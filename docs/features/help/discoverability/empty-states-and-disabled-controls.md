@@ -1,12 +1,12 @@
 ---
 id: F-HLP-020
-title: Пустые состояния, которые учат, и серые виджеты, которые молчат
-status: кандидат
+title: Empty states that teach, and grey widgets that stay silent
+status: candidate
 priority: B
 cost: M
 category: help/discoverability
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, vscode-1.136, jetbrains-2026.2]
-we_have: частично
+we_have: partial
 crates: [kt-app, kt-media]
 invariants: [8, 12]
 ui_rules: [9, 10, 13, 18, 20]
@@ -17,395 +17,172 @@ depends_on: [F-HLP-001, F-HLP-010, F-HLP-033, F-UI-002]
 checked: 2026-09-07
 ---
 
-# F-HLP-020 — Пустые состояния, которые учат, и серые виджеты, которые молчат
+# F-HLP-020 — Empty states that teach, and grey widgets that stay silent
 
-## Суть
+## Essence
 
-Контейнер, в котором пока ничего нет, — это площадь экрана, за которую никто не
-платит: там уже пусто. Пустой таймлайн, пустой бин, пустая цепочка эффектов,
-пустой график автоматизации — единственные моменты, когда у монтажёра нет
-объекта для разглядывания и есть внимание на одну фразу. Обратная сторона того
-же места — серый виджет: он занимает площадь, обещает функцию и не называет
-условия, при котором она включится. Заметка о двух этих состояниях как об
-ОДНОМ решении: чем занять пустое место и что показывать там, где сегодня стоит
-серость.
+A container in which nothing is yet is an area of screen for which no one pays: it is already empty there. An empty timeline, an empty bin, an empty effect chain, an empty automation graph — these are the only moments when the editor has no object to look at and has attention for one phrase. The reverse side of the same place is the grey widget: it occupies area, promises a function and does not name the condition under which it will switch on. The note treats these two states as ONE decision: what to occupy the empty place with, and what to show where today there is grey.
 
-## У кого и как
+## Who has it and how
 
-Вопрос строки: что стоит В САМОМ пустом контейнере (не в мануале, не в
-приветственном экране) и что стоит вместо недоступного пункта.
+The question of the row: what stands IN the empty container itself (not in the manual, not on the welcome screen) and what stands instead of an unavailable item.
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it is organized |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 b66 | «Building peaks…» | Единственное, что проверено живьём по первоисточнику-форуму: состояние «ещё не готово» у волноформ НАЗВАНО и видно — оно настолько заметно, что о нём заводят тред «как это выключить». Пустой таймлайн инструктирующего текста, по всем найденным скриншотам тредов, не несёт; недоступные пункты гаснут без причины **[НЕ ПРОВЕРЕНО живьём]** |
-| Adobe Premiere | 26.x | Home screen · Import mode · Learn | Пустой проект решается не текстом в панели, а отдельным РЕЖИМОМ окна: вкладки Import / Edit / Export наверху, и пустое состояние — это целый экран импорта вместо пустых панелей. Плюс рабочее пространство Learn с интерактивными уроками **[НЕ ПРОВЕРЕНО: `helpx.adobe.com` из этого окружения не открывается, см. «Источники»]** |
-| DaVinci Resolve | 21 | Project Manager | Пустое состояние поднято на уровень приложения: программа стартует не в пустом монтаже, а в менеджере проектов; пустой Media Pool показывает собственный тулбар и ничего больше **[НЕ ПРОВЕРЕНО живьём]** |
-| Final Cut Pro | 12.3 | Create Library → Import Media | Проверено по руководству: «The first time you open Final Cut Pro, it contains no media», и дальше пустое состояние ГЛАВНОГО окна — это две кнопки подряд, `Create Library`, затем `Import Media`. Отдельно `Final Cut Pro > Download Demo Project` — готовый монтаж прямо из меню. Причина серости («is dimmed if …») написана в руководстве: слово `dimmed` встречается 20 раз, в программе — ни разу |
-| After Effects | 26.x | Home screen · пустая Composition | Пустая панель композиции предлагает создать композицию ссылкой в самой панели, а не только пунктом меню **[НЕ ПРОВЕРЕНО: тот же барьер `helpx.adobe.com`]** |
+| VEGAS Pro | 2026.0 b66 | "Building peaks…" | The only thing checked live against a first-hand source, the forum: the "not ready yet" state of the waveforms is NAMED and visible — so noticeable that threads are opened about "how to turn it off". An empty timeline carries no instructional text, according to all the found thread screenshots; unavailable items fade without a reason **[NOT VERIFIED live]** |
+| Adobe Premiere | 26.x | Home screen · Import mode · Learn | An empty project is solved not by text in a panel, but by a separate MODE of the window: the tabs Import / Edit / Export at the top, and the empty state is a whole import screen instead of empty panels. Plus the Learn workspace with interactive lessons **[NOT VERIFIED: `helpx.adobe.com` does not open from this environment, see "Sources"]** |
+| DaVinci Resolve | 21 | Project Manager | The empty state is raised to the level of the application: the program starts not in an empty edit, but in the project manager; an empty Media Pool shows its own toolbar and nothing else **[NOT VERIFIED live]** |
+| Final Cut Pro | 12.3 | Create Library → Import Media | Checked against the guide: "The first time you open Final Cut Pro, it contains no media", and further the empty state of the MAIN window is two buttons in a row, `Create Library`, then `Import Media`. Separately, `Final Cut Pro > Download Demo Project` — a ready edit right from the menu. The reason for greying ("is dimmed if …") is written in the guide: the word `dimmed` occurs 20 times, in the program — never |
+| After Effects | 26.x | Home screen · empty Composition | The empty composition panel offers to create a composition by a link in the panel itself, not only by a menu item **[NOT VERIFIED: the same `helpx.adobe.com` barrier]** |
 
-Строк «нет» здесь нет ни одной: пустое состояние есть у всех пяти — вопрос
-только в том, УЧИТ оно или просто существует. Проверить это по документации
-невозможно в принципе: вендор описывает функции, а не то, что видно, когда
-функций ещё не применили. Отсюда три пометки `[НЕ ПРОВЕРЕНО]` и отсюда же
-вторая таблица — там механизм не подсмотрен, а записан спецификацией.
+There is not a single "no" row here: all five have an empty state — the only question is whether it TEACHES or merely exists. It is impossible in principle to verify this from documentation: the vendor describes functions, not what is visible when the functions have not yet been applied. Hence the three `[NOT VERIFIED]` marks, and hence the second table — there the mechanism is not spied on, but is recorded by a specification.
 
-**Вне ядра.** Без этих двух программ фичу описать нельзя: у одной пустое
-состояние формализовано письменным гайдлайном с обязательным составом, у
-другой оно реализовано так, что читает живую раскладку клавиш и меняет состав
-в зависимости от состояния окна. Пять NLE не дают ни того, ни другого — там
-пустое состояние есть, но его правил не публиковал никто.
+**Outside the core.** Without these two programs the feature cannot be described: in one the empty state is formalized by a written guideline with a mandatory composition, in the other it is implemented so that it reads the live keyboard layout and changes the composition depending on the state of the window. The five NLEs provide neither — there an empty state exists, but no one has published its rules.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it is organized |
 |---|---|---|---|
-| IntelliJ IDEA | 2026.2 | Empty State (гайдлайн + `ComponentWithEmptyText`) | Обязательный состав из трёх частей: «A reason why the container is empty», «Actions to fill in the area», «A link to the corresponding help topic». Действий — одно-два, не больше. Отдельное правило: если действия нет вообще, всё равно «add a text describing all the required steps» |
-| Visual Studio Code | 1.136 | Editor watermark (`workbench.tips.enabled`) | Пустая область редактора — список команд, у каждой рядом её ЖИВАЯ горячая клавиша: `editorGroupWatermark.ts` спрашивает `IKeybindingService.lookupKeybinding(id)` на каждую запись и перерисовывается по `onDidUpdateKeybindings`. Состав зависит от состояния: у пустого окна свой набор, у открытой папки — другой |
+| IntelliJ IDEA | 2026.2 | Empty State (guideline + `ComponentWithEmptyText`) | A mandatory composition of three parts: "A reason why the container is empty", "Actions to fill in the area", "A link to the corresponding help topic". One or two actions, no more. A separate rule: if there is no action at all, still "add a text describing all the required steps" |
+| Visual Studio Code | 1.136 | Editor watermark (`workbench.tips.enabled`) | The empty area of the editor is a list of commands, next to each of which is its LIVE hotkey: `editorGroupWatermark.ts` asks `IKeybindingService.lookupKeybinding(id)` for each entry and is redrawn on `onDidUpdateKeybindings`. The composition depends on the state: an empty window has its own set, an open folder has another |
 
-## Фишка фишки
+## The trick behind it
 
-Пустое состояние несёт то, чего одна строка статусбара не вместит никогда, —
-**МЕСТО**. Не длину текста: место. Строка стоит внизу справа и говорит про то,
-на чём СЕЙЧАС курсор; пустое состояние стоит ровно там, где предмет ПОЯВИТСЯ,
-и адресовано состоянию, а не курсору. Поэтому оно приходит без просьбы (push),
-а строка — только по наведению (pull), и никакая ёмкость этого не меняет: см.
-тезис Р.40 и F-HLP-001. Груз, который здесь появляется, у нас денется в тела
-самих пустых контейнеров — тело таймлайна, площадь под графиком автоматизации,
-полоса клипа без волноформы, — и ни одного символа в статусбар не добавит.
+The empty state carries what one status-bar line will never fit — **the PLACE**. Not the length of the text: the place. The line stands at the bottom right and speaks about what the cursor is on NOW; the empty state stands exactly where the object WILL APPEAR, and is addressed to the state, not to the cursor. Therefore it comes without a request (push), while the line — only on hover (pull), and no capacity changes this: see the thesis of R.40 and F-HLP-001. The load that appears here will, with us, go into the bodies of the empty containers themselves — the body of the timeline, the area under the automation graph, the clip strip without a waveform — and will not add a single character to the status bar.
 
-Три детали, которых нет в списках возможностей.
+Three details that are absent from the lists of capabilities.
 
-**1. Пустое состояние — не добавление, а ВЫЧИТАНИЕ.** Естественный ход
-(«допишем подсказку, тулбар оставим») гайдлайн IntelliJ прямо запрещает: «Hide
-the area's toolbar if it does not have the same action as in the empty state.
-Usually, all other toolbar actions are not relevant in this case». То есть
-штатный ответ на вопрос «что показывать вместо серого виджета в пустом
-контейнере» — НИЧЕГО: кнопку убирают, а её действие переезжает в пустое
-состояние ссылкой. Серый виджет и пустое состояние оказываются не двумя темами,
-а двумя половинами одного решения, и вторая половина отменяет первую. Там же
-задан и словарь: «avoid words that describe physical actions like press or
-click», «avoid saying `add new`. Just use `add`», и неразрывный пробел между
-именем действия и его клавишей — потому что в пустом состоянии клавиша обязана
-стоять рядом с действием, а не переноситься на следующую строку.
+**1. An empty state is not an addition, but a SUBTRACTION.** The natural move ("let's add a hint and leave the toolbar") is directly forbidden by the IntelliJ guideline: "Hide the area's toolbar if it does not have the same action as in the empty state. Usually, all other toolbar actions are not relevant in this case". That is, the standard answer to the question "what to show instead of the grey widget in an empty container" is NOTHING: the button is removed, and its action moves into the empty state as a link. The grey widget and the empty state turn out to be not two topics, but two halves of one decision, and the second half cancels the first. The same place sets a vocabulary: "avoid words that describe physical actions like press or click", "avoid saying `add new`. Just use `add`", and a non-breaking space between the name of an action and its key — because in the empty state the key must stand next to the action and not wrap onto the next line.
 
-**2. Пустое состояние VS Code не имеет права соврать про клавишу.** Список
-команд в пустом редакторе выглядит как статическая картинка, но
-`editorGroupWatermark.ts` собирает его тремя фильтрами подряд: команда
-существует в реестре, её `when` выполняется, и — последним —
-`.filter(entry => !!this.keybindingService.lookupKeybinding(entry.id))`.
-Команда без назначенной клавиши из пустого состояния ИСЧЕЗАЕТ, а сама клавиша
-не записана в текст, а спрошена у сервиса раскладки и перерисовывается по
-`onDidUpdateKeybindings`. Плюс два штриха, видных только в коде: лишние записи
-перемешиваются (`shuffle`) до минимума в три штуки, чтобы одна и та же пятёрка
-не окаменела, а базовый набор берётся разный для `WorkbenchState.EMPTY` и для
-открытой папки. Пустое состояние там — функция от состояния и от раскладки, а
-не строка в каталоге.
+**2. The VS Code empty state has no right to lie about a key.** The list of commands in an empty editor looks like a static picture, but `editorGroupWatermark.ts` assembles it with three filters in a row: the command exists in the registry, its `when` is satisfied, and — last — `.filter(entry => !!this.keybindingService.lookupKeybinding(entry.id))`. A command with no assigned key DISAPPEARS from the empty state, and the key itself is not written into the text, but is requested from the layout service and redrawn on `onDidUpdateKeybindings`. Plus two touches visible only in the code: extra entries are shuffled (`shuffle`) down to a minimum of three items so that the same five do not petrify, and the base set is taken different for `WorkbenchState.EMPTY` and for an open folder. The empty state there is a function of the state and of the layout, not a line in a catalog.
 
-**3. Учащее пустое состояние — единственная подсказка, которая удаляет себя
-сама.** Оно исчезает ровно в тот момент, когда перестаёт быть нужным: положил
-первый клип — текста больше нет, и никогда не будет. Ни у «совета дня», ни у
-тура, ни у баннера этого свойства нет: их приходится закрывать руками, и потому
-они раздражают. Это же снимает главный аргумент против — правило 13 чек-листа
-(«НЕ ТРАТИТЬ МЕСТО ВПУСТУЮ») здесь неприменимо по построению: место, которое
-занимает пустое состояние, и так занято пустотой.
+**3. A teaching empty state is the only hint that removes itself.** It disappears exactly at the moment it stops being needed: the first clip is placed — there is no text any more, and there never will be. The tip of the day, the tour, the banner have no such property: they have to be closed by hand, and therefore they irritate. This also removes the main argument against: rule 13 of the checklist ("DO NOT WASTE SPACE FOR NOTHING") is inapplicable here by construction: the space that the empty state occupies is already occupied by emptiness.
 
-## Плюсы
+## Pros
 
-- Место бесплатно и ровно одно: текст стоит там, где предмет появится, поэтому
-  «где это делать» и «что делать» отвечаются одним взглядом без перевода глаз
-  на статусбар и без наведения мыши.
-- Самоудаление: подсказка живёт ровно столько, сколько длится состояние, — за
-  ней не нужно ни кнопки «больше не показывать», ни настройки, ни счётчика
-  показов, ни хранения «пользователь это уже видел» (а хранить нам сегодня
-  негде — вывод №1 первой волны про отсутствие пользовательского хранилища вне
-  проекта, `docs/features/README.md`).
-- Push без перекрытия и без задержки: ничего не всплывает, ничего не закрывает,
-  ничего не ждёт — пункты 1 и 2 тезиса Р.40 не задеваются вовсе.
-- Пустое состояние — естественный носитель горячей клавиши (правило IntelliJ
-  «It can also educate about the shortcut»), а клавиша — это ровно то, что у нас
-  не описано нигде: 13 из 20 пунктов меню без акселератора, `Ctrl+Y` и
-  `Backspace` не названы ни в одной строке каталога.
-- Серость, заменённая на пустое состояние, снимает вопрос «почему выключено»
-  вместе с самим выключенным виджетом, а не отвечает на него.
+- The place is free and exactly one: the text stands where the object will appear, so "where to do it" and "what to do" are answered with one glance, without moving the eyes to the status bar and without hovering the mouse.
+- Self-removal: the hint lives exactly as long as the state lasts — it needs neither a "don't show again" button, nor a setting, nor a counter of showings, nor storage of "the user has already seen this" (and today we have nowhere to store it — conclusion no. 1 of the first wave about the absence of user storage outside the project, `docs/features/README.md`).
+- Push without overlap and without delay: nothing pops up, nothing covers anything, nothing waits — items 1 and 2 of the R.40 thesis are not touched at all.
+- An empty state is a natural carrier of a hotkey (the IntelliJ rule "It can also educate about the shortcut"), and the key is exactly what we nowhere describe: 13 of 20 menu items have no accelerator, and `Ctrl+Y` and `Backspace` are not named in any line of the catalog.
+- Greyness replaced by an empty state removes the question "why is it off" together with the switched-off widget itself, rather than answering it.
 
-## Минусы
+## Cons
 
-- Пустое состояние видит только новичок — и ровно один раз. Опытный
-  пользователь платит за него ноль, но и не получает ничего: канал не
-  масштабируется на «второй год работы», в отличие от палитры или шпаргалки.
-- Оно врёт по построению, если состав жёстко записан: клавиша, переехавшая при
-  переназначении, останется в тексте (в VS Code это решено `lookupKeybinding`,
-  и решение потребовало сервиса раскладок — то есть зависимости от F-UI-002).
-- Оно провоцирует наращивание: гайдлайн IntelliJ вынужден ограничивать —
-  «Use one or two actions. Three or more actions would make it harder to choose
-  what to start from», — потому что естественное движение автора «дописать ещё
-  один совет» превращает пустой контейнер в рекламный щит.
-- Пустое состояние НЕ решает случай «контейнер полон, а действие недоступно»:
-  там серость остаётся, и её объяснение — предмет F-HLP-010, а не этой заметки.
-- Текст в пустой области конфликтует с правилом 9 («ничего лишнего, очевидных
-  надписей не делать»): надпись «здесь пусто» над пустотой — ровно то, что
-  правило запрещает. Разделяет их только одно — назван ли следующий жест.
+- The empty state is seen only by a newcomer — and exactly once. An experienced user pays nothing for it, but also gets nothing: the channel does not scale to "the second year of work", unlike the palette or the cheat sheet.
+- It lies by construction if its composition is hard-coded: a key that moved on reassignment will remain in the text (in VS Code this is solved by `lookupKeybinding`, and the solution required the layout service — that is, a dependency on F-UI-002).
+- It provokes accumulation: the IntelliJ guideline is forced to limit it — "Use one or two actions. Three or more actions would make it harder to choose what to start from" — because the natural move of the author "to add one more tip" turns the empty container into an advertising board.
+- The empty state does NOT solve the case "the container is full, but the action is unavailable": there the greyness remains, and its explanation is the subject of F-HLP-010, not of this note.
+- Text in an empty area conflicts with rule 9 ("nothing superfluous, do not make obvious labels"): the inscription "here is empty" over emptiness is exactly what the rule forbids. What separates them is only one thing — whether the next gesture is named.
 
-## Что говорят пользователи
+## What users say
 
-Состояние «ещё не готово», не названное вслух, читается как поломка. Человек
-видит сплошную заливку вместо волноформы и не может отличить «строится» от
-«сломано» — и уходит спрашивать наружу:
+A state "not ready yet" that is not named aloud reads as a breakdown. A person sees a solid fill instead of a waveform and cannot distinguish "being built" from "broken" — and goes outside to ask:
 
-> «In Vegas Pro Plus 2026, I have no waveform on the audio track. As my example
+> "In Vegas Pro Plus 2026, I have no waveform on the audio track. As my example
 > shows, when I import the .MP3 file, it shows up in the audio track as one
-> solid color.»
+> solid color."
 > — Debbie-Whitmer, forum.borisfx.com, 31.05.2026,
 > https://forum.borisfx.com/t/no-waveform-on-audio-track-using-borisfx-vegas-pro-plus/23845
 
-Ответ она нашла не в программе и не на форуме, а у постороннего чат-бота, и он
-свёлся к одному пункту меню и одному сочетанию клавиш. Обратная сторона: когда
-то же самое состояние НАЗВАНО, его замечают настолько, что просят выключить, —
-это и есть доказательство, что «Building peaks…» видно:
+She found the answer not in the program and not on the forum, but from an outside chatbot, and it boiled down to one menu item and one key combination. The reverse side: when the same state IS named, it is noticed so much that people ask to switch it off — and this is the proof that "Building peaks…" is visible:
 
-> «Is there any way to disable peak building for source video files when opening
-> a project and only generate peaks manually when needed?»
+> "Is there any way to disable peak building for source video files when opening
+> a project and only generate peaks manually when needed?"
 > — McVik, forum.borisfx.com, 02.04.2026,
 > https://forum.borisfx.com/t/building-peaks-how-to-disable-it-for-source-video-files/21642
 
-И серый виджет глазами того, кому он обещал функцию:
+And the grey widget through the eyes of the one it promised a function to:
 
-> «The tutorials make reference to the Move up and Move down commands to
+> "The tutorials make reference to the Move up and Move down commands to
 > determine layer order, however in every instance I can find those commands are
-> greyed out and I don't know why.»
+> greyed out and I don't know why."
 > — 626key, forum.borisfx.com, 19.02.2024,
 > https://forum.borisfx.com/t/particle-illusion-move-up-down-greyed-out/18124
 
-Ответ разработчика в том же треде поучителен больше самой жалобы: команды не
-«временно недоступны», их не должно быть — они остались от двумерной версии.
-Серость пережила функцию и продолжала обещать её три года.
+The developer's answer in the same thread is more instructive than the complaint itself: the commands are not "temporarily unavailable", they should not be there at all — they were left over from the two-dimensional version. The greyness outlived the function and went on promising it for three years.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-Инвентаризация по коду: шестнадцать мест, где контейнер бывает пуст. Делятся
-на три вида, и учащих среди них **пять**.
+An inventory from the code: sixteen places where a container can be empty. They divide into three kinds, and among them the teaching ones are **five**.
 
-**Учат — называют следующий жест (5):**
+**Teach — name the next gesture (5):**
 
-| Ключ | Текст (en) | Где |
+| Key | Text (en) | Where |
 |---|---|---|
-| `bin.empty` | «empty — drop media files on the window» | `src/apps/kt-app/src/bin_panel.rs:412` |
-| `fx.chain_empty` | «Chain is empty — add an effect» | `src/apps/kt-app/src/widgets.rs:604` |
-| `mrph.no_areas` / `mrph.no_marks` | «…: select a band and save it» / «…: mark one with M and give it a name» | `src/apps/kt-app/src/morpher_editor.rs:754` |
-| `tl.menu.pick_something` | «Select a region or a clip» | `src/apps/kt-app/src/timeline.rs:4750` |
-| `mrph.source_drop` | «Drop a file here, or drag a card from the media bin» | `src/apps/kt-app/src/morpher_editor.rs:134` |
+| `bin.empty` | "empty — drop media files on the window" | `src/apps/kt-app/src/bin_panel.rs:412` |
+| `fx.chain_empty` | "Chain is empty — add an effect" | `src/apps/kt-app/src/widgets.rs:604` |
+| `mrph.no_areas` / `mrph.no_marks` | "…: select a band and save it" / "…: mark one with M and give it a name" | `src/apps/kt-app/src/morpher_editor.rs:754` |
+| `tl.menu.pick_something` | "Select a region or a clip" | `src/apps/kt-app/src/timeline.rs:4750` |
+| `mrph.source_drop` | "Drop a file here, or drag a card from the media bin" | `src/apps/kt-app/src/morpher_editor.rs:134` |
 
-**Констатируют — сообщают факт пустоты и всё (5):** `win.notices_empty`
-(«Nothing yet», `app.rs:1114`), `perf.log_empty` («no problems noticed»,
-`app.rs:5129`), `search.nothing` («nothing found», `app.rs:1398`),
-`fxreg.nothing` («nothing found», `fx_registry.rs:146`), `mrph.src_slot_none` /
-`mrph.keep_source` («Source: unchanged» / «— keep the source —»).
+**State — report the fact of emptiness and nothing more (5):** `win.notices_empty` ("Nothing yet", `app.rs:1114`), `perf.log_empty` ("no problems noticed", `app.rs:5129`), `search.nothing` ("nothing found", `app.rs:1398`), `fxreg.nothing` ("nothing found", `fx_registry.rs:146`), `mrph.src_slot_none` / `mrph.keep_source` ("Source: unchanged" / "— keep the source —").
 
-**Молчат — текста нет вовсе (6):** тело пустого таймлайна
-(`src/apps/kt-app/src/timeline.rs`, ветки нет); превью пустого проекта
-(`app.rs::draw_preview`); волноформа, пока не построен индекс (`timeline.rs:3269`
-— вся ветка пропускается по `let Some(levels) = peaks.get(&c.media)`); филмстрип,
-пока не декодированы тумбы (`timeline.rs:3235` — `None` ведёт к пустому месту);
-виджет автоматизации без кривых (`automation.rs:247` — `return out;` ПОСЛЕ
-заголовка и двух переключателей вида, то есть подпись и органы управления над
-пустотой); блок параметров у эффекта без автоматизируемых параметров
-(`fx_editor.rs:395` — `return (false, None);`, блока просто нет).
+**Silent — there is no text at all (6):** the body of an empty timeline (`src/apps/kt-app/src/timeline.rs`, no branch); the preview of an empty project (`app.rs::draw_preview`); the waveform while the index is not built (`timeline.rs:3269` — the whole branch is skipped by `let Some(levels) = peaks.get(&c.media)`); the filmstrip while the thumbnails are not decoded (`timeline.rs:3235` — `None` leads to an empty place); the automation widget without curves (`automation.rs:247` — `return out;` AFTER the heading and the two view switches, that is, the caption and the controls above emptiness); the parameter block of an effect without automatable parameters (`fx_editor.rs:395` — `return (false, None);`, the block is simply absent).
 
-Из шестнадцати текст выводят десять, глагол называют пять, а КЛАВИШУ — ровно
-одно: `mrph.no_marks`, «mark one with M and give it a name». Один случай из
-522 ключей каталога (`i18n/en.toml`, `N_KEYS = 522`) случайно выполняет правило
-IntelliJ «It can also educate about the shortcut».
+Of the sixteen, ten speak in text, five name the verb, and the KEY — exactly one: `mrph.no_marks`, "mark one with M and give it a name". One case out of the 522 catalog keys (`i18n/en.toml`, `N_KEYS = 522`) by chance fulfills the IntelliJ rule "It can also educate about the shortcut".
 
-Отдельно — две дежурные поверхности, которые пустыми состояниями не являются,
-но их подменяют:
+Separately, there are two standing surfaces that are not empty states but are substituted for them:
 
-- `hint::IDLE` (`app.rs:1293`) — последняя ветка чистой `status_line`, «drop a
-  media file on the window — the clip lands under the mouse». Она не зависит
-  ОТ ЧЕГО-ЛИБО: проект с двумя сотнями клипов показывает ровно тот же текст,
-  что и пустой. Это прямая противоположность устройству VS Code, где набор
-  берётся разный для `WorkbenchState.EMPTY` и для открытой папки.
-- `tl.hint::EMPTY` (`timeline.rs:2256`) — «LMB — playhead, drag — region…» —
-  живёт внутри `if self.drag.is_none() && let Some(pos) = hover`, то есть
-  показывается только НА НАВЕДЕНИЕ. Это лучший в программе текст про пустой
-  таймлайн, и он выдан по pull-каналу.
+- `hint::IDLE` (`app.rs:1293`) — the last branch of the pure `status_line`, "drop a media file on the window — the clip lands under the mouse". It does not depend on ANYTHING: a project with two hundred clips shows exactly the same text as an empty one. This is the direct opposite of the VS Code structure, where the set is taken differently for `WorkbenchState.EMPTY` and for an open folder.
+- `tl.hint::EMPTY` (`timeline.rs:2256`) — "LMB — playhead, drag — region…" — lives inside `if self.drag.is_none() && let Some(pos) = hover`, that is, it is shown ONLY ON HOVER. This is the best text in the program about an empty timeline, and it is delivered through the pull channel.
 
-И первое, что видит человек, запустивший программу впервые:
-`KtApp::new_empty(Some(tr(k::msg::OPEN_A_PROJECT)))` (`app.rs:5287`) —
-«Open a project: kt-app &lt;file.otio&gt; or drop it on the window». Это
-`HintKind::Status`, а значит `STATUS_TTL_MS = 6000` (`app.rs:4096`): единственное
-обращение программы к новичку **самоуничтожается через шесть секунд** и в
-половине своей длины объясняет ему аргумент командной строки.
+And the first thing that a person who launches the program for the first time sees: `KtApp::new_empty(Some(tr(k::msg::OPEN_A_PROJECT)))` (`app.rs:5287`) — "Open a project: kt-app &lt;file.otio&gt; or drop it on the window". This is `HintKind::Status`, which means `STATUS_TTL_MS = 6000` (`app.rs:4096`): the program's only address to the newcomer **self-destructs after six seconds** and, in half of its length, explains to him a command-line argument.
 
-### Чего не хватает
+### What is missing
 
-1. **У таймлайна пустого состояния нет вообще.** Это главная дыра заметки, и
-   она про самый большой контейнер окна. `Project::new` даёт одну видео- и одну
-   аудио-дорожку (`src/libs/kt-model/src/project.rs:3148`), таймлайн честно
-   рисует две подписанные пустые строки — и молчит. Помощь появляется только
-   при наведении (`tl.hint::EMPTY`), то есть ровно тогда, когда пользователь уже
-   догадался поводить мышью по большому тёмному прямоугольнику. Пустой таймлайн
-   при первом запуске — момент, когда push нужен больше, чем где-либо ещё в
-   программе, и это единственное место, где место под него заведомо бесплатно.
-2. **Строящийся индекс не назван ни одним словом.** `spawn_index_worker`
-   (`src/apps/kt-app/src/util.rs:89`) — поток без обратной связи: он кладёт
-   готовые пирамиды в `Arc<Mutex<HashMap<MediaId, Peaks>>>` и всё. В каталогах
-   нет ни одного ключа со словом index, building или peaks
-   (проверено грепом по `apps/kt-app/i18n/en.toml`). Пока индекс строится,
-   аудио-клип нарисован сплошной заливкой — ровно та картинка, из-за которой
-   Debbie-Whitmer решила, что программа сломана. Хуже того: та же заливка
-   означает «построено, и там тишина» и «построить не удалось». Ключевое здесь
-   — что состояние УЖЕ ЕСТЬ в данных и просто не читается как состояние:
-   отсутствие ключа в `peaks` — это «ещё не готово», а у тумбнейлов различие
-   даже типизировано (`ThumbState::Failed`, `bin_panel.rs:655`) и всё равно
-   никому не показывается. Это тот же диагноз, что у F-HLP-011: посчитано и
-   потеряно по дороге.
-3. **Инвариант 8 обещает то, чего нет.** Его собственный текст: «Волноформы —
-   из peak-пирамиды, тумбнейлы — из полосы в sidecar индекс-БД. **Пока индекса
-   нет — плейсхолдеры.**» Плейсхолдеров нет: `timeline.rs:3235` при отсутствии
-   текстуры не рисует ничего, `timeline.rs:3269` пропускает волноформу целиком.
-   Обещание записано в корневом `CLAUDE.md` и не выполнено — ровно тот механизм
-   провала, которым закрылся Р.38 («проза ничего не роняет»).
-4. **Дежурная строка слепа к состоянию.** Одна поверхность, которая ВСЕГДА
-   видна, занята одним и тем же предложением на весь срок жизни проекта.
-5. **Два серых виджета из шести — это на самом деле пустые состояния.**
-   `timeline.rs:4599` («Область из региона» серая, когда `has_region == false`)
-   и `timeline.rs:1808` («Удалить дорожку» серая, когда `lanes_of_kind == 1`) —
-   условие в обоих случаях есть утверждение о ПУСТОТЕ («региона ещё нет»,
-   «дорожка последняя»), и по правилу IntelliJ ответ на них не «объяснить
-   серость», а «сказать про пустоту там, где она живёт». Границу подчёркиваю:
-   механизм доставки причины к серому виджету — F-HLP-010, там же разобрано,
-   почему подсказка выключенного виджета в egui мертва (`hovered()` для
-   disabled всегда `false`) и почему лечится это одним предикатом. Эта заметка
-   владеет предыдущим вопросом — а должен ли виджет быть серым вообще.
+1. **The timeline has no empty state at all.** This is the main gap of the note, and it concerns the largest container of the window. `Project::new` gives one video and one audio track (`src/libs/kt-model/src/project.rs:3148`), the timeline honestly draws two labelled empty rows — and stays silent. Help appears only on hover (`tl.hint::EMPTY`), that is, exactly when the user has already guessed to move the mouse over the large dark rectangle. The empty timeline at the first launch is the moment when a push is needed more than anywhere else in the program, and it is the only place where the space for it is certainly free.
+2. **The index being built is not named by a single word.** `spawn_index_worker` (`src/apps/kt-app/src/util.rs:89`) is a thread without feedback: it puts the finished pyramids into `Arc<Mutex<HashMap<MediaId, Peaks>>>` and that is all. There is not a single key with the word index, building or peaks in the catalogs (checked by grep over `apps/kt-app/i18n/en.toml`). While the index is being built, the audio clip is drawn as a solid fill — exactly the picture because of which Debbie-Whitmer decided the program was broken. Worse: the same fill means both "built, and there is silence" and "building failed". The key point here is that the state ALREADY EXISTS in the data and simply is not read as a state: the absence of a key in `peaks` is "not ready yet", and for the thumbnails the difference is even typed (`ThumbState::Failed`, `bin_panel.rs:655`) and still is shown to no one. This is the same diagnosis as F-HLP-011: counted and lost along the way.
+3. **Invariant 8 promises what does not exist.** Its own text: "Waveforms — from the peak pyramid, thumbnails — from the strip in the sidecar index DB. **While there is no index — placeholders.**" There are no placeholders: `timeline.rs:3235` draws nothing when the texture is absent, `timeline.rs:3269` skips the waveform entirely. The promise is written in the root `CLAUDE.md` and is not fulfilled — exactly the failure mechanism by which R.38 was closed ("prose drops nothing").
+4. **The standing line is blind to the state.** One surface that is ALWAYS visible is occupied by one and the same sentence for the whole lifetime of the project.
+5. **Two grey widgets out of six are in fact empty states.** `timeline.rs:4599` ("Area from region" is grey when `has_region == false`) and `timeline.rs:1808` ("Delete track" is grey when `lanes_of_kind == 1`) — in both cases the condition is an assertion about EMPTINESS ("there is no region yet", "the track is the last one"), and by the IntelliJ rule the answer to them is not "explain the greyness", but "say about the emptiness where it lives". I stress the boundary: the mechanism of delivering the reason to a grey widget is F-HLP-010, where it is also analyzed why the hint of a disabled widget is dead in egui (`hovered()` for disabled is always `false`) and why this is cured by a single predicate. This note owns the previous question — whether the widget should be grey at all.
 
-### Что мешает
+### What gets in the way
 
-**Правило 9, а не правило 13.** Правило 13 («НЕ ТРАТИТЬ МЕСТО ВПУСТУЮ») здесь
-не оппонент: место, занятое пустым состоянием, пусто и без него, а текст
-исчезает вместе с пустотой. Настоящий упор — правило 9 («ничего лишнего,
-очевидных надписей не делать»): «Chain is empty» над пустой цепочкой —
-кандидат в очевидные надписи. Разделяет их ровно один признак, и он
-проверяемый: назван ли ГЛАГОЛ или КЛАВИША, которых в этой области не видно.
-«Chain is empty — add an effect» проходит, «Nothing yet» — нет. Это и есть
-критерий будущего теста, а не вкусовщина.
+**Rule 9, not rule 13.** Rule 13 ("DO NOT WASTE SPACE FOR NOTHING") is not an opponent here: the space occupied by the empty state is empty without it, and the text disappears together with the emptiness. The real obstacle is rule 9 ("nothing superfluous, do not make obvious labels"): "Chain is empty" above an empty chain is a candidate for an obvious label. What separates them is exactly one sign, and it is checkable: whether a VERB or a KEY is named that is not visible in this area. "Chain is empty — add an effect" passes, "Nothing yet" does not. This is the criterion of the future test, not a matter of taste.
 
-**Правило 20 («ничего не отрастает само») и инвариант 12.** Пустое состояние
-обязано рисоваться ТОЛЬКО пока контейнер пуст, статическим текстом, без
-анимации и без собственного `request_repaint`. Тогда цена нулевая: `tr()`
-отдаёт `&'static str` без аллокаций (`src/apps/kt-app/src/i18n/mod.rs`), а сама
-ветка исполняется только в пустом состоянии. Всё, что «затухает», «пульсирует»
-или живёт по таймеру, инвариант 12 запрещает, и это же отсекает туры и coach
-marks.
+**Rule 20 ("nothing grows by itself") and invariant 12.** The empty state must be drawn ONLY while the container is empty, as static text, without animation and without its own `request_repaint`. Then the cost is zero: `tr()` returns `&'static str` without allocations (`src/apps/kt-app/src/i18n/mod.rs`), and the branch itself executes only in the empty state. Everything that "fades", "pulses" or lives on a timer is forbidden by invariant 12, and this also cuts off tours and coach marks.
 
-**t83 не задевается.** Регресс-страж `layout_tests::t83_hints_reach_status_line`
-(`src/apps/kt-app/src/layout_tests.rs:234`) держит два обещания сразу: подсказки
-доезжают до `status_line_shown` и в кадре нет ни одного слоя
-`egui::Order::Tooltip`. Пустое состояние рисуется обычным содержимым контейнера
-(`ui.weak` / `painter.galley`) в штатном слое, попапа не создаёт и `hover` не
-трогает — значит, ни `tooltip_delay = 1.0e6` из `src/apps/kt-app/src/theme.rs`,
-ни t83 ослаблять не придётся, и оба решения владельца (перекрытие, задержка)
-остаются нетронутыми. Ослаблять t83 пришлось бы только в одном сценарии,
-который эта заметка НЕ предлагает: если бы объяснение серости решили давать
-через штатный `Response::on_disabled_hover_text`.
+**t83 is not touched.** The regression guard `layout_tests::t83_hints_reach_status_line` (`src/apps/kt-app/src/layout_tests.rs:234`) holds two promises at once: the hints reach `status_line_shown`, and there is not a single layer `egui::Order::Tooltip` in the frame. The empty state is drawn as ordinary content of the container (`ui.weak` / `painter.galley`) in the standard layer, creates no pop-up and does not touch `hover` — therefore neither `tooltip_delay = 1.0e6` from `src/apps/kt-app/src/theme.rs`, nor t83 will have to be weakened, and both owner's decisions (overlap, delay) remain untouched. t83 would have to be weakened only in one scenario, which this note does NOT propose: if it were decided to give the explanation of greyness through the standard `Response::on_disabled_hover_text`.
 
-**Настоящая цена — слова, а не код.** Пять языков, потолок 160 символов
-(`src/apps/kt-app/build.rs`), глифы t100, сабсеты, арабский bidi, t125 и t131 —
-всё это посчитано в F-HLP-033 и здесь не пересчитывается. Порядок величины:
-восемь-десять новых ключей.
+**The real price is words, not code.** Five languages, the ceiling of 160 characters (`src/apps/kt-app/build.rs`), the glyphs of t100, the subsets, Arabic bidi, t125 and t131 — all of this is counted in F-HLP-033 and is not recalculated here. The order of magnitude: eight to ten new keys.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **Инвариант 8** — задевается в свою пользу: его текст уже требует
-  плейсхолдеров, которых нет. Заметка не меняет инвариант, а закрывает разрыв
-  между ним и кодом.
-- **Инвариант 12** — ограничивает форму: только статический текст, только в
-  пустом состоянии, никакой анимации и никакого repaint по таймеру.
-- **Правило 9** — главный оппонент, снимается критерием «назван глагол или
-  клавиша».
-- **Правило 10** («подсказка ровно одна и в одном месте») — не нарушается:
-  пустое состояние не является подсказкой о виджете под курсором, это
-  содержимое контейнера; со строкой статусбара оно не конкурирует, потому что
-  строка привязана к курсору, а пустое состояние — к состоянию.
-- **Правило 13** — снимается по построению (место и так пусто).
-- **Правило 18** («пункт меню говорит ЧТО и ГДЕ») и **правило 20** — держат
-  форму: одно-два действия, исчезает без следа.
+- **Invariant 8** — touched in its favor: its text already requires placeholders that do not exist. The note does not change the invariant; it closes the gap between the invariant and the code.
+- **Invariant 12** — constrains the form: static text only, only in the empty state, no animation and no repaint on a timer.
+- **Rule 9** — the main opponent, lifted by the criterion "a verb or a key is named".
+- **Rule 10** ("exactly one hint, in one place") — not violated: the empty state is not a hint about the widget under the cursor; it is the content of a container. It does not compete with the status-bar line, because that line is tied to the cursor, while the empty state is tied to the state.
+- **Rule 13** — lifted by construction (the place is already empty).
+- **Rule 18** ("a menu item says WHAT and WHERE") and **rule 20** — hold the form: one or two actions, disappears without a trace.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии раунда |
-| Где основная работа | kt-app: `timeline.rs` (пустой таймлайн; «ещё не готово» у волноформы и филмстрипа), `automation.rs` и `fx_editor.rs` (молчащие ранние возвраты), `app.rs` (дежурная строка, зависящая от состояния проекта); каталоги `apps/kt-app/i18n/*.toml`. kt-media: различить «строится» и «не удалось» в `spawn_index_worker`/`ThumbState` так, чтобы UI мог это спросить |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | `reach_tests::empty_container_names_the_next_step` — сканер по draw-путям: у каждой ветки `is_empty()` есть текст, и текст называет глагол либо клавишу; харнесс-проверка, что пустой проект показывает строку В ТЕЛЕ таймлайна и что она пропадает после первого клипа; проверка, что «ещё не готово» отличимо от «готово и пусто»; t100/t125/t128 на новые ключи |
-| Зависит от | F-HLP-010 (доставка причины к серому виджету), F-HLP-001 (строка статусбара как pull-канал), F-HLP-033 (цена слова), F-UI-002 (если в пустом состоянии показывать живую клавишу, а не литерал) |
-| Ломает совместимость | нет |
+| Size | M — 2 stages of the round |
+| Where the main work is | kt-app: `timeline.rs` (empty timeline; "not ready yet" for the waveform and the filmstrip), `automation.rs` and `fx_editor.rs` (silent early returns), `app.rs` (a stock status line that depends on the project state); catalogs `apps/kt-app/i18n/*.toml`. kt-media: distinguish "building" from "failed" in `spawn_index_worker`/`ThumbState` so that the UI can ask about it |
+| Project format | does not touch it |
+| Tests that will have to be written | `reach_tests::empty_container_names_the_next_step` — a scanner over the draw paths: every `is_empty()` branch has a text, and the text names a verb or a key; a harness check that an empty project shows a line IN THE BODY of the timeline and that it disappears after the first clip; a check that "not ready yet" is distinguishable from "ready and empty"; t100/t125/t128 for the new keys |
+| Depends on | F-HLP-010 (delivering the reason to a grayed-out widget), F-HLP-001 (the status-bar line as a pull channel), F-HLP-033 (the price of a word), F-UI-002 (if the empty state shows a live key rather than a literal) |
+| Breaks compatibility | no |
 
-Что это добавляет СВЕРХ реестра команд (F-UI-002): реестр отвечает на вопрос
-«какая клавиша у команды», пустое состояние — на вопрос «какую из команд
-уместно назвать ПРЯМО СЕЙЧАС, в этом контейнере, в этом состоянии». Первое —
-таблица, второе — выбор из неё по контексту; VS Code показывает, что второе
-без первого не строится (`lookupKeybinding` на каждую запись), а первое без
-второго остаётся справочником, в который надо прийти.
+What this adds BEYOND the command registry (F-UI-002): the registry answers the question "which key does the command have", the empty state answers the question "which of the commands is appropriate to name RIGHT NOW, in this container, in this state". The first is a table, the second is a choice from it based on context; VS Code shows that the second cannot be built without the first (`lookupKeybinding` on every entry), while the first without the second remains a reference one has to come and look up.
 
-## Вердикт
+## Verdict
 
-Берём. Это самый дешёвый push-канал из всех, что нашла волна: он не
-перекрывает, не задерживает, не требует хранилища вне проекта, не требует
-попапа и стоит ноль пикселей, потому что занимает место, которое и так пусто.
-Начинать надо не с новых текстов, а с двух дыр, где текста нет совсем: тело
-пустого таймлайна и «ещё не готово» у волноформ, — и вторая из них закрывает
-невыполненное обещание инварианта 8, а не добавляет новое.
+We take it. This is the cheapest push channel of all those the wave found: it does not overlap, does not delay, does not require storage outside the project, does not require a popup, and costs zero pixels, because it occupies a place that is already empty.
+We should start not with new texts but with two holes where there is no text at all: the body of the empty timeline and "not ready yet" for the waveforms — and the second of these closes an unfulfilled promise of invariant 8, rather than adding something new.
 
-ТЕСТ: reach_tests::empty_container_names_the_next_step — сегодня падает на
-первом же контейнере, и разведка может назвать счёт: из шестнадцати мест, где
-у нас бывает «здесь ничего нет», текст выводят десять, глагол называют пять,
-клавишу — ровно одно (`mrph.no_marks`, «mark one with M»), а у самого большого
-контейнера окна — тела таймлайна — ветки пустого состояния нет вовсе:
-`src/apps/kt-app/src/timeline.rs` рисует две подписанные пустые дорожки и
-молчит, пока на них не наведут мышь, а единственное обращение к новичку
-(`msg.open_a_project`) исчезает через `STATUS_TTL_MS = 6000` мс.
+TEST: reach_tests::empty_container_names_the_next_step — today it fails on the very first container, and the reconnaissance can name the count: of the sixteen places where we have "there is nothing here", the text is produced by ten, a verb is named by five, a key by exactly one (`mrph.no_marks`, "mark one with M"), and the largest container of the window — the body of the timeline — has no empty-state branch at all: `src/apps/kt-app/src/timeline.rs` draws two labeled empty tracks and stays silent until the mouse is placed on them, and the only address to a newcomer (`msg.open_a_project`) disappears after `STATUS_TTL_MS = 6000` ms.
 
-ОДНА СТРОКА: перекрытие — не трогает | задержка — не трогает | ёмкость — в
-строке статусбара ноль новых символов; весь груз ложится в ТЕЛА пустых
-контейнеров (тело таймлайна, площадь под графиком автоматизации, полоса клипа
-без волноформы), плюс дежурная строка перестаёт быть константой и начинает
-зависеть от состояния проекта — ни нового слоя, ни попапа, t83 остаётся
-зелёным без правок.
+ONE LINE: overlap — not touched | delay — not touched | capacity — zero new characters in the status-bar line; the whole load falls on the BODIES of the empty containers (the timeline body, the area under the automation graph, the clip strip without a waveform), plus the stock line stops being a constant and begins to depend on the project state — no new layer, no popup, t83 remains green without edits.
 
-## Источники
+## Sources
 
-- Гайдлайн «Empty State», IntelliJ Platform UI Guidelines (обновлён 04.07.2025)
-  — обязательный состав пустого состояния, ограничение «одно-два действия»,
-  правило «Hide the area's toolbar», словарь и неразрывный пробел перед
-  клавишей — https://plugins.jetbrains.com/docs/intellij/empty-state.html
-  (дата обращения 2026-09-07)
-- Исходник VS Code, `src/vs/workbench/browser/parts/editor/editorGroupWatermark.ts`
-  (ветка `main`) — состав watermark, `SETTINGS_KEY = 'workbench.tips.enabled'`,
-  `MINIMUM_ENTRIES = 3`, тройной фильтр записей, `lookupKeybinding`, `shuffle`,
-  разные наборы для `WorkbenchState.EMPTY` и открытой папки —
-  https://raw.githubusercontent.com/microsoft/vscode/main/src/vs/workbench/browser/parts/editor/editorGroupWatermark.ts
-  (дата обращения 2026-09-07)
-- Final Cut Pro User Guide for Mac (PDF, версия 12.3), разделы «If it's your
-  first import» («The first time you open Final Cut Pro, it contains no media»),
-  «Download a demo project», 20 вхождений слова `dimmed` с условиями —
-  https://help.apple.com/pdf/final-cut-pro/en_US/final-cut-pro-user-guide.pdf
-  (дата обращения 2026-09-07)
-- Форум Boris FX (Discourse, читался через `/t/<id>.json` и `/search.json`):
-  темы 23845 (нет волноформы — «one solid color»), 21642 («Building peaks…»),
-  18124 (серые Move up/down) — https://forum.borisfx.com/
-  (дата обращения 2026-09-07)
-- Наш код и каталоги: `src/apps/kt-app/src/{app,timeline,bin_panel,widgets,
-  automation,fx_editor,fx_registry,morpher_editor,util}.rs`,
-  `src/apps/kt-app/i18n/en.toml`, корневой `CLAUDE.md` (инварианты 8 и 12),
-  `src/apps/kt-app/CLAUDE.md` (правила 9, 10, 13, 18, 20)
+- The "Empty State" guideline, IntelliJ Platform UI Guidelines (updated 04.07.2025) — the mandatory composition of an empty state, the restriction "one or two actions", the rule "Hide the area's toolbar", the vocabulary and the non-breaking space before a key — https://plugins.jetbrains.com/docs/intellij/empty-state.html (accessed 2026-09-07)
+- Source code of VS Code, `src/vs/workbench/browser/parts/editor/editorGroupWatermark.ts` (branch `main`) — the composition of the watermark, `SETTINGS_KEY = 'workbench.tips.enabled'`, `MINIMUM_ENTRIES = 3`, the triple filter of entries, `lookupKeybinding`, `shuffle`, different sets for `WorkbenchState.EMPTY` and an open folder — https://raw.githubusercontent.com/microsoft/vscode/main/src/vs/workbench/browser/parts/editor/editorGroupWatermark.ts (accessed 2026-09-07)
+- Final Cut Pro User Guide for Mac (PDF, version 12.3), sections "If it's your first import" ("The first time you open Final Cut Pro, it contains no media"), "Download a demo project", 20 occurrences of the word `dimmed` with conditions — https://help.apple.com/pdf/final-cut-pro/en_US/final-cut-pro-user-guide.pdf (accessed 2026-09-07)
+- Boris FX forum (Discourse, read via `/t/<id>.json` and `/search.json`): topics 23845 (no waveform — "one solid color"), 21642 ("Building peaks…"), 18124 (grayed-out Move up/down) — https://forum.borisfx.com/ (accessed 2026-09-07)
+- Our code and catalogs: `src/apps/kt-app/src/{app,timeline,bin_panel,widgets,automation,fx_editor,fx_registry,morpher_editor,util}.rs`, `src/apps/kt-app/i18n/en.toml`, the root `CLAUDE.md` (invariants 8 and 12), `src/apps/kt-app/CLAUDE.md` (rules 9, 10, 13, 18, 20)
 
-**Чего проверить не удалось.** Проверки живьём не было ни для одной программы:
-для софта вне ядра она и не предполагается (`_editors.md`), для NLE ядра —
-пустое состояние не документируется вендорами в принципе, а из этого окружения
-`helpx.adobe.com` не открывается ни напрямую (соединение обрывается), ни через
-текст-прокси `r.jina.ai` (возвращается только навигация), справка Apple отдаёт
-по HTTP лишь оглавление — поэтому FCP взят из PDF-руководства, а строки
-Premiere, Resolve и After Effects помечены `[НЕ ПРОВЕРЕНО]`. Бюджет `WebSearch`
-сессии (200 из 200) был исчерпан до начала этой заметки, поэтому все источники
-добыты прямыми запросами `curl`/`WebFetch` по известным адресам.
+**What could not be verified.** There was no live check for any of the programs: for software outside the core it is not assumed at all (`_editors.md`), and for the NLE core the empty state is not documented by vendors in principle. From this environment `helpx.adobe.com` does not open either directly (the connection drops) or through the text proxy `r.jina.ai` (only the navigation comes back), and Apple's help returns over HTTP only the table of contents — therefore FCP was taken from the PDF guide, and the Premiere, Resolve and After Effects rows are marked `[NOT VERIFIED]`. The session's `WebSearch` budget (200 of 200) was exhausted before this note was started, so all sources were obtained by direct `curl`/`WebFetch` requests to known addresses.

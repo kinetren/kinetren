@@ -1,148 +1,78 @@
-# Редакторы ядра: версии и на чём проверяли
+# Core editors: versions and what they were checked on
 
-Единое место на всю базу. «В Vegas есть…» без версии — не факт: каждый год
-что-то появляется, а что-то ломается, и заметка полугодовой давности врёт
-уверенным тоном. Слаг из колонки «Ключ» — это то, что пишется в поле `editors:`
-шапки заметки.
+A single place for the whole base. "VEGAS has…" without a version is not a fact: something appears every year and something breaks, and a note half a year old lies in a confident tone. The slug from the "Key" column is what is written in the `editors:` field of the note header.
 
-Проверено 2026-09-08 (четвёртая волна); повторная сверка 2026-09-14 (пятая волна,
-Р.47 — эффекты): за шесть дней релизов ядра не выходило, версии оставлены как есть.
-Шестая волна 2026-09-16 (Р.51 — переходы): два дня после пятой, версии не
-перепроверялись, ключи оставлены как есть.
+Checked 2026-09-08 (fourth wave); a re-check on 2026-09-14 (fifth wave, R.47 — effects): over six days no core release came out, the versions are left as they are. The sixth wave of 2026-09-16 (R.51 — transitions): two days after the fifth, the versions were not re-verified, the keys are left as they are.
 
-Седьмая волна 2026-09-21 (Р.59 — свойства, шаблоны композиций, выражения,
-физика): версии ядра не менялись с 2026-09-16, ключи оставлены как есть. Новых
-ключей волна не завела намеренно, и вот почему — три программы, без которых тему
-не описать, УЖЕ в таблицах: **Fusion** — это страница внутри Resolve, то есть
-ключ `resolve-21` (Macro Editor и его «выставить вход наружу» проверяются там
-же); **Blender** (`blender-5.2`) и **Nuke** (`nuke-17`) стоят вне ядра и
-получают строку ровно там, где несут ПРОИСХОЖДЕНИЕ механизма — драйверы
-(свойство, ведомое выражением) и expression-поля соответственно. Решение Р.36
-(«Fusion и Nuke не в этот заход») этим не отменяется: вердикта они по-прежнему не
-несут. При следующей волне заметок таблицу обновить ПЕРВОЙ.
+The seventh wave of 2026-09-21 (R.59 — properties, composition templates, expressions, physics): the core versions have not changed since 2026-09-16, the keys are left as they are. The wave deliberately did not add new keys, and here is why — three programs without which the topic cannot be described are ALREADY in the tables: **Fusion** is a page inside Resolve, that is, the key `resolve-21` (the Macro Editor and its "expose the input" are checked there as well); **Blender** (`blender-5.2`) and **Nuke** (`nuke-17`) stand outside the core and receive a line exactly where they carry the ORIGIN of a mechanism — drivers (a property driven by an expression) and expression fields respectively. The decision of R.36 ("Fusion and Nuke not in this pass") is not cancelled by this: they still carry no verdict. At the next wave of notes the table is updated FIRST.
 
-| Ключ | Редактор | Версия на дату | Замечания |
+| Key | Editor | Version as of the date | Remarks |
 |---|---|---|---|
-| `vegas-pro-2026` | VEGAS Pro | 2026.0 build 66 (27.03.2026) | издатель сменился на Boris FX; прошлая линейка называлась «Vegas Pro 23». Нумерация перешла с порядковой на годовую — при цитировании старых форумных тредов версию писать ту, что в треде |
-| `premiere-26` | Adobe Premiere | 26.x (2026) | **Adobe убрала слово «Pro» из названия** — теперь просто «Adobe Premiere». В цитатах до 2026 г. остаётся «Premiere Pro» |
-| `resolve-21` | DaVinci Resolve / Resolve Studio | 21 (вышла из беты ~06.2026) | **текущая**. Анонс на NAB 13.04.2026, на сайте BMD продвигается как актуальная («introduces the Photo page»). Точную дату релиза по первоисточнику подтвердить не удалось |
-| `resolve-20` | DaVinci Resolve / Resolve Studio | 20.3.2 (12.02.2026) | предыдущая линейка. Заметки первой волны писались по документации 20.x — при перепроверке сверять с 21. Studio и бесплатная версия различаются составом: если фича только в Studio, это пишется в «Минусы» |
-| `fcp-12` | Final Cut Pro (macOS) | 12.3 (30.06.2026) | линейка 12.x вышла в январе 2026; часть возможностей приехала из Apple Creator Studio |
-| `after-effects-26` | Adobe After Effects | 26.x (2026) | не NLE: сравнивать с ним осмысленно только композит, слои, маски, автоматизацию. Модель монтажа у него другая, и это само по себе бывает «минусом» в заметке |
+| `vegas-pro-2026` | VEGAS Pro | 2026.0 build 66 (27.03.2026) | the publisher changed to Boris FX; the previous line was called "Vegas Pro 23". The numbering switched from ordinal to yearly — when quoting old forum threads, write the version that the thread has |
+| `premiere-26` | Adobe Premiere | 26.x (2026) | **Adobe removed the word "Pro" from the name** — now simply "Adobe Premiere". In quotes up to 2026 "Premiere Pro" remains |
+| `resolve-21` | DaVinci Resolve / Resolve Studio | 21 (out of beta ~06.2026) | **current**. Announced at NAB 13.04.2026, promoted on the BMD site as current ("introduces the Photo page"). The exact release date from the primary source could not be confirmed |
+| `resolve-20` | DaVinci Resolve / Resolve Studio | 20.3.2 (12.02.2026) | the previous line. The first wave's notes were written from the documentation of 20.x — when re-checking, compare with 21. Studio and the free version differ in composition: if a feature is only in Studio, this is written in "Cons" |
+| `fcp-12` | Final Cut Pro (macOS) | 12.3 (30.06.2026) | the 12.x line came out in January 2026; part of the capabilities came from Apple Creator Studio |
+| `after-effects-26` | Adobe After Effects | 26.x (2026) | not an NLE: it is meaningful to compare with it only the composite, layers, masks, automation. Its editing model is different, and that in itself is sometimes a "minus" in a note |
 
-## Софт вне ядра (вторая волна, Р.40)
+## Software outside the core (second wave, R.40)
 
-Заведён для домена подсказок и справки: сильнейшие решения там родились ВНЕ
-видеомонтажа, и пятью NLE их не описать. Строки этой таблицы **не заменяют** строки
-ядра и не считаются в покрытии — они объясняют механизм, а не несут вердикт
-«берём/не берём». Проверка живьём для них не предполагается, и в «Источники» это
-пишется явно.
+Set up for the domain of hints and help: the strongest solutions there were born OUTSIDE video editing, and the five NLEs cannot describe them. The rows of this table **do not replace** rows of the core and are not counted in the coverage — they explain the mechanism, not carry the verdict "take / do not take". A live check is not assumed for them, and this is stated explicitly in "Sources".
 
-Версии подтверждены поиском 2026-09-07; там, где вендор нумерует по годам, ключ несёт
-номер, а не год.
+Versions were confirmed by search on 2026-09-07; where the vendor numbers by year, the key carries the number, not the year.
 
-| Ключ | Программа | Версия на дату | Чем интересна в этом домене |
+| Key | Program | Version as of the date | What is interesting in this domain |
 |---|---|---|---|
-| `ableton-live-12` | Ableton Live | 12.4.5 (26.08.2026) | **Info View** — прямой предок нашей одной строки: фиксированная область в углу, описывающая то, что под курсором. Live 13 НЕ существует (частый слух), не ссылаться |
-| `blender-5.2` | Blender | 5.2 LTS (14.07.2026) | статусбар показывает активные модификаторы прямо во время жеста; `F3` — поиск по операторам; собственный многоязычный manual как docs-as-code |
-| `vscode-1.136` | Visual Studio Code | 1.136 (02.09.2026) | палитра команд — эталон отрасли; Keyboard Shortcuts как редактируемая таблица; Walkthroughs как встроенный онбординг |
-| `jetbrains-2026.2` | IntelliJ IDEA | 2026.2.2 (09.2026) | Search Everywhere и Find Action; подсказка горячей клавиши после действия мышью; «совет дня» как классический анти-паттерн |
-| `photoshop-27` | Adobe Photoshop | 27.x (2026) | Rich Tool Tips с видео-превью действия — самый дорогой конец шкалы подсказок; панель Discover как push-канал |
-| `kdenlive-26.08` | Kdenlive | 26.08.0 (20.08.2026, KDE Gear) | добавлен третьей волной (Р.41). Два механизма, ради которых он получает строку. **(1) Сохранность:** единственная программа, у которой это и документировано (`docs.kdenlive.org`), и видно в публичном трекере — резервная копия при КАЖДОМ сохранении, ярусное прореживание 20/час + 20/день + 20/7 дней + 20 старых, скрытый каталог `.backup` в данных приложения; строку по этому поводу получает только в заметках `resilience/`. **(2) Переход на одной дорожке («Mix», с 20.12):** единственный публично прослеживаемый случай, когда редактор с последовательной дорожкой добавил наложение задним числом — и видно, чем заплатил (kde-invent #796 и след, F-TL-010). В остальных заметках ничего не добавляет к пяти строкам ядра |
-| `otio-lib-0.18` | OpenTimelineIO (эталонная библиотека) | 0.18.x (0.18.0 — ноябрь 2025) | добавлена третьей волной (Р.41): ПРОИСХОЖДЕНИЕ обоих наших механизмов совместимости и одновременно эталон нашего собственного формата (`docs/file-format.md`). Единственное место в домене, где ДАУНГРЕЙД схемы — объявленный API (`target_schema_versions`, `otioconvert --downgrade`, карты версий по релизам и студийные «семьи» FAMILY), а незнакомая схема не роняет чтение, а становится объектом, который помнит её дословно (issue #326, 2018 — предок нашего `RawObject`). Строку получает только там, где предмет заметки — версия формата и её миграция; редактором не является и вердикта не несёт |
-| `sqlite-3.50` | SQLite | 3.50.2 (вендорена в `libsqlite3-sys` 0.35.0, наш `src/Cargo.lock`) | добавлена третьей волной (Р.41): ПРОИСХОЖДЕНИЕ механизма durability. Единственное место, где три уровня гарантии записи не только сформулированы, но и вынесены в настройку — `PRAGMA synchronous` (OFF/NORMAL/FULL/EXTRA), `journal_mode`, отдельный флаг сборки `SQLITE_DISABLE_DIRSYNC` на синхронизацию каталога. Проверяется офлайн по вендоренному `sqlite3.c` в нашем же дереве зависимостей. Строку получает только там, где предмет заметки — порядок попадания байтов на диск |
-| `logic-pro-12` | Apple Logic Pro | 12.3.1 (14.08.2026, `support.apple.com/en-us/109503`) | добавлена третьей волной (Р.41): ПРОИСХОЖДЕНИЕ механизма нарезки по тишине. Окно Remove Silence (историческое имя Strip Silence) задало набор из четырёх параметров, который спустя двадцать лет дословно повторяет Resolve: Threshold, Minimum Time to Accept as Silence, Pre Attack-Time, Post Release-Time — и, главное, задало ФОРМУ РЕЗУЛЬТАТА: процесс не удаляет ничего, а нарезает материал на регионы. Apple при этом так и не портировала механизм в Final Cut. Строку получает только там, где предмет заметки — порог тишины и его отступы; редактором не является и вердикта не несёт |
-| `libass-0.17` | libass + формат ASS/SSA | 0.17.1 (пакет `libass9 1:0.17.1-2build1`; вкомпилирована в системный `ffmpeg 6.1.1` этой машины — `--enable-libass`) | добавлена третьей волной (Р.41): ПРОИСХОЖДЕНИЕ модели оформления текста. Единственное место, где стек «заливка → обводка → тень → плашка» не набор независимых галочек, а ОДИН enum `BorderStyle`: 1 = «обводка + тень», 3 = «непрозрачная плашка», 4 (только libass) = плашка по строке, где отступ задаёт параметр `Shadow`, а цвет плашки берётся из цвета обводки. Отсюда взаимная исключительность обводки и плашки и живые дефекты чужих трекеров. Проверяется офлайн: библиотека установлена и слинкована в тот самый системный FFmpeg, который мы грузим через dlopen (инвариант 10). Строку получает только там, где предмет заметки — порядок и геометрия оформления текста; редактором не является и вердикта не несёт |
-| `nuke-17` | Foundry Nuke | 17.0 (26.02.2026; параллельно вышла 16.1 на VFX Reference Platform 2024; поиск 2026-09-13) | добавлен в Р.44: ПРОИСХОЖДЕНИЕ конкатенации трансформов. Смежные 2D-трансформ-ноды (Transform, Reformat, Tracker, GridWarp, STMap…) схлопываются в одну операцию, и фильтрация применяется ОДИН раз — фильтром, выставленным на ПОСЛЕДНЕЙ ноде серии; любая не-трансформ-нода между ними (Crop, Grade) рвёт серию МОЛЧА и возвращает двойной ресемпл — не рвут только Dot, Switch и выключенные ноды. Решение Р.36 («Nuke не в этот заход») не отменяется: строку получает только там, где предмет заметки — качество цепочки трансформов; редактором ядра не является и вердикта не несёт |
+| `ableton-live-12` | Ableton Live | 12.4.5 (26.08.2026) | **Info View** — the direct ancestor of our one-line hint: a fixed area in the corner describing what is under the cursor. Live 13 does NOT exist (a frequent rumor), do not refer to it |
+| `blender-5.2` | Blender | 5.2 LTS (14.07.2026) | the status bar shows active modifiers right during a gesture; `F3` — search over operators; its own multilingual manual as docs-as-code |
+| `vscode-1.136` | Visual Studio Code | 1.136 (02.09.2026) | the command palette — the industry reference; Keyboard Shortcuts as an editable table; Walkthroughs as built-in onboarding |
+| `jetbrains-2026.2` | IntelliJ IDEA | 2026.2.2 (09.2026) | Search Everywhere and Find Action; a hotkey hint after a mouse action; "tip of the day" as a classic anti-pattern |
+| `photoshop-27` | Adobe Photoshop | 27.x (2026) | Rich Tool Tips with a video preview of the action — the most expensive end of the hint scale; the Discover panel as a push channel |
+| `kdenlive-26.08` | Kdenlive | 26.08.0 (20.08.2026, KDE Gear) | added in the third wave (R.41). Two mechanisms for which it gets a line. **(1) Durability:** the only program where this is both documented (`docs.kdenlive.org`) and visible in the public tracker — a backup on EVERY save, tiered thinning 20/hour + 20/day + 20/7 days + 20 old ones, a hidden `.backup` directory in the application data; it gets a line on this subject only in the notes of `resilience/`. **(2) A transition on one track ("Mix", from 20.12):** the only publicly traceable case where an editor with a sequential track added overlap after the fact — and it is visible what it paid for this (kde-invent #796 and its trail, F-TL-010). In the other notes it adds nothing to the five core lines |
+| `otio-lib-0.18` | OpenTimelineIO (reference library) | 0.18.x (0.18.0 — November 2025) | added in the third wave (R.41): the ORIGIN of both of our compatibility mechanisms and at the same time the reference for our own format (`docs/file-format.md`). The only place in the domain where a schema DOWNGRADE is a declared API (`target_schema_versions`, `otioconvert --downgrade`, version maps by release and the studio "families" FAMILY), and an unknown schema does not break reading but becomes an object that remembers it verbatim (issue #326, 2018 — the ancestor of our `RawObject`). It gets a line only where the subject of the note is the version of the format and its migration; it is not an editor and carries no verdict |
+| `sqlite-3.50` | SQLite | 3.50.2 (vendored in `libsqlite3-sys` 0.35.0, our `src/Cargo.lock`) | added in the third wave (R.41): the ORIGIN of the durability mechanism. The only place where the three levels of write guarantee are not only formulated but brought out into a setting — `PRAGMA synchronous` (OFF/NORMAL/FULL/EXTRA), `journal_mode`, a separate build flag `SQLITE_DISABLE_DIRSYNC` for syncing the directory. It is checked offline by the vendored `sqlite3.c` in our own dependency tree. It gets a line only where the subject of the note is the order in which bytes reach the disk |
+| `logic-pro-12` | Apple Logic Pro | 12.3.1 (14.08.2026, `support.apple.com/en-us/109503`) | added in the third wave (R.41): the ORIGIN of the silence-cutting mechanism. The Remove Silence window (historical name Strip Silence) set a set of four parameters, which twenty years later verbatim repeats Resolve: Threshold, Minimum Time to Accept as Silence, Pre Attack-Time, Post Release-Time — and, most importantly, it set the SHAPE OF THE RESULT: the process deletes nothing, it cuts the material into regions. Apple, however, never ported the mechanism into Final Cut. It gets a line only where the subject of the note is the silence threshold and its margins; it is not an editor and carries no verdict |
+| `libass-0.17` | libass + the ASS/SSA format | 0.17.1 (package `libass9 1:0.17.1-2build1`; compiled into the system `ffmpeg 6.1.1` of this machine — `--enable-libass`) | added in the third wave (R.41): the ORIGIN of the text-styling model. The only place where the stack "fill → outline → shadow → plate" is not a set of independent checkboxes but ONE enum `BorderStyle`: 1 = "outline + shadow", 3 = "opaque plate", 4 (libass only) = a plate per line, where the margin is set by the parameter `Shadow`, and the color of the plate is taken from the outline color. Hence the mutual exclusivity of outline and plate and the live defects of other trackers. It is checked offline: the library is installed and linked into the same system FFmpeg that we load through dlopen (invariant 10). It gets a line only where the subject of the note is the order and geometry of text styling; it is not an editor and carries no verdict |
+| `nuke-17` | Foundry Nuke | 17.0 (26.02.2026; 16.1 came out in parallel on the VFX Reference Platform 2024; search 2026-09-13) | added in R.44: the ORIGIN of transform concatenation. Adjacent 2D transform nodes (Transform, Reformat, Tracker, GridWarp, STMap…) collapse into one operation, and filtering is applied ONCE — by the filter set on the LAST node of the series; any non-transform node between them (Crop, Grade) breaks the series SILENTLY and restores the double resample — only Dot, Switch and disabled nodes do not break it. The decision of R.36 ("Nuke not in this pass") is not cancelled: it gets a line only where the subject of the note is the quality of a transform chain; it is not a core editor and carries no verdict |
 
-**Когда строка вне ядра ОБЯЗАТЕЛЬНА** (любое из трёх): три и более строк ядра — «нет»;
-«Фишка фишки» заметки взята из этой программы; программа является ПРОИСХОЖДЕНИЕМ
-механизма (Info View для строки-подсказки, палитра команд для VS Code).
+**When a line outside the core is MANDATORY** (any of the three): three or more lines of the core are "no"; the "trick of the feature" of the note is taken from this program; the program is the ORIGIN of a mechanism (Info View for the hint line, the command palette for VS Code).
 
-**Когда ЛИШНЯЯ:** строка повторяет то, что уже делает редактор ядра, не добавляя груза;
-программа названа «для полноты картины» (пяти строк ядра для полноты достаточно);
-проверить не удалось И механизм не уникален — тогда одна фраза в «Плюсах», без строки.
+**When it is SUPERFLUOUS:** the line repeats what a core editor already does, adding no load; the program is named "for completeness of the picture" (five core lines are enough for completeness); verification failed AND the mechanism is not unique — then one phrase in "Pros", without a line.
 
-## Что НЕ входит в первую волну (решение Р.36)
+## What is NOT part of the first wave (decision of R.36)
 
-Avid Media Composer, Blackmagic Fusion, Foundry Nuke, опенсорс (Kdenlive,
-Shotcut, Blender VSE, Olive), AI-редакторы (CapCut, Descript, Runway).
-Не «неинтересно», а «не в этот заход»: строка редактора в таблице «У кого и как»
-без реальной проверки — это ровно та вода, против которой база заводилась.
-Если фича В ПРИНЦИПЕ существует только вне ядра — это законный повод завести
-заметку и написать в «У кого и как» одну строку с редактором вне ядра, пометив
-в «Источники», что проверки живьём не было.
+Avid Media Composer, Blackmagic Fusion, Foundry Nuke, open source (Kdenlive, Shotcut, Blender VSE, Olive), AI editors (CapCut, Descript, Runway). Not "uninteresting", but "not in this pass": a line of an editor in the table "Who has it and how" without real verification is exactly the water against which the base was started. If a feature EXISTS IN PRINCIPLE only outside the core, this is a legitimate reason to open a note and write in "Who has it and how" one line with an editor outside the core, marking in "Sources" that there was no live check.
 
-## Как проверять
+## How to verify
 
-По убыванию доверия:
+In descending order of trust:
 
-1. **Официальная справка и release notes** — говорят, что фича есть, но почти
-   никогда не говорят, как она устроена и чем за неё платят.
-2. **Форумы и reddit** (Vegas Creative Software, Blackmagic, Creative COW,
-   r/vegasvideo, r/editors, r/davinciresolve, r/premiere, r/finalcutpro) — здесь
-   живёт «фишка фишки» и весь отрицательный фидбек. Самое ценное: треды
-   «перешёл на новую версию из-за X» и «X не работает вместе с Y».
-3. **Разборы на YouTube** — видно поведение, которого нет в документации, но
-   цитировать оттуда трудно; годится как подтверждение, не как источник.
+1. **Official help and release notes** — they say that the feature exists, but almost never say how it is built and what it costs.
+2. **Forums and reddit** (Vegas Creative Software, Blackmagic, Creative COW, r/vegasvideo, r/editors, r/davinciresolve, r/premiere, r/finalcutpro) — this is where the "trick of the feature" and all the negative feedback live. The most valuable: threads "switched to the new version because of X" and "X does not work together with Y".
+3. **YouTube breakdowns** — behavior that is absent from the documentation is visible there, but it is hard to quote from them; they serve as confirmation, not as a source.
 
-Заметка, целиком собранная из пункта 1, обязана честно сказать об этом в поле
-«Источники»: «по документации, живьём не проверялось».
+A note assembled entirely from item 1 must honestly say so in the "Sources" field: "by documentation, not checked live".
 
-## Открытый софт: источник трекера, а не строка сравнения (третья волна, Р.41)
+## Open-source software: a tracker source, not a comparison line (third wave, R.41)
 
-Kdenlive, Shotcut, OpenShot, Pitivi, Olive, Flowblade, LosslessCut, Blender VSE вошли в
-базу **источниками**, а не редакторами ядра. Реестр — `_trackers.md`; ключ трекера
-(`kde-bugzilla`) и ключ редактора (`blender-5.2`) — разные вещи и живут в разных полях
-шапки. Строку в таблице «У кого и как» такой редактор получает по общему правилу раздела
-«Софт вне ядра»: только если механизм задокументирован и от него зависит «Фишка фишки» или
-«Минусы» заметки.
+Kdenlive, Shotcut, OpenShot, Pitivi, Olive, Flowblade, LosslessCut, Blender VSE entered the base as **sources**, not as core editors. The registry is `_trackers.md`; the tracker key (`kde-bugzilla`) and the editor key (`blender-5.2`) are different things and live in different header fields. Such an editor gets a line in the table "Who has it and how" by the general rule of the section "Software outside the core": only if the mechanism is documented and the "Trick of the feature" or "Cons" of the note depends on it.
 
-Решение Р.36 («опенсорс — не в этот заход») этим не отменяется, а исполняется: там
-запрещалась строка редактора **без реальной проверки**. Счёт из трекера — проверка более
-твёрдая, чем всё, чем располагали первые две волны: постоянный URL, дата, дословность и
-воспроизводимый запрос.
+The decision of R.36 ("open source — not in this pass") is not cancelled by this, but executed: what was forbidden was a line of an editor **without real verification**. A count from a tracker is a more solid check than anything the first two waves had: a permanent URL, a date, verbatim quotes and a reproducible query.
 
-**Почему третья волна вышла целиком опенсорсной.** Не потому, что опенсорс интереснее, а
-потому, что у пяти редакторов ядра публичного трекера нет ни у одного, а форум вендора
-трекером не является: в нём нет состояния, дедупликации и даты решения.
+**Why the third wave was entirely open-source.** Not because open source is more interesting, but because none of the five core editors has a public tracker, and the vendor's forum is not a tracker: it has no state, no deduplication and no decision date.
 
-## Сервис — не редактор (четвёртая волна, Р.42)
+## A service is not an editor (fourth wave, R.42)
 
-Frame.io, Team Projects, Blackmagic Cloud, общая библиотека Final Cut — это то, что стоит
-ПО ТУ СТОРОНУ редактора, а не рядом с ним. Их реестр — `_services.md`, и поле шапки у них
-своё (`services:`), потому что `editors:` их не примет.
+Frame.io, Team Projects, Blackmagic Cloud, the shared library of Final Cut — these are things that stand ON THE OTHER SIDE of the editor, not next to it. Their registry is `_services.md`, and their header field is their own (`services:`), because `editors:` will not accept them.
 
-Почему отдельным файлом, а не третьей таблицей ЗДЕСЬ: `read_editor_keys()` берёт ЛЮБУЮ
-строку этого файла, у которой первая клетка — слаг в обратных кавычках, без привязки к
-разделу. Третья таблица молча сделала бы `frame-io` законным значением `editors:` — то есть
-пустила бы сервис в таблицу «У кого и как», где живёт вердикт «берём/не берём». Разделение
-реестров здесь не порядок ради порядка, а единственное, что мешает механизму проверки
-согласиться на бессмыслицу.
+Why in a separate file and not as a third table HERE: `read_editor_keys()` takes ANY line of this file whose first cell is a slug in backticks, without binding to a section. A third table would silently make `frame-io` a legal value of `editors:` — that is, it would let a service into the table "Who has it and how", where the verdict "take / do not take" lives. The separation of registries here is not order for order's sake, but the only thing that stops the checking mechanism from agreeing to nonsense.
 
-**Облачная привязка пяти строк ядра** (проверено 08.09.2026): VEGAS — своего сервиса
-совместной работы нет; Premiere 26 — Team Projects (подписка Teams) и панель Frame.io,
-редактор без них работает полностью; Resolve 21 — Blackmagic Cloud или бесплатный
-self-hosted Project Server, совместный режим принудительно включает Live Save и выключить
-его нельзя; Final Cut 12 — облака нет вовсе, только общий том с эксклюзивным замком на всю
-библиотеку; After Effects 26 — Team Projects и Frame.io, те же, что у Premiere.
+**The cloud binding of the five core lines** (checked 08.09.2026): VEGAS — it has no service of its own for joint work; Premiere 26 — Team Projects (Teams subscription) and the Frame.io panel, the editor works fully without them; Resolve 21 — Blackmagic Cloud or the free self-hosted Project Server, the joint mode forcibly turns on Live Save and it cannot be turned off; Final Cut 12 — there is no cloud at all, only a shared volume with an exclusive lock on the whole library; After Effects 26 — Team Projects and Frame.io, the same as Premiere.
 
-**Avid ключа по-прежнему не получает** (решение Р.36) — хотя именно он изобрёл bin locking
-и в августе 2026 заметно его изменил. Причина не только в Р.36: `avid.com`, `help.avid.com`
-и `kb.avid.com` отдают 403, то есть проверить живьём нечем, а строка реестра без проверки
-и есть та вода, против которой база заводилась. В прозе заметок он цитируется по вторичным
-источникам с пометкой `[НЕ ПРОВЕРЕНО]`.
+**Avid still does not get a key** (decision of R.36) — although precisely it invented bin locking and noticeably changed it in August 2026. The reason is not only R.36: `avid.com`, `help.avid.com` and `kb.avid.com` return 403, that is, there is nothing to check live with, and a registry line without verification is exactly the water against which the base was started. In the prose of the notes it is cited from secondary sources with the mark `[NOT VERIFIED]`.
 
-## Что было недоступно при первой волне (07.09.2026)
+## What was unavailable during the first wave (07.09.2026)
 
-Зафиксировано, чтобы следующая волна не искала заново и не считала пробелы
-ленью: `helpx.adobe.com` (справка Premiere/AE), `reddit.com`, `web.archive.org`,
-`discussions.apple.com` и `video.stackexchange.com` из этого окружения не
-открывались. Поэтому строки Premiere/AE в части заметок опираются на
-`adobe.com`, официальное сообщество Adobe и вторичные источники, а форумные
-цитаты взяты оттуда, куда доступ был: `creativecow.net`,
-`vegascreativesoftware.com`, `forum.blackmagicdesign.com`, `larryjordan.com`.
-Кроме того, бюджет веб-поиска сессии был исчерпан на середине волны — поздние
-заметки искали через прямые запросы к поисковикам.
-| `syncthing-2` | Syncthing | 2.x, 08.09.2026 | ПРОИСХОЖДЕНИЕ двусторонней синхронизации без сервера: единственное место, где разрешение конфликта СФОРМУЛИРОВАНО — проигрывает файл с более старым временем правки, при равенстве устройство с бо́льшими первыми 63 битами device ID, а проигравший становится обычным файлом с именем-меткой |
-| `flamenco-3` | Flamenco | 3.x, 08.09.2026 | ПРОИСХОЖДЕНИЕ фермы без облака: manager и worker в одной сети, задание — не «отрендери проект», а тройка «команда + диапазон КАДРОВ + требования к машине» |
+Recorded so that the next wave does not search again and does not count the gaps as laziness: `helpx.adobe.com` (Premiere/AE help), `reddit.com`, `web.archive.org`, `discussions.apple.com` and `video.stackexchange.com` did not open from this environment. Therefore the Premiere/AE lines in some of the notes rely on `adobe.com`, the official Adobe community and secondary sources, and the forum quotes were taken from where access was available: `creativecow.net`, `vegascreativesoftware.com`, `forum.blackmagicdesign.com`, `larryjordan.com`. In addition, the session's web-search budget was exhausted in the middle of the wave — the late notes searched via direct queries to search engines.
+| `syncthing-2` | Syncthing | 2.x, 08.09.2026 | the ORIGIN of two-way synchronization without a server: the only place where the conflict resolution is FORMULATED — the file with the older edit time loses, on equality the device with the larger first 63 bits of the device ID wins, and the loser becomes an ordinary file with a label name |
+| `flamenco-3` | Flamenco | 3.x, 08.09.2026 | the ORIGIN of a farm without a cloud: manager and worker in one network, and the job is not "render the project" but a triple "command + range of FRAMES + requirements for the machine" |

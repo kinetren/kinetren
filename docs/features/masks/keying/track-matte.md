@@ -1,12 +1,12 @@
 ---
 id: F-MSK-003
-title: Track matte — один клип задаёт прозрачность другого
-status: кандидат
+title: Track matte — one clip sets the transparency of another
+status: candidate
 priority: B
 cost: L
 category: masks/keying
 editors: [after-effects-26, premiere-26, vegas-pro-2026, resolve-21, fcp-12]
-we_have: нет
+we_have: no
 crates: [kt-model, kt-engine, kt-gpu, kt-fx, kt-media, kt-cache, kt-otio, kt-app]
 invariants: [4, 5, 7, 11]
 ui_rules: [13, 17, 20]
@@ -17,125 +17,51 @@ depends_on: []
 checked: 2026-09-07
 ---
 
-# F-MSK-003 — Track matte — один клип задаёт прозрачность другого
+# F-MSK-003 — Track matte — one clip sets the transparency of another
 
-## Суть
+## Essence
 
-Монтажёр кладёт два клипа друг на друга и говорит: верхний не показывай,
-а используй его как трафарет для нижнего. Белое (или непрозрачное) в
-трафарете — нижний виден, чёрное (прозрачное) — дырка, серое —
-полупрозрачно. Четыре вида: **Alpha** (берётся альфа трафарета),
-**Alpha inverted**, **Luma** (берётся ЯРКОСТЬ трафарета), **Luma
-inverted**. На этом стоят титры «текст-окно», световые вскрытия,
-reveal-переходы, размытие лица по движущемуся пятну — всё, где форма
-прозрачности меняется во времени. В быту почти всегда берут luma: любой
-градиент, любое чёрно-белое видео, любая надпись на чёрном становятся
-маской без единого нарисованного контура.
+The editor puts two clips on top of each other and says: don't show the upper one, use it as a stencil for the lower one. White (or opaque) in the stencil — the lower clip is visible, black (transparent) — a hole, gray — semi-transparent. Four kinds: **Alpha** (the stencil's alpha is taken), **Alpha inverted**, **Luma** (the stencil's BRIGHTNESS is taken), **Luma inverted**. Title "text-window" effects, light reveals, reveal transitions, face blurring over a moving spot all rest on this — anything where the transparency shape changes over time. In everyday use people almost always take luma: any gradient, any black-and-white video, any text on black becomes a mask without a single drawn outline.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| After Effects | 26.x | Track Matte — свойство СЛОЯ (плюс отдельный эффект Set Matte) | у слоя колонка TrkMat: вид (Alpha / Alpha Inverted / Luma / Luma Inverted) + ССЫЛКА на слой-матт. До AE 23.0 (10.2022) ссылки не было — маттом служил слой ровно сверху. С 23.0: «Any layer in your comp, no matter where it sits in the layer stack, can be used as a Track Matte source for any other layer. You can even have multiple layers all reference a single layer for their matte». Видимость слоя-матта AE гасит САМ и обратно не включает |
-| Adobe Premiere | 26.x | Track Matte Key — ЭФФЕКТ | вешается на клип-носитель; параметр `Matte` — выпадающий список ДОРОЖЕК (`Video 2`, `Video 3`, …), `Composite Using` — `Matte Alpha` / `Matte Luma`, плюс `Reverse`. Дорожку-трафарет гасит монтажёр, редактор её не трогает. Трафарет ездит за Position носителя НЕЗАВИСИМО от порядка эффектов — по словам модератора Adobe, «longstanding quirk» и «it has never behaved the same way as it does in After Effects». В версии 26 Adobe переселила МАСКИ (не матты) из Effect Controls в Object Mask / Vector Masking на панель инструментов и рекомендует их вместо Track Matte Key |
-| VEGAS Pro | 2026.0 | режима «track matte» нет: композит-режим дорожки `Multiply (Mask)` + Parent/Child + плагин Mask Generator | матт — это ДОРОЖКА-родитель, а маскируемое — её дочерние дорожки: «The parent track is the highest track in a group of tracks and the behavior of the child tracks is determined by the parent track». Не-серое изображение доводится до матта плагином Mask Generator как Track FX. Родство дорожек — часть структуры проекта, а не свойство клипа (та же логика, что у Adjustment Events, F-MPH-001, и Video Bus Track, F-MPH-005) |
-| DaVinci Resolve | 21 (проверялось и по 20.x) | на Edit-странице сущности «track matte» нет | три пути: (1) композит-моды `Alpha` / `Inverted Alpha` / `Foreground`, которыми верхняя дорожка работает маттом для нижней — появились в Resolve 17, release notes: «Support for compositing using track mattes or external alpha» [сниппет выдачи, первоисточник не открылся]; (2) External Matte на Color-странице — файл цепляется к клипу в медиапуле («Add as Matte») и становится входом узла; (3) Fusion — MatteControl/Merge, альфа возвращается на Edit |
-| Final Cut Pro | 12.3 | track matte НЕТ, эффекта Set Matte НЕТ | вместо ссылки — режимы наложения группы «alpha channel» у самого клипа-трафарета: Stencil Alpha, Stencil Luma, Silhouette Alpha, Silhouette Luma. Apple: «Does the same thing as the Stencil Alpha blend mode, but uses the affected clip's luma value to define transparency. Stencil Luma is useful if the clip you want to use for cropping has no alpha channel of its own». Ближайший «матт из чужой картинки» — эффект Image Mask, но он берёт канал из ОТДЕЛЬНОГО изображения, а не из клипа на соседней дорожке |
+| After Effects | 26.x | Track Matte — a property of the LAYER (plus a separate Set Matte effect) | the layer has a TrkMat column: the kind (Alpha / Alpha Inverted / Luma / Luma Inverted) + a REFERENCE to the matte layer. Before AE 23.0 (10.2022) there was no reference — the matte was the layer exactly above. From 23.0: "Any layer in your comp, no matter where it sits in the layer stack, can be used as a Track Matte source for any other layer. You can even have multiple layers all reference a single layer for their matte". AE hides the matte layer itself and does not switch it back on |
+| Adobe Premiere | 26.x | Track Matte Key — an EFFECT | attached to the carrier clip; the `Matte` parameter is a drop-down list of TRACKS (`Video 2`, `Video 3`, …), `Composite Using` — `Matte Alpha` / `Matte Luma`, plus `Reverse`. The stencil track is hidden by the editor; the editor does not touch it. The stencil follows the carrier's Position INDEPENDENTLY of the effect order — in the words of an Adobe moderator, a "longstanding quirk" and "it has never behaved the same way as it does in After Effects". In version 26 Adobe moved MASKS (not mattes) from Effect Controls into Object Mask / Vector Masking on the toolbar and recommends them instead of Track Matte Key |
+| VEGAS Pro | 2026.0 | there is no "track matte" mode: the track compositing mode `Multiply (Mask)` + Parent/Child + the Mask Generator plugin | the matte is a PARENT TRACK, and what is masked are its child tracks: "The parent track is the highest track in a group of tracks and the behavior of the child tracks is determined by the parent track". A non-gray image is brought to a matte by the Mask Generator plugin as a Track FX. Track kinship is part of the project structure, not a property of the clip (the same logic as Adjustment Events, F-MPH-001, and Video Bus Track, F-MPH-005) |
+| DaVinci Resolve | 21 (also checked on 20.x) | there is no "track matte" entity on the Edit page | three paths: (1) the compositing modes `Alpha` / `Inverted Alpha` / `Foreground`, with which the upper track works as a matte for the lower one — they appeared in Resolve 17, release notes: "Support for compositing using track mattes or external alpha" [search-result snippet, the primary source did not open]; (2) External Matte on the Color page — a file is attached to a clip in the media pool ("Add as Matte") and becomes an input of the node; (3) Fusion — MatteControl/Merge, the alpha returns to Edit |
+| Final Cut Pro | 12.3 | there is NO track matte, NO Set Matte effect | instead of a reference — the blend modes of the "alpha channel" group on the stencil clip itself: Stencil Alpha, Stencil Luma, Silhouette Alpha, Silhouette Luma. Apple: "Does the same thing as the Stencil Alpha blend mode, but uses the affected clip's luma value to define transparency. Stencil Luma is useful if the clip you want to use for cropping has no alpha channel of its own". The closest "matte from someone else's picture" is the Image Mask effect, but it takes the channel from a SEPARATE image, not from a clip on the neighboring track |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Матт-слой выключается из показа — и три редактора решают это тремя
-разными способами, из чего растут три разных грабли.** AE гасит «глазик»
-слоя-матта сам и НЕ включает обратно, когда матт снимают: слой остаётся в
-композиции, но невидим, и новичок считает, что потерял его. Это не баг, а
-следствие модели: «Layers used as mattes are not normally on (visible)»,
-и с AE 23.0 иначе нельзя — один матт обслуживает несколько слоёв, и
-«вернуть глазик» после снятия матта у ОДНОГО из них было бы ошибкой.
-Premiere не гасит ничего: дорожка-трафарет продолжает рисоваться поверх
-всего, и её выключают руками — забыл, и вместо вскрытия видно сам
-трафарет. FCP не гасит и не может: у него трафарет — это клип с режимом
-наложения Stencil, то есть он и есть носитель эффекта.
+**1. The matte layer is switched out of the display — and the three editors solve this in three different ways, from which three different rakes grow.** AE turns off the eye of the matte layer itself and does NOT switch it back on when the matte is removed: the layer stays in the composition but is invisible, and a newcomer thinks they have lost it. This is not a bug but a consequence of the model: "Layers used as mattes are not normally on (visible)", and since AE 23.0 it cannot be otherwise — one matte serves several layers, and "turning the eye back on" after removing the matte from ONE of them would be an error. Premiere turns nothing off: the stencil track keeps being drawn on top of everything, and it is switched off by hand — forget, and instead of the cut-out you see the stencil itself. FCP does not turn it off and cannot: there the stencil is a clip with the Stencil blend mode, that is, it is itself the carrier of the effect.
 
-**2. Явная ссылка на матт стоит дороже, чем кажется, и Adobe пришлось
-откатывать половину.** В AE 23.0 неявную связь («слой ровно сверху»)
-заменили на выбор слоя из списка и pick whip. Выигрыш очевиден — один
-трафарет на N слоёв. Цена оказалась тройной: (а) частый случай стал
-медленнее, и это сказали прямым текстом — «The new feature solved a
-problem that sometimes happens, but completely ruined the workflow for
-90% of the rest of the shots»; Adobe вернула команду «Matte with Layer
-Above» с назначаемым хоткеем только в 23.4, через полгода; (б) ссылка
-попала в формат проекта, поэтому 23.0 ломает совместимость — «Projects
-saved in the 23.0 beta will not be able to be opened in other versions of
-After Effects»; (в) ссылка не переезжает при копировании: «I really wish
-these track mattes would update their parent link when you copy and paste
-a group of them». Пункт (в) у нас уже закрыт для морферов (п.242
-`docs/porting-notes.md`, тесты 249/250: ссылка на СКОПИРОВАННОЕ имя
-переезжает на копию, на нескопированное — остаётся на оригинале), и это
-готовая семантика для матта.
+**2. An explicit reference to a matte costs more than it seems, and Adobe had to roll back half of it.** In AE 23.0 the implicit link ("the layer exactly above") was replaced by choosing a layer from a list and the pick whip. The gain is obvious — one stencil for N layers. The price turned out to be threefold: (a) the frequent case became slower, and this was said in plain text — "The new feature solved a problem that sometimes happens, but completely ruined the workflow for 90% of the rest of the shots"; Adobe returned the "Matte with Layer Above" command with an assignable hotkey only in 23.4, half a year later; (b) the reference got into the project format, so 23.0 breaks compatibility — "Projects saved in the 23.0 beta will not be able to be opened in other versions of After Effects"; (c) the reference does not move when copying: "I really wish these track mattes would update their parent link when you copy and paste a group of them". Point (c) is already closed for us for morphers (item 242 of `docs/porting-notes.md`, tests 249/250: a reference to a COPIED name moves to the copy, to a non-copied one it stays on the original), and this is ready-made semantics for a matte.
 
-**3. Матт живёт в чужом времени и в чужой геометрии — и это ломается до
-сих пор.** Трафарет — отдельный клип со своей длиной, обрезкой и
-ключами; носитель — другой. Никто не растягивает трафарет по носителю:
-берут кадр трафарета в ТОЙ ЖЕ точке таймлайна. Отсюда дефект Premiere
-26.0.1: «the Track Matte key plug-in does not recognise that the source
-clip has been trimmed and offsets the keys as if the clip is untrimmed» —
-ровно тот вопрос, который у нас закрыт решением «домен ключа = тик
-МАТЕРИАЛА» (F-AUT-002). По геометрии — зеркальная беда: Position
-носителя ТАЩИТ трафарет за собой независимо от порядка эффектов, штатное
-лечение — nesting, а Community Expert Adobe в том же треде отвечает «Have
-not used Track Matte in a long time».
+**3. The matte lives in someone else's time and someone else's geometry — and this is still broken.** The stencil is a separate clip with its own length, trimming and keyframes; the carrier is another. Nobody stretches the stencil to the carrier: they take the stencil's frame at the SAME point of the timeline. Hence the Premiere 26.0.1 defect: "the Track Matte key plug-in does not recognise that the source clip has been trimmed and offsets the keys as if the clip is untrimmed" — exactly the question that we have closed with the decision "key domain = material tick" (F-AUT-002). As for geometry — the mirror-image trouble: the carrier's Position DRAGS the stencil along independently of the effect order, the standard cure is nesting, and an Adobe Community Expert in the same thread answers "Have not used Track Matte in a long time".
 
-**4. Мелочь, которая портит края: премультиплицированная альфа и размер.**
-У AE эффект Set Matte несёт чекбоксы «Premultiply Matte Layer» и «Stretch
-Matte to Fit»: трафарет чужого размера РЕСЕМПЛИТСЯ, а не кропится, а
-премультиплицированный без чекбокса даёт тёмную кайму. Плюс исторический
-подвох: Set Matte брал ИСХОДНИК слоя, игнорируя его маски и эффекты, —
-чинилось на уровне SDK («Effects that use layers as an input, such as Set
-Matte and Displacement Map, can now target the input layer's masks and
-effects, instead of only the source of the layer»). То есть «матт из
-слоя» и «матт из того, что этот слой рисует» — две РАЗНЫЕ вещи, и их
-путали сами авторы.
+**4. A small thing that spoils the edges: premultiplied alpha and size.** AE's Set Matte effect carries the checkboxes "Premultiply Matte Layer" and "Stretch Matte to Fit": a stencil of a foreign size is RESAMPLED, not cropped, and a premultiplied one without the checkbox gives a dark fringe. Plus a historical gotcha: Set Matte took the layer's SOURCE, ignoring its masks and effects — it was fixed at the SDK level ("Effects that use layers as an input, such as Set Matte and Displacement Map, can now target the input layer's masks and effects, instead of only the source of the layer"). That is, "a matte from a layer" and "a matte from what this layer draws" are two DIFFERENT things, and the authors themselves confused them.
 
-## Плюсы
+## Pros
 
-- Трафарет — обычный клип, поэтому на него действует ВСЁ, что действует
-  на клип: цепочка эффектов, автоматизация, обрезка, реверс. Мягкий край
-  получается блюром трафарета, а не параметром `feather` у каждого
-  эффекта; форма во времени — обычными ключами.
-- Luma-матт не требует альфы ниоткуда: чёрно-белый градиент, снятая тень,
-  титр на чёрном — готовые маски. Формулировка Apple ровно об этом: luma
-  нужен, «if the clip you want to use for cropping has no alpha channel of
-  its own». Larry Jordan объясняет выбор luma тем же: «while Final Cut
-  text has alpha channels built into it, the generated shapes do not».
-- Явная ссылка (AE 23.0+) делает трафарет переиспользуемым объектом:
-  правка одного клипа переписывает форму сразу у N носителей — без N
-  правок и N шагов undo.
-- Для композита это ОДНА операция «умножь альфу слоя на число из другого
-  кадра». Второго кода композиции не появляется — меняется источник
-  альфы, а не способ складывать слои.
+- The stencil is an ordinary clip, so EVERYTHING that acts on a clip acts on it: the effect chain, automation, trimming, reverse. A soft edge comes from blurring the stencil, not from a `feather` parameter on each effect; the shape over time comes from ordinary keyframes.
+- A luma matte requires no alpha from anywhere: a black-and-white gradient, a pulled shadow, a title on black — these are ready-made masks. Apple's wording is exactly about this: luma is needed "if the clip you want to use for cropping has no alpha channel of its own". Larry Jordan explains the choice of luma the same way: "while Final Cut text has alpha channels built into it, the generated shapes do not".
+- An explicit reference (AE 23.0+) makes the stencil a reusable object: editing one clip rewrites the shape at once for N carriers — without N edits and N undo steps.
+- For compositing this is ONE operation: "multiply the layer's alpha by a number from another frame". No second compositing code appears — the source of the alpha changes, not the way layers are stacked.
 
-## Минусы
+## Cons
 
-- Трафарет исчезает из картинки, оставаясь в проекте, и не помечен ничем,
-  кроме потушенного «глазика»: его можно случайно сдвинуть, обрезать или
-  удалить — сломается место, которого не трогали.
-- Ссылка по номеру дорожки (Premiere) ломается от вставки, удаления и
-  перестановки дорожек — операций, которые делают не думая.
-- Ссылка по слою (AE) стоит скорости в частом случае «трафарет ровно
-  сверху» и попадает в формат проекта, ломая обратную совместимость.
-  Копирование пары «носитель + трафарет» ссылку не перевязывает.
-- На кадр читаются ДВА источника вместо одного, каждый со своей цепочкой:
-  удваивается декод, объём кэша и вероятность не успеть к дедлайну.
-- Трафарет и носитель не связаны ни по времени, ни по геометрии: обрезал
-  носитель — трафарет остался; подвинул носитель Position'ом в Premiere —
-  трафарет уехал вместе с ним, хотя его об этом не просили.
-- Премультиплицированная альфа трафарета даёт кайму, а трафарет другого
-  разрешения масштабируется под носителя, а не кропится: «поставил 4K на
-  HD» — это не кроп, и края поедут.
+- The stencil disappears from the picture, staying in the project, and is marked by nothing except a switched-off "eye": it can be accidentally moved, trimmed or deleted — and a place nobody touched will break.
+- A reference by track number (Premiere) breaks on insertion, deletion and reordering of tracks — operations people do without thinking.
+- A reference by layer (AE) costs speed in the frequent case "stencil exactly above" and gets into the project format, breaking backward compatibility. Copying the pair "carrier + stencil" does not rebind the reference.
+- Two sources are read per frame instead of one, each with its own chain: decoding, cache volume and the chance of missing the deadline all double.
+- The stencil and the carrier are linked neither in time nor in geometry: trim the carrier — the stencil stays; move the carrier with Position in Premiere — the stencil moves with it, although nobody asked for that.
+- The premultiplied alpha of the stencil gives a fringe, and a stencil of a different resolution is scaled to the carrier, not cropped: "put 4K on HD" is not a crop, and the edges will shift.
 
-## Что говорят пользователи
+## What users say
 
-Слой действительно «пропадает», и об этом спрашивают прямым текстом:
+The layer really does "disappear", and people ask about it in plain text:
 
 > This may be normal AE behavior, does a layers visability (eye ball)
 > always stay off after selecting/removing a track mattee layer in the
@@ -143,38 +69,36 @@ effects, instead of only the source of the layer»). То есть «матт и
 > — 55878965, Adobe Support Community, 21.12.2023,
 > https://community.adobe.com/questions-529/layer-visability-stays-off-after-removing-track-matte-is-that-normal-ae-behavior-54298
 
-Ответ Adobe Community Expert в том же треде — это устройство фичи целиком:
+The answer of an Adobe Community Expert in the same thread is the whole design of the feature:
 
 > In the latest versions of After Effects, you can use the same layer as a
 > track matte for multiple layers. Turning the Matte layer back on after
 > turning off the Track matte on one of the layers would be a mistake.
-> — Rick Gerard, там же, 21.12.2023
+> — Rick Gerard, there, 21.12.2023
 
-Смена модели на явную ссылку (AE 23.0) — самый ценный отрицательный
-фидбек всей заметки: фичу просили годами, а получив, пожалели:
+The switch to an explicit reference (AE 23.0) is the most valuable negative feedback in this note: the feature was asked for for years, and once received, people regretted it:
 
 > The new feature solved a problem that sometimes happens, but completely
 > ruined the workflow for 90% of the rest of the shots 😞
 > — Filip23315833k75u, Adobe Community (After Effects Ideas), 11.11.2022,
 > https://community.adobe.com/t5/after-effects-ideas/2023-new-track-matte-feature-needs-some-work/idi-p/13339012
 
-Та же смена, увиденная через день после релиза:
+The same change, seen a day after the release:
 
 > It looks like bug to me because there shouldn't be two Parent & Link
 > windows/dropdowns. Especially when one is labeled Track Matte but works
 > like parent & link. It's a bug
-> — аноним, Adobe Community, 21.10.2022,
+> — anonymous, Adobe Community, 21.10.2022,
 > https://community.adobe.com/t5/after-effects-discussions/track-matte-disapeared/m-p/13291308
 
-Ссылка не переезжает при копировании — ровно то, что у нас закрыто п.242:
+The reference does not move on copying — exactly what we have closed with item 242:
 
 > I really wish these track mattes would update their parent link when you
 > copy and paste a group of them.
 > — jackthegiantkiller, Adobe Community, 31.05.2023,
 > https://community.adobe.com/t5/after-effects-beta-discussions/feature-focus-selectable-track-matte-layers-have-arrived/td-p/13110013
 
-Модель «эффект со ссылкой на дорожку» (Premiere) даёт репутацию
-ненадёжной вплоть до отказа от фичи — причём у Community Expert:
+The model "an effect with a reference to a track" (Premiere) has earned a reputation for unreliability, up to abandoning the feature — and this from a Community Expert:
 
 > I've found the Track Matte effect in Premiere Pro to be unreliable
 > (sometimes it mattes, sometimes it doesn't, even in the same sequence
@@ -187,7 +111,7 @@ effects, instead of only the source of the layer»). То есть «матт и
 > — Ann Bens (Community Expert), Adobe Community, 07.04.2026,
 > https://community.adobe.com/questions-729/track-matte-key-does-not-respect-effect-order-1556713
 
-Свежий (март 2026) баг-репорт — про развязку времён трафарета и носителя:
+A fresh (March 2026) bug report — about decoupling the times of the stencil and the carrier:
 
 > Now in 2026.0.1 the Track Matte key plug-in does not recognise that the
 > source clip has been trimmed and offsets the keys as if the clip is
@@ -195,8 +119,7 @@ effects, instead of only the source of the layer»). То есть «матт и
 > — LastArkTom, Adobe Support Community, 02.03.2026,
 > https://community.adobe.com/bug-reports-728/track-matte-key-not-working-with-keyframes-in-pp-2026-0-1-1552070
 
-Жёсткий порядок дорожек — первая ошибка новичка, и её принимают за
-поломку ВИДА матта:
+The rigid track order is a beginner's first mistake, and it is taken for a breakdown of the matte's KIND:
 
 > The effect works, but only in the mode 'Matte Luma' and not in 'Matte
 > Alpha'... when i use the setting Alpha Matte it dosen't work as a mask.
@@ -204,23 +127,23 @@ effects, instead of only the source of the layer»). То есть «матт и
 > https://creativecow.net/forums/thread/frustrating-error-whit-track-matte-key/
 
 > I think your matte clip has to go on the next track up, not underneath.
-> — Eric Jurgenson, там же, 20.04.2010
+> — Eric Jurgenson, there, 20.04.2010
 
-Почему в быту берут luma, а не alpha:
+Why people use luma rather than alpha in everyday work:
 
 > Why use Travel Matte – Luma? Because, while Final Cut text has alpha
 > channels built into it, the generated shapes do not.
 > — Larry Jordan, 15.05.2011,
 > https://larryjordan.com/articles/travel-mattes-blurring-a-face-to-protect-the-innocent/
 
-И то же правило бытовым языком в Premiere-треде:
+And the same rule in colloquial language in the Premiere thread:
 
 > If you keep it white use the luma matte setting with the Track Matte
 > Key. If you make it a color use the alpha matte setting.
 > — Paul Neumann, Creative COW, 11.09.2014,
 > https://creativecow.net/forums/thread/track-matte-problem-cant-choose-target-video-fro/
 
-Наконец — как это выглядит для беженца из AE в Vegas (апрель 2026):
+Finally — how it looks for a refugee from AE into Vegas (April 2026):
 
 > I right click on the b/w clip and change alpha to 'straight (unmatted)
 > as seen on a tutorial but nothing works? How do I use this to knock out
@@ -231,247 +154,99 @@ effects, instead of only the source of the layer»). То есть «матт и
 > On the track header use 'Multiply (Mask)' From the video FX window -
 > Utility - drag Mask Generator onto the B/W mask. Parent/Child the mask &
 > logo clip to see the track below.
-> — Gid Joiner, там же, 07.04.2026
+> — Gid Joiner, there, 07.04.2026
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- **Композит уже умеет альфу, и умеет её STRAIGHT** (не
-  премультиплицированную): `alpha_over` в
-  `src/libs/kt-engine/src/video.rs` (стр. 908), AVX2-близнец
-  `alpha_over_avx2` в `src/libs/kt-engine/src/video_simd.rs` (стр. 154),
-  WGSL-зеркало `over()` в
-  `src/libs/kt-gpu/src/shaders/composite.wgsl` (стр. 9). Это ключевой
-  факт для оценки: при straight-альфе матт — умножение ОДНОГО канала,
-  RGB трогать не надо. При премультиплицированной пришлось бы умножать
-  все четыре и перегенерировать golden-эталоны.
-- **Умножение альфы на вес уже написано трижды** — скаляром, AVX2 и в
-  шейдере: `scale_alpha_into` / `scale_alpha_inplace`
-  (`src/libs/kt-engine/src/video.rs`, стр. 818 и 808),
-  `scale_alpha_avx2` (`video_simd.rs`, стр. 107), `scale_into`
-  (`composite.wgsl`, стр. 22). Матт — ровно эта операция, но множитель
-  берётся из пикселя ДРУГОГО кадра, а не из скаляра `alpha_k`.
-- **Целочисленная яркость для luma-матта уже есть и уже заморожена**:
-  `(77·R + 150·G + 29·B) >> 8` в `src/libs/kt-fx/src/video.rs` (стр. 419
-  у `edges`, стр. 685 у `glow`). Своей формулы luma заводить не нужно —
-  наоборот, вторая формула была бы дефектом.
-- **Флаг альфы у кадра**: `VideoFrame.has_alpha`
-  (`src/libs/kt-media/src/lib.rs`, стр. 58) и `Frame.has_alpha`
-  (`src/libs/kt-fx/src/video.rs`, стр. 25).
-- **Единственный производитель альфы сегодня — хромакей**: `greenscreen()`
-  ставит `f.has_alpha = true` (`src/libs/kt-fx/src/video.rs`, стр. 385),
-  зеркало — `src/libs/kt-gpu/src/shaders/greenscreen.wgsl`.
-- **Прецедент «слой берёт ВТОРОЙ кадр из кэша, а мешает их общий код
-  плана»**: `LayerSrc.blend` / `LayerBlend` в
-  `src/libs/kt-engine/src/video_plan.rs` (стр. 62 и 67), заполняется в
-  `layer_src` (`video.rs`, стр. 486). Комментарий там прямо объясняет,
-  почему смешивание сделано в плане, а не в исполнителях: «инвариант №7 —
-  код композиции один, бэкенд это параметр исполнения». Матт ложится на
-  этот прецедент один в один.
-- **Прецедент ссылки по семантическому ключу, а не по номеру строки** — и
-  он принят осознанно: `MarkedArea.lanes`,
-  `src/libs/kt-model/src/project.rs` (стр. 1163+): «СЕМАНТИЧЕСКИЕ ключи
-  дорожек, не номера строк: перестановка строк область не двигает».
-  Рядом — `MorphTargets::Clips { ids }` (стр. 613): замороженный список
-  `ClipId`, переживающий move/split/trim.
-- **Прецедент перевязки ссылок при копипасте** — то самое, чего у AE до
-  сих пор нет: п.242 `docs/porting-notes.md`, тесты 249/250. `ops::
-  ClipBlock` возит морферы, области и метки; «ссылка морфера на
-  СКОПИРОВАННОЕ имя переезжает на копию, на нескопированное — остаётся на
-  оригинале», а элемент, у которого целей не осталось, ПРОПУСКАЕТСЯ и
-  считается, а не «доправляется» (правило 20).
-- **z-order и правило Vegas**: `ClipEvent.lane` (`project.rs`, стр. 1509,
-  «z-order для видео, меньше = выше») и сортировка
-  `clips.sort_by_key(|c| (Reverse(c.lane), c.start.0))`
-  (`src/libs/kt-engine/src/video.rs`, стр. 331) — «сверху тот, кто
-  начался позже».
-- **Пост-FX мемоизация с ключом**: `fx_chain_hash`
-  (`src/libs/kt-engine/src/video.rs`, стр. 153) и
-  `BurstKind::PostFxVideo { quality, fx_hash }`
-  (`src/libs/kt-cache/src/lib.rs`, стр. 31).
-- **Масок, matte и rotoscoping нет вообще**: греп `matte|mask` по
-  `src/libs` и `src/apps` даёт только `front_mask` (форма перехода в
-  `transitions.rs` и `composite.wgsl`) и `mask_digits` (маска таймкода в
-  `src/apps/kt-app/src/util.rs`). Ни одного поля модели, ни одного FX.
+- **The composite already handles alpha, and handles it as STRAIGHT** (not premultiplied): `alpha_over` in `src/libs/kt-engine/src/video.rs` (line 908), the AVX2 twin `alpha_over_avx2` in `src/libs/kt-engine/src/video_simd.rs` (line 154), the WGSL mirror of `over()` in `src/libs/kt-gpu/src/shaders/composite.wgsl` (line 9). This is the key fact for the estimate: with straight alpha a matte is a multiplication of ONE channel, and RGB need not be touched. With premultiplied alpha one would have to multiply all four and regenerate the golden references.
+- **Multiplying alpha by a weight is already written three times** — in scalar code, in AVX2 and in the shader: `scale_alpha_into` / `scale_alpha_inplace` (`src/libs/kt-engine/src/video.rs`, lines 818 and 808), `scale_alpha_avx2` (`video_simd.rs`, line 107), `scale_into` (`composite.wgsl`, line 22). A matte is exactly this operation, but the multiplier is taken from the pixel of ANOTHER frame, not from the scalar `alpha_k`.
+- **An integer luma for a luma matte already exists and is already frozen**: `(77·R + 150·G + 29·B) >> 8` in `src/libs/kt-fx/src/video.rs` (line 419 in `edges`, line 685 in `glow`). There is no need to introduce a luma formula of our own — on the contrary, a second formula would be a defect.
+- **The alpha flag of a frame**: `VideoFrame.has_alpha` (`src/libs/kt-media/src/lib.rs`, line 58) and `Frame.has_alpha` (`src/libs/kt-fx/src/video.rs`, line 25).
+- **The only producer of alpha today is chroma key**: `greenscreen()` sets `f.has_alpha = true` (`src/libs/kt-fx/src/video.rs`, line 385), the mirror is `src/libs/kt-gpu/src/shaders/greenscreen.wgsl`.
+- **Precedent "a layer takes a SECOND frame from the cache, and their shared plan code gets in the way"**: `LayerSrc.blend` / `LayerBlend` in `src/libs/kt-engine/src/video_plan.rs` (lines 62 and 67), filled in `layer_src` (`video.rs`, line 486). The comment there explains directly why the blending is done in the plan rather than in the executors: "invariant No. 7 — one composition code, the backend is a parameter of execution". A matte fits this precedent one-to-one.
+- **Precedent of a reference by a semantic key, not by a row number** — and it was accepted deliberately: `MarkedArea.lanes`, `src/libs/kt-model/src/project.rs` (line 1163+): "SEMANTIC track keys, not row numbers: swapping rows does not move the area". Nearby is `MorphTargets::Clips { ids }` (line 613): a frozen list of `ClipId` that survives move/split/trim.
+- **Precedent of rebinding references on copy-paste** — the very thing AE still does not have: item 242 of `docs/porting-notes.md`, tests 249/250. `ops::ClipBlock` carries morphers, areas and marks; "a morpher's reference to a COPIED name moves to the copy, to a non-copied one it stays on the original", and an element that has no targets left is SKIPPED and counted, not "fixed up" (rule 20).
+- **z-order and the Vegas rule**: `ClipEvent.lane` (`project.rs`, line 1509, "z-order for video, smaller = higher") and the sort `clips.sort_by_key(|c| (Reverse(c.lane), c.start.0))` (`src/libs/kt-engine/src/video.rs`, line 331) — "on top is the one that started later".
+- **Post-FX memoization with a key**: `fx_chain_hash` (`src/libs/kt-engine/src/video.rs`, line 153) and `BurstKind::PostFxVideo { quality, fx_hash }` (`src/libs/kt-cache/src/lib.rs`, line 31).
+- **There are no masks, mattes or rotoscoping at all**: a grep for `matte|mask` over `src/libs` and `src/apps` yields only `front_mask` (the transition shape in `transitions.rs` and `composite.wgsl`) and `mask_digits` (the timecode mask in `src/apps/kt-app/src/util.rs`). Not a single model field, not a single FX.
 
-### Чего не хватает
+### What is missing
 
-- **Источника альфы из ФАЙЛА.** `FfmpegSource::read_video_frame` и
-  `read_video_span` жёстко ставят `has_alpha: false`
-  (`src/libs/kt-media/src/ffmpeg.rs`, стр. 133 и 160) — при том что
-  swscale конвертирует кадр в `AV_PIX_FMT_RGBA`
-  (`src/libs/kt-ffmpeg/src/source_impl.rs`, стр. 928), то есть байты
-  альфы в буфере физически лежат, но движку велено считать кадр
-  непрозрачным. То же у `placeholder.rs` (стр. 254) и `synthetic.rs`
-  (стр. 204). **Вывод: Alpha matte у нас сегодня взять неоткуда, кроме
-  выхода хромакея; Luma matte — единственный вид, который заработает без
-  правок в декодере.** Это не вкусовое решение, а следствие одной строки.
-- **Поля модели «этот клип — мой трафарет»** и вида матта: в `ClipEvent`
-  (`src/libs/kt-model/src/project.rs`, стр. 1502+) нет ничего похожего.
-- **Ещё одного входа у композита.** Шапка `composite.wgsl`: «T0 = acc_in,
-  T1 = слой A, T2 = слой B (dissolve)»; бинд-группа отдаёт ровно три
-  текстуры (`src/libs/kt-gpu/src/engine.rs`, стр. 1039–1041, биндинги
-  1–3). Трафарет — четвёртая.
-- **Доступа цепочки FX к чужому кадру.** `apply_video_chain_pooled(fx,
-  frame, ctx, scratch)` (`src/libs/kt-fx/src/video.rs`, стр. 61)
-  получает РОВНО ОДИН кадр и никакого доступа к кэшу. Значит модель
-  Premiere («матт — это эффект») к нам не приделывается в принципе:
-  матт обязан родиться в ПЛАНЕ, где кадры и берутся.
+- **A source of alpha from a FILE.** `FfmpegSource::read_video_frame` and `read_video_span` hard-set `has_alpha: false` (`src/libs/kt-media/src/ffmpeg.rs`, lines 133 and 160) — even though swscale converts the frame into `AV_PIX_FMT_RGBA` (`src/libs/kt-ffmpeg/src/source_impl.rs`, line 928), that is, the alpha bytes are physically in the buffer, but the engine is told to treat the frame as opaque. The same holds for `placeholder.rs` (line 254) and `synthetic.rs` (line 204). **Conclusion: today we have nowhere to take an Alpha matte from, except the output of chroma key; a Luma matte is the only kind that would work without changes in the decoder.** This is not a matter of taste but a consequence of one line.
+- **Model fields "this clip is my stencil"** and of the matte kind: `ClipEvent` (`src/libs/kt-model/src/project.rs`, line 1502+) has nothing similar.
+- **One more input for the composite.** The header of `composite.wgsl`: "T0 = acc_in, T1 = layer A, T2 = layer B (dissolve)"; the bind group provides exactly three textures (`src/libs/kt-gpu/src/engine.rs`, lines 1039–1041, bindings 1–3). The stencil is the fourth.
+- **Access of the FX chain to a foreign frame.** `apply_video_chain_pooled(fx, frame, ctx, scratch)` (`src/libs/kt-fx/src/video.rs`, line 61) receives EXACTLY ONE frame and no access to the cache at all. So the Premiere model ("the matte is an effect") cannot be attached to us in principle: the matte must be born in the PLAN, where the frames are taken.
 
-### Что мешает
+### What gets in the way
 
-1. **Модель «дорожка строго сверху» на нашу схему не ложится.** У нас нет
-   дорожек-контейнеров с фиксированным порядком: есть `lane` (z-order) и
-   ЗАКОННЫЕ перекрытия на одной lane с авто-кроссфейдом. Положить
-   трафарет «строго над носителем» значит: (а) занять им lane, где он
-   участвует в общей сортировке; (б) отдать судьбу пары правилу «сверху
-   тот, кто начался позже» — сдвинул носитель вправо, и он сам стал
-   верхним; (в) при перекрытии трафарета с соседом по lane получить между
-   ними кроссфейд, к матту отношения не имеющий. Модель Premiere
-   («матт = номер дорожки») ещё хуже: порядок строк правится через undo
-   (`Project::set_lane_order`, `project.rs`, стр. 2989), и любая
-   перестановка переписала бы все ссылки — ровно то, от чего мы уже
-   отказались в `MarkedArea.lanes`. **Совместима с нашей моделью только
-   явная ссылка на клип по `ClipId`**, как `MorphTargets::Clips { ids }`:
-   она переживает move, trim, split и перестановку строк, и она же даёт
-   бесплатно то, ради чего AE в 23.0 ломала формат, — один трафарет на
-   несколько носителей, с уже написанной семантикой копипаста (п.242).
-2. **Явная ссылка обязана иметь быстрый жест.** Опыт AE 23.0 («ruined the
-   workflow for 90% of the rest of the shots», возврат команды «Matte
-   with Layer Above» через полгода) читается как прямое требование
-   правила 17 чек-листа UI: пикер клипа и жест «взять трафаретом клип
-   ровно сверху» должны существовать ОБА и давать одинаковый результат и
-   одинаковую запись в истории.
-3. **Трафарет — это клип со своей цепочкой, а не картинка.** План строит
-   для него ПОЛНЫЙ `LayerSrc`: свой источник, свой `cache_idx`, своя
-   `Cow<[FxInstance]>` с уже разрешённой автоматизацией, возможно свой
-   `blend`. Это рекурсия внутри `build_plan`
-   (`src/libs/kt-engine/src/video.rs`, стр. 538), и её надо оборвать:
-   матт у матта — либо запрет в модели, либо ограничение глубины.
-4. **Исключение трафарета из показа.** Технически это `continue` в
-   `build_plan`. Но правило 20 чек-листа `src/apps/kt-app/CLAUDE.md`
-   («ничего не отрастает и не отрубается само») прямо запрещает молча
-   гасить то, что пользователь положил на таймлайн, — а именно на этом в
-   AE теряют слой. Значит клип-трафарет остаётся ВИДИМЫМ на таймлайне и
-   явно помеченным, а «не рисуется в кадре» читается с его блока, а не
-   выясняется методом исключения.
-5. **Ключи кэша врут.** `fx_chain_hash` и
-   `BurstKind::PostFxVideo { fx_hash }` не знают про матт: два клипа с
-   одинаковой цепочкой и разными трафаретами схлопнулись бы в один
-   пост-FX кадр. Тот же дефект у `plan_hash` GPU-исполнителя.
-6. **GPU.** Четвёртая текстура в бинд-группе, новый `mode` в
-   `composite.wgsl` и байт-в-байт зеркало целочисленной формулы. Правило
-   `src/libs/kt-fx/CLAUDE.md` — скаляр, AVX2-ядро и WGSL правятся ОДНИМ
-   коммитом, SIMD байт-в-байт со скаляром.
-7. **Формат.** Новое поле → `KT_META_VERSION`
-   (`src/libs/kt-otio/src/meta.rs`, стр. 17) поднимается с 4 до 5:
-   старый ридер потерял бы ссылку молча, и проект открылся бы «просто без
-   вскрытия». Ломающая смена формата у AE 23.0 — предупреждение, а не
-   образец: у нас версия конверта уже есть и умеет ругаться (п.243).
-8. **Голод.** Трафарет — второй источник на кадр, то есть вторая причина
-   для `complete = false` в `execute_plan_cpu`
-   (`src/libs/kt-engine/src/video.rs`, стр. 624). Политику выбирают ОДИН
-   раз и одинаково для CPU и GPU: «трафарета нет → носитель виден
-   целиком» и «трафарета нет → носителя не видно» дают разную картинку на
-   холодном кэше, и разойдись исполнители — превью перестанет совпадать
-   с экспортом.
+1. **The model "track strictly above" does not fit our scheme.** We have no container tracks with a fixed order: there is `lane` (z-order) and LEGAL overlaps on one lane with automatic crossfade. Putting a stencil "strictly above the carrier" means: (a) occupying a lane with it, where it takes part in the general sort; (b) handing the fate of the pair to the rule "on top is the one that started later" — shift the carrier to the right, and it itself becomes the upper one; (c) when the stencil overlaps a neighbor in the same lane, getting a crossfade between them, which has nothing to do with the matte. The Premiere model ("matte = track number") is even worse: the row order is changed through undo (`Project::set_lane_order`, `project.rs`, line 2989), and any reordering would rewrite all references — exactly what we already gave up in `MarkedArea.lanes`. **Only an explicit reference to a clip by `ClipId` is compatible with our model**, like `MorphTargets::Clips { ids }`: it survives move, trim, split and reordering of rows, and it also gives for free what AE broke its format for in 23.0 — one stencil for several carriers, with the copy-paste semantics already written (item 242).
+2. **An explicit reference must have a fast gesture.** The experience of AE 23.0 ("ruined the workflow for 90% of the rest of the shots", the return of the "Matte with Layer Above" command half a year later) reads as a direct requirement of rule 17 of the UI checklist: the clip picker and the gesture "take the clip directly above as a stencil" must BOTH exist, give the same result and the same entry in the history.
+3. **The stencil is a clip with its own chain, not a picture.** The plan builds a FULL `LayerSrc` for it: its own source, its own `cache_idx`, its own `Cow<[FxInstance]>` with already resolved automation, possibly its own `blend`. This is a recursion inside `build_plan` (`src/libs/kt-engine/src/video.rs`, line 538), and it must be cut off: a matte of a matte — either a prohibition in the model or a depth limit.
+4. **Excluding the stencil from the display.** Technically this is a `continue` in `build_plan`. But rule 20 of the checklist in `src/apps/kt-app/CLAUDE.md` ("nothing grows or switches off by itself") directly forbids silently hiding what the user has placed on the timeline — and this is exactly where AE loses the layer. So the stencil clip remains VISIBLE on the timeline and explicitly marked, and "is not drawn in the frame" is read from its block, not discovered by elimination.
+5. **The cache keys lie.** `fx_chain_hash` and `BurstKind::PostFxVideo { fx_hash }` do not know about the matte: two clips with the same chain and different stencils would collapse into one post-FX frame. The same defect is in the `plan_hash` of the GPU executor.
+6. **GPU.** A fourth texture in the bind group, a new `mode` in `composite.wgsl`, and a byte-for-byte mirror of the integer formula. The rule of `src/libs/kt-fx/CLAUDE.md` — the scalar code, the AVX2 kernel and the WGSL are edited in ONE commit, SIMD byte-for-byte with the scalar code.
+7. **Format.** A new field → `KT_META_VERSION` (`src/libs/kt-otio/src/meta.rs`, line 17) is raised from 4 to 5: an old reader would lose the reference silently, and the project would open "simply without the reveal". AE 23.0's breaking format change is a warning, not a model: we already have the envelope version and it knows how to complain (item 243).
+8. **Starvation.** The stencil is a second source per frame, that is, a second reason for `complete = false` in `execute_plan_cpu` (`src/libs/kt-engine/src/video.rs`, line 624). The policy is chosen ONCE and identically for CPU and GPU: "no stencil → the carrier is visible in full" and "no stencil → the carrier is not visible" give different pictures on a cold cache, and if the executors diverged, the preview would stop matching the export.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **№7 «код композиции ОДИН» — центральный.** Инвариант перечисляет
-  поимённо, что считается единым кодом `VideoRenderer::frame_plan`: слои,
-  порядок Vegas, веса переходов/фейдов, УРОВНИ и маппинг «тик → кадр
-  источника». Матт — попиксельный уровень, то есть та же сущность, что
-  `alpha_k`. Значит «кто трафарет, какой у него кадр, какой вид и
-  инверсия» разрешается в плане, а исполнители получают готовое — как это
-  уже сделано для `LayerBlend`. Отдельного «матта в шейдере» быть не может
-  по определению инварианта.
-- **№4 «кэш — единственная правда о coverage»** — матт входит в ключ
-  пост-FX кэша, а его пре-FX кадр — обычная запись `BurstKind::Video`,
-  которая обязана попадать в полоски прогретости наравне с носителем.
-- **№5 «декодером владеет один MediaWorker»** — второй источник на кадр
-  идёт через ту же приоритетную очередь; префетч обязан греть и трафарет,
-  иначе «нет данных к дедлайну → последний кадр» будет срабатывать вдвое
-  чаще и незаметно (кадр-то есть, просто без вскрытия).
-- **№11 «детерминизм»** — CPU байт-в-байт против GOLDEN_VIDEO, и в первую
-  очередь при ОТСУТСТВИИ матта (эталоны не перегенерируются); GPU против
-  CPU — только через `kt_gpu::assert_frames_close`.
-- **№8** — тумбнейл клипа-трафарета берётся из sidecar-индекса как у всех,
-  никакого «нарисуем трафарет по-настоящему на таймлайне».
-- Правила UI `src/apps/kt-app/CLAUDE.md`: **20** (трафарет не гаснет и не
-  прячется сам — он помечен), **13** (ссылка живёт в уже существующем
-  инспекторе клипа, а не новой панелью), **17** (пикер и жест «клип
-  сверху» ведут себя одинаково и дают одну undo-запись).
+- **No. 7 "ONE composition code" — the central one.** The invariant names explicitly what counts as the single code of `VideoRenderer::frame_plan`: the layers, the Vegas order, the weights of transitions/fades, LEVELS and the mapping "tick → source frame". A matte is a per-pixel level, that is, the same entity as `alpha_k`. So "who the stencil is, which frame it has, which kind and inversion" is resolved in the plan, and the executors receive a ready result — as is already done for `LayerBlend`. A separate "matte in the shader" cannot exist by definition of the invariant.
+- **No. 4 "the cache is the single source of truth about coverage"** — the matte enters the post-FX cache key, and its pre-FX frame is an ordinary `BurstKind::Video` entry, which must get into the coverage bars on a par with the carrier.
+- **No. 5 "one MediaWorker owns the decoder"** — the second source per frame goes through the same priority queue; prefetch must warm the stencil too, otherwise "no data by the deadline → last frame" will fire twice as often and unnoticed (the frame is there, just without the reveal).
+- **No. 11 "determinism"** — CPU byte-for-byte against GOLDEN_VIDEO, and first of all in the ABSENCE of a matte (references are not regenerated); GPU against CPU — only via `kt_gpu::assert_frames_close`.
+- **No. 8** — the thumbnail of the stencil clip is taken from the sidecar index like everyone else's; no "let's really draw the stencil on the timeline".
+- UI rules of `src/apps/kt-app/CLAUDE.md`: **20** (the stencil does not switch off or hide itself — it is marked), **13** (the reference lives in the already existing clip inspector, not in a new panel), **17** (the picker and the gesture "clip above" behave identically and give one undo entry).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | L — целый раунд. Дешевле, чем кажется снаружи: композит уже straight-alpha, умножение альфы уже написано скаляром/AVX2/WGSL, целочисленная luma уже заморожена, семантика перевязки ссылок при копипасте уже есть (п.242). Дороже, чем «ещё один эффект»: матт обязан родиться в плане, доехать до GPU четвёртой текстурой и попасть в ключи кэша и в формат |
-| Где основная работа | kt-engine (`video.rs`/`video_plan.rs`: `LayerSrc` трафарета, исключение из стека, политика голода, ключ), kt-gpu (четвёртая текстура + режим в `composite.wgsl` + parity), kt-model (ссылка `ClipId`, вид, инверсия; поведение при удалении/сплите/замене источника и при копипасте), kt-cache (ключ), kt-otio (v5), kt-app (пикер + жест + метка на клипе-трафарете). Отдельно и НЕОБЯЗАТЕЛЬНО — kt-media: снять `has_alpha: false`, если нужен Alpha matte |
-| Формат проекта | нужна v5 (`KT_META_VERSION` 4 → 5); поле не сериализуется при `None` — старые файлы байт-стабильны |
-| Тесты, которые придётся написать | round-trip модели и чтение файлов без поля; luma-матт против CPU-эталона; «трафарета нет → GOLDEN_VIDEO не двигается»; конформанс CPU↔GPU по образцу t181/t182 через `kt_gpu::assert_frames_close`; превью == экспорт на одном бэкенде (образец t67/t184); различение трафаретов в ключе пост-FX кэша (образец t66); трафарет удалён / сплитнут / заменён заглушкой (`placeholder.rs`, образец t209/t211); копипаст пары «носитель + трафарет» перевязывает ссылку, копипаст одного носителя — нет (образец t205 и теста 249); трафарет под морфером и bake (t35/t36); трафарет на реверснутом клипе; layout-тест метки и пикера в `apps/kt-app/src/layout_tests.rs` |
-| Зависит от | ничего — для luma-матта из видео. Alpha matte зависит от «альфы из файла» (правка `kt-media/src/ffmpeg.rs` + конформанс-тест на файле с альфой). Трафарет из НАРИСОВАННОЙ формы — от F-MSK-001. Титры как трафарет — от категории `titles/` |
-| Ломает совместимость | нет |
+| Size | L — a whole round. Cheaper than it looks from outside: the composite is already straight-alpha, alpha multiplication is already written in scalar/AVX2/WGSL, the integer luma is already frozen, the semantics of rebinding references on copy-paste already exist (item 242). More expensive than "one more effect": the matte must be born in the plan, reach the GPU as a fourth texture, and get into the cache keys and into the format |
+| Where the main work is | kt-engine (`video.rs`/`video_plan.rs`: the stencil's `LayerSrc`, exclusion from the stack, starvation policy, key), kt-gpu (fourth texture + mode in `composite.wgsl` + parity), kt-model (`ClipId` reference, kind, inversion; behavior on delete/split/replace of the source and on copy-paste), kt-cache (key), kt-otio (v5), kt-app (picker + gesture + label on the stencil clip). Separately and OPTIONALLY — kt-media: remove `has_alpha: false`, if an Alpha matte is needed |
+| Project format | needs v5 (`KT_META_VERSION` 4 → 5); the field is not serialized when `None` — old files stay byte-stable |
+| Tests that will have to be written | round-trip of the model and reading of files without the field; luma matte against the CPU reference; "no stencil → GOLDEN_VIDEO does not move"; CPU↔GPU conformance following the pattern of t181/t182 via `kt_gpu::assert_frames_close`; preview == export on one backend (pattern of t67/t184); distinguishing stencils in the post-FX cache key (pattern of t66); stencil deleted / split / replaced by a placeholder (`placeholder.rs`, pattern of t209/t211); copy-paste of the pair "carrier + stencil" rebinds the reference, copy-paste of the carrier alone does not (pattern of t205 and test 249); stencil under a morpher and bake (t35/t36); stencil on a reversed clip; a layout test of the label and the picker in `apps/kt-app/src/layout_tests.rs` |
+| Depends on | nothing — for a luma matte from video. An Alpha matte depends on "alpha from a file" (change in `kt-media/src/ffmpeg.rs` + a conformance test on a file with alpha). A stencil from a DRAWN shape — on F-MSK-001. Titles as a stencil — on the `titles/` category |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём — и берём **luma-матт по ЯВНОЙ ссылке на клип (`ClipId`)**, а не
-модель «дорожка строго сверху». Обоснование не вкусовое: (1) наша схема
-слоёв — это lane плюс законные перекрытия с правилом «сверху тот, кто
-начался позже», и в ней «строго сверху» не выражается без того, чтобы
-пара «носитель + трафарет» разъезжалась от обычного move; (2) ссылку по
-номеру строки мы уже отвергли один раз, в `MarkedArea.lanes`, и повторять
-ошибку Premiere («Matte: Video 3») незачем; (3) явная ссылка бесплатно
-даёт то, ради чего AE ломала формат в 23.0, — один трафарет на несколько
-носителей, и у нас к ней уже написана недостающая AE половина: перевязка
-при копипасте (п.242).
+We take it — and we take the **luma matte by an EXPLICIT reference to a clip (`ClipId`)**, not the model "track strictly above". The justification is not a matter of taste: (1) our layer scheme is the lane plus legal overlaps with the rule "on top is the one that started later", and in it "strictly above" cannot be expressed without the pair "carrier + stencil" drifting apart on an ordinary move; (2) we have already rejected a reference by row number once, in `MarkedArea.lanes`, and there is no point in repeating Premiere's mistake ("Matte: Video 3"); (3) the explicit reference gives for free what AE broke its format for in 23.0 — one stencil for several carriers, and for it we already have the missing half that AE lacks: rebinding on copy-paste (item 242).
 
-Из ошибок AE берём урок целиком: явная ссылка обязана идти В ПАРЕ с
-быстрым жестом «трафаретом служит клип сверху» (правило 17), иначе
-повторим «ruined the workflow for 90% of the rest of the shots» и будем,
-как Adobe, возвращать команду через полгода.
+From AE's mistakes we take the lesson in full: the explicit reference must come TOGETHER with a fast gesture "the clip above serves as the stencil" (rule 17), otherwise we will repeat "ruined the workflow for 90% of the rest of the shots" and, like Adobe, will be returning the command half a year later.
 
-Alpha-матт откладываем осознанно и с записанной причиной: у нас нет
-источника альфы из файла (`has_alpha: false` в
-`src/libs/kt-media/src/ffmpeg.rs`), поэтому «Alpha matte» сегодня был бы
-пунктом меню, работающим только на выходе хромакея. Это отдельная
-небольшая работа (декодер + конформанс-тест), и она должна быть сделана
-ДО того, как в UI появится слово «Alpha».
+We consciously postpone the Alpha matte, with the reason recorded: we have no source of alpha from a file (`has_alpha: false` in `src/libs/kt-media/src/ffmpeg.rs`), so an "Alpha matte" today would be a menu item working only on the output of chroma key. This is separate small work (decoder + conformance test), and it must be done BEFORE the word "Alpha" appears in the UI.
 
-Трафарет у нас не гаснет молча (правило 20): он помечается на таймлайне
-и остаётся видимым блоком. Это прямое расхождение с AE — и именно оно
-снимает самую массовую жалобу по этой фиче.
+Our stencil does not switch off silently (rule 20): it is marked on the timeline and remains a visible block. This is a direct divergence from AE — and it is precisely this that removes the most widespread complaint about this feature.
 
-## Источники
+## Sources
 
-- https://community.adobe.com/t5/after-effects-beta-discussions/feature-focus-selectable-track-matte-layers-have-arrived/td-p/13110013 — **первоисточник по AE**: Catie Bass (Adobe), 02.08.2022 — анонс Selectable Track Matte Layers для 23.0 beta («Any layer in your comp, no matter where it sits in the layer stack, can be used as a Track Matte source for any other layer… You can even have multiple layers all reference a single layer for their matte»), предупреждение о ломающемся формате («Projects saved in the 23.0 beta will not be able to be opened in other versions of After Effects») и о выражениях, считающих по индексам слоёв; там же — «this feature has shipped to After Effects 23.0» (18.10.2022), меню-команды в 23.3 build 9 (26.01.2023), возврат команды «Matte with Layer Above» в 23.4 (14.06.2023), жалоба на неперевязку ссылок при копипасте (31.05.2023). Дата обращения 2026-09-07
-- https://community.adobe.com/t5/after-effects-ideas/2023-new-track-matte-feature-needs-some-work/idi-p/13339012 — AE 23.0: «completely ruined the workflow for 90% of the rest of the shots» (11.11.2022; обращение 2026-09-07)
-- https://community.adobe.com/t5/after-effects-discussions/track-matte-disapeared/m-p/13291308 — AE 23.0: «Where is Track Matte?» и «It's a bug» через день после релиза (20–21.10.2022; обращение 2026-09-07)
-- https://community.adobe.com/questions-529/layer-visability-stays-off-after-removing-track-matte-is-that-normal-ae-behavior-54298 — AE: гашение видимости трафарета как штатное поведение, словами Adobe Community Expert (21.12.2023; обращение 2026-09-07)
-- https://www.meganfriesth.com/aefundamentals/mattes — AE, сводка механики: «In previous versions of After Effects, you could only use the layer directly above the affected layer as a matte», «After Effects will automatically turn off the visibility (eyeball icon) of the matte layer» (учебный ресурс; согласуется с первоисточником Adobe выше; 2026-09-07)
-- https://creativecow.net/selectable-track-mattes-in-after-effects/ — Andy Ford, 24.10.2022: «you can either pickwhip to the layer or choose it from a dropdown» (2026-09-07)
-- https://community.adobe.com/bug-reports-728/track-matte-key-not-working-with-keyframes-in-pp-2026-0-1-1552070 — Premiere 2026.0.1: Track Matte Key не учитывает обрезку клипа-трафарета (02.03.2026; обращение 2026-09-07)
-- https://community.adobe.com/questions-729/track-matte-key-does-not-respect-effect-order-1556713 — Premiere 26: трафарет ездит за Position носителя независимо от порядка эффектов; модератор Adobe Rach McIntire — «longstanding quirk… it has never behaved the same way as it does in After Effects», рекомендация перейти на маски Properties panel; Ann Bens — «Have not used Track Matte in a long time» (07.04.2026; обращение 2026-09-07)
-- https://community.adobe.com/questions-729/premiere-2026-masking-faqs-links-1555462 — Adobe (kes_akalaonu), 27.03.2026: в Premiere 26 маски переехали из Effect Controls в Object Mask / Vector Masking, «this isn't a bug» (обращение 2026-09-07)
-- https://creativecow.net/forums/thread/track-matte-problem-cant-choose-target-video-fro/ — Premiere: выбор трафарета по НОМЕРУ дорожки и невозможность выбрать нужный номер; там же бытовое правило «белый → luma, цветной → alpha» (11.09.2014; обращение 2026-09-07)
-- https://creativecow.net/forums/thread/frustrating-error-whit-track-matte-key/ — Premiere: «matte clip has to go on the next track up» и alpha-матт, не работающий без альфы (20.04.2010; обращение 2026-09-07)
-- https://creativecow.net/forums/thread/track-matte-premiere-pro/ — Premiere: репутация Track Matte как ненадёжного (10.09.2020; обращение 2026-09-07)
-- https://charlescabrera.com/using-the-track-matte-key-effect-in-premiere-pro-2022-all-you-need-to-know/ — Premiere: параметр `Matte` — список ДОРОЖЕК («under matte, I'm going to select video 2»), Matte Alpha против Matte Luma (вторичный источник; 2026-09-07)
-- https://help.magix-hub.com/video/vegas/22/en/content/topics/8-design/compositingandmasks.htm — VEGAS: «The Compositing Mode button determines how the transparency in a video track is generated», «The parent track is the highest track in a group of tracks and the behavior of the child tracks is determined by the parent track», режим `Multiply (Mask)`, Mask Generator (справка Vegas 22; страница той же темы на CDN Boris FX для 2026 вернула 403, поэтому «в 2026 механика та же» — [НЕ ПРОВЕРЕНО] по справке 2026, но подтверждается живым тредом ниже; 2026-09-07)
-- https://forum.borisfx.com/t/22023 — VEGAS Pro, 07.04.2026: пользователь, пришедший из AE, и рабочий рецепт «Multiply (Mask) + Mask Generator + Parent/Child» (обращение 2026-09-07)
-- http://vegaspro.helpmax.net/en/using-vegas-software/applying-effects/compositing-video/compositing-and-masks/ — VEGAS: «To reproduce the 4.0 parent/child masking behavior, set the compositing mode of the parent track to Multiply, and then apply the Mask Generator» (зеркало старой справки; 2026-09-07)
-- https://support.apple.com/guide/final-cut-pro/types-of-blend-modes-ver007271c06/mac — FCP: Stencil Luma «Does the same thing as the Stencil Alpha blend mode, but uses the affected clip's luma value to define transparency. Stencil Luma is useful if the clip you want to use for cropping has no alpha channel of its own» (страница длинная, WebFetch отдаёт её усечённой — определение получено из индексированного сниппета той же страницы; 2026-09-07)
-- https://support.apple.com/guide/final-cut-pro/intro-to-masking-verce5464e1a/mac — FCP: инструментарий масок (Shape/Draw/Graduated/Image/Magnetic/Scene Removal/Vignette/Auto Mask); Image Mask берёт канал из ОТДЕЛЬНОГО изображения, а не из клипа соседней дорожки; ни track matte, ни Set Matte в FCP нет (2026-09-07)
-- https://support.apple.com/guide/final-cut-pro/use-alpha-channels-ver52cf382e/mac — FCP: альфа-канал как способ композита; про straight/premultiplied в руководстве не сказано (2026-09-07)
-- https://larryjordan.com/articles/travel-mattes-blurring-a-face-to-protect-the-innocent/ — travel matte требует трёх слоёв, и почему берут luma (15.05.2011; обращение 2026-09-07)
-- https://mixinglight.com/color-grading-tutorials/external-mattes/ и https://www.steakunderwater.com/VFXPedia/__man/Resolve18-6/DaVinciResolveManual_files/part494.htm — Resolve, External Matte: матты цепляются к клипу в медиапуле и становятся входами узла на Color-странице (тексты получены из индексированных сниппетов: прямая загрузка зеркала руководства вернула 404; 2026-09-07)
-- https://ae-plugins.docsforadobe.dev/print_page/ — AE SDK: «Effects that use layers as an input, such as Set Matte and Displacement Map, can now target the input layer's masks and effects, instead of only the source of the layer» (версия, в которой это появилось, [НЕ ПРОВЕРЕНО]; 2026-09-07)
-- https://www.freevisuals.net/post/after-effects-set-matte — AE Set Matte: «Take Matte From Layer», выбор канала, «Invert Matte», «Premultiplied»; отличие от Track Matte — «without requiring that source to sit in any specific position relative to each individual layer it is controlling» (вторичный источник; 2026-09-07)
-- `docs/porting-notes.md` п.242 (копипаст возит морферы, области и метки;
-  тесты 249/250) и п.243 (явные ошибки конверта `metadata.kt`)
-- Код (прочитан, не пересказан по аналогии): `src/libs/kt-engine/src/video.rs`,
+- https://community.adobe.com/t5/after-effects-beta-discussions/feature-focus-selectable-track-matte-layers-have-arrived/td-p/13110013 — **primary source on AE**: Catie Bass (Adobe), 02.08.2022 — announcement of Selectable Track Matte Layers for 23.0 beta ("Any layer in your comp, no matter where it sits in the layer stack, can be used as a Track Matte source for any other layer… You can even have multiple layers all reference a single layer for their matte"), the warning about a format-breaking change ("Projects saved in the 23.0 beta will not be able to be opened in other versions of After Effects") and about expressions counting by layer indices; the same thread — "this feature has shipped to After Effects 23.0" (18.10.2022), menu commands in 23.3 build 9 (26.01.2023), the return of the "Matte with Layer Above" command in 23.4 (14.06.2023), the complaint about references not rebinding on copy-paste (31.05.2023). Accessed 2026-09-07
+- https://community.adobe.com/t5/after-effects-ideas/2023-new-track-matte-feature-needs-some-work/idi-p/13339012 — AE 23.0: "completely ruined the workflow for 90% of the rest of the shots" (11.11.2022; accessed 2026-09-07)
+- https://community.adobe.com/t5/after-effects-discussions/track-matte-disapeared/m-p/13291308 — AE 23.0: "Where is Track Matte?" and "It's a bug" a day after the release (20–21.10.2022; accessed 2026-09-07)
+- https://community.adobe.com/questions-529/layer-visability-stays-off-after-removing-track-matte-is-that-normal-ae-behavior-54298 — AE: switching off the stencil's visibility as standard behavior, in the words of an Adobe Community Expert (21.12.2023; accessed 2026-09-07)
+- https://www.meganfriesth.com/aefundamentals/mattes — AE, summary of the mechanics: "In previous versions of After Effects, you could only use the layer directly above the affected layer as a matte", "After Effects will automatically turn off the visibility (eyeball icon) of the matte layer" (learning resource; consistent with the primary Adobe source above; 2026-09-07)
+- https://creativecow.net/selectable-track-mattes-in-after-effects/ — Andy Ford, 24.10.2022: "you can either pickwhip to the layer or choose it from a dropdown" (2026-09-07)
+- https://community.adobe.com/bug-reports-728/track-matte-key-not-working-with-keyframes-in-pp-2026-0-1-1552070 — Premiere 2026.0.1: Track Matte Key does not account for trimming of the stencil clip (02.03.2026; accessed 2026-09-07)
+- https://community.adobe.com/questions-729/track-matte-key-does-not-respect-effect-order-1556713 — Premiere 26: the stencil follows the carrier's Position independently of the effect order; Adobe moderator Rach McIntire — "longstanding quirk… it has never behaved the same way as it does in After Effects", recommendation to switch to masks in the Properties panel; Ann Bens — "Have not used Track Matte in a long time" (07.04.2026; accessed 2026-09-07)
+- https://community.adobe.com/questions-729/premiere-2026-masking-faqs-links-1555462 — Adobe (kes_akalaonu), 27.03.2026: in Premiere 26 masks moved from Effect Controls into Object Mask / Vector Masking, "this isn't a bug" (accessed 2026-09-07)
+- https://creativecow.net/forums/thread/track-matte-problem-cant-choose-target-video-fro/ — Premiere: choosing the stencil by track NUMBER and the impossibility of choosing the needed number; there also the everyday rule "white → luma, color → alpha" (11.09.2014; accessed 2026-09-07)
+- https://creativecow.net/forums/thread/frustrating-error-whit-track-matte-key/ — Premiere: "matte clip has to go on the next track up" and an alpha matte not working without alpha (20.04.2010; accessed 2026-09-07)
+- https://creativecow.net/forums/thread/track-matte-premiere-pro/ — Premiere: the reputation of Track Matte as unreliable (10.09.2020; accessed 2026-09-07)
+- https://charlescabrera.com/using-the-track-matte-key-effect-in-premiere-pro-2022-all-you-need-to-know/ — Premiere: the `Matte` parameter is a list of TRACKS ("under matte, I'm going to select video 2"), Matte Alpha versus Matte Luma (secondary source; 2026-09-07)
+- https://help.magix-hub.com/video/vegas/22/en/content/topics/8-design/compositingandmasks.htm — VEGAS: "The Compositing Mode button determines how the transparency in a video track is generated", "The parent track is the highest track in a group of tracks and the behavior of the child tracks is determined by the parent track", the `Multiply (Mask)` mode, Mask Generator (Vegas 22 help; the page of the same topic on the Boris FX CDN for 2026 returned 403, so "in 2026 the mechanics are the same" — [NOT VERIFIED] against the 2026 help, but confirmed by the live thread below; 2026-09-07)
+- https://forum.borisfx.com/t/22023 — VEGAS Pro, 07.04.2026: a user who came from AE, and a working recipe "Multiply (Mask) + Mask Generator + Parent/Child" (accessed 2026-09-07)
+- http://vegaspro.helpmax.net/en/using-vegas-software/applying-effects/compositing-video/compositing-and-masks/ — VEGAS: "To reproduce the 4.0 parent/child masking behavior, set the compositing mode of the parent track to Multiply, and then apply the Mask Generator" (mirror of the old help; 2026-09-07)
+- https://support.apple.com/guide/final-cut-pro/types-of-blend-modes-ver007271c06/mac — FCP: Stencil Luma "Does the same thing as the Stencil Alpha blend mode, but uses the affected clip's luma value to define transparency. Stencil Luma is useful if the clip you want to use for cropping has no alpha channel of its own" (the page is long, WebFetch returns it truncated — the definition was obtained from an indexed snippet of the same page; 2026-09-07)
+- https://support.apple.com/guide/final-cut-pro/intro-to-masking-verce5464e1a/mac — FCP: the masking toolset (Shape/Draw/Graduated/Image/Magnetic/Scene Removal/Vignette/Auto Mask); Image Mask takes the channel from a SEPARATE image, not from a clip on a neighboring track; there is neither a track matte nor Set Matte in FCP (2026-09-07)
+- https://support.apple.com/guide/final-cut-pro/use-alpha-channels-ver52cf382e/mac — FCP: the alpha channel as a way of compositing; the manual says nothing about straight/premultiplied (2026-09-07)
+- https://larryjordan.com/articles/travel-mattes-blurring-a-face-to-protect-the-innocent/ — a travel matte requires three layers, and why luma is used (15.05.2011; accessed 2026-09-07)
+- https://mixinglight.com/color-grading-tutorials/external-mattes/ and https://www.steakunderwater.com/VFXPedia/__man/Resolve18-6/DaVinciResolveManual_files/part494.htm — Resolve, External Matte: mattes are attached to a clip in the media pool and become inputs of the node on the Color page (texts obtained from indexed snippets: a direct download of the mirror of the manual returned 404; 2026-09-07)
+- https://ae-plugins.docsforadobe.dev/print_page/ — AE SDK: "Effects that use layers as an input, such as Set Matte and Displacement Map, can now target the input layer's masks and effects, instead of only the source of the layer" (the version in which this appeared is [NOT VERIFIED]; 2026-09-07)
+- https://www.freevisuals.net/post/after-effects-set-matte — AE Set Matte: "Take Matte From Layer", choice of channel, "Invert Matte", "Premultiplied"; the difference from Track Matte — "without requiring that source to sit in any specific position relative to each individual layer it is controlling" (secondary source; 2026-09-07)
+- `docs/porting-notes.md` item 242 (copy-paste carries morphers, areas and marks; tests 249/250) and item 243 (explicit errors of the `metadata.kt` envelope)
+- Code (read, not retold by analogy): `src/libs/kt-engine/src/video.rs`,
   `src/libs/kt-engine/src/video_plan.rs`, `src/libs/kt-engine/src/video_simd.rs`,
   `src/libs/kt-gpu/src/shaders/composite.wgsl`, `src/libs/kt-gpu/src/engine.rs`,
   `src/libs/kt-fx/src/video.rs`, `src/libs/kt-model/src/project.rs`,
@@ -479,13 +254,4 @@ Alpha-матт откладываем осознанно и с записанн�
   `src/libs/kt-media/src/placeholder.rs`, `src/libs/kt-ffmpeg/src/source_impl.rs`,
   `src/libs/kt-cache/src/lib.rs`, `src/libs/kt-otio/src/meta.rs`
 
-Живьём ни один из пяти редакторов не запускался. `helpx.adobe.com`,
-`reddit.com` и `forum.blackmagicdesign.com` из этого окружения не
-открылись (403/недоступны), поэтому строки AE и Premiere опираются на
-официальное сообщество Adobe (включая посты сотрудников Adobe — это
-первоисточник по факту изменения в 23.0), Creative COW и вторичные
-разборы; строка Vegas — на справку 22 плюс живой тред на официальном
-форуме Boris FX; строка Resolve — на зеркала руководства и сниппеты
-выдачи, и наличие композит-модов `Alpha`/`Inverted Alpha` на Edit-странице
-Resolve 17+ помечено `[НЕ ПРОВЕРЕНО]`. Утверждения «у нас есть / у нас
-нет» проверены грепом по `src/`.
+None of the five editors was launched live. `helpx.adobe.com`, `reddit.com` and `forum.blackmagicdesign.com` did not open from this environment (403/unavailable), so the AE and Premiere rows rely on the official Adobe community (including posts by Adobe employees — this is the primary source on the change in 23.0), Creative COW and secondary analyses; the Vegas row relies on help 22 plus a live thread on the official Boris FX forum; the Resolve row relies on mirrors of the manual and search-result snippets, and the presence of the compositing modes `Alpha`/`Inverted Alpha` on the Edit page of Resolve 17+ is marked `[NOT VERIFIED]`. The statements "we have / we do not have" were checked by grep over `src/`.

@@ -1,12 +1,12 @@
 ---
 id: F-COL-012
-title: Владелец дорожки
-status: кандидат
+title: Track owner
+status: candidate
 priority: B
 cost: M
 category: collab/handoff
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-model, kt-otio, kt-app]
 invariants: []
 ui_rules: [7, 13]
@@ -19,83 +19,46 @@ services: [team-projects, bm-cloud, resolve-project-server, fcp-shared-library]
 checked: 2026-09-08
 ---
 
-# F-COL-012 — Владелец дорожки
+# F-COL-012 — Track owner
 
-## Суть
+## Essence
 
-Работа вдвоём делится не по проектам, а по дорожкам: «V1 и V2 — мой монтаж, A3 —
-озвучка, туда не лезь, A4 — музыка, её кладёт другой человек». Это самая частая
-и самая дешёвая форма разделения труда в монтаже, и она держится ни на чём:
-программа умеет запереть дорожку (состояние, которое снимает кто угодно одним
-кликом) и не умеет сказать, ЧЬЯ она. Носителем договорённости в реальной работе
-оказывается имя дорожки.
+Work shared by two people is divided not by projects but by tracks: "V1 and V2 are my edit, A3 is the voice-over, don't touch it, A4 is music, the other person puts it there." This is the most frequent and cheapest form of dividing labour in editing, and it rests on nothing: the program can lock a track (a state anyone can remove with one click) and cannot say WHOSE it is. In real work the carrier of the agreement turns out to be the track name.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | замка у дорожки НЕТ; есть Switches → Lock у СОБЫТИЙ | запереть дорожку можно только выделив все её события до конца и заперев их пачкой; кнопку Lock в шапке дорожки пользователи просят добавить много лет, место в наборе кнопок под неё есть |
-| Adobe Premiere | 26.x | Toggle Track Lock (замок в шапке каждой дорожки) | флаг у дорожки секвенции; в Team Projects тот же флаг на аудио-дорожках работает через раз — то есть механизм, который должен нести договорённость, не держит даже собственное состояние |
-| DaVinci Resolve | 21 | Lock Track; в совместной работе — блокировка БИНА и ТАЙМЛАЙНА | замок дорожки и захват объекта в совместном проекте — две разные вещи: занять можно бин или таймлайн целиком, дорожку — нельзя |
-| Final Cut Pro | 12.3 | дорожек нет вовсе; вместо них Roles (роли) | роль — семантическое имя, назначенное КЛИПУ, живёт в библиотеке, ездит в XML и управляет и показом, и стемами экспорта; ближе всех к «имени как данным», но владельца не знает и она |
-| After Effects | 26.x | замок у СЛОЯ (иконка в панели Timeline) | тот же флаг, но на единицу ниже: у слоя, а не у дорожки; композиция дорожек не имеет, поэтому делить работу приходится композициями |
+| VEGAS Pro | 2026.0 | there is NO lock on a track; there is Switches → Lock for EVENTS | a track can be locked only by selecting all its events to the very end and locking them in one batch; users have been asking for a Lock button in the track header for many years, and there is room for it in the button set |
+| Adobe Premiere | 26.x | Toggle Track Lock (a lock in the header of each track) | a flag on a sequence track; in Team Projects the same flag on audio tracks works unreliably — that is, the mechanism that is supposed to carry the agreement does not even hold its own state |
+| DaVinci Resolve | 21 | Lock Track; in shared work — locking of the BIN and of the TIMELINE | a track lock and claiming an object in a shared project are two different things: one can claim a bin or a timeline as a whole, but not a track |
+| Final Cut Pro | 12.3 | no tracks at all; instead Roles | a role is a semantic name assigned to a CLIP, lives in the library, travels in XML and controls both display and export stems; closest of all to "name as data", but it does not know its owner either |
+| After Effects | 26.x | lock on a LAYER (icon in the Timeline panel) | the same flag, one level lower: on a layer, not on a track; a composition has no tracks, so work has to be divided by compositions |
 
-## Фишка фишки
+## The trick behind it
 
-**Все умеют запереть дорожку и никто — назначить ей владельца, и разница между
-этими двумя вещами не в объёме кода, а в том, что замок — это состояние БЕЗ
-АВТОРА.** Его снимает любой одним кликом, и после снятия в проекте не остаётся ни
-следа: ни кто запер, ни зачем, ни было ли вообще заперто. Поэтому в живых
-проектах роль владельца исполняет ИМЯ дорожки — «VO — DO NOT TOUCH», «MUSIC
-(Аня)», «LOCKED — final mix». То есть единственный носитель договорённости
-между двумя людьми — это строка, которую программа считает подписью и не читает.
+**Everyone can lock a track and nobody can assign it an owner, and the difference between these two things is not in the amount of code but in the fact that a lock is a state WITHOUT AN AUTHOR.** Anyone removes it with one click, and after removal no trace remains in the project: neither who locked it, nor why, nor whether it was locked at all. That is why in live projects the role of owner is played by the track NAME — "VO — DO NOT TOUCH", "MUSIC (Anya)", "LOCKED — final mix". That is, the only carrier of an agreement between two people is a string that the program treats as a label and does not read.
 
-**Второй слой: гранулярность занятия у всех равна единице ЗАПИСИ, а не единице
-правки, и дорожки нет ни в одном списке.** Team Projects занимает секвенцию,
-Resolve — бин и таймлайн, Final Cut — библиотеку целиком. Между «весь монтаж» и
-«клип» дорожка — самая естественная единица разговора, и ровно она не
-поддерживается ничем: она не является записью ни в одной из этих баз. Практика
-делит по дорожкам, а программы умеют делить по файлам — отсюда весь механизм и
-переехал в имена.
+**Second layer: the granularity of occupation is the same for everyone and equals one RECORD, not one edit, and a track is absent from every list.** Team Projects occupies a sequence, Resolve — a bin and a timeline, Final Cut — the library as a whole. Between "the whole edit" and "a clip" the track is the most natural unit of conversation, and exactly that is supported by nothing: it is not a record in any of these databases. Practice divides by tracks, while programs can divide only by files — hence the whole mechanism has moved into names.
 
-**Третий слой: Final Cut, единственный, кто отказался от дорожек, случайно решил
-половину задачи.** Роль — это имя, но живущее в документе: назначено клипу,
-переживает перемонтаж, определяет стемы экспорта. Стоило имени стать данными —
-и оно перестало быть подписью. Владельца роль всё равно не знает, но она
-показывает, что именно нужно поменять, чтобы договорённость перестала зависеть
-от того, кто первым нажмёт замок.
+**Third layer: Final Cut, the only one that abandoned tracks, by accident solved half the problem.** A role is a name, but one that lives in the document: it is assigned to a clip, survives re-editing, and determines the export stems. Once the name became data, it stopped being a label. A role still does not know its owner, but it shows what has to change so that the agreement stops depending on who presses the lock first.
 
-## Плюсы
+## Pros
 
-- Имя как носитель договорённости не требует ни учётной записи, ни сервера, ни
-  прав: оно едет в файле и читается человеком. Это самый переносимый механизм из
-  всех, что применяются в реальной работе.
-- Замок дешёв и понятен: одно нажатие, видно глазом, отменяется мгновенно. Как
-  защита от СОБСТВЕННОЙ ошибки («не двигай, я тут закончил») он работает
-  безупречно, и именно в этом качестве им пользуются чаще всего.
-- Роли Final Cut показывают, что перевод имени в данные окупается вторым
-  применением: то же самое имя начинает управлять экспортом стемов, то есть
-  договорённость и результат перестают расходиться.
+- A name as the carrier of an agreement requires neither a user account, nor a server, nor access rights: it travels in the file and is readable by a person. This is the most portable mechanism of all those used in real work.
+- The lock is cheap and understandable: one press, visible at a glance, cancelled instantly. As protection against one's OWN error ("don't move, I'm finished here") it works flawlessly, and it is in that capacity that it is used most often.
+- Final Cut's roles show that turning a name into data pays off through a second use: the same name starts controlling stem export, so the agreement and the result stop diverging.
 
-## Минусы
+## Cons
 
-- Замок не переживает намерение: он снимается тем же кликом, что ставится, и
-  ничего не помнит. Между «заперто, потому что смонтировано» и «заперто, потому
-  что чужое» программа не различает.
-- Имя дорожки как носитель работает ровно до первой перестановки строк и первого
-  импорта: подпись не участвует ни в одной проверке, поэтому две дорожки с
-  именем «VO» — законное состояние у всех.
-- Механизм, на который договорённость опирается, ненадёжен и там, где он есть:
-  в Team Projects замок аудио-дорожки не держится, и об этом сообщают четвёртый
-  год.
-- У модели без дорожек (Final Cut, After Effects) договариваться приходится в
-  другой валюте — ролями или композициями, — и договорённость не переводится
-  между конвейерами: «моя A3» в проекте без дорожек не означает ничего.
+- The lock does not preserve intent: it is removed by the same click that set it, and remembers nothing. The program does not distinguish between "locked because it is edited" and "locked because it belongs to someone else."
+- A track name as a carrier works exactly until the first reordering of rows and the first import: the label takes part in no check, so two tracks named "VO" are a legitimate state for everyone.
+- The mechanism the agreement relies on is unreliable even where it exists: in Team Projects the audio track lock does not hold, and people have been reporting this for the fourth year.
+- In models without tracks (Final Cut, After Effects) one has to agree in a different currency — roles or compositions — and the agreement does not carry over between pipelines: "my A3" means nothing in a project without tracks.
 
-## Что говорят пользователи
+## What users say
 
-Механизм, который должен нести договорённость, не держит собственного состояния —
-и ломается ровно в совместном режиме:
+The mechanism that is supposed to carry the agreement does not hold its own state — and breaks precisely in shared mode:
 
 > Whenever I try to lock a track the button gets stuck like this and doesn't
 > actually lock.
@@ -103,126 +66,66 @@ Resolve — бин и таймлайн, Final Cut — библиотеку це�
 > https://community.adobe.com/t5/premiere-pro-bugs/p-audio-tracks-won-t-lock-or-unlock-individually-can-only-lock-or-unlock-all-of-them-at-once/idi-p/14953063
 
 > The issue seems only to affect Team Projects.
-> — floby2k1, 28.03.2025, тот же тред (подтверждено Bryan Dumaguina,
-> 24.09.2025: «It only happens in Team Projects»)
+> — floby2k1, 28.03.2025, the same thread (confirmed by Bryan Dumaguina,
+> 24.09.2025: "It only happens in Team Projects")
 
-В VEGAS запрос обратный — там просят сам механизм, которого нет: тред «locking a
-track» на форуме VEGAS Creative Software
-(https://www.vegascreativesoftware.info/us/forum/locking-a-track--64946/) и
-«Locking tracks in Vegas?» на Creative COW
-(https://creativecow.net/forums/thread/locking-tracks-in-vegasae/) сводятся к
-одному обходу: выделить все события дорожки до конца и запереть их пачкой.
+In VEGAS the request is the reverse — people ask for the mechanism itself, which does not exist: the thread "locking a track" on the VEGAS Creative Software forum
+(https://www.vegascreativesoftware.info/us/forum/locking-a-track--64946/) and "Locking tracks in Vegas?" on Creative COW
+(https://creativecow.net/forums/thread/locking-tracks-in-vegasae/) boil down to one workaround: select all events of the track to the very end and lock them in one batch.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- Имя дорожки существует и едет в файле: `UiState.lane_names`
-  (`src/libs/kt-model/src/project.rs`, тип `Vec<(LaneKind, u32, String)>`), в
-  комментарии прямо записано «Вне undo, как весь UiState». Пусто — подпись по
-  формуле V1/A1/M1.
-- Более того, имя видео- и аудио-дорожек мы кладём в СТАНДАРТНОЕ поле OTIO
-  `Track.name` (`src/libs/kt-otio/src/convert.rs`), а не в свою секцию:
-  чужой редактор его видит и сохраняет. В `kt.ui` остаются только имена
-  морфер- и камерных дорожек, которым в OTIO места нет.
-- В документе уже есть именованная сущность, адресующая дорожки: `MarkedArea`
-  (`src/libs/kt-model/src/project.rs`) — имя, время, набор дорожек. Про неё в
-  модели написано дословно «Имя — это АДРЕС: непустое и уникальное», ключи
-  дорожек в ней СЕМАНТИЧЕСКИЕ (перестановка строк область не двигает), она
-  ходит через undo и едет в файле (`areas` в kt-конверте, схема v4).
-- Есть прецедент повышения поля из удобства в документ, с известной ценой:
-  `lane_order` уехал из `UiState` в модель в Р.35, когда порядок строк стал
-  влиять на картинку (морфер действует «на всё, что ниже»); в файле он теперь
-  лежит рядом с `ui`, а старое поле осталось только входом
-  (`#[serde(default, skip_serializing)]`), и файл поднялся до v4.
-- Единственное слово `locked` во всём проекте — у `BinGroup` (группа карточек
-  медиа-бина). У дорожки замка нет вовсе: mute/solo/lock — это F-TL-006, и там
-  `we_have: нет`.
+- A track name exists and travels in the file: `UiState.lane_names`
+  (`src/libs/kt-model/src/project.rs`, type `Vec<(LaneKind, u32, String)>`), with a comment stating directly "Outside undo, like all of UiState." Empty — the label follows the V1/A1/M1 formula.
+- Moreover, we put the name of video and audio tracks into the STANDARD OTIO field `Track.name` (`src/libs/kt-otio/src/convert.rs`), not into our own section: a foreign editor sees it and preserves it. Only the names of morpher and camera tracks, for which OTIO has no place, remain in `kt.ui`.
+- The document already contains a named entity that addresses tracks: `MarkedArea` (`src/libs/kt-model/src/project.rs`) — a name, a time, a set of tracks. The model says of it verbatim "The name is an ADDRESS: non-empty and unique"; its track keys are SEMANTIC (reordering rows does not move the area); it goes through undo and travels in the file (`areas` in the kt envelope, schema v4).
+- There is a precedent for promoting a field from convenience into the document, with a known price: `lane_order` moved from `UiState` into the model in R.35, when row order began to affect the picture (the morpher acts "on everything below"); in the file it now lies next to `ui`, the old field remained only as input (`#[serde(default, skip_serializing)]`), and the file was raised to v4.
+- The only word `locked` in the whole project belongs to `BinGroup` (a group of cards in the media bin). A track lock does not exist at all: mute/solo/lock is F-TL-006, and there `we_have: no`.
 
-БЕЗ СЕТИ: НЕ ОСТАЁТСЯ — `src/libs/kt-otio/src/meta.rs` — от владельца не остаётся ничего, и место, где это видно, — конверт файла: поле `ui` объявлено УДОБСТВОМ и стоит ровно между `lane_order`, который в Р.35 из него вынесли в модель, как только он стал влиять на картинку, и `areas`, у которых имя — адрес; единственный носитель договорённости, имя дорожки, так и лежит в удобстве, и сегодня человек пишет «не трогать» прямо внутрь подписи.
+OFFLINE: DOES NOT REMAIN — `src/libs/kt-otio/src/meta.rs` — nothing of the owner remains, and the place where this is visible is the file envelope: the `ui` field is declared a CONVENIENCE and stands exactly between `lane_order`, which in R.35 was moved out of it into the model as soon as it began to affect the picture, and `areas`, whose name is an address. The only carrier of the agreement, the track name, lies in the convenience, and today a person writes "don't touch" directly into the label.
 
-ЦЕНА СЕТИ: у второго человека должно быть имя, которое знает программа, а не письмо — права доступа — владелец без списка людей вырождается в строку, а строку уже сегодня несёт имя дорожки, то есть без учёта людей и их прав новая сущность не добавляет ничего, кроме места, куда написать то же самое.
+NETWORK COST: the second person must have a name that the program knows, not a letter — access rights — an owner without a list of people degenerates into a string, and that string is already carried today by the track name; so without accounting for people and their access rights, the new entity adds nothing except a place to write the same thing.
 
-### Чего не хватает
+### What is missing
 
-- Не поля «владелец» — его мы не заводим (второго участника нет), — а того,
-  чтобы ИМЯ стало документом: сегодня оно вне undo (переименовал и передумал —
-  откатить нечем), вне валидации (два «VO» законны) и вне любых проверок.
-- Замка дорожки как такового (F-TL-006): у нас нельзя запретить правку даже
-  СЕБЕ, поэтому «не трогай» не подкреплено ничем, кроме внимательности.
-- Способа увидеть договорённость там, где она нарушается: имя дорожки видно в
-  шапке строки, а жест происходит на клипе.
+- Not an "owner" field — we do not introduce it (there is no second participant) — but making the NAME a document: today it is outside undo (rename and change your mind — nothing to roll back to), outside validation (two "VO" are legitimate), and outside any checks.
+- A track lock as such (F-TL-006): we cannot forbid an edit even to OURSELVES, so "don't touch" is backed by nothing but attentiveness.
+- A way to see the agreement where it is violated: the track name is visible in the row header, while the gesture happens on the clip.
 
-### Что мешает
+### What gets in the way
 
-`UiState` целиком объявлен удобством и сознательно не ходит через undo — это
-решение, а не недосмотр, и оно защищает undo от мусора вроде позиции скролла.
-Значит вынос имени — это не «перенести поле», а разделение структуры на две:
-удобство остаётся, имя уезжает в модель, файл получает версию (как v4 у
-`lane_order`), а чтение старых файлов обязано продолжать поднимать имя из
-`Track.name`. Плюс правила вёрстки: длинное имя дорожки уже сегодня рисуется
-ярлыком поверх начала дорожки (правило UI 13 — не тратить место впустую,
-правило UI 7 — текст помещается, t102/t255), и любое «имя + владелец» обязано
-влезть в ту же полосу, а не завести новую.
+`UiState` as a whole is declared a convenience and deliberately does not go through undo — this is a decision, not an oversight, and it protects undo from junk such as the scroll position. So moving the name out is not "moving a field" but splitting the structure in two: the convenience stays, the name moves into the model, the file gets a version (as v4 did for `lane_order`), and reading old files must keep lifting the name from `Track.name`. Plus layout rules: a long track name is already drawn today as a label over the beginning of the track (UI rule 13 — do not waste space; UI rule 7 — the text fits, t102/t255), and any "name + owner" must fit into the same strip rather than create a new one.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Ни одного из двенадцати: имя дорожки не участвует ни в композиции, ни в
-детерминизме, ни в кэше. Задевает два правила чек-листа UI — 13 (не заводить
-новую полосу под то, что можно поставить на занятое место) и 7 (длинное имя
-усекается, а не разносит вёрстку), — и требует новой строки в таблице реестра
-`reach_tests` t253, если у дорожки появится ещё один глагол.
+None of the twelve: the track name participates in neither the composition, nor determinism, nor the cache. It touches two rules of the UI checklist — 13 (do not create a new strip for something that can be placed on an occupied spot) and 7 (a long name is truncated, not allowed to break the layout) — and it requires a new row in the `reach_tests` registry table, t253, if the track gets one more verb.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии: имя из `UiState` в модель (с версией формата и undo), затем замок дорожки как отдельное состояние |
-| Где основная работа | kt-model (имя как поле документа, валидация уникальности, команды переименования через undo), kt-otio (версия конверта, чтение старых файлов из `Track.name`), kt-app (шапка дорожки, ярлык, реестр глаголов) |
-| Формат проекта | нужна версия v6 по содержимому: старая сборка прочла бы имя из `Track.name` и не потеряла его — значит жёсткий отказ НЕ нужен, достаточно условного бампа, как у камер в Р.29 |
-| Тесты, которые придётся написать | round-trip имени через модель и undo; «два одинаковых имени — ошибка команды, а не молча»; чтение файла v4/v5, где имя лежит в `Track.name`; layout-тест «имя с пометкой владельца не растит полосу дорожки» |
-| Зависит от | F-TL-006 (замок дорожки — соседняя половина того же разговора) |
-| Ломает совместимость | нет: имя как лежало в `Track.name`, так и лежит |
+| Size | M — 2 stages: the name from `UiState` into the model (with a format version and undo), then the track lock as a separate state |
+| Where the main work is | kt-model (the name as a document field, uniqueness validation, rename commands through undo), kt-otio (envelope version, reading old files from `Track.name`), kt-app (the track header, the label, the verb registry) |
+| Project format | a v6 version is needed by content: an old build reading the name from `Track.name` would not lose it — so a hard refusal is NOT needed, a conditional bump is enough, like the cameras in R.29 |
+| Tests to write | a round trip of the name through the model and undo; "two identical names are an error of the command, not a silent acceptance"; reading a v4/v5 file where the name lies in `Track.name`; a layout test "a name with an owner's mark does not grow the track strip" |
+| Depends on | F-TL-006 (the track lock — the neighbouring half of the same conversation) |
+| Breaks compatibility | no: the name, as it lay in `Track.name`, still lies there |
 
-## Вердикт
+## Verdict
 
-Берём локальное ядро — **имя дорожки перевести из удобства в документ** — и не
-берём владельца: объявить второго участника заметка не имеет права, а владелец
-без списка людей и прав это та же строка, что и сегодня, только в другом поле.
-Перевод окупается и в одиночку: имя, ходящее через undo и проверяемое на
-уникальность, годится в адрес — ровно как `MarkedArea`, у которой это уже
-записано в модели.
+Take the local core — **move the track name from convenience into the document** — and do not take the owner: declaring a second participant is not a note's right, and an owner without a list of people and rights is the same string as today, only in a different field. The move pays off even alone: a name that goes through undo and is checked for uniqueness is fit for an address — exactly like `MarkedArea`, where this is already written into the model.
 
-Чем отличаемся от соседей. **F-TL-006** (выключатели дорожки — mute, solo, lock,
-«скрыть») — про то, что выключатель делает С КАРТИНКОЙ И ЗВУКОМ у одного
-человека: замок защищает от собственного промаха, mute и solo меняют то, что
-слышно. Здесь предмет другой: не состояние, а ПРИНАДЛЕЖНОСТЬ, и она обязана
-переживать снятие замка — иначе договорённость исчезает вместе с одним кликом.
-Пара получается несимметричной: F-TL-006 — цена L и чистый UI, эта — цена M и
-чистая модель. **F-PRJ-001** (несколько монтажей и общий бин) — про то, как
-разделить работу СТРУКТУРОЙ документа; дорожка тем и ценна, что делить ничего не
-надо. **F-UI-005** (цвет клипа как данные и как оформление) — тот же вопрос
-«подпись или данные», но у события и про различимость, а не про договорённость.
+How we differ from neighbours. **F-TL-006** (track switches — mute, solo, lock, "hide") concerns what the switch does TO THE PICTURE AND THE SOUND for one person: the lock protects against one's own slip, mute and solo change what is heard. Here the subject is different: not a state but a BELONGING, and it must survive the removal of a lock — otherwise the agreement disappears together with one click. The pair is asymmetric: F-TL-006 — cost L and pure UI, this one — cost M and a pure model. **F-PRJ-001** (several edits and a shared bin) concerns how to divide work by the STRUCTURE of the document; a track is valuable precisely because nothing needs to be divided. **F-UI-005** (clip colour as data and as decoration) asks the same question, "label or data," but about an event and about distinguishability, not about agreement.
 
-## Источники
+## Sources
 
 - https://community.adobe.com/t5/premiere-pro-bugs/p-audio-tracks-won-t-lock-or-unlock-individually-can-only-lock-or-unlock-all-of-them-at-once/idi-p/14953063
-  — замок дорожки не держится, и только в Team Projects (дата обращения
-  2026-09-08)
+  — the track lock does not hold, and only in Team Projects (accessed 2026-09-08)
 - https://www.vegascreativesoftware.info/us/forum/locking-a-track--64946/ —
-  запрос кнопки Lock в шапке дорожки VEGAS (дата обращения 2026-09-08)
-- https://creativecow.net/forums/thread/locking-tracks-in-vegasae/ — обход через
-  «выделить события до конца → Switches → Lock» (дата обращения 2026-09-08)
-- Гранулярность занятия у сервисов — `docs/features/_services.md`, колонка
-  «Единица занятия»: секвенция (Team Projects), бин и таймлайн (Blackmagic Cloud
-  и Resolve Project Server), библиотека целиком (общая библиотека Final Cut).
-  Дорожки нет ни в одной строке.
-- Роли Final Cut описаны по документации Apple; строка таблицы отражает состав
-  механизма (роль назначается клипу и управляет стемами), живьём не
-  проверялось — публичного трекера нет ни у одного из пяти
-  (`docs/features/_trackers.md`, «Кого НЕ берём»).
-- Наш код проверен грепом по `src/` 08.09.2026: `kt-model/src/project.rs`
-  (`UiState.lane_names`, `MarkedArea`, `BinGroup.locked`, `lane_names_*`),
-  `kt-otio/src/meta.rs` (`KtTimelineMeta.ui`, `lane_order`, `areas`),
-  `kt-otio/src/convert.rs` (имя дорожки в `Track.name` и обратно),
-  `kt-model/tests/parity_ops.rs` (t90).
+  the request for a Lock button in the VEGAS track header (accessed 2026-09-08)
+- https://creativecow.net/forums/thread/locking-tracks-in-vegasae/ — the workaround through "select events to the end → Switches → Lock" (accessed 2026-09-08)
+- The occupation granularity of services — `docs/features/_services.md`, column "Occupation unit": a sequence (Team Projects), a bin and a timeline (Blackmagic Cloud and Resolve Project Server), the library as a whole (the shared Final Cut library). A track is absent from every row.
+- The Final Cut roles are described from Apple's documentation; the table row reflects the composition of the mechanism (a role is assigned to a clip and controls the stems), not verified live — no public tracker exists for any of the five (`docs/features/_trackers.md`, "Whom we do NOT take").
+- Our code was checked by grep over `src/` on 08.09.2026: `kt-model/src/project.rs` (`UiState.lane_names`, `MarkedArea`, `BinGroup.locked`, `lane_names_*`), `kt-otio/src/meta.rs` (`KtTimelineMeta.ui`, `lane_order`, `areas`), `kt-otio/src/convert.rs` (the track name in `Track.name` and back), `kt-model/tests/parity_ops.rs` (t90).

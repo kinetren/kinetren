@@ -1,12 +1,12 @@
 ---
 id: F-COL-040
-title: Склейка кусков после параллельного рендера
-status: отвергнуто
+title: Stitching pieces after parallel rendering
+status: rejected
 priority: C
 cost: L
 category: collab/offload
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, flamenco-3]
-we_have: нет
+we_have: no
 crates: [kt-ffmpeg, kt-engine]
 invariants: [7, 9, 11]
 ui_rules: []
@@ -19,104 +19,55 @@ services: [resolve-project-server, bm-cloud]
 checked: 2026-09-08
 ---
 
-# F-COL-040 — Склейка кусков после параллельного рендера
+# F-COL-040 — Stitching pieces after parallel rendering
 
-## Суть
+## Essence
 
-Ферма посчитала фильм пятью машинами и вернула пять файлов. Дальше кто-то
-обязан превратить их в один — и это ровно тот шаг, ради которого всё
-затевалось: пять кусков заказчику не отдашь. Монтажёр ждёт, что программа,
-которая куски заказала, их и соберёт. На практике собирает не она: сборка
-везде вынесена наружу и делается отдельным инструментом, а попытка склеить
-готовые видеофайлы «встык» даёт шов, причину которого потом ищут месяцами не
-там, где она есть.
+A farm has computed the film on five machines and returned five files. Next, someone must turn them into one — and this is exactly the step for whose sake everything was begun: five pieces cannot be handed to the customer. The editor expects that the program which ordered the pieces will also assemble them. In practice it does not: assembly is everywhere moved outside and done by a separate tool, and an attempt to glue finished video files "end to end" produces a seam, whose cause is then sought for months in the wrong place.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 build 66 | нет | делить рендер нечем, значит и собирать нечего; пакетный скрипт делает N НЕЗАВИСИМЫХ файлов по регионам, а не N кусков одного |
-| Adobe Premiere | 26.x | нет (сборка руками) | куски, посчитанные отдельно, возвращают в проект как обычный материал и сводят второй секвенцией — то есть перекодируют ещё раз |
-| DaVinci Resolve | 21 Studio | нет | Remote Rendering отдаёт задание другой машине ЦЕЛИКОМ и не делит его: одна строка очереди — одна машина, поэтому склейка не возникает как задача |
-| Final Cut Pro | 12.3 | нет (Compressor) | распределение и сборка вынесены во второй продукт; сам FCP кусков не производит |
-| After Effects | 26.x | «Post-Render Action», а на практике — последовательность кадров | делить композицию по in/out можно, но рекомендуемый выход — последовательность кадров: тогда «сборка» вырождается в один проход кодирования по готовым файлам, а не в сшивание видео |
+| VEGAS Pro | 2026.0 build 66 | none | there is nothing to divide the render with, so there is nothing to assemble; the batch script makes N INDEPENDENT files by regions, not N pieces of one |
+| Adobe Premiere | 26.x | none (assembly by hand) | pieces computed separately are returned into the project as ordinary material and joined in a second sequence — that is, they are encoded once more |
+| DaVinci Resolve | 21 Studio | none | Remote Rendering hands the job to another machine WHOLE and does not divide it: one queue row is one machine, so assembly never arises as a task |
+| Final Cut Pro | 12.3 | none (Compressor) | distribution and assembly are moved into a second product; FCP itself produces no pieces |
+| After Effects | 26.x | "Post-Render Action", and in practice a sequence of frames | a composition can be divided by in/out, but the recommended output is a sequence of frames: then "assembly" degenerates into a single encoding pass over ready files, not into stitching of video |
 
-**Вне ядра.** Без ферм эту фичу описать нельзя: единственные, кто действительно
-делит и собирает, — менеджеры заданий, и у них сборка названа отдельной
-стадией с отдельной ценой.
+**Outside the core.** Without farms this feature cannot be described: the only ones who truly divide and assemble are job managers, and for them assembly is named as a separate stage with a separate cost.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Flamenco | 3.x | отдельная задача-сборщик после рендер-задач | облака нет, обе стороны в одной сети; сборка — ещё одно задание того же вида «команда + диапазон + требования», выполняемое ОДНОЙ машиной после остальных (`docs/features/_editors.md`) |
-| OpenCue | 1.x (docs.opencue.io, 2026) | зависимость между layer'ами | слой-сборщик зависит от слоя-рендера; это по-прежнему одна команда на одном хосте — параллельность кончается ровно там, где начинается кодирование |
+| Flamenco | 3.x | a separate assembly task after the render tasks | there is no cloud, both sides are in one network; assembly is one more job of the same kind "command + range + requirements", executed by ONE machine after the others (`docs/features/_editors.md`) |
+| OpenCue | 1.x (docs.opencue.io, 2026) | a dependency between layers | the assembly layer depends on the render layer; this is still one command on one host — parallelism ends exactly where encoding begins |
 
-## Фишка фишки
+## The trick behind it
 
-**Никто не сшивает видео — все избегают ситуации, в которой пришлось бы.**
-Правило фермы формулируется через отказ, а не через сборку: «Always render to
-image sequences, not video files — if a frame fails, only that frame needs
-re-rendering». Соль в том, что это же правило снимает вопрос стыка целиком: у
-последовательности кадров стыка нет, потому что единица — кадр, а не отрезок.
-Кодирование после этого делается ОДНИМ проходом одной машиной, и параллельность
-кончается ровно там, где начинается кодек. То есть «параллельный рендер»
-отрасли — это параллельный СЧЁТ КАДРОВ, а не параллельный вывод файла, и
-разница видна только тому, кто пробовал.
+**Nobody stitches video — everyone avoids the situation in which they would have to.** The farm's rule is formulated through refusal, not through assembly: "Always render to image sequences, not video files — if a frame fails, only that frame needs re-rendering". The point is that this same rule also removes the question of the seam entirely: a sequence of frames has no seam, because the unit is a frame, not a segment. Encoding after that is done in ONE pass by ONE machine, and parallelism ends exactly where the codec begins. That is, the "parallel rendering" of the industry is parallel COUNTING OF FRAMES, not parallel output of a file, and the difference is visible only to someone who has tried.
 
-**Кто всё-таки сшивает, тот ищет причину шва не там.** Классический случай:
-композицию разрезали надвое, посчитали двумя файлами MOV, соединили `ffmpeg` — и
-получили секундную остановку картинки и звука на стыке. Автор подозревает
-неточную границу кадра; отвечающий отводит подозрение и предлагает искать
-чёрные кадры и «программа вставляет пробел». Ни один из двух не называет
-настоящий класс причин — расхождение параметров кодирования между кусками
-(разный битрейт, разная точка ключевого кадра, разный старт временных меток).
-Это и есть цена сшивания: беда возникает в кодеке, а обсуждается в монтаже.
+**Whoever does stitch looks for the cause of the seam in the wrong place.** The classic case: a composition was cut in two, computed as two MOV files, joined with `ffmpeg` — and a one-second freeze of picture and sound at the joint was obtained. The author suspects an inexact frame boundary; the respondent dismisses the suspicion and suggests looking for black frames and "the program inserts a gap". Neither names the real class of causes — a mismatch of encoding parameters between the pieces (different bitrate, a different position of the keyframe, a different start of timestamps). This is the price of stitching: the trouble arises in the codec, but is discussed in the editing program.
 
-**У нас группа кадров — НАША, и она не совпадает с границей куска.** Муксер
-ставит `gop_size = fps * 2` (`src/libs/kt-ffmpeg/src/muxer_impl.rs:113`) и
-`max_b_frames = 0`, то есть ключевой кадр раз в две секунды, а не там, где
-кто-то решил разрезать задание. Байтовая склейка без перекодирования требует,
-чтобы граница куска БЫЛА границей группы кадров; при произвольном диапазоне
-она ею не является почти никогда. Сверх того наш муксер физически односторонний:
-`avio_open` открывается только на запись, `write_video` принимает RGBA, а
-`write_audio` — f32 (`src/libs/kt-ffmpeg/src/muxer_impl.rs:278` и `:305`), и
-пути «взять готовые пакеты из чужого файла и переложить в свой» в крейте нет
-вовсе. И последняя деталь, которая ломает даже теоретическую склейку:
-`video_pts` в муксере считается от нуля независимо от диапазона экспорта —
-кусок не несёт своего адреса, он всегда начинается с начала.
+**For us the group of frames is OURS, and it does not coincide with the boundary of a piece.** The muxer sets `gop_size = fps * 2` (`src/libs/kt-ffmpeg/src/muxer_impl.rs:113`) and `max_b_frames = 0`, that is, a keyframe every two seconds, not where someone has decided to cut the job. A byte-level joining without re-encoding requires that the boundary of a piece BE a boundary of a group of frames; with an arbitrary range it almost never is. Moreover, our muxer is physically one-way: `avio_open` is opened only for writing, `write_video` accepts RGBA, and `write_audio` — f32 (`src/libs/kt-ffmpeg/src/muxer_impl.rs:278` and `:305`), and a path "take ready packets from a foreign file and lay them into one's own" does not exist in the crate at all. And the last detail that breaks even a theoretical joining: `video_pts` in the muxer is counted from zero independently of the export range — a piece carries no address of its own, it always starts from the beginning.
 
-## Плюсы
+## Pros
 
-- Деление по кадрам даёт линейное ускорение там, где кадр дорог: это верно для
-  3D и композитинга и есть настоящая причина существования ферм.
-- Пересчитывать после сбоя приходится не весь фильм, а один кусок — и чем
-  мельче единица, тем дешевле отказ (предельный случай — один кадр).
-- Сборка, вынесенная отдельной стадией с зависимостью, честно показывает, что
-  кодирование не параллелится: это не недоработка менеджера, а свойство
-  предмета.
-- Куски как НЕЗАВИСИМЫЕ файлы (регион = файл) — полезная вещь сама по себе, и
-  она не требует ни склейки, ни фермы: это просто N заданий с разными
-  диапазонами.
+- Division by frames gives a linear speed-up where a frame is expensive: this is true for 3D and compositing and is the real reason farms exist.
+- After a failure, one must recompute not the whole film but one piece — and the finer the unit, the cheaper the failure (the limiting case is one frame).
+- Assembly, moved out as a separate stage with a dependency, honestly shows that encoding does not parallelise: this is not a shortcoming of the manager but a property of the subject.
+- Pieces as INDEPENDENT files (region = file) are a useful thing in themselves, and they require neither joining nor a farm: these are simply N jobs with different ranges.
 
-## Минусы
+## Cons
 
-- Шов на стыке возникает не в картинке, а в кодеке, и потому не
-  воспроизводится у того, кто чинит: у него другая машина, другой энкодер и
-  другая точка ключевого кадра.
-- Байтовая склейка требует совпадения ВСЕГО — кодека, профиля, битрейта,
-  разрешения, тайм-базы и границы группы кадров; нарушение любого пункта
-  превращает склейку в перекодирование, то есть отменяет выигрыш.
-- Перекодирование ради склейки съедает то, ради чего делили: один проход по
-  всему материалу возвращается, только теперь ещё и с потерей качества.
-- Временные метки кусков не складываются сами: каждый файл начинается с нуля,
-  и адрес куска приходится хранить где-то рядом с ним.
-- Разгон временны́х эффектов (F-COL-038) требует перекрытия кусков, а
-  перекрытие обязано быть выброшено при сборке — то есть сборщик обязан знать
-  про рендер больше, чем «сложи файлы по порядку».
+- The seam at the joint arises not in the picture but in the codec, and therefore cannot be reproduced by the one who fixes it: they have a different machine, a different encoder, and a different position of the keyframe.
+- A byte-level joining requires agreement of EVERYTHING — codec, profile, bitrate, resolution, time base, and the boundary of the group of frames; a violation of any item turns the joining into re-encoding, that is, cancels the gain.
+- Re-encoding for the sake of joining eats what the division was for: one pass over the whole material returns, only now also with a loss of quality.
+- The timestamps of pieces do not add up by themselves: each file starts from zero, and the address of a piece has to be stored somewhere next to it.
+- The acceleration of temporal effects (F-COL-038) requires overlap of pieces, and the overlap must be discarded at assembly — that is, the assembler must know about rendering more than "fold the files in order".
 
-## Что говорят пользователи
+## What users say
 
-Дословный случай сшивания и дословный ответ, в котором настоящая причина не
-названа:
+A verbatim case of stitching, and a verbatim answer in which the real cause is not named:
 
 > I split an after composition in 2 parts. Rendered them separately (mov) and
 > tried to concatenate them using FFMPEG. It works well except for a 1-second
@@ -126,98 +77,63 @@ re-rendering». Соль в том, что это же правило снима
 
 > There are frames in every After Effects composition, so that's not your
 > problem.
-> — Daniel Waldron, там же, 19.09.2016
+> — Daniel Waldron, same thread, 19.09.2016
 
-И правило, которым отрасль обходит задачу вместо того, чтобы её решать:
+And the rule by which the industry bypasses the task instead of solving it:
 
 > Always render to image sequences, not video files — if a frame fails, only
 > that frame needs re-rendering.
-> — «How Render Farms Work — Technical Guide (2026)», SuperRenders,
-> опубликовано 04.04.2026, обновлено 07.09.2026,
+> — "How Render Farms Work — Technical Guide (2026)", SuperRenders,
+> published 04.04.2026, updated 07.09.2026,
 > https://superrendersfarm.com/article/how-render-farms-work-technical-guide
 
-`trackers:` пуст сознательно (правило 12): публичных трекеров у пяти редакторов
-ядра нет, а в двенадцати выгруженных трекерах опенсорсных NLE нет ни ферм, ни
-воркеров, ни склейки кусков — темы не существует, и число здесь было бы
-выдумкой, а не сигналом.
+`trackers:` is empty deliberately (rule 12): there are no public trackers for the five core editors, and in the twelve exported trackers of open-source NLEs there are no farms, no workers, and no joining of pieces — the topic does not exist, and a number here would be an invention, not a signal.
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/export/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Отвергнуто: склейка сегментов рендера не нужна — экспорт внутрипроцессный и детерминированный, чанки идут в один муксер.
-БЕЗ СЕТИ: НЕ ОСТАЁТСЯ — `src/libs/kt-ffmpeg/src/muxer_impl.rs:113` — от фишки не остаётся ничего, и место, где это видно, ровно здесь: группу кадров назначаем мы сами раз в две секунды, независимо от того, где кто-то захотел разрезать работу, а рядом муксер открыт только на запись и принимает только RGBA и f32 — пути «взять готовые пакеты и переложить» в крейте нет вовсе, поэтому сшивать сегодня нечем и нечего.
-ЦЕНА СЕТИ: N файлов от N машин и тот, кто их соберёт — инвариант 9 — экспорт внутрипроцессный без внешнего бинарника и временных файлов, а все промышленные сборщики кусков являются внешним процессом, поэтому «позвать concat» у нас не запрещено дорого, а невозможно по договору.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/export/ — the contract is in `spec.md`, the "why" and the code paths are in `design.md`.
+Rejected: joining render segments is not needed — export is in-process and deterministic, and the chunks go into one muxer.
+OFFLINE: DOES NOT REMAIN — `src/libs/kt-ffmpeg/src/muxer_impl.rs:113` — nothing of the trick remains, and the place where this is visible is exactly here: we set the group of frames ourselves every two seconds, independently of where someone wanted to cut the work; and next to it the muxer is open only for writing and accepts only RGBA and f32 — a path "take ready packets and lay them over" does not exist in the crate at all, therefore there is nothing to stitch with today.
+NETWORK COST: N files from N machines, and whoever assembles them — invariant 9 — export is in-process, with no external binary and no temporary files, while all industrial assemblers of pieces are an external process, so "calling concat" is not forbidden to us at high cost but is impossible by contract.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | L — понадобился бы путь пакетов мимо декодера (демукс → мукс), переписывание временных меток и проверка совместимости потоков |
-| Где основная работа | kt-ffmpeg (чтение пакетов и запись их без перекодирования), kt-engine (кто и по какому правилу решает, что стык законен) |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | их пришлось бы придумывать против собственных инвариантов: «два куска, склеенные без перекодирования, побайтно равны цельному прогону» невыполним при разных адаптерах (инвариант 11) и бессмыслен при одном (тогда деление не нужно) |
-| Зависит от | F-COL-038 (форма задания), F-COL-039 (кто считает кусок), F-EXP-003 (тот же отсутствующий пакетный путь) |
-| Ломает совместимость | нет — фича не заводится |
+| Scope | L — it would require a path of packets bypassing the decoder (demux → mux), rewriting of timestamps, and a check of stream compatibility |
+| Where the main work is | kt-ffmpeg (reading packets and writing them without re-encoding), kt-engine (who decides, and by which rule, that a joint is legal) |
+| Project format | not touched |
+| Tests to write | they would have to be invented against our own invariants: "two pieces, joined without re-encoding, are byte-equal to a whole run" is unsatisfiable with different adapters (invariant 11) and meaningless with one (then the division is not needed) |
+| Depends on | F-COL-038 (the form of the job), F-COL-039 (who computes a piece), F-EXP-003 (the same missing packet path) |
+| Breaks compatibility | no — the feature is not opened |
 
-## Вердикт
+## Verdict
 
-**Отвергнуто.**
+**Rejected.**
 
-Причина названа номером: **инвариант 9**. Экспорт у нас полностью
-внутрипроцессный — мукс и кодирование через системный FFmpeg по dlopen, ни
-временного файла, ни внешнего бинарника, ни mkfifo, — а вся промышленная
-сборка кусков (`ffmpeg -f concat`, `mkvmerge`, сборщик менеджера заданий) есть
-внешний процесс. Второй причиной идёт **инвариант 11**: наш детерминизм
-локален, куски от разных адаптеров различаются законно, и различие ложится
-именно на стык.
+The reason is named by number: **invariant 9**. Our export is fully in-process: muxing and encoding go through the system FFmpeg via dlopen, with no temporary file, no external binary, and no mkfifo. All the industry-standard assembly of chunks (`ffmpeg -f concat`, `mkvmerge`, the job manager's assembler) is an external process. The second reason is **invariant 11**: our determinism is local, chunks from different adapters differ legitimately, and the difference falls exactly at the seam.
 
-**Что НЕ является причиной отказа** (чтобы через год не спорили не о том): не
-отсутствие сети — её отсутствие известно и без заметки; не сложность
-`concat`; не объём кода; не «у нас маленькие проекты». Диапазон в движке есть
-и работает, отдать пять кусков пятью файлами мы умеем сегодня. Отказ — про то,
-что собирать их обратно нечем и незачем.
+**What is NOT the reason for the rejection** (so that a year from now nobody argues about the wrong thing): not the absence of a network, which is known without this note; not the complexity of `concat`; not the amount of code; not "our projects are small." A range exists in the engine and works, and handing out five chunks as five files is possible today. The rejection is about the fact that there is nothing to put them back together with, and no reason to.
 
-**Дешёвый эквивалент, который берём вместо этого**, — и он уже почти собран.
-Кусок должен быть не частью файла, а самостоятельным ФАЙЛОМ: N регионов → N
-заданий → N готовых файлов, каждый посчитан целиком одним процессом. Это
-внутренняя очередь F-EXP-002 плюс форма задания F-COL-038, и ни одного нового
-механизма не требует. Ускорение же одного файла ищется не делением энкодера, а
-отказом от перекодирования нетронутых кусков — то есть smart render
-(F-EXP-003), где нужен ровно тот же пакетный путь, но внутри одного процесса и
-без всякого стыка.
+**The cheap equivalent we take instead** is already almost assembled. A chunk must be not a part of a file but an independent FILE: N regions → N jobs → N finished files, each computed entirely by one process. This is the internal queue of F-EXP-002 plus the job shape of F-COL-038, and it requires no new mechanism at all. Speeding up a single file is sought not by dividing the encoder but by refusing to re-encode untouched chunks, that is, smart render (F-EXP-003), which needs exactly the same batch path, but inside one process and without any seam at all.
 
-**Условие переоткрытия — ровно одно.** Если для smart render когда-нибудь
-появится путь «пакет из файла → в муксер без декодирования», склейка кусков
-станет его частным случаем и будет стоить не отдельной подсистемы, а правила
-«граница задания обязана лечь на границу группы кадров». Тогда заметку открыть
-заново — но начинать её придётся с F-EXP-003, а не с фермы.
+**The condition for reopening is exactly one.** If smart render ever gets a path "packet from a file → into the muxer without decoding," then joining chunks becomes its special case and will cost not a separate subsystem but the rule that "a job boundary must fall on a group-of-pictures boundary." Then the note is to be reopened, but the work must start from F-EXP-003, not from the farm.
 
-Границы: очередь и параметры вывода — F-EXP-002; форма задания — F-COL-038;
-почему двух исполнителей нельзя считать одинаковыми — F-COL-039; почему
-«облачный рендер» нигде не оказался рендером — F-COL-041.
+Boundaries: the queue and output parameters are F-EXP-002; the job shape is F-COL-038; why the two executors cannot be considered identical is F-COL-039; why "cloud rendering" never turned out to be rendering is F-COL-041.
 
-## Источники
+## Sources
 
 - https://creativecow.net/forums/thread/split-composition-into-separate-render-items-at-ex/
-  — «Split composition into separate render items at exact frame end»,
-  секундная остановка на стыке двух склеенных MOV и ответ, отводящий
-  подозрение от границы кадра, 19.09.2016 (дата обращения 2026-09-08)
+  — "Split composition into separate render items at exact frame end," a one-second stop at the seam of two glued MOV files and a reply that steers suspicion away from the frame boundary, 19.09.2016 (access date 2026-09-08)
 - https://superrendersfarm.com/article/how-render-farms-work-technical-guide —
-  правило «последовательность кадров, а не видеофайл» (опубликовано
-  04.04.2026, обновлено 07.09.2026; дата обращения 2026-09-08)
+  the rule "a sequence of frames, not a video file" (published 04.04.2026, updated 07.09.2026; access date 2026-09-08)
 - https://community.adobe.com/t5/after-effects-discussions/workflow-advice-needed-rendering-4k-50fps-project-in-segments/m-p/14746398
-  — почему при делении на сегменты советуют перекрытие и выход
-  последовательностью кадров, июль 2024 (2026-09-08)
+  — why, when splitting into segments, overlap is advised and output as a frame sequence, July 2024 (2026-09-08)
 - https://forum.level1techs.com/t/davinci-resolve-remote-render-server-complete-guide-windows-linux/138807
-  — Remote Rendering отдаёт задание целиком одной машине, деления нет
-  (eposvox, 12.02.2019; 2026-09-08)
-- https://docs.opencue.io/docs/concepts/glossary/ — зависимости между слоями,
-  из которых собирается стадия сборки (2026-09-08)
-- `docs/features/_editors.md`, строка `flamenco-3`; `flamenco.blender.org` из
-  этого окружения отдаёт 403 — **[НЕ ПРОВЕРЕНО]** по первоисточнику: точная
-  форма задачи-сборщика.
-- Наш код проверен по дереву 08.09.2026:
-  `src/libs/kt-ffmpeg/src/muxer_impl.rs` (строки 15, 113, 210, 278, 305, 401),
+  — Remote Rendering hands the job whole to one machine, with no splitting (eposvox, 12.02.2019; 2026-09-08)
+- https://docs.opencue.io/docs/concepts/glossary/ — dependencies between layers, from which the assembly stage is built (2026-09-08)
+- `docs/features/_editors.md`, row `flamenco-3`; `flamenco.blender.org` returns 403 from this environment — **[NOT VERIFIED]** against the primary source: the exact shape of the assembler task.
+- Our code checked against the tree of 08.09.2026:
+  `src/libs/kt-ffmpeg/src/muxer_impl.rs` (lines 15, 113, 210, 278, 305, 401),
   `src/libs/kt-ffmpeg/src/source_impl.rs`,
-  `src/libs/kt-engine/src/export.rs`; соседние заметки как источник по нашим
-  же решениям: F-EXP-002 («очередь внутренняя, иначе инвариант 9»),
-  F-EXP-003 (smart render), F-RES-007 (границы детерминизма).
+  `src/libs/kt-engine/src/export.rs`; neighboring notes as a source for our own decisions: F-EXP-002 ("the queue is internal, otherwise invariant 9"),
+  F-EXP-003 (smart render), F-RES-007 (determinism boundaries).

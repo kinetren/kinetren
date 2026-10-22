@@ -23,15 +23,15 @@ FEATURES = ROOT / "docs" / "features"
 README = FEATURES / "README.md"
 EDITORS = FEATURES / "_editors.md"
 
-STATUSES = ["исследовано", "кандидат", "принято", "в-работе", "сделано",
-            "отвергнуто", "уже-есть"]
+STATUSES = ["researched", "candidate", "accepted", "in-progress", "done",
+            "rejected", "already-have"]
 PRIORITIES = ["A", "B", "C"]
 COSTS = ["S", "M", "L", "XL"]
-WE_HAVE = ["да", "нет", "частично"]
+WE_HAVE = ["yes", "no", "partial"]
 
-REQUIRED_SECTIONS = ["Суть", "У кого и как", "Фишка фишки", "Плюсы", "Минусы",
-                     "Что говорят пользователи", "Как ложится на Kinotrain",
-                     "Оценка", "Вердикт", "Источники"]
+REQUIRED_SECTIONS = ["Essence", "Who has it and how", "The trick behind it", "Pros", "Cons",
+                     "What users say", "How it fits Kinotrain",
+                     "Estimate", "Verdict", "Sources"]
 
 REQUIRED_FIELDS = ["id", "title", "status", "priority", "cost", "category",
                    "editors", "we_have", "crates", "invariants", "ui_rules",
@@ -45,7 +45,7 @@ STALE_DAYS = 548  # 18 месяцев
 # разведки, поэтому вердикт получает форму, а его обещание — адрес. Без этого
 # 33 заметки написали бы одно и то же, и волна не стоила бы прочтения.
 HELP_CAT = "help"
-VERDICT_SHAPES = ("ТЕСТ:", "ПРОВЕРКА:", "ОТВЕРГНУТО:", "УЖЕ-ЕСТЬ:", "ОТЛОЖЕНО:")
+VERDICT_SHAPES = ("TEST:", "CHECK:", "REJECTED:", "ALREADY-HAVE:", "DEFERRED:")
 VERDICT_TAIL_MIN = 60
 TEMPLATE = FEATURES / "_template.md"
 
@@ -63,13 +63,13 @@ SIGNAL_CAT = "resilience"
 # фишку надвое: что остаётся на ОДНОЙ машине — и чем именно платят за вторую половину.
 SERVICES = FEATURES / "_services.md"
 OFFLINE_CAT = "collab"
-OFFLINE_SHAPES = ("ОСТАЁТСЯ", "ВЫРОЖДАЕТСЯ", "НЕ ОСТАЁТСЯ")
+OFFLINE_SHAPES = ("REMAINS", "DEGENERATES", "DOES NOT REMAIN")
 OFFLINE_TAIL_MIN = 80  # считается БЕЗ якоря: иначе длинный путь сам добирает минимум
 # Закрытый словарь «чего у нас нет сверх сокета». Слова «сеть» здесь нет
 # СОЗНАТЕЛЬНО: её отсутствие — не находка.
-NET_COSTS = ("учётная запись", "общие часы", "журнал правок", "права доступа",
-             "проект-как-база", "хранилище между проектами", "внешний исполнитель",
-             "адрес материала")
+NET_COSTS = ("user account", "shared clock", "edit log", "access rights",
+             "project-as-database", "cross-project storage", "external executor",
+             "media address")
 ANCHOR_RE = re.compile(r"^(src/[\w./-]+?)(?::\d+(?:-\d+)?|::[\w:]+)?$")
 
 # Пятая волна (change bootstrap-specs-from-chronicles, 2026-09-21): проектные
@@ -78,7 +78,7 @@ ANCHOR_RE = re.compile(r"^(src/[\w./-]+?)(?::\d+(?:-\d+)?|::[\w:]+)?$")
 # ЗАМОРОЖЕННЫХ статусов раздел — ссылка плюс одна строка сути (≤ 5 непустых строк,
 # путей src/ не требуется). У живых статусов пути src/ по-прежнему обязательны.
 SPECS = ROOT / "openspec" / "specs"
-FROZEN_STATUSES = ("сделано", "принято", "уже-есть", "отвергнуто")
+FROZEN_STATUSES = ("done", "accepted", "already-have", "rejected")
 FROZEN_FITS_MAX_LINES = 5
 CAPABILITY_RE = re.compile(r"^CAPABILITY:\s*(.+)$", re.M)
 
@@ -163,7 +163,7 @@ def read_service_keys():
     """
     if not SERVICES.exists():
         return set()
-    m = re.search(r"## Реестр(.*?)(?=\n## |\Z)", SERVICES.read_text(encoding="utf-8"), re.S)
+    m = re.search(r"## Registry(.*?)(?=\n## |\Z)", SERVICES.read_text(encoding="utf-8"), re.S)
     return set(re.findall(r"^\|\s*`([a-z0-9.-]+)`\s*\|", m.group(1), re.M)) if m else set()
 
 
@@ -257,18 +257,18 @@ def check():
                 bad(f"раздел «{s}» пуст")
 
         # Три проверки против превращения базы в википедию.
-        gimmick = sec.get("Фишка фишки", "")
+        gimmick = sec.get("The trick behind it", "")
         if len(gimmick) < GIMMICK_MIN:
             bad(f"«Фишка фишки» короче {GIMMICK_MIN} символов ({len(gimmick)}) — "
                 "это пересказ, а не находка")
-        feedback = sec.get("Что говорят пользователи", "")
+        feedback = sec.get("What users say", "")
         has_quote = re.search(r"^>", feedback, re.M) and "http" in feedback
         # Честный пробел лучше выдуманной цитаты: площадка бывает недоступна.
-        gap = re.search(r"НЕТ ЦИТАТ:\s*(.{80,})", feedback, re.S)
+        gap = re.search(r"NO QUOTES:\s*(.{80,})", feedback, re.S)
         if not (has_quote or gap):
             bad("«Что говорят пользователи»: нужна дословная цитата (строка с >) "
                 "и ссылка, либо пометка «НЕТ ЦИТАТ:» с объяснением, что искали")
-        fits = sec.get("Как ложится на Kinotrain", "")
+        fits = sec.get("How it fits Kinotrain", "")
         status = front.get("status")
         cap_lines = CAPABILITY_RE.findall(fits)
         for cl in cap_lines:
@@ -291,14 +291,14 @@ def check():
             bad("«Как ложится на Kinotrain»: нет ни одного пути вида src/… — "
                 "раздел написан вслепую")
 
-        if status == "отвергнуто" and len(sec.get("Вердикт", "")) < 40:
+        if status == "rejected" and len(sec.get("Verdict", "")) < 40:
             bad("статус «отвергнуто» без внятной причины в «Вердикт»")
-        if status == "сделано":
+        if status == "done":
             if not front.get("point"):
                 bad("статус «сделано» без point")
             if not front.get("tests"):
                 bad("статус «сделано» без tests")
-        if status in ("кандидат", "принято"):
+        if status in ("candidate", "accepted"):
             try:
                 d = datetime.date.fromisoformat(str(front.get("checked")))
                 if (today - d).days > STALE_DAYS:
@@ -308,7 +308,7 @@ def check():
 
         # --- вторая волна: категория help/ (Р.39) --------------------------
         if len(parts) == 3 and parts[0] == HELP_CAT:
-            verdict = sec.get("Вердикт", "")
+            verdict = sec.get("Verdict", "")
             shaped = [l.strip() for l in verdict.splitlines()
                       if l.strip().startswith(VERDICT_SHAPES)]
             if not shaped:
@@ -350,7 +350,7 @@ def check():
                     bad(f"трекер «{t}» не объявлен в _trackers.md")
 
             sig = [l.strip() for l in feedback.splitlines()
-                   if l.strip().startswith("СИГНАЛ:")]
+                   if l.strip().startswith("SIGNAL:")]
             if not sig:
                 bad("объявлен trackers:, но в «Что говорят пользователи» нет строки "
                     "«СИГНАЛ:» — статистика без сравнения находкой не считается")
@@ -367,7 +367,7 @@ def check():
                     signal_filters.setdefault(f.group(1), []).append(str(rel))
 
             addr = [l.strip() for l in fits.splitlines()
-                    if l.strip().startswith("АДРЕС:")]
+                    if l.strip().startswith("ADDRESS:")]
             if not addr:
                 bad("объявлен trackers:, но в «Как ложится» нет строки «АДРЕС:» — "
                     "чужая боль не привязана к нашему коду")
@@ -386,7 +386,7 @@ def check():
                     bad(f"сервис «{sv}» не объявлен в _services.md")
 
             off = [l.strip() for l in fits.splitlines()
-                   if l.strip().startswith("БЕЗ СЕТИ:")]
+                   if l.strip().startswith("OFFLINE:")]
             if not off:
                 bad("«Как ложится»: нет строки «БЕЗ СЕТИ:» — «у нас нет сети, "
                     "поэтому не берём» выводом волны не считается")
@@ -416,13 +416,13 @@ def check():
                             "остаётся (или где видно, что не остаётся ничего)")
 
             price = [l.strip() for l in fits.splitlines()
-                     if l.strip().startswith("ЦЕНА СЕТИ:")]
+                     if l.strip().startswith("NETWORK COST:")]
             if not price:
                 bad("«Как ложится»: нет строки «ЦЕНА СЕТИ:» — не названо, за что "
                     "именно платят той стороной")
             else:
                 head = price[0]
-                inv = [int(x) for x in re.findall(r"инвариант\w*\s+(\d{1,2})", head)]
+                inv = [int(x) for x in re.findall(r"invariants?\s+(\d{1,2})", head)]
                 named = [c for c in NET_COSTS if c in head]
                 if not inv and not named:
                     bad("«ЦЕНА СЕТИ:» обязана назвать инвариант N либо механизм из "
@@ -505,7 +505,7 @@ def table():
                      str(path.relative_to(FEATURES))))
     rows.sort(key=lambda r: (PRIORITIES.index(r[0]) if r[0] in PRIORITIES else 9,
                              COSTS.index(r[1]) if r[1] in COSTS else 9, r[2]))
-    print("| ID | Фича | Статус | Приор. | Цена | У нас | Заметка |")
+    print("| ID | Feature | Status | Prio | Cost | We have | Note |")
     print("|---|---|---|---|---|---|---|")
     for pr, cost, fid, title, status, we, rel in rows:
         print(f"| {fid} | {title} | {status} | {pr} | {cost} | {we} | `{rel}` |")

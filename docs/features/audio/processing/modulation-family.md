@@ -1,16 +1,16 @@
 ---
 id: F-AUD-010
-title: Модуляции — chorus, flanger, phaser, tremolo, autopan, vibrato
-status: сделано
+title: Modulation — chorus, flanger, phaser, tremolo, autopan, vibrato
+status: done
 priority: B
 cost: M
 category: audio/processing
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: да
+we_have: yes
 crates: [kt-model, kt-fx, kt-engine, kt-app]
 invariants: [2, 3, 11]
 ui_rules: []
-round: "Р.47"
+round: "R.47"
 point: 328
 tests: [322, 325]
 depends_on: []
@@ -19,96 +19,70 @@ services: []
 checked: 2026-09-14
 ---
 
-# F-AUD-010 — Модуляции — chorus, flanger, phaser, tremolo, autopan, vibrato
+# F-AUD-010 — Modulation — chorus, flanger, phaser, tremolo, autopan, vibrato
 
-## Суть
+## Essence
 
-Семейство эффектов «LFO крутит параметр»: chorus/flanger/vibrato крутят
-задержку, phaser — фазовый сдвиг, tremolo — громкость, autopan — панораму.
-Монтажёру это «расширить бэк-вокал», «телефонно-водянистый голос»,
-«пульсация подложки в такт». Одна инфраструктура — шесть слышимо разных
-эффектов.
+A family of effects where "an LFO turns a parameter": chorus/flanger/vibrato turn the delay, phaser — the phase shift, tremolo — the volume, autopan — the panning. For the editor this means "widen the backing vocals", "a phone-like, watery voice", "a pad that pulses in time". One infrastructure — six audibly different effects.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| Vegas Pro | 2026.0 | Chorus / Flange/Wah-Wah / Vibrato / Amplitude Modulation | отдельные DirectX-эффекты; Amplitude Modulation покрывает tremolo и autopan одной ручкой стерео-фазы |
-| Adobe Premiere | 26 | Chorus/Flanger (один эффект), Phaser нет | Chorus/Flanger объединены пресетом; tremolo нет — люди рисуют громкость кейфреймами |
-| DaVinci Resolve | 21 | Chorus, Flanger, Phaser (Fairlight FX) | полный набор; у каждого LFO rate/depth и mix |
-| Final Cut Pro | 12.3 | Chorus, Phaser, Tremolo (Logic-набор) | пресеты Logic; продвинутые параметры в раскрываемой панели |
-| After Effects | 26 | Flange & Chorus (аудио-эффект) | один слойный эффект с voice separation/depth/rate |
+| Vegas Pro | 2026.0 | Chorus / Flange/Wah-Wah / Vibrato / Amplitude Modulation | separate DirectX effects; Amplitude Modulation covers tremolo and autopan with one stereo-phase knob |
+| Adobe Premiere | 26 | Chorus/Flanger (one effect), no Phaser | Chorus/Flanger are combined in a preset; no tremolo — people draw the volume with keyframes |
+| DaVinci Resolve | 21 | Chorus, Flanger, Phaser (Fairlight FX) | the full set; each has LFO rate/depth and mix |
+| Final Cut Pro | 12.3 | Chorus, Phaser, Tremolo (the Logic set) | Logic presets; advanced parameters in an expandable panel |
+| After Effects | 26 | Flange & Chorus (audio effect) | one layer effect with voice separation/depth/rate |
 
-**Вне ядра.** Механика «LFO как модулятор чего угодно» видна только в DAW.
+**Outside the core.** The mechanics of "an LFO as a modulator of anything" are visible only in DAWs.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Ableton Live | 12.4.5 | Chorus-Ensemble / Phaser-Flanger / Auto Pan | Phaser и Flanger — ОДИН прибор с переключателем: устройство у них общее (модулируемые allpass/задержка), различие — в диапазоне и обратной связи |
+| Ableton Live | 12.4.5 | Chorus-Ensemble / Phaser-Flanger / Auto Pan | Phaser and Flanger are ONE device with a switch: they share the engine (modulated allpass/delay), the difference is in the range and the feedback |
 
-## Фишка фишки
+## The trick behind it
 
-Главная тонкость семейства не в формулах, а во ВРЕМЕНИ: фаза LFO обязана
-быть функцией позиции, а не счётчиком «сколько сэмплов обработали». В
-рендер-движке с seek, пре-роллом и заворотом лупа накопительная фаза даёт
-разный звук при холодном рендере и после перемотки — то, что в DAW
-называют «free-running vs. transport-synced LFO», и все пятеро в
-рендер-путях используют синхронизированный вариант (экспорт двух прогонов
-байт-совпадает). Вторая деталь: у Ableton phaser и flanger — один прибор,
-потому что каскад allpass и модулируемая короткая задержка математически
-соседи; различие эффектов — диапазон времён и знак обратной связи. Третья:
-стерео у chorus/autopan делается не вторым LFO, а сдвигом фазы того же
-LFO на 90–180° в правом канале.
+The main subtlety of the family is not in the formulas but in TIME: the phase of the LFO must be a function of position, not a counter of "how many samples have been processed". In a render engine with seek, pre-roll and loop wrap-around, an accumulated phase gives a different sound when rendered cold and after a seek — what DAWs call "free-running vs. transport-synced LFO", and all five use the synced variant in their render paths (the export of two runs is byte-identical). The second detail: in Ableton, phaser and flanger are one device, because a cascade of allpass filters and a modulated short delay are mathematical neighbours; the difference between the effects is the range of times and the sign of the feedback. The third: stereo in chorus/autopan is made not with a second LFO, but by shifting the phase of the same LFO by 90–180° in the right channel.
 
-## Плюсы
+## Pros
 
-- Шесть эффектов на одной инфраструктуре (LFO + дробная задержка +
-  allpass): цена каждого следующего — только формула.
-- Синхронизированная фаза даёт детерминизм экспорта бесплатно — без
-  «прогрева» LFO пре-роллом.
-- Tremolo/autopan безпамятные: хвоста нет, seek тривиален.
+- Six effects on one infrastructure (LFO + fractional delay + allpass): the cost of each next one is only a formula.
+- Synced phase gives export determinism for free — without "warming up" the LFO with a pre-roll.
+- Tremolo/autopan are memoryless: there is no tail, and seek is trivial.
 
-## Минусы
+## Cons
 
-- Vibrato честный только 100 % wet (сухой + модулированная задержка =
-  chorus, а не vibrato) — параметр mix у vibrato отсутствует осознанно.
-- Фаза, привязанная к позиции клипа, скачет на завороте лупа вместе с
-  материалом — тремоло может «щёлкнуть» амплитудой на стыке (материал
-  тоже рестартует, так что это честно).
+- Vibrato is honest only at 100 % wet (dry + modulated delay = chorus, not vibrato) — the mix parameter is deliberately absent from vibrato.
+- A phase tied to the clip's position jumps at the loop wrap-around together with the material — tremolo may "click" in amplitude at the seam (the material also restarts, so this is honest).
 
-## Что говорят пользователи
+## What users say
 
-НЕТ ЦИТАТ: разведка велась по официальной документации и справке пяти
-редакторов из памяти модели (срез знаний 2026-01); дословный форумный
-фрагмент со ссылкой без живого доступа к треду не воспроизводим — факты
-таблицы проверяемы по руководствам вендоров из раздела «Источники».
+NO QUOTES: the research was done from the vendors' official documentation and help of the five editors, from the model's memory (knowledge cutoff 2026-01); a verbatim forum fragment with a link cannot be reproduced without live access to the thread — the facts in the table can be checked against the vendors' manuals from the "Sources" section.
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/audio-fx/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Хорус/флэнжер/тремоло — одно семейство с LFO, фаза LFO прибита к времени события.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/audio-fx/ — the contract is in `spec.md`, the "why" and the paths in the code are in `design.md`.
+Chorus/flanger/tremolo — one family with an LFO; the LFO phase is pinned to the event's time.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — шесть узлов на трёх примитивах |
-| Где основная работа | kt-fx (Lfo, allpass, узлы) |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | рендер куском == кусками; seek == холодный рендер; кривая rate ускоряет модуляцию; vibrato меняет девиацию частоты |
-| Зависит от | F-AUD-009 (DelayLine), узловой цепочки |
-| Ломает совместимость | нет |
+| Scope | M — six nodes on three primitives |
+| Where the main work is | kt-fx (Lfo, allpass, nodes) |
+| Project format | not touched |
+| Tests that will have to be written | render in pieces == render in pieces; seek == cold render; a curve of rate accelerates the modulation; vibrato changes the frequency deviation |
+| Depends on | F-AUD-009 (DelayLine), the node chain |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём все шесть в Р.47 одной волной: Chorus (голоса 1–3, стерео 90°),
-Flanger (feedback ±), Phaser (2–8 каскадов, свип 200–2000 Гц), Tremolo,
-AutoPan, Vibrato (100 % wet). Форма волны — только синус (пила/квадрат —
-не в этот заход). Фаза LFO — интеграл кривой частоты по позиции клипа:
-детерминизм экспорта без прогрева.
+Take all six in R.47 in one wave: Chorus (voices 1–3, stereo 90°), Flanger (feedback ±), Phaser (2–8 stages, sweep 200–2000 Hz), Tremolo, AutoPan, Vibrato (100 % wet). Waveform — sine only (sawtooth/square are not in this pass). The LFO phase is the integral of the frequency curve over the clip's position: export determinism without a warm-up.
 
-## Источники
+## Sources
 
-- https://www.blackmagicdesign.com/products/davinciresolve/fairlight (дата обращения 2026-09-14)
-- https://helpx.adobe.com/premiere/using/audio-effects-transitions.html (дата обращения 2026-09-14)
-- https://www.ableton.com/en/live-manual/ (дата обращения 2026-09-14)
+- https://www.blackmagicdesign.com/products/davinciresolve/fairlight (accessed 2026-09-14)
+- https://helpx.adobe.com/premiere/using/audio-effects-transitions.html (accessed 2026-09-14)
+- https://www.ableton.com/en/live-manual/ (accessed 2026-09-14)
 
-**Реализовано в Р.47** — docs/porting-notes.md пп.328 (t325); дальнейшая жизнь фичи там.
+**Implemented in R.47** — docs/porting-notes.md items 328 (t325); further life of the feature is there.

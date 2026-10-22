@@ -1,12 +1,12 @@
 ---
 id: F-SPD-002
-title: Ретайм-кривая — время как анимируемый параметр
-status: кандидат
+title: Retime curve — time as an animatable parameter
+status: candidate
 priority: B
 cost: L
 category: time/retiming
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-model, kt-fx, kt-engine, kt-app, kt-otio, kt-cache]
 invariants: [2, 4, 5, 7, 8, 11]
 ui_rules: [13, 17, 20]
@@ -17,474 +17,406 @@ depends_on: [F-SPD-001, F-SPD-003, F-AUT-001, F-AUT-002]
 checked: 2026-09-07
 ---
 
-# F-SPD-002 — Ретайм-кривая — время как анимируемый параметр
+# F-SPD-002 — Retime curve — time as an animatable parameter
 
-## Суть
+## Essence
 
-Не «скорость 50 %», а ГРАФИК: для каждого момента события известно, какой
-кадр материала на нём показать. По такому графику один клип внутри ОДНОГО
-события успевает замедлиться, разогнаться, замереть и пойти назад — без
-резки на куски. Рисуют график двумя способами: по вертикали либо время
-источника (кривая ПОЛОЖЕНИЯ), либо процент скорости (кривая СКОРОСТИ,
-которую редактор интегрирует). Вещь одна, ощущаются они противоположно, и
-что можно нарисовать в одной — в другой нельзя.
+Not "speed 50 %", but a GRAPH: for every moment of the event it is known which
+frame of the material to show on it. Along such a graph one clip inside ONE
+event manages to slow down, speed up, freeze and go backwards - without
+cutting it into pieces. The graph is drawn in two ways: vertically either the
+source time (the POSITION curve), or the speed percentage (the SPEED curve,
+which the editor integrates). It is one thing, but they feel opposite, and what
+can be drawn in one cannot be drawn in the other.
 
-Постоянная скорость события и модель ripple разобраны в F-SPD-001,
-достройка промежуточных кадров — в F-SPD-003; здесь только сама кривая.
+The constant speed of an event and the ripple model are covered in F-SPD-001,
+building intermediate frames - in F-SPD-003; here only the curve itself.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026 (справка 23) | **Velocity envelope** — огибающая СОБЫТИЯ (не дорожки) | кривая СКОРОСТИ, диапазон **−100 % … 0 % … +300 %**: 0 = стоп-кадр, минус = ход назад, всё на той же линии, без отдельных команд. Длина события не меняется — материал кончается раньше, и остаток «заполнится либо фризом последнего кадра, либо дополнительным материалом из файла». Безье нет: 6 пресетов интерполяции на СЕГМЕНТ (Linear/Fast/Slow/Smooth/Sharp/Hold) плюс рисование от руки кистью. Аудио огибающей не подчиняется вовсе |
-| Adobe Premiere | 26 | **Time Remapping → Speed** — фиксированный эффект клипа + «резинка» на событии | кривая СКОРОСТИ. Ключ **расщепляется**: «When the speed keyframe is dragged apart and spread out beyond one frame, the halves form a speed change transition»; между половинками серая зона и «a blue curve control» с безье-ручками. Ход назад — Ctrl/Cmd-drag ключа, официально **palindrome reverse**, в дорожке скорости появляются «left-pointing angle brackets». Стоп-кадр — Ctrl+Alt-drag, «hold keyframes» с вертикальными засечками. Вниз кривая доходит только до 1 %, не до 0 (по свидетельству пользователей, см. цитаты; в справке предела нет). Числа в Effect Controls — «for reference only. You cannot edit these values directly there». Длина клипа меняется; звук «remains at 100 % speed» и уезжает |
-| DaVinci Resolve | 21 (сверено с 20) | **Retime Controls** (Cmd+R) · **Retime Curve**: кривые **Retime Frame** и **Retime Speed** · Change Clip Speed | ТРИ интерфейса над ОДНОЙ моделью: «the control points of each of the speed curves have a 1:1 correspondence to the speed points that are exposed in the Retime controls», правки зеркалятся вживую, обе кривые можно показать разом. Retime Frame — положение (вертикаль — кадр источника, горизонталь — кадр таймлайна); Retime Speed — проценты, и там тянут САМ СЕГМЕНТ, а не точки. Безье-изинг ретайм-ключей общий с прочими параметрами (21). Freeze — две speed point и красные полосы; Reverse Segment — пункт меню |
-| Final Cut Pro | 12.3 | **Retime Editor** (Cmd+R) — цветная полоса над клипом | КРИВОЙ НЕТ ВООБЩЕ: только сегменты (оранжевый — медленнее, синий — быстрее, красный — hold), скорость тянется ручкой у правого края сегмента. Плавность — отдельный объект **Speed Transition**: «a shaded bar on either side of the border between speed segments», тримится за края, снимается галкой на конкретном стыке. Hold — Shift-H, 2 с по умолчанию. Назад — только целым клипом или пресетом Rewind 1×/2×/4×. Скорость не кейфреймится и в Video Animation её нет |
-| After Effects | 26 | **Time Remap** (Layer → Time → Enable Time Remapping, Ctrl+Alt+T) | кривая ПОЛОЖЕНИЯ: значение свойства — момент источника, «an upward angle indicates forward playback, while a downward angle indicates reverse playback». Включение сразу ставит два ключа — в начале и в конце слоя, «with vertical time values equal to their horizontal position on the timeline». Freeze — просто плоский участок. Тот же Graph Editor показывает и Value Graph, и Speed Graph одного свойства; Info-панель пишет мгновенную скорость в сек/сек. Слой можно тянуть за пределы длины исходника. Звук ретаймится ВМЕСТЕ с видео, с плывущим питчем |
+| VEGAS Pro | 2026 (help 23) | **Velocity envelope** - an envelope of the EVENT (not of the track) | a SPEED curve, range **−100 % … 0 % … +300 %**: 0 = freeze frame, minus = motion backwards, all on the same line, without separate commands. The event length does not change - the material ends earlier, and the remainder "is filled either by a freeze of the last frame or by additional material from the file". No Bezier: 6 interpolation presets per SEGMENT (Linear/Fast/Slow/Smooth/Sharp/Hold) plus freehand drawing with a brush. The audio does not follow the envelope at all |
+| Adobe Premiere | 26 | **Time Remapping → Speed** - a fixed clip effect + a "rubber band" on the event | a SPEED curve. The keyframe is **split**: "When the speed keyframe is dragged apart and spread out beyond one frame, the halves form a speed change transition"; between the halves a grey zone and "a blue curve control" with Bezier handles. Reverse - Ctrl/Cmd-drag of a keyframe, officially **palindrome reverse**, in the speed track "left-pointing angle brackets" appear. Freeze frame - Ctrl+Alt-drag, "hold keyframes" with vertical tick marks. Downward the curve reaches only 1 %, not 0 (according to user testimony, see quotes; the help has no limit). The numbers in Effect Controls are "for reference only. You cannot edit these values directly there". The clip length changes; the audio "remains at 100 % speed" and drifts away |
+| DaVinci Resolve | 21 (checked against 20) | **Retime Controls** (Cmd+R) · **Retime Curve**: the **Retime Frame** and **Retime Speed** curves · Change Clip Speed | THREE interfaces over ONE model: "the control points of each of the speed curves have a 1:1 correspondence to the speed points that are exposed in the Retime controls", edits are mirrored live, both curves can be shown at once. Retime Frame - position (vertical - source frame, horizontal - timeline frame); Retime Speed - percentages, and there you pull the SEGMENT itself, not the points. Bezier easing of retime keyframes is shared with the other parameters (21). Freeze - two speed points and red bars; Reverse Segment - a menu item |
+| Final Cut Pro | 12.3 | **Retime Editor** (Cmd+R) - a coloured bar above the clip | THERE IS NO CURVE AT ALL: only segments (orange - slower, blue - faster, red - hold), the speed is pulled with a handle at the right edge of the segment. Smoothness is a separate object, **Speed Transition**: "a shaded bar on either side of the border between speed segments", trimmed by its edges, removed with a tick at a specific joint. Hold - Shift-H, 2 s by default. Backwards - only as a whole clip or with the Rewind 1×/2×/4× preset. Speed is not keyframed and there is none in Video Animation |
+| After Effects | 26 | **Time Remap** (Layer → Time → Enable Time Remapping, Ctrl+Alt+T) | a POSITION curve: the value of the property is the moment of the source, "an upward angle indicates forward playback, while a downward angle indicates reverse playback". Enabling immediately sets two keys - at the start and at the end of the layer, "with vertical time values equal to their horizontal position on the timeline". Freeze - just a flat section. The same Graph Editor shows both the Value Graph and the Speed Graph of one property; the Info panel writes the instantaneous speed in units per second. The layer can be pulled beyond the length of the source. The audio is retimed TOGETHER with the video, with a drifting pitch |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Кривая положения и кривая скорости не равны в правах: на кривой
-скорости нельзя нарисовать ни ноль, ни минус.** Математически одна —
-производная другой, но авторить в них можно РАЗНОЕ, и это видно по трём
-независимым свидетельствам. Resolve, где обе кривые лежат над одним
-набором точек («1:1 correspondence») и обе редактируемые, прямо
-запрещает: «it's impossible to create reverse motion using the Retime
-Speed curve; you need to use either the Retime controls or the Retime
-Frame curve». Premiere, где кривая только скоростная, вниз доходит лишь до
-1 % (свидетельство пользователя, см. цитаты) — стоп-кадр приходится делать
-отдельным жестом (Ctrl+Alt-drag,
-«hold keyframes»), а ход назад — третьим (Ctrl-drag, «palindrome
-reverse»), и оба рисуют на резинке СВОИ значки, а не точки кривой. AE, где
-кривая позиционная, не имеет ни одной специальной команды: freeze — это
-«drag the current keyframe marker to a value equal to the previous
-keyframe value so that the graph line is flat», реверс — просто
-убывающий участок.
+**1. The position curve and the speed curve are not equal in rights: on the speed
+curve neither zero nor a negative value can be drawn.** Mathematically one is the
+derivative of the other, but different things can be authored in them, and this is
+visible from three independent pieces of evidence. Resolve, where both curves lie over
+one set of points ("1:1 correspondence") and both are editable, directly forbids it:
+"it's impossible to create reverse motion using the Retime Speed curve; you need to use
+either the Retime controls or the Retime Frame curve". Premiere, where the curve is only a
+speed curve, goes down only to 1 % (user testimony, see quotes) - a freeze frame has to be
+made with a separate gesture (Ctrl+Alt-drag, "hold keyframes"), and reverse with a third
+(Ctrl-drag, "palindrome reverse"), and both draw their OWN icons on the rubber band, not
+points of the curve. AE, where the curve is positional, has not a single special command:
+freeze is "drag the current keyframe marker to a value equal to the previous keyframe value
+so that the graph line is flat", reverse is simply a decreasing section.
 
-Причина геометрическая. Положение кадра — интеграл скорости; чтобы
-получить остановку, скорость должна быть ровно нулём, а функция «сколько
-материала съедено» — перестать строго возрастать, и обратная к ней
-(«в какой момент играется вот этот кадр») исчезает. Все, кто хранит
-скорость, упираются в это одинаково и решают одинаково — клампом чуть выше
-нуля плюс отдельным объектом «hold». У нас тот же кламп и по той же
-причине: `RATE_CLAMP = (0.25, 32.0)`, и в `seg_dt` записано «знаменатель ≥
-r0 ≥ RATE_CLAMP.0, нулём не бывает». Премьеровский 1 % — эмпирическое
-подтверждение, что это не наша частность.
+The reason is geometric. The frame position is the integral of the speed; to get a stop, the
+speed must be exactly zero, and the function "how much material is consumed" must stop
+strictly increasing, and its inverse ("at which moment this frame plays") disappears. Everyone
+who stores speed runs into this in the same way and decides the same way - by a clamp slightly
+above zero plus a separate "hold" object. We have the same clamp for the same reason:
+`RATE_CLAMP = (0.25, 32.0)`, and in `seg_dt` it is written "the denominator ≥
+r0 ≥ RATE_CLAMP.0, never zero". Premiere's 1 % is empirical confirmation that this is not
+our private matter.
 
-Побочно: в мануале Resolve 20 этот самый запрет напечатан с ошибкой —
-приписан «Retime **Position** curve» и отсылает к «Retime **Speed**
-curve», то есть абзац про Speed-кривую ссылается сам на себя; в 21
-исправлено. Из опечатки видно легаси-имя: нынешняя **Retime Frame** — это
-прежняя **Retime Position**, поэтому «position curve» в старых тредах и
-«Retime Frame» в новых — одно и то же.
+Incidentally: in the Resolve 20 manual this very prohibition is printed with an error -
+it is attributed to the "Retime **Position** curve" and refers to the "Retime **Speed**
+curve", that is, the paragraph about the Speed curve refers to itself; fixed in 21. The typo
+reveals the legacy name: the present **Retime Frame** is the former **Retime Position**, so
+"position curve" in old threads and "Retime Frame" in new ones are the same thing.
 
-**2. «Плавный разгон» — три разных объекта в трёх редакторах, и ни один не
-является ключом.** В Premiere ключ скорости физически расщепляется:
-«Speed keyframes can be split in half, acting as two keyframes for marking
-the beginning and end of a speed-change transition», и дальше «A gray area
+**2. "Smooth acceleration" is three different objects in three editors, and none of them is
+a keyframe.** In Premiere the speed keyframe is physically split:
+"Speed keyframes can be split in half, acting as two keyframes for marking
+the beginning and end of a speed-change transition", and further "A gray area
 appears between the halves of the speed keyframe, indicating the length of
-the speed transition… A blue curve control appears in the gray area» —
-ручка принадлежит ЗОНЕ, а не точке, и половинки создаются с разницей в
-один кадр. В Final Cut разгон вообще отдельная сущность: «A transition
+the speed transition… A blue curve control appears in the gray area" -
+the handle belongs to the ZONE, not to a point, and the halves are created with a
+one-frame difference. In Final Cut the acceleration is a separate entity altogether: "A transition
 appears as a shaded bar on either side of the border between speed
-segments» — те же две половинки, но с собственной длительностью, которую
-тримят за края. В Resolve 21 то же решено интерполяцией: «The Retime
-parameter controls in the Keyframe Editor have been enhanced to use the
-same bezier easing tools as the other parameters». У VEGAS безье нет
-совсем — только выбор одного из шести пресетов интерполяции на сегмент.
+segments" - the same two halves, but with their own duration, which is trimmed by the edges. In
+Resolve 21 the same is solved by interpolation: "The Retime parameter controls in the Keyframe Editor have been enhanced to use the
+same bezier easing tools as the other parameters". VEGAS has no Bezier at all - only the choice of one of six
+interpolation presets per segment.
 
-Следствие, ради которого это стоит записать: у КРИВОЙ СКОРОСТИ плавности
-нет бесплатно. Кусочно-линейная скорость даёт непрерывное, но негладкое
-положение кадра, и излом виден как рывок — гладкость приходится добывать
-второй сущностью (Premiere, FCP) либо безье поверх (Resolve). У кривой
-ПОЛОЖЕНИЯ обычная ручка ключа и есть разгон, ничего добавлять не надо.
+The consequence, for the sake of which this is worth recording: a SPEED CURVE does not have smoothness
+for free. A piecewise-linear speed gives a continuous but non-smooth frame position, and the kink is visible
+as a jerk - smoothness has to be obtained by a second entity (Premiere, FCP) or by Bezier on top (Resolve). On a
+POSITION curve the ordinary keyframe handle IS the acceleration, nothing needs to be added.
 
-**3. Проценты у AE и Premiere означают противоположное, и это не описка
-пользователя.** Один и тот же «50 %» в Time Stretch After Effects — это
-вдвое БЫСТРЕЕ (слой ужимается до половины), а в Speed/Duration Premiere —
-вдвое МЕДЛЕННЕЕ. Внутри одного пакета Adobe. Отсюда же вторая половина
-путаницы: у AE ретайм называется Time Remapping и по вертикали у него
-время, у Premiere тоже называется Time Remapping — но по вертикали
-скорость, и на форуме предложений Adobe прямо просят переименовать
-премьеровский в «Speed Curve or whatever».
+**3. Percentages in AE and Premiere mean the opposite, and this is not a user's slip.** The same "50 %" in
+After Effects' Time Stretch means TWICE as FAST (the layer is compressed to half), while in Premiere's
+Speed/Duration it means TWICE as SLOW. Inside one Adobe package. Hence the second half of the confusion:
+in AE the retime is called Time Remapping and its vertical axis is time; Premiere also calls it Time
+Remapping - but its vertical axis is speed, and in the Adobe suggestions forum people explicitly ask to
+rename Premiere's to "Speed Curve or whatever".
 
-**4. Звук: единственный, кто тянет его за кривой, — не NLE.** VEGAS пишет
-в справке «the event's audio will not play in sync with the video»,
-Premiere — «the audio remains linked to the video, but remains at 100 %
-speed», Resolve носит в одном pdf три взаимоисключающих утверждения
-(«audio … will be muted» / «can now play either pitch-corrected or
-un-pitch-corrected variable speed audio» / «always pitch corrected»), FCP
-тянет, но только постоянную скорость. Ретаймит звук по кривой ровно один —
-After Effects, и делает это тем же способом, что мы: «You can remap audio
-files to gradually decrease or increase the pitch, play audio backward, or
-create a warbled or scratchy sound», причём подраздел так и называется
-«Time-remap audio pitch» и советует держать скорость ниже 200 %, иначе
-визг. То есть варп с плывущим питчем — это не наша самодеятельность, а
-модель AE; вопрос сохранения питча отдельным DSP разобран в F-SPD-001.
+**4. Audio: the only one that drags it along the curve is not an NLE.** VEGAS writes in its help "the event's
+audio will not play in sync with the video", Premiere - "the audio remains linked to the video, but remains at
+100 % speed", Resolve carries three mutually exclusive statements in one pdf ("audio … will be muted" /
+"can now play either pitch-corrected or un-pitch-corrected variable speed audio" / "always pitch corrected"),
+FCP drags it, but only at constant speed. Exactly one retimes the audio along the curve - After Effects, and
+it does so in the same way as we do: "You can remap audio files to gradually decrease or increase the pitch,
+play audio backward, or create a warbled or scratchy sound", and the subsection is literally called
+"Time-remap audio pitch" and advises keeping the speed below 200 %, otherwise it squeals. So a warp with a
+drifting pitch is not our own amateur invention, but the AE model; the question of preserving pitch with a
+separate DSP is covered in F-SPD-001.
 
-## Плюсы
+## Pros
 
-- Скорость меняется ВНУТРИ события, поэтому «замедлить середину» не даёт
-  двух лишних склеек, которые потом надо двигать и синхронизировать вместе.
-- Кривая положения адресует КАДР, поэтому попадание держится: удар на 12-м
-  кадре остаётся на 12-м, что бы ни делали с кривой раньше по времени.
-  У кривой скорости то же попадание — результат всего интеграла.
-- На кривой положения freeze и реверс — обычные участки графика, а не
-  отдельные команды с отдельными значками: словарь интерфейса не растёт.
-- Кривая скорости зато показывает число, которое монтажёр называет вслух
-  («поставь 300 %»), — на позиционной его надо вычислять из наклона.
-- Одна модель под несколькими интерфейсами (Resolve) означает, что ручки
-  на клипе и точки на кривой — одно и то же, без конвертации и без вопроса
-  «а что главнее».
-- У FCP плавность — объект с длительностью, значит её тримят и снимают
-  поштучно, а не подбирают формой ключа.
+- Speed changes INSIDE the event, so "slowing down the middle" does not give two extra cuts that then have to
+  be moved and synchronised together.
+- The position curve addresses the FRAME, so the hit holds: a strike on frame 12 stays on frame 12, whatever is
+  done to the curve earlier in time. The speed curve has the same hit - the result of the whole integral.
+- On the position curve freeze and reverse are ordinary sections of the graph, not separate commands with separate
+  icons: the interface vocabulary does not grow.
+- The speed curve, on the other hand, shows the number that the editor calls out loud ("set 300 %") - on a positional
+  one it has to be computed from the slope.
+- One model under several interfaces (Resolve) means that the handles on the clip and the points on the curve are the
+  same thing, without conversion and without the question "which is the main one".
+- In FCP smoothness is an object with a duration, so it is trimmed and removed piece by piece, rather than picked by the
+  shape of a keyframe.
 
-## Минусы
+## Cons
 
-- Кривая скорости: правка РАННЕГО ключа сдвигает всё последующее, потому
-  что положение кадра — интеграл. Каждое «чуть быстрее в начале» отменяет
-  расстановку попаданий дальше по клипу.
-- И она же не дотягивается до нуля и не уходит в минус, поэтому стоп-кадр
-  и ход назад приходится вводить отдельными жестами и отдельными видами
-  ключей — у Premiere это три разных модификатора мыши на одной резинке.
-- Кривая положения: скорость нигде не написана числом, «ровно 50 %»
-  превращается в подбор наклона.
-- Расщеплённый ключ Premiere: сущностей вдвое больше, чем видно точек,
-  «удалить ключ» перестаёт быть однозначной операцией, а числа в Effect
-  Controls «for reference only» — редактировать их нельзя.
-- Модель длины делит редакторы на два лагеря (см. F-SPD-001), и у Premiere
-  третий, свой: клип не риплит и не перекрывает соседа, а «pushes remaining
-  frames into the tail of the lengthened clip» — кадры не пропадают, но и
-  не видны, пока не сделаешь дырку и не растянешь край.
-- Перенос между редакторами ретайм не переживает: OTIO как обменный формат
-  знает только `LinearTimeWarp{time_scalar}` и `FreezeFrame`, кривой в
-  схеме нет.
+- Speed curve: editing an EARLY key shifts everything after it, because the frame position is an integral. Every
+  "a bit faster at the start" cancels the placement of the hits further along the clip.
+- And the same curve does not reach zero and does not go into negative values, so a freeze frame and reverse have to be
+  entered with separate gestures and separate kinds of keys - in Premiere these are three different mouse modifiers on
+  one rubber band.
+- Position curve: the speed is nowhere written as a number, "exactly 50 %" turns into fitting a slope.
+- Premiere's split keyframe: there are twice as many entities as visible points, "delete the key" stops being an
+  unambiguous operation, and the numbers in Effect Controls are "for reference only" - they cannot be edited.
+- The length model divides editors into two camps (see F-SPD-001), and Premiere has a third, its own: the clip does not
+  ripple and does not overlap its neighbour, but "pushes remaining frames into the tail of the lengthened clip" - the frames
+  do not disappear, but are not visible either until you make a gap and stretch the edge.
+- Retime does not survive transfer between editors: OTIO, as an exchange format, knows only `LinearTimeWarp{time_scalar}`
+  and `FreezeFrame`; there is no curve in the schema.
 
-## Что говорят пользователи
+## What users say
 
-Ровно про две модели одной вещи — заявка в трекер предложений Adobe,
-название темы «Make Time Remapping less confusing»:
+Exactly about two models of one thing - a request in the Adobe suggestions tracker, the topic title "Make Time Remapping less confusing":
 
 > In After Effects, Time Remapping is quite logical: set a keyframe in the clip, and tell what frame should show at that time - everything in between keyframes is interpolated accordingly. But, unfortunately, Premiere Pro messes with this principle: it kind of allows to set 'Speed' keyframes, which are not actually editable.
 > — Jaydude-wb, Adobe Community, 06.08.2024, https://community.adobe.com/feature-requests-730/make-time-remapping-less-confusing-1327690
 
-Про то, что различие моделей чувствуется именно длиной события:
+About the fact that the difference between the models is felt precisely through the length of the event:
 
 > Unlike After Effects' Time Remapping, Premiere Pro's speed ramping constantly changes the clip length, making it frustrating to refine the timing of edits.
 > — michak19395341, Adobe Community, 28.02.2025, https://community.adobe.com/feature-requests-730/improve-speed-ramping-to-behave-more-like-after-effects-time-remapping-1328339
 
-Про то, что у скоростной резинки нет полноценного графика:
+About the fact that the speed rubber band has no full-fledged graph:
 
 > Creating speed ramps requires manipulating small split keyframes and limited Bezier handles directly inside the timeline clip. There is no proper scalable speed or value graph comparable to After Effects.
 > — Alex-Dawson, Adobe Community, 08.08.2026, https://community.adobe.com/feature-requests-730/improve-speed-ramping-to-behave-more-like-after-effects-time-remapping-1328339
 
-И про кламп у нуля — человек ожидал, что стоп-кадр это просто 0 % на
-кривой:
+And about the clamp at zero - a person expected that a freeze frame is simply 0 % on the curve:
 
 > I've never actually played with Premiere's time remapping via keyframes before. I assumed I'd be able to ramp down to 0% speed for a freeze, but it seems you can only go to 1%…
-> — Gareth R, Creative COW, форум Adobe Premiere Pro, 01.03.2024, https://creativecow.net/forums/thread/time-remapping-keyframes-only-go-down-to-1-not-0-is-that-right/
+> — Gareth R, Creative COW, Adobe Premiere Pro forum, 01.03.2024, https://creativecow.net/forums/thread/time-remapping-keyframes-only-go-down-to-1-not-0-is-that-right/
 
-«Хочу как в Resolve» от пользователя FCP, у которого кривой нет вовсе:
+"I want Resolve's way" from an FCP user, who has no curves at all:
 
 > I used davinci resolve the other day and absolutely love how the speed ramping works with retime curves. … I wish fcpx would have a similar implementation.
-> — Darren Martin, Creative COW, форум Apple Final Cut Pro, 13.09.2018, https://creativecow.net/forums/thread/speed-ramping-question/
+> — Darren Martin, Creative COW, Apple Final Cut Pro forum, 13.09.2018, https://creativecow.net/forums/thread/speed-ramping-question/
 
-Обратная жалоба — из AE, где звук за кривой всё-таки идёт, и это мешает:
+A counter-complaint - from AE, where the audio does follow the curve, and this gets in the way:
 
 > The issue is now that whenever the video slows down or speeds up the audio also slows down and speeds up along with it. I want to know how to keep the audio speed default without the time remap affecting it.
-> — Sachin Jadhav, Creative COW, форум Adobe After Effects, 06.04.2021, https://creativecow.net/forums/thread/audio-getting-affected-by-time-remapping/
+> — Sachin Jadhav, Creative COW, Adobe After Effects forum, 06.04.2021, https://creativecow.net/forums/thread/audio-getting-affected-by-time-remapping/
 
-И про фиксированное окно события в VEGAS (ответов в треде не было):
+And about the fixed window of the event in VEGAS (there were no answers in the thread):
 
 > I know using Envelope won't shorten or lengthen the duration of the selected chunk. What I don't understand at all why there's NO ANY hotkey (pressing down CTRL or something) to make this happen?
-> — Tobin Bell, Creative COW, форум VEGAS Pro, 26.10.2014, https://creativecow.net/forums/thread/velocity-envelope-mess/
+> — Tobin Bell, Creative COW, VEGAS Pro forum, 26.10.2014, https://creativecow.net/forums/thread/velocity-envelope-mess/
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-**Переменная скорость видео у нас РАБОТАЕТ с Р.37** (пп.246–251
-`docs/porting-notes.md`). Устройство:
+**Variable video speed has been WORKING in Kinotrain since R.37** (items 246–251 of
+`docs/porting-notes.md`). The design:
 
-- Кривая скорости — обычная автоматизация параметра `rate` эффекта
-  `SlowedReverb` (`src/libs/kt-model/src/project.rs`, спека
-  `rate: f64, 0.25, 32.0, 1.0, 0.01, Ratio, Smooth`). Отдельной сущности
-  «ретайм» в модели нет вовсе.
-- Карта времени — интеграл этой кривой: `S(tau) = ∫rate` по ВЫХОДНОМУ
-  прогрессу события, кусочно-квадратичная; обратная `T = S⁻¹` — корень
-  квадратного уравнения в форме citardauq (`src/libs/kt-fx/src/lib.rs`:
-  `source_progress`, `output_time_for_source`, `warp_material_ticks`).
-- Точка правки на видео ровно одна — `clip_material_pos`
-  (`src/libs/kt-engine/src/video.rs`), от неё сами следуют `layers_at`,
-  `wanted_frames`, префетч плеера, прогрев превью и экспорт (t247d
-  сравнивает множествами «что согрето» и «что прочитано»).
-- Скорость СИНХРОННА у link-пары A/V: `sync_warp_to_link_group` в мутациях
+- The speed curve is an ordinary automation of the `rate` parameter of the `SlowedReverb` effect
+  (`src/libs/kt-model/src/project.rs`, spec
+  `rate: f64, 0.25, 32.0, 1.0, 0.01, Ratio, Smooth`). There is no separate "retime" entity in the
+  model at all.
+- The time map is the integral of this curve: `S(tau) = ∫rate` over the OUTPUT progress of the event,
+  piecewise-quadratic; the inverse `T = S⁻¹` is the root of a quadratic equation in the citardauq form
+  (`src/libs/kt-fx/src/lib.rs`: `source_progress`, `output_time_for_source`, `warp_material_ticks`).
+- There is exactly one editing point for video - `clip_material_pos`
+  (`src/libs/kt-engine/src/video.rs`); `layers_at`, `wanted_frames`, the player's prefetch, the preview
+  warm-up and the export follow from it on their own (t247d compares as sets "what is warm" and "what is read").
+- The speed is SYNCHRONOUS for the A/V link pair: `sync_warp_to_link_group` in the mutations
   `SetFx`/`SetFxAuto`/`SetFxBypass` (`src/libs/kt-model/src/model.rs`).
-  Правило живёт в модели, а не в окне FX, потому что `SetFx` прилетает ещё
-  из вставки цепочки из буфера, из bake морфера, из ридера формата и из
-  kt-cli. По этому пункту мы стоим на модели AE, а не NLE: звук идёт за
-  кривой и питч плывёт.
-- Модель длины — как у VEGAS и AE: событие держит окно на таймлайне,
-  меняется только то, какой материал в него попал.
-- Достройка кадров: `FrameMode::Nearest` и `Blend` — предмет F-SPD-003.
-- Превью события считает ТУ ЖЕ карту: волноформа и филмстрип идут через
-  `kt_engine::ClipWarp::material_off` (`src/libs/kt-engine/src/lib.rs`),
-  карты кэшируются по `model_rev` в `warp_maps()`
-  (`src/apps/kt-app/src/app.rs`).
-- Домен ключа — тик материала, но нормированная ось ЛИНЕЙНА и не зависит от
-  самой кривой (Р.37 С1, п.246): `(k.t − source_in) / duration`.
-  Подробности домена — F-AUT-002.
+  The rule lives in the model, not in the FX window, because `SetFx` also arrives from inserting a chain
+  from the buffer, from the morpher bake, from the format reader and from kt-cli. On this point we stand on the
+  AE model, not on an NLE: the audio follows the curve and the pitch drifts.
+- Length model - as in VEGAS and AE: the event holds its window on the timeline, only which material
+  falls into it changes.
+- Building the frames: `FrameMode::Nearest` and `Blend` - the subject of F-SPD-003.
+- The preview of the event computes THE SAME map: the waveform and the filmstrip go through
+  `kt_engine::ClipWarp::material_off` (`src/libs/kt-engine/src/lib.rs`), the maps are cached by `model_rev` in
+  `warp_maps()` (`src/apps/kt-app/src/app.rs`).
+- The key domain is the material tick, but the normalised axis is LINEAR and does not depend on the curve itself
+  (R.37 C1, item 246): `(k.t − source_in) / duration`.
+  Details of the domain - F-AUT-002.
 
-### Чего не хватает
+### What is missing
 
-1. **Второго вида кривой нет.** У нас только скоростной, а «покажи этот
-   кадр в этот момент» не выражается. Resolve даёт оба над одними точками,
-   AE — позиционный, и именно на нём freeze и реверс бесплатны.
-2. **Нет остановки и нет хода назад внутри события.** `RATE_CLAMP =
-   (0.25, 32.0)`; стоп-кадра в проекте нет вообще (`grep -i freeze` по
-   `src/` даёт один тест лупа), реверс — только на всё событие целиком
-   (`ClipEvent.reversed`). У Premiere та же стена (1 %), но обойдена двумя
-   отдельными жестами; у VEGAS стены нет, потому что за огибающей не идёт
-   звук.
-3. **Плавного разгона нет.** Кривая `rate` кусочно ЛИНЕЙНА по построению:
-   `rate_at` принудительно зовёт `param_at(…, false)`, а
-   `AutoProfiles::from_curves` гасит `ease` именно для `"rate"` — интеграл
-   от smoothstep был бы четвёртой степени. Безье нет нигде (F-AUT-001),
-   расщеплённого ключа-пары нет и подавно; из шести вегасовских пресетов
-   сегмента у нас один — Linear.
-4. **Ретайм не виден на клипе.** Кривая правится только в окне FX
-   (`src/apps/kt-app/src/fx_editor.rs` + виджет
-   `src/apps/kt-app/src/automation.rs`); на событии линией по верху
-   рисуется лишь уровень (`opacity`/`gain_db`). У всех пяти ретайм живёт
-   ПРЯМО НА КЛИПЕ, у троих это основной способ.
-5. **Скорость показана отношением, а не процентом.** `ParamUnit::Ratio`
-   печатается без суффикса (`src/apps/kt-app/src/widgets.rs`): видно
-   «0.50» там, где во всех пяти написано «50 %». С учётом того, что даже
-   Adobe развела проценты в две стороны, единица измерения тут — не мелочь.
-6. **Чужая постоянная скорость из `.otio` не играется.** Импорт понимает
-   `LinearTimeWarp` только со скалярами −1 (это наш `reversed`) и 1; любой
-   другой уходит в passthrough с notice «time warp x{} is not rendered
-   (kept untouched)» (`src/libs/kt-otio/src/convert.rs`).
+1. **There is no second kind of curve.** We have only the speed one, and "show this frame at this moment" is not
+   expressed. Resolve gives both over the same points, AE - the positional one, and it is precisely on it that
+   freeze and reverse are free.
+2. **There is no stop and no reverse inside the event.** `RATE_CLAMP =
+   (0.25, 32.0)`; there is no freeze frame in the project at all (`grep -i freeze` over `src/` gives one loop test),
+   reverse - only for the whole event (`ClipEvent.reversed`). Premiere has the same wall (1 %), but it is bypassed by two
+   separate gestures; VEGAS has no wall, because the audio does not follow the envelope there.
+3. **There is no smooth acceleration.** The `rate` curve is piecewise LINEAR by construction:
+   `rate_at` forcibly calls `param_at(…, false)`, and `AutoProfiles::from_curves` switches off `ease` precisely for
+   `"rate"` - the integral of smoothstep would be of the fourth degree. There is no Bezier anywhere (F-AUT-001), a split
+   key-pair is even less present; of the six VEGAS presets per segment we have one - Linear.
+4. **The retime is not visible on the clip.** The curve is edited only in the FX window
+   (`src/apps/kt-app/src/fx_editor.rs` + the widget
+   `src/apps/kt-app/src/automation.rs`); on the event only the level (`opacity`/`gain_db`) is drawn as a line along
+   the top. In all five the retime lives RIGHT ON THE CLIP, and in three of them that is the main way.
+5. **The speed is shown as a ratio, not a percentage.** `ParamUnit::Ratio`
+   is printed without a suffix (`src/apps/kt-app/src/widgets.rs`): one sees
+   "0.50" where all five write "50 %". Given that even Adobe split percentages in two directions, the unit of measure here is no trifle.
+6. **A foreign constant speed from `.otio` does not play.** Import understands
+   `LinearTimeWarp` only with scalars −1 (this is our `reversed`) and 1; any other goes to passthrough with the notice "time warp x{} is not rendered
+   (kept untouched)" (`src/libs/kt-otio/src/convert.rs`).
 
-### Что мешает
+### What gets in the way
 
-**Круг «параметр задаёт домен собственных ключей».** Ключ автоматизации у
-нас адресован тиком МАТЕРИАЛА (`AutoKey.t`, F-AUT-002), а ретайм-кривая —
-это и есть отображение «таймлайн → материал». Ключ такой кривой,
-адресованный материалом, зависит от значения самой кривой: подвинул
-значение — уехала точка. Круг уже срабатывал: до Р.37 ось `rate` считалась
-через варп, и пользователь поймал ровно это (п.246).
+**The circle "a parameter sets the domain of its own keys".** The automation key in our code is addressed by the
+tick of the MATERIAL (`AutoKey.t`, F-AUT-002), while the retime curve IS the mapping "timeline → material". A key of such a
+curve, addressed by material, depends on the value of the curve itself: move the value - and the point has moved.
+The circle has already fired: before R.37 the `rate` axis was computed through the warp, and the user caught exactly this (item 246).
 
-**Кривая ПОЛОЖЕНИЯ от круга свободна по построению, и это, а не удобство,
-объясняет, почему Resolve авторит реверс именно на ней.** Её домен —
-время таймлайна, которое ни от какой кривой не зависит; материал стоит в
-ЗНАЧЕНИИ ключа. Мы выбрали противоположный разрыв: хранить скорость, домен
-ключа оставить материальным, а нормированную ось трактовать как выходную
-долю события — `(k.t − source_in)/duration`, где знаменатель есть
-номинальная длина, про варп не знающая. «Материальный» тик ключа у нас —
-переодетое смещение по телу события; при линейной карте они совпадают, и
-поэтому `AutoProfiles::from_curves` не поменялась ни на строку. Но у
-такого разрыва есть цена, и она видна в трёх местах:
+**The POSITION curve is free of the circle by construction, and this, not convenience, explains why Resolve authors reverse
+precisely on it.** Its domain is the timeline time, which does not depend on any curve; the material sits in the VALUE of the key.
+We chose the opposite break: to store the speed, leave the key's domain material, and treat the normalised axis as the output
+fraction of the event - `(k.t − source_in)/duration`, where the denominator is the nominal length, which knows nothing about the warp.
+The "material" tick of a key for us is a disguised offset along the body of the event; with a linear map they coincide, and that is why
+`AutoProfiles::from_curves` did not change by a single line. But this break has a price, and it is visible in three places:
 
-- **Есть ДВЕ «материальные позиции», и они расходятся.** Номинальная
-  (`kt_model::clip_material_at`, `src/libs/kt-model/src/project.rs`) —
-  домен автоматизации, ось окна FX, арифметика тримов; фактическая
-  (`clip_material_pos` с варпом, `src/libs/kt-engine/src/video.rs`) —
-  какой кадр декодировать. На варпнутом клипе `raw_trim_start`
-  (`src/libs/kt-model/src/ops.rs`) двигает `source_in` на Δ, тогда как
-  реально съедено `S(Δ)`, — трим берёт не тот кадр. Записано в Р.37 как
-  известный дефект вне объёма («`Split`/`TrimStart`/`punch_out_region`
-  считают `source_in` линейно и на варпнутом клипе врут»).
-- **Модель уже ВЕТИРУЕТ резку из-за круга.** Предикат
-  `FxInstance::warps_time` стоит ПЕРВЫМ в `windows_on`
-  (`src/libs/kt-model/src/project.rs`): морфер-слой не режет клип с
-  варпом, «линейный `source_in` куска указал бы не туда»
-  (`src/libs/kt-model/CLAUDE.md`). Полноценная ретайм-кривая расширит эту
-  зону запрета со слоя на все геометрические операции — либо заставит
-  научить их карте.
-- **Полоска прогретости на варпнутом клипе врёт.** `coverage_runs`
-  (`src/apps/kt-app/src/app.rs`) спрашивает кэш про диапазон
-  `source_in .. source_in + duration`, а run рисуется линейно:
+- **There are TWO "material positions", and they diverge.** The nominal one (`kt_model::clip_material_at`, `src/libs/kt-model/src/project.rs`) -
+  the automation domain, the axis of the FX window, the trim arithmetic; the actual one (`clip_material_pos` with the warp, `src/libs/kt-engine/src/video.rs`) -
+  which frame to decode. On a warped clip `raw_trim_start`
+  (`src/libs/kt-model/src/ops.rs`) moves `source_in` by Δ, whereas what is actually consumed is `S(Δ)` - the trim takes the wrong frame. Recorded in R.37 as
+  a known defect outside the scope ("`Split`/`TrimStart`/`punch_out_region`
+  count `source_in` linearly and lie on a warped clip").
+- **The model ALREADY VETOES a cut because of the circle.** The predicate
+  `FxInstance::warps_time` stands FIRST in `windows_on`
+  (`src/libs/kt-model/src/project.rs`): the morpher layer does not cut a clip with a warp, "the linear `source_in` of the piece would point to the wrong place"
+  (`src/libs/kt-model/CLAUDE.md`). A full-fledged retime curve will extend this zone of prohibition from the layer to all geometric operations - or will force them to learn the map.
+- **The coverage bar on a warped clip lies.** `coverage_runs`
+  (`src/apps/kt-app/src/app.rs`) asks the cache about the range
+  `source_in .. source_in + duration`, while the run is drawn linearly:
   `t0 = c.start + run.start − c.source_in`
-  (`src/apps/kt-app/src/timeline.rs`). На клипе 0.5× половина
-  запрошенного материала клипом вообще не читается, а прогретый участок
-  выводится в первую половину события вместо всего. Р.37 С4 перевёл на
-  карту варпа волноформу и филмстрип, а coverage — нет. Инварианту №4 это
-  не противоречит (правда о coverage по-прежнему одна, из
-  `BurstCache::coverage()`), но «пиксель → индекс бёрста» считается второй,
-  линейной формулой. **Найдено при написании этой заметки, в
-  `docs/porting-notes.md` не записано.**
+  (`src/apps/kt-app/src/timeline.rs`). On a 0.5× clip half of the requested material is not read by the clip at all, and the warm section
+  is projected into the first half of the event instead of all of it. R.37 C4 moved the waveform and the filmstrip to the warp map, but coverage - not. Invariant No. 4
+  is not contradicted by this (the truth about coverage is still one, from
+  `BurstCache::coverage()`), but "pixel → burst index" is computed by a second, linear
+  formula. **Found while writing this note; NOT recorded in `docs/porting-notes.md`.**
 
-**Ноль и минус упираются не в предусловие спан-ридера, а в другое.** Это
-важно уточнить, потому что вердикт F-SPD-001 называет причиной «ключи
-строго возрастают». На деле это предусловие выполняется по построению:
-`wanted_frames` (`src/libs/kt-engine/src/video.rs`) не решает интеграл в
-обратную сторону, а перебирает ВЫХОДНЫЕ кадры по сетке, гонит каждый через
-ту же карту и в конце делает `sort()` + `dedup()` — на выходе всегда
-строго возрастающий список, что бы ни творила карта. Настоящих стен три:
+**Zero and minus rest not on a precondition of the span reader, but on something else.** This is important to clarify, because the verdict of
+F-SPD-001 names the reason as "keys strictly increase". In fact this precondition holds by construction:
+`wanted_frames` (`src/libs/kt-engine/src/video.rs`) does not solve the integral in the reverse direction, but enumerates the OUTPUT frames on the grid, passes each through
+the same map and at the end performs `sort()` + `dedup()` - the output is always a strictly increasing list, whatever the map does. There are three real walls:
 
-1. **Обратимость.** `seg_dt` делит на `r0 + √(r0² + 2·b·ds)`, «знаменатель
-   ≥ r0 ≥ RATE_CLAMP.0, нулём не бывает»; при `rate = 0` функция `S`
-   перестаёт быть строго возрастающей и `T = S⁻¹` не определена, а на ней
-   стоит расчёт окна источника для аудио (`chain_source_window_ext`).
-2. **Последовательный курсор.** `ClipProcessor` потребляет источник СТРОГО
-   ПОСЛЕДОВАТЕЛЬНО через внутренний курсор rubato — «ни пропусков, ни
-   дублей» (`src/libs/kt-fx/CLAUDE.md`); ход назад означает курсор назад,
-   чего у ресемплера нет, а инвариант №2 запрещает трогать FX-состояние
-   откуда-либо, кроме аудио-render-потока.
-3. **Зеркало — свойство ВСЕГО окна, а не куска.** Реверс события сделан как
-   виртуальный форвард-поток: `fill_source`
-   (`src/libs/kt-engine/src/audio.rs`) читает реальный источник зеркально
-   внутри окна `[source_in, window_end)`, а цепочка FX видит обычный поток
-   вперёд и о реверсе не знает; поэтому реверс и варп composeятся как
-   «ВАРП, потом ЗЕРКАЛО» с якорем на потреблённом `used`. Кусочный реверс
-   этим приёмом не выражается — звук пришлось бы резать на сегменты со
-   своим окном у каждого, то есть заводить второй механизм рядом с
-   `reversed`. Транспорт назад (`playback_rate < 0`, `reverse_frames`,
-   тест 42) — тоже про весь таймлайн, а не про кусок клипа.
+1. **Invertibility.** `seg_dt` divides by `r0 + √(r0² + 2·b·ds)`, "the denominator
+   ≥ r0 ≥ RATE_CLAMP.0, never zero"; at `rate = 0` the function `S`
+   ceases to be strictly increasing and `T = S⁻¹` is undefined, while the calculation of the source window for audio (`chain_source_window_ext`) rests on it.
+2. **The sequential cursor.** `ClipProcessor` consumes the source STRICTLY
+   SEQUENTIALLY through the internal cursor of rubato - "no skips, no
+   duplicates" (`src/libs/kt-fx/CLAUDE.md`); reverse means the cursor going backwards,
+   which the resampler does not have, and invariant No. 2 forbids touching the FX state
+   from anywhere except the audio-render thread.
+3. **The mirror is a property of the WHOLE window, not of a piece.** The reverse of an event is done as a
+   virtual forward stream: `fill_source`
+   (`src/libs/kt-engine/src/audio.rs`) reads the real source mirrored
+   inside the window `[source_in, window_end)`, and the FX chain sees an ordinary forward stream and knows nothing about the reverse; therefore reverse and warp
+   compose as "WARP, then MIRROR" anchored on the consumed `used`. A piecewise reverse is not expressed by this technique - the audio would have to be cut into segments, each with its
+   own window, that is, a second mechanism would have to be introduced alongside `reversed`. Transport backwards (`playback_rate < 0`, `reverse_frames`,
+   test 42) is also about the whole timeline, not about a piece of the clip.
 
-**Что действительно больно для префетча — не немонотонность, а разгон.**
-На 32× один выходной кадр стоит 32 исходных, и декодер уходит в seek на
-каждом кадре — тот класс, на котором мы уже обжигались (п.14 р.14: «при
-fps проекта > fps источника он на каждом втором кадре уходил в seek +
-пересоздание декодера»). При живом воспроизведении это идёт через ОДИН
-MediaWorker на источник (инвариант №5) с дедлайном: не успел — тишина и
-последний кадр. На замедлении, наоборот, `dedup` работает в плюс (t247d:
-60 кадров вместо 120).
+**What really hurts for prefetch is not non-monotonicity, but acceleration.**
+At 32× one output frame costs 32 source frames, and the decoder goes into a seek on
+every frame - the class on which we have already been burned (item 14 of R.14: "when
+the project fps > the source fps it went into a seek + decoder re-creation on every
+second frame"). During live playback this goes through ONE MediaWorker per source
+(invariant No. 5) with a deadline: if it does not make it - silence and the last frame.
+On slow motion, on the contrary, `dedup` works in our favour (t247d:
+60 frames instead of 120).
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **№7** (код композиции один): смешивание кадров сделано в общем коде
-  плана, а не отдельно в CPU-ядре и в WGSL, и второй вид кривой обязан
-  оставаться пересчётом того же плана, а не вторым путём.
-- **№5** (один MediaWorker на источник) и **№4** (кэш — единственная правда
-  о coverage): разгон бьёт по очереди с дедлайном, а полоска прогретости на
-  варпе уже считается линейной формулой.
-- **№2** (FX-состояние только в аудио-потоке) и **№11** (аудио
-  байт-в-байт) — упор для нулевой и отрицательной скорости.
-- **№8** (скролл/зум не порождает декода) — соблюдён: ретайм меняет только
-  отображение «пиксель → ключ тумбы».
-- **UI-правило 17** («парные способы одного действия ведут себя
-  одинаково») — Resolve показывает цену трёх входов в одну модель: три
-  разных ответа на «поедут ли соседи». Если у нас появится и полоса на
-  клипе, и окно FX, это обязана быть одна кривая с одним поведением.
-  **13** («не тратить место впустую») — полоса ретайма на событии
-  конкурирует с линией уровня, которая там уже живёт. **20** («ничего не
-  отрастает само») — про модель длины: событие не должно менять длину само.
+- **No. 7** (one composition code): the blending of frames is done in the common plan code,
+  not separately in the CPU kernel and in WGSL, and a second kind of curve must remain a
+  recomputation of the same plan, not a second path.
+- **No. 5** (one MediaWorker per source) and **No. 4** (the cache is the single source of truth
+  about coverage): acceleration hits the queue with a deadline, and the warmth bar on a warp is
+  already computed by a linear formula.
+- **No. 2** (FX state only in the audio stream) and **No. 11** (audio byte-for-byte) - the
+  obstacle for zero and negative speed.
+- **No. 8** (scrolling/zooming does not generate decoding) - observed: the retime changes only the
+  display "pixel → thumbnail key".
+- **UI rule 17** ("paired ways of one action behave identically") - Resolve shows the price of three
+  inputs into one model: three different answers to "will the neighbours move?". If we get both a
+  strip on the clip and the FX window, it must be one curve with one behaviour.
+  **13** ("do not waste space") - the retime strip on the event competes with the level line that
+  already lives there. **20** ("nothing grows by itself") - about the length model: the event must not
+  change its length by itself.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | L — целый раунд; половина (кривая скорости с честным интегралом) уже сделана в Р.37 |
-| Где основная работа | kt-fx (карта: кламп, hold, ветка назад), kt-model (геометрия: трим/split/резка по карте), kt-app (полоса на событии + второй вид кривой в общем виджете) |
-| Формат проекта | расширение диапазона `rate` версии не требует; отдельная кривая ПОЛОЖЕНИЯ как второе хранилище — да, `KT_META_VERSION` 4 → 5 (`src/libs/kt-otio/src/meta.rs`). Обменного представления у кривой нет: OTIO знает только `LinearTimeWarp{time_scalar}` и `FreezeFrame` |
-| Тесты, которые придётся написать | трим варпнутого клипа берёт тот кадр (kt-model); coverage-полоска по карте варпа (kt-app `layout_tests.rs`); второй вид кривой = производная первого, правка в любом виде даёт одни и те же ключи (kt-app); hold не ломает `T = S⁻¹` (kt-fx `integral_map.rs`); сегмент назад ↔ звук (kt-engine `reverse` + `fx`); префетч == прочитанное на рывковой кривой (расширение t247d) |
-| Зависит от | F-SPD-001 (постоянная скорость и модель длины), F-SPD-003 (достройка кадров), F-AUT-001 (безье), F-AUT-002 (домен ключа) |
-| Ломает совместимость | нет, пока не заводится вторая кривая как отдельное хранилище |
+| Scope | L - a whole round; half (the speed curve with an honest integral) is already done in R.37 |
+| Where the main work is | kt-fx (the map: clamp, hold, the backward branch), kt-model (geometry: trim/split/cut by the map), kt-app (the strip on the event + a second kind of curve in the shared widget) |
+| Project format | extending the range of `rate` does not require a version bump; a separate POSITION curve as a second store - yes, `KT_META_VERSION` 4 → 5 (`src/libs/kt-otio/src/meta.rs`). The curve has no exchange representation: OTIO knows only `LinearTimeWarp{time_scalar}` and `FreezeFrame` |
+| Tests to be written | trimming a warped clip takes the right frame (kt-model); the coverage strip by the warp map (kt-app `layout_tests.rs`); a second kind of curve = the derivative of the first, an edit in either form gives the same keys (kt-app); hold does not break `T = S⁻¹` (kt-fx `integral_map.rs`); a reverse segment ↔ audio (kt-engine `reverse` + `fx`); prefetch == what was read on a jerky curve (extension of t247d) |
+| Depends on | F-SPD-001 (constant speed and the length model), F-SPD-003 (building frames), F-AUT-001 (Bezier), F-AUT-002 (key domain) |
+| Breaks compatibility | no, as long as a second curve is not introduced as a separate store |
 
-## Вердикт
+## Verdict
 
-Берём, но не целиком и не одним куском. Половина уже стоит с Р.37 — кривая
-скорости с честным интегралом, общая у пары A/V; ближайшая работа не новая
-фича, а ДОЛГИ этой половины: трим, split и резка слоем, считающие
-`source_in` линейно, и coverage-полоска, рисующая прогретый участок не
-туда.
+Take it, but not entirely and not in one piece. Half is already standing since R.37 - the speed
+curve with an honest integral, shared by the A/V pair; the nearest work is not a new feature but the
+DEBTS of this half: the trim, split and cut by the layer, which count `source_in` linearly, and the
+coverage strip, which draws the warm section in the wrong place.
 
-Второй кривой отдельной сущностью не заводить: у нас один виджет
-автоматизации и один домен ключа, а вторая кривая того же смысла — прямое
-нарушение п.17 чек-листа. Правильная цель — путь Resolve без его беды:
-ОДИН набор ключей и второй ВИД (кадр вместо процента) как пересчёт. Тогда
-не возникает вопроса «пересчитываются ли ключи при переключении», а
-асимметрия прав («ноль и минус рисуются только в виде положения»)
-перестаёт быть архитектурой и становится следствием клампа, который можно
-снимать сознательно и по частям.
+Do not introduce the second curve as a separate entity: we have one automation widget and one key
+domain, and a second curve of the same meaning is a direct violation of item 17 of the checklist. The right
+goal is the Resolve path without its problem: ONE set of keys and a second KIND (frame instead of percent) as a
+recomputation. Then the question "are the keys recomputed when switching?" does not arise, and the asymmetry of rights
+("zero and minus are drawn only in the form of position") ceases to be architecture and becomes a consequence of the
+clamp, which can be removed deliberately and in parts.
 
-Hold и участок назад — отдельный раунд с честной ценой: они ломают
-обратимость карты, последовательный курсор ресемплера и пооконное зеркало
-реверса, а не «требуют кнопки». Ссылка F-SPD-001 на предусловие
-«ключи строго возрастают» как на причину отказа неверна: оно выполняется
-по построению (`wanted_frames` сортирует и дедуплицирует), и решение
-должно опираться на три стены выше.
+Hold and a reverse section are a separate round with an honest price: they break the invertibility of the map, the
+sequential cursor of the resampler and the window-wise mirroring of the reverse, rather than "require a button". The
+reference of F-SPD-001 to the precondition "keys strictly increase" as the reason for refusal is wrong: it holds by
+construction (`wanted_frames` sorts and deduplicates), and the decision must rest on the three walls above.
 
-**Раунд состоялся — Р.57 (пп.453-454), по прямой претензии владельца.**
-Все три стены сняты одним решением: РАЗДЕЛИТЬ ДВЕ ОСИ — знаковую позицию
-P(τ) = ∫rate (адрес чтения) и накопленное потребление A(τ) = ∫|rate|
-(курсор ресемплера, монотонен по построению).
+**The round took place - R.57 (items 453-454), at the owner's direct demand.** All three walls were removed by one decision: to
+SPLIT TWO AXES - the signed position P(τ) = ∫rate (the read address) and the accumulated consumption A(τ) = ∫|rate|
+(the resampler's cursor, monotonic by construction).
 
-1. *Обратимость* — обращать надо было НЕ ТО. Инверсия нужна двум местам
-   (тримы растянутого клипа), и там спрашивают «докуда дотянуть край», то
-   есть A, а не P. `output_time_for_consumption` обратима всегда, кроме
-   плато нулевой скорости, где правило названо: левый край плато.
-2. *Последовательный курсор* — он и остался последовательным: рубато ест
-   виртуальный поток со скоростью |rate|, а направление живёт в АДРЕСЕ
-   (раны постоянного знака, внутри рана ±1 на кадр).
-3. *Пооконное зеркало* — «Реверс» остался свойством всего события и
-   применяется ПОВЕРХ карты, вокруг ПРОЛЁТА позиции (min P, max P).
+1. *Invertibility* - it was the WRONG thing that had to be inverted. The inverse is needed in two places (trims of a stretched clip), and there
+   they ask "how far can the edge be pulled", that is A, not P. `output_time_for_consumption` is always invertible, except for
+   a zero-speed plateau, where the rule is named: the left edge of the plateau.
+2. *The sequential cursor* - it remained sequential: the rubato eats a virtual stream at speed |rate|, and the direction lives in the ADDRESS
+   (runs of constant sign, within a run ±1 per frame).
+3. *The window-wise mirror* - "Reverse" remained a property of the whole event and is applied ON TOP OF the map, around the SPAN of the position (min P, max P).
 
-Ноль стал стоп-кадром (видео держит кадр, звук молчит, реверб
-дозванивает); диапазон −32…32. Байтовая неизменность прежних проектов
-доказана замороженным оракулом в тесте, а не надеждой. Осталось за
-рамками: второй ВИД кривой (кадр вместо процента) — он и был главной
-мыслью этой заметки и от знака не зависит.
+Zero became a freeze frame (the video holds the frame, the audio is silent, the reverb rings out); the range is −32…32. The byte-for-byte
+invariance of old projects is proven by a frozen oracle in a test, not by hope. Left outside the scope: the second KIND of curve (frame instead of
+percent) - it was the main idea of this note and does not depend on the sign.
 
-## Источники
+## Sources
 
-- Adobe After Effects CS5 Help (архивный официальный PDF, разделы
-  «Time-remapping», «Time-remap audio pitch», «In/Out points»):
+- Adobe After Effects CS5 Help (archived official PDF, sections
+  "Time-remapping", "Time-remap audio pitch", "In/Out points"):
   https://help.adobe.com/archive/en_US/aftereffects/cs5/after_effects_cs5_help.pdf
-  — два начальных ключа «with vertical time values equal to their
-  horizontal position on the timeline», «an upward angle indicates forward
-  playback, while a downward angle indicates reverse playback», freeze
-  плоским участком, ретайм звука с плывущим питчем (дата обращения
+  — two starting keys "with vertical time values equal to their
+  horizontal position on the timeline", "an upward angle indicates forward
+  playback, while a downward angle indicates reverse playback", freeze
+  as a flat section, retiming of audio with a drifting pitch (accessed
   2026-09-07)
-- Adobe Premiere Pro CS5 Help (архивный официальный PDF, разделы про Time
+- Adobe Premiere Pro CS5 Help (archived official PDF, sections on Time
   Remapping):
   https://help.adobe.com/archive/en_US/premierepro/cs5/premierepro_cs5_help.pdf
-  — расщепление ключа скорости и «blue curve control» в серой зоне,
-  «palindrome reverse» через Ctrl-drag, «hold keyframes» через
-  Ctrl+Alt-drag, «for reference only. You cannot edit these values directly
-  there», «pushes remaining frames into the tail of the lengthened clip»,
-  «the audio … remains at 100 % speed» (дата обращения 2026-09-07)
-- DaVinci Resolve 20 Reference Manual (гл. 51, стр. 1071–1082) и DaVinci
-  Resolve 21 Reference Manual (гл. 58, стр. 1254–1264; гл. 60, стр. 1305):
+  — splitting of the speed keyframe and "blue curve control" in the grey zone,
+  "palindrome reverse" via Ctrl-drag, "hold keyframes" via
+  Ctrl+Alt-drag, "for reference only. You cannot edit these values directly
+  there", "pushes remaining frames into the tail of the lengthened clip",
+  "the audio … remains at 100 % speed" (accessed 2026-09-07)
+- DaVinci Resolve 20 Reference Manual (ch. 51, pp. 1071–1082) and DaVinci
+  Resolve 21 Reference Manual (ch. 58, pp. 1254–1264; ch. 60, p. 1305):
   https://documents.blackmagicdesign.com/UserManuals/DaVinci_Resolve_20_Reference_Manual.pdf
-  и https://documents.blackmagicdesign.com/UserManuals/DaVinci_Resolve_21_Reference_Manual.pdf
-  — «1:1 correspondence», Retime Frame как кривая положения, запрет реверса
-  на Speed-кривой (в 20 напечатан с ошибкой, в 21 исправлен), безье-изинг
-  ретайм-ключей (дата обращения 2026-09-07)
-- https://www.blackmagicdesign.com/products/davinciresolve/edit — «graphical
-  curve editor for both frame position and playback speed» (дата обращения
+  and https://documents.blackmagicdesign.com/UserManuals/DaVinci_Resolve_21_Reference_Manual.pdf
+  — "1:1 correspondence", Retime Frame as the position curve, the prohibition of reverse
+  on the Speed curve (printed with an error in 20, corrected in 21), Bezier easing of
+  retime keyframes (accessed 2026-09-07)
+- https://www.blackmagicdesign.com/products/davinciresolve/edit — "graphical
+  curve editor for both frame position and playback speed" (accessed
   2026-09-07)
 - https://support.apple.com/guide/final-cut-pro/retime-clips-verf4d4b1b46/mac
-  и https://support.apple.com/guide/final-cut-pro/add-speed-transitions-ver41a2cd3ae/mac
-  — состав раздела ретайма FCP (ни одной статьи про кривую или кейфреймы
-  скорости) и «a shaded bar on either side of the border between speed
-  segments» (дата обращения 2026-09-07)
+  and https://support.apple.com/guide/final-cut-pro/add-speed-transitions-ver41a2cd3ae/mac
+  — the composition of the FCP retiming section (not a single article about a speed curve or speed keyframes) and "a shaded bar on either side of the border between speed
+  segments" (accessed 2026-09-07)
 - https://help.magix-hub.com/video/vegas/23/en/content/topics/7-edit/event_envelopes.htm
-  и https://help.magix-hub.com/video/vegas/23/en/content/topics/3-projects/hfr-clips.htm
-  — velocity как огибающая СОБЫТИЯ, −100…+300 %, «duration that is not
-  changed by velocity envelopes», «the event's audio will not play in sync
-  with the video» (дата обращения 2026-09-07)
-- Треды Adobe Community и Creative COW, перечисленные в разделе «Что
-  говорят пользователи» (даты там же); про инвертированные проценты AE и
-  Premiere — Navarro Parker, Creative COW, 25.10.2013,
+  and https://help.magix-hub.com/video/vegas/23/en/content/topics/3-projects/hfr-clips.htm
+  — velocity as an envelope of the EVENT, −100…+300 %, "duration that is not
+  changed by velocity envelopes", "the event's audio will not play in sync
+  with the video" (accessed 2026-09-07)
+- Adobe Community and Creative COW threads listed in the section "What users say"
+  (dates there); on the inverted percentages of AE and
+  Premiere - Navarro Parker, Creative COW, 25.10.2013,
   https://creativecow.net/forums/thread/converting-between-ae-premiere-speed-ramps/
 - https://opentimelineio.readthedocs.io/en/latest/tutorials/otio-serialized-schema.html
-  — `LinearTimeWarp.time_scalar`, `FreezeFrame`; кривой ретайма в схеме нет
-  (дата обращения 2026-09-07)
+  — `LinearTimeWarp.time_scalar`, `FreezeFrame`; there is no retime curve in the
+  schema (accessed 2026-09-07)
 
-**Оговорки.** `helpx.adobe.com` (текущая справка Premiere/AE) из этого
-окружения не открывается вовсе, поэтому официальные формулировки Adobe
-взяты из АРХИВНЫХ PDF редакции CS5/CS5.5 на `help.adobe.com`. Механика
-(расщепление ключа, палиндромный реверс, два ключа Time Remap, value/speed
-graph) подтверждается ветками сообщества 2024–2026 гг., процитированными
-выше, но названия пунктов меню и модификаторы мыши в версии 26 могли
-измениться — вход в Premiere 26 сегодня идёт через FX-бейдж клипа
-[НЕ ПРОВЕРЕНО по первоисточнику v26]. Поведение соседних клипов в v26
-тоже не подтверждено: справка CS5 говорит «обрезает хвост», а пользователь
-в апреле 2026 пишет «pushes everything on your timeline around».
-`forum.blackmagicdesign.com` закрыт WAF-челленджем целиком, поэтому по
-Resolve живого фидбека нет — только первоисточник. Справка VEGAS взята
-версии 23 (последняя онлайн; каталоги `/2026/` отдают 404), числовые
-пределы для 2026 могли сдвинуться.
+**Caveats.** `helpx.adobe.com` (the current Premiere/AE help) does not open at all from this
+environment, so Adobe's official wording is taken from the ARCHIVED PDFs of the CS5/CS5.5 editions on `help.adobe.com`. The mechanics
+(splitting of the key, palindrome reverse, the two Time Remap keys, value/speed
+graph) are confirmed by the community threads of 2024–2026 quoted
+above, but the names of menu items and mouse modifiers in version 26 may have
+changed - entry into Premiere 26 today goes through the FX badge of the clip
+[NOT VERIFIED against the v26 primary source]. The behaviour of neighbouring clips in v26
+is also not confirmed: the CS5 help says "trims the tail", while a user in April 2026 writes
+"pushes everything on your timeline around".
+`forum.blackmagicdesign.com` is wholly blocked by a WAF challenge, so there is no live feedback on
+Resolve - only the primary source. The VEGAS help is taken from
+version 23 (the latest online; the `/2026/` catalogues return 404), the numeric
+limits for 2026 may have shifted.

@@ -1,12 +1,12 @@
 ---
 id: F-MED-001
-title: Умные папки, метаданные и разметка материала
-status: кандидат
+title: Smart folders, metadata and media tagging
+status: candidate
 priority: B
 cost: L
 category: media/organization
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-model, kt-otio, kt-media, kt-ffmpeg, kt-app]
 invariants: [4, 5, 8]
 ui_rules: [13, 14, 17, 20]
@@ -17,234 +17,134 @@ depends_on: [F-AUT-002]
 checked: 2026-09-07
 ---
 
-# F-MED-001 — Умные папки, метаданные и разметка материала
+# F-MED-001 — Smart folders, metadata and media tagging
 
-## Суть
+## Essence
 
-Отснято два часа — это 300–400 файлов с именами вида `C0012.MP4`, и монтаж
-начинается задолго до первой склейки: надо за три секунды найти «тот дубль,
-где он смеётся». Слоёв организации пять, и они кладутся друг на друга:
-ручные папки → умные папки (сохранённый ЗАПРОС вместо списка) → метаданные
-(из камеры и свои) → рейтинги, флаги и цветовые метки → и последний,
-который довели до конца только у FCP, — разметка ЧАСТЕЙ клипа, когда
-ключевое слово, «избранное» и «брак» вешаются не на файл, а на диапазон
-внутри него.
+Two hours of footage is 300–400 files with names like `C0012.MP4`, and editing
+starts long before the first splice: you have to find "that take
+where he laughs" in three seconds. There are five layers of organization, and they lie on top of each other:
+manual folders → smart folders (a saved QUERY instead of a list) → metadata
+(from the camera and your own) → ratings, flags and color labels → and the last one,
+which was carried through to the end only by FCP — marking PARTS of a clip, when
+a keyword, "favorite" and "reject" are attached not to a file but to a range within it.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | Name | How it works |
 |---|---|---|---|
-| Final Cut Pro | 12.3 | Keywords / Keyword Collections / Smart Collections / Favorite–Reject | самая проработанная модель, и единственная, где разметка диапазонов доведена до конца. Справка Apple: «apply one or more keywords to a range within a clip, a whole clip, or a group of clips in an event»; размеченный кусок помечается прямо в браузере — «the clip or range is marked with a blue line in the browser», избранное зелёной линией, брак красной. Keyword Collection «contains pointers (aliases) to clips tagged with a specific keyword», и в ней виден ИМЕННО КУСОК. Smart Collection — сохранённое окно Filter: «Anytime a new item that matches the Smart Collection's search criteria is brought into the event or library, the new item is automatically added»; «Clips and projects that appear in Smart Collections are not duplicates». Критерии перечислены поимённо: «clip or project name, rating, media type, used media, excessive shake, keywords, the presence of people, format information, date, roles, and item type». Рейтинг бинарный (F — favorite, Delete — reject, U — снять), фильтр браузера — фиксированный набор All Clips / Hide Rejected / No Ratings or Keywords / Favorites / Rejected / Unused |
-| DaVinci Resolve | 21 | Bins / Smart Bins / Power Bins / Metadata Editor | «Bins are folders that you create in the media pool to organize footage» — руками; «Smart Bins use metadata to automatically organize your clips and are always kept up to date as new footage is added to your project» — запрос, а не список; «Power Bins are visible across all projects on your system» — уровень ВЫШЕ проекта. Метаданные первого класса: «over 200 different metadata parameters for every clip», «both file and frame level metadata», и «Metadata tags can even be used to change the display names for clips using scene, shot and take information». Разметка диапазонов есть наполовину: маркер с длительностью принимает ключевые слова, но умный бин отдаёт весь клип — см. «Фишка фишки», п.2 |
-| VEGAS Pro | 2026.0 | Project Media: bins, smart bins, media tags, Search Media Bins, колонка Use Count | бины есть и они виртуальные: «Bins are folders within projects that you can use to organize your media files», «They do not affect the way media is saved on your computer»; удаление из бина не трогает проект — «the file is removed from the bin, but remains part of your project». Часть бинов заводится сама: «Bins are automatically created for each media tag» и для каждого типа медиа. Есть диалог Search Media Bins («search the selected bin and all subbins»), а его результат сохраняется умным бином: «Smart bins are saved search results that are automatically updated when new media items match the search results». Рейтингов, флагов и цветовых меток на материале нет; разметки диапазонов внутри клипа нет; «Use Count» в режиме Details показывает, сколько раз материал взят на таймлайн, а в тумбнейл-режиме этого не видно |
-| Adobe Premiere | 26.x | Bins / Search Bins / метаданные XMP в колонках | папки-бины плюс **Search Bin** — бин, содержимым которого является сохранённый запрос. Ограничения известны из форума Adobe и подтверждены сотрудником Adobe: бины не являются результатами поиска — «Premiere Pro's search bins are designed to filter and display media assets based on metadata and labels, but they don't inherently support the inclusion of bins as search results» (Kevin J. Monahan Jr., Adobe, 08.10.2024); условий максимум два — «Two total search filter terms connected by AND and OR»; пользовательские XMP-свойства не ищутся — «User-added custom XMP properties are nowhere to be had»; поле Description не ищется вовсе (заявка открыта с 2016 г., см. цитаты). Разметки диапазонов внутри мастер-клипа нет: её роль играют субклипы и маркеры с комментариями |
-| After Effects | 26.x | панель Project: папки, строка поиска, цветовые метки | почти ничего: ручные папки, поиск по имени в шапке панели, цветовые метки у элементов. Умных папок нет, рейтингов нет, разметки диапазонов нет — материал он организует не для отбора, а для сборки композиции. [НЕ ПРОВЕРЕНО первоисточником: `helpx.adobe.com` из этого окружения не открывается; строка написана по вторичным упоминаниям и проверке живьём не проходила] |
+| Final Cut Pro | 12.3 | Keywords / Keyword Collections / Smart Collections / Favorite–Reject | the most elaborated model, and the only one where marking ranges is carried through to the end. Apple's help: "apply one or more keywords to a range within a clip, a whole clip, or a group of clips in an event"; a marked piece is flagged directly in the browser — "the clip or range is marked with a blue line in the browser", favorites with a green line, rejects with a red one. A Keyword Collection "contains pointers (aliases) to clips tagged with a specific keyword", and in it exactly the PIECE is visible. A Smart Collection is a saved Filter window: "Anytime a new item that matches the Smart Collection's search criteria is brought into the event or library, the new item is automatically added"; "Clips and projects that appear in Smart Collections are not duplicates". The criteria are listed by name: "clip or project name, rating, media type, used media, excessive shake, keywords, the presence of people, format information, date, roles, and item type". Rating is binary (F — favorite, Delete — reject, U — clear); the browser filter is a fixed set: All Clips / Hide Rejected / No Ratings or Keywords / Favorites / Rejected / Unused |
+| DaVinci Resolve | 21 | Bins / Smart Bins / Power Bins / Metadata Editor | "Bins are folders that you create in the media pool to organize footage" — by hand; "Smart Bins use metadata to automatically organize your clips and are always kept up to date as new footage is added to your project" — a query, not a list; "Power Bins are visible across all projects on your system" — a level ABOVE the project. First-class metadata: "over 200 different metadata parameters for every clip", "both file and frame level metadata", and "Metadata tags can even be used to change the display names for clips using scene, shot and take information". Range marking exists halfway: a marker with a duration accepts keywords, but a smart bin returns the whole clip — see "The trick behind it", item 2 |
+| VEGAS Pro | 2026.0 | Project Media: bins, smart bins, media tags, Search Media Bins, Use Count column | bins exist and they are virtual: "Bins are folders within projects that you can use to organize your media files", "They do not affect the way media is saved on your computer"; removing from a bin does not touch the project — "the file is removed from the bin, but remains part of your project". Some bins are created automatically: "Bins are automatically created for each media tag" and for each media type. There is a Search Media Bins dialog ("search the selected bin and all subbins"), and its result is saved as a smart bin: "Smart bins are saved search results that are automatically updated when new media items match the search results". There are no ratings, flags or color labels on the material; there is no range marking inside a clip; "Use Count" in Details mode shows how many times the material was taken onto the timeline, and in thumbnail mode this is not visible |
+| Adobe Premiere | 26.x | Bins / Search Bins / XMP metadata in columns | folder-bins plus a **Search Bin** — a bin whose content is a saved query. The limitations are known from the Adobe forum and confirmed by an Adobe employee: bins are not search results — "Premiere Pro's search bins are designed to filter and display media assets based on metadata and labels, but they don't inherently support the inclusion of bins as search results" (Kevin J. Monahan Jr., Adobe, 08.10.2024); at most two conditions — "Two total search filter terms connected by AND and OR"; user-added XMP properties are not searched — "User-added custom XMP properties are nowhere to be had"; the Description field is not searched at all (the request has been open since 2016, see the quotes). There is no range marking inside a master clip: its role is played by subclips and markers with comments |
+| After Effects | 26.x | Project panel: folders, search field, color labels | almost nothing: manual folders, search by name in the panel header, color labels on items. There are no smart folders, no ratings, no range marking — it organizes material not for selection but for assembling a composition. [NOT VERIFIED against the primary source: `helpx.adobe.com` does not open from this environment; the row is written from secondary mentions and was not checked live] |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Умная папка — это не папка, а СОХРАНЁННЫЙ ЗАПРОС, и вся её сущность
-сидит в одном поле, которое пользователь не видит.** Плюс очевиден: новый
-файл, подходящий под условие, попадает в неё сам, и «разойтись» с
-материалом она не может. Минусы — три, и все три вылезают только на
-практике. (а) В неё НЕЛЬЗЯ перетащить клип руками: перетаскивание не
-меняет условие, а членство определяется только условием, — и один
-клип-исключение («вот этот дубль всё-таки нужен») стоит переписывания
-правила, которое заденет остальных. (б) Потеря условия = потеря папки: в
-истории версий VEGAS стоит строка «Fixed a bug that prevented smart bins
-from preserving their Condition setting» — бин переживал сохранение, а его
-условие нет, и оставалась пустая коробка с именем. (в) Самое злое: условие
-сравнивает СТРОКИ, а не значения, и заметно это становится на двузначных
-номерах. В Resolve автоматические умные бины по сцене годами кладут клипы
-сцены 16 одновременно в бин «16» и в бин «6» (см. цитату), потому что
-«6» — подстрока «16»; на съёмке из девяти сцен всё работает, на пятнадцати
-разъезжается, и монтажёр обнаруживает это не в момент настройки, а через
-две недели. Ручной бин таким сломаться не умеет в принципе.
+**1. A smart bin is not a bin but a SAVED QUERY, and its whole essence sits in one field the user never sees.** The plus is obvious: a new file that matches the condition lands in it by itself, and it cannot "drift apart" from the material. The minuses are three, and all three surface only in practice. (a) You CANNOT drag a clip into it by hand: dragging does not change the condition, and membership is determined only by the condition, so a single exception clip ("this one take is needed after all") costs a rewrite of the rule, which affects the others. (b) Losing the condition means losing the bin: VEGAS's version history has the line "Fixed a bug that prevented smart bins from preserving their Condition setting". The bin survived saving, but its condition did not, and an empty box with a name remained. (c) The nastiest one: the condition compares STRINGS, not values, and this becomes noticeable with two-digit numbers. In Resolve, automatic smart bins by scene have for years put clips of scene 16 into both the bin "16" and the bin "6" (see the quote), because "6" is a substring of "16". On a shoot of nine scenes everything works, on fifteen it falls apart, and the editor discovers this not at setup time but two weeks later. A manual bin cannot break in this way at all.
 
-**2. Разметка диапазона стоит дёшево, а вот ПОКАЗ диапазона как отдельного
-объекта — дорого, и на этом Resolve застрял.** У FCP отмеченный кусок
-становится самостоятельным элементом браузера: «when we click **Yellow
+**2. Marking a range is cheap, but SHOWING a range as a separate object is expensive, and Resolve got stuck on this.** In FCP, a marked stretch becomes an independent element of the browser: "when we click **Yellow
 star** in the Library List, only that *portion* of the NASA Solar Flare
-clip that was marked when we created the Yellow star keyword is displayed»
-(Larry Jordan). Разметил пятнадцать кусков внутри часового интервью —
-получил пятнадцать элементов, которые ничего не копируют и не рвут связь с
-исходником. Resolve прошёл ровно полпути: маркер с длительностью
-ключевые слова принимает, но результат не тот — «The filtered clips in the
-Smart Bin show the entire clip and not just what is between the IN and OUT
-of the Marker Duration» (Scott Simmons, ProVideoCoalition, 07.12.2018), и
-за восемь лет это не поменялось: в 2024 г. монтажёры пишут, что
-автоматические keyword-бины «doesn't work with duration marker keywords».
-Вывод для нас важнее самого факта: ценность даёт не хранение диапазона, а
-то, что диапазон становится ПЕРВОКЛАССНЫМ элементом списка — со своим
-именем, своим постером и своей длиной. Это решение уровня модели, а не
-интерфейса.
+clip that was marked when we created the Yellow star keyword is displayed" (Larry Jordan). Mark fifteen stretches inside a one-hour interview and you get fifteen elements that copy nothing and do not break the link to the source. Resolve got exactly halfway: a marker with a duration accepts keywords, but the result is not right: "The filtered clips in the Smart Bin show the entire clip and not just what is between the IN and OUT of the Marker Duration" (Scott Simmons, ProVideoCoalition, 07.12.2018), and in eight years this has not changed: in 2024 editors write that automatic keyword bins "doesn't work with duration marker keywords". The conclusion for us matters more than the fact itself: the value lies not in storing a range, but in the range becoming a FIRST-CLASS element of the list, with its own name, its own poster and its own length. This is a decision at the level of the model, not the interface.
 
-**3. По имени файла не ищет никто, потому что имени файла нет.**
-Практический ответ отрасли — не «искать лучше», а «сделать имя
-осмысленным»: у Resolve «Metadata tags can even be used to change the
+**3. Nobody searches by file name, because there is no file name.** The practical answer of the industry is not "search better" but "make the name meaningful": in Resolve, "Metadata tags can even be used to change the
 display names for clips using scene, shot and take information. That means
-you'll never have to rename media files again!» — отображаемое имя
-ГЕНЕРИРУЕТСЯ из метаданных камеры. Второй ход — искать по тому, чего
-человек не вводил: у FCP среди критериев Filter стоят «used media»,
-«excessive shake» и «the presence of people», то есть результаты анализа.
-Третий, самый дешёвый, — колонка «Use Count» в VEGAS: вопрос «я это уже
-брал?» решается колонкой, а не памятью. И зеркальное следствие: там, где
-данных нет, ломается всё остальное. У Premiere Search Bin не ищет по полю
-Description с 2016 года, не видит цветовых меток и не умеет
-пользовательских XMP-свойств, а условий берёт максимум два — поэтому
-«умный бин» там регулярно оказывается пустым, и люди решают, что фича не
-работает вовсе (заголовок треда — «Search Bins do absolutely nothing»).
+you'll never have to rename media files again!" That is, the display name is GENERATED from the camera metadata. The second move is to search by what the person did not type: FCP's Filter criteria include "used media", "excessive shake" and "the presence of people", that is, analysis results. The third, the cheapest, is the "Use Count" column in VEGAS: the question "did I already take this?" is answered by a column, not by memory. And the mirror consequence: where there is no data, everything else breaks. Premiere's Search Bin has not searched the Description field since 2016, does not see colour labels and cannot handle user XMP properties, and takes at most two conditions, so a "smart bin" there regularly turns out empty, and people decide the feature does not work at all (the thread title is "Search Bins do absolutely nothing").
 
-**4. Брак ПРЯЧУТ, а не удаляют, и это делает отбор обратимым.** «Rejecting
+**4. Rejects are HIDDEN, not deleted, and this makes selection reversible.** "Rejecting
 a clip does NOT delete it, it simply allows you not to display in the Event
-Browser» (Larry Jordan), а справка Apple добавляет: «If you chose Hide
+Browser" (Larry Jordan), and Apple's help adds: "If you chose Hide
 Rejected from the Filter pop-up menu at the top of the browser, clips
-marked as rejected disappear from view». Отсюда способ работы, которого нет
-в остальных четырёх редакторах: монтаж ВЫЧИТАНИЕМ — идёшь по материалу с
-двумя клавишами (F и Delete), потом прячешь брак и смотришь, что осталось,
-причём брак ставится на КУСОК, а не на файл. Ровно та же логика, что у
-нашего ключа автоматизации за обрезкой (F-AUT-002): обрезка ключ прячет, а
-не удаляет, — и по той же причине это безопасно.
+marked as rejected disappear from view". Hence a way of working that does not exist in the other four editors: editing by SUBTRACTION. You go through the material with two keys (F and Delete), then hide the rejects and look at what is left, and the reject is applied to a PIECE, not to a file. It is exactly the same logic as our automation keyframe behind a trim (F-AUT-002): the trim hides the keyframe rather than deleting it, and for the same reason this is safe.
 
-## Плюсы
+## Pros
 
-Следствия устройства, а не оценки.
+Consequences of the design, not ratings.
 
-- Умная папка не требует дисциплины: правило «всё, что 4K и длиннее
-  минуты» действует и на файл, который импортируют завтра. Ручная папка
-  требует, чтобы кто-то не забыл положить.
-- Запрос компактнее списка: условие «rating = Favorite» в файле проекта —
-  одна строка, а эквивалентная ручная папка — сотня ссылок, которые надо
-  чинить при переименовании и переносе.
-- Разметка диапазонами убирает целый класс объектов: субклип, который
-  копирует ссылку и живёт своей жизнью, заменён меткой на исходнике.
-  Переразметил — все коллекции перестроились, удалять и пересоздавать
-  нечего. Монтажёры прямо формулируют это как цель: «tag and organize media
-  without creating additional subclips which get messy with large
-  projects».
-- Отбор вычитанием обратим: браковка прячет, а не режет, поэтому «покажи
-  всё» возвращает материал целиком, и решение недельной давности не
-  стоит ничего отменить.
-- Метаданные из камеры дают то, чего человек не введёт руками никогда:
-  таймкод, объектив, ISO, сцену и дубль на 400 файлах. Именно их наличие
-  решает, сработает ли автоматика: сгенерированное имя, умная папка по
-  сцене, синхронизация по таймкоду — это одна и та же зависимость.
-- Уровень выше проекта (Power Bins) снимает копирование логотипов и
-  подложек между проектами: ассет один, ссылок много.
-- Виртуальность бина снимает страх: у VEGAS «the file is removed from the
-  bin, but remains part of your project» — раскладывать материал по папкам
-  можно, ничего не потеряв.
+- A smart bin needs no discipline: the rule "everything that is 4K and longer than a minute" applies to a file imported tomorrow as well. A manual bin requires someone not to forget to put the file in.
+- A query is more compact than a list: the condition "rating = Favorite" in the project file is one line, while the equivalent manual bin is a hundred references that must be fixed on renaming and moving.
+- Marking by ranges removes a whole class of objects: a subclip, which copies the reference and lives its own life, is replaced by a mark on the source. Re-mark it and all collections rebuild; there is nothing to delete and recreate. Editors state this goal directly: "tag and organize media
+without creating additional subclips which get messy with large
+projects".
+- Selection by subtraction is reversible: rejection hides rather than cuts, so "show everything" returns the material whole, and a decision from a week ago costs nothing to undo.
+- Camera metadata gives what a person would never type by hand: timecode, lens, ISO, scene and take on 400 files. It is precisely their presence that decides whether the automation works: a generated name, a smart bin by scene and sync by timecode are one and the same dependency.
+- A level above the project (Power Bins) removes the copying of logos and backgrounds between projects: one asset, many references.
+- The virtuality of a bin removes the fear: in VEGAS, "the file is removed from the
+bin, but remains part of your project", so you can sort material into folders without losing anything.
 
-## Минусы
+## Cons
 
-Цена того же устройства.
+The price of the same design.
 
-- **Умную папку нельзя поправить рукой** — исключений в ней не бывает по
-  построению. На практике рядом заводят ручную папку, и организация
-  раздваивается.
-- **Сущность в одном поле.** Потеря условия = потеря папки (реальный
-  дефект VEGAS с `Condition setting`). У ручного бина такого единственного
-  места отказа нет.
-- **Условие сравнивает строки.** Подстрочное совпадение по номеру сцены в
-  Resolve живёт с 2023 г. как минимум по 2024-й и ломается ровно тогда,
-  когда проект вырос, — то есть в самый неудобный момент.
-- **Автообновление противоречит предсказуемости.** Содержимое умной папки
-  меняется без жеста пользователя — после импорта, после правки
-  метаданных, после анализа. Это ровно то, что наш чек-лист UI запрещает
-  правилом 20 («ничего не отрастает и не отрубается само»), и в чужих
-  редакторах регулярно читается как «куда делся клип». Крайний случай — у
-  Resolve автоматические keyword-бины нельзя удалить: «Seems that any
-  automatically generated keyword-based Smart Bins can't be removed from
-  the project», и пустая папка исчезает только после перезагрузки проекта.
-- **Умная папка плохо стыкуется с остальным интерфейсом.** В Resolve
-  команда «найти в медиапуле» прыгает в статический бин, из-за чего работа
-  внутри умного бина на 350 клипах разваливается — жалоба 2019 года
-  повторена слово в слово в 2024-м. Смарт-бины не видят Power Bins («Media
-  is not "in" a project until you add to a regular bin»), а сами Power Bins
-  не бэкапятся и у людей пропадают вместе с разложенным материалом.
-- **Разметка диапазонами не переносится.** Keyword ranges — понятие
-  библиотеки FCP; более того, она не переносится даже внутри FCP: «all of
-  the information pertaining to the organizing and classifying of media is
-  stored within the events and NOT the projects», поэтому логгер размечает,
-  а монтажёр эту разметку не получает. Самый ценный слой организации —
-  самый непортируемый.
-- **Ключевых слов становится слишком много.** У FCP быстрых слотов ровно
-  десять (⌃1…⌃9 плюс Favorite), дальше мышь, а поиск по списку из восьмидесяти
-  слов превращается в визуальный перебор; совет самого Ларри Джордана —
-  «Keep the total number of keywords small, so you don't overwhelm the
-  search box» — это по сути признание предела системы.
-- **Метаданные теряются на первом же перекодировании** (транскод в
-  «монтажный» кодек или прокси не самим редактором обычно не переносит теги
-  камеры), и умные папки по сцене/дублю молча пустеют: автоматика,
-  зависящая от данных, отказывает тихо. [НЕ ПРОВЕРЕНО: живых жалоб именно
-  на потерю метаданных при транскоде найти не удалось]
-- **Панель материала стареет хуже остального.** У VEGAS Project Media
-  сообщество прямо называет «an old and fragile area of code», из-за чего
-  простейший индикатор «уже использовано» не появляется годами; типовой
-  обходной путь — раскладывать материал папками в проводнике ОС, а не в
-  бинах редактора.
+- **A smart bin cannot be fixed by hand** — by construction it has no exceptions. In practice a manual bin is set up next to it, and the organisation splits in two.
+- **One field holds the whole essence.** Losing the condition means losing the bin (a real VEGAS defect with `Condition setting`). A manual bin has no such single point of failure.
+- **The condition compares strings.** Substring matching on scene numbers in Resolve has been alive since 2023 and lasts at least into 2024, and it breaks exactly when the project has grown, that is, at the most inconvenient moment.
+- **Auto-update contradicts predictability.** The contents of a smart bin change without any gesture from the user — after an import, after editing metadata, after analysis. This is exactly what our UI checklist forbids with rule 20 ("nothing grows or gets cut off by itself"), and in other editors it regularly reads as "where did my clip go?". The extreme case: in Resolve, automatic keyword bins cannot be deleted: "Seems that any automatically generated keyword-based Smart Bins can't be removed from the project", and an empty folder disappears only after the project is reloaded.
+- **A smart bin fits poorly with the rest of the interface.** In Resolve, the "find in media pool" command jumps to a static bin, so working inside a smart bin of 350 clips falls apart — a 2019 complaint repeated word for word in 2024. Smart bins do not see Power Bins ("Media is not "in" a project until you add to a regular bin"), and Power Bins themselves are not backed up, so people lose them together with the material sorted into them.
+- **Range markings do not transfer.** Keyword ranges are a concept of the FCP library; moreover, they do not even transfer within FCP: "all of the information pertaining to the organizing and classifying of media is stored within the events and NOT the projects", so the logger marks, but the editor does not receive those markings. The most valuable layer of organisation is the least portable.
+- **There are too many keywords.** FCP has exactly ten quick slots (⌃1…⌃9 plus Favorite); beyond that you reach for the mouse, and searching a list of eighty keywords turns into visual trawling. The advice of Larry Jordan himself — "Keep the total number of keywords small, so you don't overwhelm the
+search box" — is in effect an admission of the system's limit.
+- **Metadata is lost on the first re-encode** (a transcode to an "editing" codec or to proxies, usually not done by the editor, typically does not carry the camera tags over), and smart bins by scene/take silently empty out: automation that depends on data fails quietly. [NOT VERIFIED: no live complaints specifically about metadata loss on transcode could be found]
+- **The media panel ages worse than the rest.** For VEGAS Project Media, the community says outright that it is "an old and fragile area of code", which is why the simplest indicator "already used" has not appeared for years; the typical workaround is to sort material into folders in the OS Explorer rather than in the editor's bins.
 
-## Что говорят пользователи
+## What users say
 
-Умный бин ломается о подстроку, и это годами:
+A smart bin breaks on a substring, and has for years:
 
 > However, clips from scene 16 are both in the smart bin for scene 16 and
 > scene 6. And clips from scene 14 are both in the smart bin for scene 14
 > and scene 4, etc.
-> — DaniKamani (Daniel Kamangar), форум Blackmagic Design, 07.07.2023,
+> — DaniKamani (Daniel Kamangar), Blackmagic Design forum, 07.07.2023,
 > https://forum.blackmagicdesign.com/viewtopic.php?f=21&t=184257
 
 > The automatic smart bins are still not filtering correctly in v19.0.3 in
 > Windows 11, apparently. I'm still getting scene 9 and scene 19 in the
 > scene 9 bin.
-> — Rakesh Malik, там же, 20.10.2024
+> — Rakesh Malik, ibid., 20.10.2024
 
-Про Premiere и его Search Bins — восьмилетний открытый дефект «поиск не
-смотрит в поле Description»:
+On Premiere and its Search Bins — an eight-year-old open defect, "search does not look in the Description field":
 
 > I have children who have learned to walk, speak, run, read, play soccer,
 > and do math in less time than it has taken Adobe to fix this critical bug.
-> — Andy Adkins, форум Adobe, 09.01.2024,
+> — Andy Adkins, Adobe forum, 09.01.2024,
 > https://community.adobe.com/t5/premiere-pro-discussions/premiere-project-and-search-bins-not-searching-description-data/td-p/8737178
 
 > I created a Search Bin filtering for 'Label - Magenta'…nothing. I
 > literally saw a clip labled 'Magenta' direclty above the bin. What's going
 > on?
-> — channonp4602134, форум Adobe, 20.09.2025, тред «Search Bins do
-> absolutely nothing»,
+> — channonp4602134, Adobe forum, 20.09.2025, thread "Search Bins do
+> absolutely nothing",
 > https://community.adobe.com/t5/premiere-pro-discussions/search-bins-do-absolutely-nothing/td-p/15513405
 
-Почему поиск по имени файла бесполезен — прямыми словами пользователя
-VEGAS (это и есть ситуация «`C0012.MP4`»):
+Why search by file name is useless — in the words of a VEGAS user (this is exactly the situation of "`C0012.MP4`"):
 
 > While what @Jetdv posted can work, that means I would have to know the
 > "name" of everyone clip. And since I don't rename them (they are the file
 > names from the camera), that method doesn't work for me.
-> — arpierre, форум Boris FX (VEGAS Pro), 10.05.2026,
+> — arpierre, Boris FX forum (VEGAS Pro), 10.05.2026,
 > https://forum.borisfx.com/t/media-in-use-indicator-only-in-explorer-window-not-in-project-media/23315
 
-Там же — просьба о флагах и метках с прямой ссылкой на Resolve как
-эталон, и объяснение, почему панель материала не развивают:
+Same thread — a request for flags and markers with a direct reference to Resolve as the benchmark, and an explanation of why the media panel is not being developed:
 
 > I think Project Media can be more useful, besides of giving tag or
 > keywords, for easy search during ongoing project editing, also, giving
 > color tag or any other 'marker' or 'clue' (which Resolve call it as
 > 'flag').
-> — set_chung, там же, 11.05.2026
+> — set_chung, ibid., 11.05.2026
 
 > My memory of comments made was that whilst it would seem easy to do, it
 > actually isn't. That's because it involves an old and fragile area of
 > code.
-> — ericlnz, там же, 10.05.2026
+> — ericlnz, ibid., 10.05.2026
 
-Живой дефект поиска по бинам в VEGAS 2026 — ровно наше правило 14 («фича
-обязана работать ПОВТОРНО, а не один раз»), нарушенное у соседа:
+A live defect of bin search in VEGAS 2026 — exactly our rule 14 ("a feature must work REPEATEDLY, not once"), broken at a neighbour's:
 
 > Now however the search button is greyed out, so I can't run another
 > search without closing and reopening VP.
-> — wjauch, форум Boris FX, 20.04.2026,
+> — wjauch, Boris FX forum, 20.04.2026,
 > https://forum.borisfx.com/t/search-media-bins-only-allows-search-once/22660
 
-Про отбор вычитанием и про то, что у сильной стороны FCP есть свой потолок:
+On selection by subtraction, and on the ceiling that FCP's strong point has:
 
 > Rejecting a clip does NOT delete it, it simply allows you not to display
 > in the Event Browser.
@@ -253,248 +153,109 @@ VEGAS (это и есть ситуация «`C0012.MP4`»):
 
 > I just keyworded several hours of footage with about 80 keywords and now
 > I'm left searching for them visually in an alphabetical list.
-> — Brandon VanBeek, комментарий, 22.03.2019,
+> — Brandon VanBeek, comment, 22.03.2019,
 > https://larryjordan.com/articles/fcp-x-find-media-using-keywords/
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- **Медиа-бин** — `src/apps/kt-app/src/bin_panel.rs`: карточки 128×72 с
-  постером и отсмотром «возюканьем» (48 логических позиций скраба на файл),
-  мини-волноформа вместо чёрного квадрата у аудио, два режима раскладки
-  (сетка и свободные позиции, `bin_free`), автоскролл у кромок
-  (`bin_edge_scroll`), перетаскивание группой, вынос на таймлайн с запасом
-  `BIN_ESCAPE_SLACK`. Пункты 62, 99, 111, 118, 123 `docs/porting-notes.md`.
-- **Ручные группы** — `BinGroup { name, members, locked }` в
-  `src/libs/kt-model/src/project.rs`: рамка вокруг карточек, имя в разрыве
-  верхней линии, замок. Живут в `UiState`, то есть **вне undo**, и едут в
-  файл через `KtTimelineMeta.bin_groups` (`src/libs/kt-otio/src/meta.rs`).
-  Это ровно «ручная папка» — и ничего, кроме неё.
-- **Поиск по проекту (Ctrl+F)** — чистая `search_hits` в
-  `src/apps/kt-app/src/app.rs`: ищет по меткам, ИМЕНАМ ГРУПП бина, медиа
-  (имя файла и путь), дорожкам и клипам, ранжирование «точное совпадение →
-  начало строки → подстрока»; живые группы передаются параметром, иначе
-  поиск видел бы только сохранённые (пп.92, 99). Существенно для этой
-  заметки: и `HitKind::Media`, и `HitKind::Clip` берут строку ровно из
-  `Path::file_name(&m.path)` — **это и есть поиск по `C0012.MP4`**, тот
-  самый, который в отрасли считается бесполезным. Ни фильтров по типу, ни
-  сохранения запроса, ни поиска по чему-либо, кроме имён, нет.
-- **Две разметки ВРЕМЕНИ ТАЙМЛАЙНА.** `Marker { t, duration, name, color }`
-  — точечная и диапазонная метка; `MarkedArea { name, start, duration,
-  lanes, color }` — именованная область «время × дорожки», причём `lanes`
-  хранит СЕМАНТИЧЕСКИЕ ключи, а не номера строк (Р.35 п.2). Обе — в
-  `src/libs/kt-model/src/project.rs`.
-- **Sidecar-индекс** — `src/libs/kt-media/src/index.rs`: таблицы `media`
-  (path, size, mtime, xxhash), `packet_index`, `audio_peaks`, `thumbnails`.
-  Единственное место, где вообще живёт что-то «про файл», и оно объявлено
-  КЭШЕМ: битая БД молча пересоздаётся.
-- **Заглушки и возврат источника** —
-  `src/libs/kt-media/src/placeholder.rs`, множество `offline` в бине
-  (пп.206–209): отсутствующий исходник виден, но это про доступность, а не
-  про организацию.
+- **Media bin** — `src/apps/kt-app/src/bin_panel.rs`: 128×72 cards with a poster and scrubbing "by dragging" (48 logical scrub positions per file), a mini waveform instead of a black square for audio, two layout modes (grid and free positions, `bin_free`), auto-scroll at the edges (`bin_edge_scroll`), group dragging, and dragging onto the timeline with the margin `BIN_ESCAPE_SLACK`. Items 62, 99, 111, 118, 123 of `docs/porting-notes.md`.
+- **Manual groups** — `BinGroup { name, members, locked }` in `src/libs/kt-model/src/project.rs`: a frame around the cards, the name in a gap in the top line, a lock. They live in `UiState`, that is, **outside undo**, and travel into the file via `KtTimelineMeta.bin_groups` (`src/libs/kt-otio/src/meta.rs`). This is exactly a "manual folder" — and nothing beyond it.
+- **Project search (Ctrl+F)** — the pure `search_hits` in `src/apps/kt-app/src/app.rs`: it searches labels, the NAMES OF BIN GROUPS, media (file name and path), tracks and clips, ranking "exact match → start of string → substring"; live groups are passed as a parameter, otherwise the search would see only the saved ones (items 92, 99). Essential for this note: both `HitKind::Media` and `HitKind::Clip` take the string exactly from `Path::file_name(&m.path)` — **this is the search by `C0012.MP4`**, the very one the industry considers useless. There are no filters by type, no saving of a query, and no search by anything other than names.
+- **Two markings of TIMELINE TIME.** `Marker { t, duration, name, color }` — a point and a range marker; `MarkedArea { name, start, duration, lanes, color }` — a named area "time × tracks", where `lanes` stores SEMANTIC keys, not row numbers (R.35 item 2). Both are in `src/libs/kt-model/src/project.rs`.
+- **Sidecar index** — `src/libs/kt-media/src/index.rs`: the tables `media` (path, size, mtime, xxhash), `packet_index`, `audio_peaks`, `thumbnails`. The only place where anything "about the file" lives at all, and it is declared a CACHE: a broken DB is silently recreated.
+- **Placeholders and source return** — `src/libs/kt-media/src/placeholder.rs`, the set `offline` in the bin (items 206–209): a missing source is visible, but this is about availability, not organisation.
 
-### Чего не хватает
+### What is missing
 
-- **Метаданных нет вообще, начиная с самого низа.** `MediaRef` — это
-  `{ id, path }` и больше ничего (`src/libs/kt-model/src/project.rs`),
-  команда `AddMedia { id, path }` в `src/libs/kt-model/src/model.rs` тоже.
-  Выше `MediaInfo` (`src/libs/kt-media/src/lib.rs`) несёт
-  `duration/has_video/has_audio/fps/width/height` — и всё; `kt_ffmpeg::Probe`
-  (`src/libs/kt-ffmpeg/src/lib.rs`) — ровно те же шесть полей. **Функция
-  `av_dict_get` в биндингах не объявлена ни разу** (`av_dict_set` есть — им
-  задают опции энкодера и муксера): контейнерные и потоковые теги мы
-  физически не читаем. Ни таймкода, ни `creation_time`, ни сцены и дубля,
-  ни объектива. Показательная деталь: в схеме sidecar-БД колонка
-  `probe_json TEXT NOT NULL DEFAULT ''` объявлена — и **не пишется и не
-  читается ни одной строкой кода**. Место под метаданные разметили и не
-  заняли.
-- **Рейтингов, флагов и цветовых меток на материале нет.** Цвет есть у
-  `Marker` и `MarkedArea` (для round-trip чужого OTIO), у медиа — нет.
-- **Умных папок нет.** `BinGroup` — список `members`, места под условие в
-  нём не предусмотрено.
-- **Нет ответа на вопрос «я это уже брал?».** Аналога колонки Use Count у
-  нас нет, хотя данные лежат под рукой: `Project.clips` знает `media` у
-  каждого клипа. Это самая дешёвая часть всей заметки.
-- **Разметки ВНУТРИ материала нет, и это другой домен, а не недоделка.**
-  Наши метки и области адресуют ВРЕМЯ ТАЙМЛАЙНА: `Marker.t` и
-  `MarkedArea.start` — тики монтажа, `MarkedArea.lanes` — дорожки. Keyword
-  range у FCP адресует ТИК МАТЕРИАЛА: он переживает обрезку, разрез,
-  перенос и реверс события, потому что про событие не знает вовсе, и один
-  и тот же размеченный кусок виден из всех проектов, где есть этот файл.
-  Это тот же выбор домена, что уже сделан и описан для автоматизации в
-  F-AUT-002 (`AutoKey.t` = тик материала), — только там он сделан ВНУТРИ
-  клипа, а здесь пришлось бы делать его для сущности, у которой клипа нет:
-  разметка принадлежит ФАЙЛУ, а не событию. Наш `Marker` переехать в этот
-  домен не может — он лежит в `Project.markers` и измеряется таймлайном.
-  Практический критерий готовности берём у Resolve, который на этом
-  застрял: мало хранить диапазон — он обязан стать отдельной КАРТОЧКОЙ в
-  бине, со своим именем, постером и длиной.
-- **Экспорт метаданных наружу тоже пуст.** При записи `.otio` наш
-  собственный материал получает `ExternalReference { available_range: None,
-  metadata: {} }` (`src/libs/kt-otio/src/convert.rs`) — чужой редактор
-  видит только путь. Чужие метаданные мы при этом НЕ теряем: `meta_foreign`
-  и `media_refs` возятся passthrough целиком, а стартовый таймкод материала
-  вычитается на чтении и возвращается на записи (t180,
-  `src/libs/kt-otio/tests/convert.rs`). То есть таймкод источника проходит
-  сквозь нас, но в модель не попадает и пользователю не виден — готовые
-  данные пролетают мимо.
+- **There is no metadata at all, from the very bottom.** `MediaRef` is `{ id, path }` and nothing more (`src/libs/kt-model/src/project.rs`), and the command `AddMedia { id, path }` in `src/libs/kt-model/src/model.rs` is the same. Above it, `MediaInfo` (`src/libs/kt-media/src/lib.rs`) carries `duration/has_video/has_audio/fps/width/height` — and that is all; `kt_ffmpeg::Probe` (`src/libs/kt-ffmpeg/src/lib.rs`) has exactly the same six fields. **The function `av_dict_get` is not declared anywhere in the bindings** (`av_dict_set` is there — it is used to set encoder and muxer options): container and stream tags are physically never read by us. No timecode, no `creation_time`, no scene and take, no lens. A telling detail: in the schema of the sidecar DB the column `probe_json TEXT NOT NULL DEFAULT ''` is declared — and **it is not written or read by a single line of code**. Room for metadata was marked out and never occupied.
+- **There are no ratings, flags or colour labels on material.** Colour exists on `Marker` and `MarkedArea` (for the round-trip of foreign OTIO), on media it does not.
+- **There are no smart bins.** `BinGroup` is a list of `members`, and no place for a condition is provided in it.
+- **There is no answer to the question "did I already take this?"** We have no analogue of the Use Count column, although the data lies at hand: `Project.clips` knows the `media` of every clip. This is the cheapest part of the whole note.
+- **There is no marking INSIDE material, and this is a different domain, not an unfinished job.** Our marks and areas address TIMELINE TIME: `Marker.t` and `MarkedArea.start` are edit ticks, `MarkedArea.lanes` are tracks. FCP's keyword range addresses the MATERIAL TICK: it survives trimming, splitting, moving and reversing the event, because it knows nothing of the event at all, and one and the same marked piece is visible from all projects where that file is present. This is the same choice of domain that is already made and described for automation in F-AUT-002 (`AutoKey.t` = material tick) — only there it is made INSIDE the clip, whereas here it would have to be made for an entity that has no clip: the marking belongs to the FILE, not to the event. Our `Marker` cannot move into this domain — it lives in `Project.markers` and is measured by the timeline. The practical readiness criterion we take from Resolve, which got stuck on this: it is not enough to store a range — it must become a separate CARD in the bin, with its own name, poster and length.
+- **Export of metadata outward is also empty.** When writing `.otio`, our own material receives `ExternalReference { available_range: None, metadata: {} }` (`src/libs/kt-otio/src/convert.rs`) — a foreign editor sees only the path. Foreign metadata, however, we do NOT lose: `meta_foreign` and `media_refs` are carried through as a whole passthrough, and the material's starting timecode is subtracted on reading and returned on writing (t180, `src/libs/kt-otio/tests/convert.rs`). That is, the source timecode passes through us, but it does not enter the model and is not visible to the user — ready data flies past.
 
-### Что мешает
+### What gets in the way
 
-- **Правило 13 «НЕ ТРАТИТЬ МЕСТО ВПУСТУЮ» и трижды повторённая жалоба на
-  ширину бина.** Это прямое ограничение на любые UI-фантазии здесь.
-  Дословно из `docs/user-feedback.md`: «виджет медиа **В ТРЕТИЙ РАЗ УЖЕ
-  ОПЯТЬ ОГРАНИЧИВАЕТСЯ ПО ШИРИНЕ**» — реплика стоит пунктом 4 в разделе
-  Р.12, а сводные таблицы того же файла и комментарий в коде приписывают её
-  п.4 р.13; сама тема помечена как повторённая ТРИЖДЫ (р.9, р.12, р.13).
-  Там же по итогам р.13 про карточки: «карточки стали слишком большими». Оба
-  решения стоят в коде с комментариями: в `src/apps/kt-app/src/app.rs` —
-  «ПРЕДЕЛ ПОСТАВЛЕН ПО ЖАЛОБЕ п.4 р.13 — не ужимать без новой просьбы
-  пользователя» у `max_size((ui.max_rect().width() * 0.7).max(420.0))`, и в
-  `src/apps/kt-app/src/bin_panel.rs` — «размер карточки НЕ раздуваем
-  (жалоба р.13): широкая колонка даёт больше карточек в ряд, а не
-  гигантские превью» у `card_w = ui.available_width().clamp(56.0,
-  PREVIEW_W)`. Практический вывод: дерево умных папок, колонки метаданных и
-  панель фильтров, каждая со своей полосой, в эту колонку НЕ ставятся.
-  Рейтинг и флаг обязаны сесть на уже занятое место — уголком карточки,
-  цветом рамки, линией по верху превью (как раз то, чем FCP помечает
-  размеченные куски), — по образцу «имя группы в разрыве верхней линии
-  рамки», который сам чек-лист приводит эталоном.
-- **Правило 20 «ничего не отрастает и не отрубается само» противоречит
-  самой идее умной папки.** Формально противоречия нет — правило про
-  РЕДАКТИРОВАНИЕ, а умная папка ничего не редактирует, — но сказать это
-  надо вслух и показать в интерфейсе: она обязана выглядеть иначе, чем
-  ручная группа, иначе первая же жалоба будет «карточка сама уехала». У
-  соседей это ровно так и звучит.
-- **Правило 17 «парные способы одного действия ведут себя одинаково».**
-  Ручная группа и умная папка внешне — одно и то же («рамка вокруг
-  карточек»), а поведение при перетаскивании противоположное: в одну
-  карточка кладётся, в другую нет. Либо у них разный вид, либо это дефект
-  по чек-листу.
-- **Правило 14 «фича обязана работать повторно».** Три из пяти чужих
-  реализаций спотыкаются именно на этом (поиск VEGAS сереет после первого
-  запроса; «найти в медиапуле» Resolve выкидывает из умного бина;
-  автоматические бины Resolve не удаляются). Тест на повторный запрос
-  обязателен с первого дня.
-- **Собирать метаданные некому и негде.** Файлы читает отдельный
-  thumb/probe-воркер (`src/apps/kt-app/src/thumbs.rs`; `duration_or_probe`
-  ставит заявку и будит воркер), он же владеет источниками и пишет в
-  sidecar-БД. Массовое чтение тегов на 400 файлах обязано идти этим же
-  путём и в фоне, иначе ломается инвариант №8 (скролл/зум не порождает
-  декод-запросов) и правило 12 чек-листа (фоновая работа не мешает).
-- **Формату проекта нужен новый уровень.** Ручная группа поместилась в
-  `KtTimelineMeta.bin_groups`; для умной папки надо хранить ЗАПРОС, а для
-  разметки материала — сущность, привязанную к файлу, а не к таймлайну.
-  Место у обеих одно — `metadata.kt` (`src/libs/kt-otio/src/meta.rs`), но
-  запрос, который старая сборка прочтёт как пустую группу, — ровно тот
-  случай, ради которого заведён бамп `KT_META_VERSION` (сегодня 4): молча
-  потерять условие хуже, чем отказать (правило р.24 «наше чтобы никто не
-  ломал»).
-- **Уровень выше проекта нам ставить некуда.** Аналог Power Bins требует
-  хранилища вне `.otio`; sidecar-БД на эту роль не годится по своему же
-  правилу — она объявлена кэшем и молча пересоздаётся при повреждении
-  (`src/libs/kt-media/src/index.rs`). Организация, которую можно потерять
-  без предупреждения, — не организация; у Resolve это ровно та жалоба, что
-  Power Bins пропадают и не бэкапятся.
-- **Условие придётся типизировать сразу.** Дефект Resolve со сценой 16 в
-  бине сцены 6 — не мелочь реализации, а решение о том, сравнивает ли
-  запрос строки или значения. Спецификация условий должна быть такой же
-  декларацией, как `params_for!` у эффектов, а не набором строковых
-  сравнений в UI.
+- **Rule 13 "DO NOT WASTE SPACE IDLY" and the bin-width complaint repeated three times.** This is a direct constraint on any UI fantasies here. Verbatim from `docs/user-feedback.md`: "the media widget **FOR THE THIRD TIME AGAIN IS LIMITED BY WIDTH**" — the remark stands as item 4 in the section of R.12, while the summary tables of the same file and a code comment attribute it to item 4 of R.13; the topic itself is marked as repeated THREE times (R.9, R.12, R.13). In the same file, after R.13, about the cards: "the cards have become too large". Both decisions stand in the code with comments: in `src/apps/kt-app/src/app.rs` — "THE LIMIT IS SET BY THE COMPLAINT OF item 4 of R.13 — do not squeeze without a new request from the user" at `max_size((ui.max_rect().width() * 0.7).max(420.0))`, and in `src/apps/kt-app/src/bin_panel.rs` — "the card size is NOT inflated (complaint R.13): a wide column gives more cards in a row, not gigantic previews" at `card_w = ui.available_width().clamp(56.0,
+PREVIEW_W)`. The practical conclusion: a tree of smart folders, metadata columns and a filter panel, each with its own strip, are NOT placed in this column. A rating and a flag must sit in space that is already occupied — a corner of the card, the colour of the frame, a line along the top of the preview (exactly what FCP uses to mark the marked pieces) — following the pattern of "the group name in a gap in the top line of the frame", which the checklist itself cites as the benchmark.
+- **Rule 20 "nothing grows or gets cut off by itself" contradicts the very idea of a smart folder.** Formally there is no contradiction — the rule is about EDITING, and a smart folder edits nothing — but this has to be said aloud and shown in the interface: it must look different from a manual group, otherwise the first complaint will be "the card drove off by itself". Neighbours' users say exactly this.
+- **Rule 17 "paired ways of doing one action behave the same".** A manual group and a smart folder look the same from outside ("a frame around the cards"), while their behaviour on dragging is opposite: a card is put into one, and not into the other. Either they look different, or it is a defect under the checklist.
+- **Rule 14 "a feature must work repeatedly".** Three of five neighbours' implementations stumble precisely on this (VEGAS search greys out after the first query; Resolve's "find in media pool" throws you out of a smart bin; Resolve's automatic bins cannot be deleted). A test for a repeated query is mandatory from day one.
+- **There is no one and no place to collect metadata.** Files are read by a separate thumb/probe worker (`src/apps/kt-app/src/thumbs.rs`; `duration_or_probe` places a request and wakes the worker), which also owns the sources and writes to the sidecar DB. Mass reading of tags on 400 files must go through this same path and in the background, otherwise invariant No. 8 (scroll/zoom does not generate decode requests) and checklist rule 12 (background work does not get in the way) are broken.
+- **The project format needs a new level.** A manual group fitted into `KtTimelineMeta.bin_groups`; for a smart folder one must store a QUERY, and for marking material — an entity tied to the file, not to the timeline. Both have one place — `metadata.kt` (`src/libs/kt-otio/src/meta.rs`) — but a query that an old build reads as an empty group is exactly the case for which the bump `KT_META_VERSION` exists (today 4): silently losing the condition is worse than refusing (R.24 rule "ours, so that nobody breaks it").
+- **We have nowhere to put a level above the project.** An analogue of Power Bins requires storage outside `.otio`; the sidecar DB is not fit for this role by its own rule — it is declared a cache and is silently recreated on damage (`src/libs/kt-media/src/index.rs`). An organisation that can be lost without warning is not an organisation; at Resolve this is exactly the complaint that Power Bins disappear and are not backed up.
+- **The condition will have to be typed at once.** Resolve's defect with scene 16 in the scene 6 bin is not a detail of implementation, but a decision about whether the query compares strings or values. The specification of conditions must be a declaration of the same kind as `params_for!` for effects, not a set of string comparisons in the UI.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **№8** (скролл/зум таймлайна не порождает декод-запросов) — прямо:
-  фильтрация и показ метаданных в бине не должны открывать файлы; всё
-  читается один раз при импорте и живёт в индексе.
-- **№5** (декодером владеет ровно один поток) — косвенно: сбор тегов идёт
-  через тот же воркер и ту же очередь приоритетов, а не новым потоком.
-- **№4** (кэш — единственная правда о coverage) — по аналогии: у
-  метаданных обязано быть ОДНО место правды; отдельная бухгалтерия «что мы
-  про файл знаем» рядом с sidecar-БД — тот же класс ошибки. Тонкость: БД
-  объявлена КЭШЕМ, а введённые пользователем теги и рейтинги — не кэш, и
-  жить в ней не могут.
-- Правила UI: **13** (место), **14** (повторно), **17** (парные способы),
-  **20** (ничего не отрастает само), плюс **12** (фоновая работа не мешает).
-- Инварианты движка 1–3, 6, 7, 9–11 не задеты вовсе: ни рендера, ни звука,
-  ни экспорта эта фича не касается. Сильный аргумент «дёшево по риску» при
-  дорогом объёме.
+- **No. 8** (timeline scroll/zoom does not generate decode requests) — directly: filtering and showing metadata in the bin must not open files; everything is read once on import and lives in the index.
+- **No. 5** (exactly one thread owns the decoder) — indirectly: tag collection goes through the same worker and the same priority queue, not through a new thread.
+- **No. 4** (the cache is the single source of truth about coverage) — by analogy: metadata must have ONE place of truth; a separate bookkeeping of "what we know about the file" next to the sidecar DB is the same class of error. A subtlety: the DB is declared a CACHE, while user-entered tags and ratings are not a cache and cannot live in it.
+- UI rules: **13** (space), **14** (repeatedly), **17** (paired ways), **20** (nothing grows by itself), plus **12** (background work does not get in the way).
+- Engine invariants 1–3, 6, 7, 9–11 are not touched at all: this feature affects neither rendering, nor sound, nor export. A strong argument of "cheap in risk" with an expensive volume.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | L — целый раунд, если брать все пять слоёв. Режется на три независимые части: (а) метаданные + рейтинг/флаг на карточке + «уже использовано» — S–M; (б) умные папки — M; (в) разметка внутри материала — отдельная L, это новый домен и новый вид карточки |
-| Где основная работа | `kt-ffmpeg` (связать `av_dict_get`, расширить `Probe`), `kt-media` (заполнить `probe_json`, который уже объявлен), `kt-model` (свойства у `MediaRef`, типизированное условие запроса), `kt-otio` (`metadata.kt` + бамп версии), `kt-app` (показ на карточке БЕЗ новых полос — правило 13) |
-| Формат проекта | нужна `KT_META_V5`: умная папка, прочитанная старой сборкой как пустая группа, — тихая потеря, а по правилу р.24 это штатный `KtMetaTooNew`, а не молчание. Метаданные и рейтинги сами по себе версию не бампают, если едут `serde(default)` |
-| Тесты, которые придётся написать | round-trip `metadata.kt` с умной папкой и рейтингами; отказ старой сборки на v5; вычисление запроса — ЧИСТАЯ функция без UI (по образцу `search_hits` и `filter_entries`) с обязательным случаем «сцена 16 не попадает в бин сцены 6»; повторный запуск запроса (правило 14); чтение тегов на фикстурах `src/fixtures/` в `kt-media/tests/ffmpeg_conformance.rs`; сохранность `probe_json` при `Reused`/`Rebuilt` (`index_db`); harness-тест бина в `layout_tests.rs` — новых полос не появилось, ширина колонки прежняя |
-| Зависит от | F-AUT-002 — оттуда берётся уже принятое различение доменов «материал против таймлайна»; разметка внутри клипа обязана лечь в тот же домен материала |
-| Ломает совместимость | да, на слое умных папок (v5); слои метаданных, рейтингов и «уже использовано» — нет |
+| Scope | L — a whole round, if all five layers are taken. It splits into three independent parts: (a) metadata + rating/flag on the card + "already used" — S–M; (b) smart folders — M; (c) marking inside the material — a separate L, a new domain and a new kind of card |
+| Where the main work is | `kt-ffmpeg` (wire up `av_dict_get`, extend `Probe`), `kt-media` (fill `probe_json`, which is already declared), `kt-model` (properties on `MediaRef`, a typed query condition), `kt-otio` (`metadata.kt` + version bump), `kt-app` (display on the card WITHOUT new strips — rule 13) |
+| Project format | `KT_META_V5` is needed: a smart folder read by an old build as an empty group is a silent loss, whereas under the R.24 rule this is the standard `KtMetaTooNew`, not silence. Metadata and ratings by themselves do not bump the version if they travel with `serde(default)` |
+| Tests to write | round-trip of `metadata.kt` with a smart folder and ratings; refusal of an old build on v5; evaluation of the query — a PURE function without UI (after the pattern of `search_hits` and `filter_entries`) with the mandatory case "scene 16 does not fall into the scene 6 bin"; repeated run of the query (rule 14); reading tags on the fixtures of `src/fixtures/` in `kt-media/tests/ffmpeg_conformance.rs`; preservation of `probe_json` on `Reused`/`Rebuilt` (`index_db`); a harness test of the bin in `layout_tests.rs` — no new strips appeared, column width unchanged |
+| Depends on | F-AUT-002 — the already accepted distinction of domains "material versus timeline" comes from there; marking inside a clip must land in the same material domain |
+| Breaks compatibility | yes, at the smart-folder layer (v5); the layers of metadata, ratings and "already used" — no |
 
-## Вердикт
+## Verdict
 
-Берём, но не целиком и не сразу. Первым — дешёвый слой: чтение тегов
-(`av_dict_get` + честный `probe_json`, под который место уже размечено),
-рейтинг/флаг на карточке и индикатор «уже использовано». Он ничего в
-движке не задевает и снимает главную боль: `C0012.MP4` перестаёт быть
-единственным, что мы знаем о файле. Вторым — умные папки, обязательно с
-ДРУГИМ ВИДОМ, чем ручные группы (иначе прямое нарушение правила 17), и с
-типизированным условием с самого начала: строковое сравнение — это
-готовый дефект «сцена 16 в бине сцены 6», прожитый Resolve на глазах у
-всех. Разметку внутри материала (keyword ranges) выносим в отдельную
-будущую заметку: это не «ещё одна метка», а новая сущность в домене
-материала и новый вид карточки в бине, и заводить её надо после того, как
-у медиа вообще появятся свойства. Отдельно зафиксировано ограничение: всё
-это обязано влезть в существующую ширину бина — тема, повторённая
-пользователем трижды, ревизии не подлежит.
+We take it, but not whole and not at once. First — the cheap layer: reading tags (`av_dict_get` + an honest `probe_json`, for which room is already marked out), a rating/flag on the card and an "already used" indicator. It touches nothing in the engine and removes the main pain: `C0012.MP4` stops being the only thing we know about a file. Second — smart folders, necessarily with a DIFFERENT KIND from manual groups (otherwise a direct violation of rule 17), and with a typed condition from the very beginning: string comparison is a ready-made defect "scene 16 in the scene 6 bin", lived through by Resolve in front of everyone. Marking inside the material (keyword ranges) we move into a separate future note: this is not "one more mark" but a new entity in the material domain and a new kind of card in the bin, and it should be opened after media has properties at all. Separately recorded is the constraint: all of this must fit into the existing width of the bin — a topic the user has repeated three times, not subject to revision.
 
-## Источники
+## Sources
 
-- Final Cut Pro User Guide, «Add keywords»:
+- Final Cut Pro User Guide, "Add keywords":
   https://support.apple.com/guide/final-cut-pro/add-keywords-ver68416335/mac
-  (дата обращения 2026-09-07)
-- Final Cut Pro User Guide, «Create Smart Collections»:
+  (accessed 2026-09-07)
+- Final Cut Pro User Guide, "Create Smart Collections":
   https://support.apple.com/guide/final-cut-pro/create-smart-collections-ver2833eb5b/mac
   (2026-09-07)
-- Final Cut Pro User Guide, «Rate clips»:
+- Final Cut Pro User Guide, "Rate clips":
   https://support.apple.com/guide/final-cut-pro/rate-clips-ver30ccd91f/mac
   (2026-09-07)
-- Final Cut Pro User Guide, «Find clips and projects»:
+- Final Cut Pro User Guide, "Find clips and projects":
   https://support.apple.com/guide/final-cut-pro/find-clips-and-projects-ver65764b45/mac
   (2026-09-07)
 - Blackmagic Design, DaVinci Resolve — Media page:
   https://www.blackmagicdesign.com/products/davinciresolve/media (2026-09-07)
-- VEGAS Pro Help, «Using media bins» (линейка 22; в 2026 раздел тот же):
+- VEGAS Pro Help, "Using media bins" (line 22; in 2026 the section is the same):
   https://help.magix-hub.com/video/vegas/22/en/content/topics/4-media/media_bins.htm
   (2026-09-07)
-- Scott Simmons, «DaVinci Resolve is a few steps away from range based
-  keywording», ProVideoCoalition, 07.12.2018:
+- Scott Simmons, "DaVinci Resolve is a few steps away from range based
+  keywording", ProVideoCoalition, 07.12.2018:
   https://www.provideocoalition.com/davinci-resolve-is-a-few-steps-away-from-range-based-keywording/
-- Larry Jordan: «Use Keywords to Find the Clips You Need in FCP» (09.02.2020),
-  «FCP X: Create Subclips Using Keywords» (18.01.2015), «FCP X: Selecting
-  the Best Clips» (27.01.2013), «FCP X: Find Media Using Keywords» —
+- Larry Jordan: "Use Keywords to Find the Clips You Need in FCP" (09.02.2020),
+  "FCP X: Create Subclips Using Keywords" (18.01.2015), "FCP X: Selecting
+  the Best Clips" (27.01.2013), "FCP X: Find Media Using Keywords" —
   https://larryjordan.com/
-- Форум Blackmagic Design: темы 184257 (подстрочный дефект умных бинов),
-  134254 (неудаляемые автоматические бины), 217689 и p=1177703 (Power
-  Bins), p=1026091 (keyword-бины и маркеры-диапазоны), 99513 («найти в
-  медиапуле» выкидывает из умного бина) — ссылки в разделе цитат.
-- Форум Adobe (`community.adobe.com`): треды td-p/8737178 (Description не
-  ищется, с 2016 г.), td-p/15513405 («Search Bins do absolutely nothing»),
-  td-p/9229566 (пользовательские XMP и предел «два условия»), m-p/14903370
-  (ответ сотрудника Adobe про бины как результаты поиска).
-- **Форум VEGAS переехал:** `vegascreativesoftware.info` и
-  `vegascreativesoftware.com/us/forum` отдают 301 на
-  `https://forum.borisfx.com/` (Discourse, категория Vegas Pro); архив
-  старых тредов недоступен, зато у нового форума работает JSON-поиск
-  `/search.json?q=…`. Использованные темы: 22660 (поиск по бинам работает
-  один раз), 23315 (индикатор «уже использовано», флаги, имена файлов от
-  камеры), 24284 («Vegas Pro Release History» — фикс условия умных бинов).
-- **Не проверено первоисточником:** строка After Effects и часть строки
-  Premiere. `helpx.adobe.com` из этого окружения не открывается (см.
-  `docs/features/_editors.md`, раздел «Что было недоступно»); страница
-  поиска `community.adobe.com` отдаёт 403, хотя прямые URL тредов
-  открываются; поисковые движки (DuckDuckGo, Bing, Brave, Ecosia, Mojeek,
-  Yahoo, searx) отвечали CAPTCHA, 403, 429 или мусором. Формулировки
-  Premiere взяты из форума Adobe, включая ответ сотрудника Adobe, — это
-  форум, а не справка, и помечено как таковое.
+- Blackmagic Design forum: threads 184257 (substring defect of smart bins),
+  134254 (non-deletable automatic bins), 217689 and p=1177703 (Power
+  Bins), p=1026091 (keyword bins and range markers), 99513 ("find in
+  media pool" throws you out of a smart bin) — links in the quotes section.
+- Adobe forum (`community.adobe.com`): threads td-p/8737178 (Description is not
+  searched, since 2016), td-p/15513405 ("Search Bins do absolutely nothing"),
+  td-p/9229566 (custom XMP and the "two conditions" limit), m-p/14903370
+  (an Adobe employee's reply about bins as search results).
+- **The VEGAS forum has moved:** `vegascreativesoftware.info` and
+  `vegascreativesoftware.com/us/forum` return a 301 to
+  `https://forum.borisfx.com/` (Discourse, category Vegas Pro); the archive
+  of old threads is unavailable, but the new forum's JSON search
+  `/search.json?q=…` works. Threads used: 22660 (bin search works
+  once), 23315 ("already used" indicator, flags, file names from the
+  camera), 24284 ("Vegas Pro Release History" — fix for the smart bin condition).
+- **Not verified against the primary source:** the After Effects line and part of
+  the Premiere line. `helpx.adobe.com` does not open from this environment (see
+  `docs/features/_editors.md`, section "What was unavailable"); the search page of
+  `community.adobe.com` returns 403, although direct thread URLs open;
+  search engines (DuckDuckGo, Bing, Brave, Ecosia, Mojeek, Yahoo, searx) answered
+  with CAPTCHA, 403, 429 or junk. The Premiere wording is taken from the Adobe forum,
+  including an Adobe employee's reply — this is a forum, not documentation, and is marked as such.

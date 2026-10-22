@@ -1,12 +1,12 @@
 ---
 id: F-TL-009
-title: Полоса обзора и линейка таймлайна
-status: кандидат
+title: Overview bar and timeline ruler
+status: candidate
 priority: B
 cost: M
 category: timeline/navigation
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, kdenlive-26.08]
-we_have: частично
+we_have: partial
 crates: [kt-app, kt-model]
 invariants: [4, 8, 12]
 ui_rules: [1, 3, 6, 13]
@@ -18,110 +18,77 @@ checked: 2026-09-08
 trackers: [kde-invent, kde-bugzilla, pitivi, losslesscut]
 ---
 
-# F-TL-009 — Полоса обзора и линейка таймлайна
+# F-TL-009 — Overview bar and timeline ruler
 
-## Суть
+## Essence
 
-Две вещи над и под дорожками, отвечающие на разные вопросы. **Линейка** говорит,
-КОТОРЫЙ сейчас час: риски, подписи, единица (кадры / таймкод / секунды) и то, что
-на ней живёт — метки, регион, зоны рендера. **Полоса обзора** говорит, ГДЕ Я: во
-всю ширину окна лежит весь проект целиком, а внутри — прямоугольник видимого
-куска; тянешь его — панорама, тянешь его КРАЙ — зум. Ни зум, ни скролл на вопрос
-«где я» не отвечают: каждый из них хранит по одному числу, а «где я» — это пара.
+Two things above and below the tracks, answering different questions. The **ruler** says
+WHAT TIME it is now: the ticks, labels, the unit (frames / timecode / seconds) and what
+lives on it — marks, the region, render zones. The **overview bar** says WHERE I AM: across the full width of the window lies the whole project, and inside it — a rectangle of the visible
+piece; drag it — and you pan, drag its EDGE — and you zoom. Neither zoom nor scroll answers the question
+"where am I": each stores one number, while "where am I" is a pair.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Time ruler + горизонтальный скроллбар | единица линейки — СВОЙСТВО ПРОЕКТА: Options → Ruler Format либо вкладка Ruler в Project Properties, 15 форматов (Samples, Time, Seconds, Time & Frames, Absolute Frames, Measures and Beats, Feet and Frames 16/35 мм, SMPTE 23.976/24/25/29.97 DF и NDF/30, Audio CD 75 fps) |
-| Adobe Premiere | 26.x | Zoom scroll bar (навигатор) | полоса под дорожками; ручки зума ПОЯВЛЯЮТСЯ ПРИ НАВЕДЕНИИ на её концы, тянешь конец — меняется видимый диапазон линейки. Work Area Bar — в нижней части самой линейки |
-| DaVinci Resolve | 21 | Edit: zoom slider; Cut: dual timeline | на Edit обзора нет — ползунок «+/−» справа сверху отвечает только на «сколько видно». На Cut обзор сделан ВТОРЫМ таймлайном: верхний показывает всю программу, нижний — зум вокруг места работы, и зум ни одного из них пользователю не отдан |
-| Final Cut Pro | 12.3 | Zoom slider в Clip Appearance | полосы обзора нет; зум — ползунок во всплывашке Clip Appearance и Cmd +/−, линейка — таймкод проекта (или источника) отдельным плавающим окном |
-| After Effects | 26.x | Time Navigator | скобки Start/End над линейкой: тянешь скобку — зум, середину — панорама. Двойной клик по навигатору — зум до отдельных кадров, Shift+двойной — вся композиция, Shift+двойной ещё раз — ВОЗВРАТ к прежним скобкам |
+| VEGAS Pro | 2026.0 | Time ruler + horizontal scrollbar | the ruler's unit is a PROPERTY OF THE PROJECT: Options → Ruler Format or the Ruler tab in Project Properties, 15 formats (Samples, Time, Seconds, Time & Frames, Absolute Frames, Measures and Beats, Feet and Frames 16/35 mm, SMPTE 23.976/24/25/29.97 DF and NDF/30, Audio CD 75 fps) |
+| Adobe Premiere | 26.x | Zoom scroll bar (navigator) | a strip under the tracks; the zoom handles APPEAR ON HOVER over its ends, drag an end — the visible range of the ruler changes. The Work Area Bar — at the bottom of the ruler itself |
+| DaVinci Resolve | 21 | Edit: zoom slider; Cut: dual timeline | on Edit there is no overview — the "+/−" slider at the top right responds only to "how much is visible". On Cut the overview is made by a SECOND timeline: the upper one shows the whole programme, the lower one — the zoom around the place of work, and the zoom of neither of them is given to the user |
+| Final Cut Pro | 12.3 | Zoom slider in Clip Appearance | there is no overview strip; zoom is a slider in the Clip Appearance popover and Cmd +/−, the ruler is the project's (or source's) timecode in a separate floating window |
+| After Effects | 26.x | Time Navigator | Start/End brackets above the ruler: drag a bracket — zoom, the middle — pan. Double-click on the navigator — zoom to individual frames, Shift+double — the whole composition, Shift+double once more — a RETURN to the previous brackets |
 
-**Вне ядра.** Без Kdenlive механизм не описать: это единственная программа, где
-превращение скроллбара в полосу зума прошло публично, в трекере, с датой и с
-чек-листом «где ещё» — и оттуда же видно, чем за это платят.
+**Outside the core.** Without Kdenlive the mechanism cannot be described: it is the only programme where the turning of a scrollbar into a zoom strip went public, in the tracker, with a date and with a checklist "where else" — and from the same place one can see what it costs.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Kdenlive | 26.08.0 | Zoom bar (он же горизонтальный скроллбар) | «zoom in/out in the timeline by dragging the edges of the timeline scrollbar» — отдельного зум-виджета не заводили, ручку скроллбара научили тянуться за края. На самой линейке — timeline zone (квадрат в центре тянет её целиком, края — границы), preview render zone цветом состояния (красный / жёлтый / зелёный) и маркеры; единица — hh:mm:ss:ff или кадры |
+| Kdenlive | 26.08.0 | Zoom bar (it is also the horizontal scrollbar) | "zoom in/out in the timeline by dragging the edges of the timeline scrollbar" — a separate zoom widget was never created; the scrollbar handle was taught to stretch from the edges. On the ruler itself — the timeline zone (a square in the centre drags it whole, the edges are the boundaries), the preview render zone coloured by state (red / yellow / green) and the markers; the unit is hh:mm:ss:ff or frames |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Полоса обзора и полоса зума — один объект, и именно поэтому её никто не
-просит по имени.** Ручка скроллбара несёт ТРИ величины сразу: её положение —
-«где я», её ширина — «сколько видно», длина жёлоба — «сколько всего». Ползунок
-зума несёт одну, и рассогласоваться с положением окна ему нечем помешать: 50 %
-зума ничего не говорит о том, в какой половине проекта вы стоите. Отсюда
-наблюдение, которое видно только по счёту: слова «minimap», «bird's eye»,
-«navigator» в девяти трекерах дают две задачи, и ни одна не про таймлайн, — зато
-ту же потребность люди формулируют как «Zoom bar it all» (37 комментариев) и
-«Add a scroll bar after zoom in timeline». **Пользователь просит обзор словами
-про зум**, потому что у него нет отдельного имени для «где я».
+**1. The overview bar and the zoom bar are one object, and that is precisely why nobody asks for it by name.** The scrollbar handle carries THREE values at once: its position —
+"where I am", its width — "how much is visible", the length of the groove — "how much there is in total". The zoom slider carries one, and there is nothing to make it fall out of step with the window's position: 50 %
+zoom says nothing about which half of the project you are standing in. Hence an observation visible only from the count: the words "minimap", "bird's eye",
+"navigator" in nine trackers give two tasks, and neither is about the timeline — but
+people formulate the same need as "Zoom bar it all" (37 comments) and
+"Add a scroll bar after zoom in timeline". **The user asks for an overview in
+words about zoom**, because he has no separate name for "where I am".
 
-**2. У AE полоса держит третье состояние, которого нет ни у зума, ни у скролла.**
-Двойной клик по Time Navigator — кадровый зум, Shift+двойной — вся композиция,
-Shift+двойной ещё раз — возврат в ТО ЖЕ окно, откуда ушёл. Зум хранит число,
-скролл хранит число, а полоса хранит пару И помнит предыдущую. Это ровно то, что
-иначе держит в голове человек: «я смотрел вот этот кусок, отвлёкся на общий план,
-вернусь обратно».
+**2. In AE the bar holds a third state that neither zoom nor scroll has.**
+Double-click on the Time Navigator — frame zoom, Shift+double — the whole composition,
+Shift+double once more — a return to THE SAME window from which one left. Zoom stores a number,
+scroll stores a number, while the bar stores a pair AND remembers the previous one. This is exactly what
+a person otherwise keeps in their head: "I was looking at this piece, got distracted by the general plan,
+I'll go back."
 
-**3. Линейка, у которой свои координаты, врёт — и врёт незаметно.** Pitivi
-рисовал риски относительными смещениями от предыдущей, накапливая ошибку;
-расхождение с настоящей сеткой кадров не видно ни на каком зуме, кроме
-предельного, и обнаружилось только шагом по кадрам на 23.976 (#1260, диагноз
-автора дословно ниже). Вывод общий, а не про Pitivi: **шаг делений обязан быть
-делителем сетки кадров и считаться от абсолютного тика**, иначе линейка — не
-измерительный прибор, а украшение. Проверить это глазами нельзя, только
-приборно: кадр на 25 fps — 3600 тиков, и промах в один тик выглядит как
-попадание.
+**3. A ruler with its own coordinates lies — and lies unnoticed.** Pitivi
+drew its ticks as relative offsets from the previous one, accumulating error;
+the divergence from the real frame grid is not visible at any zoom except the extreme one, and it was discovered only by stepping through frames at 23.976 (#1260, the author's diagnosis quoted verbatim below). The conclusion is general, not about Pitivi: **the tick step must be a divisor of the frame grid and must be computed from the absolute tick**, otherwise the ruler is not a measuring instrument but an ornament. This cannot be checked by eye, only by instrument: a frame at 25 fps is 3600 ticks, and a miss by one tick looks like a hit.
 
-## Плюсы
+## Pros
 
-- Полоса обзора экономит не движения, а **память**: без неё структура проекта
-  («блок интервью — титры — b-roll») живёт в голове монтажёра, и каждое
-  возвращение из зума стоит перепрочтения. С ней структура лежит на экране
-  постоянно и не требует ни одного жеста, чтобы быть прочитанной.
-- Зум и панорама становятся ОДНИМ жестом с обратной связью: тянешь край — сразу
-  видно, какая доля проекта останется в окне. Ctrl+колесо этого не показывает,
-  пока не отпустишь.
-- Единица линейки, вынесенная в свойство проекта (Vegas), делает монтаж под
-  музыку и монтаж под таймкод разными РЕЖИМАМИ ОДНОЙ линейки, а не двумя
-  разными привычками счёта в голове.
-- Зоны на линейке (render zone у Kdenlive и Premiere, work area у AE) кладут
-  состояние рендера ровно туда, где на него смотрят при навигации, — не заводя
-  под это отдельной панели.
+- The overview bar saves not movements but **memory**: without it the structure of the project
+  ("interview block — titles — b-roll") lives in the editor's head, and every return from a zoom costs a re-reading. With it the structure lies on the screen permanently and requires not a single gesture to be read.
+- Zoom and pan become ONE gesture with feedback: you drag the edge — and you immediately see what share of the project will remain in the window. Ctrl+wheel does not show this until you let go.
+- The ruler's unit, moved into a project property (Vegas), makes editing to music and editing to timecode different MODES OF ONE ruler, rather than two different counting habits in the head.
+- Zones on the ruler (the render zone in Kdenlive and Premiere, the work area in AE) put the render state exactly where one looks at it during navigation — without creating a separate panel for it.
 
-## Минусы
+## Cons
 
-- Полоса обзора **постоянна**: она занимает горизонтальную ленту всегда, а нужна
-  в момент «я потерялся». Это прямой конфликт с правилом 13 (не тратить место
-  впустую), и он реален: у Kdenlive пункт «Timeline vertical scroll bar» в
-  чек-листе #651 так и стоит неотмеченным пять лет спустя, при том что три
-  соседних пункта закрыты. Горизонтальную полосу за место оправдали, вертикальную
-  — нет.
-- Обзор, которому отдали зум, перестаёт быть обзором: у Resolve на Cut оба
-  таймлайна нарочно не зумятся руками. То есть у полосы нет «настроек» — либо она
-  всегда показывает всё, либо это второй таймлайн, и его тоже надо где-то искать.
-- Ручки зума, появляющиеся только при наведении (Premiere), — экономия места
-  ценой открываемости: пока не наведёшь на конец полосы, зума там нет.
-- Линейка — самый дорогой в поддержке виджет из всех «простых»: у Pitivi 26 задач
-  из 2672 (1.0 %) — HiDPI, системный масштаб шрифта, пропадающие риски на 20- и
-  30-секундном шаге, порт на другой тулкит, кэш цветов темы, синхронизация
-  прокрутки с холстом. У Kdenlive, где линейка живёт в координатах самого
-  таймлайна, — 4 из 6346 (0.1 %), и те про то, ЧТО на ней лежит, а не про то, где
-  она нарисована.
+- The overview bar is **permanent**: it occupies a horizontal strip all the time, while it is needed at the moment "I got lost". This is a direct conflict with rule 13 (do not waste space), and it is real: in Kdenlive the item "Timeline vertical scroll bar" in checklist #651 has stayed unticked for five years, while three neighbouring items are closed. The horizontal strip was justified by space, the vertical one was not.
+- An overview to which zoom has been given stops being an overview: in Resolve's Cut the two timelines are deliberately not zoomed by hand. That is, the bar has no "settings" — either it always shows everything, or it is a second timeline, and that too has to be found somewhere.
+- Zoom handles that appear only on hover (Premiere) — a saving of space at the cost of discoverability: until you hover over the end of the bar, there is no zoom there.
+- The ruler is the most expensive widget to maintain of all the "simple" ones: in Pitivi 26 tasks out of 2672 (1.0 %) — HiDPI, system font scaling, ticks disappearing at 20- and 30-second steps, a port to another toolkit, a cache of theme colours, synchronisation of scrolling with the canvas. In Kdenlive, where the ruler lives in the coordinates of the timeline itself, — 4 out of 6346 (0.1 %), and those are about WHAT lies on it, not about where it is drawn.
 
-## Что говорят пользователи
+## What users say
 
 > The latest addition of a zoom bar to the effects UI has brought an enormous
 > usability improvement. Let us zoom bar everything:
-> — kde-invent #651 «Zoom bar it all», 30.04.2020,
+> — kde-invent #651 "Zoom bar it all", 30.04.2020,
 > https://invent.kde.org/multimedia/kdenlive/-/work_items/651
 
-Дальше в теле — чек-лист из четырёх мест; отмечены три, «Timeline vertical scroll
-bar» не отмечен и сегодня. Задача закрыта, 37 комментариев.
+Further in the body is a checklist of four places; three are ticked, "Timeline vertical scroll
+bar" is not ticked, to this day. The task is closed, 37 comments.
 
 > The reason is, among other things, that the ruler uses relative paint positions
 > instead of using absolute positions, and adds some small offset errors
@@ -129,194 +96,158 @@ bar» не отмечен и сегодня. Задача закрыта, 37 к�
 > — pitivi #1260, 27.08.2012,
 > https://gitlab.gnome.org/GNOME/pitivi/-/work_items/1260
 
-Автор нашёл это не глядя на линейку, а шагая по кадрам на 23.976: подсказка при
-наведении показывала правильное время, а риски — нет.
+The author found this not by looking at the ruler but by stepping through frames at 23.976: the hover tooltip showed the correct time, while the ticks did not.
 
 > Starting a draft to improve the timeline ruler and bars visuals.
-> — kde-invent #990 «Improve timeline ruler and bars», 13.03.2021,
+> — kde-invent #990 "Improve timeline ruler and bars", 13.03.2021,
 > https://invent.kde.org/multimedia/kdenlive/-/work_items/990
 
-Открыта до сих пор (последнее движение 02.11.2025, 28 комментариев): половина
-чек-листа — про то, чтобы РАЗВЕСТИ по своим полосам зону рендера, зону эффектов,
-направляющие и метки, которые сегодня лежат друг на друге.
+Still open (last activity 02.11.2025, 28 comments): half of the checklist concerns SEPARATING onto their own strips the render zone, the effects zone,
+the guides and the markers, which today lie on top of each other.
 
-СИГНАЛ: линейка и полоса зума — 26 задач в pitivi, `ruler|zoom.?bar`; доля 1.0%
-против 0.1% в kde-bugzilla
+SIGNAL: ruler and zoom bar — 26 tasks in pitivi, `ruler|zoom.?bar`; share 1.0% versus 0.1% in kde-bugzilla
 
-СИГНАЛ: обзор по имени — 2 задачи на 9 трекеров,
-`minimap|mini.?map|bird.?s.?eye|navigator`; доля 0.0% в kde-bugzilla против 0.1%
-в olive, и ни одна из двух не про таймлайн
+SIGNAL: overview by name — 2 tasks across 9 trackers, `minimap|mini.?map|bird.?s.?eye|navigator`; share 0.0% in kde-bugzilla versus 0.1% in olive, and neither of the two is about the timeline
 
-Второй счёт и есть находка: потребность существует и формулируется («Zoom bar it
-all», «Add a scroll bar after zoom in timeline», kde-bugzilla #501912 «Storyboard
-view (AKA nonlinear timeline zoom / overview)»), но имени у неё нет, поэтому
-поиск по слову «обзор» в чужих трекерах даёт ноль и создаёт ложное впечатление,
-что фичи не просят.
+The second tally is itself the finding: the need exists and is formulated ("Zoom bar it
+all", "Add a scroll bar after zoom in timeline", kde-bugzilla #501912 "Storyboard
+view (AKA nonlinear timeline zoom / overview)"), but it has no name, so a search for the word "overview" in other people's trackers gives zero and creates the false impression
+that the feature is not being asked for.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-АДРЕС: src/apps/kt-app/src/timeline.rs — у нас этот класс возможен, и его не
-ловит ничто: `view_start = view_start.max(-(tpp * 40.0))` (строка 1399) —
-ЕДИНСТВЕННЫЙ кламп окна, и он только левый. Вправо окно уезжает в пустоту без
-предела и без обратной связи, а показать, куда уехало, нечем: горизонтальной
-полосы в таймлайне нет вовсе — единственный скроллбар вертикальный
-(`ui.id().with("tl-vscroll")`, строка 3678).
+ADDRESS: src/apps/kt-app/src/timeline.rs — for us this class is possible, and nothing catches it: `view_start = view_start.max(-(tpp * 40.0))` (line 1399) is the ONLY clamp of the window, and it is only the left one. To the right the window drifts into emptiness with no limit and no feedback, and there is nothing to show where it has drifted to: there is no horizontal bar on the timeline at all — the only scrollbar is vertical (`ui.id().with("tl-vscroll")`, line 3678).
 
-### Что уже есть
+### What already exists
 
-- **Зум и панорама** — `timeline.rs:1254-1345`: Ctrl+колесо или пинч
-  (`zoom_delta`) с якорем под курсором, голое колесо (любая ось) — панорама,
-  Shift+колесо — вертикальный скролл, Shift+Ctrl+колесо — высота строк 16..120 с
-  якорем на строке под курсором. Пределы единые и стоят по прямой просьбе
-  пользователя: `TPP_MIN = 30`, `TPP_MAX = 2_000_000` (≈22 с/px, «30-минутный
-  проект целиком в окне», п.17 р.6, п.60 `docs/porting-notes.md`).
-- **Линейка** — `RULER_H = STRIPES_H(11) + TIME_H(22)` = 33 px. Верхние 11 px —
-  полоски прогретости кэша (инвариант 4), янтарная «голова» loop-региона и лента
-  метки-диапазона; нижние 22 px — риски, подписи и имя метки ПОВЕРХ цифры, на той
-  же строке (правило 13, п.3 р.12 — отдельную полосу под метки заводили и убрали).
-- **Лестница шагов** — `RULER_LADDER = [1с, 10с, 1м, 10м, 1ч]`, `ruler_steps()`
-  берёт минимальную ступень ≥7 px под риску и ≥70 px под подпись; формат —
-  `format_ruler_time()`, мм:сс до часа и ч:мм:сс дальше. Закрыто тестом
-  `t60_zoom_out_support` (kt-app unit) — раньше цикл шёл по секундам и на
-  зум-ауте давал тысячи шейпов за кадр.
-- **Скраб по линейке** с прыжковыми heat-зонами у краёв и зонной подсказкой
-  `k::tl::hint::RULER` (`timeline.rs:2190`), follow-режим и его авто-возврат
-  (`follow_view` / `follow_rearm`, пп.59 и 72 `docs/porting-notes.md`): ручной
-  зум/панорама следование гасят, через 1.5 с тишины оно возвращается.
-- **Таймкод с кадрами уже написан** — `src/apps/kt-app/src/util.rs:217`
-  `format_timecode()` даёт `00:00:00.000 F00`, есть и обратный разбор
-  (`parse_timecode`, тесты t63/t93/t98).
+- **Zoom and pan** — `timeline.rs:1254-1345`: Ctrl+wheel or pinch
+  (`zoom_delta`) with the anchor under the cursor, the bare wheel (any axis) — pan,
+  Shift+wheel — vertical scroll, Shift+Ctrl+wheel — row height 16..120 with
+  the anchor on the row under the cursor. The limits are uniform and stand at the direct request of the
+  owner: `TPP_MIN = 30`, `TPP_MAX = 2_000_000` (≈22 s/px, "the 30-minute project whole in the window", item 17 of R.6, item 60 of `docs/porting-notes.md`).
+- **Ruler** — `RULER_H = STRIPES_H(11) + TIME_H(22)` = 33 px. The upper 11 px are the cache
+  warmth strips (invariant 4), the amber "head" of the loop region and the band of the range mark; the lower 22 px — ticks, labels and the mark name ON TOP of the digits, on the same
+  row (rule 13, item 3 of R.12 — a separate strip under the marks was introduced and removed).
+- **Step ladder** — `RULER_LADDER = [1s, 10s, 1m, 10m, 1h]`, `ruler_steps()`
+  takes the minimum step ≥7 px for a tick and ≥70 px for a label; the format is
+  `format_ruler_time()`, mm:ss up to an hour and h:mm:ss beyond. Closed by the test
+  `t60_zoom_out_support` (kt-app unit) — previously the loop ran through seconds and at zoom-out gave thousands of shapes per frame.
+- **Scrubbing on the ruler** with jump heat-zones at the edges and the zone hint
+  `k::tl::hint::RULER` (`timeline.rs:2190`), the follow mode and its automatic return
+  (`follow_view` / `follow_rearm`, items 59 and 72 of `docs/porting-notes.md`): manual
+  zoom/pan suspends following, and after 1.5 s of silence it returns.
+- **Timecode with frames is already written** — `src/apps/kt-app/src/util.rs:217`
+  `format_timecode()` gives `00:00:00.000 F00`, and there is also the reverse parse
+  (`parse_timecode`, tests t63/t93/t98).
 
-### Чего не хватает
+### What is missing
 
-- **Полосы обзора нет ни в каком виде.** Проверено грепом: единственный скроллбар
-  таймлайна — вертикальный. Доля видимого от целого не показана нигде, и
-  вернуться «ко всему проекту» одним жестом нельзя.
-- **Знаменателя для такой полосы не существует как функции.** Длина проекта
-  считается тремя независимыми выражениями: `src/libs/kt-engine/src/export.rs:73`,
-  `src/libs/kt-model/src/ops.rs:68` (private `block_len`) и
-  `src/libs/kt-otio/src/convert.rs:1045`. Публичного «конец содержимого» у модели
-  нет, а полосе обзора он нужен каждый кадр.
-- **Линейка молчит именно там, где нужнее всего.** Минимальная ступень лестницы —
-  1 секунда; при `TPP_MIN = 30` это 3000 px, а кадр на 25 fps (3600 тиков) —
-  120 px. В самом монтажном диапазоне зума между секундами нет НИ ОДНОЙ риски:
-  мы не врём, как Pitivi, — мы просто ничего не говорим. При этом тулбар в этот
-  момент показывает `F00`: две нотации времени в одном окне.
-- **Единица линейки не выбирается.** У Vegas это свойство проекта с 15
-  значениями, у нас — жёстко мм:сс в `format_ruler_time`.
-- **Зоны рендера/кэша на линейке есть только как coverage.** Полоски показывают
-  прогретость кэша, но «этот кусок отрендерен в превью» у нас понятия нет — в
-  отличие от Kdenlive и Premiere, где это цвет на самой линейке.
+- **There is no overview bar in any form.** Checked by grep: the only timeline scrollbar is
+  vertical. The share of the visible part of the whole is shown nowhere, and one cannot return "to the whole project" with one gesture.
+- **The denominator for such a bar does not exist as a function.** The project length is
+  computed by three independent expressions: `src/libs/kt-engine/src/export.rs:73`,
+  `src/libs/kt-model/src/ops.rs:68` (private `block_len`) and
+  `src/libs/kt-otio/src/convert.rs:1045`. The model has no public "end of content",
+  while the overview bar needs it every frame.
+- **The ruler is silent exactly where it is most needed.** The minimum step of the ladder is
+  1 second; at `TPP_MIN = 30` this is 3000 px, while a frame at 25 fps (3600 ticks) is
+  120 px. In the very editing range of zoom there is NOT ONE tick between seconds:
+  we do not lie, as Pitivi does — we simply say nothing. At the same time the toolbar at this
+  moment shows `F00`: two notations of time in one window.
+- **The unit of the ruler is not selectable.** In Vegas this is a project property with 15
+  values; for us it is hard-coded mm:ss in `format_ruler_time`.
+- **Render/cache zones on the ruler exist only as coverage.** The strips show the cache
+  warmth, but for us the notion "this piece is rendered into the preview" does not exist — unlike Kdenlive and Premiere, where it is a colour on the ruler itself.
 
-### Что мешает
+### What gets in the way
 
-- **Правило 13 в лоб.** «Полоса во всю ширину экрана ради подписи, которая
-  появляется изредка, — дефект, даже если так аккуратнее». Прецедент записан в
-  самом файле: под имена меток уже заводили отдельную полосу 13 px и убрали её,
-  переселив имя на строку подписей времени. Полоса обзора обязана либо платить за
-  себя постоянно (она отвечает на вопрос, который стоит всегда), либо сесть на
-  уже занятое место — например, стать вторым назначением 11-пиксельной полосы
-  кэш-полосок, которая и так тянется во всю ширину и уже рисует проект целиком.
-- **`RULER_H` — несущая константа.** На ней стоят хит-тест «мышь на линейке»
-  (шесть мест вида `pos.y > rect.top() + RULER_H`), клип области дорожек и
-  `vertical_layout(avail_h - RULER_H - 6.0)`. Любой рост линейки уменьшает
-  дорожки, а пределы вёрстки держат `t76`/`t127` и они стоят по прямым просьбам.
-- **Кадровая сетка меняет сигнатуру.** `ruler_steps(tpp)` — чистая функция одного
-  аргумента, и t60 проверяет её числами; шаг, кратный `90_000/fps`, требует
-  передать fps проекта и переписать тест.
-- **Инвариант 8 — главная опасность и одновременно наше преимущество.** У чужих
-  зум таймлайна тянет за собой декод, и в трекерах это читается как «виснет при
-  зуме»; у нас этот класс закрыт (волноформы из peak-пирамиды, тумбы из
-  `<project>.ktindex.db`, тесты 13/15 `src/libs/kt-engine/tests/viewport.rs`), и
-  в v1 он был — п.61 таблицы `docs/porting-notes.md` дословно: «скролл/зум
-  таймлайна → шторм декодов тумбнейлов/волноформ… астрономические цифры
-  обращений к avcpp». Полоса обзора рисует ВЕСЬ проект сразу, то есть это первый
-  виджет, который по построению просит данные обо всём материале. Она обязана
-  строиться из модели и `BurstCache::coverage()`, и ни один её пиксель не имеет
-  права заказать кадр — иначе мы своими руками вернём ровно тот дефект, за
-  который платят все остальные.
+- **Rule 13 head-on.** "A strip across the full width of the screen for the sake of a label that
+  appears occasionally is a defect, even if it is neater that way." The precedent is recorded in
+  the file itself: a separate 13 px strip was already introduced for the names of marks and then removed,
+  the name being moved onto the time-label row. The overview bar must either pay for itself
+  permanently (it answers a question that is always present), or sit in a place already occupied — for example, become a second use of the 11-pixel cache-strip band, which already stretches across the full width and already draws the whole project.
+- **`RULER_H` is a load-bearing constant.** It underlies the hit test "mouse on the ruler" (six places of the form
+  `pos.y > rect.top() + RULER_H`), the clip of the track area and
+  `vertical_layout(avail_h - RULER_H - 6.0)`. Any growth of the ruler shrinks the tracks, and the layout limits are held by `t76`/`t127`, and they stand at direct requests.
+- **The frame grid changes the signature.** `ruler_steps(tpp)` is a pure function of one argument, and t60 checks it with numbers; a step that is a multiple of `90_000/fps` requires passing the project's fps and rewriting the test.
+- **Invariant 8 is the main danger and at the same time our advantage.** In others' editors zooming the timeline drags decode along with it, and in the trackers this reads as "hangs on zoom"; for us this class is closed (waveforms from the peak pyramid, thumbnails from `<project>.ktindex.db`, tests 13/15 `src/libs/kt-engine/tests/viewport.rs`), and in v1 it existed — item 61 of the table in `docs/porting-notes.md` verbatim: "timeline scroll/zoom → a storm of thumbnail/waveform decodes… astronomical numbers of calls to avcpp". The overview bar draws the WHOLE project at once, so this is the first widget that by construction asks for data about all the material. It must be built from the model and `BurstCache::coverage()`, and not one of its pixels has the right to request a frame — otherwise we ourselves will bring back exactly the defect for which everyone else pays.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **8** (скролл/зум не порождает декод-запросов) — прямо и жёстче обычного: см.
-  выше. Регресс-тест обязан расширить `viewport.rs`, а не только смотреть на
-  картинку.
-- **4** (кэш — единственная правда о coverage) — полоса обзора берёт прогретость
-  у `BurstCache::coverage()`, своей бухгалтерии не заводит.
-- **12** (repaint только при движении) — полоса не анимируется и не перерисовывает
-  таймлайн, пока окно не двигают; её содержимое — кэш по `cache.epoch`.
-- Правила чек-листа UI: **13** (место — главный ограничитель), **6** (у всего, что
-  тянется мышью, есть min и max — `TPP_MIN`/`TPP_MAX` уже есть и переиспользуются
-  краями ручки), **1** (хват-зона края ручки шире рисунка, иначе «тянуть край» —
-  прицеливание), **3** (переключение обзора не меняет раскладку).
+- **8** (scroll/zoom does not generate decode requests) — directly and more strictly than usual: see
+  above. The regression test must extend `viewport.rs`, not merely look at the picture.
+- **4** (the cache is the only truth about coverage) — the overview bar takes the warmth from
+  `BurstCache::coverage()` and does not keep its own bookkeeping.
+- **12** (repaint only on movement) — the bar does not animate and does not redraw the timeline while the window is not being moved; its contents are cached by `cache.epoch`.
+- UI checklist rules: **13** (space is the main constraint), **6** (everything dragged with the mouse has a min and a max — `TPP_MIN`/`TPP_MAX` already exist and are reused by the handle edges), **1** (the grab zone of the handle edge is wider than its drawing, otherwise "dragging the edge" is aiming), **3** (switching the overview does not change the layout).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии: (1) полоса обзора + публичный «конец содержимого»; (2) кадровая ступень линейки и единица отображения |
-| Где основная работа | kt-app (`timeline.rs`: полоса, хват краёв, `ruler_steps`), kt-model (публичный конец содержимого вместо трёх копий выражения) |
-| Формат проекта | полоса — не трогает (окно живёт в `UiState`, это `dirty_ui`, п.96); ВЫБОР единицы линейки — трогает: он свойство проекта, значит новая версия схемы |
-| Тесты, которые придётся написать | харнесс-тест: ручка показывает долю видимого и позицию окна, драг середины = панорама, драг края = зум и `view_start` при этом не уезжает (правило 3); правый предел окна существует; расширение t13 `viewport.rs` — «рисование полосы обзора не породило ни одного запроса к MediaWorker»; t60 на ступень, кратную `90_000/fps`, и на совпадение подписи линейки с `format_timecode` |
-| Зависит от | ничего; F-HLP-007 (обратная связь во время жеста) — соседняя поверхность, не блокирует |
-| Ломает совместимость | нет (стадия 1); стадия 2 добавляет поле в проект |
+| Size | M — 2 stages: (1) the overview bar + a public "end of content"; (2) the frame step of the ruler and the display unit |
+| Where the main work is | kt-app (`timeline.rs`: the bar, the grabbing of the edges, `ruler_steps`), kt-model (a public end of content instead of three copies of the expression) |
+| Project format | the bar — does not touch it (the window lives in `UiState`, this is `dirty_ui`, item 96); the CHOICE of ruler unit — does touch it: it is a project property, so a new schema version |
+| Tests to be written | a harness test: the handle shows the share of the visible part and the position of the window, dragging the middle = pan, dragging the edge = zoom, and `view_start` does not drift at this point (rule 3); the right limit of the window exists; an extension of t13 `viewport.rs` — "drawing the overview bar produced not a single request to MediaWorker"; t60 for a step that is a multiple of `90_000/fps`, and for the match of the ruler label with `format_timecode` |
+| Depends on | nothing; F-HLP-007 (feedback during a gesture) — an adjacent surface, does not block |
+| Breaks compatibility | no (stage 1); stage 2 adds a field to the project |
 
-## Вердикт
+## Verdict
 
-Берём, но разделив надвое и в обратном порядке очевидности. **Дешёвая и срочная
-половина — линейка**: у нас нет правого предела окна и нет ни одной риски мельче
-секунды на кадровом зуме, при том что кадровый таймкод уже написан и показывается
-в двух шагах, в тулбаре. Это не фича, это расхождение внутри одного окна.
-**Дорогая половина — полоса обзора**: настоящая, с зумом по краям, она есть у
-двух редакторов ядра из пяти (Premiere, After Effects); у Vegas на «где я»
-отвечает пропорциональный скроллбар без зума, Resolve на Cut заменяет её вторым
-таймлайном, и только FCP не отвечает ничем. И она же — единственный виджет,
-который по построению просит данные обо всём проекте сразу, —
-то есть первый настоящий экзамен инварианту 8. Проектировать её надо не как новую
-ленту, а как второе назначение 11-пиксельной полосы кэш-полосок: та уже тянется
-во всю ширину и уже рисует проект целиком, и правило 13 в этом случае из
-запрета превращается в подсказку, куда именно это класть.
+We take it, but split in two and in the reverse order of obviousness. **The cheap and urgent
+half is the ruler**: we have no right limit of the window and not a single tick finer than a
+second at frame zoom, even though the frame timecode is already written and shown
+two steps away, in the toolbar. This is not a feature, it is a discrepancy inside one window.
+**The expensive half is the overview bar**: a real one, with zoom at the edges, exists in
+two of the five core editors (Premiere, After Effects); in Vegas "where am I" is answered
+by a proportional scrollbar without zoom, Resolve on Cut replaces it with a second
+timeline, and only FCP answers with nothing. And it is also the only widget
+that by construction asks for data about the whole project at once —
+that is, the first real examination of invariant 8. It must be designed not as a new
+strip but as a second use of the 11-pixel cache-strip band: that band already stretches
+across the full width and already draws the whole project, and in this case rule 13 turns from a
+prohibition into a hint about where exactly to put it.
 
-## Источники
+## Sources
 
-- kde-invent #651 «Zoom bar it all», 30.04.2020 (закрыта, 37 комментариев):
+- kde-invent #651 "Zoom bar it all", 30.04.2020 (closed, 37 comments):
   https://invent.kde.org/multimedia/kdenlive/-/work_items/651
-- kde-invent #990 «Improve timeline ruler and bars», 13.03.2021, открыта до сих
-  пор: https://invent.kde.org/multimedia/kdenlive/-/work_items/990
-- pitivi #1260 «Inaccurate calculations create desynch offsetting in the ruler
-  with decimal framerates», 27.08.2012:
+- kde-invent #990 "Improve timeline ruler and bars", 13.03.2021, open to this
+  day: https://invent.kde.org/multimedia/kdenlive/-/work_items/990
+- pitivi #1260 "Inaccurate calculations create desynch offsetting in the ruler
+  with decimal framerates", 27.08.2012:
   https://gitlab.gnome.org/GNOME/pitivi/-/work_items/1260
-- pitivi #1228 «Smarter and configurable ruler timecode / timestamp style»,
+- pitivi #1228 "Smarter and configurable ruler timecode / timestamp style",
   04.05.2012: https://gitlab.gnome.org/GNOME/pitivi/-/work_items/1228
-- pitivi #1236 «Allow displaying SMPTE timecode representation in the ruler»,
-  30.05.2012, открыта: https://gitlab.gnome.org/GNOME/pitivi/-/work_items/1236
-- pitivi #2622 «Ticks in ruler disappears at 20 & 30 second intervals»,
+- pitivi #1236 "Allow displaying SMPTE timecode representation in the ruler",
+  30.05.2012, open: https://gitlab.gnome.org/GNOME/pitivi/-/work_items/1236
+- pitivi #2622 "Ticks in ruler disappears at 20 & 30 second intervals",
   04.06.2022: https://gitlab.gnome.org/GNOME/pitivi/-/work_items/2622
-- kde-bugzilla #501912 «Feature: Storyboard view (AKA nonlinear timeline zoom /
-  overview)», 23.03.2025: https://bugs.kde.org/show_bug.cgi?id=501912
-- losslesscut #532 «Add a scroll bar after zoom in timeline», 06.12.2020:
+- kde-bugzilla #501912 "Feature: Storyboard view (AKA nonlinear timeline zoom /
+  overview)", 23.03.2025: https://bugs.kde.org/show_bug.cgi?id=501912
+- losslesscut #532 "Add a scroll bar after zoom in timeline", 06.12.2020:
   https://github.com/mifi/lossless-cut/issues/532
-- Kdenlive 26.08 Manual, Timeline (линейка, зоны, «zoom in/out by dragging the
-  edges of the timeline scrollbar»):
+- Kdenlive 26.08 Manual, Timeline (the ruler, zones, "zoom in/out by dragging the
+  edges of the timeline scrollbar"):
   https://docs.kdenlive.org/en/user_interface/timeline.html (08.09.2026)
-- VEGAS Pro help, Time ruler (список из 15 форматов и два места смены):
+- VEGAS Pro help, Time ruler (the list of 15 formats and two places of change):
   https://help.magix-hub.com/video/vegas/21/en/content/topics/2-window/ruler.htm
   (08.09.2026)
-- Adobe, Navigation controls in the Timeline (zoom scroll bar, ручки на концах):
+- Adobe, Navigation controls in the Timeline (zoom scroll bar, handles at the ends):
   https://helpx.adobe.com/premiere/desktop/edit-projects/change-clip-sequence/navigation-controls-in-the-timeline.html
-  (08.09.2026, через поисковую выдачу — прямой доступ к `helpx.adobe.com` из
-  этого окружения по-прежнему закрыт, см. `_editors.md`)
-- Blackmagic Design, DaVinci Resolve — Cut (dual timeline: верхний показывает всю
-  программу, нижний — зум): https://www.blackmagicdesign.com/products/davinciresolve/cut
+  (08.09.2026, via search results — direct access to `helpx.adobe.com` from
+  this environment is still closed, see `_editors.md`)
+- Blackmagic Design, DaVinci Resolve — Cut (dual timeline: the upper one shows the whole
+  programme, the lower one — the zoom): https://www.blackmagicdesign.com/products/davinciresolve/cut
   (08.09.2026)
 - Apple Support, Zoom in to and out of the timeline in Final Cut Pro for Mac
-  (ползунок в Clip Appearance):
+  (the slider in Clip Appearance):
   https://support.apple.com/guide/final-cut-pro/zoom-in-to-and-out-of-the-timeline-ver4e2edcc/mac
   (08.09.2026)
 
-**Оговорка о полноте выборки.** Счёт снят по девяти выгруженным трекерам
+**Caveat on the completeness of the sample.** The count was taken across nine exported trackers
 (flowblade, kde-bugzilla, kde-invent, losslesscut, mlt, olive, otio, pitivi,
-shotcut); openshot, blender-vse и ffmpeg-trac на момент письма ещё качались.
-Числа воспроизводятся `src/scripts/tracker-rank.py --query 'ruler|zoom.?bar'` и
-тем же скриптом `--query 'minimap|mini.?map|bird.?s.?eye|navigator'`; при выгрузке
-знаменатели изменятся, соотношение долей pitivi ↔ kde-bugzilla — вряд ли.
+shotcut); openshot, blender-vse and ffmpeg-trac were still downloading at the time of writing.
+The figures are reproducible with `src/scripts/tracker-rank.py --query 'ruler|zoom.?bar'` and
+with the same script `--query 'minimap|mini.?map|bird.?s.?eye|navigator'`; with the export
+the denominators will change, the ratio of the pitivi ↔ kde-bugzilla shares — hardly.

@@ -1,16 +1,16 @@
 ---
 id: F-AUD-013
-title: Pitch shift — высота без смены длительности
-status: сделано
+title: Pitch shift — pitch without changing duration
+status: done
 priority: B
 cost: L
 category: audio/processing
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: да
+we_have: yes
 crates: [kt-model, kt-fx, kt-engine, kt-otio, kt-app]
 invariants: [1, 2, 3, 5, 11]
 ui_rules: []
-round: "Р.48"
+round: "R.48"
 point: 339
 tests: [322, 337, 338, 339, 340]
 depends_on: []
@@ -19,119 +19,80 @@ services: []
 checked: 2026-09-14
 ---
 
-# F-AUD-013 — Pitch shift — высота без смены длительности
+# F-AUD-013 — Pitch shift — pitch without changing duration
 
-## Суть
+## Essence
 
-Поднять или опустить высоту звука события, не трогая его длину: голос
-становится ниже или выше, музыка переезжает в другую тональность, а
-событие остаётся ровно там же и той же длительности. Обратная операция к
-существующему Slowed+Reverb, где высота едет вместе со скоростью. Монтажёру
-это «сделай голос глубже», «подгони подклад под тональность» и «убери
-детский тембр у ускоренного дубля».
+Raise or lower the pitch of an event's sound without touching its length: the voice becomes lower or higher, the music moves to another key, and the event stays exactly where it was and of the same duration. The reverse of the existing Slowed+Reverb, where pitch moves together with speed. For the editor this means "make the voice deeper", "fit the backing track to the key" and "remove the childlike timbre from a sped-up take".
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| Vegas Pro | 2026 | Pitch Shift / Elastique | событийный эффект и свойство события; несколько алгоритмов (élastique Pro/Efficient/Soloist), выбор режима на событие |
-| Premiere Pro | 26 | Pitch Shifter (эффект) | эффект дорожки/клипа в Essential Sound; отдельно Audition Stretch с выбором Realtime/Rendered |
-| DaVinci Resolve | 21 | Pitch (Fairlight) | ползунок полутонов/центов на дорожке Fairlight, алгоритм скрыт от пользователя |
-| Final Cut Pro | 12 | Pitch (инспектор аудио) | параметр клипа в полутонах/центах, привязан к настройке Speed → Preserve Pitch |
-| After Effects | 26 | Pitch & Time (нет своего) | своего гранулярного питча нет; тайм-стретч меняет высоту, точная работа — в Audition |
+| Vegas Pro | 2026 | Pitch Shift / Elastique | An event effect and an event property; several algorithms (élastique Pro/Efficient/Soloist), the mode is chosen per event |
+| Premiere Pro | 26 | Pitch Shifter (effect) | A track/clip effect in Essential Sound; separately Audition Stretch with a choice of Realtime/Rendered |
+| DaVinci Resolve | 21 | Pitch (Fairlight) | A slider in semitones/cents on a Fairlight track; the algorithm is hidden from the user |
+| Final Cut Pro | 12 | Pitch (audio inspector) | A clip parameter in semitones/cents, tied to the Speed → Preserve Pitch setting |
+| After Effects | 26 | Pitch & Time (none of its own) | It has no granular pitch of its own; time-stretch changes the pitch, and precise work is done in Audition |
 
-**Вне ядра.** Без Ableton не объяснить, зачем нужны ДВА алгоритма: он
-единственный показывает выбор режима пользователю как штатную часть работы,
-а не как «настройку качества».
+**Outside the core.** Without Ableton one cannot explain why TWO algorithms are needed: it is the only one that shows the choice of mode to the user as a regular part of the work, rather than as a "quality setting".
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Ableton Live | 12 | Warp Modes | Beats/Tones/Texture/Complex — разные алгоритмы под разный материал, переключаются на клипе; Complex Pro — вокодерный, Beats — зерновой с сохранением транзиентов |
-| RubberBand / élastique | — | библиотеки | отраслевой стандарт: время-домен для ритмичного, фазовый вокодер с phase-locking для гармоничного |
+| Ableton Live | 12 | Warp Modes | Beats/Tones/Texture/Complex — different algorithms for different material, switched on the clip; Complex Pro is a vocoder, Beats is granular with transient preservation |
+| RubberBand / élastique | — | libraries | The industry standard: time-domain for rhythmic material, a phase vocoder with phase-locking for harmonic material |
 
-## Фишка фишки
+## The trick behind it
 
-**Алгоритм — это не «качество», а ВЫБОР ПОД МАТЕРИАЛ, и слышно его на
-транзиентах.** Зерновой (WSOLA) режет поток на грейны и сшивает их по
-максимуму корреляции: барабан остаётся ударом, но плотная полифония даёт
-лёгкий «шелест» на стыках. Фазовый вокодер считает спектр и переносит
-частоты бинов: подклад и синты едут чисто, а удар размазывается в «пуф» —
-классический артефакт вокодера, который в рекламе называют «мягкостью».
-Редакторы прячут этот выбор по-разному: Vegas показывает три élastique-режима
-на событии, Resolve не показывает ничего, Ableton делает из выбора обычную
-часть работы с клипом.
+**The algorithm is not about "quality" but about a CHOICE FOR THE MATERIAL, and it is audible on transients.** A granular (WSOLA) method cuts the stream into grains and stitches them together by maximum correlation: a drum stays a hit, but dense polyphony gives a light "rustle" at the joins. A phase vocoder computes the spectrum and shifts the frequencies of the bins: pads and synths move cleanly, but a hit smears into a "puff" — the classic vocoder artifact, which advertising calls "softness". The editors hide this choice in different ways: Vegas shows three élastique modes on the event, Resolve shows nothing, Ableton makes the choice an ordinary part of working with a clip.
 
-**Второе: питч дороже, чем кажется, из-за окна анализа.** Оба алгоритма
-смотрят ВПЕРЁД (зерно/окно FFT), то есть вносят задержку в тракт. Хост,
-который не умеет её компенсировать, либо сдвигает дорожку относительно
-остальных, либо вынужден рендерить эффект офлайн — отсюда деление Audition
-на Realtime и Rendered.
+**Second: pitch costs more than it seems, because of the analysis window.** Both algorithms look FORWARD (grain/FFT window), that is, they introduce a delay into the signal path. A host that cannot compensate it either shifts the track relative to the others or is forced to render the effect offline — hence Audition's split into Realtime and Rendered.
 
-**Третье: питч и скорость — разные оси, но живут в одном узле.** У Vegas
-«Lock to stretch» связывает их обратно, потому что монтажёр то хочет
-ускорить без «бурундука», то наоборот поднять высоту без ускорения.
+**Third: pitch and speed are different axes, but they live in one node.** In Vegas "Lock to stretch" ties them back together, because the editor sometimes wants to speed up without the "chipmunk" effect, and at other times wants to raise the pitch without speeding up.
 
-## Плюсы
+## Pros
 
-- Высота становится независимой осью: замедление события больше не диктует
-  тембр, и «slowed»-эстетика перестаёт быть единственным доступным звуком.
-- Два алгоритма на одном узле закрывают обе крайности материала (речь/удар
-  против подклада/полифонии) без изобретения третьего DSP.
-- Питч, работающий ПОСЛЕ варпа на клип-локальном потоке, не трогает
-  монополию варпа на потребление источника: длительность события не едет,
-  значит префетч, границы и кривые остаются прежними.
+- Pitch becomes an independent axis: slowing an event no longer dictates the timbre, and the "slowed" aesthetic stops being the only available sound.
+- Two algorithms on one node cover both extremes of material (speech/hit against pad/polyphony) without inventing a third DSP.
+- Pitch working AFTER the warp on a clip-local stream does not touch the warp's monopoly on consuming the source: the event's duration does not move, so prefetch, boundaries and curves stay as they were.
 
-## Минусы
+## Cons
 
-- Окно анализа = упреждение: без механизма сквозной задержки эффект либо
-  сдвигает событие, либо обязан читать источник вперёд (второе честнее, но
-  расширяет окно префетча).
-- Ни один алгоритм не бесплатен по артефактам: WSOLA шелестит на плотном
-  материале, вокодер размазывает удары. Это свойство, а не настройка.
-- Форманты «едут» вместе с высотой: голос, поднятый на пять полутонов,
-  звучит мультяшно. Формант-коррекция — отдельная работа.
-- Выбор движка одним переключателем на проект проще в реализации, но менее
-  гибок, чем режим на событие (как у Vegas и Ableton).
+- The analysis window = lookahead: without a mechanism of end-to-end delay compensation the effect either shifts the event or has to read the source ahead (the latter is more honest, but widens the prefetch window).
+- No algorithm is free of artifacts: WSOLA rustles on dense material, the vocoder smears hits. This is a property, not a setting.
+- Formants "move" together with the pitch: a voice raised by five semitones sounds cartoonish. Formant correction is separate work.
+- Choosing the engine with a single switch per project is simpler to implement, but less flexible than a mode per event (as in Vegas and Ableton).
 
-## Что говорят пользователи
+## What users say
 
-НЕТ ЦИТАТ: разведка велась по официальной документации и справке пяти
-редакторов из памяти модели (срез знаний 2026-01); дословный форумный
-фрагмент со ссылкой без живого доступа к треду не воспроизводим — факты
-таблицы проверяемы по руководствам вендоров из раздела «Источники».
+NO QUOTES: the research was done from the official documentation and help of the five editors, from the model's memory (knowledge cutoff 2026-01); a verbatim forum fragment with a link cannot be reproduced without live access to the thread — the facts in the table can be checked against the vendors' manuals from the "Sources" section.
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/audio-fx/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Сдвиг высоты — два движка на выбор в настройках; нейтраль байт-в-байт, куском == кусками.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/audio-fx/ — the contract is in `spec.md`, the "why" and the paths in the code are in `design.md`.
+Pitch shift — two engines to choose from in the settings; neutral byte-for-byte, a render in pieces == in pieces.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | L — раунд (упреждение + два движка) |
-| Где основная работа | kt-fx (узел и оба DSP), kt-fx/audio/mod.rs (упреждение) |
-| Формат проекта | не трогает версию: новое поле настроек с дефолтом не пишется в старые файлы |
-| Тесты, которые придётся написать | нейтраль байт-в-байт; рендер куском == кусками; спектральный пик на ожидаемой частоте; переключение движка меняет звук и переживает сохранение |
-| Зависит от | механизма упреждения (той же волны) |
-| Ломает совместимость | нет |
+| Scope | L — a round (lookahead + two engines) |
+| Where the main work is | kt-fx (the node and both DSPs), kt-fx/audio/mod.rs (lookahead) |
+| Project format | does not touch the version: a new settings field with a default is not written into old files |
+| Tests that will have to be written | neutral byte-for-byte; a render in pieces == in pieces; the spectral peak at the expected frequency; switching the engine changes the sound and survives saving |
+| Depends on | the lookahead mechanism (the same wave) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём оба движка сразу: они закрывают разный материал, и выбор между ними
-— часть работы монтажёра, а не скрытая «настройка качества» (прямое решение
-владельца). Переключатель — на уровне ПРОЕКТА: один монтаж звучит одним
-алгоритмом, а сравнить два варианта можно одним щелчком, не перебирая
-события. Нейтральное значение обязано быть байт-в-байт прежним звуком —
-иначе эффект, добавленный «на попробовать», меняет экспорт молча.
+Take both engines at once: they cover different material, and the choice between them is part of the editor's work, not a hidden "quality setting" (the direct decision of the owner). The switch is at the level of the PROJECT: one edit sounds with one algorithm, and two variants can be compared with one click, without going through events. The neutral value must be the same sound byte-for-byte as before — otherwise an effect added "to try it" silently changes the export.
 
-## Источники
+## Sources
 
-- https://www.vegascreativesoftware.com/us/vegas-pro/ (дата обращения 2026-09-14)
-- https://helpx.adobe.com/audition/using/time-pitch-manipulation.html (дата обращения 2026-09-14)
-- https://www.blackmagicdesign.com/products/davinciresolve/fairlight (дата обращения 2026-09-14)
-- https://support.apple.com/guide/final-cut-pro/ (дата обращения 2026-09-14)
-- https://www.ableton.com/en/live-manual/ (дата обращения 2026-09-14)
+- https://www.vegascreativesoftware.com/us/vegas-pro/ (accessed 2026-09-14)
+- https://helpx.adobe.com/audition/using/time-pitch-manipulation.html (accessed 2026-09-14)
+- https://www.blackmagicdesign.com/products/davinciresolve/fairlight (accessed 2026-09-14)
+- https://support.apple.com/guide/final-cut-pro/ (accessed 2026-09-14)
+- https://www.ableton.com/en/live-manual/ (accessed 2026-09-14)
 
-**Реализовано в Р.48** — docs/porting-notes.md пп.337, 339-340
-(t337-t340); дальнейшая жизнь фичи там. Формант-коррекция и режим на
-событие (вместо настройки проекта) не делались.
+**Implemented in R.48** — docs/porting-notes.md items 337, 339–340
+(t337–t340); further life of the feature is there. Formant correction and a mode per event (instead of a project setting) were not done.

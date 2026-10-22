@@ -1,12 +1,12 @@
 ---
 id: F-COL-024
-title: Версия ролика как единица рецензии
-status: кандидат
+title: Version of a cut as the unit of review
+status: candidate
 priority: B
 cost: M
 category: collab/review
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: no
 crates: [kt-engine, kt-app, kt-model]
 invariants: [9, 11]
 ui_rules: [13, 19]
@@ -19,241 +19,138 @@ services: [frame-io, bm-cloud]
 checked: 2026-09-08
 ---
 
-# F-COL-024 — Версия ролика как единица рецензии
+# F-COL-024 — Version of a cut as the unit of review
 
-## Суть
+## Essence
 
-Рецензируют не проект и не таймлайн, а ОТРЕНДЕРЕННЫЙ ролик: заказчик смотрит
-файл, а не монтаж. Ролик изготавливается заново после каждого круга правок, и
-таких файлов за неделю набирается семь. Пока они лежат кучей, разговор
-рассыпается: непонятно, на какой из них написано замечание, сделано ли уже то,
-о чём просили в прошлый раз, и какой файл считать сегодняшним. Стопка версий —
-это ответ: ролики складываются один на другой в порядке изготовления, у стопки
-один адрес, а сравнение соседних версий и есть то, ради чего старые реплики
-вообще хранят.
+Reviewers review not the project and not the timeline but a RENDERED cut: the client watches the file, not the edit. The cut is made anew after each round of revisions, and by the week seven such files accumulate. While they lie in a heap, the conversation falls apart: it is unclear which of them the remark is written on, whether what was asked for last time is already done, and which file counts as today's. A stack of versions is the answer: the cuts are piled one on another in the order they were made, the stack has one address, and comparing adjacent versions is exactly why the old replies are kept at all.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет | сущности «версия ролика» нет вовсе: Render As пишет файл, дальше о нём помнит только файловая система; круги правок различают суффиксом в имени руками — **[НЕ ПРОВЕРЕНО]** по справке линейки 2026 |
-| Adobe Premiere | 26.x | панель рецензии внутри редактора (Frame.io V4), Share for Review | стопка живёт НЕ в редакторе, а на той стороне: редактор отдаёт туда очередной экспорт, версии складываются сервисом. В 25.6 панель переписана целиком, и реплики привязываются к маркерам секвенции, а не к таймштампу ролика |
-| DaVinci Resolve | 21 | Presentations (Blackmagic Cloud), одноимённый пресет на странице Deliver | публикуется ТАЙМЛАЙН или клип прямо из редактора, а не «файл вообще»; «shared markers and comments are automatically and bidirectionally relinked with DaVinci Resolve». Сама стопка — снова на стороне облака |
-| Final Cut Pro | 12.3 | Snapshot Project (Shift-Cmd-D), Duplicate As | ближайшее родное — версия ПРОЕКТА, а не ролика: копия получает к имени слово Snapshot и дату со временем. То есть идентичность версии = строка в имени, выданная местными часами |
-| After Effects | 26.x | та же панель рецензии; очередь рендера с шаблонами имён | у самого приложения версия ролика не сущность: есть задание очереди и шаблон имени файла, а «который это по счёту» знает только человек |
+| VEGAS Pro | 2026.0 | none | there is no entity "render version" at all: Render As writes a file, and after that only the file system remembers it; rounds of revisions are told apart by a suffix in the name, by hand — **[NOT VERIFIED]** against the help of the 2026 line |
+| Adobe Premiere | 26.x | review panel inside the editor (Frame.io V4), Share for Review | the stack lives NOT in the editor but on the other side: the editor hands the next export there, and the service stacks the versions. In 25.6 the panel was rewritten entirely, and replies are attached to sequence markers, not to the timestamp of the cut |
+| DaVinci Resolve | 21 | Presentations (Blackmagic Cloud), a preset of the same name on the Deliver page | a TIMELINE or a clip is published directly from the editor, not "a file in general"; "shared markers and comments are automatically and bidirectionally relinked with DaVinci Resolve". The stack itself is again on the cloud side |
+| Final Cut Pro | 12.3 | Snapshot Project (Shift-Cmd-D), Duplicate As | the closest native thing is a version of the PROJECT, not of the cut: the copy gets the word Snapshot added to its name and the date with the time. That is, the identity of a version = a string in the name, issued by local clock |
+| After Effects | 26.x | the same review panel; render queue with name templates | the application itself has no version of the cut as an entity: there is a queue job and a file name template, and only the person knows "which one is this in order" |
 
-Сервис (Frame.io, Blackmagic Cloud) строки в этой таблице не получает по
-доктрине трёх реестров (`_services.md`): вердикт «берём/не берём» живёт рядом с
-редактором, а не рядом с чужим хостом. Механизм при этом родом именно оттуда, и
-разобран он ниже прозой — в этом и находка: **стопка версий не является фичей
-ни одного из пяти редакторов.**
+The service (Frame.io, Blackmagic Cloud) does not get a row in this table under the doctrine of the three registries (`_services.md`): the verdict "take / do not take" lives next to the editor, not next to someone else's host. The mechanism, however, originates from there, and it is analysed below in prose — and that is the finding: **a stack of versions is not a feature of any of the five editors.**
 
-## Фишка фишки
+## The trick behind it
 
-**1. Стопка — это не папка и не переименование, а объект с ПОСТОЯННЫМ адресом,
-и постоянство адреса и есть весь смысл.** Ссылку, отданную заказчику один раз,
-не нужно отдавать заново: новая версия кладётся в ту же стопку, и та же ссылка
-открывает уже её. Отсюда неочевидное следствие: адрес разговора и адрес кадра
-живут РАЗНОЕ время — ссылка вечная, а реплика приколота к конкретной версии.
-Сложи версии в папку — и придётся рассылать новый адрес после каждого круга,
-причём половина адресатов останется на старом.
+**1. A stack is not a folder and not a renaming, but an object with a PERMANENT address, and the permanence of the address is the whole point.** A link given to the client once does not need to be handed over again: the new version goes into the same stack, and the same link opens it. The non-obvious consequence: the address of the conversation and the address of the frame live DIFFERENT lifetimes — the link is eternal, while a reply is pinned to a specific version. Put the versions into a folder — and a new address has to be sent after each round, and half of the recipients will stay on the old one.
 
-**2. Номер версии — журнал ДОСТАВКИ, а не журнал монтажа.** Версия создаётся
-тем, что файл кладут поверх предыдущего («upload the new version, then drag it
-on top of the original version»), поэтому нумерация считает загрузки: повторно
-залитый старый монтаж становится следующим номером, а не возвращается на своё
-место. Отсюда классическое расхождение «v4» в имени файла у монтажёра и «V4» в
-стопке у заказчика — это два разных счётчика, и совпадают они только пока никто
-не ошибся.
+**2. The version number is a DELIVERY log, not an editing log.** A version is created by dropping the file on top of the previous one ("upload the new version, then drag it on top of the original version"), so numbering counts uploads: an old edit re-uploaded becomes the next number, rather than returning to its own place. Hence the classic mismatch between "v4" in the editor's file name and "V4" in the client's stack — these are two different counters, and they coincide only as long as nobody has made a mistake.
 
-**3. В одной стопке уживаются версии ДВУХ РОДОВ, и различает их только
-происхождение.** Есть версии, созданные человеком (перетащил файл), и есть
-системные: при работе через смонтированное хранилище локальные сохранения
-«will no longer version stack but instead be automatically nested in your
-version history and attach to the latest version you're working on» и при этом
-«Saves do not consume storage». То есть у стопки появился второй, скрытый
-уровень — история внутри версии, — и пользователю он показан не как версия.
+**3. Versions of TWO KINDS coexist in one stack, and only their origin tells them apart.** There are versions created by a person (dragging a file), and there are system ones: when working through a mounted storage, local saves "will no longer version stack but instead be automatically nested in your version history and attach to the latest version you're working on", and "Saves do not consume storage". That is, the stack has acquired a second, hidden level — history inside a version — and it is shown to the user not as a version.
 
-**4. Там, где стопки нет, идентичность версии — это СТРОКА, выданная местными
-часами.** Final Cut дописывает к имени снапшота слово и дату со временем; на
-одной машине это работает, на двух даёт два «Snapshot 2026-09-08 14:31», и
-никакой сортировкой их уже не различить. Строка вместо адреса — ровно то место,
-где стопка перестаёт быть стопкой.
+**4. Where there is no stack, the identity of a version is a STRING issued by local clock.** Final Cut appends a word and a date with time to the snapshot's name; on one machine this works, on two it gives two "Snapshot 2026-09-08 14:31", and no sorting can tell them apart any more. A string instead of an address is exactly the place where a stack stops being a stack.
 
-## Плюсы
+## Pros
 
-- Ссылка не протухает: адрес выдаётся один раз на РАБОТУ, а не на файл, поэтому
-  круг правок не порождает рассылки.
-- Реплика остаётся пришитой к тому кадру, на который её написали: старая версия
-  никуда не девается, и «посмотри, о чём я говорил» проверяемо через месяц.
-- Сравнение соседних версий превращает архив в инструмент: без него старые
-  реплики бесполезны, потому что непонятно, выполнены они или нет.
-- Порядок изготовления виден без договорённостей об именах файлов — то есть
-  механизм не разваливается от того, что кто-то один назвал файл иначе.
+- The link does not expire: the address is issued once per JOB rather than per file, so a round of revisions does not generate a re-send.
+- A reply stays pinned to the frame it was written on: the old version goes nowhere, and "look at what I was talking about" can be checked a month later.
+- Comparing adjacent versions turns the archive into a tool: without it old replies are useless, because it is unclear whether they were fulfilled.
+- The order of making is visible without agreements about file names — that is, the mechanism does not fall apart because one person named a file differently.
 
-## Минусы
+## Cons
 
-- Нумерация врёт при повторной заливке: «v5» может оказаться старее «v4», и в
-  самой стопке этого не видно.
-- Единица рецензии — плоский ролик, поэтому реплика адресована ВРЕМЕНИ ролика, а
-  монтаж к моменту прочтения уже уехал (это отдельная заметка, F-COL-026).
-- Стопка живёт на чужом хосте: она не часть документа, и при потере доступа
-  теряется вся история разговора, включая одобрения.
-- Два счётчика версий (у монтажёра в имени файла, у сервиса в стопке)
-  расходятся молча — никто не сверяет их автоматически.
-- Хранение оплачивается за каждую версию, поэтому старые версии удаляют, и
-  именно они нужны, когда спор доходит до «а это мы согласовывали».
+- The numbering lies when re-uploading: "v5" may turn out to be older than "v4", and within the stack this is not visible.
+- The unit of review is a flat cut, so a reply is addressed to the TIME of the cut, while the edit has already moved on by the moment of reading (this is a separate note, F-COL-026).
+- The stack lives on someone else's host: it is not part of the document, and if access is lost, the whole history of the conversation is lost, including the approvals.
+- Two version counters (the editor's in the file name, the service's in the stack) diverge silently — nobody checks them against each other automatically.
+- Storage is paid for each version, so old versions get deleted — and they are exactly what is needed when a dispute reaches "but this is what we agreed on".
 
-## Что говорят пользователи
+## What users say
 
-Про то, почему версия — не техническая мелочь, а единица договора:
+About why a version is not a technical trifle but a unit of contract:
 
 > We include 2 rounds of minor revisions. Minor revisions are usually about 1
 > hour of editing time for each round of revisions.
-> — Greg Ball, Creative COW, «Defining rounds of revisions», 15.04.2015,
+> — Greg Ball, Creative COW, "Defining rounds of revisions", 15.04.2015,
 > https://creativecow.net/forums/thread/defining-rounds-of-revisions/
 
-И там же — почему у круга обязана быть точка отсчёта, к которой можно вернуться:
+And in the same thread — why a round must have a reference point to which one can return:
 
 > You can't change what you previously approved and you can not ask for
 > something more that wasn't in the estimate.
-> — Ned Miller, тот же тред, 16.04.2015
+> — Ned Miller, the same thread, 16.04.2015
 
-Обе цитаты об одном: круг правок считают, на него ссылаются и им ограничивают
-объём работ, — значит у него обязано быть имя, а у названного круга обязан быть
-предъявляемый ролик.
+Both quotes are about one thing: a round of revisions is counted, referred to, and used to limit the scope of work — so it must have a name, and the named round must have a demonstrable cut.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What we already have
 
-Изготовление ролика у нас сделано целиком и внутри процесса (инвариант 9):
-мукс и кодирование идут через `kt_engine::export`, без временных файлов и
-внешнего `ffmpeg`. Есть даже больше, чем можно ожидать:
+Making a cut is done by us entirely and inside the process (invariant 9): mux and encoding go through `kt_engine::export`, without temporary files and without an external `ffmpeg`. There is even more than one might expect:
 
-- **Диапазон.** `src/libs/kt-engine/src/export.rs` умеет `range`, а GUI выводит
-  наружу «весь проект» и «регион» — то есть «выдать на рецензию кусок» уже
-  выражается.
-- **Осмысленное имя.** `render_file_name`
-  (`src/apps/kt-app/src/render_dialog.rs`) собирает
-  `kt-<проект>-<область>-<длина>s.mp4`, причём имя области берётся ТОЛЬКО у
-  метки-диапазона, совпадающей с регионом, «чтобы имя не врало про содержимое».
-- **Проверка перед выдачей.** `missing_sources` обходит материал и называет
-  недостающее до старта, а не после (F-COL-006 разбирает это со стороны прав).
-- **Ревизия документа существует.** `model_rev`
-  (`src/apps/kt-app/src/app.rs`) растёт на каждой правке модели через обёртки
-  `apply*`.
-- **Два прогона дают один байт.** Аудио байт-в-байт всегда, видео на CPU-пути —
-  между прогонами и против эталона (инвариант 11). Значит вопрос «а изменилось
-  ли что-нибудь между двумя роликами» у нас в принципе имеет честный ответ, а не
-  оценку на глаз.
+- **Range.** `src/libs/kt-engine/src/export.rs` supports `range`, and the GUI offers "whole project" and "region" — so "hand out a piece for review" is already expressible.
+- **A meaningful name.** `render_file_name`
+  (`src/apps/kt-app/src/render_dialog.rs`) assembles
+  `kt-<project>-<area>-<length>s.mp4`, and the area name is taken ONLY from a range marker that coincides with the region, "so that the name does not lie about the contents".
+- **A check before handing out.** `missing_sources` walks the footage and names what is missing BEFORE the start, not after (F-COL-006 analyses this from the side of rights).
+- **A document revision exists.** `model_rev`
+  (`src/apps/kt-app/src/app.rs`) grows on every edit of the model through the `apply*` wrappers.
+- **Two runs give one byte.** Audio is byte-for-byte always, video on the CPU path — between runs and against the reference (invariant 11). So the question "did anything change between two cuts" has, for us, an honest answer in principle, not an estimate by eye.
 
-### Чего не хватает
+### What is missing
 
-Всё перечисленное умирает вместе с заданием. `RenderJob` знает путь, настройки,
-разрешение, fps и список отсутствующих исходников — и это состояние живёт ровно
-до закрытия окна: нигде не остаётся записи о том, что ролик вообще был
-изготовлен. Отсюда три дырки подряд:
+All of the above dies together with the job. `RenderJob` knows the path, the settings, the resolution, the fps and the list of missing sources — and this state lives exactly until the window is closed: nowhere is a record left that the cut was made at all. Hence three holes in a row:
 
-- Списка изготовленного нет: ни пути, ни времени, ни настроек, ни ревизии, из
-  которой ролик собран. Открыть проект и спросить «что я отдавал в понедельник»
-  не у кого.
-- Номера версии нет и в имени: шаблон кодирует СОДЕРЖИМОЕ (проект, область,
-  длина в секундах), а не итерацию, поэтому второй рендер того же куска
-  предлагает то же самое имя.
-- Ревизия документа в файл не попадает: `model_rev` — ключ кэшей отрисовки,
-  `saved_rev` — сторож автосейва; в `.otio` уходят только версии ФОРМАТА.
-  Ролик не может сослаться на монтаж, из которого сделан, потому что у монтажа
-  нет предъявляемого имени состояния.
+- A list of what was made does not exist: no path, no time, no settings, no revision from which the cut was assembled. Open the project and ask "what did I deliver on Monday" — there is no one to ask.
+- A version number is absent from the name too: the template encodes the CONTENT (project, area, length in seconds), not the iteration, so a second render of the same piece suggests the same name.
+- The document revision does not go into the file: `model_rev` is the key of the drawing caches, `saved_rev` is the guard of autosave; only format versions go into `.otio`. A cut cannot refer to the edit it was made from, because the edit has no presentable name of state.
 
-БЕЗ СЕТИ: ВЫРОЖДАЕТСЯ — `src/apps/kt-app/src/toolbar.rs:672` — на одной машине стопка вырождается в папку с файлами: кнопка рендера — единственный вход в изготовление ролика, и после неё программа не помнит ни одного изготовленного файла: ни пути, ни настроек, ни ревизии, из которой он собран. Предлагаемое имя при этом кодирует содержимое, а не итерацию, поэтому второй рендер того же куска предлагает то же самое имя, и всю стопку версий держит вопрос системного диалога «перезаписать?».
+OFFLINE: DEGENERATES — `src/apps/kt-app/src/toolbar.rs:672` — on one machine the stack degenerates into a folder of files: the render button is the only entry point to making a cut, and after it the program remembers not a single produced file: neither its path, nor its settings, nor the revision it was assembled from. The proposed name encodes the content rather than the iteration, so a second render of the same piece proposes the same name, and the entire stack of versions is held by the question of the system dialog "overwrite?".
 
-ЦЕНА СЕТИ: одна стопка на двоих и уверенность, что оба открыли ОДИН и тот же v4 — хранилище между проектами — ролик не принадлежит ни одному файлу проекта: он изготовлен из ревизии, которой в файле нет, и по смыслу лежит рядом с проектами, а не внутри одного из них; пока такого места нет, номер версии существует только в имени файла, а имя у каждого своё.
+NETWORK COST: one stack for two people and confidence that both opened ONE AND THE SAME v4 — cross-project storage — the cut does not belong to any project file: it was made from a revision that is not in the file, and in meaning it lies next to the projects, not inside one of them; until such a place exists, the version number exists only in the file name, and each person's file name is their own.
 
-### Что мешает
+### What gets in the way
 
-Упор конструктивный, а не объёмный: **журналу версий негде жить.** Проект у нас —
-один файл `.otio` с байт-стабильным round-trip, и запись «ролик изготовлен тогда-то
-из такой-то ревизии» внутрь него не просится: она не часть монтажа и портит
-идемпотентность круга. Соседнее место есть — sidecar `<project>.ktindex.db`
-(`src/libs/kt-media/src/index.rs`), — но оно устроено под кэш, а не под данные,
-которых будет жалко: строки ключуются АБСОЛЮТНЫМ путём, а при любой ошибке
-открытия база УДАЛЯЕТСЯ и создаётся заново. Класть туда историю выдач нельзя, и
-это ровно тот случай, когда заметка обязана назвать препятствие, а не обойти его.
+The obstacle is constructive, not volumetric: **the version log has nowhere to live.** Our project is one `.otio` file with a byte-stable round-trip, and the record "the cut was made at such-and-such time from such-and-such revision" does not belong inside it: it is not part of the edit, and it breaks the idempotence of the cycle. A neighbouring place does exist — the sidecar `<project>.ktindex.db`
+(`src/libs/kt-media/src/index.rs`) — but it is built for a cache, not for data that would be a pity to lose: rows are keyed by ABSOLUTE path, and on any opening error the database is DELETED and recreated. Storing the history of deliveries there is not allowed, and this is exactly the case where a note must name the obstacle rather than go around it.
 
-Второе препятствие — место в интерфейсе (правило 13 чек-листа): полосу под
-список версий заводить нечестно, он появляется изредка; а окно настроек рендера
-обязано сказать, где решение потом меняется (правило 19).
+The second obstacle is a place in the interface (checklist rule 13): creating a strip for the list of versions is dishonest, since it appears rarely; and the render settings window must say where the decision is later changed (rule 19).
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **9 (экспорт внутрипроцессный).** Журнал изготовленного — продолжение того же
-  правила: никакого внешнего каталога заданий и никакого агента, иначе первый же
-  «менеджер версий» приведёт за собой процесс на стороне.
-- **11 (детерминизм).** Именно он делает стопку честной у нас и невозможной у
-  других: два ролика, собранные из одной ревизии одним бэкендом, совпадают
-  байт-в-байт, поэтому «версия не изменилась» — проверяемое утверждение, а не
-  впечатление.
+- **9 (export is in-process).** A log of what was made is a continuation of the same rule: no external job catalogue and no agent, otherwise the first "version manager" brings a process on the other side along with it.
+- **11 (determinism).** It is exactly this that makes the stack honest for us and impossible for others: two cuts assembled from one revision with one backend coincide byte for byte, so "the version did not change" is a verifiable statement, not an impression.
 
-Правил UI задевает два: 13 (список версий обязан встать на уже занятое место, а
-не в новую полосу) и 19 (окно рендера называет, где номер версии переключается).
+Two UI checklist rules are touched: 13 (the list of versions must fit into an already occupied place, not a new strip) and 19 (the render window names where the version number is switched).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии: запись об изготовленном ролике рядом с проектом; номер версии в имени и в окне рендера |
-| Где основная работа | kt-app (окно рендера и место показа), kt-engine (что именно записывается о задании), kt-model (предъявляемое имя состояния документа) |
-| Формат проекта | не трогает: журнал выдач не часть монтажа, и в `.otio` ему не место |
-| Тесты, которые придётся написать | «второй рендер того же куска не предлагает то же имя»; «журнал переживает переоткрытие проекта» (в отличие от `.ktindex.db`, который сносится при ошибке); layout-тест «список версий не растит полосу» |
-| Зависит от | ничего; F-COL-025 (номер версии в кадре) и F-COL-026 (реплика адресована версии) опираются на неё |
-| Ломает совместимость | нет |
+| Size | M — 2 stages: a record of the made cut next to the project; the version number in the name and in the render window |
+| Where the main work is | kt-app (the render window and the place of display), kt-engine (what exactly is recorded about the job), kt-model (the presentable name of the document state) |
+| Project format | does not touch: the log of deliveries is not part of the edit, and it has no place in `.otio` |
+| Tests to write | "a second render of the same piece does not suggest the same name"; "the log survives reopening the project" (unlike `.ktindex.db`, which is deleted on error); a layout test "the list of versions does not grow the strip" |
+| Depends on | nothing; F-COL-025 (version number in the frame) and F-COL-026 (a reply is addressed to a version) rest on it |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём локальную половину: запись об изготовленных роликах рядом с проектом и
-номер версии, выданный программой, а не набранный руками в диалоге сохранения.
-Серверную половину не заводим — второго участника нет, и объявлять его заметка
-права не имеет.
+Take the local half: a record of the made cuts next to the project and a version number issued by the program, rather than typed by hand in the save dialog. The server half we do not create — there is no second participant, and declaring one is not within the note's rights.
 
-**Отдельно и прямо: вывод F-PRJ-002 сюда НЕ переносится.** Там сказано про файл
-проекта: «пользовательский проект это один текстовый файл с байт-стабильным
-round-trip, и git решает эту половину лучше, чем решим мы». Здесь предмет
-другой — ролик, объект ВНЕ проекта: он не текст, он не диффится, он не
-воспроизводится из истории (для этого нужны те же исходники, тот же бэкенд и
-то же железо), и «Сохранить как» его не создаёт вовсе. Ни git, ни снапшоты
-модели не отвечают на вопрос «что я отдал заказчику в понедельник и чем это
-отличается от того, что отдам сегодня». Единственное, что мы уже умеем и что
-никто из пяти не умеет, — сказать про два ролика «это байт-в-байт одно и то же»
-(инвариант 11); на этом и стоит строить.
+**Separately and explicitly: the conclusion of F-PRJ-002 is NOT carried over here.** There it is said about the project file: "a user project is one text file with a byte-stable round-trip, and git solves this half better than we would". Here the subject is different — the cut, an object OUTSIDE the project: it is not text, it is not diffed, it cannot be reproduced from history (that requires the same footage, the same backend and the same hardware), and "Save as" does not create it at all. Neither git nor model snapshots answer the question "what did I hand to the client on Monday and how does it differ from what I will hand over today". The only thing we already can do, and that none of the five can do, is to say of two cuts "these are byte for byte the same" (invariant 11); on this we should build.
 
-Границы: очередь заданий и фоновый экспорт — F-EXP-002 (очередь внутренняя,
-иначе инвариант 9); история правок и снапшоты документа — F-PRJ-002; автосейв и
-версии проекта на диске — F-RES-001; чем реплика адресуется в чужом плеере —
-F-COL-025; возврат реплик в монтаж — F-COL-026.
+Boundaries: the job queue and background export — F-EXP-002 (the queue is internal, otherwise invariant 9); the history of edits and document snapshots — F-PRJ-002; autosave and project versions on disk — F-RES-001; how a reply is addressed in a foreign player — F-COL-025; returning replies to the edit — F-COL-026.
 
-## Источники
+## Sources
 
-- https://creativecow.net/forums/thread/defining-rounds-of-revisions/ — круг
-  правок как единица договора, цитаты Greg Ball и Ned Miller с датами (дата
-  обращения 2026-09-08)
-- https://help.frame.io/en/articles/9101068-versioning-in-frame-io — как
-  создаётся версия («upload the new version, then drag it on top of the
-  original version»), доступ к предыдущим, поведение сохранений при
-  смонтированном хранилище (дата обращения 2026-09-08)
+- https://creativecow.net/forums/thread/defining-rounds-of-revisions/ — a round of revisions as a unit of contract; quotes from Greg Ball and Ned Miller with dates (accessed 2026-09-08)
+- https://help.frame.io/en/articles/9101068-versioning-in-frame-io — how a version is created ("upload the new version, then drag it on top of the original version"), access to previous ones, behaviour of saves with a mounted storage (accessed 2026-09-08)
 - https://www.blackmagicdesign.com/products/davinciresolve/collaboration —
-  Presentations и двусторонняя перепривязка маркеров и комментариев (дата
-  обращения 2026-09-08)
+  Presentations and bidirectional relinking of markers and comments (accessed 2026-09-08)
 - https://support.apple.com/guide/final-cut-pro/duplicate-projects-and-clips-verfd45ffa45/mac
-  — Snapshot Project: к имени копии дописывается слово и дата со временем (дата
-  обращения 2026-09-08)
-- Строки VEGAS и After Effects собраны по составу интерфейсов; живьём не
-  проверялись — публичного трекера нет ни у одного из пяти
-  (`docs/features/_trackers.md`, «Кого НЕ берём»), пометка `[НЕ ПРОВЕРЕНО]`
-  стоит в самой таблице
-- Наш код проверен чтением 08.09.2026: `src/apps/kt-app/src/toolbar.rs`
-  (кнопка рендера), `src/apps/kt-app/src/render_dialog.rs` (`render_file_name`,
+  — Snapshot Project: a word and a date with time are appended to the copy's name (accessed 2026-09-08)
+- The VEGAS and After Effects rows were assembled from the composition of interfaces; not checked live — none of the five has a public tracker (`docs/features/_trackers.md`, "Who we do NOT take"), and the mark `[NOT VERIFIED]` stands in the table itself
+- Our code checked by reading on 08.09.2026: `src/apps/kt-app/src/toolbar.rs`
+  (the render button), `src/apps/kt-app/src/render_dialog.rs` (`render_file_name`,
   `default_render_name`, `launch_render`, `RenderJob`),
   `src/libs/kt-engine/src/export.rs` (`range`),
-  `src/libs/kt-media/src/index.rs` (поведение sidecar при ошибке открытия),
+  `src/libs/kt-media/src/index.rs` (sidecar behaviour on opening error),
   `src/apps/kt-app/src/app.rs` (`model_rev`)

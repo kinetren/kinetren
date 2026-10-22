@@ -1,16 +1,16 @@
 ---
 id: F-AUD-002
-title: Динамическая обработка — компрессор, лимитер, гейт, экспандер
-status: сделано
+title: Dynamics processing — compressor, limiter, gate, expander
+status: done
 priority: B
 cost: M
 category: audio/processing
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: да
+we_have: yes
 crates: [kt-fx, kt-model, kt-engine, kt-app, kt-media]
 invariants: [1, 2, 3, 5, 6, 11]
 ui_rules: [13, 17, 20]
-round: "Р.48"
+round: "R.48"
 point: 338
 tests: [322, 326, 334, 335, 336, 341]
 depends_on: [F-AUT-002, F-CLR-006]
@@ -18,148 +18,123 @@ trackers: [kde-bugzilla, kde-invent, olive, openshot, mlt, pitivi]
 checked: 2026-09-14
 ---
 
-# F-AUD-002 — Динамическая обработка — компрессор, лимитер, гейт, экспандер
+# F-AUD-002 — Dynamics processing — compressor, limiter, gate, expander
 
-## Суть
+## Essence
 
-Один и тот же приём: громкость правит не рука, а сам сигнал. Детектор меряет
-уровень, кривая «вход → выход» решает, на сколько дБ прижать, сглаживание
-(attack/release) решает, как быстро. Компрессор прижимает то, что ГРОМЧЕ
-порога; гейт и экспандер додавливают то, что ТИШЕ его; лимитер — тот же
-компрессор, но с обещанием «выше потолка не выпущу ни одного сэмпла».
-Монтажёру это видно как «реплики не прыгают от плана к плану», «шум в паузах
-между фразами исчез» и «экспорт не клиппит».
+One and the same technique: the volume is adjusted not by the hand but by the signal itself. A detector
+measures the level, the "input → output" curve decides by how many dB to press, and smoothing
+(attack/release) decides how fast. A compressor presses down what is LOUDER than the threshold; a gate and
+an expander push down what is QUIETER than it; a limiter is the same compressor, but with the promise "not
+one sample above the ceiling will be let out". The editor sees this as "the lines do not jump from shot to
+shot", "the noise in the pauses between phrases has disappeared" and "the export does not clip".
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Track Compressor · Track Noise Gate · Graphic Dynamics · Wave Hammer · Multi-Band Dynamics | обычные плагины в цепочке, а цепочек несколько уровней: «Audio effect settings are displayed when you click the button on a track, bus, or assignable FX control» — плюс уровень события (Event FX, F-MPH-005). Дорожечный плагин действует на всё: «Track-level DirectX or VST plug-ins are applied to every event on the selected track». Параметры дорожечных/шинных/assignable-эффектов автоматизируются огибающими. [НЕ ПРОВЕРЕНО: уровни цепочек — по официальной справке, а ИМЕНА приборов собраны из форумных постов и вики; поимённого списка аудио-плагинов в справке Vegas 22/23 найти не удалось, состав в линейке 2026 не сверялся] |
-| Adobe Premiere | 26.x | эффекты Dynamics / Hard Limiter / DeEsser + панель Essential Sound с блоком Ducking | эффекты — живые, в стеке клипа или дорожки; а ducking живой обработкой НЕ является: кнопка Generate Keyframes вешает на музыкальный клип эффект громкости и пишет в него ключи. Перегенерация затирает прежние: «Each time you click Generate Keyframes, existing keyframes are replaced with new keyframes based on the current ducking settings» [НЕ ПРОВЕРЕНО первоисточником: helpx.adobe.com из этого окружения не открывается, текст взят из поискового сниппета] |
-| DaVinci Resolve | 21 | Dynamics в канальной полоске (Expander/Gate + Compressor + Limiter) + Ducker в Track FX | динамика — не плагин, а ЧАСТЬ канала: «All channel strips include a fader…, along with dynamics and a 6 band parametric equalizer on every channel», и «Double clicking the dynamics area will open the dynamics window featuring an expander/gate, compressor and limiter dynamics processing». Дакинг — живой сайдчейн: «The track FX ducker plug-in uses the signal from one or more dialogue tracks to automatically control volume reduction on a target track» |
-| Final Cut Pro | 12.3 | набор Logic-эффектов в группе «Levels»: Compressor, Limiter, Adaptive Limiter, Expander, Noise Gate, Multipressor, DeEsser 2, Enveloper, Spectral Gate, Surround Compressor | эффекты на клипе/роли; шин и дорожек как понятия нет (F-MPH-005). У гейта есть и lookahead, и внешний ключевой вход: «When no external side chain is selected, the input signal is used as the side chain» |
-| After Effects | 26.x | нет | в списке аудио-эффектов только Backwards, Bass & Treble, Delay, Flange & Chorus, High-Low Pass, Modulator, Parametric EQ, Reverb, Stereo Mixer, Tone — ни компрессора, ни лимитера, ни гейта [НЕ ПРОВЕРЕНО первоисточником: страница списка на helpx недоступна, состав собран из сниппета] |
+| VEGAS Pro | 2026.0 | Track Compressor · Track Noise Gate · Graphic Dynamics · Wave Hammer · Multi-Band Dynamics | ordinary plugins in a chain, and there are several levels of chains: "Audio effect settings are displayed when you click the button on a track, bus, or assignable FX control" — plus the level of the event (Event FX, F-MPH-005). A track plugin acts on everything: "Track-level DirectX or VST plug-ins are applied to every event on the selected track". The parameters of track/bus/assignable effects are automated by envelopes. [NOT VERIFIED: the levels of chains are from the official help, but the NAMES of the devices are assembled from forum posts and the wiki; a named list of audio plugins was not found in the Vegas 22/23 help, the composition of the 2026 line was not checked] |
+| Adobe Premiere | 26.x | Dynamics / Hard Limiter / DeEsser effects + the Essential Sound panel with a Ducking block | the effects are live, in the stack of a clip or track; but ducking is NOT live processing: the Generate Keyframes button places a volume effect on the music clip and writes keys into it. Regeneration overwrites the previous ones: "Each time you click Generate Keyframes, existing keyframes are replaced with new keyframes based on the current ducking settings" [NOT VERIFIED against the primary source: helpx.adobe.com does not open from this environment, the text is taken from a search snippet] |
+| DaVinci Resolve | 21 | Dynamics in the channel strip (Expander/Gate + Compressor + Limiter) + Ducker in Track FX | the dynamics is not a plugin but a PART OF THE CHANNEL: "All channel strips include a fader…, along with dynamics and a 6 band parametric equalizer on every channel", and "Double clicking the dynamics area will open the dynamics window featuring an expander/gate, compressor and limiter dynamics processing". Ducking is a live sidechain: "The track FX ducker plug-in uses the signal from one or more dialogue tracks to automatically control volume reduction on a target track" |
+| Final Cut Pro | 12.3 | a set of Logic effects in the "Levels" group: Compressor, Limiter, Adaptive Limiter, Expander, Noise Gate, Multipressor, DeEsser 2, Enveloper, Spectral Gate, Surround Compressor | effects on a clip/role; there is no concept of a bus or a track (F-MPH-005). The gate has both a lookahead and an external key input: "When no external side chain is selected, the input signal is used as the side chain" |
+| After Effects | 26.x | none | the list of audio effects contains only Backwards, Bass & Treble, Delay, Flange & Chorus, High-Low Pass, Modulator, Parametric EQ, Reverb, Stereo Mixer, Tone — no compressor, no limiter, no gate [NOT VERIFIED against the primary source: the list page on helpx is unavailable, the composition is assembled from a snippet] |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Лимитер обязан видеть будущее, поэтому он не эффект, а ЗАДЕРЖКА, и
-производитель пишет это прямым текстом.** Компрессор реагирует ПОСЛЕ того, как
-пик уже прошёл через него: пока детектор поднял управляющий сигнал, первые
-миллисекунды пика вышли наружу нетронутыми. Настоящий потолок так не держится,
-поэтому у лимитера появляется lookahead — «Adjust how far ahead (in
-milliseconds) Limiter analyzes the audio signal. This enables it to react
-earlier to peak volumes by adjusting the amount of reduction» (Apple, справка
-Limiter). Плата названа там же: «Lookahead causes latency, but this has no
-perceptible effect when you use Limiter as a mastering effect on prerecorded
-material», а у Adaptive Limiter Apple доходит до инструкции по эксплуатации:
-«Using Adaptive Limiter adds latency when the Lookahead parameter is active…
-Bypass Adaptive Limiter while recording». Ключевая тонкость, которую этот
-абзац прячет: **задержка — это НЕ хвост.** Хвост (реверб) продлевает КОНЕЦ
-события и ничего не двигает; задержка сдвигает ВЕСЬ выход эффекта, то есть
-рассинхронизирует эту дорожку и с видео, и с необработанными соседями. В DAW
-это лечит plugin delay compensation; в NLE PDC либо нет, либо он частичный и
-завязан на режим шинной маршрутизации — по обсуждениям Fairlight компенсация
-трековых инстансов работает в Flexi Bus и не работает в Fixed Bussing [НЕ
-ПРОВЕРЕНО: forum.blackmagicdesign.com в этой сессии отдаёт 403, факт взят из
-поискового сниппета треда 145413].
+**1. A limiter must see the future, so it is not an effect but a DELAY, and the manufacturer writes this in
+plain text.** A compressor reacts AFTER the peak has already passed through it: while the detector raises the
+control signal, the first milliseconds of the peak get out untouched. A true ceiling does not hold this way,
+so the limiter acquires a lookahead — "Adjust how far ahead (in milliseconds) Limiter analyzes the audio signal.
+This enables it to react earlier to peak volumes by adjusting the amount of reduction" (Apple, the Limiter help).
+The price is named there too: "Lookahead causes latency, but this has no perceptible effect when you use Limiter
+as a mastering effect on prerecorded material", and for Adaptive Limiter Apple goes as far as an operating
+instruction: "Using Adaptive Limiter adds latency when the Lookahead parameter is active… Bypass Adaptive
+Limiter while recording". The key subtlety that this paragraph hides: **delay is NOT a tail.** A tail (reverb)
+extends the END of an event and moves nothing; a delay shifts the WHOLE output of the effect, that is, it
+desynchronizes this track both with the video and with the unprocessed neighbors. In a DAW this is cured by
+plugin delay compensation; in NLEs PDC is either absent or partial and tied to the bus routing mode — according
+to discussions, Fairlight's compensation of track instances works in Flexi Bus and does not work in Fixed Bussing
+[NOT VERIFIED: forum.blackmagicdesign.com returns 403 in this session, the fact is taken from a search snippet of
+thread 145413].
 
-**2. У гейта не один порог, а два, и это единственное, что отличает гейт от
-«тишины по условию».** Hysteresis: «Set the difference (in decibels) between
-the threshold values that open and close the gate» (Apple, справка Noise
-Gate). С одним порогом гейт на шумовой полке дребезжит — открывается и
-закрывается десятки раз в секунду на одном и том же шуме; вторым порогом
-(ниже первого) решение делается устойчивым. Там же живёт Hold — «Set the time
-the gate remains open after the signal falls below the threshold»: гейт нельзя
-закрывать сразу, иначе он режет хвосты слов. Ни гистерезиса, ни hold нет ни в
-одном маркетинговом списке, а без них гейт непригоден к речи.
+**2. A gate has not one threshold but two, and this is the only thing that distinguishes a gate from "silence on
+condition".** Hysteresis: "Set the difference (in decibels) between the threshold values that open and close the
+gate" (Apple, the Noise Gate help). With one threshold a gate chatters on a noise shelf — it opens and closes dozens
+of times a second on one and the same noise; with a second threshold (below the first) the decision becomes stable.
+Also there is Hold — "Set the time the gate remains open after the signal falls below the threshold": the gate
+cannot be closed at once, otherwise it cuts off the tails of words. Neither hysteresis nor hold is present in any
+marketing list, and without them a gate is unusable for speech.
 
-**3. Сайдчейн и «автоматический дакинг» — это ДВА РАЗНЫХ решения одной задачи,
-и они расходятся не качеством, а архитектурой.** У гейта FCP детекторный вход
-— отдельный сигнал, который просто по умолчанию замкнут на основной: «When no
-external side chain is selected, the input signal is used as the side chain».
-Ducker в Resolve — тот же принцип на уровне дорожек: «uses the signal from one
-or more dialogue tracks to automatically control volume reduction on a target
-track». Premiere пошёл другой дорогой: анализ + СГЕНЕРИРОВАННАЯ ОГИБАЮЩАЯ.
-Механику видно из чужого бага изнутри — «an amplify audio effect is added to
-the music clip, and no keyframes are generated» (то есть в норме фича именно
-вешает эффект громкости и пишет в него ключи). Разница решающая: огибающая
-правится рукой, ничего не задерживает, не требует у эффекта второго входа и
-считается один раз — но она СНИМОК, и после переноса музыки или перемонтажа
-реплик она остаётся старой. Живой сайдчейн всегда актуален, но требует, чтобы
-у эффекта был второй вход, а у проекта — шины и посылы. Это ровно тот же упор,
-об который встала F-CLR-006 («вход ключа — полноценный сигнал, а не параметр
-внутри эффекта»), только пришли к нему с аудио-стороны.
+**3. Sidechain and "automatic ducking" are TWO DIFFERENT solutions of one task, and they diverge not by quality but
+by architecture.** In FCP's gate the detector input is a separate signal, which by default is simply shorted to the
+main one: "When no external side chain is selected, the input signal is used as the side chain". The Ducker in
+Resolve is the same principle at the level of tracks: "uses the signal from one or more dialogue tracks to
+automatically control volume reduction on a target track". Premiere took a different road: analysis + a GENERATED
+ENVELOPE. The mechanics can be seen from the inside of someone else's bug — "an amplify audio effect is added to the
+music clip, and no keyframes are generated" (that is, normally the feature places a volume effect and writes keys
+into it). The difference is decisive: the envelope is edited by hand, delays nothing, does not require the effect
+to have a second input, and is computed once — but it is a SNAPSHOT, and after moving the music or re-editing the
+lines it stays old. A live sidechain is always up to date, but requires the effect to have a second input and the
+project to have buses and sends. This is exactly the same pressure point against which F-CLR-006 ran ("the key input
+is a full-fledged signal, not a parameter inside the effect"), only reached from the audio side.
 
-## Плюсы
+## Pros
 
-- Детектор и гейн-каскад разделены, поэтому компрессор, экспандер и гейт — это
-  ОДИН DSP с кривой, загнутой в разные стороны от порога: одно состояние, один
-  набор ручек, три эффекта в каталоге. Лимитер — тот же объект с ratio → ∞ и
-  включённым lookahead.
-- Lookahead не «улучшает звук», а меняет причинность: снижение усиления
-  начинается ДО пика, поэтому потолок держится без искажения фронта. Именно
-  поэтому лимитер без lookahead и лимитер с ним — разные приборы, а не
-  настройка.
-- Динамика в канальной полоске (Resolve) стоит на фиксированном месте цепочки:
-  её нельзя случайно затащить после плагина, и «почему тихо» ищется в одном и
-  том же месте на любом канале.
-- Дакинг огибающей даёт монтажёру объект, который он умеет читать и править:
-  это обычные ключи громкости, а не непрозрачная реакция прибора. Он же не
-  вносит задержки и не требует пересчёта при экспорте.
-- Гистерезис и hold делают решение гейта устойчивым к шуму того же уровня, что
-  и порог, — без них гейт не применим к речи вообще.
+- The detector and the gain stage are separated, therefore a compressor, an expander and a gate are ONE DSP with
+  a curve bent in different directions from the threshold: one state, one set of knobs, three effects in the
+  catalog. A limiter is the same object with ratio → ∞ and the lookahead switched on.
+- A lookahead does not "improve the sound" but changes causality: the reduction of gain begins BEFORE the peak,
+  so the ceiling holds without distorting the front. This is exactly why a limiter without lookahead and a limiter
+  with it are different devices, not a setting.
+- The dynamics in the channel strip (Resolve) sits at a fixed place in the chain: it cannot be accidentally dragged
+  after a plugin, and "why is it quiet" is looked for in one and the same place on any channel.
+- Envelope ducking gives the editor an object that he can read and edit: these are ordinary volume keys, not the
+  opaque reaction of a device. Moreover it introduces no delays and requires no recalculation at export.
+- Hysteresis and hold make the decision of the gate stable against noise of the same level as the threshold —
+  without them a gate is not applicable to speech at all.
 
-## Минусы
+## Cons
 
-- Lookahead платится задержкой, и производитель советует ОТКЛЮЧАТЬ прибор при
-  записи. Хост, у которого нет компенсации, тихо разъезжает обработанную
-  дорожку с остальными; хост, у которого она есть, обязан отложить весь микс на
-  максимум по цепочкам — то есть платить задержкой мониторинга за один прибор
-  на одном клипе.
-- Peak против RMS — источник вечного «компрессор не работает, я же вижу пик».
-  RMS-детектор законно не реагирует на короткий выброс: он меряет энергию за
-  окно интеграции. Ручки при этом одинаковые, и по ним разницу не видно.
-- «Музыкальность» компрессора — это форма колена (knee) и время интеграции
-  детектора, а не набор параметров. Два прибора с одинаковыми threshold/ratio/
-  attack/release звучат по-разному, и сравнить их по списку ручек нельзя.
-- Программно-зависимый release у «аналоговых» эмуляций делает результат
-  функцией материала: тот же клип, обрезанный на полсекунды раньше, даёт другую
-  огибающую. Для NLE с побайтовым эталоном рендера это прямой конфликт.
-- Сгенерированная огибающая устаревает молча. Перегенерация затирает ручные
-  правки целиком, а не сливается с ними.
-- Автоматика ломается на состояниях, о которых не думали: у Premiere ducking
-  не генерирует ключи, когда целевой клип соло (подтверждено Adobe как баг,
-  см. цитаты), а у части пользователей роняет приложение.
-- Динамика на уровне дорожки/шины невидима на клипе: смотришь на событие и не
-  понимаешь, почему оно тише, чем в бине.
-- Сайдчейн стоит не в приборе, а в ХОСТЕ: Olive умеет загрузить чужой
-  sidechain-компрессор, и он всё равно бесполезен, потому что направить в него
-  сигнал другой дорожки нечем (Olive #1753). Прибор без адресации второго входа
-  — это не половина фичи, а ноль.
-- Приборы динамики ломаются не алгоритмом, а стыком с трактом. У Kdenlive из
-  четырёх задач про существующую динамику две подряд — «Cannot set sink channel
-  counts» у Compressor/Expander (#489276, #490884): компрессор обязан
-  договориться о числе каналов, и это отказывает чаще, чем сам DSP.
-- Цена динамики взимается разрядностью цепочки, а не эффектом: у MLT звук
-  внутри цепочки молча сводился в 16 бит, и та же самая компрессия звучала
-  «грязно» в Kdenlive и чисто в Audacity (#1284). Прибор нельзя оценивать в
-  отрыве от точки суммирования.
-- Лимитер просят не как эффект на клипе, а как свойство ЭКСПОРТА («чтобы
-  экспорт не клиппил») — то есть просьба приходит на уровень, которого у
-  редактора может не быть вовсе.
+- A lookahead is paid for with a delay, and the manufacturer advises SWITCHING OFF the device when recording. A host
+  without compensation silently drifts the processed track out of step with the rest; a host that has it must postpone
+  the whole mix by the maximum over the chains — that is, pay with monitoring delay for one device on one clip.
+- Peak versus RMS is the source of the eternal "the compressor does not work, I can see the peak". An RMS detector
+  legitimately does not react to a short spike: it measures energy over an integration window. The knobs, meanwhile,
+  are the same, and the difference cannot be seen from them.
+- The "musicality" of a compressor is the shape of the knee and the integration time of the detector, not a set of
+  parameters. Two devices with identical threshold/ratio/attack/release sound differently, and they cannot be compared
+  by a list of knobs.
+- A program-dependent release in "analog" emulations makes the result a function of the material: the same clip, cut
+  half a second earlier, gives a different envelope. For an NLE with a byte-exact render reference this is a direct conflict.
+- A generated envelope becomes outdated silently. Regeneration overwrites manual edits entirely, rather than merging with them.
+- Automation breaks in states nobody thought about: in Premiere ducking does not generate keys when the target clip is
+  solo (confirmed by Adobe as a bug, see the quotes), and for some users it crashes the application.
+- Dynamics at the level of a track/bus is invisible on the clip: you look at the event and do not understand why it is
+  quieter than in the bin.
+- The sidechain sits not in the device but in the HOST: Olive can load someone else's sidechain compressor, and it is still
+  useless, because there is nothing to direct another track's signal into it with (Olive #1753). A device without
+  addressing of the second input is not half of the feature, but zero.
+- Dynamics devices break not in the algorithm but at the junction with the path. In Kdenlive, of four tasks about existing
+  dynamics, two in a row are "Cannot set sink channel counts" for Compressor/Expander (#489276, #490884): the compressor
+  must agree on the number of channels, and this fails more often than the DSP itself.
+- The price of dynamics is paid in the bit depth of the chain, not by the effect: in MLT the sound inside the chain was
+  silently reduced to 16 bit, and the same compression sounded "dirty" in Kdenlive and clean in Audacity (#1284). A device
+  cannot be assessed in isolation from the point of summing.
+- A limiter is asked for not as an effect on a clip but as a property of the EXPORT ("so that the export does not clip") —
+  that is, the request comes to a level which the editor may not have at all.
 
-## Что говорят пользователи
+## What users say
 
 > the 'generate keyframes' button very briefly turns gray, an amplify audio
 > effect is added to the music clip, and no keyframes are generated.
 > — Logan_Barney5958, Adobe Support Community, 02.07.2025, https://community.adobe.com/t5/premiere-pro-bugs/essential-sound-ducking-won-t-generate-keyframes-when-target-clip-is-soloed/idc-p/15405003
 
 > When I press 'Generate Keyframes', PPro crashes.
-> — Stanley Arthur, там же, 03.07.2025, https://community.adobe.com/t5/premiere-pro-bugs/essential-sound-ducking-won-t-generate-keyframes-when-target-clip-is-soloed/idc-p/15405003
+> — Stanley Arthur, same place, 03.07.2025, https://community.adobe.com/t5/premiere-pro-bugs/essential-sound-ducking-won-t-generate-keyframes-when-target-clip-is-soloed/idc-p/15405003
 
 > I've checked with the team, and you are correct; it does appear to be a bug.
 > I've written it up for our engineers.
-> — Rach McIntire, Adobe Community Manager, там же, 07.07.2025, https://community.adobe.com/t5/premiere-pro-bugs/essential-sound-ducking-won-t-generate-keyframes-when-target-clip-is-soloed/idc-p/15405003
+> — Rach McIntire, Adobe Community Manager, same place, 07.07.2025, https://community.adobe.com/t5/premiere-pro-bugs/essential-sound-ducking-won-t-generate-keyframes-when-target-clip-is-soloed/idc-p/15405003
 
 > I'd start with audio compression. I tend to use the Track Compressor plug-in,
 > but you can also do compression via the Graphic Dynamics plug-in.
@@ -169,172 +144,139 @@ the music clip, and no keyframes are generated» (то есть в норме ф
 > music from stomping on the VO.
 > — Bob Peterson, Creative COW, 05.08.2010, https://creativecow.net/forums/thread/audio-compression-howae/
 
-Читать это надо так. Первые три цитаты — не про «плохой алгоритм», а про то,
-что автоматический дакинг у Premiere есть ОТДЕЛЬНАЯ СТАДИЯ с собственным
-состоянием: она умеет не сработать, затереть чужие ключи и уронить хост, при
-том что живой сайдчейн в этих местах ломаться нечему. Последняя цитата ценна
-обратным: в треде «как приглушить музыку под голосом» опытный человек 2010 года
-советует вырезать эквалайзером НОТЧ вместо приседания — потому что механизма
-приседания у Vegas нет до сих пор, и обходят его вручную.
+One should read this as follows. The first three quotes are not about a "bad algorithm", but about the fact that
+Premiere's automatic ducking is a SEPARATE STAGE with its own state: it can fail to fire, overwrite other people's keys
+and crash the host, while a live sidechain has nothing to break in these places. The last quote is valuable in reverse:
+in a thread on "how to lower the music under the voice", an experienced person of 2010 advises cutting a NOTCH with an
+equalizer instead of ducking — because Vegas still has no ducking mechanism, and people work around it by hand.
 
-Живого отрицательного фидбека по Resolve Ducker и по задержке лимитера собрать
-не удалось (форум BMD в этой сессии отдавал 403), зато трекеры опенсорсных
-редакторов отвечают на тот же вопрос счётом — и отвечают резче, потому что там
-видно не мнение, а состояние задачи.
+Live negative feedback about the Resolve Ducker and about the latency of the limiter could not be collected (the BMD
+forum returned 403 in this session), but the trackers of the open-source editors answer the same question with a count —
+and they answer more sharply, because there one sees not an opinion but the state of a task.
 
-Мастер-лимитер просят не как эффект, а как свойство ЭКСПОРТА:
+The master limiter is requested not as an effect but as a property of the EXPORT:
 
 > I really miss a master limiter effect that'd allow to export videos without
 > clipping in case something gets too loud.
-> — Olive #2064, 14.10.2022, закрыта,
+> — Olive #2064, 14.10.2022, closed,
 > https://github.com/olive-editor/olive/issues/2064
 
-Живой сайдчейн, у которого нет адресации второго входа, бесполезен вместе со
-всем плагином — и это ровно тот упор, о который встала F-CLR-006:
+A live sidechain that has no addressing of a second input is useless together with the whole plugin — and this is exactly
+the pressure point against which F-CLR-006 ran:
 
 > However, there is no way to direct the sidechain from one of the other audio
 > tracks into the plugin, thus rendering it useless.
-> — Olive #1753, 29.09.2021, закрыта,
+> — Olive #1753, 29.09.2021, closed,
 > https://github.com/olive-editor/olive/issues/1753
 
-Приборы динамики просят там, где их нет, ровно теми же словами, что и в
-форумных тредах 2010 года, — только с готовым обходом через чужую программу:
+Dynamics devices are requested where they are absent in exactly the same words as in the forum threads of 2010 — only with a
+ready workaround through another program:
 
 > I miss a great feature in all NLE about audio, is the audio "autoduck"
 > functionality. […] Is available in Audacity but I need to do the process OUT
 > of the video editor and incorporate the result to the project.
-> — OpenShot #2813, 29.05.2019, закрыта,
+> — OpenShot #2813, 29.05.2019, closed,
 > https://github.com/OpenShot/openshot-qt/issues/2813
 
-А там, где дакинг делают руками, он делается ИМЕННО огибающей — то есть тем
-путём, который у нас дешевле всего:
+And where ducking is done by hand, it is done PRECISELY with an envelope — that is, by the path which for us is the cheapest:
 
 > This way the super frequent performed manual audio ducking with keyframes, to
 > lower e.g. music when a speaker is speaking […] would benefit from a massive
 > workflow speed boost […]
-> — Kdenlive (kde-invent) #1958, 27.01.2025, открыта,
+> — Kdenlive (kde-invent) #1958, 27.01.2025, open,
 > https://invent.kde.org/multimedia/kdenlive/-/work_items/1958
 
-Уровень применения — отдельная просьба, и звучит она про динамику дословно:
+The level of application is a separate request, and it sounds about dynamics literally:
 
 > It would be very useful to be able to add effects on full layers for instance
 > using one track for chroma-keying or compressor /limiter on audio track etc
 > and not worry about adding effect to all clips in same track.
-> — Pitivi #2472, 19.05.2020, открыта,
+> — Pitivi #2472, 19.05.2020, open,
 > https://gitlab.gnome.org/GNOME/pitivi/-/work_items/2472
 
-И цена, которую платит тракт, а не алгоритм (инвариант №1 нашего движка — про
-это буквально):
+And the price that the path pays, not the algorithm (invariant No. 1 of our engine is literally about this):
 
 > I'd noticed that Kdenlive was producing quite rough audio output when applying
 > effects (e.g. fade out / compression). The same compression algorithm was
 > sounding clean on Audacity.
-> — MLT #1284, 29.08.2026, закрыта,
+> — MLT #1284, 29.08.2026, closed,
 > https://github.com/mltframework/mlt/issues/1284
 
-СИГНАЛ: приборы динамики — 6 задач в kde-bugzilla, `auto.?duck|\bducking\b|\blimiter\b|\bcompressor\b|noise gate|side.?chain`; доля 0.1% против 0.2% в olive
+SIGNAL: dynamics devices — 6 tasks in kde-bugzilla, `auto.?duck|\bducking\b|\blimiter\b|\bcompressor\b|noise gate|side.?chain`; share 0.1% against 0.2% in olive
 
-Число мелкое, и мелкое оно честно: тема «звук» — 2522 задачи на одиннадцать
-трекеров рейтинга, динамика внутри неё это 12 задач, то есть 0.5 % темы. Находка не в
-величине, а в РАЗНИЦЕ СОСТАВА при вдвое большей доле там, где прибора нет. У
-Olive (динамики нет вовсе) все три задачи — «дайте»: лимитер, автодакер,
-сайдчейн. У Kdenlive (динамика есть, через MLT/avfilter) две задачи — просьбы
-про автодакинг (одна из них, #392623, висит CONFIRMED с 2018 года), а
-остальные четыре — поломки уже существующего: компрессор «explodes when
-attributes changed» (#403650), дважды подряд «Cannot set sink channel counts»
-у Compressor/Expander (#489276 и #490884) и искажение на целом наборе приборов,
-включая лимитер (#513447). То есть класс ведёт себя не как «редкая экзотика», а
-как «пока прибора нет — просят, как только появился — ломается на стыке с
-трактом, а не в самом DSP». Именно поэтому единственная жалоба про звучание
-(MLT #1284) оказалась не про алгоритм, а про разрядность цепочки.
+The number is small, and small it is honestly: the topic "sound" has 2522 tasks over the eleven ranked trackers, of which dynamics is 12 tasks, that is, 0.5 % of the topic. The finding lies not in the magnitude but in the DIFFERENCE OF COMPOSITION at twice the share where the device is absent. Olive (there is no dynamics at all) — all three of its tasks are "give us": a limiter, an auto-ducker, a sidechain. Kdenlive (it has dynamics, via MLT/avfilter) has two tasks that are requests about auto-ducking (one of them, #392623, has hung CONFIRMED since 2018), and the remaining four are breakages of what already exists: the compressor "explodes when attributes changed" (#403650), "Cannot set sink channel counts" twice in a row for Compressor/Expander (#489276 and #490884), and distortion on a whole set of devices, including the limiter (#513447). That is, the class behaves not like a "rare exotic thing" but like this: while the device is absent — it is requested; as soon as it has appeared — it breaks at the junction with the path, not in the DSP itself. This is exactly why the only complaint about the sound (MLT #1284) turned out to be not about the algorithm but about the bit depth of the chain.
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/audio-fx/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Компрессор и лимитер — узлы аудио-цепочки с упреждением (PDC: вход обгоняет выход), без мастер-лимитера проекта.
-АДРЕС: `src/libs/kt-engine/src/player.rs:375` — класс MLT #1284 («цепочка молча свелась в 16 бит, и компрессия звучит грязно при чистом алгоритме») у нас невозможен, потому что инвариант №1 держит f32/48k/2ch от декода до выхода, и любое отступление ловится побайтовым golden_export. А вот класс Olive #2064 («экспорт клиппит, и положить лимитер некуда») возможен, и его не ловит ничто: единственный объект с именем «мастер» — это МОНИТОРНЫЙ фейдер превью, `Player::set_master_gain` с комментарием «Мастер-громкость превью» (`player.rs:375`), живущий в атомике для cpal-колбэка; экспорт собирает тот же `AudioRenderer` вообще без него (`src/libs/kt-engine/src/export.rs:81`, `:103`). То есть в модели нет НИ ОДНОГО уровня, общего для превью и экспорта, куда лимитер защиты от клиппинга можно было бы приложить, — а golden_export стережёт байты того, что мы посчитали, и про существование потолка не знает. Именно поэтому мастер-лимитер в «Оценке» стоит L, а не M: цена не в DSP.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/audio-fx/ — the contract is in `spec.md`, the "why" and the paths in the code are in `design.md`.
+The compressor and the limiter are nodes of the audio chain with a lookahead (PDC: the input runs ahead of the output), without a project master limiter.
+ADDRESS: `src/libs/kt-engine/src/player.rs:375` — the class of MLT #1284 ("the chain was silently reduced to 16 bit, and the compression sounds dirty with a clean algorithm") is impossible with us, because invariant No. 1 holds f32/48k/2ch from decoding to output, and any deviation is caught by the byte-wise golden_export. But the class of Olive #2064 ("the export clips, and there is nowhere to put a limiter") IS possible, and nothing catches it: the only object named "master" is the MONITOR fader of the preview, `Player::set_master_gain` with the comment "Master volume of the preview" (`player.rs:375`), living in an atomic for the cpal callback; the export builds the same `AudioRenderer` without it at all (`src/libs/kt-engine/src/export.rs:81`, `:103`). That is, in the model there is NOT A SINGLE level shared by preview and export to which a clipping-protection limiter could be attached — and golden_export guards the bytes of what we computed and knows nothing about the existence of a ceiling. This is exactly why the master limiter in the "Estimate" stands at L, not M: the price is not in the DSP.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2–3 стадии: (1) дакинг огибающей, (2) компрессор+лимитер+гейт одним семейством, (3) разведение пре-ролла и хвоста. Мастер-лимитер поднимает до L (нужен уровень микса), живой сайдчейн — до XL (шины + формат) |
-| Где основная работа | kt-fx (DSP + пре-ролл), kt-model (вариант `FxInstance` и строка в `params_for!`), kt-engine (`chain_tail` → два числа, окно префетча), kt-app (`fx_registry.rs`, i18n ×5, сабсеты шрифтов) |
-| Формат проекта | версия не двигается: новый вариант `FxInstance` — аддитивная правка того же класса, что `Gain.pan` (Р.33). Чужой/незнакомый `kt:`-эффект уже не роняет загрузку, а сохраняется как foreign с notice (`src/libs/kt-otio/src/convert.rs:1214`) |
-| Тесты, которые придётся написать | байт-детерминизм компрессора через seek/пре-ролл (инвариант №11); компрессор НЕ продлевает `ext_end` (клип не звучит после конца); потолок лимитера держится на синтетическом пике; lookahead не сдвигает выход (сэмпл-точное совпадение с gain-эталоном); окно префетча покрывает lookahead — ноль underrun'ов (инвариант №5); дакинг: кривая детерминирована и строится из пик-пирамиды без декода (инвариант №8); плюс t48 (реестр), t100/t125 (глифы и каталоги), layout-тест на строку эффекта |
-| Зависит от | F-AUT-002 (домен ключа — для огибающей дакинга), F-CLR-006 (второй вход: тот же архитектурный упор), F-AUT-003 (если дакинг захочется на дорожку, а не на клип) |
-| Ломает совместимость | нет |
+| Scope | M — 2–3 stages: (1) envelope ducking, (2) compressor + limiter + gate as one family, (3) separation of pre-roll and tail. A master limiter raises it to L (it needs a level of the mix), the live sidechain — to XL (buses + format) |
+| Where the main work is | kt-fx (DSP + pre-roll), kt-model (the `FxInstance` variant and a line in `params_for!`), kt-engine (`chain_tail` → two numbers, the prefetch window), kt-app (`fx_registry.rs`, i18n ×5, font subsets) |
+| Project format | the version does not move: a new `FxInstance` variant is an additive change of the same class as `Gain.pan` (R.33). A foreign/unknown `kt:` effect no longer breaks loading; it is kept as foreign with a notice (`src/libs/kt-otio/src/convert.rs:1214`) |
+| Tests that will have to be written | the byte-determinism of the compressor through seek/pre-roll (invariant No. 11); the compressor does NOT extend `ext_end` (the clip does not sound after its end); the limiter's ceiling holds on a synthetic peak; the lookahead does not shift the output (sample-exact match with the gain reference); the prefetch window covers the lookahead — zero underruns (invariant No. 5); ducking: the curve is deterministic and is built from the peak pyramid without decoding (invariant No. 8); plus t48 (registry), t100/t125 (glyphs and catalogs), a layout test on the effect line |
+| Depends on | F-AUT-002 (the key domain — for the ducking envelope), F-CLR-006 (the second input: the same architectural pressure), F-AUT-003 (if ducking is wanted on a track rather than on a clip) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём, но двумя РАЗНЫМИ решениями, и не в одну стадию.
+Take it, but as TWO DIFFERENT decisions, and not in one stage.
 
-Первым — автоматический дакинг генерацией `ParamCurve` на `Gain.db`: он
-закрывает самую частую живую претензию («музыка забивает голос»), не трогает
-ни одного инварианта, не вносит задержки и почти целиком собирается из уже
-готовых кусков (кривые, анализ по пик-пирамиде, виджет автоматизации).
+The first — automatic ducking by generating a `ParamCurve` on `Gain.db`: it closes the most frequent live complaint
+("the music drowns out the voice"), does not touch a single invariant, introduces no delay, and is assembled almost
+entirely from ready-made pieces (curves, analysis over the peak pyramid, the automation widget).
 
-Вторым — компрессор/лимитер/гейт одним семейством на уровне клипа, с
-lookahead, реализованным подглядыванием в ИСТОЧНИК (пулл вперёд), а не
-задержкой выхода; попутно `chain_tail` разводится на «сколько греть» и
-«сколько звучать» — без этого компрессор либо теряет детерминизм, либо звучит
-после конца клипа.
+The second — compressor/limiter/gate as one family at the clip level, with a lookahead implemented by peeking into
+the SOURCE (a forward pull), rather than by a delay of the output; along the way `chain_tail` is split into "how much
+to warm up" and "how much to sound" — without this the compressor either loses determinism or sounds after the end
+of the clip.
 
-~~Живой сайдчейн — НЕ сейчас: ему нужны второй вход у эффекта, шины и правка
-формата, то есть та же XL-стена, что у F-CLR-006, а практическая польза
-покрывается огибающей.~~ **ОТМЕНЕНО владельцем (Р.63, подтверждено Р.65):**
-«Дакинг → ЖИВОЙ САЙДЧЕЙН-КОМПРЕССОР… снимок убрать совсем». Оценка XL не
-подтвердилась: шины не понадобились (ключ — ДОРОЖКА, а стадии дорожек
-появились в Р.62), второй вход оказался аргументом обработки, а не новым
-графом, правка формата — одно поле по содержимому (v12). Сделано change'ем
-`sidechain-ducking-compressor`; снимок огибающей удалён целиком, тесты
-t767–t778, живой сценарий `src/scripts/live/sidechain.py`. Мастер-лимитер — отдельный вопрос, он упирается не в
-DSP, а в то, что мастер-фейдер сегодня существует только в превью
-(`src/libs/kt-engine/src/player.rs:375`) и в экспорт не попадает.
+~~The live sidechain — NOT now: it needs a second input on the effect, buses and a format change, that is the same
+XL wall as F-CLR-006, and the practical benefit is covered by the envelope.~~ **CANCELLED by the owner (R.63, confirmed in R.65):**
+"Ducking → a LIVE SIDECHAIN COMPRESSOR… remove the snapshot entirely". The XL estimate did not hold up: buses were not
+needed (the key is a TRACK, and the track stages appeared in R.62), the second input turned out to be an argument of
+processing rather than a new graph, and the format change is one field by content (v12). It was done by the change
+`sidechain-ducking-compressor`; the envelope snapshot was removed entirely, tests t767–t778, the live scenario
+`src/scripts/live/sidechain.py`. The master limiter is a separate question: it runs into not the DSP but the fact that
+the master fader today exists only in the preview (`src/libs/kt-engine/src/player.rs:375`) and does not reach the export.
 
-## Источники
+## Sources
 
-- Трекеры (дампы от 08.09.2026 в `~/.cache/kinotrain/trackers/`, в репозиторий
-  не попадают — лицензии нет, см. `_trackers.md`): `kde-bugzilla` 6346 задач,
-  `kde-invent` 2217, `olive` 1853, `openshot` 4516 (выгрузка ещё шла, в реестре
-  4907), `mlt` 601, `pitivi` 2672. Число и доли строки `СИГНАЛ:`
-  воспроизводятся `python3 src/scripts/tracker-rank.py --query
-  'auto.?duck|\bducking\b|\blimiter\b|\bcompressor\b|noise gate|side.?chain'` на
-  этом составе; `match()` смотрит заголовок, метки и компонент, поэтому
-  совпадения только в теле задачи в счёт не идут (цитаты из тел приведены
-  поимённо со ссылками).
-- https://www.blackmagicdesign.com/products/davinciresolve/fairlight — Fairlight:
-  динамика в канальной полоске, Ducker как Track FX (дата обращения 2026-09-07)
+- Trackers (dumps of 08.09.2026 in `~/.cache/kinotrain/trackers/`, they do not go into the repository —
+  there is no license, see `_trackers.md`): `kde-bugzilla` 6346 tasks, `kde-invent` 2217, `olive` 1853,
+  `openshot` 4516 (the download was still running, the registry has 4907), `mlt` 601, `pitivi` 2672. The number
+  and the shares of the `SIGNAL:` line are reproduced by `python3 src/scripts/tracker-rank.py --query
+  'auto.?duck|\bducking\b|\blimiter\b|\bcompressor\b|noise gate|side.?chain'` on this composition; `match()`
+  looks at the title, the labels and the component, therefore matches only in the body of a task do not count
+  (quotes from bodies are given by name with links).
+- https://www.blackmagicdesign.com/products/davinciresolve/fairlight — Fairlight: dynamics in the channel strip,
+  the Ducker as Track FX (accessed 2026-09-07)
 - https://support.apple.com/en-lamr/guide/final-cut-pro-logic-effects/lgex931a007e/mac —
-  Limiter: отличие от компрессора, Lookahead, латентность (2026-09-07)
+  Limiter: the difference from a compressor, Lookahead, latency (2026-09-07)
 - https://support.apple.com/en-au/guide/final-cut-pro-logic-effects/lgex931a149c/mac —
-  Adaptive Limiter: «adds latency when the Lookahead parameter is active»,
-  Out Ceiling, True Peak (2026-09-07)
+  Adaptive Limiter: "adds latency when the Lookahead parameter is active", Out Ceiling, True Peak (2026-09-07)
 - https://support.apple.com/guide/final-cut-pro-logic-effects/noise-gate-controls-lgex931a1816/mac —
-  Noise Gate: Hysteresis, Hold, Lookahead, Side Chain; там же список группы
-  «Levels» целиком (2026-09-07)
+  Noise Gate: Hysteresis, Hold, Lookahead, Side Chain; there is also the whole list of the "Levels" group (2026-09-07)
 - https://help.magix-hub.com/video/vegas/23/en/content/topics/9-audio/audio_plug-ins.htm —
-  уровни цепочек Vegas: track / bus / assignable FX (2026-09-07)
+  Vegas chain levels: track / bus / assignable FX (2026-09-07)
 - https://help.magix-hub.com/video/vegas/22/en/content/topics/9-audio/adding_audioeffects.htm —
-  дорожечный плагин действует на все события дорожки; огибающие параметров
-  (2026-09-07)
+  a track plugin acts on all events of the track; envelopes of parameters (2026-09-07)
 - https://community.adobe.com/t5/premiere-pro-bugs/essential-sound-ducking-won-t-generate-keyframes-when-target-clip-is-soloed/idc-p/15405003 —
-  баг ducking'а, механика «эффект громкости + ключи» изнутри, подтверждение
-  Adobe (2026-09-07)
-- https://creativecow.net/forums/thread/audio-difficulties/ — набор плагинов
-  динамики Vegas глазами практика (2026-09-07)
-- https://creativecow.net/forums/thread/audio-compression-howae/ — пресеты
-  Track Compressor / Wave Hammer, обход дакинга через notch (2026-09-07)
+  the ducking bug, the "volume effect + keys" mechanics from the inside, Adobe's confirmation (2026-09-07)
+- https://creativecow.net/forums/thread/audio-difficulties/ — the set of Vegas dynamics plugins as seen by a practitioner (2026-09-07)
+- https://creativecow.net/forums/thread/audio-compression-howae/ — presets of Track Compressor / Wave Hammer, bypassing ducking via a notch (2026-09-07)
 
-Помечено `[НЕ ПРОВЕРЕНО]` и почему: (1) формулировка Adobe про Generate
-Keyframes и (2) состав аудио-эффектов After Effects взяты из поисковых
-сниппетов — `helpx.adobe.com` из этого окружения не открывается («proxy refused
-the connection»); (3) поведение PDC у Fairlight в Flexi Bus против Fixed
-Bussing — из сниппета треда forum.blackmagicdesign.com t=145413, сам форум
-отдавал 403 на всех проверенных URL. Строки Premiere и After Effects в таблице
-«У кого и как» опираются на официальное сообщество Adobe и сниппеты
-официальной справки, живьём не проверялись.
+Marked `[NOT VERIFIED]` and why: (1) the Adobe wording about Generate Keyframes and (2) the composition of the
+After Effects audio effects are taken from search snippets — `helpx.adobe.com` does not open from this environment
+("proxy refused the connection"); (3) the PDC behavior of Fairlight in Flexi Bus versus Fixed Bussing is from the
+snippet of the forum.blackmagicdesign.com thread t=145413, the forum itself returned 403 on all URLs checked. The
+Premiere and After Effects rows in the table "Who has it and how" rest on the official Adobe community and snippets
+of the official help, and were not checked live.
 
-**Реализовано в Р.47-Р.48** — компрессор и гейт в Р.47 (п.329),
-look-ahead лимитер и автодакинг в Р.48 (пп.337-338, 341). Живой
-сайдчейн и мастер-лимитер остаются вне сделанного — причины в разделе
-«Что мешает» выше; дальнейшая жизнь фичи — docs/porting-notes.md.
+**Implemented in R.47–R.48** — the compressor and the gate in R.47 (item 329), the look-ahead limiter and auto-ducking
+in R.48 (items 337–338, 341). The live sidechain and the master limiter remain outside what is done — the reasons are
+in the section "What gets in the way" above; the further life of the feature is in docs/porting-notes.md.

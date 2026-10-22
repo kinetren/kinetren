@@ -1,12 +1,12 @@
 ---
 id: F-COL-010
-title: Ручки: сколько лишнего уезжает с монтажом
-status: кандидат
+title: Handles: how much extra moves with the edit
+status: candidate
 priority: B
 cost: L
 category: collab/handoff
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: no
 crates: [kt-model, kt-engine, kt-media, kt-cli]
 invariants: [5, 9]
 ui_rules: [16, 19]
@@ -19,91 +19,75 @@ services: [bm-cloud, frame-io, fcp-shared-library]
 checked: 2026-09-08
 ---
 
-# F-COL-010 — Ручки: сколько лишнего уезжает с монтажом
+# F-COL-010 — Handles: how much extra moves with the edit
 
-## Суть
+## Essence
 
-Монтаж уехал: в цвет, в звук, к заказчику, на другую машину. Вместе с ним обязан
-уехать материал — но не весь, иначе это терабайты, и не «ровно по склейкам», иначе
-принимающий не может сдвинуть склейку ни на кадр. Между этими двумя крайностями
-стоит одно число: сколько лишнего материала оставить с каждой стороны каждого
-события. Отраслевой ответ — 24 или 48 кадров, и его спрашивает каждый конформ.
-Без этого числа сбор материала бесполезен, даже когда технически успешен.
+The edit has gone away: to colour, to sound, to the client, to another machine. Together with it the
+material must go too — but not all of it, otherwise these are terabytes, and not "exactly at the cuts", otherwise the receiving side cannot move a cut by a single frame. Between these two extremes
+stands one number: how much surplus material to leave on each side of each
+event. The industry answer is 24 or 48 frames, and every conform asks for it.
+Without this number the gathering of material is useless, even when it is technically successful.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Save As → «Copy and Trim Media with Project», поле «Extra head and tail» | обрезка — побочный эффект сохранения проекта; запас задаётся в кадрах, но режутся только DV AVI, uncompressed AVI и Sony YUV AVI, остальное копируется файлом целиком |
-| Adobe Premiere | 26.x | Project Manager → «Consolidate and Transcode» / «Collect Files», поле «Include Handles: N frames» | отдельный диалог на проект; обрезка выполняется, только если сошлись все четыре параметра (кадр, частота, поля, PAR) и кодек поддаётся резке |
-| DaVinci Resolve | 21 | Media Management → Copy / Move / Transcode, «Used media and trim keeping N frame handles» | единственный, у кого это самостоятельный инструмент со своей страницей, а не пункт «сохранить как»; обрезка считается по каждому событию таймлайна |
-| Final Cut Pro | 12.3 | Consolidate Project/Library Media | ручек НЕТ вовсе: один использованный кадр тянет в библиотеку весь файл. В FCP 7 обрезка с ручками была и в FCP X не вернулась — нишу занимают сторонние утилиты |
-| After Effects | 26.x | File → Dependencies → Collect Files (+ Reduce Project) | копирует исходники целиком; Reduce Project выбрасывает неиспользуемые ЭЛЕМЕНТЫ, но никогда не куски внутри элемента — понятия «запас» в композиционной модели нет |
+| VEGAS Pro | 2026.0 | Save As → "Copy and Trim Media with Project", the field "Extra head and tail" | trimming is a side effect of saving the project; the margin is set in frames, but only DV AVI, uncompressed AVI and Sony YUV AVI are cut, everything else is copied as a whole file |
+| Adobe Premiere | 26.x | Project Manager → "Consolidate and Transcode" / "Collect Files", the field "Include Handles: N frames" | a separate dialogue per project; trimming is performed only if all four parameters match (frame, rate, fields, PAR) and the codec yields to cutting |
+| DaVinci Resolve | 21 | Media Management → Copy / Move / Transcode, "Used media and trim keeping N frame handles" | the only one that has it as an independent tool with its own page, not an item of "save as"; trimming is counted per event of the timeline |
+| Final Cut Pro | 12.3 | Consolidate Project/Library Media | there are NO handles at all: one used frame drags the whole file into the library. In FCP 7 trimming with handles existed and did not return in FCP X — the niche is occupied by third-party utilities |
+| After Effects | 26.x | File → Dependencies → Collect Files (+ Reduce Project) | copies the sources whole; Reduce Project throws away unused ELEMENTS, but never pieces inside an element — there is no concept of a "margin" in the compositional model |
 
-## Фишка фишки
+## The trick behind it
 
-**Число ручек — это ЗАПРОС, а не гарантия, и тихий откат у всех один и тот же:
-скопировать исходник целиком.** У Premiere граница проходит по структуре GOP:
-Project Manager не режет long-GOP H.264/H.265, потому что не разбирает, где
-опорные кадры и какие соседние сегменты нужны для восстановления промежуточных, —
-и то же самое делает time remapping и любое несовпадение кадра/частоты/полей/PAR.
-У VEGAS ровно тот же откат объявлен списком форматов: тримятся DV AVI,
-uncompressed AVI и Sony YUV AVI. Пользователь в обоих случаях заказал 48 кадров
-запаса, получил папку в исходный размер и НИ ОДНОГО сообщения — узнал по объёму.
-То есть самая дорогая часть передачи (сколько байт поедет) определяется не
-настройкой, а внутренним устройством кодека, о котором диалог молчит.
+**The number of handles is a REQUEST, not a guarantee, and the silent fallback is the same for all of them:
+copy the source whole.** At Premiere the boundary runs along the structure of GOP:
+Project Manager does not cut long-GOP H.264/H.265, because it does not parse where the reference
+frames are and which neighbouring segments are needed to restore the intermediate ones —
+and the same is done by time remapping and any mismatch of frame/rate/fields/PAR.
+At VEGAS the same fallback is declared as a list of formats: DV AVI,
+uncompressed AVI and Sony YUV AVI are trimmed. In both cases the user ordered 48 frames of
+margin, received a folder of the original size and NOT A SINGLE message — he learned of it by the volume.
+That is, the most expensive part of the transfer (how many bytes will travel) is determined not by the
+setting but by the internal design of the codec, about which the dialogue is silent.
 
-**Второй неочевидный слой: обрезка МЕНЯЕТ АДРЕСА.** У обрезанной копии другая
-первая точка, и проект после сбора живёт уже не с теми числами: точки входа
-переписаны под новый файл. Пока копия и проект едут вместе, это незаметно; как
-только кто-то присылает замечание по таймкоду ИСХОДНИКА (F-COL-011), оно не
-ложится ни на что — адрес сместился ровно на длину головной ручки. Поэтому
-разумные конвейеры сохраняют исходный таймкод в обрезанной копии, и это
-отдельная работа, о которой сам чекбокс «handles» не упоминает.
+**The second non-obvious layer: trimming CHANGES ADDRESSES.** The trimmed copy has a different
+first point, and the project after gathering lives no longer with the same numbers: the entry points
+are rewritten for the new file. While the copy and the project travel together this is unnoticed; as
+soon as someone sends a remark by the timecode of the SOURCE (F-COL-011), it lands on nothing —
+the address has shifted by exactly the length of the head handle. Therefore reasonable pipelines preserve the
+source timecode in the trimmed copy, and this is a separate job that the checkbox "handles" itself does not mention.
 
-**Третий: ручки решают ровно одну задачу — «сдвинуть склейку», — и молча не
-решают вторую.** Взять другой дубль, вернуть выброшенный кусок, перемонтировать
-фразу — всё это требует материала, которого в посылке нет по построению. Запас в
-24 кадра означает «правки на уровне кадра разрешены, правки на уровне решения —
-нет», и это управленческий смысл, спрятанный в поле для числа.
+**The third: handles solve exactly one task — "move a cut" — and silently do not
+solve the second.** To take another take, to return a discarded piece, to re-edit a
+phrase — all of this requires material that is absent from the package by construction. A margin of
+24 frames means "frame-level edits are allowed, decision-level edits are not", and this is the managerial meaning, hidden in a field for a number.
 
-## Плюсы
+## Pros
 
-- Ручки делают передачу ОБРАТИМОЙ на самом дешёвом уровне: принимающий двигает
-  склейку, не запрашивая ничего и не дожидаясь никого. Ни сервера, ни учётной
-  записи, ни общего диска для этого не нужно — нужен один согласованный
-  множитель.
-- Число одно на всю посылку, поэтому оно переносится письмом и именем папки.
-  Это единственная известная договорённость отрасли, которая не требует
-  программной поддержки у ПРИНИМАЮЩЕЙ стороны.
-- Обрезка по событиям, а не по файлам, сжимает передачу на порядок: длинные
-  дубли, из которых взято по восемь секунд, перестают ехать целиком.
-- Резка на приёме дешёвая: получатель не декодирует ничего лишнего, а его кэши
-  греются по коротким файлам.
+- Handles make the transfer REVERSIBLE at the cheapest level: the receiving side moves a
+  cut without requesting anything and without waiting for anyone. No server, no user account,
+  no shared disk is needed for this — one agreed multiplier is needed.
+- The number is one for the whole package, therefore it is carried in a letter and in the folder name.
+  This is the only known agreement of the industry that does not require program support on the RECEIVING side.
+- Trimming by events rather than by files compresses the transfer by an order of magnitude: long takes, of which eight seconds are used, stop travelling whole.
+- Cutting on receipt is cheap: the recipient decodes nothing superfluous, and their caches warm up on short files.
 
-## Минусы
+## Cons
 
-- **Откат к целому файлу молчалив** — у двух редакторов из пяти он ещё и
-  зависит от кодека, то есть от свойства материала, которого нет в диалоге.
-- Обрезанная копия — уже НЕ тот же материал: другой размер, другой хэш, другая
-  первая точка. Обратный круг (получатель прислал правку, её надо приложить к
-  оригиналам) сходится только если сохранён адрес, а не имя файла.
-- Ручки удваивают материал на стыках: два события из одного дубля с
-  пересекающимися запасами дают либо два файла с общим куском, либо один
-  склеенный, и это разные ответы у разных программ — принимающий заранее не
-  знает, сколько файлов приедет. `[НЕ ПРОВЕРЕНО]` — поведение при пересечении
-  запасов в документации ни одного из пяти не описано.
-- Перекодирование при обрезке — потеря поколения. Там, где кодек не режется без
-  перекодирования, выбор стоит между «весь файл как есть» и «обрезанный, но уже
-  не мастер», и оба варианта диалог называет одним словом.
-- Число ручек невозможно проверить постфактум: посылка, собранная с нулём,
-  выглядит как посылка, собранная с 48, — разница видна только когда получатель
-  упёрся в край и уже не может ничего сделать.
+- **The fallback to the whole file is silent** — for two of the five editors it also
+  depends on the codec, that is, on a property of the material that is absent from the dialogue.
+- A trimmed copy is NOT the same material any more: a different size, a different hash, a different
+  first point. The reverse loop (the recipient sent a correction, which has to be applied to the
+  originals) converges only if the address is preserved, not the file name.
+- Handles double the material at the joins: two events from one take with overlapping margins give either two files with a shared piece, or one glued file, and these are different answers in different programs — the receiving side does not know in advance how many files will arrive. `[NOT VERIFIED]` — the behaviour when margins overlap is described in the documentation of none of the five.
+- Re-encoding during trimming is a generation loss. Where the codec cannot be cut without re-encoding, the choice is between "the whole file as is" and "trimmed, but no longer the master", and the dialogue calls both by one word.
+- The number of handles cannot be checked after the fact: a package gathered with zero looks like a package gathered with 48 — the difference is visible only when the recipient has hit the edge and can no longer do anything about it.
 
-## Что говорят пользователи
+## What users say
 
-Запрос сформулирован ровно как в определении фичи — «использованные куски плюс
-ручки», и результат обратный:
+The request is formulated exactly as in the definition of the feature — "used pieces plus handles" — and the result is the reverse:
 
 > When I try to use Project Manager to take the clips from a completed Sequence
 > and transcode the use portions plus handles the system just exports the entire
@@ -111,146 +95,125 @@ uncompressed AVI и Sony YUV AVI. Пользователь в обоих слу�
 > — aizickg14671823, 28.12.2023,
 > https://community.adobe.com/t5/premiere-pro-discussions/project-manager-not-reducing-clips-and-adding-handles/td-p/14322787
 
-Ответ в том же треде называет механику прямым текстом, и это та самая деталь,
-которой нет ни в одном списке возможностей:
+The answer in the same thread names the mechanics in plain words, and this is exactly the detail that is absent from every list of features:
 
 > One notable limitation of Project Manager, is that they can't 'cut' any H.264/5
 > long-GOP media down, because PM can't sort out where the iframes are.
-> — R Neil Haugen, 28.12.2023, тот же тред
+> — R Neil Haugen, 28.12.2023, the same thread
 
-У VEGAS то же самое обсуждают заголовком «Copy media with project – does not trim
-the source media» (Creative COW, форум VEGAS Pro,
+At VEGAS the same thing is discussed under the title "Copy media with project – does not trim
+the source media" (Creative COW, the VEGAS Pro forum,
 https://creativecow.net/forums/thread/copy-media-with-project-does-not-trim-the-source/),
-и объяснение там не про баг, а про список поддерживаемых форматов обрезки.
+and the explanation there is not about a bug but about the list of supported trimming formats.
 
-У Final Cut ту же потребность обсуждают как отсутствующую функцию: «Consolidate
-export, trimming unused portions of each clip, with handles» (Creative COW, форум
-Apple Final Cut Pro,
+At Final Cut the same need is discussed as a missing feature: "Consolidate
+export, trimming unused portions of each clip, with handles" (Creative COW, the Apple Final Cut Pro forum,
 https://creativecow.net/forums/thread/consolidate-export-trimming-unused-portions-of-each-clip-with-handles/)
-— в FCP 7 обрезка с ручками была, в FCP X её нет, и нишу занимают сторонние
-утилиты.
+— in FCP 7 trimming with handles existed, in FCP X it does not, and the niche is occupied by third-party
+utilities.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- Арифметика запаса у нас точная и уже написана. `ClipEvent` несёт `source_in`,
-  `duration` и `reversed` (`src/libs/kt-model/src/project.rs`), а «сколько
-  материала съедено к моменту τ» считает карта варпа
-  (`src/libs/kt-model/src/warp.rs`, `output_time_for_source`) — то есть для
-  события с переменной скоростью мы умеем перевести «24 кадра на выходе» в
-  «столько-то тиков материала». Это ровно тот случай, на котором Premiere
-  сдаётся и копирует клип целиком.
-- Правило куска одно на проект: `slice_anchors`/`slice_source_in`/`clip_slice`
-  (`src/libs/kt-model/src/project.rs`), и на нём стоит t273 — «арифметики над
-  `source_in` вне одного правила не бывает». Любой сбор обязан пройти через него,
-  иначе посылка разойдётся с монтажом.
-- Проверка «хватает ли материала» существует, но односторонняя:
-  `slice_fits_source` спрашивает только про ЛЕВЫЙ край (`source_in >= 0`), а
-  `trim_max_end` ограничивает правый край исключительно у реверснутых событий —
-  у обычного возвращает `i64::MAX / 4`.
-- Запись медиа внутрипроцессная и уже работает: `kt_engine::export.rs` через
-  `kt-ffmpeg::Muxer`, без временных файлов и внешнего бинарника (инвариант 9);
-  библиотека умеет диапазон (`src/libs/kt-engine/src/export.rs`).
-- Пути в файле относительные, поэтому папка, скопированная целиком, открывается
-  на другой машине без правки проекта (`src/libs/kt-otio/src/url.rs`).
+- The arithmetic of the margin is exact with us and is already written. `ClipEvent` carries `source_in`,
+  `duration` and `reversed` (`src/libs/kt-model/src/project.rs`), and "how much material is consumed by the moment τ" is computed by the warp map
+  (`src/libs/kt-model/src/warp.rs`, `output_time_for_source`) — that is, for an event with variable speed we know how to convert "24 frames at the output" into
+  "that many ticks of material". This is exactly the case on which Premiere gives up and copies the clip whole.
+- The rule of the slice is one per project: `slice_anchors`/`slice_source_in`/`clip_slice`
+  (`src/libs/kt-model/src/project.rs`), and t273 stands on it — "there is no arithmetic on
+  `source_in` outside a single rule". Any gathering must pass through it, otherwise the package will diverge from the edit.
+- A check of "is there enough material" exists, but it is one-sided:
+  `slice_fits_source` asks only about the LEFT edge (`source_in >= 0`), and `trim_max_end` limits the right edge exclusively for reversed events — for an ordinary one it returns `i64::MAX / 4`.
+- Writing media is in-process and already works: `kt_engine::export.rs` via `kt-ffmpeg::Muxer`, without temporary files and without an external binary (invariant 9);
+  the library can do a range (`src/libs/kt-engine/src/export.rs`).
+- Paths in the file are relative, therefore a folder copied whole opens on another machine without editing the project (`src/libs/kt-otio/src/url.rs`).
 
-### Чего не хватает
+### What is missing
 
-- **Документ не знает длины материала.** `MediaRef` — это `id` и `path`
-  (`src/libs/kt-model/src/project.rs`), а `MediaInfo { duration, fps, … }` живёт
-  в `src/libs/kt-media/src/lib.rs` и появляется только после открытия файла.
-  Значит вопрос «остались ли за этой склейкой 24 кадра» по одному проекту не
-  отвечается в принципе — нужен материал под рукой, то есть ровно то, чего у
-  принимающей стороны и нет.
-- Команды сбора нет: в `enum Command` нет ни `Collect`, ни `Consolidate`, ни
-  `Relink` — и последнее важнее первых двух, потому что собранная копия обязана
-  быть переадресована, а переадресовать нечем (F-MED-005).
-- Поля «сколько кадров запаса» нет нигде: ни в модели, ни в окне рендера, ни в
-  kt-cli.
+- **The document does not know the length of the material.** `MediaRef` is `id` and `path`
+  (`src/libs/kt-model/src/project.rs`), and `MediaInfo { duration, fps, … }` lives in
+  `src/libs/kt-media/src/lib.rs` and appears only after the file is opened.
+  So the question "are there 24 frames left beyond this cut" cannot be answered in principle from one project — the material must be at hand, which is exactly what the receiving side does not have.
+- There is no gathering command: `enum Command` has neither `Collect`, nor `Consolidate`, nor `Relink` — and the last matters more than the first two, because a gathered copy must be re-addressed, and there is nothing to re-address it with (F-MED-005).
+- There is no field for "how many frames of margin" anywhere: neither in the model, nor in the render window, nor in kt-cli.
 
-### Что мешает
+### What gets in the way
 
-Сбор — это N выходных файлов и обратная правка `source_in` у каждого события,
-тогда как весь наш экспорт устроен как ОДИН плоский выход. Переиспользовать
-`export.rs` целиком не выйдет: там композиция слоёв, а тут нужен сырой кусок
-одного источника. Дальше — гард `MediaInUse`: путь к материалу сегодня нельзя
-подменить, его можно только удалить, а удалить занятый материал запрещено, то
-есть без F-MED-005 собранная папка остаётся мёртвой копией.
+Gathering is N output files and a reverse edit of `source_in` for each event,
+whereas our whole export is built as ONE flat output. We cannot reuse
+`export.rs` as a whole: there is layer composition there, and here we need a raw slice of
+one source. Further — the `MediaInUse` guard: the path to material today cannot be substituted, it can only be deleted, and deleting occupied material is forbidden, so
+without F-MED-005 a gathered folder remains a dead copy.
 
-БЕЗ СЕТИ: ВЫРОЖДАЕТСЯ — `src/apps/kt-cli/src/main.rs` — на одной машине ручки вырождаются в правило «материал всегда весь»: у kt-cli семь команд (version, new, convert, demo, roundtrip, render, export), у export три параметра — вход, выход, энкодер, — и ни одной формы отдачи, кроме единственного плоского файла; запас в кадрах при этом посчитать есть чем и незачем, потому что резать нечего и переадресовывать некому.
+OFFLINE: DEGENERATES — `src/apps/kt-cli/src/main.rs` — on one machine the handles degenerate into the rule "the material is always whole": kt-cli has seven commands (version, new, convert, demo, roundtrip, render, export), export has three parameters — input, output, encoder — and not one form of delivery except a single flat file; the margin in frames can be computed, but there is no reason to, because there is nothing to cut and no one to re-address it to.
 
-ЦЕНА СЕТИ: принимающему нужны БАЙТЫ, а не документ — инвариант 9 — нарезка запаса это запись медиафайлов, а единственный разрешённый писатель у нас внутрипроцессный муксер kt-ffmpeg, то есть сбор становится вторым режимом экспорта, а не отдельной утилитой рядом с программой.
+NETWORK COST: the receiving side needs BYTES, not a document — invariant 9 — cutting the margin is writing media files, and the only permitted writer we have is the in-process muxer kt-ffmpeg, which means gathering becomes a second export mode, not a separate utility next to the program.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Инвариант 9 (экспорт полностью внутрипроцессный) — сбор обязан писать медиа тем
-же муксером; внешний `ffmpeg` для нарезки запрещён, и это скорее плюс: чужой
-бинарник в конвейере передачи — главный источник «у меня собралось, у тебя нет».
-Инвариант 5 (декодером владеет один MediaWorker) — чтение исходников для нарезки
-идёт его очередью с приоритетом ниже playback, иначе сбор задушит превью.
-Правило UI 16 (невозможность — ошибка, а не блёклая подсказка) прямо запрещает
-нам повторить чужой откат: «запас не поместился» и «этот кодек не режется» обязаны
-быть ошибкой до начала работы, а не сюрпризом в размере папки. Правило UI 19
-(диалог говорит, где потом изменить решение) — окно сбора обязано назвать место,
-где меняется число ручек.
+Invariant 9 (export is fully in-process) — gathering must write media with the
+same muxer; an external `ffmpeg` for cutting is forbidden, and this is rather a plus: a foreign
+binary in the transfer pipeline is the main source of "it built for me, not for you".
+Invariant 5 (one MediaWorker owns the decoder) — reading the sources for cutting
+goes through its queue at a priority below playback, otherwise gathering would choke the preview.
+UI rule 16 (impossibility is an error, not a faded hint) directly forbids us to repeat
+someone else's fallback: "the margin did not fit" and "this codec cannot be cut" must
+be errors before work starts, not a surprise in the folder size. UI rule 19
+(the dialogue says where the decision can be changed later) — the gathering window must name the place
+where the number of handles is changed.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | L — целый раунд: нарезка, переадресация, окно, отчёт |
-| Где основная работа | kt-engine (запись куска источника муксером), kt-model (команды сбора и переадресации, длина материала в документе), kt-cli (подкоманда сбора), kt-app (окно и отчёт) |
-| Формат проекта | не трогает: пути и точки входа уже есть; длина материала в документе — необязательное поле, если заводить, то версией |
-| Тесты, которые придётся написать | «собранная копия рендерится байт-в-байт как оригинал» (golden на синтетике); «запас N кадров получен ровно N кадров, а где не поместился — ошибка, а не молчание»; «событие с картой варпа собрано по `output_time_for_source`, а не по длительности на таймлайне»; «реверснутое событие берёт запас с той стороны, с которой читает» |
-| Зависит от | F-MED-005 (без переадресации собранная папка не открывается) |
-| Ломает совместимость | нет |
+| Size | L — a whole round: cutting, re-addressing, window, report |
+| Where the main work is | kt-engine (writing a slice of the source through the muxer), kt-model (commands of gathering and re-addressing, the length of material in the document), kt-cli (a gathering subcommand), kt-app (window and report) |
+| Project format | does not touch it: paths and entry points already exist; the length of material in the document is an optional field, and if it is introduced, it is by version |
+| Tests to write | "a gathered copy renders byte for byte like the original" (golden on synthetics); "a margin of N frames yields exactly N frames, and where it did not fit — an error, not silence"; "an event with a warp map is gathered by `output_time_for_source`, not by the duration on the timeline"; "a reversed event takes its margin from the side from which it is read" |
+| Depends on | F-MED-005 (without re-addressing a gathered folder does not open) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём локальное ядро и только вместе с F-MED-005: «собрать использованное с
-запасом N кадров» без переадресации даёт папку, которую нечем открыть. Серверную
-половину не заводим — второго участника нет, а всё, что делает эту фичу
-осмысленной, у нас уже локальное: нарезка внутрипроцессная, адрес материала в
-файле относительный, арифметика запаса точна даже на переменной скорости.
+We take the local core, and only together with F-MED-005: "gather the used material with a margin of N frames" without re-addressing yields a folder that cannot be opened. The server
+half we do not open — there is no second participant, and everything that makes this feature
+meaningful is already local with us: the cutting is in-process, the address of the material in the
+file is relative, the arithmetic of the margin is exact even at variable speed.
 
-Чем отличаемся от соседей. **F-MED-005** (перелинковка и консолидация) — про
-МЕХАНИЗМ привязки у ОДНОГО человека: путь сломался, собрать всё в одну папку,
-чтобы не потерялось. Здесь предмет — ЧИСЛО, которое имеет смысл только при
-передаче второму: сколько лишнего материала он получит. Консолидация без ручек
-технически успешна и практически бесполезна, и наоборот — ручки без
-консолидации не выражаются, поэтому заметки соседние, а не одна.
-**F-EXP-003** (smart render) — про то, как НЕ перекодировать нетронутое при
-выводе одного файла; здесь перекодирование при нарезке чаще всего обязательно
-(длинный GOP), и выход не один, а по файлу на событие. Общего у них только
-слово «не трогать лишнего».
+How we differ from the neighbours. **F-MED-005** (relinking and consolidation) is about the MECHANISM of binding for ONE person: the path broke, gather everything into one folder
+so that nothing is lost. Here the subject is a NUMBER, which makes sense only when transferring to a second person: how much surplus material he will receive. Consolidation without handles
+is technically successful and practically useless, and vice versa — handles without
+consolidation are not expressed, so the notes are neighbouring, not one.
+**F-EXP-003** (smart render) is about how NOT to re-encode what is untouched when outputting one file; here re-encoding during cutting is most often mandatory
+(long GOP), and the output is not one file but one file per event. What they have in common is only
+the words "do not touch what is extra".
 
-Отдельно: собранная копия обязана нести исходный таймкод материала, иначе
-замечания второй стороны перестают ложиться на монтаж — см. F-COL-011, там же
-разобрано, что у нас с этим уже сделано.
+Separately: the gathered copy must carry the source timecode of the material, otherwise
+the remarks of the second side stop landing on the edit — see F-COL-011, where it is
+analysed what we have already done about this.
 
-## Источники
+## Sources
 
 - https://community.adobe.com/t5/premiere-pro-discussions/project-manager-not-reducing-clips-and-adding-handles/td-p/14322787
-  — Project Manager not reducing clips and adding handles (дата обращения
+  — Project Manager not reducing clips and adding handles (accessed
   2026-09-08)
 - https://community.adobe.com/t5/premiere-pro-bugs/project-manager-consolidate-and-transcode-problems/idi-p/9260441
-  — Project Manager: Consolidate and Transcode problems, многолетний тред
-  (дата обращения 2026-09-08)
+  — Project Manager: Consolidate and Transcode problems, a multi-year thread
+  (accessed 2026-09-08)
 - https://creativecow.net/forums/thread/copy-media-with-project-does-not-trim-the-source/
-  — VEGAS Pro: «Copy media with project» не обрезает исходники (дата обращения
+  — VEGAS Pro: "Copy media with project" does not trim the sources (accessed
   2026-09-08)
 - https://creativecow.net/forums/thread/consolidate-export-trimming-unused-portions-of-each-clip-with-handles/
-  — Final Cut Pro: обрезка с ручками как отсутствующая функция (дата обращения
+  — Final Cut Pro: trimming with handles as a missing feature (accessed
   2026-09-08)
 - https://larryjordan.com/articles/final-cut-pro-consolidate-media-for-archiving-or-colllaboration/
-  — что именно делает Consolidate в FCP (дата обращения 2026-09-08)
-- Строки Resolve и VEGAS в таблице собраны по формулировкам их справок
-  («Used media and trim keeping N frame handles»; «Copy and Trim Media with
-  Project» с полем «Extra head and tail»); живьём не проверялось — публичного
-  трекера нет ни у одного из пяти (`docs/features/_trackers.md`, «Кого НЕ
-  берём»).
-- Наш код проверен грепом по `src/` 08.09.2026: `kt-model/src/project.rs`
+  — what exactly Consolidate does in FCP (accessed 2026-09-08)
+- The Resolve and VEGAS rows in the table are compiled from the wording of their help pages
+  ("Used media and trim keeping N frame handles"; "Copy and Trim Media with
+  Project" with the field "Extra head and tail"); not verified live — there is no public tracker for any of the five (`docs/features/_trackers.md`, "Whom we do NOT
+  take").
+- Our code, checked by grep across `src/` on 08.09.2026: `kt-model/src/project.rs`
   (`ClipEvent`, `MediaRef`, `slice_fits_source`, `trim_max_end`, `clip_slice`),
   `kt-model/src/warp.rs`, `kt-media/src/lib.rs` (`MediaInfo`),
   `kt-engine/src/export.rs`, `kt-cli/src/main.rs`.

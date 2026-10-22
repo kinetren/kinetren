@@ -1,153 +1,74 @@
 ---
 id: F-AUD-001
-title: Параметрический эквалайзер
-status: сделано
+title: Parametric equalizer
+status: done
 priority: A
 cost: S
 category: audio/processing
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: да
+we_have: yes
 crates: [kt-fx, kt-model, kt-app, kt-engine, kt-otio]
 invariants: [1, 2, 3, 11]
 ui_rules: [13, 17, 20]
-round: "Р.48"
+round: "R.48"
 point: 347
 tests: [322, 324, 348, 349, 350]
 depends_on: []
 checked: 2026-09-14
 ---
 
-# F-AUD-001 — Параметрический эквалайзер
+# F-AUD-001 — Parametric equalizer
 
-## Суть
+## Essence
 
-Инструмент «сделать голос слышимым»: убрать гул кондиционера снизу,
-вынуть «бочку» из речи, добавить разборчивости. Монтажёр ставит на
-событие несколько полос, у каждой три числа — частота, усиление и
-ширина, — и слышит результат сразу. Без эквалайзера единственный
-доступный жест над звуком — сделать тише, а тише мутная речь не
-становится разборчивее. Это самый базовый аудио-инструмент: он есть у
-всех пяти редакторов ядра, включая After Effects, который вообще не NLE.
+A tool for "making the voice audible": remove the air-conditioner hum from below, take the "barrel" out of speech, add intelligibility. The editor puts several bands on an event, each with three numbers — frequency, gain and width — and hears the result at once. Without an equalizer, the only available gesture over sound is to make it quieter, and quieter muddy speech does not become more intelligible. This is the most basic audio tool: it is present in all five core editors, including After Effects, which is not an NLE at all.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | VEGAS Track EQ (плюс Paragraphic EQ / Graphic EQ в списке плагинов) | Живёт в цепочке ДОРОЖКИ и уже стоит там: у каждой новой аудио-дорожки по умолчанию три плагина — Noise Gate, Track EQ, Compressor, все в нейтральном состоянии. Полос четыре (низ, низ-середина, верх-середина, верх), у каждой частота, усиление и Q, поверх — график АЧХ [НЕ ПРОВЕРЕНО по первоисточнику: справка magix-hub описывает только кнопку Track FX, страница самого плагина не нашлась]. На событие вешается отдельная цепочка Event FX, туда же кладётся второй экземпляр того же плагина |
-| Adobe Premiere | 26.x | Parametric Equalizer и Simple Parametric EQ (Audio Effects → Filter and EQ); Essential Sound → Clarity → EQ | ЕДИНСТВЕННЫЙ из пяти, у кого EQ — обычный эффект: перетаскивается на клип, на дорожку или на сабмикс, копируется вместе с эффектами клипа. В Essential Sound от того же эффекта оставлены список пресетов и один ползунок Amount — «рецепт» вместо ручек |
-| DaVinci Resolve | 21 | Fairlight EQ | Не эффект из библиотеки, а часть канала: «All channel strips include a fader…, dynamics and a 6 band parametric equalizer on every channel», открывается двойным кликом по зоне EQ в микшере. Плюс ВТОРОЙ такой же на каждом клипе: «Each clip in the timeline has its own volume, pan, pitch and 6-band parametric EQ controls» |
-| Final Cut Pro | 12.3 | Channel EQ и Linear Phase EQ (обе из Logic) | 8 полос жёстко заданного назначения: 1 — high-pass, 2 — low shelf, 3–6 — параметрические колокола, 7 — high shelf, 8 — low-pass. Анализатор с переключателем Pre/Post поверх кривой. Linear Phase EQ — тот же интерфейс и те же восемь полос на другом движке |
-| After Effects | 26.x | Parametric EQ, High-Low Pass, Bass & Treble | Старые аудио-эффекты слоя: кейфреймы работают как у любого свойства, но ни микшера, ни каналов, ни анализатора нет. Полос у Parametric EQ три [НЕ ПРОВЕРЕНО: helpx.adobe.com из этого окружения не открывается] |
+| VEGAS Pro | 2026.0 | VEGAS Track EQ (plus Paragraphic EQ / Graphic EQ in the plugin list) | Lives in the TRACK chain and is already there: every new audio track has three plugins by default — Noise Gate, Track EQ, Compressor, all in a neutral state. There are four bands (low, low-mid, high-mid, high), each with frequency, gain and Q, plus a frequency-response graph on top [NOT VERIFIED against the primary source: the magix-hub help describes only the Track FX button, the plugin's own page was not found]. A separate Event FX chain is placed on an event, and a second instance of the same plugin goes there |
+| Adobe Premiere | 26.x | Parametric Equalizer and Simple Parametric EQ (Audio Effects → Filter and EQ); Essential Sound → Clarity → EQ | The ONLY one of the five where EQ is a regular effect: it is dragged onto a clip, a track or a submix, and is copied together with the clip's effects. In Essential Sound the same effect is reduced to a list of presets and a single Amount slider — a "recipe" instead of knobs |
+| DaVinci Resolve | 21 | Fairlight EQ | Not a library effect but part of the channel: "All channel strips include a fader…, dynamics and a 6 band parametric equalizer on every channel", opened by double-clicking the EQ area in the mixer. Plus a SECOND one on every clip: "Each clip in the timeline has its own volume, pan, pitch and 6-band parametric EQ controls" |
+| Final Cut Pro | 12.3 | Channel EQ and Linear Phase EQ (both from Logic) | 8 bands with hard-wired roles: 1 — high-pass, 2 — low shelf, 3–6 — parametric bells, 7 — high shelf, 8 — low-pass. An analyzer with a Pre/Post switch over the curve. Linear Phase EQ — the same interface and the same eight bands on a different engine |
+| After Effects | 26.x | Parametric EQ, High-Low Pass, Bass & Treble | Old audio effects of a layer: keyframes work like for any property, but there is no mixer, no channels and no analyzer. Parametric EQ has three bands [NOT VERIFIED: helpx.adobe.com does not open from this environment] |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Одна и та же ручка Q на разных типах полос делает три разные вещи,
-а на самой пологой крутизне не делает ничего.** У колокола Q — это
-отношение центральной частоты к ширине: больше Q — уже горб. У полки
-ширины нет вовсе, и то же число управляет ИЗЛОМОМ у среза: за ~0.7
-полка получает выброс, то есть рядом с подъёмом появляется яма (и
-наоборот). Монтажёр, который «сделал полку поуже, чтобы точнее», на
-самом деле выгрыз дыру в соседнем диапазоне. У фильтров среза Q — это
-резонанс на частоте среза, и он существует только начиная со второго
-порядка. Apple пишет это прямым текстом про свои крайние полосы: «The Q
-parameter of band 1 and band 8 has no effect when the slope is set to 6
-dB/Oct» — 6 дБ/окт это первый порядок, полюс один, резонировать нечему.
-Отсюда же читается вся арифметика крутизны: один биквад = второй
-порядок = 12 дБ/окт, а 24/36/48 дБ/окт — это два, три, четыре биквада
-подряд, то есть выбор крутизны в интерфейсе буквально означает «сколько
-фильтров посчитать» и «сколько градусов фазы повернуть» (по 90° на
-порядок в районе среза).
+**1. One and the same Q knob does three different things on different band types, and on the gentlest slope it does nothing at all.** For a bell, Q is the ratio of the center frequency to the width: a higher Q means a narrower hump. A shelf has no width at all, and the same number controls the KINK at the cutoff: around ~0.7 the shelf gets an overshoot, that is, a dip appears next to the boost (and vice versa). An editor who "made the shelf narrower to be more precise" has in fact carved a hole in the neighbouring range. In cut filters, Q is the resonance at the cutoff frequency, and it exists only starting from the second order. Apple states this in plain text about its extreme bands: "The Q parameter of band 1 and band 8 has no effect when the slope is set to 6 dB/Oct" — 6 dB/oct is the first order, with one pole, so there is nothing to resonate. From this follows all the arithmetic of slope: one biquad = second order = 12 dB/oct, and 24/36/48 dB/oct are two, three, four biquads in a row, so the choice of slope in the interface literally means "how many filters to compute" and "how many degrees of phase to rotate" (by 90° per order around the cutoff).
 
-**2. Линейно-фазовый EQ — это не «лучше», а «другой размен», и цена в
-нём — задержка, о которой первым сообщает сам производитель.** Любой
-IIR-эквалайзер минимально-фазовый: изменил АЧХ — изменил и фазу, иначе
-не бывает. В одиночку это не слышно, слышно при СУММИРОВАНИИ обработки с
-необработанной копией того же сигнала: два микрофона на один источник,
-параллельная обработка, дубль клипа поверх себя, M/S. Ответ индустрии —
-FIR с симметричным ядром: фаза не крутится вовсе, но появляются
-постоянная задержка (половина длины ядра) и предзвон перед транзиентом.
-Apple про свой Linear Phase EQ: «perfectly preserves the phase of the
-audio signal», и тут же — «Linear Phase EQ also introduces greater
-amounts of latency. Therefore, it is strongly recommended that you use it
-for mastering previously recorded audio». Там же торчит устройство
-наружу: «uses a fixed amount of CPU resources, regardless of how many
-bands are active» — у FIR-свёртки цена в блоке одна и та же, включена
-одна полоса или восемь, ровно наоборот к IIR, где каждая полоса стоит
-своих денег. Для видеоредактора этот размен хуже, чем для DAW: у DAW
-компенсация задержки плагинов сквозная и монтажёр смотрит на цифру
-latency, а у NLE звук обязан совпадать с картинкой покадрово и живое
-превью гоняют скрабом и лупом. Ядро в 4096 отсчётов даёт 2048 отсчётов
-задержки — 43 мс при 48 kHz, то есть больше одного кадра при 24 fps
-(41.7 мс), и каждый seek обязан заново набить историю FIR.
+**2. A linear-phase EQ is not "better" but a different trade-off, and its price is latency, which the manufacturer itself mentions first.** Any IIR equalizer is minimum-phase: change the frequency response and you change the phase too, there is no other way. Alone this is not audible, but it is audible when the processed signal is SUMMED with an unprocessed copy of the same signal: two microphones on one source, parallel processing, a clip duplicated on top of itself, M/S. The industry's answer is an FIR with a symmetric kernel: the phase does not turn at all, but there appear a constant delay (half the kernel length) and pre-ringing before a transient. Apple about its Linear Phase EQ: "perfectly preserves the phase of the audio signal", and right after it — "Linear Phase EQ also introduces greater amounts of latency. Therefore, it is strongly recommended that you use it for mastering previously recorded audio". The same place exposes the device from the inside: "uses a fixed amount of CPU resources, regardless of how many bands are active" — the cost of FIR convolution is the same per block whether one band or eight are enabled, exactly the opposite of IIR, where each band costs its own. For a video editor this trade-off is worse than for a DAW: a DAW has end-to-end plugin delay compensation and the editor looks at the latency figure, while an NLE must have sound match the picture frame by frame, and the live preview is driven by scrubbing and looping. A kernel of 4096 samples gives 2048 samples of delay — 43 ms at 48 kHz, which is more than one frame at 24 fps (41.7 ms) — and every seek must refill the FIR history anew.
 
-**3. Место, где живёт эквалайзер, решает, кто им управляет — и это
-источник самой частой жалобы.** У Resolve и Vegas EQ прибит к каналу:
-его нельзя перетащить на другой клип, зато он всегда под рукой и всегда
-в одной точке тракта. У Premiere он эффект, и на дорожке попадает под
-режим автоматизации микшера — ручки послушно возвращаются на записанное
-значение, а пользователь видит «глюк эквалайзера». Vegas при этом ставит
-свой EQ на каждую дорожку ЗАРАНЕЕ и в нейтральном положении, то есть
-платит за удобство тем, что в проекте всегда висят три плагина, которые
-ничего не делают. У Resolve эквалайзеров вообще два — на клипе и на
-канале, — они выглядят одинаково и стоят в разных точках тракта, и это
-регулярный источник вопроса «почему я кручу, а не меняется».
+**3. The place where the equalizer lives decides who controls it — and this is the source of the most frequent complaint.** In Resolve and Vegas the EQ is bolted to the channel: it cannot be dragged onto another clip, but it is always at hand and always at one point in the signal path. In Premiere it is an effect, and on a track it falls under the mixer's automation mode — the knobs obediently return to the recorded value, and the user sees an "equalizer glitch". Vegas, meanwhile, puts its EQ on every track IN ADVANCE and in a neutral position, so it pays for convenience by having three plugins always sitting in the project that do nothing. Resolve has two equalizers altogether — on the clip and on the channel — they look the same and stand at different points in the signal path, and this is a regular source of the question "why do I turn it and nothing changes".
 
-## Плюсы
+## Pros
 
-- Полоса — это три числа и два-три состояния фильтра, поэтому
-  эквалайзер полностью описывается тем же паспортом параметров, что и
-  любой другой эффект: диапазоны, шаг, единицы, автоматизация и кламп
-  приезжают бесплатно, ничего специального под него в модели не нужно.
-- Состояния у биквада — два числа на канал, поэтому «правка модели не
-  убивает хвост» здесь достаётся даром: терять при пересборке нечего, а
-  переходный процесс короче миллисекунды.
-- У IIR-эквалайзера нулевая задержка, поэтому он не требует ни
-  компенсации, ни сдвига окна источника: выход кадра N считается ровно
-  из кадра N. Это и есть причина, по которой у всех пяти редакторов
-  штатный EQ именно IIR, а линейно-фазовый — отдельный «для мастеринга».
-- Цена процессора линейна по числу ВКЛЮЧЁННЫХ полос: выключенная полоса
-  стоит ноль, и это видно в UI как честная связь «включил — заплатил».
+- A band is three numbers and two or three filter states, so the equalizer is fully described by the same parameter passport as any other effect: ranges, step, units, automation and clamping come for free, and nothing special for it is needed in the model.
+- The state of a biquad is two numbers per channel, so "a model edit does not kill the tail" comes here for free: there is nothing to lose when rebuilding, and the transient is shorter than a millisecond.
+- An IIR equalizer has zero latency, so it needs neither delay compensation nor a shift of the source window: output of frame N is computed exactly from frame N. This is the reason all five editors have a standard EQ that is IIR, and the linear-phase one is a separate "for mastering".
+- The CPU cost is linear in the number of ENABLED bands: a disabled band costs zero, and this is visible in the UI as an honest link "enabled — paid".
 
-## Минусы
+## Cons
 
-- Изменение АЧХ у IIR неотделимо от изменения фазы, поэтому эквалайзер,
-  поставленный на один из двух суммируемых сигналов, меняет их сумму
-  сильнее, чем показывает собственная кривая, — и виноватым выглядит не
-  он, а «микрофоны не сфазированы».
-- Крутизна среза стоит фазы: 48 дБ/окт — это восемь порядков поворота у
-  частоты среза, отсюда «HPF съел панч», о котором на форумах говорят
-  ровно теми же словами, что и о предзвоне линейной фазы.
-- Анализатор поверх кривой провоцирует править глазами: спектр
-  показывает, где ГРОМКО, а не где плохо, у речи он всегда горбат в
-  200–400 Гц, и «выровненный по картинке» голос звучит выпотрошенным.
-  Ровно поэтому редакторы прячут рецептные полосы (гул 80–120,
-  мутность 200–400, присутствие 3–5 кГц) в пресеты с одной ручкой
-  «сколько»: Premiere в Essential Sound оставляет список пресетов и
-  ползунок Amount, Vegas — предзагруженный, но нейтральный плагин.
-- Полос всегда мало: у Fairlight их шесть, и запросы «more than 6
-  bands?» висят на форуме BMD годами; у FCP восемь, но назначение
-  полос жёсткое — под шесть колоколов подряд его не переставить.
-- Q — одно слово для трёх разных величин (ширина колокола, излом полки,
-  резонанс среза), и у самой пологой крутизны оно молча не работает.
-  Это не недоработка интерфейса, это физика фильтра, вылезшая в UI.
+- Changing the frequency response of an IIR is inseparable from changing its phase, so an equalizer placed on one of two signals that are summed changes their sum more than its own curve shows — and the culprit looks not like the equalizer but like "the microphones are out of phase".
+- Slope steepness costs phase: 48 dB/oct means eight orders of rotation at the cutoff frequency, hence "the HPF ate the punch", which forum posts describe in exactly the same words as the pre-ringing of linear phase.
+- The analyzer over the curve provokes editing by eye: the spectrum shows where it is LOUD, not where it is BAD; speech always has a hump at 200–400 Hz, and a voice "levelled by the picture" sounds gutted. That is exactly why editors hide the recipe bands (hum 80–120, muddiness 200–400, presence 3–5 kHz) in presets with a single "how much" knob: Premiere in Essential Sound keeps a list of presets and an Amount slider, Vegas keeps a preloaded but neutral plug-in.
+- There are always few bands: Fairlight has six, and requests for "more than 6 bands?" have hung on the BMD forum for years; FCP has eight, but the roles of the bands are hard-wired — six bells in a row cannot be rearranged to it.
+- Q is one word for three different quantities (bell width, shelf knee, cutoff resonance), and on the gentlest slope it silently does not work. This is not a flaw of the interface, it is the physics of the filter showing through in the UI.
 
-## Что говорят пользователи
+## What users say
 
 > Yes, those three effects are set to "do nothing" by default but are
 > very commonly used effects which is why they are there by default.
 > — Edward Troxel, Creative COW, 25.01.2022, https://creativecow.net/forums/thread/default-audio-effects-track-when-open-any-file/
 
-(о трёх плагинах — Noise Gate, Track EQ, Compressor, — которые Vegas
-кладёт на каждую аудио-дорожку заранее.)
+(About the three plug-ins — Noise Gate, Track EQ, Compressor — that Vegas puts on every audio track in advance.)
 
 > Parametric equalizer glitch! it just records my every tweak and then
 > goes back to where it was and then it plays back like this...
 > — CTMPRE, Adobe Support Community, 23.09.2022, https://community.adobe.com/t5/premiere-pro-discussions/parametric-equalizer-glitch/m-p/13218990
 
-(ответ Phillip Harvey в том же треде: дело в режиме автоматизации в
-Audio Track Mixer — «This setting is going to affect the behavior of your
-audio effect». Эквалайзер как эффект ДОРОЖКИ подчиняется автоматизации
-микшера, и пользователь читает это как поломку эквалайзера.)
+(The reply of Phillip Harvey in the same thread: the cause is the automation mode in the Audio Track Mixer — "This setting is going to affect the behavior of your audio effect". An equalizer as a TRACK effect is subject to the mixer's automation, and the user reads this as the equalizer being broken.)
 
 > the linear phase algo has a tendancy to introduce pre and/or post
 > ringing - this is an oscilation that occurs before and/or after
@@ -162,63 +83,39 @@ audio effect». Эквалайзер как эффект ДОРОЖКИ подч
 > My best advice is to mix with your ears, not your eyes.
 > — Larry Jordan, larryjordan.com, 23.07.2025, https://larryjordan.com/articles/use-channel-eq-to-improve-voice-quality-in-apple-final-cut-pro/
 
-(в статье про Channel EQ в Final Cut Pro — то есть про эквалайзер со
-встроенным анализатором.)
+(From an article on Channel EQ in Final Cut Pro — that is, on an equalizer with a built-in analyzer.)
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/audio-fx/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Параметрический EQ — биквады в цепочке узлов; график АЧХ считается из коэффициентов ядра, а не рисуется отдельно.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/audio-fx/ — the contract is in `spec.md`, the "why" and the paths in the code are in `design.md`.
+A parametric EQ — biquads in the node chain; the frequency-response graph is computed from the kernel coefficients, not drawn separately.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия раунда на ядро (DSP + вариант модели + реестр + сетка полей). График с точками — отдельная стадия, брать его в тот же заход не обязательно |
-| Где основная работа | kt-fx (биквад и его место в `ClipProcessor`), kt-model (`params_for!`), kt-app (реестр, поля, каталоги i18n) |
-| Формат проекта | не трогает: новый вариант `FxInstance` не бампает `KT_META_VERSION` (`src/libs/kt-otio/src/meta.rs`, прецедент Pan3d) |
-| Тесты, которые придётся написать | по карте kt-fx корневого `CLAUDE.md`: `kt-engine/tests/fx.rs` (вкл. t31 и t213 — автоматизация аудио), `warp_prefetch`, `reverse`, `loop_fx` (t166 шов), `golden_export` (эталон обязан остаться прежним — эффекта в эталонном проекте нет), unit-тесты kt-fx, `kt-fx/tests/{integral_map,material_range}.rs`. Плюс своё: АЧХ биквада против аналитической формулы в контрольных точках, тишина на нулевом усилении байт-в-байт, отсутствие щелчка при автоматизации частоты, `t100` (глифы) и `t125/t128` при новых строках каталога |
-| Зависит от | ничего. F-AUD-004 (шины и дорожечные FX) не нужен: он лишь добавит эквалайзеру второе МЕСТО — канал вместо события |
-| Ломает совместимость | нет |
+| Scope | S — one stage of the round for the core (DSP + model variant + registry + field grid). A graph with points is a separate stage; it is not required to take it in the same pass |
+| Where the main work is | kt-fx (the biquad and its place in `ClipProcessor`), kt-model (`params_for!`), kt-app (registry, fields, i18n catalogs) |
+| Project format | not touched: a new `FxInstance` variant does not bump `KT_META_VERSION` (`src/libs/kt-otio/src/meta.rs`, precedent Pan3d) |
+| Tests that will have to be written | per the kt-fx map in the root `CLAUDE.md`: `kt-engine/tests/fx.rs` (incl. t31 and t213 — audio automation), `warp_prefetch`, `reverse`, `loop_fx` (t166 seam), `golden_export` (the reference must stay the same — there is no effect in the reference project), kt-fx unit tests, `kt-fx/tests/{integral_map,material_range}.rs`. Plus our own: the biquad's frequency response against the analytic formula at control points, silence at zero gain byte-for-byte, no click on frequency automation, `t100` (glyphs) and `t125/t128` for new catalog strings |
+| Depends on | nothing. F-AUD-004 (buses and track FX) is not needed: it would only give the equalizer a second PLACE — the channel instead of the event |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём. Это, вероятно, самая дешёвая настоящая фича во всей базе: тракт
-уже f32/48k, диспетчер состояния FX уже есть, паспорт параметров и
-автоматизация приезжают из `params_for!` даром, формат проекта не
-двигается, хвоста нет, окно источника не меняется. Начинать с
-IIR-эквалайзера на СОБЫТИИ и с сетки чисел по `ParamSpec`;
-линейно-фазовый вариант не рассматривать вовсе, пока в движке нет
-компенсации задержки — Apple сама рекомендует свой Linear Phase EQ
-только «for mastering previously recorded audio», а у нас живое превью и
-покадровая синхронизация с картинкой. Два решения раунд обязан принять
-вслух: одна полоса = один слот цепочки или N полос одним эффектом, и
-что делать с тем, что `ClipProcessor` сейчас игнорирует порядок слотов
-(правило 17). График с перетаскиваемыми точками — вторым заходом, и
-только как второй ВИД тех же `ParamSpec`, по образцу
-`src/apps/kt-app/src/automation.rs`.
+Take it. This is probably the cheapest real feature in the whole base: the path is already f32/48k, the FX state dispatcher already exists, the parameter passport and automation come for free from `params_for!`, the project format does not move, there is no tail, and the source window does not change. Start with the IIR equalizer on an EVENT and with a grid of numbers driven by `ParamSpec`; do not consider the linear-phase variant at all while the engine has no delay compensation — Apple itself recommends its Linear Phase EQ only "for mastering previously recorded audio", while we have a live preview and frame-accurate sync with the picture. The round must decide two things aloud: one band = one chain slot, or N bands in one effect; and what to do about the fact that `ClipProcessor` currently ignores the order of slots (rule 17). A graph with draggable points is a second pass, and only as a second VIEW of the same `ParamSpec`, following the pattern of `src/apps/kt-app/src/automation.rs`.
 
-## Источники
+## Sources
 
-- https://www.blackmagicdesign.com/products/davinciresolve/fairlight (дата обращения 2026-09-07) — официальная страница Fairlight, Resolve 21: 6-полосный параметрический EQ на каждом канале микшера и отдельный 6-полосный EQ на каждом клипе
-- https://support.apple.com/guide/final-cut-pro-logic-effects/channel-eq-controls-lgex92fd757d/mac (2026-09-07) — состав восьми полос Channel EQ, анализатор Pre/Post, «The Q parameter of band 1 and band 8 has no effect when the slope is set to 6 dB/Oct»
-- https://support.apple.com/en-ca/guide/final-cut-pro-logic-effects/lgex92fd69c2/mac (2026-09-07) — Linear Phase EQ: сохранение фазы, фиксированная цена CPU независимо от числа полос, «introduces greater amounts of latency»
-- https://support.apple.com/guide/final-cut-pro-logic-effects/intro-to-equalizers-lgex25ccd530/mac (2026-09-07) — список эквалайзеров, доступных в FCP
-- https://creativecow.net/forums/thread/default-audio-effects-track-when-open-any-file/ (2026-09-07) — три плагина по умолчанию на аудио-дорожке Vegas
-- https://community.adobe.com/t5/premiere-pro-discussions/parametric-equalizer-glitch/m-p/13218990 (2026-09-07) — эквалайзер на дорожке под режимом автоматизации микшера
-- https://www.redsharknews.com/how-to-use-the-essential-sound-panel-in-adobe-premiere-pro (2026-09-07) — Clarity → Dynamics/EQ/Vocal Enhancer, «Premiere Pro offers a list of presents and a slider to adjust the amount»
-- https://www.kvraudio.com/forum/viewtopic.php?t=532089 (2026-09-07) — предзвон и задержка линейно-фазового EQ, когда его берут и когда нет
-- https://larryjordan.com/articles/use-channel-eq-to-improve-voice-quality-in-apple-final-cut-pro/ (2026-09-07) — «mix with your ears, not your eyes» про Channel EQ в FCP
+- https://www.blackmagicdesign.com/products/davinciresolve/fairlight (accessed 2026-09-07) — official Fairlight page, Resolve 21: a 6-band parametric EQ on every mixer channel and a separate 6-band EQ on every clip
+- https://support.apple.com/guide/final-cut-pro-logic-effects/channel-eq-controls-lgex92fd757d/mac (2026-09-07) — makeup of the eight bands of Channel EQ, the Pre/Post analyzer, "The Q parameter of band 1 and band 8 has no effect when the slope is set to 6 dB/Oct"
+- https://support.apple.com/en-ca/guide/final-cut-pro-logic-effects/lgex92fd69c2/mac (2026-09-07) — Linear Phase EQ: phase preservation, fixed CPU cost regardless of the number of bands, "introduces greater amounts of latency"
+- https://support.apple.com/guide/final-cut-pro-logic-effects/intro-to-equalizers-lgex25ccd530/mac (2026-09-07) — list of equalizers available in FCP
+- https://creativecow.net/forums/thread/default-audio-effects-track-when-open-any-file/ (2026-09-07) — the three default plug-ins on a Vegas audio track
+- https://community.adobe.com/t5/premiere-pro-discussions/parametric-equalizer-glitch/m-p/13218990 (2026-09-07) — an equalizer on a track under the mixer's automation mode
+- https://www.redsharknews.com/how-to-use-the-essential-sound-panel-in-adobe-premiere-pro (2026-09-07) — Clarity → Dynamics/EQ/Vocal Enhancer, "Premiere Pro offers a list of presents and a slider to adjust the amount"
+- https://www.kvraudio.com/forum/viewtopic.php?t=532089 (2026-09-07) — pre-ringing and delay of the linear-phase EQ, when it is taken and when it is not
+- https://larryjordan.com/articles/use-channel-eq-to-improve-voice-quality-in-apple-final-cut-pro/ (2026-09-07) — "mix with your ears, not your eyes" about Channel EQ in FCP
 
-Ограничения проверки: `helpx.adobe.com` и `reddit.com` из этого
-окружения не открываются, `forum.blackmagicdesign.com` при обращении
-отдал 403, форум Vegas переехал на `forum.borisfx.com` и его поиск
-отдаёт пустую страницу. Поэтому строки Premiere и After Effects опираются
-на adobe.com/сообщество Adobe и вторичные источники; число полос у
-Parametric EQ в After Effects и состав полос VEGAS Track EQ помечены
-`[НЕ ПРОВЕРЕНО]` прямо в таблице. Названия, число и назначение полос у
-Resolve и FCP взяты из первоисточников (blackmagicdesign.com,
-support.apple.com).
+Verification limits: `helpx.adobe.com` and `reddit.com` do not open from this environment, `forum.blackmagicdesign.com` returned 403 on access, the Vegas forum has moved to `forum.borisfx.com` and its search returns an empty page. Therefore the Premiere and After Effects rows rest on adobe.com / the Adobe community and secondary sources; the number of bands in After Effects' Parametric EQ and the makeup of the VEGAS Track EQ bands are marked `[NOT VERIFIED]` right in the table. The names, number and roles of the bands in Resolve and FCP are taken from primary sources (blackmagicdesign.com, support.apple.com).
 
-**Реализовано в Р.47-Р.48** — трёхполосный EQ пришёл в Р.47 (п.327),
-интерактивный график АЧХ — в Р.48 (п.347, t348-t350). Дальнейшая жизнь
-фичи — docs/porting-notes.md.
+**Implemented in R.47–R.48** — the three-band EQ came in R.47 (item 327), the interactive frequency-response graph in R.48 (item 347, t348–t350). Further life of the feature — docs/porting-notes.md.

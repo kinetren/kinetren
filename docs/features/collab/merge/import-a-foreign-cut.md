@@ -1,12 +1,12 @@
 ---
 id: F-COL-037
-title: Втянуть чужой монтаж в свой проект
-status: исследовано
+title: Pulling someone else's edit into your project
+status: researched
 priority: B
 cost: L
 category: collab/merge
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, otio-lib-0.18]
-we_have: нет
+we_have: no
 crates: [kt-otio, kt-media, kt-model, kt-app]
 invariants: [8]
 ui_rules: []
@@ -19,222 +19,132 @@ services: [premiere-productions, bm-cloud, fcp-shared-library]
 checked: 2026-09-08
 ---
 
-# F-COL-037 — Втянуть чужой монтаж в свой проект
+# F-COL-037 — Pulling someone else's edit into your project
 
-## Суть
+## Essence
 
-Монтажёр получил файл проекта от второго монтажёра и хочет забрать оттуда сцену —
-не всю работу, а вот эти четыре минуты. Он не ждёт слияния и не хочет его: он хочет,
-чтобы чужая секвенция легла РЯДОМ с его собственными, целиком и как была, а материал
-не размножился. Это единственная форма совместной работы, которой пользуются все и
-каждый день, и она ничего не сводит — она кладёт рядом. Вся сложность съезжает в
-один вопрос: чужой `C0001.MP4` — это мой `C0001.MP4` или другой?
+An editor received a project file from a second editor and wants to take a scene from it — not all the work, but these four minutes. They do not expect a merge and do not want one: they want the other person's sequence to lie NEXT TO their own, whole and as it was, and the material not to multiply. This is the only form of shared work that everyone uses every day, and it merges nothing — it lays things side by side. All the complexity moves to one question: is the other person's `C0001.MP4` my `C0001.MP4` or a different one?
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | вложенный проект (`.veg` как событие) | чужой монтаж кладётся на дорожку ОДНИМ событием и остаётся отдельным документом: вопрос дедупликации материала не решается, а откладывается `[НЕ ПРОВЕРЕНО: описания внутренней модели у Boris FX нет]` |
-| Adobe Premiere | 26.x | Import Project / импорт секвенции из Media Browser | секвенция приезжает вместе со ВСЕМ материалом, на который ссылается; дедуп управляется двумя настройками — «Allow duplicate media during project import» и «Write XMP ID to files on import», — а ключом служит пара «исходный файл + точки in/out» |
-| DaVinci Resolve | 21 | Import Timeline (AAF/XML/EDL/DRT), conform | таймлайн втягивается отдельно от материала: сначала media pool, потом привязка по имени и таймкоду. Столкновение имён даёт «c» на клипе и ручное разрешение |
-| Final Cut Pro | 12.3 | копирование события между библиотеками | единица переноса — событие целиком, вместе с материалом; выбор «скопировать файлы или сослаться» задаётся при переносе, дедуп по пути `[НЕ ПРОВЕРЕНО]` |
-| After Effects | 26.x | File → Import → проект `.aep` | чужой проект приезжает ПАПКОЙ внутрь текущего, со своими элементами материала; сведения элементов не происходит `[НЕ ПРОВЕРЕНО]` |
+| VEGAS Pro | 2026.0 | nested project (`.veg` as an event) | the other person's edit is placed on a track as ONE event and remains a separate document: the question of deduplicating material is not resolved but postponed `[NOT VERIFIED: there is no description of the internal model from Boris FX]` |
+| Adobe Premiere | 26.x | Import Project / importing a sequence from the Media Browser | the sequence arrives together with ALL the material it refers to; deduplication is governed by two settings — "Allow duplicate media during project import" and "Write XMP ID to files on import" — and the key is the pair "source file + in/out points" |
+| DaVinci Resolve | 21 | Import Timeline (AAF/XML/EDL/DRT), conform | the timeline is pulled in separately from the material: first the media pool, then binding by name and timecode. A name collision gives a "c" on the clip and manual resolution |
+| Final Cut Pro | 12.3 | copying an event between libraries | the unit of transfer is the whole event, together with its material; the choice "copy files or reference them" is set during the transfer; deduplication by path `[NOT VERIFIED]` |
+| After Effects | 26.x | File → Import → a `.aep` project | a foreign project arrives as a FOLDER inside the current one, with its own material items; the items are not reconciled `[NOT VERIFIED]` |
 
-**Вне ядра.** Одна строка: формат, который и делает такой импорт возможным между
-разными программами, и он же объясняет, почему дедупликация всегда достаётся
-принимающей стороне.
+**Outside the core.** One row: the format that makes such an import possible between different programs, and which also explains why deduplication always falls to the receiving side.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| OpenTimelineIO | 0.18.x | `ExternalReference.target_url` | материал в файле — это АДРЕС, а не содержимое и не идентификатор: у ссылки есть URL и доступный диапазон, и ничего, чем два адреса можно было бы признать одним файлом |
+| OpenTimelineIO | 0.18.x | `ExternalReference.target_url` | the material in the file is an ADDRESS, not content and not an identifier: the reference has a URL and an available range, and nothing by which two addresses could be recognised as one file |
 
-## Фишка фишки
+## The trick behind it
 
-**1. То, что все называют «слиянием проектов», — это импорт, и он не сводит
-ничего.** Чужая секвенция приезжает целиком и ложится рядом; вопросов «чья правка
-новее» и «что изменилось» не возникает вовсе, потому что обе версии остаются на
-экране одновременно. Отсюда практический вывод, переворачивающий тему: самой
-востребованной формой совместной работы оказалась та, что вообще не требует ни
-сервера, ни ревизии, ни журнала, — требует она ровно одного, идентичности материала.
+**1. What everyone calls "merging projects" is an import, and it merges nothing.** The other person's sequence arrives whole and lies beside one's own; questions of "whose edit is newer" and "what has changed" do not arise at all, because both versions remain on screen at once. A practical conclusion follows that turns the topic around: the most demanded form of shared work turned out to be the one that requires neither a server, nor a revision, nor a log — it requires exactly one thing, the identity of the material.
 
-**2. Настройки, которыми у Adobe управляют импортом секвенции, — не про монтаж, а
-про запись в чужие файлы.** Чтобы импорт прошёл чисто, дедуп должен опираться на
-XMP-идентификатор, а тот появляется в материале только если человек ЗАРАНЕЕ,
-импортируя сам материал, разрешил редактору писать в файлы. То есть чистота
-сегодняшнего импорта определяется решением, принятым месяцем раньше и по другому
-поводу; отсюда же и совет «включите обе настройки», который в форумах повторяется
-годами.
+**2. The settings by which Adobe controls the import of a sequence are not about editing but about writing into foreign files.** For the import to go through cleanly, deduplication must rely on the XMP identifier, and that appears in the material only if the person, when importing the material itself, has permitted the editor IN ADVANCE to write into files. That is, the cleanliness of today's import is determined by a decision taken a month earlier and for another reason; hence also the advice "turn on both settings," which has been repeated on forums for years.
 
-**3. Ключ дедупа — родословная, и ошибается он В СТОРОНУ РАЗМНОЖЕНИЯ.** Premiere не
-создаст второй записи для файла, уже лежащего в проекте, но создаст, если у того же
-файла в двух проектах разные точки in/out. Ложное срабатывание, направленное в
-сторону дубликатов, выбрано сознательно: лишняя запись раздражает, а склеенные по
-ошибке два разных дубля портят монтаж молча.
+**3. The deduplication key is pedigree, and it errs TOWARD MULTIPLICATION.** Premiere will not create a second record for a file already in the project, but it will create one if the same file has different in/out points in two projects. A false positive directed toward duplicates was chosen deliberately: an extra record is irritating, while two different takes glued together by mistake spoil the edit silently.
 
-**4. И то, обо что всё это разбивается, — имя файла.** Камеры нумеруют с нуля на
-каждой карте, поэтому `C0001.MP4` в проекте бывает десять штук; у Resolve, где
-идентичность — имя плюс таймкод, это даёт букву «c» на половине клипов и ручной
-conform. Готового ответа нет ни у кого: отраслевая практика — переименовать материал
-ДО монтажа, то есть починить идентичность вручную, пока она ещё дёшева.
+**4. And what all of this breaks on is the file name.** Cameras number from zero on every card, so `C0001.MP4` can occur ten times in a project; for Resolve, where identity is name plus timecode, this gives a "c" on half the clips and manual conform. There is no ready answer anywhere: the industry practice is to rename the material BEFORE editing, that is, to repair the identity by hand while it is still cheap.
 
-## Плюсы
+## Pros
 
-- «Положить рядом» не требует ни ревизии, ни журнала, ни второго участника в
-  момент передачи: файл приехал, сцена на месте, обе версии видны.
-- Единица переноса — секвенция, то есть ровно то, чем люди делят работу; вопрос
-  «кто владеет чем» решается сам собой.
-- Дедуп по родословной, ошибающийся в сторону дубликатов, безопасен: потерять
-  материал он не может, а лишнюю запись видно глазами.
-- Импорт обратим: не понравилось — удалили секвенцию, свой монтаж не тронут.
+- "Laying it side by side" requires neither a revision, nor a log, nor a second participant at the moment of transfer: the file arrived, the scene is in place, both versions are visible.
+- The unit of transfer is the sequence, that is, exactly what people share work by; the question "who owns what" resolves itself.
+- Deduplication by pedigree that errs toward duplicates is safe: it cannot lose material, and an extra record is visible to the eye.
+- The import is reversible: if you do not like it, delete the sequence; your own edit is untouched.
 
-## Минусы
+## Cons
 
-- Материал размножается: две записи на один файл — это две цепочки эффектов, два
-  набора настроек интерпретации и два места, где надо чинить путь.
-- Идентичность по имени ломается на самом обычном материале с карт, и цена
-  ошибки асимметрична: разделили — раздражение, склеили — испорченный монтаж.
-- Идентичность по содержимому требует прочитать файл целиком, а материал бывает
-  на медленном томе и в терабайтах.
-- Импорт тянет ВСЁ, на что ссылается секвенция: четыре минуты монтажа приводят за
-  собой весь материал, из которого они собраны.
+- Material multiplies: two records for one file means two effect chains, two sets of interpretation settings and two places where the path must be repaired.
+- Identity by name breaks on the most ordinary material from cards, and the cost of an error is asymmetric: separating them is an irritation, gluing them is a spoiled edit.
+- Identity by content requires reading the whole file, and material can sit on a slow volume and run to terabytes.
+- The import pulls in EVERYTHING the sequence refers to: four minutes of edit bring with them all the material they were assembled from.
 
-## Что говорят пользователи
+## What users say
 
-Формулировка задачи, дословно и за двенадцать лет до нашей разведки:
+The formulation of the task, verbatim and twelve years before our reconnaissance:
 
 > I don't want to keep two entries of the same source clips in the project (in
 > different bins too), because that gets confusing down the road.
 > — Zooropa75, 15.11.2013,
 > https://community.adobe.com/t5/premiere-pro-discussions/how-to-copy-sequences-from-another-project-and-not-end-up-with-duplicate-entries-for-source-clips/td-p/5648901
 
-И то, обо что задача разбивается на реальном материале:
+And what the task splits into on real material:
 
 > There are several clips with duplicated filenames.
 > — Rodrigo Silvestri, 17.11.2011,
 > https://creativecow.net/forums/thread/migrating-to-resolve-dealing-with-duplicated-filen/
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- **Импорта чужого монтажа РЯДОМ со своим нет вовсе.** Единственный пункт импорта
-  в программе — `.ktproj`, и он не втягивает, а конвертирует: читает старый файл,
-  пишет новый `.otio` и открывает его ВМЕСТО текущего проекта
-  (`src/apps/kt-app/src/app.rs:5411-5460`, `*self = app` в конце). В `enum Command`
-  (45 вариантов) нет ни
-  одного, который вносил бы в документ чужой монтаж.
-- **Дедуп материала у нас есть, и его ключ — адрес.** При чтении файла клипы
-  делят одну запись бина, если совпал `target_url`
-  (`src/libs/kt-otio/src/convert.rs:1171`); клипы без ссылки сознательно НЕ
-  делят запись, чтобы пустой URL не склеил независимые. URL относительный
-  (`src/libs/kt-otio/src/url.rs`), поэтому ключ — это «путь относительно папки
-  проекта»: тот же файл, приехавший по другому пути, даст вторую запись, а разные
-  файлы, лежащие одинаково относительно своих папок, — одну.
-- **Идентичность по СОДЕРЖИМОМУ уже посчитана и уже лежит рядом с проектом**:
-  xxh3-128 в таблице `media` индексной базы, плюс размер и mtime как быстрый путь
-  (`src/libs/kt-media/src/index.rs:151-190`). Хэш считается один раз при вставке.
-- **Но подчинена пути**: строка ищется по АБСОЛЮТНОМУ пути файла, и хэш
-  сравнивается только внутри уже найденной строки — чтобы спасти запись, у которой
-  сменился mtime. Двух файлов с одинаковым содержимым по разным путям эта таблица
-  не встречает никогда.
-- **Спутник к тому же одноразовый по замыслу**: при любой ошибке открытия
-  `.ktindex.db` удаляется и создаётся заново, а ключ строки — абсолютный путь,
-  поэтому перенос папки обнуляет индекс целиком (F-COL-002).
+- **An import of someone else's edit ALONGSIDE one's own does not exist at all.** The only import item in the program is `.ktproj`, and it does not pull in, it converts: it reads the old file, writes a new `.otio` and opens it INSTEAD of the current project
+  (`src/apps/kt-app/src/app.rs:5411-5460`, `*self = app` at the end). In `enum Command`
+  (45 variants) there is not one that would introduce a foreign edit into the document.
+- **We do have material deduplication, and its key is the address.** When reading a file, clips share one bin record if `target_url` matches
+  (`src/libs/kt-otio/src/convert.rs:1171`); clips without a reference deliberately do NOT share a record, so that an empty URL does not glue independent items together. The URL is relative (`src/libs/kt-otio/src/url.rs`), so the key is "the path relative to the project folder": the same file arriving by another path gives a second record, while different files lying identically relative to their folders give one.
+- **The identity by CONTENT is already computed and already lies beside the project**: xxh3-128 in the `media` table of the index database, plus size and mtime as a fast path (`src/libs/kt-media/src/index.rs:151-190`). The hash is computed once on insertion.
+- **But it is subordinated to the path**: the row is looked up by the ABSOLUTE path of the file, and the hash is compared only inside the row already found — in order to rescue a record whose mtime has changed. Two files with identical content at different paths never meet in this table.
+- **The companion, moreover, is disposable by design**: on any opening error `.ktindex.db` is deleted and created anew, and the row key is the absolute path, so moving the folder resets the index entirely (F-COL-002).
 
-БЕЗ СЕТИ: ВЫРОЖДАЕТСЯ — `src/libs/kt-media/src/index.rs:168` — втягивание вырождается в «открыть чужой файл вместо своего», а сама трудная половина — узнавание материала — уже написана и намеренно подчинена пути: содержимое сравнивается ТОЛЬКО внутри строки, найденной по абсолютному пути, и служит спасению записи со сменившимся mtime. Ключ, которым отрасль хотела бы дедуплицировать, у нас посчитан и не используется как ключ.
+OFFLINE: DEGENERATES — `src/libs/kt-media/src/index.rs:168` — the pulling-in degenerates into "open someone else's file instead of your own," while the hard half — recognising material — is already written and deliberately subordinated to the path: content is compared ONLY inside a row found by absolute path, and it serves to rescue a record whose mtime has changed. The key by which the industry would like to deduplicate is computed by us and is not used as a key.
 
-ЦЕНА СЕТИ: узнать, что чужой `C0001.MP4` — не мой, — адрес материала — сегодня две записи считаются одним материалом по совпадению относительного пути, то есть по имени папки на чужой машине, а по содержимому их никто не сверяет.
+NETWORK COST: to learn that someone else's `C0001.MP4` is not mine — media address — today two records are counted as one material by matching relative path, that is, by the name of a folder on someone else's machine, and by content no one compares them.
 
-ЦЕНА СЕТИ: принести чужую сцену, не принеся её байты, — хранилище между проектами — импорт тянет за собой весь материал, на который ссылается секвенция, и у нас нет ни общего места для него, ни формы «взял монтаж, материал остался там».
+NETWORK COST: to bring someone else's scene without bringing its bytes — cross-project storage — the import drags in all the material the sequence refers to, and we have neither a common place for it nor a form of "took the edit, the material stayed there."
 
-### Чего не хватает
+### What is missing
 
-- Команды «втянуть чужой монтаж рядом»: сегодня даже на одной машине забрать
-  сцену из вчерашней копии проекта нечем, кроме как открыть её и копировать
-  выделение вручную через второе окно.
-- Второго ключа у таблицы `media` — по содержимому: хэш посчитан, индекса по нему
-  нет, и «тот же файл в другой папке» не узнаётся.
-- Правила разрешения столкновений при вставке: у нас оно уже есть для ИМЁН
-  (суффикс при вставке областей, п.263) и отсутствует для материала.
+- A command "pull someone else's edit alongside": today even on one machine there is no way to take a scene from yesterday's copy of the project, except to open it and copy the selection by hand through a second window.
+- A second key of the `media` table — by content: the hash is computed, there is no index on it, and "the same file in another folder" is not recognised.
+- Rules for resolving collisions on insertion: for NAMES we already have one (a suffix on pasting regions, item 263), and for material there is none.
 
-### Что мешает
+### What gets in the way
 
-Три вещи, и все конструктивные. Первая: номера. Втянутый монтаж приносит свои
-`ClipId`, `MediaId`, `GroupId` и ссылки морферов на цели, и все они у нас локальные
-и переиспользуемые (F-COL-033) — значит вставка обязана переномеровать целый связный
-подграф, а не список клипов. Вторая: `Retained` — passthrough чужого документа
-ключуется теми же номерами и живёт вне модели, поэтому «втянуть» означает ещё и
-слить две карты остатков. Третья: дедуп по содержимому требует ПРОЧЕСТЬ файл
-целиком, а материал бывает на медленном томе; читать его в UI-потоке нельзя, и
-значит узнавание материала — асинхронная работа с промежуточным состоянием «пока не
-знаю».
+Three things, and all of them constructive. The first: numbers. An imported edit brings its own `ClipId`, `MediaId`, `GroupId` and morpher references to targets, and all of them are local and reusable for us (F-COL-033) — so the insertion must renumber an entire connected subgraph, not a list of clips. The second: `Retained` — the passthrough of a foreign document is keyed by the same numbers and lives outside the model, so "pulling in" also means merging two maps of remainders. The third: deduplication by content requires READING the file in full, and material can sit on a slow volume; this cannot be done on the UI thread, and so recognising material is asynchronous work with an intermediate state "don't know yet."
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Инвариант 8 — единственный и по делу: он держит правило «интерфейс не порождает
-декода», а дедупликация по содержимому — это сквозное чтение файла; ему место в
-том же воркере индекса, где уже живёт хэширование, и ни в коем случае не в жесте
-вставки. Остальные одиннадцать не задеваются: импорт ничего не считает в кадре и
-не трогает звук.
+Invariant 8 is the only one and it is to the point: it holds the rule "the interface does not generate decoding," and deduplication by content is a cross-cutting read of the file; it belongs in the same index worker where hashing already lives, and in no way in the insertion gesture. The remaining eleven are not touched: the import computes nothing in the frame and does not touch sound.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | L — вставка связного подграфа с переномерацией плюс узнавание материала; отдельно взятый второй ключ индекса — S |
-| Где основная работа | kt-model (вставка подграфа, переномерация, столкновения имён), kt-media (индекс по содержимому), kt-otio (слияние `Retained`), kt-app (пункт меню и выбор, что именно втягивать) |
-| Формат проекта | не трогает: результат импорта — обычный проект |
-| Тесты, которые придётся написать | «втянутая секвенция не ломает номера своих и чужих объектов»; «тот же файл по другому пути даёт ОДНУ запись бина»; «`C0001.MP4` с двух карт остаётся двумя записями»; round-trip после импорта |
-| Зависит от | F-COL-033 (идентичность события), F-MED-005 (перелинковка — тот же вопрос «тот же ли это файл»), F-PRJ-001 (несколько монтажей в одном документе) |
-| Ломает совместимость | нет |
+| Size | L — insertion of a connected subgraph with renumbering plus recognition of material; a separately taken second index key — S |
+| Where the main work is | kt-model (insertion of a subgraph, renumbering, name collisions), kt-media (index by content), kt-otio (merging `Retained`), kt-app (a menu item and the choice of what exactly to pull in) |
+| Project format | does not touch it: the result of the import is an ordinary project |
+| Tests to write | "a pulled-in sequence does not break the numbers of its own and of foreign objects"; "the same file by another path gives ONE bin record"; "`C0001.MP4` from two cards remains two records"; a round trip after the import |
+| Depends on | F-COL-033 (identity of the event), F-MED-005 (relinking — the same question "is this the same file"), F-PRJ-001 (several edits in one document) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём — и берём как ОДИНОЧНУЮ функцию, потому что она ею и является: импорт чужой
-секвенции ничего не сводит, второго участника не требует и одинаково нужен человеку,
-который забирает сцену из собственной вчерашней копии. Это самая полезная находка
-раздела «свести»: единственная форма слияния, которой пользуются, слиянием не
-является, и потому доступна нам целиком.
+We take it — and take it as a SINGLE function, because that is what it is: importing someone else's sequence merges nothing, does not require a second participant, and is equally needed by a person who takes a scene from their own yesterday's copy. This is the most useful finding in the section "merge": the only form of merging people use is not a merge at all, and therefore it is fully available to us.
 
-Из разведки следует конкретный первый шаг, и он не про монтаж. **Ключ, которым
-отрасль хотела бы дедуплицировать материал, у нас уже посчитан — xxh3-128
-содержимого в индексной базе, — но подчинён пути и потому не работает как ключ.**
-Сделать его вторым ключом таблицы `media` стоит одного индекса и одного запроса, а
-даёт сразу три ответа: «тот же файл, переехавший в другую папку» узнаётся без
-сервера (и снимает половину боли F-COL-002 и F-MED-005), «`C0001.MP4` с двух карт»
-перестаёт склеиваться, потому что содержимое разное, а импорт чужой секвенции
-получает ключ, который переживает чужую файловую систему. Ограничение называем
-сразу, чтобы потом не обнаружить его в раунде: хэш требует сквозного чтения файла
-(инвариант 8 — только в воркере индекса) и не узнаёт перекодированный материал.
+A concrete first step follows from the reconnaissance, and it is not about editing. **The key by which the industry would like to deduplicate material is already computed by us — xxh3-128 of the content in the index database — but it is subordinated to the path and therefore does not work as a key.** Making it a second key of the `media` table costs one index and one query, and gives three answers at once: "the same file moved to another folder" is recognised without a server (and removes half the pain of F-COL-002 and F-MED-005); "`C0001.MP4` from two cards" stops being glued together, because the content differs; and importing someone else's sequence gets a key that survives someone else's file system. The limitation is named at once, so that it is not discovered later in a round: a hash requires a cross-cutting read of the file (invariant 8 — only in the index worker), and it does not recognise re-encoded material.
 
-Чего НЕ делаем: не пытаемся при импорте что-либо сводить и не показываем «конфликт
-версий секвенции». Обе секвенции остаются в документе рядом, разбирается человек —
-ровно как у всех пятерых.
+What we do NOT do: we do not try to merge anything at import and do not show a "conflict of sequence versions." Both sequences remain side by side in the document, and the person sorts them out — exactly as all five do.
 
-Чем отличаемся от соседей. **F-PRJ-001** (несколько монтажей и общий бин) — про то,
-чтобы В ОДНОМ документе жило несколько секвенций; это предпосылка, а предмет здесь —
-как туда попадает ЧУЖОЕ. **F-PRJ-003** (проект на другой машине) — про переносимость
-своего документа; здесь второй документ никуда не переносится, он втягивается.
-**F-MED-005** (перелинковка и консолидация) — про починку пути к материалу; общий с
-ней вопрос «тот же ли это файл» здесь решается тем же хэшем, но по другому поводу.
-**F-COL-002** (служебное рядом с проектом) уже показала, что ключ индекса —
-абсолютный путь; здесь это же свойство мешает не переносу, а узнаванию.
-**F-COL-033** — про идентичность СОБЫТИЯ, здесь — про идентичность МАТЕРИАЛА.
+How we differ from neighbours. **F-PRJ-001** (several edits and a shared bin) is about several sequences living in ONE document; this is a precondition, while the subject here is how a FOREIGN one gets there. **F-PRJ-003** (a project on another machine) is about the portability of one's own document; here the second document is not transferred anywhere, it is pulled in. **F-MED-005** (relinking and consolidation) is about repairing the path to material; the question "is this the same file" that it shares with us is answered here by the same hash, but on a different occasion. **F-COL-002** (service files beside the project) has already shown that the index key is the absolute path; here this same property hinders not the transfer but the recognition. **F-COL-033** is about the identity of an EVENT; here it is about the identity of the MATERIAL.
 
-## Источники
+## Sources
 
 - https://community.adobe.com/t5/premiere-pro-discussions/how-to-copy-sequences-from-another-project-and-not-end-up-with-duplicate-entries-for-source-clips/td-p/5648901
-  — постановка задачи и ключ дедупа «исходный файл + точки in/out» (15.11.2013;
-  дата обращения 2026-09-08)
+  — the statement of the task and the deduplication key "source file + in/out points" (15.11.2013; accessed 2026-09-08)
 - https://community.adobe.com/t5/premiere-pro-discussions/solving-duplicate-master-clips-after-they-have-been-edited-into-timelines/td-p/8192178
-  — XMP ID как условие чистого импорта и цена его отсутствия (04.04.2016; дата
-  обращения 2026-09-08)
+  — the XMP ID as a condition of a clean import and the price of its absence (04.04.2016; accessed 2026-09-08)
 - https://creativecow.net/forums/thread/migrating-to-resolve-dealing-with-duplicated-filen/
-  — дубликаты имён с карт и разрешение конфликта конформа вручную («c» → «r»)
-  (17–18.11.2011; дата обращения 2026-09-08)
-- Наш код проверен грепом по `src/` 08.09.2026: `kt-app/src/app.rs`
-  (единственный пункт импорта — `.ktproj`, конвертация и открытие вместо текущего),
-  `kt-otio/src/convert.rs` (`media_by_url`, дедуп записей бина),
-  `kt-otio/src/url.rs` (относительный URL), `kt-media/src/index.rs`
-  (`ensure_media`, xxh3-128, ключ строки — абсолютный путь),
-  `kt-model/src/model.rs` (состав `Command` — ни одной команды импорта).
+  — duplicate names from cards and manual resolution of a conform conflict ("c" → "r") (17–18.11.2011; accessed 2026-09-08)
+- Our code was checked by grep over `src/` on 08.09.2026: `kt-app/src/app.rs`
+  (the only import item — `.ktproj`, converted and opened instead of the current one),
+  `kt-otio/src/convert.rs` (`media_by_url`, deduplication of bin records),
+  `kt-otio/src/url.rs` (relative URL), `kt-media/src/index.rs`
+  (`ensure_media`, xxh3-128, the row key — the absolute path),
+  `kt-model/src/model.rs` (the composition of `Command` — not a single import command).

@@ -1,12 +1,12 @@
 ---
 id: F-COL-042
-title: Отдавать надо не рендер, а анализ
-status: кандидат
+title: What to hand out is analysis, not render
+status: candidate
 priority: B
 cost: M
 category: collab/offload
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-ffmpeg, kt-media, kt-cache, kt-engine]
 invariants: [4, 8]
 ui_rules: []
@@ -19,254 +19,123 @@ services: [frame-io, bm-cloud, premiere-productions]
 checked: 2026-09-08
 ---
 
-# F-COL-042 — Отдавать надо не рендер, а анализ
+# F-COL-042 — What to hand out is analysis, not render
 
-## Суть
+## Essence
 
-Прежде чем монтаж вообще начнётся, программа делает по материалу несколько
-проходов, о которых монтажёр не думает: строит волноформы, режет тумбнейлы,
-запоминает, где в файле лежат ключевые кадры, приводит звук к рабочему виду. На
-двух часах материала это десятки минут ожидания перед первым разрезом. Работа
-эта скучная, повторяемая и — в отличие от рендера — даёт КРОШЕЧНЫЙ результат:
-не гигабайты пикселей, а несколько сотен килобайт чисел. Именно её и стоит
-отдавать другому: она переносима.
+Before an edit can begin at all, the program makes several passes over the material, of which the editor does not think: it builds waveforms, cuts thumbnails, remembers where the keyframes lie in the file, brings the sound to a working form. On two hours of material this is tens of minutes of waiting before the first cut. This work is dull, repeatable, and — unlike rendering — gives a TINY result: not gigabytes of pixels, but a few hundred kilobytes of numbers. It is precisely this that is worth handing to someone else: it is portable.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 build 66 | `.sfk` — файл пиков рядом с медиа | результат анализа лежит СПУТНИКОМ файла в той же папке; переезжает вместе с материалом сам собой, потому что адресуется его именем |
-| Adobe Premiere | 26.x | Media Cache Files + **Media Cache Database** | анализ разделён надвое: тяжёлые файлы (пики `.pek`, приведённый звук `.cfa`) и лёгкая база, отображающая материал на эти файлы. Разделение и есть признание, что дорогое и переносимое — разные вещи |
-| DaVinci Resolve | 21 | Optimized Media, Render Cache, анализ сцен | препроцесс объявлен явной командой пользователя и считается фоном; результат живёт в кэш-каталоге проекта и по сети не раздаётся |
-| Final Cut Pro | 12.3 | Background Tasks: analysis, transcode | анализ стоит в одном списке с импортом и рендером и приостанавливается, пока человек работает (F-EXP-002); библиотека при этом целиком лежит на общем томе — то есть результат анализа общим оказывается ПОБОЧНО |
-| After Effects | 26.x | Disk Cache, Conformed audio | то же разделение «тяжёлый кэш против лёгкой карты», и та же оговорка вендора: кэш локальный |
+| VEGAS Pro | 2026.0 build 66 | `.sfk` — a peaks file next to the media | the result of the analysis lies as a SATELLITE of the file in the same folder; it travels with the material by itself, because it is addressed by its name |
+| Adobe Premiere | 26.x | Media Cache Files + **Media Cache Database** | the analysis is split in two: heavy files (peaks `.pek`, conformed audio `.cfa`) and a light database mapping the material onto those files. The split is the admission that the expensive and the portable are different things |
+| DaVinci Resolve | 21 | Optimized Media, Render Cache, scene analysis | pre-processing is declared an explicit user command and is computed in the background; the result lives in the project's cache directory and is not distributed over the network |
+| Final Cut Pro | 12.3 | Background Tasks: analysis, transcode | the analysis stands in one list with import and render and is paused while the person works (F-EXP-002); the library, however, lies whole on a shared volume — that is, the result of the analysis becomes shared AS A SIDE EFFECT |
+| After Effects | 26.x | Disk Cache, Conformed audio | the same split "heavy cache against a light map", and the same vendor caveat: the cache is local |
 
-Второй таблицы здесь нет: механизм родом ровно из видеомонтажа, и все пять
-строк ядра содержательны. Сервисы (`frame-io`, `bm-cloud`) в таблицу не
-попадают сознательно — вердикт живёт у редактора, а сервис вердикта не несёт.
+There is no second table here: the mechanism comes from video editing itself, and all five core rows are substantive. The services (`frame-io`, `bm-cloud`) deliberately do not appear in the table — the verdict lives with the editor, and the service does not carry the verdict.
 
-## Фишка фишки
+## The trick behind it
 
-**Отрасль уже отдаёт анализ на сторону, только называет это кэшем — и делит
-его надвое ровно по признаку переносимости.** У Premiere это два разных
-объекта с двумя разными настройками: Media Cache **Files** (пики, приведённый
-звук — гигабайты) и Media Cache **Database** (карта «какой файл каким кэшем
-обслуживается» — килобайты). Разделение не косметическое: оно означает, что
-вендор уже отделил дорогое-но-невезомое от дешёвого-и-переносимого. Но
-дальнейший шаг не сделан, и видно почему: ключом служит ПУТЬ, поэтому «поделить
-кэш» означает «поделить файлы», то есть возить те самые гигабайты. Отсюда
-ответ поддержки на вопрос про общий сетевой кэш — «technically feasible but
-not advisable», и обоснование в треде тоже про пропускную способность, а не
-про правильность.
+**The industry already hands analysis off to the side, only it calls it a cache — and splits it in two exactly along the line of portability.** At Premiere these are two different objects with two different settings: Media Cache **Files** (peaks, conformed audio — gigabytes) and Media Cache **Database** (a map of "which file is served by which cache" — kilobytes). The split is not cosmetic: it means that the vendor has already separated the expensive-but-immovable from the cheap-and-portable. But the next step is not taken, and it is clear why: the key is the PATH, so "sharing the cache" means "sharing the files", that is, carrying those same gigabytes. Hence the support's answer to the question about a shared network cache — "technically feasible but not advisable", and the reasoning in the thread is also about bandwidth, not about correctness.
 
-**Обратите внимание на формулировку отказа: не «не работает», а «не
-советуем».** Причина названа в том же треде прямым текстом — узкое место и так
-сеть, а кэш в сети сделает его хуже. То есть препятствием является не механизм,
-а НАПРАВЛЕНИЕ ключа: пока результат анализа адресуется путём, поделиться можно
-только файлами. Если бы он адресовался содержимым, делиться нужно было бы
-базой — а она килобайтная, и тот самый аргумент про 10-гигабитную сеть просто
-не возникал бы.
+**Note the wording of the refusal: not "does not work", but "not advisable".** The reason is named in the same thread in plain text — the bottleneck is already the network, and a cache in the network would make it worse. That is, the obstacle is not the mechanism but the DIRECTION of the key: while the analysis result is addressed by path, one can share only files. Had it been addressed by content, one would have to share the database — and it is kilobytes, and the very argument about the 10-gigabit network would simply never arise.
 
-**У нас точка приёма чужого анализа уже написана — как параметр функции.**
-`Source::open_with_index(api, path, prebuilt: Option<PrebuiltIndex>)`
-(`src/libs/kt-ffmpeg/src/source_impl.rs:132`) принимает готовый результат
-и при его наличии ПРОПУСКАЕТ полный скан потока пакетов; сам результат — это
-`PrebuiltIndex { audio_pts: Vec<i64>, video_keyframes: Vec<i64> }`
-(`src/libs/kt-ffmpeg/src/lib.rs:94`), два массива чисел и больше ничего.
-Рядом стоит `index_was_prebuilt()` (`src/libs/kt-ffmpeg/src/source_impl.rs:280`)
-— функция, единственный смысл которой различать «я сам просканировал файл» и
-«мне отдали ответ». Написано это ради локальной sidecar-БД и к тому, КТО
-посчитал ответ, безразлично. Иными словами, самая дорогая часть препроцесса у
-нас уже имеет форму данных, а не действия, — и это ровно то, чего у Premiere
-нет.
+**Our point of receiving someone else's analysis is already written — as a function parameter.** `Source::open_with_index(api, path, prebuilt: Option<PrebuiltIndex>)` (`src/libs/kt-ffmpeg/src/source_impl.rs:132`) accepts a ready result and, if one is present, SKIPS the full scan of the packet stream; the result itself is `PrebuiltIndex { audio_pts: Vec<i64>, video_keyframes: Vec<i64> }` (`src/libs/kt-ffmpeg/src/lib.rs:94`), two arrays of numbers and nothing else. Beside it stands `index_was_prebuilt()` (`src/libs/kt-ffmpeg/src/source_impl.rs:280`) — a function whose only meaning is to distinguish "I scanned the file myself" from "I was handed the answer". This was written for the sake of the local sidecar DB and does not care WHO computed the answer. In other words, the most expensive part of pre-processing already has the form of data rather than of an action — and this is exactly what Premiere does not have.
 
-## Плюсы
+## Pros
 
-- Результат анализа мал и растёт не как материал, а как его длина: пики,
-  ключевые кадры, точки тишины — это числа, а не пиксели. Переносить их дёшево
-  всегда, а рендер — дорого всегда.
-- Анализ повторяем и проверяем: один и тот же файл даёт один и тот же ответ, и
-  поэтому чужому ответу можно доверять, сверив источник, — в отличие от
-  рендера, где сверять пришлось бы байты картинки (F-COL-039).
-- Анализ не срочен. Ему не нужны ни дедлайн кадра, ни приоритет: он по
-  определению фоновая работа, и его отставание не портит воспроизведение.
-- Отданный анализ убирает самое заметное ожидание — то, что стоит ПЕРЕД
-  работой, а не после неё. Рендер ждут вечером, препроцесс — утром, и вторая
-  очередь длиннее.
-- Одна форма задания обслуживает и рендер, и анализ (F-COL-038): «команда +
-  диапазон + требования к машине» одинаково описывает и «посчитай кадры», и
-  «построй пики».
+- The result of the analysis is small and grows not as the material does but as its length: peaks, keyframes, points of silence are numbers, not pixels. Transporting them is always cheap; rendering is always expensive.
+- The analysis is repeatable and verifiable: the same file gives the same answer, and therefore someone else's answer can be trusted after checking the source — unlike rendering, where one would have to check picture bytes (F-COL-039).
+- The analysis is not urgent. It needs neither a frame deadline nor a priority: by definition it is background work, and its lag does not spoil playback.
+- The handed-off analysis removes the most noticeable wait — the one that stands BEFORE the work rather than after it. Renders are awaited in the evening, pre-processing in the morning, and the second queue is longer.
+- One form of job serves both rendering and analysis (F-COL-038): "command + range + machine requirements" describes equally "compute the frames" and "build the peaks".
 
-## Минусы
+## Cons
 
-- Чужому результату нужно доверие: неверный индекс пакетов даёт не ошибку, а
-  тихо неправильные позиции, и заметно это станет на первом же переходе.
-- Ключ по содержимому требует прочитать содержимое — то есть первый ответ на
-  вопрос «тот же ли это файл» всё равно стоит полного прохода по файлу.
-- Общий результат анализа означает общий инвалидатор: файл перезаписали — чей
-  ответ теперь неверен и кто об этом узнает.
-- Разделение «тяжёлый кэш / лёгкая карта» удваивает число мест, где данные
-  могут разойтись, и Premiere этим уже платит: восстановление кэша при
-  расхождении — обычная процедура у монтажёров.
-- Анализ, отданный на сторону, возвращает свой результат только целиком:
-  половина пирамиды пиков бесполезна.
+- Someone else's result requires trust: a wrong packet index gives not an error but silently wrong positions, and it becomes noticeable at the first transition.
+- A content key requires reading the content — that is, the first answer to the question "is this the same file" still costs a full pass over the file.
+- A shared analysis result means a shared invalidator: a file is overwritten — whose answer is now wrong, and who will find out.
+- The split "heavy cache / light map" doubles the number of places where data can diverge, and Premiere already pays for this: restoring the cache after a divergence is a routine procedure for editors.
+- An analysis handed to the side returns its result only whole: half of a peak pyramid is useless.
 
-## Что говорят пользователи
+## What users say
 
-Прямой вопрос про общий анализ и прямой ответ вендора — вместе они и есть
-находка, потому что отказ сформулирован как «не советуем», а не «нельзя»:
+A direct question about a shared analysis and a direct answer from the vendor — together they are the finding, because the refusal is phrased as "not advisable" rather than "impossible":
 
 > Can you use a shared network drive to share cache files between multiple
 > editors?
-> — Pixel Jar, «Media Cache on a shared network drive», Adobe Community,
+> — Pixel Jar, "Media Cache on a shared network drive", Adobe Community,
 > 17.03.2021,
 > https://community.adobe.com/t5/premiere-pro-discussions/media-cache-on-a-shared-network-drive/td-p/11904757
 
 > It is technically feasible but not advisable according to our senior techs.
 > Keep the media cache on local drives.
-> — Kevin J. Monahan Jr. (Adobe), там же, 23.03.2021
+> — Kevin J. Monahan Jr. (Adobe), same thread, 23.03.2021
 
-Обоснование в том же треде — про пропускную способность, а не про механизм:
-узким местом уже является сеть, и перенос кэша туда её только ухудшит. Это и
-есть подтверждение, что мешает не идея, а ключ по пути: делиться приходится
-файлами, а не картой.
+The reasoning in the same thread is about bandwidth, not about the mechanism: the network is already the bottleneck, and moving the cache there would only make it worse. This confirms that what stands in the way is not the idea but the key by path: one has to share files, not the map.
 
-`trackers:` пуст сознательно (правило 12): публичных трекеров у пяти
-редакторов ядра нет (`docs/features/_trackers.md`), а тема «отдать препроцесс
-другой машине» в двенадцати выгруженных трекерах опенсорсных NLE отсутствует
-как класс. Число здесь было бы формой без сигнала.
+`trackers:` is empty deliberately (rule 12): there are no public trackers for the five core editors (`docs/features/_trackers.md`), and the topic "hand pre-processing to another machine" is absent as a class from the twelve exported trackers of open-source NLEs. A number here would be a form without a signal.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- `src/libs/kt-ffmpeg/src/source_impl.rs:132` — `open_with_index` с
-  параметром `prebuilt`: точка приёма чужого результата. В комментарии там же
-  сказано, что именно она экономит: «пакетный индекс (полный скан без декода;
-  при готовом индексе из sidecar-БД скан пропускается)».
-- `src/libs/kt-ffmpeg/src/lib.rs:94` — `PrebuiltIndex`: `audio_pts` и
-  `video_keyframes`, два `Vec<i64>`. Вся форма результата целиком.
-- `src/libs/kt-ffmpeg/src/source_impl.rs:280` — `index_was_prebuilt()`:
-  различение «посчитал сам» и «отдали готовое» уже существует как факт кода, а
-  не как план.
-- `src/libs/kt-engine/src/worker.rs` — приоритетная очередь MediaWorker:
-  Playback > NearPrefetch > FarPrefetch > **Thumbnail**. Анализ у нас уже стоит
-  последним и уже не мешает воспроизведению; отдать его наружу — значит убрать
-  из этой очереди её хвост, а не переделать очередь.
-- `src/libs/kt-media/src/index.rs` — sidecar `<project>.ktindex.db`: probe,
-  пики, тумбы, пакетный индекс; xxh3 содержимого там уже считается при
-  вставке. Тесты t34 (персист пакетного индекса) и t70 (index_db) сторожат
-  именно то, что результат анализа переживает процесс.
-- Инвариант 8 — причина, по которой всё перечисленное вообще есть: скролл и
-  зум не имеют права порождать декод, поэтому тумбы и волноформы обязаны быть
-  готовы заранее. Наш препроцесс — не оптимизация, а требование.
-- Инвариант 4 — кэш единственная правда о прогретости, и `Quality` входит в
-  ключ: дисциплина «результат опознаётся ключом, а не верой» у нас уже
-  действует.
+- `src/libs/kt-ffmpeg/src/source_impl.rs:132` — `open_with_index` with the parameter `prebuilt`: the point of receiving someone else's result. The comment there says what exactly saves time: "packet index (a full scan without decoding; when a ready index comes from the sidecar DB the scan is skipped)".
+- `src/libs/kt-ffmpeg/src/lib.rs:94` — `PrebuiltIndex`: `audio_pts` and `video_keyframes`, two `Vec<i64>`. The whole shape of the result.
+- `src/libs/kt-ffmpeg/src/source_impl.rs:280` — `index_was_prebuilt()`: the distinction between "computed it myself" and "was handed the ready one" already exists as a fact of the code, not as a plan.
+- `src/libs/kt-engine/src/worker.rs` — the priority queue of MediaWorker: Playback > NearPrefetch > FarPrefetch > **Thumbnail**. Analysis already stands last for us and no longer interferes with playback; handing it outward means removing its tail from this queue, not redesigning the queue.
+- `src/libs/kt-media/src/index.rs` — the sidecar `<project>.ktindex.db`: probe, peaks, thumbs, the packet index; xxh3 of the content is already computed on insertion. Tests t34 (persistence of the packet index) and t70 (index_db) guard precisely that the result of the analysis survives the process.
+- Invariant 8 — the reason all of the above exists at all: scrolling and zooming must not trigger decoding, so thumbnails and waveforms must be ready in advance. Our pre-processing is not an optimisation but a requirement.
+- Invariant 4 — the cache is the single truth about warmth, and `Quality` is part of the key: the discipline "a result is recognised by a key, not by faith" already operates for us.
 
-### Чего не хватает
+### What is lacking
 
-- **Ключ по содержимому вместо ключа по пути.** Sidecar ключуется абсолютным
-  путём, а идентичность файла определяется размером и mtime; хэш xxh3
-  считается один раз при вставке и ключом не является. Ровно это отличает
-  переносимый результат от непереносимого — и это ровно та ошибка, за которую
-  Premiere платит ответом «не советуем».
-- **Команды «посчитай анализ и выйди».** kt-cli умеет `render` и `export`, но
-  не умеет «построй индекс/пики/тумбы для этих файлов»: сегодня препроцесс
-  запускается только как побочный эффект открытия проекта в GUI.
-- **Способа отдать и принять результат отдельно от базы.** `PrebuiltIndex`
-  принимается функцией, но наружу как самостоятельная вещь (файл, строка,
-  что угодно) не выражается; сериализации у него нет.
-- **Списка того, что вообще считается анализом.** Пакетный индекс, пики и
-  тумбы живут в sidecar, а вот детект тишины (F-AUD-008), профиль шума
-  (F-AUD-003) и интегрированная громкость (F-AUD-005) не существуют вовсе —
-  хотя все три относятся к тому же классу и уже названы первой волной как
-  упирающиеся в одну отсутствующую подсистему.
+- **A key by content instead of a key by path.** The sidecar is keyed by the absolute path, and the file's identity is determined by size and mtime; the xxh3 hash is computed once on insertion and is not the key. This is exactly what distinguishes a portable result from a non-portable one — and it is exactly the mistake for which Premiere pays with the answer "not advisable".
+- **A command "compute the analysis and exit".** kt-cli can `render` and `export`, but cannot "build the index/peaks/thumbs for these files": today pre-processing runs only as a side effect of opening a project in the GUI.
+- **A way to hand over and receive the result separately from the database.** `PrebuiltIndex` is accepted by a function, but as a self-standing thing (a file, a string, anything) it is not expressed; it has no serialisation.
+- **A list of what counts as analysis at all.** The packet index, peaks and thumbs live in the sidecar, but the silence detection (F-AUD-008), the noise profile (F-AUD-003) and the integrated loudness (F-AUD-005) do not exist at all — although all three belong to the same class and were already named in the first wave as blocked by one missing subsystem.
 
-### Что мешает
+### What stands in the way
 
-Ничего конструктивного — и это редкий случай в категории. Точка приёма
-написана, форма результата тривиальна, очередь уже ставит анализ последним,
-инвариант 8 требует, чтобы анализ существовал. Мешает единственная вещь, и она
-не про сеть: **результат адресуется путём, а не содержимым.** Пока это так,
-чужой ответ невозможно опознать как относящийся к моему файлу, даже если он
-лежит рядом. Исправление стоит недорого (xxh3-128 там уже считается), но это
-изменение ключа существующей базы, то есть миграция, и делать его надо
-сознательно.
+Nothing constructive — and this is a rare case in the category. The point of receiving is written, the shape of the result is trivial, the queue already places analysis last, invariant 8 requires that analysis exist. One thing stands in the way, and it is not about the network: **the result is addressed by path, not by content.** As long as this is so, someone else's answer cannot be recognised as belonging to my file, even if it lies right beside it. The fix costs little (xxh3-128 is already computed there), but it is a change of the key of an existing database, that is, a migration, and it must be done deliberately.
 
-### В категории `collab/` — две обязательные строки (правило 13)
+### In the `collab/` category — two mandatory lines (rule 13)
 
-БЕЗ СЕТИ: ОСТАЁТСЯ — `src/libs/kt-ffmpeg/src/source_impl.rs:132` — фишка выражается на одной машине целиком: `open_with_index` принимает готовый результат анализа параметром и пропускает полный скан потока пакетов, `index_was_prebuilt` отличает «посчитал сам» от «отдали готовое», а сам результат — два массива чисел, и всё это написано ради локальной sidecar-БД, которой безразлично, кто именно считал.
+OFFLINE: REMAINS — `src/libs/kt-ffmpeg/src/source_impl.rs:132` — the trick is fully expressible on one machine: `open_with_index` accepts a ready analysis result as a parameter and skips the full scan of the packet stream, `index_was_prebuilt` distinguishes "computed it myself" from "was handed the ready one", and the result itself is two arrays of numbers; all of this was written for the sake of the local sidecar DB, to which it does not matter who exactly computed it.
 
-ЦЕНА СЕТИ: чужая машина, посчитавшая индекс, и общее место, где он лежит для нескольких проектов — хранилище между проектами — sidecar привязан к одному проекту и ключуется абсолютным путём, поэтому чужой ответ невозможно опознать как относящийся к моему файлу, хотя хэш содержимого рядом уже считается.
+NETWORK COST: a foreign machine that computed the index, and a common place where it lies for several projects — cross-project storage — the sidecar is tied to one project and keyed by the absolute path, so someone else's answer cannot be recognised as belonging to my file, although the content hash next to it is already computed.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Инвариант 8 (скролл и зум не порождают декод; тумбы и волноформы — из
-sidecar-индекса) — фича ЕСТЬ следствие этого инварианта, а не покушение на
-него. Инвариант 4 (кэш — единственная правда о прогретости, `Quality` — часть
-ключа) — образец дисциплины, которую надо распространить на sidecar: результат
-опознаётся ключом. Инвариант 5 (декодером владеет один MediaWorker) не
-затрагивается: анализ, посчитанный снаружи, приходит данными, а не вторым
-владельцем декодера. Правил UI заметка не задевает.
+Invariant 8 (scrolling and zooming do not produce decoding; thumbnails and waveforms come from the sidecar index) — the feature IS a consequence of this invariant, not an encroachment on it. Invariant 4 (the cache is the single truth about warmth, `Quality` is part of the key) — a model of discipline to be extended to the sidecar: the result is recognised by a key. Invariant 5 (one MediaWorker owns the decoder) is not touched: an analysis computed outside arrives as data, not as a second owner of the decoder. Rules of the UI are not touched by this note.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии: ключ по содержимому в sidecar (с миграцией) и headless-команда «посчитай анализ» |
-| Где основная работа | kt-media (ключ строки индекса — хэш содержимого, а не абсолютный путь; миграция существующих БД), kt-cli (команда препроцесса), kt-ffmpeg (`PrebuiltIndex` как самостоятельная вещь) |
-| Формат проекта | не трогает: sidecar не является форматом проекта |
-| Тесты, которые придётся написать | «файл, переехавший в другую папку, узнан по содержимому и заново не сканируется» (пара к t34); «sidecar от чужого проекта принят для того же файла»; «результат с несовпадающим хэшем отвергнут, а не применён молча»; миграция старой БД по пути в БД по содержимому |
-| Зависит от | ничего обязательного; выводом первой волны сюда же примыкают F-AUD-003, F-AUD-005, F-AUD-008, F-SPD-004, F-MSK-005 — все пять просят одну и ту же подсистему офлайн-анализа |
-| Ломает совместимость | нет для проектов; для существующих `.ktindex.db` — миграция (при любой ошибке открытия БД сегодня и так пересоздаётся) |
+| Scope | M — 2 stages: a content key in the sidecar (with a migration) and a headless command "compute the analysis" |
+| Where the main work is | kt-media (the key of an index row — a content hash, not the absolute path; migration of existing DBs), kt-cli (the pre-processing command), kt-ffmpeg (`PrebuiltIndex` as a self-standing thing) |
+| Project format | not touched: the sidecar is not the project format |
+| Tests to write | "a file moved to another folder is recognised by content and is not scanned again" (a pair to t34); "a sidecar from a foreign project is accepted for the same file"; "a result with a non-matching hash is rejected, not applied silently"; migration of an old DB keyed by path into a DB keyed by content |
+| Depends on | nothing mandatory; by the conclusion of the first wave, F-AUD-003, F-AUD-005, F-AUD-008, F-SPD-004, F-MSK-005 also adjoin here — all five ask for one and the same subsystem of offline analysis |
+| Breaks compatibility | no for projects; for existing `.ktindex.db` — a migration (on any error opening the DB it is today already recreated) |
 
-## Вердикт
+## Verdict
 
-Берём — и это единственная заметка подкатегории, где брать есть что прямо
-сейчас. Локальное ядро: **ключ результата анализа обязан быть по СОДЕРЖИМОМУ,
-а не по пути.** Одна эта правка делает препроцесс переносимым — между папками,
-между проектами и, если когда-нибудь появится второй участник, между машинами
-— и она полезна немедленно, без всякого второго участника: файл, переехавший в
-другую папку, перестанет сканироваться заново. Второй шаг — headless-команда
-«посчитай анализ и выйди», которая превращает kt-cli в готового исполнителя
-препроцесса на той же машине, ночью, из скрипта.
+We take it — and this is the only note in the subcategory where there is something to take right now. The local core: **the key of an analysis result must be by CONTENT, not by path.** This one fix makes pre-processing portable — between folders, between projects, and, if a second participant ever appears, between machines — and it is useful immediately, without any second participant: a file moved to another folder will stop being rescanned. The second step is a headless command "compute the analysis and exit", which turns kt-cli into a ready executor of pre-processing on the same machine, at night, from a script.
 
-Серверную половину — раздачу результатов чужим машинам — не заводим: второго
-участника нет, и объявлять его появление заметка права не имеет. Но заметку
-стоит запомнить по другой причине: **это единственный предмет во всей
-подкатегории, у которого отправка вообще имеет смысл.** Рендер отправлять
-некуда (F-COL-041), собирать куски нечем (F-COL-040), а анализ — маленький,
-повторяемый и уже имеющий у нас точку приёма. Если очередь когда-нибудь и
-уедет с машины, уедет именно он.
+We do not set up the server half — handing results to foreign machines — because there is no second participant, and this note has no right to declare its appearance. But the note is worth remembering for another reason: **this is the only subject in the whole subcategory for which sending has any meaning at all.** A render has nowhere to be sent (F-COL-041), pieces have nothing to assemble them from (F-COL-040), but the analysis is small, repeatable, and already has an entry point in us. If the queue ever leaves the machine, it is this that will leave.
 
-Границы: где лежит sidecar и что с ним на общем томе — F-COL-002; прокси как
-второй переносимый продукт анализа — F-MED-002; форма задания — F-COL-038;
-подсистема офлайн-анализа как общий знаменатель пяти фич — вывод первой волны
-в `docs/features/README.md`.
+Boundaries: where the sidecar lies and what happens to it on a shared volume — F-COL-002; proxies as the second portable product of analysis — F-MED-002; the form of the job — F-COL-038; the subsystem of offline analysis as the common denominator of the five features — the conclusion of the first wave in `docs/features/README.md`.
 
-## Источники
+## Sources
 
-- https://community.adobe.com/t5/premiere-pro-discussions/media-cache-on-a-shared-network-drive/td-p/11904757
-  — вопрос Pixel Jar (17.03.2021) и ответ Kevin J. Monahan Jr. (23.03.2021),
-  а также обоснование про пропускную способность в ответах basil1891 и
-  Jeff Bugbee того же дня (дата обращения 2026-09-08)
-- https://superrendersfarm.com/article/how-render-farms-work-technical-guide —
-  контекст: что именно ферма считает единицей работы и почему кодирование не
-  делится (опубликовано 04.04.2026, обновлено 07.09.2026; 2026-09-08)
-- https://docs.opencue.io/docs/concepts/command-execution/ — форма задания
-  фермы одинаково описывает рендер и произвольную команду: «Resources are
-  allocated per-frame, so all commands in a chunk share the same resources»
-  (2026-09-08)
-- Строки Resolve, Final Cut и After Effects в таблице опираются на состав их
-  фоновых задач и настроек кэша; живьём не проверялись, публичного трекера у
-  пятёрки нет (`docs/features/_trackers.md`, «Кого НЕ берём»).
-  **[НЕ ПРОВЕРЕНО]** по первоисточнику: точный состав `.sfk` у VEGAS и
-  расположение кэш-каталога Resolve — `helpx.adobe.com` и
-  `forum.blackmagicdesign.com` из этого окружения недоступны
-  (`docs/features/_services.md`, таблица доступности).
-- Наш код проверен по дереву 08.09.2026:
-  `src/libs/kt-ffmpeg/src/source_impl.rs` (132, 280),
-  `src/libs/kt-ffmpeg/src/lib.rs:94`, `src/libs/kt-engine/src/worker.rs`,
-  `src/libs/kt-media/src/index.rs`; тесты `t34` (`ffmpeg_conformance.rs`) и
-  `t70` (`index_db.rs`).
+- https://community.adobe.com/t5/premiere-pro-discussions/media-cache-on-a-shared-network-drive/td-p/11904757 — the question by Pixel Jar (17.03.2021) and the answer by Kevin J. Monahan Jr. (23.03.2021), as well as the reasoning about bandwidth in the replies of basil1891 and Jeff Bugbee of the same day (access date 2026-09-08)
+- https://superrendersfarm.com/article/how-render-farms-work-technical-guide — context: what a farm counts as a unit of work and why encoding is not divided (published 04.04.2026, updated 07.09.2026; 2026-09-08)
+- https://docs.opencue.io/docs/concepts/command-execution/ — the form of a farm job describes a render and an arbitrary command alike: "Resources are allocated per-frame, so all commands in a chunk share the same resources" (2026-09-08)
+- The rows for Resolve, Final Cut and After Effects in the table rely on the composition of their background tasks and cache settings; they were not verified live, and the five have no public tracker (`docs/features/_trackers.md`, "Whom we do NOT take").
+  **[NOT VERIFIED]** against the primary source: the exact composition of VEGAS's `.sfk` and the location of Resolve's cache directory — `helpx.adobe.com` and `forum.blackmagicdesign.com` are unavailable from this environment (`docs/features/_services.md`, the availability table).
+- Our code checked against the tree on 08.09.2026: `src/libs/kt-ffmpeg/src/source_impl.rs` (132, 280), `src/libs/kt-ffmpeg/src/lib.rs:94`, `src/libs/kt-engine/src/worker.rs`, `src/libs/kt-media/src/index.rs`; tests `t34` (`ffmpeg_conformance.rs`) and `t70` (`index_db.rs`).

@@ -1,12 +1,12 @@
 ---
 id: F-MSK-002
-title: Где живёт маска — у слоя, у эффекта или отдельным объектом
-status: кандидат
+title: Where a mask lives — on the layer, on the effect or as a separate object
+status: candidate
 priority: B
 cost: L
 category: masks/shapes
 editors: [premiere-26, after-effects-26, resolve-21, fcp-12, vegas-pro-2026]
-we_have: нет
+we_have: no
 crates: [kt-model, kt-fx, kt-engine, kt-gpu, kt-cache, kt-otio, kt-app]
 invariants: [3, 4, 7, 11]
 ui_rules: [1, 8, 13, 17, 20]
@@ -17,176 +17,61 @@ depends_on: [F-MSK-001, F-CLR-006, F-MPH-006]
 checked: 2026-09-07
 ---
 
-# F-MSK-002 — Где живёт маска — у слоя, у эффекта или отдельным объектом
+# F-MSK-002 — Where a mask lives — on the layer, on the effect or as a separate object
 
-## Суть
+## Essence
 
-Задача монтажёра формулируется в одну строку: на ОДНОМ клипе размыть лицо и
-поднять яркость в углу кадра. Дальше всё решает то, чьим свойством является
-контур. Если маска принадлежит слою — она режет слой целиком, и для двух разных
-областей нужны два слоя. Если маска принадлежит эффекту — оба действия живут
-слотами одной цепочки, но общий контур двум эффектам не отдать. Если маска —
-отдельный сигнал со своим входом, контур переиспользуется и инвертируется у
-потребителя, но у эффекта появляется второй вход, а у программы — редактор
-связей. Это не «где кнопка»: развилка определяет схему данных, ключ кэша,
-копипаст слота и формат проекта, и переигрывается только переписыванием всего
-перечисленного.
+The editor's task can be stated in one line: on ONE clip, blur a face and raise the brightness in a corner of the frame. From there, everything is decided by whose property the contour is. If the mask belongs to the layer — it cuts the whole layer, and for two different regions two layers are needed. If the mask belongs to the effect — both actions live as slots of one chain, but a shared contour cannot be handed to two effects. If the mask is a separate signal with its own input, the contour is reused and inverted by the consumer, but the effect gets a second input, and the program gets a connections editor. This is not "where the button is": the fork determines the data scheme, the cache key, the copy-paste of a slot and the project format, and it can be replayed only by rewriting everything listed above.
 
-Соседняя заметка F-MSK-001 отвечает на вопрос «что такое контур» (скалярные
-примитивы берём, произвольный безье — нет) и явным текстом откладывает вопрос
-«чей он» сюда. Эта заметка его закрывает.
+The neighboring note F-MSK-001 answers the question "what a contour is" (we take scalar primitives, not arbitrary Bezier) and explicitly defers the question "whose it is" to here. This note closes it.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| Adobe Premiere | 26.x | маски в Effect Controls, ВНУТРИ эффекта | контур — свойство КОНКРЕТНОГО эффекта, «You can only apply one mask to one effect»; нарисованная без выбранного адресата попадает в раздел Unassigned masks и перетаскивается мышью на нужный эффект либо на Opacity (Opacity = маска слоя); у маски галка Inverted, растушёвка, трекинг |
-| After Effects | 26.x | маски СЛОЯ + Compositing Options → Mask Reference у эффекта | ГИБРИД: контур живёт на слое и по умолчанию режет слой целиком (его альфу), но у эффекта есть своя группа Compositing Options с Effect Opacity и списком Mask Reference — эффект ССЫЛАЕТСЯ на маску слоя, не владея ею; отдельно Set Matte берёт канал другого слоя (по описаниям пользователей — на выбор до или после его собственных эффектов) |
-| DaVinci Resolve | 21 | Power Windows у НОДЫ (Color) + маски-ноды в Fusion | «all of the windows within a particular node work together to limit that node’s grade»; внутри ноды до пяти окон, у каждого галка Mask = складывать или вычитать; обратная область — не вторая маска, а Outside-нода («Corrector nodes with the Key Palette’s Key Input Invert control enabled»); в Fusion маска — ОТДЕЛЬНАЯ нода в синий Effect Mask вход, плюс отдельные входы pre-mask, Garbage и Solid Matte |
-| Final Cut Pro | 12.3 | семь мask-эффектов в стеке + «effect masking» внутри эффектов | ТОЖЕ гибрид, но другой: Draw / Shape / Graduated / Image / Vignette / Magnetic / Scene Removal — обычные эффекты клипа («Add them to any clip in the timeline just as you would add any other clip effect»), и такая маска режет ВЕСЬ слой; ограничить одну коррекцию можно только встроенной маской самого эффекта — «you can isolate and control which areas of the video image are affected by clip effects», — и справка прямо говорит про границу области: «mask blend modes interact within a single effect—not across multiple effects» |
-| VEGAS Pro | 2026 | Bézier Masking OFX в цепочке плагинов (плюс Cookie Cutter, Mask Generator, маска в Pan/Crop) | ПОЗИЦИОННАЯ модель: плагин-маска стоит в цепочке события; по умолчанию он вырезает дырку в кадре, а галка Mask FX превращает его в ограничитель — «to mask the effects of all plug-in(s) in the effect chain that precede the Bézier mask plug-in»; до пяти масок в экземпляре, Invert и Blend (сила) — общие на экземпляр |
+| Adobe Premiere | 26.x | masks in Effect Controls, INSIDE the effect | the contour is a property of a SPECIFIC effect, "You can only apply one mask to one effect"; a mask drawn without a selected target goes into the Unassigned masks section and is dragged with the mouse onto the needed effect or onto Opacity (Opacity = the layer's mask); the mask has an Inverted checkbox, feathering, tracking |
+| After Effects | 26.x | LAYER masks + Compositing Options → Mask Reference on the effect | a HYBRID: the contour lives on the layer and by default cuts the whole layer (its alpha), but the effect has its own Compositing Options group with Effect Opacity and a Mask Reference list — the effect REFERENCES the layer's mask without owning it; separately, Set Matte takes the channel of another layer (per users' descriptions — either before or after that layer's own effects) |
+| DaVinci Resolve | 21 | Power Windows on the NODE (Color) + mask nodes in Fusion | "all of the windows within a particular node work together to limit that node’s grade"; inside a node up to five windows, each with a Mask checkbox = add or subtract; the inverse region is not a second mask but an Outside node ("Corrector nodes with the Key Palette’s Key Input Invert control enabled"); in Fusion a mask is a SEPARATE node into the blue Effect Mask input, plus separate pre-mask, Garbage and Solid Matte inputs |
+| Final Cut Pro | 12.3 | seven mask-effects in the stack + "effect masking" inside effects | ALSO a hybrid, but a different one: Draw / Shape / Graduated / Image / Vignette / Magnetic / Scene Removal are ordinary clip effects ("Add them to any clip in the timeline just as you would add any other clip effect"), and such a mask cuts the WHOLE layer; one correction can be limited only by the built-in mask of the effect itself — "you can isolate and control which areas of the video image are affected by clip effects" — and the help says directly about the boundary of the region: "mask blend modes interact within a single effect—not across multiple effects" |
+| VEGAS Pro | 2026 | Bézier Masking OFX in the plugin chain (plus Cookie Cutter, Mask Generator, a mask in Pan/Crop) | a POSITIONAL model: the mask plugin stands in the event's chain; by default it cuts a hole in the frame, and the Mask FX checkbox turns it into a limiter — "to mask the effects of all plug-in(s) in the effect chain that precede the Bézier mask plug-in"; up to five masks per instance, Invert and Blend (strength) are shared per instance |
 
-Оговорка по версиям: онлайн-справка VEGAS доступна по 23-ю линейку
-включительно, поэтому строка VEGAS проверена по справке VEGAS Pro 23 —
-предшественнику линейки 2026 (см. `_editors.md`); расхождений в устройстве
-Bézier Masking в release notes 2026 не заявлено, но живьём это
-**[НЕ ПРОВЕРЕНО]**.
+A note on versions: the online VEGAS help is available up to and including the 23 line, so the VEGAS row is checked against the VEGAS Pro 23 help — the predecessor of the 2026 line (see `_editors.md`); no differences in the design of Bézier Masking are declared in the 2026 release notes, but live it is **[NOT VERIFIED]**.
 
-## Фишка фишки
+## The trick behind it
 
-**1. Маска у эффекта работает ПОСЛЕ эффекта, а не до него — и поэтому
-маскировать можно не всё.** Мануал Fusion говорит прямо: «While masks (or
-mattes) are connected via an input, they are actually applied “post effect,”
-which means the node first applies its effect to the entire image, and then the
-mask is used to limit the result by copying over unaffected image data from the
-input» (Resolve 21 Reference Manual, гл. 79 «Rotoscoping with Masks»). Из этого
-следуют две вещи, которых нет ни в одном списке возможностей. Первая: есть
-эффекты, к которым такая маска НЕ применяется, и мануал перечисляет их
-поимённо — «notably Savers, Time nodes, and Resize, Scale, and Crop nodes»,
-то есть ровно те, у которых вход и выход лежат в разных растрах и «скопировать
-незатронутое из входа» нечем. Вторая: у свечения и бликов в Fusion есть ВТОРОЙ,
-pre-mask вход — «a pre-mask restricts the effect to certain areas of the image
-but allows the result of that effect to extend beyond the limits of the mask», —
-и он существует именно потому, что post-effect маска ведёт себя неправильно.
-Ту же самую физику пользователь Premiere описывает своими словами: «The problem
-with doing things like adding a glow to a masked clip is that the glow is masked
-as well, so it doesn’t “glow” beyond the bounds of the mask». Маска у эффекта —
-это не «эффект посчитался только здесь», а «эффект посчитался везде, а показали
-здесь»: цена кадра не падает, а свечение и размытие обрезаются по контуру.
+**1. A mask on an effect works AFTER the effect, not before it — and therefore not everything can be masked.** The Fusion manual says directly: "While masks (or mattes) are connected via an input, they are actually applied “post effect,” which means the node first applies its effect to the entire image, and then the mask is used to limit the result by copying over unaffected image data from the input" (Resolve 21 Reference Manual, ch. 79 "Rotoscoping with Masks"). Two things follow from this that appear in no list of features. The first: there are effects to which such a mask does NOT apply, and the manual enumerates them by name — "notably Savers, Time nodes, and Resize, Scale, and Crop nodes", that is, exactly those whose input and output lie in different rasters, so there is nothing to "copy over the unaffected part of the input" with. The second: a glow and a flare in Fusion have a SECOND, pre-mask input — "a pre-mask restricts the effect to certain areas of the image but allows the result of that effect to extend beyond the limits of the mask", — and it exists precisely because the post-effect mask behaves incorrectly. The same physics is described in their own words by a Premiere user: "The problem with doing things like adding a glow to a masked clip is that the glow is masked as well, so it doesn’t “glow” beyond the bounds of the mask". A mask on an effect is not "the effect was computed only here", but "the effect was computed everywhere, and shown only here": the cost of the frame does not fall, while the glow and the blur are cut along the contour.
 
-**2. У позиционной маски (VEGAS, FCP) область — это ПРЕФИКС цепочки, и вторая
-маска режет первую.** Справка VEGAS отмечает это отдельной сноской: «Note that
-the Bézier Masking OFX masks all of the preceding effects. This applies also
-other instances of the Bézier Mask, in other words, if you have more than one
-mask, everything outside the latest mask is not affected at all». Разбор их же
-примера: «wrong color» → маска 1 → блюр → маска 2 даёт в итоге, что внутри
-второй маски размыто И покрашено, а СНАРУЖИ второй маски отменяется в том числе
-покраска, ограниченная первой. То есть две маски дают не две независимые
-области, а пересечение, и «ограничить второй эффект из пяти» позицией не
-формулируется вообще. У FCP та же ловушка приходит с другой стороны: mask-эффект
-там режет слой, а не соседний эффект, и пользователь описывает это буквально —
-«Draw mask affects the whole layer, not the colour board». Модель «маска
-принадлежит владельцу» (Premiere: эффект; Resolve: нода; FCP — но только для
-встроенных масок эффекта) от этого свободна: пять эффектов — пять независимых
-областей, и вопрос «что именно я маскирую» имеет ответ по построению, а не по
-порядку слотов.
+**2. For a positional mask (VEGAS, FCP) the region is a PREFIX of the chain, and the second mask cuts the first.** The VEGAS help marks this in a separate footnote: "Note that the Bézier Masking OFX masks all of the preceding effects. This applies also other instances of the Bézier Mask, in other words, if you have more than one mask, everything outside the latest mask is not affected at all". An analysis of their same example: "wrong color" → mask 1 → blur → mask 2 results in the inside of the second mask being both blurred AND colored, while OUTSIDE the second mask the coloring is cancelled too, including the coloring limited by the first. That is, two masks give not two independent regions but their intersection, and "to limit the second of five effects" cannot be formulated by position at all. FCP has the same trap from the other side: there the mask-effect cuts the layer, not the neighboring effect, and a user describes this literally — "Draw mask affects the whole layer, not the colour board". The model "the mask belongs to its owner" (Premiere: the effect; Resolve: the node; FCP — but only for the effect's built-in masks) is free of this: five effects — five independent regions, and the question "what exactly am I masking" has an answer by construction, not by the order of slots.
 
-Позиционную модель, впрочем, можно сделать точной — и видно, какой ценой. В
-Shotcut и Kdenlive (вне ядра пяти, но здесь они показательны) область маски
-ограничена С ДВУХ сторон: ставится фильтр-маска, потом эффекты, потом ЯВНЫЙ
-терминатор `Mask: Apply`, который «combines every thing in between», и
-документация тут же предупреждает: «So, the order of the filters is very
-important». То есть за точную область платят двумя служебными слотами на каждую
-маску и порядком как несущей конструкцией; вдобавок в такой схеме периодически
-всплывает эффект, который маску просто игнорирует, и пользователь не может
-понять, чей это дефект: «some effects, such as the NTSC one from frei0r, applies
-the effect to the entire canvas rather than to the rotoscoped area I
-designated».
-Отдельная витрина той же развилки — FCP 12.3: там ОДИН И ТОТ ЖЕ инструмент живёт
-в двух домах сразу, «click the new Auto Mask button that’s visible in every
-effect header» и «add the Auto Mask effect (in the Masks and Keying category)
-directly to a clip», — то есть даже автор гибрида не смог выбрать одну модель и
-поставил обе.
+A positional model, however, can be made precise — and one can see at what cost. In Shotcut and Kdenlive (outside the five, but here they are illustrative) the region of a mask is bounded from TWO sides: a mask filter is placed, then the effects, then an EXPLICIT terminator `Mask: Apply`, which "combines every thing in between", and the documentation warns at once: "So, the order of the filters is very important". So the exact region is paid for by two service slots per mask and by the order as a load-bearing structure; in addition, in such a scheme an effect periodically surfaces that simply ignores the mask, and the user cannot tell whose defect it is: "some effects, such as the NTSC one from frei0r, applies the effect to the entire canvas rather than to the rotoscoped area I designated".
+A separate showcase of the same fork — FCP 12.3: there ONE AND THE SAME tool lives in two homes at once, "click the new Auto Mask button that’s visible in every effect header" and "add the Auto Mask effect (in the Masks and Keying category) directly to a clip" — that is, even the author of the hybrid could not choose one model and shipped both.
 
-**3. Инверсия у контура и инверсия у ПОТРЕБИТЕЛЯ — разные механизмы, и это
-видно только на второй области.** Галка живёт у маски: Premiere — Inverted
-(«if you want the mask to apply to the background (checked) or foreground
-(unchecked)»), FCP — «A checkbox that, when selected, reverses the mask—swapping
-its solid and transparent areas», VEGAS — Invert в General Options, то есть
-сразу на все пять масок экземпляра, Resolve — галка Mask у каждого окна внутри
-ноды («whether one window adds to another window, or subtracts from that
-window»). Такой инверсией нельзя получить ВТОРУЮ коррекцию по обратной области,
-не заведя второй контур: копируешь окно — и дальше два контура живут своей
-жизнью и расходятся с первой правки. Resolve решает это тем, что инвертирует не
-маску, а ВХОДЯЩИЙ КЛЮЧ у соседа: «Outside nodes are really just Corrector nodes
-with the Key Palette’s Key Input Invert control enabled» (гл. 146), и если галку
-снять, получится вторая коррекция ТОЙ ЖЕ области. Тот же результат у AE
-достигается ссылкой, а не проводом: Mask Reference берёт маску слоя, поэтому
-двум эффектам можно дать один контур и править его в одном месте. У Premiere
-такого нет вовсе — «You can only apply one mask to one effect», и общий контур
-существует только в виде копии; у Resolve на странице Color переиспользование
-формально есть, но это «Copy Window / Paste Window» в другую ноду, то есть тоже
-копия.
+**3. Inversion of the contour and inversion of the CONSUMER are different mechanisms, and this is visible only on the second region.** The checkbox lives on the mask: Premiere — Inverted ("if you want the mask to apply to the background (checked) or foreground (unchecked)"), FCP — "A checkbox that, when selected, reverses the mask—swapping its solid and transparent areas", VEGAS — Invert in General Options, that is, at once for all five masks of the instance, Resolve — the Mask checkbox of each window inside the node ("whether one window adds to another window, or subtracts from that window"). With such an inversion one cannot obtain a SECOND correction over the inverse region without creating a second contour: you copy the window — and from then on two contours live their own lives and diverge from the first edit. Resolve solves this by inverting not the mask but the INCOMING KEY of the neighbor: "Outside nodes are really just Corrector nodes with the Key Palette’s Key Input Invert control enabled" (ch. 146), and if the checkbox is unchecked, a second correction of THE SAME region results. In AE the same result is achieved by a reference rather than a wire: Mask Reference takes the layer's mask, so two effects can be given one contour and it can be edited in one place. Premiere has nothing of the kind — "You can only apply one mask to one effect", and a shared contour exists only as a copy; in Resolve on the Color page reuse formally exists, but it is "Copy Window / Paste Window" into another node, that is, again a copy.
 
-## Плюсы
+## Pros
 
-Здесь и ниже — следствия УСТРОЙСТВА каждой из моделей, а не оценки.
+Here and below — consequences of the DESIGN of each of the models, not estimates.
 
-- **Маска у эффекта:** «размыть лицо» и «поднять яркость в углу» — два слота
-  ОДНОГО клипа. Ни дубликата клипа, ни adjustment-слоя, ни второго декода
-  источника; пользователи AE описывают ровно этот переход — «Usually I’d just
-  apply the effect on the entire layer, then duplicate that layer and mask it».
-- **Маска у эффекта:** соседний эффект в цепочке маски не видит, поэтому правка
-  контура не может испортить чужую настройку — область и её потребитель связаны
-  жёстко.
-- **Маска у слоя:** контур — это альфа слоя, и потому один механизм сразу даёт
-  прозрачность, мягкий край и участие в композите; поэффектная маска альфу слоя
-  не трогает и в композит не попадает.
-- **Маска у слоя:** одно место правки на весь клип — пять эффектов
-  гарантированно сидят в одном контуре и не могут разъехаться.
-- **Маска отдельным объектом (нода/ссылка):** контур кормит сколько угодно
-  потребителей, правка расходится ко всем сразу, а «внутри/снаружи» — состояние
-  одного сигнала (Outside), а не два объекта, которые монтажёр держит
-  синхронными руками.
-- **Позиционная маска (маска-эффект в цепочке):** ноль новых понятий в схеме
-  данных. Маска — обычный слот, поэтому она бесплатно попадает в копипаст
-  цепочки, в галку обхода, в пресеты и в формат проекта.
+- **Mask on an effect:** "blur the face" and "raise the brightness in the corner" are two slots of ONE clip. No clip duplicate, no adjustment layer, no second decode of the source; AE users describe exactly this transition — "Usually I’d just apply the effect on the entire layer, then duplicate that layer and mask it".
+- **Mask on an effect:** a neighboring effect in the chain does not see the mask, so editing the contour cannot spoil someone else's setting — the region and its consumer are tied rigidly.
+- **Mask on a layer:** the contour is the layer's alpha, and so one mechanism gives transparency, a soft edge and participation in the composite at once; a per-effect mask does not touch the layer's alpha and does not get into the composite.
+- **Mask on a layer:** one place of editing for the whole clip — five effects are guaranteed to sit in one contour and cannot drift apart.
+- **Mask as a separate object (node/reference):** the contour feeds as many consumers as you like, an edit propagates to all at once, and "inside/outside" is the state of one signal (Outside), not two objects that the editor has to keep in sync by hand.
+- **Positional mask (a mask-effect in the chain):** zero new concepts in the data scheme. The mask is an ordinary slot, so it gets into the copy-paste of the chain, the bypass checkbox, the presets and the project format for free.
 
-## Минусы
+## Cons
 
-- **Маска у эффекта:** один контур нельзя отдать двум эффектам. Premiere говорит
-  это прямым текстом, Resolve предлагает копирование окна в другую ноду — и с
-  первой же правки копии расходятся; синхронность становится обязанностью
-  человека.
-- **Маска у эффекта:** её не видно. Она спрятана внутри свёрнутого слота, и
-  цена такой невидимости измеряется годами: механизм в AE существует с 2014 г.,
-  а обходные слои-дубликаты люди строили до 2026-го (цитаты ниже).
-- **Маска у эффекта:** применима не ко всем эффектам — те, что меняют растр
-  (масштаб, кроп, ресемпл), из модели выпадают, потому что «незатронутое» брать
-  неоткуда.
-- **Маска у слоя:** чтобы ограничить ОДИН эффект, нужен второй объект —
-  adjustment-слой, прекомп или дубликат клипа. Это лишний элемент в стопке,
-  второй просчёт и лишний шаг в истории; в FCP та же нужда лечится дублированием
-  клипа даже для объединения двух масок (Add-режим у mask-эффектов отсутствует,
-  «Dragging multiple instances of the Draw Mask or the Shape Mask to the same
-  clip creates the equivalent of the Intersect blend mode»).
-- **Позиционная маска:** порядок слотов начинает значить две вещи сразу — что за
-  чем считается И что чем ограничено; вторая маска пересекается с первой
-  накопительно (сноска VEGAS выше), и предсказать картинку по скриншоту цепочки
-  нельзя.
-- **Маска отдельным объектом-нодой:** у эффекта появляется второй вход, у
-  программы — холст со связями. Цена разобрана в F-CLR-006 и там же признана
-  неподъёмной для нас.
-- **Общее для всех моделей:** маска — это анимируемая ГЕОМЕТРИЯ, а не число.
-  Ключи по точкам контура не ложатся ни в один общий редактор кривых, и каждый
-  редактор заводит для них отдельный режим: у VEGAS это собственный «Animate
-  Curve 1» с Edit Mode, у Premiere — отдельное переключение Clip/Frame, и
-  пользователи считают это регрессом: «now the controls and tools are scattered
-  in to tree different places».
+- **Mask on an effect:** one contour cannot be handed to two effects. Premiere says this in plain text, Resolve offers copying the window into another node — and from the first edit the copies diverge; synchronization becomes the person's duty.
+- **Mask on an effect:** it is not visible. It is hidden inside a collapsed slot, and the price of this invisibility is measured in years: the mechanism in AE has existed since 2014, and people were building workaround duplicate layers up to 2026 (quotes below).
+- **Mask on an effect:** not applicable to all effects — those that change the raster (scale, crop, resample) fall out of the model, because there is nowhere to take the "unaffected" part from.
+- **Mask on a layer:** to limit ONE effect, a second object is needed — an adjustment layer, a precomp or a clip duplicate. This is an extra element in the stack, a second render pass and an extra undo step; in FCP the same need is solved by duplicating the clip even for combining two masks (there is no Add mode for mask-effects: "Dragging multiple instances of the Draw Mask or the Shape Mask to the same clip creates the equivalent of the Intersect blend mode").
+- **Positional mask:** the order of slots starts to mean two things at once — what is computed after what AND what is limited by what; the second mask intersects with the first cumulatively (the VEGAS footnote above), and the picture cannot be predicted from a screenshot of the chain.
+- **Separate node-object mask:** the effect gets a second input, the program gets a canvas of connections. The price was analyzed in F-CLR-006, and there it was acknowledged as unaffordable for us.
+- **Common to all models:** a mask is an animatable GEOMETRY, not a number. Keys on the points of a contour do not fit into any common curve editor, and each editor creates a separate mode for them: VEGAS has its own "Animate Curve 1" with an Edit Mode, Premiere has a separate Clip/Frame switch, and users consider this a regression: "now the controls and tools are scattered in to tree different places".
 
-## Что говорят пользователи
+## What users say
 
-Сам вопрос в чистом виде — и ответ, который был верен до 2014 года:
+The question itself in pure form — and the answer that was correct until 2014:
 
 > Is there a way to apply a mask to a single effect on a video track? […] Can I
 > do this without having to duplicate the layer?
@@ -195,25 +80,23 @@ with the Key Palette’s Key Input Invert control enabled» (гл. 146), и ес
 > Not quite- you could ad an adjustment layer and apply the effect to it and
 > then a mask, but any other layer that would be underneath would be affected as
 > well.
-> — Tudor «ted» jelescu, там же, 02.08.2010, https://creativecow.net/forums/thread/masking-out-single-effect-on-layer/
+> — Tudor «ted» jelescu, there, 02.08.2010, https://creativecow.net/forums/thread/masking-out-single-effect-on-layer/
 
-(В квадратных скобках опущено «Like when you apply a mask to a filter or color
-node in shake» — отсылка к Shake, к делу не относится.)
+(In square brackets, the phrase "Like when you apply a mask to a filter or color node in shake" is omitted — a reference to Shake, not relevant here.)
 
-Про невидимость поэффектной маски (AE, механизм появился в 2014 году):
+About the invisibility of the per-effect mask (AE, the mechanism appeared in 2014):
 
 > I have been using AE since 2003. I just learned about Compositing Options in
 > the year of our lord 2026.
 > — u/newaccount47, r/AfterEffects, 28.06.2026, https://www.reddit.com/r/AfterEffects/comments/1k6zqqf/did_you_know_this_pro_tip/oua43gb/
 
-Про то, что она заменяет:
+About what it replaces:
 
 > Usually I'd just apply the effect on the entire layer, then duplicate that
 > layer and mask it.
 > — u/MX010, r/AfterEffects, 18.06.2026, https://www.reddit.com/r/AfterEffects/comments/1u8yfk4/after_20_years_i_finally_figured_out/ose8yp0/
 
-Про два этажа силы (сила эффекта против прозрачности слоя — прямая связь с
-F-MPH-006):
+About two floors of strength (the strength of the effect versus the transparency of the layer — a direct link with F-MPH-006):
 
 > The “Opacity” controller on the Fill effect itself actually makes the layer
 > itself transparent, which isn’t really that helpful. But if you use the
@@ -221,21 +104,19 @@ F-MPH-006):
 > the Fill.
 > — u/Stinky_Fartface, r/AfterEffects, 18.06.2026, https://www.reddit.com/r/AfterEffects/comments/1u8yfk4/after_20_years_i_finally_figured_out/osczsom/
 
-Как поэффектная маска выглядит в работе у Premiere 26 (маска сначала ничья,
-потом её НАЗНАЧАЮТ владельцу):
+How the per-effect mask looks in work in Premiere 26 (the mask first belongs to no one, then it is ASSIGNED to its owner):
 
 > assuming you're using a recentish version, use one of the mask tools, then
 > drag that mask from "unassigned masks" down onto your blur effect
 > — u/reginaltus, r/premiere, 24.07.2026, https://www.reddit.com/r/premiere/comments/1v5ecar/need_help_with_applying_gaussian_blur/ozj86ju/
 
-И отрицательный отзыв о том же самом — назначение владельца отдельным жестом
-раздражает:
+And a negative opinion about the same thing — assigning the owner by a separate gesture irritates:
 
 > Seems convoluted but maybe there's a deeper reason they did it that way. I
 > still default to After Effects for real masking.
 > — u/DaleFairdale, r/premiere, 18.08.2026, https://www.reddit.com/r/premiere/comments/1vrodzr/do_you_prefer_the_new_masking_method_in_premiere/p4fjb0p/
 
-И про швы вокруг механизма — редактирование контура растащено по трём местам:
+And about the seams around the mechanism — editing the contour is spread across three places:
 
 > So basically when previously all the necessary controls for masks were
 > underneath *Effect Control* window, now the controls and tools are scattered
@@ -243,311 +124,177 @@ F-MPH-006):
 > Preview/Program window.*)
 > — u/Bluefi1, r/premiere, 24.06.2026, https://www.reddit.com/r/premiere/comments/1tcbgus/the_object_mask_tool_is/otkn70p/
 
-Про «маска режет весь слой, а не мой эффект» — FCP, где mask-эффект стоит в
-стеке рядом с коррекцией и всё равно её не ограничивает:
+About "the mask cuts the whole layer, not my effect" — FCP, where the mask-effect stands in the stack next to a correction and still does not limit it:
 
 > Draw mask affects the whole layer, not the colour board. You could make it
 > work though by duplicating the layer, make the colour board on the lower layer
 > and draw mask on the upper layer.
 > — u/Silver_Mention_3958, r/finalcutpro, 09.04.2026, https://www.reddit.com/r/finalcutpro/comments/1sgzj4a/draw_mask/of8y3mc/
 
-Про post-effect применение маски, увиденное со стороны монтажёра:
+About post-effect application of a mask, as seen from the editor's side:
 
 > The problem with doing things like adding a glow to a masked clip is that the
 > glow is masked as well, so it doesn't "glow" beyond the bounds of the mask.
 > — u/mcarterphoto, r/premiere, 15.08.2026, https://www.reddit.com/r/premiere/comments/1vpcel9/how_to_apply_effects_to_a_masked_object_without_a/p3x32jn/
 
-Про обратную область руками — ровно то, что Resolve делает одной галкой на
-чужом ключе, здесь делается копией контура со снятой галкой Inverted:
+About the inverse region done by hand — exactly what Resolve does with one checkbox on someone else's key, here is done by a copy of the contour with the Inverted checkbox unset:
 
 > Copy the object mask of the person and remove inverted checkbox.
 > — u/NLE_Ninja85, r/premiere, 19.04.2026, https://www.reddit.com/r/premiere/comments/1spzhis/how_can_i_mimic_this_effect_in_premiere/oh44na6/
 
-И самый дорогой вид фидбека — «остался на старой версии из-за этого»: человек
-приносил контур из внешнего трекера (Mocha Pro) и вставлял его в клип, чтобы
-повесить на него эффект, а в 26-й это перестало работать:
+And the most expensive kind of feedback — "stayed on the old version because of this": a person brought a contour from an external tracker (Mocha Pro) and inserted it into a clip in order to hang an effect on it, and in version 26 this stopped working:
 
 > I have both 2025 and 2026 installed, but use 2025 for this reason.
 > — u/pmarval, r/premiere, 16.04.2026, https://www.reddit.com/r/premiere/comments/1r89e87/premiere_pro_2026_hate_it_or_love_it/ogiox3f/
 
-Третий запрос из списка — «поделиться одним контуром между двумя эффектами» —
-звучит одинаково у всех и одинаково не имеет штатного ответа:
+The third request from the list — "share one contour between two effects" — sounds the same for everyone and likewise has no built-in answer:
 
 > Is it possible to copy / transfer a Pixel Chooser Key matte from one effect to
 > another?
-> — Petergot, форум Boris FX, 18.05.2022, https://forum.borisfx.com/t/14040
+> — Petergot, Boris FX forum, 18.05.2022, https://forum.borisfx.com/t/14040
 
-Про то, что копия контура — это НЕ общий контур (FCP, но диагноз общий):
+That a copy of the contour is NOT a shared contour (FCP, but the diagnosis is general):
 
 > With Draw Mask, the animation is locked to that specific mask instance, so if
 > you paste keyframes onto a different mask layer even if it looks identical it
 > won’t behave the way you expect.
 > — u/StupidRaisins, r/finalcutpro, 24.02.2026, https://www.reddit.com/r/finalcutpro/comments/1rd3n79/keyframe_copy_and_paste_not_working_on_mask/o76n9sw/
 
-Читать это надо так. Жалоб «маска у эффекта — плохая идея» нет ни одной;
-жалуются на две вещи. Первая — что её НЕ НАХОДЯТ: в AE механизм существует с
-2014 года, в Premiere и Resolve — сколько себя помнят, а треды 2026-го
-называются «after 20 years i finally figured out». Вторая — на швы вокруг:
-назначение владельца отдельным жестом, разъезд копий контура и режимы
-редактирования, растащенные по трём панелям. То есть дорого не устройство, а
-его подача.
+This should be read as follows. There is not a single complaint of the kind "a per-effect mask is a bad idea"; people complain about two things. The first — that it is NOT FOUND: in AE the mechanism has existed since 2014, in Premiere and Resolve for as long as anyone remembers, and the threads of 2026 are titled "after 20 years i finally figured out". The second — the seams around it: assigning the owner by a separate gesture, copies of the contour drifting apart, and editing modes spread across three panels. So what is expensive is not the design but its presentation.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- **Цепочка эффектов клипа** — `ClipEvent.fx: Vec<FxInstance>`
-  (`src/libs/kt-model/src/project.rs:1522`) плюс параллельные `fx_bypass`,
-  `fx_auto` и мастер-выключатель `fx_off`; движку её отдаёт `active_fx()`
-  (там же, 1569). Морфер-слой дописывает свои слоты в ТУ ЖЕ цепочку, а
-  `Project::effective_clips()` (`project.rs:3013`) — единственная точка выдачи
-  клипов движку, экспорту и отрисовке.
-- **Два байт-совпадающих исполнителя цепочки**: `apply_video_chain_pooled`
-  (`src/libs/kt-fx/src/video.rs:61`) — цикл `for f in fx` над одним живым
-  кадром, и его зеркало `chain_ops` (`src/libs/kt-gpu/src/engine.rs:124`),
-  собирающее `Vec<FxOp>`.
-- **Альфа как канал уже существует**: `greenscreen`
-  (`src/libs/kt-fx/src/video.rs:348`) пишет её в `px[3]`, дальше она уходит в
-  `alpha_over` композита (`src/libs/kt-engine/src/video.rs`). Ключ физически
-  есть, но у него нет ни имени, ни адреса (диагноз F-CLR-006).
-- **Нечисловое поле-ССЫЛКА у эффекта — прецедент есть**: `Pan3d.camera:
-  Option<CameraId>` (`project.rs:2097`). Числовые параметры рисует единая сетка
-  по `ParamSpec`, а ссылка — комбо-боксом в нечисловом хвосте
-  `draw_video_fx_params` (`src/apps/kt-app/src/fx_editor.rs:557` и далее).
-- **Ссылка по ИМЕНИ с живучей мёртвой ссылкой — тоже прецедент**:
-  `MorphTargets::Areas` смотрит на `MarkedArea` (`project.rs:1163`) по имени,
-  удалённая область не забывается и рисуется ошибочным стилем (правило 20).
-- **Паспорт параметров у структуры** — `params_for_struct!` (им описана
-  `CameraParams`, `project.rs:2394`): форма-контур с числовыми полями получит
-  и общую сетку полей, и общий виджет кривых без единой новой строки в UI.
-- **Автоматизация** — `ParamCurve` вешается только на `ParamKind::Smooth`
-  (`project.rs:2150`, 2174), домен ключа — тик МАТЕРИАЛА, поэтому trim/split/
-  reverse кривые не трогают.
-- **Кэш** — `fx_chain_hash` (`src/libs/kt-engine/src/video.rs:153`) хеширует
-  Debug ВСЕЙ цепочки плюс геометрию клипа; пост-FX кадр мемоизируется в
-  `layer_frame_cpu` (там же, 721).
-- **Копипаст слота** — `ops::FxSlotBlock` (`src/libs/kt-model/src/ops.rs:851`)
-  и `FxChainBlock`: JSON в системном буфере, переживает перезапуск и переезжает
-  между окнами (t205/t215/t217).
-- **Формат** — `FxInstance` уезжает serde-конвертом в `metadata.kt` эффекта
-  (`src/libs/kt-otio/src/convert.rs:548`), версия конверта ставится ПО
-  СОДЕРЖИМОМУ (`src/libs/kt-otio/src/meta.rs:17`, сейчас
-  `KT_META_VERSION = 4`).
+- **The clip's effect chain** — `ClipEvent.fx: Vec<FxInstance>` (`src/libs/kt-model/src/project.rs:1522`) plus the parallel `fx_bypass`, `fx_auto` and the master switch `fx_off`; the engine receives it via `active_fx()` (same file, 1569). A morpher layer appends its slots to THE SAME chain, and `Project::effective_clips()` (`project.rs:3013`) is the single point of delivering clips to the engine, export and drawing.
+- **Two byte-matching chain executors**: `apply_video_chain_pooled` (`src/libs/kt-fx/src/video.rs:61`) — a `for f in fx` loop over one live frame, and its mirror `chain_ops` (`src/libs/kt-gpu/src/engine.rs:124`), which builds a `Vec<FxOp>`.
+- **Alpha as a channel already exists**: `greenscreen` (`src/libs/kt-fx/src/video.rs:348`) writes it into `px[3]`, after which it goes into the composite's `alpha_over` (`src/libs/kt-engine/src/video.rs`). The key physically exists, but it has neither a name nor an address (diagnosis of F-CLR-006).
+- **A non-numeric reference field in an effect — there is a precedent**: `Pan3d.camera: Option<CameraId>` (`project.rs:2097`). Numeric parameters are drawn by a unified grid over `ParamSpec`, while the reference is drawn as a combo box in the non-numeric tail of `draw_video_fx_params` (`src/apps/kt-app/src/fx_editor.rs:557` and onward).
+- **A reference by NAME with a surviving dead reference — also a precedent**: `MorphTargets::Areas` looks up `MarkedArea` (`project.rs:1163`) by name; a deleted area is not forgotten and is drawn in an error style (rule 20).
+- **The parameter passport of a struct** — `params_for_struct!` (which describes `CameraParams`, `project.rs:2394`): a shape-contour with numeric fields will get both the common field grid and the common curve widget without a single new line in the UI.
+- **Automation** — `ParamCurve` is attached only to `ParamKind::Smooth` (`project.rs:2150`, 2174), the key domain is the MATERIAL TICK, so trim/split/reverse do not touch the curves.
+- **Cache** — `fx_chain_hash` (`src/libs/kt-engine/src/video.rs:153`) hashes the Debug form of the WHOLE chain plus the clip's geometry; the post-FX frame is memoized in `layer_frame_cpu` (same file, 721).
+- **Copy-paste of a slot** — `ops::FxSlotBlock` (`src/libs/kt-model/src/ops.rs:851`) and `FxChainBlock`: JSON in the system clipboard, survives a restart and moves between windows (t205/t215/t217).
+- **Format** — `FxInstance` travels as a serde envelope in the effect's `metadata.kt` (`src/libs/kt-otio/src/convert.rs:548`), and the envelope version is set BY CONTENT (`src/libs/kt-otio/src/meta.rs:17`, currently `KT_META_VERSION = 4`).
 
-### Чего не хватает
+### What is missing
 
-Масок нет вообще: грепом `mask|matte|rotoscop` по `src/` находятся только
-`front_mask` внутри `transitions.rs` и маска ввода таймкода в `util.rs`. Нет
-геометрии контура, нет растеризатора, нет понятия «область кадра» — и это стоит
-подчеркнуть: наша `MarkedArea` — это ВРЕМЯ × ДОРОЖКИ, пространственного смысла
-в слове «область» у нас пока нет вовсе, а имя уже занято (пространство имён у
-областей и меток общее). Нет и экранного редактирования: превью сегодня умеет
-ровно один жест — клик play/pause (`src/apps/kt-app/src/app.rs:3205`, t74), ни
-одного гизмо поверх кадра не существует.
+There are no masks at all: a grep for `mask|matte|rotoscop` over `src/` finds only `front_mask` inside `transitions.rs` and the timecode-input mask in `util.rs`. There is no contour geometry, no rasterizer, no notion of a "frame region" — and this should be emphasized: our `MarkedArea` is TIME × TRACKS, we do not yet have any spatial meaning for the word "area" at all, and the name is already taken (the namespace of areas and marks is shared). There is also no on-screen editing: today the preview supports exactly one gesture — a click for play/pause (`src/apps/kt-app/src/app.rs:3205`, t74); not a single gizmo over the frame exists.
 
-### Что мешает
+### What gets in the way
 
-1. **Внутри цепочки живут РАЗНЫЕ растры.** `Pan`, `CamMotion`, `EventGrid` и
-   `Pan3d` ресемплят кадр в размер проекта (видно по `chain_ops`), остальные
-   семь видео-FX размер сохраняют. Маска на ресемплящем слоте не определена:
-   «оригинал» и «результат» лежат в разных системах координат — то самое
-   ограничение, которое Fusion документирует поимённо для Resize/Scale/Crop.
-2. **Кадр приходит в разрешении КАЧЕСТВА.** Декодер отдаёт кадр уже в
-   `Quality { width, height }`, и одна и та же цепочка считается на разных
-   растрах в превью и в экспорте (`q_key` в `layer_frame_cpu`). Значит
-   координаты контура обязаны быть нормированными; «пиксели» тут не годятся.
-3. **`params_for!` знает только числа.** `ParamSpec` — это
-   min/max/default/step/unit/kind, и ссылка на маску в него не лезет: она
-   рисуется руками в хвосте `draw_video_fx_params`, как `Pan3d.camera`. Числовые
-   поля самой формы (центр, размер, поворот, растушёвка) в макрос ложатся
-   идеально — и вместе с ними бесплатно приезжает автоматизация. Безье-путь не
-   ложится: ключи по точкам — это не `ParamCurve`, и он стал бы ВТОРЫМ
-   исключением после `CamMotion.keyframes`, у которого уже есть собственный
-   мини-редактор в `fx_editor.rs` вопреки правилу «кривые рисует один виджет».
-4. **Ключ пост-FX кэша.** `fx_chain_hash` хеширует Debug цепочки. Инлайн-контур
-   он поймает сам; ССЫЛКА в Debug есть, а геометрия — нет, и правка общего
-   контура не инвалидировала бы пост-FX кадры (инвариант №4). Лечится приёмом
-   морфера: разрешать ссылку в `effective_clips()` ДО построения плана
-   (`VideoRenderer::new` и так зовёт его первым делом) — движок увидит
-   инлайн-геометрию, и хеш снова верен без единой правки в кэше.
-5. **Копипаст между проектами.** `FxSlotBlock` — сериализуемый блок в системном
-   буфере; ссылка по имени в чужом проекте окажется висячей. Прецедент решения
-   есть: `ClipBlock` возит с собой `areas`/`markers`, а `paste_block` считает
-   `PasteSkipped` вместо того, чтобы «доправлять» вставку.
-6. **Формат.** Новое поле уедет в `metadata.kt` само, но старая сборка (v4) его
-   молча проигнорирует и отрендерит эффект НА ВЕСЬ КАДР — это ровно случай
-   «тихой порчи», ради которого заведён отказ `KtMetaTooNew`. Значит v5, по тому
-   же правилу «версия по содержимому», по которому поднимались v3 (домен ключей)
-   и v4 (морфер-слой).
-7. **Растеризатор пишется дважды.** Смеситель «оригинал ↔ результат по маске» и
-   сама форма нужны и в скалярном ядре с AVX2, и в WGSL, причём SIMD обязан
-   совпадать со скаляром байт-в-байт. Аналитическая форма (эллипс/прямоугольник
-   через знаковое расстояние с растушёвкой) для этого пригодна; полигональный
-   скан-лайн с антиалиасингом — главный риск расхождения CPU↔GPU.
+1. **Different rasters live inside the chain.** `Pan`, `CamMotion`, `EventGrid` and `Pan3d` resample the frame to the project size (visible from `chain_ops`), while the other seven video FX preserve the size. A mask on a resampling slot is undefined: the "original" and the "result" lie in different coordinate systems — exactly the restriction that Fusion documents by name for Resize/Scale/Crop.
+2. **The frame arrives at QUALITY resolution.** The decoder delivers a frame already at `Quality { width, height }`, and the same chain is computed on different rasters in the preview and in the export (`q_key` in `layer_frame_cpu`). So the coordinates of a contour MUST be normalized; "pixels" are not suitable here.
+3. **`params_for!` knows only numbers.** `ParamSpec` is min/max/default/step/unit/kind, and a mask reference does not fit into it: it is drawn by hand in the tail of `draw_video_fx_params`, like `Pan3d.camera`. The numeric fields of the shape itself (center, size, rotation, feathering) fit into the macro perfectly — and automation comes along with them for free. The Bezier path does not fit: keys on points are not a `ParamCurve`, and it would become a SECOND exception after `CamMotion.keyframes`, which already has its own mini-editor in `fx_editor.rs`, in violation of the rule "curves are drawn by one widget".
+4. **The post-FX cache key.** `fx_chain_hash` hashes the Debug form of the chain. It will catch an inline contour by itself; a REFERENCE appears in Debug, but the geometry does not, and editing a shared contour would not invalidate post-FX frames (invariant No. 4). This is cured by the morpher's technique: resolve the reference in `effective_clips()` BEFORE the plan is built (`VideoRenderer::new` already calls it first thing) — the engine will see the inline geometry, and the hash will be correct again without a single edit in the cache.
+5. **Copy-paste between projects.** `FxSlotBlock` is a serializable block in the system clipboard; a reference by name in another project would be dangling. There is a precedent for the solution: `ClipBlock` carries `areas`/`markers` along, and `paste_block` counts `PasteSkipped` instead of "fixing up" the paste.
+6. **Format.** A new field will travel into `metadata.kt` by itself, but an old build (v4) will silently ignore it and render the effect over the WHOLE FRAME — this is exactly the case of "silent corruption" for which the refusal `KtMetaTooNew` was introduced. So v5, by the same rule "version by content" by which v3 (key domain) and v4 (morpher layer) were raised.
+7. **The rasterizer is written twice.** The mixer "original ↔ result by mask" and the shape itself are needed both in the scalar kernel with AVX2 and in WGSL, and SIMD must match the scalar code byte for byte. An analytic shape (ellipse/rectangle via signed distance with feathering) is suitable for this; a polygonal scanline fill with antialiasing is the main risk of CPU↔GPU divergence.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **№7 (код композиции ОДИН).** Маска обязана быть частью того же плана кадра,
-  а не вторым путём: смеситель живёт в цепочке и повторяется в обоих
-  исполнителях. Это дороже обычного эффекта ровно вдвое, но по форме — тот же
-  `FxOp`, а не новый интерпретатор (в отличие от графа, F-CLR-006).
-- **№11 (детерминизм) и правило крейта kt-fx.** Умолчание «маски нет» обязано
-  давать прежние байты — тогда GOLDEN_VIDEO и golden-эталоны видео-FX не
-  перегенерируются. Схема `#[serde(default, skip_serializing_if …)]` у нас на
-  это уже настроена.
-- **№4 (кэш — единственная правда о coverage).** Геометрия обязана попасть в
-  ключ пост-FX; зато общая маска, изменённая один раз, инвалидирует пост-FX
-  кадры всех клипов-потребителей — это правильное поведение, но это чёрн, и
-  его надо ждать.
-- **№3 (правка модели не уничтожает FX-состояние).** Поле маски осмысленно
-  только у видео-вариантов; появление его у слота не должно считаться сменой
-  цепочки для аудио-состояния при diff по id клипа.
-- **Правила UI.** 13 — маска не заводит собственной панели: числа идут в ту же
-  сетку карточки эффекта, ссылка — в её нечисловой хвост, форма правится гизмо
-  поверх УЖЕ существующего превью. 17 — «маска-эффект в цепочке» и «маска-поле
-  у слота» описывают одно и то же действие, поэтому в продукт берётся РОВНО
-  ОДНА из моделей. 20 — мёртвая ссылка на удалённый контур не самоудаляется
-  (прецедент областей морфера). 1 — точки контура обязаны иметь хват-зону шире
-  рисунка, и гизмо не должно ломать клик play/pause по превью (t74) и двойные
-  клики (t206/t207). 8 — гизмо рисуется в кадре, а не «стандартным виджетом».
+- **No. 7 (one composition code).** The mask must be part of the same frame plan, not a second path: the mixer lives in the chain and is repeated in both executors. It costs exactly twice as much as an ordinary effect, but in form it is the same `FxOp`, not a new interpreter (unlike the graph, F-CLR-006).
+- **No. 11 (determinism) and the rule of the kt-fx crate.** The default "no mask" must give the previous bytes — then GOLDEN_VIDEO and the golden references of the video FX are not regenerated. The schema `#[serde(default, skip_serializing_if …)]` is already configured for this in our code.
+- **No. 4 (the cache is the single source of truth about coverage).** The geometry must get into the post-FX key; on the other hand, a shared mask changed once invalidates the post-FX frames of all consumer clips — this is the correct behavior, but it is a black and must be waited out.
+- **No. 3 (editing the model does not destroy FX state).** The mask field is meaningful only for video variants; its appearance on a slot must not count as a change of the chain for the audio state in the diff by clip id.
+- **UI rules.** 13 — the mask does not get its own panel: the numbers go into the same grid of the effect card, the reference goes into its non-numeric tail, and the shape is edited by a gizmo over the ALREADY existing preview. 17 — "a mask-effect in the chain" and "a mask field on a slot" describe the same action, so EXACTLY ONE of the models goes into the product. 20 — a dead reference to a deleted contour does not delete itself (the precedent of morpher areas). 1 — the points of the contour must have a grab zone wider than the drawing, and the gizmo must not break the play/pause click over the preview (t74) and the double clicks (t206/t207). 8 — the gizmo is drawn in the frame, not as a "standard widget".
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | L — целый раунд: объект-контур в модели, смеситель и растеризатор в ДВУХ исполнителях, гизмо поверх превью, версия формата |
-| Где основная работа | kt-model (объект маски + ссылка у слота), kt-fx (смеситель + форма: скаляр и AVX2), kt-gpu (WGSL-зеркало и новый `FxOp`), kt-app (гизмо в превью, хвост карточки эффекта), kt-otio (v5), kt-engine (разрешение ссылки в `effective_clips`, ключ кэша) |
-| Формат проекта | нужна версия v5: старый ридер молча отрендерил бы эффект на весь кадр — штатный отказ честнее тихой порчи |
-| Тесты, которые придётся написать | round-trip модели и копипаст слота со ссылкой (в духе t205/t215); «без маски — прежние байты» (golden_export t11/t67, video_fx); правка контура инвалидирует пост-FX кадр (в духе t66/t66c); конформанс растеризации CPU↔GPU ТОЛЬКО через `kt_gpu::assert_frames_close` (t181-стиль); мёртвая ссылка резолвится в ничто и рисуется ошибкой (в духе t247/t248 именованных областей); layout-тест гизмо и «клик по превью всё ещё играет» (t74/t76) |
-| Зависит от | F-CLR-006 (граф отвергнут — значит ветвится ПОЛЕ, а не провод), F-MPH-006 (сила наложения: тот же смеситель, один буфер) |
-| Ломает совместимость | нет: файл без масок байт-в-байт прежний; файл с масками старая сборка честно откажется открыть |
+| Size | L — a whole round: a contour object in the model, the mixer and the rasterizer in TWO executors, a gizmo over the preview, a format version |
+| Where the main work is | kt-model (mask object + reference on the slot), kt-fx (mixer + shape: scalar and AVX2), kt-gpu (WGSL mirror and a new `FxOp`), kt-app (gizmo in the preview, the tail of the effect card), kt-otio (v5), kt-engine (resolving the reference in `effective_clips`, cache key) |
+| Project format | needs version v5: an old reader would silently render the effect over the whole frame — the standard refusal is more honest than silent corruption |
+| Tests that will have to be written | round-trip of the model and copy-paste of a slot with a reference (in the spirit of t205/t215); "without a mask — the previous bytes" (golden_export t11/t67, video_fx); an edit of the contour invalidates the post-FX frame (in the spirit of t66/t66c); CPU↔GPU conformance of the rasterization ONLY via `kt_gpu::assert_frames_close` (t181-style); a dead reference resolves to nothing and is drawn as an error (in the spirit of t247/t248 of named areas); a layout test of the gizmo and "a click over the preview still plays" (t74/t76) |
+| Depends on | F-CLR-006 (the graph is rejected — so a FIELD branches, not a wire), F-MPH-006 (overlay strength: the same mixer, one buffer) |
+| Breaks compatibility | no: a file without masks is byte-for-byte the same; a file with masks will be honestly refused by an old build |
 
-## Вердикт
+## Verdict
 
-**Берём модель 2 по семантике и модель 3 по хранению: область действия
-принадлежит СЛОТУ цепочки, а геометрия — отдельному именованному объекту
-проекта, на который слот ссылается (плюс галка инверсии у ссылки).** Это
-единственная комбинация, которая отвечает на исходный вопрос «размыть лицо и
-поднять яркость в углу на одном клипе», не заводя ни дубликата клипа, ни
-второго морфер-слоя, и при этом не платит главной ценой модели 2 —
-расползающимися копиями контура.
+**We take model 2 by semantics and model 3 by storage: the scope of action belongs to a SLOT of the chain, and the geometry belongs to a separate named object of the project, which the slot references (plus an inversion checkbox on the reference).** This is the only combination that answers the original question "blur the face and raise the brightness in the corner on one clip" without creating a clip duplicate or a second morpher layer, and at the same time does not pay the main price of model 2 — contour copies that drift apart.
 
-Почему не остальные. **Модель 1 (маска у слоя)** у нас означала бы «маска режет
-клип целиком», а «ограничить один эффект» пришлось бы делать морфер-слоем или
-дубликатом события — то есть воспроизвести ровно ту жалобу, с которой люди
-уходят в AE («duplicate that layer and mask it»). **Позиционная модель
-(маска-эффект в цепочке, VEGAS/FCP)** соблазнительна дешевизной — новых понятий
-ноль, — но её область есть ПРЕФИКС цепочки, вторая маска пересекает первую, и
-«ограничить второй эффект из пяти» в ней не выражается; вдобавок порядок слотов
-начал бы значить две вещи сразу. **Модель 3 в чистом виде (нодовая, со вторым
-входом и холстом связей)** отвергнута в F-CLR-006, и открывать её заново эта
-заметка не предлагает: ветвится только АДРЕС контура, картинка остаётся
-линейным списком.
+Why not the others. **Model 1 (mask on the layer)** for us would mean "the mask cuts the whole clip", and "limit one effect" would have to be done with a morpher layer or a duplicate of the event — that is, to reproduce exactly the complaint for which people leave for AE ("duplicate that layer and mask it"). **The positional model (a mask-effect in the chain, VEGAS/FCP)** is tempting for its cheapness — zero new concepts — but its region is a PREFIX of the chain, the second mask intersects the first, and "limit the second of five effects" cannot be expressed in it; in addition, the order of slots would mean two things at once. **Model 3 in pure form (a node graph with a second input and a canvas of connections)** was rejected in F-CLR-006, and this note does not propose reopening it: only the ADDRESS of the contour branches, while the picture remains a linear list.
 
-Три опоры, на которых рекомендация держится в НАШЕМ коде, уже стоят: ссылка
-нечисловым полем у эффекта — `Pan3d.camera`; ссылка по имени с живучей мёртвой
-ссылкой — области морфера; разрешение ссылки в инлайн-данные до построения
-плана — `effective_clips()`, благодаря которому движок, ключ пост-FX кэша и оба
-исполнителя не узнают о существовании ссылок вовсе. Дивиденды: смеситель
-«оригинал ↔ результат по маске» — это ТОТ ЖЕ код, что нужен F-MPH-006 для силы
-наложения (маска с равномерным уровнем и есть wet/dry слота), а параметрическая
-форма получает автоматизацию, копипаст и хеширование даром, потому что её поля —
-числа в `params_for!`.
+Three supports on which the recommendation rests are already in place in OUR code: a reference as a non-numeric field of an effect — `Pan3d.camera`; a reference by name with a surviving dead reference — the morpher's areas; and resolving a reference into inline data before the plan is built — `effective_clips()`, thanks to which the engine, the post-FX cache key and both executors do not learn of the existence of references at all. Dividends: the mixer "original ↔ result by mask" is the SAME code that F-MPH-006 needs for overlay strength (a mask with a uniform level is exactly the wet/dry of a slot), while the parametric shape gets automation, copy-paste and hashing for free, because its fields are numbers in `params_for!`.
 
-Согласование с F-MSK-001. Она приходит к «маска у слота» с другой стороны — от
-геометрии — и это подтверждение, а не совпадение; расходимся мы в одном месте,
-и его стоит записать. Там сказано «у слота цепочки — как в FCP», но живьём у
-FCP всё сложнее: его семь mask-эффектов режут ВЕСЬ слой (цитата про Draw Mask и
-Color Board выше), а поэффектная область там существует только как встроенные
-маски внутри самих эффектов, и только у них есть булевы режимы. Эталон для нас
-не FCP, а Premiere по владельцу и AE по адресации: владелец — слот, контур —
-общий объект, на который слот ссылается. Форму контура, число точек и режимы
-сложения масок внутри слота описывает F-MSK-001, чужую альфу как источник
-ключа — F-MSK-003; эта заметка про них ничего не решает.
+Coordination with F-MSK-001. It arrives at "a mask at the slot" from the other side — from geometry — and this is a confirmation, not a coincidence; we diverge in one place, and it should be recorded. There it is said "at the chain slot — as in FCP", but in live FCP everything is more complicated: its seven mask-effects cut the WHOLE layer (the quote about Draw Mask and Color Board above), and a per-effect region there exists only as built-in masks inside the effects themselves, and only they have Boolean modes. The reference for us is not FCP but Premiere for ownership and AE for addressing: the owner is the slot, the contour is a shared object which the slot references. The shape of the contour, the number of points and the modes of combining masks inside a slot are described by F-MSK-001, and a foreign alpha as the source of a key — by F-MSK-003; this note decides nothing about them.
 
-Границы решения, которые стоит зафиксировать сразу: маска разрешена только у
-слотов, не меняющих растр (Fusion перечисляет тот же список запретов); первый
-этап — параметрические формы (эллипс, прямоугольник, линейный градиент), как и
-постановила F-MSK-001, потому что ключи по точкам произвольного контура не
-ложатся в наш единственный виджет кривых. И честная оговорка:
-пользователь масок пока не просил (`docs/user-feedback.md` о них молчит) —
-заметка закрывает архитектурную развилку заранее, чтобы первая же маска не
-приехала «эффектом в цепочке», из которого потом не выбраться без смены формата.
+Boundaries of the decision that should be fixed at once: a mask is allowed only on slots that do not change the raster (Fusion lists the same set of prohibitions); the first stage is parametric shapes (ellipse, rectangle, linear gradient), as F-MSK-001 established, because keys on the points of an arbitrary contour do not fit into our single curve widget. And an honest caveat: the user has not yet asked for masks (`docs/user-feedback.md` is silent about them) — this note closes the architectural fork in advance, so that the first mask does not arrive as "an effect in the chain", from which it would later be impossible to escape without a format change.
 
-## Источники
+## Sources
 
-- DaVinci Resolve 21 Reference Manual (июль 2026, прочитан локально): гл. 138
-  «Secondary Windows» — «all of the windows within a particular node work
-  together to limit that node’s grade», «If you don’t create a new node before
+- DaVinci Resolve 21 Reference Manual (July 2026, read locally): ch. 138
+  "Secondary Windows" — "all of the windows within a particular node work
+  together to limit that node’s grade", "If you don’t create a new node before
   creating a window, you’ll discover you’ve inappropriately changed a primary
-  correction into a secondary correction», раздел «Combining Power Windows with
-  the Mask Control» (add/subtract), раздел «Copying and Pasting Windows»
-  (Copy Window / Paste Window в другую ноду) и «Saving Window Presets»
-  («Loaded window presets overwrite whatever other windows were set up in that
-  node»); гл. 146 «Combining Keys and Using Mattes» — Outside Nodes и Key Input
-  Invert; гл. 79 «Rotoscoping with Masks» — Effect Mask вход, «applied “post
-  effect”», список нод без поддержки масок, Pre-Masking Inputs, Garbage/Solid
-  Matte. https://documents.blackmagicdesign.com/UserManuals/DaVinci_Resolve_21_Reference_Manual.pdf (дата обращения 2026-09-07)
+  correction into a secondary correction", section "Combining Power Windows with
+  the Mask Control" (add/subtract), section "Copying and Pasting Windows"
+  (Copy Window / Paste Window into another node) and "Saving Window Presets"
+  ("Loaded window presets overwrite whatever other windows were set up in that
+  node"); ch. 146 "Combining Keys and Using Mattes" — Outside Nodes and Key Input
+  Invert; ch. 79 "Rotoscoping with Masks" — Effect Mask input, "applied “post
+  effect”", list of nodes without mask support, Pre-Masking Inputs, Garbage/Solid
+  Matte. https://documents.blackmagicdesign.com/UserManuals/DaVinci_Resolve_21_Reference_Manual.pdf (accessed 2026-09-07)
 - https://help.magix-hub.com/video/vegas/23/en/content/topics/8-design/fxplugins/beziermask.htm
-  — VEGAS Bézier Masking: Mask FX («mask the effects of all plug-in(s) in the
-  effect chain that precede the Bézier mask plug-in»), сноска про накопительное
-  пересечение масок, Invert, Blend как сила, до пяти масок, трекинг, анимация
-  точек «new since VEGAS Pro 23» (2026-09-07). Справки для линейки 2026 в
-  открытом доступе нет — см. оговорку в «У кого и как».
+  — VEGAS Bézier Masking: Mask FX ("mask the effects of all plug-in(s) in the
+  effect chain that precede the Bézier mask plug-in"), a footnote about the cumulative
+  intersection of masks, Invert, Blend as strength, up to five masks, tracking, point
+  animation "new since VEGAS Pro 23" (2026-09-07). No public documentation for the
+  2026 line exists — see the caveat in "Who has it and how".
 - https://support.apple.com/guide/final-cut-pro/intro-to-masking-verce5464e1a/mac
-  — FCP: семь mask-эффектов, «Add them to any clip in the timeline just as you
-  would add any other clip effect», отдельное «effect masking» у большинства
-  эффектов, «Masking blend modes … are available for effect masking only»
-  (2026-09-07)
+  — FCP: seven mask effects, "Add them to any clip in the timeline just as you
+  would add any other clip effect", separate "effect masking" for most effects,
+  "Masking blend modes … are available for effect masking only" (2026-09-07)
 - https://support.apple.com/guide/final-cut-pro/use-multiple-masks-ver1b0945a01/mac
-  — FCP: две маски на клипе = Intersect, режим Add требует дубликата клипа
-  связанным клипом сверху (2026-09-07)
+  — FCP: two masks on a clip = Intersect; the Add mode requires duplicating the clip
+  as a linked clip above (2026-09-07)
 - https://support.apple.com/guide/final-cut-pro/mask-controls-verf8949b45e/mac
-  — FCP: инверсия маски («reverses the mask—swapping its solid and transparent
-  areas») (2026-09-07)
+  — FCP: mask inversion ("reverses the mask—swapping its solid and transparent
+  areas") (2026-09-07)
 - https://support.apple.com/guide/final-cut-pro/intro-to-effect-masking-verd9d69f195/12.3/mac/15.6
-  — FCP: встроенные маски эффектов, «you can isolate and control which areas of
-  the video image are affected by clip effects» (2026-09-07)
+  — FCP: built-in effect masks, "you can isolate and control which areas of
+  the video image are affected by clip effects" (2026-09-07)
 - https://support.apple.com/guide/final-cut-pro/combine-multiple-effect-masks-ver2531c0ab1/12.3/mac/15.6
-  — FCP, ключевая граница области: «mask blend modes interact within a single
-  effect—not across multiple effects» (проверено прямым запросом, 2026-09-07)
+  — FCP, the key boundary of scope: "mask blend modes interact within a single
+  effect—not across multiple effects" (checked by a direct query, 2026-09-07)
 - https://www.provideocoalition.com/great-ways-to-use-auto-mask-in-final-cut-pro/
-  — FCP 12.3: один и тот же Auto Mask и кнопкой в шапке КАЖДОГО эффекта, и
-  отдельным эффектом клипа из категории Masks and Keying (2026-09-07)
-- https://forum.shotcut.org/t/mask-apply-video-filter/12859/1 и
-  https://discuss.kde.org/t/43705 — редакторы вне ядра пяти, показательные для
-  позиционной модели: явный терминатор `Mask: Apply`, «combines every thing in
-  between», «So, the order of the filters is very important», и типовой отказ
-  «some effects … applies the effect to the entire canvas rather than to the
-  rotoscoped area I designated» (2026-09-07)
-- https://forum.borisfx.com/t/14040 — запрос «поделиться контуром между
-  эффектами» словами пользователя стороннего плагина; проверено прямым запросом
+  — FCP 12.3: the same Auto Mask both as a button in the header of EACH effect, and
+  as a separate clip effect from the Masks and Keying category (2026-09-07)
+- https://forum.shotcut.org/t/mask-apply-video-filter/12859/1 and
+  https://discuss.kde.org/t/43705 — editors outside the core five, indicative of the
+  positional model: an explicit terminator `Mask: Apply`, "combines every thing in
+  between", "So, the order of the filters is very important", and a typical failure
+  "some effects … applies the effect to the entire canvas rather than to the
+  rotoscoped area I designated" (2026-09-07)
+- https://forum.borisfx.com/t/14040 — a request to "share a contour between
+  effects" in the words of a third-party plugin user; checked by a direct query
   (2026-09-07)
 - https://creativecow.net/forums/thread/masking-out-single-effect-on-layer/ —
-  AE, 2010: постановка вопроса и оба обходных пути (adjustment-слой и дубликат
-  слоя) до появления Compositing Options; проверено прямым запросом (2026-09-07)
+  AE, 2010: the question as posed and both workarounds (adjustment layer and layer
+  duplicate) before Compositing Options appeared; checked by a direct query (2026-09-07)
 - https://larryjordan.com/articles/adobe-updates-and-modifies-masking-in-premiere-26/
-  — Premiere 26: маска «located inside the effect», «You can only apply one mask
-  to one effect», Unassigned-маска перетаскивается на имя эффекта, галка
-  Inverted (2026-09-07)
-- Реддит читался через архив Arctic Shift (прямые ссылки на reddit.com из этого
-  окружения не открываются); цитаты приведены дословно по архивным записям,
-  ссылки указывают на исходные пермалинки: r/AfterEffects
+  — Premiere 26: the mask is "located inside the effect", "You can only apply one mask
+  to one effect", an Unassigned mask is dragged onto the effect name, the Inverted
+  checkbox (2026-09-07)
+- Reddit was read through the Arctic Shift archive (direct reddit.com links do not open
+  from this environment); quotes are given verbatim from the archived records, and the
+  links point to the original permalinks: r/AfterEffects
   (`did_you_know_this_pro_tip`, `after_20_years_i_finally_figured_out`),
   r/premiere (`do_you_prefer_the_new_masking_method_in_premiere`,
   `need_help_with_applying_gaussian_blur`,
   `how_to_apply_effects_to_a_masked_object_without_a`,
   `how_can_i_mimic_this_effect_in_premiere`, `the_object_mask_tool_is`,
   `premiere_pro_2026_hate_it_or_love_it`), r/finalcutpro
-  (`draw_mask`, `keyframe_copy_and_paste_not_working_on_mask`) — все
+  (`draw_mask`, `keyframe_copy_and_paste_not_working_on_mask`) — all
   2026-09-07.
-- Строка After Effects взята из соседней заметки F-MPH-002 (Compositing
-  Options, Effect Opacity, Mask Reference — там они проверены по
-  `helpx.adobe.com`): в этот заход `helpx.adobe.com` не открывался вовсе
-  (прокси обрывает соединение), поиск Adobe Community отдаёт 403. Механизм
-  дополнительно подтверждён пользовательскими описаниями «hit the “+” symbol.
-  It’ll auto-add the first mask on the layer»
+- The After Effects line is taken from the neighboring note F-MPH-002 (Compositing
+  Options, Effect Opacity, Mask Reference — verified there via
+  `helpx.adobe.com`): in this pass `helpx.adobe.com` did not open at all
+  (the proxy drops the connection), and the Adobe Community search returns 403. The mechanism
+  is additionally confirmed by user descriptions "hit the “+” symbol.
+  It’ll auto-add the first mask on the layer"
   (https://www.reddit.com/r/AfterEffects/comments/1twm374/one_comment_one_great_advice_the_holy_thread_of/opww2u8/).
-- Живьём ни в одном редакторе не проверялось: Resolve — по официальному мануалу
-  21-й версии, FCP — по официальной справке 12.3, VEGAS — по справке 23-й
-  линейки, Premiere — по разбору обновления 26 и форумным описаниям.
+- Not tested live in any editor: Resolve — per the official 21st-version manual,
+  FCP — per the official 12.3 help, VEGAS — per the help for the 23rd line,
+  Premiere — per a review of update 26 and forum descriptions.

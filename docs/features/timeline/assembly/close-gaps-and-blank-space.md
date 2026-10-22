@@ -1,12 +1,12 @@
 ---
 id: F-TL-008
-title: Закрытие дыр на дорожке — одна, вся дорожка, весь проект
-status: кандидат
+title: Closing gaps on a track — one, the whole track, the whole project
+status: candidate
 priority: B
 cost: M
 category: timeline/assembly
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, kdenlive-26.08]
-we_have: нет
+we_have: no
 crates: [kt-model, kt-app]
 invariants: [3]
 ui_rules: [16, 17, 20]
@@ -18,139 +18,115 @@ trackers: [kde-bugzilla, kde-invent, otio, pitivi, shotcut, olive]
 checked: 2026-09-08
 ---
 
-# F-TL-008 — Закрытие дыр на дорожке — одна, вся дорожка, весь проект
+# F-TL-008 — Closing gaps on a track — one, the whole track, the whole project
 
-## Суть
+## Essence
 
-Монтажёр повырезал из интервью два десятка кусков — на дорожке остались дыры.
-Одна команда, и события съезжаются влево встык, без перетаскивания каждого.
-Под этим словом живут ТРИ разные операции: закрыть дыру под курсором, закрыть
-все дыры на одной дорожке, закрыть все дыры во всём проекте. Отличаются они не
-удобством, а тем, сколько чужого монтажа сдвинется: первая двигает соседа,
-вторая — хвост дорожки, третья — весь фильм. Отдельная от ripple (F-TL-001)
-вещь: там режим, который меняет ЛЮБУЮ правку, здесь одноразовая команда без
-состояния.
+The editor cut two dozen pieces out of an interview - holes remained on the track.
+One command, and the events slide left flush, without dragging each one.
+Under this word live THREE different operations: close the hole under the cursor, close
+all the holes on one track, close all the holes in the whole project. They differ not
+in convenience, but in how much of someone else's edit will be shifted: the first moves the neighbour,
+the second - the tail of the track, the third - the whole film. A thing separate from ripple (F-TL-001):
+there it is a mode that changes ANY edit, here it is a one-off command without state.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026 | Close gaps (меню Edit и ПКМ по дорожке) | по ВЫДЕЛЕНИЮ: «Select two or more events on a track… The second and all following selected events are moved towards the first one so they will border at each order closing the gaps between them». Область задаёт рука пользователя, а не режим. Вариант «вся дорожка» — вырожденный случай той же команды: «If no event is selected when performing this command all gaps on the track will be closed». Отдельно есть путь через ripple: двойной клик по пустоте делает выделение времени по дыре, дальше `Delete` при включённом Auto Ripple либо `Delete` + `Ctrl+Shift+F` |
-| Adobe Premiere | 26 | `Sequence > Close Gap`; ПКМ по дыре → Ripple Delete (`Shift+Delete`) | ЕДИНСТВЕННЫЙ из пяти, у кого штатная команда работает на всю секвенцию сразу, по всем видео- и аудиодорожкам; сузить её можно только метками in/out. Обрывается о любое препятствие на соседней дорожке и об этом молчит; дыру между нулём и первым клипом не убирает |
-| DaVinci Resolve | 21 | Delete Gaps (ПКМ по клипу или пустоте); выделение дыры + `Delete` | дыра — выделяемый объект: кликнул по пустоте, `Delete` рипплит, `Backspace` нет (две клавиши на два поведения). `Delete Gaps` закрывает все дыры дорожки [НЕ ПРОВЕРЕНО первоисточником: официальный мануал 21 при прямом обращении не отдался, текст сверен по двум вторичным разборам] |
-| Final Cut Pro | 12.3 | нет команды «закрыть дыры»; вместо неё gap clip | дыра по недосмотру не возникает: в основной сюжетной линии её нет как состояния. Чтобы дыра появилась, её надо ЗАВЕСТИ — `Edit > Replace with Gap` (`Shift+Delete`) кладёт gap clip, либо Position tool временно выключает магнит и оставляет пустоту. Убирается дыра как обычный клип: выделил и `Delete`. Массовой команды нет, потому что нечего массово убирать |
-| After Effects | 26 | нет | слои параллельны и соседей по дорожке не имеют, «правее на дорожке» не существует — понятия дыры нет вовсе |
+| VEGAS Pro | 2026 | Close gaps (Edit menu and right-click on the track) | by SELECTION: "Select two or more events on a track… The second and all following selected events are moved towards the first one so they will border at each order closing the gaps between them". The scope is set by the user's hand, not by a mode. The variant "the whole track" is a degenerate case of the same command: "If no event is selected when performing this command all gaps on the track will be closed". Separately there is a path through ripple: a double click on empty space makes a time selection over the hole, then `Delete` with Auto Ripple on, or `Delete` + `Ctrl+Shift+F` |
+| Adobe Premiere | 26 | `Sequence > Close Gap`; right-click on the hole → Ripple Delete (`Shift+Delete`) | the ONLY one of the five whose standard command works on the whole sequence at once, across all video and audio tracks; it can be narrowed only with in/out markers. It snags on any obstacle on a neighbouring track and says nothing about it; it does not remove the hole between zero and the first clip |
+| DaVinci Resolve | 21 | Delete Gaps (right-click on a clip or on empty space); selecting the hole + `Delete` | the hole is a selectable object: click on empty space, `Delete` ripples, `Backspace` does not (two keys for two behaviours). `Delete Gaps` closes all the holes of a track [NOT VERIFIED against the primary source: the official manual 21 did not respond to a direct request, the text was checked against two secondary analyses] |
+| Final Cut Pro | 12.3 | no "close gaps" command; instead a gap clip | a hole does not arise by oversight: in the primary storyline it does not exist as a state. For a hole to appear it has to be CREATED - `Edit > Replace with Gap` (`Shift+Delete`) places a gap clip, or the Position tool temporarily switches off the magnet and leaves the void. A hole is removed like an ordinary clip: select it and `Delete`. There is no mass command, because there is nothing to remove en masse |
+| After Effects | 26 | no | layers are parallel and have no neighbours on a track, "further right on the track" does not exist - there is no concept of a hole at all |
 
-**Вне ядра.** Живой запрос, с которого началась заметка, и весь счётный
-материал — из Kdenlive: это единственная программа выборки, где все три
-операции разведены по разным пунктам меню и потому видно, чем каждая платит.
-«Фишка фишки» ниже взята оттуда.
+**Outside the core.** The live request with which the note began, and all the counting
+material - come from Kdenlive: it is the only programme in the sample where all three
+operations are separated into different menu items, and therefore it is visible what each one costs.
+The "trick behind it" below is taken from there.
 
-| Программа | Версия | Как называется | Как устроено |
+| Programme | Version | What it is called | How it works |
 |---|---|---|---|
-| Kdenlive | 26.08 | Remove Space · Remove Space In All Tracks · Remove All Spaces After Cursor | все три операции существуют одновременно и адресуются позицией курсора, а не выделением: первая — активная дорожка, вторая — все дорожки в той же точке, третья — хвост целиком. Дорожку для первой раньше спрашивал отдельный диалог `Track Select` |
+| Kdenlive | 26.08 | Remove Space · Remove Space In All Tracks · Remove All Spaces After Cursor | all three operations exist at the same time and are addressed by the cursor position, not by selection: the first - the active track, the second - all tracks at the same point, the third - the tail whole. For the first a separate `Track Select` dialog used to ask which track |
 
-## Фишка фишки
+## The trick behind it
 
-**1. «Закрыть дыру» — это ripple, у которого область действия урезана до одной
-дорожки, и потому он ломает синхрон ТИШЕ, чем настоящий ripple.** У ripple-режима
-есть индикатор, кнопка, красный курсор и целая глава справки о том, что его
-опасно забыть включённым (F-TL-001). У «закрыть дыры» нет ничего: одноразовая
-команда, состояния не имеет, забыть нечего — и ровно поэтому её последствия
-никто не показывает. Механически это то же самое: всё правее точки едет влево,
-а всё, что адресовано абсолютным временем и в сдвиг не попало, остаётся на
-месте. Публичный трекер называет пострадавших поимённо: в Shotcut это ключевые
-кадры фильтров ДОРОЖКИ («Removing empty space moves all the clips forward.
-However, it does not move the keyframes», #641), в Kdenlive — playhead, который
-остаётся в той же точке ЭКРАНА и оказывается посреди приехавшего клипа (#408142),
-в Premiere — соседняя дорожка с adjustment-слоем, и объяснение в треде дословно
-называет причину: «Because you are performing a ripple delete (on multiple empty
-spaces)». То есть пользователь выбирал не ripple, а «прибраться», и получил
-ripple.
+**1. "Close the hole" is ripple whose scope is cut down to one track, and therefore it breaks sync
+QUIETER than a real ripple.** The ripple mode has an indicator, a button, a red cursor and a whole chapter of help about
+how dangerous it is to forget it switched on (F-TL-001). "Close the holes" has nothing: a one-off
+command, it has no state, there is nothing to forget - and precisely for this reason its consequences
+nobody shows. Mechanically it is the same thing: everything to the right of the point moves left,
+and everything addressed by absolute time that did not get into the shift stays
+in place. The public tracker names the victims one by one: in Shotcut these are the keyframes of the
+filters of the TRACK ("Removing empty space moves all the clips forward.
+However, it does not move the keyframes", #641), in Kdenlive - the playhead, which
+stays at the same point of the SCREEN and ends up in the middle of the clip that has moved in (#408142),
+in Premiere - a neighbouring track with an adjustment layer, and the explanation in the thread literally
+names the cause: "Because you are performing a ripple delete (on multiple empty
+spaces)". That is, the user chose not ripple but "tidying up", and got ripple.
 
-**2. Отличить намеренную дыру от случайной умеет только тот, у кого дыра —
-ОБЪЕКТ.** Пауза в речи, чёрный кадр между сценами, место под ещё не снятый
-план — это часть монтажа, и на дорожке они выглядят ровно как мусор. Отсутствие
-нельзя ни выделить, ни назвать, ни залочить, поэтому автоматика, работающая по
-отсутствию, обязана уничтожать намеренные паузы: у неё нет признака, по которому
-их различить. Все, кто эту задачу решил, решили её одинаково — сделав пустоту
-сущностью: у Final Cut это gap clip, который приходится завести явной командой
-`Replace with Gap`; в OTIO `Gap` — полноценный `Composable` рядом с `Clip`
-(наш `src/libs/kt-otio/src/schema.rs`); Pitivi обсуждает то же самое пятнадцать
-лет и предлагает «fake clip», который «could be selected and deleted». И
-обратная сторона видна там же: у Final Cut, где дыра — объект, команды «закрыть
-все дыры» НЕТ ВООБЩЕ, а у Kdenlive, где дыра — отсутствие, у этой команды семь
-лет регрессий подряд.
+**2. Only the one for whom the hole is an OBJECT can tell an intentional hole from an accidental one.**
+A pause in speech, a black frame between scenes, a place for a shot not yet filmed - these are part of the edit,
+and on the track they look exactly like rubbish. An absence cannot be selected, named or locked, therefore
+automation that works by absence is bound to destroy intentional pauses: it has no sign by which
+to tell them apart. Everyone who solved this task solved it the same way - by making the void an entity: in Final Cut it is the gap clip,
+which has to be created by the explicit command `Replace with Gap`; in OTIO `Gap` is a full-fledged `Composable` next to `Clip`
+(our `src/libs/kt-otio/src/schema.rs`); Pitivi has been discussing the same thing for fifteen years and proposes a "fake clip" that "could be selected and deleted".
+The reverse side is visible there too: in Final Cut, where the hole is an object, there is NO command "close
+all holes" AT ALL, while in Kdenlive, where the hole is an absence, this command has seven years of regressions in a row.
 
-**3. Одно и то же слово в трёх местах интерфейса одного продукта означает три
-разные области действия.** Kdenlive #557 дословно: «'Remove Space' means
+**3. One and the same word in three places of one product's interface means three different scopes.** Kdenlive #557, verbatim: "'Remove Space' means
 something different depend on the place you see it. For example, in the context
 menu of the Timeline 'Remove Space' means to remove the space on all tracks.
 However, in the main menu Timeline -> Space section 'Remove Space' means to
-remove space on just the active track». Горячая клавиша ведёт себя как главное
-меню. Это не опечатка в подписи: пункт, отличающийся от соседа только областью
-сдвига, невозможно назвать так, чтобы название несло область, — и в списке
-возможностей на сайте разница не видна ни при каком чтении, потому что там
-стоит одна строка «Remove Space».
+remove space on just the active track". The hotkey behaves like the main menu. This is not a typo in a label: an item that differs from its neighbour only by the
+scope of the shift cannot be named so that the name carries the scope - and in the feature list on the site the difference
+is not visible under any reading, because there is one line there, "Remove Space".
 
-## Плюсы
+## Pros
 
-- **Вегасовская форма «по выделению» задаёт область рукой, а не режимом.**
-  «Сомкни вот эти три склейки и не трогай остальное» выражается прямо жестом
-  выделения, который у пользователя и так в пальцах; отдельной третьей операции
-  «весь проект» при таком устройстве не нужно вовсе.
-- **Команда без состояния дешевле режима на целый класс ошибок.** Её нельзя
-  забыть включённой, ей не нужен индикатор, её не надо выключать перед следующей
-  правкой — то есть вся цена ripple-режима (F-TL-001, «Минусы») здесь не
-  платится.
-- **Дыра-объект делает намеренную паузу выразимой.** Раз пустота заведена явной
-  командой, её можно оставить, выделить, растянуть и не потерять при уборке —
-  а «случайная дырка в один кадр» перестаёт существовать как класс.
-- **Resolve развёл рипплящее и не рипплящее удаление на разные клавиши**
-  (`Delete` против `Backspace`), то есть последствие выбирается пальцем в момент
-  жеста, а не настройкой, найденной месяц назад.
-- **Premiere умеет сузить область метками in/out** — та же мысль, что у Vegas,
-  другим органом: команда глобальная, но её горизонт задаёт пользователь.
+- **The Vegas "by selection" form sets the scope by hand, not by a mode.**
+  "Close these three joints and leave the rest alone" is expressed directly by the selection gesture, which the user already has at their fingertips;
+  a separate third operation "the whole project" is not needed at all with such a design.
+- **A command without state is cheaper than a mode by a whole class of errors.** It cannot
+  be forgotten switched on, it needs no indicator, it does not have to be switched off before the next
+  edit - that is, the whole price of the ripple mode (F-TL-001, "Cons") is not paid here.
+- **A hole-object makes an intentional pause expressible.** Since the void is created by an explicit
+  command, it can be kept, selected, stretched and not lost during tidying up -
+  and an "accidental one-frame hole" ceases to exist as a class.
+- **Resolve separated the rippling and non-rippling deletion onto different keys**
+  (`Delete` versus `Backspace`), that is, the consequence is chosen by a finger at the moment of the gesture, not by a setting found a month ago.
+- **Premiere can narrow the scope with in/out markers** - the same idea as in Vegas,
+  by another organ: the command is global, but its horizon is set by the user.
 
-## Минусы
+## Cons
 
-- **Это ripple без предупреждения.** Всё, что сказано в F-TL-001 про «правку
-  видно, а последствие за пределами экрана», действует здесь целиком, но без
-  индикатора, режима и красного курсора, которые там хотя бы есть.
-- **Операция не отличает намеренную дыру от случайной** — см. «Фишка фишки» 2.
-  Пауза в речи, оставленная ради дыхания, схлопывается вместе с мусором, и
-  восстановить её можно только undo, то есть отменив и всю полезную часть уборки.
-- **Её нельзя применить к выделению — только к дорожке целиком или ко всему
-  проекту, — и потому она почти всегда переделывается руками.** Заявка kde
-  #371279 просит убрать даже диалог выбора дорожки, то есть единственный орган,
-  которым область хоть как-то сужалась. Vegas тут исключение, а не правило.
-- **Обрыв о препятствие на другой дорожке молчит.** У Premiere объяснение живёт
-  на форуме, а не в программе: «If you cannot close the gap it means something
-  on the track is blocking» — пользователь видит только то, что команда «не
-  сработала».
-- **Курсор после операции остаётся там, где был на экране**, а не там, где
-  теперь стык: playhead оказывается посреди приехавшего клипа на произвольном
-  расстоянии от его начала (kde #408142, открыта с 2019 года).
-- **Всё, что адресовано абсолютным временем и не входит в сдвиг, разъезжается:**
-  ключи дорожечных фильтров (Shotcut #641), маркеры и направляющие (зеркальная
-  заявка kde #500773 просит того же у обратной операции — «"Insert Space" should
-  have option to move guides too»), клипы соседних дорожек.
-- **Вариант «во всём проекте» — почти всегда ошибка пользователя.** Он рушит
-  синхрон между дорожками ровно тем же способом, что ripple с областью «все
-  дорожки», но выбирается не как режим монтажа, а как «прибраться», то есть без
-  всякого ожидания последствий.
+- **This is ripple without a warning.** Everything said in F-TL-001 about "the edit is visible, but the consequence is outside the screen" applies here in full, but without the indicator,
+  the mode and the red cursor that are there, at least.
+- **The operation does not distinguish an intentional hole from an accidental one** - see "The trick behind it" 2.
+  A pause in speech, left for breathing, collapses together with the rubbish, and it can be restored only by undo, that is, by cancelling the whole useful part of the tidying.
+- **It cannot be applied to a selection - only to a whole track or to the whole project - and therefore it is almost always redone by hand.** The request kde
+  #371279 asks to remove even the track-selection dialog, that is, the only organ by which the scope was narrowed at all. Vegas is an exception here, not the rule.
+- **A snag on an obstacle on another track is silent.** In Premiere the explanation lives on the forum, not in the programme: "If you cannot close the gap it means something
+  on the track is blocking" - the user sees only that the command "did not work".
+- **The cursor after the operation stays where it was on the screen**, not where the joint now is: the playhead ends up in the middle of the moved-in clip at an arbitrary distance from its start (kde #408142, open since 2019).
+- **Everything addressed by absolute time and not included in the shift comes apart:**
+  the keys of track filters (Shotcut #641), markers and guides (the mirror request kde #500773 asks the same of the reverse operation - "'Insert Space' should
+  have option to move guides too"), clips of neighbouring tracks.
+- **The "whole project" variant is almost always a user error.** It breaks sync between tracks in exactly the same way as ripple with the scope "all
+  tracks", but is chosen not as an editing mode but as "tidying up", that is, without any expectation of the consequences.
 
-## Что говорят пользователи
+## What users say
 
 > You can currently remove spaces in a track or you can remove the same space in
 > the all tracks but it would be a fantastic feature to be able to remove all
 > spaces of a single track all at once.
 > — Michael Tunnell, 14.11.2019, https://bugs.kde.org/show_bug.cgi?id=414142
 
-Заявка закрыта `RESOLVED FIXED` 17.03.2026 — через семь лет — ответом
-сопровождающего «Feature exists: Remove Space, Remove Space in All Tracks,
-Remove All Spaces After Cursor». Между этими двумя датами лежит весь счётный
-материал заметки: команда всё это время была, ломалась и чинилась.
+The request was closed `RESOLVED FIXED` on 17.03.2026 - seven years later - with the reply
+of the maintainer "Feature exists: Remove Space, Remove Space in All Tracks,
+Remove All Spaces After Cursor". Between these two dates lies all the counting
+material of the note: the command was there the whole time, broke and was repaired.
 
 > 'Remove Space' means something different depend on the place you see it.
 > — kdenlive #557, 08.02.2020, https://invent.kde.org/multimedia/kdenlive/-/issues/557
@@ -168,7 +144,7 @@ Remove All Spaces After Cursor». Между этими двумя датами 
 > — TK - JV, 21.02.2025, https://community.adobe.com/t5/premiere-pro-discussions/mind-the-gap/m-p/11330161
 
 > Because you are performing a ripple delete (on multiple empty spaces).
-> — Ann Bens (ответ ему же), 21.02.2025, https://community.adobe.com/t5/premiere-pro-discussions/mind-the-gap/m-p/11330161
+> — Ann Bens (reply to the same), 21.02.2025, https://community.adobe.com/t5/premiere-pro-discussions/mind-the-gap/m-p/11330161
 
 > If you cannot close the gap it means something on the track is blocking.
 > — Ann Bens, 01.08.2020, https://community.adobe.com/t5/premiere-pro-discussions/mind-the-gap/m-p/11330161
@@ -178,230 +154,187 @@ Remove All Spaces After Cursor». Между этими двумя датами 
 > following clips to the left.
 > — Pitivi #2548, https://gitlab.gnome.org/GNOME/pitivi/-/issues/2548
 
-СИГНАЛ: закрытие пустоты — 8 задач в kde-invent, `(remove|delete|close)\w*[ -](all )?(the )?(blank|empty|gap|space)`; доля 0.4% против 0.1% в kde-bugzilla
+SIGNAL: closing the void - 8 tasks in kde-invent, `(remove|delete|close)\w*[ -](all )?(the )?(blank|empty|gap|space)`; share 0.4% against 0.1% in kde-bugzilla
 
-СИГНАЛ: дыра как объект — 4 задачи в otio, `\bgaps?\b`; доля 0.6% против 0.2% в pitivi
+SIGNAL: a hole as an object - 4 tasks in otio, `\bgaps?\b`; share 0.6% against 0.2% in pitivi
 
-Первую строку читать так: из 22 задач фильтра 17 — кдэлайвовские, и в
-разработческом трекере (`kde-invent`) их вчетверо больше по доле, чем в
-пользовательской багзилле, при том что багзилла втрое крупнее. Пользователь
-просит эту команду один раз, а чинят её постоянно: по фильтру
+Read the first line like this: of the 22 tasks of the filter, 17 are KDE ones, and in the
+developer tracker (`kde-invent`) they are four times more numerous by share than in the user
+bugzilla, although the bugzilla is three times larger. The user asks for this command once, but it is fixed constantly: by the filter
 `(remove|delete|clos)\w*[ -](space|gap)\w*.*(not|doesn|broken|wrong|strange|fail)`
-в `kde-invent` 7 задач против 3 в `kde-bugzilla` — это «Remove Space doesn't
-work anymore», «broken», «not working (sometimes)», «strange behaviour».
+in `kde-invent` there are 7 tasks against 3 in `kde-bugzilla` - these are "Remove Space doesn't
+work anymore", "broken", "not working (sometimes)", "strange behaviour".
 
-Вторую строку читать так: `otio` — БИБЛИОТЕКА без единого элемента интерфейса,
-и всё равно доля задач про `gap` у неё втрое выше, чем у Pitivi с полноценным
-таймлайном. Дыра дорого стоит и там, где её никто не рисует: как только пустота
-стала объектом, её приходится создавать, дробить, склеивать и сохранять — то
-есть цена решения «дыра — сущность» видна на голом формате, без UI.
+Read the second line like this: `otio` is a LIBRARY without a single interface element,
+and yet its share of tasks about `gap` is three times higher than that of Pitivi with a full-fledged
+timeline. The hole is expensive even where nobody draws it: as soon as the void
+has become an object, it has to be created, split, glued and saved - that is,
+the price of the decision "the hole is an entity" is visible on the bare format, without UI.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- **Обе операции, ПОРОЖДАЮЩИЕ пустоту, написаны, а закрывающей нет ни одной.**
-  `ops::delete_region` (`src/libs/kt-model/src/ops.rs`) сносит все клипы,
-  пересекающие регион, вместе с их link-партнёрами; `ops::punch_out_region`
-  вырезает у каждого пересекающего клипа интерьер региона, остатки получают
-  новые id и теряют link-группу. Обе оставляют на месте региона ровно такую
-  дыру, какой он был, и обе честно об этом говорят: док-комментарий
-  `punch_out_region` кончается словами «Без ripple». Зовутся из
-  `src/apps/kt-app/src/app.rs` — `delete_action` и `punch_out_action`.
-- **Половина будущей операции уже есть и уже покрыта тестом.**
-  `timeline::plan_move_block` (`src/apps/kt-app/src/timeline.rs`) считает
-  ОБЩИЙ сдвиг пачки выделенных клипов, клампит его о первое препятствие своей
-  дорожки и возвращает `blocker` — координаты, вид и номер дорожки виновника.
-  Тест t204 (`src/apps/kt-app/src/layout_tests.rs`) фиксирует, что взаимные
-  расстояния внутри блока не меняются и что весь перенос — ОДИН undo-шаг.
-  «Закрыть дыру» — это ровно `plan_move_block` с отрицательной дельтой; не
-  хватает только способа набрать в блок «всё правее на этой дорожке».
-- **Свободное место считается той же геометрией.** Приватные `room_left`,
-  `room_right` и `obstacles` в `ops.rs` дают расстояние до ближайшего соседа
-  своей `(kind, lane)` с учётом чужих плейсхолдеров `Project.foreign`.
-- **Регион у нас — ЧИСТОЕ ВРЕМЯ, без дорожек.** `pub struct Region { start,
-  end }` (`src/libs/kt-model/src/project.rs`), и `intersects_clip` смотрит
-  только на время. Поэтому наш `Del` с регионом — это уже «во всех дорожках»,
-  а операции «только на этой дорожке» у нас нет ни в каком виде.
-- **Именованная область — наоборот, время × ДОРОЖКИ.** `MarkedArea` несёт
-  `lanes: Vec<(LaneKind, u32)>` и `covers_lane()` (пустой список = все), причём
-  ключи семантические, а не номера строк. Готовый адресный тип для «дорожечной»
-  области действия у нас, таким образом, уже есть — просто не в `Region`.
-- **Мультивыделение, рамка и операции по всему выделению есть** (t202/t203,
-  t205), то есть вегасовская форма «закрыть дыры между выделенными событиями»
-  ложится на существующие органы, а не требует новых.
+- **Both operations that PRODUCE a void are written, and not one closing operation exists.**
+  `ops::delete_region` (`src/libs/kt-model/src/ops.rs`) removes all clips
+  crossing the region, together with their link partners; `ops::punch_out_region`
+  cuts the region's interior out of every crossing clip, and the remainders get
+  new ids and lose their link group. Both leave exactly the gap the region was in place,
+  and both state this honestly: the doc comment of `punch_out_region` ends with the words "Without ripple".
+  They are called from `src/apps/kt-app/src/app.rs` — `delete_action` and `punch_out_action`.
+- **Half of the future operation already exists and is already covered by a test.**
+  `timeline::plan_move_block` (`src/apps/kt-app/src/timeline.rs`) computes the COMMON shift
+  of the selected clip batch, clamps it against the first obstacle on its track, and returns `blocker` — the coordinates, kind and track number of the culprit.
+  Test t204 (`src/apps/kt-app/src/layout_tests.rs`) pins down that the mutual distances inside the block do not change and that the whole move is ONE undo step.
+  "Closing the gap" is exactly `plan_move_block` with a negative delta; only a way to put "everything to the right on this track" into the block is missing.
+- **Free space is computed with the same geometry.** The private `room_left`,
+  `room_right` and `obstacles` in `ops.rs` give the distance to the nearest neighbour of
+  its own `(kind, lane)`, taking into account foreign placeholders `Project.foreign`.
+- **A region for us is PURE TIME, without tracks.** `pub struct Region { start,
+  end }` (`src/libs/kt-model/src/project.rs`), and `intersects_clip` looks
+  only at time. Therefore our `Del` with a region already means "in all tracks",
+  and an operation "on this track only" does not exist for us in any form.
+- **A named area is the opposite — time × TRACKS.** `MarkedArea` carries
+  `lanes: Vec<(LaneKind, u32)>` and `covers_lane()` (an empty list = all), and the keys
+  are semantic, not row numbers. So a ready address type for a "track-wise"
+  scope of action already exists for us — it is simply not in `Region`.
+- **Multi-selection, the frame and operations over the whole selection exist** (t202/t203,
+  t205), so the Vegas-style form "close the gaps between the selected events" fits onto the existing
+  organs rather than requiring new ones.
 
-### Чего не хватает
+### What is missing
 
-1. **Понятия «дыра».** В модели её нет: дорожка — разреженный список клипов со
-   `start`/`duration`, а `Gap` синтезируется только на запись в OTIO
-   (`src/libs/kt-otio/src/convert.rs`) и читается обратно как пустота. То же
-   отмечено в F-TL-001, «Чего не хватает» п.2 — но там это мешало жесту «двойной
-   клик по дырке», а здесь это прямо лишает нас признака «намеренная».
-2. **Выделения «всё правее на ЭТОЙ дорожке».** `plan_move_block` берёт готовый
-   список `ClipId`, а собрать его некому: `Region` дорожек не знает, рамка
-   выделения работает по пикселям.
-3. **Дорожечной адресации у региона** — либо `Region` учится нести `lanes` как
-   `MarkedArea`, либо операция берёт дорожку из выделения.
+1. **The concept of a "gap".** It does not exist in the model: a track is a sparse list of clips with
+   `start`/`duration`, and a `Gap` is synthesized only when writing to OTIO
+   (`src/libs/kt-otio/src/convert.rs`) and is read back as emptiness. The same
+   is noted in F-TL-001, "What is missing" item 2 — but there it got in the way of the
+   "double-click on the gap" gesture, while here it directly deprives us of the sign "intentional".
+2. **Selection of "everything to the right on THIS track".** `plan_move_block` takes a ready
+   list of `ClipId`, and nobody collects it: `Region` does not know tracks, and the frame
+   selection works by pixels.
+3. **Track addressing for the region** — either `Region` learns to carry `lanes` like `MarkedArea`,
+   or the operation takes the track from the selection.
 
-### Что мешает
+### What gets in the way
 
-- **В умолчательном режиме проекта блок вообще не тормозит о соседа.**
-  `plan_move_block` начинается с `if p.overlap_layers && !foreign { continue; }`:
-  при включённом переслаивании (а оно включено по умолчанию, по прямой просьбе
-  пользователя, п.9 Р.24) препятствиями остаются ТОЛЬКО чужие плейсхолдеры.
-  Значит «ехать влево до упора» у нас не остановится ни на чём, и закрытие дыры
-  обязано вычислять целевую дельту само — по геометрии соседа, а не движением
-  до столкновения. Иначе команда наложит клипы друг на друга и тихо породит
-  новый авто-кроссфейд.
-- **Сдвиг ОДНОЙ стороны стыка молча убивает переход.**
+- **In the project's default mode the block does not brake against a neighbour at all.**
+  `plan_move_block` begins with `if p.overlap_layers && !foreign { continue; }`:
+  with layer overlap enabled (and it is enabled by default, at the owner's direct request,
+  item 9 of R.24), the ONLY obstacles remaining are foreign placeholders.
+  So "driving left until the stop" for us will not stop at anything, and closing a gap
+  must compute the target delta itself — from the neighbour's geometry, not by moving until a collision. Otherwise the command will overlay clips on each other and silently
+  generate a new auto-crossfade.
+- **Shifting ONE side of a joint silently kills the transition.**
   `TimelineModel::reconcile_transitions` (`src/libs/kt-model/src/model.rs`)
-  выбрасывает переход, если после правки `a.start + a.duration != b.start`.
-  Закрытие дыры двигает правого соседа и не двигает левого — то есть каждый
-  кроссфейд на ГРАНИЦЕ операции умирает. Дальше вступает
-  `ops::restore_handles`: он возвращает срезанный при создании кроссфейда
-  материал и клампит подарок освободившимся местом
-  (`gap = b.start − (a.start + a.duration)`), а операция как раз этот зазор и
-  съедает. Результат зависит от порядка фаз внутри батча — `apply_batch_restoring`
-  считает возврат по `preview` основного батча, значит дельта сдвига обязана
-  вычисляться ПОСЛЕ возврата ручек. Ровно та же ловушка описана у F-TL-001, и
-  это довод делать обе фичи одним механизмом, а не двумя.
-- **Именованные области и метки-диапазоны не поедут, а морфер адресует цели
-  через них.** `MorpherEvent::ref_windows` (`src/libs/kt-model/src/project.rs`)
-  в режимах `MorphTargets::Marks`/`Areas` резолвит `p.named_range(n)` и
-  `p.area(n)` по ИМЕНИ и пересекает окно с телом клипа. Закрыли дыры на одной
-  дорожке — клипы уехали, имя живо, окно стоит на прежних тиках: патч ляжет на
-  чужой материал или ни на что. У Premiere в том же сценарии adjustment-слой
-  ПОЕХАЛ и этим напугал пользователя (цитата TK - JV); у нас он, наоборот, НЕ
-  поедет и промолчит — что хуже, потому что заметить нечего.
-- **Морфер в режиме `Below` держится за порядок строк, а во времени — за свой
-  блок.** `MorpherEvent::row_in`/`Project::rows()` дают пространственную часть,
-  и её операция не трогает; но временное окно морфера — это `start`/`duration`
-  его собственного блока, и закрытие дыр под ним разъедет патч с целями по
-  времени, оставив пространственную привязку целой. Разъезд ровно наполовину —
-  худший вид: слой продолжает работать, но не там.
-- **Метка не имеет id — её адрес это её `t`.** `Command::MoveMarker { from, to }`
-  отвергается с `MarkerExists`, если в `to` уже кто-то стоит (`check_on` в
-  `src/libs/kt-model/src/model.rs`). Массовый сдвиг влево обязан идти строго по
-  возрастанию, а метка, приехавшая на тик метки левее точки правки (та не
-  двигается вообще), уронит весь атомарный батч.
-- **Чужие плейсхолдеры — жёсткая стена.** `Project::validate()` запрещает
-  наложение `Clip`×`Foreign` всегда (`ProjectError::ForeignOverlap`), а команд,
-  правящих `Project.foreign` и `Project.timeline_end`, в модели нет. Закрытие дыр
-  на дорожке с чужими конструкциями обязано либо честно отказать, либо двигать и
-  их — второго механизма пока не существует.
-- **Правило 20 («ничего не отрастает и не отрубается само»).** Стена та же, что
-  у F-TL-001, но проходится она здесь легче и по другой причине: это ОДНА явная
-  команда, а не режим, поэтому она не «доправляет соседей за пользователя», а
-  исполняет отданное. Вегасовская форма — по выделению — правилу не противоречит
-  вовсе; форма «во всём проекте», выбираемая одним пунктом меню без выделения,
-  противоречит ему буквально, и именно её трекеры показывают как источник боли.
-- **Правило 16 (невозможность = ОШИБКА).** Обрыв о препятствие обязан быть
-  сообщением, называющим, куда смотреть, а не тихим недоездом: у Premiere это
-  знание живёт на форуме. Материал у нас уже есть — `BlockPlan.blocker` несёт
-  `((start, end), kind, lane)` виновника, а эталон подачи — t172 «препятствие
-  как ошибка».
-- **Правило 17 (одно поведение на все входы).** Kdenlive #557 — эталонный провал
-  этого правила: пункт главного меню, пункт контекстного меню и горячая клавиша
-  делают разное под одним названием. У нас это ловится тем же способом, что
-  «M против Marker here»: одно тело операции на жест, меню и клавишу.
+  drops a transition if after the edit `a.start + a.duration != b.start`.
+  Closing a gap moves the right neighbour and does not move the left one — so every crossfade
+  at the BOUNDARY of the operation dies. Next, `ops::restore_handles` comes into play: it returns the material
+  that was trimmed when the crossfade was created and clamps the gift by the freed space
+  (`gap = b.start − (a.start + a.duration)`), while the operation is precisely the one that consumes this gap.
+  The result depends on the order of phases inside the batch — `apply_batch_restoring`
+  computes the return from the `preview` of the main batch, so the shift delta must
+  be computed AFTER the return of the handles. The very same trap is described for F-TL-001, and
+  this is an argument for doing both features with one mechanism, not two.
+- **Named areas and mark ranges will not move, and the morpher addresses its targets through them.**
+  `MorpherEvent::ref_windows` (`src/libs/kt-model/src/project.rs`)
+  in the `MorphTargets::Marks`/`Areas` modes resolves `p.named_range(n)` and
+  `p.area(n)` by NAME and intersects the window with the body of the clip. We closed the gaps on one
+  track: the clips moved, the name is alive, the window stands at the old ticks — the patch lands on
+  someone else's material or on nothing. In Premiere, in the same scenario, the adjustment layer
+  DID move and frightened the user with it (quote TK - JV); for us, on the contrary, it will NOT move and will stay silent — which is worse, because there is nothing to notice.
+- **The morpher in `Below` mode holds onto the order of rows, and in time onto its own block.** `MorpherEvent::row_in`/`Project::rows()` give the spatial part,
+  and the operation does not touch it; but the morpher's temporal window is the `start`/`duration`
+  of its own block, and closing gaps under it will desync the patch with its targets
+  in time, leaving the spatial binding intact. A desync of exactly half is the worst kind:
+  the layer keeps working, but not where it should.
+- **A mark has no id — its address is its `t`.** `Command::MoveMarker { from, to }`
+  is rejected with `MarkerExists` if someone already stands at `to` (`check_on` in
+  `src/libs/kt-model/src/model.rs`). A mass shift to the left must go strictly in ascending order, and a mark that arrives at the tick of an edit point to the left of the point (that one does not move at all) will bring down the whole atomic batch.
+- **Foreign placeholders are a hard wall.** `Project::validate()` forbids the overlap `Clip`×`Foreign` always (`ProjectError::ForeignOverlap`), and there are no commands in the model that edit `Project.foreign` and `Project.timeline_end`. Closing gaps on a track with foreign constructions must either honestly refuse, or move them too — a second mechanism does not yet exist.
+- **Rule 20 ("nothing grows back and nothing gets cut off by itself").** The wall is the same as for
+  F-TL-001, but it is passed more easily here and for a different reason: this is ONE explicit command,
+  not a mode, so it does not "fix up the neighbours on the user's behalf" but carries out what was given. The Vegas-style form — by selection — does not contradict the rule at all; the form "across the whole project", chosen by one menu item without a selection, contradicts it literally, and it is precisely this form that the trackers show as the source of the pain.
+- **Rule 16 (impossibility = an ERROR).** An abort on an obstacle must be a message naming where to look, not a silent under-move: in Premiere this knowledge lives on a forum. The material is already there — `BlockPlan.blocker` carries the `((start, end), kind, lane)` of the culprit, and the reference for the presentation is t172, "obstacle as an error".
+- **Rule 17 (one behaviour for all inputs).** Kdenlive #557 is the reference failure of
+  this rule: the main-menu item, the context-menu item and the hotkey do different things under one name. For us this is caught the same way as "M versus Marker here": one body of the operation per gesture, menu and key.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-**Инвариант 3** («правка модели не уничтожает FX-состояние») — единственный, и
-по той же причине, что у ripple: диф цепочек идёт ПО ID клипа, поэтому операция
-обязана двигать клипы `MoveClip`, а не пересоздавать их. Соседство здесь опасное:
-дыры чаще всего остаются после `punch_out_region`, который как раз ПЕРЕСОЗДАЁТ
-остатки с новыми id, — значит «вырезал и сомкнул» одним жестом оборвёт хвосты
-реверба, если сдвиг не сделать отдельной фазой батча.
+**Invariant 3** ("editing the model does not destroy FX state") — the only one, and for the same reason as with ripple: the chain diff goes BY the clip ID, so the operation
+must move clips with `MoveClip`, not recreate them. The neighbourhood here is dangerous:
+gaps most often remain after `punch_out_region`, which precisely RECREATES
+the remainders with new ids — so "cut out and close up" in one gesture will break the reverb
+tails, if the shift is not done as a separate phase of the batch.
 
-Остальные одиннадцать не трогаются: операция целиком в модели, декода не
-порождает (№8), аудио-тракта (№1, №2), кода композиции (№7) и детерминизма
-(№11) не касается. Формат проекта не меняется — всё, что операция двигает, уже
-сериализуется тиками.
+The other eleven are not touched: the operation lives entirely in the model, produces no decode (No. 8), does not concern the audio path (No. 1, No. 2), the composition code (No. 7), or determinism (No. 11). The project format does not change — everything the operation moves is already serialized in ticks.
 
-Смежные заметки: **F-TL-001** — ripple как РЕЖИМ, меняющий любую правку; эта
-заметка про КОНКРЕТНУЮ операцию без состояния и с явной областью, и общий у них
-только механизм сдвига, который надо написать один раз. **F-TL-002** (slip/slide)
-— операции, длину дорожки не меняющие, то есть дыр не порождающие и не
-закрывающие.
+Related notes: **F-TL-001** — ripple as a MODE that changes any edit; this note is about a SPECIFIC operation without state and with an explicit scope, and what they share is only the shift mechanism, which must be written once. **F-TL-002** (slip/slide)
+— operations that do not change track length, that is, that neither produce nor close gaps.
 
-АДРЕС: src/libs/kt-model/src/project.rs — класс «правка увела клипы из окна
-именованной области, а морфер этого не заметил» у нас возможен, и его не ловит
-ничто: `Project::validate()` проверяет перекрытия, `ForeignOverlap` и границы,
-но НИ ОДНА проверка не смотрит, остались ли непустыми окна
-`MorpherEvent::ref_windows` после правки; сегодня класс не проявляется только
-потому, что ни одна наша команда не двигает клипы под неподвижной областью — а
-закрытие дыр будет делать ровно это.
+ADDRESS: src/libs/kt-model/project.rs — the class "an edit moved clips out of a named area's window, and the morpher did not notice" is possible for us, and nothing catches it: `Project::validate()` checks overlaps, `ForeignOverlap` and boundaries, but NONE of the checks looks at whether the windows of `MorpherEvent::ref_windows` remain non-empty after an edit; today the class does not manifest only because none of our commands moves clips under a stationary area — and closing gaps will do exactly that.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | **M** — 2 стадии. (1) Операция в модели: набор «что правее на этой дорожке», вычисление дельты по геометрии (не «до упора»: при `overlap_layers` упора нет), фаза сдвига ПОСЛЕ `restore_handles`, ссылочные сущности — метки, именованные области, морферы. (2) UI: жест по пустоте, пункты меню в трёх формах с честными названиями областей, ошибка о препятствии по образцу t172 |
-| Где основная работа | `kt-model` (`ops.rs` — операция и набор блока; `project.rs` — дорожечная адресация области), `kt-app` (`timeline.rs` — жест и подсветка дыры под курсором, `app.rs` — действия и меню). Механизм сдвига общий с F-TL-001 и пишется один раз |
-| Формат проекта | не трогает: операция ничего не хранит, а всё, что двигает, уже в тиках |
-| Тесты, которые придётся написать | закрытие одной дыры двигает ровно правого соседа и всё за ним на этой дорожке, соседние дорожки стоят; один undo-шаг; пара A/V не уезжает вдвое (`MoveClip` двигает link-группу целиком); переход на границе операции ВЫЖИЛ, а `reconcile_transitions` его не тронул; операция + `restore_handles` в одном батче дают ожидаемую длину; `MorpherEvent::ref_windows` после операции даёт те же окна, что до неё; сдвиг пачки меток не падает на `MarkerExists`; при `overlap_layers` смыкание не порождает нового кроссфейда; дорожка с `foreign` — внятный отказ, а не тихий разъезд; харнесс-тест на подсветку дыры и на текст ошибки о препятствии; `i18n`-тест на новые пункты меню (t100/t171) |
-| Зависит от | F-TL-001 — не блокирует, но механизм сдвига обязан быть общим; иначе получим два кода, по-разному обходящихся с переходами и метками |
-| Ломает совместимость | нет |
+| Size | **M** — 2 stages. (1) The operation in the model: the set "what is to the right on this track", computing the delta from geometry (not "until the stop": with `overlap_layers` there is no stop), the shift phase AFTER `restore_handles`, reference entities — marks, named areas, morphers. (2) UI: a gesture on empty space, menu items in three forms with honest area names, an obstacle error modelled on t172 |
+| Where the main work is | `kt-model` (`ops.rs` — the operation and the block's set; `project.rs` — track addressing of the area), `kt-app` (`timeline.rs` — the gesture and highlighting of the gap under the cursor, `app.rs` — actions and the menu). The shift mechanism is shared with F-TL-001 and is written once |
+| Project format | not touched: the operation stores nothing, and everything it moves is already in ticks |
+| Tests to be written | closing one gap moves exactly the right neighbour and everything after it on this track, neighbouring tracks stay; one undo step; an A/V pair does not drift apart by double (`MoveClip` moves the link group as a whole); a transition at the boundary of the operation SURVIVED, and `reconcile_transitions` did not touch it; the operation + `restore_handles` in one batch give the expected length; `MorpherEvent::ref_windows` after the operation gives the same windows as before it; a mass shift of marks does not fail on `MarkerExists`; with `overlap_layers` the closing does not generate a new crossfade; a track with `foreign` — an intelligible refusal, not a silent drift; a harness test for the gap highlight and for the obstacle error text; an `i18n` test for the new menu items (t100/t171) |
+| Depends on | F-TL-001 — does not block, but the shift mechanism must be shared; otherwise we get two pieces of code that handle transitions and marks differently |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём — приоритет B: это не «без чего продукт не редактор» (в отличие от самого
-ripple), а частая уборка, которую сегодня приходится делать перетаскиванием.
-Цена M и почти целиком общая с F-TL-001: `plan_move_block` и t204 уже дают
-сдвиг пачки одной дельтой одним undo-шагом, а `blocker` уже называет виновника
-для сообщения по правилу 16.
+We take it — priority B: this is not "without which the product is not an editor" (unlike ripple itself), but frequent tidying that today has to be done by dragging.
+The cost is M and almost entirely shared with F-TL-001: `plan_move_block` and t204 already give
+a shift of a batch by one delta in one undo step, and `blocker` already names the culprit
+for the message under rule 16.
 
-Форму берём **вегасовскую: по выделению**, а «вся дорожка» — вырожденный случай
-той же команды при пустом выделении. Причина не во вкусе: у нас `Region` — чистое
-время без дорожек, и любая форма «по курсору» пришлось бы изобретать дорожечную
-адресацию с нуля, тогда как выделение у нас уже мультиклиповое и уже несёт
-дорожку каждого участника (t202–t205).
+We take the **Vegas form: by selection**, and "the whole track" is a degenerate case of
+the same command with an empty selection. The reason is not taste: for us `Region` is pure
+time without tracks, and any "by cursor" form would have to invent track addressing from scratch, whereas the selection for us is already multi-clip and already carries
+the track of each participant (t202–t205).
 
-Третью операцию — **«закрыть все дыры во всём проекте» — не берём**: это
-ripple с областью «все дорожки», выбираемый одним пунктом меню без единого
-признака того, что сейчас поедет весь фильм. Он прямо противоречит правилу 20 и
-именно он даёт основную массу счётного материала заметки. Если такая операция
-когда-нибудь понадобится, её место — третье состояние ripple-кнопки из F-TL-001,
-рядом с индикатором, а не отдельный пункт «прибраться».
+The third operation — **"close all gaps across the whole project" — we do not take**: it is
+ripple with the scope "all tracks", chosen by one menu item without a single sign
+that the whole film is about to move. It directly contradicts rule 20, and
+it is precisely this that produces the bulk of the countable material of the note. If such an operation is ever needed, its place is the third state of the ripple button from F-TL-001,
+next to the indicator, not a separate "tidy up" item.
 
-Отдельное решение, которое придётся принять пользователю: **что считать
-намеренной дырой.** Ни один из пяти редакторов ядра различать их не умеет, а
-единственный известный способ — сделать пустоту объектом (gap clip у Final Cut,
-`Gap` в OTIO). У нас объекта нет, и заводить его ради одной операции дорого;
-дешёвая замена — держать намеренную паузу именованной областью, которую операция
-обязана уважать. Это ровно та же сущность, за которую цепляется морфер, и
-поэтому решение всё равно придётся принять — см. `АДРЕС:` выше.
+A separate decision the user will have to make: **what counts as an intentional gap.** None of the five core editors can tell them apart, and the only known way — to make the void an object (gap clip in Final Cut,
+`Gap` in OTIO). We have no object, and creating one for the sake of a single operation is expensive;
+the cheap substitute is to hold an intentional pause as a named area, which the operation
+must respect. This is exactly the same entity that the morpher hangs on, and
+therefore the decision will have to be made regardless — see `ADDRESS:` above.
 
-## Источники
+## Sources
 
-- https://bugs.kde.org/show_bug.cgi?id=414142 — исходный живой запрос («Feature: Please add a GUI option to remove all blank spaces in a track»), 14.11.2019, закрыт FIXED 17.03.2026 ответом «Feature exists…» (дата обращения 2026-09-08)
-- https://bugs.kde.org/show_bug.cgi?id=408142 — «Improve workflow when removing empty space in timeline»: playhead остаётся в точке ЭКРАНА; открыта с 2019 (2026-09-08)
-- https://invent.kde.org/multimedia/kdenlive/-/issues/557 — «'Remove Space' Label & Functionality Inconsistencies»: одно слово, три области (2026-09-08)
-- https://bugs.kde.org/show_bug.cgi?id=371279 — просьба убрать диалог `Track Select` у «Remove Space» (2026-09-08)
-- https://bugs.kde.org/show_bug.cgi?id=500773 — зеркальная операция: «"Insert Space" should have option to move guides too» (2026-09-08)
-- https://github.com/mltframework/shotcut/issues/641 — «Removing empty space does not move keyframes applied to track filters» (2026-09-08)
-- https://gitlab.gnome.org/GNOME/pitivi/-/issues/2548 — «Allow controlling gaps through fake clips»: дыра как объект (2026-09-08)
-- https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/closing%20gaps.htm — справка VEGAS: «Closing gaps» работает по выделению, пустое выделение = вся дорожка (2026-09-08)
-- https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/7-edit/post_edit_ripple.htm — VEGAS 2026: `Ctrl+Shift+F` как альтернативный путь закрытия дыры через ripple (2026-09-08)
-- https://community.adobe.com/t5/premiere-pro-discussions/mind-the-gap/m-p/11330161 — Premiere: adjustment-слой едет при закрытии дыр, объяснение «это ripple delete», препятствие на дорожке (2020, 2025) (2026-09-08)
-- https://www.provideocoalition.com/tool-tip-tuesday-for-adobe-premiere-pro-selectively-close-gaps-in-the-timeline/ — `Sequence > Close Gap` на всю секвенцию, сужение метками in/out (2026-09-08)
-- https://larryjordan.com/articles/fcpx-delete-primary-clips/ и https://larryjordan.com/articles/fcpx-position-tool/ — Final Cut: основная сюжетная линия дыр не допускает, дыра заводится явно (`Shift+Delete` → gap clip, либо Position tool) (2026-09-08)
-- https://support.apple.com/guide/final-cut-pro/verc5d34129/mac — Final Cut, `Edit > Replace with Gap`: выделение заменяется gap clip'ом, длительность проекта сохраняется (2026-09-08)
-- https://beginnersapproach.com/davinci-resolve-delete-gaps-clips/ — Resolve: `Delete Gaps` в контекстном меню, `Delete` рипплит, `Backspace` нет (2026-09-08)
+- https://bugs.kde.org/show_bug.cgi?id=414142 — the original live request ("Feature: Please add a GUI option to remove all blank spaces in a track"), 14.11.2019, closed as FIXED 17.03.2026 with the reply "Feature exists…" (access date 2026-09-08)
+- https://bugs.kde.org/show_bug.cgi?id=408142 — "Improve workflow when removing empty space in timeline": the playhead stays at the SCREEN point; open since 2019 (2026-09-08)
+- https://invent.kde.org/multimedia/kdenlive/-/issues/557 — "'Remove Space' Label & Functionality Inconsistencies": one word, three areas (2026-09-08)
+- https://bugs.kde.org/show_bug.cgi?id=371279 — a request to remove the `Track Select` dialog from "Remove Space" (2026-09-08)
+- https://bugs.kde.org/show_bug.cgi?id=500773 — the mirror operation: ""Insert Space" should have option to move guides too" (2026-09-08)
+- https://github.com/mltframework/shotcut/issues/641 — "Removing empty space does not move keyframes applied to track filters" (2026-09-08)
+- https://gitlab.gnome.org/GNOME/pitivi/-/issues/2548 — "Allow controlling gaps through fake clips": a gap as an object (2026-09-08)
+- https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/closing%20gaps.htm — VEGAS help: "Closing gaps" works by selection, an empty selection = the whole track (2026-09-08)
+- https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/7-edit/post_edit_ripple.htm — VEGAS 2026: `Ctrl+Shift+F` as an alternative way of closing a gap via ripple (2026-09-08)
+- https://community.adobe.com/t5/premiere-pro-discussions/mind-the-gap/m-p/11330161 — Premiere: the adjustment layer moves when gaps are closed, the explanation "this is ripple delete", an obstacle on the track (2020, 2025) (2026-09-08)
+- https://www.provideocoalition.com/tool-tip-tuesday-for-adobe-premiere-pro-selectively-close-gaps-in-the-timeline/ — `Sequence > Close Gap` across the whole sequence, narrowing with in/out marks (2026-09-08)
+- https://larryjordan.com/articles/fcpx-delete-primary-clips/ and https://larryjordan.com/articles/fcpx-position-tool/ — Final Cut: the primary storyline does not allow gaps, a gap is created explicitly (`Shift+Delete` → gap clip, or the Position tool) (2026-09-08)
+- https://support.apple.com/guide/final-cut-pro/verc5d34129/mac — Final Cut, `Edit > Replace with Gap`: the selection is replaced by a gap clip, the project duration is preserved (2026-09-08)
+- https://beginnersapproach.com/davinci-resolve-delete-gaps-clips/ — Resolve: `Delete Gaps` in the context menu, `Delete` ripples, `Backspace` does not (2026-09-08)
 
-**Честно о пробелах.** Строка Resolve опирается на два вторичных разбора:
-официальный мануал 21 при прямом обращении не отдался, и это помечено прямо в
-таблице. Строка After Effects — по устройству продукта (слои параллельны), а не
-по странице справки: `helpx.adobe.com` из этого окружения по-прежнему не
-открывается (тот же пробел зафиксирован в F-TL-001).
+**Honest about the gaps.** The Resolve row relies on two secondary write-ups:
+the official manual 21 did not come back on a direct request, and this is marked explicitly in the
+table. The After Effects row is based on how the product is built (layers are parallel), not on
+the help page: `helpx.adobe.com` still does not open from this environment (the same gap is recorded in F-TL-001).
 
-**Честно о выгрузке.** Числа сняты 08.09.2026, когда в кэше
-`~/.cache/kinotrain/trackers/` лежали восемь дампов из двенадцати реестра
+**Honest about the export.** The figures were taken on 08.09.2026, when the cache
+`~/.cache/kinotrain/trackers/` held eight dumps out of the twelve in the registry
 `_trackers.md`: `kde-bugzilla` (6346), `kde-invent` (2217), `pitivi` (2672),
-`shotcut` (1368), `olive` (1853), `otio` (680), `mlt` (601) — полные по реестру,
-плюс `losslesscut` и `flowblade`, качавшиеся в этот момент. Обе строки `СИГНАЛ:`
-считаны ТОЛЬКО по полным дампам (`kde-invent`, `kde-bugzilla`, `otio`, `pitivi`)
-и воспроизводятся `tracker-rank.py --query` с приведёнными фильтрами;
-`openshot`, `blender-vse` и `ffmpeg-trac` в счёт не входят вовсе.
+`shotcut` (1368), `olive` (1853), `otio` (680), `mlt` (601) — complete per the registry,
+plus `losslesscut` and `flowblade`, which were being downloaded at that moment. Both `SIGNAL:` lines
+were read ONLY from the complete dumps (`kde-invent`, `kde-bugzilla`, `otio`, `pitivi`)
+and are reproducible with `tracker-rank.py --query` with the filters given;
+`openshot`, `blender-vse` and `ffmpeg-trac` are not counted at all.

@@ -1,12 +1,12 @@
 ---
 id: F-HLP-024
-title: Шпаргалка клавиш внутри программы
-status: кандидат
+title: Keyboard cheat sheet inside the program
+status: candidate
 priority: B
 cost: S
 category: help/reference
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, vscode-1.136, jetbrains-2026.2]
-we_have: частично
+we_have: partial
 crates: [kt-app]
 invariants: [12]
 ui_rules: [9, 13, 14, 17, 18]
@@ -18,208 +18,85 @@ trackers: [losslesscut, openshot, flowblade]
 checked: 2026-09-07
 ---
 
-# F-HLP-024 — Шпаргалка клавиш внутри программы
+# F-HLP-024 — Keyboard cheat sheet inside the program
 
-## Суть
+## Essence
 
-Одно место, куда приходят НАМЕРЕННО, чтобы увидеть все клавиши разом: таблица
-«аккорд — что делает», разбитая на смысловые группы. Сюда идут не за командой
-(за командой идут в меню), а в тот момент, когда решили перестать возить мышью.
-Шпаргалка отвечает на вопрос, которого строка подсказки не слышит вообще: «а
-что тут вообще есть на клавишах» — потому что навести мышь на клавишу нельзя.
-У нас такая таблица написана, переведена и опубликована — на лендинге, и из
-программы до неё нет ни одной ссылки.
+One place people come to DELIBERATELY to see all the keys at once: a table "chord — what it does", divided into semantic groups. People come here not for a command (for a command they go to the menu), but at the moment they have decided to stop moving the mouse around. A cheat sheet answers a question that the hint line does not hear at all: "what is there on the keys in general", because one cannot hover the mouse over a key. We have such a table already written, translated and published — on the landing page, and there is not a single link to it from the program.
 
-## У кого и как
+## Who has it and how
 
-Вопрос строки один: есть ли В ПРОГРАММЕ место, где видны ВСЕ клавиши сразу и
-которое при этом НЕ является редактором раскладки (редактор — F-UI-002).
+The question of the row is one: is there a place IN THE PROGRAM where ALL keys are visible at once and which at the same time is NOT a layout editor (the editor is F-UI-002)?
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026 | отдельной нет | Список назначений живёт в `Options → Customize Keyboard` — то есть в редакторе раскладки: вкладки по областям, фильтр «Show commands containing», поле «Shortcut keys» (F-UI-002). Читаемого списка «всё сразу» нет; на прямой вопрос пользователя вендор отсылает в главу руководства [НЕ ПРОВЕРЕНО: главу в руководстве VEGAS 2026 открыть не удалось, зеркала справки лежат, см. «Источники»] |
-| Adobe Premiere | 26 | отдельной нет | `Edit → Keyboard Shortcuts` — нарисованная клавиатура: это форма «интерактивная клавиатура», но она же и редактор. Клавиши раскрашены по области видимости (фиолетовые — общие, зелёные — панельные), нажатие модификатора перерисовывает слой (F-UI-002, F-HLP-005) |
-| DaVinci Resolve | 21 | отдельной нет | `Keyboard Customization` (⌥⌘K) — та же виртуальная клавиатура плюс список; чтение и правка в одном окне, слой модификатора выбирается кликом по нарисованной клавише (F-UI-002) |
-| Final Cut Pro | 12.3 | нет в программе; печатная страница в руководстве | Единственный из пяти, у кого шпаргалка отделена от редактора и является ДОКУМЕНТОМ: страница «Keyboard shortcuts in Final Cut Pro for Mac» — 10 групп (Application, Editing, Effects, General, Marking, Organization, Playback and navigation, Share and tools, View, Windows) и около 380 строк в три колонки **Action / Command / Shortcut**. Полный набор — в Command Editor, страница честно говорит про подмножество |
-| After Effects | 26 | отдельной нет | `Edit → Keyboard Shortcuts` — визуальный редактор с 2017 г.; читаемый список — страница справки на сайте, а не окно программы [НЕ ПРОВЕРЕНО: `helpx.adobe.com` из этого окружения не открылся ни напрямую, ни через `r.jina.ai`, ошибка HTTP/2 та же, что у F-HLP-017] |
+| VEGAS Pro | 2026 | no separate one | The list of assignments lives in `Options → Customize Keyboard` — that is, in the layout editor: tabs by area, the filter "Show commands containing", the field "Shortcut keys" (F-UI-002). There is no readable list "everything at once"; to a direct question of a user the vendor refers to a chapter of the manual [NOT VERIFIED: the chapter in the VEGAS 2026 manual could not be opened, mirrors of the help exist, see "Sources"] |
+| Adobe Premiere | 26 | no separate one | `Edit → Keyboard Shortcuts` — a drawn keyboard: this is the form "interactive keyboard", but it is also the editor. Keys are colored by scope of visibility (purple — general, green — panel), pressing a modifier redraws the layer (F-UI-002, F-HLP-005) |
+| DaVinci Resolve | 21 | no separate one | `Keyboard Customization` (⌥⌘K) — the same virtual keyboard plus a list; reading and editing in one window, the modifier layer is chosen by clicking the drawn key (F-UI-002) |
+| Final Cut Pro | 12.3 | not in the program; a printed page in the guide | The only one of the five whose cheat sheet is separated from the editor and is a DOCUMENT: the page "Keyboard shortcuts in Final Cut Pro for Mac" — 10 groups (Application, Editing, Effects, General, Marking, Organization, Playback and navigation, Share and tools, View, Windows) and about 380 rows in three columns **Action / Command / Shortcut**. The full set is in the Command Editor; the page honestly says it is a subset |
+| After Effects | 26 | no separate one | `Edit → Keyboard Shortcuts` — a visual editor since 2017; a readable list is a help page on the site, not a window of the program [NOT VERIFIED: `helpx.adobe.com` from this environment did not open either directly or through `r.jina.ai`, the same HTTP/2 error as in F-HLP-017] |
 
-**Итог по ядру, и он неожиданный: ни у одного из пяти нет лёгкой шпаргалки
-внутри программы.** Список клавиш там либо СОВМЕЩЁН с редактором раскладки
-(четверо), либо вынесен НАРУЖУ в документ (Final Cut). Разделение двух
-поверхностей — читай-только шпаргалка отдельно, редактор отдельно — в
-видеомонтаже не встречается ни разу, и оценить его цену пятью строками ядра
-нельзя.
+**Summary for the core, and it is unexpected: none of the five has a light cheat sheet inside the program.** The list of keys is either MERGED with the layout editor (four of them) or moved OUTSIDE into a document (Final Cut). A split of the two surfaces — a read-only cheat sheet separately, an editor separately — does not occur in video editing even once, and its price cannot be estimated by five lines of the core.
 
-**Вне ядра.** Обе программы ниже делают это разделение НАМЕРЕННО и объясняют
-зачем; без них форму «печатная шпаргалка» описать нечем, а «фишка фишки» этой
-заметки взята прямо оттуда.
+**Outside the core.** Both programs below make this split DELIBERATELY and explain why; without them the form "printed cheat sheet" cannot be described, and the "trick behind the trick" of this note is taken directly from them.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Visual Studio Code | 1.136 | Keyboard Shortcut Reference + Keyboard Shortcuts editor | Две разные поверхности и два разных пункта. `Help → Keyboard Shortcut Reference`: «We have a printable version of the default keyboard shortcuts… a condensed PDF version suitable for printing as an easy reference» — три PDF по платформам. Правка — отдельно: `Ctrl+K Ctrl+S`, редактируемая таблица, открывается «in a modal overlay on top of the editor area» |
-| IntelliJ IDEA | 2026.2 | Help → Keyboard Shortcuts PDF | Печатная карточка раскладки, и вендор прямо ограничивает её область: «If you are using one of the predefined keymaps, you can print the default keymap reference card». Для СВОЕЙ раскладки штатной печати нет — справка отсылает к стороннему плагину Keymap exporter |
+| Visual Studio Code | 1.136 | Keyboard Shortcut Reference + Keyboard Shortcuts editor | Two different surfaces and two different items. `Help → Keyboard Shortcut Reference`: "We have a printable version of the default keyboard shortcuts… a condensed PDF version suitable for printing as an easy reference" — three PDFs by platform. Editing is separate: `Ctrl+K Ctrl+S`, an editable table, opened "in a modal overlay on top of the editor area" |
+| IntelliJ IDEA | 2026.2 | Help → Keyboard Shortcuts PDF | A printed reference card of the layout, and the vendor explicitly limits its scope: "If you are using one of the predefined keymaps, you can print the default keymap reference card". For your OWN layout there is no standard printing — the help refers to a third-party plugin, Keymap exporter |
 
-**Четыре формы шпаргалки и цена каждой.** Разница между ними не в оформлении, а
-в том, что каждая умеет и чем за это платит.
+**Four forms of a cheat sheet and the price of each.** The difference between them is not in design but in what each can do and what it pays for doing it.
 
-1. **Печатная страница или PDF.** Живёт ВНЕ программы: лежит рядом с
-   клавиатурой, читается, пока программа грузится, фотографируется и
-   передаётся. Единственная форма, переживающая закрытие программы, и
-   единственная, которую можно читать, не отнимая экран у монтажа. Цена: не
-   следует переназначению (JetBrains печатает только предустановленную
-   раскладку) и устаревает молча — печатный лист никто не пересобирает.
-   У нас эта форма уже есть и уже собирается конвейером (`site/build.py`).
-2. **Окно в программе со списком.** Приходят намеренно, поэтому поверхность
-   ничего не перекрывает и ничего не задерживает; пока окно закрыто, оно стоит
-   ноль пикселей и ноль кадров (правило 13). Цена: нужна точка входа (пункт
-   меню, клавиша, иконка) — иначе окно существует и недостижимо; и нужен
-   возврат фокуса при закрытии (правило 14). Это форма, которой в
-   видеомонтаже нет ни у кого.
-3. **Оверлей поверх интерфейса по удержанию клавиши.** Самая интересная и
-   самая спорная. Эталон — PowerToys Shortcut Guide: «When you open Shortcut
-   Guide, it automatically shows shortcuts for the app currently in the
-   foreground», удержание Windows по умолчанию 900 мс, длительность
-   настраивается от 100 до 5000 мс, есть настройка «Close Shortcut Guide when
-   the Windows key is released». Механизм решает длину списка КОНТЕКСТОМ:
-   показывает не все клавиши, а клавиши того, что сейчас перед тобой. Цена:
-   перекрытие (см. цитаты) и задержка удержания — то есть ровно пп.1-2
-   решений владельца (п.14 р.8); плюс таймер удержания, который надо опрашивать
-   (инвариант 12). Показательно, что вендор этой формы **сам от неё
-   откатился**: в Shortcut Guide V2 гид стал обычным окном («Shortcut Guide
-   opens as a regular window that you can read alongside the app you were
-   using»), удержание убрали, пользователи потребовали вернуть, и его вернули
-   настройкой. **У нас эта форма не предлагается** — она спорит с двумя
-   решениями владельца сразу, и рынок про неё уже дважды передумал.
-4. **Интерактивная клавиатура, где кликают клавишу.** Отвечает на обратный
-   вопрос «что делает вот эта» и показывает, какие клавиши СВОБОДНЫ. Есть у
-   Premiere, Resolve, Final Cut и After Effects — и везде это редактор
-   раскладки, потому что «свободна ли клавиша» интересно ровно тому, кто
-   назначает своё. Цена: рисунок клавиатуры зависит от физической раскладки
-   пользователя, и это отдельная подсистема. Форма принадлежит F-UI-002, не
-   этой заметке.
+1. **A printed page or PDF.** Lives OUTSIDE the program: it lies next to the keyboard, is read while the program loads, is photographed and passed on. The only form that survives closing the program, and the only one that can be read without taking the screen away from editing. Price: it does not follow reassignment (JetBrains prints only the predefined layout) and gets stale silently — nobody rebuilds a printed sheet. We already have this form and it is already built by the pipeline (`site/build.py`).
+2. **A window in the program with a list.** People come to it deliberately, therefore the surface overlaps nothing and blocks nothing; while the window is closed it costs zero pixels and zero frames (rule 13). Price: it needs an entry point (a menu item, a key, an icon) — otherwise the window exists and is unreachable; and it needs the return of focus on closing (rule 14). This is a form that no video editor has.
+3. **An overlay on top of the interface, shown while a key is held.** The most interesting and the most controversial. The reference is PowerToys Shortcut Guide: "When you open Shortcut Guide, it automatically shows shortcuts for the app currently in the foreground", holding Windows by default for 900 ms, the duration is configurable from 100 to 5000 ms, there is a setting "Close Shortcut Guide when the Windows key is released". The mechanism solves the length of the list by CONTEXT: it shows not all keys but the keys of what is in front of you right now. Price: the overlap (see the quotes) and the hold delay — that is, exactly points 1–2 of the owner's decisions (item 14 of round 8); plus a hold timer that has to be polled (invariant 12). Telling: the vendor of this form **itself rolled it back**: in Shortcut Guide V2 the guide became a regular window ("Shortcut Guide opens as a regular window that you can read alongside the app you were using"), the hold was removed, users demanded its return, and it was returned as a setting. **We do not propose this form** — it contradicts two decisions of the owner at once, and the market has changed its mind about it twice.
+4. **An interactive keyboard where one clicks a key.** It answers the reverse question "what does this particular key do" and shows which keys are FREE. It exists in Premiere, Resolve, Final Cut and After Effects — and everywhere it is part of the layout editor, because "is this key free" is interesting exactly to the one who assigns his own. Price: the drawing of the keyboard depends on the physical layout of the user, and this is a separate subsystem. The form belongs to F-UI-002, not to this note.
 
-## Фишка фишки
+## The trick behind it
 
-**Груз механизма — ВЕСЬ СПИСОК СРАЗУ, то есть возможность прочитать про то, о
-чём не спрашивал.** Строка статусбара адресуется указателем: она физически не
-может сказать ничего о предмете, на который курсор не наведён, а на клавишу
-навести нельзя вообще — у клавиши нет прямоугольника на экране. Шпаргалка не
-адресуется ничем: её читают сверху вниз и узнают о командах, о существовании
-которых не подозревали. У нас этот груз уже уехал, и уехал целиком: 30 строк в
-четырёх группах лежат на лендинге (`site/content/structure.toml:203-244`), а в
-программе от них нет ни следа и ни ссылки.
+**The payload of the mechanism is THE WHOLE LIST AT ONCE, that is, the possibility of reading about what one did not ask about.** A status-bar line is addressed by the pointer: it physically cannot say anything about an object over which the cursor is not hovering, and a key cannot be hovered over at all — a key has no rectangle on the screen. A cheat sheet is not addressed by anything: it is read from top to bottom and one learns about commands whose existence one did not suspect. For us this payload has already moved on, and moved entirely: 30 lines in four groups lie on the landing page (`site/content/structure.toml:203-244`), and in the program there is no trace of them and no link.
 
-Три детали, которых нет в списке возможностей ни у кого.
+Three details that are absent from the list of capabilities of everyone.
 
-1. **Шпаргалка — единственная поверхность, способная показать ВТОРУЮ привязку
-   команды.** Колонка меню этого не умеет структурно: один пункт — один аккорд
-   (F-HLP-017 называет это своим ограничением). Таблица умеет, и наша это уже
-   делает: `A`/`D` и `Home`/`End` стоят двумя строками с ОДИНАКОВЫМ описанием
-   («Previous / next stop point»), потому что это две привязки одного действия.
-   И ровно там же она проваливается: `Backspace` (вторая привязка удаления) и
-   `Ctrl+Y` (вторая привязка redo) в тридцати строках отсутствуют. Механизм
-   умеет то, чего не умеет меню, и именно на этом умении у нас сломан.
+1. **A cheat sheet is the only surface capable of showing a SECOND binding of a command.** The menu column cannot do this structurally: one item — one chord (F-HLP-017 calls this its own limitation). The table can, and ours already does: `A`/`D` and `Home`/`End` stand as two rows with the SAME description ("Previous / next stop point"), because these are two bindings of one action. And precisely there it fails: `Backspace` (the second binding of deletion) and `Ctrl+Y` (the second binding of redo) are absent from the thirty rows. The mechanism can do what the menu cannot, and exactly this ability is broken for us.
 
-2. **Неполнота шпаргалки — её свойство, а не дефект, и потому её нельзя
-   сгенерировать одним обходом реестра.** Apple на своей странице пишет:
-   «Shortcuts for common commands are listed in the table below» — и это ~380
-   строк при полном наборе, живущем в Command Editor. Читаемость даёт КУРАЦИЯ,
-   а курация — это чьё-то решение, какая команда «common». Значит машинная
-   сборка из реестра снимает вопрос «врёт или нет», но не снимает вопроса
-   «что показывать»: реестру нужен признак, а не только запись. Это та часть
-   цены, которой нет ни в одном списке возможностей.
+2. **Incompleteness of a cheat sheet is its property, not a defect, and therefore it cannot be generated with one pass over the registry.** Apple writes on its page: "Shortcuts for common commands are listed in the table below" — and that is ~380 rows with the full set living in the Command Editor. Readability is given by CURATION, and curation is someone's decision about which command is "common". So a machine assembly from the registry removes the question "is it lying or not", but does not remove the question "what to show": the registry needs a sign, not only a record. This is the part of the price that is absent from every list of capabilities.
 
-3. **Аккорд и подпись действия — это ДВА РАЗНЫХ ИСТОЧНИКА, и наш собственный
-   лендинг это уже понял, а программа — нет.** В `site/content/structure.toml`
-   над таблицами стоит решение прозой: «Аккорды — не проза: они одинаковы на
-   любом языке. В каталоге лежит только описание действия, ключ
-   `keys.<группа>.<id>`». Аккорд разложен на токены
-   (`{ id = "top", keys = ["Shift", "+", "Home"] }`) и рисуется отдельными
-   `<kbd>`, подпись берётся из каталога. Это ровно то обоснование, которое
-   записано в комментарии `Toolbar::menu_btn` («переводчик не должен иметь
-   возможности сломать акселератор»), — и ровно то, что нарушено в ~150
-   рукописных упоминаниях клавиш внутри переведённых фраз (F-HLP-017). Одна
-   команда, два файла в одном репозитории, две противоположные политики, и ни
-   одну из них никто не принимал вслух.
+3. **The chord and the caption of the action are TWO DIFFERENT SOURCES, and our own landing page has understood this already, while the program has not.** In `site/content/structure.toml` above the tables there is a decision written as prose: "Chords are not prose: they are the same in any language. The catalog holds only the description of the action, the key `keys.<group>.<id>`". The chord is split into tokens (`{ id = "top", keys = ["Shift", "+", "Home"] }`) and drawn as separate `<kbd>` elements, and the caption is taken from the catalog. This is exactly the justification recorded in the comment of `Toolbar::menu_btn` ("the translator must not be able to break the accelerator"), — and exactly what is violated in the ~150 hand-written mentions of keys inside translated phrases (F-HLP-017). One command, two files in one repository, two opposite policies, and neither of them was ever accepted aloud.
 
-## Плюсы
+## Pros
 
-- Приходят намеренно, поэтому поверхность не конкурирует ни за экран, ни за
-  внимание: пока окно закрыто, оно не стоит ни пикселя и ни кадра. В отличие от
-  постоянной панели, платящей местом каждую секунду, и в отличие от оверлея,
-  платящего перекрытием в момент показа.
-- Единственная поверхность с ОБРАТНЫМ индексом: колонка аккордов отвечает на
-  «что делает `Ctrl+L`». Строка подсказки на этот вопрос не отвечает никогда —
-  на клавишу нельзя навести мышь; меню отвечает только в другую сторону.
-- Соседство по СМЫСЛУ: группа ставит `I` и `O` рядом, а `Ctrl+Z` и
-  `Ctrl+Shift+Z` — парой. Череда одиночных подсказок так не читается в
-  принципе, а колонка меню даёт соседство лишь по вертикали пункта.
-- Показывает вторую привязку одной команды — то, чего колонка меню не выражает
-  структурно.
-- Охватывает и то, что есть в меню, и то, что живёт жестом. У нас это ровно та
-  дыра, которую F-HLP-017 называет своим потолком: 22 строки шпаргалки из 30
-  несут клавиши, 8 — жесты мыши, и ни одна из восьми пунктом меню не
-  выражается.
-- Собранная из реестра шпаргалка не может соврать, а написанная руками врёт
-  всегда, и доказательство лежит в нашем же репозитории (см. «Как ложится»):
-  30 строк, две пропущенные привязки и одна строка про поведение, которого в
-  программе нет.
-- Печатная форма работает при закрытой программе: лист рядом с клавиатурой
-  читается, пока проект открывается. Ни одна внутрипрограммная поверхность
-  этого не умеет по определению.
+- They come deliberately, so the surface competes neither for the screen nor for attention: while the window is closed, it does not cost a single pixel or a single frame. Unlike a permanent panel, which pays with space every second, and unlike an overlay, which pays with overlap at the moment of showing.
+- The only surface with a REVERSE index: the column of chords answers "what does `Ctrl+L` do". The hint line never answers this question — one cannot hover the mouse over a key; the menu answers only in the other direction.
+- Adjacency by MEANING: a group puts `I` and `O` next to each other, and `Ctrl+Z` and `Ctrl+Shift+Z` as a pair. A sequence of single hints cannot be read this way in principle, while the menu column gives adjacency only vertically within an item.
+- It shows a second binding of one command — what the menu column does not express structurally.
+- It covers both what is in the menu and what lives in a gesture. For us this is exactly the hole that F-HLP-017 calls its ceiling: 22 rows of the cheat sheet out of 30 carry keys, 8 — mouse gestures, and none of the eight is expressed by a menu item.
+- A cheat sheet assembled from the registry cannot lie, while one written by hand always does, and the proof lies in our own repository (see "How it fits"): 30 rows, two missing bindings and one row about behavior that does not exist in the program.
+- The printed form works with the program closed: a sheet next to the keyboard can be read while the project is opening. No surface inside the program can do this by definition.
 
-## Минусы
+## Cons
 
-- Длина. Полный список нечитаем: у Final Cut ~380 строк даже в
-  ОТОБРАННОМ виде. Курация — ручной труд, и она протухает первой.
-- Второй источник правды по построению — если шпаргалка не собрана из реестра.
-  Наша тому доказательство. Для нас это прямо означает: пока реестра команд нет
-  (F-UI-002), шпаргалка в программе станет ПЯТЫМ источником рядом с
-  обработчиком, литералом меню, переведённой фразой каталога и таблицей сайта.
-- Печатная форма не следует переназначению: у JetBrains печатается только
-  предустановленная раскладка, для своей вендор отсылает к стороннему плагину.
-  То есть форма 1 и F-UI-002 структурно враждебны.
-- «Приходят намеренно» читается и как «не приходят вовсе». Шпаргалка — pull, и
-  pull последней инстанции: чтобы её открыть, надо знать, что она есть. Своей
-  точки входа у неё нет, её приходится занимать в меню или на клавише, и это
-  ровно та же задача этажом выше.
-- Плоская таблица не выражает контекста. У нас `Esc` — каскад из пяти шагов
-  (`escape_action`, `src/apps/kt-app/src/app.rs:1712`), `Space` — четыре
-  поведения на одной клавише, а строка в таблице одна; она неизбежно описывает
-  что-то одно.
-- Пять языков в одной таблице требуют двух колонок из двух источников: аккорд
-  не переводится, подпись переводится. Это решаемо (лендинг решил), но означает,
-  что испанская политика «переводить ИМЕНА клавиш» (`Supr`, `Mayús`, `Inicio`,
-  `Fin` — F-HLP-017) с этой таблицей несовместима: одну из двух политик
-  придётся похоронить сознательно.
-- **Окно ПРО клавиши съедает клавиши — и это не гипотеза правила 14, а самый
-  частый способ сломать именно эту фичу.** Трекер показал цену формы 2 живьём:
-  «I want to learn keyboard shortcuts, but with the Keyboard Shortcuts dialog
-  open I can not apply any of these keyboard shortcuts, as the dialog seems to
-  intercept all of them» (flowblade #620, 14.02.2019,
-  https://github.com/jliljebl/flowblade/issues/620; закрыта фиксом). Тот же
-  дефект пришёл в LosslessCut с другой стороны — там из-за него просят вынести
-  справку ВНАРУЖУ, потому что внутреннюю «has to be dismissed in order to start
-  using a key command» (losslesscut #726). То есть у формы 2 есть цена, которой
-  нет ни у одной из остальных трёх: пока шпаргалка открыта, по ней нельзя
-  тренироваться.
+- Length. The full list is unreadable: Final Cut has ~380 rows even in the SELECTED form. Curation is manual labor, and it goes stale first.
+- A second source of truth by construction — if the cheat sheet is not assembled from the registry. Ours is the proof. For us this means directly: until the registry of commands exists (F-UI-002), a cheat sheet in the program becomes a FIFTH source alongside the handler, the menu literal, the translated phrase of the catalog and the site table.
+- The printed form does not follow reassignment: JetBrains prints only the predefined layout, and for one's own the vendor refers to a third-party plugin. That is, form 1 and F-UI-002 are structurally hostile to each other.
+- "They come deliberately" can be read also as "they do not come at all". A cheat sheet is pull, and pull of last resort: to open it one must know that it exists. It has no entry point of its own; it has to occupy one in the menu or on a key, and this is exactly the same task one level up.
+- A flat table does not express context. For us `Esc` is a cascade of five steps (`escape_action`, `src/apps/kt-app/src/app.rs:1712`), `Space` is four behaviors on one key, while a table row is one; it inevitably describes one thing.
+- Five languages in one table require two columns from two sources: the chord is not translated, the caption is. This is solvable (the landing page solved it), but it means that the Spanish policy "translate the NAMES of keys" (`Supr`, `Mayús`, `Inicio`, `Fin` — F-HLP-017) is incompatible with this table; one of the two policies will have to be buried deliberately.
+- **A window ABOUT keys swallows keys — and this is not a hypothesis of rule 14 but the most frequent way to break exactly this feature.** The tracker showed the price of form 2 live: "I want to learn keyboard shortcuts, but with the Keyboard Shortcuts dialog open I can not apply any of these keyboard shortcuts, as the dialog seems to intercept all of them" (flowblade #620, 14.02.2019, https://github.com/jliljebl/flowblade/issues/620; closed by a fix). The same defect came to LosslessCut from the other side — there, because of it, people ask to move the help OUTSIDE, because the internal one "has to be dismissed in order to start using a key command" (losslesscut #726). That is, form 2 has a price that none of the other three has: while the cheat sheet is open, one cannot train on it with the keys.
 
-## Что говорят пользователи
+## What users say
 
-Что происходит, когда шпаргалки нет: пользователь делает её сам и публикует.
+What happens when there is no cheat sheet: the user makes one himself and publishes it.
 
 > My question is whether it would be possible to make an authoritative list of
 > keyboard shortcuts/hotkeys? I have searched for a long time for a good
 > reference doc but haven't come upon anything.
-> — nateC, 20.01.2026, тред «Keyboard Shortcuts for SynthEyes?»,
+> — nateC, 20.01.2026, thread "Keyboard Shortcuts for SynthEyes?",
 > https://forum.borisfx.com/t/keyboard-shortcuts-for-syntheyes/20970
 
-В тот же день он отвечает сам себе, приложив PDF на 91 КБ: «This is my list of
-SynthEyes Keyboard Shortcuts and Hotkeys as of now.» Тред целиком — цена
-отсутствия шпаргалки, выраженная в часах чужого труда: клавиши, по его словам,
-«buried in the documentation or tutorial videos».
+The same day he answers himself, attaching a 91 KB PDF: "This is my list of SynthEyes Keyboard Shortcuts and Hotkeys as of now." The whole thread is the price of the absence of a cheat sheet, expressed in hours of someone else's labor: the keys, in his words, are "buried in the documentation or tutorial videos".
 
-Про форму 3 (оверлей по удержанию) — обе стороны спора живьём. За:
+About form 3 (the overlay on hold) — both sides of the dispute live. For:
 
 > In earlier versions of PowerToys, holding down the Windows key opened the
 > Shortcut Guide… This feature was extremely useful and has been completely
@@ -227,389 +104,164 @@ SynthEyes Keyboard Shortcuts and Hotkeys as of now.» Тред целиком �
 > — h3rbstk1nd, 22.06.2026,
 > https://github.com/microsoft/PowerToys/issues/48789
 
-Мейнтейнер там же (niels9001, 24.06.2026) подтверждает откат и возврат:
-«taskbar indicators are already shipping in the current version, and we are
-working on adding long-press support». Против — цена перекрытия, дословно:
+The maintainer there (niels9001, 24.06.2026) confirms the rollback and the return: "taskbar indicators are already shipping in the current version, and we are working on adding long-press support". Against — the price of the overlap, verbatim:
 
 > Opening the guide shows the guide as expected, but the rest of the screen is
 > covered in a grey overlay.
 > — jungletek, 17.08.2026,
 > https://github.com/microsoft/PowerToys/issues/49975
 
-В багтрекерах открытых редакторов та же просьба лежит своими словами. Первая —
-ровно форма 1 (печатная карточка) и ровно та цена, которой платит JetBrains:
-шпаргалка нужна ПОСЛЕ переназначения, а печатается только предустановленная
-раскладка.
+In the bug trackers of open editors the same request lies in their own words. The first is exactly form 1 (the printed card) and exactly the price that JetBrains pays: the cheat sheet is needed AFTER reassignment, while only the predefined layout is printed.
 
 > It helps to create a cheat sheet from the list and display it till muscle
 > memory develops. Let the user export the "command vs hotkey" text from the
 > **Preferences** dialog.
-> — openshot #5447, 20.02.2024 (открыта до сих пор),
+> — openshot #5447, 20.02.2024 (still open),
 > https://github.com/OpenShot/openshot-qt/issues/5447
 
-Вторая — прямое противопоставление форм 1 и 2, и обоснование ровно то, что в
-«Минусах» стоит у формы 2:
+The second is a direct opposition of forms 1 and 2, and the justification is exactly what stands in the "Cons" of form 2:
 
 > It would be helpful to have a keyboard shortcut reference sheet available
 > outside of the app (rather than only as a help menu within the app that has to
 > be dismissed in order to start using a key command).
-> — losslesscut #726, 18.04.2021 (открыта, 6 комментариев),
+> — losslesscut #726, 18.04.2021 (open, 6 comments),
 > https://github.com/mifi/lossless-cut/issues/726
 
-Третья — про точку входа, которая в этой заметке стоит дороже самого окна, и
-пользователь называет сразу оба парных способа (правило 17):
+The third — about the entry point, which in this note costs more than the window itself, and the user names both paired ways at once (rule 17):
 
 > It would be nice to be able to press <kbd>?</kbd> and have the list of
 > shortcuts appear. It could also be an option in the top menu.
 > — losslesscut #19, 04.01.2017, https://github.com/mifi/lossless-cut/issues/19
 
-СИГНАЛ: список клавиш как ДОКУМЕНТ — 2 задачи в losslesscut, `cheat ?sheet|(shortcut|hotkey|keybinding)s?[^.]{0,20}(\breference|cheat|chart|\bdocumentation|documented)|(print|export)\w*( the| your| current| all| custom){0,2}( keyboard| key)? (shortcut|hotkey|keybinding)|(list|overview) of[^.]{0,20}(shortcut|hotkey)|show shortcuts`; доля 0.1% против 0.0% (1 задача из 4516) в openshot
+SIGNAL: the list of keys as a DOCUMENT — 2 tasks in losslesscut, `cheat ?sheet|(shortcut|hotkey|keybinding)s?[^.]{0,20}(\breference|cheat|chart|\bdocumentation|documented)|(print|export)\w*( the| your| current| all| custom){0,2}( keyboard| key)? (shortcut|hotkey|keybinding)|(list|overview) of[^.]{0,20}(shortcut|hotkey)|show shortcuts`; share 0.1% against 0.0% (1 task out of 4516) in openshot
 
-СИГНАЛ: клавиши как тема вообще — 41 задача в losslesscut, `(shortcut|hotkey|keybinding|keymap)`; доля 2.1% против 0.4% в openshot
+SIGNAL: keys as a topic in general — 41 tasks in losslesscut, `(shortcut|hotkey|keybinding|keymap)`; share 2.1% against 0.4% in openshot
 
-Два счёта рядом и дают находку, которой нет в документации: тема клавиш горячая
-везде (1.0–2.1 % у семи трекеров из восьми), а «список клавиш как документ» —
-0.1 % в лучшем случае. Просят не шпаргалку, а РЕДАКТОР раскладки, и это тот же
-результат, что дал обход пяти редакторов ядра выше, только счётом. Причём обе
-задачи losslesscut пришли туда, где окно со списком УЖЕ есть (`HelpSheet`,
-пункт Help и клавиша `H`): шпаргалку там просят не вместо окна, а сверх него —
-потому что окно приходится закрыть, чтобы нажать клавишу.
+Two counts side by side give a find that is not in the documentation: the topic of keys is hot everywhere (1.0–2.1% in seven trackers out of eight), while "the list of keys as a document" is 0.1% at best. People ask not for a cheat sheet but for a layout EDITOR, and this is the same result as the survey of five core editors above, only expressed in counts. Moreover, both tasks of losslesscut came where a window with the list ALREADY exists (`HelpSheet`, the Help item and the key `H`): the cheat sheet is requested there not instead of the window but in addition to it — because the window has to be closed in order to press a key.
 
-Про пять редакторов ядра цитаты по-прежнему нет и быть не может: публичного
-трекера нет ни у одного (`_trackers.md`, «Кого НЕ берём»), а форум вендора
-трекером не является. Через Discourse-API форума Boris FX отработаны запросы
-«cheat sheet shortcuts», «printable keyboard shortcuts», «shortcut list pdf»,
-«keyboard shortcuts chart», «list of hotkeys», «shortcuts reference document»,
-«print shortcuts», «quick reference guide keyboard», «where is the list of
-shortcuts», «learn shortcuts faster», «memorize shortcuts» — единственный тред
-по существу приведён выше, и он про SynthEyes, а не про VEGAS.
+About the five core editors no quote exists and cannot exist: there is no public tracker for any of them (`_trackers.md`, "Whom we do NOT take"), and a vendor forum is not a tracker. Through the Discourse API of the Boris FX forum the queries "cheat sheet shortcuts", "printable keyboard shortcuts", "shortcut list pdf", "keyboard shortcuts chart", "list of hotkeys", "shortcuts reference document", "print shortcuts", "quick reference guide keyboard", "where is the list of shortcuts", "learn shortcuts faster", "memorize shortcuts" were worked through — the only thread on the substance is quoted above, and it is about SynthEyes, not about VEGAS.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-**Что шпаргалка добавляет СВЕРХ реестра команд (F-UI-002).** Реестр — источник:
-он знает, у какой команды какой аккорд, и отвечает тому, кто пришёл спросить.
-Шпаргалка — единственная поверхность, которую читают БЕЗ вопроса, сверху вниз, и
-единственная, которая отвечает в обратную сторону («что делает `Ctrl+Y`»), не
-будучи при этом редактором назначений. Плюс печатная форма работает там, где
-реестра нет вовсе — при закрытой программе. Ответ «ничего» тут невозможен:
-реестр без шпаргалки не показывает НИЧЕГО никому, кто не открыл окно
-назначений.
+**What the cheat sheet adds ON TOP of the command registry (F-UI-002).** The registry is the source: it knows which command has which chord, and answers the one who came to ask. The cheat sheet is the only surface that is read WITHOUT a question, from top to bottom, and the only one that answers in the reverse direction ("what does `Ctrl+Y` do") without being at the same time an editor of assignments. Plus, the printed form works where there is no registry at all — with the program closed. The answer "nothing" is impossible here: a registry without a cheat sheet shows NOTHING to anyone who did not open the assignments window.
 
-**Что шпаргалка добавляет СВЕРХ акселераторов в меню (F-HLP-017).** Колонка
-меню учит семи командам, у которых есть пункт, по одному аккорду на пункт, и
-только тому, кто в меню пошёл. Шпаргалка берёт все 27 аккордных форм, включая
-20, у которых пункта меню нет и быть не может (транспорт, навигация, края
-региона, жесты колеса), и показывает вторую привязку одной команды, которую
-колонка не выражает структурно. Границу F-HLP-017 сформулировал сам: «Охват
-равен меню… остальные 23 — транспорт, навигация и жесты — не выражаются ничем».
-Это и есть предмет здесь. Разошедшиеся четыре источника аккорда (обработчик,
-литерал меню, фраза каталога, таблица сайта) и испанские `Supr`/`Mayús` —
-находка F-HLP-017, она цитируется, а не переоткрывается.
+**What the cheat sheet adds ON TOP of the accelerators in the menu (F-HLP-017).** The menu column teaches seven commands that have an item, one chord per item, and only to the one who went into the menu. The cheat sheet takes all 27 chord forms, including 20 that have no menu item and cannot have one (transport, navigation, the edges of a region, wheel gestures), and shows a second binding of one command, which the column does not express structurally. The boundary of F-HLP-017 was formulated by itself: "Coverage equals the menu… the other 23 — transport, navigation and gestures — are not expressed by anything". This is the subject here. The four diverged sources of a chord (handler, menu literal, catalog phrase, site table) and the Spanish `Supr`/`Mayús` are a find of F-HLP-017; it is cited, not reopened.
 
-АДРЕС: src/apps/kt-app/src/app.rs (`handle_keys`, гейт
-`ctx.egui_wants_keyboard_input()`) — класс flowblade #620 («окно про клавиши
-перехватило клавиши») у нас возможен, и его не ловит ничто: гейт глушит все 27
-аккордных форм разом, пока фокус держит любой виджет, а единственный сторож
-отданного фокуса — t98 в `src/apps/kt-app/src/layout_tests.rs` — проверяет
-ровно одну поверхность, маску таймкода, и про окна («Уведомления»,
-«Диагностика») не знает ничего. Половина класса losslesscut #726 у нас, наоборот,
-невозможна: печатная форма уже живёт вне программы (`site/build.py`), закрывать
-её, чтобы нажать клавишу, не требуется.
+ADDRESS: src/apps/kt-app/src/app.rs (`handle_keys`, the gate `ctx.egui_wants_keyboard_input()`) — the class of flowblade #620 ("the window about keys intercepted the keys") is possible for us, and nothing catches it: the gate mutes all 27 chord forms at once while any widget holds focus, and the only guard of a surrendered focus — t98 in `src/apps/kt-app/src/layout_tests.rs` — checks exactly one surface, the timecode mask, and knows nothing about windows ("Notifications", "Diagnostics"). Half of the class of losslesscut #726 is, on the contrary, impossible for us: the printed form already lives outside the program (`site/build.py`), and closing it in order to press a key is not required.
 
-### Что уже есть
+### What is already there
 
-**Шпаргалка написана, разложена на данные, отрисована и опубликована — вне
-программы.** `site/content/structure.toml:203-244`: четыре секции
-`[keys.transport]`, `[keys.editing]`, `[keys.region]`, `[keys.view]`, 30 строк
-вида `{ id = "top", keys = ["Shift", "+", "Home"] }`. Подписи действий — в
-`site/content/*.toml`, секция `[keys]`, 36 значений на каталог (заголовок,
-подзаголовок, 4 группы, 30 действий). Рисует `c_keys` (`site/build.py:382`),
-аккорды идут отдельными `<kbd>`, подпись — отдельным `<span>`. Раздел объявлен
-секцией лендинга (`structure.toml:147-152`, `component = "keys"`,
-`timecode = "00:01:58"`).
+**The cheat sheet is written, split into data, rendered and published — outside the program.** `site/content/structure.toml:203-244`: four sections `[keys.transport]`, `[keys.editing]`, `[keys.region]`, `[keys.view]`, 30 rows of the form `{ id = "top", keys = ["Shift", "+", "Home"] }`. The captions of actions are in `site/content/*.toml`, the section `[keys]`, 36 values per catalog (heading, subheading, 4 groups, 30 actions). It is rendered by `c_keys` (`site/build.py:382`), chords go as separate `<kbd>`, the caption as a separate `<span>`. The section is declared as a section of the landing page (`structure.toml:147-152`, `component = "keys"`, `timecode = "00:01:58"`).
 
-**Подзаголовок раздела формулирует нашу философию подсказок одной строкой** — и
-формулирует её на странице, до которой из программы нельзя добраться:
+**The subheading of the section formulates our philosophy of hints in one line — and formulates it on a page that cannot be reached from the program:**
 
-> «Всплывающих подсказок в Kinotrain нет нигде. Есть одна строка подсказки,
-> всегда на одном и том же месте внизу окна, и она говорит, что делает то, что
-> под курсором.» (`site/content/ru.toml:185`)
+> "There are no pop-up hints in Kinotrain anywhere. There is one hint line, always in the same place at the bottom of the window, and it says what the thing under the cursor does." (`site/content/ru.toml:185`)
 
-**Аккорд как данные там уже отделён от прозы, и решение записано:**
-`structure.toml:200-202` — «Аккорды — не проза: они одинаковы на любом языке. В
-каталоге лежит только описание действия, ключ `keys.<группа>.<id>`». Это ровно
-та модель, которой не хватает программе, и она уже существует в репозитории.
+**The chord as data is already separated from prose there, and the decision is recorded:** `structure.toml:200-202` — "Chords are not prose: they are the same in any language. The catalog holds only the description of the action, the key `keys.<group>.<id>`". This is exactly the model that the program lacks, and it already exists in the repository.
 
-**Ссылки на сайт из программы нет ни одной.** Проверено грепом: во всём
-`src/apps/kt-app/src/` и во всех пяти каталогах `src/apps/kt-app/i18n/*.toml`
-ноль вхождений `http://`/`https://`; ни `open_url`, ни `Hyperlink` не
-используются. `DEFAULT_BASE = "https://kinotrain.app"` (`site/build.py:54`)
-известен только сборщику сайта.
+**There are no links to the site from the program.** Checked by grep: across the whole `src/apps/kt-app/src/` and across all five catalogs `src/apps/kt-app/i18n/*.toml` there are zero occurrences of `http://`/`https://`; neither `open_url` nor `Hyperlink` is used. `DEFAULT_BASE = "https://kinotrain.app"` (`site/build.py:54`) is known only to the site builder.
 
-**Места под точку входа свободны.** Клавиша `F1` не занята — во всём
-`src/apps/kt-app/src/` ноль упоминаний `egui::Key::F` любого номера. Корневых
-меню три (`Toolbar::menu_items`, `src/apps/kt-app/src/toolbar.rs:244`) — Файл,
-Правка, Вид; меню Help нет. Иконки под справку тоже нет: `icons.rs` — 39
-констант, среди них нет ни «?», ни книги, ни клавиатуры (новый кодпоинт
-означает пересборку сабсетов, `src/scripts/subset-fonts.py`, и сторожа t100).
+**Places for an entry point are free.** The key `F1` is not taken — across the whole `src/apps/kt-app/src/` there are zero mentions of `egui::Key::F` with any number. There are three root menus (`Toolbar::menu_items`, `src/apps/kt-app/src/toolbar.rs:244`) — File, Edit, View; there is no Help menu. There is no icon for help either: `icons.rs` has 39 constants, among them there is no "?", no book, no keyboard (a new codepoint means rebuilding the subsets, `src/scripts/subset-fonts.py`, and guard t100).
 
-**Окно с точно нужным поведением уже написано дважды.** «Уведомления»
-(`src/apps/kt-app/src/app.rs:1103`) и «Диагностика» (`:5069`) — `egui::Window`
-за `bool`-флагом, открываются пунктом меню «Вид», закрываются крестиком и
-шагом каскада `escape_action` (`:1734`, `:1738`). Шпаргалка — тот же виджет с
-тем же жизненным циклом; изобретать нечего.
+**A window with exactly the needed behavior has already been written twice.** "Notifications" (`src/apps/kt-app/src/app.rs:1103`) and "Diagnostics" (`:5069`) — `egui::Window` behind a `bool` flag, opened by a menu item in "View", closed by the cross and by a step of the cascade `escape_action` (`:1734`, `:1738`). The cheat sheet is the same widget with the same life cycle; there is nothing to invent.
 
-### Чего не хватает
+### What is missing
 
-**Сверка шпаргалки с обработчиком, и она падает.** `KtApp::handle_keys`
-(`src/apps/kt-app/src/app.rs:3879`) слушает 27 аккордных форм: `S`, `Delete`,
-`Backspace`, `Ctrl+Z`, `Ctrl+Shift+Z`, `Ctrl+Y`, `Ctrl+S`, `M`, `I`, `O`, `L`,
-`Esc`, `Ctrl+C`, `Ctrl+V`, `Home`, `End`, `A`, `D`, `Shift+Home`, `Shift+End`,
-`Shift+A`, `Shift+D`, `Ctrl+L`, `Ctrl+F` и три поведения `Space` (короткое
-нажатие, повторное в пределах `DOUBLE_PAUSE_MS`, удержание дольше
-`SPACE_HOLD_MS`). Шпаргалка называет 25 из 27 в 22 строках; оставшиеся 8 строк
-— жесты мыши (`Ctrl` без магнита, четыре жеста колеса, три двойных клика).
+**Checking the cheat sheet against the handler, and it fails.** `KtApp::handle_keys` (`src/apps/kt-app/src/app.rs:3879`) listens to 27 chord forms: `S`, `Delete`, `Backspace`, `Ctrl+Z`, `Ctrl+Shift+Z`, `Ctrl+Y`, `Ctrl+S`, `M`, `I`, `O`, `L`, `Esc`, `Ctrl+C`, `Ctrl+V`, `Home`, `End`, `A`, `D`, `Shift+Home`, `Shift+End`, `Shift+A`, `Shift+D`, `Ctrl+L`, `Ctrl+F` and three behaviors of `Space` (a short press, a repeated press within `DOUBLE_PAUSE_MS`, a hold longer than `SPACE_HOLD_MS`). The cheat sheet names 25 of the 27 in 22 rows; the remaining 8 rows are mouse gestures (`Ctrl` without magnet, four wheel gestures, three double clicks).
 
-Не названы нигде в шпаргалке:
+Not named anywhere in the cheat sheet:
 
-- **`Backspace`** (`app.rs:3929`) — вторая привязка удаления;
-- **`Ctrl+Y`** (`app.rs:3933`) — вторая привязка redo.
+- **`Backspace`** (`app.rs:3929`) — the second binding of deletion;
+- **`Ctrl+Y`** (`app.rs:3933`) — the second binding of redo.
 
-Это те же две клавиши, которые F-HLP-017 нашла отсутствующими во всех 522
-значениях каждого из пяти каталогов программы. То есть они не существуют
-НИГДЕ — ни в программе, ни на сайте; обработчик слушает клавиши, которых у
-продукта нет.
+These are the same two keys that F-HLP-017 found absent in all 522 values of each of the five catalogs of the program. That is, they do not exist ANYWHERE — neither in the program nor on the site; the handler listens to keys that the product does not have.
 
-**Обратное направление: шпаргалка обещает то, чего в программе нет.** Строка
-`view_reset` («Speed bar, volume rail, fader: reset») называет три поверхности,
-и третья неверна. Двойной клик по спид-бару сбрасывает скорость
-(`src/apps/kt-app/src/app.rs:3546`), двойной клик по фейдеру — уровень
-(`src/apps/kt-app/src/meters.rs:780`), а двойной клик по клипу — включая зону
-линии уровня, `ClipZone::Level` — открывает окно FX
-(`src/apps/kt-app/src/timeline.rs:2471`). Сброс усиления живёт пунктом
-контекстного меню `tl.menu.reset_gain` (`timeline.rs:4401`). Ошибка написана
-руками, опубликована и лежит в пяти файлах каталога.
+**The reverse direction: the cheat sheet promises what is not in the program.** The row `view_reset` ("Speed bar, volume rail, fader: reset") names three surfaces, and the third is wrong. A double click on the speed bar resets the speed (`src/apps/kt-app/src/app.rs:3546`), a double click on the fader resets the level (`src/apps/kt-app/src/meters.rs:780`), and a double click on a clip — including the zone of the level line, `ClipZone::Level` — opens the FX window (`src/apps/kt-app/src/timeline.rs:2471`). The reset of gain lives as the context-menu item `tl.menu.reset_gain` (`timeline.rs:4401`). The error is written by hand, published, and lies in five files of the catalog.
 
-**Самый частый двойной клик программы в шпаргалке отсутствует.** Из как
-минимум тринадцати мест, где код различает двойной клик, названы три (превью,
-таймкод, сброс). Не названы: клип → окно FX (`timeline.rs:2471`, комментарий в
-коде: «ровно то, что обещает подсказка клипа с Р.18»), `Shift`+двойной клик →
-регион по событию (там же), заголовок дорожки → переименование (`:1681`),
-морфер → его окно (`:2406`), камера → её окно (`:2379`), переход → его
-свойства (`:2420`), метка-диапазон → выделение региона (`:2343`), ключ кривой
-→ удаление (`src/apps/kt-app/src/automation.rs:547`), фон заголовка окна →
-максимизация (`src/apps/kt-app/src/toolbar.rs:230`, `:388`). И отдельно:
-ОДИНОЧНЫЙ клик по превью — это play/pause (`app.rs:3344`,
-`preview_click_step`), а шпаргалка про превью говорит только про двойной.
+**The most frequent double click of the program is absent from the cheat sheet.** Of at least thirteen places where the code distinguishes a double click, three are named (preview, timecode, reset). Not named: clip → FX window (`timeline.rs:2471`, the comment in the code: "exactly what the hint of the clip promises from R.18"), `Shift` + double click → region by event (there as well), track header → rename (`:1681`), morpher → its window (`:2406`), camera → its window (`:2379`), transition → its properties (`:2420`), range marker → selection of the region (`:2343`), a curve key → deletion (`src/apps/kt-app/src/automation.rs:547`), the window title background → maximization (`src/apps/kt-app/src/toolbar.rs:230`, `:388`). And separately: a SINGLE click on the preview is play/pause (`app.rs:3344`, `preview_click_step`), while the cheat sheet speaks about the preview only with respect to the double click.
 
-**Строка про `Esc` описывает один шаг из пяти.** `region_clear` — «Clear the
-region (the loop stays armed)»: это шаг 3 каскада `escape_action`
-(`app.rs:1712`), и в этой части она точна (`clear_region_keep_loop`). Про
-закрытие поиска, окна префикса вставки, верхнего окна и отмену драга — молчит.
-Тот же провал, что F-HLP-017 нашла у `tb.timecode_edit` («Esc — отмена» в
-частном смысле), только в другую сторону.
+**The row about `Esc` describes one step out of five.** `region_clear` — "Clear the region (the loop stays armed)": this is step 3 of the cascade `escape_action` (`app.rs:1712`), and in this part it is accurate (`clear_region_keep_loop`). About closing the search, the window of the insert prefix, the top window and cancelling a drag it is silent. The same failure that F-HLP-017 found in `tb.timecode_edit` ("Esc — cancel" in a private sense), only in the other direction.
 
-**Перевода нет, вопреки общему допущению волны.** Секция `[keys]` есть во всех
-пяти каталогах сайта, но переведена на ОДИН язык: `es.toml`, `zh-Hans.toml` и
-`ar.toml` содержат английский текст побайтово (покрытие 0.0 %, авто-`noindex` по
-`translated_min = 0.9`). Это установлено F-HLP-019 и F-HLP-033 для `[fxdesc]` и
-подтверждается тем же счётом для `[keys]`: ru — 98.1 %, три остальных — 0 %.
-Практический вывод для этой заметки: перенос шпаргалки в программу — это 30
-непереведённых значений × 3 языка, а не «перевод уже оплачен».
+**There is no translation, contrary to the general assumption of the wave.** The section `[keys]` exists in all five catalogs of the site, but it is translated into ONE language: `es.toml`, `zh-Hans.toml` and `ar.toml` contain the English text byte for byte (coverage 0.0%, automatic `noindex` by `translated_min = 0.9`). This was established by F-HLP-019 and F-HLP-033 for `[fxdesc]`, and the same count confirms it for `[keys]`: ru — 98.1%, the other three — 0%. The practical conclusion for this note: moving the cheat sheet into the program means 30 untranslated values × 3 languages, not "the translation is already paid for".
 
-### Что мешает
+### What gets in the way
 
-**Пятый источник правды.** Сегодня аккорд `Del` записан четырежды (обработчик,
-литерал `menu_btn`, фраза каталога, таблица сайта) и записи уже разошлись
-(F-HLP-017). Шпаргалка в программе, набранная руками, станет пятой записью — и
-она хуже остальных четырёх, потому что претендует на полноту: у неполной
-колонки меню пустая ячейка честна, у неполной шпаргалки отсутствие строки
-читается как «такой клавиши нет». Отсюда жёсткий порядок: сначала аккорд как
-данные (F-UI-002 и F-HLP-017), потом окно. Иначе фича своими руками создаёт
-дефект, который потом сама же и будет ловить.
+**A fifth source of truth.** Today the chord `Del` is recorded four times (handler, the `menu_btn` literal, the catalog phrase, the site table), and the records have already diverged (F-HLP-017). A cheat sheet in the program, typed by hand, becomes a fifth record — and it is worse than the other four, because it claims completeness: an incomplete column in the menu has an honestly empty cell, while in an incomplete cheat sheet the absence of a row reads as "there is no such key". Hence the strict order: first the chord as data (F-UI-002 and F-HLP-017), then the window. Otherwise the feature, done by hand, creates a defect that it itself will later have to catch.
 
-**Каталог программы под таблицу не приспособлен.** 30 подписей действий — это
-30 новых ключей × 5 языков со всей ценой F-HLP-033 (предел 160 символов в
-`src/apps/kt-app/build.rs:42`, глифы t100, сабсеты, t125 «ни одной надписи мимо
-каталога», t131). Подписи короткие (самая длинная английская — «Suspend
-snapping while dragging», 32 символа), так что предел не жмёт, но три языка
-придётся переводить, а не переносить.
+**The catalog of the program is not adapted for the table.** 30 captions of actions are 30 new keys × 5 languages with the full price of F-HLP-033 (the limit of 160 characters in `src/apps/kt-app/build.rs:42`, the glyphs of t100, the subsets, t125 "not a single inscription outside the catalog", t131). The captions are short (the longest English one is "Suspend snapping while dragging", 32 characters), so the limit does not pinch, but three languages will have to be translated, not carried over.
 
-**Арабский решается формой, а не костылём.** Латинский аккорд внутри арабской
-фразы — запрещённая ситуация, о которой прямо говорит комментарий `menu_btn`, и
-которую `ar.toml` уже нарушает 30 раз (F-HLP-017). Две колонки её снимают: в
-своей ячейке аккорд — отдельный атом начертания, а `i18n::bidi`
-(`src/apps/kt-app/src/i18n/bidi.rs`) переупорядочивает атомы, не символы;
-сторож — t126, где `"Ctrl+S"` уже проверяется как атом. То есть таблица — не
-удобная форма, а ЕДИНСТВЕННАЯ корректная для RTL.
+**Arabic is solved by the form, not by a crutch.** A Latin chord inside an Arabic phrase is a forbidden situation, which the comment of `menu_btn` speaks about directly, and which `ar.toml` already violates 30 times (F-HLP-017). Two columns remove it: in its own cell the chord is a separate glyph atom, and `i18n::bidi` (`src/apps/kt-app/src/i18n/bidi.rs`) reorders atoms, not characters; the guard is t126, where `"Ctrl+S"` is already checked as an atom. That is, the table is not a convenient form but the ONLY correct one for RTL.
 
-**Точка входа стоит дороже самого окна.** Пункт меню требует четвёртого
-корневого меню либо места в «Вид» (правило 13 против новой полосы, правило 18 —
-пункт обязан сказать ЧТО и ГДЕ). `F1` свободен, но одинокая клавиша без пункта
-меню нарушает правило 17 (парные способы). Иконка требует нового кодпоинта и
-пересборки сабсетов. Ни один из трёх вариантов не бесплатен, и выбор — вопрос
-раунда.
+**The entry point costs more than the window itself.** A menu item requires a fourth root menu or a place in "View" (rule 13 against a new strip, rule 18 — the item must say WHAT and WHERE). `F1` is free, but a lone key without a menu item violates rule 17 (paired ways). An icon requires a new codepoint and rebuilding the subsets. None of the three variants is free, and the choice is the question of the round.
 
-**Каскад `Esc` — фиксированный порядок в коде.** Новое окно обязано встать в
-`escape_action` явной веткой (`app.rs:1712-1741`) и отдать фокус при закрытии,
-иначе повторится дефект п.8 р.12, из которого выросло правило 14: виджет
-удержал фокус egui, `handle_keys` гейтится `egui_wants_keyboard_input()`, и все
-горячие клавиши умерли до клика мимо. Для окна, которое ПРО горячие клавиши,
-это был бы особенно нарядный дефект.
+**The `Esc` cascade is a fixed order in the code.** A new window must enter `escape_action` by an explicit branch (`app.rs:1712-1741`) and return the focus on closing, otherwise the defect of item 8 of round 12 repeats, from which rule 14 grew: a widget held the egui focus, `handle_keys` is gated by `egui_wants_keyboard_input()`, and all hotkeys died until a click elsewhere. For a window that is ABOUT hotkeys this would be a particularly elegant defect.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-**Инвариант 12 — не задевается выбранной формой и задевается отвергнутой.**
-Окно со статическим списком не заводит ни таймера, ни анимации, ни затухающего
-состояния: оно перерисовывается ровно тогда, когда перерисовывается кадр, и
-частоту не меняет (дежурный тик простоя 250 мс, `repaint_delay(false)`, сторож
-t20). Отвергнутая форма 3 (оверлей по удержанию) требует ИЗМЕРЯТЬ длительность
-удержания, то есть опрашивать время в кадрах без ввода, — это прямой спор с
-инвариантом 12 и с t20, и это одна из трёх причин, по которым она здесь не
-предлагается.
+**Invariant 12 — not touched by the chosen form and touched by the rejected one.** A window with a static list does not set up any timer, animation or decaying state: it is redrawn exactly when the frame is redrawn, and does not change the frequency (the idle tick of 250 ms, `repaint_delay(false)`, guard t20). The rejected form 3 (the overlay on hold) requires MEASURING the duration of the hold, that is, polling time in frames without input — this is a direct dispute with invariant 12 and with t20, and it is one of the three reasons why it is not proposed here.
 
-Правила чек-листа `src/apps/kt-app/CLAUDE.md`:
+Rules of the checklist `src/apps/kt-app/CLAUDE.md`:
 
-- **13 «не тратить место впустую»** — главный довод «за» именно окна: закрытая
-  шпаргалка не стоит ничего, тогда как постоянная панель платит каждую секунду,
-  а оверлей — перекрытием в момент показа.
-- **14 «работает повторно, фокус возвращается»** — окно обязано встать в
-  каскад `Esc` и отдать фокус; см. «Что мешает».
-- **17 «парные способы одинаковы»** — центральное: шпаргалка обязана называть
-  ту же клавишу, что обработчик, и теми же словами, что колонка меню
-  (F-HLP-017). Сегодня нарушено в обе стороны.
-- **18 «пункт меню говорит ЧТО и ГДЕ»** — точка входа обязана называть себя без
-  загадок; «Справка» без уточнения правилу не отвечает.
-- **9 «ничего лишнего»** — запрещает дублировать в шпаргалке то, что и так
-  стоит колонкой меню, ЕСЛИ обе поверхности берут аккорд из разных мест;
-  когда источник один, дублирование перестаёт быть дублированием.
+- **13 "do not waste space"** — the main argument "for" precisely the window: a closed cheat sheet costs nothing, while a permanent panel pays every second, and an overlay pays with overlap at the moment of showing.
+- **14 "works repeatedly, focus returns"** — the window must enter the `Esc` cascade and give the focus back; see "What gets in the way".
+- **17 "paired ways are identical"** — central: the cheat sheet must name the same key as the handler, and with the same words as the menu column (F-HLP-017). Today it is violated in both directions.
+- **18 "the menu item says WHAT and WHERE"** — the entry point must name itself without riddles; "Help" without a qualifier does not answer the rule.
+- **9 "nothing superfluous"** — forbids duplicating in the cheat sheet what already stands in the menu column, IF both surfaces take the chord from different places; when the source is one, duplication stops being duplication.
 
-Формат проекта, движок и инварианты 1-11 не трогаются: фича целиком в
-`src/apps/kt-app` и `site/`.
+The format of the project, the engine and invariants 1–11 are not touched: the feature lies entirely in `src/apps/kt-app` and `site/`.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия раунда, ЕСЛИ аккорд к тому моменту стал данными. Само окно — список из готовой таблицы; ни новой подсистемы, ни нового виджета (образец — окно «Уведомления», `app.rs:1103`) |
-| Где основная работа | `kt-app`: окно и его точка входа, ветка в `escape_action`, 30 подписей в `i18n/*.toml` (3 языка из 5 придётся переводить); `site/`: таблица переезжает из `site/content/structure.toml` в общий источник, чтобы лендинг и программа читали одно |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | `reach_tests::cheatsheet_and_handler_agree` — сверка «аккорд в обработчике ↔ строка шпаргалки» в обе стороны; харнесс-тест «пункт меню открывает окно, `Esc` закрывает, клавиши после закрытия живы» (правило 14); t100/t125/t128 автоматически по новым ключам |
-| Зависит от | F-UI-002 (реестр команд — источник; без него шпаргалка становится пятым источником правды), F-HLP-017 (аккорд как данные и колонка), F-HLP-033 (цена строки на пяти языках), F-HLP-032 (конвейер сайта — там же живёт печатная форма) |
-| Ломает совместимость | нет |
+| Volume | S — one stage of the round, IF by then the chord has become data. The window itself is a list from a ready table; no new subsystem, no new widget (the model — the "Notifications" window, `app.rs:1103`) |
+| Where the main work is | `kt-app`: the window and its entry point, a branch in `escape_action`, 30 captions in `i18n/*.toml` (3 of 5 languages will have to be translated); `site/`: the table moves from `site/content/structure.toml` to a common source, so that the landing page and the program read one |
+| Project format | does not touch it |
+| Tests that will have to be written | `reach_tests::cheatsheet_and_handler_agree` — a check "chord in the handler ↔ row of the cheat sheet" in both directions; a harness test "the menu item opens the window, `Esc` closes it, the keys are alive after closing" (rule 14); t100/t125/t128 automatically for the new keys |
+| Depends on | F-UI-002 (the command registry is the source; without it the cheat sheet becomes a fifth source of truth), F-HLP-017 (the chord as data and the column), F-HLP-033 (the price of a row in five languages), F-HLP-032 (the pipeline of the site — the printed form lives there too) |
+| Breaks compatibility | no |
 
-Отдельно: печатная форма у нас УЖЕ работает и ничего не стоит — она собирается
-`site/build.py` вместе с лендингом. Заметка не предлагает её делать; она
-предлагает перестать делать вид, что программы и сайта не существует друг для
-друга.
+Separately: the printed form we ALREADY have works and costs nothing — it is built by `site/build.py` together with the landing page. The note does not propose to make it; it proposes to stop pretending that the program and the site do not exist for each other.
 
-## Вердикт
+## Verdict
 
-Берём, но не как «добавить окно со списком клавиш» — окно тут самая дешёвая
-часть, — а как «сделать так, чтобы список нельзя было написать руками». Три
-вещи, которые разведка изменила в постановке. Первая: шпаргалка у нас уже есть,
-написана и опубликована, и вопрос не «сделать», а «дотянуться» — из программы к
-сайту нет ни одной ссылки, `F1` свободен, меню Help нет, иконки нет. Вторая:
-рукописная шпаргалка врёт уже сегодня, и это проверяемо без запуска программы —
-две привязки пропущены, одна строка описывает поведение, которого нет, а самый
-частый двойной клик программы в тридцати строках не упомянут. Третья: форма
-«оверлей по удержанию» — самая интересная из четырёх и единственная, решающая
-длину списка контекстом (связь с F-HLP-005: там срез выбирается модификатором в
-той же строке, здесь — модификатором на весь экран), — отвергается тремя
-доводами сразу: перекрытие (п.1 решений владельца), задержка удержания (п.2) и
-таймер против инварианта 12; вендор этой формы, Microsoft, сам заменил её
-обычным окном.
+We take it, but not as "add a window with a list of keys" — the window is the cheapest part here — but as "make it so that the list cannot be written by hand". Three things that the reconnaissance changed in the statement. First: the cheat sheet already exists, is written and published, and the question is not "make" but "reach" — from the program to the site there is not a single link, `F1` is free, there is no Help menu, no icon. Second: the hand-written cheat sheet is already lying today, and this is verifiable without running the program — two bindings are omitted, one row describes behavior that does not exist, and the most frequent double click of the program is not mentioned in thirty rows. Third: the form "overlay on hold" is the most interesting of the four and the only one that solves the length of the list by context (a link to F-HLP-005: there the slice is chosen by a modifier in the same row, here by a modifier over the whole screen), — and it is rejected by three arguments at once: the overlap (item 1 of the owner's decisions), the hold delay (item 2) and the timer against invariant 12; the vendor of this form, Microsoft, itself replaced it with a regular window.
 
-ТЕСТ: reach_tests::cheatsheet_and_handler_agree — сегодня падает трижды, и все три падения видны одним чтением файлов, без запуска программы.
-(1) `Backspace` и `Ctrl+Y` (`src/apps/kt-app/src/app.rs:3929`, `:3933`) слушаются
-обработчиком и отсутствуют во всех 30 строках `site/content/structure.toml`
-(`[keys.*]`) — программа слушает клавиши, которых у продукта, с точки зрения
-любого пользователя, нет. (2) Строка `view_reset` обещает сброс двойным кликом
-для «volume rail», тогда как двойной клик по клипу, включая зону `ClipZone::Level`,
-открывает окно FX (`src/apps/kt-app/src/timeline.rs:2471`), а сброс усиления
-живёт пунктом контекстного меню (`timeline.rs:4401`) — шпаргалка обещает жест,
-которого нет, и обещает его в пяти файлах каталога. (3) Двойной клик по клипу =
-окно FX, самый частый двойной клик программы, не назван ни одной из 30 строк,
-хотя код называет его «ровно то, что обещает подсказка клипа с Р.18».
+TEST: reach_tests::cheatsheet_and_handler_agree — today it fails three times, and all three failures are visible by one reading of the files, without running the program. (1) `Backspace` and `Ctrl+Y` (`src/apps/kt-app/src/app.rs:3929`, `:3933`) are heard by the handler and are absent from all 30 rows of `site/content/structure.toml` (`[keys.*]`) — the program listens to keys that the product, from the point of view of any user, does not have. (2) The row `view_reset` promises a reset by double click for the "volume rail", while a double click on a clip, including the zone `ClipZone::Level`, opens the FX window (`src/apps/kt-app/src/timeline.rs:2471`), and the gain reset lives as a context-menu item (`timeline.rs:4401`) — the cheat sheet promises a gesture that does not exist, and promises it in five catalog files. (3) A double click on a clip = the FX window, the most frequent double click of the program, is not named in any of the 30 rows, although the code calls it "exactly what the hint of the clip promises from R.18".
 
-ОДНА СТРОКА: перекрытие — не трогает | задержка — не трогает | ёмкость — в
-строке статусбара не меняется ни на символ; список целиком появляется на ТРЕТЬЕЙ
-поверхности, куда приходят намеренно, — отдельном окне, которое, пока закрыто,
-не стоит ни пикселя и ни кадра, — плюс уже существующая печатная страница
-лендинга, куда из программы наконец ведёт ссылка.
+ONE LINE: overlap — does not touch | delay — does not touch | capacity — does not change by a single character in the status-bar line; the whole list appears on a THIRD surface, to which one comes deliberately — a separate window which, while closed, does not cost a single pixel or frame — plus the already existing printed page of the landing, to which from the program a link finally leads.
 
-## Источники
+## Sources
 
-**Живьём не проверялась ни одна из семи программ** — доступа к ним из этого
-окружения нет; для строк вне ядра проверка живьём и не предполагается
-(`_editors.md`, раздел «Софт вне ядра»). Механика окон раскладки у пяти
-редакторов ядра НЕ переоткрывалась: она проверена и записана в F-UI-002,
-видимость акселератора — в F-HLP-017; здесь на них даются ссылки.
+**Not one of the seven programs was verified live** — there is no access to them from this environment; for rows outside the core a live check is not assumed (`_editors.md`, section "Software outside the core"). The mechanics of layout windows of the five core editors were NOT reopened: they are verified and recorded in F-UI-002, the visibility of the accelerator — in F-HLP-017; here references to them are given.
 
 - https://support.apple.com/guide/final-cut-pro/keyboard-shortcuts-ver90ba5929/mac
-  (обращение 2026-09-07) — печатная страница Final Cut Pro 12.3: «Shortcuts for
-  common commands are listed in the table below», 10 групп, ~380 строк, колонки
-  Action / Command / Shortcut
-- https://code.visualstudio.com/docs/configure/keybindings (обращение
-  2026-09-07) — `Help → Keyboard Shortcut Reference`, «a condensed PDF version
-  suitable for printing as an easy reference»; отдельно редактор `Ctrl+K Ctrl+S`
-- https://www.jetbrains.com/help/idea/mastering-keyboard-shortcuts.html
-  (обращение 2026-09-07) — `Help | Keyboard Shortcuts PDF`, «If you are using
-  one of the predefined keymaps, you can print the default keymap reference
-  card»; для своей раскладки — сторонний плагин Keymap exporter
-- https://learn.microsoft.com/en-us/windows/powertoys/shortcut-guide (страница
-  обновлена 25.08.2026, обращение 2026-09-07) — форма 3: контекстность («shows
-  shortcuts for the app currently in the foreground»), удержание 900 мс
-  (настраивается 100-5000), «Close Shortcut Guide when the Windows key is
-  released», и переход к обычному окну («opens as a regular window that you can
-  read alongside the app you were using»); манифесты шпаргалок — YAML, среди
-  встроенных есть DaVinci Resolve и After Effects
-- https://github.com/microsoft/PowerToys/issues/48789 (22.06.2026, обращение
-  2026-09-07) — требование вернуть удержание; ответ мейнтейнера о возврате
-- https://github.com/microsoft/PowerToys/issues/49975 (17.08.2026, обращение
-  2026-09-07) — цена перекрытия дословно
-- https://forum.borisfx.com/t/keyboard-shortcuts-for-syntheyes/20970 (20.01.2026,
-  обращение 2026-09-07) — пользователь собирает шпаргалку сам и выкладывает PDF
-- https://help.magix-hub.com/video/vegas/en/content/topics/customizing_keyboard_shortcuts.htm
-  (обращение 2026-09-07) — VEGAS: список назначений живёт в Customize Keyboard;
-  отдельной страницы «keyboard shortcuts» на этом зеркале найти не удалось
-- https://developer.apple.com/documentation/uikit/uikeycommand (обращение
-  2026-09-07) — `discoverabilityTitle`, «An elaborated title that explains the
-  purpose of the key command»: платформенный API под форму 3 существует, но
-  описания поведения «удержать ⌘ → список» в текущей версии страницы нет —
-  [НЕ ПРОВЕРЕНО], поэтому в таблицы эта площадка не внесена
+  (accessed 2026-09-07) — the printed page of Final Cut Pro 12.3: "Shortcuts for common commands are listed in the table below", 10 groups, ~380 rows, columns Action / Command / Shortcut
+- https://code.visualstudio.com/docs/configure/keybindings (accessed 2026-09-07) — `Help → Keyboard Shortcut Reference`, "a condensed PDF version suitable for printing as an easy reference"; separately the editor `Ctrl+K Ctrl+S`
+- https://www.jetbrains.com/help/idea/mastering-keyboard-shortcuts.html (accessed 2026-09-07) — `Help | Keyboard Shortcuts PDF`, "If you are using one of the predefined keymaps, you can print the default keymap reference card"; for one's own layout — the third-party plugin Keymap exporter
+- https://learn.microsoft.com/en-us/windows/powertoys/shortcut-guide (page updated 25.08.2026, accessed 2026-09-07) — form 3: contextuality ("shows shortcuts for the app currently in the foreground"), hold 900 ms (configurable 100–5000), "Close Shortcut Guide when the Windows key is released", and the transition to a regular window ("opens as a regular window that you can read alongside the app you were using"); the manifests of cheat sheets are YAML, among the built-in ones there are DaVinci Resolve and After Effects
+- https://github.com/microsoft/PowerToys/issues/48789 (22.06.2026, accessed 2026-09-07) — the request to return the hold; the maintainer's answer about the return
+- https://github.com/microsoft/PowerToys/issues/49975 (17.08.2026, accessed 2026-09-07) — the price of the overlap, verbatim
+- https://forum.borisfx.com/t/keyboard-shortcuts-for-syntheyes/20970 (20.01.2026, accessed 2026-09-07) — a user assembles a cheat sheet himself and publishes a PDF
+- https://help.magix-hub.com/video/vegas/en/content/topics/customizing_keyboard_shortcuts.htm (accessed 2026-09-07) — VEGAS: the list of assignments lives in Customize Keyboard; a separate page "keyboard shortcuts" was not found on this mirror
+- https://developer.apple.com/documentation/uikit/uikeycommand (accessed 2026-09-07) — `discoverabilityTitle`, "An elaborated title that explains the purpose of the key command": a platform API for form 3 exists, but a description of the behavior "hold ⌘ → list" is absent from the current version of the page — [NOT VERIFIED], therefore this platform is not entered into the tables
 
-Трекеры (дампы `~/.cache/kinotrain/trackers/`, в репозиторий не попадают —
-`_trackers.md`, раздел лицензий; оба числа строк `СИГНАЛ:` воспроизводятся
-`python3 src/scripts/tracker-rank.py --query '<фильтр>'` с фильтрами из
-обратных кавычек, обращение 08.09.2026):
+Trackers (dumps in `~/.cache/kinotrain/trackers/`, they do not enter the repository — `_trackers.md`, the section on licenses; both numbers of the rows `SIGNAL:` are reproduced by `python3 src/scripts/tracker-rank.py --query '<filter>'` with the filters from the backticks, accessed 08.09.2026):
 
-- `losslesscut` — https://github.com/mifi/lossless-cut/issues/726 (18.04.2021,
-  открыта), `/19` (04.01.2017, закрыта реализацией), `/1996` (14.05.2024) и
-  `/549` (13.12.2020) — из последних двух видно, что окно «Keyboard & Mouse
-  Shortcuts» вызывается пунктом Help и клавишей `H`, то есть форма 2 там уже
-  была, когда просили форму 1
-- `openshot` — https://github.com/OpenShot/openshot-qt/issues/5447 (20.02.2024,
-  открыта): экспорт «command vs hotkey» из диалога Preferences
-- `flowblade` — https://github.com/jliljebl/flowblade/issues/620 (14.02.2019,
-  закрыта фиксом): диалог раскладки перехватывает весь ввод; и `/1199`
-  (28.08.2025, открыта) — `Backspace` в редакторе раскладки роняет Flowblade
-  трейсбеком: та самая вторая привязка удаления, которой у нас нет ни в
-  шпаргалке, ни в каталогах
-- Пяти редакторов ядра здесь нет и быть не может: публичного трекера нет ни у
-  одного (`_trackers.md`, «Кого НЕ берём — и почему»)
+- `losslesscut` — https://github.com/mifi/lossless-cut/issues/726 (18.04.2021, open), `/19` (04.01.2017, closed by implementation), `/1996` (14.05.2024) and `/549` (13.12.2020) — from the last two it is visible that the window "Keyboard & Mouse Shortcuts" is called by the Help item and the key `H`, that is, form 2 was already there when form 1 was requested
+- `openshot` — https://github.com/OpenShot/openshot-qt/issues/5447 (20.02.2024, open): export "command vs hotkey" from the Preferences dialog
+- `flowblade` — https://github.com/jliljebl/flowblade/issues/620 (14.02.2019, closed by a fix): the layout dialog intercepts all input; and `/1199` (28.08.2025, open) — `Backspace` in the layout editor crashes Flowblade with a traceback: exactly that second binding of deletion which we have neither in the cheat sheet nor in the catalogs
+- The five core editors are not here and cannot be: there is no public tracker for any of them (`_trackers.md`, "Whom we do NOT take — and why")
 
-Внутренние источники (проверено грепом и чтением 2026-09-07):
+Internal sources (verified by grep and reading 2026-09-07):
 `src/apps/kt-app/src/app.rs:1103-1127`, `:1712-1752`, `:3344`, `:3546`,
 `:3879-4020`, `:4472-4490`, `:5069`; `src/apps/kt-app/src/timeline.rs:1275-1333`,
 `:1681`, `:2343-2500`, `:2977`, `:4401`; `src/apps/kt-app/src/meters.rs:780`;
 `src/apps/kt-app/src/automation.rs:547`; `src/apps/kt-app/src/toolbar.rs:230`,
-`:239-345`, `:388`, `:447`; `src/apps/kt-app/src/icons.rs` (39 констант);
+`:239-345`, `:388`, `:447`; `src/apps/kt-app/src/icons.rs` (39 constants);
 `src/apps/kt-app/src/i18n/bidi.rs`; `src/apps/kt-app/build.rs:42`;
-`src/apps/kt-app/i18n/*.toml` (522 значения в каждом);
+`src/apps/kt-app/i18n/*.toml` (522 values in each);
 `site/content/structure.toml:18-24`, `:147-152`, `:200-244`;
-`site/content/*.toml` (секция `[keys]`, 36 значений в каждом);
-`site/build.py:54`, `:120-162`, `:382-392`, `:665-680`, `:805`. Покрытие
-переводов лендинга пересчитано алгоритмом самого `site/build.py:validate`:
-ru — 98.1 %, es / zh-Hans / ar — 0.0 % (215 из 215 значений совпадают с
-английским побайтово).
+`site/content/*.toml` (section `[keys]`, 36 values in each);
+`site/build.py:54`, `:120-162`, `:382-392`, `:665-680`, `:805`. The translation coverage of the landing page was recounted by the algorithm of `site/build.py:validate` itself:
+ru — 98.1%, es / zh-Hans / ar — 0.0% (215 out of 215 values coincide with the English byte for byte).

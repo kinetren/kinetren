@@ -1,12 +1,12 @@
 ---
 id: F-RES-011
-title: Память и большие проекты: кто и по какому правилу выселяет
-status: кандидат
+title: Memory and large projects: who evicts and by what rule
+status: candidate
 priority: B
 cost: M
 category: resilience/performance
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-cache, kt-engine, kt-app, kt-gpu]
 invariants: [4, 5, 8, 9, 12]
 ui_rules: [12, 19]
@@ -18,198 +18,184 @@ trackers: [mlt, shotcut, kde-bugzilla, kde-invent, pitivi, olive, otio]
 checked: 2026-09-08
 ---
 
-# F-RES-011 — Память и большие проекты: кто и по какому правилу выселяет
+# F-RES-011 — Memory and large projects: who evicts and by what rule
 
-## Суть
+## Essence
 
-Класс, которого не видно на демо-проекте и который приходит на третьем часе
-монтажа: программа занимает всё больше, машина уходит в swap, и дальше
-тормозит уже не редактор, а вся система. Монтажёр видит один симптом
-(«всё встало») и не может отличить три разные причины: течёт ли память,
-не хватило ли её разово на 4K, или кэш просто мал для этого материала.
-Предмет заметки — не «есть ли утечка», а правило выселения и то, видно ли
-пользователю, что упёрлись именно в него.
+A class that is not visible on a demo project and that arrives in the third hour
+of editing: the program takes up more and more, the machine goes into swap, and from
+then on it is not the editor that slows down but the whole system. The editor sees one symptom
+("everything froze") and cannot tell apart three different causes: whether memory is leaking,
+whether it ran out once on 4K, or whether the cache is simply too small for this material.
+The subject of the note is not "is there a leak" but the eviction rule, and whether
+the user can see that exactly this limit was hit.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Dynamic RAM Preview max (MB) | одно число в настройках видео: сколько ОЗУ отдать под RAM-превью. Заполнилось — превью просто останавливается. Кэш ДЕКОДА этим числом не управляется и нигде не показан [НЕ ПРОВЕРЕНО] |
-| Adobe Premiere | 26 | Preferences → Memory + Media Cache | лимит задан ВЫЧИТАНИЕМ: «сколько ГБ зарезервировать другим приложениям», плюс переключатель «Optimize rendering for: Performance / Memory». Число в мегабайтах есть только у ДИСКОВОГО кэша [НЕ ПРОВЕРЕНО] |
-| DaVinci Resolve | 21 | Preferences → Memory and GPU | единственный из пяти, кто называет ДВА потолка раздельно: системная память и память GPU (плюс кэш Fusion). Render cache — дисковый, виден цветной полосой под линейкой [НЕ ПРОВЕРЕНО] |
-| Final Cut Pro | 12 | нет | настройки памяти нет вовсе; всё управление сводится к удалению сгенерированных файлов библиотеки. Ставка на то, что ОС разберётся сама [НЕ ПРОВЕРЕНО] |
-| After Effects | 26 | RAM Preview + «RAM reserved for other applications» | ближайший к нам аналог: ЗЕЛЁНАЯ полоса под таймлайном есть буквально покрытие ОЗУ-кэша, а Purge → All Memory сбрасывает его руками. Но сам лимит опять задан вычитанием, а не числом [НЕ ПРОВЕРЕНО] |
+| VEGAS Pro | 2026.0 | Dynamic RAM Preview max (MB) | a single number in the video settings: how much RAM to give to RAM preview. When it fills up, the preview simply stops. The DECODE cache is not controlled by this number and is shown nowhere [NOT VERIFIED] |
+| Adobe Premiere | 26 | Preferences → Memory + Media Cache | the limit is set by SUBTRACTION: "how many GB to reserve for other applications", plus a switch "Optimize rendering for: Performance / Memory". A number in megabytes exists only for the DISK cache [NOT VERIFIED] |
+| DaVinci Resolve | 21 | Preferences → Memory and GPU | the only one of the five that names TWO ceilings separately: system memory and GPU memory (plus the Fusion cache). The render cache is on disk and is visible as a coloured strip under the ruler [NOT VERIFIED] |
+| Final Cut Pro | 12 | none | there are no memory settings at all; all management comes down to deleting the library's generated files. The bet is that the OS will sort it out itself [NOT VERIFIED] |
+| After Effects | 26 | RAM Preview + "RAM reserved for other applications" | the closest analogue to ours: the GREEN bar under the timeline is literally the coverage of the RAM cache, and Purge → All Memory resets it by hand. But the limit itself is again set by subtraction, not as a number [NOT VERIFIED] |
 
-Общее у всех пяти: **потолок ОЗУ выражается вычитанием («оставь другим») или
-не выражается никак**; положительным числом его называют только VEGAS (и
-только для RAM-превью) и Resolve. Покрытие ОЗУ-кэша показывает ровно один —
+What all five have in common: **the RAM ceiling is expressed either by subtraction ("leave it to others") or
+not expressed at all**; only VEGAS (and only for RAM preview) and Resolve name it as a positive number. Coverage of the RAM cache is shown by exactly one —
 After Effects.
 
-Kdenlive, Shotcut, Pitivi, Olive и движок MLT строкой сравнения не идут: они
-источники счёта, а не механизма (`_editors.md`, раздел «Открытый софт»). Их
-устройство разобрано ниже как объяснение, откуда берётся счёт.
+Kdenlive, Shotcut, Pitivi, Olive and the MLT engine do not appear here as comparison rows: they are
+sources of the count, not of the mechanism (`_editors.md`, section "Open-source software"). Their
+design is analysed below as an explanation of where the count comes from.
 
-## Фишка фишки
+## The trick behind it
 
-**Первое: у видеоредактора нет режима «не кэшировать».** Воспроизведение
-физически невозможно без опережающего декода, поэтому вопрос никогда не
-стоит «сколько памяти занимать» — он стоит «по какому правилу освобождать».
-У MLT (движок Kdenlive и Shotcut) это правило есть, и оно звучит «никогда»:
-`mlt_pool` растёт до пика и обратно ОС память не отдаёт, поэтому закрытие
-producer'ов не уменьшает footprint, а `mlt_pool_purge()` не помогает
-(mlt #695, диагноз самого репортёра, задача закрыта как completed). Этажом
-выше это видно уже как поведение: прочитанный клип из памяти не
-освобождается, размер проекта упирается в объём ОЗУ, а рабочий обход —
-сохранить проект и переоткрыть его, чтобы заставить программу отпустить
-память (kde-invent #970). То есть роль LRU там играет перезапуск. Ровно
-поэтому жалобы «настройка кэша ничего не меняет» в трекерах не встречается
-вообще: настраивать нечего — у кэша нет ни лимита, ни правила, ни имени.
+**First: a video editor has no mode "do not cache".** Playback is physically impossible without look-ahead decoding,
+so the question is never "how much memory to occupy" — it is "by which rule to release it".
+MLT (the engine of Kdenlive and Shotcut) has such a rule, and it reads "never":
+`mlt_pool` grows to its peak and never returns memory to the OS, so closing the
+producers does not reduce the footprint, and `mlt_pool_purge()` does not help
+(mlt #695, the reporter's own diagnosis, task closed as completed). One level higher this
+is already visible as behaviour: a clip that has been read is not released from memory, the project size runs into the
+amount of RAM, and the working workaround is to save the project and reopen it to force the program to let go of
+memory (kde-invent #970). That is, the role of LRU there is played by a restart. Precisely for this
+reason, complaints that "changing the cache setting changes nothing" do not occur in the trackers at all:
+there is nothing to configure — the cache has no limit, no rule, no name.
 
-**Второе: у нас направление зависимости обратное общепринятому.** Не «сколько
-кадров подтянуть — столько памяти займём», а «сколько памяти отведено —
-столько кадров влезло». Три независимых потребителя считаются ОДНОЙ формулой
-«не больше половины видео-бюджета»: длина спана декода
-(`span_key_budget`, `src/libs/kt-engine/src/worker.rs`), окно упреждения
-префетча (`video_lookahead_ticks`, `src/libs/kt-engine/src/player.rs`) и
-размер пачки экспорта (`export_chunk_frames`,
-`src/libs/kt-engine/src/export.rs`). Следствие, которого нет ни в одном
-списке возможностей: **окно упреждения у нас есть функция разрешения**. При
-неизменных 512 МБ бюджета оно равно 9.7 с на 640×360, 1.07 с на 1080p и
-0.27 с на 4K (арифметика: кадр 4K в RGBA8 — 33.2 МБ, в бюджет их влезает 16,
-в окно — половина). Это буквально запрошенный в kde-invent #1012 «in memory
-range from the cursor», только не выставляемый рукой, а вычисляемый.
+**Second: in our case the direction of dependency is the reverse of the generally accepted one.** Not "how many
+frames to pull in — that much memory we will occupy", but "how much memory is allocated —
+that many frames fit". Three independent consumers are computed by ONE formula,
+"not more than half of the video budget": the length of the decode span
+(`span_key_budget`, `src/libs/kt-engine/src/worker.rs`), the look-ahead window of
+the prefetch (`video_lookahead_ticks`, `src/libs/kt-engine/src/player.rs`) and
+the size of the export batch (`export_chunk_frames`,
+`src/libs/kt-engine/src/export.rs`). A consequence that is absent from every list of features: **our look-ahead window is a resolution function**. With
+an unchanged budget of 512 MB it equals 9.7 s at 640×360, 1.07 s at 1080p and
+0.27 s at 4K (arithmetic: a 4K frame in RGBA8 is 33.2 MB, 16 of them fit in the budget,
+the window is half of that). This is literally the "in memory
+range from the cursor" requested in kde-invent #1012, only not set by hand but computed.
 
-**Третье: цена малого кэша у нас проявляется не тормозами, а НЕВЕРНЫМ
-РЕЗУЛЬТАТОМ, и это уже случалось дважды.** П.116 и п.195
-`docs/porting-notes.md`: пачка кадров экспорта не влезала в бюджет, LRU
-выбрасывал кадры ДО композиции — и готовый файл выходил чёрным с редкими
-уцелевшими кадрами (замер на 720p: 102 недостающих слоя из 120). Тормоза
-пользователь замечает, чёрный кадр в отрендеренном файле — нет. Поэтому у
-нас лимит кэша не «настройка производительности», а часть корректности: там,
-где у чужих мал кэш даёт «медленно», у нас он давал «не то».
+**Third: the cost of a small cache for us shows up not as slowness but as a WRONG RESULT, and this has already happened twice.**
+Items 116 and 195 of `docs/porting-notes.md`: a batch of export frames did not fit into the budget, LRU
+evicted frames BEFORE composition — and the finished file came out black with a few
+surviving frames (a measurement at 720p: 102 missing layers out of 120). The user notices slowness;
+a black frame in a rendered file — does not. Therefore for us the cache limit is not a "performance setting" but part of
+correctness: where others with a small cache get "slow", we got "wrong".
 
-## Плюсы
+## Pros
 
-- Инвариант 4 снимает целый класс расхождений: полоска «прогретости» в UI —
-  это `BurstCache::coverage()` того же кэша, а не отдельная бухгалтерия.
-  Выселение дырявит полоску ровно на свой `span` (тесты 8, 28), поэтому
-  состояние «на экране прогрето, в памяти нет» структурно невозможно.
-- Бюджеты аудио и видео РАЗДЕЛЬНЫЕ, и `evict_over_budget` выселяет из того
-  пула, который превышен: видео-шторм не может выбить звук, то есть
-  переполнение памяти не превращается в тишину (инвариант 6).
-- `quality` — часть ключа: смена качества превью не «удваивает» тот же кадр
-  молча, она видна как отдельный набор ключей внутри того же бюджета.
-- Pin (голова loop-региона) сильнее бюджета, но действует только на уже
-  существующие записи — единственное объявленное исключение из правила
-  выселения, а не молчаливое.
-- У каждого крупного потребителя есть жёсткий потолок, и он назван числом:
-  512 МБ видео + 64 МБ аудио (кэш), 192 МБ (экспорт), 256/128/64 МБ VRAM
-  (`UPLOAD_BUDGET`/`TRANSIENT_BUDGET`/`READBACK_BUDGET` в
-  `src/libs/kt-gpu/src/engine.rs`), 384 тумбы, 800 строк журнала, 200
-  notice, 80 шагов undo.
-- Занятость считается ОТ НАСТОЯЩЕГО лимита (`cache.max_video_bytes()`), а не
-  от продублированной руками константы — в v1 такая константа врала в 384
-  раза.
-- Два порога вместо молчания: «всплеск eviction: N/с — кэшу тесно» (>500/с) и
-  «сброшено N записей кэша до первого чтения (prefetch-thrash)» — последний
-  срабатывает на ЛЮБОЙ ненулевой дельте.
+- Invariant 4 removes a whole class of discrepancies: the "warmth" bar in the UI is
+  `BurstCache::coverage()` of the same cache, not a separate bookkeeping.
+  Eviction punches a hole in the bar exactly over its own `span` (tests 8, 28), so
+  the state "warm on screen, not in memory" is structurally impossible.
+- The audio and video budgets are SEPARATE, and `evict_over_budget` evicts from the
+  pool that is exceeded: a video storm cannot knock out the sound, so memory overflow
+  does not turn into silence (invariant 6).
+- `quality` is part of the key: changing the preview quality does not "double" the same frame
+  silently; it is visible as a separate set of keys within the same budget.
+- Pin (the head of the loop region) is stronger than the budget, but acts only on entries that
+  already exist — the single declared exception to the eviction rule, not a silent one.
+- Every major consumer has a hard ceiling, and it is named by a number:
+  512 MB video + 64 MB audio (cache), 192 MB (export), 256/128/64 MB VRAM
+  (`UPLOAD_BUDGET`/`TRANSIENT_BUDGET`/`READBACK_BUDGET` in
+  `src/libs/kt-gpu/src/engine.rs`), 384 thumbnails, 800 log lines, 200
+  notices, 80 undo steps.
+- Occupancy is computed FROM the real limit (`cache.max_video_bytes()`), not from a constant
+  duplicated by hand — in v1 such a constant was off by a factor of 384.
+- Two thresholds instead of silence: "eviction spike: N/s — the cache is cramped" (>500/s) and
+  "N cache entries dropped before first read (prefetch-thrash)" — the latter fires on ANY non-zero delta.
 
-## Минусы
+## Cons
 
-- **Лимит не настраивается ниоткуда.** `Player::new`
-  (`src/libs/kt-engine/src/player.rs:189`) берёт `CacheConfig::default()`;
-  ни переменной окружения, ни пункта меню, ни файла настроек во всём `src/`
-  нет. Предупреждение «кэшу тесно» называет диагноз и не называет действие —
-  это прямое нарушение правила 19 чек-листа UI.
-- Оба предупреждения живут в перф-панели, которую надо открыть заранее — тот
-  же дефект канала, что у «ui stall» в F-RES-010.
-- Занятость показана только для ВИДЕО-пула. Аудио-пул (64 МБ) и три
-  VRAM-бюджета kt-gpu не показаны нигде и не считаются никуда.
-- Пост-FX мемоизация (`BurstKind::PostFxVideo`) делит видео-бюджет с пре-FX
-  кадрами, но по инварианту 4 невидима для coverage. «Занятость 90 %» рядом
-  с пустыми полосками — правильное поведение, которое ничем не объяснено.
-- **Экспорт внутрипроцессный (инвариант 9), и это стоит памяти.** Его 192 МБ
-  плюс ВТОРОЙ headless GPU-движок (`export_video_gpu`,
-  `src/apps/kt-app/src/app.rs:5215`) складываются с памятью редактора.
-  У Kdenlive рендер — отдельный процесс melt, и пользователь может закрыть
-  редактор, не убив рендер (kde-invent #1424 просит именно этого). У нас так
-  нельзя ПО ПОСТРОЕНИЮ, и это осознанная цена инварианта 9.
-- Не всё в памяти — кэш, и остальное потолка не имеет: пакетный индекс
-  каждого источника лежит `Vec<i64>` в ОЗУ
-  (`src/libs/kt-media/src/ffmpeg.rs`, `packet_index`), MediaWorker с
-  открытым декодером заводится на КАЖДОЕ медиа проекта безусловно
-  (`Player::new`, разобрано в F-RES-010), а undo хранит 80 ПОЛНЫХ клонов
+- **The limit cannot be configured from anywhere.** `Player::new`
+  (`src/libs/kt-engine/src/player.rs:189`) takes `CacheConfig::default()`;
+  there is no environment variable, no menu item, no settings file anywhere in `src/`.
+  The warning "the cache is cramped" names the diagnosis and does not name the action —
+  this is a direct violation of rule 19 of the UI checklist.
+- Both warnings live in the performance panel, which has to be opened in advance — the same
+  channel defect as "ui stall" in F-RES-010.
+- Occupancy is shown only for the VIDEO pool. The audio pool (64 MB) and the three
+  VRAM budgets of kt-gpu are shown nowhere and are not counted anywhere.
+- Post-FX memoization (`BurstKind::PostFxVideo`) shares the video budget with pre-FX
+  frames, but under invariant 4 it is invisible to coverage. "90 % occupancy" next to
+  empty bars is correct behaviour that is not explained by anything.
+- **Export is in-process (invariant 9), and that costs memory.** Its 192 MB
+  plus a SECOND headless GPU engine (`export_video_gpu`,
+  `src/apps/kt-app/src/app.rs:5215`) add up on top of the editor's memory.
+  In Kdenlive rendering is a separate melt process, and the user can close the
+  editor without killing the render (kde-invent #1424 asks for exactly this). For us this
+  is impossible BY CONSTRUCTION, and it is a conscious price of invariant 9.
+- Not everything in memory is cache, and the rest has no ceiling: the packet index of
+  each source is held as a `Vec<i64>` in RAM
+  (`src/libs/kt-media/src/ffmpeg.rs`, `packet_index`), a MediaWorker with an
+  open decoder is started for EVERY media of the project unconditionally
+  (`Player::new`, analysed in F-RES-010), and undo keeps 80 FULL clones of
   `Project` (`MAX_UNDO`, `src/libs/kt-model/src/model.rs:11`).
-- Негативные кэши воркера (`failed_video`/`failed_audio`,
-  `src/libs/kt-engine/src/worker.rs:194`) — единственные множества без
-  потолка в декод-пути. У тумб такой потолок есть и назван
-  (`MAX_FAILED = 4096`, `src/apps/kt-app/src/thumbs.rs:115`).
+- The worker's negative caches (`failed_video`/`failed_audio`,
+  `src/libs/kt-engine/src/worker.rs:194`) are the only sets without a ceiling in the decode path. Thumbnails do have such
+  a ceiling, and it is named (`MAX_FAILED = 4096`, `src/apps/kt-app/src/thumbs.rs:115`).
 
-## Что говорят пользователи
+## What users say
 
-СИГНАЛ: память и утечки — 18 задач в mlt, `memory|leak|\bram\b|out of memory`; доля 3.0% против 0.5% в kde-bugzilla
+SIGNAL: memory and leaks — 18 tasks in mlt, `memory|leak|\bram\b|out of memory`; a share of 3.0% against 0.5% in kde-bugzilla
 
-Полная раскладка по шести выгруженным трекерам: mlt 18/601 = 3.0 %,
+The full breakdown across the six exported trackers: mlt 18/601 = 3.0 %,
 shotcut 20/1368 = 1.5 %, kde-invent 19/2217 = 0.9 %, kde-bugzilla
 33/6346 = 0.5 %, pitivi 6/2672 = 0.2 %, olive 1/405 = 0.2 %, otio 0/680.
 
-**Главное в этих числах — не размер темы, а то, ГДЕ она сидит.** Первое
-место занимает mlt, который вообще не редактор: это движок, на котором
-стоят и Kdenlive, и Shotcut. У обоих его потребителей доля ниже (1.5 % и
-0.9/0.5 %), у редактора со СВОИМ движком (olive) — 0.2 %, у библиотеки
-формата (otio) — ноль. Разрыв движок/самодельный движок — пятнадцатикратный.
-Боль про память живёт не в интерфейсе и не в модели монтажа, а в слое,
-который держит кадры, и наследуется вниз всеми, кто на нём стоит. Для нас
-это прямое указание, куда смотреть: kt-cache и kt-engine, а не kt-app.
+**The main point of these numbers is not the size of the topic but WHERE it sits.** First place
+goes to mlt, which is not an editor at all: it is the engine on which both Kdenlive and
+Shotcut stand. Their consumers of it have a lower share (1.5 % and
+0.9/0.5 %); an editor with ITS OWN engine (olive) has 0.2 %; a format library
+(otio) has zero. The engine-versus-home-made-engine gap is fifteenfold. The pain about memory lives not in the interface and not in the editing model, but in the layer
+that holds the frames, and is inherited downward by everyone who stands on it. For us this
+is a direct pointer to where to look: kt-cache and kt-engine, not kt-app.
 
-**Оговорка о фильтре, без которой число вырастет вчетверо.** Заявленный на
-входе фильтр содержал `oom` без границ слова, и он ловит `zoom` и `room`
-ровно так же, как `ram` без границ ловит `frame`, `program` и `parameter`
-(эта вторая ошибка уже исправлена в лексиконе `_trackers.md` 08.09.2026).
-Проверено: `memory|leak|\bram\b|oom|out of memory|swap` даёт 139 / 53 / 64
-по kde-bugzilla / kde-invent / pitivi, исправленный
-`memory|leak|\bram\b|out of memory` — 33 / 19 / 6, то есть завышение в
-4.2 / 2.8 / 10.7 раза. `\bswap\b` во всей выгрузке даёт ровно одну задачу,
-и та про перестановку значений колесом мыши. Все числа ниже — по
-исправленному фильтру.
+**A caveat about the filter, without which the number would grow fourfold.** The filter declared at the input contained `oom` without word boundaries, and it catches `zoom` and `room`
+exactly as `ram` without boundaries catches `frame`, `program` and `parameter`
+(this second error has already been corrected in the lexicon of `_trackers.md` on 08.09.2026).
+Checked: `memory|leak|\bram\b|oom|out of memory|swap` gives 139 / 53 / 64
+for kde-bugzilla / kde-invent / pitivi, the corrected
+`memory|leak|\bram\b|out of memory` — 33 / 19 / 6, that is, an overstatement of
+4.2 / 2.8 / 10.7 times. `\bswap\b` across the whole export gives exactly one task,
+and that one is about swapping values with the mouse wheel. All numbers below are by the
+corrected filter.
 
-**Утечка против разового пика — разделение, ради которого заметка заведена.**
+**Leak versus a one-off peak — the distinction for which the note was opened.**
 
-- Утечка (растёт со временем):
+- Leak (grows over time):
   `leak|memory (is )?not (released|freed)|release ram|memory grows|persist in memory`
-  — 53 задачи, доля 1.7 % в mlt против 0.3 % в kde-bugzilla.
-- Разовый пик (открыли большое — не хватило):
+  — 53 tasks, a share of 1.7 % in mlt against 0.3 % in kde-bugzilla.
+- One-off peak (opened something big — not enough):
   `out of memory|insufficient memory|(all|full).{0,10}\bram\b|\bram\b.{0,12}(usage|saturation|hog)|eat.{0,12}(\bram\b|gb of ram)|fills ram`
-  — 14 задач, доля 0.2 % в mlt против 0.1 % в kde-bugzilla.
+  — 14 tasks, a share of 0.2 % in mlt against 0.1 % in kde-bugzilla.
 
-**Утечка перевешивает пик почти 4 : 1.** То есть жалуются не на то, что не
-хватило на 4K, а на то, что перестало хватать через час. И живёт этот класс
-долго не потому, что висит открытым, а потому, что его закрывают
-нечинённым: в kde-bugzilla (единственном трекере выгрузки, который отдаёт
-причину закрытия) у темы памяти доля НАСТОЯЩИХ фиксов среди закрытых — 32 %
-против 47 % в среднем по трекеру, и WORKSFORME (9 задач) больше, чем FIXED
-(7). У открытых задач подтемы «утечка» медианный возраст 2.7 года,
-максимальный — 9.6: mlt #271 «About the release of memory after the closed
-project» открыта с 23.11.2017 и открыта до сих пор.
+**The leak outweighs the peak almost 4 : 1.** That is, people complain not that it was not enough for 4K, but that
+it stopped being enough after an hour. And this class lives long not because it hangs open, but because it is closed
+unfixed: in kde-bugzilla (the only tracker in the export that gives the reason for closing) the share of GENUINE fixes among closed memory-topic tasks is 32 %,
+against 47 % on average across the tracker, and WORKSFORME (9 tasks) is more than
+FIXED (7). Among open tasks in the "leak" subtopic the median age is 2.7 years,
+the maximum is 9.6: mlt #271 "About the release of memory after the closed
+project" has been open since 23.11.2017 and is still open.
 
-**Видимости ОЗУ-кэша у источников счёта НЕТ ВООБЩЕ.** Фильтр `cache` даёт 30
-задач на шесть трекеров (0.4 % pitivi, 0.2 % kde-bugzilla, mlt и olive,
-0.1 % kde-invent и shotcut), и при поштучном чтении заголовков **ни одна не
-про кэш в памяти, который пользователь видит и может ограничить**: все до
-единой — про ДИСКОВЫЙ каталог (куда его переложить, чем очистить, почему не
-очистился, что входит в его обзор) либо про внутренний кэш кода (ключ по
-PTS, размер картинки тумбы). Пользователю там нечего наблюдать и нечего
-крутить, поэтому единственный доступный ему язык описания — «съело всю
-память», а единственный доступный инструмент — перезапуск.
+**Visibility of the RAM cache is ABSENT ENTIRELY among the sources of the count.** The filter `cache` gives 30
+tasks across six trackers (0.4 % pitivi, 0.2 % kde-bugzilla, mlt and olive,
+0.1 % kde-invent and shotcut), and on reading the headings one by one **not one is
+about the cache in memory that the user sees and can limit**: every single one is
+about the DISK directory (where to move it, what to clear it with, why it did not
+clear, what is included in its overview) or about the internal code cache (the key by
+PTS, the thumbnail image size). There is nothing for the user to observe there and nothing
+to turn, so the only language of description available to him is "ate all
+memory", and the only tool available is a restart.
 
 > The problem is that after closing all producers, the process memory usage
 > does not go back down.
-> — mlt #695 «Deallocating memory from `mlt_pool`», 06.04.2021,
+> — mlt #695 "Deallocating memory from `mlt_pool`", 06.04.2021,
 > https://github.com/mltframework/mlt/issues/695
 
 > Repeat to create a project, close the project, the memory will continue to
 > rise until the shutcut program crashes.
-> — mlt #271, открыта 23.11.2017 и открыта до сих пор,
+> — mlt #271, open since 23.11.2017 and still open,
 > https://github.com/mltframework/mlt/issues/271
 
 > It seems that whenever Kdenlive reads a video clip, it does not release
@@ -220,228 +206,210 @@ PTS, размер картинки тумбы). Пользователю там 
 > As far as I can tell, Kdenlive insists on loading every clip that it knows
 > about into memory. Due to the high bitrate of some of the footage out
 > there, memory is consumed pretty quickly.
-> — kde-invent #1012 «Suggestion: "In memory area/range" on the timeline.»,
+> — kde-invent #1012 "Suggestion: "In memory area/range" on the timeline.",
 > 31.03.2021, https://invent.kde.org/multimedia/kdenlive/-/work_items/1012
 
 > If you work at least 15 minutes more by reviewing any fragments, adjusting
 > the clips, changing the fades, then the RAM will end completely and SWAP
 > will start to be consumed and after that everything will start to slow down
 > terribly both Kdenlive and other applications.
-> — kde-invent #736 «Pretty easy to eat 8 GB of RAM», 26.06.2020,
+> — kde-invent #736 "Pretty easy to eat 8 GB of RAM", 26.06.2020,
 > https://invent.kde.org/multimedia/kdenlive/-/work_items/736
 
 > I could close kdenlive and the render would continue however then I would
 > loose access to the progress bar.
-> — kde-invent #1424 «Release ram while rendering project», открыта
-> 07.05.2022 и открыта до сих пор,
+> — kde-invent #1424 "Release ram while rendering project", open since
+> 07.05.2022 and still open,
 > https://invent.kde.org/multimedia/kdenlive/-/work_items/1424
 
 > This memory usage is excessive. This project is not that large... and even
 > then I still had heaps of memory left when the crash happened.
-> — pitivi #623, 28.08.2009 (в теле — помесячный рост: 380 МБ на старте,
-> 1.8 ГиБ на 95 % рендера),
+> — pitivi #623, 28.08.2009 (in the body — month-by-month growth: 380 MB at start,
+> 1.8 GiB at 95 % of the render),
 > https://gitlab.gnome.org/GNOME/pitivi/-/work_items/623
 
-Дословных цитат из kde-bugzilla в этой заметке нет по технической причине, а
-не по лени: REST-выгрузка `/rest/bug` не отдаёт описание задачи, в дампе поле
-`body` пустое у всех 6346 записей. Заголовки — текст автора и цитируются как
-есть: «Memory leak when rendering anything longer than 5-10 minutes in 4K»
+Verbatim quotes from kde-bugzilla are absent from this note for a technical reason, not
+out of laziness: the REST export `/rest/bug` does not return the task description; in the dump the
+`body` field is empty for all 6346 records. The headings are the author's own text and are quoted
+as they are: "Memory leak when rendering anything longer than 5-10 minutes in 4K"
 (#501578, 16.03.2025, UNCONFIRMED, https://bugs.kde.org/show_bug.cgi?id=501578)
-и «Performance: Memory leak in GBs when removing files from project bin /
-timeline - it doesn't actually free memory» (#516409, 20.02.2026, UNCONFIRMED,
+and "Performance: Memory leak in GBs when removing files from project bin /
+timeline - it doesn't actually free memory" (#516409, 20.02.2026, UNCONFIRMED,
 https://bugs.kde.org/show_bug.cgi?id=516409).
 
-Отдельно стоит kde-invent #1599 «Warn user during rendering when system is low
-on memory» (15.12.2022, закрыта): запрос на ровно тот жанр предупреждения,
-который у нас уже есть — только у нас оно про НАШ кэш и с числом, а просили
-про систему.
+Separately worth noting is kde-invent #1599 "Warn user during rendering when system is low
+on memory" (15.12.2022, closed): a request for exactly the genre of warning
+that we already have — only ours is about OUR cache and carries a number, while they asked
+about the system.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-АДРЕС: `src/libs/kt-cache/src/lib.rs` — класс «прочитанное не освобождается,
-проект упёрся в объём ОЗУ» (kde-invent #970, #1012) у нас невозможен: у кэша
-есть жёсткие байтовые бюджеты, LRU с pin'ом и interval-set покрытия, который
-обновляется теми же операциями, что и сам кэш. Класс «кэшу тесно, и увеличить
-его нечем» ВОЗМОЖЕН и не ловится ничем: `src/libs/kt-engine/src/player.rs:189`
-берёт `CacheConfig::default()` (512 МБ видео + 64 МБ аудио), а во всём `src/`
-нет ни одного места, где это число можно изменить — при том что
-`src/apps/kt-app/src/app.rs:5039` уже печатает пользователю «кэшу тесно».
+ADDRESS: `src/libs/kt-cache/src/lib.rs` — the class "what was read is not released, the project ran into the amount of RAM" (kde-invent #970, #1012) is impossible for us: the cache has hard byte budgets, an LRU with pin and an interval-set of coverage that is updated by the same operations as the cache itself. The class "the cache is cramped, and there is nothing to enlarge it with" is POSSIBLE and is not caught by anything: `src/libs/kt-engine/src/player.rs:189` takes `CacheConfig::default()` (512 MB video + 64 MB audio), and nowhere in `src/` is there a single place where this number can be changed — even though `src/apps/kt-app/src/app.rs:5039` already prints "the cache is cramped" to the user.
 
-### Что уже есть
+### What already exists
 
-- `src/libs/kt-cache/src/lib.rs` — весь механизм: `CacheConfig
+- `src/libs/kt-cache/src/lib.rs` — the whole mechanism: `CacheConfig
   {max_audio_bytes, max_video_bytes}`, `Entry {payload, recency, pinned,
-  had_hit, span}`, LRU по `BTreeMap<recency, key>`, `evict_over_budget`
-  (идёт от старейших, пропускает pinned, выселяет ИЗ ПРЕВЫШЕННОГО пула),
-  `IntervalSet` покрытия с `insert_range`/`remove_range`/`query`.
-  `epoch` бампается на каждой вставке и выселении — UI перерисовывает
-  полоски только при изменении.
-- Счётчики честные и раздельные: `CacheStats {audio_hits, audio_misses,
+  had_hit, span}`, LRU over `BTreeMap<recency, key>`, `evict_over_budget`
+  (goes from the oldest, skips pinned, evicts FROM THE EXCEEDED pool),
+  the coverage `IntervalSet` with `insert_range`/`remove_range`/`query`.
+  `epoch` is bumped on every insertion and eviction — the UI redraws
+  the bars only when something changes.
+- The counters are honest and separate: `CacheStats {audio_hits, audio_misses,
   video_hits, video_misses, evictions, unused_evictions}`. `unused_evictions`
-  растёт и при выселении, и при ПЕРЕЗАПИСИ записи до первого чтения — порт
-  `hadHit` из v1, закрыт тестом 37 (`t37_unused_evictions_counted_separately`).
-- `src/apps/kt-app/src/app.rs` (`draw_diagnostics`, ~5077) — занятость
-  видео-кэша считается как `video_bytes() / max_video_bytes()`, полоса
-  краснеет выше 90 %; рядом «no-read drops всего: N». Пороговые записи в
-  журнал — там же (~5038): `eviction_spike` при >500 выселений/с и
-  `prefetch_thrash` при любой ненулевой дельте `unused_evictions`. График
-  `perf.churn` рисует три серии: eviction/с, промахи/с, no-read drops/с.
-- Размеры всех «пачек» подчинены бюджету, а не наоборот: `span_key_budget`
+  grows both on eviction and on OVERWRITE of an entry before its first read — a port of
+  `hadHit` from v1, covered by test 37 (`t37_unused_evictions_counted_separately`).
+- `src/apps/kt-app/src/app.rs` (`draw_diagnostics`, ~5077) — occupancy
+  of the video cache is computed as `video_bytes() / max_video_bytes()`, the bar
+  turns red above 90 %; next to it "no-read drops total: N". Threshold entries
+  in the log are there too (~5038): `eviction_spike` at >500 evictions/s and
+  `prefetch_thrash` on any non-zero delta of `unused_evictions`. The chart
+  `perf.churn` draws three series: evictions/s, misses/s, no-read drops/s.
+- The sizes of all "batches" are subordinated to the budget, not the other way round: `span_key_budget`
   (`worker.rs:327`), `video_lookahead_ticks` (`player.rs:959`),
-  `export_chunk_frames` (`export.rs:66`) — везде «не больше половины
-  бюджета». Причина записана в п.19в porting-notes: спан не должен уметь
-  выселить сам себя.
-- Префетч не греет то, что не прозвучит: `lookahead_windows` фолдит окно
-  упреждения в loop-регион (п.167, тесты 167/167b) — прямой ответ на
+  `export_chunk_frames` (`export.rs:66`) — everywhere "not more than half
+  the budget". The reason is recorded in item 19c of porting-notes: a span must not be able
+  to evict itself.
+- Prefetch does not warm what will not sound: `lookahead_windows` folds the look-ahead window into the loop region (item 167, tests 167/167b) — a direct answer to
   prefetch-thrash.
-- Пост-FX мемоизация живёт в общем видео-бюджете и невидима для coverage
-  (тест 65), а в ЭКСПОРТЕ выключена совсем (`FramePlan.memoize_postfx`,
-  п.195) — именно потому, что там она только вытесняла ещё не
-  использованные кадры соседних дорожек.
-- VRAM тоже под потолком: `TexturePool`/`UploadCache`/`ReadbackCache`
-  (`src/libs/kt-gpu/src/pool.rs`) — три LRU с бюджетами 128/256/64 МБ,
-  «кэши — единственные держатели текстур между кадрами».
-- Всё, что копится в UI, ограничено: журнал 800 строк, notice 200, тумбы
-  `MAX_READY = 384`, негативный кэш тумб `MAX_FAILED = 4096`, источники
-  тумб-воркера `MAX_OPEN_SOURCES = 4`.
+- Post-FX memoization lives in the shared video budget and is invisible to coverage
+  (test 65), and in EXPORT it is switched off entirely (`FramePlan.memoize_postfx`,
+  item 195) — precisely because there it only evicted the not-yet-used frames of neighbouring tracks.
+- VRAM is also under a ceiling: `TexturePool`/`UploadCache`/`ReadbackCache`
+  (`src/libs/kt-gpu/src/pool.rs`) — three LRUs with budgets of 128/256/64 MB,
+  "caches are the only holders of textures between frames".
+- Everything that accumulates in the UI is bounded: the log 800 lines, notices 200, thumbnails
+  `MAX_READY = 384`, the thumbnail negative cache `MAX_FAILED = 4096`, the thumbnail-worker
+  sources `MAX_OPEN_SOURCES = 4`.
 
-### Чего не хватает
+### What is missing
 
-- **Лимит кэша не выставляется ниоткуда, а предупреждение о нём уже
-  показывается.** «Кэшу тесно» без места, где его расширить, — это
-  сообщение, на которое нельзя отреагировать (правило 19).
-- **4K не покрыт регресс-тестом.** Тест 116
+- **The cache limit is not exposed anywhere, yet a warning about it is already shown.** "The cache is cramped" without a place
+  to enlarge it is a message to which one cannot react (rule 19).
+- **4K is not covered by a regression test.** Test 116
   (`t116_export_has_no_black_frames_at_large_quality`,
-  `src/libs/kt-engine/tests/frame_order.rs:184`) гоняет матрицу
-  320×180 … 1920×1080 × 1–5 слоёв. Арифметика за её границей: при 4K и семи
-  одновременных слоях пачка вырождается в один кадр, которому нужно 232 МБ
-  в бюджете 201 МБ, — и ассерт это пропустит из-за оговорки `|| n == 1`.
-  При 1080p того же не происходит ни при каком числе слоёв. То есть класс
-  п.116 (чёрный рендер из-за выселения до композиции) при 4K возвращается
-  примерно на 3.5× меньшем числе слоёв, чем при 1080p, и матрица теста
-  ровно туда не доходит.
-- **Ветка `None` в `span_key_budget` (`worker.rs:334`) обходит бюджет**:
-  отдаёт 64 ключа при ПОЛНОМ разрешении источника, то есть 2.1 ГБ на 4K в
-  кэш 512 МБ за один проход. Сегодня недостижима (плеер всегда шлёт
-  `Some(q)`), но охраны у этого допущения нет ни тестом, ни типом.
-- **Верхнего предела на число открытых источников нет.** `Player::new`
-  заводит поток и открытый декодер на каждое медиа проекта; у тумб предел
-  есть и назван числом, у плеера — нет. Сама по себе эта дыра принадлежит
-  F-RES-010 (там она про отзывчивость), здесь она про то, что вместе с
-  каждым источником в ОЗУ приезжает его пакетный индекс.
-- **Занятость показана для одного пула из пяти** (видео-кэш; аудио-кэш и три
-  бюджета VRAM — нет), и нигде не показана суммарная цифра, с которой
-  пользователь мог бы сверить то, что видит в диспетчере задач.
-- Негативные кэши воркера без потолка (см. «Минусы») — единственное место в
-  декод-пути, где структура растёт монотонно за сеанс.
+  `src/libs/kt-engine/tests/frame_order.rs:184`) runs a matrix of
+  320×180 … 1920×1080 × 1–5 layers. The arithmetic beyond its boundary: at 4K with seven
+  simultaneous layers the batch degenerates into a single frame, which needs 232 MB
+  in a 201 MB budget — and the assertion will let this through because of the caveat `|| n == 1`.
+  At 1080p the same does not happen for any number of layers. That is, the class of item 116
+  (a black render because of eviction before composition) returns at 4K at roughly
+  3.5× fewer layers than at 1080p, and the test matrix does not reach there.
+- **The `None` branch in `span_key_budget` (`worker.rs:334`) bypasses the budget**:
+  it returns 64 keys at FULL resolution of the source, that is 2.1 GB at 4K into
+  a 512 MB cache in one pass. Today it is unreachable (the player always sends
+  `Some(q)`), but this assumption has no guard, neither by a test nor by a type.
+- **There is no upper limit on the number of open sources.** `Player::new`
+  starts a thread and an open decoder for every media of the project; thumbnails have a limit
+  and it is named by a number, the player does not. This hole in itself belongs to
+  F-RES-010 (there it is about responsiveness); here it is about the fact that each source brings
+  its packet index into RAM along with it.
+- **Occupancy is shown for one pool out of five** (the video cache; the audio cache and the three
+  VRAM budgets — no), and nowhere is a total figure shown against which the user could check
+  what they see in the task manager.
+- The worker's negative caches without a ceiling (see "Cons") are the only place in the decode path
+  where the structure grows monotonically over a session.
 
-### Что мешает
+### What gets in the way
 
-`CacheConfig` — обычное поле `BurstCache`, заполняемое в `new`, а сам кэш
-раздан воркерам как `Arc` и создаётся один раз в `Player::new`. Поменять
-лимит на живом кэше нечем: пересоздать его = потерять всё прогретое и
-осиротить воркеров. Значит либо настройка применяется со следующего
-открытия проекта (дёшево, но выглядит как «не работает»), либо `config`
-становится атомарным и `evict_over_budget` читает его на каждой вставке —
-это горячий путь под тем же мьютексом.
+`CacheConfig` is an ordinary field of `BurstCache`, filled in `new`, and the cache itself
+is handed to the workers as an `Arc` and created once in `Player::new`. There is no way to change
+the limit on a live cache: recreating it means losing everything warm and orphaning the workers.
+So either the setting applies from the next project opening (cheap, but looks like "does not work"), or
+`config` becomes atomic and `evict_over_budget` reads it on every insertion —
+that is a hot path under the same mutex.
 
-Вторая помеха — хранить настройку негде. Лимит кэша МАШИННЫЙ, и в `.otio`
-ему не место: один и тот же проект ездит между машиной на 4 ГБ и машиной на
-64 ГБ. Это ровно вывод 2 первой волны («нет пользовательского хранилища вне
-проекта», README каталога) — тот же, в который упираются F-AUT-004,
-F-TXT-002, F-EXP-001 и F-UI-002.
+The second obstacle is that there is nowhere to store the setting. The cache limit is a MACHINE property, and it has no place
+in `.otio`: the same project travels between a machine with 4 GB and a machine with
+64 GB. This is exactly the conclusion of point 2 of the first wave ("there is no user storage outside
+the project", the catalogue's README) — the same one that F-AUT-004,
+F-TXT-002, F-EXP-001 and F-UI-002 run into.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Инвариант 4 (кэш — единственная правда о coverage) — ПОДТВЕРЖДАЕТСЯ и
-является причиной, по которой заметка вообще имеет предмет: занятость и
-полоски читаются из одной структуры. Инварианты 5 и 8 объясняют, почему
-скролл и зум не растят память (декодов не порождают вовсе), 12 — почему
-показ занятости не должен стоить кадров (полоски троттлятся при игре).
-Инвариант 9 (экспорт внутрипроцессный) — единственный, который здесь
-работает ПРОТИВ: он запрещает вынести рендер в отдельный процесс, то есть
-запрещает решение, которым пользуются Kdenlive и его пользователи. Правила
-чек-листа UI: 12 (фоновая работа не мешает) и 19 (диалог обязан сказать, где
-это потом изменить) — второе сегодня нарушено буквально.
+Invariant 4 (the cache is the single source of truth about coverage) — CONFIRMED and
+is the reason the note has a subject at all: occupancy and the bars are read from one structure. Invariants 5 and 8 explain why
+scrolling and zooming do not grow memory (they do not spawn decodes at all), and 12 — why
+showing occupancy must not cost frames (the bars are throttled during playback).
+Invariant 9 (in-process export) is the only one that works AGAINST here: it forbids moving the render into a separate process, that is, it forbids
+the decision used by Kdenlive and its users. The UI checklist rules: 12 (background work does not interfere) and 19 (a dialog must say where
+it can be changed later) — the second is literally violated today.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2–3 стадии раунда |
-| Где основная работа | kt-app (машинная настройка + канал предупреждения), kt-cache (лимит из конфигурации вместо `default()`), kt-engine (матрица t116 до 4K, охрана ветки `None`) |
-| Формат проекта | НЕ трогает и не должен: лимит машинный, в `.otio` ему не место |
-| Тесты, которые придётся написать | t116 расширить до 3840×2160 и 6–8 слоёв (сегодня оговорка `\|\| n == 1` прячет невлезающую пачку); `span_key_budget(None, …)` обязан уважать бюджет; харнесс: предупреждение «кэшу тесно» несёт адрес, где лимит менять |
-| Зависит от | пользовательское хранилище вне проекта (вывод 2 первой волны), F-HLP-013 (журнал и колокольчик), F-RES-010 (канал предупреждений и предел числа источников) |
-| Ломает совместимость | нет |
+| Scope | M — 2–3 stages of the round |
+| Where the main work is | kt-app (machine setting + warning channel), kt-cache (limit taken from configuration instead of `default()`), kt-engine (t116 matrix up to 4K, guard of the `None` branch) |
+| Project format | does NOT touch it and must not: the limit is per machine, it has no place in `.otio` |
+| Tests that will have to be written | extend t116 to 3840×2160 and 6–8 layers (today the caveat `\|\| n == 1` hides a batch that does not fit); `span_key_budget(None, …)` must respect the budget; harness: the "cache is cramped" warning carries the address where the limit is changed |
+| Depends on | user storage outside the project (conclusion 2 of the first wave), F-HLP-013 (log and bell), F-RES-010 (warning channel and the limit on the number of sources) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём, приоритет B. Движковая половина закрыта сильнее, чем у любого из
-источников счёта: у нас есть лимит, правило выселения, счётчик записей,
-выброшенных до первого чтения, и занятость от НАСТОЯЩЕГО лимита — тогда как
-все 30 «кэш»-задач шести трекеров оказались про дисковый каталог или про
-внутренний кэш кода, а про наблюдаемый кэш в памяти там нет ни одной,
-потому что наблюдать нечего. И тема сидит в ДВИЖКЕ (mlt 3.0 % против 0.2 %
-у редактора со своим движком) — то есть ровно в том слое, который у нас
-описан инвариантом 4 и закрыт тестами. Не A потому, что пользователь от
-этого сегодня не получает ничего, кроме диагноза.
+Take it, priority B. The engine half is closed more strongly than in any of the
+sources of the count: we have a limit, an eviction rule, a counter of entries
+dropped before their first read, and occupancy computed from the REAL limit — whereas
+all 30 "cache" tasks across six trackers turned out to be about the disk directory or about the
+internal code cache, and there is not a single one about the observable cache in memory,
+because there is nothing to observe. And the topic sits in the ENGINE (mlt 3.0 % against 0.2 %
+for an editor with its own engine) — that is, exactly in the layer that is described for us by invariant 4 and closed by tests. Not A because the user gets nothing from
+this today except a diagnosis.
 
-Открытая часть ровно одна и она же — обратная сторона нашей же фишки:
-**предупреждение «кэшу тесно» бесполезно, пока лимит нельзя увеличить из
-интерфейса.** Видимая занятость превращает «программа тормозит» в «кэш мал»
-и этим переносит диагноз с разработчика на пользователя — но перенос
-диагноза без переноса рычага делает его насмешкой. Второе, что стоит
-закрыть до жалобы, а не после: матрица t116 не доходит до 4K, а именно там
-арифметика пачки снова упирается в бюджет — класс «чёрный рендер» из п.116
-не отменён, он отодвинут на разрешение, которое мы не проверяем.
+The open part is exactly one, and it is the reverse side of our own feature:
+**the warning "the cache is cramped" is useless as long as the limit cannot be raised from the
+interface.** Visible occupancy turns "the program is slow" into "the cache is small"
+and thereby moves the diagnosis from the developer to the user — but moving the diagnosis without moving the lever
+makes it a mockery. The second thing to close before a complaint, not after: the t116 matrix does not reach 4K, and it is precisely there that the
+batch arithmetic again hits the budget — the "black render" class from item 116
+is not cancelled, it has been pushed to a resolution that we do not check.
 
-## Источники
+## Sources
 
 - mlt #695 — https://github.com/mltframework/mlt/issues/695
-  (задача от 06.04.2021, обращение 2026-09-08)
+  (task of 06.04.2021, accessed 2026-09-08)
 - mlt #271 — https://github.com/mltframework/mlt/issues/271
-  (задача от 23.11.2017, открыта, обращение 2026-09-08)
-- mlt #899 «Huge memory consumption of mlt-7.14.0 runs oom with 08:40
-  minutes project on 64+8 GB laptop» —
-  https://github.com/mltframework/mlt/issues/899 (10.04.2023), #1268 «4k
-  video edit need large memory?» (08.07.2026), #66/#1202 (`[mlt_pool] out of
-  memory`, повреждение пула) — обращение 2026-09-08
-- shotcut #483 «closing a project does not release all memory» (05.01.2018,
-  открыта), #977, #880, #1908 —
-  https://github.com/mltframework/shotcut/issues/483 и далее по номерам,
-  обращение 2026-09-08
+  (task of 23.11.2017, open, accessed 2026-09-08)
+- mlt #899 "Huge memory consumption of mlt-7.14.0 runs oom with 08:40
+  minutes project on 64+8 GB laptop" —
+  https://github.com/mltframework/mlt/issues/899 (10.04.2023), #1268 "4k
+  video edit need large memory?" (08.07.2026), #66/#1202 (`[mlt_pool] out of
+  memory`, pool corruption) — accessed 2026-09-08
+- shotcut #483 "closing a project does not release all memory" (05.01.2018,
+  open), #977, #880, #1908 —
+  https://github.com/mltframework/shotcut/issues/483 and onward by number,
+  accessed 2026-09-08
 - kde-invent #970 — https://invent.kde.org/multimedia/kdenlive/-/work_items/970
-  (задача от 02.03.2021, обращение 2026-09-08)
+  (task of 02.03.2021, accessed 2026-09-08)
 - kde-invent #1012 — https://invent.kde.org/multimedia/kdenlive/-/work_items/1012
-  (задача от 31.03.2021, обращение 2026-09-08)
+  (task of 31.03.2021, accessed 2026-09-08)
 - kde-invent #736 — https://invent.kde.org/multimedia/kdenlive/-/work_items/736
-  (задача от 26.06.2020, обращение 2026-09-08)
+  (task of 26.06.2020, accessed 2026-09-08)
 - kde-invent #1424 — https://invent.kde.org/multimedia/kdenlive/-/work_items/1424
-  (задача от 07.05.2022, открыта, обращение 2026-09-08)
-- kde-invent #1599, #392, #215, #1973 — то же, обращение 2026-09-08
+  (task of 07.05.2022, open, accessed 2026-09-08)
+- kde-invent #1599, #392, #215, #1973 — same, accessed 2026-09-08
 - pitivi #623 — https://gitlab.gnome.org/GNOME/pitivi/-/work_items/623
-  (задача от 28.08.2009, обращение 2026-09-08)
-- pitivi #2459 «Memory not released after rendering» (открыта с 29.04.2020),
-  #2673 — то же, обращение 2026-09-08
+  (task of 28.08.2009, accessed 2026-09-08)
+- pitivi #2459 "Memory not released after rendering" (open since 29.04.2020),
+  #2673 — same, accessed 2026-09-08
 - kde-bugzilla #501578, #516409, #478871, #479684, #506718, #425806, #396637
-  (последняя — WONTFIX) — https://bugs.kde.org/show_bug.cgi?id=501578 и
-  далее по номерам, обращение 2026-09-08. Описаний задач в выгрузке нет:
-  `/rest/bug` их не отдаёт, поэтому цитируются заголовки.
-- Счёт воспроизводится:
-  `python3 src/scripts/tracker-rank.py --query '<фильтр>'`. На дату
-  написания в кэше выгружены ШЕСТЬ трекеров реестра — kde-bugzilla,
-  kde-invent, pitivi, mlt, shotcut, olive и otio (последний по теме даёт
-  ноль); остальные пять (flowblade, openshot, losslesscut, blender-vse,
-  ffmpeg-trac) ещё качались, и долей по ним здесь нет. Выгрузка приехала
-  в середине работы: числа по kde-bugzilla/kde-invent/pitivi снимались
-  дважды и не изменились, mlt и shotcut добавлены после.
-- Строки пяти редакторов ядра — по документации вендоров, живьём не
-  проверялось (пометка `[НЕ ПРОВЕРЕНО]` в таблице).
-- Наш код читан напрямую: `src/libs/kt-cache/src/lib.rs` целиком,
+  (the last one — WONTFIX) — https://bugs.kde.org/show_bug.cgi?id=501578 and
+  onward by number, accessed 2026-09-08. There are no task descriptions in the export:
+  `/rest/bug` does not return them, so the headings are quoted.
+- The count is reproducible:
+  `python3 src/scripts/tracker-rank.py --query '<filter>'`. As of the date of
+  writing, SIX registry trackers were exported in the cache — kde-bugzilla,
+  kde-invent, pitivi, mlt, shotcut, olive and otio (the last gives zero on this topic); the other five (flowblade, openshot, losslesscut, blender-vse,
+  ffmpeg-trac) were still downloading, and no shares for them are given here. The export arrived
+  in the middle of the work: the numbers for kde-bugzilla/kde-invent/pitivi were taken
+  twice and did not change; mlt and shotcut were added afterwards.
+- The rows for the five core editors — from vendor documentation, not checked live
+  (marked `[NOT VERIFIED]` in the table).
+- Our code was read directly: `src/libs/kt-cache/src/lib.rs` in full,
   `src/libs/kt-engine/src/{player,worker,export}.rs`,
   `src/libs/kt-gpu/src/{pool,engine}.rs`,
   `src/apps/kt-app/src/{app,thumbs}.rs`,
   `src/libs/kt-model/src/model.rs`, `src/libs/kt-media/src/{lib,ffmpeg}.rs`,
-  `src/libs/kt-engine/tests/frame_order.rs`; пункты 19, 37, 113, 116, 167,
-  195 `docs/porting-notes.md`.
+  `src/libs/kt-engine/tests/frame_order.rs`; items 19, 37, 113, 116, 167,
+  195 of `docs/porting-notes.md`.

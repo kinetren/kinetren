@@ -1,12 +1,12 @@
 ---
 id: F-EXP-003
-title: Smart render — копирование нетронутых кусков без перекодирования
-status: кандидат
+title: Smart render — copying untouched pieces without re-encoding
+status: candidate
 priority: C
 cost: M
 category: export/pipeline
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: no
 crates: [kt-ffmpeg, kt-media, kt-engine, kt-app]
 invariants: [1, 5, 7, 9, 10, 11]
 ui_rules: [9, 13, 16, 19]
@@ -17,123 +17,62 @@ depends_on: []
 checked: 2026-09-07
 ---
 
-# F-EXP-003 — Smart render — копирование нетронутых кусков без перекодирования
+# F-EXP-003 — Smart render — copying untouched pieces without re-encoding
 
-## Суть
+## Essence
 
-Монтажёр взял часовой файл, отрезал две минуты в начале, ничего больше не
-трогал — и ждёт сорок минут, пока редактор заново кодирует то, что уже
-закодировано. Smart render убирает это ожидание: кусок таймлайна, который
-буква в букву совпадает с куском исходника, не декодируется и не
-кодируется, а копируется пакетами в новый файл. Быстро — потому что
-работы нет вовсе; без потери качества — потому что байты те же самые.
-Плата одна и она жёсткая: копировать можно только с ключевого кадра,
-поэтому «умный» рендер умён ровно до первой подрезки не по границе GOP.
+The editor took an hour-long file, cut two minutes off the beginning, touched nothing else —
+and waits forty minutes while the editor re-encodes what is already encoded. Smart render removes this wait: a piece of the timeline that exactly matches a piece of the source is not decoded and not
+encoded, but copied in packets into a new file. It is fast because there is no work at all; it is lossless because the bytes are the same.
+The price is one and it is strict: one can copy only from a key frame,
+so "smart" rendering is smart exactly up to the first trim that is not on a GOP boundary.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | **«no-recompress rendering (smart rendering)»** — своё имя есть, отдельного переключателя нет | Умеет с эпохи DV, наращивалось форматами: в истории версий строка «Added support for no-recompress rendering (smart rendering) of XAVC Intra MXF video» (VP 13 build 290, 17.04.2014). Срабатывает САМО, когда шаблон рендера совпадает с параметрами исходника — галочки «включить умный рендер» в диалоге нет, и поэтому пользователь узнаёт о работе фичи только по времени рендера. Термина «render only where needed» в продукте нет (см. «Источники») |
-| Adobe Premiere | 26.x | **Smart Rendering**, плюс отдельная галочка **«Use Previews»** в диалоге экспорта | Работает НЕ для «любого h264», а по списку интермедиатов в двух обёртках: MXF (AVC-Intra, DNxHD/HR, XDCAM, JPEG 2000, XAVC-Intra) и QuickTime (ProRes, DNxHD, GoPro CineForm, Animation, uncompressed RGB). Условие сформулировано жёстко: «Smart rendering works only if the source codec, size, frame rate, and bit rate match the export settings». Клипы с эффектами требуется ПРЕДВАРИТЕЛЬНО отрендерить в превью — тогда экспорт копирует файлы предпросмотра вместо пересчёта |
-| DaVinci Resolve | 21 (механика проверялась по форумным описаниям 17.x–20.x) | **«Bypass re-encode when possible»** — галочка на странице Deliver | Копирует, когда для куска таймлайна уже есть готовый материал в нужном виде: оптимизированный/пре-рендеренный клип либо сам исходник. Практически ограничен intra-кодеками (ProRes, DNxHD/DNxHR). Отдельное условие, которого нет ни у кого другого: **цветоуправление проекта обязано быть выключено** — «This feature only works on certain codecs (DNxHD should work) with deactivated color management», «any afaik in Rec709 only. Other color spaces in project settings will result in reencoding» |
-| Final Cut Pro | 12.3 | своего маркетингового имени нет — это поведение render-файлов | При совпадении кодека экспорта с кодеком render-файлов кадры копируются: «the render files will be used. That is, the frames are simply copied to the final file». Исторический предок (FCP 7) назывался иначе и делался руками: Export → QuickTime Movie → Current Settings + Make Self-Contained давало «non recompressed movie» |
-| After Effects | 26.x | нет | Композитор, а не монтажный редактор: у него нет понятия «нетронутый кусок исходника» — каждый слой проходит через трансформации композиции, и Render Queue считает кадр всегда. **[НЕ ПРОВЕРЕНО первоисточником]** — вывод из устройства продукта, отдельного отрицания в справке не искал |
+| VEGAS Pro | 2026.0 | **"no-recompress rendering (smart rendering)"** — it has its own name, there is no separate switch | it has worked since the DV era, growing with formats: the version history has the line "Added support for no-recompress rendering (smart rendering) of XAVC Intra MXF video" (VP 13 build 290, 17.04.2014). It triggers ITSELF when the render template matches the parameters of the source — there is no checkbox "enable smart rendering" in the dialog, and therefore the user learns that the feature works only from the render time. The term "render only where needed" does not exist in the product (see "Sources") |
+| Adobe Premiere | 26.x | **Smart Rendering**, plus a separate checkbox **"Use Previews"** in the export dialog | It works NOT for "any h264", but by the list of intermediates in two wrappers: MXF (AVC-Intra, DNxHD/HR, XDCAM, JPEG 2000, XAVC-Intra) and QuickTime (ProRes, DNxHD, GoPro CineForm, Animation, uncompressed RGB). The condition is formulated strictly: "Smart rendering works only if the source codec, size, frame rate, and bit rate match the export settings". Clips with effects must be PRE-rendered to previews — then the export copies the preview files instead of recalculating |
+| DaVinci Resolve | 21 (the mechanics were checked from forum descriptions of 17.x–20.x) | **"Bypass re-encode when possible"** — a checkbox on the Deliver page | Copies when a ready material in the needed form already exists for the piece of the timeline: an optimized/pre-rendered clip or the source itself. Practically limited to intra codecs (ProRes, DNxHD/DNxHR). A separate condition that nobody else has: **the project's colour management must be disabled** — "This feature only works on certain codecs (DNxHD should work) with deactivated color management", "any afaik in Rec709 only. Other color spaces in project settings will result in reencoding" |
+| Final Cut Pro | 12.3 | no marketing name of its own — this is the behaviour of render files | When the codec of the export matches the codec of the render files, the frames are copied: "the render files will be used. That is, the frames are simply copied to the final file". The historical ancestor (FCP 7) was called differently and was done by hand: Export → QuickTime Movie → Current Settings + Make Self-Contained gave a "non recompressed movie" |
+| After Effects | 26.x | no | A compositor, not an editing application: it has no notion of an "untouched piece of the source" — every layer goes through the transformations of the composition, and Render Queue always computes the frame. **[NOT VERIFIED against the primary source]** — a conclusion from the structure of the product; I did not search the help for an explicit denial |
 
-## Фишка фишки
+## The trick behind it
 
-**1. «Smart render» — это ДВА разных механизма под одним именем, и путают
-их постоянно.** Первый — копирование пакетов ИСХОДНИКА («не перекодируй
-то, что не менялось»); так это делает VEGAS и так это описано в его
-истории версий словом «no-recompress». Второй — повторное использование
-уже посчитанных ФАЙЛОВ ПРЕДПРОСМОТРА («не считай второй раз то, что уже
-посчитано»); именно это у Premiere спрятано за галочкой «Use Previews», и
-именно это у FCP делают render-файлы. Разница практическая: у второго
-механизма исходник вообще ни при чём — важно, чтобы кодек ПРЕВЬЮ совпал с
-кодеком экспорта, и клип С ЭФФЕКТАМИ тоже копируется, если его заранее
-отрендерили. То есть у Premiere ускоряется проект, где всё
-обвешано эффектами, а у Vegas — проект, где эффектов нет вовсе. Это
-противоположные сценарии, и пользователь, прочитавший про «smart render»
-в одном редакторе, приходит в другой с неверными ожиданиями.
+**1. "Smart render" is TWO different mechanisms under one name, and they are constantly confused.** The first is copying the packets of the SOURCE ("do not re-encode what did not change"); this is how VEGAS does it and how it is described in its version history with the word "no-recompress". The second is reusing the already computed PREVIEW FILES ("do not compute a second time what is already computed"); this is exactly what Premiere hides behind the "Use Previews" checkbox, and it is exactly what FCP's render files do. The difference is practical: in the second mechanism the source does not matter at all — what matters is that the codec of the PREVIEW matches the export codec, and a clip WITH EFFECTS is also copied if it was rendered in advance. That is, Premiere accelerates a project where everything is
+loaded with effects, and Vegas accelerates a project where there are no effects at all. These are opposite scenarios, and a user who has read about "smart render"
+in one editor arrives at another with wrong expectations.
 
-**2. Гибридный вывод упирается не в кодек, а в ЗАГОЛОВОК контейнера.** В
-MP4/MOV параметры видеопотока (для h264 — SPS/PPS в боксе `avcC`) лежат в
-заголовке ОДНИМ набором на весь файл и фиксируются в момент его записи.
-Значит в файле, где часть кусков скопирована, а часть закодирована,
-энкодер обязан выдать битстрим, совместимый с этим единственным набором:
-тот же профиль, тот же уровень, тот же pix_fmt, то же разрешение, тот же
-тип энтропийного кодирования. Отсюда — и только отсюда — берётся то, что
-в справках выглядит как произвольный список поддерживаемых форматов: у
-Premiere это буквально перечень MXF- и QuickTime-обёрток, у Resolve —
-ProRes/DNxHD, у Vegas — DV/HDV/XDCAM/XAVC-Intra. Все они либо intra-only,
-либо с жёстко заданной структурой потока, то есть такие, где «выдать
-совместимый поток» — выполнимое требование. Произвольный h264 с телефона
-в этот список не попадает никогда: у него свой профиль, свои SPS, часто
-переменный кадр и B-пирамида.
+**2. The hybrid output runs into not the codec but the CONTAINER HEADER.** In MP4/MOV the parameters of the video stream (for h264 — SPS/PPS in the `avcC` box) lie in the header as ONE set for the whole file and are fixed at the moment it is written.
+So in a file where some pieces are copied and some are encoded, the encoder must output a bitstream compatible with this single set: the same profile, the same level, the same pix_fmt, the same resolution, the same type of entropy coding. Hence — and only hence — comes what in the help pages looks like an arbitrary list of supported formats: for Premiere it is literally a list of MXF and QuickTime wrappers, for Resolve — ProRes/DNxHD, for Vegas — DV/HDV/XDCAM/XAVC-Intra. All of them are either intra-only,
+or have a rigidly defined stream structure, that is, ones where "output a compatible stream" is a feasible requirement. An arbitrary h264 from a phone never falls into this list: it has its own profile, its own SPS, often a variable frame and B-pyramid.
 
-**3. Ключевой кадр — необходимое условие разреза, но НЕ достаточное.**
-Копировать можно с I-кадра, но «I-кадр» и «безопасная точка склейки» —
-разные вещи. При открытом GOP «a B frame in one GOP is able to reference
-a frame in a different GOP» (Wikipedia, Group of pictures) — то есть
-кадры после I-кадра законно ссылаются на предыдущую группу, и разрез
-ровно по I-кадру даёт разваленную картинку в первых кадрах куска. Плюс
-порядок вывода не равен порядку декодирования: «резать по pts ключевого
-кадра» и «резать по границе пакетов» — тоже не одно и то же. Поэтому
-редакторы обычно требуют не просто ключевой кадр, а закрытый GOP, и
-поэтому же интра-форматы удобны: там каждый кадр — граница.
+**3. A key frame is a necessary condition for a cut, but NOT a sufficient one.**
+One can copy from an I-frame, but "I-frame" and "a safe splice point" are
+different things. With an open GOP "a B frame in one GOP is able to reference
+a frame in a different GOP" (Wikipedia, Group of pictures) — that is, the frames after an I-frame legitimately reference the previous group, and a cut
+exactly at the I-frame gives a broken picture in the first frames of the piece. Plus the
+output order is not equal to the decoding order: "cut by the pts of the key frame" and
+"cut by the packet boundary" are also not the same thing. Therefore editors usually require not just a key frame but a closed GOP,
+and that is also why intra formats are convenient: there every frame is a boundary.
 
-## Плюсы
+## Pros
 
-- **Единственный путь без потери поколения.** У нас (и у любого редактора
-  с RGB-конвейером) даже «я ничего не менял» — это декод в RGB, композит и
-  кодирование заново: 10-битный или 4:2:2 исходник ухудшается ГАРАНТИРОВАННО.
-  Копия пакетов — не «чуть лучше», а единственная ветка, где ухудшения нет
-  в принципе.
-- **Время экспорта перестаёт зависеть от длины ролика и начинает зависеть
-  от объёма правок.** Час материала с двумя подрезками отдаётся за секунды,
-  и это не оптимизация на проценты, а другой порядок величины.
-- **Копия детерминированнее кодирования.** Те же входные байты дают те же
-  выходные всегда, тогда как выход libx264/nvenc зависит от сборки, версии
-  и числа потоков. Байтовое равенство «копия == оригинал» — более сильное
-  утверждение, чем любой хэш закодированного файла.
-- **Механизм №2 (переиспользование превью) окупает пре-рендер.** Там, где
-  он есть, монтажёр рендерит тяжёлый участок один раз во время монтажа, а
-  экспорт этот участок уже не считает — работа переезжает из «ожидания в
-  конце» в «фон во время работы».
+- **The only path without generation loss.** For us (and for any editor with an RGB pipeline) even "I did not change anything" means decode to RGB, composite and encode again: a 10-bit or 4:2:2 source is GUARANTEED to degrade. A copy of the packets is not "a bit better" but the only branch where there is no degradation in principle.
+- **Export time stops depending on the length of the clip and starts depending on the volume of edits.** An hour of material with two trims is delivered in seconds, and this is not an optimization by percentages but a different order of magnitude.
+- **A copy is more deterministic than encoding.** The same input bytes always give the same output bytes, whereas the output of libx264/nvenc depends on the build, the version and the number of threads. The byte equality "copy == original" is a stronger statement than any hash of an encoded file.
+- **Mechanism No. 2 (reusing previews) pays back the pre-render.** Where it exists, the editor renders a heavy section once during editing, and the export no longer computes that section — the work moves from "waiting at the end" to "background during work".
 
-## Минусы
+## Cons
 
-- **Умён до первой подрезки.** Точка входа не на ключевом кадре — и кусок
-  либо перекодируется целиком, либо съезжает на ближайший I-кадр. То есть
-  плата за скорость — либо отсутствие скорости, либо потеря монтажной
-  точности; на длинном GOP (0.5–2 с) это половина секунды промаха.
-- **Выходной файл становится неоднородным.** В одном ролике соседствуют
-  куски с битрейтом исходника и куски с нашим CRF: качество и битрейт
-  скачут на стыках, и это видно и глазом, и анализатором. «Без потери
-  качества» верно только про скопированную часть.
-- **Список форматов вместо правила.** Пользователь не может предсказать,
-  сработает ли фича: у Premiere это таблица обёрток и кодеков, у Vegas —
-  совпадение с шаблоном рендера. Отсюда весь отрицательный фидбек вида
-  «включил, а быстрее не стало» — фича молча не сработала.
-- **Отсутствие видимого органа управления работает против.** У Vegas
-  переключателя нет вовсе — пользователь не знает, копировалось у него
-  что-нибудь или нет; у Premiere галочка есть, и тогда появляется класс
-  жалоб «галочка стоит, а он всё равно кодирует».
-- **Гибрид ставит стык в зависимость от энкодера, который выбирали не вы.**
-  На машине с nvenc и на машине с libx264 «совместимый поток» — это разные
-  битстримы, и один и тот же проект может собраться на одной и не собраться
-  на другой.
-- **Фичу убивает любая глобальная настройка кадра, а не только правка
-  клипа.** У Resolve её гасит включённое цветоуправление проекта: «Other
-  color spaces in project settings will result in reencoding». Пользователь
-  при этом ничего с клипом не делал — он один раз выставил цветовую
-  политику проекта, и весь smart render молча выключился на всём таймлайне.
-  Для нас это прямое предупреждение: наш конвейер сам по себе есть
-  преобразование цвета (декод в RGBA8 и обратно в YUV420P), и как только у
-  проекта появится хоть какая-то цветовая настройка, право на копию
-  придётся снимать целиком.
+- **Smart only up to the first trim.** An entry point not on a key frame — and the piece either is re-encoded entirely or slides to the nearest I-frame. That is, the price of speed is either no speed or a loss of editing precision; on a long GOP (0.5–2 s) this is half a second of miss.
+- **The output file becomes non-uniform.** In one video there are pieces with the source's bitrate side by side with pieces with our CRF: the quality and bitrate jump at the joins, and this is visible both to the eye and to an analyzer. "Without loss of quality" is true only of the copied part.
+- **A list of formats instead of a rule.** The user cannot predict whether the feature will trigger: in Premiere it is a table of wrappers and codecs, in Vegas — a match with the render template. Hence all the negative feedback of the kind "turned it on, and it did not get faster" — the feature silently did not trigger.
+- **The absence of a visible control works against it.** Vegas has no switch at all — the user does not know whether anything was copied or not; Premiere has the checkbox, and then the class of complaints appears "the checkbox is ticked, yet it still encodes".
+- **The hybrid makes the join dependent on an encoder that you did not choose.** On a machine with nvenc and on a machine with libx264 the "compatible stream" is different bitstreams, and the same project may assemble on one and not on another.
+- **The feature is killed by any global setting of the frame, not only by an edit of the clip.** In Resolve it is switched off by enabled project colour management: "Other color spaces in project settings will result in reencoding". The user did nothing with the clip — he set the colour policy of the project once, and the whole smart render silently switched off on the entire timeline. For us this is a direct warning: our pipeline is itself a colour conversion (decode to RGBA8 and back to YUV420P), and as soon as the project gets any colour setting at all, the right to a copy will have to be removed entirely.
 
-## Что говорят пользователи
+## What users say
 
 > The "Use Previews on Export" tick box no longer works. So even if you have
 > all ProRes 422 Preview rendered files ready to go - Premiere simply ignores
@@ -141,301 +80,269 @@ a frame in a different GOP» (Wikipedia, Group of pictures) — то есть
 > — JonesVid, 29.04.2024, https://community.adobe.com/questions-729/faq-what-is-smart-rendering-1355162
 
 > It needs a re-encode, not a rewrap.
-> — RogerS, 12.04.2026, https://forum.borisfx.com/t/bugs-in-vegas-pro-2026/22222 (пост 5)
+> — RogerS, 12.04.2026, https://forum.borisfx.com/t/bugs-in-vegas-pro-2026/22222 (post 5)
 
 > There are video codecs that do not use temporal compression… those are often
 > referred to as "all intra" frame videos, or "All-I" frame.
-> — Fr0sty, 12.04.2026, https://forum.borisfx.com/t/bugs-in-vegas-pro-2026/22222 (пост 7)
+> — Fr0sty, 12.04.2026, https://forum.borisfx.com/t/bugs-in-vegas-pro-2026/22222 (post 7)
 
 > File/export/quicktime movie… then select "make self contained" and use
 > "current settings". this will result in a non recompressed movie.
 > — Jerry Hofmann, 11.05.2008, https://creativecow.net/forums/thread/final-cut-pro-export-without-re-encoding-clipsae/
 
-Первая цитата — самый ценный вид фидбека: фича заявлена, орган управления
-на месте, а поведения нет, и человек об этом узнаёт по времени экспорта.
-Вторая и третья — из треда о «плохих для монтажа» файлах: там же объясняют,
-почему длинный GOP мешает и почему intra-форматы редакторам удобнее, то
-есть ровно тот механизм, на котором стоит smart render. Четвёртая
-показывает возраст темы: у Final Cut это было ручной операцией ещё в 2008-м.
+The first quote is the most valuable kind of feedback: the feature is declared, the control
+is in place, and there is no behaviour, and the person learns this from the export time. The second and third are from a thread about "bad for editing" files: there they also explain
+why a long GOP gets in the way and why intra formats are more convenient for editors, that is,
+exactly the mechanism on which smart render stands. The fourth
+shows the age of the topic: with Final Cut it was a manual operation back in 2008.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What is already there
 
-**Половина предпосылок лежит готовой, и это редкий случай для этой базы.**
+**Half of the prerequisites lie ready, and this is a rare case for this codebase.**
 
-1. **Муксер уже наш и уже внутрипроцессный.** `Muxer` в
-   `src/libs/kt-ffmpeg/src/muxer_impl.rs` сам открывает
-   `AVFormatContext`, заводит потоки, пишет заголовок и гонит пакеты через
-   `av_interleaved_write_frame` (стр. 377) с уже готовым
-   `av_packet_rescale_ts` рядом. Passthrough — это ровно тот же вызов,
-   только пакет приходит не из `avcodec_receive_packet`, а из
-   `av_read_frame` чужого файла. Инвариант №9 здесь не мешает, а является
-   ПРЕДПОСЫЛКОЙ: редактору, который шеллится в бинарник `ffmpeg`,
-   пришлось бы городить `-c copy` и терять управление стыком.
+1. **The muxer is already ours and already in-process.** `Muxer` in
+   `src/libs/kt-ffmpeg/src/muxer_impl.rs` itself opens the `AVFormatContext`, creates the streams, writes the header and pushes packets through
+   `av_interleaved_write_frame` (line 377) with `av_packet_rescale_ts` already next to it. Passthrough is exactly the same call,
+   only the packet comes not from `avcodec_receive_packet` but from `av_read_frame` of someone else's file. Invariant No. 9 here does not hinder but is a PREREQUISITE: an editor that shells out to a `ffmpeg` binary
+   would have to build `-c copy` and would lose control of the join.
 
-2. **Индекс кейфреймов уже построен и уже лежит в SQLite.** Таблица
-   `packet_index` (`docs/media-index.md`, схема v2) хранит по строке на
-   поток: `stream='video'` — pts всех пакетов с `AV_PKT_FLAG_KEY`,
-   `stream='audio'` — pts всех аудио-пакетов, blob i64 LE, отсортирован.
-   Пишет `src/libs/kt-media/src/index.rs` (`put_packet_index` /
-   `packet_index`), читает `FfmpegSource::open_indexed`
-   (`src/libs/kt-ffmpeg/src/source_impl.rs`, стр. 190–226), а наружу уже
-   торчит готовый ответ — `MediaSource::keyframe_before(pts) ->
-   Option<Tick>` (`src/libs/kt-media/src/lib.rs`, стр. 73; реализация —
-   `source_impl.rs`, стр. 284–295, с пересчётом из timebase потока в тики
-   и обратно). То есть вопрос «где ближайший ключевой кадр слева», ради
-   которого чужие редакторы держат отдельную индексацию, у нас УЖЕ
-   отвечается `partition_point`'ом по массиву в памяти, без единого чтения
-   файла. Привязка индекса к файлу тоже решена: `PrebuiltIndex`
-   (`src/libs/kt-ffmpeg/src/lib.rs`, стр. 89–97) прямо оговаривает
-   «валиден только для байт-в-байт того же файла», а идентичность
-   проверяется size + mtime + xxh3-128 в `MediaIndexDb::ensure_media`.
+2. **The keyframe index is already built and already lies in SQLite.** The table
+   `packet_index` (`docs/media-index.md`, schema v2) holds one row per stream:
+   `stream='video'` — the pts of all packets with `AV_PKT_FLAG_KEY`,
+   `stream='audio'` — the pts of all audio packets, an i64 LE blob, sorted. It is written by `src/libs/kt-media/src/index.rs` (`put_packet_index` /
+   `packet_index`), read by `FfmpegSource::open_indexed`
+   (`src/libs/kt-ffmpeg/src/source_impl.rs`, lines 190–226), and the ready answer already sticks out outward — `MediaSource::keyframe_before(pts) ->
+   Option<Tick>` (`src/libs/kt-media/src/lib.rs`, line 73; the implementation is
+   `source_impl.rs`, lines 284–295, with recomputation from the stream's timebase into ticks and back). That is, the question "where is the nearest key frame to the left", for which foreign editors keep a separate index, is ALREADY answered by us by a `partition_point` over an array in memory, without a single read of the file. The binding of the index to the file is also solved: `PrebuiltIndex`
+   (`src/libs/kt-ffmpeg/src/lib.rs`, lines 89–97) explicitly stipulates
+   "valid only for byte-for-byte the same file", and identity is checked by size + mtime + xxh3-128 in `MediaIndexDb::ensure_media`.
 
-3. **Решать «этот кадр — нетронутая копия?» есть чем и есть где.**
-   `FramePlan` (`src/libs/kt-engine/src/video_plan.rs`) — структура
-   композиции момента, построенная ОДНИМ кодом до выбора бэкенда. Признак
-   «тривиальный кадр» читается из неё целиком и дёшево: `layers.len() ==
-   1`, ветка `PlanLayer::One` с `alpha_k == 4096`, `fade: None`, пустая
-   `fx`, `blend: None`, `cam3d: None`, `has_3d == false`, размер слоя
-   равен `out_w × out_h`. Это важно архитектурно: решение о passthrough
-   принимает тот же построитель плана, что и всё остальное, — второго
-   обхода модели со своим пониманием «что считается правкой» не заводится,
-   и инвариант №7 остаётся буквально верным.
+3. **There is a way to decide "is this frame an untouched copy?"** `FramePlan` (`src/libs/kt-engine/src/video_plan.rs`) — the composition structure of the moment, built by ONE code before the backend is chosen. The sign of a "trivial frame" is read from it entirely and cheaply: `layers.len() ==
+   1`, a branch `PlanLayer::One` with `alpha_k == 4096`, `fade: None`, an empty
+   `fx`, `blend: None`, `cam3d: None`, `has_3d == false`, the size of the layer
+   equals `out_w × out_h`. This is important architecturally: the decision about passthrough is taken by the same plan builder as everything else — a second traversal of the model with its own understanding of "what counts as an edit" is not created, and invariant No. 7 remains literally true.
 
-4. **Фикстура для теста уже сгенерирована.** `src/fixtures/gen.sh` делает
-   `testsrc_h264.mp4` — 320×180, 30 fps, `-g 15`, yuv420p, libx264. Проект
-   320×180@30 с одним таким клипом без FX — ровно тот вырожденный случай,
-   который passthrough обязан скопировать целиком, а границы кратно 0.5 с
-   ложатся точно на ключевые кадры.
+4. **The test fixture is already generated.** `src/fixtures/gen.sh` makes
+   `testsrc_h264.mp4` — 320×180, 30 fps, `-g 15`, yuv420p, libx264. A project
+   320×180@30 with one such clip without FX is exactly the degenerate case that passthrough must copy entirely, and the boundaries at multiples of 0.5 s fall exactly on key frames.
 
-### Чего не хватает
+### What is missing
 
-- **Пакетов не видит никто выше kt-ffmpeg.** Трейт `MediaSource`
-  (`src/libs/kt-media/src/lib.rs`, стр. 64–94) — абстракция
-  ДЕКОДИРОВАННОГО: `read_audio_burst` отдаёт f32 48k, `read_video_frame`
-  отдаёт RGBA. Сырого пакета в ней нет и по смыслу быть не должно — её
-  реализуют ещё `SyntheticSource` и `PlaceholderSource`
-  (`src/libs/kt-media/src/placeholder.rs`), которым «отдай h264-пакет»
-  нечем ответить. Нужен ОТДЕЛЬНЫЙ необязательный интерфейс копира, а не
-  расширение трейта.
-- **Муксер умеет ровно два входа**: `write_video(rgba)` и
-  `write_audio(&[f32])`. Пакетного входа нет.
-- **Кодек источника нигде не записан.** `MediaInfo`
-  (`src/libs/kt-media/src/lib.rs`, стр. 16–26) — это
-  `duration/has_video/has_audio/fps/width/height`, и всё: ни codec_id, ни
-  профиля, ни уровня, ни pix_fmt, ни цветовых характеристик, ни
-  `extradata`. Условие «тот же кодек и тот же профиль» сейчас ПРОВЕРИТЬ
-  НЕЧЕМ — сравнивать нечего с чем; вместе с этим придётся расширять и
-  `probe_json` в индекс-БД.
-- **Символов dlopen не хватает.** В `src/libs/kt-ffmpeg/src/api.rs`
-  загружены `av_read_frame`, `avcodec_parameters_from_context`,
-  `av_packet_rescale_ts`, `avformat_write_header` и
-  `av_interleaved_write_frame`, но НЕТ `avcodec_parameters_copy`,
-  `av_packet_ref` и семейства `av_bsf_*` (битстрим-фильтры; для перехода
-  Annex B ↔ AVCC они обязательны). Их надо и дописать в таблицу
-  загрузчика, и провести через bindgen по вендоренным заголовкам
-  `src/libs/kt-ffmpeg/vendor/ffmpeg-{6,7,8}` (инвариант №10) — работа
-  механическая, но троекратная.
+- **No one above kt-ffmpeg sees packets.** The `MediaSource` trait
+  (`src/libs/kt-media/src/lib.rs`, lines 64–94) is an abstraction over
+  DECODED data: `read_audio_burst` returns f32 48k, `read_video_frame`
+  returns RGBA. There is no raw packet in it, and by its meaning there should
+  not be one. It is also implemented by `SyntheticSource` and `PlaceholderSource`
+  (`src/libs/kt-media/src/placeholder.rs`), which have nothing to answer to "give me
+  an h264 packet". A SEPARATE optional copier interface is needed, not an extension
+  of the trait.
+- **The muxer has exactly two inputs**: `write_video(rgba)` and
+  `write_audio(&[f32])`. There is no packet input.
+- **The source codec is recorded nowhere.** `MediaInfo`
+  (`src/libs/kt-media/src/lib.rs`, lines 16–26) holds
+  `duration/has_video/has_audio/fps/width/height`, and that is all: no codec_id, no
+  profile, no level, no pix_fmt, no colour characteristics, no
+  `extradata`. The condition "same codec and same profile" cannot be CHECKED right now,
+  because there is nothing to compare against; `probe_json` in the index DB would have to be
+  extended along with it.
+- **Not enough dlopen symbols.** `src/libs/kt-ffmpeg/src/api.rs` loads
+  `av_read_frame`, `avcodec_parameters_from_context`,
+  `av_packet_rescale_ts`, `avformat_write_header` and
+  `av_interleaved_write_frame`, but there is NO `avcodec_parameters_copy`,
+  `av_packet_ref`, or the `av_bsf_*` family (bitstream filters; they are mandatory for
+  the Annex B ↔ AVCC conversion). They must be added to the loader's table and
+  run through bindgen over the vendored headers in
+  `src/libs/kt-ffmpeg/vendor/ffmpeg-{6,7,8}` (invariant No. 10). The work is
+  mechanical, but it is triple.
 
-### Что мешает
+### What gets in the way
 
-**1. Наш выход по конструкции один, и он наш.** `Muxer::open` берёт
-`codecpar` потока у НАШЕГО энкодера (`avcodec_parameters_from_context`,
-`muxer_impl.rs` стр. 204–205) и сразу пишет заголовок с `+faststart`
-(стр. 210–220). После `avformat_write_header` набор параметров потока
-зафиксирован на весь файл. Гибрид требует брать `codecpar` у ИСТОЧНИКА и
-заставлять наш энкодер выдавать совместимый с ним битстрим.
+**1. Our output is one by construction, and it is ours.** `Muxer::open` takes the
+`codecpar` of the stream from OUR encoder (`avcodec_parameters_from_context`,
+`muxer_impl.rs` lines 204–205) and writes the header right away with `+faststart`
+(lines 210–220). After `avformat_write_header` the set of stream parameters is
+fixed for the whole file. A hybrid requires taking `codecpar` from the SOURCE and
+forcing our encoder to emit a bitstream compatible with it.
 
-**2. А наш энкодер выбирается автоматически и на чужой машине.**
-`VIDEO_ENCODERS` = nvenc → vaapi → qsv → libx264 → mpeg4, с реальной
-пробой открытия (`muxer_impl.rs`, стр. 95–160), плюс мы жёстко задаём
-`gop_size = fps*2`, `max_b_frames = 0`, `pix_fmt = YUV420P`. Совместить
-это со случайным h264 с телефона нельзя ни при каком старании — можно
-только запретить смешивание и разрешить копию лишь там, где кодировать не
-нужно ВОВСЕ.
+**2. And our encoder is chosen automatically, on someone else's machine.**
+`VIDEO_ENCODERS` = nvenc → vaapi → qsv → libx264 → mpeg4, with a real
+open-probe (`muxer_impl.rs`, lines 95–160), plus we hard-set
+`gop_size = fps*2`, `max_b_frames = 0`, `pix_fmt = YUV420P`. There is no way to combine
+this with a random h264 from a phone, however hard one tries. One can only forbid
+mixing and allow a copy where no encoding is needed AT ALL.
 
-**3. Аудио вылетает первым.** Инвариант №1: внутри движка звук всегда f32
-48 kHz stereo, и AAC-энкодер муксера принимает только его.
-Аудио-passthrough — это выход за №1 (пакеты не декодируются вовсе); а если
-копировать только видео, а звук кодировать, начинается гибрид по
-контейнеру с priming-задержкой AAC и рассинхроном на стыке.
+**3. Audio goes first.** Invariant No. 1: inside the engine, sound is always f32
+48 kHz stereo, and the muxer's AAC encoder accepts only that.
+Audio passthrough is a violation of No. 1 (packets are not decoded at all). And if
+only video is copied while the sound is encoded, a hybrid container appears, with the
+AAC priming delay and a desync at the junction.
 
-**4. Конвейер экспорта покадровый, и на этом стоят его инварианты.**
+**4. The export pipeline is per-frame, and its invariants rest on this.**
 `render_raw_video_range_with` (`src/libs/kt-engine/src/export.rs`,
-стр. 190–275) идёт чанками по сетке fps, греет кэш `read_video_span`,
-считает `max_concurrent_layers` и зовёт `emit(&frame_buf)` ровно
-`total_video` раз. Копируемый отрезок надо ВЫРЕЗАТЬ из этого цикла
-целиком, а не подменять в нём кадры, иначе прогресс, статистика и
-`missing_video_layers` начнут считать несуществующие кадры.
+lines 190–275) runs in chunks along the fps grid, warms the cache with `read_video_span`,
+computes `max_concurrent_layers`, and calls `emit(&frame_buf)` exactly
+`total_video` times. The segment to be copied must be CUT OUT of this loop
+entirely, rather than substituting frames inside it. Otherwise progress, statistics and
+`missing_video_layers` will start counting frames that do not exist.
 
-**5. Наши кейфреймы — это pts, а не «место разреза».** Индекс хранит
-`p.pts` пакетов с `AV_PKT_FLAG_KEY` (`source_impl.rs`, стр. 213–218) — и
-больше ничего: ни dts, ни размеров, ни признака закрытого GOP. При
-B-кадрах порядок вывода не равен порядку декодирования, а открытый GOP
-`AV_PKT_FLAG_KEY` тоже помечает (см. «Фишка фишки», п. 3). Утешение: сам
-сканирующий проход уже читает КАЖДЫЙ пакет файла (`av_read_frame` в цикле,
-стр. 204–221), поэтому дописать в индекс то, чего копиру не хватает, —
-вопрос объёма блоба, а не второго прохода по файлу.
+**5. Our keyframes are pts, not "where to cut".** The index stores
+`p.pts` of packets with `AV_PKT_FLAG_KEY` (`source_impl.rs`, lines 213–218), and nothing
+else: no dts, no sizes, no sign of a closed GOP. With B-frames the output order is not
+the decode order, and an open GOP is also marked with `AV_PKT_FLAG_KEY` (see "The trick behind it", item 3). The consolation: the scanning pass itself already reads EVERY packet of the file (`av_read_frame` in a loop,
+lines 204–221), so adding to the index what the copier lacks is a question of blob size,
+not of a second pass over the file.
 
-### Тестируемость: подрывает ли фича фундамент
+### Testability: does the feature undermine the foundation
 
-Разбираю отдельно, потому что это главный вопрос по фиче.
+I analyse this separately, because it is the main question about the feature.
 
-**Инвариант №11 (детерминизм) фича НЕ трогает.** `golden_export.rs`
-(тест 11) хэширует СЫРЫЕ потоки `render_raw_audio`/`render_raw_video` на
-`SyntheticSource` — муксера в нём нет вовсе, а у синтетического источника
-нет пакетов. GOLDEN_AUDIO/GOLDEN_VIDEO passthrough не касается ни одним
-байтом. Более того, копия детерминированнее кодирования: выход libx264
-зависит от сборки и числа потоков — ровно поэтому наш эталон и стоит на
-сырых потоках, а не на mp4.
+**Invariant No. 11 (determinism) the feature does NOT touch.** `golden_export.rs`
+(test 11) hashes the RAW streams `render_raw_audio`/`render_raw_video` on
+`SyntheticSource`. There is no muxer in it at all, and the synthetic source has no
+packets. GOLDEN_AUDIO/GOLDEN_VIDEO do not touch passthrough by a single byte. Moreover, a copy is more
+deterministic than encoding: the output of libx264 depends on the build and on the number of
+threads. That is exactly why our reference stands on raw streams and not on mp4.
 
-**Инвариант №7 фича не нарушает, но выводит кусок файла из-под проверки.**
-Формулировка «на одном бэкенде превью == экспорт байт-в-байт» — про
-РЕНДЕР. Скопированный отрезок не рендерится, и сравнивать нечего: наш
-превью-путь для того же момента даёт декод → RGBA8 → композит → YUV420P
-при CRF 23, то есть ДВЕ пересборки цветового пространства и потерю
-поколения, а копия — ни одной. Картинка на выходе будет лучше превью и
-заведомо другая. Это не нарушение буквы, но это дыра в проверяемости.
+**Invariant No. 7 the feature does not violate, but it takes a piece of the file out from under
+verification.** The formulation "on one backend, preview == export byte-for-byte" is about
+RENDERING. A copied segment is not rendered, so there is nothing to compare: our preview path
+for the same moment gives decode → RGBA8 → composite → YUV420P
+at CRF 23, that is TWO colour-space reconversions and a generation loss, while the copy has none. The picture at the output will be better than the preview and
+certainly different. This is not a violation of the letter, but it is a hole in verifiability.
 
-**Однако проверять это можно СТРОЖЕ, чем кодирование, и точными
-равенствами, а не допусками** (ad-hoc epsilon у нас и так запрещены):
+**However, it can be verified MORE strictly than encoding, with exact equalities rather than tolerances**
+(ad-hoc epsilons are already forbidden for us):
 
-- копия равна оригиналу побайтно — демуксить исходник и выход и сравнить
-  полезные нагрузки пакетов на отрезке (`assert_eq` на `Vec<u8>`);
-- декод выхода равен декоду источника — тем же `FfmpegSource`, что в
-  `src/libs/kt-media/tests/ffmpeg_conformance.rs` (тесты 10/34);
-- сетка не поехала — длительность выхода равна `project_range`, кадров
-  ровно `total_video`;
-- отказ честный — на клипе с FX, переходом, уровнем, варпом, реверсом,
-  вторым слоем, чужим fps или чужим размером passthrough ОБЯЗАН не
-  сработать; это отдельный негативный тест класса «t247e» (перечислить все
-  виды правки и убедиться, что каждая снимает право на копию).
+- the copy equals the original byte for byte: demux the source and the output and compare the
+  payloads of the packets over the segment (`assert_eq` on `Vec<u8>`);
+- the decode of the output equals the decode of the source, with the same `FfmpegSource` as in
+  `src/libs/kt-media/tests/ffmpeg_conformance.rs` (tests 10/34);
+- the grid has not drifted: the output duration equals `project_range`, with exactly
+  `total_video` frames;
+- a refusal is honest: on a clip with FX, a transition, a level, a warp, a reverse, a second layer,
+  a foreign fps or a foreign size, passthrough MUST fail to engage. This is a separate negative test
+  of the "t247e" class (enumerate all kinds of edits and make sure each one removes the right to a copy).
 
-Так что фундамент подрывает не passthrough, а ГИБРИД: стык, где копия
-граничит с нашим кодированием, байтовым равенством не проверяется в
-принципе — там остаётся смотреть на декодируемость и на отсутствие
-артефакта, а это ровно та зона, где у чужих редакторов живут все баги
-smart render.
+So the foundation is undermined not by passthrough, but by a HYBRID: at the junction where a copy
+borders our encoding, byte equality cannot be checked in principle. There one can only look at
+decodability and at the absence of artifacts, and that is exactly the zone where all the
+smart render bugs of other editors live.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **№9** (экспорт внутрипроцессный) — не задевает, а опирается: копия идёт
-  тем же `av_interleaved_write_frame`.
-- **№10** (не линковаться с libav*) — задевает механически: новые символы
-  в `api.rs` плюс bindgen-обвязка ffmpeg-6/7/8.
-- **№1** (аудио всегда f32 48k внутри движка) — аудио-passthrough выходит
-  за него; либо копируем только видео, либо инвариант переформулируется
-  («звук, который движок ОБРАБАТЫВАЕТ, всегда f32 48k»).
-- **№7** (код композиции один) — не нарушается, пока признак «тривиальный
-  кадр» считается ИЗ `FramePlan`; нарушается сразу, если завести отдельный
-  анализатор проекта со своим понятием «правки».
-- **№11** (детерминизм) — не нарушается (см. выше), но зона без эталона
-  расширяется.
-- **№5** (декодером владеет один MediaWorker) — копир обязан открывать
-  файл СВОИМ короткоживущим handle, как это уже делает индекс-воркер
-  (`docs/media-index.md`, «Кто пишет»), а не ходить в чужой декодер.
-- **Правила UI 9, 13, 16, 19.** Отдельного чекбокса «умный рендер» быть не
-  должно: в диалоге уже есть комбобокс «Видеокодек» с пунктом «Авто»
-  (`src/apps/kt-app/src/render_dialog.rs`, стр. 285–300), и «Копировать
-  без перекодирования» — это ещё один его пункт (п.13 «не тратить место
-  впустую», п.9 «никаких чекбоксов не к месту»). А когда копия невозможна,
-  это обязано быть ОШИБКОЙ с названной причиной, а не тихим сползанием в
-  перекодирование (п.16) — иначе мы своими руками воспроизведём тред
-  «галочка стоит, а он всё равно кодирует», процитированный выше.
+- **No. 9** (export is in-process): not touched, but relied upon: the copy goes through
+  the same `av_interleaved_write_frame`.
+- **No. 10** (no linking with libav*): touched mechanically: new symbols
+  in `api.rs` plus the bindgen wrapping of ffmpeg-6/7/8.
+- **No. 1** (audio always f32 48k inside the engine): audio passthrough goes
+  beyond it. Either we copy only the video, or the invariant is reworded
+  ("sound that the engine PROCESSES is always f32 48k").
+- **No. 7** (the composition code is one): not violated, as long as the "trivial frame" flag is
+  computed FROM `FramePlan`. It is violated at once if a separate project analyser with its own
+  notion of "edit" is created.
+- **No. 11** (determinism): not violated (see above), but the zone without a reference
+  is widened.
+- **No. 5** (one MediaWorker owns the decoder): the copier MUST open the
+  file with its OWN short-lived handle, as the index worker already does
+  (`docs/media-index.md`, "Who writes"), and not go to someone else's decoder.
+- **UI rules 9, 13, 16, 19.** There must be no separate "smart render" checkbox.
+  The dialog already has a "Video codec" combobox with an "Auto" item
+  (`src/apps/kt-app/src/render_dialog.rs`, lines 285–300), and "Copy
+  without re-encoding" is one more item of it (item 13 "do not waste space", item 9
+  "no checkboxes out of place"). And when a copy is impossible, this MUST be an ERROR with a
+  named reason, not a silent slide into re-encoding (item 16). Otherwise we would
+  reproduce with our own hands the thread "the box is ticked, but it encodes anyway", quoted above.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | **M** для вырожденного случая («весь экспорт — копия одного нетронутого клипа»): 2–3 стадии раунда. Гибридный вывод — отдельная фича на **XL** и с другим вердиктом |
-| Где основная работа | kt-ffmpeg (копир пакетов, новые символы dlopen, bindgen 6/7/8, пакетный вход муксера), kt-media (probe: codec_id/профиль/pix_fmt/extradata в `MediaInfo` и `probe_json`), kt-engine (предикат по `FramePlan`, ветка экспорта в обход покадрового цикла), kt-app (пункт комбобокса кодека + причина отказа как ошибка) |
-| Формат проекта | не трогает (решение принимается при экспорте, в модели ничего не хранится) |
-| Тесты, которые придётся написать | conformance на `src/fixtures/out/testsrc_h264.mp4`: побайтное равенство скопированных пакетов, декод выхода == декод источника, число кадров и длительность; негативный тест «любая правка снимает право на копию» (FX, переход, уровень, варп, реверс, второй слой, чужой fps, чужой размер); тесты 25/33 (`export_options.rs`) не ослаблять |
-| Зависит от | ничего (расширение probe полезно само по себе) |
-| Ломает совместимость | нет |
+| Size | **M** for the degenerate case ("the whole export is a copy of one untouched clip"): 2–3 round stages. The hybrid output is a separate feature at **XL** and with a different verdict |
+| Where the main work is | kt-ffmpeg (packet copier, new dlopen symbols, bindgen 6/7/8, packet input of the muxer), kt-media (probe: codec_id/profile/pix_fmt/extradata in `MediaInfo` and `probe_json`), kt-engine (predicate over `FramePlan`, export branch bypassing the per-frame loop), kt-app (codec combobox item + refusal reason as an error) |
+| Project format | not touched (the decision is made at export; nothing is stored in the model) |
+| Tests to write | conformance on `src/fixtures/out/testsrc_h264.mp4`: byte equality of the copied packets, decode of the output == decode of the source, number of frames and duration; negative test "any edit removes the right to a copy" (FX, transition, level, warp, reverse, second layer, foreign fps, foreign size); tests 25/33 (`export_options.rs`) are not to be weakened |
+| Depends on | nothing (extending probe is useful on its own) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-**Берём, но только вырожденный случай и только явным выбором в комбобоксе
-кодека: «копировать без перекодирования».** Копия оправдана тем, что это
-единственная ветка экспорта без потери поколения — сейчас у нас даже
-нетронутый клип проходит YUV → RGBA8 → YUV420P при CRF 23, — а половина
-работы (индекс кейфреймов, свой муксер, единый построитель плана) уже
-сделана под другие задачи.
+**We take it, but only the degenerate case, and only as an explicit choice in the
+codec combobox: "copy without re-encoding".** The copy is justified by the fact that it is the only
+export branch without generation loss. Right now even an untouched clip goes through YUV → RGBA8 → YUV420P
+at CRF 23. Half of the work (keyframe index, own muxer, single plan builder) has
+already been done for other tasks.
 
-**Гибридный вывод — отвергнуть до отдельного решения владельца.** Причина
-не в объёме, а в конструкции: заголовок MP4 несёт один набор SPS/PPS на
-файл, а наш энкодер выбирается автоматически из пяти кандидатов на чужой
-машине, поэтому «совместимый стык» мы гарантировать не можем и проверить
-байтовым равенством не можем тоже. Правильная форма отказа — ошибка с
-названной причиной («источник h264 High@4.0, экспорт откроется как
-libx264 Main@3.1 — копия невозможна»), а не молчаливое перекодирование.
+**The hybrid output is rejected until a separate decision by the owner.** The reason
+is not the size but the construction: the MP4 header carries one set of SPS/PPS per file, while our encoder is
+chosen automatically from five candidates on someone else's machine. So we can guarantee neither a
+"compatible junction", nor can we check it by byte equality. The right form of refusal is an error with a
+named reason ("the source is h264 High@4.0, the export will open as
+libx264 Main@3.1 — a copy is impossible"), not a silent re-encoding.
 
-## Источники
+## Sources
 
-- Vegas Pro Release History (тема на официальном форуме Boris FX,
-  автор Nick Hope, 22.06.2026): строка «Added support for no-recompress
-  rendering (smart rendering) of XAVC Intra MXF video» в разделе Vegas Pro
+- Vegas Pro Release History (topic on the official Boris FX forum,
+  author Nick Hope, 22.06.2026): the line "Added support for no-recompress
+  rendering (smart rendering) of XAVC Intra MXF video" in the section Vegas Pro
   13 build 290 (17.04.2014) —
   https://forum.borisfx.com/t/vegas-pro-release-history/24284
-  (дата обращения 2026-09-07)
-- Larry Jordan, «Premiere Pro: Export Faster with Smart Render»,
-  05.12.2019 — условие «Smart rendering works only if the source codec,
-  size, frame rate, and bit rate match the export settings», список
-  MXF/QuickTime-обёрток, галочка «Use Previews» —
+  (access date 2026-09-07)
+- Larry Jordan, "Premiere Pro: Export Faster with Smart Render",
+  05.12.2019 — the condition "Smart rendering works only if the source codec,
+  size, frame rate, and bit rate match the export settings", the list of
+  MXF/QuickTime wrappers, the "Use Previews" checkbox —
   https://larryjordan.com/articles/premiere-pro-export-faster-with-smart-render/
-- Adobe Support Community, «FAQ: What is Smart Rendering?», Kevin J.
-  Monahan, 03.10.2019, и комментарии 2024 г. —
+- Adobe Support Community, "FAQ: What is Smart Rendering?", Kevin J.
+  Monahan, 03.10.2019, and comments from 2024 —
   https://community.adobe.com/questions-729/faq-what-is-smart-rendering-1355162
-- Larry Jordan, «FCP X: Render Files, Exporting and Image Quality»,
-  22.11.2015 — «the render files will be used. That is, the frames are
-  simply copied to the final file» —
+- Larry Jordan, "FCP X: Render Files, Exporting and Image Quality",
+  22.11.2015 — "the render files will be used. That is, the frames are
+  simply copied to the final file" —
   https://larryjordan.com/articles/fcp-x-render-files-exporting-and-image-quality/
-- Creative COW, тред «Final Cut Pro – export without re-encoding clips?»,
-  май 2008 —
+- Creative COW, thread "Final Cut Pro – export without re-encoding clips?",
+  May 2008 —
   https://creativecow.net/forums/thread/final-cut-pro-export-without-re-encoding-clipsae/
-- Boris FX Forum, тред «BUGs in Vegas Pro 2026», 12.04.2026 (посты 5 и 7)
+- Boris FX Forum, thread "BUGs in Vegas Pro 2026", 12.04.2026 (posts 5 and 7)
   — https://forum.borisfx.com/t/bugs-in-vegas-pro-2026/22222
-- Wikipedia, «Group of pictures» — определения открытого и закрытого GOP —
+- Wikipedia, "Group of pictures" — definitions of an open and a closed GOP —
   https://en.wikipedia.org/wiki/Group_of_pictures
-- Blackmagic Forum, треды о «Bypass re-encode when possible» (доступны в
-  этой сессии только через выдачу поисковика, см. оговорку 3) —
-  https://forum.blackmagicdesign.com/viewtopic.php?f=21&t=101369 и
+- Blackmagic Forum, threads on "Bypass re-encode when possible" (available in
+  this session only through search engine output, see caveat 3) —
+  https://forum.blackmagicdesign.com/viewtopic.php?f=21&t=101369 and
   https://forum.blackmagicdesign.com/viewtopic.php?f=33&t=211623
-- Код и документация проекта: `src/libs/kt-ffmpeg/src/muxer_impl.rs`,
+- Project code and documentation: `src/libs/kt-ffmpeg/src/muxer_impl.rs`,
   `src/libs/kt-ffmpeg/src/source_impl.rs`, `src/libs/kt-ffmpeg/src/api.rs`,
   `src/libs/kt-ffmpeg/src/lib.rs`, `src/libs/kt-media/src/index.rs`,
   `src/libs/kt-media/src/lib.rs`, `src/libs/kt-engine/src/export.rs`,
   `src/libs/kt-engine/src/video_plan.rs`, `src/apps/kt-app/src/render_dialog.rs`,
   `src/fixtures/gen.sh`, `docs/media-index.md`.
 
-**Оговорки о проверке.**
+**Caveats about the verification.**
 
-1. **Формулировка задания «у Vegas это называется render only where
-   needed» не подтвердилась.** Поиск точной фразы (Yahoo, полнотекстовый
-   поиск по официальному форуму Boris FX через его Discourse API) не дал
-   ни одного попадания, связанного с видеоредакторами: выдача уходит в
-   Blender и Maya. Собственный термин Vegas — «no-recompress rendering
-   (smart rendering)», и он подтверждён историей версий. Считаю посылку
-   задания ошибочной и в заметке её не воспроизвожу.
-2. **Форум Vegas переехал.** `vegascreativesoftware.info/us/forum`
-   отдаёт 301 на `https://forum.borisfx.com/` (Discourse, раздел
-   `/c/vegas-pro/55`). Полнотекстовый поиск удобно делать через
-   `https://forum.borisfx.com/search.json?q=…`, а конкретный пост брать
-   как `/t/<id>/<номер>.json` — это стоит запомнить следующим волнам:
-   обычные поисковики в этой сессии отдавали капчу и 403.
-3. **Строка Resolve — самая слабая.** Название опции («Bypass re-encode
-   when possible», галочка на странице Deliver) и обе цитаты про кодеки и
-   цветоуправление взяты из ВЫДАЧИ поисковика по форуму Blackmagic
+1. **The wording of the task, "in Vegas it is called render only where
+   needed", was not confirmed.** A search for the exact phrase (Yahoo, full-text
+   search over the official Boris FX forum through its Discourse API) gave not a single hit related to video editors: the output goes to
+   Blender and Maya. Vegas's own term is "no-recompress rendering
+   (smart rendering)", and it is confirmed by the version history. I consider the premise of the task
+   mistaken and do not reproduce it in the note.
+2. **The Vegas forum has moved.** `vegascreativesoftware.info/us/forum`
+   returns a 301 to `https://forum.borisfx.com/` (Discourse, section
+   `/c/vegas-pro/55`). Full-text search is convenient through
+   `https://forum.borisfx.com/search.json?q=…`, and a specific post is taken
+   as `/t/<id>/<number>.json`. This is worth remembering for the next waves:
+   ordinary search engines in this session returned a captcha and 403.
+3. **The Resolve line is the weakest.** The option name ("Bypass re-encode
+   when possible", the checkbox on the Deliver page) and both quotes about codecs and
+   colour management are taken from the SEARCH ENGINE OUTPUT over the Blackmagic forum
    (`forum.m.blackmagicdesign.com/viewtopic.php?f=21&t=101369`,
-   `forum.blackmagicdesign.com/viewtopic.php?f=33&t=211623`): сами треды в
-   этой сессии отдавали 403 либо ошибку сертификата, а Resolve Reference
-   Manual я не открывал. Авторов и дат постов у меня нет, поэтому в раздел
-   «Что говорят пользователи» эти фразы НЕ вынесены — только в таблицу как
-   описание механики. Вся строка — **[НЕ ПРОВЕРЕНО первоисточником]**, и
-   при следующей волне её надо перепроверить первой.
-4. **Строка After Effects — рассуждение, а не цитата** (см. пометку в
-   таблице). `helpx.adobe.com` из этого окружения не открывается.
-5. Строки Vegas и FCP описывают механику по истории версий, форуму и
-   разбору Larry Jordan; живьём в 2026-й версии не проверялись.
+   `forum.blackmagicdesign.com/viewtopic.php?f=33&t=211623`). The threads themselves in
+   this session returned 403 or a certificate error, and I did not open the Resolve Reference
+   Manual. I have no authors and dates of the posts, so these phrases are NOT moved to the section
+   "What users say". They appear only in the table, as a description of the mechanics. The whole line is **[NOT VERIFIED against the primary source]**,
+   and at the next wave it must be re-checked first.
+4. **The After Effects line is a reasoning, not a quote** (see the note in
+   the table). `helpx.adobe.com` does not open from this environment.
+5. The Vegas and FCP lines describe the mechanics from the version history, the forum and
+   the analysis by Larry Jordan; they were not checked live on the 2026 version.

@@ -1,17 +1,17 @@
 ---
 id: F-AUT-010
-title: Формула на отрезке и формула-слой поверх ключей
-status: сделано
+title: Formula on a segment and a formula layer over keys
+status: done
 priority: A
 cost: M
 category: automation/keyframes
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, blender-5.2]
-we_have: да
+we_have: yes
 crates: [kt-model, kt-otio, kt-app]
 invariants: [11]
 ui_rules: [5, 9, 16, 20]
-round: Р.67
-point: "change r67-curves-stills-import (летопись заморожена на §470)"
+round: R.67
+point: "change r67-curves-stills-import (chronicle frozen at §470)"
 tests: [t784, t787, t787b, t787c, t787d, t787e, t792, t792b]
 depends_on: [F-AUT-007, F-AUT-008, F-AUT-009]
 trackers: []
@@ -19,110 +19,80 @@ services: []
 checked: 2026-09-26
 ---
 
-# F-AUT-010 — Формула на отрезке и формула-слой поверх ключей
+# F-AUT-010 — Formula on a segment and a formula layer over keys
 
-## Суть
+## Essence
 
-Монтажёр ставит ключи мышью или в таблице, участку между двумя ключами даёт форму (прямая,
-третий порядок, ступень, зигзаг) — или ФОРМУЛУ этого участка; поверх всей кривой пишет
-ещё одну формулу, которая видит значение ключей `k` и дорисовывает своё; всё это видно на
-одном графике и снимается по отдельности: снял слой — остались ключи с формами, снял
-формулу участка — остался зигзаг. Ни один шаг не стирает предыдущий.
+The editor sets keys with the mouse or in a table, gives the stretch between two keys a shape (straight, third order, step, zigzag) — or a FORMULA for that stretch; over the whole curve writes one more formula, which sees the value of the keys `k` and adds its own; all of this is visible on one graph and is removed separately: remove the layer — the keys with shapes remain; remove the stretch's formula — the zigzag remains. No step erases the previous one.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| Vegas Pro | 2026.0 | Fade type / Set Type на ключе огибающей | форма — свойство участка между ключами, закрытый список (Linear/Fast/Slow/Smooth/Sharp/Hold); формул нет вовсе |
-| Adobe Premiere | 26 | Temporal interpolation + Ease handles | форма на ключе, ручки безье; выражений нет — только у After Effects |
-| DaVinci Resolve | 21 | Keyframe interpolation (Curves) / Fusion Expressions | на странице Edit — форма на ключе; в Fusion выражение ЗАМЕНЯЕТ анимацию входа целиком, ключи при этом отключаются, но не удаляются (Modifier → Expression) |
-| Final Cut Pro | 12.3 | Interpolation (Linear/Smooth) | только форма на ключе; формул нет |
-| After Effects | 26 | Expressions поверх keyframes | выражение получает `value` — значение ключей под ним — и возвращает своё; ключи остаются, выключатель выражения возвращает их; отдельной «формулы на участке» нет — только `linear()/ease()` по времени внутри выражения |
+| Vegas Pro | 2026.0 | Fade type / Set Type on an envelope key | the shape is a property of the stretch between keys, a closed list (Linear/Fast/Slow/Smooth/Sharp/Hold); there are no formulas at all |
+| Adobe Premiere | 26 | Temporal interpolation + Ease handles | shape on the key, Bezier handles; no expressions — only in After Effects |
+| DaVinci Resolve | 21 | Keyframe interpolation (Curves) / Fusion Expressions | on the Edit page — shape on the key; in Fusion an expression REPLACES the input's animation entirely, the keys are disabled but not deleted (Modifier → Expression) |
+| Final Cut Pro | 12.3 | Interpolation (Linear/Smooth) | only the shape on the key; no formulas |
+| After Effects | 26 | Expressions over keyframes | the expression receives `value` — the values of the keys beneath it — and returns its own; the keys remain, and the expression switch returns them; there is no separate "formula on a stretch" — only `linear()/ease()` by time inside an expression |
 
-**Вне ядра.** Blender показывает, что бывает, когда слой формулы — отдельный объект: Drivers
-и F-Curve Modifiers (Generator, Noise, Cycles) складываются СТЕКОМ поверх ключей.
+**Outside the core.** Blender shows what happens when a formula layer is a separate object: Drivers
+and F-Curve Modifiers (Generator, Noise, Cycles) stack ON TOP of the keys.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Blender | 5.2 | F-Curve Modifiers (Generator/Noise/Cycles) + Drivers | модификаторы применяются к результату ключей по порядку списка, у каждого — диапазон кадров (Restrict Frame Range) и влияние 0..1; драйвер — выражение Python, заменяющее значение целиком |
+| Blender | 5.2 | F-Curve Modifiers (Generator/Noise/Cycles) + Drivers | the modifiers are applied to the result of the keys in list order, each has a frame range (Restrict Frame Range) and an influence 0..1; a driver is a Python expression that replaces the value entirely |
 
-## Фишка фишки
+## The trick behind it
 
-1. **У After Effects выражение ВИДИТ ключи как `value` и не удаляет их.** Это и есть
-   единственная модель, где «передумал — вернулся к ключам» стоит один клик: выражение
-   можно выключить, ключи всё время под ним. Наш прежний код клал формулу как ИСТОЧНИК и
-   стирал ключи — модель Resolve Fusion (Modifier заменяет вход), которую ни один
-   монтажёр за пределами Fusion не ждёт.
-2. **Blender — единственный, у кого «слой» имеет ДИАПАЗОН КАДРОВ.** Именно так у него
-   выражается «отдельным областям что-то проставить» (Restrict Frame Range у модификатора).
-   Мы получаем ту же возможность дешевле: формула на ОТРЕЗКЕ между ключами уже имеет
-   диапазон — его задают ключи, и вставка ключа делит область пополам без второго
-   механизма.
-3. **Ни у кого из пяти редакторов ядра формула не является ФОРМОЙ ОТРЕЗКА.** Ближайшее —
-   `ease()/linear()` внутри выражения AE, где границы участка приходится писать числами.
-   У нас границы участка — ключи, а формула получает `s` (долю пути), `a` и `b` (концы):
-   «на этом куске подрожи», сказанное владельцем про зигзаг (Р.61), распространяется на
-   любую формулу.
+1. **In After Effects an expression SEES the keys as `value` and does not delete them.** This is the only model where "changed my mind — back to the keys" costs one click: the expression can be switched off, the keys are always beneath it. Our previous code put the formula as the SOURCE and erased the keys — the Resolve Fusion model (a Modifier replaces the input), which no editor outside Fusion expects.
+2. **Blender is the only one whose "layer" has a RANGE OF FRAMES.** That is how it expresses "apply something to separate areas" (Restrict Frame Range on a modifier). We get the same capability more cheaply: a formula on a STRETCH between keys already has a range — the keys define it, and inserting a key splits the area in half without a second mechanism.
+3. **None of the five core editors has a formula that is the SHAPE OF A STRETCH.** The closest is `ease()/linear()` inside an AE expression, where the boundaries of the stretch have to be written as numbers. For us the boundaries of the stretch are the keys, and the formula receives `s` (the fraction of the path), `a` and `b` (the ends): "jitter on this piece" — the owner's words about the zigzag (R.61) — extends to any formula.
 
-## Плюсы
+## Pros
 
-- Ничего не стирается: ключи, формы, слой и связь — независимые слои с фиксированным
-  порядком (ключи → формы → слой), каждый снимается своим действием (правило 5, 20).
-- «Комбинация всего этого» (владелец, Р.67) выражена без нового окна и без стека с
-  порядком: два места для формулы — отрезок и слой — покрывают «область» и «всё».
-- Формат меняется по содержимому (v13 только при наличии формулы-отрезка или слоя), файлы
-  без них байт-стабильны; `Formula`-источник прежних файлов читается как слой над пустыми
-  ключами — семантика та же.
+- Nothing is erased: keys, shapes, layer and link are independent layers with a fixed order (keys → shapes → layer), each removed by its own action (rules 5, 20).
+- "The combination of all this" (the owner, R.67) is expressed without a new window and without a stack with an order: two places for a formula — the stretch and the layer — cover "area" and "everything".
+- The format changes by content (v13 only when there is a stretch-formula or a layer): files without them stay byte-stable; the `Formula` source of old files is read as a layer over empty keys — the semantics are the same.
 
-## Минусы
+## Cons
 
-- Два места для формулы надо объяснить в интерфейсе: «формула участка» живёт в меню
-  участка рядом с зигзагом, «слой» — в блоке кривой; без справки в блоке (F-HLP-034)
-  человек снова спросит «как их назначить».
-- Формула на отрезке вправе дать разрыв на ключе (как ступень) — это её свобода, но и
-  её ловушка; график обязан это показать.
-- Стек модификаторов с областями времени (Blender) остаётся невыраженным; владелец выбрал
-  «отрезок + слой» осознанно.
+- The two places for a formula must be explained in the interface: "stretch formula" lives in the stretch menu next to the zigzag, "layer" — in the curve block; without help in the block (F-HLP-034) the person will again ask "how do I assign them".
+- A formula on a stretch is entitled to produce a break at a key (like a step) — this is its freedom, but also its trap; the graph must show this.
+- A stack of modifiers with time ranges (Blender) remains unexpressed; the owner chose "stretch + layer" consciously.
 
-## Что говорят пользователи
+## What users say
 
-НЕТ ЦИТАТ: разведка велась по официальной документации и справке пяти редакторов ядра и
-Blender (Expressions/`value` в AE, Modifier → Expression в Fusion, F-Curve Modifiers в
-Blender); поиск по форумам и трекерам в этом раунде не проводился — источник требования
-здесь не чужие пользователи, а прямые слова владельца (`docs/user-feedback.md`, Р.67:
-«я могу ЛИБО сам нарисовать точки… либо формулу, либо отдельным областям что-то проставить
-А ТАКЖЕ КОМБИНАЦИЯ ВСЕГО ЭТОГО»; «я может быть передумал или ошибся и хотел бы вернуться к
-зигзагу?»).
+NO QUOTES: the reconnaissance was conducted from the official documentation and help of the five core editors and Blender (Expressions/`value` in AE, Modifier → Expression in Fusion, F-Curve Modifiers in Blender); a search of forums and trackers was not conducted in this round — the source of the requirement here is not foreign users, but the owner's direct words (`docs/user-feedback.md`, R.67: "I can EITHER draw the points myself… or a formula, or apply something to separate areas AND ALSO A COMBINATION OF ALL OF THIS"; "I may have changed my mind or made a mistake and would like to go back to the zigzag?").
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/automation/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Формула — вариант формы отрезка (`s`, `a`, `b`, `t` от левого ключа) и необязательный слой кривой (`k`, `t`, `src`) поверх ключей; порядок фиксирован, снимаются по отдельности; `t` — от начала материала везде; разрешение в ключи до аудио-потока тем же проходом, что связи.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/automation/ — the contract is in `spec.md`, the "why" and the code paths are in `design.md`.
+A formula is a variant of the stretch shape (`s`, `a`, `b`, `t` from the left key) and an optional curve layer (`k`, `t`, `src`) over the keys; the order is fixed, they are removed separately; `t` is from the start of the material everywhere; resolution into keys before the audio stream runs in the same pass as the links.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — модель (форма и слой, резолвер, валидация переопределений), формат v13, блок в виджете |
-| Где основная работа | kt-model (`SegShape::Formula`, `ParamCurve.layer`, `links.rs`), kt-otio (конверт), kt-app (`automation.rs`, `widgets::curve_block`) |
-| Формат проекта | трогает по содержимому: v13 при формуле-отрезке или слое; без них — прежние байты |
-| Тесты, которые придётся написать | формула участка против оракула и детерминизм; слой над ключами и снятие; `t` от материала в рендере и предпросмотре; переопределение экземпляра с формулой; круг формата и отказ старого ридера |
-| Зависит от | F-AUT-007 (вычислитель), F-AUT-008 (связь — `src`), F-AUT-009 (формы отрезков) |
-| Ломает совместимость | вперёд нет; назад — файл v13 старая сборка отвергает по версии |
+| Size | M — the model (shape and layer, the resolver, validation of overrides), format v13, a block in the widget |
+| Where the main work is | kt-model (`SegShape::Formula`, `ParamCurve.layer`, `links.rs`), kt-otio (the envelope), kt-app (`automation.rs`, `widgets::curve_block`) |
+| Project format | affected by content: v13 for a stretch-formula or a layer; without them — the previous bytes |
+| Tests that will have to be written | a stretch formula against an oracle and determinism; a layer over keys and its removal; `t` from the material in rendering and in the preview; an instance override with a formula; a format round-trip and the rejection by an old reader |
+| Depends on | F-AUT-007 (the evaluator), F-AUT-008 (the link — `src`), F-AUT-009 (stretch shapes) |
+| Breaks compatibility | not forward; backward yes — a v13 file is rejected by an old build by its version |
 
-## Вердикт
+## Verdict
 
-**Принято решением владельца (Р.67).** Модель After Effects («выражение видит `value`,
-ключи под ним живы») плюс формула как форма отрезка — а не стек модификаторов Blender:
-владельцу предложены оба, выбран первый как «сочетаются, снимаются по отдельности».
-Отвергнуто: формула-источник, стирающая ключи (наш прежний код; модель Fusion Modifier) —
-потому что «передумал» стоило бы всей ручной работы; стек с областями — потому что
-область у нас уже задают ключи участка.
+**Accepted by the owner's decision (R.67).** The After Effects model ("the expression sees `value`,
+the keys beneath it are alive") plus a formula as the shape of a stretch — and not Blender's stack of modifiers:
+the owner was offered both, and the first was chosen as "they combine, are removed separately".
+Rejected: a formula-source that erases the keys (our previous code; the Fusion Modifier model) —
+because "changed my mind" would cost all the manual work; a stack with areas — because
+the area is already defined for us by the keys of the stretch.
 
-## Источники
+## Sources
 
-- Adobe After Effects Help: «Expression basics» — `value`, включение/выключение выражения
-  при сохранённых ключах (проверено 2026-09-26 по справке 26.x).
-- Blackmagic DaVinci Resolve 21 Reference Manual, Fusion: «Modifiers → Expression».
-- Blender 5.2 Manual: «F-Curve Modifiers» (Generator, Noise, Restrict Frame Range), «Drivers».
-- VEGAS Pro 2026 Help: «Envelope keyframe types».
-- `docs/user-feedback.md`, Р.61 и Р.67 — слова и решения владельца.
+- Adobe After Effects Help: "Expression basics" — `value`, enabling/disabling an expression
+  with the keys preserved (checked 2026-09-26 against the 26.x help).
+- Blackmagic DaVinci Resolve 21 Reference Manual, Fusion: "Modifiers → Expression".
+- Blender 5.2 Manual: "F-Curve Modifiers" (Generator, Noise, Restrict Frame Range), "Drivers".
+- VEGAS Pro 2026 Help: "Envelope keyframe types".
+- `docs/user-feedback.md`, R.61 and R.67 — the owner's words and decisions.

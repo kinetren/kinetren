@@ -1,135 +1,121 @@
 ---
 id: F-MPH-005
-title: Уровни применения видео-FX в VEGAS и Video Bus Track
-status: в-работе
+title: Levels of applying video FX in VEGAS and the Video Bus Track
+status: in-progress
 priority: B
 cost: XL
 category: morpher/analogues
 editors: [vegas-pro-2026, premiere-26, resolve-20, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-model, kt-engine, kt-gpu, kt-otio, kt-app]
 invariants: [7, 11]
 ui_rules: [13, 17]
-round: Р.62
+round: R.62
 point: null
 tests: [t735, t736, t737, t739]
 depends_on: []
 checked: 2026-09-07
 ---
 
-# F-MPH-005 — Уровни применения видео-FX в VEGAS и Video Bus Track
+# F-MPH-005 — Levels of applying video FX in VEGAS and the Video Bus Track
 
-## Суть
+## Essence
 
-В VEGAS один и тот же плагин можно повесить на четыре разных места, и от
-выбора места зависит, ЧТО он увидит на входе: медиафайл целиком (Media FX),
-одно событие (Event FX), выход одной дорожки (Track FX) или готовый кадр
-всего проекта (Video Output FX). Последний уровень живёт на отдельной строке
-таймлайна — Video Bus Track, — где кроме цепочки эффектов есть три
-огибающие на весь микс. Порядок между уровнями жёсткий и не настраивается:
-монтажёр выбирает не «когда», а «где». Adjustment event — пятый способ, и он
-не заменяет ни один из четырёх.
+In VEGAS the same plugin can be hung in four different places, and the choice of place determines WHAT it sees on input: the whole media file (Media FX),
+one event (Event FX), the output of one track (Track FX), or the finished frame
+of the whole project (Video Output FX). The last level lives on a separate row of the
+timeline — the Video Bus Track — where, besides the chain of effects, there are three
+envelopes over the whole mix. The order between the levels is rigid and not configurable:
+the editor chooses not "when" but "where". The adjustment event is a fifth way, and it
+does not replace any of the four.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Media FX · Event FX · Track FX · Video Output FX (Video Bus Track) | четыре уровня в жёстком порядке; вход каждого — результат предыдущего; шина — строка таймлайна с цепочкой и тремя огибающими на весь проект |
-| Adobe Premiere | 26.x | Adjustment Layer; Master Clip Effects; вложенная секвенция | дорожечных ВИДЕО-FX нет вообще: уровень «дорожка» подменяется клипом-слоем сверху, уровень «мастер» — вложением секвенции. У аудио есть всё: Track FX, Submix, Master |
-| DaVinci Resolve | 20.3 | Clip · Group Pre-Clip · Group Post-Clip · Timeline (+ Adjustment Clip на Edit-странице) | те же четыре уровня, но грейд уровня Timeline применяется к КАЖДОМУ клипу отдельно, а не к смикшированному кадру; дорожечных FX на Edit-странице нет |
-| Final Cut Pro | 12.3 | Adjustment Clip (встроен с 11.1) | дорожек нет как понятия, значит нет и дорожечного уровня; группировка — compound clip; уровня «выход проекта» нет |
-| After Effects | 26.x | Adjustment Layer, precomp | уровень «дорожка» отсутствует (слой = клип), уровень «выход» подменяется вложением композиции в композицию |
+| VEGAS Pro | 2026.0 | Media FX · Event FX · Track FX · Video Output FX (Video Bus Track) | four levels in a rigid order; the input of each is the result of the previous one; the bus is a timeline row with a chain and three envelopes over the whole project |
+| Adobe Premiere | 26.x | Adjustment Layer; Master Clip Effects; nested sequence | there are no track VIDEO FX at all: the "track" level is replaced by a layer-clip on top, the "master" level by nesting a sequence. Audio has everything: Track FX, Submix, Master |
+| DaVinci Resolve | 20.3 | Clip · Group Pre-Clip · Group Post-Clip · Timeline (+ Adjustment Clip on the Edit page) | the same four levels, but the grade of the Timeline level is applied to EACH clip separately, not to the mixed frame; there are no track FX on the Edit page |
+| Final Cut Pro | 12.3 | Adjustment Clip (built in since 11.1) | there are no tracks as a concept, so there is no track level; grouping is a compound clip; there is no "project output" level |
+| After Effects | 26.x | Adjustment Layer, precomp | the "track" level is absent (a layer = a clip), the "output" level is replaced by nesting a composition into a composition |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Кнопка Track FX означает две разные вещи в зависимости от флага
-дорожки.** Обычная дорожка: вход цепочки — только её собственные события.
-Дорожка, вставленная через `Insert | Adjustment Track`: «Adjustment tracks
+**1. The Track FX button means two different things depending on the track flag.**
+An ordinary track: the input of the chain is only its own events.
+A track inserted via `Insert | Adjustment Track`: "Adjustment tracks
 show the Track FX button in the track header by default. You can click this
 button to access the Plug-In Chooser and add the video effects you want to
-pass through to other tracks» — та же кнопка, то же окно, но на входе уже
-смикшированная картинка всех дорожек НИЖЕ. Ограничить охват можно, объявив
-нижние дорожки compositing children: «any tracks that are not children of
+pass through to other tracks" — the same button, the same window, but at the input is already
+the mixed picture of all the tracks BELOW. The scope can be limited by declaring the
+lower tracks compositing children: "any tracks that are not children of
 the adjustment tracks — even though they are below the adjustment track —
-are no longer influenced by it». То есть уровень задаётся не тем, куда ты
-положил плагин, а свойством строки, и по внешнему виду цепочки отличить
-один случай от другого нельзя.
+are no longer influenced by it". That is, the level is set not by where you put
+the plugin, but by a property of the row, and by the look of the chain one case cannot be told
+apart from the other.
 
-**2. Внутри уровня порядок свободен, между уровнями — прибит гвоздями, и
-именно поэтому существует скрытый пятый уровень.** В цепочке события
-Pan/Crop — такой же перетаскиваемый узел, как плагины: «you can choose
+**2. Within a level the order is free, between levels it is nailed down — and that is exactly why a hidden fifth level exists.**
+In the event chain Pan/Crop is the same draggable node as the plugins: "you can choose
 whether effects are applied to the event before or after any event panning
 and cropping by arranging the Pan/Crop button in the plug-in chain at the
-top of the Video Event FX window». А вот поменять местами Event FX и Track
-FX нельзя ничем: единственный способ «переставить» — перенести плагин на
-другой уровень. Ради этого и держат Media FX, до которого добираются
-Alt+кликом по иконке Event FX: это единственное место РАНЬШЕ цепочки
-события. Классический сценарий («хочу ч/б на кусок поверх дорожечной
-коррекции») решается не флагом, а переездом коррекции на медиа-уровень.
+top of the Video Event FX window". But you cannot swap Event FX and Track
+FX in any way: the only way to "rearrange" is to move the plugin to
+another level. For this purpose Media FX is kept, which is reached
+by Alt+click on the Event FX icon: it is the only place BEFORE the chain
+of the event. The classic scenario ("I want black-and-white on a piece on top of a track
+correction") is solved not by a flag but by moving the correction to the media level.
 
-**3. Шина — это дорожка, а не просто цепочка, ради трёх огибающих, две из
-которых вообще не фильтры.** Кроме fade-to-color на Video Bus Track живут
-motion blur amount и video supersampling — они не обрабатывают готовый
-кадр, а меняют, СКОЛЬКО промежуточных кадров посчитает композитор:
-«supersampling cannot improve the appearance of existing video», работает
-только по движению, которое VEGAS порождает сам (track motion, pan/crop,
-переходы, кейфреймы эффектов). Такому параметру нужна линия во времени, а
-цепочке эффектов — нет; отсюда отдельная строка. И там же вылезает домен
-ключей: у шины событий нет вообще, поэтому её ключи всегда во времени
-ПРОЕКТА, а на обычных дорожках то, поедут ли ключи за событием, решает
-глобальный переключатель `Options | Lock Envelopes to Events` — свойство
-приложения, а не эффекта и не клипа.
+**3. The bus is a track, not just a chain, because of three envelopes, two of which are not filters at all.**
+Besides fade-to-color, Video Bus Track also hosts
+motion blur amount and video supersampling — they do not process the finished
+frame, but change HOW MANY intermediate frames the compositor computes:
+"supersampling cannot improve the appearance of existing video", it works only
+on the motion that VEGAS itself generates (track motion, pan/crop,
+transitions, effect keyframes). Such a parameter needs a line over time,
+whereas a chain of effects does not; hence a separate row. And here the domain of
+keys emerges: the bus has no events at all, so its keys are always in the time
+of the PROJECT, while on ordinary tracks whether keys follow the event is decided by the
+global switch `Options | Lock Envelopes to Events` — a property of the application,
+not of the effect or the clip.
 
-## Плюсы
+## Pros
 
-- Плагин, повешенный на шину, считается по одному разу на кадр; тот же
-  плагин на уровне события считается столько раз, сколько событий в кадре.
-  На шестислойном композите это разница в шесть прогонов ядра.
-- Уровень «выход проекта» видит кадр ПОСЛЕ композита, поэтому финальные
-  вещи (лимитер уровней, зерно, виньетка, LUT показа) применяются один раз
-  и одинаково ко всему, включая фон и края, куда не достаёт ни одно
-  событие.
-- Дорожечный уровень наследуется автоматически: новое событие, брошенное на
-  дорожку, уже обработано её цепочкой — ничего не надо копировать. Именно
-  этого не хватает в Premiere, где дорожечных видео-FX нет и слой-заменитель
-  приходится растягивать руками.
-- Adjustment event, будучи ОБЫЧНЫМ событием («just like any video event, you
-  can add up to 32 effects in the chain of effects for the event»), даром
-  получает всё событийное: трим, сплит, копипаст, уголковые фейды и
-  ползунок непрозрачности. Отсюда и подмешивание эффекта частично, и
-  кроссфейд между двумя разными коррекциями.
-- Обход есть на каждом уровне и на каждом плагине: галка у отдельного
-  плагина в окне цепочки, «disable all / enable all» по правому клику на
-  иконке Track FX, одна кнопка «Bypass FX and Envelopes» на шине.
+- A plugin hung on the bus is computed once per frame; the same plugin at the event level is
+  computed as many times as there are events in the frame.
+  On a six-layer composite that is a difference of six kernel runs.
+- The "project output" level sees the frame AFTER the composite, so the final
+  things (the level limiter, grain, vignette, display LUT) are applied once
+  and uniformly to everything, including the background and the edges, which no
+  event reaches.
+- The track level is inherited automatically: a new event dropped on the track is already
+  processed by its chain — nothing needs to be copied. Exactly this
+  is what Premiere lacks, where there are no track video FX and the stand-in layer
+  has to be stretched by hand.
+- The adjustment event, being an ORDINARY event ("just like any video event, you
+  can add up to 32 effects in the chain of effects for the event"),
+  gets everything event-related for free: trim, split, copy/paste, corner fades and
+  the opacity slider. Hence both partial blending of an effect and
+  a crossfade between two different corrections.
+- A bypass exists at every level and on every plugin: a checkbox on an individual plugin in the chain window,
+  "disable all / enable all" by right-clicking the Track FX icon, one "Bypass FX and Envelopes" button on the bus.
 
-## Минусы
+## Cons
 
-- Четыре уровня — четыре места, где искать, почему картинка не такая, и
-  ни одно из них не видно с таймлайна: иконка Track FX выглядит одинаково с
-  цепочкой и без, Media FX не имеет своего значка на событии вовсе, а
-  Video Output FX живёт в строке, которая по умолчанию скрыта (View | Video
+- Four levels — four places to look for why the picture is not what it should be, and none of them is visible from the timeline: the Track FX icon looks the same with and without a chain, Media FX has no badge on the event at all, and
+  Video Output FX lives in a row that is hidden by default (View | Video
   Bus Track).
-- Порядок нельзя ни увидеть, ни изменить. Ожидание «я поставил эффект на
-  событие, значит он последний» ломается всегда одинаково, и лечится только
-  знанием списка уровней наизусть.
-- Результат зависит от уровня не только по порядку, но и по тому, что
-  смешивается: на кроссфейде между двумя событиями коррекция, стоящая на
-  дорожке, и та же коррекция, стоящая на событиях, дают разную картинку —
-  ловится по вылету чёрного на RGB-параде.
-- Раздельного предпросмотра по уровням нет. Split-screen «FX Bypassed»
-  выключает всё сразу — «bypasses all video effects (track effects, event
-  effects, media effects, and video output effects)»; посмотреть «без
-  дорожечного уровня, но с событийным» нельзя.
-- Шина ровно одна: «a single bus track exists as a timeline representation
-  of the main video output». Ни сабмиксов, ни посылов, ни параллельных
-  веток — при том что у АУДИО в том же VEGAS есть и шины, и assignable FX.
-  Заменитель видео-сабмикса — adjustment track с compositing children, то
-  есть та же работа делается совсем другим механизмом.
-- У шины нет событий, значит нет и обрезки: ограничить шинный эффект куском
-  фильма можно только ключевыми кадрами (или байпасом руками), а ключи там
-  во времени проекта — врезка в начало таймлайна уводит их все.
+- The order can be neither seen nor changed. The expectation "I put the effect on the event, so it is last" always breaks in the same way, and it is cured only by
+  knowing the list of levels by heart.
+- The result depends on the level not only by order but also by what is being mixed: on a crossfade between two events, a correction sitting on the track and the same correction sitting on the events give different pictures — caught by the black dropout on the RGB parade.
+- There is no separate preview by level. The split-screen "FX Bypassed" switches everything off at once — "bypasses all video effects (track effects, event
+  effects, media effects, and video output effects)"; one cannot look at "without the track level, but with the event level".
+- There is exactly one bus: "a single bus track exists as a timeline representation
+  of the main video output". No submixes, no sends, no parallel branches — even though AUDIO in the same VEGAS has buses and assignable FX.
+  The stand-in for a video submix is an adjustment track with compositing children, that is, the same work is done by a completely different mechanism.
+- The bus has no events, so there is no trimming either: a bus effect can be limited to a piece of the film only
+  by keyframes (or a bypass by hand), and the keys there are in the time of the project — inserting something at the start of the timeline shifts all of them.
 
-## Что говорят пользователи
+## What users say
 
 > Vegas processes FX in this order: Media FX –> Event FX –> Track FX –>
 > Master Video FX. This is why your Track FX and overriding your Event FX.
@@ -137,138 +123,127 @@ motion blur amount и video supersampling — они не обрабатываю
 > https://creativecow.net/forums/thread/any-way-to-apply-event-fx-after-track-fx/
 
 > Aha, "Media FX." I am new to Vegas, I had NO IDEAL that these existed.
-> — David Hall (автор темы), Creative COW, 12.05.2011,
+> — David Hall (thread author), Creative COW, 12.05.2011,
 > https://creativecow.net/forums/thread/any-way-to-apply-event-fx-after-track-fx/
 
 > Right click the track fx icon for a given track and you should see a menu
 > giving options to disable all and enable all fx for that track.
 > — Norman Black, Creative COW, 06.06.2013,
 > https://creativecow.net/forums/thread/vide-fx-bypass-ae/
-> (спрашивавший ответил, что искал это в мануале и не нашёл)
+> (the person asking replied that they had looked for it in the manual and not found it)
 
-Показательно не то, что люди путаются, а КТО путается: автор первой темы
-монтировал в VEGAS не первый день и просто не знал о существовании
-медиа-уровня, пока порядок обработки не ударил его по рукам. Отрицательный
-фидбек по шине почти отсутствует — её просто не включают: строка скрыта по
-умолчанию, и большинство сценариев закрывается adjustment-событием.
+What is telling is not that people get confused, but WHO gets confused: the author of the first thread
+had been editing in VEGAS for more than a day and simply did not know that the media level existed,
+until the processing order hit him on the hands. Negative feedback about the bus is almost absent — it is simply not switched on: the row is hidden by default, and most scenarios are covered by the adjustment event.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-Уровней применения видео-FX у нас ровно два, и оба — событийные.
+We have exactly two levels of applying video FX, and both are event-based.
 
-- Цепочка события: `ClipEvent.fx` / `fx_bypass` / `fx_auto` / `fx_off` в
-  `src/libs/kt-model/src/project.rs` (около строки 1502).
-- Морфер-слой: `MorpherEvent.patch.video_fx`, который в
-  `MorphPatch::apply_to` (там же) делает буквально `c.fx.extend(add)` —
-  ДОПИСЫВАЕТ свои плагины в цепочку каждой цели. Раскладка целей —
-  `Project::effective_clips()`, накопление снизу вверх по
-  `Project.lane_order` / `LaneKind`, правка через `Command::SetLaneOrder`
+- The event chain: `ClipEvent.fx` / `fx_bypass` / `fx_auto` / `fx_off` in
+  `src/libs/kt-model/src/project.rs` (around line 1502).
+- The morpher layer: `MorpherEvent.patch.video_fx`, which in
+  `MorphPatch::apply_to` (same file) literally does `c.fx.extend(add)` —
+  it APPENDS its plugins to the chain of each target. The layout of targets —
+  `Project::effective_clips()`, accumulation bottom to top by
+  `Project.lane_order` / `LaneKind`, edited via `Command::SetLaneOrder`
   (`src/libs/kt-model/src/model.rs`).
-- Исполнение: `LayerSrc.fx` в `src/libs/kt-engine/src/video_plan.rs` —
-  цепочка ПЕР-СЛОЙ; `apply_video_chain` в `src/libs/kt-fx/src/video.rs`
-  зовётся до композита, композит (`compose_from_cache` в
-  `src/libs/kt-engine/src/video.rs`) идёт после.
-- Уровень клипа одной линией: `ClipEvent.opacity` / `gain_db`, уголковые
-  фейды — переход с одним живым концом.
-- Аудио-мастер существует, но только как громкость: `set_master_gain` в
-  `src/libs/kt-engine/src/player.rs:375`, ручка — в
+- Execution: `LayerSrc.fx` in `src/libs/kt-engine/src/video_plan.rs` — the chain is PER-LAYER;
+  `apply_video_chain` in `src/libs/kt-fx/src/video.rs` is called before the composite, and the composite (`compose_from_cache` in
+  `src/libs/kt-engine/src/video.rs`) comes after.
+- The clip level as a single line: `ClipEvent.opacity` / `gain_db`, corner
+  fades — a transition with one live end.
+- An audio master exists, but only as volume: `set_master_gain` in
+  `src/libs/kt-engine/src/player.rs:375`, the handle is in
   `src/apps/kt-app/src/meters.rs:822`.
-- Автоматизация: `ParamCurve` / `AutoKey` (`project.rs`), виджет —
-  `src/apps/kt-app/src/automation.rs`. Домен ключа — ТИК МАТЕРИАЛА:
-  `curve_value(keys, ease, at)` берёт материальную позицию, поэтому обрезка
-  ключи прячет, а не сдвигает. Это ровно противоположный выбор относительно
-  шины VEGAS (время проекта) и относительно `Lock Envelopes to Events`
-  (глобальный тумблер): у нас домен один и переключателя нет.
+- Automation: `ParamCurve` / `AutoKey` (`project.rs`), the widget is
+  `src/apps/kt-app/src/automation.rs`. The key domain is the MATERIAL TICK:
+  `curve_value(keys, ease, at)` takes the material position, therefore trimming
+  hides the keys rather than shifting them. This is exactly the opposite choice relative to
+  the VEGAS bus (project time) and relative to `Lock Envelopes to Events`
+  (a global toggle): we have one domain and no switch.
 
-### Чего не хватает
+### What is missing
 
-Грепом по `src/` (`track_fx|lane_fx|bus_fx|master_fx|output_fx|submix`) —
-ноль совпадений. Нет ни дорожечного, ни шинного, ни мастер-уровня для
-видео; для аудио нет дорожечных FX и сабмиксов. Главное же: у нас нет НИ
-ОДНОГО уровня, вход которого — смикшированная картинка. Морфер выглядит как
-adjustment layer, но по устройству он ближе к Timeline-грейду Resolve
-(правится один раз, действует на каждый клип отдельно), а не к Video Bus
-Track и не к adjustment event VEGAS. Отсюда же тянется отсутствие ползунка
-силы у морфера (п.245 `docs/porting-notes.md`, Р.36
-`docs/user-feedback.md`): «частично подмешать» нечего, пока нет отдельного
-результата композита.
+A grep over `src/` (`track_fx|lane_fx|bus_fx|master_fx|output_fx|submix`) gives
+zero matches. There is no track, bus, or master level for
+video; for audio there are no track FX and no submixes. The main thing, however, is that we have NOT ONE
+level whose input is a mixed picture. The morpher looks like an adjustment layer, but by construction it is closer to Resolve's Timeline grade
+(edited once, acts on each clip separately), not to the Video Bus
+Track and not to VEGAS's adjustment event. From this also follows the absence of a strength slider on the morpher (item 245 of `docs/porting-notes.md`, R.36
+of `docs/user-feedback.md`): there is nothing to "partially blend in" until there is a separate
+result of the composite.
 
-### Что мешает
+### What gets in the way
 
-`FramePlan` (`src/libs/kt-engine/src/video_plan.rs`) описывает СЛОИ, а не
-конвейер: у него есть `layers`, но нет объекта «готовый кадр», к которому
-можно приложить цепочку. Появление шинного уровня — это новая стадия ПОСЛЕ
-композита, и её надо родить сразу в двух исполнителях: CPU
-(`compose_from_cache*`) и GPU (kt-gpu, второй проход по цели). Ключ
-пост-FX-мемоизации сейчас пер-слойный (`LayerSrc.fx_hash`) — шинная цепочка
-меняет весь кадр, значит нужен ключ уровня кадра, иначе кэш начнёт отдавать
-чужое. Плюс: цепочка уровня проекта — новое поле модели, а значит версия
-формата `KT_META_V5` в `src/libs/kt-otio/src/meta.rs` (сейчас
-`KT_META_VERSION = 4`). И строка шины на таймлайне — это ещё один вид
-`LaneKind`, который обязан попасть в `lane_order` и не сломать тест 49.
+`FramePlan` (`src/libs/kt-engine/src/video_plan.rs`) describes LAYERS, not a pipeline: it has `layers`, but no object "finished frame" to which
+a chain could be attached. A bus-level appearance is a new stage AFTER the
+composite, and it must be born in both executors at once: the CPU
+(`compose_from_cache*`) and the GPU (kt-gpu, a second pass over the target). The
+post-FX memoization key is currently per-layer (`LayerSrc.fx_hash`) — a bus chain
+changes the whole frame, so a frame-level key is needed, otherwise the cache will start returning
+someone else's. Plus: the project-level chain is a new model field, and therefore the format version
+`KT_META_V5` in `src/libs/kt-otio/src/meta.rs` (currently
+`KT_META_VERSION = 4`). And the bus row on the timeline is one more
+`LaneKind`, which must get into `lane_order` and not break test 49.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **№7 (код композиции один).** Стадия «эффекты на смикшированном кадре»
-  обязана появиться внутри `VideoRenderer::frame_plan`, а не отдельной
-  веткой в экспорте — иначе получим ровно второй путь, против которого
-  инвариант и написан.
-- **№11 (детерминизм).** Новая стадия после композита проходит через
-  GOLDEN_VIDEO и через конформанс CPU↔GPU (`kt_gpu::assert_frames_close`),
-  и через «превью == экспорт байт-в-байт» на одном бэкенде.
-- **Правило UI 13 («не тратить место впустую»).** Постоянная строка шины
-  ради одной цепочки — ровно тот случай, за который у нас ругают: у VEGAS
-  она скрыта по умолчанию, и это признание проблемы, а не решение.
-- **Правило UI 17 («парные способы»).** Если уровень появится, у него
-  сразу должны быть и байпас уровня, и A/B-показ, иначе повторим минус
-  VEGAS: обход есть только «всё сразу».
+- **No. 7 (the composition code is one).** The stage "effects on the mixed frame" must
+  appear inside `VideoRenderer::frame_plan`, not as a separate branch
+  in export — otherwise we get exactly the second path against which the invariant is written.
+- **No. 11 (determinism).** The new stage after the composite passes through
+  GOLDEN_VIDEO and through CPU↔GPU conformance (`kt_gpu::assert_frames_close`),
+  and through "preview == export byte for byte" on one backend.
+- **UI rule 13 ("do not waste space").** A permanent bus row for the sake of one chain is
+  exactly the case for which we get criticised: in VEGAS it is
+  hidden by default, and that is an admission of the problem, not a solution.
+- **UI rule 17 ("paired ways").** If the level appears, it must immediately have both a level bypass and an A/B view,
+  otherwise we will repeat VEGAS's minus: the bypass exists only as "everything at once".
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | XL — раунд плюс версия формата и новая стадия рендера |
-| Где основная работа | kt-engine (`video_plan`/`video`: стадия после композита), kt-gpu (второй проход), kt-model (поле проекта + undo + `LaneKind`), kt-otio (v5), kt-app (строка и её FX-редактор) |
-| Формат проекта | нужна версия v5 (`KT_META_V5`); старые файлы = пустая цепочка |
-| Тесты, которые придётся написать | round-trip модели с шинной цепочкой; конформанс CPU↔GPU новой стадии; превью == экспорт (расширение t67/t184); неизменность t36 (морфер == bake) и GOLDEN_VIDEO без шинной цепочки; ключ пост-FX-кэша уровня кадра |
-| Зависит от | — (но «ползунок силы морфера» логически идёт следом: обе фичи упираются в отсутствие объекта «смикшированный кадр») |
-| Ломает совместимость | нет |
+| Size | XL — a round plus a format version and a new render stage |
+| Where the main work is | kt-engine (`video_plan`/`video`: the stage after the composite), kt-gpu (the second pass), kt-model (the project field + undo + `LaneKind`), kt-otio (v5), kt-app (the row and its FX editor) |
+| Project format | a v5 version is needed (`KT_META_V5`); old files = an empty chain |
+| Tests that will have to be written | a model round-trip with the bus chain; CPU↔GPU conformance of the new stage; preview == export (an extension of t67/t184); unchanged t36 (morpher == bake) and GOLDEN_VIDEO without the bus chain; the frame-level post-FX cache key |
+| Depends on | — (but the "morpher strength slider" logically follows: both features run into the absence of an object "the mixed frame") |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём в план, но не первым: ценность здесь не в «ещё одном месте для
-плагинов», а в том, что уровень со смикшированным кадром на входе — это
-недостающий кусок под ползунок силы морфера и под честные финальные
-эффекты. Четыре уровня целиком копировать НЕ надо: минус «четыре места, где
-искать» реален, и VEGAS платит за него скрытой по умолчанию строкой. Наш
-разумный минимум — один уровень выхода проекта плюс, отдельным решением,
-переключатель «морфер работает на композите ниже» — то есть то, чего у
-VEGAS как раз нет: у них Track FX и adjustment track различаются флагом
-строки, а не переключателем на самом слое.
+We take it into the plan, but not first: the value here is not in "one more place for
+plugins", but in the fact that a level with the mixed frame on its input is the missing piece for the morpher's strength slider and for honest
+final effects. The four levels should NOT be copied whole: the minus of "four places to look" is real, and VEGAS pays for it with a
+row hidden by default. Our reasonable minimum is one project-output level plus, as a separate decision,
+a switch "the morpher works on the composite below" — that is, what VEGAS does not have at all: there Track FX and the adjustment track are distinguished by a
+row flag, not by a switch on the layer itself.
 
-## Источники
+## Sources
 
-- https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/7-edit/bus_tracks-video.htm — Video bus track, VEGAS Pro 2026 (дата обращения 2026-09-07)
+- https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/7-edit/bus_tracks-video.htm — Video bus track, VEGAS Pro 2026 (access date 2026-09-07)
 - https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/7-edit/adjustmenttracks.htm — Adjustment tracks, 2026 (2026-09-07)
 - https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/7-edit/adjustmentevents.htm — Adjustment events, 2026 (2026-09-07)
 - https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/8-design/addvideofx_media.htm — Adding video media effects, 2026 (2026-09-07)
-- https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/1-before/whatsnew.htm — What's New в 2026: изменений в уровнях FX НЕТ, новое — Speech-to-Text/Text-to-Speech, Storyblocks, Z-Depth 2.0, Continuum Title Pack, Blackwell 4:2:2 (2026-09-07)
+- https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/1-before/whatsnew.htm — What's New in 2026: there are NO changes to FX levels; new items are Speech-to-Text/Text-to-Speech, Storyblocks, Z-Depth 2.0, Continuum Title Pack, Blackwell 4:2:2 (2026-09-07)
 - https://help.magix-hub.com/video/vegas/22/en/content/topics/8-design/addvideofx.htm — Adding video effects, v22 (2026-09-07)
 - https://help.magix-hub.com/video/vegas/22/en/content/topics/5-preview/split-screen_previews.htm — Split-screen previews / FX Bypassed (2026-09-07)
-- https://help.magix-hub.com/video/vegas/22/en/content/topics/2-window/pancropwindow.htm — Pan/Crop как узел цепочки события (2026-09-07)
+- https://help.magix-hub.com/video/vegas/22/en/content/topics/2-window/pancropwindow.htm — Pan/Crop as a node of the event chain (2026-09-07)
 - https://help.magix-hub.com/video/vegas/22/en/content/topics/11-autoscript/insertvidenv.htm — Video track automation, Lock Envelopes to Events (2026-09-07)
-- https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/videotrack.htm — состав заголовка видеодорожки (2026-09-07)
-- https://creativecow.net/forums/thread/any-way-to-apply-event-fx-after-track-fx/ — порядок уровней и Media FX (2026-09-07)
-- https://creativecow.net/forums/thread/vide-fx-bypass-ae/ — байпас цепочки дорожки правым кликом (2026-09-07)
-- https://creativecow.net/forums/thread/vegas-12-crossfades-with-color-correction/ — расхождение картинки на кроссфейде между уровнями (2026-09-07)
-- https://community.adobe.com/t5/premiere-pro-discussions/can-i-apply-a-video-effect-to-a-track/m-p/2793436 — в Premiere дорожечных видео-FX нет (2026-09-07)
-- https://mixinglight.com/color-grading-tutorials/revisiting-resolve-grouping-using-post-clip-as-a-timeline-level-grading-alternative/ — уровни грейда Resolve (2026-09-07)
-- https://www.cined.com/apple-final-cut-pro-11-1-introduces-adjustment-clips-and-enhances-magnetic-masks/ — Adjustment Clips встроены в FCP с 11.1 (2026-09-07)
+- https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/videotrack.htm — the composition of the video track header (2026-09-07)
+- https://creativecow.net/forums/thread/any-way-to-apply-event-fx-after-track-fx/ — the order of levels and Media FX (2026-09-07)
+- https://creativecow.net/forums/thread/vide-fx-bypass-ae/ — bypass of the track chain by right-click (2026-09-07)
+- https://creativecow.net/forums/thread/vegas-12-crossfades-with-color-correction/ — the divergence of the picture on a crossfade between levels (2026-09-07)
+- https://community.adobe.com/t5/premiere-pro-discussions/can-i-apply-a-video-effect-to-a-track/m-p/2793436 — in Premiere there are no track video FX (2026-09-07)
+- https://mixinglight.com/color-grading-tutorials/revisiting-resolve-grouping-using-post-clip-as-a-timeline-level-grading-alternative/ — the grade levels of Resolve (2026-09-07)
+- https://www.cined.com/apple-final-cut-pro-11-1-introduces-adjustment-clips-and-enhances-magnetic-masks/ — Adjustment Clips built into FCP since 11.1 (2026-09-07)
 
-Замечание о доступности: форум vegascreativesoftware.info с 2026 г. отвечает
-301-редиректом на корень https://forum.borisfx.com/ — прямые ссылки на
-старые треды Vegas-форума мертвы, поэтому фидбек здесь собран с Creative COW
-и Adobe/Blackmagic-площадок. Живьём в VEGAS 2026 не проверялось: заметка
-собрана по официальной справке 2026 г. и форумным тредам.
+A note on availability: the forum vegascreativesoftware.info since 2026 answers
+with a 301 redirect to the root https://forum.borisfx.com/ — direct links to the
+old Vegas-forum threads are dead, so the feedback here was collected from Creative COW
+and the Adobe/Blackmagic sites. Not checked live in VEGAS 2026: the note
+is compiled from the official 2026 help and forum threads.

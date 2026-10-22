@@ -1,12 +1,12 @@
 ---
 id: F-COL-026
-title: Возврат реплик в монтаж
-status: кандидат
+title: Returning review comments to the edit
+status: candidate
 priority: B
 cost: M
 category: collab/review
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-model, kt-otio, kt-app]
 invariants: []
 ui_rules: [13, 16]
@@ -19,235 +19,135 @@ services: [frame-io, bm-cloud]
 checked: 2026-09-08
 ---
 
-# F-COL-026 — Возврат реплик в монтаж
+# F-COL-026 — Returning review comments to the edit
 
-## Суть
+## Essence
 
-Замечания собраны, и теперь их надо ВНЕСТИ. Монтажёр хочет видеть их не
-списком в письме, а метками на своём таймлайне: встал на метку — сразу видно,
-о чём речь. Обратный путь выглядит простым (десяток строк с временем и
-текстом), но ломается он не на транспорте, а на соответствии: реплика
-адресована времени РОЛИКА, а монтаж с тех пор уехал. И там, где путь всё-таки
-проложили, выясняется вторая беда: то, что приезжает снаружи, пишет в документ
-мимо всех правил документа.
+The comments have been collected, and now they must be BROUGHT IN. The editor wants to see them not as a list in an email but as markers on their own timeline: stand on a marker — and immediately see what it is about. The return path looks simple (a dozen lines with a time and a text), but it breaks not on transport but on correspondence: a remark is addressed to the time of the VIDEO, and the edit has since moved. And where the path has nevertheless been laid, a second trouble turns up: what arrives from outside writes into the document past all the rules of the document.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет | возврата не поддержано ничем: замечания приходят письмом, метки ставятся руками — **[НЕ ПРОВЕРЕНО]** по справке линейки 2026 |
-| Adobe Premiere | 26.x | панель рецензии (Frame.io V4); перестроена целиком в 25.6 | реплики приезжают в панель и становятся маркерами секвенции. До перестройки они висели на таймштампе версии, панель перезаписывала маркеры при синхронизации, а ручной кнопки «синхронизировать» в V4, в отличие от V3, не было вовсе |
-| DaVinci Resolve | 21 | Presentations, двусторонняя перепривязка | единственный, кто обещает возврат в ОБЕ стороны: «shared markers and comments are automatically and bidirectionally relinked with DaVinci Resolve» — комментарий оттуда становится маркером, маркер отсюда комментарием |
-| Final Cut Pro | 12.3 | родного возврата нет | замечания переносятся руками либо сторонним рабочим процессом; библиотека при этом занимается целиком, так что «принять реплики» и «монтировать» — взаимоисключающие занятия — **[НЕ ПРОВЕРЕНО]** |
-| After Effects | 26.x | та же панель рецензии | комментарии видны в панели; в сообществе известны треды вида «imported frame.io comments not visible» — то есть путь есть и он хрупкий |
+| VEGAS Pro | 2026.0 | none | nothing supports the return: comments arrive by email, markers are placed by hand — **[NOT VERIFIED]** against the 2026 product help |
+| Adobe Premiere | 26.x | review panel (Frame.io V4); rebuilt entirely in 25.6 | remarks arrive in the panel and become sequence markers. Before the rebuild they hung on the version's timestamp, the panel overwrote markers on sync, and in V4, unlike V3, there was no manual "sync" button at all |
+| DaVinci Resolve | 21 | Presentations, two-way relinking | the only one that promises a return in BOTH directions: "shared markers and comments are automatically and bidirectionally relinked with DaVinci Resolve" — a comment from there becomes a marker, a marker from here becomes a comment |
+| Final Cut Pro | 12.3 | no native return | comments are carried over by hand or by a third-party workflow; the library is handled whole, so "accept the remarks" and "edit" are mutually exclusive activities — **[NOT VERIFIED]** |
+| After Effects | 26.x | the same review panel | comments are visible in the panel; threads of the kind "imported frame.io comments not visible" are known in the community — that is, the path exists and it is fragile |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Ломается СООТВЕТСТВИЕ, а не передача.** Реплика приколота к времени
-плоского ролика, а таймлайн с тех пор пересобран: одна вставка в начале — и все
-адреса правее уехали, причём выглядят исправными. Отрасль нашла ровно один
-рабочий ответ, и он контринтуитивен: адрес переводят ОДИН РАЗ, в момент
-приёмки, после чего реплика живёт не временем, а МАРКЕРОМ и едет вместе с
-монтажом. Формулировка Adobe к перестройке панели: комментарии теперь привязаны
-к маркерам секвенции, а не к исходному таймштампу, «so you can edit your
-sequence without losing track of what part of your sequence a comment was
-about».
+**1. What breaks is CORRESPONDENCE, not transfer.** A remark is pinned to the time of a flat video, and the timeline has since been reassembled: one insertion at the start — and all addresses to the right have moved, although they look correct. The industry has found exactly one working answer, and it is counterintuitive: the address is translated ONCE, at the moment of acceptance, after which the remark lives not by time but by a MARKER and moves together with the edit. Adobe's wording on the rebuild of the panel: comments are now tied to sequence markers, not to the original timestamp, "so you can edit your sequence without losing track of what part of your sequence a comment was about."
 
-**2. У перевода есть цена, и её не платит никто явно.** Как только адрес
-переведён в маркер, исходный адрес (время в ролике v3) потерян: ответить на
-вопрос «а где это было в той версии, которую смотрел заказчик» уже нечем.
-Двух адресов сразу не держит ни один из пяти — хранить и то и другое означало
-бы помнить, из какой ревизии сделан каждый ролик.
+**2. The translation has a price, and nobody pays it explicitly.** As soon as the address has been translated into a marker, the original address (the time in video v3) is lost: there is no longer any way to answer the question "where was this in the version the client watched." None of the five holds two addresses at once — keeping both would mean remembering which revision each video was made from.
 
-**3. Обратный путь оказался НЕ дописывающим, а зеркальным — и это худший из
-возможных выборов.** Панель не добавляет реплики к тому, что есть, а приводит
-состояние меток в соответствие со своей стороной; когда её сторона отстала,
-она откатывает работу монтажёра. Пользовательское описание буквально такое:
-метки на таймлайне возвращаются к состоянию ПРЕДЫДУЩЕЙ версии монтажа, и
-единственный найденный обход — закрыть окно рецензии совсем.
+**3. The return path turned out NOT to be additive but mirroring — and this is the worst possible choice.** The panel does not add remarks to what exists; it brings the state of the markers into correspondence with its own side, and when its side has fallen behind, it rolls back the editor's work. The user description reads literally: the markers on the timeline revert to the state of the PREVIOUS version of the edit, and the only workaround found is to close the review window altogether.
 
-**4. Общий закон, ради которого заметка и заведена: внешняя правка, не прошедшая
-через команды документа, убивает отмену.** Обходной плагин, дописывающий
-маркеры мимо редактора, ломает CTRL+Z — и это не частность плагина, а
-неизбежность: история правок ведётся тем, кто правит, и всё, что правит в обход,
-для истории не существует. У нас ровно та же конструкция, и записана она
-задолго до этой заметки.
+**4. A general law, for which this note was opened: an external edit that does not go through the document's commands kills undo.** A workaround plugin that appends markers past the editor breaks CTRL+Z — and this is not a peculiarity of the plugin but an inevitability: the edit history is kept by whoever edits, and everything that edits around it does not exist for the history. We have exactly the same construction, and it was recorded long before this note.
 
-## Плюсы
+## Pros
 
-- Реплика в виде метки на таймлайне отвечает на вопрос «где» без перевода:
-  монтажёр не считает время в уме и не ошибается на кадр.
-- Перевод адреса один раз в момент приёмки делает реплику устойчивой ко всей
-  дальнейшей правке — это единственное известное отрасли решение.
-- Двусторонняя перепривязка (Resolve) закрывает и обратное направление:
-  ответ монтажёра виден рецензенту там же, где он спрашивал.
-- Список реплик рядом с монтажом заменяет письмо: «сделано/не сделано»
-  проверяется по документу, а не по переписке.
+- A remark in the form of a marker on the timeline answers the question "where" without translation: the editor does not count time in their head and does not miss by a frame.
+- Translating the address once, at the moment of acceptance, makes the remark stable under all further editing — this is the only solution the industry knows.
+- Two-way relinking (Resolve) closes the reverse direction too: the editor's reply is visible to the reviewer right where they asked.
+- A list of remarks next to the edit replaces the email: "done / not done" is checked against the document, not against the correspondence.
 
-## Минусы
+## Cons
 
-- Зеркальная синхронизация перезаписывает свою же работу, и восстановить
-  затёртые метки нечем: они не были правкой пользователя, значит их не вернёт и
-  отмена.
-- Внешний писатель мимо команд документа ломает отмену целиком — цена одной
-  строки интеграции равна цене всей истории правок.
-- После перевода адреса исходное время ролика теряется: спор «мы говорили про
-  другой кадр» неразрешим.
-- Текст реплики в панели бывает недоступен даже для копирования — то есть
-  замечание видно и не переносимо.
-- Метка несёт только имя: у неё нет автора, статуса и времени, поэтому
-  «выполнено» отмечают припиской в самом имени.
+- A mirror-style sync overwrites its own work, and there is nothing to restore the overwritten markers from: they were not a user edit, so even undo will not bring them back.
+- An external writer that bypasses the document's commands breaks undo entirely — the cost of one line of integration equals the cost of the whole edit history.
+- After the address is translated, the original time of the video is lost: the dispute "we were talking about a different frame" is unresolvable.
+- The text of a remark in the panel is sometimes unavailable even for copying — that is, the comment is visible but not portable.
+- A marker carries only a name: it has no author, no status and no time, so "done" is marked by an annotation inside the name itself.
 
-## Что говорят пользователи
+## What users say
 
-Про зеркало вместо дописывания — с датой и дословно:
+About mirroring instead of appending — with a date and verbatim:
 
 > Frame.IO V4 is overwriting & deleting comments markers on my sequences in
 > Premiere Pro.
 > — Andrew C. Brinsmead, Adobe Community, 28.10.2025,
 > https://community.adobe.com/bug-reports-728/frame-io-v4-keeps-overwriting-comments-markers-in-premiere-pro-pro-1332248
 
-Там же — как именно это выглядит и чем спасаются:
+In the same thread — how exactly this looks and how people cope:
 
 > Comments in my timeline will revert to match the previous version of the edit
 > on Frame.IO.
-> — тот же автор, тот же день; единственный найденный им обход — закрыть окно
-> рецензии в Premiere целиком
+> — the same author, the same day; the only workaround he found is to close the
+> review window in Premiere altogether
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-Половина, отвечающая за ПОКАЗ реплики, у нас сделана и сделана неплохо:
+Half of the mechanism, the part responsible for DISPLAYING a remark, is done by us, and done reasonably well:
 
-- Метка — это `t`, `duration`, `name`, `color`
-  (`src/libs/kt-model/src/project.rs`), она бывает точечной и диапазонной, у
-  диапазонной есть лента на строке подписей времени, а имя пишется прямо там же,
-  без отдельной полосы (правило 13 чек-листа).
-- Имя вводится на месте и уходит в модель командой: `Command::SetMarkerName`
-  через обёртку `KtApp::apply` (`src/apps/kt-app/src/timeline.rs`), новая метка
-  с именем — батч `[AddMarker, SetMarkerName]`, то есть ОДИН шаг отмены.
-- Метка уже участвует в выдаче: имя области попадает в имя отрендеренного файла,
-  если регион совпал с меткой-диапазоном
-  (`default_render_name`, `src/apps/kt-app/src/render_dialog.rs`).
-- Дисциплина правок записана: все правки модели из UI идут через `apply`,
-  `apply_batch`, `apply_batch_restoring`, `apply_coalesced`
-  (`src/apps/kt-app/CLAUDE.md`, п.200), а отмена — снапшоты целого `Project`
-  (`src/libs/kt-model/src/model.rs`).
+- A marker is `t`, `duration`, `name`, `color` (`src/libs/kt-model/src/project.rs`); it can be a point or a range; a range marker has a band on the time-label row, and its name is written right there, without a separate lane (rule 13 of the checklist).
+- The name is entered in place and goes into the model as a command: `Command::SetMarkerName` through the `KtApp::apply` wrapper (`src/apps/kt-app/src/timeline.rs`); a new marker with a name is the batch `[AddMarker, SetMarkerName]`, that is, ONE undo step.
+- The marker already takes part in output: the area's name gets into the name of the rendered file if the region coincides with a range marker (`default_render_name`, `src/apps/kt-app/src/render_dialog.rs`).
+- The discipline of edits is recorded: all model edits from the UI go through `apply`, `apply_batch`, `apply_batch_restoring`, `apply_coalesced` (`src/apps/kt-app/CLAUDE.md`, item 200), and undo is snapshots of the whole `Project` (`src/libs/kt-model/src/model.rs`).
 
-И ровно на этом же месте видны три дырки:
+And right at this same place three holes are visible:
 
-- **Метка адресуется ТИКОМ**, идентичность — время: `MarkerExists(Tick)` не даёт
-  поставить вторую на тот же кадр (правило 16 чек-листа — невозможность
-  показывается ошибкой), а при чтении чужого файла лишние молча схлопываются
-  `dedup_by_key`. Двух реплик на один кадр не бывает.
-- **Ни одна правка монтажа метку не двигает.** `plan_move`/`plan_move_block`
-  знают о клипах и препятствиях и ничего не знают о метках. Вставил кусок —
-  метки остались на своих тиках.
-- **Поле для реплики есть в формате, который мы уже пишем, и мы его
-  выбрасываем.** У OTIO-схемы `Marker.2` есть `comment`
-  (`src/libs/kt-otio/src/schema.rs`), но читатель его отбрасывает, а писатель
-  пишет пустым (`src/libs/kt-otio/src/convert.rs`). Чужой `.otio` с
-  комментариями теряет их на первом сохранении — это дефект, а не решение.
+- **A marker is addressed by a TICK, its identity is the time:** `MarkerExists(Tick)` does not allow placing a second one on the same frame (rule 16 of the checklist — an impossibility is shown as an error), and when reading someone else's file the extra ones are silently collapsed by `dedup_by_key`. Two remarks on one frame cannot exist.
+- **No edit of the montage moves a marker.** `plan_move`/`plan_move_block` know about clips and obstacles and know nothing about markers. Insert a piece — the markers stay on their ticks.
+- **A field for a remark exists in the format we already write, and we discard it.** The OTIO schema `Marker.2` has a `comment` (`src/libs/kt-otio/src/schema.rs`), but the reader drops it, and the writer writes it empty (`src/libs/kt-otio/src/convert.rs`). A foreign `.otio` with comments loses them on the first save — this is a defect, not a decision.
 
-БЕЗ СЕТИ: ВЫРОЖДАЕТСЯ — `src/apps/kt-app/src/timeline.rs:4241` — возврат реплики вырождается в набранное руками имя метки: метка рисуется на своём тике и держится за него мёртво, ни одна правка монтажа её не двигает, — поэтому уже на ОДНОЙ машине собственная заметка «поправить тут», сделанная вчера, после первой же вставки указывает на соседний шот и выглядит при этом исправной. Несвежесть ничем не помечается, автора и времени у метки нет, а двух реплик на одном кадре не бывает вовсе.
+OFFLINE: DEGENERATES — `src/apps/kt-app/src/timeline.rs:4241` — the return of a remark degenerates into a marker name typed by hand: the marker is drawn on its own tick and holds onto it dead; no edit of the montage moves it — therefore already on ONE machine one's own note "fix it here," made yesterday, after the first insertion points to the neighboring shot while looking correct. Staleness is marked by nothing, the marker has neither author nor time, and two remarks on one frame do not occur at all.
 
-ЦЕНА СЕТИ: перенести реплику со времени старой версии на время нынешнего монтажа — журнал правок — отмена у нас это снимки целого проекта, поэтому между двумя роликами нет ни одной НАЗВАННОЙ правки, по которой время пересчитывается; без такого журнала адрес переносит только человек, который помнит, что он двигал.
+NETWORK COST: moving a remark from the time of the old version to the time of the current edit — the edit log — our undo is snapshots of the whole project, so between two videos there is not a single NAMED edit by which the time could be recalculated; without such a log only the person who remembers what they moved can transfer the address.
 
-### Чего не хватает
+### What is missing
 
-- Содержания у метки: текста реплики (поле `comment` уже есть в формате),
-  автора, времени и состояния «учтено».
-- Двух реплик на одном кадре: идентичность по тику это запрещает по построению.
-- Связи реплики с версией ролика, на которой она написана (F-COL-024), — без
-  неё «на какой версии это сказано» неотвечаемо.
-- Признака несвежести: сегодня метка, оставшаяся от прежнего монтажа, не
-  отличается от только что поставленной ничем.
+- Content for the marker: the text of the remark (the `comment` field already exists in the format), author, time and a state of "addressed."
+- Two remarks on one frame: identity by tick forbids this by construction.
+- A link of the remark to the video version on which it was written (F-COL-024) — without it "on which version was this said" cannot be answered.
+- A sign of staleness: today a marker left over from a previous edit is not distinguishable in any way from one just placed.
 
-### Что мешает
+### What blocks it
 
-Первое препятствие — **идентичность метки по времени.** Это не мелочь модели:
-на ней стоят команды (`MoveMarker` отказывается ехать на занятый тик), гард
-`MarkerExists`, схлопывание при чтении чужого файла и `pick_range_marker` в
-интерфейсе. Реплика же по своей природе — объект со СВОИМ адресом, который
-может делить кадр с соседом. Это развилка модели, а не поле.
+The first obstacle is **the identity of a marker by time.** This is not a detail of the model: commands rest on it (`MoveMarker` refuses to move onto an occupied tick), the `MarkerExists` guard, the collapse on reading someone else's file, and `pick_range_marker` in the interface. A remark, by its nature, is an object with its OWN address, which may share a frame with its neighbor. This is a fork of the model, not a field.
 
-Второе — **обратный путь обязан идти через команды, и это не пожелание, а уже
-записанное правило.** Всё, что придёт снаружи (импорт списка замечаний,
-конвертация чужих меток), обязано стать батчем команд, иначе не двинется
-`model_rev`, не встанет снапшот отмены и погаснет гейт автосейва — симптом
-известен дословно: правки «выглядели сохранёнными и терялись при выходе». То
-есть чужая беда «плагин ломает CTRL+Z» у нас воспроизводится один в один, и
-единственная защита от неё — та самая обёртка.
+The second — **the return path must go through commands, and this is not a wish but an already recorded rule.** Everything that arrives from outside (importing a list of remarks, converting someone else's markers) must become a batch of commands, otherwise `model_rev` will not move, the undo snapshot will not be taken, and the autosave gate will go out — the symptom is known verbatim: edits "looked saved and were lost on exit." That is, someone else's trouble "the plugin breaks CTRL+Z" is reproduced with us one for one, and the only protection against it is that same wrapper.
 
-Третье — **зеркало против дописывания.** Приёмка реплик обязана быть
-дописывающей: приведение состояния меток «как на той стороне» у нас невозможно
-отменить осмысленно, потому что отменяется весь проект целиком, а не отдельная
-метка.
+The third — **mirroring versus appending.** Acceptance of remarks must be appending: bringing the state of the markers "as it is on the other side" is impossible for us to undo meaningfully, because the whole project is undone, not an individual marker.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Ни одного из двенадцати — и это сильный аргумент «дёшево»: реплика не трогает
-ни модель времени, ни детерминизм, ни кэш, ни композицию. Задевает два правила
-чек-листа UI: 13 (текст реплики обязан встать на уже занятое место — лента и
-строка подписей времени, а не новая полоса) и 16 (невозможность показывается
-ошибкой — в том числе «сюда метку уже не поставить»).
+None of the twelve — and this is a strong argument for "cheap": a remark touches neither the time model, nor determinism, nor the cache, nor the composition. It touches two rules of the UI checklist: 13 (the text of a remark must fit into an already occupied place — the band and the time-label row, not a new lane) and 16 (an impossibility is shown as an error — including "a marker can no longer be placed here").
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2–3 стадии: содержание у метки (текст, автор, состояние) и её собственная идентичность; приёмка списка реплик батчем команд |
-| Где основная работа | kt-model (идентичность метки и её поля), kt-otio (`comment` перестаёт теряться в обе стороны), kt-app (показ, приёмка, отметка «учтено») |
-| Формат проекта | нужна версия: у метки появляются поля сверх `Marker.2`; чужой `comment` при этом наконец начинает переживать круг, а не теряться |
-| Тесты, которые придётся написать | «чужой `.otio` с комментариями меток переживает круг» (сегодня падает — поле отбрасывается на чтении); «две реплики на одном кадре»; «приёмка списка реплик — ОДИН шаг отмены»; «метка, оставшаяся от прежнего монтажа, помечена несвежей» |
-| Зависит от | F-COL-024 (версия, на которой написана реплика), F-COL-011 (адрес, в котором она приходит) |
-| Ломает совместимость | нет: новые поля необязательны, чужая часть файла по-прежнему возвращается дословно |
+| Size | M — 2–3 stages: content on a marker (text, author, state) and its own identity; acceptance of a list of remarks as a batch of commands |
+| Where the main work is | kt-model (the identity of a marker and its fields), kt-otio (`comment` stops being lost in both directions), kt-app (display, acceptance, the "addressed" mark) |
+| Project format | a version is needed: the marker gets fields beyond `Marker.2`; a foreign `comment` at the same time finally begins to survive the round trip instead of being lost |
+| Tests that will have to be written | "a foreign `.otio` with marker comments survives the round trip" (fails today — the field is dropped on reading); "two remarks on one frame"; "acceptance of a list of remarks is ONE undo step"; "a marker left over from a previous edit is marked as stale" |
+| Depends on | F-COL-024 (the version on which the remark was written), F-COL-011 (the address at which it arrives) |
+| Breaks compatibility | no: the new fields are optional, and the foreign part of the file still comes back verbatim |
 
-## Вердикт
+## Verdict
 
-Берём локальную половину, и она больше, чем кажется. Ровно та же проблема
-соответствия существует у ОДНОГО человека: метка, поставленная вчера, после
-первой вставки указывает не туда и об этом не сообщает. Значит содержание у
-метки, её собственная идентичность и признак несвежести нужны нам вне всякой
-рецензии — а когда второй участник появится, обратный путь будет уже проложен.
-Серверную половину не заводим: участника нет.
+We take the local half, and it is larger than it seems. Exactly the same problem of correspondence exists for ONE person: a marker placed yesterday points to the wrong place after the first insertion and does not report it. So the content of a marker, its own identity and the sign of staleness are needed by us outside any review — and when a second participant appears, the return path will already be laid. We do not introduce the server half: there is no participant.
 
-Отдельно — вывод, который эта заметка обязана оставить в базе как ОБЩИЙ, а не
-как частность Frame.io: **внешняя правка, не прошедшая через команды модели,
-убивает отмену.** Любая будущая интеграция — импорт замечаний, синхронизация,
-плагин — обязана быть батчем команд через `KtApp::apply*` и обязана ДОПИСЫВАТЬ,
-а не приводить в соответствие. Нарушив это, мы получим ровно то, на что жалуются
-у соседей: молча откаченную работу и мёртвый CTRL+Z.
+Separately — a conclusion that this note must leave in the base as a GENERAL one, not as a peculiarity of Frame.io: **an external edit that does not pass through the model's commands kills undo.** Any future integration — importing remarks, synchronization, a plugin — must be a batch of commands through `KtApp::apply*` and must APPEND, not bring into correspondence. If we violate this, we get exactly what neighbors complain about: silently rolled-back work and a dead CTRL+Z.
 
-И одна находка про нас самих, годная в отдельную задачу: поле `comment` у метки
-есть в схеме, которую мы уже читаем и пишем, а мы его отбрасываем на чтении и
-пишем пустым. Чужой документ с замечаниями теряет их у нас на первом сохранении —
-при том что НЕИЗВЕСТНАЯ схема маркера переживает круг целиком через passthrough.
-Родная схема защищена хуже чужой.
+And one finding about ourselves, suitable for a separate task: the `comment` field of a marker is in the schema we already read and write, and we discard it on reading and write it empty. A foreign document with remarks loses them with us on the first save — even though an UNKNOWN marker schema survives the round trip whole via passthrough. Our native schema is protected worse than a foreign one.
 
-Границы: версия ролика, к которой приколота реплика, — F-COL-024; чем реплика
-адресуется в чужом плеере — F-COL-025; таймкод как общий адрес — F-COL-011;
-метка-данные у события (цвет как признак) — F-UI-005; история правок и снапшоты —
-F-PRJ-002.
+Boundaries: the version of the video to which the remark is pinned — F-COL-024; how a remark is addressed in someone else's player — F-COL-025; the timecode as a common address — F-COL-011; a marker as data on the event (color as a sign) — F-UI-005; the edit history and snapshots — F-PRJ-002.
 
-## Источники
+## Sources
 
 - https://community.adobe.com/bug-reports-728/frame-io-v4-keeps-overwriting-comments-markers-in-premiere-pro-pro-1332248
-  — перезапись и удаление маркеров-комментариев, откат к состоянию предыдущей
-  версии, обход «закрыть окно» (дата обращения 2026-09-08)
+  — overwriting and deleting of comment markers, rollback to the state of the previous version, the "close the window" workaround (access date 2026-09-08)
 - https://community.adobe.com/t5/premiere-pro-discussions/pr-25-frame-io-v4-export-timeline-markers-as-comments/m-p/15649143
-  — тред про экспорт маркеров таймлайна как комментариев и про перестройку
-  панели в 25.6: реплики привязываются к маркерам секвенции, а не к исходному
-  таймштампу (дата обращения 2026-09-08)
+  — a thread on exporting timeline markers as comments and on the rebuild of the panel in 25.6: remarks are tied to sequence markers, not to the original timestamp (access date 2026-09-08)
 - https://www.blackmagicdesign.com/products/davinciresolve/collaboration —
-  двусторонняя перепривязка маркеров и комментариев в Presentations (дата
-  обращения 2026-09-08)
-- Строки VEGAS и Final Cut собраны по составу интерфейсов; живьём не
-  проверялись, пометки `[НЕ ПРОВЕРЕНО]` стоят в самой таблице
-- Наш код проверен чтением 08.09.2026: `src/apps/kt-app/src/timeline.rs`
-  (отрисовка меток, инлайн-ввод имени, `pick_range_marker`, `plan_move_block`),
+  two-way relinking of markers and comments in Presentations (access date 2026-09-08)
+- The rows for VEGAS and Final Cut were compiled from the composition of their interfaces; they were not checked live, the `[NOT VERIFIED]` marks stand in the table itself
+- Our code checked by reading on 08.09.2026: `src/apps/kt-app/src/timeline.rs`
+  (drawing of markers, inline name input, `pick_range_marker`, `plan_move_block`),
   `src/libs/kt-model/src/project.rs` (`Marker`),
-  `src/libs/kt-model/src/model.rs` (команды меток, `MarkerExists`, снапшоты
-  отмены), `src/libs/kt-otio/src/schema.rs` и `convert.rs` (поле `comment`),
-  `src/apps/kt-app/CLAUDE.md` (п.200 — все правки через обёртки)
+  `src/libs/kt-model/src/model.rs` (marker commands, `MarkerExists`, undo snapshots), `src/libs/kt-otio/src/schema.rs` and `convert.rs` (the `comment` field),
+  `src/apps/kt-app/CLAUDE.md` (item 200 — all edits through wrappers)

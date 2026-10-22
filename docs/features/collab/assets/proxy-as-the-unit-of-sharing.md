@@ -1,12 +1,12 @@
 ---
 id: F-COL-005
-title: Прокси, сделанные не для себя
-status: исследовано
+title: Proxies made not for oneself
+status: researched
 priority: C
 cost: L
 category: collab/assets
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, syncthing-2]
-we_have: нет
+we_have: no
 crates: [kt-app, kt-cache, kt-media]
 invariants: [4, 8, 11]
 ui_rules: [12, 20]
@@ -19,269 +19,153 @@ services: [bm-cloud, premiere-productions, syncthing]
 checked: 2026-09-08
 ---
 
-# F-COL-005 — Прокси, сделанные не для себя
+# F-COL-005 — Proxies made not for oneself
 
-## Суть
+## Essence
 
-Прокси в одиночку — личное ускорение: сделал, смонтировал, выбросил. Вдвоём
-прокси перестаёт быть ускорением и становится ЕДИНИЦЕЙ РАЗДАЧИ: лёгкие копии
-делает один участник, а монтируют по ним все, потому что оригиналы по сети
-никто не возит. С этого момента прокси — не кэш, а материал второго сорта: у
-него есть адрес, его надо кому-то отдать, и его же двое могут сделать
-одновременно.
+A proxy alone is a personal speed-up: you make it, edit, and throw it away. Shared between two people, a proxy stops being a speed-up and becomes a UNIT OF DISTRIBUTION: one participant makes the lightweight copies, and everyone edits on them, because nobody moves the originals over the network. From that moment the proxy is not a cache but second-class material: it has an address, it has to be handed to someone, and two people can make it at the same time.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Create Video Proxy | `.sfvp0` рядом с исходником, с тем же именем. Раздача не предусмотрена, но получается сама собой: файл лежит В ПАПКЕ МАТЕРИАЛА, поэтому уезжает вместе с ней — «раздача» здесь побочный эффект места хранения |
-| Adobe Premiere | 26.x | Create Proxies / Attach Proxies; Productions поверх общей папки | прокси — обычные файлы в выбранной при импорте папке. Чужие цепляются по имени `<оригинал>_Proxy.<расш>`. В совместной Production именно прокси и разъезжаются: путь к ним записан документом и несёт имя тома ТОЙ машины, где их сделали |
-| DaVinci Resolve | 21 | Proxy Media (портируемые файлы) против Optimized Media (внутренний кэш); Blackmagic Proxy Generator; Blackmagic Cloud | разделение проведено прямо по признаку раздачи: Optimized Media «cannot be exported, and is not user accessible», Proxy Media — «fully portable and independent media». Отдельное бесплатное приложение строит прокси по watch-папке — то есть роль «тот, кто делает прокси для всех» выделена в отдельную программу |
-| Final Cut Pro | 12.3 | Proxy media, external storage location | прокси живут либо внутри библиотеки, либо в отдельном storage location — и второй вариант существует ровно затем, чтобы производную можно было положить туда, куда достанет второй. Замок при этом на всю библиотеку целиком |
-| After Effects | 26.x | Set Proxy → File; Placeholder | прокси ставится на конкретный элемент проекта, путь пишется в документ. Раздача не предусмотрена: у AE нет ни общей папки как режима, ни привязки прокси по правилу имени |
+| VEGAS Pro | 2026.0 | Create Video Proxy | `.sfvp0` next to the source, with the same name. Distribution is not provided, but it happens by itself: the file lies IN THE MATERIAL'S FOLDER, so it travels with it — "distribution" here is a side effect of where it is stored |
+| Adobe Premiere | 26.x | Create Proxies / Attach Proxies; Productions on top of a shared folder | proxies are ordinary files in the folder chosen at import. Others attach them by the name `<original>_Proxy.<ext>`. In a shared Production it is precisely the proxies that come apart: the path to them is recorded in the document and carries the volume name of THE machine where they were made |
+| DaVinci Resolve | 21 | Proxy Media (portable files) against Optimized Media (internal cache); Blackmagic Proxy Generator; Blackmagic Cloud | the split is drawn exactly along the sign of distribution: Optimized Media "cannot be exported, and is not user accessible", Proxy Media is "fully portable and independent media". A separate free application builds proxies from a watch folder — that is, the role "the one who makes proxies for everyone" is pulled out into a separate program |
+| Final Cut Pro | 12.3 | Proxy media, external storage location | proxies live either inside the library or in a separate storage location — and the second option exists precisely so that the derivative can be put where the second person can reach it. The lock is over the whole library at once |
+| After Effects | 26.x | Set Proxy → File; Placeholder | a proxy is set on a specific project item, and the path is written into the document. Distribution is not provided: AE has neither a shared folder as a mode nor a proxy binding by a naming rule |
 
-**Вне ядра.** Без Syncthing нельзя назвать, что именно происходит с двумя
-копиями одной производной: это единственное место, где исход столкновения
-сформулирован, а не оставлен на усмотрение реализации.
+**Outside the core.** Without Syncthing one cannot say what exactly happens to two copies of one derivative: this is the only place where the outcome of a collision is formulated, not left to the implementation.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Syncthing | 2.x | sync-conflict | слияния нет: проигрывает файл с более старым временем правки, при равенстве — устройство с бо́льшими первыми 63 битами device ID. Проигравший переименовывается в `<имя>.sync-conflict-<дата>-<время>-<кем>.<ext>`, «are treated as normal files» и расползается по всем узлам как обычный файл |
+| Syncthing | 2.x | sync-conflict | there is no merging: the file with the older modification time loses; on a tie, the device with the larger first 63 bits of its device ID wins. The loser is renamed to `<name>.sync-conflict-<date>-<time>-<who>.<ext>`, "are treated as normal files", and it spreads to all nodes as an ordinary file |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Конфликтует не материал, а ПРОИЗВОДНАЯ от него — и это видно по тому, где
-именно приходится перелинковывать.** В совместной Production перелинковка нужна
-каждый раз, когда файл открыл второй участник, — и только прокси; камерные
-оригиналы при этом не отваливаются никогда. Причина не в байтах, а в
-происхождении адреса: путь к оригиналу пришёл с карты и на обеих машинах
-одинаков до последнего сегмента, а путь к прокси записала в документ ТА машина,
-которая прокси сделала, — вместе с именем своего тома. Лечится это не
-редактором: люди переименовывают тома так, чтобы имена совпали. То есть
-единственный работающий способ раздать производную — сделать так, чтобы её
-адрес перестал зависеть от того, кто её сделал.
+**1. It is not the material that conflicts, but the DERIVATIVE made from it — and this shows in where relinking is needed.** In a shared Production relinking is needed every time a file has been opened by the second participant, and only for proxies; the camera originals never come loose at all. The cause is not the bytes but the origin of the address: the path to the original came from the card and is identical on both machines down to the last segment, while the path to the proxy was written into the document by THE machine that made the proxy, together with the name of its own volume. The fix does not come from the editor: people rename the volumes so that the names match. That is, the only working way to distribute a derivative is to make its address stop depending on who made it.
 
-**2. Файлы с суффиксом `-conflict` появляются В ПАПКЕ ПРОКСИ, а не в папке
-съёмки, и это следует из устройства.** Оригинал пишется один раз и больше не
-переписывается — двух писателей у него не бывает, и конфликтовать нечему.
-Прокси, наоборот, ГЕНЕРИРУЕТСЯ, и генерирует его каждый, кому он понадобился:
-двое запускают построение на один и тот же клип, оба кладут результат под одним
-именем, и двусторонняя синхронизация обязана выбрать одного — по более свежему
-времени правки, а проигравшего переименовать. Получается пара файлов, которые
-означают одно и то же и не совпадают ни единым байтом (энкодер недетерминирован
-по времени и потоку), и оба остаются лежать: система синхронизации не имеет
-права выбросить ни один.
+**2. Files with the suffix `-conflict` appear IN THE PROXY FOLDER, not in the shooting folder, and this follows from the design.** The original is written once and is never rewritten — it has no two writers, so there is nothing to conflict over. A proxy, on the other hand, is GENERATED, and each person who needed it generates it: two people start building the same clip, both put the result under one name, and two-way sync must choose one of them by the more recent modification time, renaming the loser. The result is a pair of files that mean the same thing and do not match by a single byte (the encoder is non-deterministic in time and in threading), and both remain lying there: the sync system has no right to throw either one away.
 
-**3. Blackmagic доказывает то же самое с другого конца: по сети во время
-съёмки летит именно ПРОИЗВОДНАЯ.** Live sync устроен так, что камера пишет
-второй файл — HD-прокси H.264, — и в бин едет он. Единицей раздачи оказывается
-не материал, а его лёгкая копия, причём сделанная не редактором и даже не
-монтажной станцией. Когда производная становится тем, чем обмениваются, вопрос
-«кто её сделал и совпадёт ли она у двоих» перестаёт быть внутренним делом
-кэша — а именно внутренним делом кэша он выглядит в списке возможностей.
+**3. Blackmagic proves the same from the other end: over the network during a shoot, it is the DERIVATIVE that flies.** Live sync is built so that the camera records a second file — an HD proxy in H.264 — and it is that file that travels into the bin. The unit of distribution turns out to be not the material but its lightweight copy, and made not by the editor or even by an edit workstation. When the derivative becomes the thing that is exchanged, the question "who made it and will it match for two people" stops being an internal matter of the cache — which is how it looks in the list of capabilities.
 
-## Плюсы
+## Pros
 
-- Дорогой транскод делается ОДИН раз на группу, а не каждым: экономия
-  умножается на число участников, чего личный кэш не умеет в принципе.
-- Прокси — обычные файлы, поэтому раздаются любым способом, включая тот, где
-  нет никакого сервиса: общая папка, диск в руках, двусторонняя синхронизация.
-- Раздельные роли получаются сами: «строитель прокси» может быть отдельной
-  машиной и даже отдельной программой (Blackmagic Proxy Generator по
-  watch-папке), и монтажная станция освобождается от транскода полностью.
-- Прокси с площадки (камерные) вписываются в ту же схему без единой правки:
-  для монтажа безразлично, кто сделал лёгкую копию.
+- An expensive transcode is done ONCE per group, not by each person: the saving is multiplied by the number of participants, which a personal cache cannot do at all.
+- Proxies are ordinary files, so they are distributed by any means, including the one with no service: a shared folder, a disk in someone's hands, two-way sync.
+- Separate roles arise by themselves: the "proxy builder" can be a separate machine and even a separate program (Blackmagic Proxy Generator over a watch folder), and the edit station is freed from transcoding entirely.
+- Proxies from the site (camera ones) fit into the same scheme without a single change: for editing it does not matter who made the lightweight copy.
 
-## Минусы
+## Cons
 
-- Производная получает АДРЕС — и с этого момента ломается не материал, а
-  адрес: имя тома, буква диска, порядок монтирования. Перелинковка сотен клипов
-  становится регулярной операцией, а не аварией.
-- Двое строят одно и то же и получают разные байты: детерминированного
-  энкодера нет, поэтому «одинаковая производная» у двоих — вопрос доверия, а не
-  проверки.
-- Конфликтные копии никуда не деваются сами. Двести файлов `-conflict` — это
-  двести настоящих файлов, занимающих место, и удалить их программа не вправе.
-- Правда о том, «что уже готово», раздваивается: у каждого участника свой
-  ответ, и ни один из них не полный.
-- Прокси кодируются с потерями, поэтому всё, что оценивается по тонким
-  градациям, на раздаваемой копии оценивать нельзя — а выглядит она как
-  материал.
+- The derivative gets an ADDRESS — and from then on what breaks is not the material but the address: the volume name, the drive letter, the mount order. Relinking hundreds of clips becomes a regular operation, not an accident.
+- Two people build the same thing and get different bytes: there is no deterministic encoder, so "the same derivative" for two people is a matter of trust, not of verification.
+- Conflict copies do not go away on their own. Two hundred `-conflict` files are two hundred real files occupying space, and the program has no right to delete them.
+- The truth about "what is already ready" is split: each participant has his own answer, and none of them is complete.
+- Proxies are encoded lossy, so anything judged by fine gradations cannot be judged on the shared copy — yet it looks like material.
 
-## Что говорят пользователи
+## What users say
 
-Разница между материалом и производной названа пользователем прямо, дважды и в
-одном треде:
+The difference between material and derivative was named by a user directly, twice, in one thread:
 
 > anytime either of us open a project after the other has worked in it, we have
 > to relink or re-attach the proxy to the file paths on our respective drives.
-> — J_Boy, Adobe Community, «proxy linking issues in shared production»,
+> — J_Boy, Adobe Community, "proxy linking issues in shared production",
 > 24.01.2025,
 > https://community.adobe.com/t5/premiere-pro-discussions/proxy-linking-issues-in-shared-production/td-p/15110876
 
 > Premiere does not have the same issue with the camera original media, just the
 > proxies.
-> — J_Boy, там же, 24.01.2025
+> — J_Boy, same thread, 24.01.2025
 
-Решение оказалось не в редакторе: тома переименовали одинаково, и после этого
-автор подтвердил, что для исходников такого не требовалось вовсе — «this is not
-neccessary for source clips, only the proxies» (J_Boy, 29.01.2025, тот же тред).
+The fix turned out not to be in the editor: the volumes were renamed identically, and afterwards the author confirmed that for source clips this was not needed at all — "this is not neccessary for source clips, only the proxies" (J_Boy, 29.01.2025, same thread).
 
-Чего процитировать НЕ удалось: жалоб про 200+ файлов `-conflict` в папке прокси
-Blackmagic Cloud. Треды `forum.blackmagicdesign.com` (в частности
-«Warning: Blackmagic Cloud Not Ready for Professional Use», `t=224635`, и
-«Help me get Davinci Resolve 19 Cloud (Proxies Only) Working», `t=214931`) в
-этом окружении не открываются: Cloudflare отдаёт 403 и на curl, и на читалку, а
-пересказ выдачи цитатой не является. Факт приводится как вторичный и вывода на
-себе не несёт — вывод заметки держится на треде Adobe, где есть и автор, и
-даты, и подтверждение решения.
+What could NOT be quoted: complaints about 200+ `-conflict` files in the proxy folder of Blackmagic Cloud. The threads on `forum.blackmagicdesign.com` (in particular "Warning: Blackmagic Cloud Not Ready for Professional Use", `t=224635`, and "Help me get Davinci Resolve 19 Cloud (Proxies Only) Working", `t=214931`) do not open in this environment: Cloudflare returns 403 to both curl and the reader, and a paraphrase of search results is not a quote. The fact is given as secondary and carries no weight in the conclusion; the conclusion of the note rests on the Adobe thread, where there is an author, dates, and a confirmation of the fix.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Чем эта заметка отличается от F-MED-002
+### How this note differs from F-MED-002
 
-F-MED-002 — про ПЕРЕКЛЮЧАТЕЛЬ у себя: сделать лёгкие копии, монтировать на них,
-на рендере молча вернуться к оригиналам; её главный вопрос — «как гарантировать,
-что экспорт не пойдёт с прокси» (у нас гарантируется конструкцией: экспорт
-открывает исходники по `MediaRef::path` в `src/apps/kt-app/src/render_dialog.rs`
-и прокси-файла не видит вовсе), и её вердикт — «берём, когда упрёмся в декод
-4K».
+F-MED-002 is about OUR OWN switch: make lightweight copies, edit on them, and on render silently return to the originals. Its main question is "how to guarantee that the export does not go out with proxies" (with us this is guaranteed by construction: the export opens the sources by `MediaRef::path` in `src/apps/kt-app/src/render_dialog.rs` and does not see the proxy file at all), and its verdict is "we take it when we hit the limit of 4K decoding".
 
-Здесь предмет другой и он начинается там, где F-MED-002 заканчивается: прокси
-как ЕДИНИЦА РАЗДАЧИ. Вопросы этой заметки — чей адрес несёт производная, что
-происходит, когда её построили двое, и почему конфликтует именно она. Из неё
-следует ровно одно требование к F-MED-002, и оно недорогое, если поставить его
-заранее: адрес и идентичность прокси обязаны быть функцией ИСХОДНИКА, а не
-машины, которая прокси построила. Задним числом это не чинится — ровно это и
-показывает тред про перелинковку в общей Production.
+Here the subject is different, and it begins where F-MED-002 ends: the proxy as a UNIT OF DISTRIBUTION. The questions of this note are whose address the derivative carries, what happens when two people have built it, and why precisely the derivative conflicts. From it follows exactly one requirement for F-MED-002, and it is cheap if set in advance: the address and identity of a proxy must be a function of the SOURCE, not of the machine that built the proxy. Retroactively this cannot be fixed — the thread about relinking in the shared Production shows exactly this: relinking is needed at every opening.
 
-### Что уже есть
+### What already exists
 
-- **Прокси нет вовсе** (0 совпадений по `proxy` во всём `src/`), и это не
-  пробел на пустом месте: есть `Quality { width, height }` — запрос К ДЕКОДЕРУ
-  на размер выдачи внутри ОДНОГО источника, часть ключа кэша
-  (`src/libs/kt-cache/src/lib.rs`, инвариант №4). Прокси — другой ФАЙЛ за тем
-  же медиа; это другая ось, и в F-MED-002 разобрано, почему их нельзя
-  смешивать в ключе.
-- **Единственная наша производная, живущая файлом, — jpeg-полоса тумб.** Её
-  делает тумб-воркер (`src/apps/kt-app/src/thumbs.rs`) и кладёт в
-  `<project>.ktindex.db` рядом с проектом. Пики и пакетный индекс живут там же.
-- **Ключи этой производной уже машинно-независимы, и это доказано тестом.**
-  `thumb_key_t` квантует момент ОТ НУЛЯ ФАЙЛА по фиксированной лестнице
-  `THUMB_STEP_LADDER`, а не от `source_in` и не от зума (t62): две машины,
-  открывшие один файл, произведут ОДИН И ТОТ ЖЕ набор ключей. То есть с точки
-  зрения «совпадёт ли производная у двоих» самое трудное у нас уже сделано —
-  и сделано не ради раздачи, а ради общего кэша бина и таймлайна.
-- **Остальные наши производные раздать нельзя по построению**: пре-FX бёрсты и
-  пост-FX кадры живут только в оперативной памяти и умирают вместе с процессом;
-  `PostFxVideo{quality, fx_hash}` вдобавок ключуется хэшем цепочки эффектов, то
-  есть чужому он бесполезен, даже если бы доехал.
+- **There is no proxy at all** (0 matches for `proxy` across all of `src/`), and this is not a gap on empty ground: there is `Quality { width, height }` — a request TO THE DECODER for the output size within ONE source, part of the cache key (`src/libs/kt-cache/src/lib.rs`, invariant No. 4). A proxy is another FILE behind the same media; that is a different axis, and F-MED-002 explains why the two must not be mixed in one key.
+- **The only derivative of ours that lives as a file is the JPEG thumbnail strip.** It is made by the thumbnail worker (`src/apps/kt-app/src/thumbs.rs`) and written into `<project>.ktindex.db` next to the project. Peaks and the batch index live there as well.
+- **The keys of this derivative are already machine-independent, and a test proves it.** `thumb_key_t` quantizes the moment FROM ZERO OF THE FILE on a fixed ladder `THUMB_STEP_LADDER`, not from `source_in` and not from the zoom (t62): two machines that open one file produce ONE AND THE SAME set of keys. So from the point of view of "will the derivative match for two people", the hardest part is already done with us — and it was done not for distribution but for the shared cache of the bin and the timeline.
+- **Our other derivatives cannot be distributed by construction**: pre-FX bursts and post-FX frames live only in RAM and die with the process; `PostFxVideo{quality, fx_hash}` is moreover keyed by the hash of the effect chain, so it is useless to anyone else even if it arrived.
 
-### Чего не хватает
+### What is missing
 
-1. Самой производной: транскодера «файл → файл» нет (`export_mp4_with_backends`
-   рендерит КОМПОЗИЦИЮ), второго пути у медиа в модели нет — см. F-MED-002.
-2. Адреса, не зависящего от машины. Сегодня `.ktindex.db` ключует медиа
-   АБСОЛЮТНЫМ путём (`ensure_media`, `src/libs/kt-media/src/index.rs`), то
-   есть производная привязана к тому, как файл виден у меня.
-3. Хранилища, живущего между проектами. БД сидекара — при проекте: у второго
-   проекта на тот же материал будет своя, а у второго человека — своя третья.
-4. Устойчивости хранилища к чужому вмешательству: `MediaIndexDb::open` при
-   ЛЮБОЙ ошибке открытия УДАЛЯЕТ файл и создаёт заново. Для личного кэша это
-   правильное решение (дешевле пересчитать), для раздаваемой производной —
-   потеря чужой работы.
+1. The derivative itself: a "file → file" transcoder does not exist (`export_mp4_with_backends` renders a COMPOSITION), and the model has no second path for media — see F-MED-002.
+2. An address that does not depend on the machine. Today `.ktindex.db` keys media by its ABSOLUTE path (`ensure_media`, `src/libs/kt-media/src/index.rs`), so the derivative is tied to how the file is visible to me.
+3. A store that lives between projects. The sidecar's DB belongs to the project: a second project for the same material will have its own, and a second person will have a third one of his own.
+4. Robustness of the store against outside interference: `MediaIndexDb::open` on ANY opening error DELETES the file and creates it again. For a personal cache this is the right decision (cheaper to recompute); for a shared derivative it is the loss of someone else's work.
 
-### Что мешает
+### What gets in the way
 
-Инвариант №4: кэш — единственная правда о прогретости. Общий склад производных
-неизбежно заводит вторую правду («у меня в памяти нет, но на складе есть»), и
-полоскам прогретости придётся выбирать, какую показывать, — ровно та беда, ради
-запрета которой инвариант написан. Второе: наш муксер снапает дробные частоты
-на целую сетку (`grid_fps(23.976) = 24`), поэтому построенная нами лёгкая копия
-часового материала окажется короче оригинала почти на четыре секунды — раздавать
-такую производную нельзя тем более, чем личный кэш. Третье: инвариант №11
-требует байтового детерминизма от НАШЕГО пути, но ничего не может требовать от
-копии, построенной чужой машиной и чужим энкодером.
+Invariant No. 4: the cache is the only source of truth about warmth. A shared store of derivatives inevitably creates a second truth ("it is not in my memory, but it is in the store"), and the coverage bars would have to choose which one to show — exactly the trouble for whose prevention the invariant was written. Second: our muxer snaps fractional frame rates to a whole grid (`grid_fps(23.976) = 24`), so a lightweight copy of hour-long material that we build would come out shorter than the original by almost four seconds — distributing such a derivative is out of the question, even more so than a personal cache. Third: invariant No. 11 requires byte determinism from OUR path, but it cannot require anything of a copy built by someone else's machine and someone else's encoder.
 
-БЕЗ СЕТИ: НЕ ОСТАЁТСЯ — `src/apps/kt-app/src/thumbs.rs` — раздавать нечего и некому: прокси у нас нет вовсе, результат декода живёт в оперативной памяти и умирает вместе с процессом, а единственная производная, существующая файлом, — jpeg-полоса тумб, которую воркер пишет в базу рядом с МОИМ проектом и адресует абсолютным путём. Отсутствие видно именно здесь: ключи этой полосы уже одинаковы на любой машине, а сама она не отделима от одного документа.
+OFFLINE: DOES NOT REMAIN — `src/apps/kt-app/src/thumbs.rs` — there is nothing to distribute and no one to distribute to: we have no proxies at all, the decoded result lives in RAM and dies with the process, and the only derivative that exists as a file is the JPEG thumbnail strip, which the worker writes into the database next to MY project and addresses by absolute path. The absence shows precisely here: the keys of this strip are already the same on any machine, but the strip itself cannot be separated from a single document.
 
-ЦЕНА СЕТИ: единица раздачи — хранилище между проектами — производную негде положить так, чтобы её нашли двое: наш склад сидекара привязан к одному проекту, ключуется абсолютным путём и удаляется целиком при любой ошибке открытия.
+NETWORK COST: the unit of distribution — cross-project storage — there is no place to put the derivative so that two people can find it: our sidecar store is tied to one project, is keyed by an absolute path, and is deleted entirely on any opening error.
 
-ЦЕНА СЕТИ: чужая производная как источник правды — инвариант 4 — общий склад завёл бы вторую правду о прогретости рядом с кэшем, и полоскам прогретости пришлось бы выбирать, какую из двух показывать.
+NETWORK COST: someone else's derivative as the source of truth — invariant 4 — a shared store would create a second truth about warmth next to the cache, and the coverage bars would have to pick which of the two to show.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **№4** — главный: вторая правда о прогретости не допускается, поэтому общий
-  склад производных обязан входить в кэш через ту же дверь, что декодер, а не
-  становиться параллельным ответом на вопрос «готово ли».
-- **№8** (скролл/зум не декодирует): раздаваемая полоса тумб — прямое усиление
-  этого инварианта, и именно поэтому она и есть наш кандидат в «производную для
-  второго».
-- **№11** (детерминизм): чужая лёгкая копия — чужие байты. Ни одно наше
-  сравнение с эталоном на ней не имеет смысла, и это надо сказать заранее, а не
-  обнаружить на золотых тестах.
-- Правила UI: **20** (ничего не отрастает само — производные не строятся и не
-  раздаются без человека), **12** (построение — фоновая работа, не во время
-  жеста и не во время воспроизведения).
+- **No. 4** — the main one: a second truth about warmth is not allowed, so a shared store of derivatives must enter the cache through the same door as the decoder, not become a parallel answer to the question "is it ready".
+- **No. 8** (scroll/zoom does not decode): the shared thumbnail strip is a direct amplification of this invariant, and that is precisely why it is our candidate for "a derivative for a second person".
+- **No. 11** (determinism): someone else's lightweight copy is someone else's bytes. None of our comparisons against the reference make sense on it, and this must be said in advance, not discovered on the golden tests.
+- UI rules: **20** (nothing grows by itself — derivatives are neither built nor distributed without a person), **12** (building is background work, not during a gesture or during playback).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | L — и только вместе с F-MED-002: сама по себе «раздача» без прокси беспредметна |
-| Где основная работа | kt-media (адрес производной как функция исходника, а не пути), kt-app (кто строит и куда кладёт), kt-cache (одна дверь к правде о прогретости) |
-| Формат проекта | своей версии не требует — место штатное, `media_references` OTIO (разобрано в F-MED-002); эта заметка добавляет требование к СОДЕРЖИМОМУ ключа, а не к схеме |
-| Тесты, которые придётся написать | ключ производной не зависит от абсолютного пути и от машины (расширение t62 на медиа целиком); чужая производная не попадает в coverage мимо кэша; открытие повреждённого склада НЕ удаляет чужую работу |
-| Зависит от | F-MED-002 (без прокси раздавать нечего); смежные — F-COL-004 (растущий файл обесценивает производные), F-MED-005 (адрес материала), F-PRJ-003 (переносимость проекта) |
-| Ломает совместимость | нет |
+| Size | L — and only together with F-MED-002: on its own, "distribution" is meaningless without proxies |
+| Where the main work is | kt-media (the address of a derivative as a function of the source, not of the path), kt-app (who builds it and where it is put), kt-cache (one door to the truth about warmth) |
+| Project format | does not need its own version — the place is standard, the `media_references` OTIO (analysed in F-MED-002); this note adds a requirement on the CONTENT of the key, not on the schema |
+| Tests to write | the derivative key does not depend on the absolute path or on the machine (an extension of t62 to the media as a whole); a foreign derivative does not get into coverage around the cache; opening a damaged store does NOT delete someone else's work |
+| Depends on | F-MED-002 (without proxies there is nothing to distribute); related — F-COL-004 (a growing file makes derivatives stale), F-MED-005 (the address of the material), F-PRJ-003 (portability of the project) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Не берём: единица раздачи требует того, кому раздают, а второго участника нет —
-та же формула, что у F-PRJ-003 и F-PRJ-001. Заметка заводится не ради «берём», а
-ради одного требования к F-MED-002, которое дёшево поставить заранее и дорого
-задним числом: **адрес и идентичность прокси обязаны быть функцией ИСХОДНИКА, а
-не машины, которая прокси построила.** Тред про перелинковку в общей Production —
-готовое доказательство цены обратного решения: перелинковывать приходится каждое
-открытие, и только производные, а лечится это переименованием томов, то есть не
-средствами редактора вообще.
+We do not take it: a unit of distribution requires someone to distribute to, and there is no second participant — the same formula as F-PRJ-003 and F-PRJ-001. The note is opened not for "we take it" but for one requirement on F-MED-002, which is cheap to set in advance and expensive afterwards: **the address and identity of a proxy must be a function of the SOURCE, not of the machine that built the proxy.** The thread about relinking in the shared Production is ready proof of the price of the reverse decision: relinking is needed at every opening, and only for derivatives, and it is fixed by renaming volumes — that is, not by the editor's means at all.
 
-Второе, что стоит записать до реализации: наш склад производных сегодня
-удаляется целиком при любой ошибке открытия. Для личного кэша это правильно и
-менять не надо; но ровно эта строка отделяет «кэш» от «общего имущества», и
-если производная когда-нибудь станет общей, решение придётся принимать заново —
-здесь, а не в момент, когда чужая работа уже потеряна.
+A second thing to write down before implementation: our store of derivatives today is deleted entirely on any opening error. For a personal cache this is correct and should not be changed; but precisely this line separates "cache" from "common property", and if a derivative ever becomes shared, the decision will have to be made anew — here, and not at the moment when someone else's work is already lost.
 
-Границы: переключатель прокси у себя и защита экспорта — F-MED-002; починка
-пути к материалу — F-MED-005; растущий исходник, обесценивающий производные, —
-F-COL-004; перенос всего проекта на другую машину — F-PRJ-003.
+Boundaries: the proxy toggle and the export protection are F-MED-002; the repair of a path to the material is F-MED-005; a growing source that makes derivatives stale is F-COL-004; moving the whole project to another machine is F-PRJ-003.
 
-## Источники
+## Sources
 
-- Adobe Community, «proxy linking issues in shared production», 24.01.2025 –
+- Adobe Community, "proxy linking issues in shared production", 24.01.2025 –
   29.01.2025:
   https://community.adobe.com/t5/premiere-pro-discussions/proxy-linking-issues-in-shared-production/td-p/15110876
-  (дата обращения 08.09.2026) — перелинковка нужна каждому открытию и только
-  прокси; лечится совпадением имён томов; в треде участвуют J_Boy и
+  (accessed 08.09.2026) — relinking is needed at every opening and only for proxies;
+  it is fixed by matching volume names; participants in the thread are J_Boy and
   PaulMurphy (Community Expert).
-- Syncthing docs, «Syncing»: https://docs.syncthing.net/users/syncing.html
-  (08.09.2026) — правило разрешения конфликта, имя `sync-conflict`,
-  «are treated as normal files».
+- Syncthing docs, "Syncing": https://docs.syncthing.net/users/syncing.html
+  (08.09.2026) — the rule for resolving a conflict, the name `sync-conflict`,
+  "are treated as normal files".
 - Blackmagic Design, DaVinci Resolve — Collaboration:
   https://www.blackmagicdesign.com/products/davinciresolve/collaboration
-  (08.09.2026) — «As new files are added they will automatically sync and
-  appear in the project.»
-- Различение Proxy Media и Optimized Media цитируется по F-MED-002, где оно
-  взято из документации установщика Resolve через тред
-  `forum.blackmagicdesign.com` (в текущем окружении форум недоступен — 403).
-- `forum.blackmagicdesign.com`, треды `t=224635` и `t=214931` — НЕДОСТУПНЫ
-  (Cloudflare); факт про файлы `-conflict` в папке прокси взят из выдачи
-  поиска, помечен в тексте как вторичный.
-- Механизм live sync (камера пишет HD-прокси H.264, который и синхронизируется)
-  — вторичные публикации 2026 г.; точных формулировок первоисточника получить
-  не удалось: **[НЕ ПРОВЕРЕНО]**.
-- Наш код прочитан 08.09.2026: `src/apps/kt-app/src/thumbs.rs` (`thumb_key_t`,
-  `THUMB_STEP_LADDER`, t62, запись jpeg в sidecar-БД),
+  (08.09.2026) — "As new files are added they will automatically sync and
+  appear in the project."
+- The distinction between Proxy Media and Optimized Media is quoted from F-MED-002, where it is
+  taken from the Resolve installer documentation via the thread on `forum.blackmagicdesign.com`
+  (in the current environment the forum is unavailable — 403).
+- `forum.blackmagicdesign.com`, threads `t=224635` and `t=214931` — UNAVAILABLE (Cloudflare);
+  the fact about `-conflict` files in the proxy folder is taken from search results, marked in
+  the text as secondary.
+- Live sync mechanism (the camera records an HD H.264 proxy, which is what gets synced) —
+  secondary publications from 2026; the exact wording of the primary source could not be
+  obtained: **[NOT VERIFIED]**.
+- Our code, read on 08.09.2026: `src/apps/kt-app/src/thumbs.rs` (`thumb_key_t`,
+  `THUMB_STEP_LADDER`, t62, writing the JPEG to the sidecar DB),
   `src/libs/kt-cache/src/lib.rs` (`BurstKind`, `PostFxVideo`, coverage),
-  `src/libs/kt-media/src/index.rs` (`ensure_media`, удаление БД при ошибке
-  открытия), `docs/features/media/proxies/proxy-toggle-workflow.md`.
+  `src/libs/kt-media/src/index.rs` (`ensure_media`, deleting the DB on an opening error),
+  `docs/features/media/proxies/proxy-toggle-workflow.md`.

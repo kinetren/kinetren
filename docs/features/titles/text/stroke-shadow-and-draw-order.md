@@ -1,16 +1,16 @@
 ---
 id: F-TXT-005
-title: Обводка, тень, плашка и порядок отрисовки текста
-status: сделано
+title: Outline, shadow, plate and text draw order
+status: done
 priority: B
 cost: M
 category: titles/text
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, libass-0.17]
-we_have: да
+we_have: yes
 crates: [kt-fx, kt-media, kt-engine, kt-gpu, kt-model, kt-app]
 invariants: [4, 7, 10, 11]
 ui_rules: [6, 13, 17, 20]
-round: Р.52
+round: R.52
 point: 406
 tests: [t486]
 depends_on: [F-TXT-001]
@@ -18,158 +18,74 @@ trackers: [kde-invent, kde-bugzilla, pitivi, flowblade, olive, mlt, openshot]
 checked: 2026-09-08
 ---
 
-# F-TXT-005 — Обводка, тень, плашка и порядок отрисовки текста
+# F-TXT-005 — Outline, shadow, plate and text draw order
 
-## Суть
+## Essence
 
-Титр читают поверх чужой картинки, и белые буквы на белом небе не видно.
-Читаемость даёт не выбор шрифта, а слой оформления: обводка по контуру
-глифа, тень со смещением и размытием, плашка под строкой. Монтажёр
-включает их галочками и крутит три-четыре числа. Незаметная часть, из-за
-которой всё это работает или не работает, — ПОРЯДОК: что рисуется под
-чем. Обводка поверх текста съедает половину штриха, тень под обводкой
-исчезает, плашка поверх строки закрывает строку.
+A title is read over someone else's picture, and white letters on a white sky are not visible.
+Readability comes not from the choice of font but from a styling layer: an outline along the glyph
+contour, a drop shadow with offset and blur, a plate under the line. The editor turns them on with
+checkboxes and adjusts three or four numbers. The inconspicuous part on which all of this works or
+does not work is the ORDER: what is drawn under what. An outline drawn over the text eats half of the
+stroke, a shadow under the outline disappears, a plate drawn over the line covers the line.
 
-Владение: сам текст как объект — F-TXT-001 (там строка, шрифт, шейпинг,
-детерминизм растеризации). Здесь — оформление этого текста и порядок
-между слоями оформления.
+Ownership: the text itself as an object is F-TXT-001 (there: the string, the font, shaping, the
+determinism of rasterization). Here: the styling of this text and the order between the styling
+layers.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| After Effects | 26.x | Character panel: Fill / Stroke; Layer Styles | Порядок — ПЕРВОКЛАССНОЕ свойство: у символа «Fill Over Stroke» / «Stroke Over Fill», у слоя два переключателя-надстройки «All Fills Over All Strokes» / «All Strokes Over All Fills», которые перебивают посимвольный выбор. Штрих центрирован на контуре глифа: «наружная» обводка получается не шириной, а тем, что штрих двойной толщины кладётся ПОД заливку. Тень/свечение — другой механизм, Layer Styles (наследие Photoshop) с зашитым порядком. Задокументированное ограничение: при посимвольном 3D оба слоевых переключателя не делают ничего |
-| Adobe Premiere | 26.x | Essential Graphics → Appearance: Fill, Stroke, Background, Shadow | Единственный, у кого «наружу/внутрь» вынесено явно: Outer растёт от края наружу и рисуется ПОЗАДИ заливки, Inner растёт внутрь и рисуется ПОВЕРХ неё, Center — поверх заливки у фигур и ПОД заливкой у текста. Штрихов до 10, первый рисуется поверх второго; штрих вешается и на отдельные символы; теней тоже несколько. Inner/Outer появились в октябре 2022, а прежнее поведение Center сохранено ради вида уже сделанных проектов **[НЕ ПРОВЕРЕНО по первоисточнику: `helpx.adobe.com` из окружения не открывается (proxy refused); формулировки взяты из сниппета выдачи страницы `premiere-pro/using/work-with-fill-stroke-background-shadow.html` и подтверждаются анонсом в сообществе Adobe]** |
-| DaVinci Resolve | 21 | Text+ (Fusion), вкладка Shading | Порядок сделан как СТЕК, а не как пара: восемь пронумерованных shading-элементов, меню «Sort By» = Priority (1 — верхний, 8 — нижний) либо Z-depth, плюс ползунок «Priority Back/Front». Вид элемента: Text Fill / Text Outline / Border Fill / Border Outline. У обводки Thickness, Join Style (Sharp / Rounded / Beveled) и «Adapt Thickness to Perspective». У Border отдельное меню Level: Text / Line / Word / Character — область плашки выбирается явно. Простой генератор «Text» Edit-страницы ничего этого не умеет |
-| Final Cut Pro | 12.3 | Text inspector: Face / Outline / Glow / Drop Shadow | Четыре секции с независимыми выключателями, у каждой свой тип заливки, цвет, непрозрачность и размытие; у Outline ещё ширина, у Glow радиус, у Drop Shadow дистанция и угол. Порядок между секциями зашит (лицо сверху, тень внизу) и не переставляется. Отдельный набор параметров у 3D-титров (Substance / Edges) |
-| VEGAS Pro | 2026 | «Titles & Text» (OFX-генератор) | Самый бедный набор: Outline Width и Outline Color; Shadow Enable, Shadow Color, Shadow Offset X, Shadow Offset Y, Shadow Blur; Background Color — цвет ФОНА КАДРА, а не плашка под строкой. Обводка ровно одна, порядка нет вовсе. Показательно, что на несколько обводок существует отдельный сторонний плагин |
+| After Effects | 26.x | Character panel: Fill / Stroke; Layer Styles | Order is a FIRST-CLASS property: a character has "Fill Over Stroke" / "Stroke Over Fill", and a layer has two override switches, "All Fills Over All Strokes" / "All Strokes Over All Fills", which override the per-character choice. The stroke is centered on the glyph outline: an "outside" stroke is obtained not by width but by drawing a stroke of double thickness UNDER the fill. Shadow/glow is a different mechanism, Layer Styles (a legacy of Photoshop) with a built-in order. Documented limitation: with per-character 3D, neither layer-level switch has any effect |
+| Adobe Premiere | 26.x | Essential Graphics → Appearance: Fill, Stroke, Background, Shadow | The only one that exposes "outside/inside" explicitly: Outer grows outward from the edge and is drawn BEHIND the fill, Inner grows inward and is drawn ON TOP of the fill, Center is drawn over the fill for shapes and UNDER the fill for text. Up to 10 strokes, the first is drawn over the second; a stroke can be applied to individual characters too; there can also be several shadows. Inner/Outer appeared in October 2022, while the earlier Center behavior was kept for the sake of the look of already made projects **[NOT VERIFIED against the primary source: `helpx.adobe.com` is not reachable from the environment (proxy refused); the wording is taken from a search-result snippet of the page `premiere-pro/using/work-with-fill-stroke-background-shadow.html` and confirmed by an announcement in the Adobe community]** |
+| DaVinci Resolve | 21 | Text+ (Fusion), Shading tab | The order is made as a STACK, not as a pair: eight numbered shading elements, a "Sort By" menu = Priority (1 is top, 8 is bottom) or Z-depth, plus a "Priority Back/Front" slider. Element kinds: Text Fill / Text Outline / Border Fill / Border Outline. The outline has Thickness, Join Style (Sharp / Rounded / Beveled) and "Adapt Thickness to Perspective". Border has a separate Level menu: Text / Line / Word / Character, so the plate's area is chosen explicitly. The simple "Text" generator of the Edit page can do none of this |
+| Final Cut Pro | 12.3 | Text inspector: Face / Outline / Glow / Drop Shadow | Four sections with independent switches; each has its own fill type, color, opacity and blur; Outline also has width, Glow has radius, Drop Shadow has distance and angle. The order between sections is fixed (face on top, shadow at the bottom) and cannot be rearranged. 3D titles have a separate set of parameters (Substance / Edges) |
+| VEGAS Pro | 2026 | "Titles & Text" (OFX generator) | The poorest set: Outline Width and Outline Color; Shadow Enable, Shadow Color, Shadow Offset X, Shadow Offset Y, Shadow Blur; Background Color is the color of the frame BACKGROUND, not a plate under the line. There is exactly one outline, and no order at all. Tellingly, a separate third-party plugin exists for multiple outlines |
 
-**Вне ядра.** Без формата ASS фичу не описать: он — единственное место, где
-стек оформления не набор галочек, а объявленная модель, и именно он объясняет
-целый класс чужих дефектов с плашкой субтитра.
+**Outside the core.** Without the ASS format this feature cannot be described: it is the only place where
+the styling stack is not a set of checkboxes but a declared model, and it is the one that explains a whole
+class of other products' defects with subtitle plates.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| libass + формат ASS/SSA | 0.17.1 (пакет `libass9 1:0.17.1-2build1`, слинкована в системный `ffmpeg 6.1.1`) | `BorderStyle`, `Outline`, `Shadow`, `OutlineColour`, `BackColour` | Обводка, тень и плашка — не три выключателя, а ОДИН enum: `BorderStyle` 1 = «обводка + тень», 3 = «непрозрачная плашка», 4 (только libass) = плашка по строке, где отступ задаёт параметр `Shadow`. Обводка и плашка взаимно исключены; при `BorderStyle` ≠ 0 значение `Outline` обязано быть нулевым, иначе оно перебивает режим. Цвет плашки берётся из цвета обводки/`BackColour`, поэтому альфа «цвета обводки» управляет прозрачностью плашки |
+| libass + ASS/SSA format | 0.17.1 (package `libass9 1:0.17.1-2build1`, linked into the system `ffmpeg 6.1.1`) | `BorderStyle`, `Outline`, `Shadow`, `OutlineColour`, `BackColour` | Outline, shadow and plate are not three switches but ONE enum: `BorderStyle` 1 = "outline + shadow", 3 = "opaque plate", 4 (libass only) = a per-line plate where the padding is set by the `Shadow` parameter. Outline and plate are mutually exclusive; when `BorderStyle` ≠ 0, the `Outline` value MUST be zero, otherwise it overrides the mode. The plate color is taken from the outline color / `BackColour`, so the alpha of the "outline color" controls the transparency of the plate |
 
-## Фишка фишки
+## The trick behind it
 
-**1. «Обводка наружу» — это не ширина, а ПОРЯДОК; и вендор зашил
-исключение специально для текста.** Растеризатор кладёт штрих по контуру
-глифа центрированным: половина внутрь, половина наружу. Внутренняя
-половина съедает штрих буквы, и на тонком шрифте съедает его целиком —
-поэтому «толстая обводка» в редакторе с центрированным штрихом
-существует только на бумаге. Дешёвый способ получить наружную обводку
-известен и он же единственный: нарисовать штрих ДВОЙНОЙ толщины и
-положить его ПОД заливку, тогда внутренняя половина просто скрывается.
-Именно поэтому у After Effects соответствующий контрол — не «позиция
-штриха», а «порядок заливки и штриха». И именно поэтому у Adobe один и
-тот же пункт `Center` ведёт себя по-разному в зависимости от типа
-объекта: поверх заливки у фигур и под заливкой у ТЕКСТА. Вендор
-захардкодил исключение ровно там, где съеденная половина штриха убивает
-читаемость, — это и есть доказательство, что «обводка под текстом» не
-вкус, а требование.
+**1. "Outside outline" is not a matter of width but of ORDER; and the vendor hard-coded an exception specifically for text.** The rasterizer lays a stroke along the glyph contour centered: half inside, half outside. The inner half eats the letter's stroke, and on a thin font it eats it entirely — that is why a "thick outline" in an editor with a centered stroke exists only on paper. The cheap way to get an outside outline is known, and it is also the only one: draw the stroke at DOUBLE thickness and place it UNDER the fill, then the inner half is simply hidden. That is exactly why After Effects' corresponding control is not a "stroke position" but "fill and stroke order". And that is exactly why Adobe's one and the same `Center` item behaves differently depending on the object type: over the fill for shapes and under the fill for TEXT. The vendor hard-coded the exception exactly where the eaten half of the stroke destroys readability — and that is the proof that "outline under text" is not a taste but a requirement.
 
-Настоящая наружная обводка (не имитация порядком) требует посчитать
-смещённый контур, и это видно по тому, что умеет один Resolve: Join
-Style (Sharp / Rounded / Beveled) и «Adapt Thickness to Perspective».
-Ни того, ни другого нельзя получить, рисуя глиф дважды: у двойной
-отрисовки стыков не существует как понятия. Цена дешёвого варианта
-конкретная и видна на тонких шрифтах: край глифа композитится ДВАЖДЫ —
-сначала сглаженный край штриха, потом сглаженный край заливки поверх, —
-и на прямой (непремультиплицированной) альфе покрытие складывается
-завышенно, отчего контур систематически чуть толще и темнее, чем
-задумано.
+A real outside outline (not an imitation by order) requires computing an offset contour, and this is visible from the fact that Resolve alone can do it: Join Style (Sharp / Rounded / Beveled) and "Adapt Thickness to Perspective". Neither can be obtained by drawing the glyph twice: the double rendering has no notion of joins at all. The cost of the cheap variant is concrete and is visible on thin fonts: the glyph edge is composited TWICE — first the anti-aliased edge of the stroke, then the anti-aliased edge of the fill on top — and on straight (non-premultiplied) alpha the coverage adds up too high, so the contour comes out systematically a little thicker and darker than intended.
 
-**2. Порядок — это СТЕК, а не пара, и «починив» одну пару, ломаешь
-следующую.** Живая последовательность в трекере Kdenlive: октябрь 2022 —
-просьба положить обводку под текст (#1550); февраль 2023 — то же самое
-жалобой в bugzilla (#465912, закрыт FIXED); май 2023, через три недели
-после того, как порядок поменяли, — #1689 «тень полностью перекрыта
-обводкой». Пара «текст/обводка» починена, и ровно этим сломана пара
-«обводка/тень». Отсюда устройство у тех, кто прошёл этот путь: Resolve
-не даёт переключателя, он даёт восемь пронумерованных элементов с
-сортировкой по приоритету и ползунком «ближе/дальше»; Premiere — до
-десяти штрихов с правилом «первый рисуется поверх второго». Кто отдаёт
-пользователю пару булевых, гарантированно получает вторую жалобу.
+**2. The order is a STACK, not a pair, and "fixing" one pair breaks the next.** The live sequence in the Kdenlive tracker: October 2022 — a request to put the outline under the text (#1550); February 2023 — the same thing as a complaint in bugzilla (#465912, closed as FIXED); May 2023, three weeks after the order was changed, — #1689 "shadow is fully covered by the outline". The "text/outline" pair was fixed, and exactly that broke the "outline/shadow" pair. Hence the design of those who went through this path: Resolve does not give a switch, it gives eight numbered elements with sorting by priority and a "closer/farther" slider; Premiere gives up to ten strokes with the rule "the first is drawn over the second". Whoever gives the user a couple of booleans is guaranteed a second complaint.
 
-Третье следствие дороже обоих: **порядок — это вид УЖЕ СДЕЛАННЫХ
-проектов.** Adobe, вводя Outer/Inner в октябре 2022, сохранила старое
-поведение `Center` именно ради совместимости. Kdenlive порядок просто
-поменял — и все существующие титры стали выглядеть иначе, что видно по
-тому же #1689. Значит порядок обязан быть сохранённым значением, а не
-константой рисовалки, и решается это ДО первого титра, а не после
-первой жалобы.
+The third consequence is more expensive than both: **the order is the look of ALREADY MADE projects.** Adobe, when it introduced Outer/Inner in October 2022, kept the old `Center` behavior precisely for compatibility. Kdenlive simply changed the order — and all existing titles began to look different, as can be seen from the same #1689. So the order MUST be a stored value, not a constant of the drawing routine, and this is decided BEFORE the first title, not after the first complaint.
 
-**3. Плашка под строкой — отдельная геометрия, которую из метрик глифа
-не получить.** В ASS её вообще нет как самостоятельного объекта:
-`BorderStyle` — один enum, где обводка и плашка взаимно исключены, цвет
-плашки берётся из цвета обводки, а в режиме 4 отступ плашки задаёт
-параметр ТЕНИ. Практическое следствие ловится в трекере руками
-пользователя: у субтитра с пустой строкой достаточно опустить альфу
-«цвета обводки» ниже 255 — и плашка распадается на построчные
-прямоугольники (kde-invent #1846), потому что она и есть построчные
-прямоугольники цвета обводки, до этого сливавшиеся в один при альфе 255.
-Resolve — единственный, кто сделал это честно: у Border есть меню Level
-(Text / Line / Word / Character), то есть область плашки ВЫБИРАЕТСЯ.
-Вывести её из метрик нельзя в принципе: ширина плашки — это ширина
-СТРОКИ после переноса плюс отступы, а не сумма advance'ов глифов, и
-меняется она при каждой правке текста.
+**3. The plate under the line is a separate geometry that cannot be derived from glyph metrics.** In ASS it does not exist as an independent object at all: `BorderStyle` is one enum where outline and plate are mutually exclusive, the plate color is taken from the outline color, and in mode 4 the plate's padding is set by the SHADOW parameter. The practical consequence is caught in the tracker by users' hands: for a subtitle with an empty line it is enough to lower the alpha of the "outline color" below 255 — and the plate falls apart into per-line rectangles (kde-invent #1846), because it is those per-line rectangles of the outline color, which had been merging into one at alpha 255. Resolve is the only one that did this honestly: Border has a Level menu (Text / Line / Word / Character), that is, the area of the plate is CHOSEN. It is impossible in principle to derive it from metrics: the plate's width is the width of the LINE after wrapping plus padding, not the sum of the glyph advances, and it changes with every edit of the text.
 
-## Плюсы
+## Pros
 
-- Порядок как сохранённое свойство (AE, Premiere, Resolve) позволяет
-  чинить читаемость, не ломая вид старых проектов: новый порядок —
-  новое значение поля, старые титры остаются как были.
-- Стек с номерами (Resolve, 8 элементов; Premiere, до 10 штрихов) не
-  требует новой пары переключателей на каждую следующую жалобу: третья
-  обводка и вторая тень выражаются тем же механизмом, что первая.
-- Обводка через порядок (штрих двойной толщины под заливкой) не требует
-  геометрии контуров — значит её умеет любой растровый путь, и это
-  ровно то, что делает фичу дешёвой при отсутствии своего шейпера.
-- Плашка как ЯВНАЯ область (Level = Text / Line / Word / Character)
-  переживает правку текста: строка стала длиннее — плашка перестроилась,
-  потому что она считается от строки, а не задана числом.
-- Оформление отдельно от текста означает, что стиль переносится: один
-  набор «обводка+тень+плашка» ложится на сорок нижних третей.
+- The order as a stored property (AE, Premiere, Resolve) makes it possible to fix readability without breaking the look of old projects: a new order is a new value of the field, old titles stay as they were.
+- A numbered stack (Resolve, 8 elements; Premiere, up to 10 strokes) does not require a new pair of switches for each next complaint: a third outline and a second shadow are expressed by the same mechanism as the first.
+- An outline via order (a double-thickness stroke under the fill) does not require contour geometry — so any raster path can do it, and this is exactly what makes the feature cheap when there is no own shaper.
+- A plate as an EXPLICIT area (Level = Text / Line / Word / Character) survives editing of the text: the line became longer — the plate is rebuilt, because it is computed from the line and not set by a number.
+- Styling separate from the text means the style is portable: one set "outline+shadow+plate" applies to forty lower thirds.
 
-## Минусы
+## Cons
 
-- Наружная обводка порядком даёт двойное сглаживание на краю глифа: край
-  композитится дважды, и на тонком шрифте контур выходит толще и темнее
-  задуманного. Честный вариант — считать смещённый контур — тянет за
-  собой понятие стыка (Sharp/Rounded/Beveled), которого у растрового
-  пути нет.
-- Стек с приоритетами (Resolve) — самая мощная модель и самая непонятная:
-  восемь номеров и меню «Sort By» вместо галочки «обводка».
-- Зашитый порядок (FCP, Vegas) не чинится настройкой вообще: секции
-  Face / Outline / Glow / Drop Shadow переставить нельзя, тень под
-  обводку не убрать.
-- Одна обводка (Vegas) означает, что «белая буква — чёрный контур —
-  белая кайма» не выражается; за неё платят сторонним плагином.
-- Плашка, сделанная режимом обводки (ASS), не сочетается с обводкой и
-  прозрачностью: альфа плашки и альфа обводки — одно число, и попытка
-  сделать полупрозрачную плашку разваливает её на построчные
-  прямоугольники.
-- Параметры оформления — самая ненадёжно сохраняемая часть титра.
-  В Kdenlive отдельно заводились: толщина обводки не сохраняется
-  (#363340), значение обводки при создании нового титра умножается на
-  десять (kde-invent #1342), клик по одному текстовому объекту меняет
-  настройку тени у другого (#476393), параметры тени возвращаются
-  обратно (#498351).
-- Размытие тени растит габарит объекта — и там, где холст остался
-  прежним, тень обрезается: `git 16.04: text shadow in title clips gets
-  clipped` (#361899) и `Title shadow blur of 18 or higher causes
-  clipping` (#499550), девять лет между ними.
-- Толщина обводки меняет метрики строки: в Kdenlive текст ЕЗДИЛ по
-  горизонтали при правке тени и обводки (kde-invent #1340).
-- Диапазон параметра — отдельный источник расхождений: у обводки в MLT
-  ползунок 0..3, а в Shotcut поверх того же фильтра — 0..200 (mlt #976).
+- An outside outline done by order gives double anti-aliasing on the glyph edge: the edge is composited twice, and on a thin font the contour comes out thicker and darker than intended. The honest variant — computing an offset contour — drags in the notion of a join (Sharp/Rounded/Beveled), which a raster path does not have.
+- A stack with priorities (Resolve) is the most powerful model and the least understandable: eight numbers and a "Sort By" menu instead of an "outline" checkbox.
+- A hard-wired order (FCP, Vegas) cannot be fixed by any setting at all: the sections Face / Outline / Glow / Drop Shadow cannot be rearranged, and the shadow under the outline cannot be removed.
+- A single outline (Vegas) means that "white letter — black contour — white rim" cannot be expressed; for it one pays with a third-party plugin.
+- A plate made by the outline mode (ASS) does not combine with outline and transparency: the alpha of the plate and the alpha of the outline are one number, and an attempt to make a semi-transparent plate breaks it into per-line rectangles.
+- Styling parameters are the least reliably preserved part of a title. In Kdenlive the following were filed separately: outline thickness is not saved (#363340), the outline value is multiplied by ten when a new title is created (kde-invent #1342), a click on one text object changes the shadow setting of another (#476393), shadow parameters revert (#498351).
+- Shadow blur grows the bounding box of the object — and where the canvas has stayed the same, the shadow is clipped: `git 16.04: text shadow in title clips gets clipped` (#361899) and `Title shadow blur of 18 or higher causes clipping` (#499550), nine years apart.
+- Outline thickness changes the line metrics: in Kdenlive the text MOVED horizontally when the shadow and outline were edited (kde-invent #1340).
+- The parameter range is a separate source of discrepancies: for the outline in MLT the slider is 0..3, while in Shotcut, on top of the same filter, it is 0..200 (mlt #976).
 
-## Что говорят пользователи
+## What users say
 
-Постановка задачи — почему это баг, а не вкус (задача открыта с 2022
-года, двадцать комментариев, метки `Enhancement` + `Titler`):
+The problem statement — why this is a bug and not a matter of taste (the task has been open since 2022, twenty comments, labels `Enhancement` + `Titler`):
 
 > When adding an outline to text in title clips, the outline is rendered
 > on top of the text rather than below. This severely impacts legibility
@@ -179,14 +95,14 @@ Resolve — единственный, кто сделал это честно: �
 > — kde-invent #1550, 19.10.2022,
 > https://invent.kde.org/multimedia/kdenlive/-/work_items/1550
 
-Что случилось через три недели после того, как порядок поменяли:
+What happened three weeks after the order was changed:
 
 > with latest changes to outline (now not more "inside" the text) the
 > shadow is completely "overlapped" by the outline.
 > — kde-invent #1689, 07.05.2023,
 > https://invent.kde.org/multimedia/kdenlive/-/work_items/1689
 
-Через три года после первой просьбы, с названным обходным путём:
+Three years after the first request, with a named workaround:
 
 > From my experience using Kdenlive, I've noticed that the current
 > "Outline" option in the title clip editor only applies inner outlines,
@@ -195,7 +111,7 @@ Resolve — единственный, кто сделал это честно: �
 > — kde-invent #2043, 28.08.2025,
 > https://invent.kde.org/multimedia/kdenlive/-/work_items/2043
 
-Плашка, сделанная из цвета обводки, — наблюдение пользователя:
+A plate made from the outline color — a user's observation:
 
 > But if I choose a "Custom Outline Color" and change the "Alpha channel"
 > from 255 to anything lower, the empty line becomes visible i.e. the
@@ -203,7 +119,7 @@ Resolve — единственный, кто сделал это честно: �
 > — kde-invent #1846, 26.03.2024,
 > https://invent.kde.org/multimedia/kdenlive/-/work_items/1846
 
-Обратная беда — оформление, зашитое НАСМЕРТЬ и невыключаемое:
+The opposite problem — styling hard-wired and impossible to turn off:
 
 > Currently the text in a title clip is shown with a border and shadow
 > which can be easily seen by setting the foreground color to transparent
@@ -211,111 +127,91 @@ Resolve — единственный, кто сделал это честно: �
 > — pitivi #1860, 04.07.2016,
 > https://gitlab.gnome.org/GNOME/pitivi/-/work_items/1860
 
-Двойное сглаживание края глазами пользователя (у Flowblade — через
-подложку MLT/Qt):
+Double anti-aliasing of the edge as seen by a user (in Flowblade — via the MLT/Qt backdrop):
 
 > I'm getting a green halo around fonts in the titler. I don't get the
 > same halo effect in gimp so I'm not sure where the problem is.
 > — flowblade #937, 28.11.2020,
 > https://github.com/jliljebl/flowblade/issues/937
 
-СИГНАЛ: оформление текста (обводка/тень/ореол) — 9 задач в kde-invent, `(outline|stroke|shadow|halo)[^.]{0,30}(text|title|subtitle|caption|font|letter|glyph)|(text|title|subtitle|caption|font|letter|glyph)[^.]{0,30}(outline|stroke|shadow|halo)`; доля 0.4% против 0.1% в pitivi
+SIGNAL: text styling (outline/stroke/shadow/halo) — 9 issues in kde-invent, `(outline|stroke|shadow|halo)[^.]{0,30}(text|title|subtitle|caption|font|letter|glyph)|(text|title|subtitle|caption|font|letter|glyph)[^.]{0,30}(outline|stroke|shadow|halo)`; share 0.4% against 0.1% in pitivi
 
-СИГНАЛ: ПОРЯДОК отрисовки как самостоятельный класс — 2 задачи в kde-invent, `(outline|shadow)[^.]{0,40}(cover|overlap|above|on top|obscur|hidden|wrong layer|below|under)|(cover|overlap|obscur|hidden|above|on top of|wrong layer)[^.]{0,40}(outline|shadow|the text)`; доля 0.1% против 0.0% (1 задача из 6346) в kde-bugzilla
+SIGNAL: drawing ORDER as an independent class — 2 issues in kde-invent, `(outline|shadow)[^.]{0,40}(cover|overlap|above|on top|obscur|hidden|wrong layer|below|under)|(cover|overlap|obscur|hidden|above|on top of|wrong layer)[^.]{0,40}(outline|shadow|the text)`; share 0.1% against 0.0% (1 issue of 6346) in kde-bugzilla
 
-Самое интересное число не в объёме, а в судьбе. По первому фильтру в
-kde-bugzilla 13 задач, из них закрыто 11, и **10 закрыты как FIXED — 91 %
-против 47 % настоящих фиксов по трекеру целиком** (2568 из 5422
-закрытых). То есть класс чинят вдвое охотнее среднего — и он всё равно
-не закрывается: просьба 2022 года открыта в 2026-м, а в 2025-м подана
-заново в оба трекера сразу (kde-invent #2043, kde-bugzilla #511673,
-`severity: wishlist`). Это и есть подпись стека: каждое исправление
-двигает проблему на следующую пару. Воспроизводится тем же дампом:
+The most interesting number is not in the volume but in the fate. By the first filter in kde-bugzilla there are 13 issues, of which 11 are closed, and **10 are closed as FIXED — 91% against 47% of real fixes across the whole tracker** (2568 of 5422 closed). That is, the class gets fixed twice as eagerly as average — and it still does not get closed: the request from 2022 is open in 2026, and in 2025 it was filed anew in both trackers at once (kde-invent #2043, kde-bugzilla #511673, `severity: wishlist`). This is the signature of the stack: each fix moves the problem to the next pair. It is reproduced with the same dump:
 
 ```bash
 python3 src/scripts/tracker-rank.py --query '(outline|stroke|shadow|halo)[^.]{0,30}(text|title|subtitle|caption|font|letter|glyph)|(text|title|subtitle|caption|font|letter|glyph)[^.]{0,30}(outline|stroke|shadow|halo)'
-# доли по трекерам; фикс-рейт считается по полям state/closed_reason
-# того же ~/.cache/kinotrain/trackers/kde-bugzilla.jsonl
+# shares by tracker; the fix rate is computed from the state/closed_reason fields
+# of the same ~/.cache/kinotrain/trackers/kde-bugzilla.jsonl
 ```
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/generators/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Обводка/тень/порядок отрисовки — параметры титра на событии; растеризация прибита пинами и вендоренным Noto (FONT-MANIFEST).
-АДРЕС: src/libs/kt-fx/src/video.rs:401 и :658 (зеркала `src/libs/kt-gpu/src/shaders/edges.wgsl`, `glow_add.wgsl`) — класс возможен, и его не ловит ничто: обе наши «декоративные» операции работают МИМО альфы (`edges` возвращает `Frame { …, has_alpha: false }` на `video.rs:464` и пишет `255u` в шейдере, `glow` складывает только `for c in 0..3` на `video.rs:699` и возвращает `vec4<u32>(rgb, c.a)`), а `alpha_over` в `src/libs/kt-engine/src/video.rs:997` композитит прямую альфу и домножает RGB источника на его альфу — значит любая обводка или тень, собранная из этих двух ядер, за пределами глифа НЕВИДИМА, и ни один тест этого не заметит: `src/libs/kt-fx/tests/video_fx.rs:34` строит эталонный кадр как `has_alpha: false`, и `src/libs/kt-gpu/tests/parity.rs:285` гоняет ВСЕ случаи конформанса t181 на `frame(W, H, false, 0)`.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/generators/ — the contract is in `spec.md`, the "why" and the code paths are in `design.md`.
+Outline/shadow/drawing order are parameters of a title on an event; rasterization is pinned by the pins and the vendored Noto (FONT-MANIFEST).
+ADDRESS: src/libs/kt-fx/src/video.rs:401 and :658 (mirrors `src/libs/kt-gpu/src/shaders/edges.wgsl`, `glow_add.wgsl`) — the class is possible, and nothing catches it: both of our "decorative" operations work BYPASSING alpha (`edges` returns `Frame { …, has_alpha: false }` at `video.rs:464` and writes `255u` in the shader, `glow` sums only `for c in 0..3` at `video.rs:699` and returns `vec4<u32>(rgb, c.a)`), while `alpha_over` in `src/libs/kt-engine/src/video.rs:997` composites straight alpha and multiplies the source RGB by its alpha — so any outline or shadow assembled from these two kernels is INVISIBLE outside the glyph, and no test notices: `src/libs/kt-fx/tests/video_fx.rs:34` builds the reference frame as `has_alpha: false`, and `src/libs/kt-gpu/tests/parity.rs:285` runs ALL conformance cases of t181 on `frame(W, H, false, 0)`.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2–3 стадии, и ТОЛЬКО внутри раунда F-TXT-001: (1) модель оформления и порядок как сохранённый список; (2) растровые операции над альфой — дилатация силуэта, смещённая размытая копия, плашка по строке; (3) редактор в UI |
-| Где основная работа | kt-media (оформление внутри титрового `MediaSource`, рядом с `placeholder.rs`), kt-model (порядок и параметры как нечисловое поле), kt-app (редактор); kt-fx и kt-gpu НЕ трогаются, если оформление не становится слоем плана |
-| Формат проекта | нужно поле порядка — сохранённый список, а не константа. Едет тем же конвертом, что и сам титр (F-TXT-001), отдельной версии не требует |
-| Тесты, которые придётся написать | детерминизм оформления (родня t208: те же параметры → те же байты); порядок как значение — перестановка меняет кадр предсказуемо; обводка не съедает штрих (проверка толщины на тонком шрифте); плашка перестраивается при правке текста; **и отдельно, независимо от титров** — прогон видео-FX по кадру с альфой в `video_fx.rs` и в t181, сегодня отсутствующий |
-| Зависит от | F-TXT-001 жёстко (без текста оформлять нечего). Смежное: F-TXT-004 (у субтитра тот же стек, но своя модель), F-TXT-003 (плашка-подложка как отдельный клип — другой способ решить ту же читаемость), F-MED-003 (материал с альфой — тот же непроверенный путь) |
-| Ломает совместимость | нет; но порядок обязан появиться в формате ОДНОВРЕМЕННО с титром, иначе сломает потом |
+| Size | M — 2–3 stages, and ONLY inside the round F-TXT-001: (1) the styling model and the order as a stored list; (2) raster operations over alpha — silhouette dilation, offset blurred copy, per-line plate; (3) the editor in the UI |
+| Where the main work is | kt-media (styling inside the title `MediaSource`, next to `placeholder.rs`), kt-model (order and parameters as a non-numeric field), kt-app (the editor); kt-fx and kt-gpu are NOT touched, unless styling becomes a layer of the plan |
+| Project format | an order field is needed — a stored list, not a constant. It travels in the same envelope as the title itself (F-TXT-001) and does not require a separate version |
+| Tests to write | determinism of styling (a relative of t208: the same parameters → the same bytes); order as a value — a permutation changes the frame predictably; an outline does not eat the stroke (a thickness check on a thin font); the plate is rebuilt when the text is edited; **and separately, independently of titles** — a run of video FX over a frame with alpha in `video_fx.rs` and in t181, absent today |
+| Depends on | F-TXT-001 hard (without text there is nothing to style). Related: F-TXT-004 (a subtitle has the same stack, but its own model), F-TXT-003 (a plate-backdrop as a separate clip — a different way to solve the same readability), F-MED-003 (material with alpha — the same unverified path) |
+| Breaks compatibility | no; but the order MUST appear in the format AT THE SAME TIME as the title, otherwise it will break later |
 
-## Вердикт
+## Verdict
 
-Берём, но **не отдельной фичей: одной стадией внутри F-TXT-001**. Титр
-без этого слоя нечитаем ровно там, где титры и нужны, — поверх реального
-кадра; обходной путь у соседей известен и назван вслух («сделать PNG в
-GIMP и импортировать», kde-invent #2043), и это ровно та цена, ради
-которой заводился каталог.
+We take it, but **not as a separate feature: as one stage inside F-TXT-001**. A title
+without this layer is unreadable exactly where titles are needed — over a real
+frame; the workaround at neighbors' is known and named aloud ("make a PNG in
+GIMP and import it", kde-invent #2043), and that is exactly the price for which the catalog was started.
 
-Из разведки следует ровно одно решение, которое нельзя принимать по ходу
-дела: **порядок отрисовки — сохранённое значение, а не константа
-рисовалки, и список, а не пара булевых.** Обоснование не эстетическое:
-Kdenlive поменял порядок константой и через три недели получил жалобу на
-следующую пару, а вид всех ранее сделанных титров изменился; Adobe тот же
-шаг сделала полем и сохранила старое поведение для старых проектов.
-Стоит это одного поля в формате, если сделать сразу, и несовместимости,
-если сделать потом.
+From the reconnaissance follows exactly one decision that cannot be made on the fly: **the drawing order is a stored value, not a constant of the drawing routine, and a list, not a pair of booleans.** The justification is not aesthetic:
+Kdenlive changed the order with a constant and three weeks later got a complaint about the next pair, and the look of all previously made titles changed; Adobe made the same step a field and kept the old behavior for old projects. It costs one field in the format if done at once, and incompatibility if done later.
 
-Второе решение, тоже до кода: **шестая библиотека в
-`src/libs/kt-ffmpeg/src/loader.rs` не появляется.** libass лежит в
-процессе на расстоянии вытянутой руки и умеет всё, о чём эта заметка, —
-и именно поэтому запрет надо написать словами: он не следует ни из
-одного существующего инварианта, а последствие (разные байты на разных
-машинах) обнаружится не на компиляции, а через полгода на чужом рендере.
+The second decision, also before the code: **a sixth library in
+`src/libs/kt-ffmpeg/src/loader.rs` does not appear.** libass sits in the
+process within arm's reach and can do everything this note is about —
+and that is precisely why the prohibition has to be written in words: it does not follow from
+any existing invariant, and its consequence (different bytes on different
+machines) will show up not at compilation but half a year later on someone else's render.
 
-Из наших ядер переиспользовать нечего: `Edges` считает яркость и убивает
-альфу, `Glow` складывает RGB и альфу не расширяет, и обводка/тень — это
-операции над АЛЬФОЙ, которых у нас нет ни одной. Переиспользуемы
-дисциплина (целочисленное ядро + AVX2 + WGSL-зеркало + допуск t181) и
-даунскейл-размытие. Отдельно и независимо от титров: прогон видео-FX по
-кадру с альфой не делает ни один тест — это чинить в любом случае.
+From our kernels there is nothing to reuse: `Edges` computes brightness and kills alpha, `Glow` sums RGB and does not extend alpha, and outline/shadow are operations over ALPHA, of which we have not a single one. Reusable are the discipline (an integer kernel + AVX2 + a WGSL mirror + the t181 tolerance) and downscale blur. Separately and independently of titles: running video FX over a frame with alpha is not covered by a single test — this has to be fixed in any case.
 
-**Сделано в Р.52 С3 (п.406):** плашка по строке, тень box-blur альфы,
-обводка точной EDT с наружностью ПОРЯДКОМ, `order` — сохраняемое поле
-формата с первого дня. Редактор порядка слоёв в UI — отложен (дефолт
-plate→shadow→stroke→fill покрывает норму; поле уже в файле, так что UI
-добавится без миграции).
+**Done in R.52 S3 (item 406):** the per-line plate, a box-blur shadow of alpha,
+an outline by exact EDT with the outside done by ORDER, `order` — a stored field of
+the format from day one. The layer-order editor in the UI is deferred (the default
+plate→shadow→stroke→fill covers the norm; the field is already in the file, so the UI
+will be added without migration).
 
-## Источники
+## Sources
 
-- https://invent.kde.org/multimedia/kdenlive/-/work_items/1550 (дата обращения 2026-09-08) — постановка задачи, открыта с 19.10.2022, 20 комментариев
-- https://invent.kde.org/multimedia/kdenlive/-/work_items/1689 (2026-09-08) — следующая пара сломалась через три недели после исправления первой
-- https://invent.kde.org/multimedia/kdenlive/-/work_items/2043 (2026-09-08) — просьба повторена в 2025-м, назван обходной путь через GIMP
-- https://invent.kde.org/multimedia/kdenlive/-/work_items/1846 (2026-09-08) — плашка субтитра сделана из цвета обводки
-- https://invent.kde.org/multimedia/kdenlive/-/work_items/222 (2026-09-08) — «Shadows of titles are applied on the wrong "layer"», 2019, тот же класс за три года до #1550
-- https://invent.kde.org/multimedia/kdenlive/-/work_items/1340 (2026-09-08) — толщина обводки двигает текст по горизонтали
-- https://invent.kde.org/multimedia/kdenlive/-/work_items/1342 (2026-09-08) — значение обводки умножается на десять у нового титра
-- https://bugs.kde.org/show_bug.cgi?id=465912 (2026-09-08) — «Title outline effect covers up the text itself», RESOLVED/FIXED
-- https://bugs.kde.org/show_bug.cgi?id=511673 (2026-09-08) — та же просьба заново, 05.11.2025, `severity: wishlist`
-- https://bugs.kde.org/show_bug.cgi?id=361899 и https://bugs.kde.org/show_bug.cgi?id=499550 (2026-09-08) — тень обрезается по габариту, 2016 и 2025
-- https://bugs.kde.org/show_bug.cgi?id=476393, https://bugs.kde.org/show_bug.cgi?id=498351, https://bugs.kde.org/show_bug.cgi?id=363340 (2026-09-08) — кластер «параметры оформления не держатся»
-- https://gitlab.gnome.org/GNOME/pitivi/-/work_items/1860 и https://gitlab.gnome.org/GNOME/pitivi/-/work_items/2312 (2026-09-08) — оформление, зашитое насмерть, и просьба открыть управление тенью
-- https://github.com/jliljebl/flowblade/issues/937 (2026-09-08) — «Green Halo around Fonts»
-- https://github.com/jliljebl/flowblade/issues/706 (2026-09-08) — размытие тени в пикселях
-- https://github.com/olive-editor/olive/issues/963 (2026-09-08) — обводку выкинули при переписывании, просят вернуть
-- https://github.com/olive-editor/olive/issues/490 и https://github.com/olive-editor/olive/issues/607 (2026-09-08) — направление тени; «Shadow Angle» активен при выключенной тени
-- https://github.com/mltframework/mlt/issues/976 (2026-09-08) — диапазон обводки 0..3 в MLT против 0..200 в Shotcut
-- https://github.com/OpenShot/openshot-qt/issues/2843 (2026-09-08) — обводка включена там, где её не просили
-- https://jayaretv.com/fusion/text-node/ (2026-09-08) — вкладка Shading у Text+: восемь элементов, «Sort By» Priority/Z-depth, Priority Back/Front, виды элементов, Join Style, Adapt Thickness to Perspective, меню Level (Text/Line/Word/Character)
-- https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/8-design/texttitles_plugin.htm (2026-09-08) — параметры «Titles & Text» в Vegas Pro 2026
-- https://support.apple.com/guide/final-cut-pro/adjust-titles-ver4e32ca5/mac (2026-09-08) — четыре секции Text inspector: Face / Outline / Glow / Drop Shadow и их параметры
-- https://community.adobe.com/t5/premiere-pro-beta-discussions/now-released-inner-outer-strokes-for-premiere-pro-titles/m-p/13223993 (2026-09-08) — Inner/Outer в релизе октября 2022 и сохранение прежнего поведения `Center` ради старых проектов
-- https://github.com/libass/libass/wiki/ASS-File-Format-Guide (2026-09-08) — `BorderStyle` 1/3/4, взаимная исключительность с `Outline`, `Shadow` как отступ плашки в режиме 4
-- **[НЕ ПРОВЕРЕНО по первоисточнику]** `helpx.adobe.com/premiere-pro/using/work-with-fill-stroke-background-shadow.html` (Outer/Inner/Center и «over the fill for shapes, but under the fill for text») и `helpx.adobe.com/after-effects/using/formatting-characters-character-panel.html` («All Fills Over All Strokes», ограничение при посимвольном 3D): `helpx.adobe.com` из этого окружения отдаёт «proxy refused the connection» (то же зафиксировано первой волной в `_editors.md`), формулировки взяты из сниппетов поисковой выдачи этих же страниц
-- **Состояние дампов на 2026-09-08:** выгрузка закрыта, 12 дампов из 12 (28 537 записей; в рейтинге 11 — 25 442, ffmpeg-trac вне его). Счёт ниже перепроверен на полном корпусе: `blender-vse` и `ffmpeg-trac` попаданий по этому фильтру не дали. По теме заметки это ничего не меняет: оба вне интересующего класса
-- Внутренние источники: `src/libs/kt-fx/src/video.rs`, `src/libs/kt-gpu/src/shaders/edges.wgsl`, `src/libs/kt-gpu/src/shaders/glow_add.wgsl`, `src/libs/kt-engine/src/video.rs`, `src/libs/kt-engine/src/video_plan.rs`, `src/libs/kt-ffmpeg/src/loader.rs`, `src/libs/kt-media/src/placeholder.rs`, `src/libs/kt-model/src/project.rs`, `src/libs/kt-fx/tests/video_fx.rs`, `src/libs/kt-gpu/tests/parity.rs`, `src/libs/kt-engine/tests/golden_export.rs`; соседние заметки F-TXT-001, F-TXT-003, F-TXT-004, F-MED-003
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/1550 (accessed 2026-09-08) — problem statement, open since 19.10.2022, 20 comments
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/1689 (2026-09-08) — the next pair broke three weeks after the first was fixed
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/2043 (2026-09-08) — the request repeated in 2025, a workaround via GIMP named
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/1846 (2026-09-08) — a subtitle plate made from the outline color
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/222 (2026-09-08) — "Shadows of titles are applied on the wrong "layer"", 2019, the same class three years before #1550
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/1340 (2026-09-08) — outline thickness moves the text horizontally
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/1342 (2026-09-08) — the outline value is multiplied by ten for a new title
+- https://bugs.kde.org/show_bug.cgi?id=465912 (2026-09-08) — "Title outline effect covers up the text itself", RESOLVED/FIXED
+- https://bugs.kde.org/show_bug.cgi?id=511673 (2026-09-08) — the same request anew, 05.11.2025, `severity: wishlist`
+- https://bugs.kde.org/show_bug.cgi?id=361899 and https://bugs.kde.org/show_bug.cgi?id=499550 (2026-09-08) — shadow clipped by the bounding box, 2016 and 2025
+- https://bugs.kde.org/show_bug.cgi?id=476393, https://bugs.kde.org/show_bug.cgi?id=498351, https://bugs.kde.org/show_bug.cgi?id=363340 (2026-09-08) — the cluster "styling parameters do not persist"
+- https://gitlab.gnome.org/GNOME/pitivi/-/work_items/1860 and https://gitlab.gnome.org/GNOME/pitivi/-/work_items/2312 (2026-09-08) — styling hard-wired, and a request to open shadow control
+- https://github.com/jliljebl/flowblade/issues/937 (2026-09-08) — "Green Halo around Fonts"
+- https://github.com/jliljebl/flowblade/issues/706 (2026-09-08) — shadow blur in pixels
+- https://github.com/olive-editor/olive/issues/963 (2026-09-08) — the outline was dropped during a rewrite, a request to restore it
+- https://github.com/olive-editor/olive/issues/490 and https://github.com/olive-editor/olive/issues/607 (2026-09-08) — shadow direction; "Shadow Angle" active while the shadow is off
+- https://github.com/mltframework/mlt/issues/976 (2026-09-08) — outline range 0..3 in MLT against 0..200 in Shotcut
+- https://github.com/OpenShot/openshot-qt/issues/2843 (2026-09-08) — the outline is enabled where it was not requested
+- https://jayaretv.com/fusion/text-node/ (2026-09-08) — the Shading tab of Text+: eight elements, "Sort By" Priority/Z-depth, Priority Back/Front, element kinds, Join Style, Adapt Thickness to Perspective, the Level menu (Text/Line/Word/Character)
+- https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/8-design/texttitles_plugin.htm (2026-09-08) — the "Titles & Text" parameters in Vegas Pro 2026
+- https://support.apple.com/guide/final-cut-pro/adjust-titles-ver4e32ca5/mac (2026-09-08) — the four sections of the Text inspector: Face / Outline / Glow / Drop Shadow and their parameters
+- https://community.adobe.com/t5/premiere-pro-beta-discussions/now-released-inner-outer-strokes-for-premiere-pro-titles/m-p/13223993 (2026-09-08) — Inner/Outer in the October 2022 release and the retention of the former `Center` behavior for the sake of old projects
+- https://github.com/libass/libass/wiki/ASS-File-Format-Guide (2026-09-08) — `BorderStyle` 1/3/4, mutual exclusivity with `Outline`, `Shadow` as the plate padding in mode 4
+- **[NOT VERIFIED against the primary source]** `helpx.adobe.com/premiere-pro/using/work-with-fill-stroke-background-shadow.html` (Outer/Inner/Center and "over the fill for shapes, but under the fill for text") and `helpx.adobe.com/after-effects/using/formatting-characters-character-panel.html` ("All Fills Over All Strokes", the limitation with per-character 3D): `helpx.adobe.com` from this environment returns "proxy refused the connection" (the same was recorded in the first wave in `_editors.md`), the wording is taken from search-result snippets of these same pages
+- **State of the dumps as of 2026-09-08:** the export is closed, 12 dumps of 12 (28 537 records; 11 in the ranking — 25 442, ffmpeg-trac is outside it). The count below was re-checked on the full corpus: `blender-vse` and `ffmpeg-trac` gave no hits for this filter. This changes nothing for the subject of the note: both are outside the class of interest
+- Internal sources: `src/libs/kt-fx/src/video.rs`, `src/libs/kt-gpu/src/shaders/edges.wgsl`, `src/libs/kt-gpu/src/shaders/glow_add.wgsl`, `src/libs/kt-engine/src/video.rs`, `src/libs/kt-engine/src/video_plan.rs`, `src/libs/kt-ffmpeg/src/loader.rs`, `src/libs/kt-media/src/placeholder.rs`, `src/libs/kt-model/src/project.rs`, `src/libs/kt-fx/tests/video_fx.rs`, `src/libs/kt-gpu/tests/parity.rs`, `src/libs/kt-engine/tests/golden_export.rs`; neighboring notes F-TXT-001, F-TXT-003, F-TXT-004, F-MED-003

@@ -1,12 +1,12 @@
 ---
 id: F-COL-001
-title: Общий диск вместо облака — сеть как файловая система
-status: исследовано
+title: Shared drive instead of cloud — network as a file system
+status: researched
 priority: B
 cost: M
 category: collab/assets
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-media, kt-otio, kt-app]
 invariants: []
 ui_rules: []
@@ -19,230 +19,151 @@ services: [fcp-shared-library, premiere-productions, resolve-project-server, bm-
 checked: 2026-09-08
 ---
 
-# F-COL-001 — Общий диск вместо облака — сеть как файловая система
+# F-COL-001 — Shared drive instead of cloud — network as a file system
 
-## Суть
+## Essence
 
-Двое монтируют один том: материал и проект лежат на нём, и никакого сервиса
-между ними нет — сеть работает только как файловая система. Монтажёр ждёт от
-этой схемы ровно двух вещей: чтобы программа открыла файл по сетевому пути так
-же, как по локальному, и чтобы второй человек не затёр его работу. Первое почти
-всегда «просто работает» — до момента, когда не работает совсем и без объяснений;
-второе не делает почти никто, а кто делает — делает файлом-замком рядом с
-проектом. Это самая дешёвая совместная схема отрасли: она не стоит подписки и не
-требует чужого хоста.
+Two people edit one volume: the material and the project lie on it, and there is no service between them — the network works only as a file system. The editor expects from this scheme exactly two things: that the program opens the file by a network path just as it does a local one, and that the second person does not overwrite his work. The first almost always "just works" — until the moment it stops working completely and without explanation; the second is done by almost nobody, and whoever does it does it with a lock file next to the project. This is the cheapest shared scheme in the industry: it costs no subscription and does not need someone else's host.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет отдельного механизма | проект и медиа — просто пути; сетевой том виден как папка, замка нет ни на проекте, ни на событии: двое открывших получат две копии в памяти, и запишет тот, кто сохранит последним |
-| Adobe Premiere | 26.x | Productions (project locking) | общая ПАПКА без сервера: рядом с каждым `.prproj` кладётся `.prlock`, открытие читает чужой замок и показывает «Project Locked»; сервиса нет вовсе, вся синхронизация — существование файла на общем томе |
-| DaVinci Resolve | 21 | Disk database on shared storage / Project Server / Blackmagic Cloud | три разных ответа на один вопрос: диск-база в папке (для одного), PostgreSQL-сервер на своём хосте (для многих), облачная библиотека проектов (по подписке). Совместная работа начинается там, где база УХОДИТ из файловой системы в процесс |
-| Final Cut Pro | 12.3 | Shared storage (NFS/SMB) | библиотека целиком лежит на томе; требование к SMB — Samba 4.3.4 или новее с модулями совместимости Apple (`vfs objects = catia fruit streams_xattr`); держит библиотеку один Mac, гранулярность занятия — вся библиотека |
-| After Effects | 26.x | нет | общий проект AE — это Team Projects, то есть сервис; `.aep` на шаре ведёт себя как у Vegas, а Adobe прямо предлагает вместо него сервис |
+| VEGAS Pro | 2026.0 | no separate mechanism | the project and media are simply paths; a network volume is visible as a folder, and there is no lock either on the project or on the event: two people who open it get two copies in memory, and whoever saves last writes. |
+| Adobe Premiere | 26.x | Productions (project locking) | a shared FOLDER without a server: a `.prlock` is placed next to each `.prproj`; opening reads a foreign lock and shows "Project Locked". There is no service at all — all synchronization is the existence of a file on the shared volume |
+| DaVinci Resolve | 21 | Disk database on shared storage / Project Server / Blackmagic Cloud | three different answers to one question: a disk database in a folder (for one person), a PostgreSQL server on its own host (for many), a cloud project library (by subscription). Shared work begins where the database LEAVES the file system and goes into a process |
+| Final Cut Pro | 12.3 | Shared storage (NFS/SMB) | the library lies entirely on the volume; the requirement for SMB is Samba 4.3.4 or newer with Apple compatibility modules (`vfs objects = catia fruit streams_xattr`); one Mac holds the library, and the granularity of occupancy is the whole library |
+| After Effects | 26.x | none | a shared AE project is Team Projects, that is, a service; a `.aep` on a share behaves like Vegas', and Adobe explicitly offers a service instead |
 
-Второй таблицы (софт вне ядра) здесь нет: механизм родом ровно из
-видеомонтажа, три строки ядра из пяти заполнены содержательно, а «фишка фишки»
-взята из ядра — по критериям `_editors.md` строка вне ядра была бы водой.
-Сервисы, стоящие рядом с этой схемой (`_services.md`), в таблицу не попадают
-сознательно: там живёт вердикт «берём/не берём», а сервис вердикта не несёт.
+There is no second table here (software outside the core): the mechanism comes from video editing
+proper, three of the five core lines are filled in substantively, and the "trick behind it" is taken
+from the core — by the criteria of `_editors.md` a line outside the core would be water. The services
+standing next to this scheme (`_services.md`) are deliberately not included in the table: the verdict
+"take / do not take" lives there, and a service carries no verdict.
 
-## Фишка фишки
+## The trick behind it
 
-**Apple не сделала облака вовсе и вместо сервиса предъявила требование к
-ПРОТОКОЛУ.** Строка `vfs objects = catia fruit streams_xattr` в чужом
-`smb.conf` — это не «оптимизация под Mac», а признание того, что Final Cut
-хранит часть своих данных не В файле, а РЯДОМ с ним: именованные потоки и
-метаданные Finder, которые на macOS живут в расширенных атрибутах. `fruit` и
-`streams_xattr` укладывают эти потоки в xattr файловой системы Linux, `catia`
-перекодирует символы имён, недопустимые в SMB. Практическое следствие, которого
-нет ни в одном списке возможностей: том может быть смонтирован, читаться,
-отдавать десять гигабит — и Final Cut всё равно откажется, потому что проверяет
-он не скорость, а способность протокола нести метаданные ВНЕ содержимого файла.
-Вопрос «поддерживается ли наш NAS» оказывается вопросом про xattr, а не про
-производительность, и это единственная причина, по которой самая дешёвая
-совместная схема отрасли требует читать документацию Samba.
+**Apple did not make a cloud at all, and instead presented a requirement on the PROTOCOL.** The line
+`vfs objects = catia fruit streams_xattr` in someone else's `smb.conf` is not "an optimization for the Mac",
+but an admission that Final Cut keeps part of its data NOT in the file but NEXT TO it: named streams and
+Finder metadata, which on macOS live in extended attributes. `fruit` and `streams_xattr` put these streams into
+the xattr of the Linux file system, `catia` re-encodes characters in names that are illegal for SMB. The practical
+consequence, absent from every list of features: the volume may be mounted, readable, and deliver ten gigabits —
+and Final Cut will still refuse, because what it checks is not speed but the ability of the protocol to carry
+metadata OUTSIDE the file's content. The question "does our NAS support it" turns out to be a question about
+xattr, not about performance, and this is the only reason why the cheapest shared scheme in the industry requires
+reading the Samba documentation.
 
-**Resolve на тот же вопрос ответил ровно наоборот — вынес метаданные из
-файловой системы совсем.** Диск-база в папке на шаре у него официально не
-рекомендуется, а «правильный» путь — PostgreSQL на своём хосте: там нет ни
-xattr, ни замков, ни зависимости от версии Samba, потому что файловая система
-вообще перестаёт участвовать в согласовании. Две программы, один вопрос, два
-противоположных ответа: **потребовать от протокола больше — или перестать
-просить у него что-либо.** Третьего варианта отрасль не нашла, и это самая
-полезная развилка для нас: наш выбор уже сделан молча и совпадает со вторым
-ответом наполовину — метаданные материала мы держим в своей SQLite рядом с
-проектом, а не в атрибутах файлов.
+**Resolve answered the same question exactly the opposite way — it removed metadata from the file system altogether.**
+A disk database in a folder on a share is officially not recommended, and the "correct" path is PostgreSQL on its own
+host: there is no xattr there, no locks, and no dependence on the Samba version, because the file system stops taking
+part in the coordination at all. Two programs, one question, two opposite answers: **either demand more from the
+protocol, or stop asking it for anything.** The industry has found no third option, and this is the most useful fork
+for us: our choice has already been made silently and coincides half-way with the second answer — we keep the
+material's metadata in our own SQLite next to the project, not in the file attributes.
 
-**Замок в этой схеме — не механизм, а соглашение.** У Premiere `.prlock` не
-блокирует ничего на уровне файловой системы: это обычный файл, чьё
-СУЩЕСТВОВАНИЕ означает «занято». Отсюда весь его класс отказов — замок
-переживает падение программы, и снятие занятости выглядит как «удалите файл,
-которого вы не видите».
+**The lock in this scheme is not a mechanism but a convention.** At Premiere a `.prlock` blocks nothing at the level
+of the file system: it is an ordinary file whose EXISTENCE means "occupied". Hence its whole class of failures — the
+lock survives a crash of the program, and clearing the occupancy looks like "delete a file you cannot see".
 
-## Плюсы
+## Pros
 
-- Схема не требует ни сервиса, ни хоста, ни подписки: та же папка, только
-  смонтированная. Единственная во всей категории, где второй человек ничего не
-  стоит деньгами.
-- Гранулярность занятия видна глазом (файл рядом с проектом) и чинится руками —
-  в отличие от занятия внутри чужой базы, где «снять замок» некому сказать.
-- Для программы, которая читает файл только через `open`/`read`/`seek`, сетевой
-  том вообще не является особым случаем: код доступа к материалу не меняется ни
-  на строку.
-- Относительные пути превращают «том смонтирован по-разному» из катастрофы в
-  мелочь: проект, лежащий вместе с материалом, переносится целиком.
+- The scheme needs no service, no host and no subscription: the same folder, merely mounted. It is the only one in the whole category where the second person costs no money.
+- The granularity of occupancy is visible to the eye (a file next to the project) and can be fixed by hand — unlike occupancy inside someone else's database, where there is no one to tell you how to "remove the lock".
+- For a program that reads a file only through `open`/`read`/`seek`, a network volume is not a special case: the code that accesses the material does not change by a single line.
+- Relative paths turn "the volume is mounted differently" from a catastrophe into a minor matter: a project that lies together with its material moves as a whole.
 
-## Минусы
+## Cons
 
-- **Требование к протоколу проверяется не там, где заметно.** Ошибка приходит
-  одной строкой при выборе места («Unsupported volume type»), и в ней нет ни
-  слова про xattr — то есть причина отказа не сообщается вовсе, а лечится
-  чтением стороннего мануала по Samba.
-- Всё, что программа положила в расширенные атрибуты, теряется при обычном
-  копировании: `cp` без `-a`, zip, отправка почтой, выгрузка на «неправильный»
-  NAS. Данные есть, а рядом с файлом их больше нет.
-- Замок-файлом не переживает падения: `.prlock` остаётся на диске, и второй
-  человек видит «занято» без владельца.
-- Никто не блокирует материал — блокируют документ. Двое, одновременно
-  перезаписавшие один и тот же исходник на общем томе, не получат ни
-  предупреждения, ни следа.
-- Задержка сетевой файловой системы бьёт не по чтению кадров, а по служебным
-  проходам: любой полный скан файла при открытии становится трафиком.
+- **The protocol requirement is checked where it is not noticeable.** The error comes as one line when choosing a location ("Unsupported volume type"), and it has no word about xattr — that is, the cause of the refusal is not reported at all, and it is fixed by reading a third-party manual on Samba.
+- Everything the program has put into extended attributes is lost in an ordinary copy: `cp` without `-a`, zip, sending by mail, uploading to a "wrong" NAS. The data exists, but next to the file it is no longer there.
+- A file-lock does not survive a crash: the `.prlock` stays on disk, and the second person sees "occupied" with no owner.
+- Nobody locks the material — they lock the document. Two people who simultaneously overwrite the same source on a shared volume get neither a warning nor a trace.
+- The latency of a network file system hits not the reading of frames but the service passes: any full scan of a file on opening becomes traffic.
 
-## Что говорят пользователи
+## What users say
 
-Дословный ответ Final Cut, приведённый человеком, который собирал NAS сам и
-упёрся ровно в требование к протоколу:
+The verbatim response of Final Cut, quoted by a person who assembled his own NAS and ran into exactly the protocol requirement:
 
 > Unsupported volume type - Choose a local, SAN, or supported SMB location.
-> — geerlingguy, «Configure Samba smb.conf attributes for use with Final Cut
-> Pro», issue #9 репозитория `geerlingguy/arm-nas`, 03.04.2024,
+> — geerlingguy, "Configure Samba smb.conf attributes for use with Final Cut
+> Pro", issue #9 of the repository `geerlingguy/arm-nas`, 03.04.2024,
 > https://github.com/geerlingguy/arm-nas/issues/9
 
-Формулировка самого требования — из документации Apple; она полезна тем, что
-называет ВЕРСИЮ чужого демона как условие работы редактора:
+The wording of the requirement itself is from Apple's documentation; it is useful because it names the VERSION of someone else's daemon as the condition for the editor to work:
 
 > If you're using a shared storage system that uses the SMB protocol, the SMB
 > volume must originate from a macOS server or a Linux server running Samba
 > 4.3.4 or later configured with modules for Apple compatibility.
-> — Apple, «Use shared storage with Final Cut Pro», обновлено 15.12.2023,
+> — Apple, "Use shared storage with Final Cut Pro", updated 15.12.2023,
 > https://support.apple.com/en-us/HT207128
 
-Счётной части у этой заметки нет и не будет: `trackers:` пуст сознательно.
-Публичных трекеров у пяти редакторов ядра не существует
-(`docs/features/_trackers.md`, «Кого НЕ берём»), а в двенадцати выгруженных
-трекерах опенсорса совместной работы практически нет — одна настоящая просьба на
-25 442 задачу. Заполнить поле ради формы значило бы сфабриковать сигнал
-(правило 12).
+This note has no counting part and never will: `trackers:` is empty on purpose. The five core editors have no public trackers
+(`docs/features/_trackers.md`, "Whom we do NOT take"), and across the twelve exported trackers of open-source shared work there is practically
+no such request — one genuine request among 25 442 issues. Filling in the field for the sake of the form would mean fabricating a signal (rule 12).
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- `src/libs/kt-media/src/ffmpeg.rs` — единственное место, где путь становится
-  байтами: `FfmpegSource::open` отдаёт строку пути в kt-ffmpeg, и больше от
-  файловой системы не требуется ничего. Ни одного расширенного атрибута, ни
-  одного файлового замка: грепом по всему `src/` 0 совпадений на
-  `xattr|flock|lock_exclusive|O_EXCL`. Ответ на вопрос «поддерживается ли ваш
-  NAS» у нас поэтому равен «умеет ли он open/read/seek».
-- `src/libs/kt-otio/src/url.rs` — путь материала пишется ОТНОСИТЕЛЬНО файла
-  проекта (решение Р.24 п.7), фолбэк — абсолютный `file://`. Именно это делает
-  «том смонтирован в разных местах» безобидным: пока проект лежит вместе с
-  материалом, на второй машине резолвится тот же файл.
-- `src/apps/kt-app/src/util.rs` — `resolve_media_path(base, path)`: тот же
-  резолв на стороне приложения (дубль резолвера, отмеченный в разведке).
-- `src/libs/kt-media/src/index.rs` — метаданные материала (probe, пики, тумбы,
-  пакетный индекс) лежат в НАШЕЙ SQLite, а не в атрибутах файлов: половина
-  ответа Resolve сделана у нас по другой причине — ради инварианта 8.
+- `src/libs/kt-media/src/ffmpeg.rs` — the only place where a path becomes bytes: `FfmpegSource::open` passes the path string to kt-ffmpeg, and nothing more is required of the file system. Not a single extended attribute, not a single file lock: a grep across all of `src/` gives 0 matches for `xattr|flock|lock_exclusive|O_EXCL`. The answer to "does your NAS support it" is therefore "can it do open/read/seek".
+- `src/libs/kt-otio/src/url.rs` — the path to the material is written RELATIVE to the project file (decision R.24 item 7), with a fallback to an absolute `file://`. This is exactly what makes "the volume is mounted in different places" harmless: as long as the project lies together with the material, on a second machine the same file resolves.
+- `src/apps/kt-app/src/util.rs` — `resolve_media_path(base, path)`: the same resolution on the application side (a duplicate of the resolver, noted in the reconnaissance).
+- `src/libs/kt-media/src/index.rs` — the material's metadata (probe, peaks, thumbnails, the batch index) lives in OUR SQLite, not in file attributes: half of Resolve's answer is made by us for another reason — for the sake of invariant 8.
 
-### Чего не хватает
+### What is missing
 
-- Цены сетевого тома никто не считает: первое открытие каждого файла делает
-  третий сквозной проход по всему потоку пакетов (пакетный индекс без декода,
-  `FfmpegSource::open`). Локально это десятки миллисекунд, на шаре — чтение
-  файла целиком по проводу. Спасение есть и работает — `open_indexed` берёт
-  индекс из sidecar-БД, — но ровно до первого открытия и ровно пока
-  sidecar жив (F-COL-002).
-- Признака «этот том сетевой» нет нигде: ни в диагностике, ни в перф-панели.
-  Программа не может ни предупредить, ни выбрать другое поведение.
-- Никакого занятия документа не существует: `write_project_guarded`
-  (`src/apps/kt-app/src/app.rs`) сравнивает ревизию и знает ровно одного
-  писателя. Это сторож своей работы, а не замок против чужой.
+- The cost of a network volume is nobody's concern: the first opening of each file does a third full pass over the whole packet stream (the batch index without decoding, `FfmpegSource::open`). Locally that is tens of milliseconds; on a share it is reading the whole file across the wire. A rescue exists and works — `open_indexed` takes the index from the sidecar DB — but only up to the first opening and only while the sidecar is alive (F-COL-002).
+- A sign of "this volume is network" exists nowhere: neither in diagnostics nor in the performance panel. The program cannot warn, nor choose a different behaviour.
+- No occupancy of the document exists at all: `write_project_guarded` (`src/apps/kt-app/src/app.rs`) compares the revision and knows exactly one writer. It is a guard of its own work, not a lock against someone else's.
 
-### Что мешает
+### What gets in the way
 
-Ничего конструктивного — и это главный вывод. Схема «общий том» у нас уже
-работает, потому что мы ничего не просим у протокола. Мешает обратное: как
-только кто-нибудь захочет положить рядом с файлом хоть один байт метаданных
-(цвет клипа, замок, отметку «занято»), придётся выбирать тот самый ответ, на
-котором разошлись Apple и Blackmagic, — и выбирать его надо сознательно, а не
-в раунде, где это вылезет случайно.
+Nothing constructive — and that is the main conclusion. The "shared volume" scheme already works with us, because we ask nothing of the protocol. What gets in the way is the opposite: as soon as someone wants to put even one byte of metadata next to a file (a clip colour, a lock, a "busy" mark), they will have to choose the very answer on which Apple and Blackmagic parted ways — and that choice must be made deliberately, not in a round where it surfaces by accident.
 
-### В категории `collab/` — две обязательные строки (правило 13)
+### In the `collab/` category — two mandatory lines (rule 13)
 
-БЕЗ СЕТИ: ОСТАЁТСЯ — `src/libs/kt-media/src/ffmpeg.rs:28` — доступ к материалу у нас сводится к открытию файла по пути и чтению со сдвигом, поэтому проект, лежащий на смонтированном томе, открывается сегодня без единой настройки и без единого требования к протоколу; платим мы за это не совместимостью, а трафиком: первое открытие каждого файла — сквозной проход по всему потоку пакетов.
+OFFLINE: REMAINS — `src/libs/kt-media/src/ffmpeg.rs:28` — access to the material with us reduces to opening the file by path and reading with a seek, so a project lying on a mounted volume opens today without a single setting and without a single protocol requirement; we pay for this not in compatibility but in traffic: the first opening of each file is a full pass over the whole packet stream.
 
-ЦЕНА СЕТИ: том, смонтированный на обеих машинах, и одинаковый способ его назвать — адрес материала — путь в проекте относителен файлу проекта, а ключ строки sidecar-индекса абсолютен; пока машина одна, эти два адреса совместимы, а на общем томе `/Volumes/RAID` и `/mnt/raid` — уже нет, и «тот же файл» перестаёт узнаваться, хотя байты и xxh3 совпадают.
+NETWORK COST: a volume mounted on both machines, and the same way of naming it — the media address — the path in the project is relative to the project file, while the key of the sidecar index row is absolute; as long as the machine is one, these two addresses are compatible, but on a shared volume `/Volumes/RAID` and `/mnt/raid` they are no longer compatible, and "the same file" stops being recognized even though the bytes and xxh3 match.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Ни одного — и это сильный аргумент «дёшево». Инвариант 8 (тумбы и волноформы
-берутся из sidecar-индекса, а не из декода) схемой не затрагивается, пока
-sidecar не переезжает на шару вместе с проектом; ровно этот случай разбирает
-F-COL-002. Инвариант 5 (декодером владеет один MediaWorker) к расположению
-файла безразличен.
+None — and this is a strong argument for "cheap". Invariant 8 (thumbnails and waveforms are taken from the sidecar index, not from decoding) is not touched by the scheme as long as the sidecar does not move to the share together with the project; precisely this case is analysed by F-COL-002. Invariant 5 (one MediaWorker owns the decoder) is indifferent to where the file is located.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии раунда, и обе про диагностику, а не про совместную работу |
-| Где основная работа | kt-media (признак сетевого тома и цена открытия), kt-app (сказать об этом человеку) |
-| Формат проекта | не трогает: относительные пути уже есть |
-| Тесты, которые придётся написать | открытие проекта, чей материал лежит по абсолютному пути вне каталога проекта; сверка резолвера kt-otio и резолвера kt-app на одном наборе путей (сегодня их два) |
-| Зависит от | F-COL-002 (служебное рядом с проектом), F-PRJ-003 (переносимость проекта — там про то, что уезжает ДОКУМЕНТ, здесь про то, где лежат БАЙТЫ) |
-| Ломает совместимость | нет |
+| Size | M — 2 stages of the round, and both are about diagnostics, not about shared work |
+| Where the main work is | kt-media (a sign of a network volume and the cost of opening), kt-app (telling the person about it) |
+| Project format | does not touch it: relative paths already exist |
+| Tests to write | opening a project whose material lies by an absolute path outside the project's directory; a cross-check of the kt-otio resolver against the kt-app resolver on one set of paths (today there are two) |
+| Depends on | F-COL-002 (the service data next to the project), F-PRJ-003 (portability of the project — there it is about the DOCUMENT travelling, here about where the BYTES lie) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Брать нечего — уже есть, и по лучшему из двух возможных вариантов. Мы ничего не
-просим у протокола: ни расширенных атрибутов, ни именованных потоков, ни
-файловых замков, и поэтому вопрос «поддерживается ли ваш NAS», стоящий у Apple
-поперёк дороги, у нас не задаётся вовсе. Локальное ядро схемы работает сегодня;
-серверную половину (занятие документа, чужой замок, чьё-то имя рядом с ним) не
-заводим — второго участника нет, и объявлять его появление заметка права не
-имеет.
+There is nothing to take — it already exists, and in the better of the two possible variants. We ask nothing of the protocol: no extended attributes, no named streams, no file locks; and therefore the question "does your NAS support it", which stands in Apple's way, is not asked by us at all. The local core of the scheme works today; the server half (occupancy of the document, someone else's lock, someone's name next to it) we do not introduce — there is no second participant, and the note has no right to declare his appearance.
 
-Что заметка обязана оставить после себя — это ЗАПРЕТ, симметричный инварианту 7:
-никаких данных Kinotrain в расширенных атрибутах, в именованных потоках и в
-служебных файлах, чьё существование что-то значит. Цена такого решения известна
-заранее по чужому опыту: у Apple — зависимость от версии чужого демона, у
-Adobe — замок, переживающий падение. Наш ответ ближе к ответу Blackmagic (все
-метаданные в своей базе), и следующая заметка показывает, чем за него платим.
+What the note must leave behind is a PROHIBITION, symmetric to invariant 7: no Kinotrain data in extended attributes, in named streams, and in service files whose existence means something. The cost of such a decision is known in advance from others' experience: at Apple — dependence on the version of someone else's daemon; at Adobe — a lock that survives a crash. Our answer is closer to Blackmagic's (all metadata in our own database), and the next note shows what we pay for it.
 
-Границы: судьба самого документа на второй машине — F-PRJ-003; служебная база
-рядом с проектом — F-COL-002; «материал ещё не приехал» — F-COL-003;
-перепривязка исходников — F-MED-005.
+Boundaries: the fate of the document itself on a second machine is F-PRJ-003; the service database next to the project is F-COL-002; "the material has not arrived yet" is F-COL-003; relinking sources is F-MED-005.
 
-## Источники
+## Sources
 
-- https://support.apple.com/en-us/HT207128 — Apple, «Use shared storage with
-  Final Cut Pro», обновлено 15.12.2023 (дата обращения 2026-09-08). Оттуда же
-  перечень поддерживаемых томов: «Store Final Cut Pro libraries on local
-  storage volumes, a SAN like an Xsan storage volume, on NFS or SMB file system
-  volumes…».
-- https://github.com/geerlingguy/arm-nas/issues/9 — «Configure Samba smb.conf
-  attributes for use with Final Cut Pro», 03.04.2024 (дата обращения
-  2026-09-08).
+- https://support.apple.com/en-us/HT207128 — Apple, "Use shared storage with Final Cut
+  Pro", updated 15.12.2023 (accessed 2026-09-08). The same page gives the list of supported
+  volumes: "Store Final Cut Pro libraries on local storage volumes, a SAN like an Xsan storage volume,
+  on NFS or SMB file system volumes…".
+- https://github.com/geerlingguy/arm-nas/issues/9 — "Configure Samba smb.conf attributes for use with
+  Final Cut Pro", 03.04.2024 (accessed 2026-09-08).
 - https://community.adobe.com/t5/premiere-pro-discussions/issue-with-productions-showing-projects-as-locked-when-they-are-not/td-p/14579493
-  — тред про `.prlock`, оставшиеся после падения, 25.04.2024 (дата обращения
-  2026-09-08); подробнее разбирается в F-COL-002.
-- https://www.blackmagicdesign.com/products/davinciresolve/collaboration —
-  страница совместной работы Resolve, откуда взяты три варианта размещения базы
-  (дата обращения 2026-09-08).
-- Реестр сервисов и единица занятия у каждого — `docs/features/_services.md`.
-- Наш код проверен грепом по `src/` 08.09.2026: `kt-media/src/ffmpeg.rs`,
+  — the thread about `.prlock` files left after a crash, 25.04.2024 (accessed
+  2026-09-08); analysed in more detail in F-COL-002.
+- https://www.blackmagicdesign.com/products/davinciresolve/collaboration — the Resolve collaboration
+  page, from which the three variants of placing the database are taken (accessed 2026-09-08).
+- The service registry and the unit of occupancy for each — `docs/features/_services.md`.
+- Our code, checked by grep across `src/` on 08.09.2026: `kt-media/src/ffmpeg.rs`,
   `kt-media/src/index.rs`, `kt-otio/src/url.rs`, `kt-app/src/util.rs`;
-  `xattr|flock|lock_exclusive|O_EXCL` — 0 совпадений.
+  `xattr|flock|lock_exclusive|O_EXCL` — 0 matches.

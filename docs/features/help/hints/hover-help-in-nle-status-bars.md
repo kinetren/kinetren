@@ -1,12 +1,12 @@
 ---
 id: F-HLP-003
-title: Приборная полоса против справочной — что лежит в статусбаре у других
-status: исследовано
+title: Instrument strip versus help strip — what others keep in the status bar
+status: researched
 priority: B
 cost: S
 category: help/hints
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, blender-5.2, vscode-1.136, jetbrains-2026.2]
-we_have: частично
+we_have: partial
 crates: [kt-app]
 invariants: [12]
 ui_rules: [10, 13]
@@ -18,158 +18,66 @@ trackers: [kde-invent, kde-bugzilla, openshot]
 checked: 2026-09-07
 ---
 
-# F-HLP-003 — Приборная полоса против справочной — что лежит в статусбаре у других
+# F-HLP-003 — Instrument strip versus help strip — what others keep in the status bar
 
-## Суть
+## Essence
 
-Внизу окна — полоса высотой в строку. У одних программ в ней написано, что за
-предмет под курсором; у других — приборы: позиция, зум, память, кэш, прогресс
-фоновой задачи, колокольчик уведомлений; у третьих полосы нет вовсе. У нас
-там И то, И другое: слева приборы (зум, регион, кэш, underruns, V-fps),
-справа — подсказка, и подсказка рисуется ПОВЕРХ, заливая приборы своим фоном.
-Заметка отвечает на вопрос, кто ещё совмещает два назначения в одной полосе и
-чем за это платит.
+At the bottom of the window — a strip one line high. In some programs it says what the object under the cursor is; in others it holds instruments: position, zoom, memory, cache, the progress of a background task, a notification bell; in third ones there is no strip at all. We have BOTH here: on the left the instruments (zoom, region, cache, underruns, V-fps), on the right — a hint, and the hint is drawn ON TOP, covering the instruments with its own background. The note answers the question of who else combines two purposes in one strip and what they pay for it.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Status Bar | ЕСТЬ: элемент №7 главного окна в официальной справке 2026 — и единственный из семи, у кого в колонке «More Information» нет ссылки, то есть вендор полосу называет и не описывает. Несёт help-текст пунктов меню (по мануалам линейки 14–17, разбор — F-HLP-001; для 2026 [НЕ ПРОВЕРЕНО]), индикатор Record Time, РЕДАКТИРУЕМОЕ поле Selection Length «в статусбаре под таймлайном», прогресс долгих операций. Закрывается, и это запоминается между запусками |
-| Adobe Premiere | 26.x | нет | Полосы во всю ширину окна нет. Предупреждения, ошибки и информационные события живут в панели Events; в окне появляется «alert icon», двойной клик по нему открывает панель, а всплывающие уведомления гасятся настройкой Show Event Indicator |
-| DaVinci Resolve | 21 | Status Bar (только страница Fusion) | Внизу окна — Page bar, это НАВИГАЦИЯ (семь страниц), ПКМ по ней даёт «Show Icons Only», чтобы полоса занимала меньше места. Настоящая строка состояния есть только на странице Fusion: слева — сведения об узле под курсором, СПРАВА — процент занятости RAM-кэша, который «appears at all times», при игре — достигнутый fps, плюс бейдж сообщения консоли; в вьюере та же полоса даёт RGBA/Z и координаты пикселя под курсором [сверено по мануалу Resolve 20; для 21 НЕ ПРОВЕРЕНО] |
-| Final Cut Pro | 12.3 | нет | Полосы нет. Фоновые задачи — КНОПКА Background Tasks в тулбаре плюс отдельное окно (Cmd-9), где перечислены выполняемые задачи и процент готовности каждой |
-| After Effects | 26.x | нет (панель Info) | Полосы нет; её роль несёт плавающая ПАНЕЛЬ Info, и справка вынуждена советовать держать её впереди своей группы, потому что иначе она не видна. Прогресс рендера попадает туда отдельной настройкой (Show Rendering Progress In Info Panel And Flowchart) |
+| VEGAS Pro | 2026.0 | Status Bar | YES: element No. 7 of the main window in the official 2026 help — and the only one of the seven whose "More Information" column has no link, that is, the vendor names the strip and does not describe it. It carries the help text of menu items (from the manuals of the 14–17 line, analysis — F-HLP-001; for 2026 [NOT CHECKED]), the Record Time indicator, an EDITABLE Selection Length field "in the status bar under the timeline", the progress of long operations. It can be closed, and this is remembered between launches |
+| Adobe Premiere | 26.x | none | There is no full-width strip in the window. Warnings, errors and information events live in the Events panel; an "alert icon" appears in the window, a double-click on it opens the panel, and pop-up notifications are silenced by the setting Show Event Indicator |
+| DaVinci Resolve | 21 | Status Bar (only the Fusion page) | At the bottom of the window — the Page bar, which is NAVIGATION (seven pages); RMB on it gives "Show Icons Only" so the bar takes less space. A real status line exists only on the Fusion page: on the left — information about the node under the cursor, on the RIGHT — the percentage of RAM cache occupancy, which "appears at all times", during playback — the achieved fps, plus a console message badge; in the viewer the same bar gives RGBA/Z and the pixel coordinates under the cursor [checked against the Resolve 20 manual; for 21 NOT CHECKED] |
+| Final Cut Pro | 12.3 | none | There is no strip. Background tasks — a Background Tasks BUTTON in the toolbar plus a separate window (Cmd-9), where the running tasks and the percentage of readiness of each are listed |
+| After Effects | 26.x | none (the Info panel) | There is no strip; its role is carried by the floating Info PANEL, and the help is forced to advise keeping it in front of its group, because otherwise it is not visible. Render progress gets there through a separate setting (Show Rendering Progress In Info Panel And Flowchart) |
 
-Итог по ядру: полоса внизу окна есть у двоих из пяти, и **совмещает справку с
-приборами ровно один** — Resolve, и только на странице Fusion. У Vegas полоса
-приборная плюс help-текст меню; у Premiere, FCP и AE нижней полосы нет, и
-всё, что она обычно несёт, вынесено в панели и окна.
+Summary for the core: a strip at the bottom of the window exists for two of the five, and **combines the help with the instruments exactly one** — Resolve, and only on the Fusion page. Vegas has an instrument strip plus the help text of the menu; Premiere, FCP and AE have no bottom strip, and everything it usually carries is moved into panels and windows.
 
-**Вне ядра.** Без этих трёх программ инвентаризация не получается: у трёх NLE
-из пяти полосы нет вообще, и «что бывает в статусбаре» пришлось бы описывать
-по двум строкам. Именно вне видеомонтажа полоса разработана как поверхность —
-с зонами, с выбором состава и с кликом.
+**Outside the core.** Without these three programs the inventory does not work out: three of the five NLEs have no strip at all, and "what happens in the status bar" would have to be described from two lines. It is precisely outside video editing that the strip is designed as a surface — with zones, with a choice of composition and with a click.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Blender | 5.2 LTS | Status Bar | Три зоны с фиксированными местами. СЛЕВА — Keymap Information: «The left side of the Status Bar displays mouse button shortcuts and the keymap of the active tool», а тап по Alt перерисовывает её в горячие клавиши инструментов (Alt Click Tool Prompt). ПОСЕРЕДИНЕ — прогресс задачи (наведение даёт оценку времени, есть кнопка отмены) и Report Message, по клику открывающийся целиком в Info Editor. СПРАВА — Resource Information: статистика сцены, длительность, память, обновления расширений, версия; СОСТАВ ПРАВОЙ ЗОНЫ выбирает пользователь через ПКМ по полосе. Вся полоса гасится через Window → Show Status Bar |
-| Visual Studio Code | 1.136 | Status Bar | Чисто приборная и целиком кликабельная: «A status bar item is a status bar contribution that can show text and icons and run a command on click». У элемента есть `alignment` (лево/право) и `priority` («Higher value means the item should be shown more to the left»), собственное имя вида «Python Language Indicator» и СВОЙ tooltip — то есть справка о полосе всплывает НАД полосой, а не живёт в ней. Колокольчик уведомлений — в правом углу полосы, его позиция настраивается (bottom-right по умолчанию, top-right переносит значок в титлбар) |
-| IntelliJ IDEA | 2026.2 | Status bar | Гибрид с разделением по краям. СЛЕВА — либо навигационная строка, либо последнее событие: «it shows the most recent event messages», клик открывает его в Notifications, ПКМ даёт Copy для вставки в багрепорт; там же прогресс процессов, клик — Processes manager. СПРАВА — виджеты-кнопки: `52:11` (клик — перейти к строке и столбцу), `LF` (клик — сменить перенос строк), `UTF-8` (клик — сменить кодировку), отступ, режим только-для-чтения; состав выбирается ПКМ по полосе. Виджет VCS из полосы УБРАЛИ — он переехал в главный тулбар наверх |
+| Blender | 5.2 LTS | Status Bar | Three zones with fixed places. On the LEFT — Keymap Information: "The left side of the Status Bar displays mouse button shortcuts and the keymap of the active tool", and a tap on Alt redraws it into the hotkeys of the tools (Alt Click Tool Prompt). In the MIDDLE — the task progress (hovering gives a time estimate, there is a cancel button) and the Report Message, which on click opens entirely in the Info Editor. On the RIGHT — Resource Information: scene statistics, duration, memory, extension updates, version; the COMPOSITION OF THE RIGHT ZONE is chosen by the user via RMB on the strip. The whole strip is switched off via Window → Show Status Bar |
+| Visual Studio Code | 1.136 | Status Bar | Purely instrumental and entirely clickable: "A status bar item is a status bar contribution that can show text and icons and run a command on click". An element has an `alignment` (left/right) and a `priority` ("Higher value means the item should be shown more to the left"), its own name like "Python Language Indicator" and ITS OWN tooltip — that is, the help about the strip pops up ABOVE the strip, and does not live in it. The notification bell is in the right corner of the strip, its position is configurable (bottom-right by default, top-right moves the icon to the title bar) |
+| IntelliJ IDEA | 2026.2 | Status bar | A hybrid with a division by edges. On the LEFT — either the navigation line or the last event: "it shows the most recent event messages", a click opens it in Notifications, RMB gives Copy for pasting into a bug report; there also the progress of processes, a click — the Processes manager. On the RIGHT — button widgets: `52:11` (a click — go to the line and column), `LF` (a click — change the line separator), `UTF-8` (a click — change the encoding), indentation, the read-only mode; the composition is chosen via RMB on the strip. The VCS widget was REMOVED from the strip — it moved to the main toolbar at the top |
 
-## Фишка фишки
+## The trick behind it
 
-**Что механизм несёт, чего одна строка подсказки вместить не может:
-СОСТОЯНИЕ, верное без жеста, — и вход в это состояние.** Подсказка транзиентна
-по определению: она отвечает на вопрос «что под курсором» и живёт, пока курсор
-там. Прибор обязан быть верным и тогда, когда на него никто не смотрит, и
-именно поэтому он не может делить пиксели с текстом переменной длины. У нас
-этот груз делится надвое: кэш, underruns и V-fps дублированы в перф-боксе
-левой колонки, а зум и границы региона не существуют больше нигде и исчезают
-под плитой подсказки.
+**What the mechanism carries that one hint line cannot hold: a STATE that is correct without a gesture — and the entry into this state.** A hint is transient by definition: it answers the question "what is under the cursor" and lives while the cursor is there. An instrument must be correct even when nobody is looking at it, and that is exactly why it cannot share pixels with text of variable length. For us this load is split in two: the cache, underruns and V-fps are duplicated in the perf box of the left column, while the zoom and the region boundaries exist nowhere else any more and disappear under the hint plate.
 
-Три детали, которых нет ни в одном списке возможностей.
+Three details that are not in any list of features.
 
-**1. Resolve делает ОБА наших спорных решения сразу — и разводит их по времени
-и по месту.** Мануал описывает тайминг буквально: имя входа или выхода узла
-под курсором «immediately appears in the Status bar. If you wait for a few more
-moments, a floating tooltip displays the same name right over the node». То
-есть строка состояния — канал БЕЗ задержки и БЕЗ перекрытия, всплывающая
-подсказка — канал С задержкой и С перекрытием, и это один продукт, а не спор
-двух школ. При этом справка в полосе не съедает приборы: сведения об узле
-идут слева, процент RAM-кэша стоит «на самом правом краю» и виден всегда.
-Конкуренции нет не потому, что текст короткий, а потому что у зон разные края.
+**1. Resolve does BOTH of our disputed decisions at once — and separates them by time and by place.** The manual describes the timing literally: the name of an input or output of the node under the cursor "immediately appears in the Status bar. If you wait for a few more moments, a floating tooltip displays the same name right over the node". That is, the status line is a channel WITHOUT delay and WITHOUT overlap, the floating tooltip is a channel WITH delay and WITH overlap, and this is one product, not a dispute between two schools. At the same time the help in the strip does not eat the instruments: the node information goes on the left, the RAM cache percentage stands "on the far right edge" and is visible always. There is no competition not because the text is short, but because the zones have different edges.
 
-**2. У Blender справочная зона полосы меняется от КЛАВИАТУРЫ, а не от мыши.**
-Слева написано, что делают кнопки мыши в текущем инструменте, и тап по Alt
-перерисовывает эту зону в горячие клавиши инструментов. Это ровно то, чего у
-нашей строки нет и чем владеет F-HLP-005: подсказка, отвечающая на «что будет,
-если я сейчас зажму», а не «что здесь лежит». И обратите внимание на
-асимметрию прав: состав ПРИБОРНОЙ зоны пользователь выбирает сам через ПКМ, а
-справочную зону выключить нельзя — вендор считает её частью управления, а не
-украшением.
+**2. In Blender the help zone of the strip changes from the KEYBOARD, not from the mouse.** On the left it says what the mouse buttons do in the current tool, and a tap on Alt redraws this zone into the hotkeys of the tools. This is exactly what our line lacks and what F-HLP-005 owns: a hint that answers "what will happen if I hold this now", not "what is here". And note the asymmetry of rights: the composition of the INSTRUMENT zone the user chooses himself via RMB, but the help zone cannot be switched off — the vendor considers it part of control, not a decoration.
 
-**3. В VS Code и IntelliJ элемент полосы — не надпись, а кнопка.** «Can show
-text and icons and **run a command on click**»; клик по `52:11` ведёт к строке
-и столбцу, по `LF` — меняет перенос строк, по сообщению слева — открывает
-Notifications, ПКМ по нему — копирует текст в буфер. Полоса там работает как
-ДВЕРЬ: показание само ведёт туда, где им управляют, и поэтому не нуждается в
-объяснении. У нас в полосе шесть показаний и ровно один кликабельный предмет —
-колокольчик (`app.rs:3842`); остальные пять нарисованы `ui.weak()`, а слой
-подсказки поверх них объявлен `interactable(false)`.
+**3. In VS Code and IntelliJ a strip element is not a caption but a button.** "Can show text and icons and **run a command on click**"; a click on `52:11` leads to the line and column, on `LF` — it changes the line separator, on the message on the left — it opens Notifications, RMB on it — copies the text to the clipboard. There the strip works as a DOOR: the reading itself leads to where it is controlled, and therefore it needs no explanation. For us the strip has six readings and exactly one clickable item — the bell (`app.rs:3842`); the other five are drawn with `ui.weak()`, and the hint layer over them is declared `interactable(false)`.
 
-Куда груз денется у нас: никуда не денется. Плита подсказки заливает полосу
-цветом панели от правого края влево, с клампом по `strip.left()`
-(`app.rs:1316`), поэтому порядок вымирания приборов задан не важностью, а
-вёрсткой Р.7: сначала V-fps, потом underruns, потом кэш, потом регион, и
-последним — зум. Два показания, у которых во всём `apps/` ровно одно место
-отрисовки, оказались крайними слева — то есть уцелели случайно.
+Where the load goes for us: nowhere, it does not go anywhere. The hint plate fills the strip with the panel's colour from the right edge to the left, clamped by `strip.left()` (`app.rs:1316`), so the order in which instruments die is set not by importance but by the layout of R.7: first V-fps, then underruns, then the cache, then the region, and last — the zoom. Two readings, which across the whole `apps/` have exactly one drawing place, turned out to be the outermost on the left — that is, they survived by accident.
 
-## Плюсы
+## Pros
 
-- **Полоса как приборная поверхность не требует жеста.** «The percentage of the
-  RAM cache that's used appears at all times» — величина, которую нельзя
-  пропустить, стоит там, где на неё натыкается взгляд; наши `underruns` того же
-  класса: их смысл в том, что они видны, когда никто их не спрашивал.
-- **Разметка по МЕСТУ вместо приоритета делает полосу предсказуемой.** У Blender
-  и Resolve справка и приборы не конкурируют за одни пиксели, потому что у
-  каждой зоны свой край; длина текста не меняет того, куда смотреть.
-- **Полоса-дверь снимает вопрос «а где это менять».** Клик по элементу открывает
-  ровно то, о чём он докладывает (Notifications, Info Editor, Processes,
-  произвольная команда) — это правило 18 нашего чек-листа, выраженное
-  геометрией, а не текстом.
-- **Состав приборной зоны назначает тот, кто платит за место** (ПКМ по полосе у
-  Blender и JetBrains): пользователь, которому не нужна память, забирает
-  пиксели себе, и вендору не нужно угадывать за всех.
-- **Полоса выключается целиком** (Window → Show Status Bar у Blender, View →
-  Appearance → Status Bar у IDEA, закрытие Status Bar у Vegas с запоминанием
-  выбора) — цена в одну строку высоты платится добровольно.
+- **The strip as an instrument surface does not require a gesture.** "The percentage of the RAM cache that's used appears at all times" — a quantity that cannot be missed, stands where the gaze runs into it; our `underruns` are of the same class: their meaning is that they are visible when nobody asked about them.
+- **Marking by PLACE instead of priority makes the strip predictable.** In Blender and Resolve the help and the instruments do not compete for the same pixels, because each zone has its own edge; the length of the text does not change where to look.
+- **The strip-door removes the question "where do you change this".** A click on an element opens exactly what it reports on (Notifications, Info Editor, Processes, an arbitrary command) — this is rule 18 of our checklist, expressed by geometry rather than text.
+- **The composition of the instrument zone is assigned by the one who pays for the space** (RMB on the strip in Blender and JetBrains): a user who does not need memory takes the pixels for himself, and the vendor does not have to guess for everyone.
+- **The strip is switched off entirely** (Window → Show Status Bar in Blender, View → Appearance → Status Bar in IDEA, closing the Status Bar in Vegas with the choice remembered) — the cost of one line of height is paid voluntarily.
 
-## Минусы
+## Cons
 
-- **Совмещение двух назначений без разметки означает вытеснение.** Как только
-  справка и приборы делят один прямоугольник и разметки нет, более длинный
-  текст просто съедает соседа. У нас это сделано честнее некуда — `rect_filled`
-  поверх (`app.rs:1316`), и это единственная известная реализация «приоритет
-  вместо зон» из семи рассмотренных программ.
-- **Низ окна далёк от места работы.** Главная претензия к постоянной
-  справочной области (Info View, разбор в F-HLP-002) — «глаза уезжают вниз».
-  Отраслевые ответы на неё не увеличивают полосу, а дублируют или переносят:
-  Resolve повторяет тот же текст всплывающей подсказкой прямо над узлом, FCP
-  выносит прогресс в кнопку тулбара и окно, JetBrains убрал самый нужный
-  виджет (VCS) из полосы НАВЕРХ, в главный тулбар.
-- **Дверь стоит кода.** Каждый элемент VS Code — вклад с командой, именем,
-  приоритетом и своим тултипом; это дорого ровно настолько, насколько дёшевы
-  наши `ui.weak()` — и настолько же полезно.
-- **Приборы стареют молча.** В полосу смотрят редко, поэтому дефект в ней живёт
-  годами: Vegas чинил «Record Time indicator … now properly displays very large
-  values» отдельным пунктом релиз-нот. Тот же класс у нас: один и тот же
-  показатель написан в двух местах двумя разными английскими литералами мимо
-  каталогов — `"underruns: {}/{}"` (`app.rs:3869`) и `"Underruns {}/{}"`
-  (`app.rs:3714`).
-- **Что можно закрыть — закрывают.** Пользователь Vegas в августе 2026 пишет о
-  закрытии Status Bar как о рутине. Всё, что жило только в полосе, при этом
-  исчезает; у нас в этом положении зум и границы региона.
-- **Цена «одного экземпляра» подтверждается трекером в чистом виде.** Автор
-  kde-invent #1744 спрятал полосу ради лишней дорожки и был вынужден включить её
-  обратно — не потому, что полоса нужна, а потому, что одно показание не
-  существует больше нигде. Это тот самый сценарий, который у нас недостижим
-  выключателем (его нет) и достижим плитой подсказки: результат для зума и
-  границ региона одинаковый, отличается только способ.
-- **20 px — это не «мало места», это отдельный класс дефектов.** У Kdenlive
-  четыре обращения к полосе из семи — про непоместившийся текст, на трёх
-  платформах и за десять лет (kde-bugzilla #353657, #437113, #471252, #501571;
-  последний открыт с 16.03.2025). У нас в полосе уже есть расхождение того же
-  класса: плита подсказки строится по прямоугольнику высотой 22 px, а панель
-  заведена `exact_size(20.0)`.
-- **Полоса мигает, пока водят мышью, и это чинят как баг.** Kdenlive закрывал
-  фиксом «Visual jitter in statusbar when move cursor over timeline»
-  (kde-bugzilla #356661, 14.12.2015,
-  https://bugs.kde.org/show_bug.cgi?id=356661). У нас источник дрожания тот же и
-  сильнее: таймлайн даёт подсказку в каждой своей точке (F-HLP-001), поэтому
-  плита появляется и исчезает на каждом входе курсора в таймлайн и обратно, а
-  вместе с ней мигают пять приборов.
+- **Combining two purposes without marking means displacement.** As soon as the help and the instruments share one rectangle and there is no marking, a longer text simply eats the neighbor. Ours is done as honestly as possible — `rect_filled` over it (`app.rs:1316`), and this is the only known implementation of "priority instead of zones" among the seven programs reviewed.
+- **The bottom of the window is far from the place of work.** The main objection to a permanent help area (Info View, analysis in F-HLP-002) is "the eyes travel down". Industry answers to it do not enlarge the strip, but duplicate or move things: Resolve repeats the same text as a popup hint right above the node, FCP moves the progress into a toolbar button and a window, JetBrains removed the most needed widget (VCS) from the strip UP to the main toolbar.
+- **The door costs code.** Every VS Code element is a contribution with a command, a name, a priority and its own tooltip; this is expensive exactly to the extent that our `ui.weak()` are cheap — and just as useful.
+- **Instruments age silently.** People look at the strip rarely, so a defect in it lives for years: Vegas fixed "Record Time indicator … now properly displays very large values" as a separate item in the release notes. The same class for us: one and the same indicator is written in two places with two different English literals bypassing the catalogs — `"underruns: {}/{}"` (`app.rs:3869`) and `"Underruns {}/{}"` (`app.rs:3714`).
+- **What can be closed — gets closed.** A Vegas user in August 2026 writes about closing the Status Bar as a routine matter. Everything that lived only in the strip disappears at that moment; for us in this position are the zoom and the region boundaries.
+- **The price of "a single instance" is confirmed by a tracker in its pure form.** The author of kde-invent #1744 hid the strip to make room for an extra track and was forced to turn it back on — not because the strip is needed, but because one reading does not exist anywhere else. This is exactly the scenario that is unreachable for us by a switch (there is none) and reachable by the hint plate: the result for the zoom and the region boundaries is the same, only the way differs.
+- **20 px is not "too little space", it is a separate class of defects.** Kdenlive has four appeals about the strip out of seven — about text that did not fit, on three platforms and over ten years (kde-bugzilla #353657, #437113, #471252, #501571; the last one has been open since 16.03.2025). We already have a discrepancy of the same class in the strip: the hint plate is built on a rectangle 22 px high, while the panel is set up with `exact_size(20.0)`.
+- **The strip flickers while the mouse moves, and this is fixed as a bug.** Kdenlive closed it with the fix "Visual jitter in statusbar when move cursor over timeline" (kde-bugzilla #356661, 14.12.2015, https://bugs.kde.org/show_bug.cgi?id=356661). For us the source of the jitter is the same and stronger: the timeline gives a hint at each of its points (F-HLP-001), so the plate appears and disappears at every entry of the cursor into the timeline and back, and together with it the five instruments flicker.
 
-## Что говорят пользователи
+## What users say
 
 > When I close the Status Bar, it saves this change, but it doesn't save it for
 > the toolbar; it always stays open by default.
@@ -178,259 +86,131 @@ Notifications, ПКМ по нему — копирует текст в буфе�
 
 > Can properly edit the Selection Length box in the status bar below the
 > timeline even with no selection range present on the timeline.
-> — VegasDerek (издатель), релиз-ноты VEGAS Pro 2026 build 66, 27.03.2026,
+> — VegasDerek (publisher), release notes of VEGAS Pro 2026 build 66, 27.03.2026,
 > https://forum.borisfx.com/t/21161
 
 > The Record Time indicator in the status bar now properly displays very large
 > values.
-> — релиз-ноты VEGAS Pro 20 Update 4, приведены в «Vegas Pro Release History»,
+> — release notes of VEGAS Pro 20 Update 4, as given in "Vegas Pro Release History",
 > NickHope, 22.06.2026, https://forum.borisfx.com/t/24284
 
-Про расстояние до места работы дословная жалоба нашлась только вне
-видеомонтажа и уже процитирована в F-HLP-002 («The problem is the amount you
-have to move your attention and eyes takes you away from the very button or
-area you're interested in», forum.ableton.com, 25.10.2019).
+A verbatim complaint about the distance to the place of work was found only outside video editing, and it is already quoted in F-HLP-002 ("The problem is the amount you have to move your attention and eyes takes you away from the very button or area you're interested in", forum.ableton.com, 25.10.2019).
 
-Багтрекер Kdenlive — единственный NLE с публичной перепиской именно об этой
-полосе, и там спор идёт ровно между двумя нашими назначениями. За справочную
-зону — просьба сделать её ПОСТОЯННОЙ, и просят буквально Blender, которого
-разбирает таблица выше:
+The Kdenlive bug tracker is the only NLE with a public correspondence precisely about this strip, and there the dispute runs exactly between our two assignments. For the help zone — a request to make it PERMANENT, and the request is literally for Blender, which the table above analyzes:
 
 > Other Applications like Blender, Inkscape and many more show "Keymap
 > Infromation" permanently in the status bar. The information depends on the
 > current selected tool.
-> — kde-invent #916, 08.01.2021 (2 голоса, 14 комментариев),
+> — kde-invent #916, 08.01.2021 (2 votes, 14 comments),
 > https://invent.kde.org/multimedia/kdenlive/-/work_items/916
 
-Автор там же называет цену совмещения ровно нашим языком: сегодня Kdenlive пишет
-это в общий `statusbarmessagelabel`, где текст «visible for a few seconds after
-the tool is activated and they shared the label with other status messages», —
-то есть справка и приборы делят одну надпись, и справка её выигрывает.
+The same author names the price of combining in exactly our language: today Kdenlive writes this into the common `statusbarmessagelabel`, where the text is "visible for a few seconds after the tool is activated and they shared the label with other status messages" — that is, the help and the instruments share one label, and the help wins it.
 
-Против — просьба вынести показание ИЗ полосы, и мотив редкий: полосу спрятали
-ради лишней дорожки, а значение, живущее только в ней, заставило вернуть полосу
-обратно.
+Against — a request to move the reading OUT of the strip, and the motive is rare: the strip was hidden to gain an extra track, and a value living only in it forced the strip back on.
 
 > a way to move this displayed value on other position? or maybe display the
 > value as a textual popup if the status bar is hidden?
-> — kde-invent #1744, 15.08.2023 («i started to not use anymore the status bar
+> — kde-invent #1744, 15.08.2023 ("i started to not use anymore the status bar
 > to gain the space for another track… but this value make me forced to display
-> it again»), https://invent.kde.org/multimedia/kdenlive/-/work_items/1744
+> it again"), https://invent.kde.org/multimedia/kdenlive/-/work_items/1744
 
-И третья сторона — «полоса есть, но пустая», список пожеланий совпадает с нашим
-составом почти построчно (клавиши инструмента, значения параметров, прогресс):
+And a third side — "the strip exists but is empty"; the wish list coincides with our composition almost line by line (the instrument keys, the parameter values, progress):
 
 > OpenShot does have a status bar but it isn't used. It would be nice if we
 > could make extensive use of the status bar.
 > — openshot #1858, 16.07.2018,
 > https://github.com/OpenShot/openshot-qt/issues/1858
 
-Просьбу «убрать» тоже видно, и она про справочную половину: kde-bugzilla #496054
-«Disable tutorial info in Statusbar» (10.11.2024, `wishlist`, подтверждена
-триажем, https://bugs.kde.org/show_bug.cgi?id=496054).
+A request to "remove" is also visible, and it concerns the help half: kde-bugzilla #496054 "Disable tutorial info in Statusbar" (10.11.2024, `wishlist`, confirmed by triage, https://bugs.kde.org/show_bug.cgi?id=496054).
 
-СИГНАЛ: нижняя полоса как предмет — 7 задач в kde-bugzilla, `status ?bar|statusbar`; доля 0.1% против 0.0% (1 задача из 4516) в openshot
+SIGNAL: the bottom strip as a subject — 7 tasks in kde-bugzilla, `status ?bar|statusbar`; a share of 0.1% against 0.0% (1 task out of 4516) in openshot
 
-СИГНАЛ: текст, не поместившийся в полосу — 4 задачи в kde-bugzilla, `(status ?bar|statusbar)[^.]{0,40}(cut off|cropped|crop|truncat|spacing|too narrow|not be read|cannot be read)`; доля 0.1% против 0.0% (ни одной из 2217) в kde-invent
+SIGNAL: text that did not fit into the strip — 4 tasks in kde-bugzilla, `(status ?bar|statusbar)[^.]{0,40}(cut off|cropped|crop|truncat|spacing|too narrow|not be read|cannot be read)`; a share of 0.1% against 0.0% (not one of 2217) in kde-invent
 
-Второй счёт и есть находка: больше половины обращений к полосе в `kde-bugzilla`
-(4 из 7) — не про содержание, а про то, что текст в неё не влез. Три из
-четырёх — на трёх разных платформах и с интервалом в годы (#437113, 14.05.2021,
-«wrong spacing (horizontally cut off)»; #471252, 20.06.2023, macOS, «strings
-are cropped»; #501571, 16.03.2025, Windows, «vertically cut off», не закрыта),
-четвёртая — #353657 (07.10.2015, HiDPI 2880×1620, кнопки полосы слишком узкие).
-У полосы в одну строку главный дефект — не «не туда смотрят», а «не
-поместилось», и это ровно правило 7 чек-листа.
+The second count is the finding: more than half of the appeals to the strip in `kde-bugzilla` (4 of 7) are not about the content, but about the text not fitting into it. Three of the four — on three different platforms and with an interval of years (#437113, 14.05.2021, "wrong spacing (horizontally cut off)"; #471252, 20.06.2023, macOS, "strings are cropped"; #501571, 16.03.2025, Windows, "vertically cut off", not closed), the fourth — #353657 (07.10.2015, HiDPI 2880×1620, the strip's buttons too narrow). For a strip of one line the main defect is not "they look in the wrong place" but "it did not fit" — and this is exactly rule 7 of the checklist.
 
-Жалобы монтажёров в словах «не смотрю туда» / «далеко от таймлайна» по-прежнему
-нет: у трёх NLE ядра из пяти полосы нет вовсе, а у оставшихся двух публичного
-трекера нет (`_trackers.md`, «Кого НЕ берём»). Отработаны Discourse-поиск форума
-Boris FX (`/search.json` по «status bar», «status bar tooltip», «status bar
-missing», «status bar font small», «bottom of the screen eyes») — только
-релиз-ноты и пост hb2k; поиск форума Blackmagic (`search.php`) без сессии отдаёт
-страницу «Information».
+Complaints from editors in the words "I don't look there" / "far from the timeline" are still absent: three of the five core NLEs have no strip at all, and the remaining two have no public tracker (`_trackers.md`, "Whom we do NOT take"). The Discourse search of the Boris FX forum (`/search.json` for "status bar", "status bar tooltip", "status bar missing", "status bar font small", "bottom of the screen eyes") gave only release notes and a post by hb2k; the search of the Blackmagic forum (`search.php`) without a session returns the "Information" page.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-АДРЕС: src/apps/kt-app/src/app.rs (`egui::Panel::bottom("status")` и
-`draw_statusbar`) — половина класса kde-invent #1744 у нас невозможна, потому
-что полосу нельзя спрятать: панель заводится безусловно каждым кадром, ни в
-одном из трёх корневых меню выключателя нет, и запоминать нечего. Вторая
-половина возможна, и её не ловит ничто: `draw_status_hint` заливает полосу
-цветом панели от правого края до `strip.left()`, а единственное измерение полосы
-— t128 в `src/apps/kt-app/src/layout_tests.rs:1899` — гоняет `REGION_S` и
-`CACHE_SHORT` по бюджету `PERF_COLUMN = 190.0`, то есть по ширине ЧУЖОЙ панели;
-ни один тест не спрашивает, что осталось видно под плитой.
+ADDRESS: src/apps/kt-app/src/app.rs (`egui::Panel::bottom("status")` and `draw_statusbar`) — half of the class of kde-invent #1744 is impossible for us, because the strip cannot be hidden: the panel is set up unconditionally every frame, there is no switch in any of the three root menus, and there is nothing to remember. The second half is possible, and nothing catches it: `draw_status_hint` fills the strip with the panel's colour from the right edge to `strip.left()`, and the only measurement of the strip — t128 in `src/apps/kt-app/src/layout_tests.rs:1899` — runs `REGION_S` and `CACHE_SHORT` against the budget `PERF_COLUMN = 190.0`, that is, against the width of ANOTHER panel; no test asks what remained visible under the plate.
 
-### Что уже есть
+### What already exists
 
-- Полоса: `egui::Panel::bottom("status")` … `.exact_size(20.0)`
-  (`src/apps/kt-app/src/app.rs:823`), содержимое рисует
-  `draw_statusbar(ui)` (`app.rs:3800`). Порядок слева направо: колокольчик с
-  бейджем непрочитанных (единственный кликабельный элемент, `:3842`), зум
-  `{:.0} px/s` (`:3851`), регион в секундах (`:3855`), кэш аудио/видео в МБ
-  (`:3863`), `underruns: a/b` (`:3869`), `{:.0} vfps` (`:3875`). Пустые места
-  полосы таскают окно (`ViewportCommand::StartDrag`, `:3811`).
-- Подсказка рисуется ПОВЕРХ полосы последней операцией кадра:
-  `draw_status_hint` (`app.rs:1274`), слой `Order::Foreground`, галлея
-  `layout_no_wrap`, плита от `strip.right() - 6.0` влево на ширину текста, левый
-  край клампится `.max(strip.left())`, заливка `theme::PANEL` — то есть не
-  подложка, а стирание. Комментарий в коде (`app.rs:1316`) дословно:
-  «длинная подсказка спокойно затирает метрики слева — она важнее».
-  [Мелочь на будущее: плита строится по `statusbar_rect` высотой 22 px, тогда
-  как панель заведена `exact_size(20.0)` — двух пикселей у полосы нет; оценка по
-  коду, живьём не мерено.]
-- Дублирование: кэш и underruns есть в перф-боксе левой колонки
-  (`draw_perf_box`, `app.rs:3697`: `k::perf::CACHE_MB` на `:3709`, `Underruns`
-  на `:3714`), V-fps — отдельная серия графика качества (`app.rs:4837`).
-  Перф-бокс всегда открыт, живёт в `ScrollArea` под медиа-бином (`app.rs:892`)
-  и подсказкой не перекрывается никогда: она рисуется только по
-  `statusbar_rect`.
-- НЕ дублировано ничего больше: `px/s` встречается во всём `src/apps/kt-app/src`
-  один раз (`app.rs:3851`), ключ `k::perf::REGION_S` — один раз (`app.rs:3855`,
-  плюс упоминание в тесте). Диалог рендера регион использует, но показывает не
-  границы, а длину в имени файла (`render_dialog.rs:165`).
-- Приборная часть полосы — прямое решение владельца: Р.7 («чистка статусбара»,
-  «очевидных надписей не делать» — убраны «зум:», «FPS:», «(loop)»), Р.7.1 п.1
-  (V-fps «здесь, не в тулбаре»), п.22 Р.7 (кэш и underruns после региона). По
-  правилу каталога состав не меняется без новой просьбы; МЕСТО и второй адрес —
-  меняются.
-- Случайная смягчающая деталь: зона таймлайна ставит подсказку только когда
-  жеста НЕТ (`timeline.rs:2179`: `if self.drag.is_none() && let Some(pos) =
-  hover`). Значит во время самого перетаскивания подсказка гаснет и приборы
-  возвращаются; стираются они, пока пользователь ВОДИТ мышью, а таймлайн даёт
-  подсказку в каждой своей точке (F-HLP-001). Приборы видны, когда курсор над
-  превью, вне окна или тащит; во всё остальное время — нет.
-- Измерено в полосе ровно наоборот, чем нужно: t128 (`layout_tests.rs:1899`)
-  гоняет `REGION_S` и `CACHE_SHORT` по бюджету `PERF_COLUMN = 190.0` — бюджету
-  ЧУЖОЙ панели, а настоящий их конкурент, плита подсказки, не меряется ничем
-  (это находка F-HLP-002 и её тест `hint_fits_the_status_strip`).
-- t83 (`layout_tests.rs:234`) не задевается: здесь ничего всплывающего не
-  предлагается, `Order::Tooltip` не появляется, `theme.rs` не трогается, и
-  правило 10 (подсказка ровно одна и в одном месте) остаётся формулировкой
-  нашей модели.
+- The strip: `egui::Panel::bottom("status")` … `.exact_size(20.0)`
+  (`src/apps/kt-app/src/app.rs:823`), the content is drawn by `draw_statusbar(ui)` (`app.rs:3800`). The order from left to right: the bell with a badge of unread items (the only clickable element, `:3842`), zoom `{:.0} px/s` (`:3851`), the region in seconds (`:3855`), the audio/video cache in MB (`:3863`), `underruns: a/b` (`:3869`), `{:.0} vfps` (`:3875`). The empty places of the strip drag the window (`ViewportCommand::StartDrag`, `:3811`).
+- The hint is drawn ON TOP of the strip by the last operation of the frame: `draw_status_hint` (`app.rs:1274`), layer `Order::Foreground`, galley `layout_no_wrap`, the plate from `strip.right() - 6.0` to the left by the width of the text, the left edge clamped `.max(strip.left())`, fill `theme::PANEL` — that is, not a backing but an erasing. The comment in the code (`app.rs:1316`) word for word: "a long hint calmly erases the metrics on the left — it is more important". [A small note for the future: the plate is built from `statusbar_rect` 22 px high, while the panel is set up with `exact_size(20.0)` — there are no two pixels at the strip; an estimate from the code, not measured live.]
+- Duplication: the cache and underruns are in the perf box of the left column (`draw_perf_box`, `app.rs:3697`: `k::perf::CACHE_MB` at `:3709`, `Underruns` at `:3714`), V-fps — a separate series of the quality chart (`app.rs:4837`). The perf box is always open, lives in a `ScrollArea` under the media bin (`app.rs:892`), and is never covered by the hint: it is drawn only within `statusbar_rect`.
+- NOTHING ELSE is duplicated: `px/s` occurs across the whole `src/apps/kt-app/src` once (`app.rs:3851`), the key `k::perf::REGION_S` — once (`app.rs:3855`, plus a mention in a test). The render dialog uses the region, but shows not the boundaries but the length in the file name (`render_dialog.rs:165`).
+- The instrument part of the strip is a direct decision of the owner: R.7 ("cleaning the status bar", "obvious labels are not to be made" — "zoom:", "FPS:", "(loop)" removed), R.7.1 item 1 (V-fps "here, not in the toolbar"), item 22 of R.7 (cache and underruns after the region). By the catalog rule the composition does not change without a new request; the PLACE and the second address — do change.
+- An accidental mitigating detail: the timeline zone sets a hint only when there is NO gesture (`timeline.rs:2179`: `if self.drag.is_none() && let Some(pos) = hover`). So during the drag itself the hint goes out and the instruments return; they are erased while the user MOVES the mouse, and the timeline gives a hint at each of its points (F-HLP-001). The instruments are visible when the cursor is over the preview, outside the window or dragging; the rest of the time — no.
+- Measured in the strip exactly the opposite of what is needed: t128 (`layout_tests.rs:1899`) runs `REGION_S` and `CACHE_SHORT` against the budget `PERF_COLUMN = 190.0` — the budget of ANOTHER panel, while their real competitor, the hint plate, is measured by nothing (this is the finding of F-HLP-002 and its test `hint_fits_the_status_strip`).
+- t83 (`layout_tests.rs:234`) is not touched: nothing popping up is proposed here, `Order::Tooltip` does not appear, `theme.rs` is not touched, and rule 10 (exactly one hint in one place) remains the wording of our model.
 
-### Чего не хватает
+### What is missing
 
-**Гарантии, что ни одно показание не живёт ТОЛЬКО под плитой.** Сегодня такой
-гарантии нет ни в коде, ни в тесте: два значения из пяти существуют в одном
-экземпляре и в самом заливаемом месте. Плюс нет ни одного признака полосы-двери
-(кликабелен только колокольчик), нет выбора состава пользователем и нет
-выключателя полосы — то есть три из трёх приёмов, которыми чужие полосы платят
-за совмещение, у нас отсутствуют.
+**A guarantee that no reading lives ONLY under the plate.** Today there is no such guarantee in the code or in a test: two values out of five exist in a single instance and in the very place that gets erased. Plus there is not a single sign of the strip-door (only the bell is clickable), there is no choice of the composition by the user and there is no switch for the strip — that is, all three techniques by which other strips pay for combining are absent with us.
 
-### Что мешает
+### What gets in the way
 
-Правило 13: новой полосы заводить нельзя, и это правильно — вторая строка
-внизу стоила бы столько же, сколько 5 % окна у Ableton (F-HLP-002), ради двух
-чисел. Зонирование внутри 20 px тоже не бесплатно: чтобы честно поделить
-полосу, надо на каждом кадре мерить ширину приборной части и усекать текст, а
-инвариант 12 прямо запрещает лишние аллокации и раскладки в draw-путях — сейчас
-их две коротких, и это уже на грани (F-HLP-001). Самое дешёвое, что можно
-сделать, — не делить полосу, а дать двум показаниям второй адрес в уже
-открытом перф-боксе, где для них есть готовая двухколоночная сетка.
+Rule 13: a new strip must not be set up, and that is right — a second line at the bottom would cost as much as Ableton's 5 % of the window (F-HLP-002), for the sake of two numbers. Zoning inside 20 px is not free either: to divide the strip honestly one would have to measure the width of the instrument part on every frame and truncate the text, while invariant 12 directly forbids extra allocations and layouts in draw paths — now there are two short ones, and this is already on the edge (F-HLP-001). The cheapest thing to do is not to divide the strip, but to give the two readings a second address in the already open perf box, where there is a ready two-column grid for them.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Инвариант **12** — задевает и ограничивает: любое зонирование полосы добавляет
-работу на кадр, поэтому вердикт выбирает вариант, который в draw-путь не
-добавляет ничего. Правила чек-листа: **13** (не тратить место впустую — почему
-не заводится ни вторая полоса, ни свой блок), **10** (подсказка ровно одна и в
-одном месте — не трогается), **18** (пункт говорит ЧТО и ГДЕ — то, чем чужая
-полоса-дверь заменяет справку; у нас не выполнено ни одним элементом полосы,
-кроме колокольчика), **7** (текст помещается — задето, но им владеет F-HLP-002).
+Invariant **12** — touched and constrained: any zoning of the strip adds work per frame, therefore the verdict chooses the variant that adds nothing to the draw path. Rules of the checklist: **13** (do not waste space — why neither a second strip nor its own block is set up), **10** (exactly one hint in one place — not touched), **18** (the item says WHAT and WHERE — what the foreign door-strip replaces the help with; with us it is not fulfilled by a single element of the strip except the bell), **7** (the text fits — touched, but it is owned by F-HLP-002).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия раунда |
-| Где основная работа | kt-app: `reach_tests.rs` (новый тест), при находках — `app.rs` (`draw_perf_box`: две строки в существующую сетку `ui.columns(2)`) |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | `reach_tests::no_reading_lives_only_under_the_hint` — каждое значение, отрисованное в `statusbar_rect`, обязано иметь второй адрес вне зоны заливки плиты |
-| Зависит от | F-HLP-001 (модель строки), F-HLP-002 (измерение ширины подсказки) |
-| Ломает совместимость | нет |
+| Size | S — one stage of a round |
+| Where the main work is | kt-app: `reach_tests.rs` (a new test), with findings — `app.rs` (`draw_perf_box`: two lines into the existing `ui.columns(2)` grid) |
+| Project format | not touched |
+| Tests to be written | `reach_tests::no_reading_lives_only_under_the_hint` — every value drawn in `statusbar_rect` must have a second address outside the fill area of the plate |
+| Depends on | F-HLP-001 (the model of the line), F-HLP-002 (the measurement of the hint width) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Совмещение справки и приборов в одной полосе — не наша выдумка: так делает
-Resolve на странице Fusion и, в мягком виде, Vegas. Но все, кто совмещает,
-разводят два назначения ПО МЕСТУ (левый край против правого), а мы развели их
-по приоритету и стираем приборы заливкой. Полосу это не портит ровно до тех
-пор, пока каждое стираемое показание есть где-то ещё; сегодня два из пяти —
-зум и границы региона — есть только там, и теряются они как раз тогда, когда
-пользователь водит мышью, то есть почти всегда. Правило 13 запрещает лечить это
-местом, поэтому лечим адресом, а не пикселями.
+Combining the help and the instruments in one strip is not our invention: Resolve does it on the Fusion page and, in a soft form, Vegas. But everyone who combines separates the two purposes BY PLACE (the left edge against the right), while we separated them by priority and erase the instruments with a fill. The strip is not spoiled by this exactly as long as every erased reading exists somewhere else; today two of the five — the zoom and the region boundaries — exist only there, and they are lost precisely when the user moves the mouse, that is, almost always. Rule 13 forbids treating this with a place, therefore we treat it with an address, not with pixels.
 
-ТЕСТ: reach_tests::no_reading_lives_only_under_the_hint — сегодня падает на двух показаниях из пяти: «px/s» (`src/apps/kt-app/src/app.rs:3851`) и `perf.region_s` (`:3855`) отрисованы во всём `apps/` ровно по одному разу, а плита подсказки заливает полосу от правого края до `strip.left()` цветом панели (`:1316`); кэш, underruns и V-fps тест пройдут — их дублирует всегда открытый перф-бокс (`:3709`, `:3714`).
+TEST: reach_tests::no_reading_lives_only_under_the_hint — today fails on two readings out of five: "px/s" (`src/apps/kt-app/src/app.rs:3851`) and `perf.region_s` (`:3855`) are drawn across the whole `apps/` exactly once each, while the hint plate fills the strip from the right edge to `strip.left()` with the panel colour (`:1316`); the cache, underruns and V-fps the test will pass — they are duplicated by the always-open perf box (`:3709`, `:3714`).
 
-ОДНА СТРОКА: перекрытие — не трогает | задержка — не трогает | ёмкость — в строку статусбара не добавляется ни символа и ни один пиксель не отбирается у подсказки; меняется не текст, а гарантия — зум и границы региона получают второй адрес в УЖЕ открытом перф-боксе левой колонки (`app.rs:3697`, готовая сетка `ui.columns(2)`), после чего приоритет «подсказка важнее» перестаёт стоить показаний.
+ONE LINE: overlap — not touched | delay — not touched | capacity — not a single character is added to the status line and not a single pixel is taken from the hint; what changes is not the text but the guarantee — the zoom and the region boundaries get a second address in the ALREADY open perf box of the left column (`app.rs:3697`, the ready grid `ui.columns(2)`), after which the priority "the hint matters more" stops costing readings.
 
-## Источники
+## Sources
 
-- VEGAS Pro 2026 Online Help, «The User Interface» (Status Bar — элемент 7
-  главного окна; страница изменена 15.04.2026) —
+- VEGAS Pro 2026 Online Help, "The User Interface" (Status Bar — element 7 of the main window; page changed 15.04.2026) —
   https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/2-window/mainwindow.htm
-  (обращение 07.09.2026)
-- forum.borisfx.com (Discourse API `/search.json`, `/t/<id>.json`,
-  `/posts/<id>.json`): темы 21161 (релиз 2026 build 66), 24284 (Release
-  History), 25206 (патч 2026.0.3) — 07.09.2026
-- Adobe, «View warnings, errors, and information events» (Premiere; страница
-  обновлена 07.01.2026) —
+  (accessed 07.09.2026)
+- forum.borisfx.com (Discourse API `/search.json`, `/t/<id>.json`, `/posts/<id>.json`): topics 21161 (release 2026 build 66), 24284 (Release History), 25206 (patch 2026.0.3) — 07.09.2026
+- Adobe, "View warnings, errors, and information events" (Premiere; page updated 07.01.2026) —
   https://helpx.adobe.com/premiere/desktop/edit-projects/correct-mistakes/view-warnings-errors-and-information-events.html
-  (прочитано в текстовой копии, снятой 07.09.2026: прямые запросы к
-  `helpx.adobe.com` из окружения падают по таймауту, `r.jina.ai` отдаёт ошибку
-  HTTP/2)
-- Adobe, «General user interface items» (After Effects, совет держать панель
-  Info впереди группы) —
+  (read in a text copy taken 07.09.2026: direct requests to `helpx.adobe.com` from the environment time out, `r.jina.ai` returns an HTTP/2 error)
+- Adobe, "General user interface items" (After Effects, the advice to keep the Info panel in front of the group) —
   https://helpx.adobe.com/after-effects/desktop/get-started/get-familiar-with-the-interface/general-user-interface-items.html
-  (текстовая копия от 07.09.2026); настройка «Show Rendering Progress In Info
-  Panel And Flowchart» — Adobe After Effects Help (PDF), раздел Display
-  preferences
-- DaVinci Resolve 20 Reference Manual (PDF, Blackmagic Design, 05.07.2025):
-  «Introduction to DaVinci Resolve» — Status Bar (с. 40–41), Minimizing the
-  Resolve Page Bar (с. 21), «Exploring the Fusion Interface» — Status Bar
-  (с. 1243) и RAM Cache (с. 1235), «Node Tooltips and the Status Bar» (с. 1365),
-  «Status Bar Information» в вьюерах (с. 1431), Spline Editor (с. 1479) —
+  (text copy of 07.09.2026); the setting "Show Rendering Progress In Info Panel And Flowchart" — Adobe After Effects Help (PDF), section Display preferences
+- DaVinci Resolve 20 Reference Manual (PDF, Blackmagic Design, 05.07.2025): "Introduction to DaVinci Resolve" — Status Bar (pp. 40–41), Minimizing the Resolve Page Bar (p. 21), "Exploring the Fusion Interface" — Status Bar (p. 1243) and RAM Cache (p. 1235), "Node Tooltips and the Status Bar" (p. 1365), "Status Bar Information" in the viewers (p. 1431), Spline Editor (p. 1479) —
   https://documents.blackmagicdesign.com/UserManuals/DaVinci_Resolve_20_Reference_Manual.pdf
-  (обращение 07.09.2026). Для Resolve 21 не перепроверялось
-- Apple, «View background tasks» (Final Cut Pro User Guide) —
+  (accessed 07.09.2026). For Resolve 21 it was not re-checked
+- Apple, "View background tasks" (Final Cut Pro User Guide) —
   https://support.apple.com/guide/final-cut-pro/view-background-tasks-ver64e71609/mac
   (07.09.2026)
-- Blender 5.2 LTS Manual, Status Bar (Keymap Information / Status Messages /
-  Resource Information) —
+- Blender 5.2 LTS Manual, Status Bar (Keymap Information / Status Messages / Resource Information) —
   https://docs.blender.org/manual/en/latest/interface/window_system/status_bar.html
-  (07.09.2026, через текст-прокси `r.jina.ai`: прямой доступ закрыт
-  Cloudflare)
-- Visual Studio Code API, `StatusBarItem` / `StatusBarAlignment` (alignment,
-  priority, «run a command on click», tooltip) —
+  (07.09.2026, via the text proxy `r.jina.ai`: direct access is blocked by Cloudflare)
+- Visual Studio Code API, `StatusBarItem` / `StatusBarAlignment` (alignment, priority, "run a command on click", tooltip) —
   https://raw.githubusercontent.com/microsoft/vscode/main/src/vscode-dts/vscode.d.ts
-  (07.09.2026); позиция колокольчика уведомлений —
+  (07.09.2026); the position of the notification bell —
   https://code.visualstudio.com/docs/configure/custom-layout (07.09.2026)
-- IntelliJ IDEA 2026.2 Help, «User interface» (Status bar: левая часть,
-  прогресс процессов, виджеты справа, ПКМ для выбора состава, переезд
-  VCS-виджета в тулбар) —
+- IntelliJ IDEA 2026.2 Help, "User interface" (Status bar: the left part, process progress, widgets on the right, RMB to choose the composition, the move of the VCS widget to the toolbar) —
   https://www.jetbrains.com/help/idea/guided-tour-around-the-user-interface.html
   (07.09.2026)
-- Трекеры (дампы `~/.cache/kinotrain/trackers/`, в репозиторий не попадают —
-  `_trackers.md`, раздел лицензий; оба числа строк `СИГНАЛ:` воспроизводятся
-  `python3 src/scripts/tracker-rank.py --query '<фильтр>'` с фильтрами из
-  обратных кавычек, обращение 08.09.2026):
-  `kde-invent` — work_items 916 (08.01.2021, постоянная зона клавиш в полосе) и
-  1744 (15.08.2023, вынести показание из полосы);
-  `kde-bugzilla` — 496054 (10.11.2024, `wishlist`, убрать обучающий текст),
-  356661 (14.12.2015, дрожание полосы при движении курсора по таймлайну),
-  353657 / 437113 / 471252 / 501571 (2015-2025, текст не помещается);
-  `openshot` — 1858 (16.07.2018, «полоса есть, но не используется»).
-  Публичного трекера нет ни у одного из пяти редакторов ядра (`_trackers.md`,
-  «Кого НЕ берём — и почему»), поэтому счёт снят по открытым редакторам, а
-  таблица «У кого и как» остаётся на документации вендоров
-- Код: `src/apps/kt-app/src/app.rs` (`draw_statusbar`, `draw_status_hint`,
-  `draw_perf_box`), `timeline.rs`, `layout_tests.rs` (t83, t128),
-  `render_dialog.rs`; `docs/user-feedback.md` (Р.7, Р.7.1, Р.9 п.1, Р.40) —
-  07.09.2026
+- Trackers (dumps in `~/.cache/kinotrain/trackers/`, not committed to the repository — `_trackers.md`, the licences section; both SIGNAL line counts are reproduced by `python3 src/scripts/tracker-rank.py --query '<filter>'` with the filters from the backquotes, accessed 08.09.2026):
+  `kde-invent` — work_items 916 (08.01.2021, a permanent key zone in the strip) and 1744 (15.08.2023, move the reading out of the strip);
+  `kde-bugzilla` — 496054 (10.11.2024, `wishlist`, remove the tutorial text), 356661 (14.12.2015, the strip flicker when the cursor moves over the timeline), 353657 / 437113 / 471252 / 501571 (2015–2025, text does not fit);
+  `openshot` — 1858 (16.07.2018, "the strip exists but is not used").
+  None of the five core editors has a public tracker (`_trackers.md`, "Whom we do NOT take — and why"), therefore the count is taken from open editors, and the table "Who has it and how" remains on the vendors' documentation
+- Code: `src/apps/kt-app/src/app.rs` (`draw_statusbar`, `draw_status_hint`, `draw_perf_box`), `timeline.rs`, `layout_tests.rs` (t83, t128), `render_dialog.rs`; `docs/user-feedback.md` (R.7, R.7.1, R.9 item 1, R.40) — 07.09.2026
 
-Живьём не проверялась ни одна чужая программа: Blender, VS Code и IntelliJ —
-софт вне ядра, проверка живьём для них не предполагается (`_editors.md`); пять
-NLE ядра описаны по официальной документации и релиз-нотам вендоров, и
-несовпадение версии мануала с версией из `_editors.md` помечено в таблице.
+Not a single foreign program was checked live: Blender, VS Code and IntelliJ are software outside the core, and a live check is not assumed for them (`_editors.md`); the five core NLEs are described from official documentation and the vendors' release notes, and a mismatch between the manual's version and the version from `_editors.md` is marked in the table.

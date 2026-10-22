@@ -1,12 +1,12 @@
 ---
 id: F-COL-027
-title: Статус приёмки — состояние, а не текст
-status: кандидат
+title: Acceptance status is a state, not text
+status: candidate
 priority: B
 cost: M
 category: collab/review
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: no
 crates: [kt-model, kt-app, kt-otio]
 invariants: [12]
 ui_rules: [7, 13]
@@ -19,107 +19,58 @@ services: [frame-io, bm-cloud]
 checked: 2026-09-08
 ---
 
-# F-COL-027 — Статус приёмки — состояние, а не текст
+# F-COL-027 — Acceptance status is a state, not text
 
-## Суть
+## Essence
 
-Кто-то смотрит кусок и выносит по нему решение: «на проверке», «переделать»,
-«принято». Решение относится не к файлу и не к прямоугольнику на таймлайне, а к
-РАБОТЕ над куском: материал не изменился, а состояние сменилось; и у каждого
-значения есть последствие — после «переделать» кусок обязан вернуться в работу,
-после «принято» его не трогают. В монтажных программах такого предмета нет ни у
-кого. Поэтому решение всегда переезжает в цвет метки, а смысл цвета остаётся в
-голове того, кто его поставил.
+Someone watches a piece and issues a decision on it: "under review," "redo," "accepted." The decision refers not to a file and not to a rectangle on the timeline, but to the WORK on the piece: the material has not changed, but the state has; and each value has a consequence — after "redo" the piece must return to work, after "accepted" it is not touched. No editing program has such an object. That is why the decision always moves into the color of a marker, and the meaning of the color stays in the head of whoever set it.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет | своей метки у события нет вовсе — цвет события равен цвету дорожки (разобрано в F-UI-005). У события есть Switches (Mute, Lock, Loop) — состояния БЕЗ автора и без отношения к приёмке; решение записывают в имя региона |
-| Adobe Premiere | 26.x | Label (16 меток с редактируемыми именами); собственно статус — только в панели Frame.io | статус живёт НЕ в проекте, а на активе сервиса: три значения «Needs Review», «In Progress», «Approved» на ЗАЛИТОЙ версии ролика, в V4 добавлены свои. Смена статуса рассылает уведомление участникам проекта. Секвенция о решении не знает ничего |
-| DaVinci Resolve | 21 | Flag · Clip Color · Marker; в совместном режиме — общие маркеры и чат | статуса нет: три цветных механизма разведены по области действия (F-UI-005), и ни один не описывает состояние работы. В разборах совместного режима это названо главным пробелом — увидеть, что принято, а что нет, нечем |
-| Final Cut Pro | 12.3 | Favorite / Rejected (рейтинг) | **единственный настоящий автомат в пятёрке**: три состояния (любимое → без оценки → забраковано), ставятся НА ДИАПАЗОН, а не на клип целиком; рисуются зелёной и красной ЛИНИЕЙ по верху кадров; фильтр «Hide Rejected» делает состояние рабочим, `U` (Unrate) возвращает в нейтраль. Но предмет — материал, а не работа над ним |
-| After Effects | 26.x | Label; та же панель Frame.io | у слоя есть цвет с редактируемым именем, у работы — ничего; статус, как и в Premiere, живёт на активе сервиса |
+| VEGAS Pro | 2026.0 | none | an event has no marker of its own at all — the event's color equals the track's color (analyzed in F-UI-005). An event has Switches (Mute, Lock, Loop) — states WITHOUT an author and without any relation to acceptance; the decision is recorded in the region's name |
+| Adobe Premiere | 26.x | Label (16 labels with editable names); the actual status — only in the Frame.io panel | the status lives NOT in the project but on the asset of the service: three values "Needs Review," "In Progress," "Approved" on the UPLOADED version of the clip; in V4 own statuses were added. Changing the status sends a notification to the project's participants. The sequence knows nothing about the decision |
+| DaVinci Resolve | 21 | Flag · Clip Color · Marker; in collaborative mode — shared markers and chat | there is no status: three colored mechanisms are separated by scope (F-UI-005), and none of them describes the state of the work. In analyses of collaborative mode this is named the main gap — there is no way to see what has been accepted and what has not |
+| Final Cut Pro | 12.3 | Favorite / Rejected (rating) | **the only real state machine among the five**: three states (favorite → unrated → rejected), set on a RANGE, not on the whole clip; drawn as a green and a red LINE along the top of the frames; the "Hide Rejected" filter makes the state operative, `U` (Unrate) returns it to neutral. But the object is the material, not the work on it |
+| After Effects | 26.x | Label; the same Frame.io panel | a layer has a color with an editable name, a piece of work has nothing; the status, as in Premiere, lives on the service's asset |
 
-**Вне ядра.** Все пять строк ядра по существу — «нет», поэтому пятёркой механизм
-не описать: видно только, во что он вырождается. Устройство статуса живёт там,
-где он есть по профессии, — в пайплайн-трекерах, и обе программы ниже приведены
-ради устройства, а не ради вердикта.
+**Outside the core.** All five core rows are in essence "none," so the mechanism cannot be described by the five: one can only see what it degenerates into. The structure of the status lives where it exists by profession — in pipeline trackers, and both programs below are given for the sake of the structure, not for the sake of a verdict.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Kitsu (API Zou) | документация на 08.09.2026 | Task Status | статус — СТРОКА ТАБЛИЦЫ: `name`, `short_name`, `description` («Explanation of what this status means»), `color`, `priority` (порядок показа) и семь булевых — `is_done`, `is_wip`, `is_retake`, `is_feedback_request`, `is_default`, **`is_artist_allowed`** («Artists can set tasks to this status») и **`is_client_allowed`** («Clients can set tasks to this status»). Цвет описан как «Hex color for visual identification» — то есть прямо объявлен оформлением |
-| AYON | help.ayon.app на 08.09.2026 | Statuses в Project Anatomy | у статуса есть ИМЯ (произвольное, переименовывается) и отдельное машинное `state`; сервер читает состояние, а не имя: «AYON identifies the first status with an `in_progress` state and uses it as the default status for all new publishes». Порядок статусов в анатомии — это порядок их показа по всему серверу; область действия объявляется по типам сущностей, поэтому у версии может быть свой набор состояний, а у задачи свой |
+| Kitsu (API Zou) | documentation as of 08.09.2026 | Task Status | the status is a TABLE ROW: `name`, `short_name`, `description` ("Explanation of what this status means"), `color`, `priority` (display order), and seven booleans — `is_done`, `is_wip`, `is_retake`, `is_feedback_request`, `is_default`, **`is_artist_allowed`** ("Artists can set tasks to this status") and **`is_client_allowed`** ("Clients can set tasks to this status"). The color is described as "Hex color for visual identification" — that is, it is openly declared as decoration |
+| AYON | help.ayon.app as of 08.09.2026 | Statuses in Project Anatomy | a status has a NAME (arbitrary, renamable) and a separate machine `state`; the server reads the state, not the name: "AYON identifies the first status with an `in_progress` state and uses it as the default status for all new publishes". The order of statuses in the anatomy is the order of their display across the whole server; the scope is declared by entity types, so a version may have its own set of states and a task its own |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Право сказать «принято» стоит НА СОСТОЯНИИ, а не на человеке.** У каждого
-статуса Kitsu два отдельных булевых поля — `is_artist_allowed` и
-`is_client_allowed`, — и их описание в API дословно: «Artists can set tasks to
-this status», «Clients can set tasks to this status». То есть вопрос «кто имеет
-право» отвечается КОЛОНКОЙ таблицы статусов, а не проверкой роли где-то в коде:
-автомат хранится как данные, вместе с переходами, начальным значением
-(`is_default`) и смыслом каждого значения (`description`). Цветная метка NLE
-этого не выражает в принципе — у краски нет места, где жило бы «кому можно ею
-красить».
+**1. The right to say "accepted" stands ON A STATE, not on a person.** Each Kitsu status has two separate boolean fields — `is_artist_allowed` and `is_client_allowed` — and their descriptions in the API read verbatim: "Artists can set tasks to this status," "Clients can set tasks to this status." That is, the question "who has the right" is answered by a COLUMN of the status table, not by a role check somewhere in the code: the state machine is stored as data, together with transitions, the initial value (`is_default`) and the meaning of each value (`description`). A colored NLE label does not express this in principle — paint has no place where "who is allowed to paint with it" could live.
 
-**2. Имя — для человека, `state` — для машины, и это разведено намеренно.** В
-AYON поведение сервера зависит от машинного класса состояния и от ПОРЯДКА
-статусов, но никогда от подписи: переименование ничего не меняет. В монтажных
-программах ровно наоборот — машина читает цвет (фильтры и `Select Label Group`),
-а смысл живёт в голове автора. Отсюда и вывод F-UI-005 про анонимный цвет: он не
-про палитру, он про то, что смысл оказался в единственном месте, которое не
-переживает неделю.
+**2. The name is for the person, the `state` is for the machine, and this is separated deliberately.** In AYON the server's behavior depends on the machine class of the state and on the ORDER of statuses, but never on the label: renaming changes nothing. In editing programs it is exactly the opposite — the machine reads the color (filters and `Select Label Group`), while the meaning lives in the author's head. Hence the conclusion of F-UI-005 about anonymous color: it is not about the palette, it is about the fact that the meaning ended up in the one place that does not survive a week.
 
-**3. Когда набор состояний фиксирован и непереименуем, люди гнут ярлык.**
-Frame.io отгрузила ровно три значения, и годами держащийся запрос №1 был не
-«добавьте статусы», а «дайте переименовать „Needs review“ в „Rejected“» — то
-есть людям нужно было состояние, которого в автомате нет, и они пытались
-подменить его подписью существующего. Свои статусы появились только в V4.
+**3. When the set of states is fixed and cannot be renamed, people bend the label.** Frame.io shipped exactly three values, and the request that held out for years as No. 1 was not "add statuses" but "let us rename 'Needs review' to 'Rejected'" — that is, people needed a state the state machine did not have, and they tried to substitute it with the label of an existing one. Custom statuses appeared only in V4.
 
-**4. Деталь чужой вёрстки, прямо полезная нам.** Final Cut рисует состояние
-ЛИНИЕЙ по верхней кромке кадров, а не заливкой, и ставит его на ДИАПАЗОН, а не
-на клип: состояние не отнимает у содержимого ни пикселя и не конфликтует с тем,
-что уже нарисовано внутри. Это готовый ответ на правило 13 чек-листа, добытый не
-рассуждением, а чужой практикой.
+**4. A detail of someone else's layout, directly useful to us.** Final Cut draws the state as a LINE along the top edge of the frames, not as a fill, and sets it on a RANGE, not on a clip: the state takes not a single pixel from the content and does not conflict with what is already drawn inside. This is a ready answer to rule 13 of the checklist, obtained not by reasoning but from someone else's practice.
 
-## Плюсы
+## Pros
 
-- Автомат, хранимый данными, настраивается без релиза: набор состояний,
-  начальное значение и «кому можно» — строки таблицы, а не ветки в коде.
-- Разделение «имя для человека / класс для машины» делает переименование
-  безопасным: поведение не зависит от подписи, поэтому подпись можно писать
-  на языке студии.
-- У состояния есть собственное объяснение (`description`) — смысл хранится
-  рядом со значением, а не в переписке и не в памяти автора.
-- Состояние на ДИАПАЗОНЕ и линией по кромке (FCP) добавляет канал, не отнимая
-  площади у содержимого, а фильтр «спрятать забракованное» превращает состояние
-  из украшения в оператор выборки — по нему можно не только смотреть, но и
-  искать.
-- Смена состояния — событие с адресатом: Frame.io шлёт по ней уведомление, то
-  есть переход виден не только тому, кто открыл файл.
+- An automaton stored as data can be configured without a release: the set of states, the initial value and "who is allowed" are table rows, not branches in code.
+- Separating "name for the person / class for the machine" makes renaming safe: behavior does not depend on the label, so the label can be written in the studio's language.
+- A state has its own explanation (`description`) — the meaning is stored next to the value, not in correspondence and not in the author's memory.
+- A state on a RANGE with a line along the edge (FCP) adds a channel without taking area from the content, and the "hide rejected" filter turns the state from decoration into a query operator — by it one can not only look but also search.
+- A change of state is an event with an addressee: Frame.io sends a notification about it, that is, the transition is visible not only to the one who opened the file.
 
-## Минусы
+## Cons
 
-- Половина механизма осмысленна только при двух лицах: без них
-  `is_artist_allowed` и `is_client_allowed` — два всегда-истинных поля, а
-  «принято» превращается в заметку себе.
-- Статус — свойство работы, а работа меняется. У трекеров он поэтому привязан к
-  версии/публикации; в редакторе привязывать не к чему, и «принято» молча
-  переживает перемонтаж куска, то есть врёт ровно тогда, когда важнее всего.
-- Фиксированный набор навязывает чужой конвейер, свободный набор скатывается в
-  ту же анонимную палитру, только словами. Frame.io прошла обе стадии подряд, и
-  вторая стоила ей четырёх лет.
-- Ещё один цветной канал на событии упирается в занятость каналов, разобранную
-  в F-UI-005: свободной краски на клипе нет.
-- Уведомление — половина ценности перехода, и эта половина целиком на стороне
-  сервиса: в файле проекта её выразить нечем.
+- Half of the mechanism is meaningful only with two persons: without them `is_artist_allowed` and `is_client_allowed` are two always-true fields, and "accepted" turns into a note to oneself.
+- A status is a property of the work, and work changes. Trackers therefore attach it to the version/publication; in an editor there is nothing to attach it to, and "accepted" silently survives the re-edit of a piece, that is, it lies exactly when it matters most.
+- A fixed set imposes someone else's pipeline, a free set slides into the same anonymous palette, just in words. Frame.io went through both stages in a row, and the second cost it four years.
+- One more colored channel on the event runs into the occupancy of channels analyzed in F-UI-005: there is no free paint on the clip.
+- The notification is half the value of the transition, and this half lies entirely on the service's side: there is nothing to express it with in the project file.
 
-## Что говорят пользователи
+## What users say
 
-Что происходит, когда набор состояний фиксирован (тред — запрос переименовать
-одно из трёх значений; статус «Needs review» люди пытались заставить значить
-«Rejected»):
+What happens when the set of states is fixed (the thread — a request to rename one of three values; people tried to make the status "Needs review" mean "Rejected"):
 
 > +1 on this. very counterintuitive and would even pay extra to customize these
 > choices.
@@ -128,185 +79,102 @@ Frame.io отгрузила ровно три значения, и годами 
 
 > I can confirm this is one of our #1 feature requests and that we will be
 > addressing this in the future.
-> — jhodges (Frame.io), 16.11.2023, тот же тред
+> — jhodges (Frame.io), 16.11.2023, same thread
 
 > Custom statuses are available in Frame.io V4.
-> — jhodges, 03.09.2024, тот же тред (запрос от 27.10.2023 закрыт сменой
-> мажорной версии сервиса)
+> — jhodges, 03.09.2024, same thread (the request of 27.10.2023 was closed by a major version change of the service)
 
-И со стороны редактора, у которого статуса нет вовсе, — про то, чем именно
-платят за его отсутствие:
+And from the side of an editor who has no status at all — about what exactly is paid for its absence:
 
 > There's no clean workflow for review and approvals, making it difficult to see
 > what changes have and have not been approved.
-> — Evercast, «How to collaborate in DaVinci Resolve», 26.02.2026,
+> — Evercast, "How to collaborate in DaVinci Resolve," 26.02.2026,
 > https://www.evercast.us/blog/how-to-collaborate-in-davinci-resolve
 
-Поле `trackers:` пустое сознательно: предмет «состояние приёмки» в трекерах
-монтажных программ не заводится — нарушать нечего, дефекта не бывает, а
-хотелку формулируют как «дайте цветные метки» (это уже посчитано в F-UI-005).
-Ставить сюда чужой счёт значило бы засчитать один и тот же сигнал дважды.
+The `trackers:` field is empty deliberately: the subject "acceptance state" is not registered in the trackers of editing programs — there is nothing to violate, no defect can exist, and the wish is formulated as "give us color labels" (this is already accounted for in F-UI-005). Putting someone else's bill here would mean counting the same signal twice.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- **Единственная пользовательская краска во всей программе — палитра области:**
-  `AREA_PALETTE` в `src/apps/kt-app/src/theme.rs:43` — пять пар «`#rrggbb` →
-  цвет», и ни у одной нет имени; разбор строгий, `parse_hex`
-  (`src/apps/kt-app/src/theme.rs:53`) на чужое значение возвращает `None`
-  («рисуй как обычно»). Заведена Р.38 п.1 — то есть у нас УЖЕ есть ровно тот
-  механизм, в который у всех пятерых мигрирует статус, и он у нас так же
-  анонимен.
-- **Остальная палитра занята ВИДАМИ, а не состояниями:** `LANE_VIDEO`,
-  `LANE_AUDIO`, `LANE_MORPH`, `LANE_CAMERA`, `MORPH_SLOT`, `AREA`
-  (`src/apps/kt-app/src/theme.rs:29-63`). Свободного цвета под состояние нет —
-  тот же вывод, к которому пришла F-UI-005 со стороны события.
-- **Ближайший к «объекту приёмки» предмет документа — именованная область**
-  (`MarkedArea`, `src/libs/kt-model/src/project.rs`): имя-адрес, время, набор
-  дорожек; ходит через undo, едет в файле (схема v4), ключи дорожек в ней
-  семантические. Это единственная сущность, которая адресует КУСОК РАБОТЫ, а не
-  файл и не прямоугольник.
-- **Привычка «состояние — это ТИП, а не число» у нас уже есть:** `SlotSel` в
-  `src/apps/kt-app/src/widgets.rs:272` заведён отдельным типом с прямой
-  мотивировкой — иначе смещение индексов эффектов на единицу гарантированно даёт
-  off-by-one. Ровно этим статус и отличается от подписи.
-- **Ярлык состояния обязан влезть в занятое место:** усечение имени в программе
-  одно на все точки — `widgets::elided_name`
-  (`src/apps/kt-app/src/widgets.rs:326`, правило 7 чек-листа, t255).
-- **Единственный `locked` в программе — у группы бина**: `KtApp::bin_locked`
-  (`src/apps/kt-app/src/bin_panel.rs:118`) — состояние без автора и без
-  перехода, снимается тем же кликом, что ставится. На самой карточке
-  (превью 128×72, имя, длительность) канала под состояние нет вовсе.
+- **The only user-facing paint in the whole program — the area palette:** `AREA_PALETTE` in `src/apps/kt-app/src/theme.rs:43` — five pairs "`#rrggbb` → color," and none of them has a name; the parsing is strict, `parse_hex` (`src/apps/kt-app/src/theme.rs:53`) returns `None` for a foreign value ("draw as usual"). It was introduced by R.38 item 1 — that is, we ALREADY have exactly that mechanism into which all five will migrate the status, and ours is just as anonymous.
+- **The rest of the palette is occupied by KINDS, not states:** `LANE_VIDEO`, `LANE_AUDIO`, `LANE_MORPH`, `LANE_CAMERA`, `MORPH_SLOT`, `AREA` (`src/apps/kt-app/src/theme.rs:29-63`). There is no free color for a state — the same conclusion that F-UI-005 reached from the side of the event.
+- **The document item closest to an "acceptance object" is the named area** (`MarkedArea`, `src/libs/kt-model/src/project.rs`): a name-address, time, a set of tracks; it goes through undo, travels in the file (schema v4), and the track keys within it are semantic. This is the only entity that addresses a PIECE OF WORK, not a file and not a rectangle.
+- **The habit "a state is a TYPE, not a number" already exists with us:** `SlotSel` in `src/apps/kt-app/src/widgets.rs:272` was introduced as a separate type with a direct rationale — otherwise an offset of effect indices by one is guaranteed to give an off-by-one. This is exactly what distinguishes a status from a label.
+- **A state label must fit into the occupied place:** name truncation is one thing for all points in the program — `widgets::elided_name` (`src/apps/kt-app/src/widgets.rs:326`, rule 7 of the checklist, t255).
+- **The only `locked` in the program — belongs to a bin group:** `KtApp::bin_locked` (`src/apps/kt-app/src/bin_panel.rs:118`) — a state without an author and without a transition, cleared by the same click that sets it. On the card itself (preview 128×72, name, duration) there is no channel for a state at all.
 
-БЕЗ СЕТИ: ВЫРОЖДАЕТСЯ — `src/apps/kt-app/src/theme.rs:43` — автомат остаётся целиком: закрытый набор значений, начальное, «переделать» и «готово» осмысленны и в одиночку, потому что монтажёр размечает СВОЮ работу («сюда вернуться», «этот кусок сдан»); вырождается ровно колонка прав — два поля «кому можно» схлопываются в одно лицо. Приземлиться же состоянию сегодня некуда, кроме анонимного цвета: единственная пользовательская краска в программе — пять `#rrggbb` без единого имени, то есть та самая миграция статуса в оформление у нас уже произошла, только без второго участника.
+OFFLINE: DEGENERATES — `src/apps/kt-app/src/theme.rs:43` — the automaton remains entirely: a closed set of values, the initial one, "redo" and "done" are meaningful on their own, because the editor marks THEIR OWN work ("come back here," "this piece is handed in"); what degenerates is exactly the column of rights — the two "who is allowed" fields collapse into one person. Yet today a state has nowhere to land except an anonymous color: the only user-facing paint in the program is five `#rrggbb` values without a single name, that is, the very migration of a status into decoration has already happened with us, only without a second participant.
 
-ЦЕНА СЕТИ: право сказать «принято» — права доступа — в чужом автомате разрешение стоит НА СОСТОЯНИИ (`is_artist_allowed` и `is_client_allowed` — поля статуса, а не свойства человека), поэтому без списка людей эти две колонки не выразимы ничем, и приёмка остаётся пометкой себе, а не приёмкой.
+NETWORK COST: the right to say "accepted" — access rights — in someone else's automaton the permission stands ON THE STATE (`is_artist_allowed` and `is_client_allowed` are fields of the status, not properties of a person), therefore without a list of people these two columns cannot be expressed by anything, and acceptance remains a note to oneself, not acceptance.
 
-### Чего не хватает
+### What is missing
 
-- **Объекта приёмки.** Статус — свойство работы, а работа у нас нигде не
-  названа: версии ДОКУМЕНТА в файле нет (есть только версия формата), у правки
-  нет имени, `model_rev` и `saved_rev` в файл не попадают. Поэтому «принято»
-  негде положить так, чтобы оно перестало быть верным при первой же правке
-  куска.
-- **Типа состояния.** Ни у области, ни у события, ни у медиа нет поля, где живёт
-  состояние; есть только цвет — и он, как сказано выше, анонимен.
-- **Оператора выборки.** У Final Cut состояние работает потому, что рядом есть
-  фильтр «спрятать забракованное». У нас фильтра нет ни в бине, ни на таймлайне,
-  и состояние осталось бы чисто визуальным — то есть тем же украшением.
+- **An acceptance object.** The status is a property of the work, and our work is named nowhere: there is no document version in the file (there is only the format version), an edit has no name, and `model_rev` and `saved_rev` do not get into the file. Therefore "accepted" has nowhere to be placed so that it stops being true at the first edit of the piece.
+- **A state type.** Neither an area, nor an event, nor media has a field where a state lives; there is only a color — and it, as said above, is anonymous.
+- **A query operator.** In Final Cut the state works because next to it there is a "hide rejected" filter. We have no filter either in the bin or on the timeline, and the state would remain purely visual — that is, the same decoration.
 
-### Что мешает
+### What blocks it
 
-Занятость каналов и правило 13 чек-листа: новую полосу под статус заводить
-нельзя, а вся заливка события уже говорит (идентичность исходника, выделение,
-ховер, offline, уровень, метка, область, морфер). Форму поэтому подсказывает
-чужой код: линия по кромке диапазона, а не заливка.
+The occupancy of channels and rule 13 of the checklist: a new lane for the status cannot be created, and the whole fill of the event already says everything (source identity, selection, hover, offline, level, label, area, morpher). The shape is therefore suggested by someone else's code: a line along the edge of the range, not a fill.
 
-Второе, и оно тяжелее: статус, поставленный на кусок, обязан ПРОТУХАТЬ при
-правке этого куска, иначе он врёт. Механизма «эта область изменилась с момента
-X» у нас нет, потому что у правки нет ни имени, ни базовой ревизии в документе:
-undo — это снимки целого `Project`, а не операции. Значит либо состояние
-сбрасывается любой правкой в границах области (грубо, но честно), либо предмет
-приёмки должен быть неизменяемым — а неизменяемого предмета у нас тоже пока
-нет.
+The second thing, and it is heavier: a status set on a piece must GO STALE when that piece is edited, otherwise it lies. We have no mechanism of the kind "this area has changed since X," because an edit has neither a name nor a base revision in the document: undo is snapshots of the whole `Project`, not operations. So either the state is reset by any edit within the bounds of the area (crude, but honest), or the acceptance object must be immutable — and an immutable object we do not have yet either.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **12** (repaint только при движении, ни аллокаций, ни клонов в draw-путях):
-  состояние обязано лечь в тот же кэш по `model_rev`, что и подписи, и рисоваться
-  одной линией, а не набором шейпов на кадр.
-- **Правило 13** чек-листа UI — новой полосы под состояние не будет;
-  **правило 7** — подпись состояния усекается через `elided_name`, а не
-  разносит вёрстку.
-- Формат: поле состояния у области лежит в нашей `kt`-секции, старый читатель
-  область прочтёт и без него — значит бамп по содержимому, как у `lane_order` в
-  Р.35, а не жёсткий отказ читать.
+- **12** (repaint only on motion, no allocations, no clones in draw paths): the state must land in the same cache keyed by `model_rev` as the labels, and be drawn as one line, not as a set of shapes per frame.
+- **Rule 13** of the UI checklist — there will be no new lane for the state; **rule 7** — the state label is truncated via `elided_name` and does not break the layout.
+- Format: the state field of an area lies in our `kt` section, an old reader will read the area without it — therefore a content bump, as with `lane_order` in R.35, rather than a hard refusal to read.
 
-### Чем отличается от соседних заметок
+### How it differs from neighboring notes
 
-- **F-UI-005** (цвет клипа как данные и как оформление) чинит анонимность:
-  метка получает цвет ПЛЮС имя. Но именованную метку «Принято» по-прежнему
-  ставит кто угодно, в любой момент, в любое значение, и снимает одним кликом —
-  ровно как замок дорожки в F-COL-012. Статус — не значение, а АВТОМАТ:
-  закрытый набор, начальное значение, разрешённые переходы и последствие у
-  каждого. И предмет другой: метка описывает ОБЪЕКТ («это интервью»), статус —
-  РАБОТУ над ним.
-- **F-MED-001** (умные папки и поиск) — свойства МАТЕРИАЛА и выборка по ним.
-  Статус приёмки не свойство файла: один и тот же файл в одном монтаже принят, а
-  в другом отправлен на переделку, и меняется он без изменения байтов. Положить
-  его в индекс материала нельзя физически — `.ktindex.db` ключуется абсолютным
-  путём и идентичностью файла (размер и mtime), а статус ни к тому, ни к другому
-  не привязан.
-- **F-COL-012** (владелец дорожки) — про принадлежность строки; здесь — про
-  состояние куска работы. Пересечение ровно одно: и там, и здесь без списка
-  людей вторая половина механизма вырождается, и обе заметки отказываются её
-  заводить.
+- **F-UI-005** (clip color as data and as decoration) fixes the anonymity: a label gets a color PLUS a name. But a named label "Accepted" is still set by anyone, at any moment, to any value, and removed with one click — exactly like the track lock in F-COL-012. A status is not a value but an AUTOMATON: a closed set, an initial value, allowed transitions and a consequence for each. And the subject differs: a label describes an OBJECT ("this is an interview"), a status describes the WORK on it.
+- **F-MED-001** (smart folders and search) — properties of MATERIAL and selection by them. The acceptance status is not a property of the file: the same file in one edit is accepted, and in another it is sent for redo, and it changes without any change of bytes. It cannot physically be put into the media index — `.ktindex.db` is keyed by the absolute path and the file identity (size and mtime), and a status is bound to neither.
+- **F-COL-012** (track owner) — about membership of a row; here — about the state of a piece of work. The intersection is exactly one thing: here and there, without a list of people the second half of the mechanism degenerates, and both notes refuse to introduce it.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии: тип состояния у области с переходами и сбросом при правке, затем показ линией и фильтр |
-| Где основная работа | kt-model (закрытый набор значений, начальное, команда перехода через undo, инвалидация при правке в границах области), kt-app (линия по кромке, фильтр «спрятать сданное», строка глаголов в реестре t253), kt-otio (поле в `kt`-секции и чтение старых файлов) |
-| Формат проекта | бамп по содержимому (как `lane_order` в Р.35): старая сборка область прочтёт, состояние потеряет |
-| Тесты, которые придётся написать | round-trip состояния через модель, undo и файл; «правка в границах области сбрасывает состояние»; «переход, которого нет в автомате, — ошибка команды, а не молча»; layout-тест «линия состояния не отняла у содержимого ни пикселя»; строка в таблице глаголов t253 |
-| Зависит от | F-UI-005 (там решается, чем красится событие; здесь — что означает состояние) |
-| Ломает совместимость | нет |
+| Size | M — 2 stages: a state type on an area with transitions and reset on edit, then display as a line and a filter |
+| Where the main work is | kt-model (a closed set of values, the initial one, a transition command via undo, invalidation on edit within the area's bounds), kt-app (a line along the range edge, a "hide accepted" filter, a row of verbs in the t253 registry), kt-otio (a field in the `kt` section and reading of old files) |
+| Project format | a content bump (as `lane_order` in R.35): an old build will read the area and lose the state |
+| Tests that will have to be written | a state round-trip through the model, undo and the file; "an edit within the area's bounds resets the state"; "a transition that is not in the automaton is a command error, not a silent one"; a layout test "the state line took not a single pixel from the content"; a row in the verb table t253 |
+| Depends on | F-UI-005 (there it is decided what colors the event; here — what the state means) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём локальное ядро — **состояние как ТИП у именованной области**, с закрытым
-набором значений, начальным значением, объяснением у каждого значения и сбросом
-при правке куска. Это работает в одиночку и нужно в одиночку: разметить свою же
-работу «переделать / сдано» и спрятать сданное — та же ценность, что у рейтинга
-Final Cut, только про работу, а не про материал. Рисуем линией по кромке
-диапазона: канал добавляется, пикселей у содержимого не отнимается.
+We take the local core — **the state as a TYPE on a named area**, with a closed set of values, an initial value, an explanation for each value, and a reset on an edit of the piece. This works on its own and is needed on its own: marking one's own work "redo / handed in" and hiding the handed-in items is the same value as the Final Cut rating, only about the work, not about the material. We draw it as a line along the edge of the range: a channel is added, and no pixels are taken from the content.
 
-Не берём вторую половину — **роли и права**. Объявить второго участника заметка
-не имеет права, а «кому можно ставить это состояние» без списка людей — два
-всегда-истинных поля. Формула та же, что у F-PRJ-001 и F-PRJ-003: локальное ядро
-сейчас, серверная половина — не заводится.
+We do not take the second half — **roles and rights**. This note has no right to declare a second participant, and "who is allowed to set this state" without a list of people is two always-true fields. The formula is the same as for F-PRJ-001 and F-PRJ-003: the local core now, the server half is not introduced.
 
-И отдельно, чтобы через год не спорили не о том: **цвет для статуса не годится в
-принципе**, даже именованный. Разница не в том, что цвета мало, а в том, что у
-краски нет ни закрытого набора, ни перехода, ни колонки «кому можно» — а
-статус — это ровно они. Наша собственная `AREA_PALETTE` из пяти безымянных
-`#rrggbb` показывает, куда состояние уедет, если поля под него не завести.
+And separately, so that a year from now nobody argues about the wrong thing: **color is not suitable for a status in principle**, even a named one. The difference is not that there are few colors, but that paint has neither a closed set, nor a transition, nor a "who is allowed" column — and a status is exactly those. Our own `AREA_PALETTE` of five anonymous `#rrggbb` values shows where the state will end up if fields are not created for it.
 
-## Источники
+## Sources
 
-- Frame.io Developer Forum, тред «Change the display name of the status inside
-  frame.io from Needs review to Rejected» (открыт 27.10.2023, ответы 03.11.2023,
-  16.11.2023, 01.08.2024, 03.09.2024, 17.10.2024):
+- Frame.io Developer Forum, thread "Change the display name of the status inside frame.io from Needs review to Rejected" (opened 27.10.2023, replies 03.11.2023, 16.11.2023, 01.08.2024, 03.09.2024, 17.10.2024):
   https://forum.frame.io/t/change-the-display-name-of-the-status-inside-frame-io-from-needs-review-to-rejected/840
-  (дата обращения 2026-09-08)
-- Frame.io V4 Knowledge Center, «Player page features» — три значения статуса в
-  панели Properties и уведомление участникам при смене:
+  (access date 2026-09-08)
+- Frame.io V4 Knowledge Center, "Player page features" — three status values in the Properties panel and a notification to participants on change:
   https://help.frame.io/en/articles/9105311-player-page-features (2026-09-08)
-- Kitsu / Zou API, объект Task Status — состав полей и дословные описания
-  `is_artist_allowed`, `is_client_allowed`, `color`:
+- Kitsu / Zou API, object Task Status — the set of fields and verbatim descriptions of `is_artist_allowed`, `is_client_allowed`, `color`:
   https://mintlify.wiki/cgwire/zou/api/tasks/task-status (2026-09-08).
-  Пользовательская документация Kitsu о статусах:
+  Kitsu user documentation on statuses:
   https://kitsu.cg-wire.com/status/ (2026-09-08)
-- AYON, «Project Anatomy» — статусы, их порядок и машинное `state`:
+- AYON, "Project Anatomy" — statuses, their order and the machine `state`:
   https://help.ayon.app/articles/3815114-project-anatomy (2026-09-08)
-- Apple, Final Cut Pro — «Rate clips»: зелёная и красная линия по верху кадров,
-  оценка диапазона, фильтр «Hide Rejected», `U` = Unrate:
+- Apple, Final Cut Pro — "Rate clips": a green and a red line along the top of the frames, rating of a range, the "Hide Rejected" filter, `U` = Unrate:
   https://support.apple.com/guide/final-cut-pro/rate-clips-ver30ccd91f/mac
   (2026-09-08)
-- Evercast, «How to collaborate in DaVinci Resolve», 26.02.2026 — о том, что
-  приёмки в совместном режиме Resolve нет:
+- Evercast, "How to collaborate in DaVinci Resolve," 26.02.2026 — on the fact that there is no acceptance in Resolve's collaborative mode:
   https://www.evercast.us/blog/how-to-collaborate-in-davinci-resolve (2026-09-08)
-- Строки VEGAS, Premiere, Resolve и After Effects по части цветных механизмов
-  взяты из уже проверенной разведки F-UI-005
-  (`docs/features/ui/viewer/clip-colors-and-legibility.md`), чтобы не
-  пересчитывать один и тот же факт дважды; `forum.blackmagicdesign.com` для
-  Resolve по-прежнему отдаёт 403, поэтому дословной цитаты по нему нет
-- Единица занятия у сервисов (актив у Frame.io, бин и таймлайн у Blackmagic
-  Cloud) — `docs/features/_services.md`, колонка «Единица занятия»
-- Наш код проверен чтением 08.09.2026: `src/apps/kt-app/src/theme.rs`
-  (`AREA_PALETTE`, `parse_hex`, палитра видов), `src/apps/kt-app/src/widgets.rs`
+- The rows for VEGAS, Premiere, Resolve and After Effects, as far as colored mechanisms are concerned, are taken from the already verified reconnaissance of F-UI-005
+  (`docs/features/ui/viewer/clip-colors-and-legibility.md`), so as not to recount the same fact twice; `forum.blackmagicdesign.com` for
+  Resolve still returns 403, so there is no verbatim quote from it
+- The unit of occupancy for services (the asset for Frame.io, the bin and timeline for Blackmagic Cloud) — `docs/features/_services.md`, column "Unit of occupancy"
+- Our code checked by reading on 08.09.2026: `src/apps/kt-app/src/theme.rs`
+  (`AREA_PALETTE`, `parse_hex`, the kind palette), `src/apps/kt-app/src/widgets.rs`
   (`SlotSel`, `elided_name`), `src/apps/kt-app/src/bin_panel.rs`
-  (`bin_locked`, состав карточки), `src/libs/kt-model/src/project.rs`
+  (`bin_locked`, composition of the card), `src/libs/kt-model/src/project.rs`
   (`MarkedArea`)

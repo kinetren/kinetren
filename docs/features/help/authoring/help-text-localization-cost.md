@@ -1,12 +1,12 @@
 ---
 id: F-HLP-033
-title: Цена строки справки на пяти языках
-status: кандидат
+title: The cost of a help line in five languages
+status: candidate
 priority: B
 cost: S
 category: help/authoring
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, blender-5.2]
-we_have: частично
+we_have: partial
 crates: [kt-app]
 invariants: [12]
 ui_rules: [7, 11]
@@ -18,394 +18,163 @@ trackers: [kde-bugzilla, kde-invent, openshot]
 checked: 2026-09-08
 ---
 
-# F-HLP-033 — Цена строки справки на пяти языках
+# F-HLP-033 — The cost of a help line in five languages
 
-## Суть
+## Essence
 
-Счётчик, а не обзор: во что обходится ЛЮБАЯ новая строка, которую увидит
-пользователь. Остальные заметки волны ссылаются сюда вместо того, чтобы
-пересчитывать цену по-своему и предлагать невозможное.
+A counter, not an overview: what ANY new line that the user will see costs. The other notes of this wave refer here instead of recalculating the price on their own and proposing the impossible.
 
-**Цена одной новой надписи или подсказки: 5 значений ≤ 160 символов (4 из
-них — перевод) + 1 ПОЛНЫЙ путь `k::…` в коде + 0 новых тестов при 3 зелёных
-старых (t100 глифы, t125 каталоги, t128 бюджеты); частичной поставки не
-бывает — отсутствие любого из пяти валит СБОРКУ `kt-app`. Появился в переводе
-новый иероглиф — плюс пересборка `NotoSansSC-kt.otf` и коммит бинарника
-шрифта.**
+**The cost of one new label or hint: 5 values of ≤ 160 characters (4 of them are translation) + 1 FULL path `k::…` in the code + 0 new tests with 3 old ones green (t100 glyphs, t125 catalogs, t128 budgets); a partial delivery does not exist — the absence of any of the five breaks the BUILD of `kt-app`. If a new hieroglyph appears in the translation — plus a rebuild of `NotoSansSC-kt.otf` and a commit of the font binary.**
 
-**Цена одной страницы руководства другая: предела длины нет (23 из 220
-значений лендинга уже длиннее 160), зато добавляются 8 скриншотов × 5 языков
-и версионирование, — и, в отличие от программы, частичная поставка ЕСТЬ:
-язык с покрытием < 90 % собирается, но получает `noindex`.**
+**The cost of one manual page is different: there is no length limit (23 of 220 values of the landing page are already longer than 160), but 8 screenshots × 5 languages and versioning are added — and, unlike the program, a partial delivery DOES exist: a language with coverage < 90 % is built, but gets `noindex`.**
 
-## У кого и как
+## Who has it and how
 
-Колонка «Как устроено» отвечает на один вопрос: сколько языков у ИНТЕРФЕЙСА и
-сколько у СПРАВКИ. Это почти всегда разные числа.
+The column "How it is organized" answers one question: how many languages the INTERFACE has and how many the HELP has. Those are almost always different numbers.
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it is organized |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Online Help | язык стоит в пути (`/Documentation/vegas/2026/en/`), то есть адресация как у нас; кроме `en` разведке не открылось ничего. Интерфейс исторически шире справки [НЕ ПРОВЕРЕНО: сайт вендора из этого окружения отдал 301 без тела] |
-| Adobe Premiere | 26.x | Premiere User Guide | одна живая версия на helpx, язык в пути (`/de/`, `/jp/`); часть локалей отдаёт машинный перевод с плашкой. Интерфейс переведён шире, чем справка [НЕ ПРОВЕРЕНО: `helpx.adobe.com` недоступен и напрямую, и через текст-прокси] |
-| DaVinci Resolve | 21 | Reference Manual | на странице поддержки у версии 21 ровно ОДНА позиция «DaVinci Resolve 21 Manual», языковых вариантов рядом нет (проверено 2026-09-07), тогда как язык интерфейса выбирается в настройках программы. F-HLP-032 называет тот же PDF многоязычным — расхождение не разрешено, [НЕ ПРОВЕРЕНО] |
-| Final Cut Pro | 12.3 | Final Cut Pro User Guide | **10 языков интерфейса против 7 у справки** (проверено). Интерфейс: en, fr, de, it, ja, ko, pt, zh-Hans, es, zh-Hant. Гид переведён на de, fr, ja, zh-CN, ko, es; на it, pt-BR, zh-TW, nl, ru, ar ТОТ ЖЕ адрес отдаёт АНГЛИЙСКУЮ страницу в локализованной обёртке сайта |
-| Adobe After Effects | 26.x | After Effects User Guide | то же устройство, что у Premiere: helpx, язык в пути, одна живая версия [НЕ ПРОВЕРЕНО] |
+| VEGAS Pro | 2026.0 | Online Help | the language is in the path (`/Documentation/vegas/2026/en/`), that is, addressing like ours; beyond `en` the reconnaissance found nothing. The interface has historically been wider than the help [NOT VERIFIED: the vendor site returned 301 without a body from this environment] |
+| Adobe Premiere | 26.x | Premiere User Guide | one live version on helpx, the language is in the path (`/de/`, `/jp/`); some locales return machine translation with a banner. The interface is translated more widely than the guide [NOT VERIFIED: `helpx.adobe.com` is unavailable both directly and through a text proxy] |
+| DaVinci Resolve | 21 | Reference Manual | on the support page for version 21 there is exactly ONE entry "DaVinci Resolve 21 Manual", with no language variants next to it (checked 2026-09-07), whereas the interface language is chosen in the program's settings. F-HLP-032 calls the same PDF multilingual — the discrepancy is not resolved, [NOT VERIFIED] |
+| Final Cut Pro | 12.3 | Final Cut Pro User Guide | **10 interface languages against 7 for the guide** (checked). Interface: en, fr, de, it, ja, ko, pt, zh-Hans, es, zh-Hant. The guide is translated into de, fr, ja, zh-CN, ko, es; for it, pt-BR, zh-TW, nl, ru, ar THE SAME address returns an ENGLISH page inside a localized site wrapper |
+| Adobe After Effects | 26.x | After Effects User Guide | the same structure as Premiere: helpx, language in the path, one live version [NOT VERIFIED] |
 
-Три языка интерфейса Final Cut Pro (итальянский, португальский, традиционный
-китайский) справки не имеют вовсе — и пользователь узнаёт об этом, только
-открыв страницу: заголовок сайта на его языке, текст статьи английский.
+Three interface languages of Final Cut Pro (Italian, Portuguese, traditional Chinese) have no help at all — and the user finds this out only by opening the page: the site title is in his language, the text of the article is English.
 
-**Вне ядра.** Без Blender эту фичу описать нельзя: это единственная из
-рассмотренных программ, где интерфейс и руководство переводят РАЗНЫЕ люди в
-разное время открыто, правила стыковки записаны, а результат виден на одной
-странице.
+**Outside the core.** Without Blender this feature cannot be described: it is the only one of the programs reviewed where the interface and the manual are translated by DIFFERENT people at different times, openly, the rules of joining are written down, and the result is visible on one page.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it is organized |
 |---|---|---|---|
-| Blender | 5.2 LTS | Blender Manual | сборка на язык (`docs.blender.org/manual/<lang>/latest/`), перевод — сообщество на Weblate, отдельно от перевода интерфейса. Непереведённая строка выводится ПО-АНГЛИЙСКИ внутри локализованной страницы: у немецкой сборки в оглавлении рядом стоят «Blender installieren» и «Installing from Steam», «Menüleiste» и «Status Bar» (проверено). Страницу не прячут и машинным переводом не подменяют |
+| Blender | 5.2 LTS | Blender Manual | a build per language (`docs.blender.org/manual/<lang>/latest/`), translation by the community on Weblate, separate from the interface translation. An untranslated string is output IN ENGLISH inside the localized page: in the German build the table of contents has "Blender installieren" and "Installing from Steam" next to each other, "Menüleiste" and "Status Bar" (checked). The page is not hidden and is not replaced with machine translation |
 
-Проверено запросом 2026-09-07 на одной и той же странице Video Sequencer:
-переведён заголовок у `ru`, `es`, `ja`, `zh-hans`, `it`, `vi`; английский —
-у `de`, `ar`, `fi`. Порог покрытия, ниже которого язык не публикуют, у
-Blender не найден: сборка выходит при любом проценте.
+Checked by a query on 2026-09-07 on the same page of the Video Sequencer: the heading is translated for `ru`, `es`, `ja`, `zh-hans`, `it`, `vi`; English — for `de`, `ar`, `fi`. A coverage threshold below which a language is not published was not found for Blender: the build is released at any percentage.
 
-## Фишка фишки
+## The trick behind it
 
-Механизм несёт **чужое имя** — имя, которым программу называет не программа,
-а её справка, переведённая другим человеком в другое время. Одна строка
-статусбара этого груза вместить не может по построению: она берёт имя из
-своего каталога и про существование второго каталога не знает. Согласование
-двух имён живёт не в строке, а МЕЖДУ двумя каталогами, и потому нигде.
+The mechanism carries a **foreign name** — the name by which the program is called not by the program, but by its help, translated by another person at another time. A single status-bar string cannot hold this cargo by construction: it takes the name from its own catalog and knows nothing about the existence of a second catalog. The agreement between the two names lives not in the string, but BETWEEN the two catalogs, and therefore nowhere.
 
-У нас этот груз уже упал, и это видно грепом:
+For us this cargo has already fallen, and it is visible with grep:
 
-* `site/content/en.toml`, секция `[fxdesc]`, ключ `cammotion` описывает
-  эффект **CamMotion**, которого в программе НЕТ с Р.34: он мигрирован в
-  `Pan` с кривыми, и это закреплено тестом t230
-  (`src/libs/kt-engine/tests/fx_auto_render.rs:146`). Лендинг на пяти языках
-  рекламирует эффект, которого пользователь в пикере не найдёт;
-* обратная сторона той же дыры: `Pan 3D` — флагман Р.29, единственный
-  обитатель категории `three_d` — на лендинге отсутствует. Счётчик «10
-  видео-эффектов» (`site/content/structure.toml:77`) сошёлся с реальностью
-  случайно: в программе тоже ровно 10 шаблонов, но НАБОР другой;
-* `[fxcat]` несёт 6 категорий, `[fxreg.cat]` в программе — 10. Русские
-  значения шести общих совпадают дословно («Движение», «Геометрия»,
-  «Размытие», «Ключ», «Стилизация», «Свечение») — но совпадают вручную:
-  `site/build.py` не читает `src/apps/kt-app/i18n/` ни одной строкой, и
-  наоборот тоже.
+* `site/content/en.toml`, section `[fxdesc]`, key `cammotion` describes the effect **CamMotion**, which has not existed in the program since R.34: it was migrated to `Pan` with curves, and this is fixed by test t230 (`src/libs/kt-engine/tests/fx_auto_render.rs:146`). The landing page in five languages advertises an effect that the user will not find in the picker;
+* the reverse side of the same hole: `Pan 3D` — the flagship of R.29, the sole member of the category `three_d` — is absent from the landing page. The counter "10 video effects" (`site/content/structure.toml:77`) matched reality by chance: the program also has exactly 10 templates, but the SET is different;
+* `[fxcat]` carries 6 categories, `[fxreg.cat]` in the program has 10. The Russian values of the six common ones coincide word for word ("Motion", "Geometry", "Blur", "Key", "Stylization", "Glow"), but they coincide by hand: `site/build.py` does not read `src/apps/kt-app/i18n/` in a single line, and vice versa.
 
-Blender ту же дыру знает и латает прозой, а не машиной: его руководство по
-переводу требует «UI elements should use the same translation as in Blender's
-user interface» и разрешает при расхождении оставить английский термин со
-скобками. Мы находимся ровно там же — с той разницей, что у Blender это
-записано, а у нас нет.
+Blender knows the same hole and patches it with prose, not with a machine: its translation guide requires "UI elements should use the same translation as in Blender's user interface" and, in case of a discrepancy, allows keeping the English term with the translation in parentheses. We stand exactly in the same place — with the difference that Blender has this written down and we do not.
 
-## Плюсы
+## Pros
 
-- Пропуск ключа, пустое значение, лишний ключ, расхождение плейсхолдеров,
-  PUA-символ и ASCII-запятая в арабском **валят СБОРКУ `kt-app`**, а не тест
-  и не показ: `src/apps/kt-app/build.rs`, `fail()` печатает
-  `cargo:warning=` и паникует. Переводчик физически не может выложить
-  недоделанный каталог.
-- Обратное направление закрыто t125: ключ, которого не зовёт ни один
-  ПОЛНЫЙ путь `k::секция::КОНСТАНТА` в исходниках, валит тест — каталог не
-  гниёт и переводчик не работает вхолостую.
-- Цена рантайма нулевая: таблицы статические, `tr()` отдаёт `&'static str`,
-  арабский переупорядочен ещё в `build.rs` (`bidi::visual`). Каталог не
-  задевает инвариант 12 ни одной аллокацией.
-- Сабсеты режутся ПО ФАКТУ использования: 527 кодпоинтов CJK → 99 КБ вместо
-  19 МБ (`src/apps/kt-app/assets/SUBSET-MANIFEST.txt`). Арабский взят
-  блоком целиком (U+0600…U+06FF, 63 КБ), поэтому новая арабская буква
-  пересборки НЕ требует — требует только новый иероглиф.
-- Покрытие уже измеряется бесплатно: `build.rs` печатает ключи, чьё значение
-  совпало с английским, ПОИМЁННО. Сегодня ru 9 совпадений из 517, es 31,
-  ar 8, zh-Hans 3 — то есть 94…99 % перевода интерфейса.
+- A missing key, an empty value, an extra key, a mismatch of placeholders, a PUA character and an ASCII comma in Arabic **break the BUILD of `kt-app`**, not a test and not the display: `src/apps/kt-app/build.rs`, `fail()` prints `cargo:warning=` and panics. The translator physically cannot ship an unfinished catalog.
+- The reverse direction is closed by t125: a key that no FULL path `k::section::CONSTANT` in the sources calls fails the test — the catalog does not rot and the translator does not work in vain.
+- The runtime cost is zero: the tables are static, `tr()` returns `&'static str`, Arabic is reordered already in `build.rs` (`bidi::visual`). The catalog does not touch invariant 12 with a single allocation.
+- Subsets are cut BY THE FACT of use: 527 CJK codepoints → 99 KB instead of 19 MB (`src/apps/kt-app/assets/SUBSET-MANIFEST.txt`). Arabic is taken as a whole block (U+0600…U+06FF, 63 KB), so a new Arabic letter does NOT require a rebuild — only a new hieroglyph does.
+- Coverage is already measured for free: `build.rs` prints the keys whose value coincides with the English one, BY NAME. Today ru has 9 matches out of 517, es 31, ar 8, zh-Hans 3 — that is, 94…99 % of the interface translation.
 
-## Минусы
+## Cons
 
-- **Отката нет.** «Выложим сначала en+ru, остальное потом» невозможно: нет
-  ключа — нет сборки. Пять языков покупаются вместе или не покупаются вовсе.
-- **Предел 160 символов — не про длину, а про арабский.** Комментарий в
-  `build.rs` говорит прямо: переупорядоченный абзац нельзя переносить заново,
-  каждой визуальной строке нужен свой порядок. Значит абзац прозы в каталоге
-  невозможен структурно, а не «не рекомендуется». Встроенное РУКОВОДСТВО в
-  `i18n/*.toml` не поместится никогда.
-- **Настоящий потолок показа ниже 160 и его никто не меряет.** t128 меряет
-  три заголовка меню (160 px), восемь строк перф-панели (190 px) и один
-  чекбокс (380 px) — и ни одной из 85 подсказок. Самая длинная сегодня —
-  `mrph.src_slot_hint` 114 символов (en) и `tl.hint.empty` 124 (es); при
-  минимальном окне 640×640 (`app.rs:5245`) такая строка уже не влезает в
-  полосу состояния.
-- **Направление «код → каталог» не закрыто ничем.** t131 ловит только
-  КИРИЛЛИЦУ в литералах; английский литерал, показанный пользователю мимо
-  каталога, не ловит никто. Ровно так в статусбар уезжают английские строки
-  `thiserror` (`ExportError`, `Error::KtMetaBroken`).
-- Новый иероглиф = пересборка сабсета + коммит бинарного шрифта в репозиторий
-  + системный Noto на машине агента. `scripts/subset-fonts.py --check` этого
-  не сторожит автоматически: краснеет t100, и уже по нему надо догадаться.
-- Сабсет считается по каталогам ПРОГРАММЫ. Иероглиф, появившийся только в
-  `site/content/zh-Hans.toml`, в шрифт программы не попадёт — у сайта свой
-  набор шрифтов.
-- **Фолбэк «нет перевода → английский» стоит не меньше, чем его отсутствие.**
-  Трекер показал цену прямо: Kdenlive #510090 «Kdenlive incorrectly uses English
-  as fallback language for Chinese interface elements» закрыт WORKSFORME, то
-  есть смешанный язык пользователь читает как дефект, а сопровождающий — как
-  норму, и спор не разрешается. Наше «нет ключа — нет сборки» покупает именно
-  отсутствие этого класса; заводить фолбэк — значит заводить и его.
-- **Порог покрытия наказывает переводчика, а не автора.** Kdenlive #463084:
-  «Slovenian help for KDEnlive is not built, even if translation exists» —
-  перевод справки был, а сборки на язык не было. Наш `translated_min = 0.9`
-  устроен так же: язык с 89 % получает `noindex`, и переводчик узнаёт об этом
-  не от инструмента, а по отсутствию своей страницы в `sitemap.xml`.
+- **There is no rollback.** "Let's ship en+ru first, the rest later" is impossible: no key — no build. Five languages are bought together or not bought at all.
+- **The limit of 160 characters is not about length, but about Arabic.** The comment in `build.rs` says it directly: a reordered paragraph cannot be re-wrapped, each visual line needs its own order. So a paragraph of prose in the catalog is impossible structurally, not "not recommended". The built-in MANUAL in `i18n/*.toml` will never fit.
+- **The real display ceiling is below 160, and nobody measures it.** t128 measures three menu headings (160 px), eight lines of the performance panel (190 px) and one checkbox (380 px) — and not one of the 85 hints. The longest today is `mrph.src_slot_hint` with 114 characters (en) and `tl.hint.empty` with 124 (es); at the minimum window size 640×640 (`app.rs:5245`) such a line no longer fits in the status strip.
+- **The direction "code → catalog" is not closed by anything.** t131 catches only CYRILLIC in literals; an English literal shown to the user outside the catalog is caught by no one. This is exactly how English strings from `thiserror` (`ExportError`, `Error::KtMetaBroken`) get into the status bar.
+- A new hieroglyph = rebuild of the subset + commit of the binary font into the repository + the system Noto on the agent's machine. `scripts/subset-fonts.py --check` does not guard this automatically: t100 turns red, and one has to guess the cause from it.
+- The subset is computed from the catalogs of the PROGRAM. A hieroglyph that appears only in `site/content/zh-Hans.toml` will not get into the program's font — the site has its own set of fonts.
+- **The fallback "no translation → English" costs no less than its absence.** The tracker showed the price directly: Kdenlive #510090 "Kdenlive incorrectly uses English as fallback language for Chinese interface elements" is closed as WORKSFORME, that is, a mixed language is read by the user as a defect, and by the maintainer as the norm, and the dispute is not resolved. Our "no key — no build" buys precisely the absence of this class; introducing a fallback means introducing this too.
+- **The coverage threshold punishes the translator, not the author.** Kdenlive #463084: "Slovenian help for KDEnlive is not built, even if translation exists" — the help translation existed, but there was no build for that language. Our `translated_min = 0.9` works the same way: a language with 89 % gets `noindex`, and the translator learns about it not from the tool, but from the absence of his page in `sitemap.xml`.
 
-## Что говорят пользователи
+## What users say
 
-СИГНАЛ: перевод и справка как отдельная статья расхода — 131 задача в kde-bugzilla, `translat|locale|language|i18n|l10n|\brtl\b|documentation|\bdocs\b|user guide|\bmanual\b`; доля 2.1% против 1.2% в kde-invent (26 задач из 2217)
+SIGNAL: translation and help as a separate item of expense — 131 tasks in kde-bugzilla, `translat|locale|language|i18n|l10n|\brtl\b|documentation|\bdocs\b|user guide|\bmanual\b`; share 2.1 % against 1.2 % in kde-invent (26 tasks out of 2217)
 
-СИГНАЛ: цена не в починке, а в объёме — 89 задач в kde-bugzilla, `\b(translation|documentation)\b`; доля 1.4% против 0.4% в kde-invent, а настоящих фиксов среди закрытых 57% против 47% по всему трекеру
+SIGNAL: the price is not in the fixing, but in the volume — 89 tasks in kde-bugzilla, `\b(translation|documentation)\b`; share 1.4 % against 0.4 % in kde-invent, and among the closed ones the share of real fixes is 57 % against 47 % across the whole tracker.
 
-Второй счёт — тот, ради которого заметка вообще смотрит в трекер. У Kdenlive
-перевод и документация — не тема, а **два отдельных компонента** Bugzilla:
-`Translation` (38 задач) и `Documentation` (45), вместе 83 из 6346. Их
-устройство противоположно всему остальному трекеру: открытыми висят **3 задачи
-из 83 = 3.6% против 14.0%** (891 из 6346) по трекеру, а настоящих фиксов среди
-закрытых 56% против 47%. То есть перевод чинят охотно и не копят — цена лежит
-не в починке, а в объёме и в том, что объём возвращается с каждой новой
-строкой. Сравнивать доли фиксов при этом можно только внутри Bugzilla: у
-GitHub/GitLab-дампов закрытие без пометки неотличимо от фикса, и база у них
-1.00 — счёт «фиксы» там ничего не измеряет.
+The second count is the one for which the note looks into the tracker at all. In Kdenlive translation and documentation are not a topic, but **two separate components** of Bugzilla: `Translation` (38 tasks) and `Documentation` (45), together 83 out of 6346. Their structure is the opposite of the rest of the tracker: open there hang **3 tasks out of 83 = 3.6 % against 14.0 %** (891 out of 6346) across the tracker, and among the closed ones the share of real fixes is 56 % against 47 %. That is, translation is fixed willingly and not accumulated — the price lies not in the fixing, but in the volume, and in the fact that the volume returns with every new line. At the same time, shares of fixes can be compared only within Bugzilla: in GitHub/GitLab dumps, closing without a label is indistinguishable from a fix, and the baseline there is 1.00 — the "fixes" count measures nothing there.
 
-Дословно — из руководства переводчикам самого Blender, то есть от тех, кто
-эту работу и делает:
+Verbatim — from the translators' guide of Blender itself, that is, from those who do this work:
 
 > We expect our readers to use the English version of Blender, not a
 > translated one.
-> — Blender 5.2 LTS Manual, Style Guide для переводчиков, 2026-09-07,
+> — Blender 5.2 LTS Manual, Style Guide for translators, 2026-09-07,
 > https://docs.blender.org/manual/en/latest/contribute/translate_manual/style_guide.html
 
-Там же, про то, как расходятся имена: «UI elements should use the same
-translation as in Blender's user interface. If the UI element has not yet been
-translated, keep the English term and add the translation in parentheses.»
+There, on how names diverge: "UI elements should use the same translation as in Blender's user interface. If the UI element has not yet been translated, keep the English term and add the translation in parentheses."
 
-Живая жалоба ровно на тот разрыв, который считает эта заметка, нашлась в
-трекере OpenShot: интерфейс переведён, справка нет, и списки поддерживаемых
-языков у программы и у сайта — разные. Шаг воспроизведения там записан одной
-строкой: «Click on 'support>User guide' … User guide remains in English».
+A live complaint about exactly the gap that this note counts was found in the OpenShot tracker: the interface is translated, the help is not, and the lists of supported languages of the program and of the site are different. The reproduction step there is written in one line: "Click on 'support>User guide' … User guide remains in English".
 
-> «There seems to be inconsistency between which languages are supported. …
-> Expect the manual to be in selected language (Dutch/French/?)»
-> — OpenShot, issue #3406 «Language of Program vs website vs listed as
-> supported», 24.04.2020,
-> https://github.com/OpenShot/openshot-qt/issues/3406 (обращение 2026-09-08)
+> "There seems to be inconsistency between which languages are supported. …
+> Expect the manual to be in selected language (Dutch/French/?)"
+> — OpenShot, issue #3406 "Language of Program vs website vs listed as supported", 24.04.2020,
+> https://github.com/OpenShot/openshot-qt/issues/3406 (accessed 2026-09-08)
 
-Заголовки компонента `Translation` у Kdenlive читаются как список наших
-собственных рисков, и все три — дословно: `Slovenian help for KDEnlive is not
-built, even if translation exists` (#463084, FIXED — перевод справки на язык
-существовал, а сборка на этот язык не выходила), `Kdenlive incorrectly uses
-English as fallback language for Chinese interface elements` (#510090, закрыта
-WORKSFORME), `Some effects/composite descriptions, option names and option
-tooltips show always in English` (#512355, FIXED).
+The titles of the `Translation` component at Kdenlive read like a list of our own risks, and all three — verbatim: `Slovenian help for KDEnlive is not built, even if translation exists` (#463084, FIXED — the help translation for the language existed, but a build for that language did not come out), `Kdenlive incorrectly uses English as fallback language for Chinese interface elements` (#510090, closed WORKSFORME), `Some effects/composite descriptions, option names and option tooltips show always in English` (#512355, FIXED).
 
-Чего найти не удалось: живой жалобы на расхождение справки и интерфейса у
-Blender и у платной пятёрки. Бюджет `WebSearch` в сессии исчерпан (200 из 200);
-`helpx.adobe.com` не открывается ни напрямую, ни через текст-прокси
-`r.jina.ai` (HTTP/2 framing error), `docs.blender.org` и `translate.blender.org`
-отдают Cloudflare-заглушку на прямой `curl`; Discourse-API `blenderartists.org`
-опрошен шестью запросами («manual not translated language», «documentation in
-my language manual», «switched back to english interface», «changed blender to
-english tutorials», «interface language english easier find», «english manual
-difficult language documentation») — релевантных тредов в выдаче нет.
+What could not be found: a live complaint about the discrepancy between the help and the interface at Blender and at the paid five. The `WebSearch` budget in the session is exhausted (200 of 200); `helpx.adobe.com` does not open either directly or through the text proxy `r.jina.ai` (HTTP/2 framing error), `docs.blender.org` and `translate.blender.org` return a Cloudflare stub on a direct `curl`; the Discourse API of `blenderartists.org` was queried with six requests ("manual not translated language", "documentation in my language manual", "switched back to english interface", "changed blender to english tutorials", "interface language english easier find", "english manual difficult language documentation") — no relevant threads in the results.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-АДРЕС: `src/apps/kt-app/src/i18n_tests.rs` (t131) — класс «интерфейс переведён,
-а часть текста всё равно английская» у нас ВОЗМОЖЕН, и его не ловит ничто: t131
-роняет тест только на КИРИЛЛИЦУ в литерале `.rs`, поэтому английская строка,
-показанная пользователю мимо каталога, проходит насквозь во всех пяти языках —
-ровно так доезжают `#[error("project uses 3D effects on {0} clip(s), but no GPU
-is available")]` (`src/libs/kt-engine/src/export.rs:292`) и
-`Error::KtMetaBroken` (`src/libs/kt-otio/src/lib.rs:59`). У Kdenlive это не
-гипотеза, а три отдельные задачи компонента `Translation` (#502594, #512355,
-#473086 — описания эффектов, имена опций и тултипы «show always in English»),
-и все три закрыты FIXED: класс реален, чинится и возвращается.
+ADDRESS: `src/apps/kt-app/src/i18n_tests.rs` (t131) — the class "the interface is translated, but part of the text is still English" is POSSIBLE with us, and nothing catches it: t131 fails the test only on CYRILLIC in a literal of a `.rs` file, so an English string shown to the user outside the catalog passes through in all five languages — exactly this is how `#[error("project uses 3D effects on {0} clip(s), but no GPU is available")]` (`src/libs/kt-engine/src/export.rs:292`) and `Error::KtMetaBroken` (`src/libs/kt-otio/src/lib.rs:59`) get through. At Kdenlive this is not a hypothesis but three separate tasks of the `Translation` component (#502594, #512355, #473086 — effect descriptions, option names and tooltips "show always in English"), and all three are closed as FIXED: the class is real, it gets fixed, and it returns.
 
-### Что уже есть
+### What already exists
 
-Числа посчитаны по коду 2026-09-07, не по памяти.
+The numbers are counted from the code on 2026-09-07, not from memory.
 
-* **522 ключа** в каждом из пяти каталогов `src/apps/kt-app/i18n/*.toml`
-  (en/ru/es/zh-Hans/ar); `en.toml` — эталон набора И порядка, индекс в нём и
-  есть `Key`.
-* **85 из 522 — подсказки**. Рецепт счёта: секции `[tb]` 32, `[tl.hint]` 21,
-  `[hint]` 11 плюс ключи вида `*_hint`/`hint_*` в других секциях — `[fx]` 13,
-  `[mrph]` 4, `[bin]` 3, `[cam]` 1. Если считать только три выделенные
-  секции, получится 64; расхождение соседних заметок волны — про эту границу,
-  а не про разные данные.
-* **Предел значения — `MAX_VALUE_CHARS = 160`**,
-  `src/apps/kt-app/build.rs:42`. Превышение валит СБОРКУ (не тест):
-  `check_value` зовёт `fail()`, тот печатает `cargo:warning=` и паникует.
-  Сегодня в потолок никто не упирается: максимум en 139, ru 128, es 145
-  (`mrph.below_note`, `es.toml:242` — единственное значение длиннее 140),
-  ar 136, zh-Hans 60 символов. Дорасти оно до 173 — сборка сказала бы
-  `i18n/es.toml:242: "mrph.below_note" is 173 chars, limit is 160 (split it
-  into two keys)`.
-* **Что ещё валит сборку** (всё в `build.rs`): пропущенный ключ
-  (`missing key "…"`), значение, которого нет в `en.toml`
-  (`key "…" is not in en.toml`), пустое значение (`is empty`), разный набор
-  плейсхолдеров с английским, PUA-кодпоинт U+E000…U+F8FF
-  (`icons are composed in Rust, not in catalogs`), ASCII `,`/`;`/`?` в
-  арабском значении (`use Arabic punctuation (U+060C, U+061B, U+061F)`),
-  различающиеся самоназвания `lang.*`, и больше 65535 ключей.
-* **t100** (`src/apps/kt-app/src/font_tests.rs`) требует глиф на КАЖДЫЙ
-  неASCII-символ каталогов и исходников. Шрифты берутся ровно те, что грузит
-  `install_fonts`: дефолтная связка egui (Ubuntu-Light, NotoEmoji,
-  emoji-icon-font) плюс `icons::VENDORED` — Phosphor, `NotoSansSC-kt.otf`,
-  `NotoSansArabic-kt.ttf`. При провале печатает
-  `символы без глифа в шрифтах программы (пользователь увидит квадрат):
-  U+XXXX 'ч' — ru.toml:317`. У теста есть самопроверка: `я`, `ñ`, `日`, `ب`
-  обязаны быть покрыты, а тайская `ก` U+0E01 — нет.
-* **t125** (`src/apps/kt-app/src/i18n_tests.rs`) — целостность
-  СГЕНЕРИРОВАННЫХ таблиц плюс обратная проверка: ключ, которого не зовёт ни
-  один полный путь `k::…` в исходниках, роняет тест
-  (`catalog keys nobody uses (delete them or wire them up)`). Сокращённый
-  `use` прячет ключ — поэтому путь пишется целиком.
-* **t128** (`src/apps/kt-app/src/layout_tests.rs:1899`) — бюджеты в
-  ПИКСЕЛЯХ во всех пяти языках: три заголовка меню ≤ 160 px, восемь
-  собранных строк перф-панели ≤ 190 px, чекбокс экономного UI ≤ 380 px.
-  Правится переводом, а не расширением панели: пределы 420 и 90 px стоят по
-  прямым просьбам пользователя.
-* **t131** — исходный язык литералов английский: кириллица в строковом
-  литерале любого `.rs` (кроме `*_tests.rs` и `tests/`) роняет тест.
-* **t126/t127** — арабский переупорядочивается ПОСЛОВНО (буквы внутри слова
-  логические, их развернёт harfrust), секции `fxreg.kw.`/`lang.` не
-  переупорядочиваются вовсе; t127 гоняет вёрстку во всех пяти языках, t129 —
-  сохранность позиций окон при смене языка.
-* **Сабсеты** — `src/scripts/subset-fonts.py`. Пересборка нужна ТОЛЬКО при
-  новом символе из диапазонов CJK (U+2E80…9FFF, 3000…303F, 3400…4DBF,
-  FF00…FFEF): арабский взят блоком U+0600…U+06FF целиком. Прочее (турецкая
-  `ğ`, типографская кавычка) обязано найтись в Ubuntu-Light, иначе скрипт
-  выходит с `characters covered by no font`. Есть режим `--check`, который
-  говорит `subsets are stale, rerun without --check`.
-* **Конвейер сайта** — см. F-HLP-032; здесь важна одна деталь:
-  `translated_min = 0.9` (`site/content/structure.toml:23`) и авто-`noindex`
-  в `site/build.py:805`. Механизм ЖИВОЙ и сейчас работает против нас: `[fxdesc]`
-  и весь лендинг переведены на ru (98 %) и НЕ переведены на es/zh-Hans/ar —
-  там лежат посимвольные копии английского, 0 %. В `site/dist/sitemap.xml`
-  сегодня три записи — корень, `en` и `ru`; трёх остальных языков в нём нет.
+* **522 keys** in each of the five catalogs `src/apps/kt-app/i18n/*.toml` (en/ru/es/zh-Hans/ar); `en.toml` is the reference for the set AND the order, and the index in it is the `Key`.
+* **85 out of 522 are hints.** The counting recipe: sections `[tb]` 32, `[tl.hint]` 21, `[hint]` 11 plus keys of the form `*_hint`/`hint_*` in other sections — `[fx]` 13, `[mrph]` 4, `[bin]` 3, `[cam]` 1. If only the three dedicated sections are counted, one gets 64; the discrepancy of the neighboring notes of the wave is about this boundary, not about different data.
+* **The value limit is `MAX_VALUE_CHARS = 160`**, `src/apps/kt-app/build.rs:42`. Exceeding it breaks the BUILD (not the test): `check_value` calls `fail()`, which prints `cargo:warning=` and panics. Today nobody hits the ceiling: the maximum is en 139, ru 128, es 145 (`mrph.below_note`, `es.toml:242` — the only value longer than 140), ar 136, zh-Hans 60 characters. If it grew to 173, the build would say `i18n/es.toml:242: "mrph.below_note" is 173 chars, limit is 160 (split it into two keys)`.
+* **What else breaks the build** (all in `build.rs`): a missing key (`missing key "…"`), a value that is not in `en.toml` (`key "…" is not in en.toml`), an empty value (`is empty`), a set of placeholders different from the English one, a PUA codepoint U+E000…U+F8FF (`icons are composed in Rust, not in catalogs`), an ASCII `,`/`;`/`?` in an Arabic value (`use Arabic punctuation (U+060C, U+061B, U+061F)`), differing self-names of `lang.*`, and more than 65535 keys.
+* **t100** (`src/apps/kt-app/src/font_tests.rs`) requires a glyph for EVERY non-ASCII character of the catalogs and sources. The fonts are taken exactly those that `install_fonts` loads: the default egui bundle (Ubuntu-Light, NotoEmoji, emoji-icon-font) plus `icons::VENDORED` — Phosphor, `NotoSansSC-kt.otf`, `NotoSansArabic-kt.ttf`. On failure it prints `символы без глифа в шрифтах программы (пользователь увидит квадрат): U+XXXX 'ч' — ru.toml:317` (characters without a glyph in the program's fonts (the user will see a square)). The test has a self-check: `я`, `ñ`, `日`, `ب` must be covered, while the Thai `ก` U+0E01 must not be.
+* **t125** (`src/apps/kt-app/src/i18n_tests.rs`) — integrity of the GENERATED tables plus a reverse check: a key that no full path `k::…` in the sources calls fails the test (`catalog keys nobody uses (delete them or wire them up)`). A shortened `use` hides a key — therefore the path is written in full.
+* **t128** (`src/apps/kt-app/src/layout_tests.rs:1899`) — budgets in PIXELS in all five languages: three menu headings ≤ 160 px, eight assembled lines of the performance panel ≤ 190 px, the checkbox of the economical UI ≤ 380 px. It is fixed by translation, not by widening the panel: the limits 420 and 90 px stand by the owner's direct requests.
+* **t131** — the source language of the literals is English: Cyrillic in a string literal of any `.rs` file (except `*_tests.rs` and `tests/`) fails the test.
+* **t126/t127** — Arabic is reordered WORD BY WORD (letters inside a word are logical, harfrust will shape them), the sections `fxreg.kw.`/`lang.` are not reordered at all; t127 runs the layout in all five languages, t129 — the preservation of window positions when the language changes.
+* **Subsets** — `src/scripts/subset-fonts.py`. A rebuild is needed ONLY for a new symbol from the CJK ranges (U+2E80…9FFF, 3000…303F, 3400…4DBF, FF00…FFEF): Arabic is taken as the whole block U+0600…U+06FF. Everything else (the Turkish `ğ`, a typographic quote) must be found in Ubuntu-Light, otherwise the script exits with `characters covered by no font`. There is a `--check` mode, which says `subsets are stale, rerun without --check`.
+* **The site pipeline** — see F-HLP-032; one detail here is important: `translated_min = 0.9` (`site/content/structure.toml:23`) and the automatic `noindex` in `site/build.py:805`. The mechanism is ALIVE and works against us right now: `[fxdesc]` and the whole landing page are translated into ru (98 %) and NOT translated into es/zh-Hans/ar — there lie character-by-character copies of the English, 0 %. Today `site/dist/sitemap.xml` has three entries — the root, `en` and `ru`; the other three languages are not in it.
 
-### Чего не хватает
+### What is missing
 
-1. Машинной сверки лендинга и программы: имён эффектов, категорий и того,
-   что описание вообще относится к существующему эффекту.
-2. Переноса `[fxdesc]` в программу. Десять описаний укладываются в 160
-   символов с запасом (максимум ru — 93 символа), но «перевод уже оплачен»
-   неверно: оплачены en и ru, три языка придётся переводить, 30 значений.
-3. Места для прозы. Каталог программы под руководство не годится
-   структурно — 160 символов и построчный арабский.
+1. A machine check of the landing page against the program: the names of effects, the categories, and whether the description refers to an existing effect at all.
+2. Transfer of `[fxdesc]` into the program. Ten descriptions fit into 160 characters with room to spare (the maximum ru is 93 characters), but "the translation is already paid for" is wrong: en and ru are paid for, three languages would have to be translated, 30 values.
+3. A place for prose. The program's catalog is structurally unfit for a manual — 160 characters and line-by-line Arabic.
 
-### Что мешает
+### What gets in the way
 
-Арабский. Наш `bidi::visual` переставляет слова ОДИН раз на сборке и отдаёт
-готовую строку; это дёшево и работает ровно до тех пор, пока строка
-однострочная. Многострочный абзац потребует настоящего bidi на этапе
-раскладки (порядок зависит от того, где легли переносы), то есть другой
-путь показа текста, а не другой файл с текстом. Порог `translated_min`
-переносится в программу только наполовину: измерять покрытие `build.rs` уже
-умеет, а «не показывать недопереведённое» в GUI смысла не имеет — кнопку не
-спрячешь. Осмысленный аналог — «показать по-английски», а его сегодня нет
-вообще: таблица на язык плотная, фолбэка на английский по ключу не
-существует, потому что отсутствующий ключ до рантайма не доживает.
+Arabic. Our `bidi::visual` reorders words ONCE at build time and hands over a ready string; this is cheap and works exactly as long as the string is single-line. A multi-line paragraph would require real bidi at the layout stage (the order depends on where the line breaks fall), that is, a different text-display path, not a different text file. The `translated_min` threshold transfers to the program only halfway: `build.rs` already knows how to measure coverage, but "do not show the under-translated" makes no sense in the GUI — a button cannot be hidden. The meaningful analogue — "show in English" — does not exist today at all: the table per language is dense, there is no fallback to English by key, because a missing key does not survive to runtime.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-**Инвариант 12** — ради него таблицы статические и `tr()` не аллоцирует;
-любой будущий фолбэк «нет перевода → английский» обязан остаться просмотром
-двух статических таблиц, а не поиском по словарю в draw-пути. Правила UI
-**7** (текст помещается) и **11** (глифы проверены) — это ровно t128 и t100.
-Правило **20** (ничего не отрастает само) объясняет, почему сабсеты
-коммитятся, а не собираются на лету.
+**Invariant 12** — for its sake the tables are static and `tr()` does not allocate; any future fallback "no translation → English" must remain a lookup in two static tables, not a search in a dictionary in the draw path. UI rules **7** (the text fits) and **11** (glyphs are verified) — these are exactly t128 and t100. Rule **20** (nothing grows by itself) explains why the subsets are committed rather than assembled on the fly.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия раунда |
-| Где основная работа | `src/apps/kt-app/src/i18n_tests.rs` (новый тест) и `site/content/*.toml` (починка того, что тест покажет) |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | один: сверка имён/категорий эффектов лендинга и реестра программы. Бюджет ширины подсказки — не сюда (F-HLP-002) |
-| Зависит от | F-HLP-032 (конвейер сайта), F-HLP-002 (полоса состояния) |
-| Ломает совместимость | нет |
+| Volume | S — one stage of a round |
+| Where the main work is | `src/apps/kt-app/src/i18n_tests.rs` (a new test) and `site/content/*.toml` (fixing what the test shows) |
+| Project format | does not touch it |
+| Tests that must be written | one: a check of the names/categories of the landing page's effects against the program's registry. The budget for hint width does not go here (F-HLP-002) |
+| Depends on | F-HLP-032 (the site pipeline), F-HLP-002 (the status strip) |
+| Breaks compatibility | no |
 
-Отдельно: перенос `[fxdesc]` в программу этой заметкой не назначается — у
-него своя цена (30 новых значений и 10 новых ключей) и своё место в раунде.
+Separately: the transfer of `[fxdesc]` into the program is not assigned by this note — it has its own price (30 new values and 10 new keys) and its own place in the round.
 
-## Вердикт
+## Verdict
 
-Заметка сама по себе ничего не строит: она счётчик, и её польза — в том,
-чтобы остальные 32 не изобретали цену заново. Но разведка нашла в счётчике
-дыру, у которой есть адрес.
+The note by itself builds nothing: it is a counter, and its use is that the other 32 do not reinvent the price. But the reconnaissance found a hole in the counter, and the hole has an address.
 
-ТЕСТ: i18n_tests::landing_and_app_name_the_same_effects — сегодня падает
-трижды: `[fxdesc].cammotion` описывает эффект CamMotion, мигрированный в
-`Pan` ещё в Р.34, `[fxcat]` знает 6 категорий из 10, а `Pan 3D` из категории
-`three_d` на лендинге отсутствует вовсе; сверять их нечем, потому что
-`site/build.py` не читает каталоги программы, а `fx_registry.rs` не знает про
-сайт.
+TEST: i18n_tests::landing_and_app_name_the_same_effects — today it fails three times: `[fxdesc].cammotion` describes the effect CamMotion, migrated to `Pan` as early as R.34, `[fxcat]` knows 6 categories out of 10, and `Pan 3D` from the category `three_d` is absent from the landing page altogether; there is nothing to compare them with, because `site/build.py` does not read the program's catalogs, and `fx_registry.rs` knows nothing about the site.
 
-Цена, которую цитируют остальные заметки, — две выделенные строки в «Сути».
-Главное в них не число 160 (в него сегодня никто не упирается), а
-отсутствие частичной поставки: пять языков покупаются вместе.
+The price that the other notes quote is the two highlighted lines in "Essence". What matters in them is not the number 160 (today no one hits it), but the absence of partial delivery: five languages are bought together.
 
-## Источники
+## Sources
 
-- `src/apps/kt-app/build.rs`, `src/apps/kt-app/i18n/{en,ru,es,zh-Hans,ar}.toml`,
-  `src/apps/kt-app/i18n/README.md`, `src/apps/kt-app/src/font_tests.rs`,
-  `src/apps/kt-app/src/i18n_tests.rs`, `src/apps/kt-app/src/layout_tests.rs`,
-  `src/apps/kt-app/src/i18n/mod.rs`, `src/apps/kt-app/src/fx_registry.rs`,
-  `src/scripts/subset-fonts.py`, `src/apps/kt-app/assets/SUBSET-MANIFEST.txt`,
-  `site/build.py`, `site/content/*.toml` — прочитаны 2026-09-07, все числа
-  посчитаны скриптом по этим файлам
-- Blender Manual, Style Guide для переводчиков:
-  https://docs.blender.org/manual/en/latest/contribute/translate_manual/style_guide.html
-  (дата обращения 2026-09-07). Проверка живьём для софта вне ядра не
-  предполагалась; страницы читались через текст-прокси `r.jina.ai` —
-  `docs.blender.org` на прямой `curl` отдаёт Cloudflare 403. Это уточняет
-  запись F-HLP-032 «`docs.blender.org` отдал 403»: обход есть, и
-  версионно-языковая адресация `manual/<язык>/latest/` теперь проверена
-  запросом, а не взята из документации
-- Blender Manual, замер фолбэка: страница
-  `editors/video_sequencer/index.html` в сборках ru/es/ja/zh-hans/it/vi имеет
-  переведённый заголовок, в de/ar/fi — английский (2026-09-07)
-- Final Cut Pro User Guide, замер языков:
-  https://support.apple.com/de-de/guide/final-cut-pro/welcome/mac и те же
-  адреса для fr-fr, ja-jp, zh-cn, ko-kr, es-es (переведены) против it-it,
-  pt-br, nl-nl, ar-ae, ru-ru, zh-tw (английский текст в локализованной
-  обёртке); проверено на двух разных страницах гида, 2026-09-07
-- Языки интерфейса Final Cut Pro:
-  https://apps.apple.com/us/app/final-cut-pro/id424389933 — «English, French,
-  German, Italian, Japanese, Korean, Portuguese, Simplified Chinese, Spanish,
-  Traditional Chinese» (дата обращения 2026-09-07)
-- DaVinci Resolve, состав изданий справки:
-  https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion
-  (дата обращения 2026-09-07)
-- Трекеры (третья волна, Р.41): выгрузки из
-  `~/.cache/kinotrain/trackers/{kde-bugzilla,kde-invent,openshot}.jsonl`, счёт
-  воспроизводится `python3 src/scripts/tracker-rank.py --query …` с фильтрами
-  из строк `СИГНАЛ:`; компоненты `Translation` (38) и `Documentation` (45)
-  считаны по полю `component` дампа kde-bugzilla (2026-09-08)
-- https://github.com/OpenShot/openshot-qt/issues/3406 — OpenShot, «Language of
-  Program vs website vs listed as supported»: интерфейс переведён, `User guide
-  remains in English` (обращение 2026-09-08)
-- https://bugs.kde.org/show_bug.cgi?id=463084 — Kdenlive, «Slovenian help for
-  KDEnlive is not built, even if translation exists» (обращение 2026-09-08)
-- https://bugs.kde.org/show_bug.cgi?id=510090 — Kdenlive, «Kdenlive incorrectly
-  uses English as fallback language for Chinese interface elements», закрыта
-  WORKSFORME (обращение 2026-09-08)
-- https://bugs.kde.org/show_bug.cgi?id=512355 — Kdenlive, «Some
-  effects/composite descriptions, option names and option tooltips show always
-  in English» (обращение 2026-09-08). Тела задач Bugzilla в дампе пусты — REST
-  `/bug` их не отдаёт, поэтому дословно цитируются заголовки
-- Premiere, After Effects и VEGAS Pro: **по документации, живьём не
-  проверялось** — `helpx.adobe.com` недоступен из этого окружения ни
-  напрямую, ни через `r.jina.ai`, `vegascreativesoftware.com` отдаёт 301 без
-  тела. Все утверждения по ним помечены `[НЕ ПРОВЕРЕНО]`
+- `src/apps/kt-app/build.rs`, `src/apps/kt-app/i18n/{en,ru,es,zh-Hans,ar}.toml`, `src/apps/kt-app/i18n/README.md`, `src/apps/kt-app/src/font_tests.rs`, `src/apps/kt-app/src/i18n_tests.rs`, `src/apps/kt-app/src/layout_tests.rs`, `src/apps/kt-app/src/i18n/mod.rs`, `src/apps/kt-app/src/fx_registry.rs`, `src/scripts/subset-fonts.py`, `src/apps/kt-app/assets/SUBSET-MANIFEST.txt`, `site/build.py`, `site/content/*.toml` — read 2026-09-07, all numbers counted by a script over these files
+- Blender Manual, Style Guide for translators: https://docs.blender.org/manual/en/latest/contribute/translate_manual/style_guide.html (accessed 2026-09-07). Live verification was not planned for software outside the core; the pages were read through the text proxy `r.jina.ai` — `docs.blender.org` on a direct `curl` returns a Cloudflare 403. This refines the F-HLP-032 entry "`docs.blender.org` returned 403": there is a way around it, and the version-and-language addressing `manual/<language>/latest/` is now verified by a query, not taken from the documentation
+- Blender Manual, fallback measurement: the page `editors/video_sequencer/index.html` in the ru/es/ja/zh-hans/it/vi builds has a translated heading, in de/ar/fi — English (2026-09-07)
+- Final Cut Pro User Guide, language measurement: https://support.apple.com/de-de/guide/final-cut-pro/welcome/mac and the same addresses for fr-fr, ja-jp, zh-cn, ko-kr, es-es (translated) versus it-it, pt-br, nl-nl, ar-ae, ru-ru, zh-tw (English text in the localized wrapper); checked on two different pages of the guide, 2026-09-07
+- Final Cut Pro interface languages: https://apps.apple.com/us/app/final-cut-pro/id424389933 — "English, French, German, Italian, Japanese, Korean, Portuguese, Simplified Chinese, Spanish, Traditional Chinese" (accessed 2026-09-07)
+- DaVinci Resolve, composition of the help editions: https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion (accessed 2026-09-07)
+- Trackers (third wave, R.41): dumps from `~/.cache/kinotrain/trackers/{kde-bugzilla,kde-invent,openshot}.jsonl`; the count is reproducible with `python3 src/scripts/tracker-rank.py --query …` using the filters from the `SIGNAL:` lines; the components `Translation` (38) and `Documentation` (45) were read from the `component` field of the kde-bugzilla dump (2026-09-08)
+- https://github.com/OpenShot/openshot-qt/issues/3406 — OpenShot, "Language of Program vs website vs listed as supported": the interface is translated, `User guide remains in English` (accessed 2026-09-08)
+- https://bugs.kde.org/show_bug.cgi?id=463084 — Kdenlive, "Slovenian help for KDEnlive is not built, even if translation exists" (accessed 2026-09-08)
+- https://bugs.kde.org/show_bug.cgi?id=510090 — Kdenlive, "Kdenlive incorrectly uses English as fallback language for Chinese interface elements", closed WORKSFORME (accessed 2026-09-08)
+- https://bugs.kde.org/show_bug.cgi?id=512355 — Kdenlive, "Some effects/composite descriptions, option names and option tooltips show always in English" (accessed 2026-09-08). The bodies of the Bugzilla tasks in the dump are empty — the REST `/bug` endpoint does not return them, therefore the titles are quoted verbatim
+- Premiere, After Effects and VEGAS Pro: **from documentation, not checked live** — `helpx.adobe.com` is unavailable from this environment either directly or through `r.jina.ai`, `vegascreativesoftware.com` returns 301 without a body. All statements about them are marked `[NOT VERIFIED]`

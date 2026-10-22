@@ -1,12 +1,12 @@
 ---
 id: F-COL-038
-title: Из чего состоит задание
-status: кандидат
+title: What a job consists of
+status: candidate
 priority: B
 cost: S
 category: collab/offload
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, flamenco-3]
-we_have: частично
+we_have: partial
 crates: [kt-engine, kt-cli, kt-app, kt-model]
 invariants: [7, 9, 11]
 ui_rules: []
@@ -19,260 +19,134 @@ services: [resolve-project-server, bm-cloud]
 checked: 2026-09-08
 ---
 
-# F-COL-038 — Из чего состоит задание
+# F-COL-038 — What a job consists of
 
-## Суть
+## Essence
 
-Монтажёр хочет сказать «посчитай вот это», уйти и получить файл. «Вот это» —
-не проект целиком: это кусок, формат и место, куда положить результат. Пока
-считает своя машина, форма такого поручения никому не нужна: она умещается в
-окно настроек и умирает вместе с ним. Как только считать берётся кто-то
-другой — хоть соседний компьютер, хоть та же программа завтра утром, — форма
-поручения становится ГЛАВНЫМ, потому что она единственное, что переезжает.
-Отрасль за пределами видеомонтажа этот вопрос давно решила и решила
-одинаково: задание — данные, а не состояние окна.
+The editor wants to say "compute this," walk away, and get a file. "This" is not the whole project: it is a chunk, a format, and a place to put the result. While its own machine does the computing, the shape of such a request is useful to no one: it fits in a settings window and dies together with it. As soon as someone else takes over the computing, whether a neighboring computer or the same program tomorrow morning, the shape of the request becomes the MAIN thing, because it is the only thing that moves. Industries outside video editing solved this question long ago, and solved it the same way: the job is data, not the state of a window.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 build 66 | нет объекта «задание» | рендер — модальная операция над проектом целиком либо над выделением; пакетный прогон живёт C#-скриптом вне продукта, задание там — РЕГИОН, а имя выходного файла собирается из имени региона (F-EXP-002). В самой программе задания как сущности нет |
-| Adobe Premiere | 26.x | отправка в Adobe Media Encoder | задание живёт в ДРУГОМ процессе и переживает закрытие редактора; его форма — снимок секвенции плюс пресет вывода. Ровно из-за того, что форма отделилась от живой модели, у связки есть класс «отрендерилось не то» |
-| DaVinci Resolve | 21 | `Deliver` → Render Queue; Remote Rendering (Studio) | задание — строка очереди: таймлайн, диапазон, формат, путь. Remote Rendering отправляет ГОТОВУЮ строку на другую машину целиком и не делит её: одна строка — одна машина, распределения нагрузки внутри задания нет |
-| Final Cut Pro | 12.3 | `Batch sharing`, дальше Compressor | внутри FCP задания нет — есть фоновая задача, которая ещё и приостанавливается, пока человек работает. Настоящий объект-задание вынесен в Compressor, где он уже сохраняем (droplet, watch folder) |
-| After Effects | 26.x | Render Queue item + Output Module | элемент очереди несёт in/out **по кадрам** и несколько выходов на один проход композита. Требований к машине в элементе нет: их роль играет то, на какой машине запустили `aerender` |
+| VEGAS Pro | 2026.0 build 66 | no "job" object | rendering is a modal operation over the whole project or over a selection; batch runs live in a C# script outside the product, and the job there is a REGION, with the output file name assembled from the region name (F-EXP-002). The program has no job as an entity |
+| Adobe Premiere | 26.x | sending to Adobe Media Encoder | the job lives in ANOTHER process and survives closing the editor; its shape is a snapshot of the sequence plus an output preset. Precisely because the shape has separated from the live model, the pairing has a class of "rendered the wrong thing" |
+| DaVinci Resolve | 21 | `Deliver` → Render Queue; Remote Rendering (Studio) | the job is a row in the queue: timeline, range, format, path. Remote Rendering sends a READY row to another machine whole and does not divide it: one row, one machine, with no distribution of load inside the job |
+| Final Cut Pro | 12.3 | `Batch sharing`, then Compressor | there is no job inside FCP: there is a background task, which even pauses while the person works. The real job object is moved out to Compressor, where it is already savable (droplet, watch folder) |
+| After Effects | 26.x | Render Queue item + Output Module | a queue item carries in/out **by frame** and several outputs from one pass of the composite. The item has no requirements on the machine: their role is played by the machine on which `aerender` was launched |
 
-**Вне ядра.** Без ферм эту фичу описать нельзя: у пяти редакторов ядра
-задание — это либо строка диалога, либо отсутствующая сущность, и увидеть, из
-чего оно вообще СОСТОИТ, можно только там, где его отправляют чужой машине.
+**Outside the core.** Without farms this feature cannot be described: for the five core editors the job is either a dialog row or a missing entity, and one can see what it actually CONSISTS of only where it is sent to someone else's machine.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Flamenco | 3.x | job → tasks | manager и worker в одной сети, облака нет вовсе; задание — не «отрендери проект», а тройка «команда + диапазон КАДРОВ + требования к машине» (`docs/features/_editors.md`) |
-| OpenCue | 1.x (docs.opencue.io, 2026) | job → layer → frame; service | job — набор layer'ов; layer — диапазон кадров плюс команда; frame — ОДНА команда. Требования к машине лежат отдельным объектом `service` (потоки, память, GPU, теги), и тег layer'а сравнивается с тегом хоста ДО отправки |
+| Flamenco | 3.x | job → tasks | manager and worker on one network, no cloud at all; the job is not "render the project" but a triple of "command + range of FRAMES + machine requirements" (`docs/features/_editors.md`) |
+| OpenCue | 1.x (docs.opencue.io, 2026) | job → layer → frame; service | a job is a set of layers; a layer is a frame range plus a command; a frame is ONE command. Machine requirements sit in a separate object `service` (threads, memory, GPU, tags), and a layer's tag is compared with the host's tag BEFORE sending |
 
-## Фишка фишки
+## The trick behind it
 
-**Атом фермы — не кадр, а КОМАНДА, и это видно в словаре, а не в
-маркетинге.** Глоссарий OpenCue определяет три уровня буквально так: «A job is
-a collection of _layers_, which is sent as a _script_ to the queue to be
-processed on remote _cores_»; «The sub-jobs in an _outline script_ job. Each
-layer contains a frame range and a command to execute»; «An individual command
-that's contained in a _layer_». То есть «кадр» в терминологии фермы — это
-единица РАБОТЫ, а не единица картинки, и именно поэтому одна и та же машина
-одинаково хорошо считает и рендер, и препроцесс: форма задания ничего не знает
-про пиксели.
+**The atom of a farm is not a frame but a COMMAND, and this is visible in the vocabulary, not in the marketing.** The OpenCue glossary defines the three levels literally like this: "A job is a collection of _layers_, which is sent as a _script_ to the queue to be processed on remote _cores_"; "The sub-jobs in an _outline script_ job. Each layer contains a frame range and a command to execute"; "An individual command that's contained in a _layer_." So "frame" in the farm's terminology is a unit of WORK, not a unit of picture, and precisely for this reason the same machine counts both a render and a preprocess equally well: the shape of the job knows nothing about pixels.
 
-**Требование к машине — это ПОЛЕ задания, проверяемое до отправки, а не ошибка
-на старте.** У OpenCue оно вынесено в отдельную сущность: «A service is a
-collection of resource requirements and tags that are associated with a
-_layer_. The service contains minimum and maximum thread requirements, minimum
-memory and gpu requirements, whether the jobs are threadable or not, and a list
-of tags», а тег работает как фильтр: «Frames contained in a layer with a tag
-will only render on a host that also shares that tag». Разница с редактором
-принципиальная и невидимая со стороны интерфейса: у редактора «нужен GPU»
-выясняется, когда задание уже начали, у фермы — когда его ещё некуда
-отправить.
+**The machine requirement is a FIELD of the job, checked before sending, not an error at start.** In OpenCue it is moved into a separate entity: "A service is a collection of resource requirements and tags that are associated with a _layer_. The service contains minimum and maximum thread requirements, minimum memory and gpu requirements, whether the jobs are threadable or not, and a list of tags," and a tag works as a filter: "Frames contained in a layer with a tag will only render on a host that also shares that tag." The difference from an editor is fundamental and invisible from the interface side: in an editor, "needs a GPU" is discovered when the job has already been started; in a farm, it is discovered when there is nowhere to send the job.
 
-**Куски НЕ независимы, и ферма это знает — но записывает знание руками, а не
-считает.** Практика при разрезании композиции на сегменты формулируется так:
-«Render with 5 frames overlap or so. Some temporal effects and expressions
-produce different results without some run-up» (Mylenium, 17.07.2024). То есть
-диапазон кадров в задании на самом деле не интервал, а интервал плюс разгон, и
-величина разгона в форму задания не входит: её угадывает человек словом «or
-so». Ровно эта величина у нас вычисляется из проекта —
-`chain_tail(fx, auto).to_audio_frames().max(MIN_PREROLL_FRAMES)`
-(`src/libs/kt-fx/src/lib.rs:607`, минимум 100 мс на
-`src/libs/kt-fx/src/lib.rs:24`), — и поэтому экспорт нашего под-диапазона
-разгоняется сам, а «пять кадров или около того» ему не нужны.
+**Chunks are NOT independent, and the farm knows this, but it records the knowledge by hand instead of computing it.** The practice when cutting a composition into segments is formulated like this: "Render with 5 frames overlap or so. Some temporal effects and expressions produce different results without some run-up" (Mylenium, 17.07.2024). That is, the frame range in a job is in fact not an interval but an interval plus a run-up, and the size of the run-up is not part of the job's shape: a person guesses it with the word "or so." Precisely this size is computed by us from the project: `chain_tail(fx, auto).to_audio_frames().max(MIN_PREROLL_FRAMES)` (`src/libs/kt-fx/src/lib.rs:607`, minimum 100 ms at `src/libs/kt-fx/src/lib.rs:24`), and therefore the export of our sub-range runs up on its own, and "5 frames or so" is not needed for it.
 
-## Плюсы
+## Pros
 
-- Задание как ДАННЫЕ переживает процесс: его можно поставить в очередь,
-  повторить после падения, отправить второй раз в другой формат и показать в
-  журнале. Всё это следствия одного решения — не хранить поручение в состоянии
-  окна.
-- Диапазон по КАДРАМ, а не по времени, снимает целый класс арифметических
-  споров: у куска [100, 200) и куска [200, 300) не бывает ни дырки, ни
-  перекрытия, потому что граница — целое число, а не результат деления.
-- Требования к машине, объявленные полем, дают дешёвую диспетчеризацию: задание
-  не уезжает туда, где заведомо не посчитается, и человек узнаёт об этом до
-  ожидания, а не после.
-- Одна форма обслуживает и рендер, и препроцесс: «команда + диапазон +
-  требования» одинаково описывает «посчитай кадры 100–200» и «построй пики по
-  этому файлу» (F-COL-042).
-- Разделение «диапазон» и «чанк» (сколько единиц отдать одной машине за раз)
-  позволяет менять зернистость, не трогая ни задание, ни исполнителя.
+- A job as DATA survives the process: it can be queued, repeated after a crash, sent a second time in another format, and shown in the log. All of this is a consequence of one decision: not to keep the request in the state of a window.
+- A range by FRAMES, not by time, removes a whole class of arithmetic disputes: chunks [100, 200) and [200, 300) can have neither a hole nor an overlap, because the boundary is an integer, not the result of a division.
+- Machine requirements declared as a field give cheap dispatching: a job is not sent where it will certainly fail to compute, and the person learns this before waiting, not after.
+- One shape serves both render and preprocess: "command + range + requirements" describes equally well "compute frames 100–200" and "build peaks for this file" (F-COL-042).
+- Separating "range" from "chunk" (how many units to hand one machine at a time) allows changing granularity without touching either the job or the executor.
 
-## Минусы
+## Cons
 
-- Форма-данные обязана быть версионируемой: как только задание переживает
-  процесс, оно переживает и обновление программы, и «поле, которого в прошлой
-  версии не было» становится вопросом совместимости.
-- Диапазон в кадрах требует, чтобы кадры были определены ОДИНАКОВО у постановщика
-  и у исполнителя: разная сетка fps, разное округление границы или разный
-  таймкод материала превращают «кадры 100–200» в разные куски.
-- Разгон (run-up) в форму задания не помещается, потому что он свойство
-  СОДЕРЖИМОГО, а не диапазона. Отсюда либо перекрытие «на глазок», либо
-  расхождение на стыке.
-- Отделение формы от живой модели порождает вопрос «чей снимок»: задание,
-  поставленное час назад, описывает монтаж часовой давности, и это ровно та
-  развилка, из-за которой у Premiere две кнопки экспорта.
-- Требования к машине, записанные явно, устаревают вместе с парком машин: тег
-  `gpu` образца позапрошлого года не значит того же, что сегодня.
+- A data shape must be versionable: as soon as a job survives the process, it also survives a program update, and "a field that did not exist in the previous version" becomes a compatibility question.
+- A range in frames requires that frames be defined IDENTICALLY for the requester and the executor: a different fps grid, a different rounding of the boundary, or a different material timecode turns "frames 100–200" into different chunks.
+- The run-up cannot be placed in the job's shape, because it is a property of the CONTENT, not of the range. Hence either overlap "by eye" or a mismatch at the seam.
+- Separating the shape from the live model raises the question "whose snapshot": a job queued an hour ago describes an edit from an hour ago, and this is exactly the fork that gives Premiere two export buttons.
+- Machine requirements written explicitly go stale along with the machine park: a `gpu` tag from the year before last does not mean the same thing as it does today.
 
-## Что говорят пользователи
+## What users say
 
-Практика разрезания длинного рендера на куски — и цена, которую платят на
-стыке, названная прямо:
+The practice of cutting a long render into chunks, and the price paid at the seam, named directly:
 
 > Render with 5 frames overlap or so. Some temporal effects and expressions
 > produce different results without some run-up.
-> — Mylenium, «Workflow advice needed: rendering 4K 50fps project in
-> segments», Adobe Community, 17.07.2024,
+> — Mylenium, "Workflow advice needed: rendering 4K 50fps project in
+> segments," Adobe Community, 17.07.2024,
 > https://community.adobe.com/t5/after-effects-discussions/workflow-advice-needed-rendering-4k-50fps-project-in-segments/m-p/14746398
 
-В том же треде — почему в итоге всё равно уходят от видеофайла к
-последовательности кадров, то есть к «одна единица работы = один файл»:
+In the same thread, why in the end they still move away from a video file toward a frame sequence, that is, toward "one unit of work = one file":
 
 > I might suggest rendering an image sequence - you can start/stop literally
 > anywhere, and AE will know which frames already exist.
-> — Kyle Hamrick, там же, 18.07.2024
+> — Kyle Hamrick, same thread, 18.07.2024
 
-Счётной части у заметки нет: `trackers:` пуст сознательно. Публичных трекеров у
-пяти редакторов ядра не существует (`docs/features/_trackers.md`, «Кого НЕ
-берём»), а в выгруженных трекерах опенсорса тема совместной работы
-представлена одной настоящей просьбой на 25 442 задачу — заполнить поле ради
-формы значило бы сфабриковать сигнал (правило 12).
+The note has no counting part: `trackers:` is empty deliberately. Public trackers do not exist for the five core editors (`docs/features/_trackers.md`, "Whom we do NOT take"), and in the exported trackers of open source the topic of collaborative work is represented by one real request out of 25,442 tasks. Filling in the field for the sake of the form would mean fabricating a signal (rule 12).
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- `src/libs/kt-engine/src/export.rs:396` — `range: Option<(Tick, Tick)>` у
-  `export_mp4_with_backends`: движок умеет считать кусок, и это не заглушка —
-  тот же параметр проходит в `render_raw_video_range_with`
-  (`src/libs/kt-engine/src/export.rs:186`) и в `render_raw_audio_range`
-  (`:93`).
-- `src/libs/kt-engine/src/export.rs:298` — `gpu_required_clips` и
-  `ExportError::GpuRequired` (`:293`): **требование к машине у нас уже
-  вычисляется по проекту**, причём по `effective_clips`, то есть с учётом
-  морфер-батчей. Это ровно то, что у OpenCue лежит в `service`.
-- `src/libs/kt-engine/src/export.rs:203` — `video.grid.align_floor(a)`: начало
-  диапазона выравнивается на сетку fps, значит понятие «кадр» у нас есть и оно
-  общее с превью (инвариант 7).
-- `src/libs/kt-fx/src/lib.rs:607` — разгон считается из цепочки, а не
-  назначается: `chain_tail(fx, auto).to_audio_frames().max(MIN_PREROLL_FRAMES)`.
-  Пять кадров «или около того» нам не нужны — величина известна точно.
-- `src/apps/kt-cli/src/main.rs` — headless-исполнитель существует и умеет
-  закрепить энкодер третьим аргументом (это уже половина «требований к
-  машине», заведённая ради воспроизводимости теста 158).
-- Имя выхода уже собирается по шаблону и санируется (`render_file_name`,
-  тест t201) — та задача, на которой спотыкается пакетный рендер VEGAS.
+- `src/libs/kt-engine/src/export.rs:396` — `range: Option<(Tick, Tick)>` in `export_mp4_with_backends`: the engine can compute a chunk, and this is not a stub — the same parameter passes through `render_raw_video_range_with` (`src/libs/kt-engine/src/export.rs:186`) and into `render_raw_audio_range` (`:93`).
+- `src/libs/kt-engine/src/export.rs:298` — `gpu_required_clips` and `ExportError::GpuRequired` (`:293`): **the machine requirement is already computed from the project**, and moreover from `effective_clips`, that is, taking morpher batches into account. This is exactly what OpenCue keeps in `service`.
+- `src/libs/kt-engine/src/export.rs:203` — `video.grid.align_floor(a)`: the start of the range is aligned to the fps grid, which means we have the notion of "frame" and it is shared with the preview (invariant 7).
+- `src/libs/kt-fx/src/lib.rs:607` — the run-up is computed from the chain, not assigned: `chain_tail(fx, auto).to_audio_frames().max(MIN_PREROLL_FRAMES)`. Five frames "or so" are not needed by us: the value is known exactly.
+- `src/apps/kt-cli/src/main.rs` — the headless executor exists and can pin the encoder via a third argument (this is already half of "machine requirements," introduced for the sake of the reproducibility of test 158).
+- The output name is already assembled from a template and sanitized (`render_file_name`, test t201) — the very task on which VEGAS batch rendering trips.
 
-### Чего не хватает
+### What is missing
 
-- **Формы задания как данных.** `ExportOptions`
-  (`src/libs/kt-engine/src/export.rs:337`) — обычная структура с
-  `#[derive(Debug, Clone)]`; во всём `kt-engine/src` ноль совпадений на
-  `serde`. Записать поручение некуда: оно живёт аргументами одного вызова.
-- **Диапазона в КАДРАХ.** `range` задан в тиках, и это время, а не номера
-  кадров. Дальше начинается разнобой: видео берёт `align_floor` для начала и
-  сырое `b` для конца (`:203-204`, цикл `while t < end`), аудио —
-  `a.to_audio_frames()` и `b.to_audio_frames()` (`:107`), то есть усечение по
-  ДРУГОЙ сетке. Одна и та же граница округляется двумя правилами.
-- **Согласованности счётчика с работой.** `total_video` считается от
-  НЕВЫРОВНЕННОГО `r0` (`src/libs/kt-engine/src/export.rs:429`), а цикл
-  стартует с `align_floor(r0)`. Диапазон, чья граница не легла на сетку fps,
-  даёт прогресс, расходящийся с числом реально выданных кадров.
-- **Требования к машине как поля.** `GpuRequired` — отказ в момент старта, а
-  не признак задания. Спросить «посчитается ли это здесь» до постановки
-  нечем, хотя функция, отвечающая на вопрос, написана.
-- **Вывода `range` наружу.** kt-cli передаёт `None`
-  (`src/apps/kt-cli/src/main.rs`), GUI — только регион
-  (`src/apps/kt-app/src/render_dialog.rs`). Из трёх источников кусков —
-  регион, метка-диапазон, именованная область — наружу выведен один.
+- **A job shape as data.** `ExportOptions` (`src/libs/kt-engine/src/export.rs:337`) is an ordinary structure with `#[derive(Debug, Clone)]`; across all of `kt-engine/src` there are zero matches for `serde`. There is nowhere to record a request: it lives in the arguments of a single call.
+- **A range in FRAMES.** `range` is set in ticks, and that is time, not frame numbers. Then the inconsistency begins: video takes `align_floor` for the start and the raw `b` for the end (`:203-204`, loop `while t < end`), audio uses `a.to_audio_frames()` and `b.to_audio_frames()` (`:107`), that is, truncation on a DIFFERENT grid. One and the same boundary is rounded by two rules.
+- **Consistency of the counter with the work.** `total_video` is computed from the UNALIGNED `r0` (`src/libs/kt-engine/src/export.rs:429`), while the loop starts at `align_floor(r0)`. A range whose boundary does not fall on the fps grid gives progress that diverges from the number of frames actually emitted.
+- **Machine requirements as fields.** `GpuRequired` is a refusal at the moment of start, not an attribute of the job. There is nothing to ask "will this compute here" before submission, although the function that answers the question has been written.
+- **Output of `range` to the outside.** kt-cli passes `None` (`src/apps/kt-cli/src/main.rs`), the GUI only the region (`src/apps/kt-app/src/render_dialog.rs`). Of the three sources of chunks — region, range marker, named area — only one is exposed outward.
 
-### Что мешает
+### What blocks it
 
-Ничего конструктивного, и это надо сказать прямо: диапазон посчитан, разгон
-посчитан, требование к машине посчитано, headless-исполнитель написан. Мешает
-одно — граница округления. Пока «кадр» в задании выражен тиком, два соседних
-куска склеиваются правильно только потому, что регион у нас всегда приходит с
-сетки; задание, набранное руками или пришедшее из чужой разметки, эту гарантию
-не несёт, а два места (видео и аудио) округляют его по-разному.
+Nothing structural, and this has to be said plainly: the range is computed, the run-up is computed, the machine requirement is computed, the headless executor is written. One thing blocks it: the rounding boundary. While "frame" in a job is expressed as a tick, two adjacent chunks join correctly only because the region always comes to us from the grid; a job typed by hand or coming from foreign markup does not carry this guarantee, and two places (video and audio) round it differently.
 
-### В категории `collab/` — две обязательные строки (правило 13)
+### In the `collab/` category — two mandatory lines (rule 13)
 
-БЕЗ СЕТИ: ВЫРОЖДАЕТСЯ — `src/libs/kt-engine/src/export.rs:396` — форма задания вырождается в набор аргументов одного вызова: диапазон, опции и бэкенды существуют ровно столько, сколько живёт кадр стека, и записать поручение некуда — сериализации у `ExportOptions` нет ни в каком виде, а диапазон задан временем, тогда как единицей работы у нас, как и у всех, является кадр.
+OFFLINE: DEGENERATES — `src/libs/kt-engine/src/export.rs:396` — the job shape degenerates into a set of arguments of a single call: the range, options and backends exist exactly as long as the stack frame lives, and there is nowhere to record a request — `ExportOptions` has no serialization in any form, and the range is set by time, whereas the unit of work for us, as for everyone, is the frame.
 
-ЦЕНА СЕТИ: тот, кто примет форму и вернёт готовый файл — внешний исполнитель — форма задания нужна ровно там, где считает не наш процесс: одному процессу поручение не нужно, ему достаточно аргументов, и все три поля тройки у нас уже вычисляются, но ни одно не существует отдельно от вызова.
+NETWORK COST: the one who accepts the shape and returns a finished file — an `external executor` — the job shape is needed exactly where a process other than ours does the computing: one process does not need a request, it is enough for it to have arguments, and all three fields of the triple are already computed by us, but none of them exists separately from the call.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Инвариант 7 (код композиции один) — источник силы: «кадр» у задания и «кадр» у
-превью обязаны быть одним и тем же, и у нас это так по построению.
-Инвариант 9 (экспорт внутрипроцессный) — ограничивает не форму задания, а её
-получателя: очередь может быть только внутренней (вывод F-EXP-002, не
-ревизуется). Инвариант 11 (детерминизм) — то, ради чего диапазон обязан быть
-кадровым: байтовое равенство прогонов имеет смысл только при совпадающих
-границах.
+Invariant 7 (one composition code) is the source of strength: the "frame" of a job and the "frame" of the preview must be one and the same, and for us this holds by construction. Invariant 9 (in-process export) constrains not the shape of the job but its recipient: the queue can only be internal (conclusion of F-EXP-002, not revisited). Invariant 11 (determinism) is the reason the range must be frame-based: byte equality of runs makes sense only with matching boundaries.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия раунда: диапазон в кадрах, единое округление, требования к машине как ответ функции |
-| Где основная работа | kt-engine (одно правило округления границы для видео и аудио, счётчик от выровненного начала), kt-cli (`--range`), kt-model (источник кусков: регион, метка-диапазон, именованная область) |
-| Формат проекта | не трогает, пока задание живёт в сессии; сохраняемая очередь — это `metadata.kt` и новая версия схемы (та же развилка, что у F-EXP-002) |
-| Тесты, которые придётся написать | «два соседних куска дают ровно те же кадры, что один целый» (видео и аудио отдельно); «граница вне сетки fps даёт согласованные счётчик и число кадров»; «под-диапазон с реверб-цепочкой равен тому же участку целого прогона» — разгон уже есть, но не проверен именно на границе задания |
-| Зависит от | F-EXP-002 (очередь; её вывод «очередь внутренняя» здесь принят как данность) |
-| Ломает совместимость | нет |
+| Size | S — one stage of the round: a range in frames, a single rounding rule, machine requirements as the answer of a function |
+| Where the main work is | kt-engine (one boundary-rounding rule for video and audio, counter from the aligned start), kt-cli (`--range`), kt-model (the source of chunks: region, range marker, named area) |
+| Project format | not touched while the job lives in the session; a persistent queue is `metadata.kt` and a new schema version (the same fork as F-EXP-002) |
+| Tests that will have to be written | "two adjacent chunks give exactly the same frames as one whole" (video and audio separately); "a boundary off the fps grid gives a consistent counter and frame count"; "a sub-range with a reverb chain equals the same stretch of the whole run" — the run-up already exists, but has not been verified precisely at the job boundary |
+| Depends on | F-EXP-002 (the queue; its conclusion "the queue is internal" is accepted here as a given) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём локальное ядро — и только его. Ядро здесь маленькое и целиком наше:
-диапазон выразить в КАДРАХ, округлять границу одним правилом для видео и
-аудио, счётчик считать от выровненного начала, а `gpu_required_clips`
-превратить из повода для ошибки в вопрос, который можно задать заранее. Всё
-это нужно и без второй машины: очередь из F-EXP-002 без формы задания
-неотличима от пяти походов в диалог.
+We take the local core — and only it. The core here is small and entirely ours: express the range in FRAMES, round the boundary by one rule for video and audio, compute the counter from the aligned start, and turn `gpu_required_clips` from a reason for an error into a question that can be asked in advance. All of this is needed even without a second machine: a queue from F-EXP-002 without a job shape is indistinguishable from five trips to a dialog.
 
-Серверную половину — отправку задания кому-то — не заводим: второго участника
-нет, и объявлять его появление заметка права не имеет. Отдельно фиксируем
-границу с соседями: получатель задания разбирается в F-COL-039 (и там же
-цена — детерминизм превращается из свойства в требование), сборка результатов
-из кусков отвергнута в F-COL-040, а самый дешёвый предмет для отправки —
-вообще не рендер, а анализ (F-COL-042).
+We do not open the server half — sending a job to someone — because there is no second participant, and this note has no right to announce its appearance. Separately we fix the boundary with the neighbors: the recipient of a job is dealt with in F-COL-039 (and there the price is that determinism turns from a property into a requirement), assembling results from chunks was rejected in F-COL-040, and the cheapest item to send is not a render at all but an analysis (F-COL-042).
 
-Что заметка обязана оставить после себя: **разгон у нас считается, а не
-угадывается**. Любое будущее «а давайте резать на куски» обязано опираться на
-`chain_tail`, а не на «пять кадров или около того»; иначе мы своими руками
-заведём тот самый шов, ради отсутствия которого написан инвариант 11.
+What the note must leave behind: **the run-up in our system is computed, not guessed**. Any future "let's cut it into chunks" must rely on `chain_tail`, not on "five frames or so"; otherwise we would, with our own hands, create that very seam for whose absence invariant 11 was written.
 
-## Источники
+## Sources
 
-- https://docs.opencue.io/docs/concepts/glossary/ — дословные определения
-  `job`, `layer`, `frame`, `service`, `tags` (дата обращения 2026-09-08)
-- https://docs.opencue.io/docs/concepts/command-execution/ — исполнение команды
-  на кадре, чанк и правило «Resources are allocated per-frame, so all commands
-  in a chunk share the same resources» (2026-09-08)
+- https://docs.opencue.io/docs/concepts/glossary/ — verbatim definitions of `job`, `layer`, `frame`, `service`, `tags` (access date 2026-09-08)
+- https://docs.opencue.io/docs/concepts/command-execution/ — execution of a command on a frame, the chunk and the rule "Resources are allocated per-frame, so all commands in a chunk share the same resources" (2026-09-08)
 - https://community.adobe.com/t5/after-effects-discussions/workflow-advice-needed-rendering-4k-50fps-project-in-segments/m-p/14746398
-  — разрезание на сегменты, перекрытие в пять кадров и совет уходить в
-  последовательность кадров, июль 2024 (2026-09-08)
+  — cutting into segments, a five-frame overlap and the advice to move to a frame sequence, July 2024 (2026-09-08)
 - https://forum.level1techs.com/t/davinci-resolve-remote-render-server-complete-guide-windows-linux/138807
-  — Remote Rendering отправляет готовую строку очереди на машину целиком
-  (eposvox, 12.02.2019; дата обращения 2026-09-08)
-- `docs/features/_editors.md`, строка `flamenco-3` — тройка «команда +
-  диапазон кадров + требования к машине». Первоисточник
-  `flamenco.blender.org` из этого окружения отдаёт 403, поэтому строка
-  таблицы опирается на реестр, а механизм подтверждён по OpenCue, где
-  документация открыта. **[НЕ ПРОВЕРЕНО]** по первоисточнику: точная форма
-  задания Flamenco.
-- `docs/features/_services.md` — что стоит по ту сторону; `docs/features/_trackers.md`
-  — почему `trackers:` пуст.
-- Наш код проверен по дереву 08.09.2026: `src/libs/kt-engine/src/export.rs`
-  (строки 93, 107, 186, 203, 293, 298, 337, 396, 429),
+  — Remote Rendering sends a finished queue row to a machine whole (eposvox, 12.02.2019; access date 2026-09-08)
+- `docs/features/_editors.md`, row `flamenco-3` — the triple "command + frame range + machine requirements." The primary source `flamenco.blender.org` returns 403 from this environment, so the table row relies on the registry, while the mechanism is confirmed by OpenCue, whose documentation is open. **[NOT VERIFIED]** against the primary source: the exact shape of the Flamenco job.
+- `docs/features/_services.md` — what lies on the other side; `docs/features/_trackers.md` — why `trackers:` is empty.
+- Our code checked against the tree of 08.09.2026: `src/libs/kt-engine/src/export.rs`
+  (lines 93, 107, 186, 203, 293, 298, 337, 396, 429),
   `src/libs/kt-fx/src/lib.rs` (24, 607), `src/apps/kt-cli/src/main.rs`,
-  `src/apps/kt-app/src/render_dialog.rs`; `serde` в `kt-engine/src` — 0
-  совпадений.
+  `src/apps/kt-app/src/render_dialog.rs`; `serde` in `kt-engine/src` — 0 matches.

@@ -1,88 +1,67 @@
-# Сервисы: что стоит по ту сторону сети
+# Services: what stands on the other side of the network
 
-Заведён четвёртой волной (Р.42). Обновляется ПЕРВЫМ — тот же порядок, что у `_editors.md`
-в правиле 3 и у `_trackers.md` в правиле 12.
+Set up in the fourth wave (R.42). Updated FIRST — the same order as `_editors.md` in rule 3 and `_trackers.md` in rule 12.
 
-**Сервис — не редактор.** Строка сервиса НЕ даёт права на строку в таблице «У кого и как»:
-туда попадает только редактор ядра и только через `_editors.md`. Вердиктов здесь нет и быть
-не может — вердикт живёт в заметке, у которой ровно одна фича. Ключ пишется в поле
-`services:` шапки; поле `editors:` его не примет и не должно.
+**A service is not an editor.** A service line does NOT grant the right to a line in the table "Who has it and how": only a core editor gets there, and only through `_editors.md`. There are no verdicts here and there cannot be — the verdict lives in the note, which has exactly one feature. The key is written in the `services:` field of the header; the `editors:` field will not accept it and must not.
 
-**Почему отдельным файлом, а не третьей таблицей в `_editors.md`.** Причина механическая, а
-не эстетическая: `read_editor_keys()` в `src/scripts/features-index.py` берёт регекспом
-ЛЮБУЮ строку файла, у которой первая клетка — слаг в обратных кавычках, без привязки к
-разделу. Третья таблица молча сделала бы `frame-io` законным значением поля `editors:` — то
-есть пустила бы сервис в таблицу, где живёт вердикт «берём/не берём». Разделение реестров
-здесь единственное, что мешает проверке согласиться на бессмыслицу.
+**Why a separate file and not a third table in `_editors.md`.** The reason is mechanical, not aesthetic: `read_editor_keys()` in `src/scripts/features-index.py` takes by regexp ANY line of the file whose first cell is a slug in backticks, without binding to a section. A third table would silently make `frame-io` a legal value of the `editors:` field — that is, it would let a service into the table where the verdict "take / do not take" lives. The separation of registries here is the only thing that stops the check from agreeing to nonsense.
 
-Отсюда доктрина трёх реестров базы:
+From this the doctrine of the three registries of the base follows:
 
-| Файл | Отвечает на вопрос | Поле шапки |
+| File | Answers the question | Header field |
 |---|---|---|
-| `_editors.md` | **с чем сравниваем** (вердикт) | `editors:` |
-| `_trackers.md` | **откуда число** (счёт) | `trackers:` |
-| `_services.md` | **что стоит по ту сторону сети** (цена) | `services:` |
+| `_editors.md` | **what we compare with** (verdict) | `editors:` |
+| `_trackers.md` | **where the number comes from** (count) | `trackers:` |
+| `_services.md` | **what stands on the other side of the network** (cost) | `services:` |
 
-## Реестр
+## Registry
 
-Колонка «Тип» — закрытый словарь, и она важнее остальных: она заранее говорит, чего ждать от
-строки `БЕЗ СЕТИ:` в заметке. `общая папка` почти всегда даёт `ОСТАЁТСЯ`, `сервис` — почти
-всегда `НЕ ОСТАЁТСЯ`, `свой сервер` — `ВЫРОЖДАЕТСЯ`.
+The "Type" column is a closed dictionary, and it is more important than the others: it says in advance what to expect from the `NO NETWORK:` line in a note. `shared folder` almost always gives `REMAINS`, `service` — almost always `DOES NOT REMAIN`, `own server` — `DEGENERATES`.
 
-| Ключ | Что это | Тип | Чей и к чему привязан | Единица занятия | Что нужно на той стороне | Проверено |
+| Key | What it is | Type | Whose and what it is tied to | Unit of claiming | What is needed on that side | Checked |
 |---|---|---|---|---|---|---|
-| `frame-io` | Frame.io | сервис | Adobe; панель внутри Premiere 26 и AE 26 | не занимает: рецензия поверх версии ролика | учётка + чужой сервер + залитый материал | 2026-09-08 |
-| `team-projects` | Adobe Team Projects | сервис | Adobe; Premiere/AE, подписка Teams | **секвенция** | учётка + сервер проектов | 2026-09-08 |
-| `premiere-productions` | Premiere Productions | общая папка | Adobe; сервера НЕТ | **проект-файл** (замок рядом с файлом) | только общая файловая система | 2026-09-08 |
-| `bm-cloud` | Blackmagic Cloud | сервис | Blackmagic; Resolve 21 Studio | **бин и таймлайн** | учётка + библиотека проектов как услуга | 2026-09-08 |
-| `resolve-project-server` | DaVinci Resolve Project Server | свой сервер | Blackmagic; ставится сам, PostgreSQL | **бин и таймлайн** | СВОЙ хост в своей сети; учётка не нужна | 2026-09-08 |
-| `fcp-shared-library` | Final Cut: общая библиотека | общая папка | Apple; FCP 12 | **вся библиотека целиком** | том, видимый обеим машинам; SMB — Samba ≥ 4.3.4 | 2026-09-08 |
-| `posthog` | PostHog Cloud (EU region, `eu.i.posthog.com`) | сервис | PostHog Inc.; not tied to any editor — receives product-analytics events over a public POST endpoint (`/i/v0/e/`, `/batch/`) | does not claim anything: it only receives events, nothing on our side waits for it | the owner's project token built into the binary + their host; the person running the program needs no account | 2026-10-22 |
-| `syncthing` | Syncthing | инструмент | ничей, свободный; ПРОИСХОЖДЕНИЕ двусторонней синхронизации | не занимает: разрешает задним числом | вторая машина, но НЕ сервер | 2026-09-08 |
+| `frame-io` | Frame.io | service | Adobe; a panel inside Premiere 26 and AE 26 | does not claim: a review over a version of the cut | an account + someone else's server + uploaded material | 2026-09-08 |
+| `team-projects` | Adobe Team Projects | service | Adobe; Premiere/AE, Teams subscription | **sequence** | an account + a project server | 2026-09-08 |
+| `premiere-productions` | Premiere Productions | shared folder | Adobe; there is NO server | **project file** (the lock beside the file) | only a shared file system | 2026-09-08 |
+| `bm-cloud` | Blackmagic Cloud | service | Blackmagic; Resolve 21 Studio | **bin and timeline** | an account + the project library as a service | 2026-09-08 |
+| `resolve-project-server` | DaVinci Resolve Project Server | own server | Blackmagic; installed by oneself, PostgreSQL | **bin and timeline** | OWN host in one's own network; no account needed | 2026-09-08 |
+| `fcp-shared-library` | Final Cut: shared library | shared folder | Apple; FCP 12 | **the whole library entirely** | a volume visible to both machines; SMB — Samba ≥ 4.3.4 | 2026-09-08 |
+| `posthog` | PostHog Cloud (EU region, `eu.i.posthog.com`) | service | PostHog Inc.; not tied to any editor — receives product-analytics events over a public POST endpoint (`/i/v0/e/`, `/batch/`) | does not claim anything: it only receives events, nothing on our side waits for it | the owner's project token built into the binary + their host; the person running the program needs no account | 2026-10-22 |
+| `syncthing` | Syncthing | tool | nobody's, free; the ORIGIN of two-way synchronization | does not claim: resolves after the fact | a second machine, but NOT a server | 2026-09-08 |
 
-Тип: `сервис` (чужой хост) · `свой сервер` (ставишь сам) · `общая папка` (сеть только как
-файловая система) · `инструмент` (не сервис, а происхождение механизма).
+Type: `service` (someone else's host) · `own server` (you install it yourself) · `shared folder` (the network only as a file system) · `tool` (not a service, but the origin of a mechanism).
 
-**Единица занятия — самая полезная колонка волны.** Никто в отрасли не сливает правки; все
-предотвращают расхождение блокировкой, и различаются ровно гранулярностью. Она всегда равна
-единице ЗАПИСИ, а не единице правки: Final Cut пишет библиотеку целиком — занимает целиком;
-Resolve пишет бины и таймлайны отдельными записями базы — занимает их врозь. **Клип не
-блокирует никто.**
+**The unit of claiming is the most useful column of the wave.** Nobody in the industry merges edits; everyone prevents divergence by locking, and they differ exactly in granularity. It is always equal to the unit of a RECORD, not the unit of an edit: Final Cut writes the library as a whole — occupies it as a whole; Resolve writes bins and timelines as separate database records — occupies them apart. **Nobody locks a clip.**
 
-## Кого НЕ берём — и почему
+## Who we do NOT take — and why
 
-| Кто | Причина |
+| Who | Reason |
 |---|---|
-| Avid Media Composer и его bin locking | решение Р.36: Avid в базу не входит. Первоисточник вдобавок недоступен физически — `avid.com`, `help.avid.com`, `kb.avid.com` отдают 403. Механизм разбирается в прозе заметки с пометкой `[НЕ ПРОВЕРЕНО]`, как уже сделано в трёх заметках базы; строка ключа без реальной проверки и есть та вода, против которой база заводилась |
-| LucidLink, Suite Studio, Dropbox, Google Drive, Nextcloud | не привязаны к редактору; для нас это `общая папка` вообще, и она уже описана типом. Отдельные строки не добавили бы ни одного механизма |
-| iCloud Drive | Apple не сделала облачной совместной работы для Final Cut: библиотека в iCloud Drive — та же `общая папка` с тем же эксклюзивным замком. Отдельной строки не заслуживает |
-| Render-фермы как услуга (iRender, AceCloudHosting) | это удалённый рабочий стол с GPU, куда пользователь ставит СВОЮ лицензию. Переносится человек, а не задание — к сервисам редактора отношения не имеет |
+| Avid Media Composer and its bin locking | decision of R.36: Avid is not part of the base. The primary source is moreover physically unavailable — `avid.com`, `help.avid.com`, `kb.avid.com` return 403. The mechanism is analyzed in the prose of the note with the mark `[NOT VERIFIED]`, as is already done in three notes of the base; a registry key without real verification is exactly the water against which the base was started |
+| LucidLink, Suite Studio, Dropbox, Google Drive, Nextcloud | not tied to an editor; for us this is a `shared folder` in general, and it is already described by the type. Separate lines would add not a single mechanism |
+| iCloud Drive | Apple has not made cloud joint work for Final Cut: a library in iCloud Drive is the same `shared folder` with the same exclusive lock. It does not deserve a separate line |
+| Render farms as a service (iRender, AceCloudHosting) | this is a remote desktop with a GPU, onto which the user installs THEIR OWN license. What is transferred is a person, not a job — it has nothing to do with the services of an editor |
 
-## Как проверять и что стареет быстрее всего
+## How to verify and what ages fastest
 
-1. **Тариф и состав подписки — самое скоропортящееся**: обязательны дата и ссылка.
-2. **Смена владельца сервиса важнее смены версии редактора.** Frame.io — прецедент: куплен
-   Adobe, и переход на V4 сломал возврат комментариев в Premiere.
-3. **«Работает офлайн» в маркетинге вендора почти всегда значит «кэширует», а не
-   «работает».** Годится только прямое утверждение документации о том, что можно сделать
-   без соединения. По Blackmagic Cloud такого утверждения в документации НЕТ вовсе; по Team
-   Projects единственная содержательная формулировка нашлась на форуме, а не в справке.
-4. **Что происходит с проектами при неоплате, не сказано НИГДЕ ни у кого** — ни Adobe, ни
-   Blackmagic. Отсутствие ответа само по себе находка, и её нельзя заменять догадкой.
+1. **The price and the composition of the subscription — the most perishable**: a date and a link are mandatory.
+2. **A change of the service owner matters more than a change of the editor version.** Frame.io is a precedent: it was bought by Adobe, and the move to V4 broke the return of comments in Premiere.
+3. **"Works offline" in the vendor's marketing almost always means "caches", not "works".** Only a direct statement of the documentation that something can be done without a connection is valid. For Blackmagic Cloud there is NO such statement in the documentation at all; for Team Projects the only substantive formulation was found on a forum, not in the help.
+4. **What happens to projects on non-payment is not said ANYWHERE by anyone** — neither by Adobe nor by Blackmagic. The absence of an answer is itself a finding, and it must not be replaced by a guess.
 
-## Доступность источников на 08.09.2026
+## Availability of sources as of 08.09.2026
 
-Проверено запросами, а не предположениями. Существенно изменилось с третьей волны.
+Checked by queries, not by assumptions. Changed significantly since the third wave.
 
-| Источник | Доступ | Замечание |
+| Source | Access | Remark |
 |---|---|---|
-| `community.adobe.com` | **есть** | **новое**: полностью замещает `helpx.adobe.com`, отдаёт живые баг-треды с никами и датами |
-| `frame.io`, `help.frame.io`, `support.frame.io` | есть | прайсинг и обе базы знаний (V4 и legacy V3) |
-| `blackmagicdesign.com` | есть | страницы продуктов, support, пресс-релизы |
-| `support.apple.com` | есть | **ловушка**: неверный слаг `/guide/final-cut-pro/…` молча редиректит на оглавление и отдаёт 200 — слаги брать из поиска, не угадывать |
-| `docs.syncthing.net` | есть | единственная формально описанная модель конфликта |
-| `liftgammagain.com`, `creativecow.net` | есть | второй только через WebFetch: curl получает 403 |
-| `helpx.adobe.com`, `adobe.com` | **нет** | соединение не устанавливается; Wayback не спасает (429, нужного снапшота нет) |
-| `forum.blackmagicdesign.com` | **нет** | Cloudflare; треды читаются только сниппетами через поиск — дословных цитат с датами оттуда не получить |
-| `avid.com` и все поддомены | **нет** | 403 везде; фактура только вторичная (elements.tv, Hedge, redsharknews) |
-| `reddit.com` | **нет** | жёсткий блок-лист фетчера |
+| `community.adobe.com` | **available** | **new**: fully replaces `helpx.adobe.com`, gives live bug threads with nicknames and dates |
+| `frame.io`, `help.frame.io`, `support.frame.io` | available | pricing and both knowledge bases (V4 and legacy V3) |
+| `blackmagicdesign.com` | available | product pages, support, press releases |
+| `support.apple.com` | available | **trap**: an incorrect slug `/guide/final-cut-pro/…` silently redirects to the table of contents and returns 200 — take slugs from search, do not guess |
+| `docs.syncthing.net` | available | the only formally described model of the conflict |
+| `liftgammagain.com`, `creativecow.net` | available | the second only via WebFetch: curl gets 403 |
+| `helpx.adobe.com`, `adobe.com` | **no** | the connection is not established; Wayback does not help (429, the needed snapshot is absent) |
+| `forum.blackmagicdesign.com` | **no** | Cloudflare; threads are read only through search snippets — verbatim quotes with dates cannot be obtained from there |
+| `avid.com` and all subdomains | **no** | 403 everywhere; only secondary sources (elements.tv, Hedge, redsharknews) |
+| `reddit.com` | **no** | a hard block-list of the fetcher |

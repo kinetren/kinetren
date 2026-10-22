@@ -1,17 +1,17 @@
 ---
 id: F-AUT-011
-title: Форма отрезка видна на графике, её параметры — под мышью
-status: сделано
+title: Segment shape is visible on the graph, its parameters are under the mouse
+status: done
 priority: B
 cost: S
 category: automation/keyframes
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, blender-5.2]
-we_have: да
+we_have: yes
 crates: [kt-app, kt-model]
 invariants: [12]
 ui_rules: [1, 3, 9, 10]
-round: Р.67
-point: "change r67-curves-stills-import (летопись заморожена на §470)"
+round: R.67
+point: "change r67-curves-stills-import (chronicle frozen at §470)"
 tests: [t784b, t785, t785b, t790]
 depends_on: [F-AUT-009, F-AUT-001]
 trackers: []
@@ -19,97 +19,96 @@ services: []
 checked: 2026-09-26
 ---
 
-# F-AUT-011 — Форма отрезка видна на графике, её параметры — под мышью
+# F-AUT-011 — Segment shape is visible on the graph, its parameters are under the mouse
 
-## Суть
+## Essence
 
-Монтажёр видит на графике ТУ линию, которая звучит: зигзаг — зигзагом, ступень —
-ступенькой, формула — своей кривой, а не прямой между ромбиками ключей. Наводит на
-середину участка — появляется ручка; тянет вверх — зигзаг выше (или третий порядок
-резче), с Shift вправо — периодов больше; число видно рядом, пока тянет. Цифры в полях
-остаются, но целиться в них больше не обязательно.
+The editor sees on the graph THAT line that sounds: a zigzag as a zigzag, a step as a
+step, a formula as its own curve, not a straight line between the diamonds of keys.
+He points at the middle of a stretch and a handle appears; he pulls up and the zigzag
+gets higher (or the third-order curve sharper), with Shift to the right there are more
+periods; the number is visible next to it while he drags. The numbers in the fields stay,
+but aiming at them is no longer required.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| Vegas Pro | 2026.0 | Envelope на событии/дорожке | линия огибающей рисуется ПО ФОРМЕ (Fast/Slow/Smooth видны кривизной), параметра у формы нет — менять нечего; точка тянется мышью |
-| Adobe Premiere | 26 | Effect Controls → Velocity/Value graph | ручки безье на ключе тянутся мышью, график величины отделён от графика скорости; форма видна в обоих |
-| DaVinci Resolve | 21 | Curve editor (Edit page) / Spline (Fusion) | ручки безье; в Fusion на сплайне есть «Smooth/Linear/Step» и ручки; параметры модификаторов (Shake, Perturb) — только полями |
-| Final Cut Pro | 12.3 | Video Animation editor | линия видна по форме (Linear/Smooth), ручки только у Smooth, параметр не редактируется |
-| After Effects | 26 | Graph Editor | ручки безье тянутся, «Easy Ease» — команда; параметры выражений (`wiggle(freq, amp)`) — только текстом |
+| Vegas Pro | 2026.0 | Envelope on an event/track | the envelope line is drawn BY ITS SHAPE (Fast/Slow/Smooth are visible by their curvature); the shape has no parameter, so there is nothing to change; the point is dragged with the mouse |
+| Adobe Premiere | 26 | Effect Controls → Velocity/Value graph | Bezier handles on a key are dragged with the mouse; the value graph is separate from the speed graph; the shape is visible in both |
+| DaVinci Resolve | 21 | Curve editor (Edit page) / Spline (Fusion) | Bezier handles; in Fusion on a spline there are "Smooth/Linear/Step" and handles; parameters of modifiers (Shake, Perturb) — only as fields |
+| Final Cut Pro | 12.3 | Video Animation editor | the line is visible by its shape (Linear/Smooth), handles only on Smooth, the parameter is not editable |
+| After Effects | 26 | Graph Editor | Bezier handles are dragged, "Easy Ease" is a command; expression parameters (`wiggle(freq, amp)`) — only as text |
 
-**Вне ядра.** Blender — единственный, где параметр процедурной формы виден и правится там
-же, где линия.
+**Outside the core.** Blender is the only one where the parameter of a procedural shape
+is visible and edited in the same place as the line.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Blender | 5.2 | F-Curve Modifier Noise (Scale/Strength) | линия перерисовывается по модификатору сразу; параметры — в панели рядом с графиком, но не ручкой на самой линии |
+| Blender | 5.2 | F-Curve Modifier Noise (Scale/Strength) | the line is redrawn at once by the modifier; the parameters are in a panel next to the graph, but not as a handle on the line itself |
 
-## Фишка фишки
+## The trick behind it
 
-1. **Все пять редакторов рисуют линию ПО ФОРМЕ — ни один не рисует прямую между
-   ключами.** Это не фича, а презумпция: график, врущий про форму, ни у кого не встречается,
-   поэтому претензия «визуально не видно что там за кривая» — не вкус, а отставание от
-   базового уровня. Наш t698 утверждал модель и был зелёным при прямых на экране.
-2. **Ручки безье у AE/Premiere/Resolve — единственный «параметр под мышью», и он
-   геометрический.** У процедурной формы (зигзаг, шум) параметр везде — число в поле
-   (`wiggle(5, 20)` в AE, Scale/Strength в Blender). Ручка на СЕРЕДИНЕ участка, тянущая
-   амплитуду/натяжение, — наш ход: у нас формы параметрические, а не безье, и середина
-   участка — единственное место, которое не занято ключами и не спорит с переносом ключа.
-3. **Vegas показывает, что форма БЕЗ параметра не нуждается в ручке** — там линия и есть
-   единственный контрол. Отсюда правило: у прямой и ступени ручки нет вовсе (правило 9 —
-   ничего лишнего).
+1. **All five editors draw the line BY ITS SHAPE — none of them draws a straight line
+   between keys.** This is not a feature but a presumption: a graph that lies about the
+   shape does not occur anywhere, so the complaint "you can't visually see what the curve
+   is" is not a matter of taste but a lag behind the base level. Our t698 asserted the
+   model and was green while the screen showed straight lines.
+2. **The Bezier handles of AE/Premiere/Resolve are the only "parameter under the mouse",
+   and it is geometric.** For a procedural shape (zigzag, noise) the parameter is everywhere
+   a number in a field (`wiggle(5, 20)` in AE, Scale/Strength in Blender). A handle in the
+   MIDDLE of a stretch, pulling the amplitude/tension, is our move: our shapes are
+   parametric, not Bezier, and the middle of a stretch is the only place that is not taken
+   by keys and does not conflict with moving a key.
+3. **Vegas shows that a shape WITHOUT a parameter does not need a handle** — there the line
+   itself is the only control. Hence the rule: a straight line and a step have no handle
+   at all (rule 9 — nothing superfluous).
 
-## Плюсы
+## Pros
 
-- Линия — выборка того же `curve_value`, что считает рендер: второй формулы рисования нет,
-  а тест сравнивает пиксели линии с вычислителем, а не модель с моделью.
-- Ручка на середине участка не конфликтует ни с ключами (ромбики на концах), ни с правым
-  кликом (форма) — один жест на один смысл.
-- Число рядом на время драга — тот же приём, что у полосы скорости (оверлей, не попап).
+- The line is a sampling of the same `curve_value` that the render computes; there is no
+  second drawing formula, and the test compares the pixels of the line with the evaluator,
+  not the model with the model.
+- A handle in the middle of a stretch does not conflict with the keys (diamonds at the
+  ends) or with the right click (shape) — one gesture for one meaning.
+- The number next to it while dragging is the same trick as the speed bar's (an overlay,
+  not a popup).
 
-## Минусы
+## Cons
 
-- У кривой со слоем-формулой две линии; надо отличать (сплошная `k`, штрих — результат).
-- Выборка по пикселям — аллокация буфера точек; держится один переиспользуемый буфер в
-  состоянии виджета (инвариант 12).
+- A curve with a formula layer has two lines; they must be told apart (solid `k`, dashed =
+  result).
+- Sampling by pixels means allocating a buffer of points; one reusable buffer is kept in
+  the state of the widget (invariant 12).
 
-## Что говорят пользователи
+## What users say
 
-НЕТ ЦИТАТ: разведка велась по справке пяти редакторов ядра и Blender (Graph Editor, Curve
-editor, Video Animation editor, F-Curve Modifiers); поиск по площадкам не проводился —
-требование пришло от владельца дословно (`docs/user-feedback.md`, Р.67: «визуально для
-пользователя вообще не видно что там за кривая, и даже нет возможности что-то мышкой
-поуправлять вместо ввода цифр в поля»).
+NO QUOTES: the reconnaissance was done from the help of the five core editors and Blender (Graph Editor, Curve editor, Video Animation editor, F-Curve Modifiers); no search of forums was carried out — the requirement came from the owner verbatim (`docs/user-feedback.md`, R.67: "visually for the user you can't see at all what the curve is, and there isn't even a way to adjust it with the mouse instead of typing numbers into fields").
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/ui-timeline/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-График рисует выборку `curve_value` по пикселям; у участка с параметром — ручка на середине (вертикаль — главный параметр, Shift+горизонталь — периоды), число рядом на время драга; у прямой и ступени ручки нет.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/ui-timeline/ — the contract is in `spec.md`, the "why" and the code paths are in `design.md`.
+The graph draws a sampling of `curve_value` by pixels; a stretch with a parameter gets a handle in the middle (the vertical is the main parameter, Shift+horizontal is the periods), a number next to it while dragging; a straight line and a step have no handle.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия: рисование выборкой, ручка и её тест |
-| Где основная работа | kt-app `automation.rs` (`graph`), `widgets.rs` (буфер точек в `AutoView`) |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | пиксели линии против `curve_value` на зигзаге/ступени/формуле; драг ручки меняет параметр одним шагом истории; ширина полей не зависит от окна |
-| Зависит от | F-AUT-009 (формы с параметрами) |
-| Ломает совместимость | нет |
+| Size | S — one stage: drawing by sampling, the handle and its test |
+| Where the main work is | kt-app `automation.rs` (`graph`), `widgets.rs` (point buffer in `AutoView`) |
+| Project format | does not touch it |
+| Tests to write | line pixels against `curve_value` on a zigzag/step/formula; dragging the handle changes the parameter in one history step; the field width does not depend on the window |
+| Depends on | F-AUT-009 (shapes with parameters) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-**Принято (Р.67).** Линия по форме — базовый уровень отрасли, а не фича; ручка параметра
-на середине участка — наш ход для параметрических форм, которого у безье-редакторов нет и
-не нужно. Безье-ручки на ключах (F-AUT-001) остаются кандидатом и решаются отдельно: у
-нас формы параметрические, и второй геометрический контрол спорил бы с ручкой участка.
+**Accepted (R.67).** A line drawn by shape is the base level of the industry, not a feature; a parameter handle in the middle of a stretch is our move for parametric shapes, which Bezier editors do not have and do not need. Bezier handles on keys (F-AUT-001) remain a candidate and are decided separately: our shapes are parametric, and a second geometric control would conflict with the stretch's handle.
 
-## Источники
+## Sources
 
-- Adobe After Effects Help: «Graph Editor», «wiggle()».
-- Adobe Premiere Help: «Keyframe interpolation and the Value/Velocity graphs».
-- Blackmagic DaVinci Resolve 21 Reference Manual: «Curve Editor», Fusion «Spline Editor».
-- Apple Final Cut Pro User Guide: «Video Animation editor».
-- VEGAS Pro 2026 Help: «Adjusting envelopes».
-- Blender 5.2 Manual: «F-Curve Modifiers».
+- Adobe After Effects Help: "Graph Editor", "wiggle()".
+- Adobe Premiere Help: "Keyframe interpolation and the Value/Velocity graphs".
+- Blackmagic DaVinci Resolve 21 Reference Manual: "Curve Editor", Fusion "Spline Editor".
+- Apple Final Cut Pro User Guide: "Video Animation editor".
+- VEGAS Pro 2026 Help: "Adjusting envelopes".
+- Blender 5.2 Manual: "F-Curve Modifiers".

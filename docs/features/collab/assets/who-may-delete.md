@@ -1,12 +1,12 @@
 ---
 id: F-COL-006
-title: Кто имеет право удалить материал
-status: кандидат
+title: Who has the right to delete media
+status: candidate
 priority: B
 cost: S
 category: collab/assets
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-model, kt-app, kt-engine]
 invariants: [9]
 ui_rules: [16, 19]
@@ -19,251 +19,238 @@ services: [premiere-productions, resolve-project-server, fcp-shared-library, bm-
 checked: 2026-09-08
 ---
 
-# F-COL-006 — Кто имеет право удалить материал
+# F-COL-006 — Who has the right to delete media
 
-## Суть
+## Essence
 
-В общем хранилище удаление опаснее правки: неудачную правку видно и можно
-отменить, а удалённый материал не отменяется ничем и обнаруживается у ДРУГОГО
-человека, в другой день, чёрным кадром посреди готового монтажа. Отсюда вопрос,
-на который каждый редактор отвечает по-своему: кто вправе стереть файл, чем
-программа доказывает, что он никому не нужен, и что она делает, когда его всё
-же не стало.
+In a shared storage deleting is more dangerous than editing: a bad edit is visible and can be
+undone, but deleted material is not undone by anything and is discovered by ANOTHER person, on
+another day, as a black frame in the middle of a finished edit. Hence the question that each editor
+answers in their own way: who has the right to erase a file, what the program uses to prove that it
+is no longer needed, and what it does when it is nevertheless gone.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Project Media → Remove from project | из проекта убирает, файл не трогает; «кто вправе» вопрос не ставится вовсе — прав нет, есть файловая система — **[НЕ ПРОВЕРЕНО]** по справке линейки 2026 |
-| Adobe Premiere | 26.x | Make Offline… → Media Files Are Deleted; Productions (замок на проект-файл) | единственный из пяти, кто удаляет БАЙТЫ по галочке в диалоге, и удаляет безвозвратно. Счёт ссылок при этом не покрывает даже свой документ целиком: в Production закрытые проекты не знают о действиях в открытых |
-| DaVinci Resolve | 21 | Remove Unused Clips (18.6+); Delete File(s) from Disk в Media Pool | счёт ссылок сделан честно и дорого: «This action loads all timelines, compound clips, and Fusion compositions, then analyzes them for media usage» — и занимает минуты. Область счёта — ОДИН проект; удаление клипа медиапула, на который смотрит таймлайн, по свидетельству форума проходит без предупреждения — **[НЕ ПРОВЕРЕНО]**, первоисточник недоступен |
-| Final Cut Pro | 12.3 | Delete Generated Library Files; библиотека целиком | материал живёт внутри библиотеки, а библиотека занимается ЦЕЛИКОМ: «The document [Library name] is already in use by [user] on [Mac].local». Права как таковой сущности нет — есть эксклюзивный замок на всё сразу |
-| After Effects | 26.x | Remove Unused Footage; Collect Files | убирает неиспользуемое из проекта, файлы не удаляет; знание об использовании ограничено одним документом по построению модели |
+| VEGAS Pro | 2026.0 | Project Media → Remove from project | removes from the project, does not touch the file; the question "who has the right" is not asked at all — there are no rights, there is a file system — **[NOT VERIFIED]** from the 2026 product line documentation |
+| Adobe Premiere | 26.x | Make Offline… → Media Files Are Deleted; Productions (a lock on the project file) | the only one of the five that deletes the BYTES via a checkbox in a dialog, and deletes irreversibly. The reference count at the same time does not even cover its own document as a whole: in a Production, closed projects are unaware of actions in open ones |
+| DaVinci Resolve | 21 | Remove Unused Clips (18.6+); Delete File(s) from Disk in the Media Pool | the reference count is done honestly and expensively: "This action loads all timelines, compound clips, and Fusion compositions, then analyzes them for media usage" — and takes minutes. The scope of the count is ONE project; deleting a media pool clip that a timeline refers to, according to forum evidence, passes without a warning — **[NOT VERIFIED]**, the primary source is unavailable |
+| Final Cut Pro | 12.3 | Delete Generated Library Files; the library as a whole | the material lives inside the library, and the library is handled AS A WHOLE: "The document [Library name] is already in use by [user] on [Mac].local". There is no right as such — there is an exclusive lock on everything at once |
+| After Effects | 26.x | Remove Unused Footage; Collect Files | removes unused items from the project, does not delete files; the knowledge of usage is limited to one document by construction of the model |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Все счётчики ссылок считают ссылки внутри ОДНОГО документа, и Resolve
-единственный говорит, чего это стоит.** Формулировка справки — «загружает все
-таймлайны, compound-клипы и Fusion-композиции, затем анализирует их на предмет
-использования материала», операция занимает минуты и, что важнее,
-«does not delete any clips from your disk». То есть индустрия отвечает на
-вопрос «кто вправе удалить» так: НИКТО не удаляет байты; удаляют только ССЫЛКИ,
-и даже для этого приходится поднять весь документ. Всё, что лежит за границей
-этого документа, невидимо не по недоработке, а по устройству.
+**1. All reference counters count references inside ONE document, and Resolve is the only one
+that says what this costs.** The wording of the help is "loads all timelines, compound clips, and
+Fusion compositions, then analyzes them for media usage"; the operation takes minutes and, more
+importantly, "does not delete any clips from your disk". That is, the industry answers the question
+"who has the right to delete" like this: NOBODY deletes bytes; only REFERENCES are deleted, and even
+for that one has to raise the whole document. Everything that lies beyond the boundary of this
+document is invisible not because of an oversight but because of the design.
 
-**2. Adobe идёт дальше и признаёт, что счёт не покрывает даже свой документ.**
-В Production «closed projects in a Production are not aware of actions you take
-in other open projects» — то есть область счёта сузилась с документа до
-ОТКРЫТОЙ ЕГО ЧАСТИ. Гранулярность замка (проект-файл) и гранулярность знания об
-использовании при этом РАЗНЫЕ, и вторая меньше первой: заперт проект целиком, а
-знает программа только про то, что сейчас открыто.
+**2. Adobe goes further and admits that the count does not even cover its own document.**
+In a Production "closed projects in a Production are not aware of actions you take in other open
+projects" — that is, the scope of the count has narrowed from the document to its OPEN PART. The
+granularity of the lock (the project file) and the granularity of knowledge about usage are DIFFERENT,
+and the second is smaller than the first: the whole project is locked, but the program knows only
+about what is currently open.
 
-**3. Отсюда следствие, которого нет ни в одном списке возможностей: гард
-«материал используется» врёт в РАЗНЫЕ стороны у себя и у соседа.** У себя он
-слишком строг — не даёт убрать медиа, на которое ссылается только мой
-собственный документ, хотя мне-то как раз виднее. У соседа он слишком мягок:
-про его ссылки он не знает ничего и разрешает удалить. Один и тот же счётчик,
-две противоположные ошибки — и это не баланс, а прямое следствие того, что
-единица счёта равна единице ЗАПИСИ, а не единице материала.
+**3. A consequence follows which is absent from every feature list: the guard "material is in use"
+lies in DIFFERENT directions for oneself and for the neighbor.** For oneself it is too strict — it does
+not allow removing media that is referenced only by my own document, although I am the one who sees it
+best. For the neighbor it is too lax: it knows nothing about their references and allows deletion. One
+and the same counter, two opposite errors — and this is not a balance, but a direct consequence of the
+fact that the unit of counting is the unit of a RECORD, not the unit of material.
 
-**4. Настоящее удаление байтов остаётся галочкой в диалоге и не отменяется.**
-«Media Files Are Deleted» стоит рядом с «Media Files Remain on Disk» в одном
-списке, различается одним словом, и цена ошибки — исходники дубля целиком:
-«This action cannot be undone and Ctrl+Z do nothing».
+**4. Real deletion of bytes remains a checkbox in a dialog and is not undoable.**
+"Media Files Are Deleted" stands next to "Media Files Remain on Disk" in one list, differs by one word,
+and the price of a mistake is the source files of a take as a whole: "This action cannot be undone and
+Ctrl+Z do nothing".
 
-## Плюсы
+## Pros
 
-- Счёт ссылок по документу даёт точный ответ там, где документ и есть весь мир:
-  в одиночной работе «неиспользуемое» вычисляется полностью и без догадок.
-- Отказ трогать диск («does not delete any clips from your disk») делает
-  операцию обратимой: убрали лишнее из проекта — файлы на месте, вернуть можно
-  импортом.
-- Эксклюзивный замок на всю библиотеку у Apple при всей грубости честен: пока
-  библиотека занята одним человеком, вопрос «а не нужен ли материал второму» не
-  возникает вовсе.
-- Явное разделение «убрать из проекта» и «удалить с диска» — единственное, что
-  вообще спасает: две команды, а не одна с последствиями.
+- A reference count per document gives an exact answer where the document is the whole world:
+  in solo work "unused" is computed completely and without guesses.
+- The refusal to touch the disk ("does not delete any clips from your disk") makes the operation
+  reversible: you removed the excess from the project — the files stay in place, and it can be undone
+  by import.
+- The exclusive lock on the whole library at Apple, for all its crudeness, is honest: while the library
+  is held by one person, the question "is the material not needed by a second one" does not arise at all.
+- The explicit separation of "remove from the project" and "delete from disk" is the only thing that
+  really saves: two commands, not one with consequences.
 
-## Минусы
+## Cons
 
-- Стоимость честного счёта высока: загрузка всех таймлайнов проекта — минуты,
-  поэтому её делают редко и «под архивацию», а не при каждом удалении.
-- Область счёта не совпадает с областью хранения. Материал общий, счёт —
-  проектный; никакой замок на проект этого не исправляет.
-- Права как сущности нет ни у кого из пяти: «кто вправе удалить» решает
-  файловая система, то есть тот, у кого есть доступ к папке.
-- Удаление байтов доступно из редактора и необратимо — при том, что информации
-  для решения у редактора заведомо меньше, чем нужно.
-- Последствие всплывает не там и не тогда: у второго человека, при открытии
-  своего документа, в виде офлайн-клипов без указания, кто и когда их убрал.
+- The cost of an honest count is high: loading all the timelines of a project takes minutes,
+  so it is done rarely and "for archiving", not at every deletion.
+- The scope of the count does not coincide with the scope of storage. The material is shared, the count
+  is per project; no lock on the project fixes this.
+- No one of the five has a right as an entity: "who has the right to delete" is decided by the file
+  system, that is, by whoever has access to the folder.
+- Deletion of bytes is available from the editor and is irreversible — even though the information
+  the editor has for the decision is certainly less than what is needed.
+- The consequence surfaces not there and not then: for a second person, when opening their own document,
+  in the form of offline clips with no indication of who removed them and when.
 
-## Что говорят пользователи
+## What users say
 
-Границу знания назвал сотрудник Adobe, отвечая на «source media has been
-deleted or moved»:
+The boundary of knowledge was named by an Adobe employee, answering "source media has been
+deleted or moved":
 
 > closed projects in a Production are not aware of actions you take in other
 > open projects
 > — Ben Insler (Adobe Community Manager), 13.07.2024,
 > https://community.adobe.com/t5/premiere-pro-discussions/productions-source-media-has-been-deleted-or-moved/td-p/14718332
 
-Цена одной галочки, дословно, в ответе, помеченном как правильный:
+The price of one checkbox, verbatim, in an answer marked as correct:
 
 > This action cannot be undone and Ctrl+Z do nothing.
-> — Averdahl, Adobe Community, тред «deleted media», 21.09.2024,
+> — Averdahl, Adobe Community, thread «deleted media», 21.09.2024,
 > https://community.adobe.com/t5/premiere-pro-discussions/deleted-media/td-p/14873391
 
-Автор того треда (nikitar28785003, 21.09.2024) поставил галочку «Media Files Are
-Deleted», не поняв её смысла, и потерял исходники DJI Ronin 4D; дальше в треде
-обсуждается уже восстановление файлов, а не работа редактора.
+The author of that thread (nikitar28785003, 21.09.2024) ticked «Media Files Are
+Deleted» without understanding its meaning, and lost the source files of DJI Ronin 4D; further in the
+thread the discussion is already about recovering the files, not about the editor's work.
 
-Чего процитировать НЕ удалось: обсуждений удаления в общей базе Resolve.
-Соответствующие треды (`forum.blackmagicdesign.com`, в частности `t=204958`,
-`t=198254`, `t=113136`) в этом окружении не открываются — Cloudflare отдаёт 403;
-утверждение «Resolve удаляет клип медиапула, используемый в таймлайне, без
-предупреждения, и на это заведена заявка» взято из выдачи поиска, помечено
-**[НЕ ПРОВЕРЕНО]** и вывода на себе не несёт. Механика счёта ссылок при этом
-взята из первоисточника — руководства по новым возможностям Resolve 18.6.
+What could NOT be quoted: discussions of deletion in the Resolve shared database.
+The relevant threads (`forum.blackmagicdesign.com`, in particular `t=204958`,
+`t=198254`, `t=113136`) do not open in this environment — Cloudflare returns 403;
+the claim "Resolve deletes a media pool clip used in a timeline without a warning, and a request has been
+filed for this" is taken from search results, is marked **[NOT VERIFIED]**, and bears no conclusion on its own.
+The mechanics of the reference count, meanwhile, are taken from the primary source — the guide to the new
+features of Resolve 18.6.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- **Гард есть, и он полон в пределах документа.** `Command::RemoveMedia`
-  проверяет и клипы, и подмены морферов
-  (`p.clips.iter().any(|c| c.media == *id)`, `m.media_refs()`), и возвращает
-  `CommandError::MediaInUse(id)` — `src/libs/kt-model/src/model.rs`. Ошибка
-  жеста, а не тихий отказ (правило UI 16).
-- **Байты пользователя мы не удаляем вообще.** Во всём продуктовом коде
-  `std::fs::remove_file` встречается трижды и ни разу не по материалу: файл
-  автосейва, недописанный выходной файл экспорта и собственная sidecar-БД. То
-  есть команды «Media Files Are Deleted» у нас нет и заводить её незачем — это
-  сильная позиция, и её стоит удержать сознательно, а не по недосмотру.
-- **Пропажа материала не роняет работу.** Недоступный файл получает
-  `PlaceholderSource` (кадр с именем файла, тишина), проект открывается,
-  превью укомплектовано, рендер идёт (t209/t210), а вернувшийся файл
-  подменяется на ходу (`Player::replace_media`, t211).
-- **Рендер честно перечисляет недостающее ДО старта.** `missing_sources`
-  (`src/apps/kt-app/src/render_dialog.rs`) обходит `project.media` и
-  проверяет существование пути; список показывается в окне настроек, а после
-  завершения — в сводке (`MISSING_AFTER`), чтобы неполный рендер не выглядел
-  успехом.
+- **The guard exists, and it is complete within the document.** `Command::RemoveMedia`
+  checks both clips and morpher substitutions
+  (`p.clips.iter().any(|c| c.media == *id)`, `m.media_refs()`), and returns
+  `CommandError::MediaInUse(id)` — `src/libs/kt-model/src/model.rs`. It is a gesture error, not a silent
+  refusal (UI rule 16).
+- **We do not delete the user's bytes at all.** Across all product code `std::fs::remove_file`
+  occurs three times and never once on material: the autosave file, an unfinished export output file, and
+  our own sidecar DB. That is, we have no "Media Files Are Deleted" command and there is no point in creating
+  one — this is a strong position, and it is worth keeping deliberately, not by oversight.
+- **The disappearance of material does not break the work.** An unavailable file receives a
+  `PlaceholderSource` (a frame with the file name, silence), the project opens, the preview is complete,
+  rendering proceeds (t209/t210), and a returned file is swapped in on the fly (`Player::replace_media`, t211).
+- **Rendering honestly lists what is missing BEFORE the start.** `missing_sources`
+  (`src/apps/kt-app/src/render_dialog.rs`) walks `project.media` and checks that the path exists; the list is
+  shown in the settings window, and after completion — in the summary (`MISSING_AFTER`), so that an incomplete
+  render does not look like a success.
 
-### Чего не хватает
+### What is missing
 
-1. **Список недостающих берётся не в тот момент.** `missing_sources` считается
-   при ОТКРЫТИИ окна настроек (`start_render`), а источники открываются позже,
-   уже в потоке рендера: `let (a, _) = open_all(…); let (v, _) = open_all(…)` —
-   и оба возвращаемых списка недостающих ВЫБРАСЫВАЮТСЯ, а в задание кладётся
-   `missing: self.render_setup.missing.clone()`, снятый до диалога сохранения
-   файла. Файл, исчезнувший между этими моментами, молча становится
-   заглушкой: `compose_export_into` возвращает `complete == true` (кадр-то
-   есть), `stats.missing_video_layers` остаётся нулём, и сводка сообщает
-   успех. Это наш собственный случай «сосед удалил, пока я жал кнопку», и
-   лечится он одной строкой — взять список из `open_all`, а не из проверки
-   получасовой давности.
-2. `open_all` зовётся ДВАЖДЫ (отдельно для аудио и для видео), то есть в
-   пределах одного задания состояние диска читается в два приёма: теоретически
-   звук может приехать из настоящего файла, а картинка — из заглушки.
-3. Признака «этот материал нужен кому-то ещё» нет и быть не может: у медиа нет
-   ни владельца, ни счётчика внешних ссылок, а `MediaId` выдаётся как
-   «максимум + 1» и у двоих совпадает.
-4. Журнала «кто убрал» нет: undo — снимки целого проекта
-   (`undo: Vec<Project>`), у правки нет ни автора, ни имени.
+1. **The list of missing items is taken at the wrong moment.** `missing_sources` is computed when the settings
+   window is OPENED (`start_render`), while the sources are opened later, already in the render thread:
+   `let (a, _) = open_all(…); let (v, _) = open_all(…)` — and both returned lists of missing items are
+   THROWN AWAY, while the job is given `missing: self.render_setup.missing.clone()`, taken before the file-save
+   dialog. A file that disappears between these moments silently becomes a placeholder: `compose_export_into`
+   returns `complete == true` (the frame is there, after all), `stats.missing_video_layers` stays at zero, and
+   the summary reports success. This is our own case of "the neighbor deleted it while I was pressing the button",
+   and it is cured by one line — take the list from `open_all`, not from a check made half an hour earlier.
+2. `open_all` is called TWICE (separately for audio and for video), so within one job the disk state is read in
+   two steps: in theory the sound may come from the real file, and the picture from a placeholder.
+3. A sign that "this material is needed by someone else" does not exist and cannot exist: a media item has
+   neither an owner nor an external reference counter, and a `MediaId` is issued as "maximum + 1" and coincides
+   for two people.
+4. There is no log of "who removed it": undo consists of snapshots of the whole project
+   (`undo: Vec<Project>`), and an edit has neither an author nor a name.
 
-### Что мешает
+### What gets in the way
 
-Ничего конструктивного — и это редкий случай. Пункт 1 из списка выше не требует
-ни новой сущности, ни новой поверхности: `open_all` уже возвращает ровно тот
-список, который нужен, его просто не берут. Дороже другое: сказать пользователю
-про пропажу, случившуюся ВО ВРЕМЯ рендера, честнее, чем строкой в итоговой
-сводке, — но это уже вопрос правила UI 19 (где потом изменить решение) и
-формулировки, а не механики.
+Nothing constructive — and this is a rare case. Item 1 from the list above requires
+neither a new entity nor a new surface: `open_all` already returns exactly the list
+that is needed, it is simply not taken. The other thing is more costly: telling the
+user about a disappearance that happened DURING rendering is more honest than a line
+in the final summary — but that is already a question of UI rule 19 (where to change
+the decision later) and of wording, not of mechanics.
 
-БЕЗ СЕТИ: ОСТАЁТСЯ — `src/apps/kt-app/src/render_dialog.rs` — на одной машине вопрос закрыт целиком и без всяких прав: удалить мог только сам пользователь, гард «материал используется» точен, потому что весь счёт ссылок и есть весь документ, а перед рендером программа сама обходит материал проекта, называет недостающее и не отменяет из-за него экспорт. Ровно поэтому тот же гард у соседа врёт: он честно отвечает про мой документ и молчит про чужой.
+OFFLINE: REMAINS — `src/apps/kt-app/src/render_dialog.rs` — on one machine the question is closed completely and without any rights: only the user themselves could have deleted the file; the guard "material is in use" is exact, because the whole reference count is the whole document, and before rendering the program itself walks the project's material, names what is missing, and does not cancel the export because of it. Precisely for this reason the same guard lies for the neighbor: it honestly answers about my document and stays silent about someone else's.
 
-ЦЕНА СЕТИ: узнать, что материал нужен второму — права доступа — у файла в нашем мире нет ни владельца, ни признака «занят», а идентификаторы медиа выдаются как «максимум + 1» и у двоих совпадают, так что чужую ссылку не на что повесить.
+NETWORK COST: to learn that the material is needed by a second person — access rights — a file in our world has neither an owner nor a sign of "busy", and media identifiers are issued as "maximum + 1" and coincide for two people, so there is nothing on which to hang someone else's reference.
 
-ЦЕНА СЕТИ: заметить пропажу в момент чтения, а не в момент проверки — инвариант 9 — экспорт внутрипроцессный и открывает исходники сам, поэтому единственный, кто видит удаление вовремя, — сам рендер; его-то ответ сегодня и выбрасывается.
+NETWORK COST: to notice a disappearance at the moment of reading, not at the moment of checking — invariant 9 — the export is in-process and opens the sources itself, so the only one who sees the deletion in time is the render itself; and its answer is precisely what is thrown away today.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **№9** (экспорт полностью внутрипроцессный): тот, кто открывает файлы, — наш
-  же поток рендера, поэтому исправление пункта 1 не требует ни внешнего
-  процесса, ни новой очереди: список уже есть внутри.
-- Инвариантов движка правка не задевает больше никаких: речь о том, какой из
-  двух уже существующих списков попадает в задание.
-- Правила UI: **16** (невозможность — ошибка: `MediaInUse` обязан оставаться
-  ошибкой жеста, а не блёклой подсказкой), **19** (диалог обязан сказать, где
-  потом изменить решение — сводка неполного рендера должна называть, что
-  делать с заглушками).
+- **No. 9** (the export is entirely in-process): the one who opens the files is our
+  own render thread, therefore fixing item 1 requires neither an external process
+  nor a new queue: the list is already inside.
+- The fix touches no other engine invariants: it concerns which of the two already
+  existing lists gets into the job.
+- UI rules: **16** (impossibility is an error: `MediaInUse` must remain a gesture
+  error, not a faded hint), **19** (the dialog must say where the decision can be
+  changed later — the summary of an incomplete render must say what to do with the
+  placeholders).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия: список недостающих берётся из `open_all`, а не из проверки перед диалогом |
-| Где основная работа | kt-app (`render_dialog.rs`: вернуть выброшенный список в задание и слить с предстартовым); kt-engine не трогается |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | харнесс-тест: файл исчезает между открытием окна настроек и стартом задания — сводка называет его среди недостающих, а не рапортует чистый успех; проверка, что оба вызова `open_all` дают согласованный список |
-| Зависит от | ничего; смежные — F-HLP-012 (как говорить про отсутствующий исходник), F-MED-005 (перелинковка: починить путь у нас можно только удалив медиа, что и запрещает `MediaInUse`), F-RES-004 (что переживает падение) |
-| Ломает совместимость | нет |
+| Size | S — one stage: the list of missing items is taken from `open_all`, not from a check before the dialog |
+| Where the main work is | kt-app (`render_dialog.rs`: return the discarded list to the job and merge it with the pre-start one); kt-engine is not touched |
+| Project format | not touched |
+| Tests to write | a harness test: the file disappears between opening the settings window and the start of the job — the summary names it among the missing ones rather than reporting a clean success; a check that both `open_all` calls give a consistent list |
+| Depends on | nothing; neighboring — F-HLP-012 (how to speak about a missing source), F-MED-005 (relinking: we can repair a path only by deleting the media, which `MediaInUse` forbids), F-RES-004 (what survives a crash) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Серверную половину — права, владельцев, «кто удалил» — не заводим: участника
-нет, и без него это не механизм, а поле в структуре. Формула та же, что у
-F-PRJ-003 и F-PRJ-001.
+The server half — rights, owners, "who deleted it" — we do not set up: there is no
+participant, and without one it is not a mechanism but a field in a structure. The
+formula is the same as for F-PRJ-003 and F-PRJ-001.
 
-Берём местный остаток, найденный разведкой и стоящий одной стадии: рендер
-обязан докладывать о материале, пропавшем ПОСЛЕ проверки, а не о том, что
-проверялось при открытии окна настроек. Сегодня `open_all` считает правильный
-список дважды и оба раза выбрасывает, а заглушка делает кадр «полным», поэтому
-неполный рендер выглядит успешным — то есть ровно тот сценарий, ради которого
-Р.33 п.10 заводил сводку, остаётся не закрытым в самом опасном своём варианте:
-когда файл убрал не ты.
+We take the local remainder found by the reconnaissance, which costs one stage: rendering
+must report material that disappeared AFTER the check, not what was checked when the settings
+window was opened. Today `open_all` computes the correct list twice and both times throws it
+away, and the placeholder makes the frame "complete", so an incomplete render looks successful —
+that is, exactly the scenario for which R.33 item 10 introduced the summary remains unclosed in its
+most dangerous variant: when the file was removed by someone other than you.
 
-Второе, что фиксируется этой заметкой намеренно: **у нас нет и не должно
-появиться команды, удаляющей материал пользователя с диска.** Три вызова
-`remove_file` в продуктовом коде касаются только наших собственных файлов. Тред
-про потерянные исходники DJI — цена обратного решения, и её лучше не платить.
+The second thing this note fixes intentionally: **we have not and must not acquire a command that
+deletes the user's material from disk.** The three calls of `remove_file` in product code touch only
+our own files. The thread about the lost DJI sources is the price of the opposite decision, and it is
+better not to pay it.
 
-Границы: перелинковка и консолидация — F-MED-005; сообщение об отсутствующем
-исходнике — F-HLP-012; раздача производных — F-COL-005; растущий исходник —
-F-COL-004.
+Boundaries: relinking and consolidation — F-MED-005; the message about a missing source — F-HLP-012;
+distribution of derivatives — F-COL-005; a growing source — F-COL-004.
 
-## Источники
+## Sources
 
-- DaVinci Resolve 18.6 New Features Guide, «Removing Unused Media from a
-  Project»:
+- DaVinci Resolve 18.6 New Features Guide, "Removing Unused Media from a
+  Project":
   https://documents.blackmagicdesign.com/SupportNotes/DaVinci_Resolve_18.6_New_Features_Guide.pdf
-  (дата обращения 08.09.2026) — «This action loads all timelines, compound
-  clips, and Fusion compositions, then analyzes them for media usage.»,
-  «This option does not delete any clips from your disk, only removes them from
-  the Media Pool and the Project.»
+  (accessed 08.09.2026) — "This action loads all timelines, compound
+  clips, and Fusion compositions, then analyzes them for media usage.",
+  "This option does not delete any clips from your disk, only removes them from
+  the Media Pool and the Project."
 - Adobe Community, «Productions: source media has been deleted or moved»,
   03.07.2024 – 13.07.2024:
   https://community.adobe.com/t5/premiere-pro-discussions/productions-source-media-has-been-deleted-or-moved/td-p/14718332
-  (08.09.2026) — граница знания закрытых проектов, рекомендация
-  «Reassociate Source Clips…».
+  (08.09.2026) — the boundary of knowledge of closed projects, the recommendation
+  "Reassociate Source Clips…".
 - Adobe Community, «deleted media», 21.09.2024:
   https://community.adobe.com/t5/premiere-pro-discussions/deleted-media/td-p/14873391
-  (08.09.2026) — «Media Files Remain on Disk» по умолчанию, необратимость
-  «Media Files Are Deleted».
-- Apple Support, HT207128 (общая библиотека Final Cut и её эксклюзивный замок):
-  https://support.apple.com/en-us/HT207128 (08.09.2026) — формулировка
-  сообщения о занятой библиотеке; требования к SMB (Samba ≥ 4.3.4,
+  (08.09.2026) — "Media Files Remain on Disk" by default, the irreversibility of
+  "Media Files Are Deleted".
+- Apple Support, HT207128 (the shared Final Cut library and its exclusive lock):
+  https://support.apple.com/en-us/HT207128 (08.09.2026) — the wording of the message about
+  a busy library; requirements for SMB (Samba ≥ 4.3.4,
   `vfs objects = catia fruit streams_xattr`).
 - Blackmagic Design, DaVinci Resolve — Collaboration:
   https://www.blackmagicdesign.com/products/davinciresolve/collaboration
-  (08.09.2026) — «Bins and timelines are 'read only' until unlocked by the
-  current user.»; о правах на удаление материала страница не говорит ничего.
-- `forum.blackmagicdesign.com` (треды об удалении из медиапула) — НЕДОСТУПЕН
-  (403, Cloudflare); соответствующее утверждение помечено **[НЕ ПРОВЕРЕНО]**.
-- Строки VEGAS и After Effects собраны по документации вендоров и составу
-  меню; живьём не проверялись.
-- Наш код прочитан 08.09.2026: `src/apps/kt-app/src/render_dialog.rs`
-  (`missing_sources`, `open_all`, `launch_render`, сводка задания),
+  (08.09.2026) — "Bins and timelines are 'read only' until unlocked by the
+  current user."; the page says nothing about rights to delete material.
+- `forum.blackmagicdesign.com` (threads about deletion from the media pool) — UNAVAILABLE
+  (403, Cloudflare); the corresponding claim is marked **[NOT VERIFIED]**.
+- The VEGAS and After Effects rows are compiled from vendor documentation and the
+  composition of menus; not checked live.
+- Our code was read on 08.09.2026: `src/apps/kt-app/src/render_dialog.rs`
+  (`missing_sources`, `open_all`, `launch_render`, the job summary),
   `src/libs/kt-engine/src/export.rs` (`missing_video_layers`, `complete`),
   `src/libs/kt-model/src/model.rs` (`Command::RemoveMedia`,
-  `CommandError::MediaInUse`), грепы `remove_file` по продуктовому коду.
+  `CommandError::MediaInUse`), greps for `remove_file` across the product code.

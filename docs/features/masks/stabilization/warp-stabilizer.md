@@ -1,12 +1,12 @@
 ---
 id: F-MSK-006
-title: Стабилизация: Warp Stabilizer и родня
-status: кандидат
+title: Stabilization: Warp Stabilizer and relatives
+status: candidate
 priority: B
 cost: XL
 category: masks/stabilization
 editors: [premiere-26, after-effects-26, resolve-21, fcp-12, vegas-pro-2026]
-we_have: нет
+we_have: no
 crates: [kt-media, kt-engine, kt-fx, kt-gpu, kt-model, kt-otio, kt-app]
 invariants: [4, 5, 7, 8, 11]
 ui_rules: [2, 13, 16, 20]
@@ -17,119 +17,116 @@ depends_on: [F-MSK-005]
 checked: 2026-09-07
 ---
 
-# F-MSK-006 — Стабилизация: Warp Stabilizer и родня
+# F-MSK-006 — Stabilization: Warp Stabilizer and relatives
 
-## Суть
+## Essence
 
-Съёмка с рук трясётся. Монтажёр вешает на клип один эффект, ждёт, пока
-редактор прогонит материал по кадрам, и получает ровное изображение —
-камера либо плавно едет, либо стоит как на штативе. Платит он краями
-кадра: чтобы компенсировать тряску, картинку двигают внутри рамки, и
-рамку приходится либо подрезать, либо зумить внутрь. Это одна из немногих
-фич, результат которой видно на первом же клипе, без объяснений, — и
-одна из немногих, которую монтажёр включает раньше, чем цветокоррекцию.
+Handheld footage shakes. The editor applies one effect to the clip, waits while the
+editor runs through the footage frame by frame, and gets a steady image —
+the camera either pans smoothly or stands still like on a tripod. The price is paid at
+the edges of the frame: to compensate for the shake, the picture is moved inside the frame,
+so the frame has to be either cropped or zoomed in. This is one of the few
+features whose result is visible on the very first clip, without any explanation — and
+one of the few that the editor turns on before color correction.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | Name | How it works |
 |---|---|---|---|
-| Adobe Premiere | 26 | Warp Stabilizer | ЭТАЛОН, приехал из AE. Эффект на клипе, анализ идёт ФОНОМ в две ступени («Analyzing in Background, Step 1 of 2» → «Stabilizing»). `Result`: Smooth Motion (со `Smoothness` в %) либо No Motion (Smoothness игнорируется). `Method` — лестница: Position → Position, Scale, Rotation → Perspective → Subspace Warp. `Framing`: Stabilize Only / Stabilize, Crop / Stabilize, Crop, Auto-scale (умолчание) / Stabilize, Synthesize Edges. Плюс `Detailed Analysis` и `Rolling Shutter Ripple`. С `Speed/Duration` на одном клипе НЕ СОЧЕТАЕТСЯ — редактор отказывает явной ошибкой |
-| After Effects | 26 | Warp Stabilizer VFX + Rolling Shutter Repair | тот же эффект плюс режим VFX (позволяет отдать результат как трансформ и стабилизировать «наоборот» — прибить объект). Rolling shutter — ОТДЕЛЬНЫЙ эффект `Rolling Shutter Repair` с `Rolling Shutter Rate` и `Scan Direction` [метод Warp/Pixel Motion — НЕ ПРОВЕРЕНО] |
-| DaVinci Resolve | 21 | Stabilization в Inspector (Edit) + Tracker в режиме Stabilizer (Color) | ДВА места. На Edit-странице — «built in stabilization and lens correction controls for every clip», ручки Camera Lock, Zoom, Cropping Ratio, Smooth, Strength; режимы Perspective / Similarity / Translation [названия режимов — НЕ ПРОВЕРЕНО по первоисточнику]. На Color-странице тот же трекер, что возит Power Windows, переключается в стабилизацию: «The tracker can also be used to stabilize images». Camera Lock — отдельная галка, а не значение Smooth: это и есть «No Motion» |
-| Final Cut Pro | 12.3 | Stabilization + Rolling Shutter (Inspector) | `Method`: Automatic (сам выбирает) / InertiaCam (для панорам и наездов, с галкой Tripod Mode) / SmoothCam (три раздельные ручки — Translation Smooth, Rotation Smooth, Scale Smooth). Rolling shutter — отдельный блок с `Amount`. Анализ — фоновая задача; исторически FCP предлагал анализировать при ИМПОРТЕ, до монтажа [есть ли это в 12.3 — НЕ ПРОВЕРЕНО] |
-| VEGAS Pro | 2026 | VEGAS Video Stabilization | Ставится **либо как Media FX, либо как Event FX**, и это разные вещи (см. «Фишка фишки»). Явная кнопка `Analyze Motion`, выбор Fast/Accurate, три уровня сложности UI (Basic/Professional/Expert). Режимы: Smooth motion (с фактором сглаживания) и Freeze motion (опорный кадр). Края: Transparent / Mirror padding / Repeat / Clamp to edge + Auto Zoom + Additional Rotation/Translation. Опциональный искусственный motion blur. Коррекции rolling shutter в документации НЕТ. Отдельно поставляется Mocha VEGAS (Boris FX) со своей стабилизацией |
+| Adobe Premiere | 26 | Warp Stabilizer | REFERENCE, came from AE. An effect on the clip; the analysis runs in the BACKGROUND in two stages ("Analyzing in Background, Step 1 of 2" → "Stabilizing"). `Result`: Smooth Motion (with `Smoothness` in %) or No Motion (Smoothness is ignored). `Method` is a ladder: Position → Position, Scale, Rotation → Perspective → Subspace Warp. `Framing`: Stabilize Only / Stabilize, Crop / Stabilize, Crop, Auto-scale (default) / Stabilize, Synthesize Edges. Plus `Detailed Analysis` and `Rolling Shutter Ripple`. It does NOT combine with `Speed/Duration` on the same clip — the editor refuses with an explicit error |
+| After Effects | 26 | Warp Stabilizer VFX + Rolling Shutter Repair | the same effect plus a VFX mode (lets you export the result as a transform and stabilize "in reverse" — pin an object). Rolling shutter is a SEPARATE effect `Rolling Shutter Repair` with `Rolling Shutter Rate` and `Scan Direction` [method Warp/Pixel Motion — NOT VERIFIED] |
+| DaVinci Resolve | 21 | Stabilization in Inspector (Edit) + Tracker in Stabilizer mode (Color) | TWO places. On the Edit page — "built in stabilization and lens correction controls for every clip", with the Camera Lock, Zoom, Cropping Ratio, Smooth and Strength controls; modes Perspective / Similarity / Translation [mode names — NOT VERIFIED against the primary source]. On the Color page the same tracker that drives Power Windows is switched to stabilization: "The tracker can also be used to stabilize images". Camera Lock is a separate checkbox, not a value of Smooth: this is exactly "No Motion" |
+| Final Cut Pro | 12.3 | Stabilization + Rolling Shutter (Inspector) | `Method`: Automatic (picks by itself) / InertiaCam (for pans and pushes, with a Tripod Mode checkbox) / SmoothCam (three separate controls — Translation Smooth, Rotation Smooth, Scale Smooth). Rolling shutter is a separate block with `Amount`. Analysis is a background task; historically FCP offered to analyze at IMPORT, before editing [whether this is in 12.3 — NOT VERIFIED] |
+| VEGAS Pro | 2026 | VEGAS Video Stabilization | Applied **either as Media FX or as Event FX**, and these are different things (see "The trick behind it"). An explicit `Analyze Motion` button, a Fast/Accurate choice, three UI complexity levels (Basic/Professional/Expert). Modes: Smooth motion (with a smoothing factor) and Freeze motion (reference frame). Edges: Transparent / Mirror padding / Repeat / Clamp to edge + Auto Zoom + Additional Rotation/Translation. Optional artificial motion blur. There is NO rolling shutter correction in the documentation. Mocha VEGAS (Boris FX) ships separately with its own stabilization |
 
-## Фишка фишки
+## The trick behind it
 
-**1. У Vegas анализ прикреплён либо к МЕДИА, либо к СОБЫТИЮ, и монтажёр
-выбирает это до начала прохода.** Media FX гонит анализ по всему файлу —
-долго, зато «permits event editing post-stabilization»: подрезал событие,
-разрезал, подвинул — траектория цела. Event FX анализирует только тот
-кусок, который событие берёт из файла, — быстро, но «Changing the event's
-start and/or time in the media file makes the analysis invalid». Это в
-точности та же развилка, которую мы уже прошли для ключей автоматизации
-(F-AUT-002, домен ключа = тик МАТЕРИАЛА, тест t212), только Vegas
-предъявляет её пользователю как выбор, а мы решили за него. Ни у Premiere,
-ни у Resolve, ни у FCP этой развилки в UI нет: там анализ всегда
-принадлежит клипу на таймлайне, и разрезать стабилизированный клип
-означает получить два эффекта, каждый со своим будущим проходом.
+**1. In Vegas the analysis is attached either to the MEDIA or to the EVENT, and the editor
+chooses this before the pass begins.** Media FX runs the analysis over the whole file —
+slow, but it "permits event editing post-stabilization": trim the event, cut it, move it — the trajectory stays intact.
+Event FX analyzes only the piece that the event takes from the file — fast, but "Changing the event's
+start and/or time in the media file makes the analysis invalid". This is exactly the same fork that we have
+already passed for automation keyframes (F-AUT-002, key domain = tick of the MEDIA, test t212), except that
+Vegas presents it to the user as a choice, while we decided it for them. Neither Premiere,
+nor Resolve, nor FCP has this fork in the UI: there the analysis always
+belongs to the clip on the timeline, and cutting a stabilized clip
+means getting two effects, each with its own future pass.
 
-**2. Premiere ЗАПРЕЩАЕТ Warp Stabilizer вместе со Speed/Duration на одном
-клипе** — не «плохо работает», а отказывает ошибкой. Причина — порядок
-вычислений: стабилизатор строит траекторию по КАДРАМ ИСТОЧНИКА, а
-ретайминг меняет само множество кадров, которые до него доедут; какой из
-двух считается первым, определяется тем, «how things are written into that
-file». Отсюда универсальный совет форумов — вложенная секвенция: она
-навязывает порядок явно. Тот же механизм объясняет, почему стабилизацию
-советуют ставить ПЕРВОЙ в цепочке: любой эффект до неё меняет то, что
-видит анализатор, и траектория, посчитанная по отгрейженной картинке,
-не совпадёт с траекторией по исходной.
+**2. Premiere FORBIDS Warp Stabilizer together with Speed/Duration on the same
+clip** — not "works badly", but refuses with an error. The reason is the order of computation:
+the stabilizer builds the trajectory over the FRAMES OF THE SOURCE, while
+retiming changes the very set of frames that will reach it; which of the
+two is computed first is determined by "how things are written into that
+file". Hence the universal forum advice — a nested sequence: it imposes the order
+explicitly. The same mechanism explains why stabilization is advised to be placed FIRST
+in the chain: any effect before it changes what
+the analyzer sees, and a trajectory computed from a graded image
+will not match the trajectory from the original.
 
-**3. `Stabilize, Synthesize Edges` ломает правило «кадр — функция от t».**
-Три первых режима Framing — это преобразование ОДНОГО кадра: подвинули,
-повернули, зазумили, обрезали. Четвёртый дорисовывает утраченные края,
-беря пиксели из СОСЕДНИХ ПО ВРЕМЕНИ кадров (ширина окна — параметр
-`Synthesis Input Range`). То есть последний пункт выпадающего списка,
-неотличимый от остальных трёх в UI, превращает пер-кадровый трансформ в
-временну́ю операцию с окном: другой профиль памяти, другая цена, другое
-поведение кэша и призраки на движущихся объектах. Для нас это прямое
-следствие: три режима ложатся в существующий FX-слот, четвёртый — нет.
+**3. `Stabilize, Synthesize Edges` breaks the rule "a frame is a function of t".**
+The first three Framing modes are a transformation of ONE frame: moved, rotated, zoomed, cropped.
+The fourth fills in the lost edges, taking pixels from frames NEIGHBORING IN TIME
+(the window width is the `Synthesis Input Range` parameter). So the last item of the dropdown,
+indistinguishable from the other three in the UI, turns a per-frame transform into
+a temporal operation with a window: a different memory profile, a different cost, different
+cache behavior, and ghosting on moving objects. For us this is a direct
+consequence: the three modes fit into the existing FX slot, the fourth does not.
 
-## Плюсы
+## Pros
 
-- **Анализ — это ДАННЫЕ, а не картинка**, поэтому вторая фаза бесплатна:
-  крутить Smoothness, менять Framing, переключать Smooth Motion на No
-  Motion можно мгновенно, повторного прохода по кадрам не нужно. Vegas
-  проводит эту границу явно: «You cannot change the method of the analysis
-  without doing the analysis again» — а сглаживание менять можно.
-- **Лестница моделей монотонна.** Position → PSR → Perspective →
-  Subspace Warp — одна ручка, по которой монтажёр меняет силу коррекции
-  на количество артефактов, не меняя ни инструмента, ни рабочего процесса.
-  Ошибся — сдвинул на ступень вниз, а не переделывал шот.
-- **Анализ по материалу переживает монтаж** (Vegas Media FX): trim, split,
-  move и смена порядка дорожек не стоят пересчёта, потому что траектория
-  адресуется тиком материала, а не позицией на таймлайне.
-- **То же ядро даёт две фичи вместо одной.** Анализ движения — это
-  трекинг (F-MSK-005); стабилизация = трекинг фона + компенсация,
-  «прибить объект» = тот же трекинг с обратным знаком. AE это признаёт
-  прямо, отдавая результат Warp Stabilizer VFX наружу как трансформ.
-- **Компенсация складывается с остальным трактом**: три из четырёх
-  режимов Framing — обычное аффинное/проективное преобразование кадра,
-  то есть ровно то, что уже умеет GPU-путь.
+- **The analysis is DATA, not a picture**, so the second phase is free:
+  turning Smoothness up, changing Framing, switching Smooth Motion to No
+  Motion can be done instantly, with no repeated pass over the frames. Vegas
+  draws this boundary explicitly: "You cannot change the method of the analysis
+  without doing the analysis again" — but the smoothing can be changed.
+- **The ladder of models is monotonic.** Position → PSR → Perspective →
+  Subspace Warp — one control with which the editor trades the strength of the correction
+  for the amount of artifacts, without changing the tool or the workflow.
+  If you overshoot, you step down a rung instead of redoing the shot.
+- **The analysis by the material survives editing** (Vegas Media FX): trim, split,
+  move and reordering of tracks do not cost a recalculation, because the trajectory is
+  addressed by the tick of the material, not by the position on the timeline.
+- **The same core gives two features instead of one.** Motion analysis is
+  tracking (F-MSK-005); stabilization = background tracking + compensation,
+  "pin an object" = the same tracking with the opposite sign. AE admits this directly,
+  exporting the Warp Stabilizer VFX result outward as a transform.
+- **The compensation fits the rest of the path**: three of the four
+  Framing modes are an ordinary affine/projective transformation of the frame,
+  that is, exactly what the GPU path can already do.
 
-## Минусы
+## Cons
 
-- **Стабилизация ВСЕГДА стоит краёв, и бесплатного варианта нет.**
-  Auto-scale — это зум внутрь, то есть потеря разрешения; чем сильнее
-  сглаживание, тем сильнее кроп. В 4К-материале на 1080-таймлайне запас
-  есть, в 1080-на-1080 каждый процент сглаживания оплачивается резкостью.
-  Отсюда в Premiere ползунок называется «Crop Less ↔ Smooth More»: это
-  не настройка качества, а торг.
-- **Subspace Warp гнёт прямые.** Деформация сетки лечит rolling shutter и
-  «желе», но на сценах с параллаксом (передний план едет не так, как
-  задний) анализатор не знает, что именно он стабилизирует, и получается
-  «плавающий фон» — вобблинг, которого в исходнике не было. Расплата
-  ровно за то, чем эта модель сильнее предыдущих.
-- **Анализ жёстко связан с тем, что видит анализатор.** Эффект до
-  стабилизатора в цепочке меняет вход; ретайминг меняет множество кадров;
-  вложенность меняет порядок. Premiere вместо тонкой обработки просто
-  запрещает пару — и это честнее, чем молча посчитать не то.
-- **Проход долгий и непрозрачный.** «Analyzing in Background (Step 1 of
-  2)» без прогресс-бара и без оценки времени — самая массовая жалоба на
-  фичу за пятнадцать лет её существования (см. цитаты).
-- **Synthesize Edges дорог по памяти и времени** и даёт призраков на
-  движущихся объектах: он честно берёт пиксели из соседних кадров, а там
-  объект уже в другом месте.
-- **Rolling shutter — отдельная беда, а не частный случай тряски.**
-  Стабилизатор, не знающий про скос строк, УСИЛИВАЕТ желе: он выравнивает
-  геометрию кадра, оставляя внутрикадровую деформацию нескомпенсированной.
-  Поэтому у AE это отдельный эффект, у FCP — отдельный блок с `Amount`, а
-  у Premiere — параметр `Rolling Shutter Ripple` внутри стабилизатора.
-  У Vegas коррекции rolling shutter в документации нет вовсе.
+- **Stabilization ALWAYS costs the edges, and there is no free option.**
+  Auto-scale is a zoom inward, that is, a loss of resolution; the stronger the
+  smoothing, the stronger the crop. In 4K material on a 1080 timeline there is
+  room to spare; in 1080-on-1080 every percent of smoothing is paid for in sharpness.
+  Hence in Premiere the slider is called "Crop Less ↔ Smooth More": this
+  is not a quality setting, it is a trade-off.
+- **Subspace Warp bends straight lines.** Grid deformation cures rolling shutter and
+  "jelly", but on scenes with parallax (the foreground moves not the way
+  the background does) the analyzer does not know what exactly it is stabilizing, and the result is
+  a "floating background" — wobbling that was not in the source. This is the price
+  for exactly what makes this model stronger than the previous ones.
+- **The analysis is tightly bound to what the analyzer sees.** An effect before
+  the stabilizer in the chain changes the input; retiming changes the set of frames;
+  nesting changes the order. Instead of subtle handling, Premiere simply forbids
+  the pair — and this is more honest than silently computing the wrong thing.
+- **The pass is long and opaque.** "Analyzing in Background (Step 1 of
+  2)" with no progress bar and no time estimate — the most common complaint about
+  the feature over the fifteen years of its existence (see the quotes).
+- **Synthesize Edges is expensive in memory and time** and produces ghosts on
+  moving objects: it honestly takes pixels from neighboring frames, where the object
+  is already somewhere else.
+- **Rolling shutter is a separate problem, not a special case of shake.**
+  A stabilizer that does not know about the skew of the rows AMPLIFIES the jelly:
+  it aligns the geometry of the frame, leaving the intra-frame deformation uncompensated.
+  That is why AE has it as a separate effect, FCP has a separate block with `Amount`, and
+  Premiere has the `Rolling Shutter Ripple` parameter inside the stabilizer.
+  Vegas has no rolling shutter correction in its documentation at all.
 
-## Что говорят пользователи
+## What users say
 
-Про артефакты старшей модели компенсации:
+About the artifacts of the senior compensation model:
 
 > I wouldn't recommend that subspace warp setting if there's bigger
 > perspective changes because it can create wobbliness when it doesn't know
@@ -137,9 +134,8 @@ file». Отсюда универсальный совет форумов — в
 > — Tero Ahlfors, Creative COW, 10.12.2014,
 > https://creativecow.net/forums/thread/warp-stabilizer-what-am-i-doing-wrongae/
 
-Там же — готовый рецепт отступления по лестнице моделей, который
-подтверждает, что она монотонна и что пользователи ею пользуются именно
-так:
+In the same thread — a ready-made recipe for stepping down the ladder of models, which
+confirms that it is monotonic and that users really do use it this way:
 
 > changing the mode from Subspace warp to "Position, Scale, Rotation"
 > and/or reducing the smoothness to less than 15 percent helps to reduce
@@ -147,297 +143,276 @@ file». Отсюда универсальный совет форумов — в
 > — Merlin Vandenbossche, Creative COW, 11.12.2014,
 > https://creativecow.net/forums/thread/warp-stabilizer-what-am-i-doing-wrongae/
 
-Про непрозрачность фазы анализа — жалоба, которую за десять лет так и не
-починили:
+About the opacity of the analysis phase — a complaint that has not been fixed in ten years:
 
 > I have been waiting for hours and I am still getting "Analyzing in
 > Background (Step 1 of 2)". Is there any sort of progress bar?
 > — Dustin Anstey, Creative COW, 14.09.2015,
 > https://creativecow.net/forums/thread/analyzing-in-background-forever/
 
-Про запрет «стабилизация + скорость» — ответ community expert'а на вопрос
-«почему нельзя», прямо называющий цену фичи:
+About the ban on "stabilization + speed" — the answer of a community expert to the question
+"why not", directly naming the price of the feature:
 
 > You are using two of the most complicated computing effects possible at
 > the same time on the same clip.
 > — R Neil Haugen (Legend), Adobe Support Community, 23.01.2024,
 > https://community.adobe.com/questions-729/why-can-t-warp-stabilizer-and-speed-be-used-on-the-same-clip-1404724
 
-И «включил, стало хуже» — результат, за которым обычно стоит попытка
-стабилизировать уже стабилизированное (стедикам) настройками по умолчанию:
+And "I turned it on and it got worse" — a result that usually stands behind an attempt
+to stabilize already-stabilized (steadicam) footage with default settings:
 
 > after applying the Warp stabilizer with the standard settings, the
 > footage actually got worse with more movement.
 > — Benjamin Gs, Creative COW, 12.10.2013,
 > https://creativecow.net/forums/thread/warp-stabilizers-makes-steadycam-footage-worse/
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-Исполнитель второй фазы у нас наполовину написан, анализ первой — нет
-вообще. Проверено грепом: `stabiliz|стабилиз|tracker|optical.flow|
-rolling.shutter` по `src/` не даёт ни одного попадания в коде.
+The executor of the second phase is half-written for us; the analysis of the first phase is not written at all. Checked by grep:
+`stabiliz|стабилиз|tracker|optical.flow|
+rolling.shutter` over `src/` gives not a single hit in the code.
 
-- **Нижняя ступень лестницы компенсации — готовый эффект.**
+- **The lower rung of the compensation ladder is an existing effect.**
   `FxInstance::Pan { mode, pan_x, pan_y, zoom }`
-  (`src/libs/kt-model/src/project.rs`, стр. 1947), исполнение —
-  `pan_zoom` в `src/libs/kt-fx/src/video.rs` (стр. 69), режимы
-  `PanMode::{Fit,Fill,Stretch}` (стр. 2456 `project.rs`). Это ровно
-  Translation + Scale, то есть уровень «Position» и половина «Position,
-  Scale, Rotation» — не хватает поворота.
-- **Верхняя ступень тоже есть, и это неожиданно.** `FxInstance::Pan3d`
-  (`src/libs/kt-model/src/project.rs`, стр. 2075) кладёт слой плоскостью
-  в мировые координаты и снимает перспективной камерой — то есть считает
-  ГОМОГРАФИЮ. Это буквально режим «Perspective», уже написанный,
-  отзеркаленный в WGSL и покрытый t187/t184. Оговорка тяжёлая: `Pan3d`
-  относится к `FxClass::Video3d` (`project.rs`, стр. 2108–2128), а
-  Video3d считается ТОЛЬКО на GPU, и `export.rs` (стр. 403) делает
-  preflight с `ExportError::GpuRequired` до создания файла. Стабилизация,
-  собранная на `Pan3d`, сделала бы проект неэкспортируемым на машине без
-  GPU — значит нужен свой варп-эффект с CPU-эталоном.
-- **Схема хранения результата анализа у нас уже есть и уже проверена.**
+  (`src/libs/kt-model/src/project.rs`, line 1947), execution —
+  `pan_zoom` in `src/libs/kt-fx/src/video.rs` (line 69), modes
+  `PanMode::{Fit,Fill,Stretch}` (line 2456 of `project.rs`). This is exactly
+  Translation + Scale, that is, the "Position" level and half of "Position,
+  Scale, Rotation" — rotation is missing.
+- **The upper rung is there too, and that is unexpected.** `FxInstance::Pan3d`
+  (`src/libs/kt-model/src/project.rs`, line 2075) places the layer as a plane
+  in world coordinates and takes it with a perspective camera — that is, it computes
+  a HOMOGRAPHY. This is literally the "Perspective" mode, already written,
+  mirrored in WGSL and covered by t187/t184. The caveat is a heavy one: `Pan3d`
+  belongs to `FxClass::Video3d` (`project.rs`, lines 2108–2128), and
+  Video3d is computed ONLY on the GPU, and `export.rs` (line 403) runs a preflight with
+  `ExportError::GpuRequired` before the file is created. A stabilization built on
+  `Pan3d` would make the project unexportable on a machine without a GPU — so a separate
+  warp effect with a CPU reference is needed.
+- **The storage scheme for the analysis result already exists and has already been tested.**
   `ParamCurve` / `AutoKey { t: Tick, v: f64 }`
-  (`src/libs/kt-model/src/project.rs`, стр. 1622), домен ключа — тик
-  МАТЕРИАЛА (`check_fx_auto`, стр. 1635, комментарий про «спрятанный
-  обрезкой ключ»), тест t212. Траектория стабилизации имеет ровно этот
-  домен: 4–8 скаляров на кадр материала. То, что Vegas выносит в выбор
-  «Media FX или Event FX», у нас уже решено в пользу материала — и решено
-  правильно.
-- **Фоновый офлайн-проход по материалу — уже существующий класс работы,
-  с двумя реализациями.** `spawn_index_worker`
-  (`src/apps/kt-app/src/util.rs`, стр. 89) строит peak-пирамиду в своём
-  потоке через КОРОТКОЖИВУЩИЙ `FfmpegSource::open_indexed`, явно «не
-  декодеры воспроизведения». Тумб-воркер (`src/apps/kt-app/src/thumbs.rs`,
-  стр. 340–420) держит СВОЙ пул источников, читает из БД, при промахе
-  декодирует сам и пишет обратно `put_thumbnail`, плюс негативный кэш
-  неудач. Оба идут МИМО `MediaWorker`.
-- **Место для результата — sidecar индекс-БД.** `MediaIndexDb`
-  (`src/libs/kt-media/src/index.rs`, `SCHEMA_VERSION = 2` на стр. 15),
-  схема и правила инвалидации — `docs/media-index.md`. Там уже лежат
-  packet index, peak-пирамида и тумбы; ключ — `media_id` с проверкой
+  (`src/libs/kt-model/src/project.rs`, line 1622), the key domain is the tick
+  of the MATERIAL (`check_fx_auto`, line 1635, a comment about the "key hidden by trimming"), test t212. The stabilization trajectory has exactly
+  this domain: 4–8 scalars per frame of material. What Vegas puts into the choice
+  "Media FX or Event FX" is already decided for us in favor of the material — and decided
+  correctly.
+- **A background offline pass over the material is an existing class of work, with
+  two implementations.** `spawn_index_worker`
+  (`src/apps/kt-app/src/util.rs`, line 89) builds the peak pyramid in its own thread
+  through a SHORT-LIVED `FfmpegSource::open_indexed`, explicitly "not playback
+  decoders". The thumbnail worker (`src/apps/kt-app/src/thumbs.rs`,
+  lines 340–420) keeps its OWN pool of sources, reads from the DB, on a miss decodes
+  itself and writes back via `put_thumbnail`, plus a negative cache of
+  failures. Both go AROUND `MediaWorker`.
+- **The place for the result is the sidecar index DB.** `MediaIndexDb`
+  (`src/libs/kt-media/src/index.rs`, `SCHEMA_VERSION = 2` on line 15),
+  the schema and the invalidation rules are in `docs/media-index.md`. It already holds the
+  packet index, the peak pyramid and the thumbnails; the key is `media_id` with a check of
   size/mtime/xxhash.
-- **Единый код композиции и место в цепочке.** `VideoRenderer::frame_plan`
-  (`src/libs/kt-engine/src/video.rs`, стр. 446), FX считаются пер-слой до
-  композита (`src/libs/kt-engine/src/video_plan.rs`), ключ пост-FX кэша —
-  `fx_chain_hash` (`video.rs`, стр. 153).
+- **A single composition code and its place in the chain.** `VideoRenderer::frame_plan`
+  (`src/libs/kt-engine/src/video.rs`, line 446), FX are computed per layer before the
+  composite (`src/libs/kt-engine/src/video_plan.rs`), the key of the post-FX cache is
+  `fx_chain_hash` (`video.rs`, line 153).
 
-### Чего не хватает
+### What is missing
 
-- **Всей первой фазы.** Нет детектора признаков, нет оптического потока,
-  нет оценки модели по соответствиям (RANSAC/LMedS), нет сглаживания
-  траектории. Это же ядро нужно F-MSK-005 — писать его надо один раз,
-  на двух потребителей, и порядок «сначала трекинг, потом стабилизация»
-  напрашивается сам.
-- **Поворота в компенсации.** `Pan` умеет сдвиг и зум, поворота нет ни у
-  одного из десяти видео-FX; ступень «Position, Scale, Rotation» —
-  новый эффект, а не новый параметр.
-- **Секции «результат офлайн-анализа» в схеме БД.** Таблицы
-  `packet_index` / `audio_peaks` / `thumbnails` описывают материал как
-  есть; поля «траектория движения, посчитанная такими-то параметрами» нет.
-- **Заполнения краёв.** `Pan` при `Fit` даёт чёрное поле; mirror/repeat/
-  clamp по краям кадра, как у Vegas, нет ни у одного эффекта.
-- **Прогресса и отмены длинной фоновой задачи в UI.** Тумбы и пики
-  показывают плейсхолдеры и не рассказывают о себе; для двадцатиминутного
-  прохода этого мало — жалоба Anstey ровно про это.
-- **Вложенных секвенций** — общий обходной путь чужих редакторов
-  («стабилизируй на вложенной») нам недоступен, и это скорее плюс: нам
-  придётся решить конфликт порядка честно, а не переложить на монтажёра.
+- **The whole first phase.** There is no feature detector, no optical flow,
+  no model estimation from correspondences (RANSAC/LMedS), no trajectory smoothing. The same core is
+  needed by F-MSK-005 — it has to be written once, for two consumers,
+  and the order "first tracking, then stabilization" suggests itself.
+- **Rotation in the compensation.** `Pan` handles shift and zoom; there is no rotation in any
+  one of the ten video FX; the "Position, Scale, Rotation" rung is a
+  new effect, not a new parameter.
+- **A "result of offline analysis" section in the DB schema.** The tables
+  `packet_index` / `audio_peaks` / `thumbnails` describe the material as it is;
+  there is no field for "motion trajectory computed with such-and-such parameters".
+- **Edge filling.** `Pan` with `Fit` gives a black field; there is no mirror/repeat/
+  clamp at the edges of the frame, as in Vegas, in any effect.
+- **Progress and cancellation of a long background task in the UI.** Thumbnails and peaks
+  show placeholders and do not report on themselves; for a twenty-minute
+  pass this is not enough — Anstey's complaint is exactly about this.
+- **Nested sequences** — the common workaround of other editors
+  ("stabilize on a nested sequence") is not available to us, and this is rather a plus: we
+  will have to resolve the order conflict honestly, rather than hand it to the editor.
 
-**Отдельно: ретайминг видео у нас УЖЕ ЕСТЬ**, и это меняет расклад по
-второй «фишке фишки». Р.37 п.2 распространил `SlowedReverb.rate` на
-картинку: `clip_video_warp` (`src/libs/kt-engine/src/video.rs`,
-стр. 83–110) строит `VideoWarp` тем же профилем, что и аудио (домен один
-на оба вида, иначе звук и картинка разъедутся), а `FrameMode::{Nearest,
-Blend}` (`src/libs/kt-model/src/project.rs`, стр. 2469) решает, что
-делать с кадром, которого в источнике нет. То есть конфликт, из-за
-которого Premiere просто ОТКАЗЫВАЕТ («Warp Stabilizer and Speed cannot be
-used on the same clip»), у нас будет живым с первого дня — но решённым:
-наш домен «тик материала» (t212) снимает его сам собой. Траектория —
-функция МАТЕРИАЛА, варп отображает выходной тик в материальный, значит
-композиция «ретайминг + стабилизация» определена однозначно и вложенная
-секвенция не нужна. Одна расплата, которую надо заложить сразу: при
-`FrameMode::Blend` выходной кадр — смесь ДВУХ материальных, у каждого
-своё преобразование, поэтому компенсация обязана применяться ДО смешения,
-покадрово по материалу, а не после. Применить варп к уже смешанному кадру
-— это тот самый вобблинг, только созданный своими руками.
+**Separately: video retiming we ALREADY HAVE**, and this changes the picture for the second
+"trick". Item 2 of R.37 extended `SlowedReverb.rate` to the picture: `clip_video_warp` (`src/libs/kt-engine/src/video.rs`,
+lines 83–110) builds a `VideoWarp` with the same profile as the audio (one domain for both
+kinds, otherwise sound and picture would drift apart), and `FrameMode::{Nearest,
+Blend}` (`src/libs/kt-model/src/project.rs`, line 2469) decides what
+to do with a frame that is absent from the source. So the conflict because of which
+Premiere simply REFUSES ("Warp Stabilizer and Speed cannot be
+used on the same clip") will be live for us from day one — but solved:
+our domain "tick of the material" (t212) removes it by itself. The trajectory is a
+function of the MATERIAL, the warp maps the output tick to the material tick, so the
+composition "retiming + stabilization" is defined unambiguously and a nested
+sequence is not needed. One cost that must be planned for at once: with
+`FrameMode::Blend` the output frame is a blend of TWO material frames, each with its
+own transformation, so the compensation must be applied BEFORE blending,
+per frame of the material, not after. Applying the warp to an already blended
+frame is the very same wobble, only created by our own hands.
 
-### Что мешает
+### What gets in the way
 
-**Главное: это уже не частный случай, а КЛАСС задач — «офлайн-анализ
-материала».** Третья подряд фича, которой нужен проход по кадрам вне
-воспроизведения: трекинг (F-MSK-005), стабилизация (эта) и, следом,
-всё, что считает статистику по кадру заранее. Пора признать класс явно,
-а не проектировать каждую фичу как исключение.
+**The main point: this is no longer a special case, but a CLASS of tasks — "offline analysis
+of the material".** It is the third feature in a row that needs a pass over the frames outside playback:
+tracking (F-MSK-005), stabilization (this one) and, next,
+everything that computes per-frame statistics in advance. It is time to acknowledge the class explicitly,
+rather than designing each feature as an exception.
 
-- **Инвариант 5 в его нынешней формулировке этому классу не подходит, и
-  код это уже знает.** Текст корневого `CLAUDE.md` говорит: «Все клиенты
-  (playback/prefetch/тумбнейлы) ходят через его приоритетную очередь
-  (Playback > NearPrefetch > FarPrefetch > Thumbnail)». Но `Priority::
-  Thumbnail` (`src/libs/kt-engine/src/lib.rs`, стр. 199–204) в реальности
-  НИКЕМ не ставится в очередь: единственное упоминание — сбор спана в
-  `src/libs/kt-engine/src/worker.rs` (стр. 236), а тумбы живут на своих
-  источниках в `thumbs.rs`. То есть офлайн-работа де-факто уже вынесена
-  из очереди, и правильный ответ для стабилизации — тот же (свой
-  короткоживущий источник, как у index-воркера), а не пятый уровень
-  приоритета. Довесок ниже `Thumbnail` голодал бы вечно, а поставленный
-  выше — отбирал бы декодер у воспроизведения на десятки минут. Заодно
-  формулировку инварианта 5 стоит уточнить: «декодерами ВОСПРОИЗВЕДЕНИЯ
-  владеет ровно один MediaWorker; офлайн-проходы открывают собственные
-  короткоживущие источники».
-- **Индекс-БД подходит для траектории — но не по всем осям, и это надо
-  решить до, а не после.** За:
-  ключ `media_id` с инвалидацией по size/mtime/xxhash (правило 1
-  `docs/media-index.md`) — ровно та семантика, которая нужна: анализ есть
-  функция материала, а не таймлайна; блоб-на-секцию уже применяется для
-  `audio_peaks`; БД переносится вместе с проектом. Против:
-  1) **БД объявлена КЭШЕМ** («потеря или повреждение не ошибка, БД
-  пересоздаётся» — `index.rs`, стр. 1–5). Пик перестроится за секунды,
-  двадцатиминутный анализ — нет. Значит либо класс данных в БД перестаёт
-  быть однородным, либо тяжёлый анализ живёт рядом, но с другим
-  контрактом. Молча потерять и молча пересчитать — худший вариант: у
-  пользователя изменится КАРТИНКА.
-  2) **Бамп `SCHEMA_VERSION`** (правило 2 `media-index.md`) сносит БД
-  целиком — то есть добавление секции анализа выбрасывает у всех
-  пользователей уже построенные пики, тумбы и пакетные индексы. Секцию
-  надо вводить одним заходом, а не итерациями.
-  3) **Объём зависит от модели компенсации на три порядка.** Аффинная
-  траектория — 6 f32 на кадр ≈ 24 байта, час 24 fps ≈ 2 МБ, это ничто.
-  Сетка Subspace Warp 16×9 узлов по 2 f32 — ≈ 1,1 КБ на кадр, час ≈
-  95 МБ на один клип. Sidecar рядом с проектом такого объёма — уже
-  разговор с пользователем, а не деталь реализации.
-  4) **Параметры анализа обязаны жить в ПРОЕКТЕ, а результат — в БД.**
-  Иначе «Fast/Accurate» окажется настройкой кэша, и два человека с одним
-  `.otio` получат разную картинку.
-- **Детерминизм несовместим со «случайным» RANSAC из учебника.**
-  Инвариант 11 требует байт-в-байт против GOLDEN_VIDEO на CPU; значит
-  сид фиксирован, порядок обхода признаков фиксирован, сумма в
-  плавающей точке накапливается в фиксированном порядке. Это ограничение
-  на выбор алгоритма, а не на его реализацию.
-- **Правило крейта kt-fx**: варп-эффект придётся писать сразу тройкой —
-  скаляр, AVX2 (`src/libs/kt-fx/src/video_simd.rs`) и WGSL
-  (`src/libs/kt-gpu/src/shaders/`), байт-в-байт SIMD со скаляром; умолчания
-  новых параметров обязаны давать прежнее поведение, иначе едут 26
-  golden'ов t26/t67.
-- **Формат — дешевле, чем кажется.** По правилу `src/libs/kt-otio/src/
-  meta.rs` (стр. 11–17, `KT_META_VERSION = 4`) неизвестный эффект
-  деградирует в foreign-passthrough и версию НЕ бампает — один Pan3d
-  прецедент создал. Так что новый FX сам по себе версию не двигает;
-  бампать до v5 придётся, только если траектория поедет в конверт клипа
-  (старая сборка потеряла бы её при перезаписи).
-- **Ключ пост-FX кэша.** `fx_chain_hash` (`src/libs/kt-engine/src/
-  video.rs`, стр. 153) хэширует Debug цепочки — если траектория попадёт в
-  параметры эффекта целиком, хэш будет считаться по мегабайтам на каждый
-  кадр. В цепочке должна лежать ССЫЛКА на анализ, а не сам анализ.
+- **Invariant 5 in its current wording does not suit this class, and the code already knows it.** The text of the root `CLAUDE.md` says: "All clients
+  (playback/prefetch/thumbnails) go through its priority queue
+  (Playback > NearPrefetch > FarPrefetch > Thumbnail)". But `Priority::
+  Thumbnail` (`src/libs/kt-engine/src/lib.rs`, lines 199–204) in reality
+  is NOT enqueued by anyone: the only mention is collecting the span in
+  `src/libs/kt-engine/src/worker.rs` (line 236), and the thumbnails live on their own
+  sources in `thumbs.rs`. So offline work has de facto already been moved
+  out of the queue, and the right answer for stabilization is the same one (its own
+  short-lived source, as the index worker has), not a fifth priority level. A tail
+  below `Thumbnail` would starve forever, and one placed above it would take the decoder away from playback for tens of minutes. At the same time,
+  the wording of invariant 5 should be refined: "the decoders of PLAYBACK are owned by exactly one MediaWorker; offline passes open their own
+  short-lived sources".
+- **The index DB suits the trajectory — but not on all axes, and this must be decided before, not after.** In favor:
+  the key `media_id` with invalidation by size/mtime/xxhash (rule 1 of
+  `docs/media-index.md`) — exactly the semantics that are needed: the analysis is a function
+  of the material, not of the timeline; a blob-per-section is already used for
+  `audio_peaks`; the DB moves together with the project. Against:
+  1) **The DB is declared a CACHE** ("loss or corruption is not an error, the DB
+  is recreated" — `index.rs`, lines 1–5). A peak is rebuilt in seconds, a twenty-minute analysis is not. So either the data class in the DB stops
+  being homogeneous, or the heavy analysis lives alongside it but with a different
+  contract. Silently losing and silently recomputing is the worst option: the user's PICTURE would change.
+  2) **Bumping `SCHEMA_VERSION`** (rule 2 of `media-index.md`) wipes the DB
+  entirely — that is, adding an analysis section throws away from everyone's
+  existing peaks, thumbnails and packet indexes. The section
+  has to be introduced in a single step, not iteratively.
+  3) **The volume depends on the compensation model by three orders of magnitude.** An affine
+  trajectory is 6 f32 per frame ≈ 24 bytes, an hour at 24 fps ≈ 2 MB, which is nothing.
+  A Subspace Warp grid of 16×9 nodes with 2 f32 each — ≈ 1.1 KB per frame, an hour ≈
+  95 MB for one clip. A sidecar of that size next to the project is already
+  a conversation with the user, not an implementation detail.
+  4) **The analysis parameters must live in the PROJECT, and the result in the DB.**
+  Otherwise "Fast/Accurate" becomes a cache setting, and two people with one
+  `.otio` would get different pictures.
+- **Determinism is incompatible with the "random" RANSAC from the textbook.**
+  Invariant 11 requires byte-for-byte matching against GOLDEN_VIDEO on the CPU; therefore
+  the seed is fixed, the order of traversing features is fixed, and the floating-point sum
+  accumulates in a fixed order. This is a constraint on the choice of algorithm, not on its implementation.
+- **The rule of the kt-fx crate**: the warp effect will have to be written as a triple at once —
+  scalar, AVX2 (`src/libs/kt-fx/src/video_simd.rs`) and WGSL
+  (`src/libs/kt-gpu/src/shaders/`), byte-for-byte SIMD against the scalar; the defaults of the
+  new parameters must give the previous behavior, otherwise 26
+  goldens of t26/t67 move.
+- **The format is cheaper than it seems.** Under the rule in `src/libs/kt-otio/src/
+  meta.rs` (lines 11–17, `KT_META_VERSION = 4`) an unknown effect
+  degrades into foreign passthrough and does NOT bump the version — one Pan3d
+  precedent was created. So a new FX by itself does not move the version;
+  a bump to v5 will be needed only if the trajectory goes into the clip envelope
+  (an old build would lose it on overwrite).
+- **The key of the post-FX cache.** `fx_chain_hash` (`src/libs/kt-engine/src/
+  video.rs`, line 153) hashes the Debug output of the chain — if the trajectory gets into the
+  effect parameters whole, the hash would be computed over megabytes on every
+  frame. The chain must hold a REFERENCE to the analysis, not the analysis itself.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **№5 (декодер)** — см. выше: не новый приоритет, а собственный
-  короткоживущий источник по образцу `spawn_index_worker` / `thumbs.rs`;
-  формулировку инварианта имеет смысл уточнить в том же раунде.
-- **№8 (скролл/зум не порождает декодов)** — анализ запускается ТОЛЬКО
-  явным действием пользователя, никогда не «сам, когда клип попал на
-  таймлайн». Это же правило 20 чек-листа UI («ничего не отрастает и не
-  отрубается само»), и здесь мы прямо расходимся с моделью FCP
-  «проанализировать всё при импорте»: она нам запрещена своим же
-  правилом. Кнопка «Анализировать», прогресс, отмена, один undo-шаг.
-- **№4 (кэш — единственная правда о coverage)** — прогресс анализа НЕ
-  является coverage и не имеет права рисоваться полосками прогретости
-  `BurstCache::coverage()`. Ему нужен свой честный индикатор; цитата
-  Anstey — ровно про цену отсутствия такого индикатора.
-- **№7 (код композиции один)** — компенсация обязана быть эффектом в
-  цепочке слоя, который считает `frame_plan`, а не отдельным путём «до
-  плана»; иначе превью и экспорт разъедутся. Морферный путь
-  (`Project::effective_clips()`) для этого не годится: он переписывает
-  клипы, а не пиксели.
-- **№11 (детерминизм)** — фиксированный сид и фиксированный порядок
-  накопления; кросс-бэкенд CPU↔GPU — только через
+- **No. 5 (decoder)** — see above: not a new priority, but its own
+  short-lived source modeled on `spawn_index_worker` / `thumbs.rs`;
+  it makes sense to refine the wording of the invariant in the same round.
+- **No. 8 (scroll/zoom does not generate decodes)** — the analysis is started ONLY
+  by an explicit user action, never "by itself, when the clip landed on the timeline". This is the same as rule 20 of the UI checklist ("nothing grows or shuts off by itself"), and here we explicitly diverge from the FCP model
+  "analyze everything on import": it is forbidden for us by our own
+  rule. An "Analyze" button, progress, cancellation, one undo step.
+- **No. 4 (the cache is the only truth about coverage)** — the analysis progress is NOT
+  coverage and has no right to be drawn with the coverage bars of `BurstCache::coverage()`. It
+  needs its own honest indicator; Anstey's quote is exactly about the cost of the absence of such an indicator.
+- **No. 7 (one composition code)** — the compensation must be an effect in the layer's
+  chain, which `frame_plan` computes, not a separate path "before the plan"; otherwise preview and export would diverge. The morpher path
+  (`Project::effective_clips()`) is not suitable for this: it rewrites
+  clips, not pixels.
+- **No. 11 (determinism)** — a fixed seed and a fixed order of accumulation; cross-backend CPU↔GPU — only via
   `kt_gpu::assert_frames_close`.
-- **Правила UI**: 2 (ручки стабилизации работают и при воспроизведении),
-  13 (панель анализа встаёт в уже занятое место FX-редактора, а не новой
-  строкой), 16 (невозможность — явной ошибкой: «этот клип не
-  проанализирован», а не серым hover'ом), 20 (см. выше). Числовые
-  параметры — только через `widgets::param_row` по `ParamSpec`; кривая
-  сглаживания, если она понадобится, рисуется единственным виджетом
+- **UI rules**: 2 (the stabilization handles work during playback too),
+  13 (the analysis panel takes the already occupied place of the FX editor, rather than a new
+  row), 16 (impossibility is shown by an explicit error: "this clip is not
+  analyzed", not by a grayed-out hover'), 20 (see above). Numeric
+  parameters — only via `widgets::param_row` over `ParamSpec`; a smoothing curve, if it is needed, is drawn by the single widget in
   `src/apps/kt-app/src/automation.rs`.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | XL — целый раунд плюс ревизия инварианта 5 и схемы sidecar-БД |
-| Где основная работа | kt-media (секция анализа в `index.rs` + бамп `SCHEMA_VERSION`), новое ядро анализа движения (общее с F-MSK-005), kt-fx + kt-gpu (варп-эффект тройкой: скаляр/AVX2/WGSL), kt-app (запуск, прогресс, отмена) |
-| Формат проекта | скорее НЕ трогает: новый FX деградирует в foreign-passthrough (`src/libs/kt-otio/src/meta.rs`). v5 нужен, только если траектория поедет в `.otio`, а не в sidecar-БД |
-| Тесты, которые придётся написать | детерминизм анализа (тот же материал → байт-в-байт та же траектория, дважды подряд и после перезапуска); round-trip секции БД + инвалидация по mtime/xxhash; неизменность картинки при умолчаниях (26 golden'ов t26/t67 не двигаются); конформанс CPU↔GPU варпа через `kt_gpu::assert_frames_close`; «анализ не ходит через MediaWorker» (счётчики `DecodeStats` воспроизведения не растут во время прохода); **композиция с ретаймингом** — стабилизация поверх `SlowedReverb.rate` на видео даёт тот же результат, что и без ретайминга, покадрово по материалу, включая `FrameMode::Blend`; харнесс-тест окна с прогрессом и отменой |
-| Зависит от | F-MSK-005 (то же ядро анализа движения — делать первым) |
-| Ломает совместимость | бамп `SCHEMA_VERSION` в `src/libs/kt-media/src/index.rs` сносит sidecar-БД у всех: пики, тумбы и пакетные индексы строятся заново. Формат проекта — нет |
+| Size | XL — a whole round plus a revision of invariant 5 and of the sidecar DB schema |
+| Where the main work is | kt-media (analysis section in `index.rs` + bump of `SCHEMA_VERSION`), a new motion analysis core (shared with F-MSK-005), kt-fx + kt-gpu (the warp effect as a triple: scalar/AVX2/WGSL), kt-app (start, progress, cancellation) |
+| Project format | most likely does NOT touch it: a new FX degrades into foreign-passthrough (`src/libs/kt-otio/src/meta.rs`). v5 is needed only if the trajectory goes into `.otio`, not into the sidecar DB |
+| Tests that will have to be written | determinism of the analysis (the same material → byte-for-byte the same trajectory, twice in a row and after a restart); round-trip of the DB section + invalidation by mtime/xxhash; unchanged picture at the defaults (26 goldens of t26/t67 do not move); CPU↔GPU conformance of the warp via `kt_gpu::assert_frames_close`; "the analysis does not go through MediaWorker" (the `DecodeStats` counters of playback do not grow during the pass); **composition with retiming** — stabilization over `SlowedReverb.rate` on video gives the same result as without retiming, per frame of the material, including `FrameMode::Blend`; a harness test of the window with progress and cancellation |
+| Depends on | F-MSK-005 (the same motion analysis core — do it first) |
+| Breaks compatibility | a bump of `SCHEMA_VERSION` in `src/libs/kt-media/src/index.rs` wipes the sidecar DB for everyone: peaks, thumbnails and packet indexes are rebuilt from scratch. The project format — no |
 
-## Вердикт
+## Verdict
 
-Берём, но не первой и не как «фичу стабилизации». Сначала F-MSK-005:
-ядро анализа движения одно, и трекинг предъявляет его в более простой
-обвязке. Главный вывод этой заметки не про стабилизацию, а про то, что
-**«офлайн-анализ материала» стал классом задач** и место для него у нас
-уже есть — sidecar `<project>.ktindex.db`, где фоном лежат пики, тумбы и
-пакетные индексы. Траектория ложится туда по домену (функция материала,
-инвалидация по xxhash — даром), но требует решить два вопроса ДО первой
-строки кода: тяжёлый анализ не может иметь контракт «кэш, потеря не
-ошибка», и данные Subspace Warp на три порядка объёмнее аффинных.
-Начинать надо с двух нижних ступеней лестницы (Position и Position/Scale/
-Rotation) — их исполнитель уже почти написан (`Pan` + поворот), они
-покрывают большинство реального материала, и они не тянут за собой ни
-сеточный варп, ни синтез краёв. Приятный побочный вывод: конфликт
-«стабилизация + скорость», который Premiere пятнадцать лет закрывает
-запретом, у нас закрыт заранее выбором домена — но только если
-компенсация ляжет ДО смешения кадров в `FrameMode::Blend`.
+Take it, but not first and not as a "stabilization feature". First F-MSK-005:
+the motion analysis core is one, and tracking presents it in a simpler
+wrapper. The main conclusion of this note is not about stabilization, but about the fact that
+**"offline analysis of the material" has become a class of tasks**, and we already have
+a place for it — the sidecar `<project>.ktindex.db`, where peaks, thumbnails and
+packet indexes lie in the background. The trajectory fits there by domain (a function of the
+material, invalidation by xxhash — for free), but it requires two questions to be decided BEFORE the first
+line of code: a heavy analysis cannot have the contract "cache, loss is not an
+error", and the Subspace Warp data is three orders of magnitude larger than the affine data.
+One must start with the two lower rungs of the ladder (Position and Position/Scale/
+Rotation) — their executor is almost written already (`Pan` + rotation), they
+cover most real material, and they do not drag along either a grid warp
+or edge synthesis. A pleasant side conclusion: the conflict
+"stabilization + speed", which Premiere has been closing with a ban for fifteen years, is closed for us in advance by the choice of domain — but only if
+the compensation goes BEFORE the frame blending in `FrameMode::Blend`.
 
-## Источники
+## Sources
 
-- Creative COW, «Warp stabilizer – What am I doing wrong?»,
+- Creative COW, "Warp stabilizer – What am I doing wrong?",
   https://creativecow.net/forums/thread/warp-stabilizer-what-am-i-doing-wrongae/
-  (обращение 2026-09-07) — цитаты Ahlfors и Vandenbossche, лестница моделей
-- Creative COW, «Analyzing in Background forever»,
+  (accessed 2026-09-07) — quotes from Ahlfors and Vandenbossche, the ladder of models
+- Creative COW, "Analyzing in Background forever",
   https://creativecow.net/forums/thread/analyzing-in-background-forever/
-  (2026-09-07) — цитата Anstey
-- Creative COW, «Warp Stabilizers makes Steadycam footage worse»,
+  (2026-09-07) — quote from Anstey
+- Creative COW, "Warp Stabilizers makes Steadycam footage worse",
   https://creativecow.net/forums/thread/warp-stabilizers-makes-steadycam-footage-worse/
-  (2026-09-07) — цитата Benjamin Gs
-- Adobe Support Community, «Why can't warp stabilizer and speed be used on
-  the same clip?»,
+  (2026-09-07) — quote from Benjamin Gs
+- Adobe Support Community, "Why can't warp stabilizer and speed be used on
+  the same clip?",
   https://community.adobe.com/questions-729/why-can-t-warp-stabilizer-and-speed-be-used-on-the-same-clip-1404724
-  (2026-09-07) — цитата Haugen
-- Adobe Support Community, «Warp Stabilizer + Speed in nested sequence
-  produces glitches»,
+  (2026-09-07) — quote from Haugen
+- Adobe Support Community, "Warp Stabilizer + Speed in nested sequence
+  produces glitches",
   https://community.adobe.com/t5/premiere-pro-discussions/warp-stabilizer-speed-in-nested-sequence-produces-glitches-dead-pixels/m-p/12906033
-  (2026-09-07) — обходной путь через вложенную секвенцию
-- Boris FX, официальная документация VEGAS Pro 2026, «Stabilizing Video
-  Clips»,
+  (2026-09-07) — the workaround via a nested sequence
+- Boris FX, official documentation of VEGAS Pro 2026, "Stabilizing Video
+  Clips",
   https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/7-edit/video_stabilization_new.htm
-  (2026-09-07) — Media FX vs Event FX, Analyze Motion, режимы, края
-- MAGIX, справка VEGAS Pro 22/23, тот же раздел,
+  (2026-09-07) — Media FX vs Event FX, Analyze Motion, modes, edges
+- MAGIX, VEGAS Pro 22/23 help, the same section,
   https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/video_stabilization_new.htm
-  (2026-09-07) — сверка формулировок с прошлой линейкой
-- Apple, Final Cut Pro User Guide, «Correct shaky video»,
+  (2026-09-07) — checking the wording against the previous line
+- Apple, Final Cut Pro User Guide, "Correct shaky video",
   https://support.apple.com/guide/final-cut-pro/correct-shaky-video-verbacf92b/mac
   (2026-09-07) — Automatic / InertiaCam / SmoothCam, Tripod Mode,
   rolling shutter
 - Blackmagic Design, DaVinci Resolve — Edit,
   https://www.blackmagicdesign.com/products/davinciresolve/edit
-  (2026-09-07) — цитата про встроенную стабилизацию в Inspector, ручки
-  camera lock / zoom / crop ratio / smoothing / strength
+  (2026-09-07) — quote about the built-in stabilization in the Inspector, the
+  camera lock / zoom / crop ratio / smoothing / strength controls
 - Blackmagic Design, DaVinci Resolve — Color,
   https://www.blackmagicdesign.com/products/davinciresolve/color
-  (2026-09-07) — трекер как стабилизатор на Color-странице
+  (2026-09-07) — the tracker as a stabilizer on the Color page
 
-**Честно о пробелах.** `helpx.adobe.com` из этого окружения не
-открывается (страница `warp-stabilizer-settings.html` найдена поиском, но
-не прочитана), поэтому точный СПИСОК параметров Warp Stabilizer собран из
-форумных цитат (Method и Result подтверждены дословно) и вторичных
-разборов (названия четырёх режимов Framing, `Synthesis Input Range`,
-`Rolling Shutter Ripple`) — помечено `[НЕ ПРОВЕРЕНО]` там, где
-первоисточника нет. Названия трёх режимов стабилизации Resolve
-(Perspective / Similarity / Translation) взяты из вторичных разборов;
-официальная страница BMD подтверждает только набор ручек. Reddit и
-`discussions.apple.com` недоступны, бюджет `WebSearch` исчерпан — поиск
-шёл прямыми запросами к Yahoo. Живьём ни один из пяти редакторов не
-запускался.
+**Honestly about the gaps.** `helpx.adobe.com` does not open from this environment (the page `warp-stabilizer-settings.html` was found by search, but
+not read), so the exact LIST of Warp Stabilizer parameters was assembled from
+forum quotes (Method and Result are confirmed verbatim) and secondary
+write-ups (the names of the four Framing modes, `Synthesis Input Range`,
+`Rolling Shutter Ripple`) — marked `[NOT VERIFIED]` where there is no primary source. The names of the three Resolve
+stabilization modes (Perspective / Similarity / Translation) are taken from secondary
+write-ups; the official BMD page confirms only the set of controls. Reddit and
+`discussions.apple.com` are unavailable, the `WebSearch` budget is exhausted — the search
+ran through direct queries to Yahoo. None of the five editors was tested live.

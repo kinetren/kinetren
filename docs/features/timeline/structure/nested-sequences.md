@@ -1,129 +1,71 @@
 ---
 id: F-TL-004
-title: Вложенные секвенции — монтаж, который ведёт себя как клип
-status: сделано
+title: Nested sequences — an edit that behaves like a clip
+status: done
 priority: A
 cost: XL
 category: timeline/structure
 editors: [premiere-26, fcp-12, resolve-21, vegas-pro-2026, after-effects-26]
-we_have: да
+we_have: yes
 crates: [kt-model, kt-otio, kt-engine, kt-gpu, kt-cache, kt-media, kt-app]
 invariants: [3, 4, 5, 7, 8, 11]
 ui_rules: [13, 17, 20]
-round: Р.50, Р.55, Р.56
+round: R.50, R.55, R.56
 point: 378-395, 434-447, 448-452
 tests: [t423, t424, t425, t426, t427, t428, t429, t430, t431, t432, t433, t434, t435, t436, t437, t438, t439, t440, t441, t442, t443, t444, t445, t446, t447, t448, t449, t450, t451, t452, t453, t454, t455, t456, t457, t458, t579, t580, t581, t582, t583, t584, t585, t586, t587, t598, t599, t600, t601, t602, t639, t640]
 depends_on: []
 checked: 2026-09-19
 ---
 
-# F-TL-004 — Вложенные секвенции — монтаж, который ведёт себя как клип
+# F-TL-004 — Nested sequences — an edit that behaves like a clip
 
-## Суть
+## Essence
 
-Кусок монтажа — несколько событий на нескольких дорожках, со стыками,
-переходами и уровнями — сворачивается в ОДНО событие. Дальше оно живёт как
-обычный клип: тримится, копируется, получает цепочку эффектов, уровень,
-скорость. Внутрь можно войти и продолжить монтировать. Смысл не в том, чтобы
-убрать бардак с глаз: вложение ставит ГРАНИЦУ ПОРЯДКА ОБРАБОТКИ. Всё, что
-навешено снаружи, применяется к уже собранной картинке (и к общему миксу), а
-не к каждому куску отдельно — а это единственный способ выразить «эффект на
-результат» там, где эффекты живут на событиях.
+A piece of the edit — several events on several tracks, with junctions, transitions and levels — collapses into ONE event. From then on it lives as an ordinary clip: it is trimmed, copied, gets an effect chain, a level, a speed. You can go inside and keep editing. The point is not to remove the mess from sight: nesting sets a BOUNDARY OF PROCESSING ORDER. Everything applied outside is applied to the already assembled picture (and to the overall mix), not to each piece separately — and that is the only way to express "an effect on the result" where effects live on events.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| Adobe Premiere | 26.x | Nest… (и просто перетаскивание секвенции в секвенцию) | выделение заменяется клипом-секвенцией, сама секвенция — полноценный объект в панели проекта со СВОИМИ настройками (растр, fps); один и тот же объект можно поставить в несколько мест, правка внутри меняет все; эффекты на клипе-вложении считаются после сборки — на этом стоит официальный совет «переставь порядок рендера вложением» (см. F-MPH-004) |
-| Final Cut Pro | 12.3 | Compound Clip | «родитель» лежит в браузере, на таймлайне стоят «дети»: «Every compound clip in the timeline has a “parent” compound clip in the browser». Правка содержимого наследуется всеми экземплярами «in all projects»; у экземпляра СВОЯ длительность, материал за её краем показан заштрихованной зоной и в кадр не идёт; независимость делается отдельно (независимый compound / snapshot проекта) |
-| DaVinci Resolve | 21 (проверялось по 20.x и форумам) | Compound Clip · Fusion Clip · таймлайн внутри таймлайна — ТРИ разных механизма | compound — монтажный контейнер: «Open in Timeline» открывает его как таймлайн, «Decompose in Place» разворачивает обратно на место; Fusion Clip — тот же выделенный кусок, но превращённый в НОДОВЫЙ композит (монтаж стыков уезжает в граф Fusion, обратно монтажом он уже не является); третье — перетаскивание готового таймлайна из медиапула в другой таймлайн. На странице Fusion compound виден одним `MediaIn` — то есть внутрь ноды монтаж не просвечивает [НЕ ПРОВЕРЕНО по первоисточнику: forum.blackmagicdesign.com и мануал из этого окружения не открылись, см. «Источники»] |
-| VEGAS Pro | 2026.0 | Nested Timeline (он же вложенный проект) | вложение — ОТДЕЛЬНЫЙ ФАЙЛ `.veg` на диске, а не объект внутри проекта: «Nested timelines are technically just nested projects, but with a big improvement: To edit it, you don't have to open it in a separate instance of VEGAS Pro». Родитель обязан быть сохранён до создания вложения; вложенному предлагается имя «<проект>_Untitled Timeline»; вход — кнопкой, выход — «Open Parent Timeline» |
-| After Effects | 26.x | Pre-compose / вложенная композиция | первоисточник идеи: прекомп — обычная композиция со своим растром, fps и длительностью, вставленная слоем в другую. При прекомпозиции одного слоя есть выбор, ОСТАВИТЬ ли трансформ и эффекты снаружи или унести внутрь — то есть по какую сторону границы они окажутся. Границу можно РАСТВОРИТЬ обратно переключателем Collapse Transformations |
+| Adobe Premiere | 26.x | Nest… (and simply dragging a sequence into a sequence) | the selection is replaced by a sequence clip; the sequence itself is a full object in the project panel with ITS OWN settings (raster, fps); the same object can be placed in several places, and an edit inside changes all of them; effects on the nest clip are computed after assembly — the official advice "reorder the render by nesting" stands on this (see F-MPH-004) |
+| Final Cut Pro | 12.3 | Compound Clip | the "parent" lies in the browser, the "children" stand on the timeline: "Every compound clip in the timeline has a “parent” compound clip in the browser". Edits to the content are inherited by all instances "in all projects"; an instance has ITS OWN duration, material beyond its edge is shown as a hatched zone and does not get into the frame; independence is done separately (an independent compound / project snapshot) |
+| DaVinci Resolve | 21 (checked against 20.x and forums) | Compound Clip · Fusion Clip · a timeline inside a timeline — THREE different mechanisms | a compound is an editing container: "Open in Timeline" opens it as a timeline, "Decompose in Place" unfolds it back in place; a Fusion Clip is the same selected piece, but converted into a NODE composite (the editing of the junctions moves into the Fusion graph and is no longer editing in the back-and-forth sense); the third is dragging a finished timeline from the media pool into another timeline. On the Fusion page a compound is visible as one `MediaIn` — that is, the editing does not show through inside the node [NOT VERIFIED against the primary source: forum.blackmagicdesign.com and the manual did not open from this environment, see "Sources"] |
+| VEGAS Pro | 2026.0 | Nested Timeline (also a nested project) | the nest is a SEPARATE `.veg` FILE on disk, not an object inside the project: "Nested timelines are technically just nested projects, but with a big improvement: To edit it, you don't have to open it in a separate instance of VEGAS Pro". The parent must be saved before the nest is created; the nested one is offered the name "<project>_Untitled Timeline"; entry is by a button, exit by "Open Parent Timeline" |
+| After Effects | 26.x | Pre-compose / nested composition | the original source of the idea: a pre-comp is an ordinary composition with its own raster, fps and duration, inserted as a layer into another. When pre-composing one layer, there is a choice of whether to LEAVE the transform and effects outside or move them inside — that is, on which side of the boundary they end up. The boundary can be UNDONE back with the Collapse Transformations switch |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Граница вложенности — управляемый объект, и AE даёт кнопку её отменить.**
-Вложение обычно описывают как «сложил в папку». На деле это переключатель
-порядка операций, и в AE он двусторонний: тот же самый квадратик, который у
-векторного слоя означает «продолжай растеризовать», у слоя-композиции
-называется Collapse Transformations и означает «этой границы нет». Walter
-Soyka на Creative COW: «For composition layers, the switch is actually called
-“Collapse Transformations.”» — и дальше главное: «The downside is that effects
-applied to the precomp layer will no longer work quite the same», потому что
-эффект, стоявший НА композите, начинает применяться к слоям внутри, в их
-собственных координатах. Отсюда практическое следствие, которого нет ни в
-одном списке возможностей: переключатель, поставленный ради резкости или ради
-того, чтобы наружу «протекли» 3D и режимы наложения, молча меняет смысл уже
-навешенных эффектов. Один и тот же переключатель с двумя разными значениями
-— это ещё и готовый ответ на вопрос «зачем вложению отдельная галка»
-(соседняя сторона той же механики разобрана в F-MPH-002).
+**1. The nesting boundary is a controllable object, and AE gives a button to cancel it.**
+Nesting is usually described as "put into a folder". In fact it is a switch of the operation order, and in AE it is two-sided: the same little square that on a vector layer means "keep rasterizing" is called Collapse Transformations on a composition layer and means "this boundary does not exist". Walter Soyka on Creative COW: "For composition layers, the switch is actually called “Collapse Transformations.”" — and then the main point: "The downside is that effects applied to the precomp layer will no longer work quite the same", because an effect that stood ON the composite starts to apply to the layers inside, in their own coordinates. Hence a practical consequence that is not in any list of features: a switch set for the sake of sharpness, or so that 3D and blend modes "leak" outward, silently changes the meaning of effects already applied. One and the same switch with two different values is also a ready answer to the question "why does nesting need a separate checkbox" (the neighboring side of the same mechanics is analyzed in F-MPH-002).
 
-**2. У вложения СВОЯ длительность и СВОЙ растр — и то и другое режет молча.**
-FCP рисует границу честно: заходишь внутрь compound clip'а — и края видны
-«darker crosshatched area», материал в этой зоне существует, но в кадр не
-попадает, пока не удлинишь РОДИТЕЛЬСКИЙ экземпляр. Растр ведёт себя так же,
-только без штриховки: вложение сначала собирается в промежуточный кадр СВОЕГО
-размера, и уже он масштабируется в родительский. Поэтому классическая жалоба
-«нест мылит при нулевом масштабе» — не баг, а два последовательных ресемпла:
-1080p-материал → 1080p-растр вложения → 720p-родитель, и каждый шаг честно
-показывает 100 %. Ровно из-за этого совет «стабилизируй на вложении» работает
-и вредит одновременно: стабилизатору нужен собранный кусок и запас за краем
-кадра — а запас берётся из растра ВЛОЖЕНИЯ, а не исходника (см. F-MSK-006).
+**2. A nest has its OWN duration and its OWN raster — and both cut silently.**
+FCP draws the boundary honestly: go inside a compound clip and the edges are visible as a "darker crosshatched area" — the material exists in that zone but does not get into the frame until you lengthen the PARENT instance. The raster behaves the same way, only without hatching: the nest is first assembled into an intermediate frame of ITS OWN size, and only that is scaled into the parent. Therefore the classic complaint "the nest gets soft at zero scale" is not a bug, but two successive resamples: 1080p material → 1080p raster of the nest → 720p parent, and each step honestly shows 100 %. It is exactly for this reason that the advice "stabilize on the nest" works and harms at the same time: the stabilizer needs the assembled piece and a margin beyond the frame edge — and the margin is taken from the raster of the NEST, not from the source (see F-MSK-006).
 
-**3. «Ссылка» у всех, но ссылаются они на разное — и цена разная.**
-FCP: «Any changes you make to the internal parts of the compound clip are
-inherited by all of its child clips, in all projects» — ссылка на объект
-внутри библиотеки, независимая копия делается отдельной командой. Premiere:
-ссылка на секвенцию в панели проекта. VEGAS: ссылка на ФАЙЛ `.veg` на диске —
-то есть вложение переносится вместе с проектом как медиа, теряется как медиа
-и «делается независимым» копированием файла. Разница не косметическая:
-в первых двух случаях «сделать копию» — команда редактора, в третьем — работа
-файлового менеджера, зато вложение можно отдать другому монтажёру отдельно.
-Общее у всех троих одно и то же неудобство: по клипу на таймлайне НЕ ВИДНО,
-сколько ещё мест изменится вместе с ним.
+**3. Everyone has a "reference", but they reference different things — and the price differs.**
+FCP: "Any changes you make to the internal parts of the compound clip are inherited by all of its child clips, in all projects" — a reference to an object inside the library; an independent copy is made by a separate command. Premiere: a reference to a sequence in the project panel. VEGAS: a reference to a `.veg` FILE on disk — that is, the nest travels with the project as media, is lost as media, and "is made independent" by copying the file. The difference is not cosmetic: in the first two cases "make a copy" is an editor's command, in the third it is the job of a file manager, but the nest can be handed to another editor separately. What all three share is one and the same inconvenience: by a clip on the timeline you CANNOT SEE how many other places will change together with it.
 
-## Плюсы
+## Pros
 
-- Единственный способ выразить «один эффект на композит N слоёв» там, где
-  эффекты живут на событиях: без границы каждый слой обработается отдельно и
-  результат будет другим (та же развилка, что в F-MPH-007).
-- Правка внутри переписывает все экземпляры разом: сорок повторов заставки
-  чинятся одной правкой и одним шагом undo, а не сорока.
-- Внутреннее время независимо от внешнего, поэтому скорость, ретайм и реверс
-  применяются к СОБРАННОМУ куску — цепочка «сначала смонтируй, потом замедли»
-  выражается, не разваливаясь на покусочные скорости.
-- Вложение — обычное событие, поэтому трим, копипаст, переходы, уровень и
-  выделение работают на нём готовым кодом: новых жестов не нужно.
-- Аудио получает бесплатный суб-микс: «один реверб на десять реплик» решается
-  без шин и посылов (в F-AUD-004 это прямо названо тем, чем FCP заменяет
-  отсутствующие шины).
-- В OTIO вложенность — родная конструкция (`Stack` ребёнком `Track`), поэтому
-  файл остаётся понятным чужим программам без изобретения своего.
+- The only way to express "one effect on the composite of N layers" where effects live on events: without a boundary each layer is processed separately and the result will be different (the same fork as in F-MPH-007).
+- An edit inside rewrites all instances at once: forty repeats of an opening title are fixed by one edit and one undo step, not forty.
+- Internal time is independent of external time, so speed, retime and reverse apply to the ASSEMBLED piece — the chain "first edit, then slow down" is expressed without falling apart into piecewise speeds.
+- A nest is an ordinary event, so trim, copy-paste, transitions, level and selection work on it with ready-made code: no new gestures are needed.
+- Audio gets a free sub-mix: "one reverb for ten lines" is solved without buses and sends (F-AUD-004 names this explicitly as what FCP uses in place of the missing buses).
+- In OTIO nesting is a native construct (`Stack` as a child of `Track`), so the file stays understandable to foreign programs without inventing our own.
 
-## Минусы
+## Cons
 
-- Промежуточный растр: два ресемпла вместо одного, мыло при несовпадении
-  размера и рывки при несовпадении fps — причём оба показывают «100 %» и
-  «нет ключей», то есть выглядят как исправная работа.
-- Ссылочная семантика невидима на таймлайне: правка внутри тихо меняет все
-  экземпляры; чтобы получить копию, надо ЗНАТЬ отдельную команду.
-- Координатные системы разъезжаются: маска или трек, сделанные внутри, не
-  знают про трансформ снаружи, а трекинг снаружи цепляется за уже собранную
-  картинку — поэтому трекинг и маски регулярно «ломаются вложением»
-  (F-MSK-005, F-MSK-001).
-- Обмен с чужими программами: наружу уезжает миксдаун, а не дорожки — для
-  звукового цеха вложенный монтаж хуже плоского.
-- Стоимость растёт нелинейно по глубине: каждый уровень — свой композит, свой
-  промежуточный буфер и свой кэш, а эффекты, зависящие от времени, лишают
-  внутренние уровни переиспользования между кадрами.
-- Диагностика: чтобы понять, откуда взялся кадр, приходится войти в N уровней
-  и выйти обратно; ошибка на любом уровне снаружи выглядит одинаково.
-- Граница длительности: материал за краем вложения существует, но не
-  показывается — правка делается не там, где видна проблема.
+- An intermediate raster: two resamples instead of one, softness when sizes do not match and judder when fps do not match — and both show "100 %" and "no keyframes", that is, they look like correct work.
+- Reference semantics are invisible on the timeline: an edit inside silently changes all instances; to get a copy one has to KNOW a separate command.
+- Coordinate systems come apart: a mask or a track made inside does not know about the transform outside, and tracking done outside attaches to the already assembled picture — which is why tracking and masks regularly "break from nesting" (F-MSK-005, F-MSK-001).
+- Exchange with foreign programs: what goes out is a mixdown, not tracks — for a sound department a nested edit is worse than a flat one.
+- The cost grows non-linearly with depth: each level is its own composite, its own intermediate buffer and its own cache, and effects that depend on time deprive the inner levels of reuse between frames.
+- Diagnostics: to understand where a frame came from one has to enter N levels and come back out; an error at any level looks the same from outside.
+- A duration boundary: material beyond the edge of a nest exists but is not shown — the edit is made not where the problem is visible.
 
-## Что говорят пользователи
+## What users say
 
-Про мыло — и про то, во что превращается обходной путь:
+On softness — and on what the workaround turns into:
 
 > My main sequence is 720p. I have a ton of footage in 1080p. To enable warp
 > stabilize, I nested the footage in a 1080p sequence. […] The scale of the
@@ -138,13 +80,13 @@ inherited by all of its child clips, in all projects» — ссылка на о�
 > timeline.
 > — dylans84529781, community.adobe.com, 08.11.2023, https://community.adobe.com/t5/premiere-pro-discussions/unscaled-nesting-lowers-resolution-quality/m-p/14219625
 
-Про цену вложенного монтажа для всех, кто получает проект после тебя:
+On the cost of nested editing for everyone who receives the project after you:
 
 > I never advise editing with nests, as it makes sending anything out for
 > separate work impossible…if not extremely challenging.
 > — Shane Ross, Creative COW, 29.05.2015, https://creativecow.net/forums/thread/editing-with-nested-sequences-good-or-bad-ideaae/
 
-Про растворение границы:
+On dissolving the boundary:
 
 > The downside is that effects applied to the precomp layer will no longer
 > work quite the same.
@@ -154,144 +96,61 @@ inherited by all of its child clips, in all projects» — ссылка на о�
 > should be avoided at the design stage whenever possible.
 > — Gary Reisman, Creative COW, 03.05.2018, https://creativecow.net/forums/thread/collapse-transformations-continuous-rasterise-rem/
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/compositions/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Лента — ссылка внутри проекта, одно пространство адресов; законы Э (инлайн == развёрнутое) и Г (уровень на вложении ≠ на каждом).
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/compositions/ — the contract is in `spec.md`, the "why" and the code paths are in `design.md`.
+A reel is a reference inside the project, one address space; the laws E (inline == expanded) and G (a level on a nest ≠ a level on each).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | XL — целый раунд: рекурсивная модель, дерево плана, оба исполнителя, формат, UI-режим |
-| Где основная работа | kt-model (схема, id, валидация циклов), kt-engine (узел плана + суб-микс аудио), kt-gpu (исполнение поддерева), kt-otio (Stack на запись и на чтение), kt-app (вход/выход, крошки, филмстрип) |
-| Формат проекта | нужна новая версия kt-конверта; чужой вложенный Stack перестаёт быть `ForeignEvent` — поведение импорта меняется несовместимо |
-| Тесты, которые придётся написать | round-trip модели с вложением; отказ на цикле; превью == экспорт на дереве (расширение t67/t184); CPU↔GPU допуски на поддереве (t181/t182); идемпотентность `.otio` со Stack (t144-t147); перевод `nested_example` из smoke в строгий ярус t158; undo правки внутри вложения; отсутствие декода при скролле над вложением (инвариант №8) |
-| Зависит от | ничего; от неё зависят F-MPH-007 (композитная стадия), F-AUD-004 (суб-микс вместо шин), F-TXT-002 (шаблоны титров), F-MSK-006 и F-MSK-005 (координаты внутри против снаружи) |
-| Ломает совместимость | да — импорт чужих файлов с вложенными Stack начинает давать другую модель |
+| Size | XL — a whole round: a recursive model, a plan tree, both executors, the format, the UI mode |
+| Where the main work is | kt-model (schema, ids, cycle validation), kt-engine (the plan node + audio sub-mix), kt-gpu (executing the subtree), kt-otio (Stack on write and on read), kt-app (entry/exit, breadcrumbs, filmstrip) |
+| Project format | a new version of the kt envelope is needed; a foreign nested Stack stops being a `ForeignEvent` — import behavior changes incompatibly |
+| Tests that will have to be written | round-trip of the model with nesting; refusal on a cycle; preview == export on the tree (extension of t67/t184); CPU↔GPU tolerances on the subtree (t181/t182); idempotence of `.otio` with Stack (t144-t147); moving `nested_example` from smoke to the strict tier t158; undo of an edit inside a nest; no decode on scroll over a nest (invariant No. 8) |
+| Depends on | nothing; depending on it are F-MPH-007 (the composite stage), F-AUD-004 (sub-mix instead of buses), F-TXT-002 (title templates), F-MSK-006 and F-MSK-005 (coordinates inside versus outside) |
+| Breaks compatibility | yes — importing foreign files with nested Stacks starts giving a different model |
 
-## Вердикт
+## Verdict
 
-Берём, и берём рано — но не как «удобство группировки», а как ревизию плана
-композиции. Это самая структурная позиция базы: на ней стоят F-MPH-007
-(эффект на композит), F-AUD-004 (одна цепочка на группу реплик), F-TXT-002
-(шаблоны) — и она же закрывает известную дыру совместимости, зафиксированную
-в п.158 (`docs/porting-notes.md`): сегодня мы честно читаем чужие вложенные
-композиции и честно рисуем на их месте пустоту.
+We take it, and we take it early — but not as "a grouping convenience" — as a revision of the composition plan. This is the most structural position of the base: F-MPH-007 (effect on the composite), F-AUD-004 (one chain per group of lines) and F-TXT-002 (templates) rest on it — and it also closes a known compatibility gap recorded in item 158 (`docs/porting-notes.md`): today we honestly read foreign nested compositions and honestly draw an empty space in their place.
 
-Приоритет A стоит осознанно: вложение есть у всех пяти, а обходного пути,
-который не ломает недеструктивность, нет — им оказывается «отрендерить и
-подложить файлом», ровно как в цитате выше. Перед раундом нужны ДВА решения
-владельца, которые определяют половину кода: наследует ли вложение настройки
-родителя (мы против всех пяти, зато без мыла и рывков) и ссылка это или копия
-(и если ссылка — то на объект внутри проекта, как у Premiere и FCP, или на
-файл на диске, как в VEGAS).
+The A priority is taken deliberately: all five have nesting, and there is no workaround that does not break non-destructiveness — the workaround is "render it and drop it in as a file", exactly as in the quote above. Before the round, TWO decisions of the owner are needed, and they determine half of the code: does a nest inherit the parent's settings (we are against it in all five, but then there is no softness and no judder), and is it a reference or a copy (and if a reference — to an object inside the project, as in Premiere and FCP, or to a file on disk, as in VEGAS).
 
-**Дополнение Р.56 (пп.448-452).** Три пункта из «за рамками раунда» закрыты
-по прямым претензиям владельца: смешивание кадров на самом вложении есть
-(п.448, и вместе с ним внутреннее время композиции стало непрерывным —
-иначе анимация внутри замедленной ленты шла ступенями), а у события-ленты
-на таймлайне появились КАДРЫ и огибающая (п.452) — офлайн-рендером
-содержимого по ключу (лента, редакция), а не тумбой по файлу. Запись
-«филмстрипа у ленты нет и быть не может» снята как неверная формулировка:
-невозможен был один способ, а не задача. Текстурная мемоизация
-суб-композита на GPU и отключаемая граница (Collapse Transformations)
-по-прежнему не сделаны.
+**Addendum R.56 (items 448-452).** Three items from "outside the scope of the round" were closed by direct demands of the owner: blending of frames on the nest itself now exists (item 448, and together with it the internal time of the composition became continuous — otherwise an animation inside a slowed reel went in steps), and the reel event on the timeline acquired FRAMES and an envelope (item 452) — by offline rendering of the content by key (reel, edition), not by a thumbnail from the file. The note "a reel has no filmstrip and never will" was removed as a wrong formulation: what was impossible was one method, not the task. Texture memoization of the sub-composite on the GPU and a disableable boundary (Collapse Transformations) are still not done.
 
-**Дополнение Р.58 (п.459).** Вскрылась цена «своего растра» у вложения,
-которую разведка называла в общем виде: **размер суб-композита и вход
-цепочки экземпляра — разные величины**. Ступень собирается ОДНА на ленту
-(содержимое общее, ключи кэша обязаны совпадать), а потребить её может не
-всякая цепочка экземпляра — пустая, из одной силы слоя или из барьеров без
-ресемпла не может. Пока это не было разделено, такой экземпляр либо ронял
-debug-сборку, либо МОЛЧА исчезал из кадра. Ровно та же развилка стоит за
-советом «стабилизируй на вложении» из раздела «Фишка фишки»: запас берётся
-из растра ВЛОЖЕНИЯ, и кто его тратит — вопрос отдельный от того, кто его
-создаёт.
+**Addendum R.58 (item 459).** The price of the "own raster" of a nest surfaced, which the reconnaissance had named in general terms: **the size of the sub-composite and the input of the instance's chain are different quantities**. One stage is assembled per reel (the content is shared, the cache keys must match), but not every instance chain can consume it — an empty one, one made of a single layer force, or of barriers without a resample cannot. Until this was separated, such an instance either brought down the debug build or SILENTLY disappeared from the frame. The very same fork stands behind the advice "stabilize on the nest" from the section "The trick behind it": the margin is taken from the raster of the NEST, and who spends it is a question separate from who creates it.
 
-## Ход работы
+## Progress
 
-**Волна А (Р.50, пп.378-383) закрыта.** Владелец ответил на оба вопроса,
-которые заметка называла обязательными: вложение — ССЫЛКА НА ОБЪЕКТ ВНУТРИ
-ПРОЕКТА (путь Premiere/FCP, не файл на диске) и НАСЛЕДУЕТ НАСТРОЙКИ РОДИТЕЛЯ
-(своих fps/растра/частоты нет — промежуточного ресемпла не возникает). Сверх
-того он решил закрыть дыру п.158 сразу: чужие вложенные `Stack` читаются как
-настоящие ленты уже в этом раунде, и внутрь вложения можно класть всё, включая
-морфер-слои и камеры.
+**Wave A (R.50, items 378-383) is closed.** The owner answered both questions that the note called mandatory: a nest is a REFERENCE TO AN OBJECT INSIDE THE PROJECT (the Premiere/FCP path, not a file on disk), and it INHERITS THE PARENT'S SETTINGS (it has no fps/raster/rate of its own — so no intermediate resample arises). Beyond that, he decided to close the gap of item 158 at once: foreign nested `Stack`s are read as real reels already in this round, and inside a nest one can put everything, including morpher layers and cameras.
 
-Сделано: модель-дерево с гардами, команды и жесты сворачивания/разворачивания/
-отвязывания, формат (`Stack` ребёнком `Track` + сайдкар `kt.sequences`,
-`KT_META_V6`), раскрытие в `effective_clips` и закон Э (инлайн байт-в-байт
-равен развёрнутому содержимому), чтение чужих вложений.
+Done: the tree model with guards, commands and gestures for collapse/expand/unlink, the format (`Stack` as a child of `Track` + the sidecar `kt.sequences`, `KT_META_V6`), expansion in `effective_clips` and law E (the inline version is byte for byte equal to the expanded content), reading of foreign nests.
 
-**Волна Б (пп.384-391) закрыта.** Вложение стало настоящим узлом плана: не
-новой веткой `PlanLayer`, а ВХОДОМ слоя (`LayerInput::Nest`) — это клип, у
-него есть уровень, фейд и камера. Цепочка на вложении теперь считается на
-СОБРАННОЙ картинке (закон Г), и ради этого всё и затевалось. Аудио сделано
-виртуальным медиа под фетчером, поэтому порядок сложения f32 не изменился
-и GOLDEN_AUDIO цел. GPU получил свой разбор и `Pipe::Unpremul`. Попутно
-вылечен дефект, найденный разведкой до того, как он появился:
-премультипликация на границе вложения.
+**Wave B (items 384-391) is closed.** The nest became a real node of the plan: not a new `PlanLayer` branch, but an INPUT of the layer (`LayerInput::Nest`) — it is a clip, it has a level, a fade and a camera. The chain on the nest is now computed on the ASSEMBLED picture (law G), and that is what everything was started for. Audio was made a virtual medium under the fetcher, so the order of f32 summation did not change and GOLDEN_AUDIO is intact. The GPU got its own parser and `Pipe::Unpremul`. Along the way a defect found by the reconnaissance before it appeared was cured: premultiplication at the nest boundary.
 
-**Волна В (пп.392-395) закрыта.** Вход внутрь сделан обменом содержимого:
-интерфейс не изменился ни на строку, а наружу уходит документ. Войти можно
-четырьмя способами, выйти — Esc (последним в каскаде) и крошкой пути; курсор
-переводится, вид возвращается целиком.
+**Wave C (items 392-395) is closed.** Entering inside is done by an exchange of content: the interface did not change by a single line, but the document goes out. You can enter in four ways, and exit with Esc (last in the cascade) and with the path breadcrumb; the cursor is translated, the view returns entirely.
 
-Осталось за рамками раунда (вне объёма плана): отключаемая граница
-(Collapse Transformations у AE), свои настройки у вложения (решение владельца
-обратное) и текстурная мемоизация суб-композита на GPU.
+Left outside the scope of the round (beyond the plan's volume): a disableable boundary (Collapse Transformations in AE), the nest's own settings (the owner's decision is the opposite) and texture memoization of the sub-composite on the GPU.
 
-**Р.56 (п.448): внутреннее время композиции НЕПРЕРЫВНО.** Пол по сетке
-ставит ЛИСТ, и только файловый; процедурное (титры, генераторы,
-автоматизация, камеры) внутри замедленной композиции больше не идёт
-ступеньками. Смешивание кадров на вложении сделано тем же пунктом —
-режим наследуется содержимому, и пару собирают ЛИСТЬЯ, поэтому
-суб-композит на кадр остаётся один.
+**R.56 (item 448): the internal time of the composition is CONTINUOUS.** The floor on the grid is set by a SHEET, and only a file one; the procedural (titles, generators, automation, cameras) inside a slowed composition no longer goes in steps. Frame blending on the nest was done by the same item — the mode is inherited by the content, and the pair is assembled from the LEAVES, so the sub-composite per frame remains one.
 
-**Р.58 (п.463): превью ленты на диске.** Претензия владельца: «У композиций
-превью на таймлайне, кажется, не кешируется и каждое открытие проекта
-строится заново». Кадры и огибающая ленты теперь лежат в готовом sidecar
-`<project>.ktindex.db` (решение владельца; вариант «общая папка данных»
-отвергнут) — таблицы `reel_strip`/`reel_frame`/`reel_peaks`, добавленные
-аддитивно, без бампа схемы. Запись Р.56 «в sidecar нельзя — он ключуется
-идентичностью файла» была свойством API `ensure_media`, а не схемы: внешних
-ключей в БД нет. Ключ на диске — (лента, редакция `content_hash`, отпечаток
-медиа): редакция подмену исходника не видит, поэтому третья часть ключа —
-xxh3 по (путь, размер, mtime) всех файлов дерева ленты, считается в потоке
-задачи, не в UI. Попадание отдаёт полосу и пики без единого декода; промах
-рендерит и пишет одной транзакцией после пиков. Проект без пути — RAM, как
-раньше. Попутно закрыты две дыры службы: LRU стал честным (обращение
-освежает запись), у негативного кэша появился потолок, а инвалидация
-редакции даёт ленте новую попытку. Тесты 639 (kt-media, круг и строгость
-ключа) и 640 (второе открытие проекта — ноль рендеров; подмена mtime —
-перерендер).
+**R.58 (item 463): the reel preview on disk.** The owner's claim: "Compositions do not seem to cache their preview on the timeline, and every project opening rebuilds it from scratch." The frames and the envelope of the reel now live in the ready-made sidecar `<project>.ktindex.db` (the owner's decision; the option "shared data folder" was rejected) — the tables `reel_strip`/`reel_frame`/`reel_peaks`, added additively, without a schema bump. The R.56 note "a sidecar is impossible — it is keyed by file identity" was a property of the `ensure_media` API, not of the schema: there are no foreign keys in the DB. The key on disk is (reel, edition `content_hash`, media fingerprint): the edition does not see a substitution of the source, so the third part of the key is xxh3 over (path, size, mtime) of all files of the reel's tree, computed in the task thread, not in the UI. A hit returns the strip and the peaks without a single decode; a miss renders and writes in one transaction after the peaks. A project without a path — RAM, as before. Along the way two holes of the service were closed: the LRU became honest (an access refreshes the record), the negative cache got a ceiling, and invalidation of the edition gives the reel a new attempt. Tests 639 (kt-media, the cycle and the strictness of the key) and 640 (the second opening of the project — zero renders; a changed mtime — a re-render).
 
-## Источники
+## Sources
 
-- https://support.apple.com/guide/final-cut-pro/intro-to-compound-clips-verbbd3496b/mac (дата обращения 2026-09-07)
-- https://support.apple.com/guide/final-cut-pro/edit-compound-clips-verca9e8672/mac (дата обращения 2026-09-07)
-- https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/nested%20timelines.htm (дата обращения 2026-09-07)
-- https://help.magix-hub.com/video/vegas/en/content/topics/nested%20timelines.htm (дата обращения 2026-09-07)
-- https://community.adobe.com/t5/premiere-pro-discussions/unscaled-nesting-lowers-resolution-quality/m-p/14219625 (дата обращения 2026-09-07)
-- https://creativecow.net/forums/thread/editing-with-nested-sequences-good-or-bad-ideaae/ (дата обращения 2026-09-07)
-- https://creativecow.net/forums/thread/collapse-transformations-continuous-rasterise-rem/ (дата обращения 2026-09-07)
-- https://davinciresolveclub.com/davinci-resolve-compound-clips/ (дата обращения 2026-09-07) — сторонний источник, взят вынужденно
-- Код и документация проекта: `src/libs/kt-model/src/project.rs`,
+- https://support.apple.com/guide/final-cut-pro/intro-to-compound-clips-verbbd3496b/mac (accessed 2026-09-07)
+- https://support.apple.com/guide/final-cut-pro/edit-compound-clips-verca9e8672/mac (accessed 2026-09-07)
+- https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/nested%20timelines.htm (accessed 2026-09-07)
+- https://help.magix-hub.com/video/vegas/en/content/topics/nested%20timelines.htm (accessed 2026-09-07)
+- https://community.adobe.com/t5/premiere-pro-discussions/unscaled-nesting-lowers-resolution-quality/m-p/14219625 (accessed 2026-09-07)
+- https://creativecow.net/forums/thread/editing-with-nested-sequences-good-or-bad-ideaae/ (accessed 2026-09-07)
+- https://creativecow.net/forums/thread/collapse-transformations-continuous-rasterise-rem/ (accessed 2026-09-07)
+- https://davinciresolveclub.com/davinci-resolve-compound-clips/ (accessed 2026-09-07) — a third-party source, used out of necessity
+- Project code and documentation: `src/libs/kt-model/src/project.rs`,
   `src/libs/kt-engine/src/{video.rs,video_plan.rs,worker.rs,fxstore.rs}`,
   `src/libs/kt-otio/src/{schema.rs,convert.rs}`,
-  `src/libs/kt-media/src/lib.rs`, `docs/porting-notes.md` пп.153, 158,
-  `docs/file-format.md`, `docs/user-feedback.md` (Р.24 п.5, Р.25 п.4).
+  `src/libs/kt-media/src/lib.rs`, `docs/porting-notes.md` items 153, 158,
+  `docs/file-format.md`, `docs/user-feedback.md` (R.24 item 5, R.25 item 4).
 
-Чего проверить НЕ удалось и почему. Строка Resolve опирается на форумные
-заголовки и сторонний разбор: `forum.blackmagicdesign.com` из этого окружения
-отдаёт 403 на любые `viewtopic.php`, зеркала мануала (manualzz) — «proxy
-refused», официального HTML-мануала у Resolve нет. Утверждения о Fusion Clip
-и о флаге «ссылаться на исходное разрешение» помечены `[НЕ ПРОВЕРЕНО]` прямо
-в таблице. Справка Adobe (`helpx.adobe.com`) и reddit недоступны — строки
-Premiere и AE собраны из официального сообщества Adobe и Creative COW; текст
-диалога Pre-compose («leaves the properties and keyframes … in the original
-composition») виден только в поисковой выдаче со ссылкой на helpx, поэтому в
-таблице он пересказан, а не процитирован. Старый форум VEGAS
-(`vegascreativesoftware.info`) после смены издателя редиректит на
-`forum.borisfx.com`, и прямые ссылки на треды о вложенных проектах умерли —
-живых цитат оттуда в заметке нет.
+What could NOT be verified, and why. The Resolve line relies on forum headings and a third-party analysis: `forum.blackmagicdesign.com` returns 403 from this environment for any `viewtopic.php`, mirrors of the manual (manualzz) give "proxy refused", and Resolve has no official HTML manual. The claims about Fusion Clip and about the flag "refer to the source resolution" are marked `[NOT VERIFIED]` directly in the table. Adobe's help (`helpx.adobe.com`) and reddit are unavailable — the Premiere and AE lines are assembled from the official Adobe community and Creative COW; the text of the Pre-compose dialog ("leaves the properties and keyframes … in the original composition") is visible only in search results with a link to helpx, so in the table it is paraphrased, not quoted. The old VEGAS forum (`vegascreativesoftware.info`) redirects after the change of publisher to `forum.borisfx.com`, and the direct links to threads about nested projects are dead — so there are no live quotes from there in this note.

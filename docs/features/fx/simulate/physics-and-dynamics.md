@@ -1,12 +1,12 @@
 ---
 id: F-FX-005
-title: Физика: движение, которого нет в ключах
-status: исследовано
+title: Physics: motion that is not in the keys
+status: researched
 priority: B
 cost: XL
 category: fx/simulate
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, blender-5.2]
-we_have: нет
+we_have: no
 crates: [kt-model, kt-media, kt-engine, kt-text]
 invariants: [4, 7, 11]
 ui_rules: []
@@ -19,281 +19,158 @@ services: []
 checked: 2026-09-21
 ---
 
-# F-FX-005 — Физика: движение, которого нет в ключах
+# F-FX-005 — Physics: motion that is not in the keys
 
-## Суть
+## Essence
 
-Монтажёр не ставит ключи, а задаёт правило: «падай», «отскакивай», «тянись
-за курсором с инерцией», «рассыпься». Дальше движение получается само и
-выглядит правдоподобно именно потому, что его никто не рисовал: скорость
-накапливается, удар гасит часть энергии, буквы валятся не синхронно.
-Классический повод у владельца — буквы титра, которые при замедлении и
-рывке события должны упасть. Ключи здесь не годятся принципиально: их
-пришлось бы ставить по одному на каждую букву, и любая правка текста или
-скорости стёрла бы работу.
+The editor does not set keyframes but gives a rule: "fall", "bounce", "chase the cursor with inertia", "scatter". After that the motion comes out by itself and looks plausible precisely because nobody drew it: the speed accumulates, the impact absorbs part of the energy, the letters fall out of sync. The classic occasion for the owner is the letters of a title that must fall when the event slows down and jerks. Keyframes are fundamentally unsuitable here: they would have to be placed one per letter, and any edit of the text or the speed would wipe out the work.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| After Effects | 26.x | встроенной физики твёрдых тел НЕТ | своё у AE — только меш Puppet-инструмента (у него есть затухание/жёсткость, но это деформация сетки, а не динамика тел) и рецепты «инерции» на выражениях (`velocity`, затухающая синусоида в свойстве). Отраслевой стандарт поля — СТОРОННИЙ плагин **Newton** (Motion Boutique): он симулирует 2D-слои как твёрдые тела и возвращает результат в композицию обычными ключами. То есть даже там, где физика есть, она живёт вне рендера |
-| Adobe Premiere | 26.x | нет | монтажный редактор; динамики нет ни в каком виде, задача уезжает в AE |
-| DaVinci Resolve | 21 | на странице Edit — нет | на странице Edit физики нет вовсе. Силы и столкновения живут в Fusion (`pGravity`, `pBounce`, `pDirectionalForce` над набором частиц) — это соседняя заметка F-FX-006, и характерно, что физика там появилась именно как часть ЧАСТИЦ, а не как эффект клипа |
-| Final Cut Pro | 12.3 | своей нет; из Motion приезжают **поведения** | самая сильная строка таблицы. В Motion есть группа Simulation behaviors — Throw, Gravity, Spring, Attractor, Repel, Vortex, Orbit Around, Random Motion, Edge Collision, — и это НЕ ключи: поведение не создаёт ключевых кадров, применяется к объекту целиком и складывается с другими поведениями и с ключами одновременно. В FCP они приезжают внутри шаблонов Motion |
-| VEGAS Pro | 2026.0 | нет | ни динамики, ни поведений; «движение» — это Pan/Crop, Track Motion и ключи |
+| After Effects | 26.x | no built-in rigid-body physics | AE's own is only the Puppet tool mesh (it has damping/stiffness, but this is deformation of a grid, not body dynamics) and "inertia" recipes made with expressions (`velocity`, a decaying sine in a property). The industry standard for the field is a THIRD-PARTY plugin **Newton** (Motion Boutique): it simulates 2D layers as rigid bodies and returns the result to the composition as ordinary keyframes. So even where physics exists, it lives outside the render |
+| Adobe Premiere | 26.x | no | an editing application; there is no dynamics in any form, the task goes over to AE |
+| DaVinci Resolve | 21 | on the Edit page — no | there is no physics on the Edit page at all. Forces and collisions live in Fusion (`pGravity`, `pBounce`, `pDirectionalForce` over a particle set) — this is the neighbouring note F-FX-006, and it is characteristic that the physics there appeared precisely as part of PARTICLES, not as a clip effect |
+| Final Cut Pro | 12.3 | none of its own; **behaviors** arrive from Motion | the strongest line of the table. Motion has a Simulation behaviors group — Throw, Gravity, Spring, Attractor, Repel, Vortex, Orbit Around, Random Motion, Edge Collision — and these are NOT keyframes: a behavior does not create keyframes, applies to the object as a whole and combines with other behaviors and with keyframes at the same time. In FCP they arrive inside Motion templates |
+| VEGAS Pro | 2026.0 | no | no dynamics and no behaviors; "motion" means Pan/Crop, Track Motion and keyframes |
 
-**Вне ядра.** Без Blender тему описать нельзя: это единственная из доступных
-программ, где симуляция объявлена подсистемой со СВОИМ хранилищем, и видно,
-чем за неё платят.
+**Outside the core.** Without Blender the topic cannot be described: it is the only one of the available programs where simulation is declared a subsystem with its OWN storage, and one can see what it costs.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Blender | 5.2 LTS | Rigid Body / Soft Body + Rigid Body World → **Cache / Bake** | физика не является функцией кадра: у мира симуляции есть point cache с диапазоном кадров, и пока он не запечён, прокрутка не даёт правильного состояния — кадр считается только продолжением предыдущего. Отсюда весь быт: «Bake» считает диапазон целиком и делает таймлайн скраббельным; запечённый кэш блокирует настройки, пока не сделан «Delete Bake»; прыжок вперёд и возврат назад оставляют в кэше состояние не того кадра |
+| Blender | 5.2 LTS | Rigid Body / Soft Body + Rigid Body World → **Cache / Bake** | physics is not a function of the frame: the simulation world has a point cache with a frame range, and until it is baked, scrubbing does not give the right state — a frame is computed only as a continuation of the previous one. Hence the whole routine: "Bake" computes the range as a whole and makes the timeline scrubbable; a baked cache locks the settings until "Delete Bake" is done; a jump forward and a return back leave in the cache the state of the wrong frame |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Симуляция — не функция кадра, а функция ВСЕЙ истории до него, и
-каждая программа, которая её завела, признаётся в этом одинаково: кэшем и
-командой «запечь».** У Blender это point cache и кнопка Bake у Rigid Body
-World: до запекания состояние на кадре не определено, потому что кадр
-считается продолжением предыдущего, и прокрутка вперёд-назад оставляет в
-кэше состояние чужого кадра. У Newton это вынесено до предела: плагин
-вообще не участвует в рендере AE — он открывает своё окно, решает задачу,
-а в композицию возвращает ОБЫЧНЫЕ КЛЮЧИ, после чего выходит. То есть самый
-популярный физический инструмент самой анимационной программы отрасли
-устроен как конвертер «правило → ключи», а не как эффект в цепочке.
-Формулировка отрасли, короче некуда: физику либо кэшируют, либо запекают;
-третьего способа сделать её скраббельной нет.
+**1. A simulation is not a function of the frame but a function of the ENTIRE history up to it, and every program that introduced it admits this in the same way: with a cache and a "bake" command.** In Blender this is the point cache and the Bake button of the Rigid Body World: before baking, the state at a frame is undefined, because the frame is computed as a continuation of the previous one, and scrubbing forward and back leaves in the cache the state of someone else's frame. Newton takes this to the limit: the plugin does not take part in AE's rendering at all — it opens its own window, solves the problem, and returns ORDINARY KEYFRAMES into the composition, after which it exits. So the most popular physical tool of the most animation-oriented program in the industry is built as a converter "rule → keyframes", not as an effect in a chain. The industry's formulation, shorter than it can be: physics is either cached or baked; there is no third way to make it scrubbable.
 
-**2. Поведения Motion — закрытая форма ИМЕННО РАДИ прокрутки, и это
-обратная сторона того же выбора.** «Гравитация» как поведение — не
-интегратор, а уравнение времени: смещение считается от времени с начала
-поведения, поэтому кадр 300 берётся без кадров 1–299, и playhead можно
-тащить назад. Платят за это ровно тем, чего в закрытой форме нет:
-столкновений между объектами (Edge Collision бьётся о край кадра, а не о
-соседа), накопления энергии и любой обратной связи. Поэтому Apple может
-позволить себе «физику» на каждом объекте без кэша и без запекания, а
-Blender — не может: у них разные задачи, но граница между ними проходит не
-по качеству, а ровно по наличию истории.
+**2. Motion's behaviors are a closed form precisely FOR the sake of scrubbing, and this is the reverse side of the same choice.** "Gravity" as a behavior is not an integrator but an equation of time: the displacement is computed from the time since the start of the behavior, so frame 300 is taken without frames 1–299, and the playhead can be dragged backward. The price for this is exactly what a closed form does not have: collisions between objects (Edge Collision hits the edge of the frame, not a neighbour), accumulation of energy and any feedback. That is why Apple can afford "physics" on every object without a cache and without baking, while Blender cannot: they have different tasks, but the boundary between them runs not through quality but exactly through the presence of history.
 
-**3. Просить физику именно у ТЕКСТА люди начинают потому, что у букв уже
-есть координаты.** Любой симуляции нужны начальные условия — тела, их
-позиции и размеры. Для произвольного видео их взять неоткуда (кадр — это
-пиксели), а раскладка титра выдаёт их даром: у каждой буквы уже посчитан
-бокс, потому что иначе её нельзя было бы нарисовать. Отсюда и рынок:
-падающие буквы — самый частый показательный ролик у физических плагинов
-для AE, хотя их API про буквы ничего не знает. То же объясняет, почему у
-нас эта заметка стоит соседкой F-TXT-006: «по буквам» уже адресует части
-надписи, и физике осталось бы только заменить закон движения.
+**3. People start asking for physics specifically of TEXT because letters already have coordinates.** Any simulation needs initial conditions — bodies, their positions and sizes. For arbitrary video there is nowhere to take them from (a frame is pixels), while the layout of a title hands them over for free: each letter already has its box computed, because otherwise it could not have been drawn. Hence the market too: falling letters are the most frequent showcase clip for physics plugins for AE, although their API knows nothing about letters. The same explains why this note sits as a neighbour of F-TXT-006 in our project: "per letter" already addresses parts of the caption, and physics would only have to replace the law of motion.
 
-## Плюсы
+## Pros
 
-- Правило вместо ключей переживает правку содержимого: дописал слово в
-  титр — оно падает вместе с остальными, потому что тел стало больше, а
-  ключи пришлось бы ставить заново.
-- Движение получается несинхронным без ручной работы: у каждого тела своя
-  начальная скорость и свой контакт, и именно это отличает «падение» от
-  «сдвига сорока слоёв по одной кривой».
-- Связь с уже существующим параметром события (скорость, рывок) даёт
-  монтажёру одну ручку вместо сорока: замедлил — буквы повисли, дёрнул —
-  посыпались.
-- Закрытая форма (путь Motion) даёт часть эффекта вообще без подсистемы:
-  гравитация, бросок и пружина — это три формулы от времени, и они
-  скраббельны по построению.
+- A rule instead of keyframes survives an edit of the content: add a word to the title — it falls together with the others, because there are more bodies now, while keyframes would have to be placed anew.
+- The motion comes out non-synchronous without manual work: each body has its own initial speed and its own contact, and exactly this separates "falling" from "shifting forty layers along one curve".
+- A link to an already existing event parameter (speed, jerk) gives the editor one knob instead of forty: slow down — the letters hang; jerk — they scatter.
+- A closed form (the Motion path) gives part of the effect without any subsystem at all: gravity, throw and spring are three formulas of time, and they are scrubbable by construction.
 
-## Минусы
+## Cons
 
-- Стоимость кадра перестаёт быть постоянной: чем дальше кадр от начала
-  события, тем дороже его посчитать, и при перемотке в конец длинного
-  события пользователь платит за всю историю сразу.
-- Любая правка параметра обесценивает всю посчитанную историю, а не
-  текущий кадр: в интерфейсе это выглядит как «подвинул ползунок — и всё
-  задумалось».
-- Кэш симуляции — это второе хранилище правды рядом с кэшем кадров, и его
-  инвалидация не совпадает с их инвалидацией (правка силы тяжести не
-  меняет ни один параметр цепочки эффектов, но отменяет всё).
-- Запекание в ключи (путь Newton) решает скорость и убивает связь с
-  источником: после bake правка текста уже не отражается в движении,
-  потому что ключи не знают, откуда взялись.
-- Столкновения между телами — нелокальны: тело зависит от соседей, поэтому
-  «посчитать только видимую часть кадра» невозможно, и обычные приёмы
-  раскроя работы по тайлам не применимы.
+- The cost of a frame stops being constant: the further the frame is from the start of the event, the more expensive it is to compute, and when scrubbing to the end of a long event the user pays for the entire history at once.
+- Any edit of a parameter invalidates the whole computed history, not just the current frame: in the interface this looks like "I moved the slider — and everything started thinking".
+- The simulation cache is a second store of truth next to the frame cache, and its invalidation does not coincide with theirs (an edit of the gravity changes none of the parameters of the effect chain but cancels everything).
+- Baking into keyframes (the Newton path) solves the speed and kills the link to the source: after the bake an edit of the text no longer shows up in the motion, because the keyframes do not know where they came from.
+- Collisions between bodies are non-local: a body depends on its neighbours, so "compute only the visible part of the frame" is impossible, and the usual ways of cutting the work into tiles are not applicable.
 
-## Что говорят пользователи
+## What users say
 
 > Newton interprets 2D layers of the current composition as rigid bodies in
 > a physical world.
-> — Newton 2.1 User's Guide, Motion Boutique, https://www.motionboutique.com/files/newton2/documentation/ (обращение 2026-09-21)
+> — Newton 2.1 User's Guide, Motion Boutique, https://www.motionboutique.com/files/newton2/documentation/ (accessed 2026-09-21)
 
 > The simulation is solved again, but this time animation data are stored in
 > memory. At the end of the simulation, stored values are converted to
 > standard After Effects keyframes, and Newton quits.
-> — там же, раздел про рендер симуляции (обращение 2026-09-21)
+> — same place, section on rendering the simulation (accessed 2026-09-21)
 
-Как это читать. Вторая цитата — паспорт всего домена в трёх предложениях:
-физика решается ОТДЕЛЬНО, результат складывается в память, превращается в
-ключи, и инструмент выходит из процесса. Не «эффект считает кадр», а
-«внешний решатель однажды произвёл данные». Именно поэтому строка AE в
-таблице выше написана честно: своей динамики твёрдых тел у самой
-анимационной программы отрасли нет, а то, чем пользуются все, живёт вне
-её конвейера и возвращает результат тем языком, который конвейер уже
-понимает.
+How to read this. The second quote is the passport of the whole domain in three sentences: the physics is solved SEPARATELY, the result is laid into memory, turned into keyframes, and the tool exits the process. Not "an effect computes the frame", but "an external solver once produced the data". That is exactly why the AE line in the table above is written honestly: the most animation-oriented program in the industry has no dynamics of rigid bodies of its own, and what everybody uses lives outside its pipeline and returns the result in the language the pipeline already understands.
 
-Дословных пользовательских жалоб к этому добавить не удалось, и это стоит
-сказать прямо: `docs.blender.org`, `projects.blender.org` и
-`helpx.adobe.com` из этого окружения отдают 403, а страницы Apple по
-поведениям Motion возвращают только оглавление руководства без тела
-статьи. Факты строк Blender и Final Cut в таблице собраны по вторичным
-пересказам официальных страниц и помечены в «Источниках» как
-`[НЕ ПРОВЕРЕНО по первоисточнику]`.
+It was not possible to add verbatim user complaints to this, and this should be said directly: `docs.blender.org`, `projects.blender.org` and `helpx.adobe.com` return 403 from this environment, and Apple's pages on Motion behaviors return only the table of contents of the manual without the article body. The facts about the Blender and Final Cut lines in the table were collected from secondary retellings of the official pages and are marked in the Sources section as `[NOT VERIFIED against the primary source]`.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- **Начальные условия для букв посчитаны и лежат наружу.**
-  `src/libs/kt-text/src/lib.rs` — у `LayoutInfo` есть поле `clusters`:
-  боксы кластеров в порядке текста, сквозная нумерация по всему титру.
-  Это ровно список тел: позиция, ширина, высота. Заведено в Р.53 под
-  анимацию по буквам (F-TXT-006), и второй раз считать нечего.
-- **Скорость события уже описана числами и уже знакова.**
-  `src/libs/kt-model/src/warp.rs`: `ClipWarp` и `rate_at(base, points,
-  tau)` — непрерывная функция скорости по материалу, с Р.57 со знаком.
-  «Замедление и резкий рывок», о которых просит владелец, — это ровно
-  значение и производная этой функции.
-- **Детерминированная псевдослучайность в видео-пути уже применяется.**
-  `noise_seed(burst_index)` в `src/libs/kt-fx/src/video.rs` — зерно
-  считается ОТ НОМЕРА КАДРА, а не хранится между кадрами. Это готовый
-  образец того, как «разное на каждом кадре» уживается с отсутствием
-  состояния.
-- **Прецедент «фиксированный шаг вместо истории» в проекте есть — в
-  звуке.** `src/libs/kt-engine/src/fxstore.rs` держит состояние цепочек
-  по `ClipId`, а сброс истории после seek оплачен явным pre-roll'ом
-  `max(tail, 100 мс)` (инвариант 11) и функцией
-  `chain_tail` (`src/libs/kt-fx/src/audio/mod.rs:191`), которая честно
-  говорит, сколько хвоста у цепочки. Формы «сколько предыстории надо
-  досчитать, чтобы кадр был правильным» у нас уже есть — но только для
-  звука.
+- **The initial conditions for the letters are computed and exposed outward.**
+  `src/libs/kt-text/src/lib.rs` — `LayoutInfo` has a field `clusters`:
+  the boxes of clusters in text order, with end-to-end numbering over the whole title.
+  This is exactly a list of bodies: position, width, height. It was set up in R.53 for animation per letter (F-TXT-006), and there is nothing to compute a second time.
+- **The event's speed is already described by numbers and is already signed.**
+  `src/libs/kt-model/src/warp.rs`: `ClipWarp` and `rate_at(base, points,
+  tau)` — a continuous speed function over the material, with signed R.57. "A slowdown and a sharp jerk", which the owner asks for, are exactly the value and the derivative of this function.
+- **Deterministic pseudo-randomness is already used in the video path.**
+  `noise_seed(burst_index)` in `src/libs/kt-fx/src/video.rs` — the seed
+  is computed FROM THE FRAME NUMBER, rather than stored between frames. This is a ready
+  example of how "different on every frame" coexists with the absence of state.
+- **A precedent for "a fixed step instead of history" exists in the project — in sound.** `src/libs/kt-engine/src/fxstore.rs` holds the state of the chains
+  by `ClipId`, and the reset of the history after a seek is paid for by an explicit pre-roll
+  `max(tail, 100 ms)` (invariant 11) and by the function
+  `chain_tail` (`src/libs/kt-fx/src/audio/mod.rs:191`), which honestly says how much tail the chain has. The notion of "how much prehistory must be computed so that the frame is correct" already exists with us — but only for sound.
 
-### Чего не хватает
+### What is missing
 
-- **Видео-путь строго без состояния, и это не случайность, а несущая
-  конструкция.** `VideoFxCtx` (`src/libs/kt-fx/src/video.rs:10`) несёт
-  ровно шесть вещей: `out_w`, `out_h`, `u`, `burst_index`, `cam3d`,
-  `in_scale`. Ни предыдущего кадра, ни номера прохода, ни ссылки на
-  что-либо переживающее кадр. На этой чистоте стоят обе мемоизации:
-  `postfx_key_hash` (`src/libs/kt-engine/src/video.rs:1802`) и `plan_key`
-  (`src/libs/kt-gpu/src/engine.rs:1900`) хэшируют ОПИСАНИЕ кадра и
-  считают, что одинаковое описание даёт одинаковые байты. Симуляция это
-  утверждение отменяет напрямую.
-- **Понятия пре-ролла у видео нет вообще.** У звука есть tail, есть
-  `reset()` при seek, есть проверенное правило «досчитать 100 мс перед
-  точкой». У видео нет ни одного места, где кадр зависел бы от соседа, —
-  поэтому нет и механизма, который бы это выражал.
-- **Генератор не знает скорости события.** `src/libs/kt-media/src/generator.rs`
-  отдаёт кадр функцией `render_at(kind, pts, w, h)`, а наружу — через
-  `read_video_frame(pts, quality)`: вход генератора — тик МАТЕРИАЛА и
-  размер, и больше ничего. Скорость живёт этажом выше, в движке, и до
-  генератора сегодня физически не доезжает — а владелец просит падение
-  букв именно ОТ НЕЁ.
-- **Тел нет как понятия.** `clusters` — это боксы раскладки, а не объекты
-  с массой и скоростью; между «есть координаты» и «есть тела» лежит
-  решение, чем тело является и где оно объявляется.
+- **The video path is strictly stateless, and this is not an accident but a load-bearing structure.** `VideoFxCtx` (`src/libs/kt-fx/src/video.rs:10`) carries
+  exactly six things: `out_w`, `out_h`, `u`, `burst_index`, `cam3d`,
+  `in_scale`. No previous frame, no pass number, no reference to anything that survives the frame. Both memoizations rest on this purity:
+  `postfx_key_hash` (`src/libs/kt-engine/src/video.rs:1802`) and `plan_key`
+  (`src/libs/kt-gpu/src/engine.rs:1900`) hash the DESCRIPTION of the frame and
+  assume that the same description gives the same bytes. Simulation cancels this assumption directly.
+- **There is no notion of a pre-roll for video at all.** Sound has a tail, has
+  `reset()` on seek, has a verified rule "compute 100 ms before the point". There is not a single place in video where a frame depends on its neighbour — so there is also no mechanism that would express this.
+- **The generator does not know the speed of the event.** `src/libs/kt-media/src/generator.rs`
+  returns a frame via the function `render_at(kind, pts, w, h)`, and outwards — via `read_video_frame(pts, quality)`: the generator's input is the MATERIAL tick and the size, and nothing else. The speed lives a floor higher, in the engine, and physically does not reach the generator today — yet the owner asks for the falling of the letters precisely FROM IT.
+- **Bodies do not exist as a concept.** `clusters` are layout boxes, not objects with mass and speed; between "there are coordinates" and "there are bodies" lies a decision about what a body is and where it is declared.
 
-### Что мешает
+### What gets in the way
 
-1. **Инвариант 11 (детерминизм).** Он не запрещает симуляцию — он
-   запрещает недетерминированную симуляцию. Любой шаг, зависящий от того,
-   С КАКОГО кадра начали считать, ломает golden-эталон немедленно и молча:
-   экспорт идёт с начала, а превью — с точки, куда ткнули.
-2. **Инвариант 4 (кэш — единственная правда).** Сегодня ключ кадра
-   выражает всё, от чего кадр зависит. Симуляция добавляет зависимость от
-   номера кадра НАЧАЛА счёта, и если её не внести в ключ — кэш начнёт
-   отдавать чужое состояние; если внести буквально — кэш перестанет
-   попадать вовсе.
-3. **Инвариант 7 (код композиции один).** Решение «что считать и с каким
-   шагом» обязано жить там же, где живут остальные решения плана
-   (`kt_fx::plan::plan_chain`, `src/libs/kt-fx/src/plan.rs:243`), иначе
-   превью и экспорт разойдутся первым же кадром — у них разные истории
-   обращений.
-4. **Требование ноля цены (п.4 Р.59).** Событие, где физики нет, не смеет
-   платить ни одной операции; событие с физикой не смеет делать дороже
-   соседей. Значит признак «тут считается история» обязан быть у ЗАКАЗА,
-   а не проверяться в горячем пути.
+1. **Invariant 11 (determinism).** It does not forbid simulation — it forbids non-deterministic simulation. Any step that depends on WHICH FRAME the computation started from breaks the golden reference immediately and silently: export starts from the beginning, while the preview starts from the point where one clicked.
+2. **Invariant 4 (the cache is the only truth).** Today the frame key expresses everything the frame depends on. Simulation adds a dependence on the frame number of the START of the computation, and if it is not put into the key — the cache will start returning someone else's state; if it is put in literally — the cache will stop hitting at all.
+3. **Invariant 7 (one composition code).** The decision "what to compute and with what step" must live where the other plan decisions live
+   (`kt_fx::plan::plan_chain`, `src/libs/kt-fx/src/plan.rs:243`), otherwise the preview and the export will diverge on the very first frame — they have different histories of access.
+4. **The requirement of zero cost (item 4 of R.59).** An event where there is no physics must not pay a single operation; an event with physics must not become more expensive than its neighbours. Therefore the flag "history is computed here" must be on the REQUEST, and not be checked in the hot path.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **№11 (детерминизм)** — главный: результат обязан не зависеть от того,
-  откуда начали смотреть.
-- **№4 (кэш — единственная правда)** — в ключе появляется то, чего в нём
-  сегодня нет.
-- **№7 (код композиции один)** — решение о шаге и о предыстории
-  принимается один раз, в общем коде плана.
+- **No. 11 (determinism)** — the main one: the result must not depend on where one started looking.
+- **No. 4 (the cache is the only truth)** — something appears in the key that is absent today.
+- **No. 7 (one composition code)** — the decision about the step and about the prehistory is made once, in the shared plan code.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | XL — не эффект, а новая ось зависимости кадра; трогает ключи кэша и договор о детерминизме |
-| Где основная работа | kt-model (чем объявляется тело и правило), kt-engine (доставка скорости события и предыстории в заказ), kt-media (генератор принимает числа), kt-text (боксы кластеров как начальные условия) |
-| Формат проекта | новая версия нужна: правило симуляции в модели отсутствует как класс |
-| Тесты, которые придётся написать | «кадр N с прокрутки == кадр N с начала» (байт-в-байт); «событие без физики не платит ничего»; «правка текста меняет число тел, а не ломает движение»; golden не трогается |
-| Зависит от | F-TXT-006 (адресация частей надписи), соседка — F-FX-006 |
-| Ломает совместимость | нет (обратная совместимость владельцем снята, но класс новый и старые файлы его не содержат) |
+| Size | XL — not an effect but a new axis of frame dependence; it touches the cache keys and the determinism contract |
+| Where the main work is | kt-model (what declares a body and a rule), kt-engine (delivery of the event speed and of the prehistory into the request), kt-media (the generator accepts numbers), kt-text (the cluster boxes as initial conditions) |
+| Project format | a new version is needed: a simulation rule is absent from the model as a class |
+| Tests that will have to be written | "frame N from a scrub == frame N from the start" (byte for byte); "an event without physics pays nothing"; "an edit of the text changes the number of bodies, rather than breaking the motion"; the golden is not touched |
+| Depends on | F-TXT-006 (addressing parts of the caption), the neighbour — F-FX-006 |
+| Breaks compatibility | no (backward compatibility has been waived by the owner, but the class is new and old files do not contain it) |
 
-## Вердикт
+## Verdict
 
-**Исследовано.** Решение владельца Р.59 (`docs/user-feedback.md`, раздел
-«Решения владельца») по существу такое: **симуляция снова делается
-ФУНКЦИЕЙ.** Состояние на кадре считается от начала события фиксированным
-шагом, и тогда оно однозначно — то есть цена платится счётом, а не
-хранением. Контрольные точки в памяти разрешены, но только как
-ОПТИМИЗАЦИЯ: байты кадра от их наличия не меняются, иначе вернётся ровно
-та зависимость от истории просмотра, ради отсутствия которой всё и
-затевалось. И третье: **физика кормит генератор ЧИСЛАМИ, а не пикселями** —
-она считает, куда сдвинулась буква, а рисует по-прежнему тот же код
-композиции (инвариант 7); собственного пути рендера у физики нет.
+**Researched.** The owner's decision in R.59 (`docs/user-feedback.md`, section
+"Owner's decisions") is in essence this: **simulation is made a FUNCTION again.** The state at a frame is computed from the start of the event with a fixed step, and then it is unambiguous — that is, the cost is paid by counting, not by storing. Checkpoints in memory are allowed, but only as an OPTIMIZATION: the bytes of the frame must not change depending on their presence, otherwise exactly the dependence on the viewing history comes back, for whose absence the whole thing was undertaken. And third: **physics feeds the generator with NUMBERS, not pixels** — it computes where the letter has moved, and it still draws with the same composition code (invariant 7); physics has no path of its own rendering.
 
-Раунд Р.59 пишет заметку и интерфейс, но не подсистему: объём раунда —
-фундамент (модель свойств, параметры генераторов на событии, публичные
-параметры композиции), физика в нём — бумага и типы.
+The R.59 round writes a note and an interface, but not a subsystem: the scope of the round is the foundation (the property model, parameters of generators on an event, the public parameters of the composition), and physics within it is paper and types.
 
-**Открытый вопрос следующему раунду, и он ровно один: чему равен
-фиксированный шаг и чем ограничена цена длинного события.** Шаг, привязанный
-к fps проекта, делает результат зависимым от настройки проекта (сменил
-25 на 30 — движение стало другим); шаг, не привязанный к fps,
-разъезжается с сеткой кадров и требует интерполяции между шагами. Цена:
-у события длиной пять минут при шаге 1/120 с — тридцать шесть тысяч шагов
-до последнего кадра, и на этот счёт нужен потолок с объявленным
-поведением (обрезать историю? замораживать? отказывать с notice?).
-Ответа у отрасли нет: Blender платит кэшем, Newton — запеканием в ключи,
-Motion — отказом от истории вовсе. Пока вопрос не закрыт, писать код
-нельзя — это будет четвёртый ответ, выбранный случайно.
+**An open question for the next round, and there is exactly one: what the fixed step equals and what limits the cost of a long event.** A step tied to the project's fps makes the result dependent on the project setting (change 25 to 30 — the motion became different); a step not tied to fps drifts out of the frame grid and requires interpolation between steps. The cost: for an event five minutes long at a step of 1/120 s — thirty-six thousand steps up to the last frame, and for this a ceiling with a declared behaviour is needed (cut the history? freeze? refuse with a notice?). The industry has no answer: Blender pays with a cache, Newton — with baking into keyframes, Motion — with abandoning history altogether. While the question is not closed, writing code is impossible — it would be a fourth answer, chosen at random.
 
-## Источники
+## Sources
 
 - https://www.motionboutique.com/files/newton2/documentation/ — Newton 2.1
-  User's Guide: «Newton interprets 2D layers of the current composition as
-  rigid bodies in a physical world», «Once simulation is completed, Newton
-  export the animation to After Effects using standard keyframes», описание
-  рендера симуляции с выходом плагина (обращение 2026-09-21)
-- https://www.motionboutique.com/products/newton-4 — текущая версия Newton и
-  формулировка про «editable keyframes for post-simulation tweaks»
-  (обращение 2026-09-21)
-- https://docs.blender.org/manual/en/latest/physics/baking.html — страница
-  «Baking Physics Simulations» руководства Blender 5.2 LTS; `[НЕ ПРОВЕРЕНО
-  по первоисточнику]`: домен отдаёт 403 из этого окружения, содержание
-  раздела Cache/Bake (запекание диапазона, блокировка настроек до Delete
-  Bake, некорректное состояние при прыжках по таймлайну) взято из
-  вторичных пересказов страницы (обращение 2026-09-21)
-- https://support.apple.com/en-ie/guide/motion/motnf425e02f/mac — «Behaviors
-  versus keyframes» руководства Motion; `[НЕ ПРОВЕРЕНО по первоисточнику]`:
-  страница отдаёт только оглавление без тела статьи, состав Simulation
-  behaviors (Throw, Gravity, Spring, Attractor, Repel, Vortex, Orbit Around,
-  Random Motion, Edge Collision) и утверждение «поведение не создаёт ключей»
-  взяты из вторичных пересказов официального руководства (обращение
+  User's Guide: "Newton interprets 2D layers of the current composition as
+  rigid bodies in a physical world", "Once simulation is completed, Newton
+  export the animation to After Effects using standard keyframes", the description
+  of rendering the simulation with the output of the plugin (accessed 2026-09-21)
+- https://www.motionboutique.com/products/newton-4 — the current version of Newton and
+  the wording about "editable keyframes for post-simulation tweaks"
+  (accessed 2026-09-21)
+- https://docs.blender.org/manual/en/latest/physics/baking.html — the page
+  "Baking Physics Simulations" of the Blender 5.2 LTS manual; `[NOT VERIFIED
+  against the primary source]`: the domain returns 403 from this environment, the content
+  of the Cache/Bake section (baking a range, locking the settings until
+  Delete Bake, an incorrect state on jumps along the timeline) was taken from
+  secondary retellings of the page (accessed 2026-09-21)
+- https://support.apple.com/en-ie/guide/motion/motnf425e02f/mac — "Behaviors
+  versus keyframes" of the Motion manual; `[NOT VERIFIED against the primary source]`:
+  the page returns only the table of contents without the body of the article; the composition of
+  Simulation behaviors (Throw, Gravity, Spring, Attractor, Repel, Vortex, Orbit Around,
+  Random Motion, Edge Collision) and the claim "a behavior creates no keys" were taken from
+  secondary retellings of the official manual (accessed
   2026-09-21)
-- `docs/user-feedback.md`, раздел «Раунд Р.59 (2026-09-20)» — дословная
-  формулировка владельца про падающие буквы и его решение про фиксированный
-  шаг; `docs/features/titles/text/text-animation-presets.md` (F-TXT-006) —
-  адресация частей надписи и требование стабильности раскладки.
+- `docs/user-feedback.md`, section "Round R.59 (2026-09-20)" — the owner's verbatim
+  wording about the falling letters and his decision about the fixed step;
+  `docs/features/titles/text/text-animation-presets.md` (F-TXT-006) — addressing
+  of parts of the caption and the requirement of layout stability.

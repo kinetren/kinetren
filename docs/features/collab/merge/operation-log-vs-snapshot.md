@@ -1,12 +1,12 @@
 ---
 id: F-COL-036
-title: Операция против снимка
-status: исследовано
+title: Operation versus snapshot
+status: researched
 priority: B
 cost: XL
 category: collab/merge
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, otio-lib-0.18]
-we_have: частично
+we_have: partial
 crates: [kt-model, kt-otio, kt-engine, kt-app]
 invariants: [3]
 ui_rules: []
@@ -19,232 +19,125 @@ services: [team-projects, bm-cloud, resolve-project-server]
 checked: 2026-09-08
 ---
 
-# F-COL-036 — Операция против снимка
+# F-COL-036 — Operation versus snapshot
 
-## Суть
+## Essence
 
-История правок хранится одним из двух способов, и третьего нет. Либо программа
-запоминает СОСТОЯНИЕ документа после каждого жеста — снимок, — либо запоминает САМ
-ЖЕСТ: «сдвинул клип 7 на 12 кадров вправо». Монтажёр не видит разницы, пока жмёт
-Ctrl+Z: обе конструкции отменяют одинаково. Разница вылезает на других вопросах —
-«что я вчера натворил», «чем эти два файла отличаются», «возьми его правку, не
-трогая мою», — и на них снимок не отвечает не потому, что недоделан, а потому, что
-не хранит ответа.
+The history of edits is stored in one of two ways, and there is no third. Either the program remembers the STATE of the document after each gesture — a snapshot — or it remembers the GESTURE ITSELF: "moved clip 7 by 12 frames to the right". The editor sees no difference while pressing Ctrl+Z: both constructions undo identically. The difference shows up on other questions — "what did I do yesterday", "how do these two files differ", "take his edit without touching mine" — and on these the snapshot does not answer, not because it is unfinished, but because it does not store the answer.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Undo History | видимый список ИМЕНОВАННЫХ шагов, клик по строке откатывает всё до неё. Имя у шага есть, самой операции наружу нет: сравнить два проекта нечем |
-| Adobe Premiere | 26.x | Undo; History; в Team Projects — Publish и Version History | внутри сеанса — история шагов, наружу — снимки: опубликованная версия это состояние, а не набор правок. Отменить свои неопубликованные правки нельзя вовсе |
-| DaVinci Resolve | 21 | Timeline Comparison + Difference Index | документ — база, но сравнение работает НЕ по журналу: берутся два таймлайна как состояния, разница считается постфактум и принимается человеком по секциям («Accept Change») |
-| Final Cut Pro | 12.3 | Undo; Snapshot | снапшот — копия состояния события/проекта, буквально по названию; сравнения двух состояний нет |
-| After Effects | 26.x | Undo (глубина настраивается) | снимки в памяти, глубина — настройка; ни сравнения, ни слияния |
+| VEGAS Pro | 2026.0 | Undo History | a visible list of NAMED steps; a click on a row rolls back everything up to it. A step has a name, but the operation itself is not exposed: there is no way to compare two projects |
+| Adobe Premiere | 26.x | Undo; History; in Team Projects — Publish and Version History | inside a session — a history of steps; outwards — snapshots: a published version is a state, not a set of edits. One cannot undo one's own unpublished edits at all |
+| DaVinci Resolve | 21 | Timeline Comparison + Difference Index | the database is the base, but the comparison works NOT on a log: two timelines are taken as states, the difference is computed after the fact and accepted by a human section by section ("Accept Change") |
+| Final Cut Pro | 12.3 | Undo; Snapshot | a snapshot is a copy of the state of an event/project, literally by the name; there is no comparison of two states |
+| After Effects | 26.x | Undo (depth is configurable) | snapshots in memory, depth is a setting; no comparison, no merge |
 
-**Вне ядра.** Одна строка: формат, которым отрасль обменивается монтажом, — и он же
-объясняет, почему журнал не пересекает границу программы.
+**Outside the core.** One row: the format by which the industry exchanges an edit — and it also explains why the log does not cross the boundary of the program.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| OpenTimelineIO | 0.18.x | Timeline (состояние) | все формы обмена — AAF, EDL, XML, `.otio` — снимки: они описывают, КАКОЙ монтаж, и ни одна не описывает, ЧТО с ним сделали. Change list (EDL) — не исключение: это тоже состояние, только выраженное списком событий |
+| OpenTimelineIO | 0.18.x | Timeline (state) | all exchange forms — AAF, EDL, XML, `.otio` — are snapshots: they describe WHICH edit it is, and none describes WHAT was done to it. A change list (EDL) is no exception: it is also a state, only expressed as a list of events |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Тот единственный в отрасли, кто действительно сводит правки, журнала не
-хранит.** Инструмент сравнения таймлайнов Resolve берёт ДВА СОСТОЯНИЯ и вычисляет
-разницу постфактум, показывая секциями, где кадры добавлены, удалены, сдвинуты или
-подрезаны; «Difference Index» — производная от снимков, а не запись событий, и
-принимает изменения человек, по секции за раз. То есть спор «журнал против снимка»
-отрасль разрешила не в пользу журнала: она осталась на снимках и добавила к ним
-замок и дифф.
+**1. The one in the industry who actually merges edits does not keep a log.** Resolve's timeline comparison tool takes TWO STATES and computes the difference after the fact, showing by sections where frames were added, deleted, moved or trimmed; the "Difference Index" is derived from snapshots, not a record of events, and changes are accepted by a human, one section at a time. That is, the industry settled the dispute "log versus snapshot" not in favour of the log: it stayed with snapshots and added a lock and a diff to them.
 
-**2. Дифф двух снимков возможен ровно настолько, насколько разрешима
-идентичность.** Сравнение обязано сказать, что клип слева и клип справа — «тот же»,
-а личности в файле нет ни у кого (F-COL-033), поэтому сравнивают по родословной:
-материал, начало, длина, положение. Отсюда неочевидное следствие для планирования:
-«сделать сравнение» — задача не про историю правок вообще, а про идентичность, и
-дешевеет она ровно на столько, на сколько наведён порядок в адресации.
+**2. The diff of two snapshots is possible exactly as far as identity is solvable.** A comparison has to say that the clip on the left and the clip on the right are "the same", and no one has identity in the file (F-COL-033), so they compare by lineage: media, start, length, position. Hence a non-obvious consequence for planning: "make a comparison" is a task not about edit history in general, but about identity, and it gets cheaper exactly as far as the addressing has been put in order.
 
-**3. Цена снимка платится не в слиянии, а В ОДИНОЧНОЙ РАБОТЕ.** Снимок отвечает
-идеально на «верни как было» и не отвечает НИ НА ОДИН вопрос вида «что изменилось»:
-ни «что я сделал за последний час», ни «чем файл на диске отличается от того, что у
-меня в окне», ни «что потерял круг через чужой формат». У нас это видно буквально:
-`model_rev` знает, что что-то изменилось, и не знает, что именно, — звёздочка
-«не сохранено» есть, а описания правки нет нигде.
+**3. The price of a snapshot is paid not in merging but in SINGLE-USER work.** A snapshot answers perfectly "put it back as it was", and does not answer ANY question of the form "what has changed": neither "what did I do in the last hour", nor "how does the file on disk differ from what is in my window", nor "what did the circle lose through a foreign format". We see this literally: `model_rev` knows that something has changed, and does not know what — the "unsaved" asterisk exists, but a description of the edit exists nowhere.
 
-**4. Журнал у нас не отсутствует — он ВЫБРАСЫВАЕТСЯ на входе.** Операции написаны и
-типизированы: 45 вариантов `Command`, единая воронка `apply`, пакет `apply_batch`
-на сложный жест и склейка живого жеста `apply_coalesced`. Команда доезжает до
-модели и умирает; сохраняется её результат — клон всего проекта. И на диске то же
-самое: `save_project` сериализует ВЕСЬ проект целиком, автосейв каждые 30 с пишет
-очередной полный снимок поверх предыдущего. Обмен, таким образом, уже совершён и
-оплачен — заметка обязана назвать его ценой, а не недоделкой.
+**4. We do not lack a log — it is THROWN AWAY at the entrance.** Operations are written and typed: 45 variants of `Command`, a single funnel `apply`, a batch `apply_batch` for a complex gesture, and coalescing of a live gesture `apply_coalesced`. A command reaches the model and dies; what is saved is its result — a clone of the whole project. And on disk it is the same: `save_project` serializes the WHOLE project, and the autosave every 30 s writes the next full snapshot over the previous one. The exchange, therefore, has already happened and has been paid for — the note must name it as a price, not as an unfinished part.
 
-**5. Один потребитель диффа у нас уже работает, и он инвариант.** Инвариант 3
-требует, чтобы правка модели не убивала хвосты реверба, и держится он на сравнении
-двух состояний: `FxStateStore::sync_clip` сверяет отпечаток цепочки с уже
-построенным процессором, `retain_clips` выбрасывает состояния умерших клипов. Это
-единственное место в программе, которое отвечает на вопрос «что изменилось между
-двумя снимками», — и опирается оно на `ClipId`, то есть на адрес, который границу
-документа не пересекает.
+**5. One consumer of a diff already works for us, and it is an invariant.** Invariant 3 requires that an edit of the model not kill the reverb tails, and it holds on a comparison of two states: `FxStateStore::sync_clip` compares the fingerprint of the chain with the already-built processor, and `retain_clips` discards the states of dead clips. This is the only place in the program that answers the question "what has changed between two snapshots" — and it relies on `ClipId`, that is, on an address that does not cross the boundary of the document.
 
-## Плюсы
+## Pros
 
-- Снимок не врёт: восстановление точное, «отмена отмены» бесплатна, а класс
-  дефектов «обратная операция посчитана неверно» отсутствует по построению — по
-  трекерам (F-PRJ-002) именно он доминирует у тех, кто пошёл журналом.
-- Гранулярность правильная и уже настроена под человека: сложный жест — один
-  снимок, живой драг склеивается по токену.
-- Снимок переживает изменение модели: добавили поле в `Project` — история
-  продолжает работать, мигрировать нечего. У журнала каждая новая команда — это
-  ещё и обратная операция, и её версия.
-- На диске снимок означает, что файл проекта самодостаточен: он открывается без
-  всякой истории и не зависит от того, чем его писали.
+- A snapshot does not lie: restoration is exact, "undo of undo" is free, and the class of defects "the inverse operation was computed wrongly" is absent by construction — by trackers (F-PRJ-002) precisely this class dominates among those who went with a log.
+- The granularity is right and already tuned to a person: a complex gesture is one snapshot, a live drag is coalesced by a token.
+- A snapshot survives a change of the model: a field was added to `Project` — the history keeps working, there is nothing to migrate. With a log, each new command is also an inverse operation, and its version.
+- On disk, a snapshot means that the project file is self-sufficient: it opens without any history and does not depend on what wrote it.
 
-## Минусы
+## Cons
 
-- Снимок не знает автора и не знает, что из него уже отдано: «отменить чужую
-  правку, не тронув свою» им нельзя даже теоретически.
-- Глубина истории — это память: 80 клонов целого проекта стоят тем дороже, чем
-  крупнее монтаж, и предел приходится ставить числом, а не смыслом.
-- Ни один вопрос вида «что изменилось» снимками не отвечается без диффа, а дифф —
-  отдельная подсистема, которая упирается в идентичность.
-- Журнал, если его когда-нибудь завести, платит ровно тем, что у снимка бесплатно:
-  точностью восстановления и устойчивостью к эволюции модели.
+- A snapshot does not know the author and does not know what has already been handed out: "undo someone else's edit without touching mine" is impossible with it even in theory.
+- The depth of history is memory: 80 clones of a whole project cost more the larger the edit, and the limit has to be set by a number, not by meaning.
+- No question of the form "what has changed" is answered by snapshots without a diff, and a diff is a separate subsystem that runs into identity.
+- A log, if it were ever introduced, pays with exactly what a snapshot gets for free: precision of restoration and resilience to the evolution of the model.
 
-## Что говорят пользователи
+## What users say
 
-Реальный случай, ради которого сравнение и включают, — не слияние, а «что тут
-нового»:
+The real case for which a comparison is switched on is not a merge but "what is new here":
 
 > I was e-mailed a new XML and couldn't remember how to compare timelines so I
 > could see which were the new shots.
 > — Warren Eagles, 15.10.2018,
 > https://liftgammagain.com/forum/index.php?threads/compare-timelines-resolve-tip.11564/
 
-Как это продаёт вендор — и обратите внимание, что слово «merge» стоит рядом со
-словом «versions», а не со словом «changes from the log»:
+As the vendor sells it — and note that the word "merge" stands next to the word "versions", not next to the words "changes from the log":
 
 > The revolutionary timeline comparison tool lets you visually see the differences
 > between two versions of a timeline.
-> — Blackmagic Design, страница Collaboration,
+> — Blackmagic Design, Collaboration page,
 > https://www.blackmagicdesign.com/products/davinciresolve/collaboration
-> (дата обращения 2026-09-08)
+> (access date 2026-09-08)
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- **История — снимки целого документа**: `undo: Vec<Project>` в `TimelineModel`,
-  `push_undo` (`src/libs/kt-model/src/model.rs:428`) клонирует весь проект,
-  предел `MAX_UNDO = 80` (`:11`), возврат — `undo` (`:450`).
-- **Операции существуют и типизированы**: 45 вариантов `Command` от `AddMedia` до
-  `RemoveCameraLane` (`src/libs/kt-model/src/model.rs`), пакет `apply_batch`
-  (`:376`) и склейка живого жеста `apply_coalesced` (`:414`) дают ровно один
-  снимок на ЖЕСТ.
-- **На диске тоже снимок**: `save_project` (`src/libs/kt-otio/src/lib.rs:91`)
-  сериализует весь проект целиком, фоновый автосейв каждые 30 с пишет полный
-  снимок в файл пользователя (`src/apps/kt-app/src/app.rs:1078`), и на диске в
-  каждый момент существует ровно одно состояние.
-- **Единственный уже работающий дифф двух состояний** — инвариант 3:
-  `FxStateStore::sync_clip` (`src/libs/kt-engine/src/fxstore.rs:25`) сверяет
-  отпечаток цепочки, `retain_clips` (`:54`) выбрасывает состояния умерших клипов.
-- **Родословная для сравнения уже лежит в модели**: `media`, `source_in`,
-  `duration` у события (`src/libs/kt-model/src/project.rs:1846-1855`) — то, чем
-  сравнивают у всех, кто сравнивает (F-COL-033).
-- **Описания правки нет нигде**: `model_rev` (`src/apps/kt-app/src/app.rs:327`) —
-  счётчик, а не имя; ни у снимка, ни у шага истории нет ни заголовка, ни автора.
+- **History is snapshots of the whole document**: `undo: Vec<Project>` in `TimelineModel`, `push_undo` (`src/libs/kt-model/src/model.rs:428`) clones the whole project, the limit `MAX_UNDO = 80` (`:11`), return — `undo` (`:450`).
+- **Operations exist and are typed**: 45 variants of `Command` from `AddMedia` to `RemoveCameraLane` (`src/libs/kt-model/src/model.rs`), the batch `apply_batch` (`:376`) and the coalescing of a live gesture `apply_coalesced` (`:414`) give exactly one snapshot per GESTURE.
+- **On disk, also a snapshot**: `save_project` (`src/libs/kt-otio/src/lib.rs:91`) serializes the whole project, the background autosave every 30 s writes a full snapshot into the user's file (`src/apps/kt-app/src/app.rs:1078`), and on disk there exists at every moment exactly one state.
+- **The only already working diff of two states** — invariant 3: `FxStateStore::sync_clip` (`src/libs/kt-engine/src/fxstore.rs:25`) compares the fingerprint of the chain, `retain_clips` (`:54`) discards the states of dead clips.
+- **The lineage for comparison already lies in the model**: `media`, `source_in`, `duration` of an event (`src/libs/kt-model/src/project.rs:1846-1855`) — what everyone who compares uses (F-COL-033).
+- **A description of an edit exists nowhere**: `model_rev` (`src/apps/kt-app/src/app.rs:327`) is a counter, not a name; neither the snapshot nor a history step has a title or an author.
 
-БЕЗ СЕТИ: ОСТАЁТСЯ — `src/libs/kt-otio/src/lib.rs:91` — обмен сделан целиком и работает на одной машине: сохранение сериализует ВЕСЬ проект, автосейв кладёт поверх очередной полный снимок, и ровно поэтому отмена у нас точна, «отмена отмены» бесплатна, а класс «обратная операция посчитана неверно» отсутствует. Тем же самым куплено и то, что вопрос «чем этот файл отличается от вчерашнего» не имеет ответа даже в одиночку.
+OFFLINE: REMAINS — `src/libs/kt-otio/src/lib.rs:91` — the exchange is done whole and works on one machine: saving serializes the WHOLE project, the autosave lays the next full snapshot over the previous one, and precisely for that reason our undo is exact, "undo of undo" is free, and the class "the inverse operation was computed wrongly" is absent. The same thing has bought the fact that the question "how does this file differ from yesterday's" has no answer even for a single user.
 
-ЦЕНА СЕТИ: свести две правки одного монтажа — журнал правок — снимку нечего складывать: у правки нет ни имени, ни автора, ни базовой ревизии, поэтому «вычесть» из состояния один жест и оставить остальные нечем даже теоретически.
+NETWORK COST: to bring two edits of one edit together — edit log — a snapshot has nothing to add up: an edit has no name, no author, and no base revision, so "subtracting" one gesture from a state and leaving the others is not possible even in theory.
 
-ЦЕНА СЕТИ: положить рядом два состояния одного монтажа, чтобы их сравнить, — хранилище между проектами — на диске у нас существует ровно одно состояние проекта, а вторую линию правки некуда открыть: втянуть чужой монтаж рядом со своим программа не умеет вовсе (F-COL-037).
+NETWORK COST: to place two states of one edit side by side in order to compare them — cross-project storage — on disk we have exactly one state of the project, and there is nowhere to open a second line of editing: our program cannot bring someone else's edit alongside its own at all (F-COL-037).
 
-### Чего не хватает
+### What is lacking
 
-- Не журнала — его мы не заводим, — а **имени у шага** (F-PRJ-002): без него ни
-  один вопрос «что изменилось» не формулируется даже в интерфейсе.
-- Функции сравнения двух `Project` по родословной. Она не требует ни сети, ни
-  журнала и отвечает сразу на три одиночных вопроса: что потерял круг через чужой
-  формат, чем правленый файл отличается от исходного, что изменилось после
-  импорта.
-- Второй линии на диске: сравнивать нечего, пока состояние одно (F-RES-001).
+- Not a log — we do not start one — but a **name for a step** (F-PRJ-002): without it not one "what has changed" question can even be formulated in the interface.
+- A function comparing two `Project`s by lineage. It requires neither a network nor a log, and it answers at once three single-user questions: what the circle lost through a foreign format, how an edited file differs from the original, what changed after an import.
+- A second line on disk: there is nothing to compare while the state is single (F-RES-001).
 
-### Что мешает
+### What stands in the way
 
-Снимок — не полуфабрикат журнала, а другая конструкция: у него нет ни описания
-правки, ни обратной операции, и «дописать автора» к нему нельзя, потому что автор
-появляется только у ОПЕРАЦИИ. Переход стоит того, чем снимки как раз хороши:
-точности восстановления и устойчивости к эволюции модели — каждая новая команда в
-журнале обзаводится обратной операцией и собственной версией, а у нас 45 команд и
-живая модель. Второе препятствие — инвариант 3: он опознаёт клип по `ClipId`, а
-номера локальны и переиспользуются (F-COL-033), поэтому любая склейка двух историй
-начинается с того, что номера перестают быть адресами.
+A snapshot is not a semi-finished log, but a different construction: it has neither a description of the edit nor an inverse operation, and "add an author" to it cannot be done, because an author appears only for an OPERATION. The transition costs what snapshots are precisely good at: precision of restoration and resilience to the evolution of the model — each new command in a log acquires an inverse operation and its own version, while we have 45 commands and a living model. The second obstacle is invariant 3: it identifies a clip by `ClipId`, and the numbers are local and reused (F-COL-033), so any splicing of two histories begins with the numbers ceasing to be addresses.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Инвариант 3 — прямо: он и есть наш единственный дифф двух состояний, и он
-привязан к `ClipId`. Инвариант 11 (детерминизм) косвенно и в нашу пользу: снимок
-воспроизводится побайтно, поэтому сравнение двух снимков — чистая функция без
-всякого wall-clock. Остальные десять не задеваются: история ничего не считает и
-не рисует.
+Invariant 3 — directly: it is exactly our single diff of two states, and it is bound to `ClipId`. Invariant 11 (determinism) indirectly and in our favour: a snapshot is reproduced byte for byte, therefore comparing two snapshots is a pure function without any wall-clock. The other ten are not touched: history computes nothing and draws nothing.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | XL для журнала (меняет модель, формат и весь путь команды); S для того, что берём — функции сравнения двух `Project` по родословной |
-| Где основная работа | kt-model (сравнение состояний, имена жестов), kt-app (показ результата), kt-otio (сравнение того, что уехало в файл) |
-| Формат проекта | не трогает: сравниваются состояния, а не записи |
-| Тесты, которые придётся написать | «круг через чужой формат: сравнение называет ровно то, что потерялось»; «сравнение устойчиво к переномерации клипов»; сохранение поведения t96 (регион и loop не откатываются) |
-| Зависит от | F-COL-033 (идентичность для сравнения), F-PRJ-002 (имена шагов), F-RES-001 (второе состояние на диске) |
-| Ломает совместимость | нет |
+| Scope | XL for the log (it changes the model, the format and the whole path of a command); S for what we take — a function comparing two `Project`s by lineage |
+| Where the main work is | kt-model (comparison of states, names of gestures), kt-app (showing the result), kt-otio (comparison of what went into the file) |
+| Project format | not touched: states are compared, not records |
+| Tests to write | "a circle through a foreign format: the comparison names exactly what was lost"; "the comparison is stable under renumbering of clips"; preservation of the behaviour of t96 (region and loop are not rolled back) |
+| Depends on | F-COL-033 (identity for comparison), F-PRJ-002 (names of steps), F-RES-001 (a second state on disk) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Журнал правок не заводим, и не потому, что дорого, а потому, что **его не завёл
-никто из тех, кто действительно сводит монтаж**: Resolve сравнивает два состояния и
-даёт человеку принять разницу по секциям, а не проигрывает чужой лог. Наш обмен уже
-совершён и это не долг, а покупка: снимок целого проекта дал нам точную отмену,
-жестовую гранулярность и отсутствие целого класса дефектов, который у пошедших
-журналом остаётся доминирующим (F-PRJ-002 показала это по трекерам). Записывать
-`undo: Vec<Project>` в недоделки — значит переписать модель ради вопроса, которого
-у нас пока некому задать.
+We do not start an edit log, and not because it is expensive, but because **no one who truly merges an edit has started one**: Resolve compares two states and lets a human accept the difference section by section, rather than replaying someone else's log. Our exchange has already happened, and this is not debt but a purchase: the snapshot of a whole project gave us exact undo, gesture-level granularity, and the absence of a whole class of defects that remains dominant among those who went with a log (F-PRJ-002 showed this from the trackers). Writing `undo: Vec<Project>` down as an unfinished item would mean rewriting the model for the sake of a question that we do not yet have anyone to ask.
 
-Берём из разведки одно и берём сейчас: **сравнение двух состояний по родословной**.
-Оно не требует ни журнала, ни сети, ни второго участника; оно отвечает на вопрос,
-который сегодня у нас задают трижды и по-разному — «что потерял круг через чужой
-формат» (F-COL-008), «чем файл на диске отличается от того, что в окне»
-(F-COL-034), «что приехало вместе с чужим монтажом» (F-COL-037); и оно ровно тем
-дешевле, чем раньше наведён порядок в адресации (F-COL-033). Второе решение, которое
-стоит записать заранее: если сравнение когда-нибудь появится, его результат нельзя
-называть слиянием — принимает разницу человек, посекционно, как у Blackmagic.
+We take one thing from the reconnaissance and take it now: **comparison of two states by lineage**. It requires neither a log, nor a network, nor a second participant; it answers a question that today is asked of us three times and in different ways — "what did the circle lose through a foreign format" (F-COL-008), "how does the file on disk differ from what is in the window" (F-COL-034), "what came along with someone else's edit" (F-COL-037); and it is cheaper exactly as far as the addressing has been put in order (F-COL-033). A second decision to record in advance: if a comparison ever appears, its result must not be called a merge — a human accepts the difference, section by section, as at Blackmagic.
 
-Чем отличаемся от соседей. **F-PRJ-002** (история правок и версии проекта) владеет
-видимой историей и именованными состояниями у ОДНОГО человека; здесь предмет —
-выбор НОСИТЕЛЯ и то, на какие вопросы он в принципе способен ответить. **F-COL-018**
-(что отменяет Ctrl+Z при общем владении) — про поведение отмены, когда правка не
-только моя; здесь отмена вообще не главный потребитель истории. **F-COL-034**
-(ревизия документа) — про адрес состояния; здесь — про его содержимое.
-**F-COL-033** — про то, чем адресуется объект внутри состояния, без чего сравнение
-не считается.
+How we differ from neighbours. **F-PRJ-002** (edit history and project versions) owns the visible history and named states for ONE person; here the subject is the choice of the CARRIER and which questions it is in principle able to answer. **F-COL-018** (what Ctrl+Z undoes under shared ownership) is about the behaviour of undo when an edit is not only mine; here undo is not the main consumer of history at all. **F-COL-034** (document revision) is about the address of a state; here it is about its content. **F-COL-033** is about what an object is addressed by inside a state, without which a comparison does not count.
 
-## Источники
+## Sources
 
-- https://www.blackmagicdesign.com/products/davinciresolve/collaboration —
-  «revolutionary timeline comparison tool», «Automatic bin and timeline locking»,
-  «merge changes into a master timeline» (дата обращения 2026-09-08)
-- https://liftgammagain.com/forum/index.php?threads/compare-timelines-resolve-tip.11564/
-  — зачем сравнение включают на практике (15.10.2018; дата обращения 2026-09-08)
-- https://community.adobe.com/t5/premiere-pro-beta-discussions/now-in-beta-updated-version-and-auto-save-history-in-team-projects/td-p/14128940
-  — версия у Adobe это состояние, а не набор правок (03.10.2023; дата обращения
-  2026-09-08)
-- `docs/features/project/history/versions-and-snapshots.md` (F-PRJ-002) —
-  подсчёт по трекерам: доминирующий класс дефектов отмены у пошедших журналом —
-  «вернулось не то»
-- Наш код проверен грепом по `src/` 08.09.2026: `kt-model/src/model.rs`
-  (`undo`, `push_undo`, `MAX_UNDO`, `apply_batch`, `apply_coalesced`, состав
-  `Command` — 45 вариантов), `kt-otio/src/lib.rs` (`save_project`),
-  `kt-engine/src/fxstore.rs` (`sync_clip`, `retain_clips`),
-  `kt-app/src/app.rs` (`model_rev`, фоновый автосейв).
+- https://www.blackmagicdesign.com/products/davinciresolve/collaboration — "revolutionary timeline comparison tool", "Automatic bin and timeline locking", "merge changes into a master timeline" (access date 2026-09-08)
+- https://liftgammagain.com/forum/index.php?threads/compare-timelines-resolve-tip.11564/ — why the comparison is switched on in practice (15.10.2018; access date 2026-09-08)
+- https://community.adobe.com/t5/premiere-pro-beta-discussions/now-in-beta-updated-version-and-auto-save-history-in-team-projects/td-p/14128940 — a version at Adobe is a state, not a set of edits (03.10.2023; access date 2026-09-08)
+- `docs/features/project/history/versions-and-snapshots.md` (F-PRJ-002) — the count from the trackers: the dominant class of undo defects among those who went with a log — "the wrong thing came back"
+- Our code checked by grep over `src/` on 08.09.2026: `kt-model/src/model.rs` (`undo`, `push_undo`, `MAX_UNDO`, `apply_batch`, `apply_coalesced`, the set of `Command` — 45 variants), `kt-otio/src/lib.rs` (`save_project`), `kt-engine/src/fxstore.rs` (`sync_clip`, `retain_clips`), `kt-app/src/app.rs` (`model_rev`, the background autosave).

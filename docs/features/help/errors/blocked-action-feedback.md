@@ -1,12 +1,12 @@
 ---
 id: F-HLP-010
-title: Невозможность действия: как редактор объясняет, почему жест не прошёл
-status: уже-есть
+title: Impossible action: how the editor explains why a gesture did not work
+status: already-have
 priority: B
 cost: S
 category: help/errors
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: да
+we_have: yes
 crates: [kt-app, kt-model]
 invariants: []
 ui_rules: [9, 16, 18, 19]
@@ -17,247 +17,220 @@ depends_on: []
 checked: 2026-09-07
 ---
 
-# F-HLP-010 — Невозможность действия: как редактор объясняет, почему жест не прошёл
+# F-HLP-010 — Impossible action: how the editor explains why a gesture did not work
 
-## Суть
+## Essence
 
-Монтажёр тянет событие — и оно перестаёт ехать. Вопрос у него ровно один и
-всегда один и тот же: «а почему?». Хороший ответ состоит из трёх частей: ЧТО
-мешает (вот этот объект), ПОЧЕМУ нельзя (вот словами) и КУДА СМОТРЕТЬ, если
-мешающее лежит за пределами экрана. Третья часть — та самая, ради которой
-пользователь у нас и написал требование: препятствие может быть в двух минутах
-правее, и без указателя его надо искать вручную.
+The editor drags an event — and it stops moving. The question he has is always exactly one
+and the same: "why?". A good answer has three parts: WHAT is in the way (this object), WHY it
+cannot move (in words), and WHERE TO LOOK if the obstacle lies outside the screen. The third
+part is the one the user actually wrote the requirement for: the obstacle may be two minutes
+to the right, and without a pointer one has to search for it by hand.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет: упора не существует | Наезд ЗАКОНЕН и превращается в кроссфейд («a crossfade is inserted»); трим за конец материала даёт повтор или тишину в зависимости от Loop-переключателя. Объяснять нечего, потому что отказа нет. Красную метку на виноватом объекте VEGAS умеет — но для другого: `Show Unquantized Event Edges` рисует красную линию на неквантованной кромке |
-| Adobe Premiere | 26.x | Events panel (журнал, не про жест) | Перекрытие разрешено, «the clip on the higher track will be visible»; конфликт = overwrite. Причина отказа жеста не сообщается; блокировка дорожки помечена ЗАРАНЕЕ штриховкой, и заблокированная дорожка просто перестаёт быть целевой. Панель Events — цветокодированный журнал (Errors / Alerts / Info) c кнопкой Details, но про формат материала и систему, а не про геометрию монтажа |
-| DaVinci Resolve | 21 | «Not Enough Handles» (диалог, только для переходов) | Перетаскивание поверх соседа молча ПЕРЕЗАПИСЫВАЕТ его. Во время жеста тултип у курсора показывает число сдвинутых кадров, а при триме рисуется **обводка допустимой области** — «outlines show you how much media is available». Единственный настоящий отказ с объяснением: не хватает хэндлов для перехода — диалог называет причину и даёт три исхода (Trim Clips / Skip Clips / Cancel) |
-| Final Cut Pro | 12.3 | красная кромка клипа; Alert icons | Магнитный таймлайн раздвигает соседей, поэтому упора в соседа нет вовсе. Предел материала показан МАРКЕРОМ БЕЗ ТЕКСТА: «the clip edge turns red»; в precision editor доступный запас нарисован постоянно приглушёнными участками. Каталог бейджей с причинами словами (Missing Clip / Missing File / Missing Plug-in…) относится к пропавшему материалу, не к отказанному жесту |
-| After Effects | 26.x | мигание слоя | Коллизий нет по конструкции: слои — строки, перекрытие во времени законно. Единственный отказ во всём таймлайне подан **самим объектом**: «If you try to select or modify a locked layer, the layer flashes in the Timeline panel». Числа жеста (имя, длительность, сдвиг) уезжают в фиксированную Info-панель |
+| VEGAS Pro | 2026.0 | none: there is no stop at all | Butting into an event is LEGAL and turns into a crossfade ("a crossfade is inserted"); trimming past the end of the material gives a repeat or silence, depending on the Loop switch. There is nothing to explain, because there is no refusal. VEGAS can show a red marker on the guilty object — but for something else: `Show Unquantized Event Edges` draws a red line on an unquantized edge |
+| Adobe Premiere | 26.x | Events panel (a log, not about the gesture) | Overlap is allowed, "the clip on the higher track will be visible"; a conflict = overwrite. The reason for the refused gesture is not reported; a locked track is marked IN ADVANCE with hatching, and a locked track simply stops being the target. The Events panel is a color-coded log (Errors / Alerts / Info) with a Details button, but it is about the format of the material and the system, not about the geometry of the edit |
+| DaVinci Resolve | 21 | "Not Enough Handles" (a dialog, only for transitions) | Dragging over a neighbour SILENTLY OVERWRITES it. During the gesture a tooltip at the cursor shows the number of shifted frames, and when trimming an **outline of the permissible area** is drawn — "outlines show you how much media is available". The only real refusal with an explanation: there are not enough handles for a transition — the dialog names the reason and gives three outcomes (Trim Clips / Skip Clips / Cancel) |
+| Final Cut Pro | 12.3 | a red clip edge; Alert icons | The magnetic timeline pushes the neighbours aside, so there is no stop at a neighbour at all. The limit of the material is shown by a MARKER WITHOUT TEXT: "the clip edge turns red"; in the precision editor the available reserve is drawn permanently as muted areas. The catalog of badges with reasons in words (Missing Clip / Missing File / Missing Plug-in…) concerns missing material, not a refused gesture |
+| After Effects | 26.x | the layer blinks | There are no collisions by construction: layers are rows, and overlap in time is legal. The only refusal in the whole timeline is delivered by **the object itself**: "If you try to select or modify a locked layer, the layer flashes in the Timeline panel". The numbers of the gesture (name, duration, shift) go to a fixed Info panel |
 
-Из пяти строк складывается объяснение, почему мы тут одни. **Отказ нужен только
-тому, кто не разрушает чужой монтаж молча.** VEGAS и AE делают конфликт
-законным, Resolve и Premiere разрешают его перезаписью, FCP — вытеснением
-соседей; ни одному из пяти не приходится говорить «нельзя», потому что у них
-всё можно. У нас упор появился как прямое решение Р.24 п.10 и Р.28 п.6
-(«НИЧЕГО НИГДЕ НЕ ДОЛЖНО ОТРАСТАТЬ/ОТРУБАТЬСЯ»), и вместе с ним появилась
-обязанность объяснять.
+From these five rows a single explanation emerges for why we are alone here. **A refusal is
+needed only by someone who does not silently destroy someone else's edit.** VEGAS and AE make
+the conflict legal, Resolve and Premiere let it through by overwriting, FCP pushes the
+neighbours away; none of the five has to say "you can't", because for them everything is
+possible. For us the stop appeared as a direct decision of R.24 item 10 and R.28 item 6
+("NOTHING ANYWHERE MUST GROW BACK OR BE CUT OFF"), and together with it came the duty to explain.
 
-Отдельно проверялся третий вопрос — сообщает ли редактор, ГДЕ препятствие,
-если оно за пределами вида. **Ни один из пяти: ни стрелки у кромки, ни
-расстояния, ни стороны, ни автопрокрутки к препятствию.** Это подтверждённый
-пробел отрасли, а не пробел поиска (перечень просмотренных страниц — в
-«Источники»). Причём Blackmagic эту самую задачу решила — но в другом окне:
-в нодовом редакторе Fusion есть Auto Navigator, который «only appears when one
-or more nodes is outside the visible area of the Node Editor». На монтажном
-таймлайне того же продукта — ничего.
+Separately, a third question was checked — whether the editor reports WHERE the obstacle is
+if it is outside the view. **None of the five: neither arrows at the edge, nor distances, nor
+sides, nor auto-scrolling toward the obstacle.** This is a confirmed gap of the industry, not a
+gap of the search (the list of pages reviewed is in "Sources"). Moreover, Blackmagic has solved
+exactly this task — but in another window: the Fusion node editor has an Auto Navigator, which
+"only appears when one or more nodes is outside the visible area of the Node Editor". On the
+same product's editing timeline — nothing.
 
-**Вне ядра.** Без Blender вторую половину темы — «почему виджет серый» —
-описать нельзя: это единственная найденная программа, где движок интерфейса
-ОБЯЗЫВАЕТ автора действия положить причину отказа в сам виджет, а не в
-руководство.
+**Outside the core.** Without Blender the second half of the topic — "why is the widget grey" —
+cannot be described: it is the only program found where the interface engine OBLIGES the author
+of an action to put the reason for the refusal into the widget itself, not into the manual.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Blender | 5.2 LTS | «Disabled (red)» в тултипе; API — `Operator.poll_message_set()` | Мануал перечисляет это как штатный элемент подсказки: «Disabled (red) — The reason why the value is not editable». Причина берётся из двух источников: сообщение, которое операция ставит рядом с отказом своего `poll()`, и поле кнопки `disabled_info`; рисуется стилем `TIP_LC_ALERT` и проходит через `TIP_()`, то есть ПЕРЕВОДИТСЯ. Появилось в 3.0. Фиксированного префикса «Disabled: » в коде нет — красный и есть маркер |
-| VS Code | 1.136 | `enablement` против `when` | Два разных рычага: `when` убирает пункт, `enablement` гасит. Палитра команд «doesn't show icons nor disabled commands», контекстное меню редактора показывает серыми. Канала «почему» в контракте расширений не предусмотрено вообще |
-| IntelliJ IDEA | 2026.2 | — | Гайдлайны говорят, КОГДА гасить кнопку (её контрол выключен; не заполнены обязательные поля), а тултипу предписывают нести ярлык действия и горячую клавишу. На странице про тултипы слова «disabled» нет ни разу |
-| Ableton Live | 12.4.5 | Info View + Status Bar | Info View — «displays the name and function of whatever element of the UI that you hover over»: прямой предок нашей строки по форме. Строка состояния отдельно «displays useful information like error messages». Описывает ли Info View НЕДОСТУПНЫЕ элементы и называет ли причину — не найдено |
-| Photoshop | 27.x | Rich Tool Tips | Самый дорогой конец шкалы: описание плюс короткое видео действия, отключается в настройках. Поведение на неактивных элементах не документировано — не найдено |
+| Blender | 5.2 LTS | "Disabled (red)" in the tooltip; API — `Operator.poll_message_set()` | The manual lists this as a standard element of the hint: "Disabled (red) — The reason why the value is not editable". The reason comes from two sources: the message that the operator sets next to the refusal of its `poll()`, and the `disabled_info` field of the button; it is drawn in the `TIP_LC_ALERT` style and passes through `TIP_()`, that is, it IS TRANSLATED. It appeared in 3.0. There is no fixed prefix "Disabled: " in the code — the red colour is the marker |
+| VS Code | 1.136 | `enablement` versus `when` | Two different levers: `when` removes the item, `enablement` greys it out. The command palette "doesn't show icons nor disabled commands", the editor context menu shows them grey. A channel for "why" is not provided in the extension contract at all |
+| IntelliJ IDEA | 2026.2 | — | The guidelines say WHEN to disable a button (its control is off; required fields are not filled in), and they prescribe that a tooltip carries the action's label and hotkey. The page about tooltips does not contain the word "disabled" even once |
+| Ableton Live | 12.4.5 | Info View + Status Bar | The Info View "displays the name and function of whatever element of the UI that you hover over": a direct ancestor of our line in form. The status bar separately "displays useful information like error messages". Whether the Info View describes UNAVAILABLE elements and names the reason — not found |
+| Photoshop | 27.x | Rich Tool Tips | The most expensive end of the scale: a description plus a short video of the action, switched off in the settings. The behaviour on inactive elements is not documented — not found |
 
-## Фишка фишки
+## The trick behind it
 
-**Груз, который одна строка статусбара вместить не может, — это КООРДИНАТА:
-указатель на конкретный объект, который в момент отказа может лежать вне
-экрана.** Текст умеет назвать, но не умеет показать. У нас этот груз не
-уместили в строку и не отдали попапу — его расщепили на три поверхности,
-каждая из которых несёт свою треть: объект берёт цвет, строка берёт сторону и
-число, кромка строки дорожки берёт стрелку. Заметка в статусе `уже-есть`
-именно поэтому: расщепление уже сделано, и три детали в нём неочевидны.
+**The payload that one status-bar line cannot hold is the COORDINATE: a pointer to a specific
+object which, at the moment of the refusal, may lie outside the screen.** Text can name it but
+cannot show it. We did not fit this payload into the line, and did not hand it to a popup
+either — we split it into three surfaces, each carrying its own third: the object takes the
+colour, the line takes the side and the number, the edge of the track's lane takes the arrow.
+The note has the status `already-have` precisely for this reason: the split is already done, and
+three of its details are non-obvious.
 
-1. **Препятствие выбирается по ХОДУ ЖЕСТА, а не по близости к курсору.**
-   `plan_move()` берёт `min_by_key` по началу при движении вправо и
-   `max_by_key` по концу при движении влево (`timeline.rs:267-272`). Разница
-   видна, когда тащишь клип поверх трёх соседей: подсвечивается не тот, что
-   ближе к мыши, а тот, ОБО ЧТО ты остановился, — и подсветка перепрыгивает на
-   другого соседа, если ты поведёшь мышь обратно. Это единственный выбор, при
-   котором подсвеченный объект и есть объяснение остановки.
-2. **Число — это «сколько мотать», а не «где оно начинается».** `block_view`
-   меряет до БЛИЖНЕЙ кромки препятствия: `view.0 - span.1` влево,
-   `span.0 - view.1` вправо (`timeline.rs:166-174`). Пользователь получает не
-   таймкод, который надо вычитать из текущего, а готовое расстояние прокрутки.
-3. **Стрелка несёт вторую координату, которой в тексте нет вообще.** Она
-   рисуется не в углу экрана, а у кромки ТОЙ строки дорожки, где лежит
-   препятствие (`lane_top(b.kind, b.lane)`, `timeline.rs:4230`). Текст говорит
-   «в 12.4 с справа», стрелка молча добавляет «на второй видеодорожке». Оба
-   ответа нужны, и ни один не занимает места у другого.
+1. **The obstacle is chosen by the DIRECTION of the gesture, not by proximity to the cursor.**
+   `plan_move()` takes `min_by_key` on the start when moving right and `max_by_key` on the end
+   when moving left (`timeline.rs:267-272`). The difference shows when you drag a clip over three
+   neighbours: the highlighted one is not the one nearest to the mouse, but the one you STOPPED
+   AT — and the highlight jumps to another neighbour if you move the mouse back. This is the only
+   choice under which the highlighted object is itself the explanation of the stop.
+2. **The number is "how far to scroll", not "where it starts".** `block_view` measures to the
+   NEAREST edge of the obstacle: `view.0 - span.1` to the left, `span.0 - view.1` to the right
+   (`timeline.rs:166-174`). The user gets not a timecode to subtract from the current one, but a
+   ready scroll distance.
+3. **The arrow carries a second coordinate which the text does not have at all.** It is drawn not
+   in a corner of the screen, but at the edge of THAT lane of the track where the obstacle lies
+   (`lane_top(b.kind, b.lane)`, `timeline.rs:4230`). The text says "12.4 s to the right", while the
+   arrow silently adds "on the second video track". Both answers are needed, and neither takes
+   space from the other.
 
-Обратная сторона расщепления, тоже неочевидная: подсветка обрезается кромками
-вида (`.max(rect.left())` / `.min(rect.right())`), поэтому частично видимое
-препятствие показывает красный прямоугольник, уходящий за край, — и это само
-по себе читается как «оно продолжается там».
+The reverse side of the split, also non-obvious: the highlight is clipped by the edges of the view
+(`.max(rect.left())` / `.min(rect.right())`), so a partly visible obstacle shows a red rectangle
+running off the edge — and this by itself reads as "it continues there".
 
-Третью треть — «куда смотреть» — не несёт **ни один** из пяти редакторов
-ядра (проверено, см. «У кого и как»). Так что в этой заметке «фишка фишки»
-работает наоборот: находка не в чужом продукте, а в том, что чужого продукта
-с таким грузом нет.
+The third part — "where to look" — is carried by **none** of the five core editors (checked, see
+"Who has it and how"). So in this note the "trick behind the trick" works the other way round: the
+finding is not in someone else's product, but in the fact that there is no other product with such
+a payload.
 
-## Плюсы
+## Pros
 
-- **Решение «видно или нет» — чистая функция от `(span, view)`**, ничего не
-  знающая о пикселях. Поэтому «куда смотреть» проверяется таблицей значений без
-  окна (часть 2 t172) и не может отстать от правки вёрстки: у неё нет ни
-  геометрии, ни состояния, чтобы отстать.
-- **Препятствие описано ТИКАМИ, а не `ClipId`.** `Blocked.span: (i64, i64)` —
-  поэтому подсветка одинаково работает для чужих кусков `Project::foreign`
-  (плейсхолдеров импортированного OTIO, у которых `ClipId` нет вообще) и не
-  ломается, если модель под жестом успела перестроиться.
-- **Однокадровая жизнь исключает целый класс дефектов.** Гашение стоит в начале
-  прохода, до всех хит-тестов; «красная подсветка залипла» невозможна не
-  потому, что кто-то помнит про сброс, а потому, что сброс безусловный.
-- **Ошибка первая в `status_line` — hover физически не может выиграть.** Пока
-  жест упирается, движение мыши по кнопкам не в состоянии затереть объяснение,
-  и не нужен ни таймер, ни приоритет «кто последний написал».
-- **Кламп происходит в ПРЕВЬЮ жеста, а не при отпускании** (`d.cur_start =
-  start` внутри обработчика драга). Отпускание не делает сюрприза: то, что
-  видно, то и будет — это же требование Р.28 п.6 «НИЧЕГО НИГДЕ НЕ ДОЛЖНО
-  ОТРАСТАТЬ/ОТРУБАТЬСЯ».
+- **The decision "visible or not" is a pure function of `(span, view)`**, knowing nothing about
+  pixels. Therefore "where to look" is checked by a table of values without a window (part 2 of
+  t172) and cannot fall behind a change of the layout: it has no geometry and no state to fall
+  behind with.
+- **The obstacle is described in TICKS, not by `ClipId`.** `Blocked.span: (i64, i64)` — so the
+  highlight works equally for the foreign pieces of `Project::foreign` (placeholders of imported
+  OTIO, which have no `ClipId` at all) and does not break if the model has been rebuilt during the
+  gesture.
+- **A one-frame lifetime rules out a whole class of defects.** The clearing happens at the start
+  of the pass, before all the hit tests; "the red highlight got stuck" is impossible not because
+  someone remembers to reset it, but because the reset is unconditional.
+- **The error is first in `status_line` — hover physically cannot win.** While the gesture is
+  stopped, mouse movement over buttons is not in a position to overwrite the explanation, and
+  neither a timer nor a priority rule "who wrote last" is needed.
+- **The clamp happens in the PREVIEW of the gesture, not on release** (`d.cur_start =
+  start` inside the drag handler). Releasing makes no surprise: what is visible is what will be —
+  this is the requirement of R.28 item 6, "NOTHING ANYWHERE MUST GROW BACK OR BE CUT OFF".
 
-## Минусы
+## Cons
 
-- **В штатном режиме проекта механизм почти не показывается.** Переслаивание
-  (`Project.overlap_layers`) по решению Р.28 включено ПО УМОЛЧАНИЮ
-  (`src/libs/kt-model/src/project.rs:3020`), а `plan_move()` при включённом
-  переслаивании и отсутствии чужих кусков возвращает `Free`: класть клипы друг
-  на друга законно, упираться не во что. Самый отточенный механизм обратной
-  связи в программе живёт на двух сценариях — чужие плейсхолдеры из импорта и
-  проекты, где пользователь выключил переслаивание из контекстного меню. Сам
-  t172 вынужден начинать с `p.overlap_layers = false` и комментария
-  «блокировка возможна только в этом режиме».
-- **Ноль следа.** `blocked` не попадает в кольцо `notices` (200 записей) —
-  единственная правильно сделанная ошибка в программе единственная же и не
-  сохраняется. Отвёл мышь — перечитать негде.
-- **Строка называет род, а не объект.** «Мешает событие на дорожке» — но не
-  какое: ни имени медиа, ни таймкода. Если препятствий несколько, узнаёшь про
-  первое, домотаешь — упрёшься в следующее, и так по одному. Умение назвать
-  объект поимённо в программе есть — соседние сообщения об отсутствующем
-  исходнике так и написаны (`media_missing`: «{0}: исходник недоступен,
-  показана заглушка»), — просто здесь оно не применено.
-- **Единица измерения в этой строке уникальна для всей программы.** Расстояние
-  даётся в секундах с одним знаком, тогда как тулбар, маска ввода (t98) и
-  метки живут в таймкоде. Число нельзя ни с чем сопоставить глазами.
+- **In the project's normal mode the mechanism is barely shown.** Overlap layering
+  (`Project.overlap_layers`) is enabled BY DEFAULT under the R.28 decision
+  (`src/libs/kt-model/src/project.rs:3020`), and `plan_move()` with overlap layering on and no
+  foreign pieces returns `Free`: putting clips on top of each other is legal, there is nothing to
+  butt into. The most refined feedback mechanism in the program lives on two scenarios — foreign
+  placeholders from an import, and projects where the user has switched overlap layering off in
+  the context menu. t172 itself has to start with `p.overlap_layers = false` and the comment
+  "blocking is possible only in this mode".
+- **Zero trace.** `blocked` does not get into the `notices` ring (200 entries) — the only
+  correctly made error in the program is, by the same token, the one that is not saved. Move the
+  mouse away — and there is nowhere to re-read it.
+- **The line names the kind, not the object.** "An event on a track is in the way" — but which one:
+  neither the media name nor the timecode. If there are several obstacles, you learn about the first,
+  scroll past it — you run into the next, and so on one by one. The ability to name an object
+  individually exists in the program — the neighbouring messages about a missing source are written
+  exactly so (`media_missing`: "{0}: source unavailable, placeholder shown") — it is simply not applied here.
+- **The unit of measure in this line is unique in the whole program.** The distance is given in seconds
+  with one decimal place, whereas the toolbar, the input mask (t98) and the markers live in timecode.
+  The number cannot be matched against anything by eye.
 
-## Что говорят пользователи
+## What users say
 
-Оговорка про источник цитат: форумы четырёх редакторов ядра в этот заход не
-открылись — `forum.blackmagicdesign.com` отдаёт бот-челлендж AWS WAF,
-`community.adobe.com` — 403 от CloudFront, `reddit.com` — 403, а форум VEGAS
-переехал с `vegascreativesoftware.com` на Discourse Boris FX
-(`forum.borisfx.com/c/vegas-pro/55`), куда дойти не успели. Цитаты ниже — с
-площадок, которые открылись: `video.stackexchange.com`,
-`blender.stackexchange.com`, `blenderartists.org` и форум Shotcut.
+A caveat about the source of the quotes: the forums of the four core editors did not open in this
+pass — `forum.blackmagicdesign.com` returns an AWS WAF bot challenge, `community.adobe.com` returns
+403 from CloudFront, `reddit.com` returns 403, and the VEGAS forum has moved from
+`vegascreativesoftware.com` to the Boris FX Discourse (`forum.borisfx.com/c/vegas-pro/55`), which
+there was no time to reach. The quotes below come from the platforms that did open:
+`video.stackexchange.com`, `blender.stackexchange.com`, `blenderartists.org` and the Shotcut forum.
 
-Маркер без слов не работает — вот тот самый механизм FCP «кромка краснеет»
-глазами человека, который его увидел и не понял:
+A marker without words does not work — here is that very FCP mechanism "the edge turns red" through
+the eyes of a person who saw it and did not understand it:
 
-> «Now I wanted to add some more images to my last segment but then I can't
+> "Now I wanted to add some more images to my last segment but then I can't
 > drag the clip longer. It will show a red border at the end and wont make it
-> longer.»
+> longer."
 > — Georg, video.stackexchange.com, 22.12.2017,
 > https://video.stackexchange.com/questions/23095/cant-make-a-clip-in-finalcutpro-x-longer
 
-Условие, при котором пункт становится доступен, знает только программа, а
-объясняет его форум:
+The condition under which the item becomes available is known only to the program, and the forum
+explains it:
 
-> «I'm trying to merge these two cut parts. The "merge" option is still greyed
-> out even though those cut parts of the video.»
+> "I'm trying to merge these two cut parts. The "merge" option is still greyed
+> out even though those cut parts of the video."
 > — Danielle, Shotcut Forum, 16.10.2023,
 > https://forum.shotcut.org/t/the-merge-option-is-greyed-out/41150
 
-И обратный случай — автор, сознательно положивший невыполненное условие в
-подсказку выключенной кнопки:
+And the reverse case — an author who deliberately put the unmet condition into the hint of a disabled button:
 
-> «Sorry, I made the bake button appear disabled while certain conditions
+> "Sorry, I made the bake button appear disabled while certain conditions
 > required for it to work were not met. Hovering the mouse over the button
-> tells you what error has to be dealt with.»
+> tells you what error has to be dealt with."
 > — AquaticNightmare, blenderartists.org, 19.09.2020,
 > https://blenderartists.org/t/ez-baker/1245869/76
 
-В той же ветке «наведи и прочитай причину» стало частью протокола поддержки, а
-другой участник пишет, что предпочитает именно серую кнопку с причиной, потому
-что это быстрее, чем нажимать и смотреть, что сломалось. Это ровно то
-поведение, которого у нас сегодня нет, — не из-за спора о дизайне, а из-за
-`hovered()`.
+In the same thread "hover and read the reason" has become part of the support protocol, and another
+participant writes that he prefers exactly the grey button with a reason, because it is faster than
+pressing it and seeing what broke. This is exactly the behaviour we do not have today — not because
+of a dispute about design, but because of `hovered()`.
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/ui-reach/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Уже есть: невозможное действие — ошибка в строке состояния, а не молчание (t172); «немых объектов не бывает». (регресс-страж t83).
+## How it fits Kinotrain
 
-## Оценка
+CAPABILITY: openspec/specs/ui-reach/ — the contract is in `spec.md`, the "why" and the paths in the code are in `design.md`.
+Already there: an impossible action is an error in the status line, not silence (t172); "there are no silent objects" (regression guard t83).
 
-Оценивается не «сделать фичу» — она сделана, — а **распространить правило 16 на
-остальные пять мест** и закрыть его машиной, как Р.38 поступил с правилами
-1, 3, 7, 17.
+## Estimate
 
-| Что | Ответ |
+What is estimated is not "make the feature" — it is done — but **extending rule 16 to the other five
+places** and locking it with a machine, as R.38 did for rules 1, 3, 7 and 17.
+
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия раунда; строки причин дороже кода |
-| Где основная работа | kt-app (`app.rs` — `hovered()` → `contains_pointer()` в двух хелперах; `timeline.rs` — `blocked` на тримах; `app.rs::apply` — отказ модели как `Error`), kt-model (открыть `check_on` наружу, чтобы причину можно было спросить ДО жеста), плюс каталоги i18n |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | `reach_tests::refusal_is_an_error_everywhere` — сканер: у каждого `add_enabled(cond, …)` есть подсказка, чей текст ЗАВИСИТ от `cond` (сегодня из шести мест этому отвечает одно); харнесс-проверка, что подсказка выключенного виджета доезжает до `status_line_shown`; расширение t172 на `DragMode::Trim*`; проверка, что отказ `Command` даёт `HintKind::Error` и локализованный текст |
-| Зависит от | — (смыкается с F-HLP-020 по «следу, который остаётся»; цена строк — F-HLP-033) |
-| Ломает совместимость | нет |
+| Size | S — one stage of the round; the reason lines cost more than the code |
+| Where the main work is | kt-app (`app.rs` — `hovered()` → `contains_pointer()` in two helpers; `timeline.rs` — `blocked` on trims; `app.rs::apply` — the model's refusal as `Error`), kt-model (open `check_on` outward, so that the reason can be asked about BEFORE the gesture), plus the i18n catalogs |
+| Project format | does not touch it |
+| Tests that will have to be written | `reach_tests::refusal_is_an_error_everywhere` — a scanner: every `add_enabled(cond, …)` has a hint whose text DEPENDS on `cond` (today one entry answers for all six places); a harness check that the hint of a disabled widget reaches `status_line_shown`; an extension of t172 to `DragMode::Trim*`; a check that a refused `Command` gives `HintKind::Error` and a localized text |
+| Depends on | — (joins F-HLP-020 on "the trace that remains"; the price of the lines — F-HLP-033) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Наш Move-жест — эталон, который в этой заметке нечем улучшить: три части
-ответа на месте, а третьей (сторона + расстояние + стрелка) нет ни у одного из
-пяти редакторов ядра — ради этого и заведена заметка в статусе `уже-есть`.
-Менять там нечего.
+Our Move gesture is the reference, which this note has nothing to improve on: the three parts of the
+answer are in place, and the third (side + distance + arrow) is missing in ALL five core editors —
+that is why the note was opened with the status `already-have`. There is nothing to change there.
 
-Разведка изменила не решение, а его ГРАНИЦУ. Правило 16 написано словами про
-жест на таймлайне — и ровно настолько и работает: трим молчит, отказ модели
-жёлтый и английский, серая кнопка не объясняется, а единственная в проекте
-правильная попытка объяснить СЕРОСТЬ (`mrph.timed_by_ref`) физически не может
-показаться — при том, что тот же приём на соседнем, не выключенном виджете
-(`mrph.ref_dead`) работает. Это не «ещё бы вот тут доделать»: это
-доказательство, что проза опять не уронила ничего, — тот же вывод, которым
-закрылся Р.38.
+The reconnaissance changed not the decision but its BOUNDARY. Rule 16 is written in words about the
+gesture on the timeline — and it works exactly that far: the trim is silent, the model's refusal is
+yellow and English, a grey button is not explained, and the only correct attempt in the project to
+explain GREYNESS (`mrph.timed_by_ref`) physically cannot be shown — although the same device on a
+neighbouring, not disabled widget (`mrph.ref_dead`) works. This is not "a bit more to finish here":
+it is proof that prose has once again dropped nothing — the same conclusion with which R.38 closed.
 
-УЖЕ-ЕСТЬ: reach_tests::refusal_is_an_error_everywhere — правило 16 покрывает
-не класс «невозможность действия», а один Move-жест: разведка сузила
-формулировку до него и назвала пять адресов, куда её надо расширить — трим
-(`src/apps/kt-app/src/timeline.rs:2665`), отказ команды модели (`Severity`
-без варианта `Error`, `src/apps/kt-app/src/app.rs:17`), все шесть
-`add_enabled`, приватность `TimelineModel::check_on` и маска ввода. Подсказка
-выключенного виджета вдобавок мертва по устройству egui (`hovered()` всегда
-`false`), поэтому расширять правило надо сканером, а не прозой: Р.38 уже
-доказал, что проза ничего не роняет.
+ALREADY-HAVE: reach_tests::refusal_is_an_error_everywhere — rule 16 covers not the class "impossibility of an action" but a single Move gesture: the reconnaissance narrowed the wording to it and named five addresses to which it has to be extended — the trim (`src/apps/kt-app/src/timeline.rs:2665`), the model's command refusal (`Severity` without a variant `Error`, `src/apps/kt-app/src/app.rs:17`), all six `add_enabled`, the privacy of `TimelineModel::check_on`, and the input mask. The hint of a disabled widget is moreover dead by the design of egui (`hovered()` is always `false`), so the rule has to be extended by a scanner, not by prose: R.38 has already proved that prose drops nothing.
 
-ОДНА СТРОКА: перекрытие — не трогает | задержка — не трогает | ёмкость —
-причина отказа (трим, серый виджет, отвергнутая команда) едет на УЖЕ
-существующую поверхность красной строки статусбара, `HintKind::Error`, через
-`contains_pointer()` вместо `hovered()`; ни одного нового слоя и ни одного
-попапа.
+ONE LINE: overlap — untouched | delay — untouched | capacity — the reason for a refusal (a trim, a grey
+widget, a rejected command) travels to the EXISTING surface of the red status line, `HintKind::Error`,
+through `contains_pointer()` instead of `hovered()`; not a single new layer and not a single popup.
 
-## Источники
+## Sources
 
-Живьём ни один из пяти редакторов в этот заход не запускался: всё по
-официальной документации и мануалам вендоров, для софта вне ядра — по
-документации и исходникам. Дата обращения ко всем — 2026-09-07.
+None of the five core editors was run live in this pass: everything is from official documentation and vendor
+manuals; for software outside the core, from documentation and sources. The access date for all is 2026-09-07.
 
-**Ядро.**
+**Core.**
 
-- DaVinci Resolve 21 Reference Manual (PDF, скачан и прочитан локально;
-  ссылки в тексте — по главам и страницам мануала: Ch. 45 с. 964-965 перенос
-  и обводка допустимой области, Ch. 36 с. 737/741-742/747 перезапись и
-  штриховка, Ch. 55 с. 1197 «Adding Transitions When There's Not Enough
-  Handles», Ch. 66 с. 1472 Auto Navigator в нодовом редакторе) —
+- DaVinci Resolve 21 Reference Manual (PDF, downloaded and read locally; references in the text are by chapter
+  and manual page: Ch. 45 pp. 964-965 the move and the outline of the permissible area, Ch. 36 pp. 737/741-742/747
+  overwrite and hatching, Ch. 55 p. 1197 "Adding Transitions When There's Not Enough Handles", Ch. 66 p. 1472
+  Auto Navigator in the node editor) —
   https://documents.blackmagicdesign.com/UserManuals/DaVinci_Resolve_21_Reference_Manual.pdf
-- VEGAS Pro 2026 Online Help (Last modified 15.04.2026),
+- VEGAS Pro 2026 Online Help (last modified 15.04.2026),
   `cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/7-edit/`:
   `moving_events.htm`, `autocrossfades.htm`, `adjusting_eventslength.htm`,
   `quantize_frames.htm`, `post_edit_ripple.htm`, `shuffling_events.htm`
@@ -275,45 +248,41 @@ CAPABILITY: openspec/specs/ui-reach/ — контракт в `spec.md`, «поч
   `edit-projects/correct-mistakes/view-warnings-errors-and-information-events.html`,
   `get-started/preferences-and-settings/timeline-preferences.html` (17.06.2026)
 - After Effects 26, `helpx.adobe.com/after-effects/desktop/`:
-  `work-with-layers/manage-layers/layers.html` (мигание заблокированного слоя),
+  `work-with-layers/manage-layers/layers.html` (the blinking of a locked layer),
   `work-with-layers/select-and-arrange-layers/selecting-arranging-layers.html`,
   `get-started/get-familiar-with-the-interface/general-user-interface-items.html`
 
-**Вне ядра.**
+**Outside the core.**
 
 - Blender 5.2 Manual, Help System → Tooltips → Elements —
   https://docs.blender.org/manual/en/5.2/getting_started/help.html ;
   API `Operator.poll_message_set()` —
   https://docs.blender.org/api/current/bpy.types.Operator.html ;
-  release notes 3.0 (появление механизма) —
+  release notes 3.0 (the appearance of the mechanism) —
   https://developer.blender.org/docs/release_notes/3.0/python_api/ ;
-  реализация — `source/blender/editors/interface/regions/interface_region_tooltip.cc`
-  в https://github.com/blender/blender
-- VS Code Extension API, Contribution Points (`when` против `enablement`) —
+  implementation — `source/blender/editors/interface/regions/interface_region_tooltip.cc`
+  in https://github.com/blender/blender
+- VS Code Extension API, Contribution Points (`when` versus `enablement`) —
   https://code.visualstudio.com/api/references/contribution-points
-- IntelliJ Platform UI Guidelines: Button (когда гасить) —
-  https://plugins.jetbrains.com/docs/intellij/button.html ; Tooltip (три вида,
-  «disabled» не упомянут) — https://plugins.jetbrains.com/docs/intellij/tooltip.html
-- Ableton Live 12 Manual, «First Steps» (Info View) и «Live Concepts»
+- IntelliJ Platform UI Guidelines: Button (when to disable) —
+  https://plugins.jetbrains.com/docs/intellij/button.html ; Tooltip (three kinds,
+  "disabled" not mentioned) — https://plugins.jetbrains.com/docs/intellij/tooltip.html
+- Ableton Live 12 Manual, "First Steps" (Info View) and "Live Concepts"
   (Status Bar) — https://www.ableton.com/en/live-manual/12/first-steps/
 - Photoshop, Rich Tool Tips —
   https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/show-or-hide-tool-tips.html
   (23.02.2026)
 
-**Что искали и НЕ нашли** (чтобы следующая волна не искала заново): указания
-на препятствие за пределами вида ни у одного из пяти — полнотекстовый поиск по
-мануалу Resolve (`off screen`, `out of view`, `outside the visible`,
-`scrolls the Timeline to`), страницы Premiere `rearrange-clips-on-the-timeline`,
-`different-ways-to-move-clips`, `snap-clips`, `navigation-controls-in-the-timeline`,
-`timeline-preferences` (auto-scroll / edge / arrow / distance), страницы FCP
-`scroll-in-the-timeline`, `snap-to-items`, `arrange-clips`,
-`extend-or-shorten`, страницы VEGAS `moving_events`, `adjusting_eventslength`,
-`quantize_frames`, `post_edit_ripple`. Также не найдены: подсветка
-клипа-препятствия во время жеста (ни у одного); поведение JetBrains Search
-Everywhere с недоступными действиями; описывает ли Info View у Ableton
-недоступные элементы; появляются ли Rich Tool Tips у Photoshop на неактивных
-элементах; сообщение «Studio only» внутри интерфейса Resolve (мануал маркирует
-такие фичи в заголовках, интерфейс просто серый).
-`[НЕ ПРОВЕРЕНО]` — строка Premiere «Trim media limit reached on Footage 1» и
-белый треугольник у кромки клипа: в официальной документации Adobe их нет,
-подтверждение только форумное.
+**What was searched for and NOT found** (so that the next wave does not search again): indications of an
+obstacle outside the view in any of the five — a full-text search of the Resolve manual (`off screen`,
+`out of view`, `outside the visible`, `scrolls the Timeline to`), the Premiere pages
+`rearrange-clips-on-the-timeline`, `different-ways-to-move-clips`, `snap-clips`,
+`navigation-controls-in-the-timeline`, `timeline-preferences` (auto-scroll / edge / arrow / distance), the
+FCP pages `scroll-in-the-timeline`, `snap-to-items`, `arrange-clips`, `extend-or-shorten`, the VEGAS pages
+`moving_events`, `adjusting_eventslength`, `quantize_frames`, `post_edit_ripple`. Also not found: highlighting
+of the obstacle clip during a gesture (in none of them); the behaviour of JetBrains Search Everywhere with
+unavailable actions; whether Ableton's Info View describes unavailable elements; whether Photoshop's Rich
+Tool Tips appear on inactive elements; a "Studio only" message inside the Resolve interface (the manual marks
+such features in the headings, the interface simply greys them out).
+`[NOT VERIFIED]` — the Premiere line "Trim media limit reached on Footage 1" and the white triangle at a clip
+edge: they are absent from Adobe's official documentation; confirmation exists only on forums.

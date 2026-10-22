@@ -1,12 +1,12 @@
 ---
 id: F-MPH-008
-title: Автоматизация (кривые) у самого морфер-слоя
-status: кандидат
+title: Automation (curves) on the morpher layer itself
+status: candidate
 priority: B
 cost: XL
 category: morpher/gaps
 editors: [vegas-pro-2026, premiere-26, resolve-20, fcp-12, after-effects-26]
-we_have: нет
+we_have: no
 crates: [kt-model, kt-otio, kt-engine, kt-app]
 invariants: [3, 7, 11]
 ui_rules: [13, 16, 17, 20]
@@ -17,131 +17,56 @@ depends_on: [F-MPH-006]
 checked: 2026-09-07
 ---
 
-# F-MPH-008 — Автоматизация (кривые) у самого морфер-слоя
+# F-MPH-008 — Automation (curves) on the morpher layer itself
 
-## Суть
+## Essence
 
-Морфер-блок действует ровно так, как его настроили: одно и то же значение
-каждого параметра от первого кадра блока до последнего. Монтажёру нужно
-другое — грейд, который НАРАСТАЕТ к концу сцены; блюр, который
-выстреливает на вспышке и уезжает; переезд между двумя образами внутри
-одного слоя. Сегодня единственный способ — нарезать блок на куски и
-выставить значения ступеньками: на длинной сцене это десяток блоков
-вместо одной кривой, и на каждом стыке видно ступеньку.
+The morpher block acts exactly as it was set up: one and the same value of each parameter from the first frame of the block to the last. The editor needs something else — a grade that GROWS towards the end of the scene; a blur that fires on a flash and then drifts away; a move between two images within one layer. Today the only way is to cut the block into pieces and set the values stepwise: on a long scene that is a dozen blocks instead of one curve, and a step is visible at every joint.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Adjustment Event | ключи FX и уголки-фейды принадлежат СОБЫТИЮ, домен — время события; композитная огибающая живёт на дорожке во времени проекта, а поедет ли она за событием — решает глобальный `Options \| Lock Envelopes to Events` (разобрано в F-MPH-005) |
-| Adobe Premiere | 26.x | Adjustment Layer | слой — обычный клип; ключи Opacity («intrinsic effect») и любого параметра Lumetri живут во времени этого клипа и едут вместе с ним |
-| DaVinci Resolve | 20.3.2 | Adjustment Clip | ключи Inspector'а и Color-страницы — во времени клипа-слоя; отдельного «времени слоя» не существует, потому что слой и есть клип |
-| Final Cut Pro | 12.3 | Adjustment Clip (нативный с 11.1) | Opacity/Transform/Crop/Distort кейфреймятся у самого клипа-слоя, как у любого другого клипа |
-| After Effects | 26.x | Adjustment Layer | ключи хранятся во ВРЕМЕНИ СЛОЯ; растяжение и ремап времени слоя тянут их за собой |
+| VEGAS Pro | 2026.0 | Adjustment Event | the FX keys and the corner fades belong to the EVENT, the domain is the event's time; the composite envelope lives on the track in project time, and whether it moves with the event is decided by the global `Options \| Lock Envelopes to Events` (analysed in F-MPH-005) |
+| Adobe Premiere | 26.x | Adjustment Layer | the layer is an ordinary clip; the keys of Opacity ("intrinsic effect") and of any Lumetri parameter live in the time of this clip and move with it |
+| DaVinci Resolve | 20.3.2 | Adjustment Clip | the keys of the Inspector and of the Color page are in the time of the layer-clip; a separate "layer time" does not exist, because the layer is the clip |
+| Final Cut Pro | 12.3 | Adjustment Clip (native since 11.1) | Opacity/Transform/Crop/Distort are keyframed on the layer-clip itself, as on any other clip |
+| After Effects | 26.x | Adjustment Layer | the keys are stored in the TIME OF THE LAYER; stretching and time remapping of the layer drag them along |
 
-Ответ у всех пяти один и тот же, и он не про автоматизацию: **у слоя есть
-собственное время, потому что слой — клип.** Ключ садится в это время, и
-вопрос «в каком домене» просто не возникает.
+The answer is the same for all five, and it is not about automation: **the layer has its own time, because the layer is a clip.** The key sits in this time, and the question "in which domain" simply does not arise.
 
-## Фишка фишки
+## The trick behind it
 
-**Домен ключа — не деталь реализации, а обещание пользователю.** У нас
-`AutoKey.t` — тик МАТЕРИАЛА (`src/libs/kt-model/src/project.rs:1587`), и
-выбран он не из красоты: именно поэтому обрезка не растягивает анимацию,
-а прячет ключи; разрез отдаёт каждой половине её кусок ОДНОЙ кривой, и
-значение на стыке совпадает с обеих сторон; реверс зеркалит анимацию
-вместе с картинкой. Ни одна геометрическая команда ключи не двигает —
-«приклеенность» обеспечена ПРЕДСТАВЛЕНИЕМ, а не кодом команд (тест
-t212, `src/libs/kt-model/tests/fx_auto.rs`).
+**The domain of a key is not an implementation detail but a promise to the user.** For us `AutoKey.t` is a tick of the MATERIAL (`src/libs/kt-model/src/project.rs:1587`), and it was chosen not for beauty: that is exactly why trimming does not stretch the animation but hides the keys; a cut gives each half its piece of ONE curve, and the value at the joint matches from both sides; reversal mirrors the animation together with the picture. No geometric command moves the keys — "stickiness" is ensured by the REPRESENTATION, not by the code of the commands (test t212, `src/libs/kt-model/tests/fx_auto.rs`).
 
-**У морфер-слоя материала нет.** Он не клип: ни `media`, ни `source_in`,
-ни `reversed` у него не бывает — только `lane/start/duration/targets/
-patch` (`project.rs:569`). Поэтому единый механизм автоматизации к нему
-не прикладывается вообще: домен придётся ВЫБРАТЬ заново, и каждый выбор
-чем-то платит. Время проекта — кривая остаётся на месте при переносе
-блока, и ключи придётся двигать командами, чего наш механизм не делает
-принципиально. Время от начала блока (так живут камера и переход) — но в
-режимах `Marks`/`Areas` окно действия приходит из ССЫЛКИ, а не из блока
-(`project.rs:929`): блок стоит в начале таймлайна, действует на область в
-середине, и кривая «от начала блока» уезжает мимо целиком. Материал
-каждой цели — у слоя целей много, с разными источниками и точками входа,
-одна кривая в «материале» не адресуется.
+**The morpher layer has no material.** It is not a clip: it never has `media`, `source_in` or `reversed` — only `lane/start/duration/targets/patch` (`project.rs:569`). Therefore the single automation mechanism is not applicable to it at all: the domain will have to be CHOSEN anew, and each choice pays for something. Project time — the curve stays in place when the block is moved, and the keys would have to be moved with commands, which our mechanism does not do on principle. Time from the start of the block (this is how the camera and the transition live) — but in the `Marks`/`Areas` modes the action window comes from a REFERENCE, not from the block (`project.rs:929`): the block stands at the start of the timeline, acts on an area in the middle, and a curve "from the start of the block" drifts past entirely. The material of each target — the layer has many targets, with different sources and entry points, and one curve in "material" cannot be addressed.
 
-**И это первый носитель, у которого домен не выводится из него самого.**
-У нас уже три носителя кривых и ДВА домена: слот эффекта — материал
-клипа (`project.rs:1520`), камера — тик от начала события
-(`project.rs:2471`), переход — тик от начала окна (`project.rs:382`).
-Разнобоем это не является: домен каждый раз определяется тем, что у
-носителя есть собственная ось. У морфера собственной оси нет — блок
-задаёт время в одних режимах и не задаёт в других, — поэтому морфер
-требует не «третий домен», а первое в проекте РЕШЕНИЕ о домене.
+**And this is the first carrier whose domain is not derived from itself.** We already have three carriers of curves and TWO domains: the effect slot — the material of the clip (`project.rs:1520`), the camera — the tick from the start of the event (`project.rs:2471`), the transition — the tick from the start of the window (`project.rs:382`). This is not a mess: the domain each time is determined by what the carrier has as its own axis. The morpher has no axis of its own — the block sets the time in some modes and does not in others — therefore the morpher requires not "a third domain" but the first DECISION about the domain in the project.
 
-## Плюсы
+## Pros
 
-- Виджет уже написан и уже переиспользован трижды: `automation::draw`
-  обслуживает слот эффекта, камеру и переход через `AutoCtx` с парой
-  функций `to_timeline`/`to_curve` (`src/apps/kt-app/src/automation.rs`;
-  подключения — `fx_editor.rs:480`, `camera_editor.rs:150`,
-  `transition_editor.rs:273`). Морферу нужна ЧЕТВЁРТАЯ пара функций, а не
-  четвёртый редактор кейфреймов, — правило «своего редактора кейфреймов
-  ни у одного эффекта быть не должно» (`src/apps/kt-app/CLAUDE.md`)
-  держится само собой.
-- Хранение готово: `ParamCurve`/`AutoKey` сериализуются со
-  `skip_serializing_if = Vec::is_empty`, поэтому файлы без кривых
-  остаются байт-стабильными — так уже сделано у камер и переходов.
-- Кривая вешается только на `ParamKind::Smooth` (`project.rs:2117`):
-  структурные параметры (геометрия линий задержки реверба) автоматизации
-  не подлежат. Правило переносится на морфер без единой оговорки.
-- Домен «тик от начала блока» дал бы морферу ровно то поведение, которое
-  пользователь уже видел у камеры: перенос везёт анимацию с собой, правка
-  длины открывает и прячет ключи, ничего не растягивается.
+- The widget is already written and has already been reused three times: `automation::draw` serves the effect slot, the camera and the transition through `AutoCtx` with a pair of functions `to_timeline`/`to_curve` (`src/apps/kt-app/src/automation.rs`; the connections are at `fx_editor.rs:480`, `camera_editor.rs:150`, `transition_editor.rs:273`). The morpher needs a FOURTH pair of functions, not a fourth keyframe editor — the rule "no effect should have its own keyframe editor" (`src/apps/kt-app/CLAUDE.md`) holds by itself.
+- Storage is ready: `ParamCurve`/`AutoKey` are serialized with `skip_serializing_if = Vec::is_empty`, so files without curves stay byte-stable — this is already done for cameras and transitions.
+- A curve is attached only to `ParamKind::Smooth` (`project.rs:2117`): structural parameters (the geometry of the reverb delay lines) are not subject to automation. The rule transfers to the morpher without a single reservation.
+- The domain "tick from the start of the block" would give the morpher exactly the behaviour the user has already seen with the camera: moving carries the animation along, editing the length reveals and hides keys, nothing is stretched.
 
-## Минусы
+## Cons
 
-- Кривой у морфера нет НИКАКОЙ, и молчит она честнее, чем кажется:
-  `MorphPatch::apply_to` дописывает эффекты в цель через
-  `c.fx.extend(add)` (`project.rs:858`) и `c.fx_auto` не трогает, а
-  `active_fx_auto()` отдаёт дописанным слотам пустые векторы
-  (`project.rs:1560`). Слой не «не умеет анимироваться» — он
-  анимируется пустым набором кривых, и ошибки при этом нет.
-- Ссылочные режимы лишают блок даже его собственного времени: `Marks` и
-  `Areas` берут окна из ссылки и блоком их не ограничивают
-  (`project.rs:929`), причём окон на одну цель может быть несколько.
-  Любой домен, привязанный к блоку, в этих режимах неверен.
-- Слой режет цель на куски по краям окон (`Project::effective_clips`,
-  `project.rs:2971`), и каждый кусок — отдельный `ClipEvent` со своим
-  `start`/`source_in`. Кривая слоя обязана давать на шве резки одно
-  значение с обеих сторон — иначе появится ступенька ровно там, где её
-  не может быть по построению.
-- Реверснутая цель. Если проекция наивно положит позиции ключей слоя
-  прямо в `fx_auto` куска, у реверснутого клипа анимация СЛОЯ пойдёт
-  задом наперёд: материал зеркалится (`clip_material_at`), а время слоя
-  зеркалиться не должно.
-- **Побочный эффект, который уже стоит пользователю данных: вставка
-  скопированной цепочки в морфер МОЛЧА теряет огибающие.** В окне
-  морфера `chain_strip` зовётся с `auto: None`
-  (`src/apps/kt-app/src/morpher_editor.rs:381`), ветка paste кладёт
-  `slot.fx` и `slot.bypass`, а `slot.curves` пропускает
-  (`src/apps/kt-app/src/widgets.rs:369`) — и всё равно ставит
-  `ch.auto = true` (`widgets.rs:386`), то есть рапортует об изменении
-  кривых, которых не перенесла. Тот же самый виджет в окне события
-  кривые переносит и перевешивает на новую точку входа
-  (`src/libs/kt-model/src/ops.rs:892`, `fn rebase`). Скопировал цепочку
-  с события, вставил в морфер — огибающих больше нет, и никто об этом не
-  сказал.
-- Морф-строка втрое ниже строки клипов (`src/apps/kt-app/src/
-  timeline.rs:1389`): рисовать огибающую прямо на блоке негде, место под
-  неё придётся искать в окне морфера.
+- The morpher has NO curve at all, and it stays silent more honestly than it seems: `MorphPatch::apply_to` appends the effects to the target via `c.fx.extend(add)` (`project.rs:858`) and does not touch `c.fx_auto`, while `active_fx_auto()` gives the appended slots empty vectors (`project.rs:1560`). The layer does not "fail to animate" — it animates with an empty set of curves, and no error is raised.
+- Reference modes deprive the block even of its own time: `Marks` and `Areas` take the windows from a reference and do not limit them by the block (`project.rs:929`), and there may be several windows per target. Any domain tied to the block is wrong in these modes.
+- The layer cuts the target into pieces along the edges of the windows (`Project::effective_clips`, `project.rs:2971`), and each piece is a separate `ClipEvent` with its own `start`/`source_in`. The curve of the layer must give one value at the seam of the cut from both sides — otherwise a step will appear exactly where by construction it cannot be.
+- A reversed target. If the projection naively puts the key positions of the layer straight into `fx_auto` of the piece, then for a reversed clip the animation of the LAYER will run backwards: the material is mirrored (`clip_material_at`), while the time of the layer must not be mirrored.
+- **A side effect that already costs the user data: pasting a copied chain into the morpher SILENTLY loses the envelopes.** In the morpher window `chain_strip` is called with `auto: None` (`src/apps/kt-app/src/morpher_editor.rs:381`); the paste branch puts `slot.fx` and `slot.bypass`, and skips `slot.curves` (`src/apps/kt-app/src/widgets.rs:369`) — and yet still sets `ch.auto = true` (`widgets.rs:386`), that is, it reports a change of curves that it did not carry over. The same widget in the event window does carry the curves over and rebases them to the new entry point (`src/libs/kt-model/src/ops.rs:892`, `fn rebase`). Copy a chain from an event, paste it into the morpher — and the envelopes are gone, and nobody says so.
+- The morph row is three times lower than the clip rows (`src/apps/kt-app/src/timeline.rs:1389`): there is no room to draw the envelope right on the block; a place for it will have to be looked for in the morpher window.
 
-## Что говорят пользователи
+## What users say
 
 > I want a color grade (using Lumetri) to fade in over the course of a
 > scene. There does not seem to be a way to do this.
 > — James Strecker, Creative COW, 25.05.2018,
 > https://creativecow.net/forums/thread/keyframe-lumetriadjustment-layerae/
 
-Канонический ответ отрасли — анимировать не параметры эффектов, а СИЛУ
-слоя целиком:
+The canonical answer of the industry is to animate not the parameters of the effect but the STRENGTH of the layer as a whole:
 
 > In that Lumetri instance, grade to the total change you want to apply.
 > In the Effects Control Panel (ECP), use the Opacity 'intrinsic' effect
@@ -150,131 +75,68 @@ patch` (`project.rs:569`). Поэтому единый механизм авто
 > — R Neil Haugen, Adobe Community, 19.01.2021,
 > https://community.adobe.com/t5/premiere-pro-discussions/color-grade-transition/m-p/11763446
 
-Отрицательная сторона того же треда: когда механизма нет, люди
-дублируют клипы на дорожку выше и делают кроссфейд «необработанного с
-обработанным».
+The negative side of the same thread: when there is no mechanism, people duplicate the clip onto the track above and make a crossfade of "the unprocessed with the processed".
 
 > It's dumb that there has to be that workaround, but I will try it out!
 > — James Strecker, Creative COW, 04.06.2018,
 > https://creativecow.net/forums/thread/keyframe-lumetriadjustment-layerae/
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- Единый виджет `src/apps/kt-app/src/automation.rs`: `AutoCtx { specs,
-  range, to_timeline, to_curve, frame_step }`, график ↔ таблица, ключи на
-  сетке кадров, мини-таймлайн двигает главный курсор. Три носителя уже
-  подключены — слот эффекта (`fx_editor.rs:480`, домен: материал клипа),
-  камера (`camera_editor.rs:150`, домен: тик от начала события), переход
-  (`transition_editor.rs:273`, домен: тик от начала окна).
-- Модель кривых: `AutoKey`/`ParamCurve` (`src/libs/kt-model/src/
-  project.rs:1587` и `:1598`), `curve_value` (linear и smoothstep при
-  `ease`; безье НЕТ), `apply_fx_auto`, `check_fx_auto`.
-- Носители: `ClipEvent::fx_auto` (`project.rs:1520`),
-  `TransitionEvent::auto` (`project.rs:382`), `CameraEvent::auto`
-  (`project.rs:2471`).
-- Копипаст цепочки ВМЕСТЕ с огибающими: `kt_model::ops::FxSlotBlock`
-  (`src/libs/kt-model/src/ops.rs:851`) и перевес ключей «точка входа к
-  точке входа» (`ops.rs:892`), `paste_fx_chain` (`ops.rs:947`), тест
-  t215.
-- Морфер: `MorpherEvent` (`project.rs:569`), `MorphPatch::apply_to`
-  (`project.rs:832`), окна действия `windows_on`/`ref_windows`
-  (`project.rs:929`/`:892`), окно редактора
-  `src/apps/kt-app/src/morpher_editor.rs` (параметры слота рисует тот же
-  `draw_video_fx_params`, что и окно события, — но статикой).
+- A single widget `src/apps/kt-app/src/automation.rs`: `AutoCtx { specs, range, to_timeline, to_curve, frame_step }`, graph ↔ table, keys on the frame grid, the mini-timeline moves the main cursor. Three carriers are already connected — the effect slot (`fx_editor.rs:480`, domain: the material of the clip), the camera (`camera_editor.rs:150`, domain: tick from the start of the event), the transition (`transition_editor.rs:273`, domain: tick from the start of the window).
+- The curve model: `AutoKey`/`ParamCurve` (`src/libs/kt-model/src/project.rs:1587` and `:1598`), `curve_value` (linear and smoothstep with `ease`; Bézier is NOT there), `apply_fx_auto`, `check_fx_auto`.
+- Carriers: `ClipEvent::fx_auto` (`project.rs:1520`), `TransitionEvent::auto` (`project.rs:382`), `CameraEvent::auto` (`project.rs:2471`).
+- Copy-paste of a chain TOGETHER with the envelopes: `kt_model::ops::FxSlotBlock` (`src/libs/kt-model/src/ops.rs:851`) and the rebasing of keys "entry point to entry point" (`ops.rs:892`), `paste_fx_chain` (`ops.rs:947`), test t215.
+- The morpher: `MorpherEvent` (`project.rs:569`), `MorphPatch::apply_to` (`project.rs:832`), the action windows `windows_on`/`ref_windows` (`project.rs:929`/`:892`), the editor window `src/apps/kt-app/src/morpher_editor.rs` (the slot parameters are drawn by the same `draw_video_fx_params` as the event window — but statically).
 
-### Чего не хватает
+### What is missing
 
-- Поля `auto` у `MorpherEvent`: это единственный носитель параметров в
-  проекте без кривых.
-- Проекции «домен слоя → материал куска» внутри `effective_clips`
-  (`project.rs:2971`): слой режет цель на куски, у каждого свой
-  `start`/`source_in`/`reversed`, и результат обязан быть непрерывным на
-  шве — то же требование, что t212 проверяет для разреза клипа.
-- Секции автоматизации в окне морфера (сейчас `auto: None`,
-  `morpher_editor.rs:381`).
-- Переноса огибающих при вставке цепочки в морфер (`widgets.rs:369`) —
-  либо переноса, либо честного отказа.
+- The `auto` field on `MorpherEvent`: this is the only carrier of parameters in the project without curves.
+- The projection "layer domain → material of the piece" inside `effective_clips` (`project.rs:2971`): the layer cuts the target into pieces, each with its own `start`/`source_in`/`reversed`, and the result must be continuous at the seam — the same requirement that t212 checks for the cut of a clip.
+- Automation sections in the morpher window (currently `auto: None`, `morpher_editor.rs:381`).
+- Transfer of envelopes when a chain is pasted into the morpher (`widgets.rs:369`) — either transfer, or an honest refusal.
 
-### Что мешает
+### What stands in the way
 
-Выбор домена, и ничего кроме него. Три варианта и их цена:
+The choice of domain, and nothing else. Three options and their costs:
 
-1. **Время проекта.** Однозначно и работает в ссылочных режимах, но
-   перенос блока оставляет кривую на месте; копипаст морферов уже
-   перебазирует `start` (`ops.rs:133`, `rebase_morpher`), значит ключи
-   придётся двигать КОМАНДАМИ — и падает главное свойство нынешнего
-   механизма: «ни одна геометрическая команда ключи не трогает».
-2. **Тик от начала блока** (как у камеры). Перенос и трим ведут себя
-   привычно, ключи не двигаются ничем. Ломается на `Marks`/`Areas`, где
-   окно приходит из ссылки, а не из блока, и где окон на одну цель может
-   быть несколько: кривая идёт по каждому окну заново или один раз на
-   весь блок — ответа нет, его надо ПРИНЯТЬ.
-3. **Материал каждой цели.** Пережил бы обрезку и реверс целей, но у
-   слоя целей много и материалы у них разные; вариант распадается на
-   «кривая на каждую пару (слой, цель)» — бухгалтерию, которой некому
-   владеть и которая рассыпается при смене состава целей.
+1. **Project time.** Unambiguous and works in reference modes, but moving the block leaves the curve in place; copy-paste of morphers already rebases `start` (`ops.rs:133`, `rebase_morpher`), so the keys would have to be moved by COMMANDS — and the main property of the current mechanism falls: "no geometric command touches the keys".
+2. **Tick from the start of the block** (as for the camera). Moving and trimming behave as expected, the keys are not moved by anything. It breaks on `Marks`/`Areas`, where the window comes from a reference rather than from the block, and where there may be several windows per target: the curve runs over each window anew or once across the whole block — there is no answer, one has to be CHOSEN.
+3. **The material of each target.** It would survive trimming and reversal of targets, but the layer has many targets and their materials differ; the option falls apart into "a curve per pair (layer, target)" — bookkeeping that nobody owns and that breaks when the set of targets changes.
 
-Отдельно: правильная проекция обязана идти «домен слоя → тик таймлайна →
-материал куска» и потому зависеть от `reversed` каждой цели, иначе
-анимация слоя зеркалится на реверснутых клипах.
+Separately: a correct projection must run "layer domain → timeline tick → material of the piece" and therefore depend on the `reversed` flag of each target, otherwise the animation of the layer is mirrored on reversed clips.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- Корневой `CLAUDE.md`: **7** — значение кривой слоя обязано считаться
-  ОДНИМ кодом для превью и экспорта; проекция живёт в `effective_clips`,
-  то есть до `frame_plan`, и оба бэкенда получают уже спроецированные
-  кривые. **11** — значение на шве резки цели обязано совпадать
-  байт-в-байт, иначе поедет GOLDEN_VIDEO. **3** — дописанные слоем слоты
-  диффятся по clip id, и меняющиеся по кривой параметры обязаны ехать
-  через `set_params` со сглаживанием, а не пересоздавать FX-состояние на
-  каждом кадре.
-- `src/apps/kt-app/CLAUDE.md`: **17** — парные способы одного действия
-  ведут себя одинаково, а сейчас вставка цепочки в событие и в морфер
-  ведут себя по-разному; **20** — ничего не отрубается само, а вставка
-  молча срезает огибающие; **16** — невозможность действия показывается
-  как ошибка, а не молчанием; **13** — морф-строка втрое ниже, новой
-  полосы под огибающую не заводить.
-- Формат: `KT_META_VERSION = 4` (`src/libs/kt-otio/src/meta.rs:17`).
-  Кривые слоя старая сборка прочитала бы как их отсутствие и молча
-  отрендерила бы не то — по политике v3 и v4 («отказ честнее тихой
-  порчи») это v5 с жёстким отказом.
+- Root `CLAUDE.md`: **7** — the value of the layer's curve must be computed by ONE code for preview and export; the projection lives in `effective_clips`, that is, before `frame_plan`, and both backends receive already projected curves. **11** — the value at the seam of a target's cut must match byte-for-byte, otherwise GOLDEN_VIDEO will move. **3** — slots appended by the layer are diffed by clip id, and parameters changing along a curve must go through `set_params` with smoothing, not recreate the FX state on every frame.
+- `src/apps/kt-app/CLAUDE.md`: **17** — paired ways of one action behave alike, and at present pasting a chain into an event and into the morpher behave differently; **20** — nothing is switched off by itself, and a paste silently cuts the envelopes; **16** — the impossibility of an action is shown as an error, not by silence; **13** — the morph row is three times lower, so no new strip is to be created under the envelope.
+- Format: `KT_META_VERSION = 4` (`src/libs/kt-otio/src/meta.rs:17`). An old build would read the layer's curves as their absence and would silently render the wrong thing — under the policy of v3 and v4 ("refusal is more honest than silent corruption") this is v5 with a hard refusal.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | XL — выбор домена меняет семантику автоматизации и поднимает версию файла |
-| Где основная работа | kt-model (поле `auto` + проекция в `effective_clips`), kt-app (секция автоматизации в окне морфера), kt-otio (v5) |
-| Формат проекта | нужна версия v5 (`KT_META_V5`, жёсткий отказ старых сборок) |
-| Тесты, которые придётся написать | домен: перенос и трим блока не двигают ключи (по образцу t212/t231); непрерывность кривой через шов резки цели; реверснутая цель не зеркалит анимацию слоя; `Marks`/`Areas` — где идёт кривая; морфер-рендер == bake с кривыми (расширение t36); перенос огибающих при вставке цепочки в морфер (t215/t217); round-trip модели и .otio |
-| Зависит от | F-MPH-006 (ползунок силы слоя) |
-| Ломает совместимость | да — файлы с кривыми слоя не читаются сборками до v5 |
+| Size | XL — the choice of domain changes the semantics of automation and raises the file version |
+| Where the main work is | kt-model (the `auto` field + projection in `effective_clips`), kt-app (automation section in the morpher window), kt-otio (v5) |
+| Project format | v5 needed (`KT_META_V5`, hard refusal of old builds) |
+| Tests that will have to be written | domain: moving and trimming the block do not move the keys (on the pattern of t212/t231); continuity of the curve through the seam of a target's cut; a reversed target does not mirror the animation of the layer; `Marks`/`Areas` — where the curve runs; morpher render == bake with curves (an extension of t36); transfer of envelopes when a chain is pasted into the morpher (t215/t217); round-trip of the model and of .otio |
+| Depends on | F-MPH-006 (the layer's strength slider) |
+| Breaks compatibility | yes — files with layer curves are not readable by builds before v5 |
 
-Отдельной строкой: **починка тихой потери огибающих при вставке цепочки в
-морфер — цена S и от выбора домена не зависит.** Пока `auto: None`,
-вставка обязана сказать словами, что кривые не поедут (правило 16), а не
-рапортовать `ch.auto = true` и молчать.
+On a separate line: **repairing the silent loss of envelopes when a chain is pasted into the morpher — cost S, and it does not depend on the choice of domain.** While `auto: None`, the paste must say in words that the curves will not be carried over (rule 16), rather than report `ch.auto = true` and stay silent.
 
-## Вердикт
+## Verdict
 
-Берём, но ПОСЛЕ F-MPH-006. Кривая нужна в первую очередь ради силы слоя:
-пока у морфера нет одного скалярного «сколько его», вести кривой нечего —
-«грейд нарастает» через параметры отдельных эффектов не выражается, а
-через силу выражается одной линией, как у всех пяти редакторов. Порядок:
-сила (F-MPH-006) → решение о домене и кривая на силу → кривые остальных
-параметров слоя тем же механизмом и тем же виджетом. Тихая потеря
-огибающих при вставке цепочки в морфер — дефект, а не отсутствующая
-фича, и чинится немедленно и отдельно от всего перечисленного.
+We take it, but AFTER F-MPH-006. The curve is needed first of all for the strength of the layer: while the morpher has no single scalar "how much of it", there is nothing to lead with a curve — "the grade grows" cannot be expressed through the parameters of individual effects, but through the strength it is expressed by one line, as in all five editors. The order: strength (F-MPH-006) → decision on the domain and a curve for the strength → curves of the layer's other parameters by the same mechanism and the same widget. The silent loss of envelopes when a chain is pasted into the morpher is a defect, not a missing feature, and it is fixed immediately and separately from everything listed here.
 
-## Источники
+## Sources
 
-- https://creativecow.net/forums/thread/keyframe-lumetriadjustment-layerae/ (дата обращения 2026-09-07)
-- https://community.adobe.com/t5/premiere-pro-discussions/color-grade-transition/m-p/11763446 (дата обращения 2026-09-07)
-- https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/adjustmentevents.htm (дата обращения 2026-09-07)
-- https://help.magix-hub.com/video/vegas/21/en/content/topics/event_envelopes.htm (дата обращения 2026-09-07)
-- https://larryjordan.com/articles/new-features-in-apple-final-cut-pro-11-1/ (дата обращения 2026-09-07)
-- https://helpx.adobe.com/premiere/desktop/add-video-effects/work-with-composites/specify-clip-opacity.html (дата обращения 2026-09-07)
-- Строки Resolve и After Effects — по документации и общей практике;
-  живьём в этой волне не проверялись.
+- https://creativecow.net/forums/thread/keyframe-lumetriadjustment-layerae/ (accessed 2026-09-07)
+- https://community.adobe.com/t5/premiere-pro-discussions/color-grade-transition/m-p/11763446 (accessed 2026-09-07)
+- https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/adjustmentevents.htm (accessed 2026-09-07)
+- https://help.magix-hub.com/video/vegas/21/en/content/topics/event_envelopes.htm (accessed 2026-09-07)
+- https://larryjordan.com/articles/new-features-in-apple-final-cut-pro-11-1/ (accessed 2026-09-07)
+- https://helpx.adobe.com/premiere/desktop/add-video-effects/work-with-composites/specify-clip-opacity.html (accessed 2026-09-07)
+- The Resolve and After Effects lines — per the documentation and common practice; not checked live in this wave.

@@ -1,12 +1,12 @@
 ---
 id: F-COL-016
-title: Единица занятия — библиотека, бин или секвенция
-status: исследовано
+title: Unit of occupancy — library, bin or sequence
+status: researched
 priority: B
 cost: L
 category: collab/claim
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: no
 crates: [kt-model, kt-otio, kt-app]
 invariants: []
 ui_rules: []
@@ -19,97 +19,93 @@ services: [team-projects, bm-cloud, resolve-project-server, fcp-shared-library, 
 checked: 2026-09-08
 ---
 
-# F-COL-016 — Единица занятия — библиотека, бин или секвенция
+# F-COL-016 — Unit of occupancy — library, bin or sequence
 
-## Суть
+## Essence
 
-Двое взялись за один монтаж. Никто в отрасли не сводит их правки — все не дают им
-разойтись: то, что взял первый, второму показывают только на чтение. Поэтому
-единственный содержательный вопрос совместной работы звучит не «есть ли замок», а
-«ЧТО ИМЕННО он занимает». Final Cut занимает библиотеку целиком — со всем
-материалом и всеми монтажами; Resolve занимает отдельный бин и отдельный таймлайн;
-Team Projects — секвенцию; Productions — файл проекта. От размера этой единицы
-зависит, могут ли двое работать одновременно вообще или только по очереди.
+Two people have taken up the same edit. Nobody in the industry merges their edits — everyone
+prevents them from diverging: what the first one has taken is shown to the second one only for
+reading. Therefore the only substantive question of shared work sounds not "is there a lock" but
+"WHAT EXACTLY does it occupy". Final Cut occupies the whole library — with all the material and all
+the edits; Resolve occupies a separate bin and a separate timeline; Team Projects — the sequence;
+Productions — the project file. The size of this unit determines whether two people can work at the
+same time at all or only in turns.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет | совместной работы нет ни в каком виде: проект — один файл `.veg` и ровно один таймлайн, и «занятие» выражается тем, что файл физически лежит у одного человека |
-| Adobe Premiere | 26.x | Project locking (Productions) и Sequence locking (Team Projects) | ДВА разных механизма в одной программе, и различаются они ровно единицей: в Productions занимается ФАЙЛ ПРОЕКТА, а замок объявляется отдельным файлом `.prlock` рядом с ним; в Team Projects занимается СЕКВЕНЦИЯ, и у второго она «view only», пока первый не опубликовал |
-| DaVinci Resolve | 21 | Automatic bin and timeline locking | единица — ЗАПИСЬ БАЗЫ: бины и таймлайны лежат в библиотеке проектов (PostgreSQL) отдельными записями и занимаются врозь, «read only until unlocked by the current user»; двое работают в одном проекте, пока сидят в разных бинах |
-| Final Cut Pro | 12.3 | общая библиотека на общем томе | занимается ВСЯ библиотека сразу, потому что она и есть единица записи: событий и проектов внутри неё замок не различает, второму приходит «already in use by …» и путь один — ждать |
-| After Effects | 26.x | своего нет; через Team Projects — та же секвенция/композиция | у самого AE занятия не существует: проект — файл, и делится он копированием. В Team Projects AE ходит клиентом чужого сервиса и наследует его единицу целиком |
+| VEGAS Pro | 2026.0 | none | there is no shared work in any form: the project is one `.veg` file and exactly one timeline, and "occupied" is expressed by the file physically lying with one person |
+| Adobe Premiere | 26.x | Project locking (Productions) and Sequence locking (Team Projects) | TWO different mechanisms in one program, and they differ by exactly one unit: in Productions the PROJECT FILE is occupied, and the lock is declared by a separate `.prlock` file next to it; in Team Projects the SEQUENCE is occupied, and for the second person it is "view only" until the first one publishes |
+| DaVinci Resolve | 21 | Automatic bin and timeline locking | the unit is a DATABASE RECORD: bins and timelines lie in the project library (PostgreSQL) as separate records and are occupied separately, "read only until unlocked by the current user"; two people work in one project while they sit in different bins |
+| Final Cut Pro | 12.3 | shared library on a shared volume | the WHOLE library is occupied at once, because it is itself the unit of recording: the lock does not distinguish the events and projects inside it, the second person gets "already in use by …", and the only path is one — to wait |
+| After Effects | 26.x | has none of its own; through Team Projects — the same sequence/composition | AE itself has no occupation at all: the project is a file, and it is shared by copying. In Team Projects AE acts as a client of someone else's service and inherits its unit entirely |
 
-## Фишка фишки
+## The trick behind it
 
-**Гранулярность замка ВСЕГДА равна единице ЗАПИСИ, а не единице правки, и потому
-её нельзя выбрать — её наследуют от того, как программа сохраняет.** Final Cut
-пишет библиотеку целиком, поэтому и занимает её целиком: внутри библиотеки нет
-ничего, что можно записать отдельно, значит нет и ничего, что можно занять
-отдельно. Resolve пишет бины и таймлайны отдельными записями базы — и занимает их
-врозь, ничего для этого не изобретая. Productions — тот же закон, прочитанный
-задом наперёд: Adobe разрезала один большой проект на много файлов, и единицей
-занятия немедленно стал файл, а замком — файл рядом с ним. Ни у кого «единица
-занятия» не является отдельным решением; это тень от способа записи.
+**The granularity of the lock is ALWAYS equal to the unit of RECORDING, not to the unit of an edit,
+and therefore it cannot be chosen — it is inherited from how the program saves.** Final Cut writes the
+library as a whole, and therefore occupies it as a whole: inside the library there is nothing that can
+be written separately, so there is nothing that can be occupied separately. Resolve writes bins and
+timelines as separate database records — and occupies them separately, without inventing anything for
+this. Productions is the same law read backwards: Adobe cut one large project into many files, and the
+unit of occupation immediately became the file, and the lock became a file next to it. Nowhere is the
+"unit of occupation" a separate decision; it is the shadow of the way of recording.
 
-**Отсюда второе, чего нет ни в одном списке возможностей: клип не блокирует
-НИКТО, хотя правят люди именно клипы.** Единица разговора между двумя монтажёрами
-(«не трогай первые пять минут», «V2 моя») и единица занятия не совпадают ни у
-одного из пятерых и совпасть не могут, пока запись не станет такой же мелкой.
-Всё, что мельче единицы записи, живёт в устной договорённости, в имени дорожки
-(F-COL-012) или во встроенном чате Resolve — то есть вне механизма.
+**From this follows a second thing, absent from every feature list: a clip is locked by NOBODY,
+although people actually edit clips.** The unit of conversation between two editors ("don't touch the
+first five minutes", "V2 is mine") and the unit of occupation coincide for none of the five and cannot
+coincide until the recording becomes just as fine-grained. Everything finer than the unit of recording
+lives in an oral agreement, in the name of a track (F-COL-012), or in Resolve's built-in chat — that is,
+outside the mechanism.
 
-**Третье: у крупной единицы есть цена, которую платят структурой документа.**
-Чтобы двое могли работать в Premiere одновременно, монтаж приходится заранее
-разрезать на файлы-проекты Productions — не потому, что так удобнее монтировать, а
-потому, что иначе замок захватит всё. Организация документа диктуется замком, и
-это решение принимается ДО первого кадра.
+**Third: a large unit has a price, paid in the structure of the document.** So that two people could work
+in Premiere at the same time, the edit has to be cut in advance into Productions project files — not
+because it is more convenient to edit that way, but because otherwise the lock would capture everything.
+The organization of the document is dictated by the lock, and this decision is made BEFORE the first frame.
 
-## Плюсы
+## Pros
 
-- Пессимистичное занятие снимает задачу слияния целиком: «не дать разойтись»
-  дешевле, чем «свести разошедшееся». Отсутствие автоматического merge у всех
-  пятерых — не пробел, а следствие этого выбора.
-- Единица, унаследованная от записи, честна по построению: занято ровно то, что
-  при сохранении перезапишется целиком. «Занял и не потерял чужое» становится
-  свойством конструкции, а не аккуратности.
-- Мелкая единица окупается сразу и без сервера: у Resolve двое сидят в одном
-  проекте, пока работают в разных бинах, и очередь не возникает вовсе.
-- Состояние занятия читается ДО открытия: в панели Productions есть колонка
-  «Project Locked» с именем занявшего, то есть замок — это ещё и ответ на вопрос
-  «у кого сейчас».
+- Pessimistic occupation removes the task of merging altogether: "do not let them diverge" is cheaper
+  than "reconcile what has diverged". The absence of automatic merge at all five is not a gap but a
+  consequence of this choice.
+- A unit inherited from recording is honest by construction: what is occupied is exactly what will be
+  overwritten as a whole on saving. "Occupied and did not lose someone else's" becomes a property of the
+  construction, not of carefulness.
+- A small unit pays off at once and without a server: at Resolve two people sit in one project while they
+  work in different bins, and no queue arises at all.
+- The state of occupation can be read BEFORE opening: in the Productions panel there is a "Project Locked"
+  column with the name of the one who occupied it, so the lock is also an answer to the question
+  "who has it now".
 
-## Минусы
+## Cons
 
-- Крупная единица превращает совместную работу в очередь: библиотека Final Cut
-  занимается целиком, поэтому «двое в одном проекте» у Apple означает «по одному».
-- Единица занятия навязывает структуру работы: разрезание монтажа на файлы делается
-  ради замка, а не ради монтажа, и обратно уже не склеивается.
-- То, о чём люди реально договариваются, не занимается ничем: клип, кусок
-  таймлайна, дорожка. Договорённость держится на внимательности, и её нарушение
-  программа не замечает.
-- Замок, унаследованный от записи, наследует и её отказы: файл `.prlock` остаётся
-  после падения, и проект оказывается занят человеком, которого нет.
-- Два механизма в одной программе (Productions и Team Projects) означают две разные
-  единицы у одного пользователя: то, что в одном режиме «моя секвенция», в другом
-  «весь проект», и переносить привычку между ними нельзя.
+- A large unit turns shared work into a queue: the Final Cut library is occupied whole, so "two people in one
+  project" at Apple means "one at a time".
+- The unit of occupation imposes the structure of work: cutting an edit into files is done for the sake of the
+  lock, not for the sake of editing, and cannot be glued back together.
+- What people really agree on is occupied by nothing: a clip, a piece of a timeline, a track. The agreement is
+  held by attentiveness, and the program does not notice its violation.
+- A lock inherited from recording inherits its failures too: the `.prlock` file remains after a crash, and the
+  project turns out to be occupied by a person who is no longer there.
+- Two mechanisms in one program (Productions and Team Projects) mean two different units for one user: what in
+  one mode is "my sequence" is in the other "the whole project", and the habit cannot be carried between them.
 
-## Что говорят пользователи
+## What users say
 
-Вендор формулирует единицу прямо — у Resolve это пара «бин и таймлайн»:
+The vendor formulates the unit directly — at Resolve it is the pair "bin and timeline":
 
 > Automatic bin and timeline locking let multiple people work without overwriting
 > each others work.
-> — Blackmagic Design, страница «DaVinci Resolve — Collaboration»,
+> — Blackmagic Design, page «DaVinci Resolve — Collaboration»,
 > https://www.blackmagicdesign.com/products/davinciresolve/collaboration
-> (дата обращения 2026-09-08)
+> (accessed 2026-09-08)
 
 > Bins and timelines are "read only" until unlocked by the current user.
-> — там же (дата обращения 2026-09-08)
+> — ibid. (accessed 2026-09-08)
 
-У Adobe единица названа в справочном треде так же однозначно — это ПРОЕКТ, и
-второму достаётся режим чтения:
+At Adobe the unit is named just as unambiguously in the reference thread — it is the PROJECT, and the second
+person gets read-only mode:
 
 > Project locking helps multiple editors in a workgroup environment who are working
 > together on a single Premiere Pro project by warning them when a project is
@@ -118,124 +114,109 @@ Team Projects — секвенцию; Productions — файл проекта. �
 > 18.10.2017,
 > https://community.adobe.com/t5/premiere-pro/faq-what-is-project-locking-and-how-do-i-use-it/td-p/9431268
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- Документ у нас ровно один и неделимый: `TimelineModel`
-  (`src/libs/kt-model/src/model.rs:343`) держит одно поле `project: Project`, и
-  всё остальное — история этого же объекта. Ни бина как записи, ни второй
-  секвенции, ни какого-либо под-документа в модели не существует (F-PRJ-001,
-  `we_have: нет`).
-- Единица ЗАПИСИ — весь документ: `kt_otio::save_project` сериализует проект
-  целиком, а `write_project_atomic` (`src/apps/kt-app/src/app.rs:5051`) кладёт
-  результат во временный файл и подменяет им целевой через `rename`. Поправленная
-  громкость одного клипа переписывает файл ровно так же, как перемонтаж.
-- Единица ПРАВКИ у нас, наоборот, мелкая и хорошо очерченная: жест —
-  `apply_batch` (`src/libs/kt-model/src/model.rs:376`), один undo-снимок на жест,
-  атомарность всей серии. То есть разрыв между «чем правят» и «что пишут» у нас
-  максимальный из возможных: команда над одним клипом — против файла целиком.
-- Единственное слово `locked` во всём продуктовом коде — галка группы карточек
-  медиа-бина (`src/libs/kt-model/src/project.rs:1647`), и она защищает раскладку
-  от собственного промаха, а не документ от второго человека.
-- Сторож записи знает ровно одного писателя: `write_project_guarded`
-  (`src/apps/kt-app/src/app.rs:5036`) сравнивает ревизию модели в ПАМЯТИ и
-  защищает нас от собственного фонового автосейва, а не от чужого процесса; ни
-  одного чтения mtime и ни одной блокировки файла в `kt-app` нет.
+- We have exactly one document, indivisible: `TimelineModel`
+  (`src/libs/kt-model/src/model.rs:343`) holds a single field `project: Project`, and
+  everything else is the history of this same object. Neither a bin as a record, nor a second
+  sequence, nor any sub-document exists in the model (F-PRJ-001, `we_have: no`).
+- The unit of RECORDING is the whole document: `kt_otio::save_project` serializes the project
+  entirely, and `write_project_atomic` (`src/apps/kt-app/src/app.rs:5051`) puts the result into a temporary
+  file and replaces the target with it via `rename`. A corrected volume of one clip rewrites the file in exactly
+  the same way as a re-edit.
+- The unit of an EDIT with us, on the contrary, is small and well delineated: a gesture — `apply_batch`
+  (`src/libs/kt-model/src/model.rs:376`), one undo snapshot per gesture, atomicity of the whole series. That is,
+  the gap between "what is edited" and "what is written" with us is the greatest possible: a command over one clip
+  — against the whole file.
+- The only word `locked` in all the product code is the checkbox of a media bin card group
+  (`src/libs/kt-model/src/project.rs:1647`), and it protects the layout from one's own slip, not the document from
+  a second person.
+- The save guard knows exactly one writer: `write_project_guarded`
+  (`src/apps/kt-app/src/app.rs:5036`) compares the model revision in MEMORY and protects us from our own background
+  autosave, not from a foreign process; there is no read of mtime and no file lock anywhere in `kt-app`.
 
-БЕЗ СЕТИ: НЕ ОСТАЁТСЯ — `src/libs/kt-model/src/ops.rs:81` — занимать нечего и некому, и место, где это видно лучше всего, — вот здесь: копирование ОДНОГО выделения клипов тянет за собой морферы, области и метки, то есть объекты уровня всего документа. Единицы мельче документа у нас нет даже у копипаста, поэтому вопрос «что занимать» сегодня закрыт тем, что человек за файлом один.
+OFFLINE: DOES NOT REMAIN — `src/libs/kt-model/src/ops.rs:81` — there is nothing to occupy and no one to occupy it, and the place where this is most visible is here: copying ONE selection of clips drags along morphers, areas and markers, that is, objects of the level of the whole document. We have no unit finer than the document even for copy-paste, so the question "what to occupy" is today closed by the fact that the person is alone at the file.
 
-ЦЕНА СЕТИ: занять ЧАСТЬ документа, не занимая целого, — проект-как-база — врозь занимают там, где врозь пишут: у Resolve бин и таймлайн это отдельные записи PostgreSQL, а у нас единственная запись — файл целиком, и мельче она не делается ни при каком количестве участников.
+NETWORK COST: to occupy PART of a document without occupying the whole — project-as-database — separately they occupy where they write separately: at Resolve the bin and the timeline are separate PostgreSQL records, while with us the only record is the whole file, and it does not become finer with any number of participants.
 
-ЦЕНА СЕТИ: узнать, что занято, ДО первой правки — права доступа — замку нужен владелец с именем, которое переживает его процесс, а у нас нет ни имён людей, ни самой идеи «занято»: идентификаторы клипов и медиа выдаются как «максимум + 1» и у двоих совпадают.
+NETWORK COST: to learn what is occupied BEFORE the first edit — access rights — the lock needs an owner with a name that outlives its process, and we have neither names of people nor the very idea of "occupied": identifiers of clips and media are issued as "maximum + 1" and coincide for two people.
 
-### Чего не хватает
+### What is missing
 
-- Названной границы «документ ↔ монтаж». Сегодня в `Project` вперемешку лежат
-  материал и бин (принадлежат документу), клипы, дорожки, области, метки
-  (принадлежат монтажу) и регион с вьюпортом (принадлежат сеансу). Пока граница не
-  названа, любая будущая единица занятия равна файлу.
-- Записи мельче файла. Даже разделив модель, мы пишем один `.otio`; чтобы занимать
-  монтаж отдельно от материала, отдельно должен СОХРАНЯТЬСЯ хотя бы один из них.
+- A named boundary "document ↔ edit". Today `Project` contains a mix of material and bin (belonging to the document),
+  clips, tracks, areas, markers (belonging to the edit), and the region with the viewport (belonging to the session).
+  As long as the boundary is not named, any future unit of occupation equals the file.
+- Records finer than the file. Even if we divide the model, we write one `.otio`; to occupy the edit separately from
+  the material, at least one of them must be SAVED separately.
 
-### Что мешает
+### What gets in the way
 
-Не объём кода, а направление зависимости: гранулярность занятия — производная от
-формата записи, и менять её отдельно бессмысленно. Наш формат — один документ
-OpenTimelineIO, и это осознанный выбор (F-COL-007: отдать монтаж значит скопировать
-файл; passthrough хранит чужое дословно). Разрезание документа на записи стоило бы
-ровно того, что у нас сейчас работает лучше всего, — переносимости одним файлом.
-Второе препятствие мельче, но упрямее: `model.project()` в kt-app вызывается сотни
-раз, и каждое обращение считает документ единым объектом.
+Not the volume of code, but the direction of dependency: the granularity of occupation is derived from the record format,
+and changing it separately makes no sense. Our format is one OpenTimelineIO document, and this is a deliberate choice
+(F-COL-007: handing over an edit means copying the file; passthrough keeps someone else's content verbatim). Splitting the
+document into records would cost exactly what works best for us now — portability as one file. The second obstacle is smaller
+but more stubborn: `model.project()` in kt-app is called hundreds of times, and each call treats the document as a single object.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Ни одного из двенадцати: занятие ничего не считает и не рисует. Задевает решение
-F-PRJ-001 — «при ближайшем изменении формата назвать в модели границу документа и
-монтажа», — и добавляет к нему довод, которого там не было: эта же граница
-становится единицей занятия, если второй участник когда-нибудь появится.
+None of the twelve: occupation calculates and draws nothing. It touches the decision F-PRJ-001 — "at the nearest change of format,
+name in the model the boundary of the document and the edit" — and adds to it an argument that was not there: this same boundary
+becomes the unit of occupation if a second participant ever appears.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | L — целый раунд, и то лишь на локальную половину (граница документ ↔ монтаж); само занятие без второго участника не начинается |
-| Где основная работа | kt-model (разделение `Project` на документ и монтаж), kt-otio (версия формата и чтение старых файлов), kt-app (133 обращения `model.project()`) |
-| Формат проекта | нужна новая версия `kt.v`, если граница станет структурной; на чтение старых файлов не влияет |
-| Тесты, которые придётся написать | round-trip разделённой модели; «правка монтажа не трогает раздел документа»; сохранение старых файлов без потери полей |
-| Зависит от | F-PRJ-001 (та же граница, но со стороны структуры документа) |
-| Ломает совместимость | нет, пока разделение выражается внутри одного файла |
+| Size | L — a whole round, and even then only for the local half (the boundary document ↔ edit); occupation itself does not begin without a second participant |
+| Where the main work is | kt-model (splitting `Project` into document and edit), kt-otio (format version and reading old files), kt-app (133 calls of `model.project()`) |
+| Project format | a new version of `kt.v` is needed if the boundary becomes structural; reading old files is not affected |
+| Tests to write | round-trip of the split model; "an edit change does not touch the document section"; saving old files without loss of fields |
+| Depends on | F-PRJ-001 (the same boundary, but from the side of the document structure) |
+| Breaks compatibility | no, as long as the split is expressed inside a single file |
 
-## Вердикт
+## Verdict
 
-Занятия не заводим — объявить второго участника заметка не имеет права, а замок без
-второго участника это галка «не трогать», которая у нас уже есть у группы бина.
-Берём из разведки один вывод и записываем его туда, где он сработает: **единица
-занятия равна единице записи, поэтому граница «документ ↔ монтаж» из F-PRJ-001 —
-это ещё и будущая гранулярность замка**, и цена её откладывания растёт вдвое
-быстрее, чем там посчитано. Разделив документ и монтаж, мы получаем возможность
-занимать их врозь бесплатно; не разделив — навсегда остаёмся с единицей «весь
-файл», как Final Cut, и с очередью вместо совместной работы.
+We do not set up occupation — declaring a second participant is not within the note's rights, and a lock without a second
+participant is a "do not touch" checkbox, which we already have for the bin group. We take one conclusion from the reconnaissance
+and record it where it will work: **the unit of occupation equals the unit of recording, therefore the boundary "document ↔ edit" from
+F-PRJ-001 is also the future granularity of the lock**, and the cost of postponing it grows twice as fast as is calculated there.
+Having split the document and the edit, we gain the ability to occupy them separately for free; without splitting, we remain forever with the
+unit "the whole file", like Final Cut, and with a queue instead of shared work.
 
-Чем отличаемся от соседей. **F-COL-013** (два процесса над одним файлом проекта)
-приходит к тому же закону от нашей однопроцессной дыры и останавливается на выводе
-«доступная нам единица ровно одна — файл»; здесь этот вывод не конец, а посылка:
-единица записи не константа, она следствие структуры документа, и потому вопрос
-гранулярности решается не в замке, а в F-PRJ-001. **F-COL-012** (владелец дорожки)
-вторым слоем уже называет, что дорожки нет ни в одном списке единиц; здесь предмет
-обратный — не чего в списке нет, а ПОЧЕМУ список именно такой, и добавлено
-доказательство с нашей стороны: у нас не локализуема даже единица ПРАВКИ
-(`block_extras` тянет морферы, области и метки), поэтому «занять клип» у нас не
-выражается вдвойне. **F-COL-015** («только чтение» как режим) — про то, что можно
-делать внутри занятого чужим; здесь — про размер занимаемого.
-**F-PRJ-001** — про то, зачем разделять документ и монтаж ради самого монтажа;
-здесь — про то, что то же разделение является единственным способом когда-либо
-занимать не всё сразу. **F-COL-017** — про то, ГДЕ лежит замок (в файле, рядом или
-в базе); здесь — про то, ЧТО он занимает. **F-COL-002** (служебное рядом с
-проектом) — про сидекар и общий диск, а не про единицу занятия.
+How we differ from neighbors. **F-COL-013** (two processes over one project file) arrives at the same law from our single-process hole and
+stops at the conclusion "the unit available to us is exactly one — the file"; here this conclusion is not the end but a premise: the unit of recording
+is not a constant, it is a consequence of the document structure, and therefore the question of granularity is resolved not in the lock but in F-PRJ-001.
+**F-COL-012** (the owner of a track) already names at a second layer that the track is absent from every list of units; here the subject is the reverse — not what
+is absent from the list, but WHY the list is exactly such, and evidence from our side is added: we cannot localize even the unit of EDITING
+(`block_extras` drags morphers, areas and markers along), therefore "occupy a clip" cannot be expressed with us twice over. **F-COL-015** ("read-only" as a mode) is about
+what can be done inside something occupied by someone else; here it is about the size of what is occupied.
+**F-PRJ-001** is about why to separate the document and the edit for the sake of editing itself; here it is about the fact that the same separation is the only way ever to
+occupy not everything at once. **F-COL-017** is about WHERE the lock lies (in the file, next to it, or in the database); here it is about WHAT it occupies.
+**F-COL-002** (auxiliary data next to the project) is about the sidecar and the shared disk, not about the unit of occupation.
 
-## Источники
+## Sources
 
 - https://www.blackmagicdesign.com/products/davinciresolve/collaboration —
-  «Automatic bin and timeline locking…», «read only until unlocked by the current
-  user» (дата обращения 2026-09-08)
+  "Automatic bin and timeline locking…", "read only until unlocked by the current
+  user" (accessed 2026-09-08)
 - https://community.adobe.com/t5/premiere-pro/faq-what-is-project-locking-and-how-do-i-use-it/td-p/9431268
-  — определение project locking и режим read only (18.10.2017, дата обращения
+  — the definition of project locking and read-only mode (18.10.2017, accessed
   2026-09-08)
 - https://community.adobe.com/t5/premiere-pro-discussions/productions-prlock/m-p/13543552
-  — `.prlock` как объявление замка рядом с файлом проекта (дата обращения
+  — `.prlock` as a declaration of a lock next to the project file (accessed
   2026-09-08)
-- https://creativecow.net/forums/thread/library-is-already-in-use/ — сообщение
-  Final Cut о занятой библиотеке (18.10.2017, дата обращения 2026-09-08)
-- Единицы занятия сведены в `docs/features/_services.md`, колонка «Единица
-  занятия»: секвенция (Team Projects), бин и таймлайн (Blackmagic Cloud и Resolve
-  Project Server), проект-файл (Productions), вся библиотека (общая библиотека
-  Final Cut).
-- Строки VEGAS и After Effects отражают отсутствие механизма и проверялись по
-  составу продуктов, а не по трекеру: публичного трекера нет ни у одного из пяти
-  (`docs/features/_trackers.md`, «Кого НЕ берём»).
-- Наш код проверен грепом по `src/` 08.09.2026: `kt-model/src/model.rs`
+- https://creativecow.net/forums/thread/library-is-already-in-use/ — the Final Cut message about a
+  busy library (18.10.2017, accessed 2026-09-08)
+- The units of occupation are collected in `docs/features/_services.md`, column "Unit of occupation":
+  sequence (Team Projects), bin and timeline (Blackmagic Cloud and Resolve Project Server), project file
+  (Productions), the whole library (shared Final Cut library).
+- The VEGAS and After Effects rows reflect the absence of a mechanism and were checked against the composition of
+  the products, not against a tracker: there is no public tracker for any of the five
+  (`docs/features/_trackers.md`, "Whom we do NOT take").
+- Our code was checked by grep over `src/` on 08.09.2026: `kt-model/src/model.rs`
   (`TimelineModel`, `apply_batch`), `kt-model/src/ops.rs` (`block_extras`),
   `kt-model/src/project.rs` (`BinGroup.locked`), `kt-app/src/app.rs`
   (`write_project_guarded`, `write_project_atomic`); `flock`, `create_new`,
-  `single-instance` и чтение mtime в `apps/` и `libs/` не встречаются ни разу.
+  `single-instance` and reading of mtime do not occur even once in `apps/` and `libs/`.

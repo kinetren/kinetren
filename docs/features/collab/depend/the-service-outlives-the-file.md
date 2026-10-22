@@ -1,12 +1,12 @@
 ---
 id: F-COL-044
-title: Что переживает сервис
-status: исследовано
+title: What survives the service
+status: researched
 priority: B
 cost: S
 category: collab/depend
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, otio-lib-0.18]
-we_have: частично
+we_have: partial
 crates: [kt-otio, kt-model, kt-app]
 invariants: [11]
 ui_rules: [16]
@@ -19,124 +19,57 @@ services: [frame-io, team-projects, bm-cloud, resolve-project-server]
 checked: 2026-09-08
 ---
 
-# F-COL-044 — Что переживает сервис
+# F-COL-044 — What survives the service
 
-## Суть
+## Essence
 
-«Открою ли я это через десять лет» — вопрос, у которого два разных ответа в
-зависимости от того, где лежит работа. У файлового документа срок жизни задаёт
-ФОРМАТ: пока есть спецификация и есть чем прочитать, документ жив, и никто
-снаружи на это не влияет. У сервисного документа срок жизни задаёт ДОГОВОР:
-владелец сервиса может сменить поколение, сменить владельца, отключить
-интеграцию или спрятать часть данных — и всё это происходит с работой, которую
-пользователь считал своей.
+"Will I open this in ten years?" is a question with two different answers depending on where the work lives. For a file-based document the lifespan is set by the FORMAT: while there is a specification and something to read it with, the document is alive, and nobody outside affects this. For a service-based document the lifespan is set by a CONTRACT: the owner of the service may change the generation, change the owner, switch off the integration or hide part of the data — and all of this happens to work that the user considered his own.
 
-У современного редактора монтаж и рецензия лежат по разные стороны этой
-границы: монтаж — в файле или в базе, замечания — в сервисе. Поэтому один и тот
-же проект имеет два разных срока жизни, и они не совпадают.
+A modern editor has the edit and the review on different sides of this boundary: the edit is in a file or in a database, the remarks are in the service. Therefore one and the same project has two different lifespans, and they do not coincide.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | `.veg` | двоичный проприетарный контейнер, читаемый только самим VEGAS; сервисной половины нет вовсе, поэтому срок жизни ровно один — и определяется он не форматом (спецификации нет), а тем, продаётся ли ещё программа |
-| Adobe Premiere | 26.x | `.prproj` + Frame.io / Team Projects | у документа ДВА срока: монтаж в двоичном `.prproj`, замечания — в сервисе. Team Projects хранит монтаж целиком на стороне Adobe. Frame.io — прецедент смены поколения: 2026 год, перевод розничных клиентов с Legacy на V4, вместе с которым перестал работать список интеграций |
-| DaVinci Resolve | 21 | проект — строка базы | родного файла у проекта нет: он строка в диск-базе, в PostgreSQL или в облачной библиотеке. `.drp` — экспорт, а не место жизни. Срок жизни задаёт та база, в которой проект лежит; у облачной — договор, у Project Server — свой хост |
-| Final Cut Pro | 12.3 | `.fcpbundle` | библиотека — пакет с базой внутри; сервисной половины нет, срок жизни целиком в руках Apple и версии приложения. Формат обмена (`fcpxml`) существует, но это не то, в чём живёт работа |
-| After Effects | 26.x | `.aep` + Frame.io | самый чистый случай разделения: комментарий у AE не хранится в документе вовсе — в колонке лежит ссылка, тянущая текст из сервиса. Открыть `.aep` через десять лет можно; прочитать в нём замечания — только пока жив сервис |
+| VEGAS Pro | 2026.0 | `.veg` | a binary proprietary container, readable only by VEGAS itself; there is no service half at all, so the lifespan is exactly one — and it is determined not by the format (there is no specification) but by whether the program is still sold |
+| Adobe Premiere | 26.x | `.prproj` + Frame.io / Team Projects | the document has TWO lifespans: the edit in the binary `.prproj`, the remarks in the service. Team Projects keeps the edit entirely on Adobe's side. Frame.io is a precedent of a generation change: 2026, the transfer of retail customers from Legacy to V4, together with which the list of integrations stopped working |
+| DaVinci Resolve | 21 | a project is a database row | the project has no native file: it is a row in a disk database, in PostgreSQL or in the cloud library. `.drp` is an export, not the place of life. The lifespan is set by the database in which the project lies; for the cloud one — by a contract, for Project Server — by its own host |
+| Final Cut Pro | 12.3 | `.fcpbundle` | the library is a package with a database inside; there is no service half, the lifespan lies entirely in the hands of Apple and the version of the application. The exchange format (`fcpxml`) exists, but it is not what the work lives in |
+| After Effects | 26.x | `.aep` + Frame.io | the purest case of separation: AE does not store the comment in the document at all — the column holds a link that pulls the text from the service. One can open `.aep` in ten years; to read the remarks in it — only while the service is alive |
 
-**Вне ядра.** Одна строка нужна потому, что вопрос «что делает читатель с
-незнакомой конструкцией» решён в домене ровно один раз и не редактором.
+**Outside the core.** One row is needed because the question "what does the reader do with an unfamiliar construction" has been solved in the domain exactly once, and not by an editor.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| OpenTimelineIO | 0.18.x | schema versioning + `SerializableObject` | единственное место домена, где ДАУНГРЕЙД схемы объявлен API (`target_schema_versions`, карты версий по релизам), а незнакомая схема не роняет чтение, а становится объектом, помнящим её дословно (issue #326, 2018) |
+| OpenTimelineIO | 0.18.x | schema versioning + `SerializableObject` | the only place in the domain where a schema DOWNGRADE is declared as an API (`target_schema_versions`, version maps by release), and an unfamiliar schema does not break reading but becomes an object that remembers it verbatim (issue #326, 2018) |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Frame.io — готовый прецедент, и в нём ценна не поломка, а форма
-документации: шаг вперёд описан поимённо, шаг назад не описан вовсе.** Статья
-«What to expect when updating to V4» (обновлена 16.06.2026) перечисляет
-поимённо, что перестаёт работать после перехода: панель Legacy в Premiere,
-интеграция с DaVinci Resolve, создание проекта Final Cut из share-адресата,
-публикация в Vimeo и Dropbox, Capture One, Carousel Viewer, новые связи со
-Slack. Список подробный, инженерный, честный. И при этом во всей статье нет ни
-одного предложения о том, можно ли ВЕРНУТЬСЯ на Legacy. Это не забывчивость
-редактора справки: у сервисного документа обратного шага нет как понятия —
-версия сервиса не является выбором пользователя, поэтому и описывать нечего.
-Сравнение с файловым миром здесь буквальное: в OTIO даунгрейд схемы — это
-публичный API с картами версий, потому что там читатель и писатель принадлежат
-разным людям; в сервисе они принадлежат одному, и вопрос исчезает.
+**1. Frame.io is a ready-made precedent, and what is valuable in it is not the breakage but the form of the documentation: the step forward is described by name, the step back is not described at all.** The article "What to expect when updating to V4" (updated 16.06.2026) lists by name what stops working after the transition: the Legacy panel in Premiere, the integration with DaVinci Resolve, creating a Final Cut project from the share destination, publishing to Vimeo and Dropbox, Capture One, Carousel Viewer, new links to Slack. The list is detailed, engineering, honest. And yet in the entire article there is not a single sentence about whether one can RETURN to Legacy. This is not forgetfulness of the help editor: a service-based document has no concept of a backward step — the version of the service is not the user's choice, and therefore there is nothing to describe. The comparison with the file world is literal: in OTIO a schema downgrade is a public API with version maps, because there the reader and the writer belong to different people; in the service they belong to one, and the question disappears.
 
-**2. Внутри того же перехода видно, чем именно платит рецензия, и это величина,
-которой у файла не бывает вовсе: ВИДИМОСТЬ ПО УМОЛЧАНИЮ.** Часть данных не
-исчезла и не сломалась — она перестала показываться: «those comments (now known
-as Internal Comments) will be hidden by default». Другая часть требует ручного
-восстановления доступа: «all Members must be invited back to them to gain
-access». То есть документ пережил переход, а право его увидеть — нет. Файл так
-устроен быть не может: у файла нет состояния «есть, но скрыт по умолчанию», и
-нет стороны, которая могла бы это состояние переключить. Это самая точная
-формулировка разницы между двумя сроками жизни, какую удалось найти: не «данные
-пропали», а «данные перестали быть вашими по умолчанию».
+**2. Within the same transition one sees exactly what the review pays with, and this is a quantity that a file never has at all: DEFAULT VISIBILITY.** Part of the data did not disappear and did not break — it stopped being shown: "those comments (now known as Internal Comments) will be hidden by default". Another part requires manual restoration of access: "all Members must be invited back to them to gain access". That is, the document survived the transition, but the right to see it did not. A file cannot be built this way: a file has no state "exists, but hidden by default", and there is no party that could switch this state. This is the most precise formulation of the difference between the two lifespans that could be found: not "the data is gone", but "the data has stopped being yours by default".
 
-**3. Третья деталь наша, и она портит красивый ответ «у нас текстовый JSON,
-значит навсегда».** Наш формат гарантирует, что через десять лет файл
-РАЗБЕРЁТСЯ; он не гарантирует, что эффект внутри что-нибудь будет значить.
-Эффект пишется тегом-строкой (`#[serde(tag = "kind", rename_all = "snake_case")]`,
-`src/libs/kt-model/src/project.rs:2242`) — в файле лежит `"kind": "slowed_reverb"`,
-а что эта строка значит, живёт в перечислении внутри бинаря. Читатель незнакомый
-тег НЕ роняет и не выбрасывает: он кладёт эффект в чужие с уведомлением
-(`src/libs/kt-otio/src/convert.rs:1211`, `unreadable effect … kept as foreign`) —
-то есть применяет к СВОЕЙ утраченной схеме ровно тот механизм, который заведён
-для ЧУЖИХ. Практическое следствие: монтаж десятилетней давности откроется и
-сыграет, а исчезнувший эффект превратится в молчаливый ноль плюс строку в
-журнале. **Наша «договорная» половина существует, просто стороной договора
-являемся мы сами** — и держится она на перечислении в `kt-model` и на строке
-реестра в `src/apps/kt-app/src/fx_registry.rs:47`. Асимметрия при этом обратная
-ожидаемой: старый проект с исчезнувшим эффектом ещё как-то живёт, а завести
-такой эффект заново уже нельзя — файл переживает возможность его создать.
+**3. The third detail is ours, and it spoils the pretty answer "we have a text JSON, so forever".** Our format guarantees that in ten years the file will be PARSEABLE; it does not guarantee that an effect inside will mean anything. The effect is written with a string tag (`#[serde(tag = "kind", rename_all = "snake_case")]`, `src/libs/kt-model/src/project.rs:2242`) — the file contains `"kind": "slowed_reverb"`, and what this string means lives in an enumeration inside the binary. A reader does NOT break on an unknown tag and does not throw it away: it puts the effect among foreign ones with a notice (`src/libs/kt-otio/src/convert.rs:1211`, `unreadable effect … kept as foreign`) — that is, it applies to its OWN lost schema exactly the mechanism that was set up for FOREIGN ones. The practical consequence: an edit ten years old will open and play, and a vanished effect will turn into a silent zero plus a line in the log. **Our "contractual" half exists, it is just that we ourselves are the party of the contract** — and it is held up by the enumeration in `kt-model` and by a registry line in `src/apps/kt-app/src/fx_registry.rs:47`. The asymmetry here is the reverse of what one would expect: an old project with a vanished effect still somehow lives, but to create such an effect anew is no longer possible — the file survives the possibility of creating it.
 
-## Плюсы
+## Pros
 
-- Формат проекта — текстовый JSON по открытой спецификации OpenTimelineIO. Его
-  можно прочитать глазами, положить в git, сравнить дифом, починить руками и
-  разобрать чужой программой. Ни одного из этих свойств нет ни у `.veg`, ни у
-  `.prproj`, ни у библиотеки Final Cut, ни у строки в PostgreSQL.
-- Незнакомая конструкция не роняет чтение: чужая схема уходит в passthrough и
-  переживает круг целиком, а нечитаемый эффект становится чужим объектом. Файл
-  открывается всегда — деградирует содержимое, а не доступ.
-- У нас нет второй половины, которую можно отключить решением владельца: нет ни
-  одной величины проекта, чей смысл жил бы на чужой стороне. Колонки-ссылки, как
-  у After Effects, у нас появиться не может.
-- Инвариант 11 даёт более сильное обещание, чем «откроется»: закоммиченные
-  эталоны требуют, чтобы старый проект ещё и РЕНДЕРИЛСЯ байт-в-байт так же.
-  Долговечность у нас проверяемая, а не декларативная.
-- Пути материала относительны файлу проекта (`src/libs/kt-otio/src/url.rs`),
-  поэтому «через десять лет» не ломается ещё и о переехавшую папку.
+- The project format is a text JSON under the open OpenTimelineIO specification. It can be read by eye, put into git, compared with a diff, repaired by hand and parsed by a foreign program. None of these properties exists for `.veg`, `.prproj`, the Final Cut library, or a row in PostgreSQL.
+- An unfamiliar construction does not break reading: a foreign schema goes into passthrough and survives the round trip entirely, and an unreadable effect becomes a foreign object. The file always opens — the content degrades, not the access.
+- We do not have a second half that could be switched off by the owner's decision: there is not a single project quantity whose meaning would live on the other side. Link columns, as in After Effects, cannot appear with us.
+- Invariant 11 makes a stronger promise than "it will open": the committed references require that an old project also RENDERS byte-for-byte the same. Our durability is verifiable, not declarative.
+- Paths to material are relative to the project file (`src/libs/kt-otio/src/url.rs`), therefore "in ten years" does not break even on a moved folder.
 
-## Минусы
+## Cons
 
-- **Это преимущество куплено отказом от сервисной половины целиком.** «Пережить
-  сервис» у нас нечему, потому что сервиса нет: рецензии, версий ролика и
-  приёмки не существует ни в каком виде, и вопрос про их срок жизни не имеет
-  предмета. Формулировать преимущество, не называя цену, было бы враньём.
-- Смысл эффекта живёт не в файле, а в бинаре. Удаление варианта перечисления —
-  штатная операция рефакторинга, у которой сегодня нет ни одного стража: она
-  тихо обнуляет эффект во всех старых проектах.
-- След этого обнуления — одна строка в журнале (`notices`), то есть поверхность,
-  которую человек не смотрит, если ничего не сломалось. На таймлайне пропавший
-  эффект ничем не отмечен.
-- Версии ДОКУМЕНТА в файле нет — есть только версии ФОРМАТА (F-RES-003). На
-  вопрос «та ли это версия монтажа, которую утверждали в марте» файл не отвечает,
-  и это ровно та величина, ради которой в сервисах заводят стек версий.
-- Наша долговечность зависит от чужой библиотеки в одном месте: спецификация
-  OTIO принадлежит не нам. Она открытая, и это несравнимо лучше договора, но
-  «ничьё» и «наше» — разные вещи.
+- **This advantage is bought by refusing the service half entirely.** "Outliving the service" has nothing for us to outlive, because there is no service: remarks, versions of a cut and approval do not exist in any form, and the question of their lifespan has no subject. Formulating the advantage without naming the price would be a lie.
+- The meaning of an effect lives not in the file but in the binary. Removing a variant of the enumeration is a routine refactoring operation which today has not a single guard: it silently zeroes the effect in all old projects.
+- The trace of this zeroing is one line in the log (`notices`), that is, a surface that a person does not look at if nothing has broken. On the timeline a vanished effect is marked by nothing.
+- The version of the DOCUMENT is not in the file — there are only versions of the FORMAT (F-RES-003). The file does not answer the question "is this the edit version that was approved in March", and this is exactly the quantity for whose sake services set up a stack of versions.
+- Our durability depends at one point on someone else's library: the OTIO specification does not belong to us. It is open, and this is incomparably better than a contract, but "nobody's" and "ours" are different things.
 
-## Что говорят пользователи
+## What users say
 
-Самая точная иллюстрация того, что срок жизни задаёт не формат, а сторона: сервис
-переписывает содержимое ЛОКАЛЬНОГО документа, возвращая его к своей версии.
+The most precise illustration that the lifespan is set not by the format but by the side: the service rewrites the content of the LOCAL document, returning it to its own version.
 
 > Frame.IO V4 is overwriting & deleting comments markers on my sequences in
 > Premiere Pro, and I need it to stop making my comments markers revert to the
@@ -144,155 +77,91 @@ access». То есть документ пережил переход, а пр�
 > — Andrew C. Brinsmead, 28.10.2025,
 > https://community.adobe.com/bug-reports-728/frame-io-v4-keeps-overwriting-comments-markers-in-premiere-pro-pro-1332248
 
-И вторая, про то, как выглядит перенос данных через границу сервиса, когда сама
-интеграция работает: замечания приезжают, но не туда и не тем, чем были.
+And a second one, about how the transfer of data across the service boundary looks when the integration itself works: the remarks arrive, but not where they were and not in the form they had.
 
 > So I import comments much like premiere but it creates a text layer as a guide
 > but I cannot see any of the comment text.
 > — curt.gallery, 05.02.2024,
 > https://community.adobe.com/t5/after-effects-discussions/imported-frame-io-comments-not-visible/td-p/14403508
 
-Счётной части у заметки нет: `trackers:` пуст сознательно. Долговечность
-документа в трекерах опенсорса представлена задачами про миграцию СВОЕГО
-формата (они разобраны в F-RES-003), а про «пережить чужой сервис» задач нет и
-быть не может — у свободных редакторов нет сервиса, который можно пережить.
-Заполнить поле ради формы значило бы сфабриковать сигнал (правило 12).
+The note has no counting part: `trackers:` is empty deliberately. The durability of a document in the trackers of open source is represented by tasks about migrating ONE'S OWN format (they are analyzed in F-RES-003), and about "outliving someone else's service" there are no tasks and there cannot be — free editors have no service that could be outlived.
+Filling the field for the sake of the form would mean fabricating a signal (rule 12).
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- `src/libs/kt-otio/` — формат проекта: текстовый JSON по спецификации
-  OpenTimelineIO, наши величины в `metadata["kt"]`, чужие схемы в passthrough.
-  Круговые тесты t144–t147 (идемпотентность, passthrough, версии, пути) и
-  t149 (конформанс эталонной библиотекой) — это и есть механическая проверка
-  того самого «через десять лет».
-- `src/libs/kt-otio/src/convert.rs:1211` — единственное место, где решается
-  судьба эффекта, чей `kind` читателю неизвестен: он уходит в `effects_foreign`
-  с уведомлением `unreadable effect … kept as foreign`. Механизм чужой схемы
-  применён к своей — так наш формат отдаёт долг за пункт 3 «фишки фишки».
-- `src/libs/kt-model/src/project.rs:2242` — `FxInstance` с тегом-строкой; в
-  комментарии прямо сказано «типизированные FX (не opaque JSON — валидация на
-  загрузке, тест 12)», и именно эта типизация делает набор эффектов частью
-  договора, а не частью данных.
-- `src/apps/kt-app/src/fx_registry.rs:47` — вторая половина того же договора:
-  таблица, по которой строка из файла становится именем в пикере. Строка ушла из
-  реестра — старый эффект ещё играет, а нового такого же уже не завести.
-- Инвариант 11: GOLDEN_AUDIO и GOLDEN_VIDEO закоммичены, аудио байт-в-байт
-  всегда, видео на CPU-пути — против эталона в репозитории. Это обещание
-  сильнее «файл откроется».
+- `src/libs/kt-otio/` — the project format: a text JSON under the OpenTimelineIO specification, our quantities in `metadata["kt"]`, foreign schemas in passthrough. The round-trip tests t144–t147 (idempotence, passthrough, versions, paths) and t149 (conformance with the reference library) are exactly the mechanical check of that same "in ten years".
+- `src/libs/kt-otio/src/convert.rs:1211` — the only place where the fate of an effect whose `kind` is unknown to the reader is decided: it goes into `effects_foreign` with the notice `unreadable effect … kept as foreign`. The mechanism of a foreign schema is applied to our own — so our format pays the debt for item 3 of "the trick behind it".
+- `src/libs/kt-model/src/project.rs:2242` — `FxInstance` with a string tag; the comment says directly "typed FX (not opaque JSON — validation on load, test 12)", and exactly this typing makes the set of effects part of the contract, not part of the data.
+- `src/apps/kt-app/src/fx_registry.rs:47` — the second half of the same contract: the table by which a string from the file becomes a name in the picker. The string has left the registry — the old effect still plays, but a new one of the same kind can no longer be created.
+- Invariant 11: GOLDEN_AUDIO and GOLDEN_VIDEO are committed; audio is byte-for-byte always, video on the CPU path is checked against the reference in the repository. This is a promise stronger than "the file will open".
 
-### Чего не хватает
+### What is missing
 
-- У события «эффект стал чужим» нет видимого следа нигде, кроме журнала. На
-  клипе он неотличим от клипа без эффектов, и монтажёр узнаёт о потере только
-  из готового рендера — то есть по тому же сценарию, который разобран в
-  F-RES-007.
-- Нет теста, который брал бы проект с заведомо незнакомым `kind` и проверял, что
-  файл открылся, монтаж цел, эффект сохранён как чужой и вернулся на запись
-  неизменным. Механизм есть, страж у него отсутствует.
-- Версии документа в файле нет: `model_rev` и `saved_rev` — рантайм-величины и в
-  файл не попадают. «Тот ли это монтаж» проверяется только глазами.
+- An event "the effect became foreign" has no visible trace anywhere except the log. On the clip it is indistinguishable from a clip without effects, and the editor learns of the loss only from the finished render — that is, by the same scenario analyzed in F-RES-007.
+- There is no test that would take a project with a deliberately unfamiliar `kind`, and check that the file opened, the edit is intact, the effect was preserved as a foreign one and came back to the writing unchanged. The mechanism exists; its guard is absent.
+- There is no document version in the file: `model_rev` and `saved_rev` are runtime quantities and do not get into the file. "Is this the right edit" is checked only by eye.
 
-### Что мешает
+### What gets in the way
 
-Ничего конструктивного, и это стоит сказать прямо: та половина вопроса, которая
-у чужих стоит дорого и решается договором, у нас решена бесплатно и навсегда
-одним решением Р.24 — не заводить своего контейнера. Мешает обратное: соблазн
-объявить это полной победой. Полной она не будет, пока у нас есть собственный
-«договор» — перечисление эффектов, — у которого нет ни версии, ни стража, ни
-следа на экране.
+Nothing constructive, and this should be said directly: the half of the question that costs dearly for others and is solved by contract, we have solved for free and forever by one decision of R.24 — not to set up our own container. What gets in the way is the reverse: the temptation to declare this a complete victory. It will not be complete as long as we have our own "contract" — the enumeration of effects — which has neither a version, nor a guard, nor a trace on the screen.
 
-### В категории `collab/` — две обязательные строки (правило 13)
+### In category `collab/` — two mandatory lines (rule 13)
 
-БЕЗ СЕТИ: ВЫРОЖДАЕТСЯ — `src/apps/kt-app/src/fx_registry.rs:47` — переживаемость остаётся целиком у монтажа и вырождается там, где документ ссылается на что-то по ИМЕНИ: сам файл разберётся через десять лет, потому что это текстовый JSON по открытой спецификации, а вот эффект внутри значит ровно то, что значит строка в таблице реестра и вариант перечисления рядом с ней; исчезнет строка — старый проект откроется и сыграет, эффект молча станет чужим объектом, а завести такой же заново будет уже нечем.
+OFFLINE: DEGENERATES — `src/apps/kt-app/src/fx_registry.rs:47` — durability remains entirely with the edit and degenerates where the document refers to something BY NAME: the file itself will be parsed in ten years, because it is a text JSON under an open specification, but the effect inside means exactly what the string in the registry table means and the enumeration variant next to it; if the string disappears, the old project will open and play, the effect will silently become a foreign object, and there will be nothing with which to create the same one anew.
 
-ЦЕНА СЕТИ: документ, живущий не файлом, а строками на чужой стороне — проект-как-база — только там срок жизни может задаваться договором: пока документ является файлом, его нельзя ни скрыть по умолчанию, ни отобрать вместе с правом доступа, и весь класс отказов «данные целы, а показывать их вам больше не будут» у нас не имеет места, куда встать.
+NETWORK COST: a document living not as a file but as rows on someone else's side — project-as-database — only there can the lifespan be set by a contract: while a document is a file, it cannot be hidden by default or taken away together with the right of access, and the whole class of failures "the data is intact, but you will no longer be shown it" has no place to stand with us.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Инвариант 11 — единственный, и он здесь работает аргументом, а не препятствием:
-детерминизм с закоммиченными эталонами превращает «файл откроется» в «файл
-откроется и даст те же байты», то есть в проверяемое обещание долговечности.
-Правило 16 чек-листа UI (`src/apps/kt-app/CLAUDE.md`) — «невозможность действия
-показывается как ОШИБКА, а не блёклой подсказкой» — сегодня в этой точке не
-выполняется вовсе: невозможность прочитать эффект не показывается даже блёклой
-подсказкой, а уходит строкой в журнал, то есть тише, чем самый мягкий из
-запрещённых вариантов правила.
+Invariant 11 is the only one, and here it works as an argument, not as an obstacle: determinism with committed references turns "the file will open" into "the file will open and give the same bytes", that is, into a verifiable promise of durability. Rule 16 of the UI checklist (`src/apps/kt-app/CLAUDE.md`) — "the impossibility of an action is shown as an ERROR, not as a faded hint" — at this point is not fulfilled at all today: the impossibility of reading an effect is not shown even as a faded hint, but goes as a line into the log, that is, more quietly than the mildest of the forbidden variants of the rule.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия: тест на незнакомый `kind` и видимый след «эффект сохранён как чужой» |
-| Где основная работа | kt-otio (тест круга), kt-app (след на клипе вместо строки журнала) |
-| Формат проекта | не трогает: механизм уже есть, добавляется только страж |
-| Тесты, которые придётся написать | круг проекта с незнакомым `kind`: открылся, монтаж цел, эффект вернулся на запись неизменным; проверка, что уведомление доходит до поверхности, а не только в журнал |
-| Зависит от | F-RES-003 (миграция формата), F-COL-008 (что теряет чужой файл) |
-| Ломает совместимость | нет |
+| Volume | S — one stage: a test for an unfamiliar `kind` and a visible trace "the effect was preserved as foreign" |
+| Where the main work is | kt-otio (the round-trip test), kt-app (the trace on the clip instead of a log line) |
+| Project format | does not touch it: the mechanism already exists, only a guard is added |
+| Tests that will have to be written | a round trip of a project with an unfamiliar `kind`: it opened, the edit is intact, the effect came back to the writing unchanged; a check that the notice reaches the surface, not only the log |
+| Depends on | F-RES-003 (format migration), F-COL-008 (what a foreign file loses) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Сервисной половины не заводим — участника нет, и заметка не имеет права объявить
-его появление. Из разведки берём три вывода, и все три применимы в одиночку.
+We do not set up a service half — there is no participant, and the note has no right to declare his appearance. From the reconnaissance we take three conclusions, and all three apply alone.
 
-**Первое, и его надо назвать ЯВНО, потому что оно куплено дорого.** Наш формат —
-текстовый JSON по открытой спецификации, и это преимущество ровно того класса,
-который у чужих стоит подписки: документ нельзя ни скрыть по умолчанию, ни
-отобрать, ни перевести на новое поколение без спроса. Куплено оно отказом от
-сервисной половины целиком — рецензии, версий ролика, приёмки у нас нет, — и
-поэтому формулировка «мы долговечнее» законна только вместе с «мы беднее». Обе
-половины принадлежат одному решению Р.24, и разъединять их в разговоре нельзя.
+**First, and it must be named EXPLICITLY, because it was bought dearly.** Our format is a text JSON under an open specification, and this is an advantage of exactly that class which for others costs a subscription: the document cannot be hidden by default, taken away, or moved to a new generation without asking. It was bought by refusing the service half entirely — there are no remarks, versions of a cut, or approval with us — and therefore the formulation "we are more durable" is legitimate only together with "we are poorer". Both halves belong to one decision, R.24, and in conversation they cannot be separated.
 
-**Второе, и это единственная РАБОТА, которую заметка оставляет.** У нас есть
-собственный договор, и стороной в нём выступаем мы: набор вариантов `FxInstance`
-и строк реестра. Сегодня удаление варианта — обычный рефакторинг без единого
-стража, а его цена — тихое обнуление эффекта во всех старых проектах. Нужен
-круговой тест на незнакомый `kind` и видимый след на клипе вместо строки в
-журнале. Это дешёвая работа, и она превращает наше преимущество из декларации в
-свойство.
+**Second, and this is the only WORK the note leaves.** We have our own contract, and we are a party to it: the set of variants of `FxInstance` and the registry strings. Today removing a variant is an ordinary refactoring without a single guard, and its price is the silent zeroing of the effect in all old projects. A round-trip test for an unfamiliar `kind` and a visible trace on the clip instead of a line in the log are needed. This is cheap work, and it turns our advantage from a declaration into a property.
 
-**Третье, как решение.** Ни одна величина проекта не имеет права жить на чужой
-стороне — ни текстом, ни ссылкой. Путь After Effects, где в колонке документа
-лежит не комментарий, а адрес комментария, для нас закрыт: он делает срок жизни
-документа равным сроку жизни договора, причём в самом неприятном виде — файл
-цел, а прочитать его нельзя.
+**Third, as a decision.** No quantity of the project has the right to live on someone else's side — neither as text nor as a link. The After Effects path, where the document's column holds not a comment but the address of a comment, is closed for us: it makes the lifespan of the document equal to the lifespan of the contract, in the most unpleasant form — the file is intact, but it cannot be read.
 
-Границы. **F-COL-043** — цена совместной работы: там про счёт и про то, что
-бывает, когда его перестают оплачивать; здесь — про судьбу самих данных, которая
-от оплаты не зависит и решается сменой поколения сервиса. **F-COL-045** — учётная
-запись: там про условие входа, здесь — про то, что остаётся, когда входить
-некуда. **F-COL-007** — форматы обмена: там про то, что теряется при ПЕРЕДАЧЕ
-монтажа другому, здесь — про то, что теряется при ХРАНЕНИИ его во времени.
-**F-COL-008** — что теряет чужой файл, пройдя через нас: соседняя половина того
-же механизма passthrough, но с точки зрения чужой схемы, а не своей утраченной.
-**F-RES-003** — миграция формата: там про версии НАШЕГО формата и путь вперёд;
-здесь про то, что делает читатель, когда путь вперёд уже пройден, а данные
-остались от прошлого. **F-PRJ-002** — версии и снапшоты: там про историю
-документа внутри одного человека.
+Boundaries. **F-COL-043** — the price of shared work: there it is about the account and about what happens when one stops paying for it; here it is about the fate of the data itself, which does not depend on payment and is decided by a change of the service generation. **F-COL-045** — the user account: there it is about the condition of entry, here it is about what remains when there is nowhere to enter. **F-COL-007** — exchange formats: there it is about what is lost when the edit is TRANSFERRED to another, here it is about what is lost when it is STORED over time. **F-COL-008** — what a foreign file loses on passing through us: the neighboring half of the same passthrough mechanism, but from the point of view of a foreign schema, not of our lost one. **F-RES-003** — format migration: there it is about the versions of OUR format and the path forward; here it is about what the reader does when the path forward has already been traversed and the data has remained from the past. **F-PRJ-002** — versions and snapshots: there it is about the history of a document within one person.
 
-## Источники
+## Sources
 
 - https://help.frame.io/en/articles/11534393-what-to-expect-when-updating-to-v4-a-comprehensive-guide-for-updating-your-account-on-a-free-pro-or-team-plan
-  — «What to expect when updating to V4», обновлено 16.06.2026: поимённый список
-  переставших работать интеграций, «those comments (now known as Internal
-  Comments) will be hidden by default», «all Members must be invited back to
-  them to gain access»; ни одного упоминания возврата на Legacy (дата обращения
+  — "What to expect when updating to V4", updated 16.06.2026: a named list of
+  integrations that stopped working, "those comments (now known as Internal
+  Comments) will be hidden by default", "all Members must be invited back to
+  them to gain access"; no mention at all of a return to Legacy (accessed
   2026-09-08).
 - https://community.adobe.com/bug-reports-728/frame-io-v4-keeps-overwriting-comments-markers-in-premiere-pro-pro-1332248
-  — Andrew C. Brinsmead, 28.10.2025: сервис переписывает метки в локальной
-  секвенции (дата обращения 2026-09-08).
+  — Andrew C. Brinsmead, 28.10.2025: the service overwrites markers in the local
+  sequence (accessed 2026-09-08).
 - https://community.adobe.com/t5/after-effects-discussions/imported-frame-io-comments-not-visible/td-p/14403508
-  — curt.gallery, 05.02.2024, и ответ David Arbor 07.02.2024 про то, что
-  комментарии приезжают текстовым слоем, а сами метки остаются пустыми (дата
-  обращения 2026-09-08).
+  — curt.gallery, 05.02.2024, and the reply by David Arbor, 07.02.2024, that
+  comments arrive as a text layer while the markers themselves stay empty
+  (accessed 2026-09-08).
 - https://www.blackmagicdesign.com/products/davinciresolve/collaboration —
-  три места жизни проекта Resolve и бесплатный Project Server (дата обращения
-  2026-09-08).
-- Реестр сервисов и правило «смена владельца сервиса важнее смены версии
-  редактора» — `docs/features/_services.md`; строка `otio-lib-0.18` и её
-  обоснование — `docs/features/_editors.md`.
-- Наш код проверен чтением 08.09.2026: `libs/kt-model/src/project.rs:2242`
-  (тег-строка `FxInstance`), `libs/kt-otio/src/convert.rs:1211` (незнакомый
-  эффект → `effects_foreign` с уведомлением), `apps/kt-app/src/fx_registry.rs:47`
-  (таблица имён), `libs/kt-otio/src/url.rs` (относительные пути).
+  three places where a Resolve project lives, and the free Project Server
+  (accessed 2026-09-08).
+- The service registry and the rule "a change of service owner matters more
+  than a change of editor version" — `docs/features/_services.md`; the row
+  `otio-lib-0.18` and its justification — `docs/features/_editors.md`.
+- Our code, checked by reading on 08.09.2026: `libs/kt-model/src/project.rs:2242`
+  (the tag string of `FxInstance`), `libs/kt-otio/src/convert.rs:1211` (an
+  unknown effect → `effects_foreign` with a notice), `apps/kt-app/src/fx_registry.rs:47`
+  (the name table), `libs/kt-otio/src/url.rs` (relative paths).

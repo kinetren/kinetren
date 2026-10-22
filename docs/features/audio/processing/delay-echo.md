@@ -1,16 +1,16 @@
 ---
 id: F-AUD-009
-title: Delay / Echo на событии
-status: сделано
+title: Delay / Echo on an event
+status: done
 priority: A
 cost: M
 category: audio/processing
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: да
+we_have: yes
 crates: [kt-model, kt-fx, kt-engine, kt-app]
 invariants: [1, 2, 3, 11]
 ui_rules: []
-round: "Р.47"
+round: "R.47"
 point: 329
 tests: [322, 326]
 depends_on: []
@@ -19,90 +19,83 @@ services: []
 checked: 2026-09-14
 ---
 
-# F-AUD-009 — Delay / Echo на событии
+# F-AUD-009 — Delay / Echo on an event
 
-## Суть
+## Essence
 
-Повторы звука с настраиваемым временем, затуханием (feedback) и балансом
-сухого/мокрого. Монтажёру это «эхо на слове», «хвост на ударе», «даб-дилей
-на фразе» — самый частый аудио-эффект после эквалайзера. Ставится на
-событие, время повторов и mix анимируются кривыми.
+Repeats of the sound with an adjustable time, decay (feedback) and a dry/wet balance. For the editor this is
+"an echo on a word", "a tail on a beat", "a dub delay on a phrase" — the most frequent audio effect after the
+equalizer. It is placed on an event; the repeat time and the mix are animated by curves.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| Vegas Pro | 2026.0 | Simple Delay / Multi-Tap Delay (DirectX FX) | цепочка FX события/дорожки; multi-tap — до 8 отводов с своим временем и паном каждого |
-| Adobe Premiere | 26 | Delay (Audio Effects → Delay and Echo) | до 2 с задержки, Feedback в %, Mix; на клипе и на дорожке |
-| DaVinci Resolve | 21 | Echo (Fairlight FX) | раздельные L/R времена, feedback с фильтром в петле, темпо-синхронизация |
-| Final Cut Pro | 12.3 | Echo (Logic-набор эффектов) | пресетный echo из Logic; параметры открываются в панели Audio |
-| After Effects | 26 | Delay (эффект аудио-слоя) | слойный эффект, время в мс, Feedback и Dry/Wet |
+| Vegas Pro | 2026.0 | Simple Delay / Multi-Tap Delay (DirectX FX) | the FX chain of an event/track; multi-tap — up to 8 taps, each with its own time and pan |
+| Adobe Premiere | 26 | Delay (Audio Effects → Delay and Echo) | up to 2 s of delay, Feedback in %, Mix; on a clip and on a track |
+| DaVinci Resolve | 21 | Echo (Fairlight FX) | separate L/R times, feedback with a filter in the loop, tempo sync |
+| Final Cut Pro | 12.3 | Echo (a Logic set of effects) | a preset echo from Logic; the parameters open in the Audio panel |
+| After Effects | 26 | Delay (an effect of an audio layer) | a layer effect, time in ms, Feedback and Dry/Wet |
 
-**Вне ядра.** Без DAW не видно, чем «дилей монтажёра» отличается от
-«дилея музыканта» — темпо-синком и фильтром в петле.
+**Outside the core.** Without a DAW it is not visible how the "editor's delay" differs from the "musician's delay" —
+by tempo sync and by the filter in the loop.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Ableton Live | 12.4.5 | Delay / Echo | время в долях такта ИЛИ мс; в петле обратной связи фильтр и сатурация — хвост темнеет с каждым повтором |
+| Ableton Live | 12.4.5 | Delay / Echo | the time in fractions of a bar OR in ms; in the feedback loop a filter and saturation — the tail darkens with every repeat |
 
-## Фишка фишки
+## The trick behind it
 
-У всех пятерых петля обратной связи — не голое переиспользование буфера:
-в неё встроен фильтр (у Resolve — явные ручки, у Ableton — фильтр и
-сатурация), поэтому каждый следующий повтор темнее и мягче предыдущего, и
-хвост не превращается в металлический звон. Второе: смена времени задержки
-на лету у «плёночных» реализаций не щёлкает, а «плывёт» — буфер читается
-дробной головой, и время сглаживается (tape glide), а не перескакивает.
-Третье: Premiere ограничивает feedback заметно ниже 100 % — саморазгон
-петли считается дефектом, а не фичей.
+In all five the feedback loop is not a bare reuse of a buffer: a filter is built into it (in Resolve these are
+explicit knobs, in Ableton a filter and saturation), therefore every next repeat is darker and softer than the
+previous one, and the tail does not turn into a metallic ring. Second: changing the delay time on the fly in
+"tape-like" implementations does not click but "glides" — the buffer is read by a fractional head, and the time
+is smoothed (tape glide), rather than jumping. Third: Premiere limits the feedback noticeably below 100 % — the
+self-acceleration of the loop is regarded as a defect, not a feature.
 
-## Плюсы
+## Pros
 
-- Повторы с затуханием — единственный способ сделать «эхо на слове» без
-  копирования клипа руками N раз со ступенчатым гейном.
-- Фильтр в петле даёт естественный хвост: копии не звенят.
-- Анимируемый mix позволяет «включить эхо на последнем слове» одной кривой.
+- Repeats with decay are the only way to make an "echo on a word" without copying the clip by hand N times with a
+  stepped gain.
+- A filter in the loop gives a natural tail: the copies do not ring.
+- An animatable mix allows "turn on the echo on the last word" with one curve.
 
-## Минусы
+## Cons
 
-- Эффект с памятью: хвост живёт дольше клипа — движок обязан продлить
-  окно события на длину хвоста, иначе повторы обрежутся на границе.
-- Feedback около максимума держит хвост десятки секунд: цена — событие
-  остаётся «активным» для рендера долго после своего конца.
+- An effect with memory: the tail lives longer than the clip — the engine must extend the window of the event by the
+  length of the tail, otherwise the repeats will be cut at the boundary.
+- Feedback near the maximum holds the tail for tens of seconds: the price is that the event stays "active" for the
+  render for a long time after its end.
 
-## Что говорят пользователи
+## What users say
 
-НЕТ ЦИТАТ: разведка велась по официальной документации и справке пяти
-редакторов из памяти модели (срез знаний 2026-01); дословный форумный
-фрагмент со ссылкой без живого доступа к треду не воспроизводим — факты
-таблицы проверяемы по руководствам вендоров из раздела «Источники».
+NO QUOTES: the research was done from the official documentation and the help of five editors from the memory of the model (knowledge cutoff 2026-01); a verbatim forum fragment with a link cannot be reproduced without live access to the thread — the facts of the table are verifiable by the vendors' manuals from the "Sources" section.
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/audio-fx/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Эхо — узел цепочки с предзадержкой и хвостом, состояние живёт только у аудио-render-потока.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/audio-fx/ — the contract is in `spec.md`, the "why" and the paths in the code are in `design.md`.
+An echo is a node of the chain with a pre-delay and a tail; the state lives only with the audio-render thread.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — узел + обобщение хвостов |
-| Где основная работа | kt-fx (DelayLine, узел), kt-engine (тесты хвоста) |
-| Формат проекта | не трогает (foreign-passthrough в старых сборках) |
-| Тесты, которые придётся написать | эхо ровно на time_ms; серия убывающих пиков; хвост ≤ chain_tail; ping-pong в противоканале |
-| Зависит от | узловой цепочки (первая волна Р.47) |
-| Ломает совместимость | нет |
+| Scope | M — a node + generalization of tails |
+| Where the main work is | kt-fx (DelayLine, the node), kt-engine (tail tests) |
+| Project format | not touched (foreign-passthrough in old builds) |
+| Tests that will have to be written | an echo exactly at time_ms; a series of decreasing peaks; the tail ≤ chain_tail; ping-pong in the opposite channel |
+| Depends on | the node chain (the first wave of R.47) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём в Р.47: time/feedback/mix + ping-pong-галка, фильтр в петле — one-pole
-lowpass (наследие фишки «хвост темнеет»). Темпо-синк не берём — у проекта
-нет понятия темпа. Кольцо на максимум (1.5 с), время НЕ структурное —
-модулируется дробным чтением со сглаживанием ~100 мс (тейп-глайд).
+Take it in R.47: time/feedback/mix + a ping-pong checkbox, the filter in the loop — a one-pole lowpass (the heritage of
+the "the tail darkens" trick). Tempo sync is not taken — the project has no concept of tempo. The ring to the maximum
+(1.5 s), the time is NOT structural — it is modulated by fractional reading with smoothing of ~100 ms (tape glide).
 
-## Источники
+## Sources
 
-- https://helpx.adobe.com/premiere/using/audio-effects-transitions.html (дата обращения 2026-09-14)
-- https://www.blackmagicdesign.com/products/davinciresolve/fairlight (дата обращения 2026-09-14)
-- https://support.apple.com/guide/final-cut-pro/welcome/mac (дата обращения 2026-09-14)
+- https://helpx.adobe.com/premiere/using/audio-effects-transitions.html (accessed 2026-09-14)
+- https://www.blackmagicdesign.com/products/davinciresolve/fairlight (accessed 2026-09-14)
+- https://support.apple.com/guide/final-cut-pro/welcome/mac (accessed 2026-09-14)
 
-**Реализовано в Р.47** — docs/porting-notes.md пп.329 (t326); дальнейшая жизнь фичи там.
+**Implemented in R.47** — docs/porting-notes.md items 329 (t326); the further life of the feature is there.

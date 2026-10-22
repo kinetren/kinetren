@@ -1,12 +1,12 @@
 ---
 id: F-PRJ-003
-title: Проект, открытый на другой машине
-status: кандидат
+title: A project opened on another machine
+status: candidate
 priority: B
 cost: M
 category: project/structure
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, kdenlive-26.08, otio-lib-0.18]
-we_have: частично
+we_have: partial
 crates: [kt-otio, kt-model, kt-media, kt-app, kt-cli]
 invariants: [7, 9, 10, 11]
 ui_rules: [16, 19, 20]
@@ -18,167 +18,75 @@ trackers: [shotcut, mlt, kde-bugzilla, kde-invent, openshot, flowblade, olive, p
 checked: 2026-09-08
 ---
 
-# F-PRJ-003 — Проект, открытый на другой машине
+# F-PRJ-003 — A project opened on another machine
 
-## Суть
+## Essence
 
-Проект уехал: на второй компьютер, коллеге, с Windows на Linux, с ноутбука на
-рендер-машину. Пути к материалу — только половина беды; вторая половина — всё,
-что монтаж не СОДЕРЖИТ, а только НАЗЫВАЕТ: шрифт титра, LUT, сторонний эффект,
-выбранный энкодер, папку кэша, разделитель дробной части. Половина потерь
-громкая (файл не открылся, эффекта нет), половина тихая: проект открылся,
-кадр другой, никто ничего не сказал. Здесь — ПОЛНОТА переезда как класс: что
-именно в проекте не является проектом.
+The project has moved: to a second computer, to a colleague, from Windows to Linux, from a laptop to a render machine. Paths to the media are only half the trouble; the other half is everything the project does not CONTAIN but only NAMES: a title's font, a LUT, a third-party effect, the chosen encoder, a cache folder, a decimal separator. Half of the losses are loud (the file did not open, the effect is missing); the other half are silent: the project opened, the frame is different, and nobody said anything. Here the subject is the COMPLETENESS of the move as a class: what exactly in a project is not part of the project.
 
-Границы. Перепривязка исходников и сбор материала в одну папку — F-MED-005
-(`media/organization/relink-and-consolidate.md`); проект, созданный ДРУГОЙ
-ВЕРСИЕЙ программы, — F-RES-003
-(`resilience/durability/project-format-migration.md`); раскладка панелей и то,
-чей файл ей владеет, — F-UI-003 (`ui/input/workspaces-and-layouts.md`). Ни
-одна из трёх не отвечает на вопрос «что ещё уедет молча», и он здесь.
+Boundaries. Relinking sources and collecting media into one folder is F-MED-005 (`media/organization/relink-and-consolidate.md`); a project created by ANOTHER VERSION of the program is F-RES-003 (`resilience/durability/project-format-migration.md`); the panel layout and whose file owns it is F-UI-003 (`ui/input/workspaces-and-layouts.md`). None of the three answers the question "what else leaves silently", and that question is answered here.
 
-## У кого и как
+## Who has it and how
 
-Колонка «Как устроено» отвечает на ОДИН вопрос: что проект берёт с собой и что
-оставляет на машине автора. Механизм копирования материала (Collect Files,
-Project Manager, Media Management, Consolidate) разобран в F-MED-005 и не
-повторяется — отсюда взято только то, чего он НЕ берёт.
+The "How it works" column answers ONE question: what the project takes with it and what it leaves on the author's machine. The media-copying mechanism (Collect Files, Project Manager, Media Management, Consolidate) is covered in F-MED-005 and is not repeated here; only what it does NOT take is taken from there.
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | имени нет; `Copy media with project` | Переносимость не выделена в предмет: `.veg` — двоичный, Windows-only, и вопрос «а откроется ли на Mac» не встаёт вовсе. Пути к материалу абсолютные, лечатся диалогом поиска при открытии. Шрифты титров берутся из системных, LUT — путь к файлу. Копирование материала с проектом есть, копирования ЗАВИСИМОСТЕЙ нет |
-| Adobe Premiere | 26.x | `Project Manager`, `Missing Fonts`, Team Projects | Ходит между Windows и macOS одним файлом — и всё равно завёл под совместную работу ОТДЕЛЬНЫЙ продукт (Team Projects, с собственными «Create a new Team Project from a version» и «Archive»), то есть сам вендор признал, что перенос файла задачу не решает. Отсутствующий шрифт — модальный диалог при открытии с попыткой активировать шрифт из Adobe Fonts. Отсутствующий сторонний компонент называется отдельной ошибкой («the preset used by one or more sequences in this project requires third-party components that could not be located») — `[НЕ ПРОВЕРЕНО]`, по форумному треду, не по справке. Материал собирается, шрифты и плагины — нет |
-| DaVinci Resolve | 21 | **Path Mapping** + `Project Media Locations` + `.drp` | Самая полная и структурно иная реализация: путь переводится НА ЛЕТУ по таблице, которую заполняет ПОЛУЧАТЕЛЬ. Мануал разбирает ровно наш сценарий — монтажёр на Mac (`/Users/editor/cloudfolder/Episode 12`) и колорист на PC (`D:\Projects\Episodes\cloudfolder\Episode 12`). Есть `Automatically setup when relinking`: одна ручная перепривязка создаёт правило и чинит остальные. Отдельно — старый `Mapped Mount`, который мануал сам объявляет худшим («requires each user knowing the file path of all the other users»). LUT живут в общей папке установки, не в проекте |
-| Final Cut Pro | 12.3 | `Copy a Final Cut Pro project to another Mac`; `Motion Content` storage location | macOS-only, поэтому кросс-ОС нет; зато единственный, кто сделал переносимость ЯВНОЙ НАСТРОЙКОЙ хранилища. Кастомные титры/эффекты/генераторы, сделанные в Motion, по умолчанию лежат в `~/Movies/Motion Templates` и с библиотекой НЕ едут; в свойствах библиотеки есть переключатель `Motion Content: In Library` и кнопка `Consolidate`, и его надо нажать ДО копирования. Сторонний FxPlug не покрывается ничем — мануал говорит это прямым текстом |
-| After Effects | 26.x | `File > Dependencies > Collect Files`; предупреждение о подмене шрифта | Единственный, кто считает зависимостью не только медиафайл: отчёт `Collect Files` перечисляет «files, effects, and fonts» (F-MED-005). Но перечисляет — в ОТЧЁТЕ, а копирует только файлы. Отсутствующий шрифт объявляется при открытии и дальше подменяется молча до конца сеанса; отсутствующие эффекты и материал ищутся отдельными фильтрами панели проекта. `Reduce Project`, `Obey Proxy Settings`, `Generate Report Only` — области той же операции |
+| VEGAS Pro | 2026.0 | no name; `Copy media with project` | Portability is not singled out as a subject: `.veg` is binary and Windows-only, so the question "will it open on a Mac" does not arise at all. Paths to the media are absolute and are fixed by a search dialog when the project is opened. Title fonts are taken from the system fonts; LUTs are file paths. Copying the media with the project exists; copying DEPENDENCIES does not |
+| Adobe Premiere | 26.x | `Project Manager`, `Missing Fonts`, Team Projects | It moves between Windows and macOS as a single file, and yet it set up a SEPARATE product for collaborative work (Team Projects, with its own "Create a new Team Project from a version" and "Archive"). That is, the vendor itself admitted that moving the file does not solve the task. A missing font is a modal dialog on opening, with an attempt to activate the font from Adobe Fonts. A missing third-party component is reported as a separate error ("the preset used by one or more sequences in this project requires third-party components that could not be located") — `[NOT VERIFIED]`, from a forum thread, not from the documentation. Media gets collected; fonts and plugins do not |
+| DaVinci Resolve | 21 | **Path Mapping** + `Project Media Locations` + `.drp` | The most complete and structurally different implementation: the path is translated ON THE FLY by a table that the RECIPIENT fills in. The manual works through exactly our scenario: the editor on a Mac (`/Users/editor/cloudfolder/Episode 12`) and the colorist on a PC (`D:\Projects\Episodes\cloudfolder\Episode 12`). There is `Automatically setup when relinking`: one manual relink creates a rule and fixes the rest. Separately, the old `Mapped Mount`, which the manual itself declares the worst ("requires each user knowing the file path of all the other users"). LUTs live in the shared installation folder, not in the project |
+| Final Cut Pro | 12.3 | `Copy a Final Cut Pro project to another Mac`; `Motion Content` storage location | macOS-only, so there is no cross-OS support; however, it is the only one that made portability an EXPLICIT STORAGE SETTING. Custom titles, effects and generators made in Motion are by default kept in `~/Movies/Motion Templates` and do NOT travel with the library; the library properties have a `Motion Content: In Library` switch and a `Consolidate` button, and it must be pressed BEFORE copying. A third-party FxPlug is not covered by anything; the manual says so in plain text |
+| After Effects | 26.x | `File > Dependencies > Collect Files`; warning about font substitution | The only one that counts as a dependency not just the media file: the `Collect Files` report lists "files, effects, and fonts" (F-MED-005). But it lists them in the REPORT, and copies only the files. A missing font is announced on opening and is then substituted silently until the end of the session; missing effects and footage are searched for with separate filters in the project panel. `Reduce Project`, `Obey Proxy Settings`, `Generate Report Only` are options of the same operation |
 
-**Вне ядра.** Две программы обязательны по правилам `_editors.md`, и по разным
-причинам. Kdenlive — единственный NLE, у которого «проекты не переносимы»
-существует как публичный тикет с состоянием и датой, а не как жанр форумного
-треда; счёт всех трёх строк `СИГНАЛ:` ниже опирается на его трекер и на
-трекеры родственных ему проектов. OpenTimelineIO — ПРОИСХОЖДЕНИЕ нашего
-`target_url` и единственное место, где форма пути к материалу обсуждается как
-спецификация, а не как поведение.
+**Outside the core.** Two programs are mandatory under the rules of `_editors.md`, and for different reasons. Kdenlive is the only NLE for which "projects are not portable" exists as a public ticket with a status and a date, not as a forum-thread genre; the tally of all three `SIGNAL:` lines below relies on its tracker and on the trackers of its related projects. OpenTimelineIO is the ORIGIN of our `target_url` and the only place where the form of a media path is discussed as a specification, not as behavior.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Kdenlive | 26.08.0 | `Archive Project`; тикет «projects are not portable» | Проект — текстовый MLT-XML, пути относительные не везде (`.pgm` переходов, корень `root=`, `.TRF` трекинга — абсолютные). Сбор в архив существует и не берёт шрифты (#501914), встроенный генератор `Counter` (#420623) и встроенные luma-маски (#492435). Класс признан заголовком тикета #518992, CONFIRMED с 15.04.2026 |
-| OpenTimelineIO | 0.18.x | `ExternalReference.target_url` | Строка без объявленной формы. Собственный трекер библиотеки до сих пор держит два открытых тикета о том, чем эта строка обязана быть: #904 «Clarify the form and constraints of target_url» (2021, «wild west» — дословно) и #1985 (11.12.2025), где расхождение вскрылось на файлах, которые пишет Premiere 26.1 beta. Percent-encoding, `file://` и разрешение относительных ссылок в спецификации не закреплены |
+| Kdenlive | 26.08.0 | `Archive Project`; ticket "projects are not portable" | The project is text MLT-XML; paths are not relative everywhere (`.pgm` transitions, the `root=` root, `.TRF` tracking are absolute). The archive collection exists and does not take fonts (#501914), the built-in `Counter` generator (#420623) or built-in luma masks (#492435). The class is acknowledged by the title of ticket #518992, CONFIRMED since 15.04.2026 |
+| OpenTimelineIO | 0.18.x | `ExternalReference.target_url` | A string with no declared form. The library's own tracker still keeps two open tickets about what this string must be: #904 "Clarify the form and constraints of target_url" (2021, "wild west" — verbatim) and #1985 (11.12.2025), where the discrepancy surfaced on files written by Premiere 26.1 beta. Percent-encoding, `file://` and the resolution of relative references are not pinned down in the specification |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Переносимость — свойство не файла, а ПРИНИМАЮЩЕЙ установки, и
-единственный, кто это признал, вынес её в настройки получателя.** Все прочие
-решают задачу «как записать путь, который поймут все», и упираются в то, что
-такого пути не существует: `D:\` не бывает на Linux, `/Volumes/` не бывает на
-Windows, а имя тома не переносимо в принципе. Resolve развернул вопрос: проект
-хранит ИМЯ общей папки, а каждый участник объявляет у себя, где эта папка лежит
-локально, — «Path Mapping lets the user just present their own file path, and
-DaVinci Resolve takes care of the translation for all the other users instead»
-(Reference Manual 21, гл. 6). Отсюда же берётся `Automatically setup when
-relinking`: перепривязка чинит не файл, а ПРАВИЛО, и остальные файлы чинятся
-следствием. Практический вывод для нас неприятный и точный: относительный путь
-(наше решение Р.24 п.7) — это то же самое отображение, только с одним
-неизменяемым правилом «всё лежит там же, где лежало относительно проекта». Оно
-бесплатно и покрывает самый частый случай — и ровно ничего не может сделать,
-когда материал был на отдельной точке монтирования, потому что тогда
-`url::relativize` возвращает `None` и в файл уходит абсолют (находка F-MED-005).
+**1. Portability is a property not of the file but of the RECEIVING setup, and the only one that recognized this moved the setting to the recipient's side.** All the others solve the problem of "how to write a path that everyone will understand", and run into the fact that such a path does not exist: `D:\` does not exist on Linux, `/Volumes/` does not exist on Windows, and a volume name is not portable in principle. Resolve turned the question around: the project stores the NAME of the shared folder, and each participant declares locally where this folder lies. "Path Mapping lets the user just present their own file path, and DaVinci Resolve takes care of the translation for all the other users instead" (Reference Manual 21, ch. 6). This is also where `Automatically setup when relinking` comes from: relinking fixes not a file but a RULE, and the other files are fixed as a consequence. The practical conclusion for us is unpleasant and precise: a relative path (our decision R.24 item 7) is the same kind of mapping, only with one immutable rule, "everything stays where it was relative to the project". It is free and covers the most frequent case, and it can do exactly nothing when the material was on a separate mount point, because then `url::relativize` returns `None` and an absolute path goes into the file (finding of F-MED-005).
 
-**2. Каждая фича, положившая своё имущество в пользовательское хранилище,
-вычла из переносимости — это обратная сторона вывода 2 первой волны.** README
-каталога зафиксировал: «Четыре фичи упираются в отсутствие „пользовательского
-хранилища вне проекта“: библиотека FX-пресетов (F-AUT-004), шаблоны титров
-(F-TXT-002), экспорт-пресеты (F-EXP-001), раскладки клавиш (F-UI-002)». Трекеры
-показывают счёт с другой стороны. Flowblade #1168 — проект на внешнем диске
-ссылается на `~/.local/share/flowblade/projectsdata/<hash>/savefiles`, и на
-другой машине это даёт ошибку не при ОТКРЫТИИ, а при СОХРАНЕНИИ, то есть
-обнаруживается после часа работы. FCP пришёл к единственной форме, при которой
-«вне проекта» и «переносимо» не противоречат друг другу: у хранилища есть
-переключатель `In Library` и кнопка `Consolidate`, и по умолчанию он стоит НЕ
-в переносимом положении, а рядом честно написано, что на сторонний FxPlug
-переключатель не действует. То есть хранилище вне проекта — не бесплатное
-место, а вторая половина каждой из четырёх фич: у неё обязан быть день, когда
-её содержимое кладут внутрь.
+**2. Every feature that put its own assets into a user storage outside the project subtracted from portability; this is the reverse side of conclusion 2 of the first wave.** The catalog README recorded: "Four features run into the absence of a 'user storage outside the project': the FX preset library (F-AUT-004), title templates (F-TXT-002), export presets (F-EXP-001), keyboard layouts (F-UI-002)". The trackers show the count from the other side. Flowblade #1168: a project on an external drive refers to `~/.local/share/flowblade/projectsdata/<hash>/savefiles`, and on another machine this produces an error not when OPENING but when SAVING, that is, it is discovered after an hour of work. FCP arrived at the only form in which "outside the project" and "portable" do not contradict each other: the storage has an `In Library` switch and a `Consolidate` button, and by default it is NOT in the portable position, while right next to it is honestly written that the switch has no effect on a third-party FxPlug. So a storage outside the project is not a free place, but the second half of each of the four features: it must have a day when its contents are put inside.
 
-**3. Тихая подмена страшнее пропажи, потому что не видна на превью, — и
-предупреждение стоит в единственный момент, когда его нечем проверить.**
-Пропавший файл виден: заглушка в кадре, красная карточка в бине, счёт в
-префлайте. Подменённый шрифт не виден нигде — кадр валидный, просто не тот, и
-монтажёр узнает об этом от заказчика. AE — единственный, кто говорит вслух
-(«Font substitution will occur until the originals become available»), и
-говорит это модальным окном при ОТКРЫТИИ, когда таймлайн ещё не нарисован;
-дальше подмена живёт весь сеанс, а найти пострадавшие слои можно только
-отдельным фильтром панели проекта. Тот же класс на два порядка ниже —
-десятичная запятая: shotcut #713 описывает, как проект, сохранённый в локали с
-запятой, у получателя с точкой открывается без единой ошибки, а все дробные
-числа в нём становятся нулями. Причина названа в mlt #580 — библиотека
-сериализовала числа локалью интерфейса, и в XML уезжало `29,97`. «Работает у
-меня» начинается ровно здесь: обе стороны видят исправный файл и исправную
-программу, и обе правы.
+**3. A silent substitution is worse than a loss, because it is not visible in the preview, and the warning comes at the only moment when there is nothing to check it with.** A missing file is visible: a placeholder in the frame, a red card in the bin, a count in the preflight. A substituted font is visible nowhere: the frame is valid, just not the right one, and the editor learns about it from the client. AE is the only one that says it out loud ("Font substitution will occur until the originals become available"), and says it in a modal window on OPENING, when the timeline has not yet been drawn; after that the substitution lives for the whole session, and the affected layers can be found only with a separate filter in the project panel. The same class, two orders of magnitude lower, is the decimal comma: shotcut #713 describes how a project saved in a locale with a comma opens without a single error on a recipient with a dot, and all fractional numbers in it become zeros. The cause is named in mlt #580: the library serialized numbers in the interface locale, and `29,97` went into the XML. "It works on my machine" begins exactly here: both sides see a sound file and a sound program, and both are right.
 
-## Плюсы
+## Pros
 
-- Отображение путей как ИМЕНОВАННАЯ договорённость (Resolve) снимает
-  кросс-ОС-вопрос целиком и попутно делает перепривязку самонакапливающейся:
-  одно указание рождает правило, правило чинит остальные файлы. Это то же
-  «указал один — нашлись все», что F-MED-005 нашла в трёх трекерах, но
-  ПЕРЕЖИВАЮЩЕЕ сеанс.
-- Отчёт вместо копии (`Generate Report Only`) дёшев и честен: перечислить
-  зависимость можно даже там, где скопировать её нельзя по лицензии — шрифт,
-  плагин. F-HLP-011 разбирает ту же поверхность как префлайт.
-- Хранилище с переключателем «положить внутрь» (FCP `Motion Content: In
-  Library`) — единственная известная форма, при которой библиотека пресетов не
-  уменьшает переносимость.
-- Текстовый формат проекта сам по себе половина дела, и пользователи называют
-  это первым: shotcut #710 начинается с похвалы XML против двоичного формата и
-  только потом просит относительные пути. Двоичный `.veg` не позволяет даже
-  посмотреть, чем присланный проект отличается от своего.
-- Отказ от хостинга плагинов оплачивается один раз и закрывает целый класс
-  навсегда: у F-EXT-001 это сформулировано как требование пользователя —
-  программа «работает на чужой машине тем, что на этой машине есть».
+- Path mapping as a NAMED agreement (Resolve) removes the cross-OS question entirely and, incidentally, makes relinking self-accumulating: one indication creates a rule, and the rule fixes the other files. This is the same "one pointed, all found" that F-MED-005 found in three trackers, but SURVIVING the session.
+- A report instead of a copy (`Generate Report Only`) is cheap and honest: a dependency can be listed even where it cannot be copied because of its license, such as a font or a plugin. F-HLP-011 treats the same surface as a preflight.
+- A storage with a "put inside" switch (FCP `Motion Content: In Library`) is the only known form in which a library of presets does not reduce portability.
+- The text format of the project is half the battle by itself, and users name this first: shotcut #710 begins with praise of XML versus a binary format and only then asks for relative paths. A binary `.veg` does not even allow looking at how a received project differs from its own.
+- Refusing to host plugins is paid for once and closes a whole class forever: for F-EXT-001 this is formulated as a user requirement, the program "works on someone else's machine with what is on that machine".
 
-## Минусы
+## Cons
 
-- Path Mapping — настройка ПОЛУЧАТЕЛЯ, значит требует, чтобы он знал о ней
-  раньше, чем увидит «media offline». Ничем не подсказана: сам факт, что
-  Resolve держит рядом устаревший `Mapped Mount` и объясняет разницу абзацем
-  мануала, показывает, что механизм не самоочевиден.
-- Отчёт не копирует. AE перечисляет «files, effects, and fonts» и берёт с
-  собой только первое; Kdenlive получил на это отдельную задачу («Archive
-  project don't bundle fonts», #501914) — UNCONFIRMED с 23.03.2025.
-- Половина пятёрки решила кросс-ОС тем, что переезжать некуда: `.veg` —
-  Windows, библиотека FCP — macOS. «Переносимость» у них измеряется переездом
-  между двумя одинаковыми машинами, и это не тот же вопрос.
-- Настройки, привязанные к железу, уезжают вместе с проектом там, где живут в
-  нём, и класс даже не признан: kde-bugzilla #476371 «Video Resolution and fps
-  change when working on different pc» закрыт WORKSFORME.
-- Локаль остаётся дырой в интерфейсе даже после починки формата: в mlt #580
-  сериализацию исправили, но kde-invent #589 (2020) просил не исправить
-  формат, а ПРЕДУПРЕДИТЬ пользователя, что у него запятая, и посоветовать
-  сменить настройку операционной системы.
-- Сбор материала уплощает структуру папок и теряет одноимённые файлы — разобрано
-  в F-MED-005 и здесь не переоткрывается.
+- Path Mapping is a setting of the RECIPIENT, so it requires that they know about it before they see "media offline". Nothing hints at it: the very fact that Resolve keeps an outdated `Mapped Mount` alongside and explains the difference in a paragraph of the manual shows that the mechanism is not self-evident.
+- The report does not copy. AE lists "files, effects, and fonts" and takes only the first with it; Kdenlive got a separate task for this ("Archive project don't bundle fonts", #501914), UNCONFIRMED since 23.03.2025.
+- Half of the five solved cross-OS by having nowhere to move to: `.veg` is Windows, the FCP library is macOS. "Portability" for them is measured by moving between two identical machines, and that is not the same question.
+- Settings tied to the hardware travel with the project where they live in it, and the class is not even acknowledged: kde-bugzilla #476371 "Video Resolution and fps change when working on different pc" is closed as WORKSFORME.
+- The locale remains a hole in the interface even after the format is fixed: in mlt #580 the serialization was fixed, but kde-invent #589 (2020) asked not to fix the format but to WARN the user that they have a comma, and to advise changing the operating system setting.
+- Collecting media flattens the folder structure and loses files with the same name; this was analyzed in F-MED-005 and is not reopened here.
 
-## Что говорят пользователи
+## What users say
 
-Класс, названный своим именем, — одна и та же фраза в четырёх трекерах за
-восемь лет:
+The class, named by its own name, is one and the same phrase in four trackers over eight years:
 
 > I copied the entire contents of a project file to another machine, Loading
 > the project says it is missing file clips for every clip.
 > — OpenShot #1334, 04.03.2018, https://github.com/OpenShot/openshot-qt/issues/1334
 
-Тот же диагноз, но потеря не медиа, а СЛУЖЕБНОГО каталога программы — и
-обнаруживается она при сохранении, а не при открытии:
+The same diagnosis, but the loss is not of media, it is of the program's SERVICE directory, and it is discovered on saving, not on opening:
 
 > I have an external Harddisk with my projects. If I move the HD to another PC
 > running the same version OS and Flowblade I get references to the
 > ~/.local/share folder and .config/flowblade folder which result in an IO
 > error on saving the project.
-> — Flowblade #1168, 02.09.2024, открыт, https://github.com/jliljebl/flowblade/issues/1168
+> — Flowblade #1168, 02.09.2024, open, https://github.com/jliljebl/flowblade/issues/1168
 
-Почему текстовый формат — половина ответа, словами того, кто просил
-относительные пути:
+Why the text format is half the answer, in the words of the one who asked for relative paths:
 
 > I would like this project file to always use relative paths when the resource
 > is inside the project folder, for better portability of projects. You should
@@ -186,380 +94,153 @@ relinking`: перепривязка чинит не файл, а ПРАВИЛО
 > path references.
 > — Shotcut #710, 14.03.2019, https://github.com/mltframework/shotcut/issues/710
 
-Тихая половина класса — локаль получателя:
+The silent half of the class is the recipient's locale:
 
 > best friend loads the file and realises all numbers are **zero** which did
 > have any fractions (breaking everything from chroma key to ... anything,
 > really)
 > — Shotcut #713, 16.03.2019, https://github.com/mltframework/shotcut/issues/713
 
-Причина, названная в библиотеке, которая эти числа писала:
+The cause, named in the library that was writing these numbers:
 
 > At Kdenlive, we regularly have issues with different locales because by
 > default numbers are converted to string using the default locale.
 > — MLT #580, 05.06.2020, https://github.com/mltframework/mlt/issues/580
 
-И отрицательный фидбек особого рода — просьба не чинить, а предупредить:
+And negative feedback of a special kind, a request not to fix but to warn:
 
 > Kdenlive has know issues when used on computer that uses "," (comma) as a
 > decimal separator. is possible to change the decimal separator to "." (point)
 > on your computer preferences
 > — kde-invent #589, 22.03.2020, https://invent.kde.org/multimedia/kdenlive/-/work_items/589
 
-Про шрифт, который подменяется и продолжает подменяться:
+About the font that is substituted and keeps being substituted:
 
 > This project uses fonts that are not currently available on this computer.
 > Font substitution will occur until the originals become available.
-> — цитата предупреждения After Effects, приведённая пользователем jk22973525,
+> — quote of the After Effects warning, cited by user jk22973525,
 > 12.01.2018, https://community.adobe.com/t5/after-effects-discussions/after-effects-warning-fonts-that-are-not-currently-available/td-p/9598778
 
-И про форму пути в нашем собственном формате — в трекере эталонной библиотеки:
+And about the form of the path in an external format, in the tracker of the reference library:
 
 > The confusion emerged from Adobe Premiere Beta 26.1 exporting OTIO files with
 > media references with said `file://` prefix
-> — OTIO #1985, 11.12.2025, открыт, https://github.com/AcademySoftwareFoundation/OpenTimelineIO/issues/1985
+> — OTIO #1985, 11.12.2025, open, https://github.com/AcademySoftwareFoundation/OpenTimelineIO/issues/1985
 
-СИГНАЛ: эффект как чужой бинарник — 9 задач в mlt, `frei0r|ladspa|\bofx\b|openfx|\bvst\b`; доля 1.5% против 0.1% в shotcut
+SIGNAL: effect as a foreign binary — 9 tasks in mlt, `frei0r|ladspa|\bofx\b|openfx|\bvst\b`; share 1.5% against 0.1% in shotcut
 
-СИГНАЛ: локаль получателя — 3 задачи в shotcut, `decimal (separator|comma|point|mark)|comma.{0,20}decimal|locale.{0,30}(break|number|decimal|separator|xml|file|save|transfer)|(number|value|xml|project).{0,25}locale`; доля 0.2% против 0.1% в kde-invent
+SIGNAL: recipient's locale — 3 tasks in shotcut, `decimal (separator|comma|point|mark)|comma.{0,20}decimal|locale.{0,30}(break|number|decimal|separator|xml|file|save|transfer)|(number|value|xml|project).{0,25}locale`; share 0.2% against 0.1% in kde-invent
 
-СИГНАЛ: «проект не переносим» как заголовок — 1 задача в shotcut, `(project|projects)\b.{0,40}(not portable|portab)|portab\w*.{0,40}project`; доля 0.1% против 0.0% (1 из 6346) в kde-bugzilla
+SIGNAL: "project is not portable" as a title — 1 task in shotcut, `(project|projects)\b.{0,40}(not portable|portab)|portab\w*.{0,40}project`; share 0.1% against 0.0% (1 of 6346) in kde-bugzilla
 
-Что за этими числами.
+What lies behind these numbers.
 
-**Первая пара — про то, ГДЕ живёт зависимость, которая не едет.** Фильтр
-называет не жалобу, а имя внешнего поставщика эффектов, и разброс огромен:
-1.5 % в mlt против 0.1 % в shotcut — пятнадцатикратная разница между
-библиотекой, которая плагины ЗАГРУЖАЕТ, и приложением, которое их показывает.
-Между ними по убыванию olive 1.0 % (18 задач, из них #14 — просьба завести
-VST/AU вообще), kde-invent 0.5 %, flowblade 0.4 %, kde-bugzilla 0.2 %,
-pitivi 0.2 %. Читается это однозначно: у всех девяти открытых редакторов
-«эффект» — чужой бинарник, и цена этого решения платится не там, где эффект
-выбирают, а этажом ниже, в загрузчике. Для переезда следствие прямое: список
-эффектов проекта — это список программ, которые обязаны быть установлены у
-получателя, и ни один из девяти не возит его с собой. Это не наша боль
-(F-EXT-001 отвергнута), но она объясняет, почему у остальных «отдай проект
-коллеге» не решается сбором файлов в папку в принципе.
+**The first pair is about WHERE the dependency that does not travel lives.** The filter catches not a complaint but the name of an external supplier of effects, and the spread is huge: 1.5% in mlt against 0.1% in shotcut, a fifteenfold difference between the library that LOADS plugins and the application that shows them. Between them, in descending order: olive 1.0% (18 tasks, of which #14 is a request to add VST/AU at all), kde-invent 0.5%, flowblade 0.4%, kde-bugzilla 0.2%, pitivi 0.2%. This reads unambiguously: in all nine open editors an "effect" is a foreign binary, and the price of this decision is paid not where the effect is chosen, but a floor lower, in the loader. For the move the consequence is direct: the list of a project's effects is a list of programs that MUST be installed on the recipient's side, and none of the nine carries it with itself. This is not our pain (F-EXT-001 is rejected), but it explains why for the others "give the project to a colleague" is not solved by collecting files into a folder at all.
 
-**Вторая пара — про самый тихий отказ домена.** Семь задач на три трекера —
-это МАЛО, и в этом вся находка: shotcut 0.2 %, kde-invent 0.1 %,
-kde-bugzilla 0.0 %. Класс, который ломает у получателя все дробные числа
-разом, дал за десять лет семь тикетов, и разложены они показательно: два
-(shotcut #166 и #186) — вообще не про перенос, а про собственный интерфейс на
-машине автора; два (kde-bugzilla #357991, #414370) — про то же на другой
-стороне; один (kde-invent #589) просит не чинить, а ПРЕДУПРЕДИТЬ и посоветовать
-сменить настройку ОС; и только два (shotcut #713, kde-invent #713 «Use the C
-locale for project files») называют настоящую причину — что формат файла не
-имеет права зависеть от локали. Причина малочисленности та же, что делает
-класс опасным: чтобы подать такой тикет, надо УЖЕ понимать, что виновата
-локаль, а обе стороны видят исправную программу. Числа домена меряют не
-частоту беды, а частоту догадки.
+**The second pair is about the quietest failure of the domain.** Seven tasks across three trackers is FEW, and that is the whole finding: shotcut 0.2%, kde-invent 0.1%, kde-bugzilla 0.0%. A class that breaks all fractional numbers at the recipient's side at once produced seven tickets in ten years, and they are laid out tellingly: two (shotcut #166 and #186) are not about the move at all, but about the program's own interface on the author's machine; two (kde-bugzilla #357991, #414370) are the same on the other side; one (kde-invent #589) asks not to fix but to WARN and advise changing the OS setting; and only two (shotcut #713, kde-invent #713 "Use the C locale for project files") name the real cause, that a file format has no right to depend on the locale. The reason for the small number is the same thing that makes the class dangerous: to file such a ticket one must ALREADY understand that the locale is to blame, while both sides see a working program. The numbers of the domain measure not the frequency of trouble but the frequency of guessing.
 
-**Третья пара — про то, что класс неподаваем как таковой.** Фильтр по слову
-«portable» рядом со словом «project» даёт по ОДНОЙ задаче ровно в четырёх
-трекерах — kde-bugzilla #518992 «Kdenlive projects are not portable»
-(CONFIRMED, 15.04.2026), openshot #1334 «Projects not portable to another
-machine» (2018), flowblade #1168 «Projects are not portable» (2024, открыт),
-shotcut #710 (2019, про относительные пути). Четыре независимых проекта,
-четыре почти дословно совпадающих заголовка, восемь лет — и ни одного
-дубликата, ни одной ссылки друг на друга. Заметить это можно только по
-трекерам: заголовок «не переносим» не имеет исполнителя, потому что у него нет
-одного места в коде, и каждый такой тикет либо стоит годами (flowblade,
-kde-bugzilla), либо распадается на частные (shotcut #710 → относительные пути;
-и отдельно #713 → локаль). Отсюда и предмет заметки: у класса нет своего
-тикета, значит он обязан иметь свою заметку.
+**The third pair is about the fact that the class cannot be filed as such.** A filter on the word "portable" next to the word "project" gives exactly one task in each of four trackers: kde-bugzilla #518992 "Kdenlive projects are not portable" (CONFIRMED, 15.04.2026), openshot #1334 "Projects not portable to another machine" (2018), flowblade #1168 "Projects are not portable" (2024, open), shotcut #710 (2019, about relative paths). Four independent projects, four almost verbatim matching titles, eight years, and not one duplicate, not one link to each other. This can be noticed only through the trackers: the title "not portable" has no assignee, because it has no single place in the code, and each such ticket either stands for years (flowblade, kde-bugzilla) or splits into private ones (shotcut #710 becomes relative paths; and separately #713 becomes the locale). Hence the subject of this note: the class has no ticket of its own, so it must have a note of its own.
 
-Обязательный разбор `--rejected`: отказов по существу в домене нет, но есть
-показательный — kde-bugzilla #476371 «Video Resolution and fps change when
-working on different pc», закрытый WORKSFORME. По правилу 1 чтения чисел
-(`_trackers.md`) это не «починено», а «не воспроизвели»: класс «параметры
-проекта поменялись от смены машины» даже не признан существующим. Ещё два
-отказа — losslesscut #2055 и #2343 (not_planned) — про другое значение слова
-«portable» (программа с флешки), и в счёт третьей строки не входят.
+Mandatory `--rejected` review: there are no rejections on the merits in the domain, but there is an indicative one: kde-bugzilla #476371 "Video Resolution and fps change when working on different pc", closed as WORKSFORME. By reading rule 1 of the numbers (`_trackers.md`) this is not "fixed" but "not reproduced": the class "project parameters changed when the machine changed" is not even recognized as existing. Two more rejections, losslesscut #2055 and #2343 (not_planned), are about a different meaning of the word "portable" (a program run from a flash drive), and are not counted in the third line's tally.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-Наш проект ссылается наружу РОВНО ОДИН РАЗ, и это проверяется грепом: во всём
-`src/libs/kt-model/src/project.rs` поле с именем `path` одно —
-`MediaRef::path` (`project.rs:1780`). Ни шрифта, ни LUT, ни плагина, ни папки
-кэша, ни энкодера в файле проекта нет — не «пока не завели», а потому что их
-нет в программе:
+Our project refers outward EXACTLY ONCE, and this is verified by grep: across the whole of `src/libs/kt-model/src/project.rs` there is one field named `path`, namely `MediaRef::path` (`project.rs:1780`). There is no font, no LUT, no plugin, no cache folder and no encoder in the project file; not "not yet added", but because they are not in the program at all:
 
-- **Относительный путь по построению.** `src/libs/kt-otio/src/url.rs`:
-  `media_target_url()` релятивизует путь медиа от каталога проекта
-  POSIX-слэшами, фолбэк — `file://` с percent-encoding; `resolve_media_path()`
-  читает все три вида, `synth:<pattern>` проходит verbatim. То, что просит
-  shotcut #710, у нас решение Р.24 п.7 и золотой файл: в
-  `src/fixtures/demo-3d.otio` все четыре `target_url` — `media/m1.mp4`,
-  `media/m2.mp4`. Кейс «переехала папка целиком» бесплатен.
-- **Числа не зависят от локали.** Грепа `setlocale`/`LC_NUMERIC` по `src/`
-  нет ни одного попадания в путях сериализации: единственное упоминание
-  локали — `apps/kt-app/src/i18n/detect.rs`, и оно про выбор ЯЗЫКА, а не про
-  формат числа. `serde_json` пишет дробь через точку всегда. Класс shotcut
-  #713 и mlt #580 у нас невозможен конструктивно.
-- **Плагинов нет.** F-EXT-001 отвергнута, и в её вердикте назван ровно наш
-  предмет: чужой код «делает байты свойством машины». Все видео- и аудио-FX
-  живут в `src/libs/kt-fx`, в дереве, и едут вместе с бинарём. Класс
-  «эффект превратился в дырку» (первая строка `СИГНАЛ:`) у нас невозможен.
-- **Шрифтов в проекте нет дважды.** Титров нет (F-TXT-001, `we_have: нет`),
-  поэтому шрифт не может попасть в модель; а собственный интерфейс не зависит
-  от системных шрифтов — сабсеты вшиты в бинарь
-  (`src/apps/kt-app/src/icons.rs:55-57`, `include_bytes!`), полнота глифов
-  держится тестом t100. Программа на чужой машине выглядит так же, как на
-  своей.
-- **Железо выбирается на месте, а не берётся из файла.** Инвариант 10: бинарь
-  не линкуется с `libav*`, FFmpeg грузится dlopen — один и тот же
-  исполняемый файл использует СИСТЕМНЫЙ FFmpeg получателя. Инвариант 9:
-  энкодер выбирается автоматически с реальной проверкой открытия
-  (`src/libs/kt-ffmpeg/src/muxer_impl.rs:16` и далее, nvenc → vaapi → qsv →
-  libx264 → mpeg4). Настройки рендера в файл вообще не попадают:
-  `RenderSetup` (`src/apps/kt-app/src/render_dialog.rs:46`) не имеет `serde`
-  и не переживает даже перезапуск. Класс «уехал чужой энкодер» невозможен.
-- **Настройки программы с проектом не ездят.** `eframe::App::save`
-  (`src/apps/kt-app/src/app.rs:5247`) кладёт в хранилище приложения ровно две
-  строки — `lang` и `last_project`.
-- **Отказ вместо тихого расхождения там, где железо решает.** Проект с 3D на
-  машине без GPU — явная ошибка `ExportError::GpuRequired`
-  (`src/libs/kt-engine/src/export.rs:407`), а не молчаливое «отрендерилось
-  иначе».
-- **Sidecar переезда не требует.** `<project>.ktindex.db`
-  (`src/libs/kt-media/src/index.rs`) регенерируется; до перестройки на месте
-  волноформ и тумб стоят плейсхолдеры (инвариант 8). Оговорка: строки БД
-  ключуются АБСОЛЮТНЫМ путём, поэтому после переезда индекс строится заново
-  целиком — находка и её цена уже разобраны в F-MED-005, здесь не
-  переоткрываются.
-- **Чужие поля переживают наш круг.** Passthrough (`Retained`,
-  `src/libs/kt-otio/src/convert.rs:72`) держит чужие неймспейсы и
-  неизвестные схемы дословно, t144–t147. Присланный чужой проект не худеет от
-  того, что мы его открыли.
+- **A relative path by construction.** `src/libs/kt-otio/src/url.rs`: `media_target_url()` makes the media path relative to the project directory with POSIX slashes, with a fallback to `file://` with percent-encoding; `resolve_media_path()` reads all three kinds, and `synth:<pattern>` passes through verbatim. What shotcut #710 asks for is our decision R.24 item 7 and a golden file: in `src/fixtures/demo-3d.otio` all four `target_url` values are `media/m1.mp4`, `media/m2.mp4`. The case "the whole folder was moved" is free.
+- **Numbers do not depend on the locale.** A grep for `setlocale`/`LC_NUMERIC` across `src/` gives not a single hit in the serialization paths: the only mention of the locale is `apps/kt-app/src/i18n/detect.rs`, and it is about the choice of LANGUAGE, not about the number format. `serde_json` always writes the fraction with a dot. The class of shotcut #713 and mlt #580 is structurally impossible for us.
+- **There are no plugins.** F-EXT-001 is rejected, and its verdict names exactly our subject: foreign code "makes bytes a property of the machine". All video and audio FX live in `src/libs/kt-fx`, in the tree, and travel together with the binary. The class "an effect turned into a hole" (the first `SIGNAL:` line) is impossible for us.
+- **There are no fonts in the project, twice over.** There are no titles (F-TXT-001, `we_have: none`), so a font cannot get into the model; and the program's own interface does not depend on system fonts: the subsets are built into the binary (`src/apps/kt-app/src/icons.rs:55-57`, `include_bytes!`), and the completeness of glyphs is held by test t100. The program looks the same on someone else's machine as on its own.
+- **The hardware is chosen on the spot, not taken from the file.** Invariant 10: the binary is not linked with `libav*`, FFmpeg is loaded via dlopen, so one and the same executable uses the recipient's SYSTEM FFmpeg. Invariant 9: the encoder is chosen automatically with a real opening check (`src/libs/kt-ffmpeg/src/muxer_impl.rs:16` and onward, nvenc → vaapi → qsv → libx264 → mpeg4). Render settings do not get into the file at all: `RenderSetup` (`src/apps/kt-app/src/render_dialog.rs:46`) has no `serde` and does not even survive a restart. The class "a foreign encoder traveled" is impossible.
+- **The program's settings do not travel with the project.** `eframe::App::save` (`src/apps/kt-app/src/app.rs:5247`) puts exactly two lines into the application's storage: `lang` and `last_project`.
+- **A refusal instead of a silent divergence where the hardware decides.** A project with 3D on a machine without a GPU is an explicit error `ExportError::GpuRequired` (`src/libs/kt-engine/src/export.rs:407`), not a silent "rendered differently".
+- **The sidecar does not require a move.** `<project>.ktindex.db` (`src/libs/kt-media/src/index.rs`) is regenerated; until it is rebuilt in place, the waveforms and thumbnails show placeholders (invariant 8). A caveat: the database rows are keyed by the ABSOLUTE path, so after a move the index is built anew in full. The finding and its cost are already analyzed in F-MED-005 and are not reopened here.
+- **Foreign fields survive our round trip.** Passthrough (`Retained`, `src/libs/kt-otio/src/convert.rs:72`) keeps foreign namespaces and unknown schemas verbatim, t144–t147. A received foreign project does not lose weight from the fact that we opened it.
 
-### Чего не хватает
+### What is missing
 
-1. **Отображения путей нет и не из чего строить.** Наш относительный путь —
-   одно неизменяемое правило; таблицы «логическое имя → локальный путь»
-   (Resolve Path Mapping) у нас нет ни в проекте, ни в настройках программы, и
-   материал с отдельной точки монтирования уезжает абсолютом.
-2. **Проверки комплектности перед отдачей нет.** Аналога `Generate Report
-   Only` — «вот что этому проекту нужно на той стороне» — не существует;
-   ближайшее, что есть, — список недоступных исходников в момент открытия
-   настроек рендера (`render_dialog.rs`), то есть у ПОЛУЧАТЕЛЯ и поздно.
-3. **`kt-cli` не умеет назвать зависимости.** Команды —
-   `new`, `convert`, `demo`, `roundtrip`, `render`, `export`
-   (`src/apps/kt-cli/src/main.rs:127`); самая дешёвая форма проверки перед
-   отдачей (`kt-cli deps <project>`) отсутствует, хотя весь материал для неё
-   уже в модели.
-4. **`meters_w` едет с проектом.** Единственное поле интерфейса по ту сторону
-   границы (`UiState::meters_w`, `src/libs/kt-model/src/project.rs:1547`;
-   пишется в `src/apps/kt-app/src/app.rs:763`, перебивает мою при открытии —
-   `app.rs:713`): открыл чужой проект — панель метров встала по чужой
-   ширине. Находка и решение принадлежат F-UI-003, здесь она подтверждается
-   с другой стороны и считается ЕДИНСТВЕННЫМ известным случаем «настройка
-   уехала с проектом».
+1. **There is no path mapping and nothing to build it from.** Our relative path is one immutable rule; a table "logical name → local path" (Resolve Path Mapping) is absent both from the project and from the program's settings, and material from a separate mount point travels as an absolute path.
+2. **There is no completeness check before handing a project over.** An analogue of `Generate Report Only` — "here is what this project needs on the other side" — does not exist; the closest thing is the list of unavailable sources at the moment the render settings are opened (`render_dialog.rs`), that is, on the RECIPIENT's side and too late.
+3. **`kt-cli` cannot name dependencies.** The commands are `new`, `convert`, `demo`, `roundtrip`, `render`, `export` (`src/apps/kt-cli/src/main.rs:127`); the cheapest form of check before handing over (`kt-cli deps <project>`) is missing, although all the material for it is already in the model.
+4. **`meters_w` travels with the project.** The only interface field on the far side of the boundary (`UiState::meters_w`, `src/libs/kt-model/src/project.rs:1547`; written in `src/apps/kt-app/src/app.rs:763`, overrides mine on opening — `app.rs:713`): open a foreign project, and the meters panel takes the width of the foreign one. The finding and the decision belong to F-UI-003; here it is confirmed from the other side and counts as the ONLY known case of "a setting traveled with the project".
 
-### Что мешает
+### What gets in the way
 
-**Разделитель пути и признак «абсолютный» у нас определяются ОС читателя, а не
-файлом, и на этом теряются данные молча.** `decode_file_url`
-(`src/libs/kt-otio/src/url.rs:27`) возвращает результат ДО проверки на
-абсолютность, а `media_target_url` (`url.rs:85`) для пути, который на этой ОС
-не абсолютный, делает `media_path.replace('\\', "/")` и пишет его как
-относительный. Оба случая воспроизводятся на собранном `kt-cli` за одну
-команду (`roundtrip` над копией `fixtures/demo-3d.otio` с подменённым
-`target_url`), оба дают код возврата 0:
+**The path separator and the "absolute" flag are determined for us by the reader's OS, not by the file, and data is lost silently because of this.** `decode_file_url` (`src/libs/kt-otio/src/url.rs:27`) returns its result BEFORE the check for absoluteness, and `media_target_url` (`url.rs:85`), for a path that is not absolute on this OS, does `media_path.replace('\\', "/")` and writes it as a relative one. Both cases are reproduced on the built `kt-cli` with a single command (`roundtrip` over a copy of `fixtures/demo-3d.otio` with a substituted `target_url`), and both return exit code 0:
 
-- `file://C%3A%5CFootage%5Cm1.mp4` — то, что НАШ ЖЕ писатель произведёт на
-  Windows для материала на другом диске (там `relativize` вернёт `None`), —
-  на Linux превращается в `C:/Footage/m1.mp4`, то есть абсолютный путь
-  становится ОТНОСИТЕЛЬНЫМ каталогу проекта, и следующее сохранение
-  записывает потерю на диск;
-- `media/take\01.mp4` — законное имя файла на ext4 — превращается в
-  `media/take/01.mp4`, то есть один файл становится файлом в подкаталоге.
+- `file://C%3A%5CFootage%5Cm1.mp4` — what OUR OWN writer produces on Windows for material on another drive (there `relativize` returns `None`) — on Linux turns into `C:/Footage/m1.mp4`, that is, the absolute path becomes RELATIVE to the project directory, and the next save writes the loss to disk;
+- `media/take\01.mp4` — a legitimate file name on ext4 — turns into `media/take/01.mp4`, that is, one file becomes a file in a subdirectory.
 
-Форма `file:///C:/Footage/m2.mp4` (её, по OTIO #1985, пишет Premiere 26.1)
-ведёт себя правильно — становится несуществующим `/C:/…` и честно показывается
-как пропавший исходник. То есть из трёх форм две тихие и одна громкая, и
-громкая — чужая.
+The form `file:///C:/Footage/m2.mp4` (which, according to OTIO #1985, Premiere 26.1 writes) behaves correctly: it becomes the non-existent `/C:/…` and is honestly shown as a missing source. So of the three forms, two are silent and one is loud, and the loud one is foreign.
 
-АДРЕС: src/libs/kt-otio/src/url.rs — класс «проект уехал между ОС и потерял путь молча» у нас ВОЗМОЖЕН и его не ловит ничто: `decode_file_url` (`url.rs:27`) отдаёт путь до проверки на абсолютность, `media_target_url` (`url.rs:85`) переписывает неабсолютный путь через `replace('\\', "/")`, а тест t147 (`src/libs/kt-otio/tests/format.rs:289`) проверяет все три формы `target_url` ТОЛЬКО в POSIX-виде — ни одного входа с `C:`, с обратным слэшем или с `file:///C:/…` во всём крейте нет.
+ADDRESS: src/libs/kt-otio/src/url.rs — the class "the project moved between OSes and silently lost its path" is POSSIBLE for us, and nothing catches it: `decode_file_url` (`url.rs:27`) returns the path before the absoluteness check, `media_target_url` (`url.rs:85`) rewrites a non-absolute path through `replace('\\', "/")`, and test t147 (`src/libs/kt-otio/tests/format.rs:289`) checks all three forms of `target_url` ONLY in POSIX form — there is not a single input with `C:`, with a backslash, or with `file:///C:/…` anywhere in the crate.
 
-Остальные упоры:
+The other pressure points:
 
-- **Байтовое равенство картинки — не свойство проекта, а свойство пары
-  «проект + машина».** Инвариант 11: CPU-путь байт-в-байт против эталона и
-  gated `linux/x86_64`; GPU-путь байт-в-байт только НА ОДНОМ УСТРОЙСТВЕ, между
-  машинами гарантируется лишь совпадение с CPU в допусках (t181/t182/t183).
-  При GPU по умолчанию (Р.29) это значит: тот же проект на другой машине даст
-  ДРУГИЕ БАЙТЫ законно. Никакого «расхождение — дефект» здесь заявить нельзя,
-  и любая формулировка о переносимости обязана это разделять.
-- **Инвариант 7 (код композиции один) держит только половину.** Он
-  гарантирует, что превью и экспорт совпадают НА ОДНОМ бэкенде, и ничего не
-  говорит о двух машинах. Смежная заметка про расхождение превью и вывода —
-  F-RES-008.
-- **Отчёт о зависимостях — это текст, а текст стоит пяти языков** и предела
-  160 символов (`src/apps/kt-app/build.rs:42`), глифов t100, сабсетов,
-  t125/t128/t131; подробности — F-HLP-033.
-- **Правило 20 чек-листа.** Отображение путей — это состояние, которое
-  «помнит» программа; оно обязано заводиться явной командой, а не
-  накапливаться само при каждой перепривязке. Resolve сделал наоборот
-  (`Automatically setup when relinking` — галка), и это ровно тот случай, где
-  чужое умолчание нам не годится.
+- **Byte equality of the picture is not a property of the project, but a property of the pair "project + machine".** Invariant 11: the CPU path is byte-for-byte against the reference and gated to `linux/x86_64`; the GPU path is byte-for-byte ONLY ON ONE DEVICE, and between machines only agreement with the CPU within tolerances is guaranteed (t181/t182/t183). With GPU by default (R.29) this means: the same project on another machine will legitimately produce DIFFERENT BYTES. No claim of "divergence is a defect" can be made here, and any statement about portability must make this distinction.
+- **Invariant 7 (the composition code is one) holds only half.** It guarantees that preview and export coincide ON ONE backend, and says nothing about two machines. A related note about the divergence of preview and output is F-RES-008.
+- **The dependency report is text, and text costs five languages and a limit of 160 characters** (`src/apps/kt-app/build.rs:42`), glyphs of t100, subsets, t125/t128/t131; details are in F-HLP-033.
+- **Rule 20 of the checklist.** Path mapping is state that the program "remembers"; it must be created by an explicit command, not accumulate by itself on every relink. Resolve did the opposite (`Automatically setup when relinking` — a checkbox), and this is exactly the case where another product's default does not suit us.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Корневой `CLAUDE.md`: **9** (экспорт внутрипроцессный, энкодер выбирается на
-машине получателя реальной проверкой открытия) и **10** (dlopen системного
-FFmpeg) — это те два, за счёт которых у нас класс «чужое железо» и так решён
-лучше, чем у девяти открытых редакторов вместе взятых, и трогать их нельзя;
-**11** (детерминизм) — задевается по-настоящему: обещание «у получателя
-получится то же самое» на GPU-пути не выполняется по построению, и заметка
-обязана говорить про допуски, а не про байты; **7** (код композиции один) —
-только как напоминание, что он про бэкенды, а не про машины.
+The root `CLAUDE.md`: **9** (the export is in-process, the encoder is chosen on the recipient's machine by a real opening check) and **10** (dlopen of the system FFmpeg) are the two thanks to which our class "foreign hardware" is already solved better than in nine open editors taken together, and they must not be touched; **11** (determinism) is really affected: the promise "the recipient will get the same result" is not fulfilled by construction on the GPU path, and the note must speak about tolerances, not about bytes; **7** (the composition code is one) only as a reminder that it concerns backends, not machines.
 
-Правила чек-листа `src/apps/kt-app/CLAUDE.md`: **16** (невозможность —
-ОШИБКА: сегодня чужой `C:`-путь не даёт ни ошибки, ни заглушки, потому что
-превращается в валидный относительный), **19** (диалог обязан сказать, где
-изменить решение — касается любого будущего отображения путей), **20** (ничего
-не отрастает само — правило переезда заводится командой, а не привычкой
-программы).
+Checklist rules of `src/apps/kt-app/CLAUDE.md`: **16** (impossibility must be an ERROR: today a foreign `C:` path gives neither an error nor a placeholder, because it turns into a valid relative one), **19** (the dialog must say where to change the decision — applies to any future path mapping), **20** (nothing grows by itself: the move rule is created by a command, not by a habit of the program).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2–3 стадии: (1) кросс-ОС-путь: `target_url` читается и пишется по объявленной форме, чужой абсолют становится ЗАГЛУШКОЙ, а не тихой относительной ссылкой — S; (2) `kt-cli deps` и та же проверка перед отдачей в GUI — S; (3) отображение «логическое имя → локальный путь» как явная команда — M |
-| Где основная работа | kt-otio (`url.rs`: форма пути, признак «абсолютный» без участия ОС читателя), kt-cli (`deps`), kt-app (сообщение о неразрешимом пути по правилу 16), kt-model — только на стадии 3 и только если отображение решено хранить в проекте |
-| Формат проекта | стадии 1–2 не трогают: `target_url` уже строка, форма лишь фиксируется и документируется в `docs/file-format.md`. Стадия 3 трогает — таблица отображения либо новый ключ в `metadata.kt` (тогда `kt.v` растёт, читатель старых файлов обязан пережить его отсутствие), либо файл настроек программы; развилка решается в раунде, не здесь |
-| Тесты, которые придётся написать | t147 расширить входами `C:\…`, `file://C%3A%5C…`, `file:///C:/…` и относительным путём с обратным слэшем в имени — сегодня ни одного нет; «чужой абсолютный путь другой ОС читается как ПРОПАВШИЙ исходник и переписывается обратно НЕТРОНУТЫМ» (идемпотентность по правилам t144–t147); `kt-cli deps` перечисляет ровно `MediaRef::path` и `synth:` и ничего больше; harness-тест «открытие чужого проекта не двигает ширину панели метров» (общий с F-UI-003) |
-| Зависит от | F-MED-005 (перепривязка — то, чем чинится найденное), F-RES-003 (версия формата — соседняя половина «файл из другого места»), F-UI-003 (`meters_w`), F-HLP-011 (префлайт — поверхность для отчёта о зависимостях) |
-| Ломает совместимость | нет; стадия 1 меняет только ПОВЕДЕНИЕ на входах, которые сегодня обрабатываются неверно |
+| Scope | M — 2–3 stages: (1) cross-OS path: `target_url` is read and written in the declared form, a foreign absolute path becomes a PLACEHOLDER, not a silent relative link — S; (2) `kt-cli deps` and the same check before handing over in the GUI — S; (3) the mapping "logical name → local path" as an explicit command — M |
+| Where the main work is | kt-otio (`url.rs`: path form, the "absolute" flag without involving the reader's OS), kt-cli (`deps`), kt-app (message about an unresolvable path under rule 16), kt-model — only in stage 3 and only if the mapping is decided to be stored in the project |
+| Project format | stages 1–2 do not touch it: `target_url` is already a string, the form is only pinned down and documented in `docs/file-format.md`. Stage 3 touches it — the mapping table is either a new key in `metadata.kt` (then `kt.v` grows, and the reader of old files must survive its absence), or a file of the program's settings; the fork is decided in the round, not here |
+| Tests to write | extend t147 with inputs `C:\…`, `file://C%3A%5C…`, `file:///C:/…` and a relative path with a backslash in the name — today there are none; "a foreign absolute path of another OS is read as a MISSING source and is rewritten back UNTOUCHED" (idempotence under the rules of t144–t147); `kt-cli deps` lists exactly `MediaRef::path` and `synth:` and nothing more; a harness test "opening a foreign project does not move the meters panel width" (shared with F-UI-003) |
+| Depends on | F-MED-005 (relinking — what the found issue is fixed with), F-RES-003 (format version — the neighboring half of "a file from another place"), F-UI-003 (`meters_w`), F-HLP-011 (preflight — the surface for the dependency report) |
+| Breaks compatibility | no; stage 1 changes only the BEHAVIOR on inputs that are processed incorrectly today |
 
-## Вердикт
+## Verdict
 
-**Берём стадии 1–2, стадию 3 откладываем до появления второго сценария.**
-Разведка изменила предмет заметки. Ожидалось, что слабое место — состав того,
-что уезжает: шрифты, LUT, плагины, настройки железа. Оказалось, что этого
-состава у нас нет вовсе и не по недосмотру: титров нет, LUT нет, плагины
-отвергнуты (F-EXT-001), энкодер выбирается на машине получателя реальной
-проверкой открытия (инварианты 9 и 10), настройки рендера не переживают даже
-перезапуск, а во всей модели ровно одно поле с путём. По ПОЛНОТЕ переезда мы
-не догоняем пятёрку — мы в положении, которого у неё нет, и оплачено оно
-отказом от плагинов, а не работой.
+**We take stages 1–2 and defer stage 3 until a second scenario appears.**
+The reconnaissance changed the subject of the note. It was expected that the weak point was the composition of what travels: fonts, LUTs, plugins, hardware settings. It turned out that we do not have this composition at all, and not through an oversight: there are no titles, no LUTs, plugins are rejected (F-EXT-001), the encoder is chosen on the recipient's machine by a real opening check (invariants 9 and 10), render settings do not survive even a restart, and the whole model contains exactly one field with a path. In terms of COMPLETENESS of the move we do not catch up with the five; we are in a position they do not have, and it was paid for by rejecting plugins, not by work.
 
-Слабое место оказалось на одну ступень ниже и целиком наше: **разделитель пути
-и признак «абсолютный» определяются операционной системой ЧИТАТЕЛЯ**, поэтому
-из трёх форм чужого `target_url` две теряются молча, а одна из этих двух —
-та, что производит наш собственный писатель на Windows. Это ровно тот исход,
-который F-RES-003 называет третьим и худшим («открылось, и части монтажа в нём
-больше нет»), только применённый не к версии формата, а к пути: ошибки нет,
-код возврата 0, следующее сохранение записывает потерю. Цена починки — S, и
-она вся в `url.rs` и в t147.
+The weak point turned out to be one level lower and entirely ours: **the path separator and the "absolute" flag are determined by the READER's operating system**, therefore of the three forms of a foreign `target_url`, two are lost silently, and one of those two is the one our own writer produces on Windows. This is exactly the outcome that F-RES-003 calls the third and worst ("it opened, and parts of the edit are no longer in it"), only applied not to the format version but to the path: there is no error, the exit code is 0, and the next save writes the loss. The cost of the fix is S, and all of it is in `url.rs` and in t147.
 
-Стадия 3 (отображение путей по образцу Resolve) откладывается сознательно:
-сегодня у нас один пользователь на одной машине, а относительный путь уже
-покрывает единственный живой сценарий — «переехало всё вместе». Заводить
-именованные точки монтирования раньше, чем появится второй участник, значит
-завести состояние, которое некому проверять. Но оговорка первой волны остаётся
-в силе с обратным знаком: как только появится «пользовательское хранилище вне
-проекта» (вывод 2 README, четыре фичи), у него в тот же день обязан появиться
-переключатель «положить внутрь проекта» — иначе мы своими руками воспроизведём
-Flowblade #1168, где проект ссылается на служебный каталог автора и умирает у
-получателя при СОХРАНЕНИИ.
+Stage 3 (path mapping modeled on Resolve) is deferred deliberately: today we have one user on one machine, and the relative path already covers the only live scenario, "everything moved together". Creating named mount points before a second participant appears means creating state that nobody can verify. But the caveat of the first wave remains in force with the opposite sign: as soon as a "user storage outside the project" appears (conclusion 2 of the README, four features), it must have a "put inside the project" switch on the same day, otherwise we would by our own hands reproduce Flowblade #1168, where a project refers to the author's service directory and dies on the recipient's side when SAVING.
 
-## Источники
+## Sources
 
-Ядро — по мануалам; живьём не запускался ни один редактор. Открытые
-редакторы — по выгрузкам трекеров (`_trackers.md`). Наш код проверен грепом и
-запуском собранного `target/debug/kt-cli`. Дата обращения ко всему —
-2026-09-08.
+The core is based on manuals; no editor was run live. Open editors are based on tracker dumps (`_trackers.md`). Our code was verified by grep and by running the built `target/debug/kt-cli`. The access date for everything is 2026-09-08.
 
-**Ядро.**
+**Core.**
 
-- DaVinci Resolve 21 Reference Manual, гл. 6 «Setup and Workflows», раздел
-  «Path Mapping» (пример Mac/PC, `Project Media Locations`, `Automatically
-  setup when relinking`, сравнение с `Mapped Mount`) и гл. 2 «Using Path
-  Mapping to Access Volumes From Other Operating Systems» — PDF скачан и
-  прочитан локально,
+- DaVinci Resolve 21 Reference Manual, ch. 6 "Setup and Workflows", section "Path Mapping" (the Mac/PC example, `Project Media Locations`, `Automatically setup when relinking`, comparison with `Mapped Mount`) and ch. 2 "Using Path Mapping to Access Volumes From Other Operating Systems" — PDF downloaded and read locally,
   https://documents.blackmagicdesign.com/UserManuals/DaVinci_Resolve_21_Reference_Manual.pdf
-- Final Cut Pro User Guide for Mac 12.3, «Manage Motion content» (с. 874–875):
-  `Motion Content: In Library`, `Consolidate`, и фраза «Regardless, you must
-  manually track and move any third-party (FxPlug) content, because it is not
-  managed within the Final Cut Pro library» — PDF прочитан локально,
+- Final Cut Pro User Guide for Mac 12.3, "Manage Motion content" (pp. 874–875): `Motion Content: In Library`, `Consolidate`, and the phrase "Regardless, you must manually track and move any third-party (FxPlug) content, because it is not managed within the Final Cut Pro library" — PDF read locally,
   https://support.apple.com/guide/final-cut-pro/welcome/mac
-- After Effects, `Collect Files` и состав отчёта («files, effects, and fonts»)
-  — по разбору F-MED-005, не переоткрывался; текст предупреждения о подмене
-  шрифта — по форуму Adobe (ссылка ниже). `[НЕ ПРОВЕРЕНО]` для 26.x:
-  `helpx.adobe.com` из этого окружения по-прежнему не открывается («proxy
-  refused the connection»), оговорка первой волны в `_editors.md` остаётся в
-  силе
-- Adobe Premiere 26.x: разделы `Project Manager`, `Adobe Fonts`, `Team
-  Projects`, `Convert online clips to offline clips` подтверждены только по
-  оглавлению справки Adobe; `[НЕ ПРОВЕРЕНО]` по той же причине
-- VEGAS Pro 2026.0: двоичный формат и Windows-only — по F-RES-003, где это
-  разобрано с цитатой вендора; отдельной проверки не было
+- After Effects, `Collect Files` and the composition of the report ("files, effects, and fonts") — based on the analysis in F-MED-005, not reopened; the text of the font-substitution warning is from the Adobe forum (link below). `[NOT VERIFIED]` for 26.x: `helpx.adobe.com` still does not open from this environment ("proxy refused the connection"), the caveat of the first wave in `_editors.md` remains in force
+- Adobe Premiere 26.x: the sections `Project Manager`, `Adobe Fonts`, `Team Projects`, `Convert online clips to offline clips` are confirmed only by the table of contents of Adobe's help; `[NOT VERIFIED]` for the same reason
+- VEGAS Pro 2026.0: binary format and Windows-only — from F-RES-003, where this is analyzed with a quote from the vendor; no separate check was made
 
-**Трекеры** (числа воспроизводятся `tracker-rank.py --query` с фильтрами из
-строк `СИГНАЛ:`; дампы — `~/.cache/kinotrain/trackers/`, в репозиторий не
-попадают).
+**Trackers** (the numbers are reproduced by `tracker-rank.py --query` with the filters from the `SIGNAL:` lines; the dumps are in `~/.cache/kinotrain/trackers/` and are not in the repository).
 
-- Класс своим именем: https://bugs.kde.org/show_bug.cgi?id=518992 (CONFIRMED,
-  15.04.2026), https://github.com/OpenShot/openshot-qt/issues/1334,
-  https://github.com/jliljebl/flowblade/issues/1168 (открыт),
-  https://github.com/mltframework/shotcut/issues/710; смежные —
-  openshot 988, 2727, 3129, kde-bugzilla 416469, kde-invent 729
-- Локаль: https://github.com/mltframework/shotcut/issues/713,
-  https://github.com/mltframework/mlt/issues/580,
-  https://invent.kde.org/multimedia/kdenlive/-/work_items/589 и 713 («Use the
-  C locale for project files»),
-  https://bugs.kde.org/show_bug.cgi?id=414370, 357991; shotcut 166, 186
-- Пути и зависимости Kdenlive: 501914 (шрифты не пакуются, UNCONFIRMED),
-  431604 (`.pgm` абсолютом), 495091 (корневой путь ломает перенос каталога,
-  ASSIGNED с 2024), 363363, 405249 (текст в SVG рисуется шрифтами машины),
-  476371 (закрыт WORKSFORME)
-- Плагины как внешняя зависимость: mlt 274, olive 14, kde-bugzilla 513318,
-  pitivi 1449 — и весь фильтр первой строки `СИГНАЛ:`
-- Форма `target_url` и кросс-ОС-пути в эталонной библиотеке:
-  https://github.com/AcademySoftwareFoundation/OpenTimelineIO/issues/904
-  (открыт с 2021), 1985 (11.12.2025); отдельно 581 — разделитель списка путей
-  в переменной окружения (`os.pathsep` вместо `:`), тот же класс на уровне
-  установки
-- Другое значение слова «portable» (программа с флешки, в счёт не входит):
-  losslesscut 645, 2055, 2343
+- The class by its own name: https://bugs.kde.org/show_bug.cgi?id=518992 (CONFIRMED, 15.04.2026), https://github.com/OpenShot/openshot-qt/issues/1334, https://github.com/jliljebl/flowblade/issues/1168 (open), https://github.com/mltframework/shotcut/issues/710; related — openshot 988, 2727, 3129, kde-bugzilla 416469, kde-invent 729
+- Locale: https://github.com/mltframework/shotcut/issues/713, https://github.com/mltframework/mlt/issues/580, https://invent.kde.org/multimedia/kdenlive/-/work_items/589 and 713 ("Use the C locale for project files"), https://bugs.kde.org/show_bug.cgi?id=414370, 357991; shotcut 166, 186
+- Kdenlive paths and dependencies: 501914 (fonts are not packed, UNCONFIRMED), 431604 (`.pgm` as absolute), 495091 (the root path breaks moving the directory, ASSIGNED since 2024), 363363, 405249 (text in SVG is drawn with the machine's fonts), 476371 (closed WORKSFORME)
+- Plugins as an external dependency: mlt 274, olive 14, kde-bugzilla 513318, pitivi 1449 — and the whole filter of the first `SIGNAL:` line
+- The form of `target_url` and cross-OS paths in the reference library: https://github.com/AcademySoftwareFoundation/OpenTimelineIO/issues/904 (open since 2021), 1985 (11.12.2025); separately 581 — the separator of the path list in an environment variable (`os.pathsep` instead of `:`), the same class at the installation level
+- Another meaning of the word "portable" (a program run from a flash drive, not counted): losslesscut 645, 2055, 2343
 
-**Форумы (цитаты).**
+**Forums (quotes).**
 
 - https://community.adobe.com/t5/after-effects-discussions/after-effects-warning-fonts-that-are-not-currently-available/td-p/9598778
-  (точный текст предупреждения AE о подмене шрифта, 12.01.2018)
+  (the exact text of the AE warning about font substitution, 12.01.2018)
 
-**Наш код (проверено грепом и запуском).**
+**Our code (verified by grep and by running).**
 
-- `src/libs/kt-otio/src/url.rs`, `src/libs/kt-otio/tests/format.rs:289`
-  (t147), `src/libs/kt-otio/src/convert.rs:72` и `:1362`,
-  `src/libs/kt-model/src/project.rs:1780` и `:1547`,
-  `src/apps/kt-app/src/render_dialog.rs:46`,
-  `src/apps/kt-app/src/app.rs:5247`, `:763` и `:713`,
-  `src/apps/kt-app/src/icons.rs:55`,
-  `src/libs/kt-ffmpeg/src/muxer_impl.rs:16`,
-  `src/libs/kt-engine/src/export.rs:407`,
-  `src/apps/kt-cli/src/main.rs:127`, `src/fixtures/demo-3d.otio`
-- Воспроизведение обеих тихих потерь: копия `fixtures/demo-3d.otio` с
-  подменённым `target_url` + `target/debug/kt-cli roundtrip in.otio out.otio`
-  (код 0, вывод «byte-stable: false»)
+- `src/libs/kt-otio/src/url.rs`, `src/libs/kt-otio/tests/format.rs:289` (t147), `src/libs/kt-otio/src/convert.rs:72` and `:1362`, `src/libs/kt-model/src/project.rs:1780` and `:1547`, `src/apps/kt-app/src/render_dialog.rs:46`, `src/apps/kt-app/src/app.rs:5247`, `:763` and `:713`, `src/apps/kt-app/src/icons.rs:55`, `src/libs/kt-ffmpeg/src/muxer_impl.rs:16`, `src/libs/kt-engine/src/export.rs:407`, `src/apps/kt-cli/src/main.rs:127`, `src/fixtures/demo-3d.otio`
+- Reproduction of both silent losses: a copy of `fixtures/demo-3d.otio` with a substituted `target_url` + `target/debug/kt-cli roundtrip in.otio out.otio` (exit code 0, output "byte-stable: false")
 
-**Что искали и НЕ нашли** (чтобы следующая волна не искала заново). Жалоб на
-подмену шрифта при переносе проекта в девяти открытых трекерах практически
-нет: фильтр `missing.*font|font.*missing|no font|wrong font` даёт 2 задачи на
-25 442 записи (kde-bugzilla 401903, openshot 3063), а
-`font.{0,30}(embed|not installed|install|substitut)` — ровно одну (openshot
-4536), и та про установку шрифта в СВОЮ систему, а не про чужую. Похоже, что
-класс существует, но подаётся под другим именем: у открытых редакторов титр —
-это генератор движка или SVG, и подмена шрифта выглядит как «текст рисуется
-неправильно» (kde-bugzilla 405249 — текст в импортированном SVG; 499355 —
-шрифт субтитров, закрыта WORKSFORME). Проверить эту догадку счётом не на чем,
-и следующей волне стоит начинать не со слова `font`. Поэтому «Фишка фишки»
-опирается в этой
-части на мануалы и форум Adobe, а не на счёт. Выгрузки `blender-vse` и
-`ffmpeg-trac` на эту дату пусты; `openshot` не закончена (4516 записей из
-~4907 объявленных в реестре), поэтому openshot цитируется, но в процентные
-сравнения строк `СИГНАЛ:` не берётся — тот же порядок, что в F-MED-005.
+**What was searched for and NOT found** (so that the next wave does not search again). In the nine open trackers there are practically no complaints about font substitution when a project is moved: the filter `missing.*font|font.*missing|no font|wrong font` gives 2 tasks out of 25,442 records (kde-bugzilla 401903, openshot 3063), and `font.{0,30}(embed|not installed|install|substitut)` gives exactly one (openshot 4536), and that one is about installing a font on ITS OWN system, not on a foreign one. It seems the class exists but is filed under another name: in open editors a title is the engine's generator or SVG, and a font substitution looks like "text is drawn incorrectly" (kde-bugzilla 405249 — text in an imported SVG; 499355 — the subtitle font, closed WORKSFORME). There is nothing to check this guess with by counting, and the next wave should not start with the word `font`. Therefore "The trick behind it" relies in this part on the manuals and the Adobe forum, not on counting. The dumps of `blender-vse` and `ffmpeg-trac` are empty as of this date; `openshot` is not finished (4516 records out of ~4907 declared in the registry), so openshot is quoted but is not included in the percentage comparisons of the `SIGNAL:` lines — the same order as in F-MED-005.

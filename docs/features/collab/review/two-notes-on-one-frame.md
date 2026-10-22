@@ -1,12 +1,12 @@
 ---
 id: F-COL-021
-title: Две заметки на одном кадре
-status: исследовано
+title: Two notes on one frame
+status: researched
 priority: B
 cost: S
 category: collab/review
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, syncthing-2]
-we_have: нет
+we_have: no
 crates: [kt-model, kt-app]
 invariants: []
 ui_rules: [16, 17, 20]
@@ -19,233 +19,141 @@ services: [frame-io, syncthing]
 checked: 2026-09-08
 ---
 
-# F-COL-021 — Две заметки на одном кадре
+# F-COL-021 — Two notes on one frame
 
-## Суть
+## Essence
 
-Двое смотрят один и тот же просмотровый ролик и оба останавливаются на одном
-кадре: режиссёр говорит «склейка рано», звукорежиссёр — «здесь щелчок». Это не
-совпадение и не редкость: стоп-кадр и есть общий язык, поэтому проблемные места
-у разных людей совпадают чаще, чем расходятся.
+Two people watch the same review cut and both stop on the same frame: the director says "the cut is early", the sound engineer says "here is a click". This is neither a coincidence nor a rarity: a freeze frame is a common language, so problem spots coincide among different people more often than they diverge.
 
-Вопрос заметки один: что делает программа, когда вторая заметка приходит на
-занятый кадр. Ответов ровно три — сложить в стопку, отказать, молча выкинуть, — и
-третий встречается чаще, чем кажется.
+The question of this note is one: what does the program do when a second note arrives on an occupied frame? There are exactly three answers — stack it, refuse it, or silently discard it — and the third occurs more often than it seems.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Markers / Regions | метка адресуется позицией; двух меток в одной точке одной линейки нет. Обходной путь исторический — РЕГИОНЫ, они перекрываются, поэтому «вторая заметка» выражается второй областью, а не второй меткой `[НЕ ПРОВЕРЕНО]` для 2026.0 |
-| Adobe Premiere | 26.x | Sequence markers + clip markers | второй «этаж» есть, но он не про людей: метка живёт и на секвенции, и на клипе, и это два разных пространства адресов. Реплики Frame.io приезжают в одно из них, и при импорте двух комментариев на один кадр вторая метка ложится на то же место, что первая |
-| DaVinci Resolve | 21 | Markers (timeline / clip) + Flags | три носителя разом: маркер таймлайна, маркер клипа и флаг у исходника. Флаг не имеет времени вовсе, поэтому «две заметки на кадре» частично решаются сменой НОСИТЕЛЯ, а не разрешением дубля |
-| Final Cut Pro | 12.3 | Markers на клипах | линейки для меток нет вообще: «You work with markers in the same way for clips in the browser and clips in the timeline». Значит два кадра-близнеца — это два клипа, и на общей вертикали одного момента меток может быть столько, сколько под курсором клипов |
-| After Effects | 26.x | Layer markers + Composition markers | ровно два уровня, и они независимы: маркер слоя и маркер композиции могут стоять на одном кадре, потому что принадлежат разным объектам. Число заметок на кадр = число слоёв плюс один |
+| VEGAS Pro | 2026.0 | Markers / Regions | a marker is addressed by position; there are no two markers at one point of one ruler. The historical workaround is REGIONS: they overlap, so a "second note" is expressed by a second area, not a second marker `[NOT VERIFIED]` for 2026.0 |
+| Adobe Premiere | 26.x | Sequence markers + clip markers | a second "floor" exists, but it is not about people: a marker lives both on the sequence and on the clip, and these are two different spaces of addresses. Frame.io replies arrive in one of them, and when two comments on one frame are imported, the second marker lands on the same spot as the first |
+| DaVinci Resolve | 21 | Markers (timeline / clip) + Flags | three carriers at once: a timeline marker, a clip marker and a flag on the source. A flag has no time at all, so "two notes on a frame" are partly solved by changing the CARRIER, not by resolving the duplicate |
+| Final Cut Pro | 12.3 | Markers on clips | there is no ruler for markers at all: "You work with markers in the same way for clips in the browser and clips in the timeline". So two twin frames are two clips, and on the shared vertical of one moment there can be as many markers as there are clips under the cursor |
+| After Effects | 26.x | Layer markers + Composition markers | exactly two levels, and they are independent: a layer marker and a composition marker can stand on one frame, because they belong to different objects. The number of notes per frame = the number of layers plus one |
 
-**Вне ядра.** Нужны два источника: тот, где ограничение СФОРМУЛИРОВАНО вместе со
-своей областью действия, и тот, где столкновение разрешено формально, а не на
-глазок.
+**Outside the core.** Two sources are needed: one where the limitation is FORMULATED together with its scope of action, and one where a collision is resolved formally, not by eye.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Live Timecode Notes (editingtools.io) | 2025–2026 | сессия логгера | «Only one comment is allowed per timecode in a single user session» — уникальность по времени объявлена явно и ОГРАНИЧЕНА одной сессией одного человека; в командном событии до 100 логгеров, и каждый кладёт на тот же таймкод свою заметку, потому что пространств столько же, сколько имён |
-| OTRN | 1 (ноябрь 2025) | `notes[].replies` | ответ на заметку — не вторая заметка, а элемент массива `replies` внутри первой: «An array of reply objects for threaded discussion. Can be empty». Второе высказывание про кадр выражается вложенностью, а не соседством |
-| Syncthing | 2.x | `.sync-conflict-…` | эталон формального разрешения: проигравший не исчезает, а ПЕРЕИМЕНОВЫВАЕТСЯ в `<имя>.sync-conflict-<дата>-<время>-<кем>.<ext>`, файлы-конфликты «are treated as normal files» и расходятся по всем узлам. Правило детерминировано до последнего бита: проигрывает более старое время правки, при равенстве — устройство с бо́льшими первыми 63 битами device ID |
+| Live Timecode Notes (editingtools.io) | 2025–2026 | logger session | "Only one comment is allowed per timecode in a single user session" — uniqueness by time is declared explicitly and LIMITED to one session of one person; in a team event there are up to 100 loggers, and each puts their note on the same timecode, because there are as many spaces as there are names |
+| OTRN | 1 (November 2025) | `notes[].replies` | a reply to a note is not a second note, but an element of the `replies` array inside the first: "An array of reply objects for threaded discussion. Can be empty". A second statement about a frame is expressed by nesting, not by adjacency |
+| Syncthing | 2.x | `.sync-conflict-…` | the reference for formal conflict resolution: the loser does not disappear but is RENAMED to `<name>.sync-conflict-<date>-<time>-<who>.<ext>`; conflict files "are treated as normal files" and spread to all nodes. The rule is deterministic to the last bit: the older modification time loses; on a tie, the device with the larger first 63 bits of the device ID |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Уникальность заметки по времени — законное правило ОДНОГО автора и прямой
-запрет на второго.** Формулировка Live Timecode Notes показывает это дословно:
-ограничение «одна заметка на таймкод» существует, но область его действия —
-`a single user session`. Внутри одного потока сознания две заметки на один кадр
-и правда бессмысленны: человек допишет первую. Стоит расширить ту же область до
-таймлайна, и то же самое правило превращается в «второму сказать нечего»,
-причём код при этом не меняется ни на строку — меняется только то, сколько людей
-делят одно пространство адресов.
+**1. Uniqueness of a note by time is a legitimate rule for ONE author and a direct ban on a second one.** The wording of Live Timecode Notes shows this verbatim: the restriction "one note per timecode" exists, but its scope is `a single user session`. Within one stream of consciousness two notes on one frame are indeed pointless: the person will just finish the first. Extend the same scope to the timeline and the very same rule becomes "the second has nothing to say", and the code does not change by a single line in the process — only the number of people sharing one address space changes.
 
-**2. Все, кто «умеет» две заметки на кадре, умеют это не про людей, а про
-ОБЪЕКТЫ.** У Premiere второй этаж — маркер клипа против маркера секвенции; у
-After Effects — маркер слоя против маркера композиции; у Resolve третьим идёт
-флаг, у которого времени нет вовсе; у Final Cut линейки нет, и число заметок на
-кадре равно числу клипов под курсором. То есть ёмкость кадра нигде не равна
-числу людей — она равна числу носителей, и второй рецензент попадает в стопку
-случайно, заняв свободный этаж. Ровно поэтому импорт рецензии на одну дорожку
-схлопывает мнения, оставаясь «по спецификации» исправным.
+**2. Everyone who "can" put two notes on a frame does it not for people but for OBJECTS.** In Premiere the second floor is a clip marker versus a sequence marker; in After Effects, a layer marker versus a composition marker; in Resolve a third is a flag, which has no time at all; in Final Cut there is no ruler, and the number of notes on a frame equals the number of clips under the cursor. That is, the capacity of a frame is nowhere equal to the number of people — it is equal to the number of carriers, and a second reviewer lands in the stack by accident, by occupying a free floor. Precisely for this reason importing a review onto one track collapses the opinions while remaining "formally correct per the specification".
 
-**3. Отраслевой выход из тупика — не разрешить дубль, а сменить отношение.** OTRN
-не добавляет второй заметке права стоять на том же кадре: он делает вторую
-заметку ОТВЕТОМ внутри первой (`replies`). Это меняет вопрос: не «сколько
-заметок помещается на кадр», а «одна ли это тема». И этого достаточно, чтобы
-уникальность по времени перестала мешать: на кадре всегда одна нить, а
-высказываний в ней сколько угодно.
+**3. The industry way out of the deadlock is not to allow the duplicate but to change the relation.** OTRN does not add the right for a second note to stand on the same frame: it makes the second note a REPLY inside the first (`replies`). This changes the question: not "how many notes fit on a frame", but "is this one topic". And that is enough for the time uniqueness to stop interfering: on a frame there is always one thread, and there can be as many statements in it as you like.
 
-**4. Промышленный ответ на столкновение известен, и он не про монтаж.** Syncthing
-— единственное место, где правило записано целиком: проигравший переименовывается
-и остаётся обычным файлом, который расходится по всем узлам. Ценна не схема имени,
-а принцип: сторона, разрешающая конфликт, НЕ ИМЕЕТ ПРАВА уменьшать число
-объектов. Всё, что молча схлопывает два в один, отличается от этого не строгостью,
-а тем, что потерю никто не увидит.
+**4. The industrial answer to a collision is known, and it is not about editing.** Syncthing is the only place where the rule is written in full: the loser is renamed and remains an ordinary file, which spreads across all nodes. What matters is not the naming scheme but the principle: the side resolving the conflict MUST NOT reduce the number of objects. Anything that silently collapses two into one differs from this not by strictness, but by the fact that the loss is never seen.
 
-## Плюсы
+## Pros
 
-- Одна заметка на кадр внутри одного автора — правильное умолчание: оно
-  превращает случайный повторный жест в правку уже сказанного, а не в мусор.
-- Разные носители (клип, дорожка, монтаж) дают ёмкость бесплатно и заодно
-  отвечают на вопрос «про что заметка» — про кадр или про этот дубль.
-- Нить ответов вместо соседства делает адрес по времени достаточным: стопке не
-  нужен свой порядок, у неё есть порядок реплик.
-- Формальное правило разрешения конфликта (кто проигрывает и что с ним
-  происходит) дороже любой эвристики: его можно проверить тестом и объяснить
-  человеку.
+- One note per frame within one author is the right default: it turns an accidental repeated gesture into an edit of what has already been said, rather than into junk.
+- Different carriers (clip, track, edit) provide capacity for free and at the same time answer the question "what is this note about" — about the frame or about this take.
+- A thread of replies instead of adjacency makes the address by time sufficient: the stack does not need its own order, it has the order of replies.
+- A formal rule for resolving a conflict (who loses and what happens to the loser) is more valuable than any heuristic: it can be checked by a test and explained to a person.
 
-## Минусы
+## Cons
 
-- Ёмкость по числу носителей — иллюзия ёмкости: два человека, работающие в одном
-  слое, всё равно дерутся за одну ячейку.
-- Стопка на кадре нечитаема глазами: флажки рисуются в одной точке линейки, и
-  пока не наведёшь, видно ровно одну заметку.
-- Нить ответов требует идентичности у корневой заметки — то есть того самого
-  `noteId`, ради которого OTRN и заводился; без него ответ некуда прицепить.
-- Правило «проигравший переименовывается» плодит объекты: у Syncthing файлы
-  конфликтов расползаются по всем узлам, и чистить их приходится вручную.
+- Capacity by the number of carriers is an illusion of capacity: two people working in one layer still fight over one cell.
+- A stack on a frame is unreadable by eye: flags are drawn at one point of the ruler, and until you hover, only one note is visible.
+- A reply thread requires an identity for the root note — that is, the very `noteId` for whose sake OTRN was created; without it the reply has nowhere to attach.
+- The rule "the loser is renamed" multiplies objects: in Syncthing conflict files spread across all nodes, and they have to be cleaned up by hand.
 
-## Что говорят пользователи
+## What users say
 
-Самое ценное здесь — не жалоба, а место, где ограничение названо ВМЕСТЕ со своей
-областью действия. Это ровно та строка, которая отличает «правило одного автора»
-от «запрета на второго»:
+The most valuable thing here is not a complaint but a place where a restriction is named TOGETHER with its scope of action. This is exactly the line that separates "a rule for one author" from "a ban on a second one":
 
 > Only one comment is allowed per timecode in a single user session.
-> — Live Timecode Notes, раздел «The basics of this tool», editingtools.io,
-> https://editingtools.io/livenotes/ (дата обращения 2026-09-08)
+> — Live Timecode Notes, section "The basics of this tool", editingtools.io,
+> https://editingtools.io/livenotes/ (accessed 2026-09-08)
 
-Отрицательная половина фидбека — про то, что происходит, когда чужая рецензия
-всё-таки приезжает на занятое место: заголовок треда Adobe про Frame.io V4 звучит
-как «keeps overwriting comments markers», и обходом там оказалось закрыть панель
-целиком (Andrew C. Brinsmead, 28.10.2025,
+The negative half of the feedback concerns what happens when someone else's review does land on an occupied spot: the Adobe thread about Frame.io V4 is titled "keeps overwriting comments markers", and the workaround there turned out to be closing the panel entirely (Andrew C. Brinsmead, 28.10.2025,
 https://community.adobe.com/t5/premiere-pro-bugs/frame-io-v4-keeps-overwriting-comments-markers-in-premiere-pro-pro/idi-p/15565768).
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What we already have
 
-У нас правило «одна метка на тик» реализовано ТРИЖДЫ и все три раза по-разному —
-это и есть находка заметки.
+We implement the rule "one marker per tick" THREE times, and all three times differently — and that is the finding of this note.
 
-1. **Честная ошибка.** `Command::AddMarker` проверяет занятость и возвращает
-   `CommandError::MarkerExists(Tick)`; `MoveMarker` — то же самое для цели
-   (`src/libs/kt-model/src/model.rs`). Это ровно правило чек-листа UI 16:
-   невозможность действия показывается ошибкой, а не блёклой подсказкой.
-2. **Считанный отказ.** При вставке пачки столкнувшиеся метки пропускаются, а
-   пропуск СЧИТАЕТСЯ и показывается плашкой: `skipped.markers` в
-   `src/libs/kt-model/src/ops.rs` и сообщение `PASTE_SKIPPED_MARKERS` в
-   `src/apps/kt-app/src/app.rs` (t249, копипаст Р.35).
-3. **Молчаливая потеря.** `Project::normalize()` при загрузке делает
-   `sort_by_key` + `dedup_by_key` по `m.t`
-   (`src/libs/kt-model/src/project.rs:3488`). Комментарий рядом честно
-   объясняет, зачем это сделано — стабильная сортировка нужна ради
-   байт-стабильности проекта (тест 12), — но ФАКТ остаётся: чужой файл с двумя
-   метками на одном тике открывается без единого слова, и одна из них исчезает.
+1. **An honest error.** `Command::AddMarker` checks occupancy and returns `CommandError::MarkerExists(Tick)`; `MoveMarker` does the same for the target
+   (`src/libs/kt-model/src/model.rs`). This is exactly UI checklist rule 16:
+   an impossible action is shown as an error, not as a faded hint.
+2. **A counted refusal.** When pasting a batch, colliding markers are skipped, and the skip IS COUNTED and shown as a banner: `skipped.markers` in
+   `src/libs/kt-model/src/ops.rs` and the message `PASTE_SKIPPED_MARKERS` in
+   `src/apps/kt-app/src/app.rs` (t249, copy-paste R.35).
+3. **A silent loss.** `Project::normalize()` on load does `sort_by_key` + `dedup_by_key` by `m.t`
+   (`src/libs/kt-model/src/project.rs:3488`). The comment next to it honestly
+   explains why this is done — a stable sort is needed for the byte stability of the project (test 12) — but the FACT remains: a foreign file with two markers on one tick opens without a single word, and one of them disappears.
 
-Третий путь противоречит первым двум по правилу чек-листа UI 17 («парные способы
-одного действия ведут себя одинаково») и по правилу 20 («ничего не отрастает и не
-отрубается само»). Из трёх ответов на один и тот же вопрос два разговаривают с
-человеком, а третий — нет.
+The third path contradicts the first two by UI checklist rule 17 ("paired ways of doing one action behave the same") and by rule 20 ("nothing grows or switches off by itself"). Of three answers to the same question, two talk to the person, and the third does not.
 
-Дополнительно: метка-диапазон с непустым именем занимает ОБЩЕЕ пространство имён
-с областями (`Project::taken_names`, `validate` → `ProjectError::DuplicateName`,
-`src/libs/kt-model/src/project.rs`). То есть на одном кадре нельзя не только два
-флажка — нельзя и два одинаковых слова.
+Additionally: a range marker with a non-empty name occupies the COMMON namespace with areas (`Project::taken_names`, `validate` → `ProjectError::DuplicateName`,
+`src/libs/kt-model/src/project.rs`). That is, on one frame one can not only not have two flags — one cannot even have two identical words.
 
-БЕЗ СЕТИ: НЕ ОСТАЁТСЯ — `src/libs/kt-model/src/project.rs:3488` — вторая заметка на кадре не существует даже для одного человека: сортировка и дедуп по времени стоят в нормализации, которая зовётся на КАЖДОЙ загрузке, поэтому «склейка рано» и «здесь щелчок» на одном тике не сосуществуют ни секунды, а из трёх наших ответов на столкновение (ошибка команды, счётчик пропусков при вставке, дедуп на чтении) именно этот единственный молчит — потеря видна только в diff'е файла.
+OFFLINE: DOES NOT REMAIN — `src/libs/kt-model/src/project.rs:3488` — a second note on a frame does not exist even for one person: sorting and dedup by time sit in the normalisation, which runs on EVERY load, so "the cut is early" and "here is a click" on one tick never coexist even for a second; and of our three answers to a collision (command error, a count of skips on paste, dedup on read) exactly this single one is silent — the loss is visible only in a diff of the file.
 
-ЦЕНА СЕТИ: чтобы столкновение разрешалось, а не схлопывалось, нужны имена участников и запись обеих версий — учётная запись и журнал правок — сегодня сравнивать нечего: у метки нет ни автора, ни порядкового следа, undo хранит снимки целого проекта, и «кто из двоих проиграл» вычислить не из чего, а значит и переименовать проигравшего по правилу Syncthing невозможно.
+NETWORK COST: for a collision to be resolved rather than collapsed, one needs the names of the participants and a record of both versions — user account and edit log. Today there is nothing to compare: a marker has neither an author nor a sequence trace, undo keeps snapshots of the whole project, and "who lost" cannot be computed from anything, so renaming the loser by the Syncthing rule is impossible.
 
-### Чего не хватает
+### What is missing
 
-- Ёмкости кадра больше единицы — в любой форме: стопка, нить ответов или второй
-  носитель (метка НА КЛИПЕ, разбор — F-COL-023).
-- Одинакового поведения трёх путей: загрузка обязана считать выброшенное и
-  сказать, как это делает вставка.
-- Читаемости стопки: два флажка в одной точке линейки сегодня нарисовать нечем.
+- Capacity of a frame greater than one — in any form: a stack, a reply thread, or a second carrier (a marker ON THE CLIP, see F-COL-023).
+- Uniform behaviour of the three paths: loading must count what it discards and say so, as paste does.
+- Readability of a stack: two flags at one point of the ruler cannot be drawn today.
 
-### Что мешает
+### What gets in the way
 
-Дедуп стоит не по недосмотру: он держит байт-стабильность файла (тест 12).
-Убирать его нельзя — можно только перестать МОЛЧАТЬ: пропуск при загрузке
-считается так же, как при вставке, и уезжает в notice-список открытия проекта,
-который у нас уже есть (Р.33, отсутствующие исходники). Это дешёвая и честная
-половина.
+The deduplication is not an oversight: it keeps the byte stability of the file (test 12). It cannot be removed — we can only stop being SILENT: a skip on loading is counted the same way as on paste, and goes to the notice list on project opening that we already have (R.33, missing sources). This is the cheap and honest half.
 
-Дорогая половина упирается в решение Р.35 п.4 (`docs/user-feedback.md`):
-«отвергнут вариант завести настоящие id: метки сегодня адресуются временем».
-Пока адрес и есть идентичность, второй заметке на кадре взяться неоткуда — и это
-не дефект, а осознанная цена, которую пересматривает только новая просьба
-пользователя.
+The expensive half runs into the decision of R.35 item 4 (`docs/user-feedback.md`): "rejected the option of creating real ids: markers are addressed by time today". While the address is the identity, a second note on a frame has nowhere to get its identity from — and this is not a defect but a conscious cost, which only a new request from the user can revisit.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Ни одного из двенадцати. Задевает три правила чек-листа UI: 16 (невозможность —
-ошибка, а не тишина), 17 (парные пути ведут себя одинаково — сегодня три пути
-ведут себя тремя способами) и 20 (ничего не отрубается само — а `dedup_by_key`
-отрубает).
+None of the twelve. It touches three UI checklist rules: 16 (impossibility is an error, not silence), 17 (paired paths behave the same — today three paths behave in three ways) and 20 (nothing switches off by itself — and `dedup_by_key` switches it off).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия для честной половины: загрузка считает выброшенные метки и говорит об этом тем же механизмом, что вставка |
-| Где основная работа | kt-model (`normalize` возвращает счётчик вместо тихого дедупа), kt-app (строка в notice-списке открытия) |
-| Формат проекта | не трогает: на диске ничего не меняется, меняется поведение чтения |
-| Тесты, которые придётся написать | model: файл с двумя метками на одном тике даёт счётчик 1 и один notice; parity: три пути (команда, вставка, загрузка) отвечают на столкновение одинаково по СЛЕДСТВИЮ — рядом с t249 и t89 |
-| Зависит от | F-COL-020 (без текста у реплики стопка на кадре бессмысленна) |
-| Ломает совместимость | нет |
+| Size | S — one stage for the honest half: loading counts the discarded markers and reports it through the same mechanism as paste |
+| Where the main work is | kt-model (`normalize` returns a count instead of silent dedup), kt-app (a line in the notice list on project opening) |
+| Project format | does not touch: nothing changes on disk, the reading behaviour changes |
+| Tests to write | model: a file with two markers on one tick gives count 1 and one notice; parity: the three paths (command, paste, load) answer a collision the same way by CONSEQUENCE — next to t249 and t89 |
+| Depends on | F-COL-020 (without text on a reply a stack on a frame is meaningless) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём дешёвую половину сейчас, дорогую не заводим. Дешёвая — убрать третий,
-молчаливый ответ на столкновение: загрузка обязана считать выброшенное и сказать
-об этом ровно так, как это делает вставка. Это правило UI 20, и оно не про
-второго человека — оно про то, что чужой файл нельзя открывать с тихой потерей.
+Take the cheap half now, do not take the expensive one. The cheap half: remove the third, silent answer to a collision — loading must count what it discards and say so exactly as paste does. This is UI rule 20, and it is not about a second person — it is about the fact that a foreign file must not be opened with silent loss.
 
-Дорогую половину — ёмкость кадра больше единицы — не заводим: она требует
-идентичности метки помимо времени, а этот вариант отвергнут в Р.35 п.4 по
-прямому решению пользователя. Участника, ради которого его стоило бы
-переоткрывать, нет.
+The expensive half — a frame's capacity greater than one — we do not take: it requires an identity for a marker beyond its time, and this option was rejected in R.35 item 4 by a direct decision of the user. There is no participant for whose sake it would be worth reopening it.
 
-Отличие от F-UI-005: там предмет — цвет как ДАННЫЕ события и его владелец
-(источник или клип); здесь предмет — сколько высказываний помещается в один
-момент времени, и цвет к этому не относится вовсе. От F-TL-007 отличие ещё
-резче: та заметка отказалась заводить вторую сущность рядом с меткой, и мы этот
-вердикт продолжаем — ёмкость ищется у существующей метки (стопка, нить,
-носитель), а не у нового объекта.
+The difference from F-UI-005: there the subject is colour as DATA of an event and its owner (source or clip); here the subject is how many statements fit into one moment, and colour has nothing to do with it. The difference from F-TL-007 is even sharper: that note refused to create a second entity next to the marker, and we continue that verdict — capacity is sought in the existing marker (a stack, a thread, a carrier), not in a new object.
 
-## Источники
+## Sources
 
-- https://editingtools.io/livenotes/ — Live Timecode Notes: «Only one comment is
-  allowed per timecode in a single user session», до 100 логгеров в командном
-  событии (дата обращения 2026-09-08)
-- https://otrn.editingtools.io/ — OTRN v1 (ноябрь 2025): поле `replies`, «An
-  array of reply objects for threaded discussion. Can be empty»; `noteId` как
-  идентичность заметки (дата обращения 2026-09-08)
-- https://docs.syncthing.net/users/syncing.html — правило разрешения конфликта:
-  переименование проигравшего, «are treated as normal files» (дата обращения
-  2026-09-08)
+- https://editingtools.io/livenotes/ — Live Timecode Notes: "Only one comment is allowed per timecode in a single user session", up to 100 loggers in a team event (accessed 2026-09-08)
+- https://otrn.editingtools.io/ — OTRN v1 (November 2025): the `replies` field, "An array of reply objects for threaded discussion. Can be empty"; `noteId` as the identity of a note (accessed 2026-09-08)
+- https://docs.syncthing.net/users/syncing.html — the conflict resolution rule: renaming the loser, "are treated as normal files" (accessed 2026-09-08)
 - https://community.adobe.com/t5/premiere-pro-bugs/frame-io-v4-keeps-overwriting-comments-markers-in-premiere-pro-pro/idi-p/15565768
-  — «keeps overwriting comments markers», 28.10.2025 (дата обращения 2026-09-08)
-- https://help.frame.io/en/articles/9105278-comments-panel-overview — сортировка
-  комментариев: таймкод по умолчанию, но также Newest/Oldest и Commenter; ответы
-  образуют нить и не участвуют в фильтрации (дата обращения 2026-09-08)
+  — "keeps overwriting comments markers", 28.10.2025 (accessed 2026-09-08)
+- https://help.frame.io/en/articles/9105278-comments-panel-overview — comment sorting: by timecode by default, but also Newest/Oldest and Commenter; replies form a thread and do not take part in filtering (accessed 2026-09-08)
 - https://support.apple.com/guide/final-cut-pro/intro-to-markers-ver397279dd/mac
-  — «You work with markers in the same way for clips in the browser and clips in
-  the timeline» (дата обращения 2026-09-08)
-- Строки VEGAS и Premiere в части «две метки в одной точке» собраны по составу
-  интерфейсов и справок; живьём не проверялось, публичного трекера нет ни у
-  одного из пяти (`docs/features/_trackers.md`, «Кого НЕ берём»). Строка VEGAS
-  помечена `[НЕ ПРОВЕРЕНО]`
-- Наш код проверен грепом по `src/` 08.09.2026: `kt-model/src/model.rs`
-  (`CommandError::MarkerExists`, пять команд меток), `kt-model/src/ops.rs`
-  (`skipped.markers` при вставке блока), `kt-model/src/project.rs`
-  (`normalize` с `dedup_by_key`, `taken_names`, `validate`),
-  `kt-app/src/app.rs` (плашка `PASTE_SKIPPED_MARKERS`); `docs/user-feedback.md`,
-  Р.35 п.4
+  — "You work with markers in the same way for clips in the browser and clips in the timeline" (accessed 2026-09-08)
+- The VEGAS and Premiere rows regarding "two markers at one point" were assembled from the composition of interfaces and help pages; not checked live, and none of the five has a public tracker (`docs/features/_trackers.md`, "Who we do NOT take"). The VEGAS row is marked `[NOT VERIFIED]`
+- Our code checked by grep over `src/` on 08.09.2026: `kt-model/src/model.rs`
+  (`CommandError::MarkerExists`, five marker commands), `kt-model/src/ops.rs`
+  (`skipped.markers` on block paste), `kt-model/src/project.rs`
+  (`normalize` with `dedup_by_key`, `taken_names`, `validate`),
+  `kt-app/src/app.rs` (banner `PASTE_SKIPPED_MARKERS`); `docs/user-feedback.md`,
+  R.35 item 4

@@ -1,12 +1,12 @@
 ---
 id: F-MPH-007
-title: Что видит слой на входе — композит снизу или каждый клип
-status: исследовано
+title: What a layer sees on input — the composite below or each clip
+status: researched
 priority: B
 cost: XL
 category: morpher/gaps
 editors: [after-effects-26, premiere-26, vegas-pro-2026, resolve-20, fcp-12]
-we_have: нет
+we_have: no
 crates: [kt-model, kt-engine, kt-gpu, kt-cache, kt-app]
 invariants: [4, 7, 11]
 ui_rules: [13, 17]
@@ -17,157 +17,55 @@ depends_on: [F-MPH-001, F-MPH-002, F-MPH-003, F-MPH-004, F-MPH-005]
 checked: 2026-09-07
 ---
 
-# F-MPH-007 — Что видит слой на входе — композит снизу или каждый клип
+# F-MPH-007 — What a layer sees on input — the composite below or each clip
 
-## Суть
+## Essence
 
-Монтажёр кладёт слой поверх монтажа и вешает на него эффект. Вопрос,
-на который заметка отвечает: что этот эффект получит на вход — ОДНУ уже
-сложенную картинку всего, что лежит ниже, или КАЖДЫЙ нижний клип по
-отдельности. Снаружи оба варианта выглядят одинаково («эффект на всё
-ниже»), а на экране расходятся: блюр поперёк кроссфейда, грейд двух
-камер одним слоем, хромакей, виньетка, наезд камерой на сцену — везде
-разная картинка. У всех пяти редакторов ядра вход — композит. У нас —
-каждый клип, и это самое глубокое расхождение морфера с чужими
-adjustment-слоями: из него выводятся и отсутствие прозрачности
-наложения (F-MPH-001, F-MPH-002), и отсутствие масок по площади кадра,
-и наличие подмены источника, которого нет ни у кого.
+The editor puts a layer over the edit and attaches an effect to it. The question this note answers: does that effect receive as input ONE already composited picture of everything below it, or EACH lower clip separately? From the outside both look the same ("effect on everything below"), but on screen they diverge: a blur across a crossfade, a grade of two cameras with one layer, a chroma key, a vignette, a camera push onto the scene. Each gives a different picture. All five reference editors take the composite as input. We take each clip, and this is the deepest divergence of the morpher from other editors' adjustment layers: from it follow the absence of overlay transparency (F-MPH-001, F-MPH-002), the absence of masks by frame area, and the presence of source substitution, which nobody else has.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| After Effects | 26.x | Adjustment Layer | вход — СШИТЫЙ кадр всех слоёв ниже в этой композиции; эффект считается один раз на кадр, альфа слоя — карта применения |
-| Adobe Premiere | 26.x | Adjustment Layer | вход — смикшированная картинка дорожек ниже; выход композитится обратно поверх ровно того же кадра |
-| VEGAS Pro | 2026.0 | Adjustment Event / Adjustment Track | вход — композит нижних дорожек («примерно post-compositing Track FX»); пер-клиповые уровни Media FX и Event FX остаются рядом отдельными |
-| DaVinci Resolve | 20.3.2 | Adjustment Clip **против** Timeline-грейда | два уровня под одним лозунгом «применить ко всему»: adjustment clip — ОДИН раз по склеенной картинке, Timeline-грейд — по разу НА КАЖДЫЙ клип до композита |
-| Final Cut Pro | 12.3 | Adjustment Clip | вход — композит клипов ниже по стопке; дорожек как понятия нет, стопку задаёт порядок |
-| Kinotrain | — | морфер-слой | вход — КАЖДЫЙ накрытый клип: `MorphPatch::apply_to` дописывает FX в его цепочку, частично накрытая цель режется на куски; композита слой не видит вовсе |
+| After Effects | 26.x | Adjustment Layer | the input is the STITCHED frame of all layers below it in this composition; the effect is computed once per frame, and the layer's alpha is the application map |
+| Adobe Premiere | 26.x | Adjustment Layer | the input is the mixed-down picture of the tracks below; the output is composited back over exactly the same frame |
+| VEGAS Pro | 2026.0 | Adjustment Event / Adjustment Track | the input is the composite of the lower tracks ("roughly post-compositing Track FX"); per-clip Media FX and Event FX levels remain separate alongside |
+| DaVinci Resolve | 20.3.2 | Adjustment Clip **versus** Timeline grade | two levels under one slogan "apply to everything": the adjustment clip runs ONCE on the joined picture, while the Timeline grade runs once PER CLIP before compositing |
+| Final Cut Pro | 12.3 | Adjustment Clip | the input is the composite of the clips below it in the stack; there is no concept of tracks, the stack order defines it |
+| Kinotrain | — | morpher layer | the input is EVERY covered clip: `MorphPatch::apply_to` appends the FX to its chain, and a partially covered target is cut into pieces; the layer does not see the composite at all |
 
-## Фишка фишки
+## The trick behind it
 
-**1. «Adjustment layer» — это не фича, а имя МЕСТА в конвейере, и место
-в разных редакторах разное.** Доказательство лежит внутри одного
-продукта: в Resolve и adjustment clip, и Timeline-грейд описываются
-одной фразой «действует на всё», но стоят по разные стороны композита —
-Timeline-грейд отрабатывает по разу на каждый клип ДО склейки,
-adjustment clip — один раз ПОСЛЕ (F-MPH-003). Поэтому вопрос «есть ли у
-нас adjustment layer» бессмыслен, пока не назван вход. У морфера вход
-пер-клиповый, значит по устройству он — Timeline-грейд Resolve и
-Source Effect Premiere, а вовсе не одноимённый слой.
+**1. "Adjustment layer" is not a feature but the name of a PLACE in the pipeline, and the place differs between editors.** Evidence lies within one product: in Resolve both the adjustment clip and the Timeline grade are described by the same phrase "acts on everything", but they stand on opposite sides of the composite: the Timeline grade runs once per clip BEFORE joining, the adjustment clip once AFTER (F-MPH-003). So the question "do we have an adjustment layer" is meaningless until the input is named. The morpher's input is per-clip, so by its design it is Resolve's Timeline grade and Premiere's Source Effect, and not a like-named layer at all.
 
-**2. Различить схемы можно одним замером, и он же предсказывает
-картинку: сколько раз ядро эффекта прогоняется на ОДИН выходной кадр.**
-У них — ровно один. У нас — столько, сколько слоёв под морфером, и на
-кроссфейде оба конца пары считаются по отдельности (`PlanLayer::
-Dissolve` в `src/libs/kt-engine/src/video_plan.rs` смешивает УЖЕ
-обработанные кадры). Схемы дают одно и то же ровно при двух условиях
-сразу: эффект — ЛИНЕЙНЫЙ оператор (свёртка коммутирует со взвешенной
-суммой) И композит в этом месте есть чистая взвешенная сумма, то есть
-кроссфейд. Первое условие рвут порог и нелинейность (`Glow` с
-`threshold`, `Edges`, `Vhs`, `Noise` от `burst_index`), геометрия
-(`Pan`, `Pan3d`, `EventGrid`) и производство альфы (`Greenscreen`).
-Второе рвёт сам композит: `alpha_over()` в
-`src/libs/kt-engine/src/video.rs` — не взвешенная сумма, а
-альфа-перекрытие с делениями и клампом, и он стоит на КАЖДОМ стыке
-слоёв. Поэтому «одинаково» бывает только в вырожденном случае — одна
-дорожка, один непрозрачный слой, линейное ядро; всё остальное даёт
-разные байты. То есть «где слой в конвейере» — не деталь реализации:
-это разный набор возможностей и разный результат на одних и тех же
-параметрах.
+**2. The schemes can be told apart by one measurement, and it also predicts the picture: how many times the effect's kernel runs for ONE output frame.** They run exactly once. We run as many times as there are layers under the morpher, and on a crossfade both ends of the pair are computed separately (`PlanLayer::Dissolve` in `src/libs/kt-engine/src/video_plan.rs` mixes frames that are ALREADY processed). The schemes give the same result only under two conditions at once: the effect is a LINEAR operator (convolution commutes with a weighted sum) AND the composite at that spot is a pure weighted sum, that is, a crossfade. The first condition is broken by threshold and nonlinearity (`Glow` with `threshold`, `Edges`, `Vhs`, `Noise` from `burst_index`), by geometry (`Pan`, `Pan3d`, `EventGrid`), and by alpha production (`Greenscreen`). The second is broken by the composite itself: `alpha_over()` in `src/libs/kt-engine/src/video.rs` is not a weighted sum but an alpha over-blend with divisions and clamping, and it stands at EVERY layer junction. So "the same" happens only in the degenerate case: one track, one opaque layer, a linear kernel; everything else gives different bytes. That is, "where the layer sits in the pipeline" is not an implementation detail: it is a different set of capabilities and a different result with the same parameters.
 
-**3. Место входа определяет, ЧТО слой в принципе способен адресовать, и
-две дыры оказываются одной.** Слой на композите адресует ОБЛАСТЬ КАДРА:
-маска, виньетка, «размыть вот этот угол» — однокликовые операции, а
-источник для него не существует, потому что в смеси источники
-неразличимы. Пер-клиповый слой адресует ИСТОЧНИК: подмену `media`,
-сдвиг `source_in`, свой грейд каждой камере — и не умеет адресовать
-область, потому что «кадра» у него нет. Отсюда же и прозрачность
-наложения: композитному слою wet/dry достаётся ДАРОМ (его выход
-ложится обратно на ту самую картинку, которую он съел), а
-пер-клиповому не даётся вовсе — рядом нет необработанного кадра, с
-которым смешивать. Претензия п.245 `docs/porting-notes.md` («ползунком
-управлять прозрачностью наложения, а у нас — нет») и наша уникальная
-подмена источника — не два независимых пробела, а два следствия одного
-выбора входа.
+**3. The place of input determines WHAT a layer can address in principle, and two gaps turn out to be one.** A layer on the composite addresses the AREA OF THE FRAME: a mask, a vignette, "blur this corner" are one-click operations, and a source for it does not exist, because in a mix the sources are indistinguishable. A per-clip layer addresses the SOURCE: substituting `media`, shifting `source_in`, grading each camera on its own, and it cannot address an area, because it has no "frame". Hence the overlay transparency too: a composite layer gets wet/dry as a GIFT (its output lands back on the very picture it consumed), while a per-clip layer is not given it at all, because there is no unprocessed frame beside it to mix with. The claim of item 245 in `docs/porting-notes.md` ("the transparency of the overlay is adjustable with a slider, and we do not have it") and our unique source substitution are not two independent gaps, but two consequences of one choice of input.
 
-## Плюсы
+## Pros
 
-Здесь и ниже — про НАШУ схему: чем она платит и что даёт.
+Here and below — about OUR scheme: what it pays and what it gives.
 
-- Эффект видит нетронутый ОДИН источник, поэтому морфер умеет то, чего
-  композитный слой не может в принципе: подменить `media` и сдвинуть
-  `source_in` у каждой цели (`MorphPatch` в
-  `src/libs/kt-model/src/project.rs`). В смикшированном кадре подменять
-  нечего — источники в нём уже неразличимы.
-- Область действия декларативна и адресует ЦЕЛИ, а не «всё, что ниже»:
-  `MorphTargets::Clips` (замороженный список), `Marks` (именованные
-  диапазоны), `Areas` (именованные области «время × дорожки»,
-  `MarkedArea.lanes` — семантические ключи дорожек). Композитная стадия
-  умеет ровно один режим — «всё ниже»; именно этого не хватает людям в
-  Premiere и Resolve (цитаты ниже).
-- Bake честный и полный: `Command::BakeMorpher`
-  (`src/libs/kt-model/src/model.rs`) вписывает патч в настоящие клипы и
-  МАТЕРИАЛИЗУЕТ резку — «bake == то, что рисовалось» проверяется t36
-  (`morpher_render`). Композитную стадию запечь в клипы нельзя вообще:
-  вписывать некуда.
-- Хромакей на слое осмыслен. `greenscreen()` в
-  `src/libs/kt-fx/src/video.rs` ставит `px[3] = 0`, `alpha_over()` в
-  `src/libs/kt-engine/src/video.rs` пропускает такой пиксель — видно
-  слой НИЖЕ. На композите ключ вообще не может отделить объект от фона:
-  фон уже вмешан в те же пиксели (в Premiere дырка вскрывает ту же
-  картинку — F-MPH-004).
-- Движок про морфер не знает: `Project::effective_clips()` —
-  единственная точка выдачи клипов превью, экспорту и отрисовке. Ни
-  новой стадии в `FramePlan`, ни второго вида ключа кэша, ни зеркала в
-  WGSL — инварианты 4, 7 и 11 морфер не трогает ВООБЩЕ.
-- Мемоизация работает на клип: `BurstKind::PostFxVideo { quality,
-  fx_hash }` (`src/libs/kt-cache/src/lib.rs`) — правка одного нижнего
-  слоя не выбрасывает пост-FX кадры остальных. Ключ композита
-  инвалидировался бы целиком от любого чиха на любой дорожке.
+- The effect sees one untouched SOURCE, so the morpher can do what a composite layer cannot do in principle: substitute `media` and shift `source_in` for each target (`MorphPatch` in `src/libs/kt-model/src/project.rs`). In a mixed-down frame there is nothing to substitute: the sources are already indistinguishable in it.
+- The scope is declarative and addresses TARGETS, not "everything below": `MorphTargets::Clips` (a frozen list), `Marks` (named ranges), `Areas` (named areas "time × tracks", `MarkedArea.lanes` — semantic track keys). The composite stage can do exactly one mode, "everything below"; that is exactly what people lack in Premiere and Resolve (quotes below).
+- Bake is honest and complete: `Command::BakeMorpher` (`src/libs/kt-model/src/model.rs`) writes the patch into the real clips and MATERIALIZES the cut — "bake == what was drawn" is verified by t36 (`morpher_render`). The composite stage cannot be baked into clips at all: there is nowhere to write it.
+- Chroma key on a layer makes sense. `greenscreen()` in `src/libs/kt-fx/src/video.rs` sets `px[3] = 0`, and `alpha_over()` in `src/libs/kt-engine/src/video.rs` lets such a pixel through — the layer BELOW is visible. On the composite a key cannot separate the object from the background at all: the background is already mixed into the same pixels (in Premiere a hole reveals the same picture — F-MPH-004).
+- The engine knows nothing about the morpher: `Project::effective_clips()` is the single point that outputs clips for preview, export and rendering. No new stage in `FramePlan`, no second kind of cache key, no mirror in WGSL — the morpher does not touch invariants 4, 7 and 11 AT ALL.
+- Memoization works per clip: `BurstKind::PostFxVideo { quality, fx_hash }` (`src/libs/kt-cache/src/lib.rs`) — editing one lower layer does not discard the post-FX frames of the others. The composite key would be invalidated entirely by any hiccup on any track.
 
-## Минусы
+## Cons
 
-- Цена умножается на слои: N дорожек под морфером — N прогонов ядра на
-  кадр. У композитной схемы — один; на шестислойном монтаже это разница
-  в шесть раз, и Adobe прямым текстом продаёт adjustment-слой как
-  экономию.
-- Шов не заклеивается. Площадный эффект (`Blur`, `Glow`, `Noise`)
-  считается на каждом слое отдельно, а склейка идёт после. На чистом
-  кроссфейде линейное ядро это ещё переживает (расходятся только
-  округления u8), но как только под слоем стопка, склеенная
-  `alpha_over` — кеированный объект над фоном, PiP, титр, любой уровень
-  меньше 1.0, — граница между слоями площадным эффектом со слоя не
-  смягчается вовсе: у них она размывается, у нас остаётся резкой.
-- Область кадра невыразима: у слоя нет объекта «кадр», значит нет ни
-  масок, ни виньетки на всё изображение, ни рамки. Виньетка «на весь
-  фильм» в нашей схеме — это N виньеток по слоям, и на
-  картинке-в-картинке они удвоятся (ровно минус Timeline-грейда
-  Resolve).
-- Wet/dry невозможен без второго буфера: смешивать «до/после» надо
-  ВНУТРИ слоя, то есть держать пре-FX кадр рядом с пост-FX на каждом
-  слое и на обоих бэкендах.
-- Частичное накрытие стоит РЕЗКИ модели: `effective_clips()` рубит цель
-  по внутренним краям окон, и вокруг этого выросла целая механика —
-  `slice_id`/`slice_origin`, `forbidden_zones` (окна переходов и наезды
-  соседей), `MIN_CLIP_DURATION`, исключение для варпа времени, поправка
-  движка «конец перехода ищется по `same_clip`» (t237). Композитной
-  стадии не нужно ничего из этого: она ограничена временем и всё.
-- Геометрия расходится по слоям. `pan_frame()` в
-  `src/libs/kt-fx/src/video.rs` считает рамку ОТ РАЗМЕРА ИСТОЧНИКА
-  (`src_w`/`src_h`), поэтому один морфер с одним `Pan` над 4K-планом и
-  HD-титром даст два разных кадрирования; «наехать камерой на всю
-  сцену» одним объектом не выражается.
-- Отдельные эффекты в пер-клиповой схеме просто ломают композит:
-  `event_grid()` возвращает полноэкранный кадр с `has_alpha: false`, а
-  `alpha_over()` при `has_alpha == false` копирует байты целиком — то
-  есть мозаика, дописанная морфером в КАЖДЫЙ слой, закрывает собой всё,
-  что было под ней, и виден только верхний накрытый слой.
+- The cost multiplies by layers: N tracks under the morpher means N kernel runs per frame. The composite scheme has one; on a six-layer edit that is a six-fold difference, and Adobe sells the adjustment layer outright as a saving.
+- The seam is not sealed. An area effect (`Blur`, `Glow`, `Noise`) is computed on each layer separately, and the joining happens afterwards. On a pure crossfade a linear kernel survives this (only u8 rounding diverges), but as soon as there is a stack under the layer that is joined by `alpha_over` — a keyed object over the background, PiP, a title, any level below 1.0 — the boundary between layers is not softened by an area effect from the layer at all: there it is blurred, here it stays sharp.
+- The frame area is inexpressible: a layer has no "frame" object, so there are no masks, no vignette over the whole image, no frame. A vignette "for the whole film" in our scheme is N vignettes, one per layer, and in picture-in-picture they double (exactly minus Resolve's Timeline grade).
+- Wet/dry is impossible without a second buffer: mixing "before/after" has to happen INSIDE the layer, that is, keep the pre-FX frame beside the post-FX one on each layer and on both backends.
+- Partial coverage costs the model a CUT: `effective_clips()` cuts the target along the inner edges of the windows, and around this a whole mechanism has grown — `slice_id`/`slice_origin`, `forbidden_zones` (transition windows and neighbours' push-ins), `MIN_CLIP_DURATION`, an exception for time warp, the engine fix "the end of the transition is searched by `same_clip`" (t237). The composite stage needs none of this: it is bounded by time and that is all.
+- Geometry diverges across layers. `pan_frame()` in `src/libs/kt-fx/src/video.rs` computes the frame FROM THE SOURCE SIZE (`src_w`/`src_h`), so one morpher with one `Pan` over a 4K plan and an HD title gives two different framings; "push the camera onto the whole scene" with one object cannot be expressed.
+- Separate effects in the per-clip scheme simply break the composite: `event_grid()` returns a full-screen frame with `has_alpha: false`, and `alpha_over()` with `has_alpha == false` copies the bytes whole — so a mosaic appended by the morpher into EACH layer covers everything that was under it, and only the top covered layer is visible.
 
-## Что говорят пользователи
+## What users say
 
-Главная жалоба на композитный вход — ровно то, что у нас есть даром:
-адресовать источник им нечем.
+The main complaint about the composite input is exactly what we have for free: they have no way to address a source.
 
 > My understanding is that since adjustment layers affect all video
 > tracks beneath them in a sequence, I can't (cleanly) have both
@@ -177,202 +75,88 @@ Dissolve` в `src/libs/kt-engine/src/video_plan.rs` смешивает УЖЕ
 
 > It seems like it would be so much easier if we could control which
 > track(s) an adjustment layer affects.
-> — Tripecac2, там же, 02.02.2025
+> — Tripecac2, there, 02.02.2025
 
-Санкционированный ответ эксперта — уйти с композитного уровня на
-пер-клиповый, то есть ровно в нашу схему:
+The sanctioned answer of an expert is to move from the composite level to the per-clip level, that is, exactly our scheme:
 
 > Simple statement: Apply the Lumetri as a Source Effect ... done.
-> — R Neil Haugen, Adobe Community, 02.02.2025, там же
+> — R Neil Haugen, Adobe Community, 02.02.2025, there
 
-И обратная сторона: там, где эффекту нужен ОДИН источник, композитный
-вход мешает, и советуют разносить по слоям, соглашаясь платить
-рендером. Автор ReelSmart Motion Blur о своём же плагине на
-adjustment-слое:
+And the reverse side: where an effect needs ONE source, the composite input gets in the way, and people advise splitting by layers, agreeing to pay in rendering. The author of ReelSmart Motion Blur on his own plugin on an adjustment layer:
 
 > The more you can separate layers and apply RMSB to each layer the
 > better.
 > — Peter Litwinowicz (RE:Vision Effects), Creative COW, 17.04.2008,
 > https://creativecow.net/forums/thread/applying-motion-blur-to-each-layer-or-to-a-top-adj/
 
-Отрицательного фидбека на нашу сторону выбора взять неоткуда: продукта
-с пер-клиповым «слоем» на рынке нет, а ближайший аналог — Source
-Effects Premiere и Timeline-грейд Resolve — люди зовут не слоем, а
-обходным путём.
+There is no negative feedback about our side of the choice to be had: there is no product with a per-clip "layer" on the market, and the nearest analogues — Source Effects in Premiere and Resolve's Timeline grade — people call not a layer but a workaround.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Где разница видна на картинке
+### Where the difference is visible in the picture
 
-Перебор по случаям; всё проверено по коду, а не по аналогии.
+A walk through the cases; everything is checked against the code, not by analogy.
 
-1. **Цветокоррекция двух разных источников одним слоем.** У них —
-   общий грейд по смеси, и подтянуть log-кривые двух камер нельзя в
-   принципе. У нас `apply_to()` дописывает цепочку в КАЖДЫЙ клип, и
-   каждый источник проходит свой проход — но параметры у прохода одни,
-   так что «своё каждой камере» сегодня достигается не морфером, а
-   вторым морфером с другим `MorphTargets::Clips`. Механизм для этого
-   есть, чего у них нет вовсе.
-2. **Блюр/`Glow` поперёк стыка и поперёк кроссфейда.** У них
-   размывается шов: переход посчитан ДО эффекта. У нас
-   `PlanLayer::Dissolve` держит два `LayerSrc`, у каждого своя
-   `fx`-цепочка и свой `fx_hash`; ядро отрабатывает дважды, а
-   `dissolve_into` смешивает уже обработанные кадры. Честная оценка:
-   для ЧИСТОГО кроссфейда и ЧИСТО линейного ядра (`Blur`) разница —
-   только округление u8, свёртка коммутирует со взвешенной суммой.
-   Разница становится видимой в двух местах. Во-первых, у `Glow` есть
-   `threshold`, а у `Edges` — порог Собеля: пороги применяются к
-   каждому кадру пары до смешивания, и в середине перехода светится/
-   обводится не то, что светилось бы на смеси. Во-вторых и главное —
-   шов между СЛОЯМИ (не между кусками перехода): `alpha_over` не
-   взвешенная сумма, и площадный эффект со слоя не размывает границу
-   кеированного объекта с фоном под ним.
-3. **Геометрия поверх наложенных дорожек.** `Pan`/`Pan3d`/`EventGrid`
-   в нашей схеме двигают каждый слой в его собственной системе
-   координат: `pan_frame()` берёт размеры ИСТОЧНИКА, `LayerSrc.cam3d`
-   разрешается ПОСЛОЙНО. Один Pan над стопкой = N разных кадрирований;
-   на композите это была бы одна трансформация одного кадра размера
-   проекта.
-4. **Хромакей.** Единственный случай, где пер-клиповая схема строго
-   сильнее: у нас ключ видит пиксели одного источника и, пробив альфу,
-   открывает нижнюю дорожку; на композите под «зелёным» лежит уже
-   вмешанный фон, и вскрывать нечего (дефект Premiere, F-MPH-004).
-   Этот выигрыш нельзя потерять при появлении композитной стадии — на
-   него нужен регресс-тест.
-5. **Виньетка/рамка на всё изображение.** У них — один проход по
-   готовому кадру. У нас такого эффекта нет, а появись он — дал бы N
-   виньеток, по одной на слой, и на картинке-в-картинке их стало бы
-   две. Это чистый минус нашей схемы, ничем не компенсируемый.
-6. **`EventGrid` и любой эффект, делающий кадр непрозрачным.**
-   `has_alpha: false` на выходе плюс копирующая ветка `alpha_over()` =
-   слой закрывает всё под собой. На композите тот же эффект сделал бы
-   одну мозаику из готовой картинки.
+1. **Colour correction of two different sources with one layer.** They have a shared grade over the mix, and it is impossible in principle to pull up the log curves of two cameras. We have `apply_to()` append the chain to EACH clip, and each source goes through its own pass — but the parameters of the pass are the same, so "something of its own for each camera" today is achieved not by the morpher, but by a second morpher with another `MorphTargets::Clips`. The mechanism for this exists; they do not have it at all.
+2. **Blur/`Glow` across a join and across a crossfade.** For them the seam is blurred: the transition is computed BEFORE the effect. For us `PlanLayer::Dissolve` holds two `LayerSrc`, each with its own `fx` chain and its own `fx_hash`; the kernel runs twice, and `dissolve_into` mixes frames that are already processed. Honest assessment: for a PURE crossfade and a PURELY linear kernel (`Blur`) the difference is only u8 rounding, since convolution commutes with a weighted sum. The difference becomes visible in two places. First, `Glow` has a `threshold`, and `Edges` has a Sobel threshold: the thresholds are applied to each frame of the pair before mixing, so in the middle of the transition what glows or gets outlined is not what would glow on the mix. Second, and more important — the seam between LAYERS (not between pieces of the transition): `alpha_over` is not a weighted sum, and an area effect from a layer does not blur the boundary of a keyed object with the background beneath it.
+3. **Geometry over stacked tracks.** `Pan`/`Pan3d`/`EventGrid` in our scheme move each layer in its own coordinate system: `pan_frame()` takes the dimensions of the SOURCE, and `LayerSrc.cam3d` is resolved PER LAYER. One Pan over a stack = N different framings; on the composite it would be one transformation of one frame of the project's size.
+4. **Chroma key.** The only case where the per-clip scheme is strictly stronger: for us the key sees the pixels of one source and, having punched the alpha, reveals the lower track; on the composite the mixed background lies under the "green", and there is nothing to reveal (the Premiere defect, F-MPH-004). This gain must not be lost when a composite stage appears — it needs a regression test.
+5. **Vignette/frame over the whole image.** For them — one pass over the finished frame. For us there is no such effect, and if it appeared it would give N vignettes, one per layer, and in picture-in-picture there would be two. This is a pure minus of our scheme, not compensated by anything.
+6. **`EventGrid` and any effect that makes the frame opaque.** `has_alpha: false` on the output plus the copying branch of `alpha_over()` = the layer covers everything under it. On the composite the same effect would make one mosaic out of the finished picture.
 
-### Что уже есть
+### What already exists
 
-- `MorphPatch::apply_to()` и `Project::effective_clips()` в
-  `src/libs/kt-model/src/project.rs` — переписывание клипов ДО
-  построения плана, накопление снизу вверх по `(Reverse(row),
-  MorphId)`, резка частично накрытых целей.
-- `VideoRenderer::frame_plan` / `build_plan` в
-  `src/libs/kt-engine/src/video.rs`, `FramePlan`/`PlanLayer`/`LayerSrc`
-  в `src/libs/kt-engine/src/video_plan.rs` — план описывает СЛОИ.
-  Объекта «готовый кадр, к которому можно приложить цепочку» в нём нет:
-  `execute_plan_cpu` пробегает `plan.layers` и складывает результат в
-  `out`, после чего композиция закончена.
-- Оба исполнителя уже симметричны: CPU `execute_plan_cpu`
-  (`alpha_over`/`dissolve_into`/`mix_into`) и GPU из
-  `src/libs/kt-gpu/src/engine.rs`.
-- Пер-слойная мемоизация: `BurstKind::PostFxVideo { quality, fx_hash }`
-  в `src/libs/kt-cache/src/lib.rs`, ключ считает `fx_chain_hash()`
-  (`src/libs/kt-engine/src/video.rs`) от параметров цепочки, кривых
-  автоматизации и геометрии клипа.
-- **Ключ уровня КАДРА у нас уже написан — но только на GPU.**
-  `plan_key()` в `src/libs/kt-gpu/src/engine.rs` хэширует весь план
-  (t, размер, для каждого слоя — `source`, `cache_idx`, `fx_hash`, `u`,
-  камера, `alpha_k`, параметры вида перехода) и кормит им
-  `ReadbackCache` (`src/libs/kt-gpu/src/pool.rs`). Это готовый ответ
-  на вопрос «по какому ключу кэшировать пост-композитный результат»:
-  `plan_key` плюс хэш пост-композитной цепочки.
+- `MorphPatch::apply_to()` and `Project::effective_clips()` in `src/libs/kt-model/src/project.rs` — rewriting clips BEFORE the plan is built, accumulation bottom-up by `(Reverse(row), MorphId)`, cutting of partially covered targets.
+- `VideoRenderer::frame_plan` / `build_plan` in `src/libs/kt-engine/src/video.rs`, `FramePlan`/`PlanLayer`/`LayerSrc` in `src/libs/kt-engine/src/video_plan.rs` — the plan describes LAYERS. There is no object in it "a finished frame to which a chain can be applied": `execute_plan_cpu` walks `plan.layers` and puts the result into `out`, after which the composition is finished.
+- Both executors are already symmetrical: CPU `execute_plan_cpu` (`alpha_over`/`dissolve_into`/`mix_into`) and GPU from `src/libs/kt-gpu/src/engine.rs`.
+- Per-layer memoization: `BurstKind::PostFxVideo { quality, fx_hash }` in `src/libs/kt-cache/src/lib.rs`; the key is computed by `fx_chain_hash()` (`src/libs/kt-engine/src/video.rs`) from the chain parameters, the automation curves and the clip geometry.
+- **The FRAME-level key is already written by us — but only on the GPU.** `plan_key()` in `src/libs/kt-gpu/src/engine.rs` hashes the whole plan (t, size, for each layer — `source`, `cache_idx`, `fx_hash`, `u`, camera, `alpha_k`, transition-kind parameters) and feeds it into `ReadbackCache` (`src/libs/kt-gpu/src/pool.rs`). This is a ready answer to the question "under which key to cache the post-composite result": `plan_key` plus a hash of the post-composite chain.
 
-### Чего не хватает
+### What is missing
 
-- Стадии «эффект по СКЛЕЕННОМУ кадру» — узла в `FramePlan` после
-  `layers` и его исполнения в обоих бэкендах.
-- Места, где такая стадия живёт в модели. Повесить её галкой на
-  `MorpherEvent` нельзя без ревизии: у морфера богатое целеуказание
-  (`Clips`/`Marks`/`Areas`), а композитная стадия по устройству знает
-  только «всё, что ниже» — правило UI 17 (парные способы ведут себя
-  одинаково) требует либо совпадающего поведения, либо разных объектов.
-- Ключа пост-композитного кэша на CPU. `BurstKey` требует `source:
-  SourceId` (`src/libs/kt-cache/src/lib.rs`), а у композита источника
-  нет: нужен либо синтетический `SourceId` «кадр», либо новый вид
-  ключа, не адресуемый источником.
+- The stage "effect on the JOINED frame" — a node in `FramePlan` after `layers` and its execution in both backends.
+- A place where such a stage lives in the model. Hanging it on a checkbox on `MorpherEvent` is impossible without a revision: the morpher has rich targeting (`Clips`/`Marks`/`Areas`), while the composite stage by its nature knows only "everything below" — UI rule 17 (paired ways behave alike) requires either matching behaviour or different objects.
+- A post-composite cache key on the CPU. `BurstKey` requires `source: SourceId` (`src/libs/kt-cache/src/lib.rs`), and a composite has no source: one needs either a synthetic `SourceId` "frame", or a new kind of key not addressed by a source.
 
-### Что мешает
+### What stands in the way
 
-Не объём кода, а четыре упора подряд.
+Not the volume of code, but four obstacles in a row.
 
-1. **Инвариант 7.** Стадия обязана появиться внутри
-   `VideoRenderer::frame_plan` и быть исполнена ОБОИМИ исполнителями —
-   CPU-эталоном и WGSL-зеркалом (`src/libs/kt-gpu/shaders/`), иначе
-   это ровно второй путь композиции, против которого инвариант написан.
-   Экспорт при этом не смешивает бэкенды: ошибка GPU посреди экспорта
-   остаётся ошибкой экспорта.
-2. **Инвариант 11.** Новая стадия проходит через GOLDEN_VIDEO
-   (пустая стадия обязана быть тождеством, иначе эталон сдвинется),
-   через «превью == экспорт байт-в-байт на одном бэкенде» (t67/t184) и
-   через кросс-бэкенд по допускам — только `kt_gpu::assert_frames_close`,
-   ad-hoc epsilon запрещены.
-3. **Инвариант 4 и кэш.** На GPU ключ есть (`plan_key` +
-   `ReadbackCache`), на CPU его не на что повесить. При этом
-   пост-композитный вид, как и `PostFxVideo`, обязан НЕ попадать в
-   coverage-полоски: инвариант 4 остаётся про ПРЕ-FX данные
-   (`src/libs/kt-cache/CLAUDE.md`), иначе прогретость соврёт. Плюс
-   `FramePlan.memoize_postfx` в экспорте выключен намеренно (Р.31 п.4),
-   и пост-композитная стадия обязана уважать тот же флаг.
-4. **Bake ломается концептуально.** `Command::BakeMorpher`
-   (`src/libs/kt-model/src/model.rs`) считает `effective_clips()` и
-   вписывает результат в клипы. Композитная стадия в клипы не
-   вписывается вообще — значит у объекта в композитном режиме кнопки
-   bake либо нет, либо она означает другое. Это самостоятельный
-   аргумент за ОТДЕЛЬНЫЙ объект, а не за галку на `MorpherEvent`.
+1. **Invariant 7.** The stage must appear inside `VideoRenderer::frame_plan` and be executed by BOTH executors — the CPU reference and the WGSL mirror (`src/libs/kt-gpu/shaders/`); otherwise it is exactly a second composition path, the one the invariant is written against. Export, in this case, does not mix backends: a GPU error in the middle of an export remains an export error.
+2. **Invariant 11.** The new stage goes through GOLDEN_VIDEO (an empty stage must be an identity, otherwise the reference shifts), through "preview == export byte-for-byte on one backend" (t67/t184), and through the cross-backend check within tolerances — only `kt_gpu::assert_frames_close`, ad-hoc epsilons are forbidden.
+3. **Invariant 4 and the cache.** On the GPU the key exists (`plan_key` + `ReadbackCache`), on the CPU there is nothing to hang it on. At the same time the post-composite kind, like `PostFxVideo`, MUST NOT get into the coverage bars: invariant 4 remains about PRE-FX data (`src/libs/kt-cache/CLAUDE.md`), otherwise warmth would lie. Also `FramePlan.memoize_postfx` is deliberately disabled in export (R.31 item 4), and the post-composite stage must respect the same flag.
+4. **Bake breaks conceptually.** `Command::BakeMorpher` (`src/libs/kt-model/src/model.rs`) computes `effective_clips()` and writes the result into the clips. A composite stage does not write into clips at all — so for an object in composite mode the bake button either does not exist, or it means something else. This is an independent argument for a SEPARATE object, not for a checkbox on `MorpherEvent`.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Корневой `CLAUDE.md`: **7** (код композиции один — стадия пишется в
-`frame_plan`, а не в бэкенд и не в экспорт), **11** (детерминизм:
-GOLDEN_VIDEO нетронут при пустой стадии, CPU байт-в-байт, кросс-бэкенд
-через `assert_frames_close`), **4** (кэш — единственная правда о
-coverage: новый вид ключа обязан вести себя как `PostFxVideo` и в
-полоски не попадать). Инвариант **5** не задет: стадия не порождает
-запросов к декодеру. Правила UI `src/apps/kt-app/CLAUDE.md`: **13**
-(режим обязан встать в уже занятое место окна морфера, а не новой
-панелью) и **17** (если у одного объекта окажутся два входа, оба обязаны
-вести себя предсказуемо — либо это разные объекты с разными именами).
+Root `CLAUDE.md`: **7** (one composition code — the stage is written in `frame_plan`, not in a backend or in export), **11** (determinism: GOLDEN_VIDEO untouched with an empty stage, CPU byte-for-byte, cross-backend via `assert_frames_close`), **4** (the cache is the only truth about coverage: the new kind of key must behave like `PostFxVideo` and not get into the bars). Invariant **5** is not touched: the stage generates no requests to the decoder. UI rules from `src/apps/kt-app/CLAUDE.md`: **13** (the mode must fit into the already occupied place of the morpher window, not into a new panel) and **17** (if one object ends up with two inputs, both must behave predictably — or they are different objects with different names).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | XL — новая стадия рендера на обоих бэкендах, новый вид ключа кэша и версия формата |
-| Где основная работа | kt-engine (`video_plan.rs` — узел после `layers`; `video.rs` — `execute_plan_cpu`), kt-gpu (второй проход + `plan_key`), kt-cache (ключ уровня кадра), kt-model (объект и его целеуказание), kt-app (видно, в каком режиме слой) |
-| Формат проекта | новая версия `metadata["kt"]`: сейчас `KT_META_VERSION = 4` (`src/libs/kt-otio/src/meta.rs`), режим/объект поднимает до v5; старые файлы читаются как пер-клиповые |
-| Тесты, которые придётся написать | golden «блюр пер-слой ≠ блюр после композита» (обе схемы, разные байты); GOLDEN_VIDEO без стадии не двигается; конформанс CPU↔GPU новой стадии по образцу t181/t182; превью == экспорт (t67/t184); t36 (морфер == bake) остаётся зелёным для пер-клипового режима, а для композитного режима решение по bake фиксируется тестом; регресс «хромакей из морфера по-прежнему вскрывает слой ниже» |
-| Зависит от | F-MPH-001 … F-MPH-005 (разведка входа у всех пяти); ползунок силы наложения логически идёт следом — ему нужен тот же объект «необработанный кадр» |
-| Ломает совместимость | нет, если режим — новое поле с умолчанием «как сейчас»; смена режима у существующего морфера меняет картинку и обязана быть явной |
+| Size | XL — a new render stage on both backends, a new kind of cache key and a format version |
+| Where the main work is | kt-engine (`video_plan.rs` — a node after `layers`; `video.rs` — `execute_plan_cpu`), kt-gpu (a second pass + `plan_key`), kt-cache (frame-level key), kt-model (the object and its targeting), kt-app (showing which mode a layer is in) |
+| Project format | a new version of `metadata["kt"]`: currently `KT_META_VERSION = 4` (`src/libs/kt-otio/src/meta.rs`); the mode/object raises it to v5; old files are read as per-clip |
+| Tests that will have to be written | golden "blur per-layer ≠ blur after composite" (both schemes, different bytes); GOLDEN_VIDEO without the stage does not move; CPU↔GPU conformance of the new stage on the pattern of t181/t182; preview == export (t67/t184); t36 (morpher == bake) stays green for the per-clip mode, and for the composite mode the decision on bake is fixed by a test; regression "the chroma key from the morpher still reveals the layer below" |
+| Depends on | F-MPH-001 … F-MPH-005 (reconnaissance of the input in all five); the overlay-strength slider logically comes next — it needs the same object "untouched frame" |
+| Breaks compatibility | no, if the mode is a new field with the default "as now"; changing the mode of an existing morpher changes the picture and must be explicit |
 
-## Вердикт
+## Verdict
 
-Берём как ОТДЕЛЬНЫЙ объект и не первым. Пер-клиповый вход — не дефект
-и не недоделка: из него растут подмена источника, `Areas`/`Marks`,
-честный bake и работающий хромакей, то есть всё, чем морфер обгоняет
-чужие adjustment-слои. Терять это ради композитной стадии нельзя, а
-совместить в одном событии галкой — значит получить объект с двумя
-разными смыслами, разной ценой, разным целеуказанием и неработающей
-кнопкой bake (правило UI 17). Поэтому композитная стадия — это второй
-объект («эффект на результат»), свой раунд, ревизия инвариантов 7 и 4 и
-новый вид ключа кэша; ключ уровня кадра для неё наполовину уже написан
-(`plan_key` в `src/libs/kt-gpu/src/engine.rs`), на CPU его вешать не
-на что. До тех пор честная формулировка расхождения такая: у нас нет
-уровня, вход которого — смикшированная картинка, и поэтому у нас нет ни
-масок по площади кадра, ни виньетки на всё изображение, ни wet/dry.
+We take it as a SEPARATE object and not first. The per-clip input is not a defect and not an unfinished piece: from it grow source substitution, `Areas`/`Marks`, honest bake and a working chroma key — that is, everything with which the morpher outpaces other editors' adjustment layers. Giving this up for a composite stage is not acceptable, and combining the two under one event with a checkbox means getting an object with two different meanings, different costs, different targeting and a broken bake button (UI rule 17). Therefore the composite stage is a second object ("effect on the result"), its own round, a revision of invariants 7 and 4 and a new kind of cache key; the frame-level key for it is half written already (`plan_key` in `src/libs/kt-gpu/src/engine.rs`), while on the CPU there is nothing to hang it on. Until then the honest formulation of the divergence is this: we have no level whose input is the mixed-down picture, and therefore we have neither masks by frame area, nor a vignette over the whole image, nor wet/dry.
 
-## Источники
+## Sources
 
-- https://community.adobe.com/t5/premiere-pro-discussions/multi-camera-editing-best-way-to-assign-separate-adjustment-layers-to-each-source/td-p/15127444 — слой не адресует источник; ответ «делай Source Effect» (дата обращения 2026-09-07)
-- https://creativecow.net/forums/thread/applying-motion-blur-to-each-layer-or-to-a-top-adj/ — автор RSMB о том, почему на композите его плагин теряет трекинг (2026-09-07)
-- https://community.adobe.com/t5/premiere-pro-discussions/color-correcting-with-adjustments-layers-with-cross-dissolves-on-clips/m-p/9748402 — грейд со слоя и кроссфейд под ним (2026-09-07)
-- https://community.adobe.com/t5/premiere-pro-discussions/luma-key-or-color-key-or-ultra-key-not-working-on-adjustment-layers-bug-or-limitation/td-p/14397400 — кеинг на композитном слое (2026-09-07)
-- https://helpx.adobe.com/after-effects/using/creating-layers.html — вход adjustment-слоя AE и обещание «один раз на кадр» (по документации, 2026-09-07)
-- https://www.steakunderwater.com/VFXPedia/__man/Resolve18-6/DaVinciResolve18_Manual_files/part2983.htm — Clip vs. Timeline Grading: Timeline-грейд отрабатывает по каждому клипу (2026-09-07)
-- https://davinciresolveclub.com/adjustment-clips-davinci-resolve/ — adjustment clip видит композит под собой (2026-09-07)
-- https://forum.borisfx.com/t/revisiting-an-old-bug-with-track-fx-vs-event-fx/25189 — место adjustment-события VEGAS в конвейере (2026-09-07)
+- https://community.adobe.com/t5/premiere-pro-discussions/multi-camera-editing-best-way-to-assign-separate-adjustment-layers-to-each-source/td-p/15127444 — the layer does not address the source; the answer "use a Source Effect" (accessed 2026-09-07)
+- https://creativecow.net/forums/thread/applying-motion-blur-to-each-layer-or-to-a-top-adj/ — the RSMB author on why his plugin loses tracking on the composite (2026-09-07)
+- https://community.adobe.com/t5/premiere-pro-discussions/color-correcting-with-adjustments-layers-with-cross-dissolves-on-clips/m-p/9748402 — a grade from a layer and a crossfade under it (2026-09-07)
+- https://community.adobe.com/t5/premiere-pro-discussions/luma-key-or-color-key-or-ultra-key-not-working-on-adjustment-layers-bug-or-limitation/td-p/14397400 — keying on a composite layer (2026-09-07)
+- https://helpx.adobe.com/after-effects/using/creating-layers.html — the AE adjustment-layer input and the promise "once per frame" (per the documentation, 2026-09-07)
+- https://www.steakunderwater.com/VFXPedia/__man/Resolve18-6/DaVinciResolve18_Manual_files/part2983.htm — Clip vs. Timeline Grading: the Timeline grade runs on each clip (2026-09-07)
+- https://davinciresolveclub.com/adjustment-clips-davinci-resolve/ — the adjustment clip sees the composite under it (2026-09-07)
+- https://forum.borisfx.com/t/revisiting-an-old-bug-with-track-fx-vs-event-fx/25189 — the place of the VEGAS adjustment event in the pipeline (2026-09-07)
 - https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/7-edit/adjustmentevents.htm — Adjustment events, VEGAS Pro 2026 (2026-09-07)
-- https://support.apple.com/guide/final-cut-pro/add-adjustment-clips-verfda63436e/mac — Adjustment Clip в FCP (2026-09-07)
+- https://support.apple.com/guide/final-cut-pro/add-adjustment-clips-verfda63436e/mac — Adjustment Clip in FCP (2026-09-07)
 
-Живьём ни один редактор не запускался: чужая сторона собрана из
-официальной документации и форумных тредов (часть страниц
-`helpx.adobe.com` и форум Blackmagic в этой сессии отдавали 403 и
-читались через сниппеты выдачи). НАША сторона проверена по коду —
-каждое утверждение о Kinotrain стоит на прочитанном файле из `src/`.
+No editor was run live: the other side is assembled from official documentation and forum threads (some pages of `helpx.adobe.com` and the Blackmagic forum in this session returned 403 and were read through search-result snippets). OUR side is checked against the code — every statement about Kinotrain rests on a file read from `src/`.

@@ -1,12 +1,12 @@
 ---
 id: F-HLP-015
-title: Палитра команд — поиск по самой программе
-status: кандидат
+title: Command palette — search within the program itself
+status: candidate
 priority: B
 cost: S
 category: help/discoverability
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-app]
 invariants: [12]
 ui_rules: [13, 14, 16, 17, 18, 20]
@@ -17,357 +17,184 @@ depends_on: [F-UI-002]
 checked: 2026-09-07
 ---
 
-# F-HLP-015 — Палитра команд — поиск по самой программе
+# F-HLP-015 — Command palette — search within the program itself
 
-## Суть
+## Essence
 
-Одна клавиша открывает поле ввода, человек набирает НАЗВАНИЕ ТОГО, ЧТО ХОЧЕТ
-сделать («удалить область», «морфер», «реверс»), видит список подходящих
-команд с горячей клавишей у каждой и нажимает Enter — команда выполняется.
-Ищется не материал проекта, а сама программа: её действия, её настройки, её
-окна. Это единственная поверхность, где не надо знать, В КАКОМ МЕНЮ и НА КАКОМ
-ОБЪЕКТЕ живёт нужное; знать надо только слово.
+One key opens an input field, the person types the NAME OF WHAT HE WANTS TO DO ("delete area", "morpher", "reverse"), sees a list of suitable commands with a hotkey next to each, and presses Enter — the command is executed. What is searched is not the project's material, but the program itself: its actions, its settings, its windows. This is the only surface where one does not need to know IN WHICH MENU and ON WHICH OBJECT the needed thing lives; one needs to know only the word.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it is organized |
 |---|---|---|---|
-| VEGAS Pro | 2026 | нет | поиск по командам в программе есть ровно один — поле «Show commands containing» в `Options → Customize Keyboard`, и оно НАЗНАЧАЕТ клавишу, а не выполняет команду (см. F-UI-002). Windows-only: системного поиска по меню на этой платформе не существует |
-| Adobe Premiere | 26 | нет | ищутся МЕДИА (Project) и ЭФФЕКТЫ (Effects); действия — только в `Keyboard Shortcuts`, и тоже ради назначения. На macOS работает системный поиск по пунктам меню (Help), на Windows его нет |
-| DaVinci Resolve | 21 | нет | то же разделение: Media Pool и Effects Library ищутся, действия — только в `Keyboard Customization`. Системный поиск по меню на macOS **[НЕ ПРОВЕРЕНО]** живьём, механизм платформенный |
-| Final Cut Pro | 12 | нет собственной; системная | Command Editor ищет команду по имени, по ключевым словам описания и по имени клавиши — но чтобы её переназначить. ВЫПОЛНИТЬ команду по имени даёт macOS: поле поиска в меню Help находит пункты меню, показывает стрелкой, где пункт лежит, и по Enter выполняет |
-| After Effects | 26 | нет | ищутся эффекты и пресеты (`Effects & Presets`); поиска по действиям нет. На macOS — та же системная лазейка через Help |
+| VEGAS Pro | 2026 | none | there is exactly one search of commands in the program — the field "Show commands containing" in `Options → Customize Keyboard`, and it ASSIGNS a key, it does not execute the command (see F-UI-002). Windows-only: there is no system search of menus on this platform |
+| Adobe Premiere | 26 | none | MEDIA (Project) and EFFECTS (Effects) are searched; actions — only in `Keyboard Shortcuts`, and also for the sake of assignment. On macOS the system search of menu items (Help) works, on Windows there is none |
+| DaVinci Resolve | 21 | none | the same division: Media Pool and Effects Library are searched, actions — only in `Keyboard Customization`. System search of the menus on macOS **[NOT VERIFIED]** live, the mechanism is platform-specific |
+| Final Cut Pro | 12 | no own one; the system one | the Command Editor searches a command by name, by keywords of the description and by key name — but in order to reassign it. To EXECUTE a command by name is given by macOS: the search field in the Help menu finds menu items, shows with an arrow where the item lies, and executes it on Enter |
+| After Effects | 26 | none | effects and presets (`Effects & Presets`) are searched; there is no search by actions. On macOS — the same system loophole through Help |
 
-Итог по ядру: **собственной палитры команд нет ни у кого**. У всех пятерых есть
-поиск по СОДЕРЖИМОМУ (медиа, эффекты) и у всех пятерых есть список команд — но
-он заперт в окне переназначения клавиш и умеет только назначать. Единственный
-работающий «поиск по программе» в этом списке пришёл от операционной системы и
-достаётся четырём из пяти бесплатно и мимо вендора.
+The summary for the core: **no one has its own command palette**. All five have search by CONTENT (media, effects) and all five have a list of commands — but it is locked in the window for reassigning keys and can only assign. The only working "search of the program" in this list came from the operating system and is available to four out of five for free and bypassing the vendor.
 
-**Вне ядра.** Без этих программ фичу описать нельзя: она оттуда родом (VS Code),
-её верхняя граница показана там же (JetBrains: команды и НАСТРОЙКИ одним
-списком), и только Blender с Photoshop снимают возражение «палитра — идея для
-программистов, монтажёру она чужая».
+**Outside the core.** Without these programs the feature cannot be described: it originates from there (VS Code), its upper boundary is shown there too (JetBrains: commands and SETTINGS in one list), and only Blender and Photoshop remove the objection "a palette is an idea for programmers, alien to the editor".
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it is organized |
 |---|---|---|---|
-| Visual Studio Code | 1.136 | Command Palette | Ctrl+Shift+P; «From here, you have access to all functionality within VS Code, including keyboard shortcuts for the most common operations». Одно поле, режимы префиксом: `@` — символы, `:` — строка, `?` — список режимов; аккорд стоит справа от имени; у команды есть КАТЕГОРИЯ-префикс («Group commands together in the same category») и условие видимости |
-| IntelliJ IDEA | 2026.2 | Search Everywhere / Find Action | двойной Shift; ищет «files, actions, classes, symbols, settings, UI elements, and anything in Git from a single entry point». Аккорд в строке результата («the Push action … together with the `Ctrl+Shift+K` shortcut»), настройки не только находятся, но и ПЕРЕКЛЮЧАЮТСЯ прямо из списка |
-| Blender | 5.2 LTS | Menu Search (F3) | «The Menu Search pop-up lets you search Blender's interface for a certain operator and execute it» — в программе без единой строчки кода у пользователя. Формулировка процитирована по странице манула 4.0: 5.2 из этого окружения не открылась **[НЕ ПРОВЕРЕНО]** |
-| Photoshop | 27 | Discover / Search | Ctrl+F (Cmd+F) — та же клавиша, что у нас занята поиском по проекту. Результаты тремя группами: «items that you could find through the Photoshop interface; such as tools, layers, and panels», обучающие статьи и Adobe Stock. То есть Adobe палитру УМЕЕТ и ставит её в Photoshop, но не ставит ни в Premiere, ни в After Effects |
+| Visual Studio Code | 1.136 | Command Palette | Ctrl+Shift+P; "From here, you have access to all functionality within VS Code, including keyboard shortcuts for the most common operations". One field, modes by prefix: `@` — symbols, `:` — line, `?` — list of modes; the chord stands on the right of the name; a command has a CATEGORY prefix ("Group commands together in the same category") and a visibility condition |
+| IntelliJ IDEA | 2026.2 | Search Everywhere / Find Action | double Shift; searches "files, actions, classes, symbols, settings, UI elements, and anything in Git from a single entry point". The chord in the result line ("the Push action … together with the `Ctrl+Shift+K` shortcut"); settings are not only found, but also TOGGLED right from the list |
+| Blender | 5.2 LTS | Menu Search (F3) | "The Menu Search pop-up lets you search Blender's interface for a certain operator and execute it" — in a program, without a single line of code on the user's side. The wording is quoted from the page of the 4.0 manual: 5.2 did not open from this environment **[NOT VERIFIED]** |
+| Photoshop | 27 | Discover / Search | Ctrl+F (Cmd+F) — the same key that we have taken for project search. Results in three groups: "items that you could find through the Photoshop interface; such as tools, layers, and panels", learning articles and Adobe Stock. That is, Adobe KNOWS how to make a palette and puts it into Photoshop, but does not put it into Premiere or After Effects |
 
-## Фишка фишки
+## The trick behind it
 
-Груз палитры — **СПИСОК**: N предметов, на которые пользователь ещё НЕ навёл
-мышь, отранжированных под набранное им слово. Строка статусбара по устройству
-несёт ровно один предмет и только тот, на который уже навели; список в неё не
-влезает не по длине, а по количеству. У нас этот груз ложится в уже
-существующее окно Ctrl+F (`kt_search`), которое по устройству и есть список,
-вторым РЕЖИМОМ одного поля, а не вторым окном.
+The load of the palette is a **LIST**: N items that the user has NOT yet pointed the mouse at, ranked under the word he has typed. A status-bar line by its nature carries exactly one item and only the one that has already been pointed at; a list does not fit into it not by length, but by quantity. For us this load falls onto the already existing Ctrl+F window (`kt_search`), which by its nature is a list, as a second MODE of one field, not as a second window.
 
-**1. В NLE палитра существует ровно там, где её дала операционная система, и
-она учит не клавише, а МЕСТУ.** macOS кладёт поле поиска в меню Help любого
-приложения, и оно индексирует пункты меню: «Hover over one of these with your
-mouse, and macOS will locate the action for you by pointing an arrow at it in
-the corresponding menu. Hit Enter, and the action will be performed for you»
-(MacRumors, 16.01.2019). Отсюда два следствия, которых нет ни в одном списке
-возможностей. Первое: три из пяти редакторов ядра получают «поиск по
-программе» бесплатно на одной платформе и не имеют его на другой — Vegas,
-живущий только под Windows, не имеет вовсе. Второе и главное: системная
-палитра видит ТОЛЬКО МЕНЮ. Всё, что живёт в контекстном меню, в кнопке панели,
-в жесте или в одной лишь горячей клавише, для неё не существует — а это ровно
-тот класс, из-за которого пользователь пишет «я не понимаю как».
+**1. In an NLE the palette exists exactly where the operating system provided it, and it teaches not the key, but the PLACE.** macOS puts a search field into the Help menu of any application, and it indexes the menu items: "Hover over one of these with your mouse, and macOS will locate the action for you by pointing an arrow at it in the corresponding menu. Hit Enter, and the action will be performed for you" (MacRumors, 16.01.2019). Two consequences follow from this, which are absent from every list of capabilities. First: three of the five core editors get "search of the program" for free on one platform and do not have it on another — Vegas, which lives only under Windows, does not have it at all. Second and main: the system palette sees ONLY THE MENUS. Everything that lives in the context menu, in a panel button, in a gesture or in a single hotkey does not exist for it — and that is exactly the class because of which the user writes "I don't understand how".
 
-**2. Палитра — не окно с поиском, а диспетчер нескольких индексов, и префикс —
-его переключатель.** В VS Code одно и то же поле по `Ctrl+P` ищет файлы, с
-`>` — команды, с `@` — символы, с `:` — номер строки, а `?` показывает список
-доступных режимов. Практическое следствие прямо для нас: «поиск по проекту» и
-«поиск по программе» — это не два окна и не две клавиши, а два режима одного
-поля. Мы стоим на этой развилке сегодня: Ctrl+F уже открыт под первый индекс, а
-Photoshop на той же клавише открывает второй.
+**2. A palette is not a window with a search, but a dispatcher of several indexes, and the prefix is its switch.** In VS Code the same field under `Ctrl+P` searches files, with `>` — commands, with `@` — symbols, with `:` — a line number, and `?` shows the list of available modes. The practical consequence directly for us: "project search" and "program search" are not two windows and not two keys, but two modes of one field. We stand at this fork today: Ctrl+F is already open under the first index, and Photoshop opens the second on the same key.
 
-**3. Аккорд справа от имени — самый дешёвый учитель клавиатуры, потому что
-берёт плату вперёд.** Человек пришёл ВЫПОЛНИТЬ команду мышью и уходит, зная её
-клавишу: JetBrains показывает «the Push action … together with the
-`Ctrl+Shift+K` shortcut» в той же строке, VS Code — «Many of the commands in
-the Command Palette have default keyboard shortcuts associated with them».
-Шпаргалка требует, чтобы человек пришёл учиться; палитра не требует ничего.
-Обратная сторона той же монеты — единственный след непонимания, который
-пользователь оставляет САМ, ничего не написав: «With an omnibox, each failed
-search is a point of information to you» (hrishi, HN, 2021). Пустой результат —
-не тупик, а сообщение о том, каким словом человек назвал искомое. Граница:
-видимостью акселератора вообще (в меню, в подсказке, в шпаргалке) владеет
-F-HLP-017; здесь речь только о колонке аккорда В САМОЙ ПАЛИТРЕ.
+**3. The chord to the right of the name is the cheapest keyboard teacher, because it collects the payment in advance.** The person came to EXECUTE a command with the mouse and leaves knowing its key: JetBrains shows "the Push action … together with the `Ctrl+Shift+K` shortcut" on the same line, VS Code — "Many of the commands in the Command Palette have default keyboard shortcuts associated with them". A cheat sheet requires the person to come to learn; the palette requires nothing. The reverse side of the same coin is the only trace of misunderstanding that the user leaves HIMSELF, without writing anything: "With an omnibox, each failed search is a point of information to you" (hrishi, HN, 2021). An empty result is not a dead end, but a message about which word the person used to name what he needed. The boundary: the visibility of accelerators in general (in the menu, in a hint, in a cheat sheet) is owned by F-HLP-017; here we are talking only about the chord column INSIDE THE PALETTE itself.
 
-## Плюсы
+## Pros
 
-- Поиск по ИМЕНИ снимает необходимость знать МЕСТО. Это единственное свойство,
-  которого нет ни у меню, ни у контекстного меню, ни у подсказки при
-  наведении: все трое требуют сначала попасть в нужную точку экрана.
-- Аккорд в строке результата превращает каждый вызов мышью в урок клавиатуры —
-  канал обучения, не требующий, чтобы пользователь пришёл учиться.
-- Категория-префикс у имени («Git: Commit») удерживает читаемость ПЛОСКОГО
-  списка на сотнях команд: иерархия меню заменяется словом в имени, и поиск от
-  этого не ломается, а улучшается.
-- Условие видимости у команды (VS Code объявляет его декларативно) означает,
-  что список подстраивается под то, что выделено, — без серых пунктов.
-- Одно поле с режимами не заводит второй поверхности: ни новой полосы, ни новой
-  клавиши, ни нового окна.
-- Провалившийся запрос — данные. Слово, которым пользователь назвал искомое,
-  видно только здесь.
+- Search by NAME removes the need to know the PLACE. This is the only property that neither the menu, nor the context menu, nor the hover hint has: all three require first hitting the right point on the screen.
+- A chord in the result line turns every call with the mouse into a keyboard lesson — a learning channel that does not require the person to come to learn.
+- A category prefix in the name ("Git: Commit") keeps a FLAT list of hundreds of commands readable: the menu hierarchy is replaced by a word in the name, and the search does not break from this but improves.
+- A visibility condition on a command (VS Code declares it declaratively) means that the list adapts to what is selected — without grayed-out items.
+- One field with modes does not create a second surface: no new strip, no new key, no new window.
+- A failed query is data. The word with which the user named what he needed is visible only here.
 
-## Минусы
+## Cons
 
-- **Палитра требует знать СЛОВО.** Она не решает открытие как таковое: тот, кто
-  не знает, что искомое называется «областью», не найдёт её никаким
-  ранжированием. Наш пользователь назвал её «saved area region» — три слова, из
-  которых нашим является одно.
-- Она индексирует КОМАНДЫ и потому слепа к жестам. «Менять длину морфер-события»
-  — это драг кромки; у драга нет имени ни у нас, ни у VS Code, ни у Blender.
-- Анти-паттерн, встроенный в саму идею: наличие палитры позволяет объявить
-  команду достижимой, не дав ей места ни в меню, ни в контекстном меню. «Она же
-  есть в палитре» — законный на вид довод, после которого меню перестаёт
-  расти, а тупики становятся невидимыми для проверок.
-- Плоский список без условия видимости наполняется командами, неприменимыми к
-  текущему выделению, и клик по ним даёт молчаливое ничто.
-- «Недавние сверху» — состояние, которое отрастает само: одинаковый запрос у
-  двух людей даёт разный первый пункт, и объяснить, почему, нечем.
-- Локализация бьёт по самому механизму: команду ищут по имени, а имя
-  переведено. Человек, выучивший английские названия по чужим урокам, не
-  найдёт их в своём языке — если искать только по переводу.
+- **The palette requires knowing the WORD.** It does not solve discovery as such: someone who does not know that what he needs is called "area" will not find it by any ranking. Our user called it "saved area region" — three words, of which only one is ours.
+- It indexes COMMANDS and is therefore blind to gestures. "Change the length of a morpher event" is an edge drag; a drag has no name, neither with us, nor in VS Code, nor in Blender.
+- An anti-pattern built into the very idea: the presence of a palette allows declaring a command reachable without giving it a place in either the menu or the context menu. "But it is in the palette" is a legitimate-looking argument, after which the menu stops growing and dead ends become invisible to checks.
+- A flat list without a visibility condition gets filled with commands inapplicable to the current selection, and a click on them gives silent nothing.
+- "Recent at the top" is a state that grows by itself: the same query from two people gives a different first item, and there is nothing to explain why.
+- Localization hits the mechanism itself: the command is searched by name, and the name is translated. A person who learned the English names from others' lessons will not find them in his language — if he searches only by translation.
 
-## Что говорят пользователи
+## What users say
 
-О том, ЧТО именно палитра даёт, — дословно, и это не про скорость:
+On WHAT exactly the palette gives — verbatim, and it is not about speed:
 
 > With vim I find I'm constantly googling how to do things. With sublime
 > learning how to do something usually happens in the editor, thanks to the
 > command bar.
 > — ollysb, Hacker News, 21.03.2013, https://news.ycombinator.com/item?id=5414566
 
-Отрицательная сторона от человека, который строил на палитре весь интерфейс
-продукта:
+The negative side, from a person who built the product's entire interface on a palette:
 
 > There is still a lack of discoverability with a command palette. Our solution
 > has been to include commonly used commands, and most popular commands
 > alongside, as well as introducing some new ones intermittently.
 > — hrishi, Hacker News, 04.06.2021, https://news.ycombinator.com/item?id=27394559
 
-Он же — о том, чего в списке возможностей не пишут:
+The same person — on what is not written in a list of capabilities:
 
 > With an omnibox, each failed search is a point of information to you.
 > — hrishi, Hacker News, 04.06.2021, https://news.ycombinator.com/item?id=27394559
 
-И рыночный сигнал прямо в нашем домене: вышедший в 2026 году видеоредактор
-Blick (public beta, Dihedron Software GmbH) продаёт палитру как фичу, наравне с
-волноформами, которые тут же сравнивает с Premiere Pro и DaVinci Resolve:
+And a market signal right in our domain: the video editor Blick, released in 2026 (public beta, Dihedron Software GmbH), sells the palette as a feature, on a par with the waveforms, which it immediately compares with Premiere Pro and DaVinci Resolve:
 
 > The command palette lets you search through every action in the program in
 > one place, and run it.
-> — blickeditor.com, обращение 2026-09-07, https://blickeditor.com
+> — blickeditor.com, accessed 2026-09-07, https://blickeditor.com
 
-Отдельно отмечено как пробел: в форуме Vegas (Discourse Boris FX, поиск
-`/search.json?q="command palette"`) — НОЛЬ упоминаний. Просить палитру в NLE
-пользователи не научились: её там никогда не было, и просят они вместо неё
-«где эта команда», по одной команде за раз.
+Separately noted as a gap: in the Vegas forum (Boris FX Discourse, search `/search.json?q="command palette"`) there are ZERO mentions. Users did not learn to ask for a palette in NLEs: there was never one there, and instead they ask "where is this command", one command at a time.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-**Половина палитры построена и работает** — это окно поиска по проекту
-(п.3 р.10):
+**Half of the palette is built and works** — this is the project search window (item 3 of R.10):
 
-- `KtApp::draw_search` (`src/apps/kt-app/src/app.rs:1332`) — окно с ПОСТОЯННЫМ
-  id `kt_search` (не от заголовка: t129, `layout_tests.rs:1775`), якорь
-  `CENTER_CENTER`, поле ввода с `hint_text`, управление фокусом через
-  `search_focus`, стрелки/Enter/Esc, разобранные ВНУТРИ окна — потому что пока
-  фокус в поле, `handle_keys` не выполняется вовсе; `ScrollArea` на 320 px,
-  строки `selectable_label`, строка «ничего не найдено», выполнение выбора.
-- Два входа, уже симметричных (правило 17): Ctrl+F (`k.find`, `app.rs:3975`) и
-  кнопка `icons::SEARCH` в тулбаре (`toolbar.rs:661`), обе ставят
-  `search_open` + `search_focus`.
-- `escape_action` (`app.rs:1713`) закрывает поиск ПЕРВЫМ шагом каскада.
-- `search_hits` (`app.rs:4543`) — чистая функция с ранжированием и тестом t92
-  (`app.rs:5486`). Ранг: 0 — точное совпадение, 1 — начинается с запроса, 2 —
-  подстрока. Это НЕ fuzzy-поиск.
+- `KtApp::draw_search` (`src/apps/kt-app/src/app.rs:1332`) — a window with a PERMANENT id `kt_search` (not derived from the title: t129, `layout_tests.rs:1775`), anchor `CENTER_CENTER`, an input field with `hint_text`, focus control via `search_focus`, arrows/Enter/Esc, parsed INSIDE the window — because while focus is in the field, `handle_keys` is not executed at all; a `ScrollArea` of 320 px, `selectable_label` rows, a "nothing found" row, execution of the selection.
+- Two entries, already symmetric (rule 17): Ctrl+F (`k.find`, `app.rs:3975`) and the `icons::SEARCH` button in the toolbar (`toolbar.rs:661`), both set `search_open` + `search_focus`.
+- `escape_action` (`app.rs:1713`) closes the search as the FIRST step of the cascade.
+- `search_hits` (`app.rs:4543`) — a pure function with ranking and test t92 (`app.rs:5486`). Rank: 0 — exact match, 1 — starts with the query, 2 — substring. This is NOT fuzzy search.
 
-**Не готов ровно один кусок — источник данных.** `HitKind` имеет пять видов
-(`Marker`, `Media`, `Track`, `Clip`, `Group`), и все пять — содержимое проекта.
-Строки «что умеет программа» в нём нет ни одной.
+**Exactly one piece is not ready — the data source.** `HitKind` has five kinds (`Marker`, `Media`, `Track`, `Clip`, `Group`), and all five are project content. There is not a single line in it about "what the program can do".
 
-**Именованных команд у нас при этом много, и живут они не в меню.** Каталог
-(`src/apps/kt-app/i18n/*.toml`): `[tl.menu]` — 38 ключей, `[tl.lane]` — 19,
-`[bin.menu]` — 9, то есть около шестидесяти надписей, почти все — команды,
-достижимые ТОЛЬКО правой кнопкой по правильному объекту. Главное меню
-(`menu.file` + `menu.edit` + `menu.view`) — около двадцати пунктов, и аккорд
-показан у семи из них, потому что `Toolbar::menu_btn` (`toolbar.rs:239`)
-склеивает его литералом вручную.
+**At the same time we have many named commands, and they do not live in the menu.** The catalog (`src/apps/kt-app/i18n/*.toml`): `[tl.menu]` — 38 keys, `[tl.lane]` — 19, `[bin.menu]` — 9, that is, about sixty labels, almost all of them commands reachable ONLY by the right button on the correct object. The main menu (`menu.file` + `menu.edit` + `menu.view`) — about twenty items, and the chord is shown for seven of them, because `Toolbar::menu_btn` (`toolbar.rs:239`) glues it in by hand as a literal.
 
-**Готовый образец «реестр + поиск по синонимам»** — `fx_registry::registry()`
-(`src/apps/kt-app/src/fx_registry.rs:47`): `&'static [FxEntry]` за `OnceLock`,
-у записи имя, категория и невидимые ключевые слова (`[fxreg.kw]`, 12 ключей),
-фильтр — чистая функция с тестом t48. Там же принято решение, прямо касающееся
-палитры: «Имя эффекта НЕ переводится: это отраслевой термин, по нему эффект
-ищут в любой локали».
+**A ready example of "registry + search by synonyms"** — `fx_registry::registry()` (`src/apps/kt-app/src/fx_registry.rs:47`): a `&'static [FxEntry]` behind a `OnceLock`; an entry has a name, a category and invisible keywords (`[fxreg.kw]`, 12 keys); the filter is a pure function with test t48. The same place records a decision directly relevant to the palette: "The effect name is NOT translated: it is an industry term, and it is searched by that name in any locale".
 
-**Р.38 закрыл семь «я не понимаю как» контекстными меню** — областью
-(`src/apps/kt-app/src/timeline.rs:4585`, комментарий «До этого раунда меню у
-неё не было ВООБЩЕ») и морфер-дорожкой (`timeline.rs:1836`,
-`tl.lane.add_morpher_here`). Это та же pull-поверхность: чтобы найти команду,
-надо догадаться щёлкнуть правой кнопкой по нужному объекту. Пользователь
-догадался и написал «пкм ничего не дает» — то есть жест он выполнил ПРАВИЛЬНО,
-и всё равно остался ни с чем.
+**R.38 closed seven "I don't understand how" cases with context menus** — the area (`src/apps/kt-app/src/timeline.rs:4585`, the comment "Before this round the area had NO menu AT ALL") and the morpher track (`timeline.rs:1836`, `tl.lane.add_morpher_here`). This is the same pull surface: to find a command, one must guess to right-click the needed object. The user guessed and wrote "PKM gives nothing" — that is, he performed the gesture CORRECTLY, and still was left with nothing.
 
-**Проверка обещания по семи претензиям Р.38** (пп. 1, 2, 3, 5, 9, 13, 14 —
-класс «я не понимаю как»; остальные из девятнадцати про попадание мышью,
-вёрстку и поведение). Нашлась бы команда в палитре:
+**Checking the promise against the seven claims of R.38** (items 1, 2, 3, 5, 9, 13, 14 — the class "I don't understand how"; the rest of the nineteen are about hitting with the mouse, layout and behavior). Would the palette find the command:
 
-| Претензия | Нашлась бы | Почему |
+| Claim | Would find it | Why |
 |---|---|---|
-| п.1 удалить/переименовать область | **да** | `RemoveArea`/`RenameArea` — именованные команды; набор «область» отвечает без знания, что цель — сама плашка области |
-| п.2 морфер на существующую дорожку | **да** | `add_morpher_here` — именованная команда, сегодня достижимая только ПКМ по морф-дорожке |
-| п.14 зум в таймлайне автоматизации | **при условии** | только если «вписать по содержимому» станет ИМЕНОВАННОЙ командой; решением Р.38 стала кнопка-замок, то есть виджет |
-| п.3 «add morpher layer странно работает» | нет | найдена была, вопрос к поведению; палитра выполнила бы то же самое |
-| п.5 «как работает камерный трек» | нет | просьба ОБЪЯСНИТЬ; груз — абзац, он не в списке команд |
-| п.9 длина морфер-события | нет | жест (драг кромки); у жеста нет имени ни у кого |
-| п.13 автоматизация у морфера | нет | фичи не существовало; палитра не создаёт возможностей, она показывает существующие |
+| item 1 delete/rename an area | **yes** | `RemoveArea`/`RenameArea` are named commands; the query "area" answers without knowing that the target is the area's tab itself |
+| item 2 morpher on an existing track | **yes** | `add_morpher_here` is a named command, today reachable only by RMB on a morph track |
+| item 14 zoom in the automation timeline | **conditionally** | only if "fit to content" becomes a NAMED command; the decision of R.38 was a lock button, that is, a widget |
+| item 3 "add morpher layer works strangely" | no | the command was found; the question is about behavior; the palette would have executed the same thing |
+| item 5 "how the camera track works" | no | the request is to EXPLAIN; the load is a paragraph, and it is not in a list of commands |
+| item 9 length of a morpher event | no | a gesture (edge drag); a gesture has no name for anyone |
+| item 13 automation on a morpher | no | the feature did not exist; the palette does not create capabilities, it shows existing ones |
 
-Две из семи наверняка, третья условно. Это честная цена ожиданий, и она прямо
-противоречит соблазну считать палитру лекарством от тупиков.
+Two out of seven for certain, the third conditionally. This is an honest price of expectations, and it directly contradicts the temptation to regard the palette as a cure for dead ends.
 
-### Чего не хватает
+### What is missing
 
-Источника «команда» (реестр — F-UI-002); режима у поля ввода, чтобы Ctrl+F
-владел двумя индексами, а не одним; колонки аккорда справа; условия
-применимости команды к текущему выделению; внятного ответа на пустой результат.
+A source of "command" (the registry — F-UI-002); a mode of the input field so that Ctrl+F owns two indexes rather than one; a chord column on the right; a condition of the command's applicability to the current selection; a clear answer to an empty result.
 
-### Что мешает
+### What gets in the way
 
-**1. Реестра команд нет, и палитра поверх сегодняшнего состояния станет
-ЧЕТВЁРТЫМ источником правды.** Команды размазаны по `handle_keys`
-(`app.rs:3750`), `Toolbar::menu_items` (`toolbar.rs:245`) и контекстным меню
-таймлайна и бина. F-UI-002 разбирает это подробно и требует обратного порядка:
-сначала реестр, из которого строятся меню и акселераторы, потом всё
-остальное. Палитра — «всё остальное».
+**1. There is no command registry, and a palette on top of today's state will become a FOURTH source of truth.** The commands are smeared across `handle_keys` (`app.rs:3750`), `Toolbar::menu_items` (`toolbar.rs:245`) and the context menus of the timeline and the bin. F-UI-002 analyzes this in detail and requires the reverse order: first the registry, from which the menus and accelerators are built, then everything else. The palette is "everything else".
 
-**2. У команды есть АДРЕСАТ, а палитра вызывается без наведения.** Больше
-половины наших именованных команд контекстные: «фейд в начале клипа», «реверс»,
-«удалить дорожку» требуют объекта. Ответ у нас уже есть и он не выдуман:
-операции по ВЫДЕЛЕНИЮ (t205, мультивыделение t202/t203) — то же, чем сегодня
-живут Ctrl+C/Del. Но тогда команда, которой выделения не хватает, обязана
-отказать ПО-ЧЕЛОВЕЧЕСКИ (правило 16: невозможность действия — ошибка, а не
-блёклая подсказка), а не молча ничего не сделать.
+**2. A command has a TARGET, and the palette is invoked without pointing.** More than half of our named commands are contextual: "fade at the start of the clip", "reverse", "delete track" require an object. We already have an answer to this, and it is not invented: operations on the SELECTION (t205, multi-selection t202/t203) — the same thing on which Ctrl+C/Del live today. But then a command that lacks a selection must refuse HUMANLY (rule 16: the impossibility of an action is an error, not a faded hint), rather than silently do nothing.
 
-**3. Инвариант 12.** `search_hits` считается ЗАНОВО КАЖДЫЙ КАДР, пока окно
-открыто (`app.rs:1339`), и аллоцирует `Vec<Hit>` со `String` на каждый хит.
-Сегодня это терпимо — в проекте десятки объектов. С сотней команд, их
-категориями и синонимами на пяти языках постоянный пересчёт в draw-пути
-становится ровно тем, что инвариант запрещает; нужна мемоизация по запросу.
+**3. Invariant 12.** `search_hits` is computed AFRESH EVERY FRAME while the window is open (`app.rs:1339`), and allocates a `Vec<Hit>` with a `String` for each hit. Today this is tolerable — there are dozens of objects in a project. With a hundred commands, their categories and synonyms in five languages, a constant recomputation in the draw path becomes exactly what the invariant forbids; memoization by query is needed.
 
-**4. Язык — развилка, а не деталь.** t125 требует каждый ключ каталога непустым
-во всех пяти языках, t131 — английские литералы в исходниках. Имена команд
-переведены, и человек, знающий их по чужим урокам, ищет по-английски. У нас уже
-есть оба готовых решения — «имя не переводится» (`fx_registry.rs`) и
-«невидимые ключевые слова» (`[fxreg.kw]`), — и выбирать между ними придётся
-осознанно. Полная цена новой строки в пяти языках — F-HLP-033.
+**4. Language is a fork, not a detail.** t125 requires every catalog key to be non-empty in all five languages, t131 — English literals in the sources. Command names are translated, and a person who knows them from others' lessons searches in English. We already have both ready solutions — "the name is not translated" (`fx_registry.rs`) and "invisible keywords" (`[fxreg.kw]`) — and one must choose between them consciously. The full price of a new line in five languages — F-HLP-033.
 
-**5. Ранг у нас подстрочный, а не fuzzy.** «рзрз» не найдёт «разрез», и это
-заметно ровно на командах: имена команд длинные, а набирают их сокращённо
-(ollysb: «you can actually figure out the 2 or 3 letters that bring up the
-command you want»). Для CJK fuzzy бессмыслен — там подстрока и есть
-правильный ответ; значит правило ранжирования зависит от языка.
+**5. Our ranking is substring-based, not fuzzy.** the query "rzrz" will not find "razrez, "cut"", and this is noticeable precisely on commands: command names are long, and they are typed abbreviated (ollysb: "you can actually figure out the 2 or 3 letters that bring up the command you want"). For CJK fuzzy makes no sense — a substring is the right answer there; so the ranking rule depends on the language.
 
-**6. Анти-паттерн против t252.** `reach_tests::t252_no_orphan_commands` ловит
-команды модели, которые UI не вызывает ни разу. Палитра даёт дешёвый способ
-сделать такой тест зелёным, ничего не починив: завёл строку в реестре — и
-формально команда «достижима». Значит при заведении палитры t252 обязан явно
-НЕ засчитывать палитру за достижимость, иначе Р.38 повторится с зелёными
-тестами.
+**6. An anti-pattern against t252.** `reach_tests::t252_no_orphan_commands` catches model commands that the UI never invokes. The palette gives a cheap way to make such a test green without fixing anything: add a line to the registry — and formally the command is "reachable". So when the palette is introduced, t252 must explicitly NOT count the palette as reachability, otherwise R.38 will repeat with green tests.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Движковых — **12** (repaint только при движении, в draw-путях ни аллокаций, ни
-клонов на кадр): пересчёт списка на каждый кадр и на каждое нажатие клавиши.
-Ни модели, ни формата проекта, ни рендера, ни детерминизма фича не касается.
+Engine ones — **12** (repaint only on motion, no allocations or clones per frame in the draw paths): recomputing the list on every frame and on every key press. The feature touches neither the model, nor the project format, nor the rendering, nor determinism.
 
-Правила чек-листа UI: **13** (палитра не заводит новой полосы — она режим уже
-существующего окна), **14** (окно берёт фокус в поле ввода и обязано его
-отдавать; прецедент разобран прямо в `draw_search`), **16** (неприменимая
-команда отказывает ошибкой, а не молчанием), **17** (палитра обязана вызывать
-ТУ ЖЕ функцию, что пункт меню, — это и есть требование реестра), **18** (пункт
-говорит ЧТО и ГДЕ: у macOS ответ «где» дан стрелкой в меню, у нас — категорией
-в имени), **20** (ничего не отрастает само: «недавние сверху» — именно
-отрастающее состояние, и заводить его надо сознательно или не заводить).
+UI checklist rules: **13** (the palette does not create a new strip — it is a mode of an already existing window), **14** (the window takes focus in the input field and must give it back; the precedent is analyzed directly in `draw_search`), **16** (an inapplicable command refuses with an error, not with silence), **17** (the palette must call THE SAME function as the menu item — this is the requirement of the registry itself), **18** (an item says WHAT and WHERE: on macOS the answer to "where" is given by an arrow in the menu, with us — by a category in the name), **20** (nothing grows by itself: "recent at the top" is precisely a growing state, and it must be introduced consciously or not introduced at all).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия раунда ПОСЛЕ реестра; без реестра — ноль, делать нечего |
-| Где основная работа | `kt-app`: `draw_search`/`search_hits` (`src/apps/kt-app/src/app.rs`) — режим поля, шестой вид хита, колонка аккорда, мемоизация; данные приходят из реестра F-UI-002 |
-| Формат проекта | не трогает; «недавние» — либо не заводим, либо eframe Storage, где сегодня лежат две строки (`app.rs:5044`) |
-| Тесты, которые придётся написать | `reach_tests`: каждый пункт меню находится набором своего имени; «палитра и меню зовут одну функцию» (правило 17); отказ неприменимой команды как ошибка (правило 16); оговорка в t252 «палитра не считается достижимостью». Имена команд и их глифы (t125/t100) — цена реестра, не палитры |
-| Зависит от | F-UI-002 (реестр команд — жёсткое условие); граница с F-MED-001: там поиск по СОДЕРЖИМОМУ, здесь по программе; с F-HLP-017: там видимость акселератора вообще, здесь — колонка аккорда в палитре |
-| Ломает совместимость | нет |
+| Volume | S — one stage of a round AFTER the registry; without the registry — zero, there is nothing to do |
+| Where the main work is | `kt-app`: `draw_search`/`search_hits` (`src/apps/kt-app/src/app.rs`) — the mode of the field, a sixth kind of hit, the chord column, memoization; the data comes from the registry of F-UI-002 |
+| Project format | does not touch it; "recent" — either not introduced, or eframe Storage, where two lines lie today (`app.rs:5044`) |
+| Tests that must be written | `reach_tests`: each menu item is found by its own name set; "the palette and the menu call one function" (rule 17); refusal of an inapplicable command as an error (rule 16); a caveat in t252 "the palette is not counted as reachability". The command names and their glyphs (t125/t100) — the price of the registry, not of the palette |
+| Depends on | F-UI-002 (the command registry — a hard condition); the boundary with F-MED-001: there is search by CONTENT, here by the program; with F-HLP-017: there is the visibility of the accelerator in general, here — the chord column in the palette |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём, но строго вторым шагом. **Что палитра добавляет СВЕРХ реестра** — три
-вещи, и ни одна из реестра не выводится: (1) поиск команды по ИМЕНИ вместо
-знания МЕСТА — сегодня около шестидесяти именованных команд живут в контекстных
-меню и находятся только догадкой, по какому объекту щёлкнуть правой кнопкой;
-(2) аккорд в строке результата, то есть обучение клавише в момент вызова мышью
-— реестр аккорд знает, но никому не показывает; (3) режим у уже существующего
-поля Ctrl+F, из-за чего второй поверхности не заводится вовсе. Реестр без
-палитры меняет для пользователя ровно ничего: меню остаётся меню.
+We take it, but strictly as the second step. **What the palette adds OVER the registry** — three things, and none of them follows from the registry: (1) searching a command by NAME instead of knowing its PLACE — today about sixty named commands live in context menus and are found only by guessing which object to right-click; (2) the chord in the result line, that is, learning the key at the moment of a mouse invocation — the registry knows the chord but shows it to no one; (3) a mode of the already existing Ctrl+F field, because of which no second surface is created at all. A registry without a palette changes exactly nothing for the user: the menu remains a menu.
 
-Честная цена ожиданий названа выше таблицей: из семи претензий Р.38 «я не
-понимаю как» палитра сняла бы две наверняка и третью условно; остальные — жесты,
-поведение и просьбы объяснить. Палитра — не лекарство от тупиков, у неё узкая и
-точная мишень: КОМАНДА, У КОТОРОЙ ЕСТЬ ИМЯ И НЕТ МЕСТА. Отдельно, и это не
-украшение вердикта: собственной палитры нет ни у одного из пяти редакторов ядра,
-а работающий поиск по программе там, где он есть, дала операционная система и
-видит он только меню.
+The honest price of expectations was named above in a table: of the seven R.38 claims "I don't understand how", the palette would remove two for certain and a third conditionally; the rest are gestures, behavior and requests to explain. The palette is not a cure for dead ends; it has a narrow and precise target: a COMMAND THAT HAS A NAME AND NO PLACE. Separately, and this is not an ornament of the verdict: none of the five core editors has its own palette, and a working search of the program, where it exists, was provided by the operating system and sees only the menu.
 
-ТЕСТ: reach_tests::palette_finds_the_program_not_only_the_project — сегодня
-падает: `search_hits` (`src/apps/kt-app/src/app.rs:4543`) отдаёт пять видов
-хитов, и все пять — данные проекта; ни один из ~20 пунктов главного меню и ни
-одна из ~60 надписей `[tl.menu]`/`[tl.lane]`/`[bin.menu]` не находится набором
-собственного имени в окне, которое пользователь открывает по Ctrl+F и которому
-подпись обещает «Search the project».
+TEST: reach_tests::palette_finds_the_program_not_only_the_project — today it fails: `search_hits` (`src/apps/kt-app/src/app.rs:4543`) returns five kinds of hits, and all five are project data; none of the ~20 items of the main menu and none of the ~60 labels of `[tl.menu]`/`[tl.lane]`/`[bin.menu]` is found by its own name in the window that the user opens with Ctrl+F and which the caption promises as "Search the project".
 
-ОТЛОЖЕНО: до F-UI-002 — источник данных палитры это реестр команд, и завести
-его отдельно ради поиска значит создать четвёртый источник правды рядом с
-`handle_keys`, `Toolbar::menu_items` и контекстными меню; порядок «сначала
-реестр, потом показ» здесь не совет, а условие.
+DEFERRED: until F-UI-002 — the data source of the palette is the command registry, and creating it separately for the sake of search means creating a fourth source of truth next to `handle_keys`, `Toolbar::menu_items` and the context menus; the order "first the registry, then the display" is not advice here, but a condition.
 
-Палитра перекрывает экран — но по вызову пользователя, а не по наведению, и
-поэтому не является попапом в смысле Р.40: это место, куда приходят намеренно.
-Ни задержки, ни ёмкости строки статусбара она не касается.
+The palette covers the screen — but by the user's call, not by hover, and therefore it is not a pop-up in the sense of R.40: it is a place to which one comes deliberately. It touches neither the delay nor the capacity of the status line.
 
-## Источники
+## Sources
 
-- https://code.visualstudio.com/docs/getstarted/userinterface (2026-09-07) — «access to all functionality within VS Code, including keyboard shortcuts», `?` как список режимов
-- https://code.visualstudio.com/docs/getstarted/tips-and-tricks (2026-09-07) — режимы `@`, `:`, `?`; аккорды рядом с именами команд
-- https://code.visualstudio.com/api/ux-guidelines/command-palette (2026-09-07) — «where all Commands are found», требование категорий у команд, условие видимости
-- https://www.jetbrains.com/help/idea/searching-everywhere.html (2026-09-07) — единый вход для файлов/действий/настроек, аккорд в строке результата, переключение настроек прямо из списка
-- https://docs.blender.org/manual/en/4.0/interface/controls/templates/operator_search.html (2026-09-07) — «lets you search Blender's interface for a certain operator and execute it». Прямое обращение к странице версии 5.2 из этого окружения отдало 403/404, формулировка взята со страницы 4.0
-- https://www.macrumors.com/how-to/use-the-macos-help-menu/ (16.01.2019, обращение 2026-09-07) — системный поиск по пунктам меню, стрелка-указатель, выполнение по Enter
-- https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/access-discover-panel.html (2026-09-07) — Discover по Cmd+F/Ctrl+F; страница не отрендерилась через текст-прокси, факт клавиши взят из выдачи поисковика
-- https://photoshoptrainingchannel.com/tips/photoshop-search/ (2026-09-07) — вторичный: три группы результатов, «tools, layers, and panels»
-- https://news.ycombinator.com/item?id=5414566 (21.03.2013, обращение 2026-09-07)
-- https://news.ycombinator.com/item?id=27394559 (04.06.2021, обращение 2026-09-07)
-- https://blickeditor.com (обращение 2026-09-07) — NLE 2026 года, продающий палитру команд как фичу
-- https://forum.borisfx.com/search.json?q=%22command%20palette%22 (2026-09-07) — ноль результатов; форум переехал на Discourse, старые треды Vegas по прежним ссылкам недоступны, поэтому вывод «не просят» — слабый сигнал, а не доказательство
-- Строки Vegas и Final Cut про поиск команд в окне переназначения — по
-  источникам F-UI-002 (help.magix-hub.com, support.apple.com/guide/final-cut-pro)
+- https://code.visualstudio.com/docs/getstarted/userinterface (2026-09-07) — "access to all functionality within VS Code, including keyboard shortcuts", `?` as the list of modes
+- https://code.visualstudio.com/docs/getstarted/tips-and-tricks (2026-09-07) — the modes `@`, `:`, `?`; chords next to command names
+- https://code.visualstudio.com/api/ux-guidelines/command-palette (2026-09-07) — "where all Commands are found", the requirement of categories for commands, the visibility condition
+- https://www.jetbrains.com/help/idea/searching-everywhere.html (2026-09-07) — a single entry for files/actions/settings, the chord in the result line, toggling settings right from the list
+- https://docs.blender.org/manual/en/4.0/interface/controls/templates/operator_search.html (2026-09-07) — "lets you search Blender's interface for a certain operator and execute it". A direct request to the page of version 5.2 from this environment returned 403/404, so the wording is taken from the 4.0 page
+- https://www.macrumors.com/how-to/use-the-macos-help-menu/ (16.01.2019, accessed 2026-09-07) — system search of menu items, the pointer arrow, execution by Enter
+- https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/access-discover-panel.html (2026-09-07) — Discover via Cmd+F/Ctrl+F; the page did not render through the text proxy, the key fact is taken from search engine results
+- https://photoshoptrainingchannel.com/tips/photoshop-search/ (2026-09-07) — secondary: three groups of results, "tools, layers, and panels"
+- https://news.ycombinator.com/item?id=5414566 (21.03.2013, accessed 2026-09-07)
+- https://news.ycombinator.com/item?id=27394559 (04.06.2021, accessed 2026-09-07)
+- https://blickeditor.com (accessed 2026-09-07) — a 2026 NLE that sells a command palette as a feature
+- https://forum.borisfx.com/search.json?q=%22command%20palette%22 (2026-09-07) — zero results; the forum has moved to Discourse, the old Vegas threads by the former links are unavailable, therefore the conclusion "they do not ask" is a weak signal, not proof
+- The Vegas and Final Cut lines about searching commands in the reassignment window — from the sources of F-UI-002 (help.magix-hub.com, support.apple.com/guide/final-cut-pro)
 
-**Чего проверить не удалось.** Живьём не проверялась ни одна программа: для
-софта вне ядра это оговорено в `_editors.md` как штатное, для NLE — бюджет
-поиска сессии исчерпан (WebSearch недоступен, работали прямые обращения и
-текст-прокси). Отрицательные строки таблицы ядра («палитры нет») опираются на
-отсутствие фичи в документации и в справке по горячим клавишам — доказать
-отсутствие документацией нельзя, и это ограничение осознанное. Наличие
-системного поиска по меню macOS у DaVinci Resolve **[НЕ ПРОВЕРЕНО]**: механизм
-платформенный, но Resolve рисует интерфейс на Qt.
+**What could not be verified.** No program was checked live: for software outside the core this is stated in `_editors.md` as standard practice; for the NLEs the session's search budget is exhausted (WebSearch unavailable, direct requests and the text proxy were used). The negative rows of the core table ("no palette") rely on the absence of the feature in documentation and in the hotkey reference — absence cannot be proven by documentation, and this limitation is deliberate. The presence of the macOS system menu search in DaVinci Resolve **[NOT VERIFIED]**: the mechanism is platform-specific, but Resolve draws its interface on Qt.

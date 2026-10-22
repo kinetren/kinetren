@@ -1,12 +1,12 @@
 ---
 id: F-COL-029
-title: Почему слияния нет ни у кого
-status: отвергнуто
+title: Why no one has merging
+status: rejected
 priority: C
 cost: XL
 category: collab/merge
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, syncthing-2]
-we_have: нет
+we_have: no
 crates: [kt-model, kt-otio, kt-app]
 invariants: []
 ui_rules: []
@@ -19,161 +19,91 @@ services: [team-projects, bm-cloud, resolve-project-server, premiere-productions
 checked: 2026-09-08
 ---
 
-# F-COL-029 — Почему слияния нет ни у кого
+# F-COL-029 — Why no one has merging
 
-## Суть
+## Essence
 
-Двое правили один монтаж, и правки разошлись. В любом текстовом редакторе тут
-начинается слияние: инструмент показывает три версии и предлагает собрать
-четвёртую. В видеомонтаже этого нет НИ У КОГО из пяти — ни в облаке, ни на общем
-диске, ни за деньги. Отрасль купила другое: не дать разойтись. Монтажёр видит это
-как замок на бине, на секвенции или на всей библиотеке — и как отсутствие самого
-вопроса «чью версию берём».
+Two people edited one edit, and their edits diverged. In any text editor a merge starts at this point: the tool shows three versions and offers to assemble a fourth. In video editing there is nothing like this at NONE of the five — not in the cloud, not on a shared drive, not for money. The industry bought something else: not letting divergence happen. The editor sees this as a lock on a bin, on a sequence, or on the whole library — and as the absence of the very question "whose version do we take".
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет ничего | ни слияния, ни предотвращения: второй экземпляр открывает тот же `.veg` и пишет поверх. Расхождение не разрешается и не замечается [НЕ ПРОВЕРЕНО живьём: механизма нет ни в справке, ни в списке возможностей] |
-| Adobe Premiere | 26.x | Team Projects, окно `Resolve Conflicts` | единственный, у кого слово «конфликт» вообще есть в интерфейсе. Но разрешение — это ВЫБОР версии, а не сборка третьей; само окно четвёртый год приходит пустым (F-COL-030). Бессерверная половина (Productions) конфликтов не знает вовсе — там замок-файл рядом с проектом |
-| DaVinci Resolve | 21 | Collaboration + Timeline Comparison | слияния нет. Есть автоматическая блокировка бина и таймлайна («Bins and timelines are "read only" until unlocked by the current user») и ОТДЕЛЬНО — ручное сравнение двух версий таймлайна глазами человека (F-COL-031). Сравнение не сливает: оно показывает, чтобы человек перенёс руками |
-| Final Cut Pro | 12.3 | эксклюзивный замок библиотеки | расходиться нечему: единица занятия — вся библиотека, второму не достаётся даже чтения. Это предотвращение, доведённое до предела |
-| After Effects | 26.x | тот же Team Projects | своей модели нет; всё, что есть, приезжает из общего с Premiere сервиса [НЕ ПРОВЕРЕНО живьём] |
+| VEGAS Pro | 2026.0 | nothing | no merge and no prevention: a second instance opens the same `.veg` and writes over it. The divergence is neither resolved nor noticed [NOT VERIFIED live: the mechanism is absent from both the help and the feature list] |
+| Adobe Premiere | 26.x | Team Projects, the `Resolve Conflicts` window | the only one for which the word "conflict" exists in the interface at all. But resolution is a CHOICE of a version, not the assembly of a third; the window itself has been arriving empty for four years (F-COL-030). The serverless half (Productions) knows no conflicts at all — there a file-lock sits next to the project |
+| DaVinci Resolve | 21 | Collaboration + Timeline Comparison | no merge. There is automatic locking of a bin and a timeline ("Bins and timelines are "read only" until unlocked by the current user"), and SEPARATELY a manual comparison of two timeline versions by a human's eyes (F-COL-031). The comparison does not merge: it shows, so that a person carries the changes over by hand |
+| Final Cut Pro | 12.3 | exclusive library lock | there is nothing to diverge: the unit of occupation is the whole library, and a second user does not even get read access. This is prevention taken to the limit |
+| After Effects | 26.x | the same Team Projects | it has no model of its own; everything it has comes from the service shared with Premiere [NOT VERIFIED live] |
 
-**Вне ядра.** Все пять строк ядра говорят «слияния нет», и объяснить, ПОЧЕМУ его
-нет, пятью отказами невозможно: нужен тот, кто расхождение всё-таки разрешает.
-Такой ровно один, и он не про монтаж.
+**Outside the core.** All five core rows say "no merge", and explaining WHY there is no merge with five refusals is impossible: one needs the tool that does resolve divergence after all. There is exactly one such tool, and it is not about editing.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Syncthing | 2.x | conflict file | расхождение не предотвращается, а РАЗРЕШАЕТСЯ — и даже там разрешение не является слиянием: проигравший переименовывается в `<имя>.sync-conflict-<дата>-<время>-<кем>.<ext>` и остаётся лежать рядом целым файлом. Правило детерминированное и записанное, но оно выбирает победителя, а не собирает третью версию |
+| Syncthing | 2.x | conflict file | divergence is not prevented but RESOLVED — and even there the resolution is not a merge: the loser is renamed to `<name>.sync-conflict-<date>-<time>-<who>.<ext>` and stays next to the winner as a whole file. The rule is deterministic and written down, but it selects a winner rather than assembling a third version |
 
-## Фишка фишки
+## The trick behind it
 
-**Отказ от слияния — не бедность и не лень вендора: у монтажа нет адреса, к
-которому слияние можно было бы привязать.** У текста адрес есть, и он устойчив:
-строка переживает правку соседних строк, поэтому «одна и та же строка» — понятие,
-и трёхсторонний diff на нём стоит. Событие на таймлайне адресуется парой
-«дорожка × время», и ОБЕ координаты меняются от чужой правки, не тронувшей
-событие ни одним полем: ripple на чужой дорожке сдвигает мои клипы, вставка в
-начало сдвигает весь монтаж, переименование дорожки меняет первую координату
-целиком. То есть после чужой правки у моего события другой адрес — при том, что
-оно само не изменилось. «Одна и та же правка» в таком пространстве неопределима,
-и трёхсторонний diff не имеет базы, относительно которой считать.
+**Refusing to merge is neither poverty nor vendor laziness: an edit has no address to which a merge could be bound.** Text has an address, and it is stable: a line survives an edit of its neighbouring lines, so "the same line" is a meaningful notion, and a three-way diff works on it. An event on a timeline is addressed by the pair "track × time", and BOTH coordinates change from someone else's edit that did not touch the event in any field: a ripple on another track shifts my clips, an insertion at the start shifts the whole edit, renaming a track changes the first coordinate entirely. That is, after someone else's edit my event has a different address, although it itself has not changed. "The same edit" is undefinable in such a space, and a three-way diff has no base against which to count.
 
-**Второй слой: единица занятия у всех равна единице ЗАПИСИ, а не единице
-правки.** Premiere пишет проект целиком — занимает проект; Final Cut пишет
-библиотеку — занимает библиотеку; Resolve хранит бины и таймлайны отдельными
-записями базы — занимает их врозь. Клип не блокирует НИКТО, и это следствие
-того же: чтобы занять клип, надо уметь записать часть документа, а частями
-документ не пишет ни один из пяти. Гранулярность блокировки в отрасли — это не
-дизайн-решение про совместную работу, это отпечаток формата файла.
+**The second layer: the unit of occupation for everyone equals the unit of WRITING, not the unit of editing.** Premiere writes the project as a whole — it occupies the project; Final Cut writes the library — it occupies the library; Resolve stores bins and timelines as separate database records — it occupies them separately. Nobody locks a clip, and this is a consequence of the same thing: to occupy a clip, one must be able to write part of a document, and none of the five writes a document in parts. Locking granularity in the industry is not a design decision about collaboration; it is an imprint of the file format.
 
-**Третий слой — самый неожиданный, и он виден только в трекерах.** На весь
-выгруженный корпус монтажных программ пришлась ОДНА настоящая просьба о
-совместном редактировании (kde-invent #1243, открыта 06.11.2021, за пять лет
-шесть комментариев и один голос). И человек, который её написал, просил НЕ
-слияния: его пункт 5 называется «Save a version» и начинается словами «You can't
-overwrite the opened project». То есть даже единственный заказчик совместной
-работы спроектировал её как версионирование с запретом перезаписи — тем самым
-предотвращением, которое отрасль и продаёт.
+**The third layer — the most unexpected, and visible only in trackers.** Across the entire exported corpus of editing programs there was ONE genuine request for collaborative editing (kde-invent #1243, opened 06.11.2021, over five years six comments and one vote). And the person who wrote it asked NOT for a merge: his item 5 is called "Save a version" and begins with the words "You can't overwrite the opened project". That is, even the only customer for collaborative work designed it as versioning with a ban on overwriting — precisely the prevention the industry sells.
 
-## Плюсы
+## Pros
 
-- Предотвращение выражается одной операцией над одним объектом (замок есть /
-  замка нет) и потому работает на голой файловой системе — без сервера, без
-  учётной записи, без часов.
-- Отказ, случившийся ДО правки, дешевле любого разрешения после: человек не
-  тратит час на монтаж, который потом окажется проигравшим.
-- Гранулярность не надо проектировать: она уже задана тем, как документ пишется
-  на диск, и потому не может разойтись с форматом.
-- Механизм объясним пользователю одной фразой и не требует от него понимать, что
-  такое «база», «версия» и «три стороны».
+- Prevention is expressed as one operation on one object (a lock is present / a lock is absent), and therefore works on a bare file system — without a server, without a user account, without clocks.
+- A refusal that happens BEFORE an edit is cheaper than any resolution afterwards: a person does not spend an hour on an edit that will turn out to be the loser.
+- Granularity need not be designed: it is already set by how the document is written to disk, and so cannot diverge from the format.
+- The mechanism is explainable to a user in one phrase and does not require them to understand what a "base", a "version", or "three sides" are.
 
-## Минусы
+## Cons
 
-- Предотвращение — это очередь: пока бин занят, второй не работает вовсе.
-  Пропускная способность бригады ограничена числом независимо занимаемых записей,
-  а их у Final Cut ровно одна на всю библиотеку.
-- Замок ничего не гарантирует: любой писатель, который его не читает (чужая
-  программа, скрипт, собственный CLI вендора), пишет поверх.
-- Расхождение всё равно случается — по чужой копии, по бэкапу, по флешке — и
-  тогда у отрасли нет вообще ничего: ни сравнения (кроме Resolve), ни
-  именованного поражения (кроме Syncthing), ни журнала.
-- Отсутствие слияния маскируется словом «конфликт» в интерфейсе Adobe: слово
-  есть, механизма нет, и пустое окно живёт четвёртый год (F-COL-030).
+- Prevention is a queue: while a bin is occupied, a second user does not work at all. The team's throughput is limited by the number of independently occupiable records, and Final Cut has exactly one for the whole library.
+- A lock guarantees nothing: any writer that does not read it (a foreign program, a script, the vendor's own CLI) writes over it.
+- Divergence happens anyway — through someone else's copy, a backup, a flash drive — and then the industry has nothing at all: no comparison (except Resolve), no named loss (except Syncthing), no log.
+- The absence of a merge is masked by the word "conflict" in the Adobe interface: the word is there, the mechanism is not, and an empty window has lived for four years (F-COL-030).
 
-## Что говорят пользователи
+## What users say
 
-Единственная за всю выгрузку просьба о совместном редактировании монтажа. Важен
-не сам факт просьбы, а её пункт 5 — заказчик просит запрет перезаписи, а не
-слияние:
+The only collaborative-editing request in the entire exported corpus. What matters is not the fact of the request but its item 5 — the customer asks for a ban on overwriting, not for a merge:
 
 > You can't overwrite the opened project.
-> — «REMOTE COLLABORATIVE PROJECT», kde-invent #1243, создана 06.11.2021,
-> открыта на 08.09.2026, https://invent.kde.org/multimedia/kdenlive/-/work_items/1243
+> — "REMOTE COLLABORATIVE PROJECT", kde-invent #1243, created 06.11.2021, still open as of 08.09.2026, https://invent.kde.org/multimedia/kdenlive/-/work_items/1243
 
-СИГНАЛ: совместное редактирование монтажа — 1 задача в kde-invent, `(collaborative (project|editing|edit)|remote collaborat|multi.?user|simultaneous(ly)? edit)`; доля 0.05% против 0.00% в openshot (4907 задач, ни одной). Точнее — 1 из 2217, то есть 0.045%; скрипт печатает доли с одним знаком и показывает здесь `0.0%`. Счёт снят по корпусу `nle` (одиннадцать трекеров рейтинга, 25 442 задачи, дампы от 08.09.2026); воспроизводится
-`python3 src/scripts/tracker-rank.py --query '(collaborative (project|editing|edit)|remote collaborat|multi.?user|simultaneous(ly)? edit)'`. Голое `collaborat` даёт 4 совпадения, из них 3 ложных — «Haiku port/collaboration», «Request for collaboration from CinGG» и «Archive project don't bundle fonts»: в трекерах монтажных программ это слово почти всегда про сотрудничество РАЗРАБОТЧИКОВ, а не про совместный монтаж. Ровно так же ведёт себя `merge`: 95 задач в losslesscut (4.9 %) — и все про склейку файлов, ни одной про сведение двух монтажей.
+SIGNAL: collaborative editing of an edit — 1 task in kde-invent, `(collaborative (project|editing|edit)|remote collaborat|multi.?user|simultaneous(ly)? edit)`; a share of 0.05% against 0.00% in openshot (4907 tasks, none). More precisely — 1 of 2217, that is 0.045%; the script prints shares with one decimal place and here shows `0.0%`. The count was taken over the `nle` corpus (eleven rating trackers, 25 442 tasks, dumps of 08.09.2026); it is reproducible with `python3 src/scripts/tracker-rank.py --query '(collaborative (project|editing|edit)|remote collaborat|multi.?user|simultaneous(ly)? edit)'`. The bare `collaborat` gives 4 matches, of which 3 are false — "Haiku port/collaboration", "Request for collaboration from CinGG" and "Archive project don't bundle fonts": in the trackers of editing programs this word almost always concerns collaboration among DEVELOPERS, not collaborative editing. `merge` behaves the same way: 95 tasks in losslesscut (4.9 %) — all about joining files, not one about merging two edits.
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/project-format/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Отвергнуто: слияния проектов нет — документ один, версии решает файловая система; вставка чужого проекта идёт композицией (одним шагом).
-АДРЕС: src/libs/kt-model/src/model.rs:429 — просьба kde-invent #1243 упирается у нас именно сюда: заказчик просил версии с запретом перезаписи, а всё, что мы умеем про два состояния одного проекта, — это положить их рядом целыми клонами в оперативной памяти и уметь переключиться на предыдущий.
-БЕЗ СЕТИ: НЕ ОСТАЁТСЯ — `src/libs/kt-model/src/model.rs:429` — от механизма слияния на одной машине не остаётся ничего, и видно это ровно здесь: единственная точка, где два состояния одного проекта лежат рядом, кладёт их целыми клонами без имени, без времени и без автора, поэтому даже собственную историю мы умеем только перематывать, а не сравнивать; правка при этом объект недолговечный — `Command` живёт до конца вызова и в документ не попадает.
-ЦЕНА СЕТИ: назвать правку, чтобы её можно было перенести отдельно от документа — журнал правок — слияние начинается не с соединения, а с того, что у правки есть имя и базовая ревизия; у нас нет ни того ни другого, а единица, которой мы обмениваемся, — целый файл, поэтому «взять чужую подрезку и не брать чужой ripple» невыразимо даже между двумя копиями в одной папке.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/project-format/ — the contract is in `spec.md`, the "why" and the code paths are in `design.md`.
+Rejected: there is no merging of projects — the document is one, and versions are handled by the file system; inserting someone else's project is done by composition (in one step).
+ADDRESS: src/libs/kt-model/src/model.rs:429 — kde-invent request #1243 runs into exactly this point for us: the customer asked for versions with a ban on overwriting, while everything we can do with two states of one project is to place them side by side as whole clones in memory and switch back to the previous one.
+OFFLINE: DOES NOT REMAIN — `src/libs/kt-model/src/model.rs:429` — nothing of a merge mechanism remains on a single machine, and this is visible exactly here: the only point where two states of one project lie side by side stores them as whole clones without a name, without a time, and without an author, so even our own history we can only rewind, not compare; and the edit object itself is short-lived — `Command` lives until the end of the call and does not enter the document.
+NETWORK COST: name the edit so that it can be carried separately from the document — edit log — a merge begins not with the joining, but with the edit having a name and a base revision; we have neither, and the unit we exchange is a whole file, so "take someone else's trim and not take their ripple" cannot even be expressed between two copies in one folder.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | XL — не раунд, а смена адресации: устойчивый идентификатор события, журнал правок, базовая ревизия в файле |
-| Где основная работа | kt-model (идентичность и журнал), kt-otio (ревизия документа в формате), kt-app (показ трёх сторон) |
-| Формат проекта | нужна новая версия: сегодня в файле нет ни ревизии документа, ни устойчивого имени события |
-| Тесты, которые придётся написать | объединение двух правок одного проекта не даёт `ClipOverlap`; id события переживает удаление и повторное создание; третья сторона восстанавливается из файла |
-| Зависит от | F-COL-031 (сравнение — обязательная предступень: пока нельзя показать разницу, нечего и сводить) |
-| Ломает совместимость | да: устойчивый идентификатор не выводится из сегодняшних файлов |
+| Scope | XL — not a round but a change of addressing: a stable event identifier, an edit log, a base revision in the file |
+| Where the main work is | kt-model (identity and the log), kt-otio (the document revision in the format), kt-app (showing three sides) |
+| Project format | a new version is needed: today the file contains neither a document revision nor a stable event name |
+| Tests to write | the union of two edits of one project does not produce `ClipOverlap`; an event's id survives deletion and re-creation; the third side is restored from the file |
+| Depends on | F-COL-031 (comparison — a mandatory precondition: until a difference can be shown, there is nothing to merge) |
+| Breaks compatibility | yes: a stable identifier cannot be derived from today's files |
 
-## Вердикт
+## Verdict
 
-Не берём, и причина не в отсутствии сети. Слияние монтажей неопределимо в нашей
-собственной адресации: событие адресуется парой «дорожка × время», обе координаты
-меняет чужая правка, не тронувшая событие, а `ClipId` выдаётся как «максимум + 1»
-и переиспользуется после удаления — значит два независимо правленных файла
-содержат разные события с одинаковыми номерами. Объединение двух монтажей у нас
-не «спорное состояние», а документ, который наш же `validate()` отвергает по двум
-уже существующим ошибкам, `DuplicateClipId` и `ClipOverlap`. Это ровно та причина,
-по которой слияния нет ни у одного из пяти редакторов ядра: отрасль купила
-предотвращение не от бедности.
+We do not take it. Merging edits is undefinable in our own addressing: an event is addressed by the pair "track × time", both coordinates are changed by someone else's edit that did not touch the event, and `ClipId` is issued as "maximum + 1" and reused after deletion — so two independently edited files contain different events with the same numbers. Merging two edits for us is not a "disputed state" but a document that our own `validate()` rejects on two already existing errors, `DuplicateClipId` and `ClipOverlap`. This is precisely the reason no one of the five core editors has merging: the industry bought prevention not out of poverty.
 
-Отдельно фиксируется, чтобы не заводили заново: единственная за весь корпус
-просьба о совместном редактировании (kde-invent #1243) просила НЕ слияния, а
-версий с запретом перезаписи. То есть даже спрос, которого почти нет, направлен
-в сторону F-PRJ-002, а не сюда.
+Separately, it is recorded so that it is not reopened anew: the only request for collaborative editing across the whole corpus (kde-invent #1243) asked NOT for a merge but for versions with a ban on overwriting. That is, even the demand, which is almost nonexistent, points toward F-PRJ-002, not here.
 
-Границы: занять и не дать разойтись — `collab/claim/` целиком (F-COL-013 и след.);
-пустое окно разрешения конфликтов как отдельный урок — F-COL-030; сравнение двух
-монтажей, единственная локальная часть темы, — F-COL-031; именованное поражение,
-когда расхождение уже случилось, — F-COL-032; версии и снапшоты своего
-документа — F-PRJ-002; проект, открытый на другой машине, — F-PRJ-003.
+Boundaries: occupying and not letting divergence happen at all — `collab/claim/` as a whole (F-COL-013 and following); the empty conflict-resolution window as a separate lesson — F-COL-030; comparison of two edits, the only local part of the topic — F-COL-031; the named loss, when divergence has already happened — F-COL-032; versions and snapshots of one's own document — F-PRJ-002; a project opened on another machine — F-PRJ-003.
 
-## Источники
+## Sources
 
-- https://invent.kde.org/multimedia/kdenlive/-/work_items/1243 — kde-invent
-  #1243 «REMOTE COLLABORATIVE PROJECT», создана 06.11.2021, открыта, 6
-  комментариев, 1 голос (дата обращения 2026-09-08; метаданные сверены по
-  выгруженному дампу `kde-invent` от 08.09.2026).
-- https://www.blackmagicdesign.com/products/davinciresolve/collaboration —
-  формулировка про read-only бины и таймлайны и про сравнение версий таймлайна
-  (дата обращения 2026-09-08).
-- https://docs.syncthing.net/users/syncing.html — правило именования файла
-  конфликта и «treated as normal files» (дата обращения 2026-09-08).
-- https://support.apple.com/en-us/HT207128 — Apple, общий том и эксклюзивный
-  замок библиотеки Final Cut (дата обращения 2026-09-08).
-- Счёт по корпусу `nle`: `python3 src/scripts/tracker-rank.py --query …`,
-  одиннадцать трекеров рейтинга, 25 442 задачи, дампы от 08.09.2026 (реестр и
-  пины — `docs/features/_trackers.md`).
-- Строки VEGAS и After Effects помечены `[НЕ ПРОВЕРЕНО]` прямо в таблице.
-- Наш код прочитан 08.09.2026: `src/libs/kt-model/src/model.rs` (11, 98, 429),
-  `src/libs/kt-model/src/project.rs` (3204, 3493),
-  `src/libs/kt-otio/src/schema.rs` (220), `src/apps/kt-app/src/app.rs` (3110).
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/1243 — kde-invent #1243 "REMOTE COLLABORATIVE PROJECT", created 06.11.2021, open, 6 comments, 1 vote (access date 2026-09-08; metadata checked against the exported `kde-invent` dump of 08.09.2026).
+- https://www.blackmagicdesign.com/products/davinciresolve/collaboration — the wording about read-only bins and timelines and about comparing timeline versions (access date 2026-09-08).
+- https://docs.syncthing.net/users/syncing.html — the rule for naming a conflict file and "treated as normal files" (access date 2026-09-08).
+- https://support.apple.com/en-us/HT207128 — Apple, a shared volume and the exclusive lock of the Final Cut library (access date 2026-09-08).
+- The count over the `nle` corpus: `python3 src/scripts/tracker-rank.py --query …`, eleven rating trackers, 25 442 tasks, dumps of 08.09.2026 (registry and pins — `docs/features/_trackers.md`).
+- The VEGAS and After Effects rows are marked `[NOT VERIFIED]` directly in the table.
+- Our code read on 08.09.2026: `src/libs/kt-model/src/model.rs` (11, 98, 429), `src/libs/kt-model/src/project.rs` (3204, 3493), `src/libs/kt-otio/src/schema.rs` (220), `src/apps/kt-app/src/app.rs` (3110).

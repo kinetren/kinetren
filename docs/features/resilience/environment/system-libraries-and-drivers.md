@@ -1,12 +1,12 @@
 ---
 id: F-RES-006
-title: Зависимость от системных библиотек и драйверов
-status: кандидат
+title: Dependence on system libraries and drivers
+status: candidate
 priority: B
 cost: S
 category: resilience/environment
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, kdenlive-26.08]
-we_have: частично
+we_have: partial
 crates: [kt-ffmpeg, kt-media, kt-engine, kt-app, kt-gpu]
 invariants: [9, 10, 12]
 ui_rules: [12, 16]
@@ -18,137 +18,101 @@ trackers: [kde-bugzilla, kde-invent, pitivi]
 checked: 2026-09-08
 ---
 
-# F-RES-006 — Зависимость от системных библиотек и драйверов
+# F-RES-006 — Dependence on system libraries and drivers
 
-## Суть
+## Essence
 
-Половина возможностей видеоредактора принадлежит не ему: кодеки живут в
-чужой библиотеке, аппаратное кодирование — в чужом драйвере, ускорение
-интерфейса — в чужом графическом стеке. Монтажёр этого не знает и знать не
-обязан: для него «не работает» неотличимо от «не умеет». Раздел — про то,
-что программа ДЕЛАЕТ, когда чужой части не оказалось на месте или она
-оказалась другой версии: чем подменяет, о чём умалчивает и во что
-превращается сеанс.
+Half of a video editor's capabilities belong not to it: codecs live in someone else's
+library, hardware encoding lives in someone else's driver, interface acceleration lives in someone else's graphics stack. The editor does not know this and need not know it: for him "does not work" is indistinguishable from "cannot". The section is about
+what the program DOES when the other party's part was not in place or turned out to be a different version: what it substitutes, what it leaves unsaid, and what the session turns into.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | Called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Preferences → Video («GPU acceleration of video processing») и → File I/O («Hardware decoder to use») | медиа-стек свой, поставляется с программой, поэтому «чужой библиотеки» в её жизни нет — есть чужой ДРАЙВЕР. Выбор устройства ручной и разложен по двум вкладкам; сама программа о находке не заговаривает. Устройство подтверждено разведкой F-HLP-030, живьём [НЕ ПРОВЕРЕНО] |
-| Adobe Premiere | 26.x | System Compatibility Report | единственный в ядре, кто проверяет ЧУЖОЕ до симптома: при запуске сверяет версию видеодрайвера с известными несовместимыми и показывает отчёт. Проверка привязана к старту, а не к первой неудаче. По документации Adobe (F-HLP-030) |
-| DaVinci Resolve | 21 | Preferences → Memory and GPU (GPU processing mode: Auto/CUDA/OpenCL/Metal) | требование к драйверу жёсткое и объявленное: поддерживаемые версии перечислены, найденные устройства — списком с галочками. Следствие устройства: ПУСТОЙ список сам по себе диагноз, его видно без единой цифры (F-HLP-030) |
-| Final Cut Pro | 12.3 | нет | класса почти не существует: медиа-движок и драйвер от одного поставщика, версии сведены платформой, выбор энкодера пользователю не предъявляется вовсе. [НЕ ПРОВЕРЕНО] |
-| Adobe After Effects | 26.x | Preferences → Previews → GPU Information… | вердикты по СПОСОБНОСТЯМ, а не по железу: «Fast Draft: Available», версия драйвера CUDA, объём памяти с явным моментом истинности «(at application launch)» (F-HLP-030) |
+| VEGAS Pro | 2026.0 | Preferences → Video ("GPU acceleration of video processing") and → File I/O ("Hardware decoder to use") | the media stack is its own, shipped with the program, so there is no "someone else's library" in its life — there is someone else's DRIVER. The choice of device is manual and laid out across two tabs; the program itself does not speak about the finding. The device is confirmed by the reconnaissance F-HLP-030, live [NOT CHECKED] |
+| Adobe Premiere | 26.x | System Compatibility Report | the only one in the core that checks the OTHER party before a symptom: at launch it compares the video driver version with known incompatible ones and shows a report. The check is tied to startup, not to the first failure. From Adobe's documentation (F-HLP-030) |
+| DaVinci Resolve | 21 | Preferences → Memory and GPU (GPU processing mode: Auto/CUDA/OpenCL/Metal) | the requirement on the driver is strict and declared: supported versions are listed, the devices found are shown as a list with checkboxes. A consequence of the device: an EMPTY list is in itself a diagnosis, visible without a single number (F-HLP-030) |
+| Final Cut Pro | 12.3 | none | the class practically does not exist: the media engine and the driver come from one supplier, versions are reconciled by the platform, the choice of encoder is not presented to the user at all. [NOT CHECKED] |
+| Adobe After Effects | 26.x | Preferences → Previews → GPU Information… | verdicts by CAPABILITIES, not by hardware: "Fast Draft: Available", the CUDA driver version, memory size with an explicit moment of truth "(at application launch)" (F-HLP-030) |
 
-**Вне ядра.** Без Kdenlive этой заметки нет: это единственная доступная
-программа, у которой обе половины механизма — и обнаружение аппаратного
-кодирования, и его отказ — видны публично, задачей с постоянным URL.
+**Outside the core.** Without Kdenlive this note does not exist: it is the only available
+program where both halves of the mechanism — both the detection of hardware
+encoding and its refusal — are visible publicly, as a task with a permanent URL.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | Called | How it works |
 |---|---|---|---|
-| Kdenlive | 26.08.0 | мастер настройки («check hardware acceleration») + профили рендера/прокси | обнаружение и использование разнесены: мастер один раз спрашивает у стороннего `ffmpeg`, какие энкодеры есть, вердикт оседает в настройках и гейтит список профилей, а сам рендер уходит внешним процессом (`melt`). Дистрибутив (AppImage/flatpak) несёт СВОЙ `ffmpeg`, который на той же машине умеет не то же самое, что системный |
+| Kdenlive | 26.08.0 | a setup wizard ("check hardware acceleration") + render/proxy profiles | detection and use are separated: the wizard asks a third-party `ffmpeg` once which encoders exist, the verdict settles into the settings and gates the list of profiles, and the render itself goes out to an external process (`melt`). The distribution (AppImage/flatpak) carries ITS OWN `ffmpeg`, which on the same machine can do something other than the system one |
 
-## Фишка фишки
+## The trick behind it
 
-**Вердикт про железо у них — воспоминание, снятое другим процессом в другой
-момент; у нас его нет вовсе, потому что вопрос задаётся тому, кто будет
-кодировать, и тогда, когда он будет кодировать.**
+**Their verdict about hardware is a memory, taken by another process at another moment; we have none at all, because the question is asked of whoever will encode, and at the moment they will encode.**
 
-Трекер показывает расхождение мастера и реальности в ОБЕ стороны, и это не
-частные баги, а следствие того, что проверка и работа — разные процессы.
-Наружу — «нашёл, но не работает»: детектор рапортует про NVIDIA, а
-декодирование падает на `CUDA_ERROR_OUT_OF_MEMORY` (kde-invent #2135,
-02.02.2026). Внутрь — «работает, но не нашёл»: превью через VAAPI идёт, а
-мастер энкодеров не видит (kde-invent #1771, 17.10.2023, открыта). Между ними
-третий вид, самый неприятный: энкодер ОТКРЫЛСЯ и выдал пустой файл при
-загрузке GPU в 40 % (kde-invent #585, 13.03.2020).
+The tracker shows a divergence between the wizard and reality in BOTH directions, and these are not
+private bugs but a consequence of the check and the work being different processes.
+Outward — "found it, but it does not work": the detector reports NVIDIA, while decoding fails with `CUDA_ERROR_OUT_OF_MEMORY` (kde-invent #2135,
+02.02.2026). Inward — "works, but did not find it": preview via VAAPI runs, while the encoder wizard does not see it (kde-invent #1771, 17.10.2023, open). Between them
+a third kind, the most unpleasant: the encoder OPENED and produced an empty file when the GPU was loaded to 40 % (kde-invent #585, 13.03.2020).
 
-Наш ответ (`src/libs/kt-ffmpeg/src/muxer_impl.rs:92-160`) устроен так, что
-первых двух видов не существует: список кандидатов
-`h264_nvenc → h264_vaapi → h264_qsv → libx264 → mpeg4` перебирается в момент
-экспорта, и признаком годности служит не «есть в сборке», а возврат
-`avcodec_open2 >= 0` в том самом процессе, который сейчас будет писать файл.
-Комментарий там же (строки 77-80) называет причину прямо: «наличие энкодера в
-сборке не значит, что он заработает». Кэшируемого вердикта нет, устареть
-нечему; неудачные пробы не пугают пользователя, потому что на время перебора
-уровень лога FFmpeg поднят до `AV_LOG_FATAL` (строка 92) и опущен обратно
-сразу после.
+Our answer (`src/libs/kt-ffmpeg/src/muxer_impl.rs:92-160`) is structured so that the first two kinds do not exist: the list of candidates
+`h264_nvenc → h264_vaapi → h264_qsv → libx264 → mpeg4` is walked at the moment
+of export, and the sign of fitness is not "present in the build" but a return of
+`avcodec_open2 >= 0` in the very same process that is about to write the file.
+The comment there (lines 77-80) states the cause directly: "the presence of an encoder in the
+build does not mean it will work". There is no cacheable verdict, so there is nothing to go stale; failed probes do not alarm the user, because for the duration of the walk the FFmpeg log level is raised to `AV_LOG_FATAL` (line 92) and lowered back
+immediately after.
 
-Третий вид — «открылся и соврал» — у нас закрыт ровно так же, как у них, то
-есть никак: `avcodec_open2` вернул успех, дальше начинается ответственность
-драйвера. Честная граница механизма проходит здесь.
+The third kind — "opened and lied" — is closed for us exactly as it is for them, that is,
+not at all: `avcodec_open2` returned success, and from there on the driver's responsibility begins. The honest boundary of the mechanism runs here.
 
-Второй слой, которого нет ни у кого из шести: **выбор версии самой
-библиотеки — тоже рантайм-решение**. `src/libs/kt-ffmpeg/src/loader.rs:20-45`
-держит три набора SONAME (FFmpeg 8/7/6) и перебирает их от новых к старым, а
-`try_candidate` (строки 91-107) не верит имени файла и сверяет
-`avcodec_version()` с ожидаемым мажором, потому что имя врёт, а функция — нет.
-Типы структур для каждого мажора отдельные (bindgen по вендоренным заголовкам,
-`version_module!` в `lib.rs:131-133`). Итог: один исполняемый файл использует
-аппаратные ускорения ЧУЖОГО системного FFmpeg, не будучи с ним слинкован, и
-это не декларация — `src/scripts/release-build.sh:55-68` роняет сборку, если
-`ldd` увидит `libav*` или потолок `GLIBC_` окажется выше заявленного.
+A second layer that none of the six has: **the choice of the library version itself is also a runtime decision**. `src/libs/kt-ffmpeg/src/loader.rs:20-45`
+holds three SONAME sets (FFmpeg 8/7/6) and walks them from new to old, and
+`try_candidate` (lines 91-107) does not trust the file name and checks
+`avcodec_version()` against the expected major, because the name lies and the function does not.
+The structure types for each major are separate (bindgen over vendored headers,
+`version_module!` in `lib.rs:131-133`). The result: one executable uses
+the hardware acceleration of SOMEONE ELSE'S system FFmpeg without being linked with it, and
+this is not a declaration — `src/scripts/release-build.sh:55-68` breaks the build if
+`ldd` sees `libav*` or if the `GLIBC_` ceiling turns out to be above the declared one.
 
-## Плюсы
+## Pros
 
-- Пробуя открывать по очереди, мы получаем аппаратное ускорение там, где оно
-  РАБОТАЕТ, без единого вопроса пользователю и без настройки. Ни мастера, ни
-  профилей, ни сохранённого вердикта — значит, нечему разойтись с реальностью
-  между запусками и нечего чинить, когда пользователь сменил драйвер.
-- Отсутствие линковки с `libav*` снимает целый класс чужой боли: пакет не
-  привязан к мажору FFmpeg дистрибутива, обновление системного FFmpeg с 7 на 8
-  не требует пересборки, а «в AppImage свой ffmpeg умеет не то, что системный»
-  (kde-invent #895, 27.12.2020; в Bugzilla тот же класс закрыт как UPSTREAM —
-  #419954) у нас невозможен по конструкции: своего ffmpeg у нас нет.
-- Порядок кандидатов задаёт политику одной строкой (`VIDEO_ENCODERS`,
-  `muxer_impl.rs:15-21`), а не набором профилей, которые пользователю надо
-  выбирать и которые в чужом трекере составляют отдельную тему запросов
-  («Improve GPU render profiles», kde-invent #808, открыта с 13.10.2020).
-- Фактически открытый энкодер попадает в `ExportStats.encoder`
-  (`src/libs/kt-engine/src/export.rs:520`) и доезжает до сводки рендера и до
-  вывода `kt-cli`: пользователь видит, чем СДЕЛАНО, а не чем собирались.
-- Потеря GPU посреди сеанса не роняет работу: `DeviceLost` «отравляет»
-  исполнителя (`player.rs:575-590`), превью молча продолжает на CPU, а notice
-  показывается ровно один раз (`app.rs:768-775`, тест 185).
+- By trying the options in turn, we get hardware acceleration where it WORKS, without a single question to the user and without any setup. There is no wizard, no profiles, no saved verdict — so there is nothing that can diverge from reality between launches and nothing to repair when the user has changed the driver.
+- The absence of linking with `libav*` removes a whole class of someone else's pain: the package is not bound to the major version of the distribution's FFmpeg, an upgrade of the system FFmpeg from 7 to 8 does not require a rebuild, and "the ffmpeg in an AppImage can do something other than the system one"
+  (kde-invent #895, 27.12.2020; in Bugzilla the same class is closed as UPSTREAM — #419954) is impossible for us by construction: we have no ffmpeg of our own.
+- The order of candidates sets the policy in one line (`VIDEO_ENCODERS`,
+  `muxer_impl.rs:15-21`), not a set of profiles that the user has to choose and that in someone else's tracker form a separate topic of requests
+  ("Improve GPU render profiles", kde-invent #808, open since 13.10.2020).
+- The encoder that actually opened goes into `ExportStats.encoder`
+  (`src/libs/kt-engine/src/export.rs:520`) and reaches the render summary and the output of `kt-cli`: the user sees what the file was MADE with, not what it was intended to be made with.
+- Loss of the GPU in the middle of a session does not drop the work: `DeviceLost` "poisons" the executor
+  (`player.rs:575-590`), the preview quietly continues on the CPU, and the notice is shown exactly once (`app.rs:768-775`, test 185).
 
-## Минусы
+## Cons
 
-- Цена та же, что у всех: мы не контролируем ни версию FFmpeg, ни драйвер, ни
-  их сочетание. Разница только в том, что мы про это спрашиваем в правильный
-  момент, а не в том, что мы от этого защищены.
-- Перебор молчит о том, чего лишился: если `h264_nvenc` не открылся, экспорт
-  просто окажется на `libx264`, и пользователь узнает об этом лишь по имени
-  энкодера в финальной сводке — то есть после, а не до. Времени рендера это
-  стоит в разы.
-- Явный выбор энкодера в диалоге фолбэка не имеет вовсе: `force_encoder`
-  пропускает всех остальных кандидатов (`muxer_impl.rs:96-99`), и неудача
-  превращается в ошибку целого экспорта. Это сознательно (тест 25
-  `t25_force_unknown_encoder_is_explicit_error`), но список, из которого
-  пользователь выбирает, набран слабой проверкой — уже найдено F-HLP-030,
-  здесь не переоткрываем.
-- 3D-эффекты без GPU — отказ ДО создания файла (`ExportError::GpuRequired`,
-  `export.rs:405-410`). Правильно по существу, но это единственное место, где
-  «у тебя нет железа» останавливает работу целиком.
+- The price is the same as for everyone: we control neither the FFmpeg version, nor the driver, nor their combination. The difference is only that we ask about it at the right moment, not that we are protected from it.
+- The walk is silent about what it has lost: if `h264_nvenc` did not open, the export simply ends up on `libx264`, and the user learns this only from the encoder name in the final summary — that is, after, not before. This costs several times the render time.
+- An explicit choice of encoder in the fallback dialog does not exist at all: `force_encoder`
+  skips all other candidates (`muxer_impl.rs:96-99`), and a failure turns into an error of the whole export. This is deliberate (test 25
+  `t25_force_unknown_encoder_is_explicit_error`), but the list from which the user chooses is compiled by a weak check — F-HLP-030 has already found this, and it is not reopened here.
+- 3D effects without a GPU — a refusal BEFORE the file is created (`ExportError::GpuRequired`,
+  `export.rs:405-410`). Correct in essence, but this is the only place where "you have no hardware" stops the work entirely.
 
-## Что говорят пользователи
+## What users say
 
-СИГНАЛ: аппарат/драйвер — 33 задачи в kde-invent, `nvenc|vaapi|qsv|cuda|movit|hardware accel`; доля 1.5% против 1.1% в kde-bugzilla
+SIGNAL: hardware/driver — 33 tasks in kde-invent, `nvenc|vaapi|qsv|cuda|movit|hardware accel`; share 1.5% versus 1.1% in kde-bugzilla
 
-Третьим идёт pitivi с 0.1 % — не потому, что у GStreamer этой боли нет, а
-потому, что она записана его словами: `gstvaapi`, «Cannot create a VA
-display» (pitivi #2108, 03.10.2017).
+Third comes pitivi with 0.1 % — not because GStreamer does not have this pain, but
+because it is written down in its words: `gstvaapi`, "Cannot create a VA
+display" (pitivi #2108, 03.10.2017).
 
-Число, ради которого заметка заведена, — не размер темы, а её ИСХОД. По трём
-выгруженным трекерам у темы «аппарат/драйвер» доля настоящих фиксов среди
-закрытых **0.46 — худшая из шестнадцати тем** (следующая снизу
-«рендер/экспорт» 0.56, сверху «интерфейс» 0.80, «перевод» 0.79, «прокси»
-0.77): `tracker-rank.py --themes`, колонка «фиксы». Внутри одного
-kde-bugzilla, единственного из трёх, где причина закрытия проставляется
-руками, картина ещё резче: **22 FIXED на 93 закрытых = 0.24**, снова худший
-результат из шестнадцати (следующий 0.39). Остальное — 24 DUPLICATE, 19
-WORKSFORME, 10 INVALID и 8 UPSTREAM/DOWNSTREAM/MOVED. Последняя доля, 8.6 % от
-закрытых, — самая высокая среди всех тем (у «рендер/экспорт» 4.5 %, у
-«интерфейса» 3.0 %) и есть прямое измерение фразы «это не наш код».
+The number for which the note was opened is not the size of the topic but its OUTCOME. Across the three exported trackers the topic "hardware/driver" has a share of real fixes among
+closed tasks of **0.46 — the worst of the sixteen topics** (the next one from the bottom
+"render/export" 0.56, from the top "interface" 0.80, "translation" 0.79, "proxies"
+0.77): `tracker-rank.py --themes`, the "fixes" column. Inside kde-bugzilla alone, the only one of the three where the reason for closing is set by hand, the picture is even sharper: **22 FIXED of 93 closed = 0.24**, again the worst result out of sixteen (the next one 0.39). The rest — 24 DUPLICATE, 19
+WORKSFORME, 10 INVALID and 8 UPSTREAM/DOWNSTREAM/MOVED. The last share, 8.6 % of
+closed, is the highest among all topics (for "render/export" it is 4.5 %, for
+"interface" 3.0 %) and is a direct measurement of the phrase "this is not our code".
 
 > using this automatically downloaded drivers Kdnelive is showing an ffmpeg
 > issue during transcoding using Nvidia card. if i download the drivers
@@ -156,150 +120,123 @@ WORKSFORME, 10 INVALID и 8 UPSTREAM/DOWNSTREAM/MOVED. Последняя дол
 > — kde-invent #1594, 05.12.2022,
 > https://invent.kde.org/multimedia/kdenlive/-/work_items/1594
 
-Тот же дистрибутив, то же железо, тот же файл — разница в том, откуда
-приехал драйвер. Из приложения это не чинится и не воспроизводится.
+The same distribution, the same hardware, the same file — the difference is where the driver came from. It cannot be fixed or reproduced from within the application.
 
 > running the setup wizard, it tells me “mediainfo” is not installed and
 > proceeds to not find any hardware encoders, both on my AMD system and INTEL
 > system, both of which can preview the video with VAAPI, but are unable to
 > actually render with it.
-> — kde-invent #1771, 17.10.2023, открыта,
+> — kde-invent #1771, 17.10.2023, open,
 > https://invent.kde.org/multimedia/kdenlive/-/work_items/1771
 
 > Render a video with profle vcodec=nvenc_h264 producing just empty files.
 > Strange thing is GPU-utilization goes up to 40% while doing the job?!
-> — kde-invent #585, 13.03.2020, открыта,
+> — kde-invent #585, 13.03.2020, open,
 > https://invent.kde.org/multimedia/kdenlive/-/work_items/585
 
-Механика, которая делает этот класс нечинимым, видна в самих задачах и
-одинакова у всех: сопровождающий не владеет ни одной из движущихся частей.
-Версию драйвера ставит вендор или ОС (#1594), версию библиотеки — дистрибутив
-(#895), сочетание существует только у репортёра. Воспроизвести нечем,
-поэтому WORKSFORME здесь не лень триажа, а честный ответ; исправление, если
-оно вообще возможно, уезжает в апстрим и приходит через год чужим релизом —
-отсюда рекордные 8.6 % UPSTREAM/DOWNSTREAM. Единственный ответ, который
-масштабируется, — «работает у меня». Ответ Pitivi на ту же задачу
-показателен и по-своему честен: прятать то, чего машина не может
-(«Hide OpenGL effects when there is no GL hardware», pitivi #1946,
+The mechanism that makes this class unfixable is visible in the tasks themselves and is the same for all of them: the maintainer owns none of the moving parts. The driver version is installed by the vendor or the OS (#1594), the library version by the distribution (#895), and the combination exists only for the reporter. There is nothing to reproduce it with,
+so WORKSFORME here is not triage laziness but an honest answer; a fix, if it is possible at all, goes upstream and arrives a year later as someone else's release —
+hence the record 8.6 % UPSTREAM/DOWNSTREAM. The only answer that scales is "works on my machine". Pitivi's answer to the same kind of task is indicative and in its own way honest: hide what the machine cannot do
+("Hide OpenGL effects when there is no GL hardware", pitivi #1946,
 01.12.2016).
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-АДРЕС: src/apps/kt-app/src/app.rs:2154-2183 — класс возможен, и его не ловит
-ничто: отсутствие СИСТЕМНОЙ библиотеки приезжает к пользователю как N
-пропавших ФАЙЛОВ, а машинерия возврата исходников после этого крутится
-вечно, потому что вернуться нечему.
+ADDRESS: src/apps/kt-app/src/app.rs:2154-2183 — the class is possible, and nothing catches it: the absence of a SYSTEM library reaches the user as N missing FILES, and the machinery for returning sources spins forever after that, because there is nothing to return.
 
-### Что уже есть
+### What already exists
 
-- `src/libs/kt-ffmpeg/src/loader.rs` — перебор SONAME трёх мажоров, сверка
-  `avcodec_version()`, единый диагноз в `FfError::NotFound` со списком того,
-  что пробовали и почему не вышло (`lib.rs:31-36`).
-- `src/libs/kt-ffmpeg/src/muxer_impl.rs:92-160` — автовыбор энкодера
-  открытием (инвариант 9); `src/libs/kt-engine/src/export.rs:520` — имя
-  фактически открытого энкодера в `ExportStats`.
-- `src/scripts/release-build.sh:55-68` — инвариант 10 машиной: `ldd` без
-  `libav*` и потолок `GLIBC_`.
-- `src/libs/kt-engine/src/player.rs:575-590` + `app.rs:768-775` — потеря GPU
-  переводит на CPU и говорит об этом один раз (тест 185);
-  `export.rs:405-410` — отказ до создания файла, если 3D нужен GPU, а его нет.
-- `src/apps/kt-app/src/util.rs:59-67` — недоступный источник заменяется
-  плейсхолдером, проект открывается и рендерится (Р.33 п.10, тесты 209-211).
+- `src/libs/kt-ffmpeg/src/loader.rs` — iteration over the SONAMEs of three majors, a check of
+  `avcodec_version()`, a single diagnosis in `FfError::NotFound` with the list of what was tried and why it did not work (`lib.rs:31-36`).
+- `src/libs/kt-ffmpeg/src/muxer_impl.rs:92-160` — automatic encoder choice
+  by opening (invariant 9); `src/libs/kt-engine/src/export.rs:520` — the name of the
+  encoder actually opened, in `ExportStats`.
+- `src/scripts/release-build.sh:55-68` — invariant 10 by machine: `ldd` without
+  `libav*` and the `GLIBC_` ceiling.
+- `src/libs/kt-engine/src/player.rs:575-590` + `app.rs:768-775` — loss of the GPU
+  switches to the CPU and says so once (test 185);
+  `export.rs:405-410` — a refusal before the file is created, if 3D needs a GPU and there is none.
+- `src/apps/kt-app/src/util.rs:59-67` — an unavailable source is replaced by a placeholder, the project opens and renders (R.33 item 10, tests 209-211).
 
-### Чего не хватает
+### What is missing
 
-1. **Различить «нет файла» и «нет библиотеки».** Сегодня оба пути сходятся в
-   `open_source_or_placeholder`, и на машине без FFmpeg 6/7/8 пользователь
-   получает по строке на КАЖДЫЙ клип — «`clip-01.mp4`: исходник недоступен,
-   показана заглушка (FFmpeg not found on this system…)» — плюс итог
-   «недоступных исходников: 40» (`app.rs:684-689`). Причина одна и системная,
-   отчёт — сорок штук и файловый; правда лежит внутри скобок сорок раз.
-2. **Перестать искать то, что не терялось.** `poll_returned_sources`
-   (`app.rs:2154-2183`) вызывается из `draw_all` каждый нарисованный кадр:
-   сторож (`util.rs:183-214`) проверяет `Path::exists()`, файлы на месте,
-   значит `offline` пуст, значит ВСЕ заглушки считаются «вернувшимися» и
-   уходят в поток `reopen-media`. Открытие мгновенно проваливается
-   (`BACKEND` — `OnceLock`, `lib.rs:143`: неудача загрузки закэширована на
-   весь процесс), заглушка остаётся, «шуметь не о чем» — и на следующем кадре
-   поток порождается снова. Установка FFmpeg посреди сеанса при этом ничего
-   не изменит: `OnceLock` не переспрашивает.
-3. **Сказать вслух, что нашлось.** `backend_error()`
-   (`src/libs/kt-media/src/ffmpeg.rs:97`, комментарий «Причина, по которой
-   FFmpeg не загрузился (для сообщения пользователю)») не вызывается ниоткуда.
-   Смежную половину — «какая версия найдена и какие ускорения доступны» —
-   нашла F-HLP-030 (мёртвые `backend_info`, `simd_name`, `EncoderChoice`);
-   здесь добавляется только вторая половина той же дыры: мёртв и текст про
-   НЕУДАЧУ.
+1. **Distinguish "no file" from "no library".** Today both paths converge in
+   `open_source_or_placeholder`, and on a machine without FFmpeg 6/7/8 the user
+   gets a line for EVERY clip — "`clip-01.mp4`: source unavailable,
+   placeholder shown (FFmpeg not found on this system…)" — plus the total
+   "unavailable sources: 40" (`app.rs:684-689`). The cause is one and systemic,
+   the report is forty items and file-based; the truth lies inside the brackets forty times.
+2. **Stop searching for what was not lost.** `poll_returned_sources`
+   (`app.rs:2154-2183`) is called from `draw_all` on every drawn frame: the guard (`util.rs:183-214`) checks `Path::exists()`, the files are in place,
+   so `offline` is empty, so ALL placeholders count as "returned" and go into the `reopen-media` thread. The opening fails instantly
+   (`BACKEND` is a `OnceLock`, `lib.rs:143`: a failed load is cached for the whole process), the placeholder stays, "nothing to report" — and on the next frame the thread is spawned again. Installing FFmpeg in the middle of a session will change nothing: the `OnceLock` does not ask again.
+3. **Say out loud what was found.** `backend_error()`
+   (`src/libs/kt-media/src/ffmpeg.rs:97`, the comment "The cause why
+   FFmpeg did not load (for the message to the user)") is called from nowhere.
+   The adjacent half — "which version was found and which accelerations are available" — was found by F-HLP-030 (dead `backend_info`, `simd_name`, `EncoderChoice`);
+   here only the second half of the same hole is added: the text about the FAILURE is dead too.
 
-### Что мешает
+### What gets in the way
 
-Ничто конструктивное. Диагноз уже собран в правильном месте и в правильной
-форме — `FfError::NotFound` несёт готовый список попыток. Мешает только то,
-что решение «библиотеки нет» принимается лениво, при первом открытии файла,
-то есть глубоко внутри цикла по медиа, где о нём известно лишь то, что оно
-`String`. Спросить `backend_error()` один раз до цикла — это условие в двух
-местах, а не подсистема.
+Nothing structural. The diagnosis is already assembled in the right place and in the right
+form — `FfError::NotFound` carries a ready list of attempts. Only the fact that the decision "the library is not there" is taken lazily, on the first opening of a file,
+that is, deep inside the loop over media, where it is known only that it is a
+`String`. Asking `backend_error()` once before the loop is a condition in two
+places, not a subsystem.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Инвариант 9 (экспорт внутрипроцессный) и 10 (dlopen, никакой линковки с
-`libav*`) — предмет заметки, оба сохраняются: правится не загрузка, а рассказ
-о её неудаче. Инвариант 12 («UI не греет систему») сегодня нарушается пунктом
-2 — поток на кадр, пока в проекте есть хоть одна заглушка. Правило UI 12
-(«фоновая работа не мешает») — то же место. Правило UI 16 («невозможность —
-ошибка, а не блёклая подсказка») — на стороне пункта 1: системная
-невозможность обязана называться своим именем, а не сорока файловыми.
+Invariant 9 (export is in-process) and 10 (dlopen, no linking with
+`libav*`) — the subject of the note; both are preserved: what is fixed is not the loading but the account
+of its failure. Invariant 12 ("the UI does not heat the system") is violated today by item
+2 — a thread per frame, as long as the project has at least one placeholder. UI rule 12
+("background work does not get in the way") — the same place. UI rule 16 ("an impossibility is
+an error, not a faded hint") — on the side of item 1: a systemic impossibility must be named by its own name, not by forty file entries.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия раунда |
-| Где основная работа | kt-app (одно условие до цикла по медиа + гейт перезапроса), kt-media (пробросить `backend_error` наверх) |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | харнесс-тест: при неудаче загрузки бэкенда — ОДНО сообщение вместо N и ни одного потока `reopen-media` (проверяется подменой пути загрузки, без сноса FFmpeg); юнит: `poll_returned_sources` не порождает поток, пока причина заглушки системная |
-| Зависит от | F-HLP-030 (что программа говорит о находках), F-HLP-012 (формулировки про отсутствующий исходник) |
-| Ломает совместимость | нет |
+| Scope | S — one stage of the round |
+| Where the main work is | kt-app (one condition before the loop over media + a gate on re-request), kt-media (propagate `backend_error` upward) |
+| Project format | not touched |
+| Tests that will have to be written | a harness test: on a backend load failure — ONE message instead of N and not a single `reopen-media` thread (checked by substituting the load path, without removing FFmpeg); a unit test: `poll_returned_sources` does not spawn a thread while the cause of the placeholder is systemic |
+| Depends on | F-HLP-030 (what the program says about findings), F-HLP-012 (wordings about a missing source) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём узкую часть, механизм не трогаем. Автовыбор открытием и рантайм-выбор
-мажора FFmpeg — сильнейшее, что у нас есть в этом домене: они убирают ровно
-те два вида расхождений, которые в чужом трекере дают худшую в базе долю
-починенного (0.46 по трём трекерам, 0.24 внутри kde-bugzilla). Цену мы платим
-ту же, что и все, и притвориться, что нет, нельзя.
+We take the narrow part, and do not touch the mechanism. The automatic choice by opening and the runtime choice of the FFmpeg major are the strongest things we have in this domain: they remove exactly
+those two kinds of divergence which, in someone else's tracker, give the worst share of repaired ones in the base (0.46 across three trackers, 0.24 inside kde-bugzilla). We pay the same price as everyone else, and pretending otherwise is not allowed.
 
-Берём три следствия, которые к механизму не относятся и стоят одну стадию:
-системная неудача обязана называться один раз и своим именем, а не сорока
-файловыми; поиск «вернувшихся» исходников обязан выключаться, когда терялся
-не файл; готовый текст `backend_error()` обязан кем-то читаться. Первые два —
-не сообщение, а поведение, поэтому живут здесь, а не в `help/`.
+We take three consequences that do not belong to the mechanism and cost one stage: a systemic failure must be named once and by its own name, not as forty file entries; the search for "returned" sources must switch off when what was lost was not a file; the ready text of `backend_error()` must be read by someone. The first two are
+not a message but behaviour, so they live here, not in `help/`.
 
-## Источники
+## Sources
 
-- Дампы трекеров от 08.09.2026, `~/.cache/kinotrain/trackers/`: kde-bugzilla
-  (6346), kde-invent (2217), pitivi (2672). **GitHub-трекеры реестра
+- Tracker dumps dated 08.09.2026, `~/.cache/kinotrain/trackers/`: kde-bugzilla
+  (6346), kde-invent (2217), pitivi (2672). **The GitHub trackers of the registry
   (shotcut, mlt, otio, olive, losslesscut, flowblade, openshot),
-  blender-vse и ffmpeg-trac на момент письма ещё выгружались** — все числа
-  заметки посчитаны по трём доступным, и доля темы в третьем (pitivi)
-  показана отдельно именно потому, что двух мало.
-- Воспроизведение чисел: `python3 src/scripts/tracker-rank.py --themes`
-  (колонка «фиксы»), `--theme 'аппарат/драйвер'`,
+  blender-vse and ffmpeg-trac were still being exported at the time of writing** — all the numbers of
+  this note are counted over the three available ones, and the share of the topic in the third (pitivi)
+  is shown separately precisely because two is too few.
+- Reproducing the numbers: `python3 src/scripts/tracker-rank.py --themes`
+  (the "fixes" column), `--theme 'аппарат/драйвер'`,
   `--query 'nvenc|vaapi|qsv|cuda|movit|hardware accel'`.
-- https://invent.kde.org/multimedia/kdenlive/-/work_items/1594 (обращение
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/1594 (accessed
   08.09.2026)
 - https://invent.kde.org/multimedia/kdenlive/-/work_items/1771 (08.09.2026)
 - https://invent.kde.org/multimedia/kdenlive/-/work_items/585 (08.09.2026)
 - https://invent.kde.org/multimedia/kdenlive/-/work_items/2135 (08.09.2026)
-- https://invent.kde.org/multimedia/kdenlive/-/work_items/895 и
-  https://bugs.kde.org/show_bug.cgi?id=419954 — «свой ffmpeg в дистрибутиве»
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/895 and
+  https://bugs.kde.org/show_bug.cgi?id=419954 — "own ffmpeg in the distribution"
   (08.09.2026)
-- https://gitlab.gnome.org/GNOME/pitivi/-/work_items/1946 — ответ Pitivi
-  «прятать то, чего машина не может» (08.09.2026)
-- Строки ядра в «У кого и как» опираются на разведку F-HLP-030
-  (`help/onboarding/first-run-hardware-and-defaults.md`); собственной живой
-  проверки VEGAS/Resolve/FCP в этот заход не было.
-- Наш код читался в дереве: `src/libs/kt-ffmpeg/src/{loader,lib,muxer_impl}.rs`,
+- https://gitlab.gnome.org/GNOME/pitivi/-/work_items/1946 — Pitivi's answer
+  "hide what the machine cannot do" (08.09.2026)
+- The core rows in "Who has it and how" rest on the reconnaissance of F-HLP-030
+  (`help/onboarding/first-run-hardware-and-defaults.md`); there was no live check of
+  VEGAS/Resolve/FCP of our own in this pass.
+- Our code was read in the tree: `src/libs/kt-ffmpeg/src/{loader,lib,muxer_impl}.rs`,
   `src/libs/kt-engine/src/export.rs`, `src/libs/kt-media/src/ffmpeg.rs`,
   `src/apps/kt-app/src/{app,util,render_dialog}.rs`,
   `src/scripts/release-build.sh`.

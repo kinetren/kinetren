@@ -1,12 +1,12 @@
 ---
 id: F-COL-008
-title: Что теряет чужой файл, пройдя через нас
-status: кандидат
+title: What a foreign file loses when it passes through us
+status: candidate
 priority: B
 cost: S
 category: collab/handoff
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, otio-lib-0.18]
-we_have: частично
+we_have: partial
 crates: [kt-otio, kt-model]
 invariants: []
 ui_rules: []
@@ -19,301 +19,275 @@ services: [premiere-productions, fcp-shared-library, bm-cloud]
 checked: 2026-09-08
 ---
 
-# F-COL-008 — Что теряет чужой файл, пройдя через нас
+# F-COL-008 — What a foreign file loses when it passes through us
 
-## Суть
+## Essence
 
-Коллега прислал монтаж, сделанный не у нас. Мы его открыли, подвинули один клип
-и сохранили — и отправили обратно. Вопрос заметки один: что из его документа не
-доехало назад. Не «открылось ли» (это F-RES-003 и F-COL-007), а именно ПОТЕРЯ
-на круге: комментарий у метки, выключенная дорожка, эффект, которого мы не
-знаем. Потеря тихая по определению — ошибки не было, файл открылся, сохранение
-прошло, и узнаёт о ней автор файла, а не мы.
+A colleague sent an edit that was made not in our program. We opened it, moved one clip,
+saved it — and sent it back. The note has one question: what from his document did not
+make it back. Not "did it open" (that is F-RES-003 and F-COL-007), but precisely the LOSS
+on the round trip: a comment at a marker, a disabled track, an effect we do not
+know. The loss is silent by definition — there was no error, the file opened, the save
+went through, and it is the file's author who learns of it, not us.
 
-## У кого и как
+## Who has it and how
 
-Колонка «Как устроено» отвечает на один вопрос: что происходит с ЧУЖИМ файлом
-после «открыть → сохранить». Выбор формата отдачи — F-COL-007; версии НАШЕГО
-формата и наша же старая сборка — F-RES-003.
+The column "How it works" answers one question: what happens to a FOREIGN file
+after "open → save". The choice of output format is F-COL-007; the versions of OUR
+format and our own old build are F-RES-003.
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Import (AAF / EDL / fcpxml) | круга нет вообще: чужой файл ИМПОРТИРУЕТСЯ в `.veg` и перестаёт существовать как документ. Обратно выходит НОВЫЙ файл, сгенерированный из модели Vegas, — совпадение с оригиналом не гарантируется и не проверяется, потому что сравнивать нечего с чем |
-| Adobe Premiere | 26.x | Import FCP XML / AAF, затем отдельный Export | то же: два независимых тракта, вход и выход. Симметрию никто не обещает, и она регулярно не выполняется — есть живой тред 2014 года про метки, не пережившие круг через собственный же FCP XML Premiere |
-| DaVinci Resolve | 21 | Import Timeline, Conform Lock, Reconform | чужой файл становится ЗАПИСЬЮ базы, а не файлом; поэтому «сохранить обратно» — это не сохранение, а новый экспорт. Взамен даётся то, чего нет у остальных: `Conform Lock` и повторный конформ, то есть механизм пересадки на обновлённый чужой файл |
-| Final Cut Pro | 12.3 | Import XML → библиотека | самая жёсткая форма: чужой `.fcpxml` втягивается в пакет библиотеки, дальше файл не нужен. Обратный `.fcpxml` — генерация из библиотеки, и по составу она не совпадает с принятым (у FCP своя модель ролей, которой в исходнике не было) |
-| After Effects | 26.x | Pro Import After Effects | круг физически односторонний: импортёр есть, экспортёра нет вовсе. Чужой монтаж входит и не выходит — «потеря на круге» здесь не определена, потому что круга не бывает |
+| VEGAS Pro | 2026.0 | Import (AAF / EDL / fcpxml) | there is no round trip at all: the foreign file is IMPORTED into `.veg` and stops existing as a document. Back comes a NEW file, generated from the Vegas model — agreement with the original is neither guaranteed nor verified, because there is nothing to compare it against |
+| Adobe Premiere | 26.x | Import FCP XML / AAF, then a separate Export | the same: two independent paths, input and output. Symmetry is promised by no one, and it regularly fails — there is a live thread from 2014 about markers that did not survive the round trip through Premiere's own FCP XML |
+| DaVinci Resolve | 21 | Import Timeline, Conform Lock, Reconform | the foreign file becomes a RECORD of the database, not a file; therefore "save back" is not a save but a new export. In exchange it gives what the others lack: `Conform Lock` and a repeated conform, that is, a mechanism for re-seating onto an updated foreign file |
+| Final Cut Pro | 12.3 | Import XML → library | the harshest form: the foreign `.fcpxml` is drawn into the library package, and the file is no longer needed after that. The return `.fcpxml` is a generation from the library, and by content it does not match the accepted one (FCP has its own role model, which the source did not have) |
+| After Effects | 26.x | Pro Import After Effects | the round trip is physically one-way: there is an importer, there is no exporter at all. A foreign edit comes in and does not go out — "loss on the round trip" is not defined here, because there is no round trip |
 
-**Вне ядра.** Пять редакторов ядра дают пять способов НЕ иметь круга, поэтому
-описать класс ими нельзя: у них чужой файл всегда импортируется, и вопрос
-«что потерялось» не имеет адресата. OpenTimelineIO — единственное место, где
-круг объявлен свойством, где потеря каждого адаптера обсуждается поимённо в
-публичном трекере и где родилась идея «незнакомая схема не роняет чтение, а
-становится объектом, который помнит себя дословно» (issue #326, 2018) — прямой
-предок нашего `RawObject`.
+**Outside the core.** The five core editors give five ways of NOT having a round trip, so the
+class cannot be described through them: for them a foreign file is always imported, and the
+question "what was lost" has no addressee. OpenTimelineIO is the only place where the round
+trip is declared a property, where the loss of each adapter is discussed by name in a
+public tracker, and where the idea was born that "an unknown schema does not break the
+reading, but becomes an object that remembers itself verbatim" (issue #326, 2018) — the direct
+ancestor of our `RawObject`.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| OpenTimelineIO | 0.18.x | `SerializableObjectWithMetadata`, `UnknownSchema`, `otio_json` | круг — предмет тестирования, а не побочный эффект: у каждого адаптера свой список того, что он читает и что пишет, и списки эти РАЗНЫЕ (issue #1050: ALE-адаптер читает CDL, но не пишет обратно). Незнакомая схема сохраняется дословно и переживает запись — то же решение, что у нас, и принято оно раньше нашего |
+| OpenTimelineIO | 0.18.x | `SerializableObjectWithMetadata`, `UnknownSchema`, `otio_json` | the round trip is a subject of testing, not a side effect: each adapter has its own list of what it reads and what it writes, and these lists are DIFFERENT (issue #1050: the ALE adapter reads CDL, but does not write it back). An unknown schema is preserved verbatim and survives writing — the same decision as ours, and it was taken earlier than ours |
 
-## Фишка фишки
+## The trick behind it
 
-**Passthrough защищает чужие схемы лучше, чем родную, — и проверяется это на
-нашей же фикстуре.** `decode_marker`
-(`src/libs/kt-otio/src/schema.rs:443`) типизирует РОВНО одну версию — `Marker.2`.
-Всё остальное уходит в `RawObject` и переживает круг дословно. А текущая версия
-схемы у эталонной библиотеки — `Marker.3`: поле `comment` добавлено в неё PR
-#1698 от 15.02.2024. Значит **ни один маркер настоящего чужого файла через
-типизированный путь не проходит**: в `src/fixtures/otio-samples/premiere_example.otio`
-все четыре маркера — `Marker.3`, в `screening_example.otio` — все три. Они
-доезжают обратно нетронутыми — и при этом не появляются на нашем таймлайне
-вообще, потому что в `kt_model::Marker` их никто не превращает. Сохранность
-здесь — следствие невидимости.
+**Passthrough protects foreign schemas better than native ones — and this can be checked on our
+own fixture.** `decode_marker`
+(`src/libs/kt-otio/src/schema.rs:443`) types EXACTLY one version — `Marker.2`.
+Everything else goes into `RawObject` and survives the round trip verbatim. And the current
+version of the schema in the reference library is `Marker.3`: the field `comment` was added to it by
+PR #1698 of 15.02.2024. So **not a single marker of a real foreign file passes through the typed path**:
+in `src/fixtures/otio-samples/premiere_example.otio` all four markers are `Marker.3`, in
+`screening_example.otio` all three are. They come back untouched — and at the same time they do not
+appear on our timeline at all, because nobody turns them into `kt_model::Marker` there. Preservation
+here is a consequence of invisibility.
 
-**И наоборот: то, что мы ПОНЯЛИ, худеет.** `Marker.2` наш читатель
-(`convert.rs:700`) разбирает на четыре поля — время, длительность, имя, цвет, —
-а писатель (`convert.rs:393`) ставит `comment`, `metadata` и `extra` пустыми.
-Комментарий чужой метки исчезает на первом же сохранении, и notice об этом не
-печатается. Отсюда правило, которое стоит произнести вслух: **у нас понимание
-стоит, а непонимание бесплатно.** Оно подтверждается вторым независимым местом:
-ВЫКЛЮЧЕННЫЙ чужой клип (`Composable::Clip(c) if c.enabled` не сработало,
-`convert.rs:849`) не импортируется вовсе — он становится серым `ForeignEvent` с
-сырьём в `Retained.foreign` и возвращается в файл побайтово, со всеми своими
-эффектами и метками. Включённый клип понимается — и теряет ровно то, чего нет в
-нашей модели. Чем меньше мы разобрали, тем целее вернули.
+**And the reverse: what we UNDERSTOOD gets thinner.** Our reader (`convert.rs:700`) for `Marker.2` takes four
+fields — time, duration, name, colour — and our writer (`convert.rs:393`) leaves `comment`, `metadata` and `extra`
+empty. The comment of a foreign marker disappears at the first save, and no notice is printed about it.
+From this follows a rule worth saying aloud: **for us, understanding costs, and not understanding is free.** It is
+confirmed by a second, independent place: a DISABLED foreign clip (`Composable::Clip(c) if c.enabled` does not
+match, `convert.rs:849`) is not imported at all — it becomes a grey `ForeignEvent` with the raw data in
+`Retained.foreign` and returns to the file byte for byte, with all its effects and markers. An enabled clip is understood — and loses exactly
+what is absent from our model. The less we parsed, the more intact we return it.
 
-**Третья деталь — про версию, которую мы сами себе подписали.** Мы ПИШЕМ свои
-метки как `Marker.2` и кладём в них поле `comment`, появившееся в `Marker.3`
-(это видно прямо в закоммиченном эталоне `src/fixtures/demo-3d.otio`, где
-рядом стоят `"OTIO_SCHEMA": "Marker.2"` и `"comment": ""`). То есть тег версии
-2 несёт поле версии 3. Строгий читатель эталона имеет право не ждать этого поля
-в v2, а наш собственный upgrade-путь `Marker.2 → Marker.3` отсутствует —
-хотя единственный писаный upgrade в крейте (`Clip.1 → Clip.2`) показывает, что
-механизм для этого есть и стоит десяти строк.
+**The third detail — about a version we signed for ourselves.** We WRITE our markers as `Marker.2` and put into them the field `comment`, which
+appeared in `Marker.3` (this is visible directly in the committed reference `src/fixtures/demo-3d.otio`, where
+next to each other stand `"OTIO_SCHEMA": "Marker.2"` and `"comment": ""`). That is, the version tag 2 carries
+the field of version 3. A strict reader of the reference has the right not to expect this field in v2, and our own upgrade path
+`Marker.2 → Marker.3` is absent — although the only written upgrade in the crate (`Clip.1 → Clip.2`) shows that
+the mechanism for it exists and costs ten lines.
 
-## Плюсы
+## Pros
 
-- Чужие неймспейсы `metadata` не трогаются вовсе, наш `kt` дописывается в
-  конец: файл, прошедший через нас, остаётся читаемым чужим редактором.
-- Неизвестные ПОЛЯ известных схем сохраняются на своих местах
-  (`#[serde(flatten)] extra`), а порядок ключей канонизирован и заморожен
-  тестами — то есть диффом чужого файла после нашего круга можно пользоваться.
-- Круг проверяется, а не декларируется: t154 гоняет девять чужих сэмплов
-  апстрима и требует идемпотентности пересохранения; t145 — что непонятое
-  вернулось; t144 — что `write(parse(write(x))) == write(x)` байт-в-байт.
-- Битая секция `metadata.kt` — ЯВНАЯ ошибка, а не «значит, файл чужой»
-  (`Error::KtMetaBroken`, п.243–244): молчаливое выбрасывание конверта уносило
-  с собой настройки, дорожки, морферы и раскладку.
-- Версия структурного хребта новее поддерживаемой — жёсткий отказ, а не
-  полупонимание: позиции детей дорожки стали бы догадкой.
-- Выключенный чужой клип и вложенный `Stack` не «поддерживаются наполовину», а
-  честно становятся непрозрачным плейсхолдером с сырьём — и возвращаются целыми.
+- Foreign `metadata` namespaces are not touched at all, our `kt` is appended at the
+  end: a file that has passed through us remains readable by the foreign editor.
+- Unknown FIELDS of known schemas are preserved in their places
+  (`#[serde(flatten)] extra`), and the key order is canonicalised and frozen by
+  tests — that is, the diff of a foreign file after our round trip can be used.
+- The round trip is checked, not declared: t154 runs nine upstream foreign samples
+  and requires idempotence of re-saving; t145 — that what was not understood came back;
+  t144 — that `write(parse(write(x))) == write(x)` byte for byte.
+- A broken `metadata.kt` section is an EXPLICIT error, not "so the file is foreign"
+  (`Error::KtMetaBroken`, items 243–244): silently discarding the envelope would carry away
+  the settings, tracks, morphers and layout.
+- A version of the structural spine newer than the supported one is a hard refusal, not a half-understanding:
+  the positions of a track's children would become a guess.
+- A disabled foreign clip and a nested `Stack` are not "supported half-way", but honestly become an opaque placeholder with raw data — and come back whole.
 
-## Минусы
+## Cons
 
-- **Маркеры чужого файла невидимы.** Настоящие файлы несут `Marker.3`, мы
-  типизируем только `Marker.2`; таймлайн чужого монтажа приходит без единой
-  метки, хотя в файле их четыре. Пользователь не видит ни меток, ни причины.
-- **Комментарий понятого маркера теряется молча.** Ни notice, ни поля в модели:
-  `kt_model::Marker` — это `t`, `duration`, `name`, `color`, и всё
+- **Markers of a foreign file are invisible.** Real files carry `Marker.3`, we type only `Marker.2`;
+  the timeline of a foreign edit arrives without a single marker, although the file has four.
+  The user sees neither the markers nor the reason.
+- **The comment of an understood marker is lost silently.** Neither a notice nor a field in the model:
+  `kt_model::Marker` is `t`, `duration`, `name`, `color`, and that is all
   (`src/libs/kt-model/src/project.rs:1459`).
-- **Две метки на одном кадре схлопываются без предупреждения** —
+- **Two markers on one frame collapse without a warning** —
   `markers.dedup_by_key(|m| m.t)` (`src/libs/kt-model/src/project.rs:3488`),
-  потому что метка адресуется тиком, а не идентификатором. Это касается тех
-  меток, что до модели ДОШЛИ, то есть корневых `Marker.2`; и что случай не
-  выдуманный, видно на настоящем файле: в `screening_example.otio` на одном
-  клипе лежат ДВА маркера с одним именем «ANIM FIX NEEDED». Ровно ту же беду
-  по той же причине описывает адаптер EDL в otio #593.
-- **Метки и эффекты ДОРОЖКИ пропадают целиком, и это худший пункт списка.**
-  `TrackExtra` (`convert.rs:61`) хранит имя, `extra`, `metadata` и гэпы — и НЕ
-  хранит ни `markers`, ни `effects`; писатель ставит на их место `vec![]`
-  (`convert.rs:364-365`). То же у корневого `Stack` (`effects: vec![]`,
-  `convert.rs:536`), у `Gap` и у `Transition`. Это не passthrough и не
-  плейсхолдер — это тихое удаление, и notice не печатается ни одного.
-- **Выключенная чужая ДОРОЖКА возвращается включённой.** Писатель ставит
-  `enabled: true` безусловно (`convert.rs:366`), читатель поля не читает. Файл
-  вернётся автору с играющей дорожкой, которую он выключил, — и это как раз
-  тот случай, где потеря не «обеднение», а СМЕНА СМЫСЛА. Отрасль этот пробел
-  знает: otio #483 просит статус клипа именно потому, что его негде хранить.
-- **Retained привязывается к дорожкам, гэпам и переходам ПО ПОЗИЦИИ** — задокументированное
-  ограничение v1: структурная правка может переклеить чужие метаданные к
-  соседнему объекту. Клипов это не касается (ключ — `ClipId`).
-- **NTSC-частоты округляются.** 23.976 сетку 90 кГц не делит, `grid_fps`
-  берёт ближайшую целую; проект чужого файла становится 24 fps, и байтовая
-  стабильность круга на таких файлах не держится (тик на клип).
+  because a marker is addressed by a tick, not by an identifier. This concerns those markers that DID reach the model, that is, the root
+  `Marker.2`; and that the case is not invented is visible in a real file: in `screening_example.otio` on one
+  clip lie TWO markers with the same name "ANIM FIX NEEDED". The very same trouble, for the same reason, is described by the EDL adapter in otio #593.
+- **The markers and effects of a TRACK disappear entirely, and this is the worst item on the list.**
+  `TrackExtra` (`convert.rs:61`) stores the name, `extra`, `metadata` and gaps — and does NOT store
+  `markers` or `effects`; the writer puts `vec![]` in their place
+  (`convert.rs:364-365`). The same for the root `Stack` (`effects: vec![]`,
+  `convert.rs:536`), for `Gap` and for `Transition`. This is not passthrough and not a placeholder — it is
+  silent deletion, and not a single notice is printed.
+- **A disabled foreign TRACK comes back enabled.** The writer sets `enabled: true` unconditionally (`convert.rs:366`), the reader does not read the field. The file
+  goes back to its author with a playing track that he had switched off — and this is exactly
+  the case where the loss is not "impoverishment" but a CHANGE OF MEANING. The industry knows this gap: otio #483 asks for the clip's status precisely because there is nowhere to store it.
+- **Retained is bound to tracks, gaps and transitions BY POSITION** — a documented limitation of v1: a structural edit may re-glue foreign metadata to a neighbouring object. Clips are not affected (the key is `ClipId`).
+- **NTSC frequencies are rounded.** 23.976 does not divide the 90 kHz grid, `grid_fps`
+  takes the nearest whole number; the project of a foreign file becomes 24 fps, and byte stability of the round trip does not hold on such files (tick per clip).
 
-## Что говорят пользователи
+## What users say
 
-СИГНАЛ: маркеры и метаданные на чтении/записи — 10 задач в otio, `(marker|metadata|comment|annotation)\w*.*(read|write|writer|reader|adapter|support|preserv|round)|((read|write|writer|reader|adapter)\w*.*(marker|metadata|comment|annotation))`; доля 1.5% против 0.3% в losslesscut
+SIGNAL: markers and metadata on read/write — 10 tasks in otio, `(marker|metadata|comment|annotation)\w*.*(read|write|writer|reader|adapter|support|preserv|round)|((read|write|writer|reader|adapter)\w*.*(marker|metadata|comment|annotation))`; share 1.5% against 0.3% in losslesscut
 
-Тема редкая ВЕЗДЕ: 1.5 % у otio, 0.3 % у losslesscut, 0.1 % у shotcut и olive,
-0.0 % у kde-invent. И это, в отличие от счёта F-COL-007, вывод не про
-популярность, а про НАБЛЮДАЕМОСТЬ. Потеря на круге по построению не видна тому,
-кто её произвёл: файл открылся, ошибки не было, сохранение прошло. Заявку пишет
-не потерпевший, а разработчик адаптера, случайно заметивший асимметрию своего
-же кода, — и поэтому счёт этой темы измеряет не боль, а внимательность. Ровно
-такой формы и наш дефект: он найден чтением кода, а не жалобой.
+The topic is rare EVERYWHERE: 1.5% at otio, 0.3% at losslesscut, 0.1% at shotcut and olive,
+0.0% at kde-invent. And this, unlike the count in F-COL-007, is a conclusion not about
+popularity but about OBSERVABILITY. A loss on the round trip is by construction invisible to
+the one who caused it: the file opened, there was no error, the save went through. The report is written
+not by the victim but by the adapter's developer, who happened to notice an asymmetry in his own
+code — and therefore the count for this topic measures not pain but attentiveness. Our defect
+is of exactly this form: it was found by reading the code, not by a complaint.
 
-Асимметрия «читаем — но не пишем» названа автором адаптера про свой же код:
+The asymmetry "we read — but do not write" is named by the author of the adapter about his own code:
 
 > The ALE adapter reads CDL values into the `cdl` namespaces of clip metadata dictionaries from the `ASC_SAT` and `ASC_SOP` fields, however it does not write them back out.
-> — reinecke, otio #1050, 24.08.2021, открыта до сих пор,
+> — reinecke, otio #1050, 24.08.2021, still open,
 > https://github.com/AcademySoftwareFoundation/OpenTimelineIO/issues/1050
 
-Наш пропавший `enabled` — известный пробел отрасли, а не наша выдумка:
+Our lost `enabled` is a known gap of the industry, not our invention:
 
 > There currently seems to be no 'status' flag that comes with a clip object to convey its state on the timeline regarding whether it is active, has been disabled, muted, etc...
-> — andrewmoore-nz, otio #483 «AAF/XML Reader: Clip enabled/disabled/muted flag?», 08.04.2019,
+> — andrewmoore-nz, otio #483 "AAF/XML Reader: Clip enabled/disabled/muted flag?", 08.04.2019,
 > https://github.com/AcademySoftwareFoundation/OpenTimelineIO/issues/483
 
-И наш `dedup_by_key` — тоже: адаптер EDL теряет всё, кроме последней метки, по
-той же причине, по которой теряем мы, — метка адресуется временем:
+And our `dedup_by_key` is also a known gap: the EDL adapter loses everything except the last marker, for the same reason we lose
+— a marker is addressed by time:
 
 > Right now the cmx_3600 adapter does not support multiple markers per clip.
 > — elabrosseRodeofx, otio #593, 27.09.2019,
 > https://github.com/AcademySoftwareFoundation/OpenTimelineIO/issues/593
 
-Круг, не сработавший внутри ОДНОЙ программы и её собственного формата обмена:
+A round trip that failed inside ONE program and its own exchange format:
 
 > The markers do not come back even if I put the original video file on the timeline before importing...
 > — Thomas Kohler, 01.10.2014,
 > https://community.adobe.com/t5/premiere-pro/premiere-markers-export-and-import-roundtrip-via-fcp-xml-not-working/m-p/6408563
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-АДРЕС: src/libs/kt-otio/src/convert.rs — читатель маркеров (`convert.rs:700`)
-берёт из `Marker` четыре поля, писатель (`convert.rs:393`) возвращает
-`comment`, `metadata` и `extra` пустыми, а `TrackExtra` (`convert.rs:61`) не
-хранит ни `markers`, ни `effects` дорожки — писатель ставит на их место
-`vec![]` (`convert.rs:364-365`). Три тихих потери в одном файле, и ни одна не
-печатает notice, хотя механизм notice в той же функции есть и используется
-девять раз.
+ADDRESS: src/libs/kt-otio/src/convert.rs — the marker reader (`convert.rs:700`) takes four fields from `Marker`, the writer (`convert.rs:393`) returns `comment`, `metadata` and `extra` empty, and `TrackExtra` (`convert.rs:61`) does not store either `markers` or `effects` of a track — the writer puts `vec![]` in their place (`convert.rs:364-365`). Three silent losses in one file, and none of them prints a notice, although the notice mechanism exists in the same function and is used nine times.
 
-### Что уже есть
+### What already exists
 
-- `src/libs/kt-otio/src/schema.rs` — `RawObject` и диспетчеры `decode_*`:
-  неизвестная схема остаётся сырьём с `OTIO_SCHEMA` на исходной позиции.
+- `src/libs/kt-otio/src/schema.rs` — `RawObject` and the `decode_*` dispatchers:
+  an unknown schema remains raw data with `OTIO_SCHEMA` at its original position.
 - `src/libs/kt-otio/src/convert.rs` — `Retained`: `timeline_extra`,
   `timeline_meta_foreign`, `stack_extra`, `stack_metadata`, `tracks`, `clips`,
   `transitions`, `foreign`, `stack_markers_foreign`, `timeline_kt_extra`.
-  Чужой выключенный клип и вложенный `Stack` едут через `ForeignEvent` +
-  `Retained.foreign` целиком.
-- `src/libs/kt-otio/src/convert.rs` — механизм `Vec<Notice>`: девять мест уже
-  умеют сказать пользователю, что именно не поехало (чужой тип перехода, карта
-  слоёв не сошлась, нечитаемый эффект, тайм-варп).
-- `src/libs/kt-model/src/project.rs` — `Marker { t, duration, name, color }` и
-  `dedup_by_key` при загрузке.
-- Тесты: `libs/kt-otio/tests/format.rs` (t144, t145, t146),
-  `libs/kt-otio/tests/convert.rs` (t154 — девять чужих сэмплов), фикстуры
-  `src/fixtures/otio-samples` (в них и лежат `Marker.3`, и два одноимённых
-  маркера на одном клипе).
+  A foreign disabled clip and a nested `Stack` travel via `ForeignEvent` +
+  `Retained.foreign` in full.
+- `src/libs/kt-otio/src/convert.rs` — the `Vec<Notice>` mechanism: nine places already
+  know how to tell the user what exactly did not make it (a foreign transition type, a layer
+  map that did not match, an unreadable effect, time warp).
+- `src/libs/kt-model/src/project.rs` — `Marker { t, duration, name, color }` and
+  `dedup_by_key` on loading.
+- Tests: `libs/kt-otio/tests/format.rs` (t144, t145, t146),
+  `libs/kt-otio/tests/convert.rs` (t154 — nine foreign samples), the fixtures
+  `src/fixtures/otio-samples` (they hold both `Marker.3` and two same-named
+  markers on one clip).
 
-### Чего не хватает
+### What is missing
 
-- Ветки `("Marker", 3)` в `decode_marker` и upgrade `Marker.2 → Marker.3` —
-  ровно того же вида, что уже написанный `upgrade_clip_1`.
-- Полей `comment` и чужой `metadata` у `kt_model::Marker`, либо — если в модель
-  их не хотим — хранения их в `Retained` по ключу метки, как хранится всё
-  остальное чужое.
-- `markers` и `effects` в `TrackExtra`, `effects` в полях корневого `Stack`,
-  `markers`/`effects` у `Gap` и `Transition`. Это чистый passthrough: читать в
-  `Retained`, писать обратно.
-- Чтения и возврата `enabled` у дорожки. Сегодня поле пишется константой.
-- Notice на каждую тихую потерю. Правило «непонятое не молчит» в крейте уже
-  действует для эффектов и переходов — метки и дорожки из него выпали.
-- Теста «чужой файл с метками, комментариями и выключенной дорожкой проходит
-  круг без потерь». Сегодня t154 требует идемпотентности НАШЕГО вывода, то
-  есть второго круга, — а первый круг (чужой файл → наш файл) не сравнивается
-  с оригиналом ничем.
+- A branch `("Marker", 3)` in `decode_marker` and the upgrade `Marker.2 → Marker.3` —
+  of exactly the same kind as the already written `upgrade_clip_1`.
+- A `comment` field and a foreign `metadata` for `kt_model::Marker`, or — if we do not want
+  them in the model — storing them in `Retained` under the key of the marker, as everything
+  else foreign is stored.
+- `markers` and `effects` in `TrackExtra`, `effects` in the fields of the root `Stack`,
+  `markers`/`effects` of `Gap` and `Transition`. This is pure passthrough: read into
+  `Retained`, write back.
+- Reading and returning `enabled` of a track. Today the field is written as a constant.
+- A notice for each silent loss. The rule "what is not understood does not stay silent" already
+  operates in the crate for effects and transitions — markers and tracks fell out of it.
+- A test "a foreign file with markers, comments and a disabled track passes the round trip
+  without losses". Today t154 requires idempotence of OUR output, that is, a second
+  round, — and the first round (foreign file → our file) is not compared with the original by anything.
 
-### Что мешает
+### What gets in the way
 
-Ничего конструктивного: все правки — внутри kt-otio, формат проекта не
-меняется, версия `kt.v` не бампается. Единственная осторожность — golden'ы:
-добавление ветки `Marker.3` и upgrade не должны сдвинуть `src/fixtures/demo-3d.otio`
-и legacy-эталон t148, а решение «писать `Marker.3` вместо `Marker.2`» сдвинет
-их обязательно, и это надо сделать одним явным перегеном, а не побочно.
+Nothing constructive: all the changes are inside kt-otio, the project format
+does not change, the version `kt.v` is not bumped. The only caution is the golden files: the
+addition of the `Marker.3` branch and the upgrade must not shift `src/fixtures/demo-3d.otio`
+and the legacy reference of t148, and the decision "write `Marker.3` instead of `Marker.2`" will shift
+them inevitably, and this has to be done in one explicit regeneration, not as a side effect.
 
-### В категории `collab/` — ещё две обязательные строки (правило 13)
+### In the `collab/` category — two more mandatory lines (rule 13)
 
-БЕЗ СЕТИ: ВЫРОЖДАЕТСЯ — `src/libs/kt-otio/src/convert.rs:700` — круг чужого документа на одной машине работает целиком, но вырождается в правило «сохраняем тем лучше, чем меньше поняли»: непонятая схема возвращается дословно, а понятая худеет на комментарий метки, метки дорожки и признак выключенности, и сказать об этом некому — автор файла узнаёт о потере у себя.
+OFFLINE: DEGENERATES — `src/libs/kt-otio/src/convert.rs:700` — the round trip of a foreign document on one machine works in full, but degenerates into the rule "we save the better, the less we understood": the not-understood schema comes back verbatim, while the understood one thins out by the marker's comment, the track's markers and the sign of disabled-ness, and there is no one to tell about this — the file's author learns of the loss on his own side.
 
-ЦЕНА СЕТИ: чтобы чужой монтаж перестал ходить кругами и терять на каждом круге, он должен перестать быть файлом — проект-как-база — так решили все пятеро: у Resolve и Team Projects чужой файл втягивается в запись базы один раз, дальше правится общая запись, и понятие «потеря на круге» исчезает вместе с самим кругом.
+NETWORK COST: for a foreign edit to stop going round in circles and losing something on every lap, it must stop being a file — project-as-database — this is what all five decided: at Resolve and Team Projects a foreign file is drawn into the database record once, after that the shared record is edited, and the notion of "loss on the round trip" disappears together with the round trip itself.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Ни одного из двенадцати — и это сильный аргумент «дёшево». Задеваются только
-инварианты самого крейта (`src/libs/kt-otio/CLAUDE.md`): идемпотентность
-записи, passthrough «не понимать наполовину» и канонический порядок ключей.
-Первый из них сегодня и маскирует дефект: `write(parse(write(x))) == write(x)`
-проверяет ВТОРОЙ круг, когда потеря уже произошла на первом.
+None of the twelve — and this is a strong argument for "cheap". Only the invariants of the crate itself are touched (`src/libs/kt-otio/CLAUDE.md`): idempotence of
+writing, passthrough "do not understand half-way" and the canonical order of keys.
+The first of them today even masks the defect: `write(parse(write(x))) == write(x)`
+checks the SECOND round, when the loss has already happened on the first.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия раунда, вся работа в одном крейте |
-| Где основная работа | kt-otio (`schema.rs`: ветка `Marker.3` и upgrade; `convert.rs`: `TrackExtra.markers/effects`, `Stack.effects`, `enabled`, notices), kt-model (`comment` у `Marker` либо явный отказ в пользу `Retained`) |
-| Формат проекта | не трогает `metadata.kt` и не бампает `kt.v`; смена тега наших меток на `Marker.3` перегенерирует golden-фикстуры |
-| Тесты, которые придётся написать | «первый круг чужого файла»: сэмпл с `Marker.3`, комментарием, двумя метками на одном кадре, метками и эффектом дорожки и выключенной дорожкой — сравнение с оригиналом, а не с нашим же выводом; notice на каждую оставшуюся потерю; неподвижность t144/t148/t189 |
-| Зависит от | ничего; граничит с F-COL-007 (чем отдаём) и F-RES-003 (версии НАШЕГО формата) |
-| Ломает совместимость | нет |
+| Size | S — one stage of the round, all the work in one crate |
+| Where the main work is | kt-otio (`schema.rs`: the `Marker.3` branch and the upgrade; `convert.rs`: `TrackExtra.markers/effects`, `Stack.effects`, `enabled`, notices), kt-model (`comment` on `Marker` or an explicit refusal in favour of `Retained`) |
+| Project format | does not touch `metadata.kt` and does not bump `kt.v`; switching the tag of our markers to `Marker.3` regenerates the golden fixtures |
+| Tests to write | "the first round of a foreign file": a sample with `Marker.3`, a comment, two markers on one frame, markers and an effect of a track, and a disabled track — comparison with the original, not with our own output; a notice for each remaining loss; immobility of t144/t148/t189 |
+| Depends on | nothing; borders on F-COL-007 (what we give out) and F-RES-003 (versions of OUR format) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём, и берём целиком — это самая дешёвая позиция всей волны: правки в одном
-крейте, ни одного из двенадцати инвариантов, формат не меняется. Причина брать
-не в маркерах, а в правиле, которое дефект вскрыл: **у нас понимание стоит, а
-непонимание бесплатно**, и это ровно наоборот к тому, что мы обещаем. Чужой
-`Marker.3` возвращается дословно; понятый `Marker.2` теряет комментарий; метки
-и эффекты ДОРОЖКИ не возвращаются вовсе; выключенная чужая дорожка приезжает
-автору играющей. Последнее — не обеднение, а смена смысла, и оно одно оправдало
-бы стадию.
+We take it, and we take it whole — this is the cheapest position of the whole wave: changes in one
+crate, none of the twelve invariants, the format does not change. The reason to take it
+is not the markers but the rule that the defect has revealed: **for us, understanding costs, and not understanding is free**, and this is exactly
+the reverse of what we promise. A foreign `Marker.3` comes back verbatim; an understood `Marker.2` loses its comment; the markers
+and effects of a TRACK do not come back at all; a disabled foreign track arrives at its author playing. The last is not impoverishment but a
+change of meaning, and it alone would justify the stage.
 
-Чем эта заметка отличается от F-RES-003. Та — про версии НАШЕГО формата: наш
-`metadata.kt.v`, наша старая сборка, наш же файл, и там есть с кем
-договариваться, потому что обе стороны — мы. Здесь номер версии не наш, схема
-не наша, и договориться не с кем: `Marker.3` появился 15.02.2024 в чужом
-релизе, и узнать об этом можно было только сверив свой диспетчер с чужой
-таблицей схем. Правило отсюда общее и стоит вынести его за пределы меток:
-**список типизируемых версий чужих схем — это внешняя зависимость, и она
-устаревает молча.** Проверять её надо тем же способом, что и всё остальное
-чужое, — корпусом реальных файлов; наши девять сэмплов апстрима эту дыру не
-поймали ровно потому, что t154 сверяет наш вывод с нашим же выводом.
+How this note differs from F-RES-003. That one is about the versions of OUR format: our `
+metadata.kt.v`, our old build, our own file, and there is someone to agree with there, because both sides are us. Here the version number is not ours, the schema
+is not ours, and there is no one to agree with: `Marker.3` appeared on 15.02.2024 in a foreign
+release, and one could learn of it only by checking one's own dispatcher against a foreign
+table of schemas. The rule from this, common and worth taking beyond markers, is:
+**the list of typed versions of foreign schemas is an external dependency, and it goes stale silently.**
+It has to be checked by the same method as everything else foreign — a corpus of real files — and our nine upstream samples did not
+catch this hole precisely because t154 compares our output with our own output.
 
-Границы: чем отдаём монтаж наружу — F-COL-007; что приезжает обратно от второго
-человека — F-COL-009; версии нашего формата — F-RES-003; переносимость своего
-проекта — F-PRJ-003.
+Boundaries: what we give the edit outward — F-COL-007; what comes back to us from the second
+person — F-COL-009; the versions of our format — F-RES-003; the portability of our own
+project — F-PRJ-003.
 
-## Источники
+## Sources
 
-- Реестр сервисов: `docs/features/_services.md`. Реестр трекеров и метод счёта:
-  `docs/features/_trackers.md`; число воспроизводится
+- Service registry: `docs/features/_services.md`. Tracker registry and the counting method:
+  `docs/features/_trackers.md`; the number is reproduced by
   `python3 src/scripts/tracker-rank.py --query '(marker|metadata|comment|annotation)\w*.*(read|write|writer|reader|adapter|support|preserv|round)|((read|write|writer|reader|adapter)\w*.*(marker|metadata|comment|annotation))'`
-  (дата выгрузки 08.09.2026, `otio` — 680 записей, `losslesscut` — 1920).
-- https://github.com/AcademySoftwareFoundation/OpenTimelineIO/pull/1698 — «Add
-  optional comment field to Marker», слит 15.02.2024: именно он поднял схему до
-  `Marker.3` (дата обращения 2026-09-08)
+  (export date 08.09.2026, `otio` — 680 entries, `losslesscut` — 1920).
+- https://github.com/AcademySoftwareFoundation/OpenTimelineIO/pull/1698 — "Add
+  optional comment field to Marker", merged 15.02.2024: it is exactly this that raised the schema to
+  `Marker.3` (accessed 2026-09-08)
 - https://opentimelineio.readthedocs.io/en/latest/tutorials/otio-serialized-schema.html
-  — текущая схема `Marker.3` с полями `color`, `comment`, `marked_range`,
-  `metadata`, `name` (дата обращения 2026-09-08)
+  — the current schema `Marker.3` with the fields `color`, `comment`, `marked_range`,
+  `metadata`, `name` (accessed 2026-09-08)
 - https://github.com/AcademySoftwareFoundation/OpenTimelineIO/issues/1050 — ALE
-  adapter round-trip CDL Values (дата обращения 2026-09-08)
+  adapter round-trip CDL Values (accessed 2026-09-08)
 - https://github.com/AcademySoftwareFoundation/OpenTimelineIO/issues/483 —
-  AAF/XML Reader: Clip enabled/disabled/muted flag? (дата обращения 2026-09-08)
+  AAF/XML Reader: Clip enabled/disabled/muted flag? (accessed 2026-09-08)
 - https://github.com/AcademySoftwareFoundation/OpenTimelineIO/issues/593 — EDL
   CMX_3600 adapter: does not support multiple markers per clip
-  (дата обращения 2026-09-08)
+  (accessed 2026-09-08)
 - https://community.adobe.com/t5/premiere-pro/premiere-markers-export-and-import-roundtrip-via-fcp-xml-not-working/m-p/6408563
-  — метки не пережили круг через FCP XML внутри самого Premiere
-  (дата обращения 2026-09-08)
-- Наш код и фикстуры проверены чтением 08.09.2026:
+  — markers did not survive the round trip through FCP XML inside Premiere itself
+  (accessed 2026-09-08)
+- Our code and fixtures, checked by reading on 08.09.2026:
   `src/libs/kt-otio/src/schema.rs` (`decode_marker`, `Marker`),
-  `src/libs/kt-otio/src/convert.rs` (`TrackExtra`, читатель и писатель меток,
-  ветка `if c.enabled`, `emit_track`), `src/libs/kt-otio/CLAUDE.md`,
-  `src/fixtures/demo-3d.otio` (наш `Marker.2` с полем `comment`),
+  `src/libs/kt-otio/src/convert.rs` (`TrackExtra`, the marker reader and writer,
+  the branch `if c.enabled`, `emit_track`), `src/libs/kt-otio/CLAUDE.md`,
+  `src/fixtures/demo-3d.otio` (our `Marker.2` with the field `comment`),
   `src/fixtures/otio-samples/{premiere_example,screening_example}.otio`
-  (четыре и три `Marker.3` соответственно, два одноимённых на одном клипе).
-- Таблица «У кого и как» собрана по документации вендоров и составу диалогов
-  импорта; живьём не проверялось — публичного трекера нет ни у одного из пяти
-  (`docs/features/_trackers.md`, «Кого НЕ берём»).
+  (four and three `Marker.3` respectively, two same-named on one clip).
+- The table "Who has it and how" is compiled from the vendors' documentation and the composition
+  of the import dialogues; not verified live — there is no public tracker for any of the five
+  (`docs/features/_trackers.md`, "Whom we do NOT take").

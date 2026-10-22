@@ -1,12 +1,12 @@
 ---
 id: F-COL-043
-title: Цена совместной работы и молчание о неоплате
-status: исследовано
+title: The cost of collaboration and silence about non-payment
+status: researched
 priority: C
 cost: S
 category: collab/depend
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: no
 crates: [kt-app, kt-version, kt-cache, kt-media]
 invariants: [9]
 ui_rules: []
@@ -19,293 +19,150 @@ services: [frame-io, bm-cloud, resolve-project-server, team-projects, premiere-p
 checked: 2026-09-08
 ---
 
-# F-COL-043 — Цена совместной работы и молчание о неоплате
+# F-COL-043 — The cost of collaboration and silence about non-payment
 
-## Суть
+## Essence
 
-Работать вдвоём у всех пятерых стоит денег, и стоит помесячно. Тариф монтажёр
-видит до цента: столько за человека, столько за терабайт, столько за библиотеку
-проектов. Чего он не видит нигде — что произойдёт с уже сделанной работой, когда
-платёж прекратится: подписку закрыли, карта не прошла, студия распалась, проект
-сдан год назад. Заметка — про эту вторую половину цены. Первая половина
-опубликована и проверяема, вторая не описана ни одним вендором, и её отсутствие
-и есть находка.
+Working together with all five editors costs money, and it costs it every month. The editor sees the tariff down to the cent: this much per person, this much per terabyte, this much for a project library. What they do not see anywhere is what happens to work already done when the payment stops: the subscription is closed, the card is declined, the studio falls apart, the project was delivered a year ago. This note is about that second half of the price. The first half is published and verifiable; the second half is not described by a single vendor, and its absence is itself the finding.
 
-Граница с `resilience/`: там программа установлена и что-то в НЕЙ или в чужом
-железе не сработало; здесь программа исправна, машина цела, файлы на месте — и
-работать всё равно нельзя, потому что не оплачено. Отказ приходит не от машины,
-а от чужой стороны, и это единственный вид отказа, который нельзя починить,
-сидя за своим компьютером.
+The boundary with `resilience/`: there the program is installed and something inside IT or in someone else's hardware failed; here the program is sound, the machine is intact, the files are in place — and it still cannot be worked with, because it has not been paid for. The refusal comes not from the machine but from the other party, and this is the only kind of failure that cannot be fixed while sitting at your own computer.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет | совместной работы нет вовсе, поэтому и второго счёта нет: платят один раз за лицензию (или помесячно за неё же), а «работа вдвоём» ценой не обладает, потому что не существует |
-| Adobe Premiere | 26.x | Productions · Team Projects · Frame.io | три разных механизма и три разных счёта за одну задачу. Productions — общая папка, отдельно не тарифицируется вообще (нужен только том). Team Projects — сервис: «everyone you invite will need to have a Creative Cloud Team or Enterprise license». Frame.io — четвёртый счёт, выставляемый ОТДЕЛЬНО от Creative Cloud: внутри CC даётся урезанный набор, за большее платят Frame.io напрямую |
-| DaVinci Resolve | 21 | Disk database · Project Server · Blackmagic Cloud | три ответа с тремя ценами, и это единственная строка таблицы, где есть настоящий ноль. Диск-база — бесплатно (для одного). Project Server — **бесплатно** и для многих, но на СВОЁМ хосте. Blackmagic Cloud — $5/мес за библиотеку проектов плюс $15 за терабайт медиа в месяц (цена вдвое снижена в ноябре 2024 с $30), и людей не считает вовсе |
-| Final Cut Pro | 12.3 | Shared storage | облака нет; плата за совместную работу равна плате за ЖЕЛЕЗО — том, видимый обеим машинам. Ежемесячного счёта нет ни в каком виде, а требование стоит не к кошельку, а к протоколу: «A Linux Network Attached Storage (NAS) SMB volume must originate from a Linux server running Samba 4.3.4 or later configured with modules for Apple compatibility» |
-| After Effects | 26.x | Team Projects · Frame.io | те же два счёта, что у Premiere, и та же особенность: комментарий в колонке проекта — не текст, а ссылка на сервис, то есть за возможность ПРОЧИТАТЬ собственную колонку тоже платят помесячно |
+| VEGAS Pro | 2026.0 | none | there is no collaboration at all, so there is no second bill either: you pay once for the license (or monthly for that same license), and "working together" has no price, because it does not exist |
+| Adobe Premiere | 26.x | Productions · Team Projects · Frame.io | three different mechanisms and three different bills for one task. Productions is a shared folder, not billed separately at all (only a volume is needed). Team Projects is a service: "everyone you invite will need to have a Creative Cloud Team or Enterprise license". Frame.io is a fourth bill, charged SEPARATELY from Creative Cloud: inside CC a reduced set is included, and for more you pay Frame.io directly |
+| DaVinci Resolve | 21 | Disk database · Project Server · Blackmagic Cloud | three answers with three prices, and this is the only row of the table where there is a genuine zero. The disk database is free (for one person). Project Server is **free** and for many people, but on YOUR OWN host. Blackmagic Cloud is $5/month for the project library plus $15 per terabyte of media per month (the price was halved in November 2024 from $30), and it does not count people at all |
+| Final Cut Pro | 12.3 | Shared storage | there is no cloud; the cost of working together equals the cost of the HARDWARE — a volume visible to both machines. There is no monthly bill in any form, and the requirement is placed not on the wallet but on the protocol: "A Linux Network Attached Storage (NAS) SMB volume must originate from a Linux server running Samba 4.3.4 or later configured with modules for Apple compatibility" |
+| After Effects | 26.x | Team Projects · Frame.io | the same two bills as Premiere, and the same peculiarity: a comment in the project column is not text but a link to the service, which means that even the right to READ one's own column is paid for monthly |
 
-Второй таблицы (софт вне ядра) здесь нет сознательно. Механизм подписки родом
-не из видеомонтажа, но объяснять его чужой программой нечем: интересна не сама
-подписка, а то, чем именно она меряет монтажную работу, и это видно только у
-монтажных сервисов. Сами сервисы в таблицу не попадают по доктрине трёх реестров
-(`docs/features/_services.md`): в «У кого и как» живёт вердикт «берём/не берём»,
-а сервис вердикта не несёт — он несёт цену.
+A second table (software outside the core) is deliberately absent here. The subscription mechanism does not originate in video editing, but there is nothing to explain it with another program: what is interesting is not the subscription itself, but what exactly it measures editing work by, and that is visible only in editing services. The services themselves do not enter the table by the doctrine of the three registries (`docs/features/_services.md`): the "Who has it and how" section carries the verdict "take it / do not take it", and a service does not carry a verdict — it carries a price.
 
-## Фишка фишки
+## The trick behind it
 
-**1. «Сколько у меня места» — не одно число, а два взаимоисключающих пула, и
-полезный меньше рекламируемого в шесть-восемь раз.** У Frame.io план называется
-объёмом Standard Storage (Pro — 2 ТБ, Team — 3 ТБ), а рядом, отдельной колонкой,
-стоит Mounted Storage: 250 ГБ у Pro и 500 ГБ у Team. Разница не в скорости и не
-в надёжности: Standard — это «лежит и открывается в вебе», Mounted — «видно с
-рабочего стола и стримится в монтажную программу». Справка формулирует прямо:
-«Counts against your Mounted Storage quota (separate from Standard)», и там же —
-«Assets count against only one storage type at a time». Отсюда следствие,
-которого нет ни в одном сравнении тарифов: **число в названии плана описывает
-объём ХРАНЕНИЯ, а объём, с которым можно РАБОТАТЬ, — это второе число, в шесть-
-восемь раз меньшее.** Человек покупает два терабайта и обнаруживает, что
-монтировать может с двухсот пятидесяти гигабайт.
+**1. "How much room do I have" is not one number but two mutually exclusive pools, and the useful one is six to eight times smaller than the advertised one.** At Frame.io a plan is called by the volume of Standard Storage (Pro — 2 TB, Team — 3 TB), and next to it, in a separate column, stands Mounted Storage: 250 GB for Pro and 500 GB for Team. The difference is not in speed or in reliability: Standard is "lies there and opens in the web", Mounted is "visible from the desktop and streamed into the editing program". The help article states it directly: "Counts against your Mounted Storage quota (separate from Standard)", and right there — "Assets count against only one storage type at a time". Hence a consequence that is absent from every tariff comparison: **the number in the plan's name describes the volume of STORAGE, while the volume you can WORK with is a second number, six to eight times smaller.** A person buys two terabytes and discovers that they can edit from only two hundred and fifty gigabytes.
 
-**2. Единственное место во всей отрасли, где документация говорит, что бывает при
-выходе за предел, описывает ПЕРЕРАСХОД, а не неоплату — и разница между этими
-двумя случаями и есть находка.** Про перерасход сказано подробно и по-инженерному:
-«If enabled projects exceed your Mounted Storage entitlement, your account enters
-a grace period. Enabling new projects for mounting is blocked until the overage is
-resolved — either by disabling projects or purchasing additional capacity. All
-media remains accessible via the web app». Есть период отсрочки, названо
-блокируемое действие, названо неблокируемое. А про неоплату во всей справке одна
-фраза, и она перекладывает работу на пользователя: «Please plan accordingly as
-you may need to delete files to stay within the reduced storage limits». Что
-сделает сервис, если пользователь НЕ удалит, не написано нигде — ни у Adobe, ни у
-Blackmagic. Это не пробел в документации: обещать здесь нечего, потому что
-обещание связало бы вендору руки, а не обещать ничего дешевле.
+**2. The only place in the whole industry where the documentation says what happens when the limit is exceeded describes OVERUSE, not non-payment — and the difference between these two cases is the finding.** About overuse it is said in detail and in an engineering way: "If enabled projects exceed your Mounted Storage entitlement, your account enters a grace period. Enabling new projects for mounting is blocked until the overage is resolved — either by disabling projects or purchasing additional capacity. All media remains accessible via the web app". There is a grace period, the blocked action is named, the non-blocked action is named. And about non-payment there is one phrase in the whole help article, and it shifts the work onto the user: "Please plan accordingly as you may need to delete files to stay within the reduced storage limits". What the service will do if the user does NOT delete is written nowhere — neither at Adobe nor at Blackmagic. This is not a gap in the documentation: there is nothing to promise here, because a promise would tie the vendor's hands, and promising nothing is cheaper.
 
-**3. Две оси цены несоизмеримы, поэтому вопрос «сколько стоит работать вдвоём»
-ответа не имеет.** Frame.io считает ЛЮДЕЙ: предел плана выражен в участниках
-(Free — 2, Pro — 5, Team — 15), и каждый следующий стоит помесячно. Blackmagic
-считает БАЙТЫ и БИБЛИОТЕКИ, а людей не считает вовсе. Одна и та же команда
-получает счета, различающиеся в разы, в зависимости от того, чего у неё много —
-людей или материала: пятеро монтажёров с сотней гигабайт дороги у Adobe и почти
-бесплатны у Blackmagic, двое с двадцатью терабайтами — ровно наоборот. И на этом
-фоне единственный настоящий ноль отрасли стоит отдельно: «DaVinci Resolve Project
-Server is free so you can share the same project or timeline with people
-simultaneously around the world». Цена подписки там заменена ценой хоста —
-PostgreSQL на своей машине в своей сети, — и это ровно тот обмен, который у нас
-уже сделан молча и целиком в пользу хоста.
+**3. The two axes of price are incommensurable, so the question "how much does it cost to work together" has no answer.** Frame.io counts PEOPLE: the plan's limit is expressed in members (Free — 2, Pro — 5, Team — 15), and each next one costs monthly. Blackmagic counts BYTES and LIBRARIES and does not count people at all. One and the same team receives bills that differ several-fold depending on what it has a lot of — people or material: five editors with a hundred gigabytes are expensive at Adobe and almost free at Blackmagic, two with twenty terabytes are exactly the reverse. Against this background the only genuine zero in the industry stands apart: "DaVinci Resolve Project Server is free so you can share the same project or timeline with people simultaneously around the world". The subscription price is replaced there by the price of the host — PostgreSQL on your own machine, on your own network — and this is exactly the exchange that we have already made silently and entirely in favour of the host.
 
-## Плюсы
+## Pros
 
-- Подписка превращает второго участника в вопрос настройки, а не установки:
-  пригласил по адресу — работает, ничего не надо ставить, поднимать и открывать
-  наружу. Ровно за это и платят.
-- Оплата за место (Frame.io) делает счёт предсказуемым при стабильной команде:
-  он не зависит от того, сколько материала приехало на этой неделе.
-- Оплата за байты и библиотеки (Blackmagic) не наказывает за размер команды —
-  третий и десятый человек не стоят ничего, и это прямо названо пользователями
-  как причина выбора.
-- Бесплатный self-hosted Project Server — единственная точка отрасли, где
-  совместная работа не имеет ежемесячной цены вообще; следствие того, что
-  согласование вынесено в обычный PostgreSQL, а не в услугу.
-- Отсрочка при перерасходе (grace period) устроена правильно: блокируется
-  РАСШИРЕНИЕ, а не доступ, и уже загруженное продолжает открываться.
+- A subscription turns a second participant into a question of configuration, not of installation: you invite them by address — it works, nothing needs to be installed, raised or opened to the outside. This is exactly what people pay for.
+- Payment per seat (Frame.io) makes the bill predictable with a stable team: it does not depend on how much material arrived this week.
+- Payment per byte and per library (Blackmagic) does not punish for the size of the team — the third and tenth person cost nothing, and this is named directly by users as the reason for the choice.
+- The free self-hosted Project Server is the only point in the industry where working together has no monthly price at all; a consequence of the fact that coordination is moved into ordinary PostgreSQL and not into a service.
+- The grace period on overuse is built correctly: what is blocked is EXPANSION, not access, and what is already loaded keeps opening.
 
-## Минусы
+## Cons
 
-- Полезная ёмкость не совпадает с купленной и в названии плана не стоит:
-  монтировать можно с 250 ГБ из купленных двух терабайт.
-- Неоплата не описана. Выход из сервиса нельзя спланировать заранее, потому что
-  неизвестно, сколько времени будет на выгрузку и будет ли оно вообще.
-- У Adobe за одну задачу три счёта, и «у меня же есть подписка Creative Cloud»
-  не значит почти ничего: включённый набор Frame.io — это 2 ГБ и 2 проекта.
-- У Blackmagic материал попадает в облако только через Resolve или камеру:
-  «For right now the only way to get media onto the BMD cloud is to load it into
-  Resolve or direct from the camera/camera app». То есть цена включает и
-  единственный допустимый маршрут байтов.
-- Единственный бесплатный вариант требует своего хоста и своей сети — цена не
-  исчезла, а сменила валюту с денег на администрирование.
-- Ежемесячный счёт делает совместную работу состоянием, а не свойством: она
-  включается и выключается снаружи, и ни один локальный признак проекта об этом
-  не говорит.
+- The useful capacity does not coincide with the purchased one and does not stand in the plan's name: you can edit from 250 GB of the two purchased terabytes.
+- Non-payment is not described. You cannot plan an exit from the service in advance, because it is unknown how much time there will be to download and whether there will be any at all.
+- At Adobe one task has three bills, and "but I already have a Creative Cloud subscription" means almost nothing: the set included with Frame.io is 2 GB and 2 projects.
+- At Blackmagic material gets into the cloud only through Resolve or the camera: "For right now the only way to get media onto the BMD cloud is to load it into Resolve or direct from the camera/camera app". That is, the price includes the only permitted route for the bytes.
+- The only free option requires its own host and its own network — the price has not disappeared, it has changed currency from money to administration.
+- A monthly bill makes working together a state rather than a property: it is switched on and off from outside, and no local sign of the project says anything about it.
 
-## Что говорят пользователи
+## What users say
 
-Дословно про несоизмеримость двух осей — от колориста, сравнившего оба тарифа
-сразу после появления Blackmagic Cloud:
+Verbatim, about the incommensurability of the two axes — from a colorist who compared both tariffs right after Blackmagic Cloud appeared:
 
 > It seems the pricing is about what it is at frame.io BUT with BMD you don't pay
 > for extra users.
-> — Evan Anthony, тред «Do you understand the new Blackmagic Cloud (sept 2023)»,
+> — Evan Anthony, thread "Do you understand the new Blackmagic Cloud (sept 2023)",
 > 15.09.2023, http://www.liftgammagain.com/forum/index.php?threads/do-you-understand-the-new-blackmagic-cloud-sept-2023.18231/
 
-Дословно про то, что цена людей у Adobe — не место в сервисе, а лицензия у
-каждого, и без неё пригласить некого (ответ сотрудника Adobe в треде «Can't add
-collaborators»):
+Verbatim, about the fact that at Adobe the price of people is not a place in the service but a license for each person, and without it there is no one to invite (a reply from an Adobe employee in the thread "Can't add collaborators"):
 
 > everyone you invite will need to have a Creative Cloud Team or Enterprise
 > license in order to collaborate
 > — PeterELee (Adobe Employee), 02.06.2019,
 > https://community.adobe.com/t5/team-projects-discussions/can-t-add-collaborators/td-p/10468415
 
-Единственная фраза отрасли про неоплату — не пользовательская, а из справки, и
-приводится потому, что найти пользовательскую не удалось ни одним запросом:
-сервис молчит, и обсуждать нечего.
+The only phrase in the industry about non-payment is not a user's but from the help article, and it is quoted because a user's version could not be found by any query: the service is silent, and there is nothing to discuss.
 
 > Please plan accordingly as you may need to delete files to stay within the
 > reduced storage limits.
-> — Frame.io, «How do I cancel my subscription?», обновлено 09.04.2024,
+> — Frame.io, "How do I cancel my subscription?", updated 09.04.2024,
 > https://help.frame.io/en/articles/9105522-how-do-i-cancel-my-subscription
 
-Счётной части у заметки нет: `trackers:` пуст сознательно. Публичных трекеров у
-пяти редакторов ядра не существует, а цена подписки чужого сервиса в трекерах
-опенсорса не отражается вовсе — там нет ни одной задачи про то, чего в продукте
-нет и быть не может. Заполнить поле ради формы значило бы сфабриковать сигнал
-(правило 12).
+The note has no tracker part: `trackers:` is empty deliberately. Public trackers do not exist for the five core editors, and the price of a subscription to someone else's service is not reflected in open-source trackers at all — there is not a single task there about what does not exist in the product and cannot exist. Filling in the field for the sake of the form would mean fabricating a signal (rule 12).
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- `src/apps/kt-app/src/main.rs:35` — весь путь запуска: `fn main() -> eframe::Result { app::run() }`.
-  Между человеком и программой нет ничего: ни проверки лицензии, ни входа, ни
-  срока, ни счётчика запусков. Проверено грепом по всему `src/` 08.09.2026:
+- `src/apps/kt-app/src/main.rs:35` — the whole startup path: `fn main() -> eframe::Result { app::run() }`.
+  Between the person and the program there is nothing: no license check, no login,
+  no expiry, no launch counter. Checked by grep across all of `src/` on 08.09.2026:
   `license|licence|trial|activation|entitlement|subscription|expire|watermark`
-  вне строк `license.workspace` и комментариев — **0 совпадений**.
-- `src/libs/kt-version/src/lib.rs:14` — единственное, чем сборка себя объявляет:
-  `display()` возвращает `ktYY.MM.DD-<hash8>` в debug и `ktYY.MM` в релизе. Это
-  отметка КОММИТА, а не право на запуск: у неё нет ни срока, ни подписи, ни
-  стороны, которая могла бы её отозвать.
-- Инвариант 9 (экспорт полностью внутрипроцессный) и отсутствие
-  `std::process::Command` в продуктовом коде означают, что готовый файл никогда
-  не проходит через чужой процесс. Считать наши байты и выставлять за них счёт
-  физически негде.
-- Служебное хранится рядом с проектом и умирает вместе с ним:
-  `src/libs/kt-media/src/index.rs` (sidecar `<project>.ktindex.db`) и
-  `src/libs/kt-cache/src/lib.rs` (burst-кэш, лимит в байтах) знают ровно один
-  проект. Общего пула, который переживал бы проект и который можно было бы
-  измерить целиком, у нас нет ни в каком виде.
+  outside the strings `license.workspace` and comments — **0 matches**.
+- `src/libs/kt-version/src/lib.rs:14` — the only thing by which the build declares itself:
+  `display()` returns `ktYY.MM.DD-<hash8>` in debug and `ktYY.MM` in release. This is
+  a mark of the COMMIT, not a right to run: it has no expiry, no signature, no party
+  that could revoke it.
+- Invariant 9 (export is fully in-process) and the absence of `std::process::Command` in product code mean that the finished file never passes through someone else's process. To count our bytes and issue a bill for them is physically impossible.
+- Auxiliary data is kept next to the project and dies with it: `src/libs/kt-media/src/index.rs` (the sidecar `<project>.ktindex.db`) and `src/libs/kt-cache/src/lib.rs` (the burst cache, a limit in bytes) know exactly one project. We have no shared pool that would outlive a project and that could be measured as a whole, in any form.
 
-### Чего не хватает
+### What is missing
 
-Ничего, что следовало бы ДОБАВИТЬ. Не хватает одного — записанного решения. У
-свойства «программу нельзя выключить снаружи» нет ни теста, ни строки в
-чек-листе, поэтому оно держится только на том, что никому не приходило в голову
-его нарушить. Первая же функция, начинающаяся словами «а пусть подтягивает
-пресеты с сервера», отнимет его молча и бесплатно.
+Nothing that should be ADDED. One thing is missing — a recorded decision. The property "the program cannot be switched off from outside" has no test and no line in a checklist, so it holds only on the fact that no one has thought to break it. The first function that begins with the words "and let it pull presets from the server" will take it away silently and for free.
 
-### Что мешает
+### What gets in the way
 
-Ничего — и это ровно тот случай, когда разведка нужна не для того, чтобы понять,
-как сделать, а для того, чтобы понять, чего не делать. Разбор чужих тарифов даёт
-нам не список работ, а список ловушек: полезная ёмкость, не совпадающая с
-проданной; отказ, наступающий не по вине пользователя; и неописанный выход.
+Nothing — and this is exactly the case where reconnaissance is needed not to understand how to do something, but to understand what not to do. An analysis of other people's tariffs gives us not a list of tasks but a list of traps: useful capacity that does not match the one sold; a refusal that comes not through the user's fault; and an undescribed exit.
 
-### В категории `collab/` — две обязательные строки (правило 13)
+### In the `collab/` category — two mandatory lines (rule 13)
 
-БЕЗ СЕТИ: ОСТАЁТСЯ — `src/apps/kt-app/src/main.rs:35` — весь запуск программы это две строки, и между ними нет ни проверки права, ни срока, ни счётчика: «перестать платить» у нас не имеет предмета, потому что нет стороны, которой платят, и нет места, где отказ мог бы наступить. Установленная копия работает завтра ровно так же, как сегодня, и это свойство куплено отказом от всей сервисной половины: второй участник не появляется ни за деньги, ни бесплатно.
+OFFLINE: REMAINS — `src/apps/kt-app/src/main.rs:35` — the whole launch of the program is these two lines, and between them there is no rights check, no expiry, no counter: "stopping paying" has no subject for us, because there is no party who is paid and no place where a refusal could occur. An installed copy works tomorrow exactly as it does today, and this property is bought by renouncing the entire service half: a second participant appears neither for money nor for free.
 
-ЦЕНА СЕТИ: чужой пул байтов, который кто-то мерит и выставляет в счёт — хранилище между проектами — счёт возможен только там, где хранилище переживает отдельный проект и меряется целиком; у нас sidecar-индекс лежит рядом с проектом, а burst-кэш ограничен своим лимитом в байтах, и величины «сколько всего занимает этот человек» не существует ни в одной структуре.
+NETWORK COST: someone else's pool of bytes that somebody measures and bills — cross-project storage — a bill is possible only where storage outlives an individual project and is measured as a whole; ours has the sidecar index lying next to the project, and the burst cache is bounded by its own byte limit, and a quantity of "how much this person occupies in total" does not exist in any structure.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Инвариант 9 — единственный, и задевает он не саму заметку, а всё, что из неё
-могло бы вырасти: экспорт внутрипроцессный, поэтому ни «рендер по подписке», ни
-«водяной знак до оплаты», ни любая другая точка, где чужая сторона решает судьбу
-готового файла, у нас не имеет места, куда встать. Инварианта, запрещающего
-проверку права на ЗАПУСК, в списке нет — сегодня его роль исполняет пустой результат грепа,
-и заметка предлагает считать это решением, а не совпадением.
+Invariant 9 is the only one, and it touches not the note itself but everything that could grow out of it: export is in-process, therefore neither "rendering by subscription", nor "a watermark until payment", nor any other point where someone else's side decides the fate of the finished file, has a place to stand in our system. An invariant forbidding a rights check at LAUNCH is not in the list — today its role is performed by the empty grep result, and the note proposes treating this as a decision rather than a coincidence.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — работы по коду нет вовсе; одна стадия ушла бы на формулировку запрета и его сторожа |
-| Где основная работа | нигде: разведка закрывает вопрос целиком |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | ноль, если запрет остаётся на бумаге; один тест на отсутствие таких строк уровня `reach_tests`, если решено сторожить его механически |
-| Зависит от | F-COL-044 (что переживает сервис), F-COL-045 (учётная запись как условие запуска) |
-| Ломает совместимость | нет |
+| Size | S — there is no code work at all; one stage would go to wording the prohibition and its guard |
+| Where the main work is | nowhere: reconnaissance closes the question entirely |
+| Project format | does not touch it |
+| Tests to write | zero, if the prohibition stays on paper; one test for the absence of such lines at the level of `reach_tests`, if it is decided to guard it mechanically |
+| Depends on | F-COL-044 (what survives the service), F-COL-045 (user account as a condition of launch) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Подписки не заводим и заводить не будем — но это не вывод заметки, а её исходная
-точка: он был известен до разведки. Вывод другой и стоит формулировки.
+We do not open subscriptions and will not open them — but this is not the note's conclusion, it is its starting point: it was known before the reconnaissance. The conclusion is different, and it is worth stating precisely.
 
-**Первое.** «Бесплатно» и «без подписки» — разные вещи, и отрасль это показывает
-на своём же примере. Единственный ноль у чужих (Resolve Project Server) не
-бесплатен: он стоит хоста, сети и PostgreSQL, просто счёт приходит в другой
-валюте. Наш выбор — тот же обмен, доведённый до конца: цена совместной работы у
-нас равна нулю по деньгам и бесконечности по возможностям, потому что второго
-участника нет. Формула волны: локальное ядро берём сейчас, серверную половину не
-заводим — участника нет, и объявлять его появление заметка права не имеет.
+**First.** "Free" and "without a subscription" are different things, and the industry demonstrates this with its own example. The only zero among others' offerings (Resolve Project Server) is not free: it costs a host, a network and PostgreSQL, only the bill arrives in another currency. Our choice is the same exchange, carried to its end: the price of working together is zero for us in money and infinite in capability, because there is no second participant. The formula for the wave: we take the local core now, and we do not open the server half — there is no participant, and the note has no right to announce his arrival.
 
-**Второе, и это единственное, что заметка обязана оставить после себя, — ЗАПРЕТ.**
-Ни одна функция Kinotrain не имеет права зависеть от продолжающегося платежа
-чужой стороне: ни запуск, ни открытие проекта, ни экспорт, ни отдельный эффект.
-Основание — не идеология, а конкретный чужой результат: у сервиса подробно
-описано, что бывает при перерасходе, и не описано ничего про неоплату, а значит
-пользователь, купивший такую зависимость, не может спланировать даже собственный
-уход. Сегодня запрет соблюдается сам собой (0 совпадений по
-`license|trial|activation|entitlement`), и цена его нарушения будет замечена не
-сразу — поэтому он записан здесь, а не выведен заново через год.
+**Second, and this is the only thing the note is obliged to leave behind — the PROHIBITION.** No function of Kinotrain has the right to depend on a continuing payment to someone else's side: neither launch, nor opening a project, nor export, nor a separate effect. The basis is not an ideology but a concrete result of someone else's: the service has described in detail what happens on overuse and has described nothing about non-payment, and therefore a user who has bought such a dependency cannot plan even their own exit. Today the prohibition is observed by itself (0 matches for `license|trial|activation|entitlement`), and the cost of breaking it will not be noticed at once — which is why it is recorded here, rather than being re-derived in a year.
 
-**Третье, прикладное.** Из чужого тарифа берём одну мысль, применимую и в
-одиночку: у ёмкости бывает ДВА числа, и полезное — не то, которое на витрине.
-У нас та же развилка уже стоит и решена в другую сторону: лимит burst-кэша
-(`src/libs/kt-cache/src/lib.rs`) — это и есть «сколько можно смонтировать
-прямо сейчас», и он никак не связан с размером диска. Если этот лимит когда-
-нибудь начнут показывать человеку, показывать надо ровно его, а не свободное
-место на диске: иначе мы повторим ту самую подмену числа, за которую ругают
-Frame.io.
+**Third, applied.** From someone else's tariff we take one idea, applicable even alone: a capacity can have TWO numbers, and the useful one is not the one on the shop window. We already have this fork here and have resolved it the other way: the limit of the burst cache (`src/libs/kt-cache/src/lib.rs`) is exactly "how much can be edited right now", and it is not connected in any way to the size of the disk. If this limit is ever shown to a person, what must be shown is exactly it, and not the free space on the disk: otherwise we would repeat the very substitution of a number for which Frame.io is criticised.
 
-Границы. **F-COL-044** — что переживает сервис: там про срок жизни ДОКУМЕНТА, а
-не про счёт, и про то, чем платит наш текстовый формат. **F-COL-045** — учётная
-запись: там про то, что второй участник обязан существовать как запись раньше,
-чем что-нибудь сделает, и это отсекает малые команды сильнее цены.
-**F-COL-001** — общий диск: единственная схема у чужих, которая, как и наша, не
-стоит подписки. **F-COL-002** — служебное рядом с проектом: там про то, где
-физически живут байты, которые здесь считались бы деньгами. **F-PRJ-003** —
-переносимость проекта: там документ уезжает на другую машину, здесь — не уезжает
-никуда, а просто перестаёт открываться по чужому решению.
-**`resilience/environment/packaging-and-install.md`** (F-RES-008) — соседняя, но
-другая беда: там программа не запустилась из-за упаковки и чужих библиотек,
-здесь — запустилась бы, но ей не позволено.
+Boundaries. **F-COL-044** — what survives the service: there it is about the lifetime of a DOCUMENT, not about a bill, and about what our text format pays with. **F-COL-045** — user account: there it is about the second participant having to exist as a record before anything is done, and this cuts off small teams more strongly than the price does. **F-COL-001** — shared disk: the only scheme among others' that, like ours, does not cost a subscription. **F-COL-002** — auxiliary data next to the project: there it is about where the bytes physically live, which here would be counted as money. **F-PRJ-003** — project portability: there the document travels to another machine; here it travels nowhere, but simply stops opening by someone else's decision.
+**`resilience/environment/packaging-and-install.md`** (F-RES-008) — a neighbouring, but different, misfortune: there the program did not start because of packaging and third-party libraries; here it would start, but it is not permitted to run.
 
-## Источники
+## Sources
 
-- https://frame.io/pricing — тарифы Free / Pro / Team / Enterprise, колонки
-  Storage и Mounted Storage, число участников и проектов (дата обращения
-  2026-09-08). Оттуда же формулировка про предупреждение при выходе за предел:
-  «If you exceed your current plan limits, the application will warn you about
-  which limit you've exceeded».
+- https://frame.io/pricing — the Free / Pro / Team / Enterprise tariffs, the Storage and Mounted Storage columns, the number of members and projects (accessed 2026-09-08). From the same page, the wording about the warning when a limit is exceeded: "If you exceed your current plan limits, the application will warn you about which limit you've exceeded".
 - https://help.frame.io/en/articles/14501614-getting-started-with-frame-io-drive-mounted-storage
-  — определения Standard и Mounted Storage, «Assets count against only one
-  storage type at a time», поведение при перерасходе (дата обращения
-  2026-09-08).
+  — definitions of Standard and Mounted Storage, "Assets count against only one storage type at a time", the behaviour on overuse (accessed 2026-09-08).
 - https://help.frame.io/en/articles/9105522-how-do-i-cancel-my-subscription —
-  «How do I cancel my subscription?», обновлено 09.04.2024: единственная фраза
-  отрасли про судьбу файлов после прекращения оплаты (дата обращения
-  2026-09-08).
+  "How do I cancel my subscription?", updated 09.04.2024: the only phrase in the industry about the fate of files after payment stops (accessed 2026-09-08).
 - https://www.blackmagicdesign.com/products/davinciresolve/collaboration —
-  «DaVinci Resolve Project Server is free…» и «Creating your Blackmagic Cloud ID
-  is easy and there's no charge!» (дата обращения 2026-09-08). Сами цены
-  Blackmagic Cloud ($5/мес за библиотеку проектов, $15/ТБ/мес за медиа, снижение
-  вдвое в ноябре 2024) на страницах blackmagicdesign.com не опубликованы —
-  проверено; числа взяты из вторичных источников и помечены как таковые.
+  "DaVinci Resolve Project Server is free…" and "Creating your Blackmagic Cloud ID is easy and there's no charge!" (accessed 2026-09-08). The prices of Blackmagic Cloud themselves ($5/month for the project library, $15/TB/month for media, halved in November 2024) are not published on blackmagicdesign.com — checked; the figures are taken from secondary sources and marked as such.
 - http://www.liftgammagain.com/forum/index.php?threads/do-you-understand-the-new-blackmagic-cloud-sept-2023.18231/
-  — тред про появление Blackmagic Cloud, цитата Evan Anthony 15.09.2023 (дата
-  обращения 2026-09-08).
+  — the thread about the appearance of Blackmagic Cloud, the quote from Evan Anthony, 15.09.2023 (accessed 2026-09-08).
 - https://community.adobe.com/t5/team-projects-discussions/can-t-add-collaborators/td-p/10468415
-  — ответ сотрудника Adobe про лицензию у каждого приглашённого, 02.06.2019
-  (дата обращения 2026-09-08).
-- https://support.apple.com/en-us/HT207128 — «Use shared storage with Final Cut
-  Pro», обновлено 15.12.2023: требование к Samba, названное вместо цены (дата
-  обращения 2026-09-08).
-- Реестр сервисов, единица занятия и правило «что происходит при неоплате, не
-  сказано нигде» — `docs/features/_services.md`.
-- Наш код проверен грепом по `src/` 08.09.2026: `apps/kt-app/src/main.rs`,
+  — a reply from an Adobe employee about a license for each invited person, 02.06.2019 (accessed 2026-09-08).
+- https://support.apple.com/en-us/HT207128 — "Use shared storage with Final Cut Pro", updated 15.12.2023: the requirement for Samba, named instead of a price (accessed 2026-09-08).
+- The service registry, the unit of occupancy, and the rule "what happens on non-payment is not stated anywhere" — `docs/features/_services.md`.
+- Our code, checked by grep across `src/` on 08.09.2026: `apps/kt-app/src/main.rs`,
   `libs/kt-version/src/lib.rs`, `libs/kt-cache/src/lib.rs`,
   `libs/kt-media/src/index.rs`; `license|licence|trial|activation|entitlement|
-  subscription|expire|watermark` в продуктовом коде — 0 совпадений.
+  subscription|expire|watermark` in product code — 0 matches.

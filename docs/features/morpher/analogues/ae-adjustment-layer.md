@@ -1,12 +1,12 @@
 ---
 id: F-MPH-002
-title: Adjustment Layer в After Effects
-status: кандидат
+title: Adjustment Layer in After Effects
+status: candidate
 priority: B
 cost: L
 category: morpher/analogues
 editors: [after-effects-26, vegas-pro-2026, premiere-26, resolve-20, fcp-12]
-we_have: частично
+we_have: partial
 crates: [kt-model, kt-engine, kt-gpu, kt-app]
 invariants: [3, 4, 7, 11]
 ui_rules: [13, 17, 20]
@@ -17,97 +17,95 @@ depends_on: []
 checked: 2026-09-07
 ---
 
-# F-MPH-002 — Adjustment Layer в After Effects
+# F-MPH-002 — Adjustment Layer in After Effects
 
-## Суть
+## Essence
 
-Слой без собственной картинки. Всё, что лежит НИЖЕ него в стопке, сначала
-сшивается в один кадр, и уже этот кадр отдаётся эффектам слоя. Действует
-только в пределах in/out самого слоя. Прозрачность слоя работает как сила
-наложения: 40 % — это 40 % обработанного поверх 60 % исходного композита.
-Маска на слое ограничивает эффект областью кадра, с растушёвкой и анимацией
-пути. Это каноническая реализация идеи, от которой пляшут остальные.
+A layer without its own picture. Everything that lies BELOW it in the stack is first
+stitched into one frame, and only this frame is handed to the layer's effects. It acts
+only within the in/out of the layer itself. The layer's opacity works as the blend strength:
+40 % means 40 % of the processed result over 60 % of the original composite.
+A mask on the layer limits the effect to a region of the frame, with feathering and animation
+of the path. This is the canonical implementation of the idea from which the others dance.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| After Effects | 26.x (2026) | Adjustment Layer | переключатель у ЛЮБОГО слоя; эффекты получают композит всего, что ниже; альфа слоя (opacity + маски) — карта применения |
-| VEGAS Pro | 2026.0 | Adjustment Event | событие на дорожке; по умолчанию действует на видеособытия прямо под ним, область сужается назначением дорожек compositing children; у события есть прозрачность |
-| Adobe Premiere | 26.x (2026) | Adjustment Layer | синтетический элемент бина, кладётся на дорожку; действует на все дорожки ниже; маска живёт у ЭФФЕКТА, не у слоя |
-| DaVinci Resolve | 20.3.2 | Adjustment Clip | клип из Effects Library; Inspector даёт opacity + Composite Mode; тот же клип на Color page даёт грейд с временнóй границей |
-| Final Cut Pro | 12.3 | Adjustment Clip (нативно с 11.1), до того — генератор из Motion | клип «над таймлайном» на диапазон; годами это был сторонний .moti-файл, который клали в системный каталог руками |
+| After Effects | 26.x (2026) | Adjustment Layer | a switch on ANY layer; effects receive the composite of everything below; the layer's alpha (opacity + masks) is the application map |
+| VEGAS Pro | 2026.0 | Adjustment Event | an event on a track; by default it acts on the video events directly under it, the area is narrowed by assigning compositing children tracks; the event has opacity |
+| Adobe Premiere | 26.x (2026) | Adjustment Layer | a synthetic bin item, placed on a track; acts on all tracks below; the mask lives on the EFFECT, not on the layer |
+| DaVinci Resolve | 20.3.2 | Adjustment Clip | a clip from the Effects Library; the Inspector gives opacity + Composite Mode; the same clip on the Color page gives a grade with a temporal boundary |
+| Final Cut Pro | 12.3 | Adjustment Clip (native since 11.1), before that a generator from Motion | a clip "above the timeline" over a range; for years it was a third-party .moti file that people put into the system folder by hand |
 
-## Фишка фишки
+## The trick behind it
 
-**Первое.** Прозрачность и маска — это НЕ две функции, а одна: альфа слоя.
-Adjustment-слой не «виден» и не «невиден» — его альфа поканально задаёт, где и
-насколько сильно обработанный кадр кладётся поверх необработанного. Отсюда
-следствие, которого нет ни в одном списке возможностей: **blend-with-original
-появляется у любого эффекта и у всей цепочки СРАЗУ, даже если сам эффект такого
-параметра не имеет**. Слайдер opacity = «40 % цветокора, блюра и зерна вместе»;
-маска с растушёвкой = «вот в этом овале — 100 %, по краю — плавно в ноль»;
-анимация пути маски = эффект едет за объектом. Один механизм, три ручки.
+**First.** Opacity and mask are NOT two functions but one: the alpha of the layer.
+An adjustment layer is not "visible" or "invisible" — its alpha, per channel, sets where and
+how strongly the processed frame is laid over the unprocessed one. Hence a consequence that is
+not in any feature list: **blend-with-original
+appears on any effect and on the whole chain AT ONCE, even if the effect itself has no such
+parameter**. The opacity slider = "40 % of colour correction, blur and grain together";
+a mask with feathering = "inside this oval — 100 %, toward the edge — smoothly to zero";
+animating the mask path = the effect moves with the object. One mechanism, three handles.
 
-**Второе, этажом ниже.** У КАЖДОГО эффекта в таймлайне есть своя группа
-Compositing Options: свойство Effect Opacity (справка Adobe прямо называет его
-тем же, чем был старый Blend With Original) и произвольное число Mask Reference.
-Маски эффекта НЕ меняют альфу слоя — они меняют, ГДЕ результат этого эффекта
-скомпонован. Поэтому один adjustment-слой держит блюр по маске №1 на 30 % и
-цветокор по маске №2 на 100 %, и обе маски живут на нём же. Два независимых
-уровня «силы»: слоевой на всю цепочку и поэффектный внутри.
+**Second, one floor down.** EVERY effect in the timeline has its own
+Compositing Options group: the Effect Opacity property (Adobe's help names it directly as
+the same thing the old Blend With Original was) and an arbitrary number of Mask References.
+The effect's masks do NOT change the alpha of the layer — they change WHERE the result of this effect
+is composited. Therefore one adjustment layer can hold a blur by mask No. 1 at 30 % and
+colour correction by mask No. 2 at 100 %, and both masks live on that same layer. Two independent
+levels of "strength": the layer-wide one for the whole chain and the per-effect one inside.
 
-**Третье.** Adjustment-слой — это 2D-разрыв стопки. Группа 3D-слоёв, разрезанная
-им пополам, схлопывается в плоский результат, будто её запрекомпили: пересечения
-и тени через границу перестают считаться. Зеркальная сторона того же механизма:
-adjustment-слой внутри прекомпа с Collapse Transformations «протекает» наружу и
-красит слои, лежащие ПОД прекомпом в родительской композиции.
+**Third.** An adjustment layer is a 2D break in the stack. A group of 3D layers, cut in half
+by it, collapses into a flat result, as if it had been precomposed: intersections
+and shadows across the boundary stop being computed. The mirror side of the same mechanism:
+an adjustment layer inside a precomp with Collapse Transformations "leaks" outward and
+colours the layers that lie BELOW the precomp in the parent composition.
 
-## Плюсы
+## Pros
 
-- Эффект считается один раз на кадр композита, а не N раз на N слоях: цена не
-  растёт от того, что под слоем не два клипа, а сорок (справка Adobe обещает это
-  прямым текстом как аргумент за adjustment-слой).
-- Площадные эффекты (блюр, дисторшн, зерно, свечение) видят СШИТЫЙ кадр, поэтому
-  границы между слоями под ними не проступают: размывается уже целая картинка, а
-  не каждый кусок отдельно со своим резким краем.
-- Правка одного слоя переписывает весь отрезок фильма без обхода клипов и без
-  сорока шагов undo; удаление слоя возвращает исходник, потому что пиксели под
-  ним не трогались.
-- Прозрачность даёт сухой/мокрый микс всей цепочки одним движением, а её ключи —
-  мягкий вход и выход эффекта, которого у самих эффектов нет.
-- Adjustment — переключатель у любого слоя, а не отдельный тип объекта: солид
-  превращается в adjustment-слой и обратно галкой, ничего не пересоздавая.
-- Маска превращает «эффект на всё ниже» в «эффект вот сюда», не заводя ни
-  прекомпа, ни дубликата слоя.
+- The effect is computed once per composite frame, not N times for N layers: the cost does not
+  grow because there are not two clips under the layer but forty (Adobe's help states this
+  directly in plain text as an argument for the adjustment layer).
+- Area effects (blur, distortion, grain, glow) see the STITCHED frame, so the boundaries
+  between the layers beneath them do not show through: the whole picture is blurred, not each
+  piece separately with its own sharp edge.
+- Editing one layer rewrites the whole stretch of film without walking through clips and without
+  forty undo steps; deleting the layer returns the source, because the pixels under it were not touched.
+- Opacity gives the dry/wet mix of the whole chain in one movement, and its keyframes give a
+  soft in and out of the effect, which the effects themselves do not have.
+- Adjustment is a switch on any layer, not a separate object type: a solid
+  turns into an adjustment layer and back with a checkbox, without re-creating anything.
+- A mask turns "an effect on everything below" into "an effect here", without creating
+  a precomp or a duplicate layer.
 
-## Минусы
+## Cons
 
-- Вход — весь кадр композита, включая места, где под слоем ПУСТО. Блюр на краю
-  композиции затягивает прозрачность и темнеет (лечится Repeat Edge Pixels,
-  подложкой-солидом, Grow Bounds), а альфа-эффекты вроде Simple Choker грызут
-  альфу накопленного буфера, а не «объект», которого движок не знает.
-- Буфер равен размеру композиции: всё, что вылезло за рамку, для эффекта не
-  существует. Площадный эффект на границе получает обрыв, а не продолжение
-  картинки — и это заметно ровно тогда, когда слой под ним анимирован и выезжает.
-- За площадное применение платят 3D-сценой: слой рассекает стопку, и пересечения
-  с тенями через него не считаются. Лечится пре-рендером или применением эффекта
-  поштучно — то есть отказом от самой идеи adjustment-слоя.
-- «Перестал работать посреди композиции» — типовая жалоба, и почти всегда это не
-  баг, а последний ключ прозрачности или конец слоя: из-за жёсткого in/out эффект
-  обрывается ровно на кадре, и на таймлайне обрыв ничем не помечен.
-- Прекомпоузинг ломает слой: внутри нового прекомпа под ним пусто. Без Collapse
-  Transformations он не действует наружу, с ним — действует, но заодно
-  протаскивает наружу режимы наложения изнутри прекомпа.
-- У слоя нет пикселей, поэтому он не может быть track matte, а AI-рото из AE 26
-  (Object Matte, 26.2, апрель 2026) на него не наводится: одноклик-выделение
-  работает по кадрам источника, так что матовую область всё равно строят на
-  слое-источнике и оттуда тащат в маску.
-- Порядок — по стопке, а не по времени. Два adjustment-слоя меняются местами
-  мышью, и результат меняется без единой правки параметров; в цепочке из четырёх
-  «почему это не так выглядит» отлаживается перетаскиванием.
+- The input is the whole composite frame, including places where there is NOTHING under the layer. Blur at the edge
+  of the composition pulls in transparency and darkens (it is cured by Repeat Edge Pixels,
+  a solid backing, Grow Bounds), and alpha effects such as Simple Choker eat the alpha
+  of the accumulated buffer, not an "object", which the engine does not know about.
+- The buffer equals the size of the composition: everything that went past the frame does not
+  exist for the effect. An area effect at the border gets a cut-off rather than a continuation
+  of the picture — and this is noticeable exactly when the layer beneath it is animated and sliding in.
+- Area application is paid for with the 3D scene: the layer slices the stack, and intersections
+  with shadows through it are not computed. It is cured by pre-rendering or by applying the effect
+  one by one — that is, by giving up the very idea of the adjustment layer.
+- "Stopped working in the middle of the composition" is a typical complaint, and almost always it is not a
+  bug but the last opacity keyframe or the end of the layer: because of the hard in/out, the effect
+  breaks off exactly on a frame, and the timeline marks the break nowhere.
+- Precomposing breaks the layer: inside the new precomp there is nothing under it. Without Collapse
+  Transformations it does not act outward; with it, it does act, but at the same time
+  it drags blend modes from inside the precomp outward.
+- A layer has no pixels, so it cannot be a track matte, and the AI roto from AE 26
+  (Object Matte, 26.2, April 2026) does not target it: one-click selection
+  works on the source frames, so the matte area is still built on
+  the source layer and dragged from there into the mask.
+- The order is by the stack, not by time. Two adjustment layers swapped with the mouse, and the result
+  changes without a single parameter edit; in a chain of four, "why does it not look like this" is debugged by dragging.
 
-## Что говорят пользователи
+## What users say
 
 > When you adjust the opacity of an empty adjustment layer, you are effectively
 > copying every layer below the adjustment layer, precomping it, and adjusting
@@ -115,150 +113,147 @@ adjustment-слой внутри прекомпа с Collapse Transformations «
 > — Walter Soyka, Creative COW, 2015-02-19,
 > https://creativecow.net/forums/thread/adjustment-layers-and-opacity/
 
-Отрицательная сторона — та же механика, увиденная снизу. Про прекомпы:
+The negative side is the same mechanics, seen from below. About precomps:
 
 > If you pre-compose an adjustment layer, you must collapse transformations to
 > get the adjustments to work in the main comp.
 > — Rick Gerard (Community Expert), Adobe Community, 2023-03-04,
 > https://community.adobe.com/t5/after-effects-discussions/all-effects-from-adjustment-layer-disappear-after-pre-compositing/td-p/12810680
 
-И про то, чем за это платят в обратную сторону:
+And about what is paid for this in the other direction:
 
 > Using collapse transformations/ continuously rasterize passes through blending
 > operations from the pre-comp when not used with 3D layers.
 > — Mylenium, Adobe Community, 2016-12-16,
 > https://community.adobe.com/t5/after-effects-discussions/adjustment-layer-within-a-precomp-affecting-layers-outside-of-precomp/td-p/8691477
 
-Тред «adjustment layers stop working mid way through comp» живёт с 2017 года и
-собирает новые ответы в 2022-м: люди режут пятиминутную композицию на куски,
-хотя причина — последний ключ на трёхминутной отметке
+The thread "adjustment layers stop working mid way through comp" has lived since 2017 and
+collects new replies in 2022: people cut a five-minute composition into pieces,
+although the cause is the last keyframe at the three-minute mark
 (https://community.adobe.com/questions-529/adjustment-layers-stop-working-mid-way-through-comp-45963).
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- `MorpherEvent` и `MorphPatch` в `src/libs/kt-model/src/project.rs`, режим
-  целей `MorphTargets::Below` — «всё, что ниже строки морфера», ровно семантика
-  adjustment-слоя. Применяется в `Project::effective_clips()` ДО построения
-  плана, движок о морфере не знает; кумулятивно снизу вверх, частично накрытая
-  цель режется на куски.
-- Окно морфера — `src/apps/kt-app/src/morpher_editor.rs`: одна полоса цепочки
-  (`chain_strip`), мастер-выключатель `enabled`, галка «по времени» (`timed`),
-  выключатели слотов (`video_bypass`).
-- Уровень как таковой у нас есть, но у КЛИПА: `ClipEvent.opacity` в
-  `src/libs/kt-model/src/project.rs` → `opacity_k` в
-  `src/libs/kt-engine/src/video.rs`, домножается на альфу слоя там же, где
-  фейды.
-- Область кадра ближе всего покрывает хромакей `Greenscreen` в
-  `src/libs/kt-fx/src/video.rs` — но это не маска, а ключ по цвету.
+- `MorpherEvent` and `MorphPatch` in `src/libs/kt-model/src/project.rs`, the target mode
+  `MorphTargets::Below` — "everything below the morpher line", exactly the semantics of
+  an adjustment layer. It is applied in `Project::effective_clips()` BEFORE the plan is built;
+  the engine knows nothing about the morpher; cumulatively from bottom to top, a partially covered
+  target is cut into pieces.
+- The morpher window — `src/apps/kt-app/src/morpher_editor.rs`: one chain strip
+  (`chain_strip`), a master switch `enabled`, a "by time" checkbox (`timed`),
+  slot bypass switches (`video_bypass`).
+- A level as such we have, but on a CLIP: `ClipEvent.opacity` in
+  `src/libs/kt-model/src/project.rs` → `opacity_k` in
+  `src/libs/kt-engine/src/video.rs`, multiplied by the layer's alpha in the same place as the
+  fades.
+- The closest thing to a frame area is the chroma key `Greenscreen` in
+  `src/libs/kt-fx/src/video.rs` — but it is not a mask, it is a colour key.
 
-### Чего не хватает
+### What is missing
 
-- **Силы наложения.** Грепом по `MorphPatch` — ни одного поля вроде
-  `amount`/`opacity`/`mix`: есть `media`, `source_in_delta`,
+- **Blend strength.** A grep for `MorphPatch` finds not a single field like
+  `amount`/`opacity`/`mix`: there are `media`, `source_in_delta`,
   `absolute_source_in`, `src_off`, `video_fx`, `audio_fx`, `video_bypass`,
-  `audio_bypass`, и всё. Морфер бинарный: `enabled` — вкл/выкл. Это ровно то
-  расхождение, из-за которого заведена база (п.245 `docs/porting-notes.md`).
-- **Автоматизации в цепочке морфера**: `chain_strip` зовётся с `auto: None`,
-  тогда как у события FX-редактор кривые показывает (`ParamCurve`/`AutoKey`,
+  `audio_bypass`, and that is all. The morpher is binary: `enabled` — on/off. This is exactly the
+  discrepancy because of which the base was created (item 245 of `docs/porting-notes.md`).
+- **Automation in the morpher chain**: `chain_strip` is called with `auto: None`,
+  whereas for an event the FX editor shows curves (`ParamCurve`/`AutoKey`,
   `src/apps/kt-app/src/automation.rs`).
-- **Масок нигде в проекте.** Греп по `src/` даёт только `tick_to_mask`/
-  `mask_digits` (таймкод), `front_mask` в `src/libs/kt-engine/src/transitions.rs`
-  (кривая перехода) и `write_mask` wgpu. Ни безье-путей, ни растушёвки, ни track
-  matte, ни масок у эффекта.
-- **Аудио-FX в пикере морфера**: `chain_strip(…, false, …)` — флаг `audio`
-  выключен, хотя `MorphPatch::audio_fx` в модели есть и `split_chains` его
-  заполняет.
+- **Masks nowhere in the project.** A grep over `src/` gives only `tick_to_mask`/
+  `mask_digits` (timecode), `front_mask` in `src/libs/kt-engine/src/transitions.rs`
+  (the transition curve) and the wgpu `write_mask`. There are no Bezier paths, no feathering, no track
+  matte, and no masks on an effect.
+- **Audio FX in the morpher picker**: `chain_strip(…, false, …)` — the `audio` flag
+  is off, although `MorphPatch::audio_fx` exists in the model and `split_chains` fills it.
 
-### Что мешает
+### What gets in the way
 
-Главное — **точка применения эффектов**. У нас видео-FX считаются ПЕР-КЛИП и
-кладутся в пост-FX кэш, а композит идёт ПОСЛЕ них:
-`src/libs/kt-engine/src/video_plan.rs` строит `FramePlan` из
-`PlanLayer::One`/`PlanLayer::Dissolve`, а `compose_plan_cpu` в
-`src/libs/kt-engine/src/video.rs` уже только смешивает готовые слои
-(`alpha_over`, `dissolve_into`). У AE вход эффекта — результат композита.
+The main thing is **the point where effects are applied**. For us video FX are computed PER CLIP
+and placed into the post-FX cache, and the composite goes AFTER them:
+`src/libs/kt-engine/src/video_plan.rs` builds a `FramePlan` from
+`PlanLayer::One`/`PlanLayer::Dissolve`, and `compose_plan_cpu` in
+`src/libs/kt-engine/src/video.rs` only mixes the ready layers
+(`alpha_over`, `dissolve_into`). In AE the input of an effect is the result of the composite.
 
-Разница НЕ косметическая, и видно её по классам эффектов:
+The difference is NOT cosmetic, and it is visible by effect class:
 
-- поточечные (яркость/цвет/`Mirror` на одиночном непрозрачном слое) дают
-  одинаковый результат в обеих схемах;
-- площадные — `Blur`, `Glow`, `Edges`, `Noise`, `VHS`, `Pan`/`Pan3d` — дают
-  РАЗНЫЙ: у нас каждый слой размывается сам по себе и после наложения его край
-  остаётся резким, у AE размывается уже сшитая картинка, и края слоёв в
-  результате не видно вовсе;
-- максимум разницы — в окне перехода: наш `PlanLayer::Dissolve` смешивает пару
-  ПОСЛЕ того, как FX отработали на каждом из клипов, у AE эффект пришёлся бы на
-  уже смешанный кадр.
+- point effects (brightness/colour/`Mirror` on a single opaque layer) give
+  the same result in both schemes;
+- area effects — `Blur`, `Glow`, `Edges`, `Noise`, `VHS`, `Pan`/`Pan3d` — give a
+  DIFFERENT result: for us each layer is blurred on its own and after the overlay its edge
+  stays sharp; in AE the already stitched picture is blurred, and the edges of the layers
+  are not visible in the result at all;
+- the maximum difference is in the transition window: our `PlanLayer::Dissolve` mixes the pair
+  AFTER the FX have run on each of the clips, whereas in AE the effect would land on
+  the already mixed frame.
 
-Чтобы кормить цепочку композитом, нужна ВТОРАЯ точка применения FX — после
-`compose_plan_*` — и завести её надо одинаково на CPU и на GPU, иначе появится
-второй путь композиции. Плюс кэш: пост-слойный FX кэшируется по клипу, а
-пост-композитный кэшировать не по чему — ключом становится весь набор слоёв
-кадра.
+To feed the chain with the composite, a SECOND point of FX application is needed — after
+`compose_plan_*` — and it must be introduced identically on CPU and on GPU, otherwise a
+second composition path appears. Plus the cache: post-layer FX is cached per clip, while a
+post-composite one has nothing to be cached by — the key becomes the whole set of layers
+of the frame.
 
-Маски — самостоятельная сущность (путь, растушёвка, анимация, CPU-эталон и WGSL-
-зеркало), это заметка категории `masks/`, а не поле в морфере.
+Masks are an independent entity (path, feathering, animation, the CPU reference and the WGSL
+mirror); this is a note of the `masks/` category, not a field in the morpher.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **7 (код композиции ОДИН)** — центральный. Вторая точка применения FX обязана
-  жить внутри `VideoRenderer::frame_plan`/`compose_plan_*`, а не в экспорте
-  отдельно; иначе превью и экспорт разойдутся.
-- **4 (кэш — единственная правда о coverage)** — появляется новый вид ключа
-  (пост-композитный), и полоски прогретости должны считать его, а не вести
-  вторую бухгалтерию.
-- **11 (детерминизм)** — CPU байт-в-байт против эталона, CPU↔GPU только через
+- **7 (the composition code is ONE)** — the central one. The second point of FX application must
+  live inside `VideoRenderer::frame_plan`/`compose_plan_*`, not separately in export;
+  otherwise preview and export will diverge.
+- **4 (the cache is the only truth about coverage)** — a new kind of key appears
+  (post-composite), and the coverage bars must count it, not keep a second set of books.
+- **11 (determinism)** — CPU byte-for-byte against the reference, CPU↔GPU only through
   `kt_gpu::assert_frames_close`.
-- **3 (правка модели не убивает FX-состояние)** — ползунок силы двигают
-  мышью в реальном времени, это `set_params` со сглаживанием, а не пересборка.
-- UI: **13** («не тратить место впустую») — ползунок силы просится в шапку окна
-  морфера рядом с мастер-выключателем, отдельной панели он не стоит; **17**
-  («парные способы») — если сила есть в окне, она должна быть и жестом на блоке,
-  как уголок-фейд у события; **20** («ничего не отрастает само») — сила у старых
-  файлов не «подставляется по смыслу», а читается как 1.0.
+- **3 (an edit of the model does not kill FX state)** — the strength slider is moved
+  with the mouse in real time, this is `set_params` with smoothing, not a rebuild.
+- UI: **13** ("do not waste space") — the strength slider asks to sit in the morpher window header
+  next to the master switch; it is not worth a separate panel; **17**
+  ("paired ways") — if the strength is in the window, it must also be a gesture on the block,
+  like the fade corner on an event; **20** ("nothing grows by itself") — strength in old
+  files is not "substituted by meaning" but is read as 1.0.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | L — сила наложения S, пост-композитная точка применения FX L; маски сюда не входят |
-| Где основная работа | kt-engine (`video_plan.rs`/`video.rs` — вторая точка FX после композита), kt-gpu (то же в композит-пайплайне), kt-model (поле силы в `MorphPatch`), kt-app (ползунок и жест) |
-| Формат проекта | новое поле в `MorphPatch` → версия `metadata["kt"]` поднимается; файлы без поля читаются с силой 1.0 |
-| Тесты, которые придётся написать | round-trip модели и чтение файлов без нового поля (kt-otio); golden «блюр над двумя слоями: пер-слой ≠ после композита»; конформанс CPU↔GPU пост-композитной цепочки через `kt_gpu::assert_frames_close`; харнесс-тест ползунка в окне морфера (`layout_tests.rs`) |
-| Зависит от | масок — только третья ручка «фишки фишки»; сила наложения и точка применения самостоятельны |
-| Ломает совместимость | новое поле — нет; смена точки применения — ДА по картинке: старый проект с морфером над несколькими слоями отрендерится иначе, поэтому точка применения должна быть переключателем события с умолчанием «как было» |
+| Size | L — blend strength S, post-composite FX application point L; masks are not included here |
+| Where the main work is | kt-engine (`video_plan.rs`/`video.rs` — the second FX point after the composite), kt-gpu (the same in the composite pipeline), kt-model (the strength field in `MorphPatch`), kt-app (the slider and the gesture) |
+| Project format | a new field in `MorphPatch` → the version of `metadata["kt"]` is raised; files without the field are read with strength 1.0 |
+| Tests that will have to be written | a model round-trip and reading of files without the new field (kt-otio); golden "blur over two layers: per-layer ≠ after composite"; CPU↔GPU conformance of the post-composite chain via `kt_gpu::assert_frames_close`; a harness test of the slider in the morpher window (`layout_tests.rs`) |
+| Depends on | masks — only the third handle of "the trick behind it"; the blend strength and the application point are independent |
+| Breaks compatibility | the new field — no; changing the application point — YES in the picture: an old project with a morpher over several layers will render differently, so the application point must be a switch on the event with the default "as it was" |
 
-## Вердикт
+## Verdict
 
-Берём частями. Сила наложения (0..1 в `MorphPatch`, ползунок в окне морфера и
-жест на блоке) — прямое закрытие расхождения из п.245, дёшево и без ревизии
-инвариантов: это множитель там же, где `opacity_k`. Пост-композитная точка
-применения FX — отдельный кусок раунда и ревизия инварианта 7, брать её надо
-осознанно и с переключателем на событии, иначе поедут уже готовые проекты. Маски
-на морфере — не сюда: это заметка `masks/`, без них наш морфер остаётся
-«эффект на всё ниже целиком», а у AE это «эффект вот сюда и вот с такой силой».
+We take it in parts. The blend strength (0..1 in `MorphPatch`, a slider in the morpher window and a
+gesture on the block) — a direct closing of the discrepancy from item 245; it is cheap and needs no revision
+of invariants: it is a multiplier right where `opacity_k` is. The post-composite
+FX application point is a separate piece of the round and a revision of invariant 7; it must be taken
+deliberately and with a switch on the event, otherwise already finished projects will shift. Masks
+on the morpher — not here: that is the note `masks/`; without them our morpher stays
+"an effect on everything below entirely", whereas in AE it is "the effect here and with such a strength".
 
-## Источники
+## Sources
 
-- https://helpx.adobe.com/after-effects/using/creating-layers.html (adjustment-слои, маски на них, обещание производительности; дата обращения 2026-09-07)
+- https://helpx.adobe.com/after-effects/using/creating-layers.html (adjustment layers, masks on them, the performance promise; access date 2026-09-07)
 - https://helpx.adobe.com/after-effects/using/mask-reference.html (Compositing Options, Effect Opacity, Mask Reference; 2026-09-07)
-- https://helpx.adobe.com/after-effects/how-to/apply-effects-masks.html (маска эффекта, растушёвка; 2026-09-07)
-- https://helpx.adobe.com/after-effects/using/3d-layers.html (2D-слои рассекают группы 3D-слоёв: пересечения и тени; 2026-09-07)
+- https://helpx.adobe.com/after-effects/how-to/apply-effects-masks.html (effect mask, feathering; 2026-09-07)
+- https://helpx.adobe.com/after-effects/using/3d-layers.html (2D layers slice groups of 3D layers: intersections and shadows; 2026-09-07)
 - https://helpx.adobe.com/after-effects/desktop/roto-brush-and-refine-matte/roto-brush/object-matte.html (Object Matte, AE 26.2; 2026-09-07)
-- https://www.cgchannel.com/2026/04/adobe-releases-after-effects-26-2/ (состав релиза 26.2, апрель 2026; 2026-09-07)
+- https://www.cgchannel.com/2026/04/adobe-releases-after-effects-26-2/ (the composition of the 26.2 release, April 2026; 2026-09-07)
 - https://creativecow.net/forums/thread/adjustment-layers-and-opacity/ (2026-09-07)
 - https://community.adobe.com/t5/after-effects-discussions/all-effects-from-adjustment-layer-disappear-after-pre-compositing/td-p/12810680 (2026-09-07)
 - https://community.adobe.com/t5/after-effects-discussions/adjustment-layer-within-a-precomp-affecting-layers-outside-of-precomp/td-p/8691477 (2026-09-07)
 - https://community.adobe.com/questions-529/adjustment-layers-stop-working-mid-way-through-comp-45963 (2026-09-07)
 - https://community.adobe.com/t5/after-effects-discussions/simple-choker-in-after-effects-is-choking-the-adjustment-layer-rather-than-the-layers-underneath/m-p/9632680 (2026-09-07)
-- https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/adjustmentevents.htm (Vegas: adjustment events, compositing children, прозрачность; 2026-09-07)
+- https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/adjustmentevents.htm (Vegas: adjustment events, compositing children, transparency; 2026-09-07)
 - https://helpx.adobe.com/premiere/desktop/add-video-effects/apply-video-effects/create-adjustment-layers.html (Premiere; 2026-09-07)
 - https://davinciresolveclub.com/adjustment-clips-davinci-resolve/ (Resolve: adjustment clip, Inspector, Color page; 2026-09-07)
-- https://larryjordan.com/articles/create-an-adjustment-layer-for-final-cut-pro-11-using-motion-5-9/ и https://support.apple.com/en-uz/102825 (FCP: нативный adjustment clip с 11.1, до того — генератор из Motion; 2026-09-07)
+- https://larryjordan.com/articles/create-an-adjustment-layer-for-final-cut-pro-11-using-motion-5-9/ and https://support.apple.com/en-uz/102825 (FCP: native adjustment clip since 11.1, before that a generator from Motion; 2026-09-07)
 
-Оговорка по правилам `_editors.md`: страницы `helpx.adobe.com` в этой сессии не
-отдавались загрузчику (таймауты) и читались через сниппеты поисковой выдачи;
-форумные треды Adobe/Creative COW и справка VEGAS прочитаны целиком. Живьём в
-редакторах ничего не проверялось.
+A caveat per the rules of `_editors.md`: the `helpx.adobe.com` pages in this session were not served to the loader (timeouts) and were read through search-result snippets;
+the Adobe and Creative COW forum threads and the VEGAS help were read in full. Nothing was checked live
+in the editors.

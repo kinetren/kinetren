@@ -1,12 +1,12 @@
 ---
 id: F-HLP-019
-title: Поиск по настройкам и эффектам: найти по тому, что оно делает
-status: кандидат
+title: Search over settings and effects: find by what it does
+status: candidate
 priority: B
 cost: M
 category: help/discoverability
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, vscode-1.136, jetbrains-2026.2, blender-5.2, photoshop-27]
-we_have: частично
+we_have: partial
 crates: [kt-app]
 invariants: [12]
 ui_rules: [13, 14, 17, 18]
@@ -17,340 +17,132 @@ depends_on: [F-HLP-015, F-HLP-025]
 checked: 2026-09-07
 ---
 
-# F-HLP-019 — Поиск по настройкам и эффектам: найти по тому, что оно делает
+# F-HLP-019 — Search over settings and effects: find by what it does
 
-## Суть
+## Essence
 
-Монтажёр помнит, ЧТО он хочет сделать, и не помнит, КАК это назвали. Поиск
-по самой программе отвечает на «убрать зелёный», «помягче», «где включается
-сглаживание» — и приводит либо к эффекту, либо к настройке. Половина этого
-у нас уже работает: пикер эффектов ищет по невидимым ключевым словам на
-пяти языках. Вторая половина — настройки — не ищется никак, и это отдельная
-задача, а не недоделанная первая.
+The editor remembers WHAT they want to do, and does not remember HOW it was named. Search within the program itself answers "remove the green", "softer", "where is smoothing turned on" — and leads either to an effect or to a setting. Half of this already works for us: the effect picker searches by invisible keywords in five languages. The second half — settings — is not searched at all, and this is a separate task, not an unfinished first one.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | How it is named | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 build 66 | фильтр в окне Video FX / Plug-In Chooser | строка фильтра сверху сужает список ЭФФЕКТОВ, причём совпадение в имени пресета оставляет в списке весь эффект — фильтр залезает на уровень ниже имени. У эффектов есть «избранное». Настройки (Options → Preferences) — вкладки без поиска [НЕ ПРОВЕРЕНО] |
-| Adobe Premiere | 26.x | поле поиска в панели Effects | по именам эффектов, переходов и пресетов сразу во всех папках панели; в Preferences поиска нет, своя строка поиска есть только у Keyboard Shortcuts [НЕ ПРОВЕРЕНО] |
-| DaVinci Resolve | 21 | лупа в Effects Library | по именам; Project Settings и Preferences — дерево страниц без строки поиска [НЕ ПРОВЕРЕНО] |
-| Final Cut Pro | 12.3 | поле поиска в Effects browser | по именам, но главный ответ на «что это делает» тут не текстовый: миниатюра проигрывает эффект на ТВОЁМ кадре при проводке мышью. Поиска по настройкам нет [НЕ ПРОВЕРЕНО] |
-| After Effects | 26.x | поле поиска в Effects & Presets | по именам эффектов, категорий и анимационных пресетов; в Preferences поиска нет [НЕ ПРОВЕРЕНО] |
+| VEGAS Pro | 2026.0 build 66 | a filter in the Video FX / Plug-In Chooser window | the filter line at the top narrows the list of EFFECTS, and a match in the preset name keeps the whole effect in the list — the filter reaches one level below the name. Effects have "favorites". Settings (Options → Preferences) — tabs without search [NOT VERIFIED] |
+| Adobe Premiere | 26.x | a search field in the Effects panel | by the names of effects, transitions and presets at once across all folders of the panel; Preferences has no search, a search line of its own exists only in Keyboard Shortcuts [NOT VERIFIED] |
+| DaVinci Resolve | 21 | a magnifier in the Effects Library | by names; Project Settings and Preferences — a tree of pages without a search line [NOT VERIFIED] |
+| Final Cut Pro | 12.3 | a search field in the Effects browser | by names, but the main answer to "what does this do" here is not textual: the thumbnail plays the effect on YOUR frame when the mouse is moved over it. There is no search over settings [NOT VERIFIED] |
+| After Effects | 26.x | a search field in Effects & Presets | by the names of effects, categories and animation presets; Preferences has no search [NOT VERIFIED] |
 
-Итог ядра: поиск по эффектам есть у всех пятерых и у всех — по ИМЕНИ (у
-VEGAS ещё и по имени пресета). Поиск по настройкам — ни у кого. Пять строк
-ядра отвечают «нет» на половину заметки, поэтому вторая таблица обязательна.
+The result for the core: search over effects exists for all five, and for all of them — by NAME (VEGAS also by the name of the preset). Search over settings — for nobody. Five rows of the core answer "no" to half of the note, therefore the second table is mandatory.
 
-**Вне ядра.** Механизм поиска по настройкам родился не в видеомонтаже:
-пятью NLE его описать нечем, а вопрос «ищет ли поиск по ОПИСАНИЮ» имеет
-осмысленный ответ только там, где описание вообще есть.
+**Outside the core.** The mechanism of searching settings was not born in video editing: the five NLEs have nothing to describe it with, and the question "does the search look at the DESCRIPTION" has a meaningful answer only where a description exists at all.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | How it is named | How it works |
 |---|---|---|---|
-| VS Code | 1.136 | Settings editor и фильтры `@` | сверяет запрос с ключом, подписью, ОПИСАНИЕМ, объявленными `keywords` и значениями enum, а у не-enum настроек — с ТЕКУЩИМ значением; описание и значение стоят в запасном ранге, ключ и подпись выигрывают. Фильтры `@modified`, `@tag:`, `@feature:`, `@lang:` |
-| IntelliJ IDEA | 2026.2.2 | поиск в диалоге Settings, Find Action | поле в левом верхнем углу диалога ищет опции; Find Action кладёт настройку в тот же список, что и команду [НЕ ПРОВЕРЕНО: переключение прямо из списка результатов] |
-| Blender | 5.2 LTS | `F3` — поиск, ПКМ → «Online Manual» | `F3` ищет ОПЕРАТОРЫ (команды), а не настройки; зато на любом контроле правая кнопка открывает страницу манула именно этого контрола — поиск заменён прямой ссылкой из точки, где человек уже стоит (см. F-HLP-032) |
-| Photoshop | 27.x | Search (`Ctrl+F`) | одно поле на три источника сразу: интерфейс программы, статьи справки, Stock [НЕ ПРОВЕРЕНО для 27.x] |
+| VS Code | 1.136 | Settings editor and the `@` filters | matches the query against the key, the label, the DESCRIPTION, the declared `keywords` and the enum values, and for non-enum settings — against the CURRENT value; the description and the value stand in a fallback rank, the key and the label win. Filters `@modified`, `@tag:`, `@feature:`, `@lang:` |
+| IntelliJ IDEA | 2026.2.2 | search in the Settings dialog, Find Action | a field in the upper left corner of the dialog searches options; Find Action puts a setting into the same list as a command [NOT VERIFIED: switching directly from the list of results] |
+| Blender | 5.2 LTS | `F3` — search, RMB → "Online Manual" | `F3` searches OPERATORS (commands), not settings; but on any control the right button opens the manual page of exactly this control — the search is replaced by a direct link from the point where the person already stands (see F-HLP-032) |
+| Photoshop | 27.x | Search (`Ctrl+F`) | one field for three sources at once: the program interface, help articles, Stock [NOT VERIFIED for 27.x] |
 
-## Фишка фишки
+## The trick behind it
 
-**Груз этого механизма — ЧУЖОЕ СЛОВО: то, которым функцию назвал бы
-пользователь, а не автор.** Одна строка статусбара несёт ровно одно имя,
-авторское, и несёт его только тому, кто уже навёл мышь. Ключевые слова
-несут два десятка читательских имён на один предмет и работают ДО
-наведения. У нас этот груз уже лежит в каталоге: `[fxreg.kw]`, 12 ключей ×
-5 языков = 60 значений, 287 слов; «блюр», «размытие», «мягкость», «blur»,
-«soft» — всё это находит один и тот же Blur, и ни одно из этих слов нигде
-не нарисовано.
+**The load of this mechanism is a FOREIGN WORD: the one by which the user would name the function, not the author.** A single status-bar line carries exactly one name, the author's, and carries it only to the one who has already hovered the mouse. Keywords carry two dozen readers' names for one subject and work BEFORE hovering. For us this load already lies in the catalog: `[fxreg.kw]`, 12 keys × 5 languages = 60 values, 287 words; "blur", "blur", "softness", "blur", "soft" — all of these are found by the same Blur, and none of these words is drawn anywhere.
 
-Три детали, которых нет ни в одном списке возможностей.
+Three details that are not in any list of features.
 
-1. **Искомый текст — единственный текст программы, который нельзя готовить
-   к показу.** Все 522 значения каталога прогоняются через `bidi::visual`
-   на СБОРКЕ (`src/apps/kt-app/build.rs:132`), то есть в арабской таблице
-   лежит уже визуальный порядок слов, а в рантайме за это платится ноль.
-   Исключены ровно две секции из тридцати четырёх:
-   `NO_BIDI_SECTIONS = ["fxreg.kw.", "lang."]` (`build.rs:37`) — потому что
-   `filter_entries` сравнивает значение с тем, что НАБРАЛ человек, а
-   набирает он в логическом порядке. Отсюда следствие: как только надпись
-   становится искомой, у неё появляются ДВА значения — показное и
-   сравнимое. Обе таблицы у нас уже сгенерированы (`TABLES[Ar]` и
-   `AR_LOGICAL`), но функция-читатель второй, `i18n::ar_logical`
-   (`src/apps/kt-app/src/i18n/mod.rs:135`), не имеет НИ ОДНОГО вызова и
-   держится `#[allow(dead_code)]`; её комментарий обещает «расходуется
-   тестом 126», а t126 читает таблицу напрямую. Поиск по настройкам —
-   первый настоящий потребитель этой функции.
-2. **Эталон ищет по ЗНАЧЕНИЮ, а не только по описанию.** В VS Code запрос
-   сверяется с ключом, подписью, описанием, `keywords` и — у не-enum
-   настроек — с текущим значением, но описание и значение стоят в запасном
-   ранге. Это и есть точный ответ на вопрос «по описанию или по имени»: по
-   обоим, но с РАЗНЫМ весом, иначе описание из десяти слов топит точное
-   совпадение имени. У нас сегодня ранга нет вовсе: `filter_entries` —
-   голый `contains`, а `search_hits` ранжирует (точное → с начала →
-   подстрока), и это два разных ответа на один вопрос в одной программе.
-3. **Ключевые слова — единственная строка каталога с бесконечным бюджетом
-   ширины.** Их не видит никто и никогда: их не меряет t128 (он меряет
-   меню и перф-панель), их не показывает ни один виджет. При этом они
-   платят полную цену перевода — глиф на каждый неASCII-символ (t100),
-   сабсет шрифта, потолок 160 символов, лишний ключ валит сборку (t125).
-   Автор каталога платит один раз словами; пользователь не платит памятью
-   ни разу. Это единственная фича домена, которая масштабируется работой
-   ПЕРЕВОДЧИКА, а не программиста.
+1. **The searched text is the only text of the program that cannot be prepared for display.** All 522 values of the catalog are passed through `bidi::visual` at BUILD time (`src/apps/kt-app/build.rs:132`), that is, the Arabic table already holds the visual order of words, and at runtime this costs zero. Exactly two of the thirty-four sections are excluded: `NO_BIDI_SECTIONS = ["fxreg.kw.", "lang."]` (`build.rs:37`) — because `filter_entries` compares the value with what the person TYPED, and they type in logical order. Hence the consequence: as soon as a label becomes searchable, it acquires TWO values — the displayed one and the comparable one. Both tables are already generated by us (`TABLES[Ar]` and `AR_LOGICAL`), but the reader function of the second one, `i18n::ar_logical` (`src/apps/kt-app/src/i18n/mod.rs:135`), has NOT A SINGLE call and is held by `#[allow(dead_code)]`; its comment promises that it "is consumed by test 126", while t126 reads the table directly. Search over settings would be the first real consumer of this function.
+2. **The reference searches by VALUE, not only by description.** In VS Code the query is matched against the key, the label, the description, `keywords` and — for non-enum settings — the current value, but the description and the value stand in a fallback rank. This is the exact answer to the question "by description or by name": by both, but with DIFFERENT weight, otherwise a ten-word description drowns an exact name match. We have no rank at all today: `filter_entries` is a bare `contains`, while `search_hits` ranks (exact → from the start → substring), and these are two different answers to one question within one program.
+3. **Keywords are the only line of the catalog with an infinite width budget.** No one sees them and no one ever will: t128 does not measure them (it measures the menus and the performance panel), no widget shows them. At the same time they pay the full price of translation: a glyph for every non-ASCII character (t100), the font subset, the ceiling of 160 characters, an extra key breaks the build (t125). The catalog's author pays once in words; the user never pays in memory. This is the only feature of the domain that scales with the work of the TRANSLATOR, not of the programmer.
 
-## Плюсы
+## Pros
 
-- Нагрузка переезжает с памяти пользователя на автора каталога: чтобы
-  «убрать зелёный» находило Greenscreen, программисту делать нечего —
-  слово дописывает переводчик в `[fxreg.kw]`.
-- Синонимы не занимают ни пикселя: невидимый текст не участвует в вёрстке,
-  предел 420 px левой колонки (t127) его не касается, правило 13 не
-  нарушается ничем.
-- Поиск, который называет МЕСТО («Разрешение проекта — полоса под
-  превью»), учит навигации: в следующий раз человек идёт туда рукой. Это
-  правило 18 чек-листа («пункт меню говорит ЧТО и ГДЕ»), распространённое
-  с меню на строку результата; у нас оно уже прожито и закреплено t171.
-- Индекс — чистая функция, как `search_hits` и `filter_entries`: ноль UI,
-  ноль движка, тест без харнесса.
-- У настройки, в отличие от команды, есть ЗНАЧЕНИЕ — поэтому у неё
-  возможны «изменена» и «по умолчанию». `@modified` VS Code вырастает
-  ровно отсюда, и это же — граница с F-HLP-015: палитра команд такого
-  фильтра иметь не может в принципе, у команды нечего сравнивать с
-  дефолтом.
+- The load moves from the user's memory to the author of the catalog: for "remove the green" to find Greenscreen, the programmer has nothing to do — the translator adds the word to `[fxreg.kw]`.
+- Synonyms do not take up a single pixel: invisible text does not take part in the layout, the 420 px limit of the left column (t127) does not touch it, rule 13 is not violated by anything.
+- A search that names the PLACE ("Project resolution — the strip under the preview") teaches navigation: next time the person goes there by hand. This is rule 18 of the checklist ("a menu item says WHAT and WHERE"), extended from the menu to the result line; for us it has already been lived through and is fixed by t171.
+- The index is a pure function, like `search_hits` and `filter_entries`: zero UI, zero engine, a test without a harness.
+- A setting, unlike a command, has a VALUE — therefore it can be "modified" and "default". The VS Code `@modified` grows exactly from here, and this is also the boundary with F-HLP-015: a command palette cannot have such a filter in principle, since there is nothing in a command to compare with the default.
 
-## Минусы
+## Cons
 
-- Синонима, которого нет в каталоге, не существует. Набрали «хромакей» —
-  нашли; «зелёнка» — не нашли и сделали вывод, что функции нет.
-  Отрицательный результат поиска врёт увереннее, чем отсутствие поиска.
-- Цена честная и умножается на пять: описание эффектов — 12 × 5 = 60
-  значений, индекс настроек — примерно столько же, и каждое проходит
-  через потолок 160 символов, глифы и сабсеты (F-HLP-033).
-- Свести два наших поиска в один — значит выбрать ОДИН ранг и переписать
-  второй; сегодня они ранжируют по-разному, и «одинаковое поведение
-  парных способов» (правило 17) при слиянии придётся восстанавливать
-  руками.
-- Найденное надо ещё уметь ПОКАЗАТЬ. Прыжок к метке — это позиция
-  курсора; переход к настройке в закрытом диалоге рендера — это открытие
-  окна, то есть взятие фокуса, а правило 14 требует его отдать.
-- Поиск по описанию делает каждое описание контрактом: переписать текст —
-  значит изменить множество запросов, которые находят предмет. У имени
-  эффекта такого свойства нет, оно не переводится вовсе.
+- A synonym that is not in the catalog does not exist. If one typed "chroma key" — found it; "green screen" — not found, and one concludes that the function does not exist. A negative search result lies more confidently than the absence of search.
+- The price is honest and is multiplied by five: the description of effects is 12 × 5 = 60 values, the index of settings is about as many, and each passes through the 160-character ceiling, the glyphs and the subsets (F-HLP-033).
+- Merging our two searches into one means choosing ONE rank and rewriting the second; today they rank differently, and "identical behavior of paired ways" (rule 17) will have to be restored by hand during the merge.
+- What is found must also be SHOWN. A jump to a label is the cursor's position; a transition to a setting in a closed render dialog is the opening of a window, that is, taking focus, while rule 14 requires giving it back.
+- Search over a description makes every description a contract: rewriting the text means changing the set of queries that find the subject. An effect name has no such property; it is not translated at all.
 
-## Что говорят пользователи
+## What users say
 
-> Currently, typing in the top box for VideoFX lets users quickly filter the
-> effect to just the ones which have a VFX or a preset (within one of those
-> VFX) matching what is typed.
-> — RedRob, форум Boris FX (VEGAS Pro), 19.06.2026,
-> https://forum.borisfx.com/t/enhancement-filter-videofx-presets-not-just-the-fx/24206
+> Currently, typing in the top box for VideoFX lets users quickly filter the effect to just the ones which have a VFX or a preset (within one of those VFX) matching what is typed.
+> — RedRob, Boris FX forum (VEGAS Pro), 19.06.2026, https://forum.borisfx.com/t/enhancement-filter-videofx-presets-not-just-the-fx/24206
 
-Хвалят не сам поиск, а его ГЛУБИНУ: фильтр залезает на уровень ниже
-эффекта, в пресеты. Дальше в том же сообщении — просьба доделать: список
-пресетов внутри найденного эффекта не сужается, и запрос «716» приводит к
-нужной группе, но искомый «716 Title» всё равно приходится искать глазами.
-То есть даже там, где поиск по эффектам считается решённым, жалоба ровно
-одна: он останавливается на уровень раньше, чем нужно человеку.
+They praise not the search itself but its DEPTH: the filter reaches one level below the effect, into the presets. Further on in the same message comes a request to finish the job: the list of presets inside the found effect does not narrow, and the query "716" leads to the needed group, but the sought "716 Title" still has to be looked for by eye. That is, even where search over effects is considered solved, there is exactly one complaint: it stops one level earlier than the person needs.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- **Пикер эффектов с невидимыми ключевыми словами** —
-  `src/apps/kt-app/src/fx_registry.rs`. `FxEntry` (строка 12) несёт `name`
-  (НЕ переводится: отраслевой термин, по нему ищут в любой локали),
-  `category: Key`, `audio`/`video` и `keywords: Option<Key>` — именно ключ
-  каталога, а не текст, поэтому `OnceLock` реестра от языка не зависит и
-  не пересобирается при переключении (п.129). `filter_entries` (строка 84)
-  фильтрует по виду и ищет подстроку в имени, в `tr(kw)` текущего языка И
-  в `tr_en(kw)` — иначе выбравший китайский не нашёл бы «blur», хотя имя
-  эффекта именно такое (п.48, п.129; t48 гоняет это по всем пяти языкам).
-- **Каталог ключевых слов** — `[fxreg.kw]` в
-  `src/apps/kt-app/i18n/*.toml`: 12 ключей × 5 языков, 287 слов. Пишет их
-  переводчик, не программист, и значения намеренно смешанные — «блюр
-  размытие мягкость blur soft», родное слово рядом с английским. Плюс
-  `[fxreg.cat]` — 10 категорий, они же заголовки групп в пикере.
-- **t126, часть «в»** (`src/apps/kt-app/src/i18n_tests.rs:146`): секции,
-  сравниваемые с вводом пользователя, в арабской таблице лежат в
-  ЛОГИЧЕСКОМ порядке. Для поиска это не косметика, а условие
-  работоспособности: `filter_entries` берёт `tr(kw)`, а `tr` для арабского
-  отдаёт таблицу, переупорядоченную на сборке ПОСЛОВНО (п.126); не будь
-  `[fxreg.kw]` исключена, араб набирал бы своё слово и не находил ничего —
-  совпадение подстроки ломается перестановкой слов, а не букв. Тест —
-  единственный сторож этого исключения, и он же — образец проверки,
-  которую придётся расширить на каждую новую искомую секцию.
-- **Поиск по проекту Ctrl+F** — `search_hits`
-  (`src/apps/kt-app/src/app.rs:4543`, п.92, t92) плюс готовое окно
-  `draw_search` (`app.rs:1335`): поле с подсказкой, стрелки, Enter, Esc
-  внутри окна, строки вида «тег · подпись». Это ОБЩИЙ код с F-MED-001
-  (она владеет поиском по СОДЕРЖИМОМУ проекта, эта заметка — поиском по
-  самой программе). Переиспользуемо из него: окно целиком, `HitKind`
-  (`app.rs:4522`) как точка расширения и ранжирование 0/1/2 — но ранг
-  сегодня замыкание внутри `search_hits`, и наружу его придётся доставать.
-  НЕ переиспользуемо: `filter_entries`, у которой ранга нет вовсе.
-- **Половина текста индекса настроек уже написана и оплачена**: секция
-  `[hint]`, 11 значений × 5 языков, из которых пять описывают именно
-  настройки — `hint.fps`, `hint.resolution`, `hint.preview_quality`,
-  `hint.smoothing`, `hint.economy`. Они уже говорят, ЧТО делает настройка,
-  и уже переведены; они просто привязаны к наведению мыши и потому
-  недостижимы тому, кто ещё не нашёл контрол.
+- **The effect picker with invisible keywords** — `src/apps/kt-app/src/fx_registry.rs`. `FxEntry` (line 12) carries `name` (NOT translated: an industry term, searched by it in any locale), `category: Key`, `audio`/`video` and `keywords: Option<Key>` — precisely a catalog key, not text, therefore the registry's `OnceLock` does not depend on the language and is not rebuilt when switching (item 129). `filter_entries` (line 84) filters by kind and searches for a substring in the name, in `tr(kw)` of the current language AND in `tr_en(kw)` — otherwise someone who chose Chinese would not find "blur", although the effect's name is exactly that (items 48, 129; t48 runs this through all five languages).
+- **The keyword catalog** — `[fxreg.kw]` in `src/apps/kt-app/i18n/*.toml`: 12 keys × 5 languages, 287 words. They are written by the translator, not by the programmer, and the values are deliberately mixed — "blur, blur in Russian, softness, blur, soft", the native word next to the English one. Plus `[fxreg.cat]` — 10 categories, which are also the group headers in the picker.
+- **t126, the part "в"** (`src/apps/kt-app/src/i18n_tests.rs:146`): sections compared with user input lie in the Arabic table in LOGICAL order. For search this is not cosmetics but a condition of working: `filter_entries` takes `tr(kw)`, and `tr` for Arabic returns the table reordered at build time WORD BY WORD (item 126); were `[fxreg.kw]` not excluded, Arabic would type its word and find nothing — a substring match breaks by a permutation of words, not of letters. The test is the only guard of this exclusion, and it is also the model of a check that will have to be extended for every new searchable section.
+- **Project search Ctrl+F** — `search_hits` (`src/apps/kt-app/src/app.rs:4543`, item 92, t92) plus the ready-made window `draw_search` (`app.rs:1335`): a field with a hint, arrows, Enter, Esc inside the window, rows of the form "tag · label". This is COMMON code with F-MED-001 (that one owns search over the CONTENT of the project, this note — search over the program itself). Reusable from it: the window as a whole, `HitKind` (`app.rs:4522`) as the extension point, and ranking 0/1/2 — but today the rank is a closure inside `search_hits`, and it would have to be pulled out. NOT reusable: `filter_entries`, which has no rank at all.
+- **Half of the text of the settings index is already written and paid for**: the `[hint]` section, 11 values × 5 languages, of which five describe precisely settings: `hint.fps`, `hint.resolution`, `hint.preview_quality`, `hint.smoothing`, `hint.economy`. They already say WHAT the setting does, and are already translated; they are simply tied to mouse hover and therefore unreachable to someone who has not yet found the control.
 
-### Чего не хватает
+### What is missing
 
-1. **Ни одна настройка не ищется.** `HitKind` знает Marker, Media, Track,
-   Clip, Group — вида «настройка» нет. Настроек у нас одиннадцать
-   переключаемых, и они разложены по трём несвязанным поверхностям:
-   полоса под превью (`app.rs:3615` — fps, разрешение проекта, качество
-   превью, сглаживание), меню «Вид» (`toolbar.rs:306` — отделить превью,
-   экономный UI, язык) и окно настроек рендера (`render_dialog.rs:275` —
-   энкодер, CRF или битрейт, аудио-битрейт, разрешение вывода).
-   Двенадцатое поле, `ProjectSettings::sample_rate`
-   (`src/libs/kt-model/src/project.rs:1685`), не имеет контрола вовсе, а
-   восемь `KT_*` переменных окружения не видны из GUI ни одной строкой.
-2. **Четыре настройки рендера не говорят, что они делают, нигде.** В
-   `render_dialog.rs` нет ни одного вызова `hint()`, и `[hint]` их не
-   описывает — искать в них было бы нечего, даже если бы поиск был.
-3. **Описания эффектов в программу не попадают.** У `FxEntry` нет поля под
-   описание. `[fxdesc]` живёт в `site/content/*.toml` и рисуется только на
-   лендинге (`site/build.py:363`).
-4. **«Переведено на пять языков» — неверно, проверено.** `[fxdesc]` есть в
-   пяти файлах, но переведён на ОДИН язык: `es.toml`, `zh-Hans.toml` и
-   `ar.toml` содержат английский текст побайтово. Покрытие этих трёх
-   каталогов — 0.0 %, и `site/build.py` штатно выдаёт им `noindex` (то же
-   число зафиксировано в F-HLP-032). Оплачено 2 языка из 5, а не 5 из 5;
-   в пересчёте на перенос описаний в программу это 30 непереведённых
-   значений, а не ноль. Все 50 существующих значений при этом влезают в
-   потолок 160 символов (максимум — 104), а глифов не хватает ровно на
-   один символ («ъ» в русском `cammotion`).
-5. **Описание не привязано к реестру ничем.** Ключи `[fxdesc]` — `green`,
-   `grid`, `cammotion` — не совпадают с именами реестра, и расхождение уже
-   живое: лендинг предлагает `CamMotion`, ушедший из пикера в Р.34 К2
-   (п.230, «новые экземпляры не создаются»), а `Pan 3D`, добавленный в
-   Р.29, не описан ни на одном языке. Два аудио-эффекта, `Gain` и
-   `Slowed+Reverb`, не описаны нигде и никогда. Итого из 12 записей
-   реестра словами объяснены 9. Ни `site/build.py`, ни тесты kt-app эту
-   связь не проверяют — расхождение и не могло не появиться.
-6. **Регистр ключевых слов держится честным словом.** `filter_entries`
-   приводит к нижнему регистру ЗАПРОС, но не значение:
-   `tr(kw).contains(&q)`. Одна заглавная буква у переводчика — и эффект
-   молча перестаёт находиться в его языке. Сегодня все 60 значений
-   строчные, но только по соглашению в комментарии каталога; `build.rs`
-   этого не проверяет.
+1. **No setting is searchable.** `HitKind` knows Marker, Media, Track, Clip, Group — there is no kind "setting". We have eleven switchable settings, and they are laid out across three unrelated surfaces: the strip under the preview (`app.rs:3615` — fps, project resolution, preview quality, smoothing), the "View" menu (`toolbar.rs:306` — detach the preview, economy UI, language), and the render settings window (`render_dialog.rs:275` — encoder, CRF or bitrate, audio bitrate, output resolution). A twelfth field, `ProjectSettings::sample_rate` (`src/libs/kt-model/src/project.rs:1685`), has no control at all, and eight `KT_*` environment variables are not visible from the GUI by a single line.
+2. **Four render settings nowhere say what they do.** There is not a single call of `hint()` in `render_dialog.rs`, and `[hint]` does not describe them — there would be nothing to search them by even if search existed.
+3. **Effect descriptions do not get into the program.** `FxEntry` has no field for a description. `[fxdesc]` lives in `site/content/*.toml` and is drawn only on the landing page (`site/build.py:363`).
+4. **"Translated into five languages" — is wrong, checked.** `[fxdesc]` exists in five files, but is translated into ONE language: `es.toml`, `zh-Hans.toml` and `ar.toml` contain the English text byte for byte. The coverage of these three catalogs is 0.0 %, and `site/build.py` as a matter of course gives them `noindex` (the same figure is recorded in F-HLP-032). Two languages out of five are paid for, not five out of five; in terms of moving the descriptions into the program this is 30 untranslated values, not zero. All 50 existing values nonetheless fit under the 160-character ceiling (the maximum is 104), and the glyphs are short by exactly one character ("ъ" in the Russian `cammotion`).
+5. **The description is not tied to the registry by anything.** The keys of `[fxdesc]` — `green`, `grid`, `cammotion` — do not match the names of the registry, and the divergence is already alive: the landing page offers `CamMotion`, which left the picker in R.34 K2 (item 230, "new instances are not created"), while `Pan 3D`, added in R.29, is described in no language. Two audio effects, `Gain` and `Slowed+Reverb`, are described nowhere and never were. In total, of the 12 registry entries 9 are explained in words. Neither `site/build.py` nor the tests of kt-app check this link — the divergence could not help but appear.
+6. **The case of the keywords is held by an honest word.** `filter_entries` lowercases the QUERY, but not the value: `tr(kw).contains(&q)`. One capital letter from the translator — and the effect silently stops being found in their language. Today all 60 values are lowercase, but only by convention in the catalog's comment; `build.rs` does not check this.
 
-### Что мешает
+### What gets in the way
 
-- **Настройка настройке рознь, а поиск обещает одно.** У нас их три сорта:
-  свойство проекта (fps, разрешение — команда `SetSettings`, едет в
-  `.otio`, отменяется undo), состояние сессии (качество превью,
-  сглаживание, экономный UI) и параметр задания (всё окно рендера, живёт
-  до конца задания). «Нашёл и изменил» означает у них разное, а
-  перезапуск переживает ровно ОДНА — язык, через
-  `storage.set_string("lang", …)` (`app.rs:5182`). Сглаживание и экономный
-  UI умирают вместе с процессом; обещать про них «осталось как поставил»
-  нельзя.
-- **`@modified` у нас не с чем сравнивать.** Фильтр «изменённые» опирается
-  на файл настроек с дефолтами; у нас его нет — есть две строки в
-  egui-storage (`lang` и `last_project`). Это ровно вывод №2 первой волны
-  про «пользовательское хранилище вне проекта» (F-AUT-004, F-TXT-002,
-  F-EXP-001, F-UI-002) — цитируем, не переоткрываем: пока места нет,
-  `@modified` не переносится и обещать его не надо.
-- **Ошибка с порядком слов видна только в арабском.** Показная и
-  сравнимая строки расходятся в одном языке из пяти, поэтому «работает» и
-  «сломано» выглядят одинаково на четырёх. Единственная защита —
-  расширять t126 одновременно с заведением каждой новой искомой секции.
-- **Индекс нельзя вырастить автоматически.** Обойти UI и собрать настройки
-  — соблазн, но правило 20 («ничего не отрастает само») и прецедент Р.38
-  говорят обратное: реестр пишется руками, а полноту стережёт тест
-  достижимости, как t252 стережёт осиротевшие команды.
-- **Экономный UI живёт в двух местах** — меню «Вид» (`toolbar.rs:318`) и
-  перф-панель (`app.rs:3763`). Поиск обязан привести в ОДНО и выбрать, в
-  какое (правило 17).
+- **One setting is not like another, and search promises one thing.** We have three kinds of them: a property of the project (fps, resolution — the command `SetSettings`, goes into `.otio`, is undone by undo), the state of the session (preview quality, smoothing, economy UI), and a parameter of a job (the whole render window, lives until the job ends). "Found and changed" means different things for them, and exactly ONE survives a restart — the language, via `storage.set_string("lang", …)` (`app.rs:5182`). Smoothing and economy UI die together with the process; one cannot promise about them "left as you set it".
+- **`@modified` has nothing to compare with in our case.** The filter "modified" relies on a settings file with defaults; we do not have one — there are two lines in egui-storage (`lang` and `last_project`). This is precisely conclusion No. 2 of the first wave about "user storage outside the project" (F-AUT-004, F-TXT-002, F-EXP-001, F-UI-002) — we quote, not reopen: until there is a place, `@modified` does not carry over and must not be promised.
+- **The error with word order is visible only in Arabic.** The displayed and the comparable strings diverge in one language out of five, so "works" and "broken" look identical in the other four. The only protection is to extend t126 at the same time as registering each new searchable section.
+- **The index cannot grow by itself.** Bypassing the UI and collecting the settings is a temptation, but rule 20 ("nothing grows on its own") and the precedent of R.38 say the opposite: the registry is written by hand, and completeness is guarded by a reachability test, just as t252 guards orphaned commands.
+- **The economy UI lives in two places** — the "View" menu (`toolbar.rs:318`) and the performance panel (`app.rs:3763`). The search must bring it into ONE place and choose which (rule 17).
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- Инвариант 12 — только краем: фильтр считается по изменению строки
-  запроса, а не каждый кадр; окно поиска у нас уже так и живёт.
-- Чек-лист UI: 13 (новой полосы под поиск не заводить — поверхность брать
-  существующую), 14 (окно поиска обязано отдавать фокус), 17 (парные
-  способы одинаковы — экономный UI), 18 (говорить ЧТО и ГДЕ).
-- Формат проекта не трогается: ни ключевые слова, ни индекс настроек в
-  `.otio` не едут, кроме уже существующего `ProjectSettings`.
+- Invariant 12 — only at the edge: the filter is computed on a change of the query line, not on every frame; the search window in our case already lives this way.
+- UI checklist: 13 (do not set up a new strip for search — take the existing surface), 14 (the search window must give back focus), 17 (paired ways are identical — economy UI), 18 (say WHAT and WHERE).
+- The project format is not touched: neither the keywords nor the settings index go into `.otio`, except the already existing `ProjectSettings`.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2–3 стадии: (1) индекс настроек и шестой вид у `search_hits` с колонкой «где живёт»; (2) описание у `FxEntry` и переезд `[fxdesc]` в `i18n/` с добиванием трёх языков; (3) сравнимая строка для арабского и расширение t126 |
-| Где основная работа | `src/apps/kt-app` целиком: `fx_registry.rs`, `app.rs` (`search_hits`, `draw_search`), каталоги `i18n/*.toml`, `build.rs` |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | `reach_tests::every_setting_and_effect_is_findable`; расширение t126 на новые искомые секции; клаузула нижнего регистра в `build.rs`; связь `[fxdesc]` с реестром FX (сегодня её нет ни в `site/build.py`, ни в тестах kt-app) |
-| Зависит от | F-HLP-025 (сам текст описаний), F-HLP-015 (поверхность, если палитра появится раньше), F-MED-001 (общий `search_hits`); цена перевода — F-HLP-033 |
-| Ломает совместимость | нет |
+| Size | M — 2–3 stages: (1) the settings index and a sixth kind in `search_hits` with a column "where it lives"; (2) a description in `FxEntry` and the move of `[fxdesc]` into `i18n/` with the completion of three languages; (3) a comparable string for Arabic and an extension of t126 |
+| Where the main work is | `src/apps/kt-app` as a whole: `fx_registry.rs`, `app.rs` (`search_hits`, `draw_search`), catalogs `i18n/*.toml`, `build.rs` |
+| Project format | does not touch it |
+| Tests that will have to be written | `reach_tests::every_setting_and_effect_is_findable`; the extension of t126 to new searchable sections; the lowercase clause in `build.rs`; the link of `[fxdesc]` with the FX registry (today it exists neither in `site/build.py` nor in the kt-app tests) |
+| Depends on | F-HLP-025 (the text of the descriptions itself), F-HLP-015 (the surface, if a palette appears earlier), F-MED-001 (the common `search_hits`); the price of translation — F-HLP-033 |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём, но разделив надвое и в обратном названию порядке. **Эффекты:**
-достраиваем то, что уже есть, — редкая часть механизма (невидимые
-синонимы на пяти языках) у нас работает, не хватает дешёвой, одной строки
-«что это делает», и та наполовину написана и оплачена. **Настройки:**
-индекс завести, отдельную поверхность — нет: одиннадцать настроек не
-окупают собственного окна, они окупают шестой `HitKind` в уже
-существующем Ctrl+F и обязательную колонку «где живёт». `@modified` не
-обещать, пока нет пользовательского хранилища настроек (вывод №2 первой
-волны).
+We take it, but split in two and in the reverse order of the title. **Effects:** we complete what already exists — the rare part of the mechanism (invisible synonyms in five languages) already works for us, what is missing is a cheap one-line "what this does", and that is half-written and paid for. **Settings:** set up the index, but not a separate surface: eleven settings do not pay for their own window, they pay for a sixth `HitKind` in the already existing Ctrl+F and for a mandatory column "where it lives". Do not promise `@modified` until there is a user storage of settings (conclusion No. 2 of the first wave).
 
-ТЕСТ: reach_tests::every_setting_and_effect_is_findable — сегодня падает
-дважды. (а) `search_hits` (`src/apps/kt-app/src/app.rs:4543`) знает пять
-видов — Marker, Media, Track, Clip, Group — и ни одного вида «настройка»:
-из одиннадцати переключаемых настроек, разложенных по трём несвязанным
-поверхностям (`app.rs:3615`, `toolbar.rs:306`, `render_dialog.rs:275`),
-Ctrl+F не находит ни одной, а четыре настройки рендера вдобавок не
-описаны ни одной строкой каталога. (б) `filter_entries`
-(`src/apps/kt-app/src/fx_registry.rs:84`) ищет по именам и по 60
-значениям `[fxreg.kw]`, но зовётся ровно из одного места —
-`widgets::chain_strip` (`src/apps/kt-app/src/widgets.rs:490`), — и из 12
-записей реестра словами объяснены 9, причём объяснение живёт в
-`site/content/*.toml` и в программу не попадает.
+TEST: reach_tests::every_setting_and_effect_is_findable — today it fails twice. (a) `search_hits` (`src/apps/kt-app/src/app.rs:4543`) knows five kinds — Marker, Media, Track, Clip, Group — and not a single kind "setting": of the eleven switchable settings, laid out across three unrelated surfaces (`app.rs:3615`, `toolbar.rs:306`, `render_dialog.rs:275`), Ctrl+F finds none, and the four render settings, moreover, are not described by a single catalog line. (b) `filter_entries` (`src/apps/kt-app/src/fx_registry.rs:84`) searches by names and by the 60 values of `[fxreg.kw]`, but is called from exactly one place — `widgets::chain_strip` (`src/apps/kt-app/src/widgets.rs:490`) — and of the 12 registry entries 9 are explained in words, and the explanation lives in `site/content/*.toml` and does not get into the program.
 
-ПРОВЕРКА: src/apps/kt-app/build.rs — клаузула «значение искомой секции
-пишется в нижнем регистре»: `filter_entries` сравнивает `tr(kw)` как есть
-с приведённым к нижнему регистру запросом, поэтому одна заглавная буква у
-переводчика молча вычёркивает эффект из поиска в его языке, а держится это
-сегодня только комментарием в каталоге.
+CHECK: src/apps/kt-app/build.rs — a clause "the value of a searchable section is written in lowercase": `filter_entries` compares `tr(kw)` as it is with the lowercased query, so one capital letter from the translator silently removes the effect from the search in their language, and today this is held only by a comment in the catalog.
 
-ОТЛОЖЕНО: до F-HLP-025 — сам текст описаний эффектов заводится там; здесь
-фиксируется единственное требование к нему, которое из этой заметки видно,
-а из той не видно: описание обязано быть ИСКОМЫМ, то есть лежать в
-`src/apps/kt-app/i18n/*.toml` рядом с `[fxreg.kw]` и иметь сравнимую
-арабскую форму, а не остаться показным текстом лендинга.
+DEFERRED: until F-HLP-025 — the text of the effect descriptions is entered there; here the single requirement for it is recorded, which is visible from this note and not visible from that one: the description must be SEARCHABLE, that is, lie in `src/apps/kt-app/i18n/*.toml` next to `[fxreg.kw]` and have a comparable Arabic form, rather than remain display text of the landing page.
 
-## Источники
+## Sources
 
-- Форум Boris FX (VEGAS Pro), тред «Enhancement: Filter VideoFX presets, not
-  just the FX», 19.06.2026:
+- Boris FX forum (VEGAS Pro), thread "Enhancement: Filter VideoFX presets, not just the FX", 19.06.2026:
   https://forum.borisfx.com/t/enhancement-filter-videofx-presets-not-just-the-fx/24206
-  (дата обращения 2026-09-07; через Discourse API `/raw/24206/1`)
-- VS Code, Settings editor и фильтры `@`:
-  https://code.visualstudio.com/docs/configure/settings (дата обращения
-  2026-09-07)
-- VS Code, что именно сверяется с запросом (первоисточник — код, а не
-  документация): `SettingMatches` в
+  (accessed 2026-09-07; via the Discourse API `/raw/24206/1`)
+- VS Code, Settings editor and the `@` filters:
+  https://code.visualstudio.com/docs/configure/settings (accessed 2026-09-07)
+- VS Code, what exactly is matched against the query (the primary source is the code, not the documentation): `SettingMatches` in
   https://raw.githubusercontent.com/microsoft/vscode/main/src/vs/workbench/contrib/preferences/browser/preferencesSearch.ts
-  (дата обращения 2026-09-07)
-- IntelliJ IDEA, диалог Settings:
+  (accessed 2026-09-07)
+- IntelliJ IDEA, the Settings dialog:
   https://www.jetbrains.com/help/idea/settings-preferences-dialog.html
-  (дата обращения 2026-09-07)
-- **Проверки живьём для софта вне ядра не предполагается** (правило
-  `_editors.md`). Для строк ядра: `helpx.adobe.com` из этого окружения не
-  открылся ни напрямую, ни через текст-прокси `r.jina.ai` (HTTP 422),
-  `support.apple.com` отдал только оглавление руководства, а бюджет
-  `WebSearch` сессии был исчерпан (200 из 200) до начала работы над
-  заметкой. Поэтому утверждения об ОТСУТСТВИИ поиска в настройках
-  Premiere, Resolve, Final Cut Pro и After Effects помечены
-  [НЕ ПРОВЕРЕНО]; утверждение о наличии поиска по эффектам у всех пяти
-  проверять не потребовалось — оно подтверждается и цитатой, и
-  документацией вендоров.
-- Наши числа получены грепом и подсчётом по репозиторию на 2026-09-07:
-  522 значения в `src/apps/kt-app/i18n/ru.toml` (34 секции), 60 значений
-  и 287 слов в `[fxreg.kw]`, 50 значений `[fxdesc]` в `site/content/*.toml`
-  (максимум 104 символа), покрытие перевода `es`/`zh-Hans`/`ar` — 0.0 %.
+  (accessed 2026-09-07)
+- **A live check for software outside the core is not assumed** (the rule of `_editors.md`). For the strings of the core: `helpx.adobe.com` did not open from this environment either directly or through the text proxy `r.jina.ai` (HTTP 422), `support.apple.com` gave only the table of contents of the manual, and the session's `WebSearch` budget was exhausted (200 of 200) before work on the note began. Therefore the claims about the ABSENCE of search in the settings of Premiere, Resolve, Final Cut Pro and After Effects are marked [NOT VERIFIED]; the claim about the presence of search over effects in all five did not need checking — it is confirmed both by the quote and by the vendors' documentation.
+- Our numbers were obtained by grep and counting over the repository as of 2026-09-07: 522 values in `src/apps/kt-app/i18n/ru.toml` (34 sections), 60 values and 287 words in `[fxreg.kw]`, 50 values of `[fxdesc]` in `site/content/*.toml` (maximum 104 characters), translation coverage of `es`/`zh-Hans`/`ar` — 0.0 %.

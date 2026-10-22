@@ -1,16 +1,16 @@
 ---
 id: F-RES-002
-title: Атомарная запись проекта и fsync
-status: сделано
+title: Atomic project write and fsync
+status: done
 priority: B
 cost: S
 category: resilience/durability
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, kdenlive-26.08, sqlite-3.50]
-we_have: да
+we_have: yes
 crates: [kt-app, kt-otio, kt-media]
 invariants: []
 ui_rules: [12]
-round: "Р.49"
+round: "R.49"
 point: 349
 tests: [351, 352, 353]
 depends_on: [F-PRJ-002]
@@ -18,222 +18,125 @@ trackers: [kde-bugzilla, kde-invent, pitivi]
 checked: 2026-09-15
 ---
 
-# F-RES-002 — Атомарная запись проекта и fsync
+# F-RES-002 — Atomic project write and fsync
 
-## Суть
+## Essence
 
-Монтажёр нажал Ctrl+S, звёздочка «не сохранено» погасла — и через секунду
-пропало электричество. Вопрос ровно один: что лежит на диске при следующем
-включении. Вариантов три: вчерашний проект целиком, сегодняшний целиком или
-файл с правильным именем и нулевым содержимым. Третий вариант — не редкость
-теории, а строка в трекере, и стоит он всей работы за день. «Сохранено» и
-«доехало до диска» — две разные гарантии, и вторую не покупает ни одна из
-привычных формулировок.
+The editor pressed Ctrl+S, the "unsaved" asterisk went out — and a second later the power went off. The question is exactly one: what is on the disk at the next power-on. There are three options: yesterday's project in full, today's in full, or a file with the right name and zero content. The third option is not a rare case from theory, but a line in a tracker, and it costs the whole day's work. "Saved" and "reached the disk" are two different guarantees, and neither of the usual phrasings buys the second.
 
-## У кого и как
+## Who has it and how
 
-Колонка «Как устроено» отвечает на ОДИН вопрос: что происходит с файлом
-проекта в момент записи. Версии, ярусы бэкапов и панель истории — предмет
-F-PRJ-002, здесь они не переоткрываются, а используются как факт.
+The column "How it works" answers ONE question: what happens to the project file at the moment of writing. Versions, backup tiers and the history panel are the subject of F-PRJ-002; they are not reopened here, but are used as a fact.
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | имени нет | Живой `.veg` перезаписывается сохранением. Страховка — не порядок записи, а КОПИИ рядом: легаси-автосейв `.autosave.veg` во временную папку и Advanced Backup ярусами (F-PRJ-002). Про временный файл, переименование и синк — ни слова ни в справке, ни в release notes |
-| Adobe Premiere | 26.x | имени нет; косвенно — Auto Save | Auto Save пишет ОТДЕЛЬНЫЕ файлы в папку «Adobe Premiere Pro Auto-Save» и живой `.prproj` не трогает вовсе — то есть страховочный путь задачу переставляет: новый файл вместо замены старого. Сам Ctrl+S проект перезаписывает; порядок записи не документирован |
-| DaVinci Resolve | 21 | Project Library (дисковая база или PostgreSQL) + Live Save | Единственный из пяти, у кого файла проекта НЕТ: проект — строка в базе, Live Save пишет постоянно. Durability тем самым делегирована СУБД, то есть коду, который про fsync знает по профессии. Отдельно — Project Backups обычными файлами |
-| Final Cut Pro | 12.3 | библиотека-пакет с базой; «Save» как действия нет | «Automatically saves all the changes you make as you work on a project»; бэкапится «the database portion of libraries only, not the media files» (F-PRJ-002). Тоже делегировано базе, только внутри пакета `.fcpbundle` |
-| After Effects | 26.x | имени нет; косвенно — Auto-Save, Increment and Save | Оба страховочных пути создают НОВЫЙ файл: копии в папку «Adobe After Effects Auto-Save», Increment and Save — то же имя с номером +1. Перезаписи живого файла в них нет; про запись самого `.aep` не документировано ничего |
+| VEGAS Pro | 2026.0 | no name | The live `.veg` is overwritten by saving. The safety net is not a writing order but COPIES alongside: the legacy autosave `.autosave.veg` into a temporary folder and Advanced Backup in tiers (F-PRJ-002). Not a word about the temporary file, renaming or sync — neither in the help nor in the release notes |
+| Adobe Premiere | 26.x | no name; indirectly — Auto Save | Auto Save writes SEPARATE files into the folder "Adobe Premiere Pro Auto-Save" and does not touch the live `.prproj` at all — that is, the safety path rearranges the task: a new file instead of replacing the old one. Ctrl+S itself overwrites the project; the writing order is not documented |
+| DaVinci Resolve | 21 | Project Library (a disk database or PostgreSQL) + Live Save | The only one of the five that has NO project file: the project is a row in a database, and Live Save writes constantly. Durability is thereby delegated to a DBMS, that is, to code that knows about fsync by profession. Separately — Project Backups as ordinary files |
+| Final Cut Pro | 12.3 | a library package with a database; there is no "Save" action | "Automatically saves all the changes you make as you work on a project"; backed up is "the database portion of libraries only, not the media files" (F-PRJ-002). Also delegated to the database, only inside the `.fcpbundle` package |
+| After Effects | 26.x | no name; indirectly — Auto-Save, Increment and Save | Both safety paths create a NEW file: copies in the folder "Adobe After Effects Auto-Save", Increment and Save — the same name with number +1. There is no overwriting of the live file in them; nothing is documented about writing the `.aep` itself |
 
-Строчка, которую видно только когда таблица собрана целиком: **вопрос
-«переживёт ли запись выключение питания» не задан вслух ни одним из пяти.**
-Двое (Resolve, FCP) его делегировали базе данных; трое остальных обошли его
-сбоку — их страховка не переписывает живой файл, а кладёт рядом новый. Обход
-честный, но неполный: новый файл, не доехавший до диска, после выключения
-питания ничем не отличается от ненаписанного.
+A line visible only when the table is assembled as a whole: **the question "will the write survive a power failure" is not asked aloud by any of the five.**
+Two (Resolve, FCP) delegated it to a database; the other three bypassed it from the side — their safety net does not rewrite the live file, but puts a new one next to it. The bypass is honest but incomplete: a new file that did not reach the disk before a power failure is no different from one that was never written.
 
-**Вне ядра.** Двух программ без ядра не хватает по разным причинам. Без базы
-данных фичу нельзя описать физически: три уровня гарантии не сформулированы ни
-в одной документации видеоредактора, а в мире СУБД они не только
-сформулированы, но и вынесены в настройку — вдобавок именно этот код уже
-слинкован в наш бинарь. А Kdenlive нужен как контрпример: это единственная
-программа, у которой механизм сохранности и документирован, и виден в
-трекере, — и она же даёт 21 задачу счёта ниже.
+**Outside the core.** Two programs without the core are missing for different reasons. Without a database a feature cannot be described physically: three levels of guarantee are not formulated in any video-editor documentation, while in the world of DBMSs they are not only formulated but also brought out into a setting — and in addition this very code is already linked into our binary. And Kdenlive is needed as a counterexample: it is the only program whose safety mechanism is both documented and visible in the tracker — and it also gives the 21 tasks of the count below.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| SQLite | 3.50.2 (вендорена в `libsqlite3-sys` 0.35.0, наш `src/Cargo.lock`) | `PRAGMA synchronous` (OFF / NORMAL / FULL / EXTRA), `journal_mode`, `SQLITE_DISABLE_DIRSYNC` | Durability — объявленный параметр с четырьмя ступенями, а не побочный эффект. FULL — синк на каждый коммит; по умолчанию именно FULL (`SQLITE_DEFAULT_SYNCHRONOUS 2` в `sqlite3.c`, сборка `libsqlite3-sys` его не переопределяет). Синхронизация КАТАЛОГА — отдельная забота, и её отключение — отдельный флаг сборки, а не побочный эффект другого |
-| Kdenlive | 26.08.0 | резервная копия при каждом сохранении, каталог `.backup` | Копия рядом доведена до предела: снимок на КАЖДОЕ сохранение и ярусное прореживание (20/час + 20/день + 20/7 дней + 20 старых), см. `_editors.md`. Про порядок записи самого файла — ни строки. Это и есть чистый эксперимент: максимум того, что даёт уровень «копия рядом», без уровня (в) |
+| SQLite | 3.50.2 (vendored in `libsqlite3-sys` 0.35.0, our `src/Cargo.lock`) | `PRAGMA synchronous` (OFF / NORMAL / FULL / EXTRA), `journal_mode`, `SQLITE_DISABLE_DIRSYNC` | Durability is a declared parameter with four levels, not a side effect. FULL means sync on every commit; the default is exactly FULL (`SQLITE_DEFAULT_SYNCHRONOUS 2` in `sqlite3.c`; the `libsqlite3-sys` build does not override it). Syncing the DIRECTORY is a separate concern, and disabling it is a separate build flag, not a side effect of something else |
+| Kdenlive | 26.08.0 | a backup copy on every save, the `.backup` directory | The copy alongside is taken to the limit: a snapshot on EVERY save and tiered thinning (20/hour + 20/day + 20/7 days + 20 old), see `_editors.md`. Not a line about the writing order of the file itself. This is precisely the clean experiment: the maximum of what the "copy alongside" level gives, without level (c) |
 
-## Фишка фишки
+## The trick behind it
 
-**1. `rename` атомарен относительно других ПРОЦЕССОВ, а не относительно
-питания — и именно эта подмена делает уровень (б) убедительным.** Три уровня
-гарантии выглядят так: (а) писать поверх живого файла — обрыв на середине
-оставляет полурезаный проект; (б) писать во временный файл рядом и
-переименовать — ни один читатель никогда не увидит половину, потому что
-переименование либо случилось, либо нет; (в) записать временный файл,
-дождаться его синка, переименовать, синкнуть КАТАЛОГ. Разница между (б) и (в)
-не видна в коде и не видна на глаз: слово «атомарно» стоит в документации
-`rename` честно, но говорит оно про видимость имени другим процессам. Что
-лежит в блоках данных под этим именем после пропажи питания, `rename` не
-обещает вовсе: запись содержимого и запись имени — две независимые поездки к
-диску, и их порядок — дело файловой системы, а не программиста. Отсюда
-характерный симптом трекеров: файл ЕСТЬ, имя правильное, длина нулевая.
+**1. `rename` is atomic with respect to other PROCESSES, not with respect to power — and this substitution is what makes level (b) convincing.** The three levels of guarantee look like this: (a) write over the live file — a break in the middle leaves a half-torn project; (b) write to a temporary file next to it and rename it — no reader will ever see a half, because the rename either happened or did not; (c) write the temporary file, wait for its sync, rename, and sync the DIRECTORY. The difference between (b) and (c) is not visible in the code and not visible to the eye: the word "atomic" stands honestly in the documentation of `rename`, but it speaks about the visibility of the name to other processes. What lies in the data blocks under this name after a power loss, `rename` does not promise at all: writing the content and writing the name are two independent trips to the disk, and their order is a matter of the file system, not of the programmer. Hence the characteristic symptom in the trackers: the file EXISTS, the name is correct, the length is zero.
 
-**2. Ядро прикрывает эту ошибку — и ровно поэтому её никто не находит.** У
-ext4 по умолчанию включён `auto_da_alloc`: ядро распознаёт шаблон «замена
-через rename» и заставляет отложенные блоки лечь до фиксации переименования.
-Документация ext4 объясняет это прямым текстом — сделано для приложений,
-которые не зовут fsync, и это «avoids the "zero-length" problem»
-[НЕ ПРОВЕРЕНО живьём в этой сессии: kernel.org отсюда не открывался, цитата по
-памяти о документации ядра]. Следствие, которого нет ни в одном списке
-возможностей: на машине разработчика уровень (б) НЕ ОТЛИЧИМ от уровня (в), и
-расходятся они там, где проекты монтажёров и живут — на внешнем диске с
-exFAT, на сетевой шаре, на монтировании без этой эвристики. Дефект по
-построению не воспроизводится там, где его ищут, и воспроизводится там, где
-никто не смотрит.
+**2. The kernel covers this error — and that is exactly why nobody finds it.** ext4 has `auto_da_alloc` enabled by default: the kernel recognizes the "replace via rename" pattern and forces the delayed blocks to land before the rename is committed. The ext4 documentation explains this in plain text — it is done for applications that do not call fsync, and it "avoids the "zero-length" problem" [NOT VERIFIED live in this session: kernel.org did not open from here, the quote is from memory of the kernel documentation]. The consequence, which is absent from every list of features: on the developer's machine level (b) is NOT DISTINGUISHABLE from level (c), and they diverge where the editors' projects actually live — on an external exFAT drive, on a network share, on a mount without this heuristic. The defect is by construction not reproduced where it is sought, and is reproduced where nobody looks.
 
-**3. Мы уже платим за durability — но не за то.** У нас в бинаре есть код,
-который синкается на каждый коммит: sidecar-индекс `<project>.ktindex.db`
-(`src/libs/kt-media/src/index.rs`) открыт с `journal_mode=WAL` при
-`synchronous` по умолчанию FULL. То есть тумбнейлы и пирамида пиков —
-данные, которые пересчитываются из исходников за минуты, — переживают
-выключение питания гарантированно, а файл проекта, который не
-восстанавливается ниоткуда, — нет. Перекос возник не решением, а умолчанием:
-у SQLite durability включена по умолчанию, у `std::fs::write` — нет.
+**3. We already pay for durability — but not for the right thing.** Our binary has code that syncs on every commit: the sidecar index `<project>.ktindex.db` (`src/libs/kt-media/src/index.rs`) is opened with `journal_mode=WAL` with `synchronous` at the default FULL. That is, thumbnails and the peak pyramid — data that is recomputed from the sources in minutes — survive a power loss guaranteed, while the project file, which is not recoverable from anywhere, does not. The imbalance arose not by decision but by default: SQLite has durability enabled by default, `std::fs::write` does not.
 
-## Плюсы
+## Pros
 
-- Уровень (в) делает состояние «имя новое, содержимое чужое» невозможным по
-  построению: после включения на диске либо целиком старый проект, либо
-  целиком новый, третьего состояния не существует.
-- Синк каталога закрывает второй, менее очевидный конец: само переименование
-  — тоже запись, и без него после выключения можно получить оба файла сразу
-  (`p.otio` старый плюс `p.otio.tmp` новый) или ни одного нового.
-- Цена платится за СОХРАНЕНИЕ, а не за правку, и не растёт с размером
-  проекта так, как растёт сериализация: на SSD это единицы миллисекунд.
-- Гарантия проверяема машиной. Это редкий класс, где тест сильнее наблюдения:
-  фолт-инжекция («файловая система, которой запретили синк») даёт ответ за
-  секунды, а живьём такое ловится раз в несколько лет и всегда постфактум.
-- Копия рядом (`.bak`) ортогональна fsync и дешевле его: она покрывает то,
-  чего durability не покрывает вовсе, — ошибку пользователя, кривой
-  сериализатор, чужую программу, испортившую файл. Один механизм не заменяет
-  другой, и путать их — самая частая ошибка в этой теме.
+- Level (c) makes the state "new name, foreign content" impossible by construction: after power-on the disk holds either the entire old project or the entire new one, and a third state does not exist.
+- Syncing the directory closes the second, less obvious end: the rename itself is also a write, and without it after a power loss one can get both files at once (`p.otio` old plus `p.otio.tmp` new), or no new one at all.
+- The price is paid for SAVING, not for editing, and does not grow with the size of the project the way serialization does: on an SSD it is a matter of a few milliseconds.
+- The guarantee is verifiable by a machine. This is a rare class where a test is stronger than observation: fault injection ("a file system that was forbidden to sync") gives an answer in seconds, while in live use such a thing is caught once in several years and always after the fact.
+- A copy alongside (`.bak`) is orthogonal to fsync and cheaper than it: it covers what durability does not cover at all — the user's error, a faulty serializer, a foreign program that spoiled the file. One mechanism does not replace the other, and confusing them is the most frequent error on this topic.
 
-## Минусы
+## Cons
 
-- fsync ждёт железо. На сетевой шаре и на дешёвой флешке это не единицы
-  миллисекунд, а сотни, и синхронное сохранение в UI-потоке превращается в
-  замирание интерфейса ровно в тот момент, когда пользователь нажал Ctrl+S.
-- Синк каталога непереносим: на Windows у каталога нет дескриптора, который
-  можно синкнуть тем же вызовом. Уровень (в) — это платформенная ветка, а не
-  одна строка, и «просто добавить fsync» неверно как формулировка задачи.
-- Durability ортогональна КОРРЕКТНОСТИ: если сериализатор записал мусор,
-  fsync аккуратно доставит мусор на диск. Класс «проект открылся пустым» она
-  закрывает только наполовину — вторую половину закрывает копия рядом.
-- Эффект нечем показать. Механизм, который невозможно продемонстрировать в
-  ролике и который пользователь замечает один раз в жизни, первым идёт под
-  нож при экономии — и это, судя по таблице выше, ровно то, что произошло у
-  всех пятерых.
-- Верхняя граница честности — не программа: диск с включённым кэшем записи
-  может подтвердить синк раньше, чем данные легли. fsync — предел того, что
-  ПО может обещать, а не абсолютная гарантия, и обещать больше нельзя.
+- fsync waits for the hardware. On a network share and on a cheap flash drive this is not a matter of single milliseconds but of hundreds, and a synchronous save in the UI thread turns into a freeze of the interface at exactly the moment the user pressed Ctrl+S.
+- Syncing a directory is not portable: on Windows a directory has no handle that can be synced with the same call. Level (c) is a platform branch, not one line, and "just add fsync" is wrong as a statement of the task.
+- Durability is orthogonal to CORRECTNESS: if the serializer wrote garbage, fsync will carefully deliver the garbage to the disk. It closes the class "the project opened empty" only halfway — the second half is closed by the copy alongside.
+- The effect cannot be shown. A mechanism that cannot be demonstrated in a clip, and that the user notices once in a lifetime, is the first to go under the knife when economizing — and, judging by the table above, this is exactly what happened with all five.
+- The upper bound of honesty is not the program: a disk with the write cache enabled can confirm a sync before the data has actually landed. fsync is the limit of what SOFTWARE can promise, not an absolute guarantee, and more cannot be promised.
 
-## Что говорят пользователи
+## What users say
 
-СИГНАЛ: битый или пустой файл проекта — 21 задача в kde-bugzilla, `(corrupt|damaged|truncated|zero.byte|0 bytes|empty).*(project|\.kdenlive|\.xges|save file)`; доля 0.3% против 0.0% (1 задача из 2300) в pitivi
+SIGNAL: a broken or empty project file — 21 tasks in kde-bugzilla, `(corrupt|damaged|truncated|zero.byte|0 bytes|empty).*(project|\.kdenlive|\.xges|save file)`; share 0.3% against 0.0% (1 task out of 2300) in pitivi
 
-Класс редкий у всех троих и при этом устроен одинаково: широкая тема
-«сохранение» (`save|autosave|backup|recover`) даёт ровные 2.9% / 2.1% / 2.3%
-по kde-bugzilla / kde-invent / pitivi, а подкласс «файл сломался» — десятую
-часть от неё. Второе число важнее первого: из 21 задачи kde-bugzilla закрыты
-17, настоящих фиксов среди них 10, а пять закрыты как WORKSFORME — почти
-треть закрытых списана в «не воспроизводится». Для дефекта, который зависит
-от файловой системы и от момента выключения, это ожидаемый исход, и он же
-объясняет, почему счёт мал: такие задачи не доживают до состояния, в котором
-их можно посчитать.
+The class is rare in all three, and at the same time it is built the same way: the broad topic "saving" (`save|autosave|backup|recover`) gives even 2.9% / 2.1% / 2.3% across kde-bugzilla / kde-invent / pitivi, while the subclass "the file broke" is a tenth of that. The second number matters more than the first: of the 21 kde-bugzilla tasks, 17 are closed, 10 of them are real fixes, and five are closed as WORKSFORME — almost a third of the closed ones were written off as "not reproducible". For a defect that depends on the file system and on the moment of power loss this is the expected outcome, and it also explains why the count is small: such tasks do not live long enough to reach a state in which they can be counted.
 
-Третье число делает из этого находку. Обе стороны счёта — Kdenlive: программа,
-которая держит копию проекта при КАЖДОМ сохранении и прореживает копии
-ярусами (см. таблицу вне ядра). То есть 21 задача класса «файл проекта
-сломался» набежала у того, кто сделал по этой части больше всех пятерых
-редакторов ядра вместе взятых. Копия рядом покрывает много и не покрывает
-именно тот такт, который здесь предмет.
+The third number turns this into a finding. Both sides of the count are Kdenlive: a program that keeps a copy of the project on EVERY save and thins the copies in tiers (see the table outside the core). That is, 21 tasks of the class "the project file broke" came from the one who has done more in this area than all five core editors together. A copy alongside covers a lot, and does not cover exactly that beat which is the subject here.
 
-И отдельная находка, которую видно только счётом: **слово `fsync` не
-встречается в этих трёх трекерах ни разу** — 0 совпадений на 10 863 задачи
-(вместе с телами задач kde-invent и pitivi; у kde-bugzilla тел в выгрузке
-нет). `atomic` встречается четырежды и все четыре раза — `atomicity.h` в
-бэктрейсах. Пользователь не может назвать причину, потому что не может её
-увидеть; он приносит симптом. Значит источник для этой темы — не поиск по
-слову, а поиск по последствию.
+And a separate finding, visible only by counting: **the word `fsync` does not occur in these three trackers even once** — 0 matches across 10,863 tasks (together with the bodies of the kde-invent and pitivi tasks; the kde-bugzilla export has no bodies). `atomic` occurs four times, and all four times it is `atomicity.h` in backtraces. The user cannot name the cause, because they cannot see it; they bring the symptom. So the source for this topic is not a search by word, but a search by consequence.
 
-Последствие, дословно:
+The consequence, verbatim:
 
 > When I next accesses the sequence (.xges file) it would not open.
 > — Pitivi #2245, 13.09.2018, https://gitlab.gnome.org/GNOME/pitivi/-/work_items/2245
 
-Механизм спасения, работающий против пользователя (заголовок задачи —
-«When a project RECOVERY fails don't "create" an empty project with the real
-project name»):
+A rescue mechanism that works against the user (the task title is "When a project RECOVERY fails don't "create" an empty project with the real
+project name"):
 
 > …after that is not possible to load the original project because kdenlive
 > think that the project is already loaded (but is empty)
 > — Kdenlive #705, 28.05.2020, https://invent.kde.org/multimedia/kdenlive/-/work_items/705
 
-Три заголовка, которые дают форму классу лучше любого пересказа:
-«Corrupted save file» (kde-bugzilla #446393, 02.12.2021, закрыт FIXED),
-«"Save" -> "Open" a specific project results in a corrupted project»
-(#509101, 04.09.2025, открыт, CONFIRMED) и «Infinite loop when loading empty
-project file via command line» (#519355, 24.04.2026, открыт). Последний — про
-второй такт той же аварии: файл нулевой длины в природе существует, и реакция
-программы на него не проверена никем.
+Three titles that give the shape of the class better than any retelling:
+"Corrupted save file" (kde-bugzilla #446393, 02.12.2021, closed FIXED),
+""Save" -> "Open" a specific project results in a corrupted project"
+(#509101, 04.09.2025, open, CONFIRMED) and "Infinite loop when loading empty
+project file via command line" (#519355, 24.04.2026, open). The last one is about the second beat of the same accident: a zero-length file does exist in nature, and the program's reaction to it has been verified by no one.
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/durability/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Запись проекта — во временный файл рядом + fsync + rename; исход записи — свой тип, не строка serde.
-АДРЕС: src/apps/kt-app/src/app.rs, `write_project_atomic` — класс возможен, и его не ловит ничто: tmp+rename без единого `fsync`/`sync_all`/`sync_data` во всём `src/` (грепом 0 совпадений), t150 проверяет только имя временного файла, t194/t199 — фоновость и гонку писателей, а на файл нулевой длины `load_project_file` отвечает сырым «EOF while parsing a value at line 1 column 0».
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/durability/ — the contract is in `spec.md`, the "why" and the code paths are in `design.md`.
+Writing the project — to a temporary file alongside + fsync + rename; the outcome of the write is its own type, not a serde string.
+ADDRESS: src/apps/kt-app/src/app.rs, `write_project_atomic` — the class is possible, and nothing catches it: tmp+rename without a single `fsync`/`sync_all`/`sync_data` in the whole of `src/` (0 matches by grep), t150 checks only the name of the temporary file, t194/t199 — background operation and the race of writers, and for a zero-length file `load_project_file` answers with the raw "EOF while parsing a value at line 1 column 0".
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия раунда |
-| Где основная работа | kt-app (`write_project_atomic`: синк временного файла, синк каталога с платформенной веткой), плюс сообщение об ошибке для пустого/нечитаемого файла |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | фолт-инжекция «синк запрещён»: убедиться, что после обрыва между записью и переименованием на диске остаётся ЦЕЛЫЙ старый файл; отдельный тест на файл нулевой длины — сообщение называет причину, а не позицию парсера |
-| Зависит от | F-PRJ-002 (копия рядом — её предмет), соседняя заметка `recovery/` (panic hook) |
-| Ломает совместимость | нет |
+| Scope | S — one stage of the round |
+| Where the main work is | kt-app (`write_project_atomic`: syncing the temporary file, syncing the directory with a platform branch), plus an error message for an empty/unreadable file |
+| Project format | does not touch it |
+| Tests to write | fault injection "sync forbidden": make sure that after a break between the write and the rename an INTACT old file remains on the disk; a separate test for a zero-length file — the message names the cause, not the parser's position |
+| Depends on | F-PRJ-002 (the copy alongside — its subject), the neighboring note `recovery/` (panic hook) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём. Это единственная позиция базы, где полная гарантия стоит одной функции
-и не задевает ни одного инварианта, а её отсутствие стоит пользователю всего
-дня работы — и мы уже платим ту же цену за кэш тумбнейлов, который не жалко.
+We take it. This is the only position of the base where the full guarantee costs one function and touches none of the invariants, while its absence costs the user a whole day of work — and we already pay the same price for the thumbnail cache, which we do not regret.
 
-Отдельно и в ту же стадию: файл нулевой длины обязан получить сообщение,
-называющее причину, а не позицию парсера. Трекер показывает, что зеро-файл в
-природе существует, и что реакция на него не проверена ни у кого.
+Separately, and in the same stage: a zero-length file must get a message naming the cause, not the parser's position. The tracker shows that a zero file does exist in nature, and that the reaction to it has been verified by no one.
 
-Копию рядом (`.bak`) в эту заметку не тащим: она дешевле и покрывает другое
-(ошибку пользователя и битый сериализатор), и её предмет — F-PRJ-002. Путать
-их — самая частая ошибка в теме, и мы её здесь не повторяем.
+The copy alongside (`.bak`) is not brought into this note: it is cheaper and covers something else (the user's error and a broken serializer), and its subject is F-PRJ-002. Confusing them is the most frequent error on this topic, and we do not repeat it here.
 
-## Источники
+## Sources
 
 - `python3 src/scripts/tracker-rank.py --query '(corrupt|damaged|truncated|zero.byte|0 bytes|empty).*(project|\.kdenlive|\.xges|save file)'` — 21 / 6346 (0.3%) kde-bugzilla, 7 / 2217 (0.3%) kde-invent, 1 / 2300 (0.0%) pitivi (08.09.2026)
 - `python3 src/scripts/tracker-rank.py --query 'save|autosave|backup|recover'` — 2.9% / 2.1% / 2.3% (08.09.2026)
-- `python3 src/scripts/tracker-rank.py --theme 'потеря данных'` — 211 задач, вес 333, доля настоящих фиксов среди закрытых 0.67 (08.09.2026)
-- Счёт `fsync` = 0 и `atomic` = 4 (все — `atomicity.h`/`atomic_base.h` в бэктрейсах) получен прямым проходом по дампам
-  `~/.cache/kinotrain/trackers/*.jsonl` с телами задач: `--query` смотрит только заголовок, метки и компонент
-- https://gitlab.gnome.org/GNOME/pitivi/-/work_items/2245 (дата обращения 08.09.2026, из дампа)
-- https://invent.kde.org/multimedia/kdenlive/-/work_items/705 (дата обращения 08.09.2026, из дампа)
-- https://bugs.kde.org/show_bug.cgi?id=446393 · https://bugs.kde.org/show_bug.cgi?id=509101 · https://bugs.kde.org/show_bug.cgi?id=519355 (заголовки и статусы — из дампа 08.09.2026; тел задач kde-bugzilla выгрузка не содержит)
-- **Выгружены три трекера из двенадцати** (kde-bugzilla 6346, kde-invent 2217, pitivi 2300 записей, дампы от 08.09.2026); shotcut, olive, openshot, flowblade, losslesscut, mlt, otio, blender-vse и ffmpeg-trac на момент письма заметки ещё не выгружены — числа заметки к ним не относятся
-- SQLite: `libsqlite3-sys` 0.35.0 из `src/Cargo.lock`, вендоренный `sqlite3/sqlite3.c` (`SQLITE_VERSION "3.50.2"`, `#define SQLITE_DEFAULT_SYNCHRONOUS 2`) и его `build.rs` — проверено локально, без сети
-- ext4 `auto_da_alloc`: документация ядра, [НЕ ПРОВЕРЕНО живьём в этой сессии] — kernel.org отсюда не открывался, формулировка приведена по памяти и помечена как непроверенная
-- Механизмы автосейва и бэкапов пяти редакторов ядра не переоткрывались: факты и их первоисточники — в F-PRJ-002 (`docs/features/project/history/versions-and-snapshots.md`)
-- Живьём ни один из пяти редакторов в этой заметке не проверялся: вопрос «переживает ли запись выключение питания» наблюдением не решается в принципе (см. «Фишка фишки», пункт 2)
+- `python3 src/scripts/tracker-rank.py --theme 'потеря данных' (data loss)` — 211 tasks, weight 333, share of real fixes among the closed ones 0.67 (08.09.2026)
+- The count of `fsync` = 0 and `atomic` = 4 (all of them — `atomicity.h`/`atomic_base.h` in backtraces) was obtained by a direct pass over the dumps
+  `~/.cache/kinotrain/trackers/*.jsonl` with task bodies: `--query` looks only at the title, labels and component
+- https://gitlab.gnome.org/GNOME/pitivi/-/work_items/2245 (access date 08.09.2026, from the dump)
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/705 (access date 08.09.2026, from the dump)
+- https://bugs.kde.org/show_bug.cgi?id=446393 · https://bugs.kde.org/show_bug.cgi?id=509101 · https://bugs.kde.org/show_bug.cgi?id=519355 (titles and statuses — from the dump of 08.09.2026; the kde-bugzilla export contains no task bodies)
+- **Three of twelve trackers exported** (kde-bugzilla 6346, kde-invent 2217, pitivi 2300 records, dumps of 08.09.2026); shotcut, olive, openshot, flowblade, losslesscut, mlt, otio, blender-vse and ffmpeg-trac had not yet been exported at the time of writing the note — the note's numbers do not apply to them
+- SQLite: `libsqlite3-sys` 0.35.0 from `src/Cargo.lock`, the vendored `sqlite3/sqlite3.c` (`SQLITE_VERSION "3.50.2"`, `#define SQLITE_DEFAULT_SYNCHRONOUS 2`) and its `build.rs` — checked locally, without the network
+- ext4 `auto_da_alloc`: the kernel documentation, [NOT VERIFIED live in this session] — kernel.org did not open from here; the wording is given from memory and is marked as unverified
+- The autosave and backup mechanisms of the five core editors were not reopened: the facts and their primary sources are in F-PRJ-002 (`docs/features/project/history/versions-and-snapshots.md`)
+- None of the five editors was checked live in this note: the question "will the write survive a power failure" cannot be settled by observation in principle (see "The trick behind it", item 2)
 
-**Реализовано в Р.49** — docs/porting-notes.md п.349
-(тесты t351, t352, t353); дальнейшая жизнь фичи там.
+**Implemented in R.49** — docs/porting-notes.md item 349
+(tests t351, t352, t353); the further life of the feature is there.

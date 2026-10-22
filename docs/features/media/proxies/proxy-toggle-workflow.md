@@ -1,12 +1,12 @@
 ---
 id: F-MED-002
-title: Прокси — монтаж на лёгких копиях, рендер с оригиналов
-status: кандидат
+title: Proxies — editing on light copies, rendering from originals
+status: candidate
 priority: B
 cost: L
 category: media/proxies
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: no
 crates: [kt-model, kt-media, kt-ffmpeg, kt-cache, kt-engine, kt-otio, kt-app]
 invariants: [4, 5, 9, 10, 11]
 ui_rules: [12, 13, 16, 20]
@@ -17,422 +17,234 @@ depends_on: []
 checked: 2026-09-07
 ---
 
-# F-MED-002 — Прокси — монтаж на лёгких копиях, рендер с оригиналов
+# F-MED-002 — Proxies — editing on light copies, rendering from originals
 
-## Суть
+## Essence
 
-Монтажёр бросает на таймлайн часовой материал с 4K-камеры, и превью
-перестаёт поспевать: скраб дёргается, кадр отстаёт от звука, вентилятор
-воет. Прокси — это когда программа один раз перекодирует исходники в
-маленькие лёгкие копии, привязывает их к оригиналам и монтирует на них, а
-на финальный рендер сама, без напоминания, возвращает оригиналы.
-Переключатель у фичи один, и вся её ценность в том, что его можно забыть
-выключить.
+The editor drops an hour of 4K camera footage onto the timeline, and the preview stops keeping up: scrubbing stutters, the picture lags behind the sound, the fan howls. A proxy is when the program re-encodes the sources once into small light copies, links them to the originals and edits on them, and for the final render it returns to the originals by itself, without a reminder. The feature has one switch, and all its value lies in the fact that it can be forgotten to be turned off.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Create Video Proxy (ПКМ в Project Media) | файл `.sfvp0` кладётся **рядом с исходником, с тем же именем**, и в Project Media НЕ показывается — его видно только в проводнике. Отдельного тумблера «прокси/оригинал» нет вовсе: прокси включает тот же регулятор, что качество превью — «When the preview quality is set to Draft or Preview, the proxy file is used. When the preview quality is set to Good or Best, the original file is used». Для 4K прокси строятся автоматически. Рендер прокси не видит в принципе |
-| Adobe Premiere | 26.x | Proxies: Ingest → Create Proxies / Attach Proxies, кнопка Toggle Proxies в Program Monitor | прокси создаются через Media Encoder по пресету ingest (типовой «Low Resolution Proxy» — 1024×540), файлы пишутся в выбранную при импорте папку. Чужие прокси цепляются командой Attach Proxies, и Adobe требует имя `<оригинал>_Proxy.<расш>` в отдельной папке рядом с мастерами. В диалоге экспорта есть галочка **Use Proxies** (появилась в 14.3.2), и Adobe прямо предупреждает: «The "Use Proxies" checkbox is not affected by enabling or disabling proxies while editing» — состояние монтажа и решение рендера НЕ СВЯЗАНЫ. Галочка сохраняется в пресет экспорта; соседняя «Use Previews» имеет над ней приоритет |
-| DaVinci Resolve | 21 (механика проверялась по 18.x–20.x) | Proxy Media, Optimized Media, Render Cache — ТРИ разные вещи | Optimized Media — внутренний, непортируемый и неэкспортируемый кэш перекодированного материала; Proxy Media — обычные файлы (ProRes Proxy на macOS, DNxHR/H.264 на Windows; четверть/восьмая разрешения), которые можно унести и раздать; папку задаёт Working Folders → Proxy generation location, а отдельное бесплатное приложение Blackmagic Proxy Generator строит их по watch-папке. В Render Settings на Deliver есть переключатель «Use optimized media» — по умолчанию рендер идёт с оригиналов |
-| Final Cut Pro | 12.3 | Optimized media / Proxy media, меню View → Media | прокси — Apple ProRes 422 Proxy **или** H.264, «in a variety of frame sizes from 12.5 percent to 100 percent of the original», хранятся внутри библиотеки или во внешнем storage location. Режимов ТРИ: Optimized/Original, **Proxy Preferred** (нет прокси — молча берёт оригинал) и **Proxy Only**. Защита от рендера с прокси — фраза в справке: «make sure to switch back to optimized/original media before sharing your project» |
-| After Effects | 26.x | Proxy (Set Proxy → File), Placeholder, Comp Proxy | прокси ставится на КОНКРЕТНЫЙ элемент проекта или на композицию, переключается квадратиком у имени элемента. Отдельная строка в Render Settings — **Proxy Use**: `Use No Proxies` (умолчание в шаблоне Best Settings) / `Use Comp Proxies Only` / `Use All Proxies` / `Current Settings`, то есть решение принимается на уровне задания рендера, а не проекта |
+| VEGAS Pro | 2026.0 | Create Video Proxy (RMB in Project Media) | the file `.sfvp0` is placed **next to the source, with the same name**, and it is NOT shown in Project Media — it is visible only in Explorer. There is no separate "proxy/original" toggle at all: the proxy is switched by the same control as preview quality — "When the preview quality is set to Draft or Preview, the proxy file is used. When the preview quality is set to Good or Best, the original file is used". For 4K, proxies are built automatically. Rendering in principle does not see the proxy |
+| Adobe Premiere | 26.x | Proxies: Ingest → Create Proxies / Attach Proxies, the Toggle Proxies button in Program Monitor | proxies are created via Media Encoder by an ingest preset (the typical "Low Resolution Proxy" — 1024×540); the files are written to the folder chosen at import. Foreign proxies are attached with the Attach Proxies command, and Adobe requires the name `<original>_Proxy.<ext>` in a separate folder next to the masters. The export dialog has a **Use Proxies** checkbox (appeared in 14.3.2), and Adobe warns directly: "The "Use Proxies" checkbox is not affected by enabling or disabling proxies while editing" — the editing state and the render decision are NOT LINKED. The checkbox is saved into the export preset; the neighbouring "Use Previews" takes priority over it |
+| DaVinci Resolve | 21 (mechanics checked against 18.x–20.x) | Proxy Media, Optimized Media, Render Cache — THREE different things | Optimized Media — an internal, non-portable and non-exportable cache of re-encoded material; Proxy Media — ordinary files (ProRes Proxy on macOS, DNxHR/H.264 on Windows; quarter/eighth resolution), which can be carried away and handed out; the folder is set by Working Folders → Proxy generation location, and the separate free application Blackmagic Proxy Generator builds them from a watch folder. In Render Settings on Deliver there is a "Use optimized media" switch — by default the render runs from the originals |
+| Final Cut Pro | 12.3 | Optimized media / Proxy media, View → Media menu | a proxy is Apple ProRes 422 Proxy **or** H.264, "in a variety of frame sizes from 12.5 percent to 100 percent of the original", stored inside the library or in an external storage location. There are THREE modes: Optimized/Original, **Proxy Preferred** (if there is no proxy, it silently takes the original) and **Proxy Only**. The protection against rendering with proxies is a phrase in the help: "make sure to switch back to optimized/original media before sharing your project" |
+| After Effects | 26.x | Proxy (Set Proxy → File), Placeholder, Comp Proxy | a proxy is set on a SPECIFIC project item or on a composition, and it is switched by a small square next to the item's name. A separate line in Render Settings — **Proxy Use**: `Use No Proxies` (the default in the Best Settings template) / `Use Comp Proxies Only` / `Use All Proxies` / `Current Settings`, that is, the decision is taken at the level of the render job, not the project |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Защита от «отрендерил с прокси» — это не галочка, а РАЗНАЯ
-КОНСТРУКЦИЯ, и разброс между редакторами максимальный.** VEGAS вообще не
-даёт такой возможности: в справке написано «Video proxy files are not used
-for rendering your project», а тумблера «прокси/оригинал» там нет — прокси
-включается тем же регулятором, что и качество превью (Draft/Preview —
-прокси, Good/Best — оригинал). То есть Vegas СКЛЕИЛ «долю разрешения» и
-«прокси» в один орган управления и тем закрыл вопрос. Premiere пошёл
-ровно в другую сторону и сделал это явно: галочка Use Proxies живёт в
-диалоге экспорта, и Adobe в анонсе подчёркивает, что она «is not affected
-by enabling or disabling proxies while editing» — то есть состояние
-монтажа и решение рендера у Premiere ДВА РАЗНЫХ, не связанных между собой
-переключателя, да ещё и сохраняемых в пресет экспорта. Отсюда и берутся
-треды «Premiere is exporting my proxies». FCP держит середину — «Proxy
-Preferred» сам подставляет оригинал, когда прокси нет, а «Proxy Only»
-честно отдаст рендер с прокси, и единственная защита Apple — предложение
-в справке. Тот же вопрос, три несовместимых ответа.
+**1. Protection against "rendered with the proxy" is not a checkbox but a DIFFERENT
+DESIGN, and the spread between editors is maximal.** VEGAS does not give such an
+option at all: the help says "Video proxy files are not used
+for rendering your project", and there is no "proxy/original" toggle there — the proxy
+is enabled by the same control as preview quality (Draft/Preview —
+proxy, Good/Best — original). That is, Vegas FUSED "resolution share" and
+"proxy" into one control and thereby closed the question. Premiere went
+exactly the other way and did it explicitly: the Use Proxies checkbox lives in the
+export dialog, and Adobe in its announcement underlines that it "is not affected
+by enabling or disabling proxies while editing" — that is, for Premiere the editing
+state and the render decision are TWO DIFFERENT switches, not linked to each other, and moreover saved into the export preset. This is where the
+threads "Premiere is exporting my proxies" come from. FCP holds the middle — "Proxy
+Preferred" itself substitutes the original when there is no proxy, while "Proxy Only"
+honestly gives a render from the proxy, and Apple's only protection is a suggestion
+in the help. The same question, three incompatible answers.
 
-**2. Совпасть прокси обязан по ЧАСТОТЕ КАДРОВ, ИМЕНИ и ЗВУКУ — а
-разрешение как раз может отличаться.** Adobe требует, чтобы чужой прокси
-назывался `<оригинал>_Proxy.<расш>` и лежал в отдельной папке рядом с
-мастерами; Larry Jordan добавляет, что частота кадров прокси обязана
-совпадать с мастером. Самое неочевидное — про звук: если у мастера больше
-двух аудиоканалов (хотя бы и пустых), прокси нельзя делать в H.264,
-потому что Premiere пишет H.264 только в MP4, а MP4 несёт два канала —
-остаются ProRes Proxy или DNxHR LB. То есть «сделаю прокси ffmpeg'ом в
-h264» ломается не об видео, а об аудио, и ломается молча.
+**2. A proxy must match by FRAME RATE, NAME and SOUND — and the resolution is exactly what may differ.** Adobe requires a foreign proxy to be named `<original>_Proxy.<ext>` and to lie in a separate folder next to
+the masters; Larry Jordan adds that the frame rate of the proxy must match the master. The least obvious thing concerns sound: if the master has more than
+two audio channels (even empty ones), the proxy cannot be made in H.264,
+because Premiere writes H.264 only into MP4, and MP4 carries two channels —
+ProRes Proxy or DNxHR LB remain. That is, "I'll make a proxy with ffmpeg in
+h264" breaks not on the video but on the audio, and breaks silently.
 
-**3. Прокси другого разрешения меняет не скорость, а КАРТИНКУ.** Эффект,
-параметр которого задан в пикселях, считается в пикселях ТЕКУЩЕГО кадра:
-блюр радиусом 20 px на прокси 1/4 покрывает вчетверо большую долю
-изображения, чем тот же блюр на оригинале. Ловушка не гипотетическая — на
-неё наступают даже без прокси, просто работая на пониженном разрешении
-превью. И к нам она относится напрямую: у нас доля разрешения превью
-1/16…1/1 уже есть, а масштабируется ею РОВНО ОДИН эффект — трёхмерный
-(`Cam3d.world_scale`); `Blur`, `Glow`, `Edges`, `Noise`, `Vhs` с единицей
-`Px` считаются в пикселях кадра как есть.
+**3. A proxy of a different resolution changes not the speed but the PICTURE.** An effect whose parameter is set in pixels is computed in the pixels of the CURRENT frame: a blur with a radius of 20 px on a 1/4 proxy covers four times the share
+of the image that the same blur covers on the original. The trap is not hypothetical — people step on it even without proxies, simply by working at a reduced preview
+resolution. And it applies to us directly: we already have a preview resolution
+share of 1/16…1/1, and EXACTLY ONE effect is scaled by it — the three-dimensional one
+(`Cam3d.world_scale`); `Blur`, `Glow`, `Edges`, `Noise`, `Vhs` with the unit
+`Px` are computed in the pixels of the frame as they are.
 
-## Плюсы
+## Pros
 
-- Экономия достаётся ДЕКОДУ — единственной статье расхода, которую не
-  уменьшают ни кэш результата, ни доля разрешения превью: те работают уже
-  после того, как кадр раскодирован.
-- Подмена источника не трогает монтаж. Клип адресует материал временем и
-  идентификатором медиа, а не файлом, поэтому тумблер — одна операция над
-  медиа, а не переписывание сорока событий.
-- Прокси — файлы на диске: они переживают перезапуск программы, их можно
-  сделать один раз на всю студию и раздать по сети, а прокси с площадки
-  (камерные) подцепить как есть. Прогретый кэш умирает вместе с
-  процессом, а доля разрешения вообще никуда не передаётся.
-- Прокси ставятся пофайлово: тяжёлый материал проксируется, лёгкий
-  остаётся как есть — «оптимизировать» проект целиком не требуется.
-- У Resolve видно, чем платят за отказ от файлов: Optimized Media быстрее
-  заводится, но «cannot be exported, and is not user accessible» — то
-  есть с коллегой не поделишься и на другую машину не увезёшь.
+- The saving goes to DECODING — the only expense item that neither the result cache nor the preview resolution share reduces: those work only after the frame has already been decoded.
+- Swapping the source does not touch the edit. A clip addresses material by time and media identifier, not by file, so the toggle is one operation on the media, not a rewrite of forty events.
+- Proxies are files on disk: they survive a restart of the program, they can be made once for the whole studio and distributed over the network, and proxies from the location (camera proxies) can be attached as they are. A warm cache dies together with the process, and the resolution share is not handed over anywhere at all.
+- Proxies are set per file: heavy material is proxied, light material stays as it is — "optimising" the whole project is not required.
+- Resolve shows what is paid for refusing files: Optimized Media starts up faster, but it "cannot be exported, and is not user accessible" — that is, you cannot share it with a colleague or take it to another machine.
 
-## Минусы
+## Cons
 
-- За одним медиа в каждый момент стоит ровно один открытый файл, поэтому
-  переключение тумблера обнуляет всё прогретое по этому источнику:
-  оригинал и прокси не могут лежать в кэше одновременно, не раздвоив
-  правду о прогретости.
-- Прокси — второй набор файлов: место на диске, необходимость
-  пересоздавать их при правке оригинала, вопрос «где мои прокси» при
-  переносе проекта и отдельная процедура переподключения на сотнях
-  клипов.
-- Эффект с параметром в пикселях даёт на прокси другую картинку. Это не
-  дефект реализации, а следствие того, что эффект не знает, в каком
-  масштабе живёт.
-- Прокси кодируются с потерями и обычно в 8 бит 4:2:0, поэтому всё, что
-  оценивается по тонким градациям — банды, шум, край ключа, результат
-  грейда — на прокси оценивать нельзя. Прокси ускоряют монтаж, но не
-  цветокоррекцию: там нужен полноценный интермедиат (Optimized Media в
-  Resolve, ProRes 422 в FCP), а это уже не «лёгкая копия».
-- Генерация — полный проход «декод + энкод» по каждому исходнику: на часе
-  4K это десятки минут, которые нужно где-то показать, дать отменить и
-  пережить закрытие диалога.
-- Требования к совпадению (имя, частота кадров, число аудиоканалов) нигде
-  не проверяются заранее: узнаёшь о них по молчаливому отказу привязки
-  или по разъехавшейся синхронизации.
+- Exactly one open file stands behind one media item at any moment, so switching the toggle zeroes everything warm for that source: the original and the proxy cannot lie in the cache at the same time without splitting the truth about warmth in two.
+- A proxy is a second set of files: disk space, the need to recreate them when the original is edited, the question "where are my proxies?" when a project is moved, and a separate procedure of relinking across hundreds of clips.
+- An effect with a parameter in pixels gives a different picture on a proxy. This is not an implementation defect but a consequence of the effect not knowing at what scale it lives.
+- Proxies are encoded lossy and usually in 8-bit 4:2:0, so everything that is judged by fine gradations — banding, noise, the edge of a key, the result of a grade — cannot be judged on a proxy. Proxies speed up editing but not colour correction: there one needs a full intermediate (Optimized Media in Resolve, ProRes 422 in FCP), and that is no longer a "light copy".
+- Generation is a full "decode + encode" pass over each source: on an hour of 4K that is tens of minutes, which have to be shown somewhere, allowed to be cancelled, and survive the closing of the dialog.
+- The matching requirements (name, frame rate, number of audio channels) are nowhere checked in advance: you learn about them from a silent refusal of the link or from a desynchronised sync.
 
-## Что говорят пользователи
+## What users say
 
-Экспорт с прокси случается и с людьми, которые знают, что делают:
+Exporting with proxies happens even to people who know what they are doing:
 
 > HELP! Premiere is exporting my proxies instead of the source file
-> — заголовок треда markalext, Adobe Community, https://community.adobe.com/questions-729/help-premiere-is-exporting-my-proxies-instead-of-the-source-file-1390164
+> — thread title by markalext, Adobe Community, https://community.adobe.com/questions-729/help-premiere-is-exporting-my-proxies-instead-of-the-source-file-1390164
 
 > If You used the proxies in the timeline, that is not the way to go.
-> — Ann Bens (Community Expert), Adobe Community, там же
+> — Ann Bens (Community Expert), Adobe Community, ibid.
 
-Ответ эксперта в том же треде объясняет, почему обратной дороги нет: «you
+The expert's answer in the same thread explains why there is no way back: "you
 will have to replace all proxy files on the timeline with the original to
-get it exported with the original files» — прокси, попавший в монтаж как
-обычный клип, перестаёт быть прокси и становится материалом.
+get it exported with the original files" — a proxy that got into the edit as an ordinary clip stops being a proxy and becomes material.
 
-Пониженное разрешение меняет картинку, и это выясняется в конце проекта:
+Reduced resolution changes the picture, and this is found out at the end of the project:
 
 > I typically preview at half resolution to use less CPU/RAM, and unfortunately, I just finished an entire project only to realize that when I render or preview at the full 1080p resolution, any text layers that have layer styles enabled are rendering completely wrong.
 > — James Inniani, Creative COW, 15.10.2018, https://creativecow.net/forums/thread/ae-half-resolution-preview-not-accurate/
 
 > Be careful working at a resolution other than 'full', as many things like plugins, not just styles, can render incorrectly or in unexpected ways.
-> — Andrew Somers, тот же тред, 15.10.2018
+> — Andrew Somers, same thread, 15.10.2018
 
-Привязка чужих прокси — отдельная история; требования Adobe озвучил свой
-же сотрудник, и они про ИМЕНА, а не про картинку:
+Attaching someone else's proxies is a separate story; Adobe's requirements were voiced by its own employee, and they concern NAMES, not the picture:
 
 > The Proxies must have names matching the Full Res/original with '_Proxy' appended to the name. e.g.: Full Res = scene01.mxf, Proxy = scene01_Proxy.mov
 > — Peter Garaway (Adobe), Creative COW, 24.10.2016, https://creativecow.net/forums/thread/proxies-do-not-automatically-attach-to-original-fo/
 
-В том же треде — цена ошибки на большом проекте: автор поста работает с
-«over 500 clips», а другой участник (02.02.2021) пишет про RED-прокси
-«These can only be attached one at a time – trying to do so as a batch
-usually causes the programme to crash».
+In the same thread — the price of an error on a large project: the post's author works with "over 500 clips", and another participant (02.02.2021) writes about RED proxies: "These can only be attached one at a time – trying to do so as a batch
+usually causes the programme to crash".
 
-Где физически лежат прокси, пользователи выясняют друг у друга:
+Users work out between themselves where the proxies physically lie:
 
 > If you look in the folder of your source media the proxy files will have the same name but the extension will be '*.sfvp0'.
 > — George Dean, Creative COW, 07.02.2019, https://creativecow.net/forums/thread/problems-withquestions-about-video-proxies/
 
-Разницу «прокси против оптимизированного материала» в Resolve на форуме
-BMD объясняют цитатой из документации самого установщика:
+The difference "proxy versus optimised media" in Resolve is explained on the BMD forum with a quote from the installer's own documentation:
 
 > Optimized Media is managed internally by DaVinci Resolve, cannot be exported, and is not user accessible. In contrast, Proxy Media creates fully portable and independent media that can be easily managed by the user.
 > — Singularity, forum.blackmagicdesign.com, 12.11.2020, https://forum.blackmagicdesign.com/viewtopic.php?p=686710
 
-Чего найти НЕ удалось: живой цитаты про прокси, разъехавшийся с
-оригиналом по длительности или таймкоду («proxies out of sync»). Искал по
-`creativecow.net`, `community.adobe.com` и через поисковые запросы вида
-«proxy different duration / out of sync / timecode mismatch» — выдача
-уходит либо в reddit (недоступен из этого окружения), либо в
-видео-туториалы, из которых цитировать нечего. Требование совпадения
-частоты кадров подтверждено первоисточником (Larry Jordan), само
-расхождение длительностей — пока только по документации.
+What could NOT be found: a live quote about a proxy that fell out of sync with the original in duration or timecode ("proxies out of sync"). I searched `creativecow.net`, `community.adobe.com` and through search queries like "proxy different duration / out of sync / timecode mismatch" — the results go either to reddit (unavailable from this environment) or to video tutorials, from which there is nothing to quote. The requirement of matching frame rate is confirmed by the primary source (Larry Jordan); the duration mismatch itself is so far only documented.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-**Три экономии, из которых у нас две.** Прокси подменяют ИСТОЧНИК, кэш
-сохраняет РЕЗУЛЬТАТ, доля разрешения уменьшает РАБОТУ. Наши две:
+**Three savings, of which we have two.** Proxies substitute the SOURCE, the cache keeps the RESULT, the resolution share reduces the WORK. Ours are the two:
 
-- *Доля разрешения превью* 1/16 … 1/1 — `draw_preview_controls` в
-  `src/apps/kt-app/src/app.rs` (массив `fracs`, `q_for`,
-  `Player::set_preview_quality`). Доля живёт «поверх» разрешения проекта:
-  при смене разрешения сохраняется доля, а не пиксели. Автоматического
-  понижения под нагрузкой нет — выбор всегда за человеком.
-- *Кэш* — `src/libs/kt-cache/src/lib.rs`: пре-FX
-  `BurstKind::Video{quality}` и пост-FX мемоизация
-  `PostFxVideo{quality, fx_hash}` (idx = таймлайн-тик). `quality` — часть
-  ключа: записи разных качеств не взаимозаменяемы, и coverage считается
-  отдельно на каждое качество (инвариант №4).
+- *Preview resolution share* 1/16 … 1/1 — `draw_preview_controls` in `src/apps/kt-app/src/app.rs` (the array `fracs`, `q_for`, `Player::set_preview_quality`). The share lives "on top of" the project resolution: when the resolution changes, the share is kept, not the pixels. There is no automatic lowering under load — the choice always belongs to the person.
+- *Cache* — `src/libs/kt-cache/src/lib.rs`: the pre-FX `BurstKind::Video{quality}` and the post-FX memoisation `PostFxVideo{quality, fx_hash}` (idx = timeline tick). `quality` is part of the key: records of different qualities are not interchangeable, and coverage is counted separately for each quality (invariant No. 4).
 
-Заодно ответ на вопрос «прокси — это та же ось, что `quality`?»: **нет**.
-`quality` — это запрос К ДЕКОДЕРУ на размер выдачи внутри ОДНОГО
-источника. Прокси — другой файл за тем же `MediaId`. Это разные оси, и
-смешивать их в ключе кэша нельзя (см. «Что мешает»).
+Also an answer to the question "are proxies the same axis as `quality`?": **no**. `quality` is a request TO THE DECODER for the output size within ONE source. A proxy is a different file behind the same `MediaId`. These are different axes, and they must not be mixed in the cache key (see "What gets in the way").
 
-**Экономия доли разрешения НЕ трогает декод.** `FfmpegSource`
-декодирует кадр целиком через `avcodec`, а `Quality` применяется потом, в
-`sws_scale` (`src/libs/kt-ffmpeg/src/source_impl.rs`). Значит 1/16
-экономит swscale, цепочку FX, композит и байты кэша — но 4K H.265 всё
-равно декодируется полностью, кадр за кадром. Именно эту статью расхода
-закрывают ТОЛЬКО прокси, и это главный аргумент за них.
+**The saving of the resolution share does NOT touch decoding.** `FfmpegSource` decodes the frame entirely through `avcodec`, and `Quality` is applied afterwards, in `sws_scale` (`src/libs/kt-ffmpeg/src/source_impl.rs`). So 1/16 saves swscale, the FX chain, the composite and the bytes of the cache — but a 4K H.265 is still decoded in full, frame by frame. It is precisely this expense item that ONLY proxies close, and that is the main argument for them.
 
-**Машинерия переключателя уже написана и покрыта тестами.**
-`Player::replace_media` (`src/libs/kt-engine/src/player.rs`) делает ровно
-то, что нужно кнопке «прокси/оригинал», и в правильном порядке: гасит
-`MediaWorker` → `cache.invalidate_source` → поднимает новый воркер →
-бампает `project_version` (иначе префетч в простое не заметит смены) →
-будит цикл. Транспорт, позиция, FX-состояние и кэш остальных источников
-не трогаются. Фоновая часть — `KtApp::reopen_rx` и поток `reopen-media` в
-`src/apps/kt-app/src/app.rs`. Тесты t209 (заглушка), t210 (рендер с
-заглушками), t211 (вернувшийся файл подменяет заглушку) — это тот же
-сценарий «за `MediaId` встал другой файл», только повод другой. Это
-сильный аргумент «дёшево»: самая нервная часть фичи — подмена источника
-на ходу без потери позиции и FX-хвостов — уже отлажена.
+**The switch machinery is already written and covered by tests.** `Player::replace_media` (`src/libs/kt-engine/src/player.rs`) does exactly what the "proxy/original" button needs, and in the right order: it stops the `MediaWorker` → `cache.invalidate_source` → starts a new worker → bumps `project_version` (otherwise prefetch at idle would not notice the change) → wakes the loop. Transport, position, FX state and the cache of the other sources are not touched. The background part is `KtApp::reopen_rx` and the thread `reopen-media` in `src/apps/kt-app/src/app.rs`. Tests t209 (placeholder), t210 (render with placeholders), t211 (a returning file replaces the placeholder) — this is the same scenario "a different file stood up behind `MediaId`", only the cause is different. This is a strong argument of "cheap": the most nervous part of the feature — substituting the source on the fly without losing position or FX tails — is already debugged.
 
-**Sidecar-механика «файл рядом с проектом» отработана.**
-`<project>.ktindex.db` (`src/libs/kt-media/src/index.rs`,
-`docs/media-index.md`) уже хранит probe, пакетный индекс, peak-пирамиду и
-тумбы; идентичность файла проверяется `size + mtime + xxhash`, и
-перестраивается ТОЛЬКО затронутое медиа. Таблица привязки «медиа →
-прокси-файл» добавляется туда аддитивно, без бампа `SCHEMA_VERSION` — в
-`index.rs` для этого есть готовый приём (`CREATE TABLE IF NOT EXISTS` на
-каждом открытии, так заведена таблица `poster`).
+**The sidecar mechanism "file next to the project" is worked out.** `<project>.ktindex.db` (`src/libs/kt-media/src/index.rs`, `docs/media-index.md`) already stores probe, packet index, peak pyramid and thumbs; the identity of a file is checked by `size + mtime + xxhash`, and ONLY the affected media is rebuilt. The table binding "media → proxy file" is added there additively, without a bump of `SCHEMA_VERSION` — `index.rs` has a ready technique for this (`CREATE TABLE IF NOT EXISTS` on every opening; this is how the `poster` table was set up).
 
-**Кодировщик есть.** `kt-ffmpeg::Muxer`
-(`src/libs/kt-ffmpeg/src/muxer_impl.rs`) принимает RGBA-кадры и f32-аудио
-и пишет MP4 h264+AAC системным FFmpeg с автовыбором аппаратного энкодера
-(инварианты №9, №10). Генерация прокси — это НЕ экспорт таймлайна: это
-отдельный маленький цикл «читать `MediaSource` при уменьшенном `Quality`
-→ писать в `Muxer`».
+**The encoder exists.** `kt-ffmpeg::Muxer` (`src/libs/kt-ffmpeg/src/muxer_impl.rs`) accepts RGBA frames and f32 audio and writes MP4 h264+AAC through the system FFmpeg with automatic choice of a hardware encoder (invariants No. 9, No. 10). Generating a proxy is NOT an export of the timeline: it is a separate small loop "read `MediaSource` at a reduced `Quality` → write to `Muxer`".
 
-**В формате проекта место под прокси уже ЕСТЬ — и не наше.** OTIO держит
-у клипа не одну ссылку на материал, а карту:
-`Clip.media_references: IndexMap<String, Option<MediaRefNode>>` +
-`active_media_reference_key` (`src/libs/kt-otio/src/schema.rs`),
-`DEFAULT_MEDIA_KEY = "DEFAULT_MEDIA"`, плюс писаный апгрейд Clip.1 →
-Clip.2. Мы читаем только активную ссылку, но ВСЮ карту возим passthrough
-(`ClipExtra::media_refs` в `src/libs/kt-otio/src/convert.rs`) — то есть
-проект, пришедший из чужого инструмента с ключом вида `proxy`, у нас уже
-не теряется; мы просто не умеем на него переключиться.
+**In the project format the place for proxies ALREADY exists — and it is not ours.** OTIO keeps for a clip not one reference to the material but a map: `Clip.media_references: IndexMap<String, Option<MediaRefNode>>` + `active_media_reference_key` (`src/libs/kt-otio/src/schema.rs`), `DEFAULT_MEDIA_KEY = "DEFAULT_MEDIA"`, plus the written upgrade Clip.1 → Clip.2. We read only the active reference, but we carry the WHOLE map as passthrough (`ClipExtra::media_refs` in `src/libs/kt-otio/src/convert.rs`) — that is, a project that came from a foreign tool with a key of the form `proxy` is already not lost with us; we simply do not know how to switch to it.
 
-### Чего не хватает
+### What is missing
 
-1. У медиа в НАШЕЙ модели один путь: `MediaRef { id, path }`
-   (`src/libs/kt-model/src/project.rs`). Второго пути и признака «сейчас
-   активен прокси» нет.
-2. Нет транскодера «файл → файл». `export_mp4_with_backends`
-   (`src/libs/kt-engine/src/export.rs`) рендерит КОМПОЗИЦИЮ и получает
-   источники снаружи; для прокси нужен другой, куда более простой цикл.
-3. Нет очереди фоновых заданий с прогрессом. Прокси на час материала —
-   десятки минут работы, которые обязаны идти в фоне и переживать
-   закрытие окна рендера.
-4. Нет ни одного места в UI, где у ОТДЕЛЬНОГО медиа есть свойства и
-   действия: у бина есть карточки и контекстное меню ГРУПП
-   (`src/apps/kt-app/src/bin_panel.rs`), у медиа — нет.
-5. Нет «attach proxies»: подцепить чужой (камерный) прокси негде и нечем
-   проверить, что он подходит.
+1. In OUR model a media item has one path: `MediaRef { id, path }` (`src/libs/kt-model/src/project.rs`). There is no second path and no sign of "the proxy is now active".
+2. There is no transcoder "file → file". `export_mp4_with_backends` (`src/libs/kt-engine/src/export.rs`) renders a COMPOSITION and receives the sources from outside; for proxies a different, much simpler loop is needed.
+3. There is no queue of background jobs with progress. A proxy for an hour of material is tens of minutes of work, which must run in the background and survive the closing of the render window.
+4. There is not one place in the UI where a SEPARATE media item has properties and actions: the bin has cards and a context menu for GROUPS (`src/apps/kt-app/src/bin_panel.rs`), media has none.
+5. There is no "attach proxies": there is nowhere and nothing to attach a foreign (camera) proxy and check that it fits.
 
-### Что мешает
+### What gets in the way
 
-**Точка привязки — `SourceId`, и она равна `MediaId` один в один**
-(`SourceId(clip.media.0)` в `src/libs/kt-engine/src/video.rs`). Это
-хорошо: прокси естественно встаёт «за тем же `MediaId`», и весь движок —
-план кадра, префетч, полоски прогретости, ключи пост-FX — ничего не
-замечает; `kt-ffmpeg` и так заперт за трейтом `MediaSource`
-(`docs/architecture.md`). Но платой идёт то, что оригинал и прокси НЕ
-МОГУТ лежать в кэше одновременно: `invalidate_source` выносит все записи
-источника, и каждое переключение тумблера обнуляет прогретость.
-Заводить прокси третьей осью ключа кэша (рядом с `quality`) нельзя: это
-удвоило бы coverage и сломало формулировку инварианта №4 «кэш —
-единственная правда о прогретости» — правды стало бы две, и полоскам
-пришлось бы выбирать, какую показывать.
+**The binding point is `SourceId`, and it equals `MediaId` one to one** (`SourceId(clip.media.0)` in `src/libs/kt-engine/src/video.rs`). This is good: a proxy naturally stands "behind the same `MediaId`", and the whole engine — the frame plan, prefetch, coverage bars, the keys of post-FX — notices nothing; `kt-ffmpeg` is already locked behind the `MediaSource` trait (`docs/architecture.md`). But the price is that the original and the proxy CANNOT lie in the cache at the same time: `invalidate_source` removes all records of the source, and every toggle of the switch zeroes the warmth. Introducing the proxy as a third axis of the cache key (next to `quality`) is not allowed: it would double the coverage and break the wording of invariant No. 4, "the cache is the single source of truth about warmth" — there would be two truths, and the bars would have to choose which one to show.
 
-**Прокси обязан совпасть с оригиналом по ДЛИТЕЛЬНОСТИ, и у нас на это уже
-стоит грабля.** Ключ кадра в кэше — время, а не номер кадра:
-`video_cache_idx(source_pts) = source_pts.0`
-(`src/libs/kt-engine/src/video.rs`). Поэтому прокси с другим fps нам не
-страшен — мы адресуем материал тиками, а не кадрами. Страшен прокси
-другой ДЛИТЕЛЬНОСТИ, а наш собственный муксер делает ровно его:
-`MuxConfig.fps` — целое число, `time_base = 1/fps`
-(`src/libs/kt-ffmpeg/src/muxer_impl.rs`), а дробные частоты мы снапаем на
-целую сетку (`grid_fps(23.976…) = 24`, t178 в
-`src/libs/kt-otio/tests/convert.rs`). Прокси часового материала 23.976
-fps, снятый нашим муксером на 24 fps, окажется короче оригинала почти на
-четыре секунды — и хвост клипа поедет. Первая же реализация обязана либо
-научить муксер дробным частотам, либо гарантировать длительность иначе.
-Побочно: MP4 у нас несёт стерео (инвариант №1), поэтому ограничение
-Premiere «h264-прокси не годится для многоканального звука» у нас
-структурно то же самое — просто многоканального звука мы и так не знаем.
+**A proxy must match the original in DURATION, and we already have a rake lying here.** The frame key in the cache is time, not the frame number: `video_cache_idx(source_pts) = source_pts.0` (`src/libs/kt-engine/src/video.rs`). Therefore a proxy with a different fps is not frightening to us — we address material by ticks, not by frames. What is frightening is a proxy of a different DURATION, and our own muxer does exactly that: `MuxConfig.fps` is an integer, `time_base = 1/fps` (`src/libs/kt-ffmpeg/src/muxer_impl.rs`), and fractional rates are snapped to the integer grid (`grid_fps(23.976…) = 24`, t178 in `src/libs/kt-otio/tests/convert.rs`). A proxy of an hour of 23.976 fps material, written by our muxer at 24 fps, will come out shorter than the original by almost four seconds — and the tail of the clip will drift. The very first implementation must either teach the muxer fractional rates or guarantee the duration some other way. Incidentally: our MP4 carries stereo (invariant No. 1), so Premiere's restriction "an h264 proxy is not suitable for multichannel audio" is structurally the same for us — we simply do not know multichannel audio anyway.
 
-**Экспорт с прокси у нас предотвращается структурно, а не галочкой.**
-Источники для рендера открывает НЕ движок: `render_dialog::open_all`
-(`src/apps/kt-app/src/render_dialog.rs`) и одноимённая функция в
-`src/apps/kt-cli/src/main.rs` идут по `MediaRef::path` из модели и
-передают готовый список в `export_mp4_with_backends`. Пока подмена
-прокси живёт ТОЛЬКО в плеерном пути (`Player::replace_media`), экспорт
-физически не видит прокси-файла — это конструкция VEGAS, а не Premiere,
-и она правильная. Но её надо не «не забыть», а закрепить: тест, который
-включает прокси, рендерит и сравнивает с эталоном на оригиналах, дёшев и
-прямо защищает инвариант №11.
+**Export with proxies is prevented structurally, not by a checkbox.** The render sources are NOT opened by the engine: `render_dialog::open_all` (`src/apps/kt-app/src/render_dialog.rs`) and the function of the same name in `src/apps/kt-cli/src/main.rs` go by `MediaRef::path` from the model and pass the ready list to `export_mp4_with_backends`. While the proxy substitution lives ONLY in the player path (`Player::replace_media`), export physically does not see the proxy file — this is the construction of VEGAS, not of Premiere, and it is correct. But it must not be "remembered" — it must be locked in: a test that turns on proxies, renders, and compares against the reference made from originals is cheap and directly protects invariant No. 11.
 
-**Пиксельные параметры FX уже врут на доле разрешения, и прокси это
-усугубит.** В `params_for!` (`src/libs/kt-model/src/project.rs`) единицу
-`Px` носят `Blur.radius/radius_y`, `Edges.thickness`, `Noise.size`,
-`Vhs.rgb_shift/scan_step`, `Glow.radius`. Масштабируется долей разрешения
-РОВНО ОДНО: 3D — `Cam3d.world_scale = quality.width / project.width`
-(`src/libs/kt-engine/src/video.rs`, `src/libs/kt-engine/src/video_plan.rs`).
-Блюр же реализован даунскейлом с шагом `(radius/3).max(1)+1` в пикселях
-ТЕКУЩЕГО кадра (`src/libs/kt-fx/src/video.rs`), поэтому на превью 1/4
-радиус 8 даёт вчетверо более грубое размытие относительно картинки, чем в
-экспорте. Инвариант №7 формально цел (превью == экспорт байт-в-байт
-проверяется на ОДНОМ качестве), но глазами монтажёра это ровно та беда, на
-которую жалуются пользователи чужих прокси. Правило крейта kt-fx
-(«умолчание нового параметра = прежнее поведение байт-в-байт») запрещает
-починить это молча: масштабирование `Px`-параметров сдвинет golden'ы, и
-решение об этом — отдельное, а не попутное.
+**Pixel parameters of FX already lie on the resolution share, and a proxy will make this worse.** In `params_for!` (`src/libs/kt-model/src/project.rs`) the unit `Px` is carried by `Blur.radius/radius_y`, `Edges.thickness`, `Noise.size`, `Vhs.rgb_shift/scan_step`, `Glow.radius`. Exactly ONE of them is scaled by the resolution share: the 3D one — `Cam3d.world_scale = quality.width / project.width` (`src/libs/kt-engine/src/video.rs`, `src/libs/kt-engine/src/video_plan.rs`). The blur, however, is implemented as a downscale with a step `(radius/3).max(1)+1` in the pixels of the CURRENT frame (`src/libs/kt-fx/src/video.rs`), so on a 1/4 preview a radius of 8 gives a blur four times coarser relative to the picture than in the export. Invariant No. 7 is formally intact (preview == export byte for byte is checked at ONE quality), but in the editor's eyes this is exactly the trouble that users complain about with other people's proxies. The rule of the kt-fx crate ("the default of a new parameter = the previous behaviour byte for byte") forbids fixing this silently: scaling of the `Px` parameters would shift the goldens, and the decision about it is a separate one, not an incidental one.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **№4** (кэш — единственная правда о coverage): переключение прокси
-  идёт только через `invalidate_source`; отдельной оси в ключе не
-  заводить.
-- **№5** (декодером владеет ровно один MediaWorker): подмена делается
-  заменой воркера, как в `replace_media`, а не вторым воркером на тот же
-  `MediaId`.
-- **№9 / №10** (экспорт внутрипроцессный, бинарь не линкуется с libav*):
-  генератор прокси обязан идти через `kt-ffmpeg::Muxer`, а не звать
-  внешний `ffmpeg`, хотя соблазн велик — это самая простая часть работы,
-  которую проще всего сделать неправильно.
-- **№11** (детерминизм): экспорт обязан идти с оригиналов. Единственный
-  пункт, ради которого фича требует ТЕСТА, а не дисциплины.
-- **№7** не нарушается: прокси меняет байты ИСТОЧНИКА, а не путь
-  композиции.
-- Правила UI `src/apps/kt-app/CLAUDE.md`: **20** («ничего не отрастает и
-  не отрубается само» — прокси не включаются сами и не выключаются сами
-  молча), **13** (тумблер обязан сесть на уже занятое место — например, в
-  карточку бина, а не в новую полосу), **16** (нет прокси у этого медиа —
-  это ОШИБКА жеста, а не блёклая подсказка), **12** (генерация — фоновая
-  работа: не во время жеста и не во время воспроизведения).
+- **No. 4** (the cache is the single source of truth about coverage): the switch of proxies goes only through `invalidate_source`; a separate axis is not to be introduced into the key.
+- **No. 5** (exactly one MediaWorker owns the decoder): the substitution is done by replacing the worker, as in `replace_media`, and not by a second worker on the same `MediaId`.
+- **No. 9 / No. 10** (export is in-process, the binary is not linked with libav*): the proxy generator must go through `kt-ffmpeg::Muxer`, and not call an external `ffmpeg`, although the temptation is great — this is the simplest part of the work, the easiest to do wrongly.
+- **No. 11** (determinism): export must go from the originals. The only item for which the feature requires a TEST, not discipline.
+- **No. 7** is not violated: a proxy changes the bytes of the SOURCE, not the path of the composition.
+- UI rules of `src/apps/kt-app/CLAUDE.md`: **20** ("nothing grows or gets cut off by itself" — proxies are not switched on by themselves nor switched off silently), **13** (the toggle must sit in space already occupied — for example, in the bin card, and not in a new strip), **16** (there is no proxy for this media — this is an ERROR of the gesture, not a faded hint), **12** (generation is background work: not during a gesture and not during playback).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | L — целый раунд: транскодер, фоновая очередь с прогрессом, второй путь у медиа, тумблер, защита экспорта |
-| Где основная работа | `kt-media`/`kt-ffmpeg` (цикл «файл → файл» поверх `Muxer`), `kt-app` (очередь, прогресс, тумблер и признак в бине), `kt-model` (второй путь и активный выбор у медиа), `kt-otio` (маппинг в штатные `media_references`) |
-| Формат проекта | своей версии НЕ требует: место штатное — `media_references` + `active_media_reference_key` OTIO, которые мы уже разбираем и возим passthrough. Тонкость: у OTIO карта ссылок висит на КЛИПЕ, а у нас медиа живёт в проекте один раз — при записи ссылка размножится по всем клипам медиа, и обратное чтение обязано это схлопывать |
-| Тесты, которые придётся написать | экспорт при включённых прокси совпадает с эталоном на оригиналах (защита №11); длительность прокси равна длительности оригинала с точностью до кадра; переключение туда-обратно не двигает playhead и не рушит FX-состояние (расширение t211); round-trip `media_references` с непустым не-дефолтным ключом; аддитивная таблица привязки в `ktindex.db` не бампает `SCHEMA_VERSION` |
-| Зависит от | ничего не блокирует; смежные — F-SPD-004 (таймкод и синхронизация), F-CLR-005 (приборы: их принципиально нельзя смотреть на прокси) |
-| Ломает совместимость | нет |
+| Scope | L — a whole round: the transcoder, a background queue with progress, a second path for media, the toggle, protection of export |
+| Where the main work is | `kt-media`/`kt-ffmpeg` (the "file → file" loop on top of `Muxer`), `kt-app` (queue, progress, the toggle and the sign in the bin), `kt-model` (a second path and an active choice for media), `kt-otio` (mapping into the standard `media_references`) |
+| Project format | does NOT require its own version: the place is standard — OTIO's `media_references` + `active_media_reference_key`, which we already parse and carry as passthrough. A subtlety: in OTIO the reference map hangs on the CLIP, while with us media lives in the project once — on writing, the reference will be multiplied across all clips of the media, and on reading back this must be collapsed |
+| Tests to write | export with proxies enabled matches the reference made from originals (protection No. 11); the duration of a proxy equals the duration of the original to the frame; switching back and forth does not move the playhead and does not break the FX state (an extension of t211); round-trip of `media_references` with a non-empty non-default key; the additive binding table in `ktindex.db` does not bump `SCHEMA_VERSION` |
+| Depends on | nothing blocks it; adjacent — F-SPD-004 (timecode and sync), F-CLR-005 (scopes: they must on principle not be looked at on a proxy) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём, но не раньше, чем появится материал, на котором это видно: доля
-разрешения превью закрывает всё, кроме декода, и пока проекты не упираются
-в декод 4K/H.265, прокси экономят чужую боль, а не нашу. Аргумент «за» —
-не производительность как таковая, а то, что половина фичи уже написана и
-оттестирована (`Player::replace_media`, sidecar-БД, `Muxer`,
-`media_references` в OTIO), и что защита от рендера с прокси у нас
-получается по конструкции VEGAS — экспорт открывает свои источники по
-`MediaRef::path` и прокси-файла не видит вовсе. Делать надо в этом
-порядке: сначала тест «рендер идёт с оригиналов», потом всё остальное.
+We take it, but not before there is material on which this shows: the preview resolution share covers everything except decoding, and while projects do not run up against decoding 4K/H.265, proxies save other people's pain, not ours. The argument "for" is not performance as such, but the fact that half of the feature is already written and tested (`Player::replace_media`, the sidecar DB, `Muxer`, `media_references` in OTIO), and that protection against rendering with proxies comes out for us by VEGAS's construction — export opens its own sources by `MediaRef::path` and does not see the proxy file at all. The work must be done in this order: first the test "render goes from the originals", then everything else.
 
-## Источники
+## Sources
 
-- VEGAS Pro 23 Help, «Creating proxy files for high-definition editing»:
+- VEGAS Pro 23 Help, "Creating proxy files for high-definition editing":
   https://help.magix-hub.com/video/vegas/23/en/content/topics/5-preview/creating_intermediate_files.htm
-  (дата обращения 07.09.2026) — `.sfvp0` рядом с исходником, привязка к
-  Preview Quality, «Video proxy files are not used for rendering your
-  project». Страница относится к линейке 23; в 2026.0 механика не
-  проверялась живьём — **[НЕ ПРОВЕРЕНО]**, что она не менялась.
-- Final Cut Pro User Guide, «Create optimized and proxy files»:
+  (accessed 07.09.2026) — `.sfvp0` next to the source, binding to Preview Quality, "Video proxy files are not used for rendering your
+  project". The page refers to line 23; in 2026.0 the mechanics were not checked live — **[NOT VERIFIED]** that it has not changed.
+- Final Cut Pro User Guide, "Create optimized and proxy files":
   https://support.apple.com/guide/final-cut-pro/create-optimized-and-proxy-files-verb8e5f6fd/mac
-  (07.09.2026) — ProRes 422 Proxy или H.264, «frame sizes from 12.5
-  percent to 100 percent of the original», хранение в библиотеке или во
-  внешнем storage location.
-- Final Cut Pro User Guide, «Control playback quality»:
+  (07.09.2026) — ProRes 422 Proxy or H.264, "frame sizes from 12.5
+  percent to 100 percent of the original", storage in the library or in an
+  external storage location.
+- Final Cut Pro User Guide, "Control playback quality":
   https://support.apple.com/guide/final-cut-pro/ver2fd7a8b94/mac
-  (07.09.2026) — определения Optimized/Original, Proxy Preferred, Proxy
-  Only и предупреждение про переключение перед Share.
-- Final Cut Pro User Guide, «Create a proxy-only project»:
+  (07.09.2026) — definitions of Optimized/Original, Proxy Preferred, Proxy
+  Only and the warning about switching before Share.
+- Final Cut Pro User Guide, "Create a proxy-only project":
   https://support.apple.com/guide/final-cut-pro/create-a-proxy-only-project-vere88b1ee9f/mac
   (07.09.2026).
-- forum.blackmagicdesign.com, тред «Proxy media vs. Optimized Media»,
+- forum.blackmagicdesign.com, thread "Proxy media vs. Optimized Media",
   12.11.2020: https://forum.blackmagicdesign.com/viewtopic.php?p=686710
-  (07.09.2026; страница открывается только через читалку `r.jina.ai`) —
-  цитата из документации установщика Resolve.
-- Adobe Community, «HELP! Premiere is exporting my proxies instead of the
-  source file»:
+  (07.09.2026; the page opens only through the reader `r.jina.ai`) —
+  a quote from the Resolve installer documentation.
+- Adobe Community, "HELP! Premiere is exporting my proxies instead of the
+  source file":
   https://community.adobe.com/questions-729/help-premiere-is-exporting-my-proxies-instead-of-the-source-file-1390164
-  (07.09.2026) — заголовок и ответы Ann Bens. Даты постов на странице
-  расходятся с упомянутой в них версией 23.3.1, поэтому дата поста здесь
-  не цитируется — **[НЕ ПРОВЕРЕНО]**.
-- Creative COW, «Proxies do not automatically attach to original
-  footage», 23.10.2016 – 02.02.2021:
+  (07.09.2026) — the title and the answers of Ann Bens. The post dates on the page
+  do not match the version 23.3.1 mentioned in them, so the post date is not
+  quoted here — **[NOT VERIFIED]**.
+- Creative COW, "Proxies do not automatically attach to original
+  footage", 23.10.2016 – 02.02.2021:
   https://creativecow.net/forums/thread/proxies-do-not-automatically-attach-to-original-fo/
-  (07.09.2026) — требования Adobe к именованию (`_Proxy`), проблемы
-  пакетной привязки RED-прокси.
-- Creative COW, «Problems With/Questions About Video Proxies», 07.02.2019:
+  (07.09.2026) — Adobe's naming requirements (`_Proxy`), the problems of batch attaching RED proxies.
+- Creative COW, "Problems With/Questions About Video Proxies", 07.02.2019:
   https://creativecow.net/forums/thread/problems-withquestions-about-video-proxies/
-  (07.09.2026) — `.sfvp0` в папке исходника.
-- Creative COW, «AE half resolution preview not accurate», 15.10.2018:
+  (07.09.2026) — `.sfvp0` in the source folder.
+- Creative COW, "AE half resolution preview not accurate", 15.10.2018:
   https://creativecow.net/forums/thread/ae-half-resolution-preview-not-accurate/
-  (07.09.2026) — эффекты на пониженном разрешении.
-- Larry Jordan, «Linking media to proxies created outside Premiere Pro»,
+  (07.09.2026) — effects at reduced resolution.
+- Larry Jordan, "Linking media to proxies created outside Premiere Pro",
   24.07.2021:
   https://larryjordan.com/articles/linking-media-to-proxies-created-outside-premiere-pro/
-  (07.09.2026) — совпадение частоты кадров, ограничение MP4 на два
-  аудиоканала, выбор ProRes Proxy / DNxHR LB.
+  (07.09.2026) — matching of the frame rate, the MP4 limit of two
+  audio channels, the choice of ProRes Proxy / DNxHR LB.
 - OpenTimelineIO Python API, `opentimelineio.schema.Clip`:
   https://opentimelineio.readthedocs.io/en/latest/api/python/opentimelineio.schema.html
   (07.09.2026) — `media_references`, `active_media_reference_key`,
-  `DEFAULT_MEDIA_KEY = 'DEFAULT_MEDIA'`. Назначение множественных ссылок
-  спецификация НЕ поясняет: трактовка «это место под прокси» —
-  **[НЕ ПРОВЕРЕНО]**, ни в `otio-file-format-specification`, ни в
-  `versioning-schemas` про них ничего нет.
-- Adobe Community (анонс), «New option to use proxy media when
-  exporting»:
+  `DEFAULT_MEDIA_KEY = 'DEFAULT_MEDIA'`. The specification does NOT explain the purpose of multiple references: the reading "this is the place for a proxy" is
+  **[NOT VERIFIED]**; neither `otio-file-format-specification` nor `versioning-schemas` says anything about them.
+- Adobe Community (announcement), "New option to use proxy media when
+  exporting":
   https://community.adobe.com/announcements-732/discuss-new-option-to-use-proxy-media-when-exporting-313379
-  (07.09.2026) — появление галочки в 14.3.2, её независимость от
-  монтажного тумблера, приоритет «Use Previews», сохранение в пресет.
-- Строки Premiere (пресет 1024×540, папка прокси) и Resolve 21 (кодеки
-  и место генерации прокси, чекбокс
-  «Use optimized media» в Render Settings) собраны из вторичных
-  источников и сниппетов поиска: `helpx.adobe.com` из этого окружения не
-  открывается, зеркало Resolve-мануала на `steakunderwater.com` отдало
-  404 на нужные страницы. Обе строки помечены как проверенные по
-  документации лишь частично — **[НЕ ПРОВЕРЕНО]** в части точных
-  формулировок UI.
-- Код Kinotrain: `src/libs/kt-cache/src/lib.rs`,
+  (07.09.2026) — the appearance of the checkbox in 14.3.2, its independence from the editing toggle, the priority of "Use Previews", saving into the preset.
+- The Premiere lines (preset 1024×540, proxy folder) and Resolve 21 (codecs
+  and the place of proxy generation, the checkbox
+  "Use optimized media" in Render Settings) were assembled from secondary
+  sources and search snippets: `helpx.adobe.com` does not open from this environment, and the mirror of the Resolve manual on `steakunderwater.com` returned
+  404 for the needed pages. Both lines are marked as only partly checked against documentation — **[NOT VERIFIED]** in the part concerning the exact UI wording.
+- Kinotrain code: `src/libs/kt-cache/src/lib.rs`,
   `src/libs/kt-media/src/{lib.rs,index.rs}`,
   `src/libs/kt-ffmpeg/src/{lib.rs,muxer_impl.rs,source_impl.rs}`,
   `src/libs/kt-engine/src/{player.rs,video.rs,video_plan.rs,export.rs}`,
@@ -440,4 +252,4 @@ Premiere «h264-прокси не годится для многоканальн
   `src/libs/kt-otio/src/{schema.rs,convert.rs,lib.rs}`,
   `src/apps/kt-app/src/{app.rs,render_dialog.rs,util.rs,bin_panel.rs}`,
   `src/apps/kt-cli/src/main.rs`, `docs/architecture.md`,
-  `docs/media-index.md` (прочитано 07.09.2026).
+  `docs/media-index.md` (read 07.09.2026).

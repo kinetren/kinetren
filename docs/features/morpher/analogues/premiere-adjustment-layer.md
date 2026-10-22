@@ -1,12 +1,12 @@
 ---
 id: F-MPH-004
-title: Adjustment Layer в Adobe Premiere
-status: исследовано
+title: Adjustment Layer in Adobe Premiere
+status: researched
 priority: B
 cost: XL
 category: morpher/analogues
 editors: [premiere-26, vegas-pro-2026, resolve-20, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-model, kt-engine, kt-fx, kt-app]
 invariants: [7, 11]
 ui_rules: [13, 17]
@@ -17,223 +17,211 @@ depends_on: []
 checked: 2026-09-07
 ---
 
-# F-MPH-004 — Adjustment Layer в Adobe Premiere
+# F-MPH-004 — Adjustment Layer in Adobe Premiere
 
-## Суть
+## Essence
 
-Монтажёр создаёт в бине пустой «слой поправок», кладёт его на верхнюю дорожку и
-вешает на него эффекты — грейд, блюр, зерно, виньетку. Всё, что лежит НИЖЕ по
-дорожкам и попадает под блок по времени, показывается через эти эффекты. Длина
-блока = длина действия: растянул — накрыло следующие три склейки, разрезал —
-половина сцены осталась без грейда. Слой ведёт себя как обычный клип: трим,
-сплит, копипаст, непрозрачность, режим наложения, ключи.
+The editor creates an empty "correction layer" in the bin, puts it on the top track and
+hangs effects on it — grade, blur, grain, vignette. Everything that lies BELOW it on the tracks and falls under
+the block by time is shown through these effects. The length of the block is the length of the action: stretch it — and it covers the next three cuts; cut it — and
+half the scene is left without the grade. The layer behaves like an ordinary clip: trim,
+split, copy-paste, opacity, blend mode, keyframes.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| Adobe Premiere | 26.x | Adjustment Layer | ЭЛЕМЕНТ ПРОЕКТА в бине с собственным размером кадра и PAR; на дорожке — обычный клип, эффекты считаются по смикшированной картинке дорожек ниже |
-| VEGAS Pro | 2026 | Adjustment Event | событие на дорожке, действует на композит нижних; есть огибающая непрозрачности и фейды по краям |
-| DaVinci Resolve | 20 | Adjustment Clip | берётся из Effects Library → Toolbox, правится в Inspector и на Color-странице |
-| Final Cut Pro | 12 | Adjustment Clip | встроен с 11.1 (Edit → Add Adjustment Clip, ⌥A, умолчание 10 с); до этого — самодельный генератор из Motion |
-| After Effects | 26 | Adjustment Layer | слой без содержимого, эффекты применяются к результату композиции слоёв ниже |
+| Adobe Premiere | 26.x | Adjustment Layer | a PROJECT ELEMENT in the bin with its own frame size and PAR; on a track it is an ordinary clip, the effects are computed on the mixed picture of the tracks below |
+| VEGAS Pro | 2026 | Adjustment Event | an event on a track, acts on the composite of the lower ones; has an opacity envelope and fades at the edges |
+| DaVinci Resolve | 20 | Adjustment Clip | taken from Effects Library → Toolbox, edited in the Inspector and on the Color page |
+| Final Cut Pro | 12 | Adjustment Clip | built in since 11.1 (Edit → Add Adjustment Clip, ⌥A, default 10 s); before that — a homemade generator from Motion |
+| After Effects | 26 | Adjustment Layer | a layer without content; effects are applied to the result of the composition of the layers below |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Выход слоя композитится поверх ровно той картинки, которую слой съел.** Из
-этого одного факта следуют три несвязанных на вид поведения. (а) Всё, что
-меняет только АЛЬФУ, на слое бессмысленно: Luma/Color/Ultra Key честно пробивает
-дырку, но в дырке виден тот же самый кадр — а премультиплицированная чернота
-подмешивается по краям, и вместо прозрачности пользователь видит «тёмное стало
-ещё темнее» (тред ниже, 2024, живёт без исправления). (б) Непрозрачность слоя
-бесплатно работает как ползунок силы эффекта: 60 % — это кроссфейд обработанной
-картинки с необработанной, отдельного параметра «strength» Adobe не понадобилось.
-(в) Пустой слой с режимом наложения Overlay меняет картинку, хотя внутри него
-ничего нет, — кадр смешивается сам с собой. Ровно та же дыра, что и (а), только
-с другим знаком.
+**1. The output of the layer is composited over exactly the picture that the layer consumed.** Three seemingly unrelated
+behaviours follow from this one fact. (a) Anything that changes only the ALPHA is meaningless on the layer: Luma/Color/Ultra Key honestly punches
+a hole, but in the hole the very same frame is visible — and premultiplied black
+bleeds in at the edges, and instead of transparency the user sees "the dark became
+even darker" (the thread below, 2024, lives on without a fix). (b) The opacity of the layer
+works for free as the strength slider of the effect: 60 % is a crossfade of the processed
+picture with the unprocessed one; Adobe did not need a separate "strength" parameter.
+(c) An empty layer with the Overlay blend mode changes the picture, although there is
+nothing inside it — the frame blends with itself. Exactly the same hole as (a), only
+with the opposite sign.
 
-**2. Это элемент проекта с собственным размером кадра, а не служебная пометка.**
-File → New → Adjustment Layer спрашивает ширину, высоту, timebase и PAR (по
-умолчанию — от текущей секвенции). Слой живёт в бине наравне с медиа, поэтому
-переносится копипастом в секвенцию другого разрешения — и тогда эффект накрывает
-не весь кадр: у людей вылезает «непокрашенная полоса справа». Лечится «Scale to
-Frame Size» на клипе или новым слоем под новую секвенцию; сам он под секвенцию
-не подстраивается.
+**2. It is a project element with its own frame size, not a service marker.**
+File → New → Adjustment Layer asks for width, height, timebase and PAR (by default — from the current sequence). The layer lives in the bin on a par with the media, so it is carried by copy-paste
+into a sequence of another resolution — and then the effect covers
+not the whole frame: people get an "unpainted strip on the right". It is cured by "Scale to
+Frame Size" on the clip or by a new layer under the new sequence; the layer itself does not
+adapt to the sequence.
 
-**3. Маска принадлежит ЭФФЕКТУ, а не клипу.** В Premiere 26 маска создаётся
-«неприписанной» и перетаскивается на Opacity или на любой эффект в Effect
-Controls. На adjustment-слое это различие смертельно: маска, посаженная на
-Opacity слоя, не ограничивает область его эффектов — она делает в выходе слоя
-дырку, где виден тот же кадр (механизм п.1). Ограничивает только маска, лежащая
-ВНУТРИ эффекта. Новый AI Object Mask и трекинг «до 20× быстрее» из 26.0 живут в
-той же схеме — ускоряют путь «маска у эффекта», а не отменяют его.
+**3. The mask belongs to the EFFECT, not to the clip.** In Premiere 26 a mask is created
+"unattached" and dragged onto Opacity or onto any effect in Effect
+Controls. On an adjustment layer this difference is fatal: a mask put on the
+Opacity of the layer does not limit the area of its effects — it makes a hole in the output of the layer,
+where the same frame is visible (the mechanism of item 1). Only a mask lying
+INSIDE the effect limits it. The new AI Object Mask and tracking "up to 20× faster" from 26.0 live in
+the same scheme — they speed up the path "mask on the effect", they do not cancel it.
 
-## Плюсы
+## Pros
 
-- Слой видит смикшированный кадр, поэтому блюр и грейд действуют на СТЫК
-  источников: виньетка ложится на кадр целиком, а не отдельно на каждый слой, и
-  на кроссфейде не видно, что под ним два разных материала.
-- Непрозрачность и режим наложения работают как сила и характер подмеса без
-  единого дополнительного параметра — это следствие того, что слой композитится
-  обычным путём.
-- Слой — обычный клип, поэтому трим, сплит, копипаст, ключи, мьют и вложение уже
-  работают тем же кодом; отдельного UI под «слой поправок» Adobe не писала.
-- Слои стекируются: грейд → блюр → виньетка на трёх дорожках, порядок задаётся
-  дорожками, а не списком внутри одного окна.
-- Область действия — геометрия блока, поэтому «раздвинуть эффект ещё на две
-  склейки» это жест ножницами, а не редактирование списка целей.
+- The layer sees the mixed frame, so blur and grade act at the JOINT of the sources: a vignette lies over the frame
+  as a whole, not separately on each layer, and on a crossfade one cannot see that there are two different materials underneath.
+- Opacity and blend mode work as the strength and character of the mix without
+  a single additional parameter — this is a consequence of the layer being composited
+  by the ordinary route.
+- The layer is an ordinary clip, so trim, split, copy-paste, keyframes, mute and nesting already work
+  with the same code; Adobe did not write a separate UI for the "correction layer".
+- Layers stack: grade → blur → vignette on three tracks, the order is set by the tracks,
+  not by a list inside one window.
+- The scope of action is the geometry of the block, so "extend the effect by two more
+  cuts" is a scissors gesture, not an edit of a target list.
 
-## Минусы
+## Cons
 
-- Любой эффект, который производит альфу, на слое не даёт видимого результата:
-  кеинг, маска на Opacity, alpha-эффекты. Единственный санкционированный обход —
-  вложение (nesting), то есть смена порядка рендера ценой плоскости монтажа.
-- Свой размер кадра, не наследуемый от секвенции: слой, переехавший в проект
-  другого разрешения, молча перестаёт накрывать весь кадр. Ошибка видна глазами,
-  а не сообщением.
-- Слой не знает, ЧТО под ним, а только «картинку». Warp Stabilizer на слое над
-  ретаймленным клипом не анализируется: трекинг требует неизменённых кадров, а
-  слой их не отдаёт.
-- Обходной путь (вложение) сам ломает следующий слой: внутри вложения
-  adjustment-слой видит только дорожки этого вложения, снаружи вложение — один
-  клип, и разложение монтажа перестаёт быть плоским.
-- Перенос в After Effects односторонний: слой с эффектами уезжает из Premiere в
-  AE, но скопировать adjustment-слой из AE обратно в Premiere нельзя (наравне с
+- Any effect that produces alpha gives no visible result on the layer:
+  keying, a mask on Opacity, alpha effects. The only sanctioned workaround is
+  nesting, that is, changing the render order at the price of the flatness of the edit.
+- Its own frame size, not inherited from the sequence: a layer moved into a project
+  of another resolution silently stops covering the whole frame. The error is visible to the eye,
+  not in a message.
+- The layer does not know WHAT is under it, only "the picture". Warp Stabilizer on a layer above a
+  retimed clip is not analysed: tracking requires unchanged frames, and the layer does not pass them on.
+- The workaround (nesting) breaks the next layer itself: inside the nest the
+  adjustment layer sees only the tracks of that nest, outside the nest is one clip, and the
+  decomposition of the edit stops being flat.
+- The transfer to After Effects is one-way: a layer with effects goes from Premiere to
+  AE, but an adjustment layer cannot be copied back from AE to Premiere (on a par with
   shape/text/camera/light).
 
-## Что говорят пользователи
+## What users say
 
 > I tried to use an adjustment layer (over a couple of clips) that contains some
 > effects and I wanted to use a Luma Key on this adjustment layer so the darker
 > tones would become transparent, but it doesn't work.
-> — Kata Lin, Adobe Community, 2 февраля 2024,
+> — Kata Lin, Adobe Community, 2 February 2024,
 > https://community.adobe.com/t5/premiere-pro-discussions/luma-key-or-color-key-or-ultra-key-not-working-on-adjustment-layers-bug-or-limitation/td-p/14397400
 
-Ответ Adobe в том же треде — не исправление, а смена маршрута рендера:
+Adobe's answer in the same thread — not a fix but a change of the render route:
 
 > You may need to reroute the render order pipeline via nesting.
-> — Kevin J. Monahan, Adobe staff, 2 февраля 2024, там же
+> — Kevin J. Monahan, Adobe staff, 2 February 2024, same thread
 
-Автор отказался: по его словам, отказ от adjustment-слоёв «massively complicate
-my workflow». Тред открыт с 2024 года, поведение в 26.x прежнее.
+The author declined: in his words, giving up adjustment layers "massively complicate
+my workflow". The thread has been open since 2024, the behaviour in 26.x is unchanged.
 
-Про маски то же самое формулирует эксперт сообщества — маска обязана быть у
-эффекта, иначе слой красит всё:
+The community expert formulates the same thing about masks — the mask must be on the
+effect, otherwise the layer paints everything:
 
 > unless of course there is a mask _on the effect_ in the AL
-> — R Neil Haugen, Adobe Community, 16 апреля 2024,
+> — R Neil Haugen, Adobe Community, 16 April 2024,
 > https://community.adobe.com/t5/premiere-pro-discussions/adjustment-layer-in-premiere-blend-mode-issues/m-p/14558936
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- `MorpherEvent` с `MorphTargets::Below` в
-  `src/libs/kt-model/src/project.rs` — прямой аналог по замыслу: «всё, что ниже
-  строки, в окне блока». Наложение считается снизу вверх, как adjustment-слои в
-  AE (`Project::effective_clips()`, там же).
-- **Устройство другое, и это принципиально.** `MorphPatch::apply_to()`
-  (`project.rs`, ~стр. 832) дописывает эффекты в цепочку КАЖДОГО клипа-цели, а не
-  обрабатывает композит. Частично накрытая цель режется на куски. Размера кадра
-  у морфера нет вовсе: в структуре только `lane/start/duration/targets/patch`,
-  поэтому весь класс дефектов «слой не той ширины» у нас невозможен по
-  построению, а копипаст морфера в проект другого разрешения безопасен.
-- **Кеинг из морфера у нас работает** — проверено по коду, не по аналогии:
-  `greenscreen()` в `src/libs/kt-fx/src/video.rs` (~стр. 348) ставит `px[3] = 0`
-  и `has_alpha = true`; композит `alpha_over()` в
-  `src/libs/kt-engine/src/video.rs` (~стр. 767) пропускает такой пиксель, и
-  виден слой НИЖЕ по дорожкам. То есть жалоба Premiere к нам не относится: у них
-  дырка вскрывает ту же картинку, у нас — следующий слой. Цена симметричная:
-  наш ключ режет каждый клип по отдельности, а не смикшированный кадр.
-- Мастер-выключатель цепочки события не гасит эффекты слоя: `apply_to()` при
-  `c.fx_off` вычищает СВОЮ цепочку клипа и дописывает морферную
-  (`project.rs`, ~стр. 850); зафиксировано тестом t214
+- `MorpherEvent` with `MorphTargets::Below` in
+  `src/libs/kt-model/src/project.rs` — a direct analogue in intent: "everything below the
+  line, within the block window". The blending is computed bottom to top, like adjustment layers in
+  AE (`Project::effective_clips()`, same place).
+- **The construction is different, and this is fundamental.** `MorphPatch::apply_to()`
+  (`project.rs`, ~line 832) appends effects to the chain of EACH target clip, rather than processing the composite. A partially covered target is cut into pieces.
+  The morpher has no frame size at all: its structure has only `lane/start/duration/targets/patch`,
+  therefore the whole class of defects "a layer of the wrong width" is impossible for us by
+  construction, and copy-pasting a morpher into a project of another resolution is safe.
+- **Keying from the morpher works for us** — verified by the code, not by analogy:
+  `greenscreen()` in `src/libs/kt-fx/src/video.rs` (~line 348) sets `px[3] = 0`
+  and `has_alpha = true`; the composite `alpha_over()` in
+  `src/libs/kt-engine/src/video.rs` (~line 767) skips such a pixel, and
+  the layer BELOW on the tracks is visible. So Premiere's complaint does not apply to us: for them the
+  hole reveals the same picture, for us — the next layer. The cost is symmetric:
+  our key cuts each clip separately, not the mixed frame.
+- The master switch of the event chain does not turn off the layer's effects: `apply_to()` with
+  `c.fx_off` clears ITS OWN clip chain and appends the morpher one
+  (`project.rs`, ~line 850); fixed by test t214
   `src/libs/kt-model/tests/fx_auto.rs`.
-- FX считаются пер-слой, композит после них: цепочка живёт в `LayerSrc.fx`
-  (`src/libs/kt-engine/src/video_plan.rs`), «пост-FX» в кэше означает «после
-  цепочки СЛОЯ», а не «после композита».
-- UI слоя — `src/apps/kt-app/src/morpher_editor.rs`, единая полоса цепочки
+- FX are computed per layer, the composite comes after them: the chain lives in `LayerSrc.fx`
+  (`src/libs/kt-engine/src/video_plan.rs`), and "post-FX" in the cache means "after the
+  chain of the LAYER", not "after the composite".
+- The layer's UI — `src/apps/kt-app/src/morpher_editor.rs`, a single chain strip
   (t217).
 
-### Чего не хватает
+### What is missing
 
-- ~~Силы наложения~~ **сделано в Р.38 п.12** (`docs/porting-notes.md`, п.267):
-  `MorpherEvent.strength` + `fade_in`/`fade_out`, а механизм — ровно тот, что
-  описан выше в «фишке фишки»: кроссфейд обработанной картинки с
-  необработанной. Реализован как СЛОТ ЦЕПОЧКИ (`FxInstance::LayerMix`), поэтому
-  автоматизация, ключ пост-FX кэша и копипаст достались ему без отдельного
-  кода. Смешение идёт с состоянием ДО вклада слоя (поле `from`), а не со входом
-  всей цепочки — иначе сила откатывала бы и собственные эффекты события.
-- Обработки СМИКШИРОВАННОЙ картинки: пост-композитного шага в плане нет,
-  `PlanLayer` описывает источники и переходы, но не «шаг над результатом».
-- Масок и трекинга: поиск по `src/libs/kt-fx/src` и `src/libs/kt-model/src` не
-  находит ни одного `mask` — ни у клипа, ни у эффекта.
-- ~~Автоматизации внутри патча~~ **сделано в Р.38 п.13** (п.266):
-  `MorphPatch.video_auto`/`audio_auto`, домен — время БЛОКА (у слоя нет
-  материала), `apply_to` переводит ключи в материал цели.
-- Вложенных композиций у нас нет (`docs/porting-notes.md`, п.158: «у нас там
-  пустота … пока вложенные композиции не поддержаны»), поэтому обходной путь
-  Adobe «переставь порядок рендера вложением» нам недоступен — решение должно
-  работать без него.
+- ~~Blend strength~~ **done in R.38 item 12** (`docs/porting-notes.md`, item 267):
+  `MorpherEvent.strength` + `fade_in`/`fade_out`, and the mechanism is exactly the one
+  described above in "The trick behind it": a crossfade of the processed picture with
+  the unprocessed one. It is implemented as a CHAIN SLOT (`FxInstance::LayerMix`), therefore
+  automation, the post-FX cache key and copy-paste came to it without separate
+  code. The mixing goes with the state BEFORE the layer's contribution (the `from` field), not with the input of
+  the whole chain — otherwise the strength would also roll back the event's own effects.
+- Processing of the MIXED picture: there is no post-composite step in the plan,
+  `PlanLayer` describes sources and transitions, but not a "step over the result".
+- Masks and tracking: a search over `src/libs/kt-fx/src` and `src/libs/kt-model/src` finds not a single `mask` — neither on a clip nor on an effect.
+- ~~Automation inside the patch~~ **done in R.38 item 13** (item 266):
+  `MorphPatch.video_auto`/`audio_auto`, the domain is the time of the BLOCK (the layer has no material), `apply_to` converts the keys to the material of the target.
+- We have no nested compositions (`docs/porting-notes.md`, item 158: "there we have a void … until nested compositions are supported"), so Adobe's workaround "reorder the render by nesting" is unavailable to us — the solution must work without it.
 
-### Что мешает
+### What gets in the way
 
-Главный упор — инвариант 7. Пост-композитный шаг обязан жить внутри
-`VideoRenderer::frame_plan` и исполняться ОБОИМИ бэкендами, иначе появится
-второй путь композиции: значит шаг в плане, зеркало в шейдере и конформанс
-CPU↔GPU. Ползунок силы на нашей модели — не «альфа слоя», а смешение до-FX и
-после-FX кадра ПЕР-СЛОЙ: это новая операция и второй кадр в памяти на каждый
-слой, причём ключ пост-FX кэша считается по хэшу цепочки
-(`src/libs/kt-engine/src/video.rs`, ~стр. 99) и его пришлось бы расширять
-силой, иначе 60 % и 100 % схлопнутся в один кадр. **Разошлось так** (Р.38
-п.267): сила стала слотом ЦЕПОЧКИ, поэтому в хэш она вошла сама, зеркало
-получилось отдельным пассом `layer_mix.wgsl` (та же целочисленная формула, что
-у `dissolve_into`), а второй кадр живёт ровно там, где стоит слот, — снимок
-делается на границе `from`, а не на каждый слой. Маски «у эффекта» по образцу
-Premiere 26 — это поле у `FxInstance`, а не у клипа, то есть правка формата и
-всех 10 видео-FX сразу.
+The main emphasis is invariant 7. The post-composite step must live inside
+`VideoRenderer::frame_plan` and be executed by BOTH backends, otherwise a
+second composition path appears: so a step in the plan, a mirror in the shader and CPU↔GPU
+conformance. The strength slider on our model is not "the alpha of the layer" but a mixing of the pre-FX and
+post-FX frame PER LAYER: this is a new operation and a second frame in memory for each
+layer, and moreover the post-FX cache key is computed from the hash of the chain
+(`src/libs/kt-engine/src/video.rs`, ~line 99), which would have to be extended
+with the strength, otherwise 60 % and 100 % would collapse into one frame. **It went differently** (R.38
+item 267): the strength became a CHAIN SLOT, so it entered the hash by itself, the mirror
+became a separate pass `layer_mix.wgsl` (the same integer formula as
+`dissolve_into`), and the second frame lives exactly where the slot stands — the snapshot
+is taken at the boundary of `from`, not at every layer. Masks "on the effect" after the
+Premiere 26 pattern are a field of `FxInstance`, not of the clip, that is, a change of the format and
+of all 10 video FX at once.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Корневые: 7 (код композиции один — любой пост-композитный шаг и любой ползунок
-силы), 11 (детерминизм: новый шаг обязан быть байт-в-байт на CPU и совпадать с
-GPU в допусках). UI: 13 (ползунок силы обязан встать на уже занятое место в
-`morpher_editor.rs`, а не новой полосой), 17 (сила, выставленная из окна и
-жестом на блоке, обязана вести себя одинаково).
+Root ones: 7 (the composition code is one — any post-composite step and any strength slider), 11 (determinism: the new step must be byte-for-byte on the CPU and match
+the GPU within tolerances). UI: 13 (the strength slider must sit in the already occupied place in
+`morpher_editor.rs`, not in a new strip), 17 (the strength set from the window and
+by a gesture on the block must behave the same way).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | XL — пост-композитный шаг меняет план кадра и формат |
-| Где основная работа | kt-engine (`video_plan.rs`, `video.rs`), kt-gpu (шейдер), kt-model (схема патча) |
-| Формат проекта | нужна новая версия: поле силы в `MorphPatch` + признак «слой над композитом» |
-| Тесты, которые придётся написать | round-trip модели и чтение старых файлов; CPU↔GPU конформанс нового шага; превью == экспорт; сила 0/50/100 % против bake; регресс «кеинг из морфера по-прежнему вскрывает слой ниже» |
-| Зависит от | — |
-| Ломает совместимость | нет: умолчание «сила 100 %, шага нет» читает старые файлы как есть |
+| Size | XL — the post-composite step changes the frame plan and the format |
+| Where the main work is | kt-engine (`video_plan.rs`, `video.rs`), kt-gpu (the shader), kt-model (the patch schema) |
+| Project format | a new version is needed: the strength field in `MorphPatch` + a sign of "layer over the composite" |
+| Tests that will have to be written | a model round-trip and reading of old files; CPU↔GPU conformance of the new step; preview == export; strength 0/50/100 % against bake; a regression "keying from the morpher still reveals the layer below" |
+| Depends on | — |
+| Breaks compatibility | no: the default "strength 100 %, no step" reads old files as they are |
 
-## Вердикт
+## Verdict
 
-Слой как ЭЛЕМЕНТ ПРОЕКТА с собственным размером кадра не берём: это источник
-целого класса дефектов Premiere, которого у нас нет по построению, и менять
-событие на дорожке на объект бина незачем. Берём выборочно две вещи: ползунок
-силы наложения (расхождение с Vegas, п.3 Р.36) и — отдельной заметкой — вопрос
-о шаге НАД композитом, без которого грейд слоя на кроссфейде считается дважды.
-Главный урок отрицательный: их кеинг на слое не работает потому, что выход слоя
-ложится на ту же картинку; наша пер-слойная схема этой дыры не имеет, и терять
-её при переходе к пост-композитному шагу нельзя — на это нужен регресс-тест.
+A layer as a PROJECT ELEMENT with its own frame size we do not take: it is the source of a
+whole class of Premiere defects that we do not have by construction, and there is no reason to
+change an event on a track into a bin object. We take two things selectively: the blend-strength
+slider (the discrepancy with Vegas, item 3 of R.36) and — as a separate note — the question
+of a step ABOVE the composite, without which a layer's grade on a crossfade is computed twice.
+The main lesson is negative: their keying on a layer does not work because the output of the layer
+lands on the same picture; our per-layer scheme does not have this hole, and it must not be lost
+when moving to a post-composite step — this needs a regression test.
 
-## Источники
+## Sources
 
-- https://community.adobe.com/t5/premiere-pro-discussions/luma-key-or-color-key-or-ultra-key-not-working-on-adjustment-layers-bug-or-limitation/td-p/14397400 (дата обращения 2026-09-07)
+- https://community.adobe.com/t5/premiere-pro-discussions/luma-key-or-color-key-or-ultra-key-not-working-on-adjustment-layers-bug-or-limitation/td-p/14397400 (access date 2026-09-07)
 - https://community.adobe.com/t5/premiere-pro-discussions/adjustment-layer-in-premiere-blend-mode-issues/m-p/14558936 (2026-09-07)
 - https://community.adobe.com/t5/premiere-pro-discussions/adjustment-layer-not-covering-full-video/td-p/10839862 (2026-09-07)
 - https://community.adobe.com/bug-reports-733/warp-stabilizer-inop-in-adjustment-layer-906424 (2026-09-07)
-- https://helpx.adobe.com/premiere/desktop/add-video-effects/apply-video-effects/create-adjustment-layers.html — создание слоя и диалог Video Settings (по документации, живьём не проверялось)
-- https://helpx.adobe.com/premiere/desktop/add-video-effects/apply-video-effects/resize-adjustment-layers.html — размер слоя против размера секвенции (по документации)
-- https://helpx.adobe.com/in/premiere/desktop/use-premiere-with-other-apps/working-with-other-adobe-applications/copy-from-after-effects-to-premiere.html — какие слои НЕ копируются из AE в Premiere (по документации)
-- https://www.provideocoalition.com/tool-tip-tuesday-for-adobe-premiere-pro-2026-mask-tool-changes-to-know/ — маски 26.0: «неприписанная» маска, перетаскивание на Opacity или на эффект (2026-09-07)
-- https://larryjordan.com/articles/adobe-updates-and-modifies-masking-in-premiere-26/ — Object Mask и ограничение «одна маска на один эффект» (2026-09-07)
-- https://petapixel.com/2026/01/20/rebranded-adobe-premiere-26-arrives-with-one-click-object-tracking/ — переименование продукта и трекинг до 20× быстрее (2026-09-07)
-- https://www.cined.com/apple-final-cut-pro-11-1-introduces-adjustment-clips-and-enhances-magnetic-masks/ — Adjustment Clip встроен в FCP с 11.1 (2026-09-07)
-- https://www.ledet.com/davinci-resolve-tip-of-the-week-use-adjustment-clips-for-quick-non-destructive-edits/ — Adjustment Clip в Resolve (2026-09-07)
+- https://helpx.adobe.com/premiere/desktop/add-video-effects/apply-video-effects/create-adjustment-layers.html — creating the layer and the Video Settings dialog (per the documentation, not checked live)
+- https://helpx.adobe.com/premiere/desktop/add-video-effects/apply-video-effects/resize-adjustment-layers.html — layer size against sequence size (per the documentation)
+- https://helpx.adobe.com/in/premiere/desktop/use-premiere-with-other-apps/working-with-other-adobe-applications/copy-from-after-effects-to-premiere.html — which layers are NOT copied from AE to Premiere (per the documentation)
+- https://www.provideocoalition.com/tool-tip-tuesday-for-adobe-premiere-pro-2026-mask-tool-changes-to-know/ — masks in 26.0: the "unattached" mask, dragging onto Opacity or onto an effect (2026-09-07)
+- https://larryjordan.com/articles/adobe-updates-and-modifies-masking-in-premiere-26/ — Object Mask and the restriction "one mask per effect" (2026-09-07)
+- https://petapixel.com/2026/01/20/rebranded-adobe-premiere-26-arrives-with-one-click-object-tracking/ — product renaming and tracking up to 20× faster (2026-09-07)
+- https://www.cined.com/apple-final-cut-pro-11-1-introduces-adjustment-clips-and-enhances-magnetic-masks/ — Adjustment Clip built into FCP since 11.1 (2026-09-07)
+- https://www.ledet.com/davinci-resolve-tip-of-the-week-use-adjustment-clips-for-quick-non-destructive-edits/ — Adjustment Clip in Resolve (2026-09-07)

@@ -1,12 +1,12 @@
 ---
 id: F-HLP-026
-title: «О программе» — версия сборки и её состав на машине пользователя
-status: кандидат
+title: "About" — build version and its contents on the user's machine
+status: candidate
 priority: B
 cost: S
 category: help/reference
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, blender-5.2, vscode-1.136]
-we_have: частично
+we_have: partial
 crates: [kt-app, kt-version, kt-ffmpeg]
 invariants: [10, 12]
 ui_rules: [9, 13]
@@ -17,349 +17,176 @@ depends_on: [F-HLP-014, F-HLP-033]
 checked: 2026-09-07
 ---
 
-# F-HLP-026 — «О программе» — версия сборки и её состав на машине пользователя
+# F-HLP-026 — "About" — build version and its contents on the user's machine
 
-## Суть
+## Essence
 
-Одно место, куда приходят намеренно и где программа говорит о СЕБЕ, а не о
-проекте: какая это сборка, из чего она собрана НА ЭТОЙ машине, и одна кнопка,
-кладущая всё это в буфер обмена. Монтажёру это нужно ровно дважды: когда он
-пишет «у меня не работает» и когда проверяет, ту ли программу он запустил.
-Ничего не перекрывает и ничего не задерживает — окно открывают, читают,
-закрывают.
+One place that people come to on purpose and where the program speaks about ITSELF, not about the project: what build this is, what it was assembled from ON THIS machine, and one button that puts all of it on the clipboard. The editor needs this exactly twice: when he writes "it does not work for me" and when he checks that he launched the right program. It covers nothing and delays nothing — the window is opened, read, and closed.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Help → About… | версия и номер сборки одной строкой («Version 2026.0 (Build 66)»). СОСТАВ там не показан: модель GPU, версия видеодрайвера и «каким плагином декодируется файл» лежат в Options → Preferences → File I/O и → Video и в Диспетчере устройств Windows. Кнопки «скопировать» нет — поэтому сообщество держит закреплённый пост-список из десяти пунктов и просит скриншоты преференсов |
-| Adobe Premiere | 26.x | Help → About Adobe Premiere + System Compatibility Report | About даёт версию и билд. Отдельный, более сильный механизм: при ЗАПУСКЕ программа сама сверяет версию видеодрайвера с известными несовместимыми и показывает отчёт — состав среды не только показывается, но и проверяется. Отчёт подтверждён документацией; вид самого About — [НЕ ПРОВЕРЕНО]: `helpx.adobe.com` с основного домена из этого окружения не открылся |
-| DaVinci Resolve | 21 | DaVinci Resolve → About DaVinci Resolve | полная версия И номер сборки. Ключевая деталь: на сплэше версия ОКРУГЛЕНА («DaVinci Resolve 17» крупно), точная («17.1B BUILD 15») — только в About, мелким шрифтом внизу; поддержка BMD в тредах спрашивает именно About, а не сплэш |
-| Final Cut Pro | 12.3 | Final Cut Pro → About Final Cut Pro | версия приложения; сбор системных сведений отдан ОС (System Information / Feedback Assistant), в самом редакторе его нет. [НЕ ПРОВЕРЕНО]: страница Apple «About Final Cut Pro» (support.apple.com/en-us/102057) оказалась обзором продукта, а не описанием окна |
-| Adobe After Effects | 26.x | Help → About After Effects | устройство то же, что у Premiere: одна платформа справки и один механизм отчёта о совместимости на всю линейку. [НЕ ПРОВЕРЕНО]: страница AE через доступное зеркало helpx не отдалась |
+| VEGAS Pro | 2026.0 | Help → About… | the version and build number in one line ("Version 2026.0 (Build 66)"). The COMPOSITION is not shown there: the GPU model, the video driver version and "which plugin decodes the file" are in Options → Preferences → File I/O and → Video, and in the Windows Device Manager. There is no "copy" button — that is why the community keeps a pinned post-list of ten items and asks for screenshots of the preference tabs |
+| Adobe Premiere | 26.x | Help → About Adobe Premiere + System Compatibility Report | About gives the version and build. A separate, stronger mechanism: at LAUNCH the program itself checks the video driver version against known incompatible ones and shows a report — the composition of the environment is not only displayed but also verified. The report is confirmed by the documentation; the look of About itself — [NOT VERIFIED]: `helpx.adobe.com` did not open from the main domain from this environment |
+| DaVinci Resolve | 21 | DaVinci Resolve → About DaVinci Resolve | the full version AND the build number. The key detail: on the splash the version is ROUNDED ("DaVinci Resolve 17" in large letters), the exact one ("17.1B BUILD 15") is only in About, in small type at the bottom; BMD support in threads asks for About, not for the splash |
+| Final Cut Pro | 12.3 | Final Cut Pro → About Final Cut Pro | the application version; collecting system information is left to the OS (System Information / Feedback Assistant), there is none in the editor itself. [NOT VERIFIED]: the Apple page "About Final Cut Pro" (support.apple.com/en-us/102057) turned out to be a product overview, not a description of the window |
+| Adobe After Effects | 26.x | Help → About After Effects | the device is the same as Premiere's: one help platform and one compatibility-report mechanism for the whole line. [NOT VERIFIED]: the AE page through an accessible helpx mirror did not load |
 
-Ни один из пяти не показывает в About состав СВОЕЙ сборки (какие библиотеки
-подхватились и каких версий) — у всех пяти он фиксирован установщиком, и
-показывать нечего. Вопрос «из чего собрано то, что у тебя запущено» у них
-просто не возникает; у нас он возникает при каждом запуске (инвариант 10).
+None of the five shows in About the composition of ITS OWN build (which libraries were picked up and of which versions) — for all five it is fixed by the installer, and there is nothing to show. The question "what the running thing is assembled from" simply does not arise for them; for us it arises at every launch (invariant 10).
 
-**Вне ядра.** Обе строки ниже — ПРОИСХОЖДЕНИЕ двух деталей, которых у пяти
-редакторов нет: хэша ревизии в окне «О программе» и кнопки, собирающей отчёт
-за пользователя. Из «Фишки фишки» взяты обе.
+**Outside the core.** Both lines below are the ORIGIN of two details that the five editors do not have: the revision hash in the "About" window and the button that collects the report for the user. Both details are taken from "The trick behind it".
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Blender | 5.2 LTS | Help → About Blender; Help → System Info | About показывает ТРИ поля: Version, Date (дата компиляции) и **Hash — git-хэш сборки**, причём руководство прямо пишет, зачем он нужен. Состав вынесен отдельной командой, которая генерирует текстовый файл `system-info.txt` — то есть «показать» и «отдать наружу» разведены на две команды |
-| Visual Studio Code | 1.136 | Help → About; Help → Report Issue | About — версия, коммит, дата, версии Electron/Chromium/Node/V8 и ОС. Но работает не About, а Report Issue: он САМ подставляет версию, платформу и список расширений в тело отчёта, и инструкция проекта отсылает не к About, а к нему |
+| Blender | 5.2 LTS | Help → About Blender; Help → System Info | About shows THREE fields: Version, Date (the compilation date) and **Hash — the git hash of the build**, and the manual says directly why it is needed. The composition is moved to a separate command, which generates a text file `system-info.txt` — that is, "show" and "hand out" are separated into two commands |
+| Visual Studio Code | 1.136 | Help → About; Help → Report Issue | About — version, commit, date, versions of Electron/Chromium/Node/V8, and OS. But it is not About that works, it is Report Issue: it itself substitutes the version, the platform and the list of extensions into the body of the report, and the project's instructions point not to About but to it |
 
-## Фишка фишки
+## The trick behind it
 
-Груз, которого одна строка статусбара не вмещает, здесь — **ЧУЖОЕ ИМЯ:
-десяток фактов не о проекте и не о программе, а о МАШИНЕ, на которой она
-сейчас работает**. Наводить не на что: у «версии загруженного avcodec» нет
-экранного представителя, на который можно навести мышь, а нужны эти факты все
-разом и ровно в тот момент, когда их надо ВЫНЕСТИ ИЗ ПРОГРАММЫ наружу — в
-чужой мессенджер, в чужой трекер, в чужой телефонный разговор. У нас груз
-ляжет в тело уже существующего окна «Диагностика», которое и так открывают
-намеренно, и уедет наружу одной кнопкой.
+The cargo that one status-bar line cannot hold here is **SOMEONE ELSE'S NAME: a dozen facts not about the project and not about the program, but about the MACHINE on which the program is running right now**. There is nothing to hover over: "the version of the loaded avcodec" has no on-screen representative, but all of these facts are needed at once and exactly at the moment when they must be TAKEN OUT OF THE PROGRAM — into someone else's messenger, someone else's tracker, someone else's phone call. For us the cargo will fit into the body of an already existing window, "Diagnostics", which people already open on purpose, and it will leave with one button.
 
-**1. Точная версия прячется под округлённой, и на этом теряют часы.** В
-Resolve сплэш пишет «17» крупно, а «17.1B BUILD 15» — мелко и только в About;
-человек в треде потратил на это часы и написал «Sorry to ask such a simple
-question». У нас та же развилка сделана осознанно и в другую сторону, но с тем
-же следствием: `kt_version::display()` (`src/libs/kt-version/src/lib.rs`)
-отдаёт `FULL` = `ktYY.MM.DD-<hash8>` в debug и `SHORT` = `ktYY.MM` в релизе.
-То есть наименее точную версию видит именно тот, у кого сборок много и кто
-ставит их поверх друг друга, — релизный пользователь. Владелец требовал
-буквально обратного (Р.12 п.3), и требовал этого до того, как релизная ветка
-вообще появилась.
+**1. The exact version is hidden under the rounded one, and people lose hours on this.** In Resolve the splash writes "17" in large letters, and "17.1B BUILD 15" in small ones and only in About; a person in a thread spent hours on this and wrote "Sorry to ask such a simple question". For us the same fork is made deliberately and in the other direction, but with the same consequence: `kt_version::display()` (`src/libs/kt-version/src/lib.rs`) returns `FULL` = `ktYY.MM.DD-<hash8>` in debug and `SHORT` = `ktYY.MM` in release. That is, the least exact version is seen exactly by the one who has many builds and installs them over each other — the release user. The owner demanded the exact opposite (R.12 item 3), and demanded it before the release branch existed at all.
 
-**2. Кнопка «скопировать» — не удобство, а протокол переноса.** Разница между
-двумя моделями видна на цифрах: сообщество VEGAS держит закреплённым постом
-список из десяти пунктов («Version & Build», «Windows Edition & Version»,
-«CPU», «GPU», «GPU Driver Version», MediaInfo, File Properties, скриншоты трёх
-вкладок преференсов), потому что собрать это может только человек; VS Code
-вместо списка даёт одну команду, которая собирает то же самое сама. И вот
-цена ручного сбора живьём: на прямой вопрос «version and build number»
-пользователь ответил «Build 143 / Vegas Pro Plus» — половиной, а версию за
-него достроил отвечавший. Даже когда окно «О программе» есть, человек
-перепечатывает из него не всё; копирует — всё.
+**2. The "copy" button is not a convenience but a transfer protocol.** The difference between the two models is visible in the numbers: the VEGAS community keeps pinned a list of ten items ("Version & Build", "Windows Edition & Version", "CPU", "GPU", "GPU Driver Version", MediaInfo, File Properties, screenshots of three preference tabs), because only a person can collect this. VS Code, instead of a list, gives one command that collects the same thing by itself. And here is the price of manual collection in real life: to the direct question "version and build number" a user answered "Build 143 / Vegas Pro Plus" — a half, and the version was completed for him by the one answering. Even when there is an "About" window, a person does not copy everything from it; he copies all of it only with a button.
 
-**3. Состав сборки у пользователя ОТЛИЧАЕТСЯ от того, что собрал
-разработчик, и без «О программе» это не выяснить.** У пяти редакторов ядра
-этой проблемы нет — там всё внутри установщика. У нас это инвариант 10:
-бинарь не слинкован с libav*, мажор FFmpeg определяется в рантайме по
-`avcodec_version()` (`src/libs/kt-ffmpeg/src/loader.rs:94`), типы структур
-берутся из версионного модуля, и весь набор аппаратных ускорений — это набор
-СИСТЕМНОГО FFmpeg, которого разработчик никогда не видел. Сайт это честно
-обещает («FFmpeg 6, 7 or 8 installed system-wide. Kinotrain uses the one you
-already have», `site/content/en.toml`), а программа не говорит, какой из трёх
-выпал. Blender ровно поэтому и печатает хэш в About: сборок его конкретной
-версии в природе много, и «5.2» — недостаточный ответ.
+**3. The composition of the user's build DIFFERS from what the developer assembled, and without "About" this cannot be found out.** The five core editors do not have this problem — everything is inside the installer. For us this is invariant 10: the binary is not linked with libav*, the FFmpeg major version is determined at runtime by `avcodec_version()` (`src/libs/kt-ffmpeg/src/loader.rs:94`), the struct types are taken from the version module, and the whole set of hardware accelerations is the set of the SYSTEM FFmpeg, which the developer has never seen. The site honestly promises this ("FFmpeg 6, 7 or 8 installed system-wide. Kinotrain uses the one you already have", `site/content/en.toml`), but the program does not say which of the three has been picked up. This is exactly why Blender prints the hash in About: builds of its particular version exist in the wild in many variants, and "5.2" is an insufficient answer.
 
-## Плюсы
+## Pros
 
-- Единственная поверхность, не зависящая от состояния проекта: она отвечает,
-  когда проект не открыт, когда исходники офлайн и когда GPU уже отравлен.
-  Поэтому её можно попросить показать по телефону — а окно рендера, бин или
-  таймлайн просить бесполезно, они сначала требуют открыть проект.
-- Факты собираются из тех же переменных, что уже питают перф-панель, поэтому
-  разойтись с ней не могут. Это не абстрактная аккуратность: в v1 предел
-  видеокэша был продублирован руками и врал в 384 раза — сегодня занятость
-  считается от настоящего `max_video_bytes()`, и второй бухгалтерии заводить
-  не надо.
-- Кнопка переносит стоимость сбора с пользователя на программу: список,
-  который сообщество VEGAS держит закреплённым постом, у нас становится одним
-  Ctrl+V. Пользователь не забывает пункт, потому что пунктов для него нет.
-- Хэш ревизии превращает вопрос «какая у тебя сборка» из «вроде свежая» в имя
-  коммита, по которому можно сделать `git show` — то есть в проверяемый факт.
-- Побочно решается вопрос «а перезапустил ли ты программу после сборки»:
-  версия с хэшем сравнивается со строкой, которую печатает `finish.sh`,
-  глазами и без спора.
+- It is the only surface that does not depend on the project's state: it answers when no project is open, when the sources are offline, and when the GPU is already poisoned. That is why it can be asked for over the phone — whereas asking for the render window, the bin or the timeline is useless, because they first require a project to be open.
+- The facts are collected from the same variables that already feed the performance panel, so they cannot diverge from it. This is not abstract tidiness: in v1 the video cache limit was duplicated by hand and lied by a factor of 384 — today the occupancy is computed from the real `max_video_bytes()`, and there is no need to start a second bookkeeping.
+- The button shifts the cost of collecting from the user to the program: a list that the VEGAS community keeps pinned as a post becomes one Ctrl+V for us. The user does not forget an item, because for him there are no items.
+- The revision hash turns the question "what build do you have" from "probably a recent one" into a commit name on which one can run `git show` — that is, into a verifiable fact.
+- As a side effect the question "did you restart the program after the build" is solved: the version with the hash is compared with the string printed by `finish.sh`, by eye and without an argument.
 
-## Минусы
+## Cons
 
-- Список состава — это обещание, и каждая строка обязана быть правдой В
-  МОМЕНТ ПОКАЗА. Часть фактов у нас поздние: FFmpeg грузится лениво (`OnceLock`
-  при первом обращении к медиа), GPU-бэкенд может стать `Poisoned` посреди
-  сессии. Окно, открытое до открытия проекта, честно скажет «FFmpeg: не
-  загружен» — и это правда, которую легко принять за поломку.
-- «Диагностика» — приманка для свалки: каждый следующий раунд захочет дописать
-  сюда ещё строку, и через год это станет второй перф-панелью. Правило 13
-  работает и против самой заметки, а не только за неё.
-- Кнопка кладёт в буфер имя GPU, версии библиотек и, если не следить, пути.
-  Это выдача сведений о машине, и она обязана быть видна на экране ДО нажатия,
-  а не собираться скрытно в момент клика.
-- Формат скопированного мгновенно становится де-факто протоколом: сменишь
-  порядок строк — сломаешь чужие шаблоны отчётов. Пользователей у нас пока
-  один, но правило известно заранее и стоит того, чтобы порядок выбрать один
-  раз.
-- Само по себе окно ничего не чинит. Оно нужно ТОЛЬКО в паре с адресатом
-  отчёта (F-HLP-014): сведения, которые некуда отправить, — просто цифры.
+- The list of the composition is a promise, and every line has to be TRUE AT THE MOMENT OF DISPLAY. Some facts are late for us: FFmpeg is loaded lazily (`OnceLock` at the first access to media), and the GPU backend may become `Poisoned` in the middle of a session. A window opened before a project is opened will honestly say "FFmpeg: not loaded" — and that is the truth, which is easy to take for a malfunction.
+- "Diagnostics" is a magnet for junk: every next round will want to add one more line here, and in a year this becomes a second performance panel. Rule 13 works against the note itself, not only for it.
+- The button puts into the clipboard the GPU name, the library versions and, if one is not careful, paths. This is the release of information about the machine, and it must be visible on screen BEFORE the click, not collected secretly at the moment of the click.
+- The format of what is copied instantly becomes a de facto protocol: change the order of the lines and you break other people's report templates. For now we have one user, but the rule is known in advance, and it is worth choosing the order once.
+- The window by itself fixes nothing. It is needed ONLY in a pair with the recipient of the report (F-HLP-014): information that has nowhere to be sent is just numbers.
 
-## Что говорят пользователи
+## What users say
 
-> Vegas Pro Version & Build — e.g. “Version 2026.0 (Build 66)”. Find this
-> information from “About…” on the “Help” menu.
-> — NickHope, закреплённый пост «IMPORTANT! Information required to help you»,
-> форум Boris FX, 28.03.2026,
+> Vegas Pro Version & Build — e.g. "Version 2026.0 (Build 66)". Find this
+> information from "About…" on the "Help" menu.
+> — NickHope, pinned post "IMPORTANT! Information required to help you",
+> Boris FX forum, 28.03.2026,
 > https://forum.borisfx.com/t/important-information-required-to-help-you/21172
 
-Это ПЕРВЫЙ пункт списка обязательного, раньше симптомов; вторым идёт версия
-Windows, дальше CPU, GPU и версия видеодрайвера («Vegas stability can be
-highly dependent on your GPU driver version»).
+This is the FIRST item of the required list, before the symptoms; the second is the Windows version, then CPU, GPU and the video driver version ("Vegas stability can be highly dependent on your GPU driver version").
 
 > What is the version shown in the About DaVinci Resolve menu?
-> — Dwaine Maggart, Blackmagic Design DaVinci Support, тред «Version 17.1 and
-> not version 17», https://forum.blackmagicdesign.com/viewtopic.php?t=134202
+> — Dwaine Maggart, Blackmagic Design DaVinci Support, thread "Version 17.1 and
+> not version 17", https://forum.blackmagicdesign.com/viewtopic.php?t=134202
 
-Ответ пользователя в том же треде — почему округлённой версии мало:
+The user's answer in the same thread — why a rounded version is not enough:
 
 > It says DaVinci Resolve 17 in big orange letters but at the bottom, in much
 > smaller letters, it says 17.1B BUILD 15.
-> — Scott Oliver, там же (обращение 2026-09-07)
+> — Scott Oliver, same thread (access date 2026-09-07)
 
 > What is your VegasPro version and build number?
-> — ericlnz, первый ответ в баг-треде, 21.08.2026, https://forum.borisfx.com/t/open-last-saved-project-doesnt-open-last-saved-project/25165
+> — ericlnz, the first reply in the bug thread, 21.08.2026,
+> https://forum.borisfx.com/t/open-last-saved-project-doesnt-open-last-saved-project/25165
 
-Дальше в том же треде: пользователь ответил «Build 143 / Vegas Pro Plus», то
-есть половиной, и версию за него достроил отвечавший — «That’s BorisFX Vegas
-Pro 2026 Build 143».
+Further in the same thread: the user answered "Build 143 / Vegas Pro Plus", that is, a half, and the version was completed for him by the one answering — "That's BorisFX Vegas Pro 2026 Build 143".
 
 > **Tip:** You can easily add all this information by creating the issue using
 > `Report Issue` from VS Code's Help menu.
-> — вики проекта VS Code, «Submitting Bugs and Suggestions»,
+> — the VS Code project wiki, "Submitting Bugs and Suggestions",
 > https://github.com/microsoft/vscode/wiki/Submitting-Bugs-and-Suggestions
-> (обращение 2026-09-07)
+> (access date 2026-09-07)
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-Отраслевой аргумент («так принято») здесь второй. Первый — местный: **вопрос
-«какую сборку ты сейчас запустил» уже стоил проекту двух раундов.** Корневой
-`CLAUDE.md`, раздел «Правила для агентов», дословно:
+The industry argument ("that is how it is done") is the second one here. The first is local: **the question "which build did you just launch" has already cost the project two rounds.** The root `CLAUDE.md`, the section "Rules for agents", verbatim:
 
-> «`cargo test` собирает ОТДЕЛЬНЫЙ тест-бинарь и НЕ пересобирает
-> `target/debug/kt-app` — тот, который запускает пользователь: дважды из-за
-> этого он получал устаревшую программу и считал дефекты неисправленными.»
+> "`cargo test` builds a SEPARATE test binary and does NOT rebuild
+> `target/debug/kt-app` — the one the user runs: twice because of this he got
+> an outdated program and considered the defects unfixed."
 
-То же в п.103 `docs/porting-notes.md` («пользователь дважды запускал
-`target/debug/kt-app` месячной давности и считал исправленные дефекты
-живыми»), и там же — почему формат версии именно такой. Слова владельца о
-формате, Р.12 п.3 `docs/user-feedback.md`:
+The same is in item 103 of `docs/porting-notes.md` ("the user twice launched `target/debug/kt-app` a month old and considered the fixed defects alive"), and there too — why the version format is exactly this. The owner's words about the format, R.12 item 3 of `docs/user-feedback.md`:
 
-> «не ужели не очевидно что имеется ввиду ktYY.MM.DD-commit_hash?? УДОБСТВО
-> ПОЛЬЗОВАТЕЛЯ И ЭРГОНОМИКА»
+> "Isn't it obvious what is meant: ktYY.MM.DD-commit_hash?? USER CONVENIENCE AND ERGONOMICS"
 
-и там же, посреди раунда: «я взял сборку из debug» → правило `finish.sh`.
-Третий раз тот же класс проблемы вылез в поставке — комментарий в
-`src/scripts/release-build.sh`: «раньше старые тарболы и распакованные
-каталоги копились вечно, и пользователь мог взять не ту сборку (п.7 р.12)».
-Три попадания в одну точку из разных сторон, и все три закрыты со стороны
-СБОРКИ. Со стороны запущенной программы не закрыто ничего.
+and there, in the middle of a round: "I took the build from debug" → the `finish.sh` rule. The third time the same class of problem surfaced in the delivery — a comment in `src/scripts/release-build.sh`: "previously old tarballs and unpacked directories piled up forever, and the user could take the wrong build (item 7 of R.12)". Three hits at one point from different sides, and all three are closed from the side of the BUILD. From the side of the running program, nothing is closed.
 
-### Что уже есть
+### What already exists
 
-- `src/libs/kt-version/src/lib.rs` — `FULL` (`ktYY.MM.DD-<hash8>` по дате
-  КОММИТА), `SHORT` (`ktYY.MM`) и `display()`, выбирающая по
-  `debug_assertions`. Сегодня это `kt26.09.07-7cdcc88d`. Формат и приоритет
-  источников (env → git → фолбэк) — `src/libs/kt-version/build.rs`.
-- Единственная точка показа в GUI — `src/apps/kt-app/src/app.rs:797`:
-  `kt_version::display()` уезжает в `ViewportCommand::Title`. И это меньше,
-  чем кажется: окно по умолчанию БЕЗ РАМКИ (`app.rs:5241`,
-  `.with_decorations(decorations)`, системная рамка только по
-  `KT_DECORATIONS`), а свой титлбар (`src/apps/kt-app/src/toolbar.rs:185`)
-  рисует ровно три кнопки — ни имени проекта, ни версии. Строка живёт в списке
-  окон WM (панель задач, Alt+Tab), а не на поверхности, которую рисует
-  программа: её нельзя ни выделить, ни скопировать, а в релизе в ней нет ни
-  дня, ни хэша.
-- `src/apps/kt-cli/src/main.rs:130` — `kt-cli version` (и голый `kt-cli`)
-  печатает `FULL` и частоту тиков. Это ЕДИНСТВЕННОЕ место, где релизный
-  пользователь может увидеть полную версию, — и оно в программе, которую
-  монтажёр не запускает.
-- Перф-панель уже знает про железо: `app.rs:5145` кладёт в `gpu_info`
-  `"{имя адаптера} / {backend}"` из `wgpu_render_state()`, строка рисуется в
-  `app.rs:3751`; рядом (`app.rs:3754`) — бэкенд видео-FX из
-  `player.video_backend()` (`src/libs/kt-engine/src/player.rs:177`,
-  `Cpu` / `Gpu(info)` / `Poisoned{…}`), ключи `perf.video_fx_gpu` и
-  `perf.video_fx_cpu`. Софт-рендер там же детектится и даёт notice
-  `msg.software_render`.
-- Окно «Диагностика» уже существует и уже открывается НАМЕРЕННО:
-  `draw_diagnostics` (`app.rs:5064`), пункт `menu.view.diagnostics`, иконка
-  GAUGE в тулбаре (`toolbar.rs:665`), заголовок `win.diag_title`, вертикальный
-  скролл, занятость кэша от настоящего `max_video_bytes()` и журнал проблем.
-  Версии, GPU и FFmpeg в нём нет ни строки.
-- Копирование в буфер уже отработано и не требует нового механизма:
-  `ui.ctx().copy_text(json)` в `src/apps/kt-app/src/widgets.rs:535` и
-  `src/apps/kt-app/src/fx_editor.rs:463`.
-- «Чёрный ящик» воспроизведения: `save_flight_log()` (`app.rs:1940`) пишет
-  `<project>.ktflight.log` из `flight.dump()`
-  (`src/libs/kt-engine/src/flight.rs:153`).
+- `src/libs/kt-version/src/lib.rs` — `FULL` (`ktYY.MM.DD-<hash8>` by the date of the COMMIT), `SHORT` (`ktYY.MM`) and `display()`, which chooses by `debug_assertions`. Today this is `kt26.09.07-7cdcc88d`. The format and the priority of sources (env → git → fallback) — `src/libs/kt-version/build.rs`.
+- The only display point in the GUI — `src/apps/kt-app/src/app.rs:797`: `kt_version::display()` goes into `ViewportCommand::Title`. And this is less than it seems: the window by default has NO FRAME (`app.rs:5241`, `.with_decorations(decorations)`, the system frame only via `KT_DECORATIONS`), and its own titlebar (`src/apps/kt-app/src/toolbar.rs:185`) draws exactly three buttons — neither the project name nor the version. The string lives in the WM's window list (taskbar, Alt+Tab), not on a surface the program draws: it cannot be selected or copied, and in release it contains neither the day nor the hash.
+- `src/apps/kt-cli/src/main.rs:130` — `kt-cli version` (and a bare `kt-cli`) prints `FULL` and the tick frequency. This is the ONLY place where the release user can see the full version — and it is in the program that the editor does not launch.
+- The performance panel already knows about the hardware: `app.rs:5145` puts into `gpu_info` the string `"{adapter name} / {backend}"` from `wgpu_render_state()`, the string is drawn in `app.rs:3751`; next to it (`app.rs:3754`) — the video FX backend from `player.video_backend()` (`src/libs/kt-engine/src/player.rs:177`, `Cpu` / `Gpu(info)` / `Poisoned{…}`), keys `perf.video_fx_gpu` and `perf.video_fx_cpu`. Software rendering is detected there too and gives the notice `msg.software_render`.
+- The "Diagnostics" window already exists and is already opened DELIBERATELY: `draw_diagnostics` (`app.rs:5064`), the item `menu.view.diagnostics`, the GAUGE icon in the toolbar (`toolbar.rs:665`), the title `win.diag_title`, vertical scrolling, the cache occupancy from the real `max_video_bytes()`, and the log of problems. There is not a single line about versions, GPU or FFmpeg in it.
+- Copying to the clipboard is already worked out and needs no new mechanism: `ui.ctx().copy_text(json)` in `src/apps/kt-app/src/widgets.rs:535` and `src/apps/kt-app/src/fx_editor.rs:463`.
+- The "black box" of playback: `save_flight_log()` (`app.rs:1940`) writes `<project>.ktflight.log` from `flight.dump()` (`src/libs/kt-engine/src/flight.rs:153`).
 
-### Чего не хватает
+### What is missing
 
-- **Главное: то самое рантайм-знание вычисляется и выбрасывается.**
-  `kt_ffmpeg::backend_info()` (`src/libs/kt-ffmpeg/src/lib.rs:171`) отдаёт
-  `major` и полную тройку `avcodec_version`, а комментарий у структуры
-  написан дословно «Что удалось загрузить (для перф-панели и диагностики)»
-  (`lib.rs:45`); `kt_media::ffmpeg::backend_info()`
-  (`src/libs/kt-media/src/ffmpeg.rs:92`) его переэкспортирует. **Вызовов нет
-  ни одного** — ни в kt-app, ни в kt-cli, ни в тестах; то же у соседней
-  `backend_error()`. Это точно тот механизм провала, что описан в п.122
-  `docs/porting-notes.md` (`lane_names_insert/remove/swap` существовали, были
-  покрыты t90 и не вызывались из приложения ни разу): юнит-тест зелен, пока UI
-  до функции не дотянулся. Слово «FFmpeg» встречается в каталогах перевода
-  РОВНО ОДИН раз — как заголовок графика `perf.graph_decode`.
-- Ни одного ключа со словом version или about в `src/apps/kt-app/i18n/*.toml`
-  (521 ключ в `en.toml`). Меню Help нет — только `[menu.file]`, `[menu.edit]`,
-  `[menu.view]`; `Key::F1` в `src/apps/kt-app/src/` не встречается.
-- В дампе «чёрного ящика» нет шапки: `flight.dump()` пишет только события
-  транспорта. Файл, который пользователя попросят прислать, не несёт ни
-  версии, ни FFmpeg, ни GPU — его нельзя привязать к сборке.
-- Нет ОС, ядра, glibc, языка интерфейса и версии формата проекта
-  (`kt_otio::KT_META_VERSION`) в одном месте, и нет кнопки «скопировать».
-- Нет ни одного теста, который вообще смотрит на версию в интерфейсе:
-  `kt_version` не упоминается ни в `layout_tests.rs`, ни в `reach_tests.rs`,
-  ни в `i18n_tests.rs` (0 вхождений в каждом).
+- **The main thing: that very runtime knowledge is computed and thrown away.** `kt_ffmpeg::backend_info()` (`src/libs/kt-ffmpeg/src/lib.rs:171`) returns `major` and the full triple of `avcodec_version`, and the comment on the structure says literally "What was managed to be loaded (for the performance panel and diagnostics)" (`lib.rs:45`); `kt_media::ffmpeg::backend_info()` (`src/libs/kt-media/src/ffmpeg.rs:92`) re-exports it. **There is not a single call** — neither in kt-app, nor in kt-cli, nor in the tests; the same for the neighboring `backend_error()`. This is exactly the failure mechanism described in item 122 of `docs/porting-notes.md` (`lane_names_insert/remove/swap` existed, were covered by t90, and were never called from the application): a unit test stays green while the UI has not reached the function. The word "FFmpeg" appears in the catalogs of translation EXACTLY ONCE — as the title of the graph `perf.graph_decode`.
+- Not a single key with the word version or about in `src/apps/kt-app/i18n/*.toml` (521 keys in `en.toml`). There is no Help menu — only `[menu.file]`, `[menu.edit]`, `[menu.view]`; `Key::F1` does not occur in `src/apps/kt-app/src/`.
+- The dump of the "black box" has no header: `flight.dump()` writes only transport events. The file that the user will be asked to send carries neither the version, nor FFmpeg, nor the GPU — it cannot be tied to a build.
+- There is no OS, kernel, glibc, interface language, or project format version (`kt_otio::KT_META_VERSION`) in one place, and there is no "copy" button.
+- There is not a single test that looks at the version in the interface at all: `kt_version` is not mentioned in `layout_tests.rs`, nor in `reach_tests.rs`, nor in `i18n_tests.rs` (0 occurrences in each).
 
-### Что мешает
+### What gets in the way
 
-- Правило 9 («ничего лишнего») и правило 13 («НЕ ТРАТИТЬ МЕСТО ВПУСТУЮ»):
-  отдельное модальное окно с логотипом и копирайтом — ровно то, против чего
-  они написаны. Место уже занято и уже правильное: тело окна «Диагностика»,
-  блоком над журналом проблем. Заводить новую поверхность здесь нельзя.
-- Правило 14 (всё, что берёт фокус, обязано его отдавать; п.105) — ещё один
-  довод против отдельной модалки и за существующее окно, которое закрывается
-  штатным `open`.
-- Цена строки на пяти языках (F-HLP-033) здесь низкая, но не нулевая:
-  ЗНАЧЕНИЯ — это имена (`kt26.09.07-7cdcc88d`, `avcodec 61.19.101`,
-  `NVIDIA / Vulkan`), они не переводятся и приезжают рантайм-аргументами, как
-  `{0}` в `perf.video_fx_gpu`; переводятся 6–8 ПОДПИСЕЙ. Предел 160 символов
-  (`src/apps/kt-app/build.rs`) для подписей не тесен, но t128 придётся
-  расширить на новый блок, а t100 — на его глифы.
-- Ленивость: FFmpeg грузится при первом обращении к медиа, GPU-бэкенд
-  инициализируется в первом кадре. Значит блок обязан уметь три состояния —
-  «загружен», «ещё нет», «не нашёлся» — и третье обязано звучать как
-  рекомендация, а не как английская строка `thiserror` (это ровно предмет
-  F-HLP-008, здесь только не испортить).
+- Rule 9 ("nothing superfluous") and rule 13 ("DO NOT WASTE SPACE"): a separate modal window with a logo and a copyright is exactly what they are written against. The place is already occupied and already right: the body of the "Diagnostics" window, as a block above the log of problems. Introducing a new surface here is not allowed.
+- Rule 14 (everything that takes focus must give it back; item 105) — one more argument against a separate modal and for the existing window, which is closed by the standard `open`.
+- The cost of a line in five languages (F-HLP-033) is low here, but not zero: the VALUES are names (`kt26.09.07-7cdcc88d`, `avcodec 61.19.101`, `NVIDIA / Vulkan`), they are not translated and arrive as runtime arguments, like `{0}` in `perf.video_fx_gpu`; only 6–8 LABELS are translated. The limit of 160 characters (`src/apps/kt-app/build.rs`) is not tight for the labels, but t128 will have to be extended to the new block, and t100 to its glyphs.
+- Laziness: FFmpeg is loaded at the first access to media, the GPU backend is initialized in the first frame. So the block must be able to handle three states — "loaded", "not yet", "not found" — and the third must sound like a recommendation, not like an English `thiserror` string (this is exactly the subject of F-HLP-008; here only do not spoil it).
 
-### Какие инварианты задевает
+### Which invariants it affects
 
-- **10** (бинарь не линкуется с libav*, FFmpeg через dlopen) — главный.
-  Заметка ничего в нём не меняет; она делает его СЛЕДСТВИЕ видимым
-  пользователю. Пока следствия не видно, инвариант работает только на нас и
-  никак не работает на того, кто прислал отчёт.
-- **12** (repaint только при движении, в draw-путях ни аллокаций, ни клонов):
-  все факты вычисляются один раз (`OnceLock` у FFmpeg, `gpu_info` — при первом
-  кадре), поэтому строки собираются на ОТКРЫТИИ окна и кладутся в готовые
-  `String`, а не форматируются каждый кадр. Анимаций и «живых» счётчиков в
-  блоке быть не должно — для них есть графики этажом ниже.
-- Правила UI **9** и **13** — см. «Что мешает»; **14** — фокус.
-- Решения 1 и 2 разморозки Р.40 (перекрытие, задержка) не задеваются вовсе:
-  предлагаемая поверхность — тело окна, а не подсказка.
+- **10** (the binary is not linked with libav*, FFmpeg via dlopen) — the main one. The note changes nothing in it; it makes its CONSEQUENCE visible to the user. As long as the consequence is not visible, the invariant works only for us and does not work at all for the person who sent the report.
+- **12** (repaint only on movement, in draw paths no allocations and no clones): all facts are computed once (`OnceLock` for FFmpeg, `gpu_info` — at the first frame), so the lines are assembled at the OPENING of the window and placed into ready `String`s, rather than formatted every frame. There must be no animations and no "live" counters in the block — for those there are the graphs one floor below.
+- The UI rules **9** and **13** — see "What gets in the way"; **14** — focus.
+- The decisions 1 and 2 of the R.40 unfreeze (overlap, delay) are not affected at all: the proposed surface is the body of a window, not a hint.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия раунда |
-| Где основная работа | kt-app: блок в `draw_diagnostics`, одна кнопка через `copy_text`, 6–8 ключей i18n. kt-ffmpeg/kt-media — только ВЫЗВАТЬ уже написанный `backend_info()`. kt-version не трогается |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | `reach_tests::build_provenance_is_reachable_and_copyable` (версия достижима из UI и попадает в буфер; `backend_info()` имеет вызывающего); расширение t128 на новый блок и t100/t125 на новые ключи |
-| Зависит от | F-HLP-014 (куда отправлять), F-HLP-033 (цена строки), F-HLP-013 (журнал и колокольчик) |
-| Ломает совместимость | нет |
+| Size | S — one stage of the round |
+| Where the main work is | kt-app: a block in `draw_diagnostics`, one button through `copy_text`, 6–8 i18n keys. kt-ffmpeg/kt-media — only to CALL the already written `backend_info()`. kt-version is not touched |
+| Project format | not touched |
+| Tests to write | `reach_tests::build_provenance_is_reachable_and_copyable` (the version is reachable from the UI and gets into the clipboard; `backend_info()` has a caller); an extension of t128 to the new block and t100/t125 to the new keys |
+| Depends on | F-HLP-014 (where to send), F-HLP-033 (the cost of a line), F-HLP-013 (the log and the bell) |
+| Breaks compatibility | no |
 
-Рамка, а не ТЗ: конкретный набор полей, порядок строк в буфере и поведение
-блока до загрузки FFmpeg — предмет раунда, не заметки.
+The frame, not a specification: the concrete set of fields, the order of lines in the buffer, and the behavior of the block before FFmpeg is loaded are the subject of the round, not of the note.
 
-## Вердикт
+## Verdict
 
-Берём, и берём дёшево: ни одной новой поверхности, ни одного нового источника
-данных — всё, что нужно показать, уже вычисляется, а половина уже показывается
-рядом. Заметка не про «сделать красивое окно», а про то, что единственный
-факт, который НЕЛЬЗЯ узнать заранее (какой FFmpeg подхватился на этой машине),
-у нас считается и молча выбрасывается, а версия с хэшем — та, которую владелец
-потребовал дословно, — в релизе не показывается нигде, кроме CLI.
+We take it, and cheaply: no new surface, no new data source — everything that needs to be shown is already computed, and half of it is already shown nearby. The note is not about "making a pretty window", but about the fact that the single fact which CANNOT be learned in advance (which FFmpeg was picked up on this machine) is computed by us and silently thrown away, and the version with the hash — the one the owner demanded word for word — is shown nowhere in the release, except in the CLI.
 
-ТЕСТ: reach_tests::build_provenance_is_reachable_and_copyable — сегодня падает четырежды, и все четыре падения видны без запуска программы: (1) `kt_ffmpeg::backend_info()` с комментарием «для перф-панели и диагностики» (`src/libs/kt-ffmpeg/src/lib.rs:45`) не вызывается НИКЕМ, кроме собственного реэкспорта в `src/libs/kt-media/src/ffmpeg.rs:92`; (2) `kt_version::display()` имеет ровно одного потребителя — `ViewportCommand::Title` в `src/apps/kt-app/src/app.rs:797`, а окно по умолчанию без рамки (`app.rs:5241`), и свой титлбар (`toolbar.rs:185`) версию не рисует; (3) в релизе `display()` отдаёт `SHORT` = `ktYY.MM`, то есть без дня и хэша, которых требовал Р.12 п.3; (4) в каталогах `src/apps/kt-app/i18n/*.toml` нет ни одного ключа про версию или сборку, а `flight.dump()` пишет журнал без шапки.
+TEST: reach_tests::build_provenance_is_reachable_and_copyable — fails today four times, and all four failures are visible without running the program: (1) `kt_ffmpeg::backend_info()` with the comment "for the performance panel and diagnostics" (`src/libs/kt-ffmpeg/src/lib.rs:45`) is called by NOBODY, except its own re-export in `src/libs/kt-media/src/ffmpeg.rs:92`; (2) `kt_version::display()` has exactly one consumer — `ViewportCommand::Title` in `src/apps/kt-app/src/app.rs:797`, and the window by default has no frame (`app.rs:5241`), while its own titlebar (`toolbar.rs:185`) does not draw the version; (3) in release `display()` returns `SHORT` = `ktYY.MM`, that is, without the day and the hash that R.12 item 3 demanded; (4) in the catalogs `src/apps/kt-app/i18n/*.toml` there is not a single key about the version or the build, and `flight.dump()` writes the journal without a header.
 
-ОДНА СТРОКА: перекрытие — не трогает | задержка — не трогает | ёмкость — в строке статусбара ноль новых символов; десяток фактов о сборке ложится блоком в тело УЖЕ ОТКРЫВАЕМОГО окна «Диагностика» (`app.rs:5064`) над журналом проблем, плюс одна кнопка, кладущая тот же текст в буфер через уже применяемый `copy_text`.
+ONE LINE: overlap — not touched | delay — not touched | capacity — in the status bar line zero new characters; a dozen facts about the build lay out as a block in the body of the ALREADY OPENED window "Diagnostics" (`app.rs:5064`) above the log of problems, plus one button that puts the same text into the clipboard through the already used `copy_text`.
 
-## Источники
+## Sources
 
-- Форум Boris FX (VEGAS), закреплённый пост «IMPORTANT! Information required
-  to help you», NickHope, 28.03.2026 —
+- The Boris FX forum (VEGAS), the pinned post "IMPORTANT! Information required to help you", NickHope, 28.03.2026 —
   https://forum.borisfx.com/t/important-information-required-to-help-you/21172
-  (обращение 2026-09-07)
-- Форум Boris FX, тред «Open last saved project doesn’t open last saved
-  project», 21–22.08.2026 —
+  (access date 2026-09-07)
+- The Boris FX forum, thread "Open last saved project doesn't open last saved project", 21–22.08.2026 —
   https://forum.borisfx.com/t/open-last-saved-project-doesnt-open-last-saved-project/25165
-  (обращение 2026-09-07)
-- Форум Blackmagic Design, тред «Version 17.1 and not version 17» (линейка
-  Resolve 17.1) — https://forum.blackmagicdesign.com/viewtopic.php?t=134202
-  (обращение 2026-09-07)
-- Blender Manual, Topbar → Help menu (поля About Blender: Version, Date, Hash;
-  System Info) —
+  (access date 2026-09-07)
+- The Blackmagic Design forum, thread "Version 17.1 and not version 17" (the Resolve 17.1 line) — https://forum.blackmagicdesign.com/viewtopic.php?t=134202
+  (access date 2026-09-07)
+- Blender Manual, Topbar → Help menu (the fields of About Blender: Version, Date, Hash; System Info) —
   https://docs.blender.org/manual/en/latest/interface/window_system/topbar.html
-  (обращение 2026-09-07)
-- Вики VS Code, «Submitting Bugs and Suggestions» —
+  (access date 2026-09-07)
+- The VS Code wiki, "Submitting Bugs and Suggestions" —
   https://github.com/microsoft/vscode/wiki/Submitting-Bugs-and-Suggestions
-  (обращение 2026-09-07)
-- Adobe, «GPU and GPU Driver requirements» (System Compatibility Report при
-  запуске) —
+  (access date 2026-09-07)
+- Adobe, "GPU and GPU Driver requirements" (the System Compatibility Report at launch) —
   https://helpx.adobe.com/in/premiere/desktop/get-started/technical-requirements/gpu-and-gpu-driver-requirements.html
-  (обращение 2026-09-07)
-- Apple Support, «About Final Cut Pro» — https://support.apple.com/en-us/102057
-  (обращение 2026-09-07; оказалась обзором продукта, устройство окна не
-  описано)
-- Живьём не проверялось ни у одного из пяти редакторов ядра и ни у одной
-  программы вне ядра: доступа к ним из этого окружения нет. Строки Premiere и
-  After Effects опираются на документацию Adobe, строки VEGAS и Resolve — на
-  форумы вендоров, строки Blender и VS Code — на руководство и вики проектов.
-- Доступ: бюджет `WebSearch` в сессии был исчерпан до начала работы, всё
-  добыто обходами из `_editors.md` — Discourse API форума Boris FX
-  (`/search.json`, `/t/<id>.json`) и текст-прокси `r.jina.ai`. Уточнение для
-  следующих заметок волны: `helpx.adobe.com` через прокси НЕ открывается
-  (ошибка HTTP/2), а региональное зеркало `helpx.adobe.com/in/…` открывается;
-  поиск форума Blackmagic (`search.php`) требует сессии, но конкретные
-  `viewtopic.php?t=<id>` через прокси читаются, и находятся они через
-  `html.duckduckgo.com/html/?q=…` тем же прокси.
+  (access date 2026-09-07)
+- Apple Support, "About Final Cut Pro" — https://support.apple.com/en-us/102057
+  (access date 2026-09-07; it turned out to be a product overview, the window's device is not described)
+- Not checked live in any of the five core editors and in any program outside the core: there is no access to them from this environment. The Premiere and After Effects rows rest on Adobe's documentation, the VEGAS and Resolve rows on the vendors' forums, the Blender and VS Code rows on the manual and the project wikis.
+- Access: the `WebSearch` budget in the session was used up before work began, everything was obtained by the workarounds from `_editors.md` — the Discourse API of the Boris FX forum (`/search.json`, `/t/<id>.json`) and the text proxy `r.jina.ai`. A clarification for the next notes of the wave: `helpx.adobe.com` does NOT open through the proxy (an HTTP/2 error), but the regional mirror `helpx.adobe.com/in/…` does open; the search of the Blackmagic forum (`search.php`) requires a session, but the concrete `viewtopic.php?t=<id>` pages can be read through the proxy, and they are found via `html.duckduckgo.com/html/?q=…` through the same proxy.

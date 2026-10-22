@@ -1,12 +1,12 @@
 ---
 id: F-COL-030
-title: Диалог разрешения конфликтов, пустой четвёртый год
-status: исследовано
+title: Conflict resolution dialog, empty fourth year
+status: researched
 priority: B
 cost: S
 category: collab/merge
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-app, kt-model]
 invariants: []
 ui_rules: [16, 20]
@@ -19,195 +19,115 @@ services: [team-projects, bm-cloud, fcp-shared-library]
 checked: 2026-09-08
 ---
 
-# F-COL-030 — Диалог разрешения конфликтов, пустой четвёртый год
+# F-COL-030 — Conflict resolution dialog, empty fourth year
 
-## Суть
+## Essence
 
-Монтажёр нажимает «опубликовать свои правки», и вместо публикации открывается
-модальное окно с заголовком «Resolve Conflicts». Внутри окна пусто: ни списка
-расхождений, ни выбора версии, ни объяснения. Единственная живая кнопка —
-«Stop Resolving», то есть отмена. Публикация не проходит, пока окно не закроют, а
-закрытие означает, что правки не опубликованы. Так это и стоит с 2020 года.
+The editor presses "publish my edits," and instead of publishing a modal window opens titled "Resolve Conflicts." Inside the window there is nothing: no list of divergences, no choice of version, no explanation. The only live button is "Stop Resolving," that is, cancel. Publication does not go through until the window is closed, and closing it means the edits were not published. This is how it has stood since 2020.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет | понятия «конфликт» нет вовсе: расхождение не предотвращается и не обнаруживается, второй сохраняет поверх первого [НЕ ПРОВЕРЕНО живьём: механизма нет ни в справке, ни в списке возможностей] |
-| Adobe Premiere | 26.x | `Resolve Conflicts` (Team Projects) | модальное окно в пути публикации правок. Список расхождений считает СЕРВЕР, клиент только рисует строки; строк не пришло — окно приходит пустым, и различить «конфликтов нет» от «список не получен» в нём нечем |
-| DaVinci Resolve | 21 | окна нет | конфликт предотвращён на входе: бины и таймлайны занимаются автоматически, «read only» до снятия замка. Вместо разрешения предлагается СРАВНЕНИЕ двух версий таймлайна глазами человека (F-COL-031) |
-| Final Cut Pro | 12.3 | окна нет | вместо окна — отказ ДО открытия: «The document [Library name] is already in use by [user] on [Mac].local». Невозможность выражена ошибкой в момент попытки, а не поверхностью после неё |
-| After Effects | 26.x | то же окно | своей модели нет: и механизм, и окно приезжают из общего с Premiere сервиса [НЕ ПРОВЕРЕНО живьём] |
+| VEGAS Pro | 2026.0 | none | the concept of "conflict" does not exist at all: divergence is neither prevented nor detected; the second save overwrites the first `[NOT VERIFIED live: the mechanism is absent both from the help and from the feature list]` |
+| Adobe Premiere | 26.x | `Resolve Conflicts` (Team Projects) | a modal window in the path of publishing edits. The list of divergences is computed by the SERVER; the client only draws the rows; if no rows arrive, the window comes up empty, and there is nothing in it with which to tell "there are no conflicts" from "the list was not received" |
+| DaVinci Resolve | 21 | there is no window | the conflict is prevented at entry: bins and timelines are occupied automatically, "read only" until the lock is released. Instead of resolution, a COMPARISON of two versions of the timeline by the human eye is offered (F-COL-031) |
+| Final Cut Pro | 12.3 | there is no window | instead of a window — a refusal BEFORE opening: "The document [Library name] is already in use by [user] on [Mac].local". The impossibility is expressed as an error at the moment of the attempt, not as a surface after it |
+| After Effects | 26.x | the same window | has no model of its own: both the mechanism and the window come from the service shared with Premiere `[NOT VERIFIED live]` |
 
-## Фишка фишки
+## The trick behind it
 
-**Окно пережило механизм, которого никогда не было, и держится не привычкой, а
-разделением обязанностей клиента и сервера.** Список расхождений в Team Projects
-считается на той стороне; клиент — рисовалка строк, приехавших по сети. Отсюда
-свойство, которое и делает дефект неубиваемым: у ПУСТОГО окна два разных смысла —
-«конфликтов нет» и «список не приехал», — и клиент не различает их в принципе,
-потому что в обоих случаях у него на руках одно и то же, пустой массив. Сказать
-«конфликтов нет» может только тот, кто их считал; клиент этого не знает и потому
-честно рисует пустоту.
+**The window outlived a mechanism that never existed, and it survives not out of habit but because of the separation of duties between client and server.** The list of divergences in Team Projects is computed on the other side; the client is a drawer of rows that arrived over the network. From this follows a property that makes the defect unkillable: an EMPTY window has two different meanings — "there are no conflicts" and "the list did not arrive" — and the client cannot distinguish them in principle, because in both cases it holds the same thing, an empty array. Only the one who counted can say "there are no conflicts"; the client does not know this and therefore honestly draws emptiness.
 
-**Второе: окно стоит на пути записи, а не рядом с ним.** Это не информационная
-панель, которую можно закрыть и работать дальше, — это модальный шаг публикации.
-Единственная работающая кнопка внутри («Stop Resolving») отменяет операцию, то
-есть у пустой поверхности ровно один исход, и он — потеря результата попытки.
-Пустое окно поэтому не «косметика»: оно тупик, оформленный как диалог.
+**Second: the window stands on the path of writing, not beside it.** It is not an information panel that can be closed while one goes on working — it is a modal step of publication. The only working button inside ("Stop Resolving") cancels the operation, that is, an empty surface has exactly one outcome, and it is the loss of the result of the attempt. An empty window is therefore not "cosmetics": it is a dead end dressed up as a dialog.
 
-**Третье, ради чего заметка и заведена: у нас есть машинная проверка ровно на
-этот класс, и она смотрит В ДРУГУЮ СТОРОНУ.** t252 (`no_orphan_commands`) ловит
-осиротевшую КОМАНДУ — механизм, до которого не дотянулся интерфейс. Случай Adobe
-зеркальный: осиротевшая ПОВЕРХНОСТЬ — окно, за которым нет механизма. Наш
-механизм «тупиков не бывает» заведён по претензии «половина тупиковая», но
-проверяет он одно направление из двух, и второе сегодня не проверяет никто.
+**Third, which is why this note was opened: we have a machine check for exactly this class, and it looks in the OTHER DIRECTION.** t252 (`no_orphan_commands`) catches an orphaned COMMAND — a mechanism that the interface did not reach. Adobe's case is the mirror image: an orphaned SURFACE — a window with no mechanism behind it. Our "no dead ends" mechanism (R.38) was established on the claim "half of it is dead ends," but it checks one direction out of two, and the second is checked today by no one.
 
-## Плюсы
+## Pros
 
-- Само наличие поверхности признаёт, что расхождение бывает: остальные четверо
-  делают вид, что вопроса нет.
-- Модальность на пути публикации — правильная форма для необратимого шага:
-  сначала разберись, потом пиши.
-- Разделение «сервер считает — клиент рисует» позволяет менять правило подсчёта
-  конфликтов, не трогая приложения.
+- The very existence of the surface admits that divergence happens: the other four pretend there is no question.
+- Modality on the path of publishing is the right form for an irreversible step: first sort it out, then write.
+- The separation "the server counts — the client draws" allows changing the rule for counting conflicts without touching the application.
 
-## Минусы
+## Cons
 
-- Пустое состояние двусмысленно по построению, и вылечить это на клиенте
-  нечем — нужен ответ «конфликтов нет» отдельным сообщением, а не отсутствием
-  строк.
-- Тупик: единственный выход из окна отменяет операцию, ради которой оно
-  открылось.
-- Поверхность создаёт видимость возможности. Пользователь четыре года ищет, как
-  «разрешить конфликты», потому что окно обещает, что это делается здесь.
-- Дефект живёт годами именно потому, что он не падение и не ошибка: ничего не
-  крашится, лог чист, воспроизведение требует второго участника и подписки.
+- An empty state is ambiguous by construction, and there is nothing on the client with which to cure this — an answer "there are no conflicts" is needed as a separate message, not as the absence of rows.
+- A dead end: the only exit from the window cancels the operation for which it was opened.
+- A surface creates an appearance of possibility. For four years the user has been searching for how to "resolve conflicts," because the window promises that this is done here.
+- The defect lives for years precisely because it is not a crash or an error: nothing crashes, the log is clean, and reproduction requires a second participant and a subscription.
 
-## Что говорят пользователи
+## What users say
 
-Дефект заведён в 2020-м и подтверждён в 2024-м — тем же симптомом, в том же
-треде, который так и не помечен решённым:
+The defect was filed in 2020 and confirmed in 2024 — by the same symptom, in the same thread, which has never been marked as solved:
 
 > When trying to share a team-project, I get a window that says 'resolve
 > conflicts' but the window itself is empty.
-> — devGuru411, «Premiere Pro Team Project - "Resolve Conflicts" Empty Window»,
+> — devGuru411, "Premiere Pro Team Project - 'Resolve Conflicts' Empty Window,"
 > Adobe Product Community, 26.08.2020,
 > https://community.adobe.com/t5/team-projects-discussions/premiere-pro-team-project-resolve-conflicts-empty-window/td-p/11387956
 
-Автор уточняет, что нажать в окне можно только «Stop Resolving» — то есть
-отменить, — и что до исправления он не может опубликовать правки. 16.12.2024
-lauren_2058 отвечает в тот же тред вопросом, нашёлся ли ответ, и сообщает, что у
-неё то же самое; сотрудник Adobe (Udo_Pawlik) спрашивает версию и просит
-попробовать воспроизвести конфликт, решения в треде нет.
+The author specifies that the only thing one can press in the window is "Stop Resolving" — that is, cancel — and that until a fix arrives they cannot publish their edits. On 16.12.2024 lauren_2058 replied in the same thread with a question whether an answer had been found, and reported that she has the same problem; an Adobe employee (Udo_Pawlik) asked for the version and requested an attempt to reproduce the conflict; there is no solution in the thread.
 
-`trackers:` пуст сознательно (правило 12): у пяти редакторов ядра публичных
-трекеров нет, а тема совместной работы в корпусе монтажных программ отсутствует
-как класс — счёт по этому поводу принадлежит F-COL-029 и повторять его здесь
-значило бы посчитать одну находку дважды.
+`trackers:` is empty deliberately (rule 12): none of the five core editors has a public tracker, and the theme of shared work is absent from the corpus of editing programs as a class — the count on this subject belongs to F-COL-029, and repeating it here would mean counting one finding twice.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- `src/libs/kt-model/src/model.rs:336` — `CommandError::NothingToUndo`: самый
-  вырожденный отказ, какой у нас бывает («откатывать нечего»), и тот НАЗВАН.
-  Модель не возвращает пустоту: у каждого отказа свой вариант с текстом —
+- `src/libs/kt-model/src/model.rs:336` — `CommandError::NothingToUndo`: the most degenerate refusal we have ("there is nothing to undo"), and it is NAMED. The model does not return emptiness: each refusal has its own variant with text —
   `ClipOverlap`, `MediaInUse`, `MarkerExists(Tick)`, `AreaUnnamed`
-  (`src/libs/kt-model/src/project.rs:3204` и рядом).
-- `src/apps/kt-app/CLAUDE.md` п.16 — «невозможность действия показывается как
-  ОШИБКА, а не блёклой подсказкой»: препятствие подсвечивается, стиль ошибочный,
-  сказано, куда смотреть, если причина за пределами вида. Закрыто t172
-  («препятствие как ошибка»).
-- `src/apps/kt-app/src/reach_tests.rs:211` — t252 `no_orphan_commands`:
-  реализованная команда, которую не создаёт ни одна строка приложения, роняет
-  сборку. Заведён по конкретной потере — именованные области Р.35 существовали в
-  модели и были недостижимы из интерфейса.
-- `src/apps/kt-app/src/reach_tests.rs:459` — t253: у каждой сущности таймлайна
-  проверяется полный набор глаголов, и таблица исчерпывающая по `TlEntity` —
-  новая сущность не соберётся, пока строку не заполнили.
+  (`src/libs/kt-model/src/project.rs:3204` and nearby).
+- `src/apps/kt-app/CLAUDE.md` item 16 — "the impossibility of an action is shown as an ERROR, not as a faded hint": the obstacle is highlighted, the style is an error style, and it is said where to look if the cause lies outside the view. Closed by t172 ("obstacle as error").
+- `src/apps/kt-app/src/reach_tests.rs:211` — t252 `no_orphan_commands`: an implemented command that no interface row of the application creates breaks the build. Introduced over a concrete loss — the named areas of R.35 existed in the model and were unreachable from the interface.
+- `src/apps/kt-app/src/reach_tests.rs:459` — t253: for each timeline entity the full set of verbs is checked, and the table is exhaustive over `TlEntity` — a new entity will not compile until its row is filled in.
 
-### Чего не хватает
+### What is missing
 
-- Проверки обратного направления. t252 идёт от команды к интерфейсу; поверхности,
-  за которой нет механизма, не ловит ни один тест. Окно с заголовком и без
-  содержимого у нас сегодня собралось бы молча.
-- Словаря пустого состояния. Пустая панель у нас означает «здесь ничего нет», и
-  этого достаточно, пока источник данных локален и синхронен: «нет строк» и
-  «строки не приехали» — один случай. Как только источник станет отдельным
-  (индекс-БД строится фоном, тумбы приходят позже), различие появится, а языка
-  для него нет.
+- A check of the reverse direction. t252 runs from the command to the interface; no test catches a surface for which there is no mechanism. A window with a title and without content would today build silently for us.
+- A vocabulary of the empty state. An empty panel for us means "there is nothing here," and this is sufficient while the data source is local and synchronous: "no rows" and "rows have not arrived" are one case. As soon as the source becomes separate (the index DB is built in the background, thumbnails arrive later), the difference will appear, and there is no language for it.
 
-### Что мешает
+### What gets in the way
 
-Ничего конструктивного — мешает только направление уже написанной проверки.
-Стоит помнить, откуда взялась цена вопроса: п.20 чек-листа («ничего не отрастает
-и не отрубается само») запрещает поверхности появляться сами по себе, но проза
-ничего не роняет — именно поэтому Р.38 и завёл `reach_tests`. Урок Adobe в том,
-что механизм достижимости обязан быть двусторонним: команда без поверхности —
-потерянная фича, поверхность без механизма — тупик, и второе хуже, потому что
-выглядит как работающая программа.
+Nothing constructive — only the direction of the already written check gets in the way. It is worth remembering where the price of the question came from: item 20 of the checklist ("nothing grows or is cut off by itself") forbids surfaces from appearing on their own, but prose breaks nothing — that is precisely why R.38 introduced `reach_tests`. The lesson of Adobe is that the reachability mechanism must be two-sided: a command without a surface is a lost feature, a surface without a mechanism is a dead end, and the second is worse, because it looks like a working program.
 
-### В категории `collab/` — две обязательные строки (правило 13)
+### In the category `collab/` — two mandatory rows (rule 13)
 
-БЕЗ СЕТИ: ОСТАЁТСЯ — `src/libs/kt-model/src/model.rs:336` — противоядие целиком локально и уже построено: невозможность у нас выражена типизированным отказом с собственным текстом, вплоть до самого вырожденного случая «откатывать нечего», а не поверхностью, которую пользователь должен истолковать; интерфейс обязан показать это ошибкой по п.16 чек-листа, и это правило проверяется t172, а не держится на добросовестности автора окна.
+OFFLINE: REMAINS — `src/libs/kt-model/src/model.rs:336` — the antidote is wholly local and is already built: impossibility is expressed for us by a typed refusal with its own text, down to the most degenerate case "there is nothing to undo," rather than by a surface that the user has to interpret; the interface is obliged to show it as an error under item 16 of the checklist, and this rule is checked by t172 rather than resting on the good faith of the author of a window.
 
-ЦЕНА СЕТИ: содержимое окна конфликтов — проект-как-база — список расхождений может составить только та сторона, которая хранит обе версии и знает, чем они отличаются; клиенту приезжает готовый массив строк, поэтому пустое окно и неотличимо от «конфликтов нет» — у нас же обеих версий сразу не бывает нигде, и составлять такой список сегодня не из чего.
+NETWORK COST: the content of the conflict window — project-as-database — the list of divergences can be compiled only by the side that stores both versions and knows how they differ; the client receives a ready array of rows, so an empty window is indistinguishable from "there are no conflicts." Ours, meanwhile, has both versions at once nowhere, and there is nothing from which to compile such a list today.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Из двенадцати — ни одного. Из правил чек-листа `src/apps/kt-app/CLAUDE.md` —
-два, и оба по существу: п.16 (невозможность обязана быть ОШИБКОЙ: пустое окно —
-предельный случай «блёклой подсказки», оно не говорит даже цветом) и п.20
-(«ничего не отрастает и не отрубается само» — поверхность, заведённая под
-механизм, которого нет, отросла сама). Заметка не предлагает нового окна и не
-трогает запрет всплывающих поверхностей.
+Of the twelve — none. Of the rules of the `src/apps/kt-app/CLAUDE.md` checklist — two, and both on substance: item 16 (impossibility must be an ERROR: an empty window is the extreme case of a "faded hint," it does not even speak with colour) and item 20 ("nothing grows or is cut off by itself" — a surface laid down under a mechanism that does not exist has grown by itself). The note does not propose a new window and does not touch the prohibition of pop-up surfaces.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия: обратное направление проверки достижимости и словарь пустого состояния |
-| Где основная работа | kt-app (`reach_tests.rs` — сканер поверхностей; тексты пустых состояний) |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | окно/панель без механизма роняет сборку так же, как осиротевшая команда (сегодня не падает); пустое состояние из-за незагруженных данных не выглядит как «здесь ничего нет» |
-| Зависит от | ни от чего: обе половины локальны |
-| Ломает совместимость | нет |
+| Size | S — one stage: the reverse direction of the reachability check and a vocabulary of the empty state |
+| Where the main work is | kt-app (`reach_tests.rs` — the surface scanner; the texts of the empty states) |
+| Project format | does not touch it |
+| Tests to write | a window/panel without a mechanism breaks the build just as an orphaned command does (today it does not fail); an empty state caused by data that has not loaded does not look like "there is nothing here" |
+| Depends on | nothing: both halves are local |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Фичу не берём — брать нечего: механизма нет и у автора окна. Берём урок, и он
-дешёвый. Прямой вывод для нас: механизм «тупиков не бывает» (Р.38) обязан
-работать в обе стороны. Сегодня t252 ловит команду, до которой не дотянулся
-интерфейс, и не ловит интерфейс, за которым нет команды, — а именно этот случай
-живёт у Adobe четвёртый год и выглядит как работающая программа. Второй вывод:
-у пустого состояния должно быть два разных текста, как только источник данных
-перестанет быть синхронным и локальным.
+We do not take the feature — there is nothing to take: the mechanism does not exist, not even for the author of the window. We take the lesson, and it is cheap. The direct conclusion for us: the "no dead ends" mechanism (R.38) must work in both directions. Today t252 catches a command that the interface did not reach, and does not catch an interface behind which there is no command — and precisely this case has lived at Adobe for four years and looks like a working program. The second conclusion: an empty state must have two different texts as soon as the data source stops being synchronous and local.
 
-Это же — самая наглядная иллюстрация к п.16 чек-листа: Final Cut на том же
-месте говорит, кто именно держит библиотеку и на какой машине, а Premiere
-показывает пустой прямоугольник. Разница между ними не в сложности механизма, а
-в том, что первый отвечает на попытку отказом с причиной, а второй —
-поверхностью.
+This is also the most vivid illustration of item 16 of the checklist: Final Cut in the same place says who exactly holds the library and on which machine, while Premiere shows an empty rectangle. The difference between them is not in the complexity of the mechanism but in the fact that the first answers an attempt with a refusal and a reason, while the second answers with a surface.
 
-Границы: почему слияния нет ни у кого и откуда взялось само окно — F-COL-029;
-что можно показать вместо разрешения (сравнение двух монтажей) — F-COL-031;
-именованное поражение вместо молчаливого — F-COL-032; как редактор вообще
-сообщает о невозможности действия — F-HLP-010; пустые состояния, которые учат, —
-F-HLP-020.
+Boundaries: why there is no merging anywhere and where the window itself came from — F-COL-029; what can be shown instead of resolution (a comparison of two edits) — F-COL-031; a named failure instead of a silent one — F-COL-032; how an editor generally reports the impossibility of an action — F-HLP-010; empty states that teach — F-HLP-020.
 
-## Источники
+## Sources
 
 - https://community.adobe.com/t5/team-projects-discussions/premiere-pro-team-project-resolve-conflicts-empty-window/td-p/11387956
-  — тред от 26.08.2020, подтверждение 16.12.2024, не помечен решённым (дата
-  обращения 2026-09-08).
+  — the thread of 26.08.2020, confirmed 16.12.2024, not marked solved (accessed 2026-09-08).
 - https://www.blackmagicdesign.com/products/davinciresolve/collaboration —
-  блокировка бинов и таймлайнов вместо разрешения конфликтов (дата обращения
-  2026-09-08).
-- https://support.apple.com/en-us/HT207128 — сообщение Final Cut «already in
-  use» как форма отказа ДО открытия (дата обращения 2026-09-08).
-- Строки VEGAS и After Effects помечены `[НЕ ПРОВЕРЕНО]` прямо в таблице.
-- Наш код прочитан 08.09.2026: `src/libs/kt-model/src/model.rs` (336),
+  locking of bins and timelines instead of resolving conflicts (accessed 2026-09-08).
+- https://support.apple.com/en-us/HT207128 — the Final Cut message "already in use" as a form of refusal BEFORE opening (accessed 2026-09-08).
+- The VEGAS and After Effects rows are marked `[NOT VERIFIED]` directly in the table.
+- Our code read on 08.09.2026: `src/libs/kt-model/src/model.rs` (336),
   `src/libs/kt-model/src/project.rs` (3204),
   `src/apps/kt-app/src/reach_tests.rs` (211, 459), `src/apps/kt-app/CLAUDE.md`
-  (пп. 16, 20 чек-листа).
+  (items 16, 20 of the checklist).

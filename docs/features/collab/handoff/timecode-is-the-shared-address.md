@@ -1,12 +1,12 @@
 ---
 id: F-COL-011
-title: Таймкод исходника как общий адрес
-status: кандидат
+title: Source timecode as a common address
+status: candidate
 priority: B
 cost: M
 category: collab/handoff
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, otio-lib-0.18]
-we_have: частично
+we_have: partial
 crates: [kt-time, kt-otio, kt-model, kt-app]
 invariants: []
 ui_rules: [3, 14]
@@ -19,237 +19,175 @@ services: [frame-io, bm-cloud]
 checked: 2026-09-08
 ---
 
-# F-COL-011 — Таймкод исходника как общий адрес
+# F-COL-011 — Source timecode as a common address
 
-## Суть
+## Essence
 
-Трое говорят про один кадр. Монтажёр говорит «на 4:12 от начала», рецензент — «на
-00:04:12 в присланном ролике», колорист — «шот 14, второй кадр после склейки».
-Стоит переставить одну склейку — и два адреса из трёх умерли: всё, что правее,
-уехало. Не умирает только один адрес — таймкод ИСХОДНИКА: он вшит в материал до
-того, как монтаж вообще существует, и не двигается ни от пересборки, ни от
-переименования файла, ни от смены редактора.
+Three people speak about one frame. The editor says "at 4:12 from the start", the reviewer — "at 00:04:12 in the sent reel", the colourist — "shot 14, the second frame after the splice". Rearrange one splice — and two of the three addresses are dead: everything to the right has
+moved. Only one address does not die — the timecode of the SOURCE: it is embedded in the material before the edit even exists, and does not move from a rebuild, nor from a renaming of the file, nor from a change of editor.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Media Properties → таймкод медиа; таймкод источника в Trimmer | адрес читается из файла и показывается рядом с монтажным временем; на таймлайне линейка живёт в своей системе координат `[НЕ ПРОВЕРЕНО]` |
-| Adobe Premiere | 26.x | Source Timecode; Modify → Timecode у клипа; колонка Media Start в проекте; эффект Timecode для burn-in | два времени видны одновременно (source и sequence), а «Modify → Timecode» позволяет объявить материалу другую начальную точку, если камера её не записала |
-| DaVinci Resolve | 21 | Source TC / Record TC, Change Clip Timecode, Data Burn-In (Source Timecode), конформ по XML/AAF/EDL | таймкод — рабочий ключ конформа наравне с именем катушки; сравнение офлайна с онлайном делается по прожжённым цифрам, а не по позициям |
-| Final Cut Pro | 12.3 | таймкод источника в инспекторе и вьюере; сторонний burn-in | структура библиотеки адресует событиями и клипами, а не дорожками и временем, поэтому адрес есть, но он не центр конвейера — источник видимости адреса тут исторически догоняющий |
-| After Effects | 26.x | стартовый таймкод футеджа; эффект Timecode с режимом Source Timecode | у элемента материала своя начальная точка, слой её помнит, композиция при этом живёт в своём времени — два времени разведены жёстче, чем у NLE |
+| VEGAS Pro | 2026.0 | Media Properties → the timecode of the media; the source timecode in the Trimmer | the address is read from the file and shown beside the edit time; on the timeline the ruler lives in its own coordinate system `[NOT VERIFIED]` |
+| Adobe Premiere | 26.x | Source Timecode; Modify → Timecode of a clip; the Media Start column in the project; the Timecode effect for burn-in | two times are visible at once (source and sequence), and "Modify → Timecode" allows declaring to the material a different starting point, if the camera did not record it |
+| DaVinci Resolve | 21 | Source TC / Record TC, Change Clip Timecode, Data Burn-In (Source Timecode), conform by XML/AAF/EDL | the timecode is a working key of the conform on a par with the reel name; the comparison of offline with online is done by the burnt-in numbers, not by positions |
+| Final Cut Pro | 12.3 | the source timecode in the inspector and the viewer; a third-party burn-in | the library's structure addresses by events and clips, not by tracks and time, so the address exists, but it is not the centre of the pipeline — the source of the address's visibility is historically catching up |
+| After Effects | 26.x | the starting timecode of the footage; the Timecode effect with the Source Timecode mode | the footage element has its own starting point, the layer remembers it, while the composition lives in its own time — the two times are separated more strictly than in an NLE |
 
-**Вне ядра.** Без OpenTimelineIO эту фичу описать нельзя: у всех пяти редакторов
-адрес показан пользователю, но НИГДЕ не сказано, в какой системе координат он
-живёт в файле обмена, — а именно от этого зависит, уедет проект на час или нет.
-Наш собственный механизм родом отсюда.
+**Outside the core.** Without OpenTimelineIO this feature cannot be described: all five editors
+show the address to the user, but NOWHERE is it said in which coordinate system it lives
+in the exchange file — and precisely this determines whether the project travels an hour out or not.
+Our own mechanism comes from here.
 
-| Программа | Версия | Как называется | Как устроено |
+| Programme | Version | What it is called | How it works |
 |---|---|---|---|
-| OpenTimelineIO | 0.18.x | `available_range.start_time`, `source_range`, `global_start_time` | отдельного поля «таймкод» НЕТ: `source_range` живёт в той же системе координат, что `available_range`, и её начало и есть вшитый таймкод; `global_start_time` — то же самое, но для монтажа целиком |
+| OpenTimelineIO | 0.18.x | `available_range.start_time`, `source_range`, `global_start_time` | there is NO separate "timecode" field: `source_range` lives in the same coordinate system as `available_range`, and its start IS the embedded timecode; `global_start_time` is the same, but for the whole edit |
 
-## Фишка фишки
+## The trick behind it
 
-**Адрес — не число, а ПАРА «катушка + таймкод», и вторая половина вшивается в
-материал раньше, чем существует монтаж.** Таймкод сам по себе не уникален: две
-карты одного съёмочного дня стартуют с одного часа, а у многих камер он вообще
-начинается с нуля при каждом включении. Уникальным адрес делает имя катушки,
-записанное на этапе дейлиз, — и именно поэтому оно переживает переименование
-файла, тогда как «ключ по имени файла» ломается от первой же чужой сортировки.
-Отсюда практический вывод, которого нет ни в одном списке возможностей:
-конформ, сошедшийся «почти весь», обычно сошёлся неправильно — он нашёл тот же
-таймкод на другой катушке.
+**The address is not a number but a PAIR "reel + timecode", and the second half is embedded in the
+material before the edit exists.** The timecode by itself is not unique: two cards of one shooting day start from one hour, and many cameras
+start from zero at every power-on. The address is made unique by the reel name,
+recorded at the dailies stage — and precisely for this reason it survives the renaming of the
+file, whereas "the key by file name" breaks at the first foreign sort. Hence a practical conclusion
+that is absent from every list of features: a conform that has converged "almost entirely" has usually converged incorrectly — it found the same
+timecode on a different reel.
 
-**Второй слой: в файле обмена таймкода как поля нет вовсе.** Есть система
-координат: `source_range` клипа выражен в тех же координатах, что
-`available_range` материала, и её начало и есть вшитый час. Редактор, который
-внутри себя считает точку входа от НУЛЕВОГО кадра файла, обязан вычитать это
-начало на чтении и возвращать на записи — иначе он уезжает в файл на час и
-рендерит пустоту. Это ровно та деталь, которая не видна ни в одном интерфейсе и
-за которую платят конформом, приехавшим чёрным.
+**The second layer: in the exchange file there is no timecode as a field at all.** There is a coordinate system:
+the `source_range` of a clip is expressed in the same coordinates as the
+`available_range` of the material, and its start IS the embedded hour. An editor that
+internally counts the entry point from the ZERO frame of the file is obliged to subtract this
+start on reading and return it on writing — otherwise it drifts into the file by an hour and
+renders emptiness. This is exactly the detail that is not visible in any interface and
+for which one pays with a conform that arrived black.
 
-**Третий слой: у монтажа тоже есть адрес, и он ЛОЖНЫЙ.** Record TC по конвенции
-начинается с 01:00:00:00 и после одной вставки сдвигается целиком — все замечания,
-записанные на него, после пересборки указывают на соседний шот, причём выглядят
-исправными. Поэтому серьёзные конвейеры просят замечания в адресах ИСХОДНИКА, а
-монтажное время оставляют для разговора внутри одной версии. Разница между двумя
-адресами не в точности, а в том, кто их автор: один написала камера, другой —
-последняя правка.
+**The third layer: the edit too has an address, and it is FALSE.** Record TC by convention
+starts at 01:00:00:00 and after one insertion shifts entirely — all remarks written against it, after a rebuild, point to the neighbouring shot, and look
+correct. Therefore serious pipelines ask for remarks in SOURCE addresses,
+and leave the edit time for conversation within one version. The difference between the two
+addresses is not in accuracy but in who their author is: one was written by the camera, the other — by the last edit.
 
-## Плюсы
+## Pros
 
-- Адрес переживает пересборку: он привязан к материалу, а материал правкой
-  монтажа не меняется. Это единственное свойство, ради которого механизм и
-  существует.
-- Адрес переживает смену программы: таймкод и катушка читаются всеми, включая
-  тех, кто ничего не знает про формат чужого проекта.
-- Адрес переживает переименование и перекладывание файлов — то есть ровно те
-  два события, которые ломают все остальные способы связать монтаж с материалом.
-- Прожжённый в картинку адрес не требует от второй стороны вообще ничего: ни
-  программы, ни учётной записи, ни доступа к проекту. Дешевле механизма для
-  разговора двоих в отрасли нет.
+- The address survives a rebuild: it is tied to the material, and the material is not changed by an edit of the montage. This is the only property for whose sake the mechanism exists at all.
+- The address survives a change of programme: the timecode and the reel are read by everyone, including those who know nothing about the format of a foreign project.
+- The address survives the renaming and moving of files — that is, precisely the two events that break all the other ways of linking an edit to the material.
+- An address burnt into the picture requires nothing at all of the second side: neither a programme, nor a user account, nor access to the project. There is no cheaper mechanism in the industry for a conversation between two people.
 
-## Минусы
+## Cons
 
-- **Адрес не уникален без катушки**, а катушку пишут не все. Материал с
-  телефона, скринкаст, экспорт из чужой программы приезжают без обоих полей —
-  и конвейер молча падает обратно на имя файла.
-- **Дробные частоты.** 23.976/29.97/59.94 — не частоты кадров, а 24000/1001 и
-  соседи; drop-frame считает подписи, а не кадры, поэтому один и тот же кадр
-  имеет два законных написания (DF и NDF), различающихся на 3.6 с в час. Ошибка
-  в этом месте выглядит как «сдвиг на пару секунд к концу ролика».
-- Таймкод переполняется в сутки: съёмка через полночь даёт два разных кадра с
-  одинаковым адресом на одной катушке.
-- Адрес говорит про материал и молчит про монтаж: «поправь тут» в адресах
-  исходника не отвечает на вопрос, в каком месте фильма это «тут» стоит, если
-  один дубль использован дважды.
-- Прожечь адрес в картинку — значит испортить картинку; отдельная версия с
-  burn-in это лишний рендер и лишний файл, который потом путают с чистовым.
+- **The address is not unique without a reel**, and not everyone writes reels. Material from a phone, a screen capture, an export from a foreign programme arrives without both fields — and the pipeline silently falls back to the file name.
+- **Fractional rates.** 23.976/29.97/59.94 are not frame rates, but 24000/1001 and its neighbours; drop-frame counts labels, not frames, so one and the same frame has two legitimate notations (DF and NDF), differing by 3.6 s per hour. An error at this point looks like "a shift of a couple of seconds towards the end of the reel".
+- The timecode overflows at a day: shooting across midnight gives two different frames with the same address on one reel.
+- The address speaks about the material and is silent about the edit: "fix this here" in the addresses of the source does not answer the question at which place of the film this "here" stands, if one take is used twice.
+- Burning the address into the picture means spoiling the picture; a separate version with burn-in is an extra render and an extra file, which are later confused with the final cut.
 
-## Что говорят пользователи
+## What users say
 
-Формулировка, ради которой заметка и заведена, — про причину, а не про удобство:
+The formulation for whose sake the note was opened is about the reason, not about convenience:
 
 > Timecode is like a train track: it tells you where you are at a given moment in
 > time. Matching source timecode is the number one reason that conforms work or
 > not.
-> — Frame.io Insider, «The Beginner's Guide to Conforming with DaVinci Resolve»,
+> — Frame.io Insider, "The Beginner's Guide to Conforming with DaVinci Resolve",
 > 29.03.2019, https://blog.frame.io/2019/03/29/conforming-with-resolve/
 
-И там же — про вторую половину адреса, ту, о которой забывают:
+And in the same place — about the second half of the address, the one that is forgotten:
 
 > While tape-based workflows are more and more rare, reel names are still
 > probably THE most important, underused part of conforming.
-> — тот же материал, 29.03.2019
+> — the same material, 29.03.2019
 
-Обе цитаты про одно и то же: адрес обязан быть записан ДО монтажа, иначе после
-монтажа его неоткуда взять.
+Both quotes are about one and the same thing: the address must be recorded BEFORE the edit, otherwise after the edit it cannot be obtained from anywhere.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-Честный ответ: у нас сделана МЕХАНИЧЕСКАЯ половина и не сделана человеческая.
+The honest answer: we have made the MECHANICAL half and have not made the human one.
 
-- Адрес не портится. Начало `available_range` активной медиа-ссылки вычитается на
-  чтении и возвращается на записи (`src/libs/kt-otio/src/convert.rs`,
-  `active_available_range`), поэтому наш `source_in` считается от первого кадра
-  файла, а чужой редактор получает свой таймкод обратно на месте. Закреплено
-  тестом t180 (`src/libs/kt-otio/tests/convert.rs`): клип с часом таймкода
-  читается как «10 секунд от начала файла» и после круга пишется обратно как
-  час плюс 240 кадров.
-- Найдено это не рассуждением, а живым фильмом: кросс-рендер t179
-  (`src/apps/kt-cli/tests/oc_render.rs`, материал «Sol Levante» с ровно часом
-  таймкода) — без вычитания движок уезжал на час в 162-секундный файл и
-  рендерил пустоту.
-- Чужие поля переживают круг целиком: `available_range`, метаданные и `extra`
-  медиа-ссылки лежат в `Retained` и возвращаются на место, даже когда мы
-  подменяем один только адрес файла.
+- The address does not get spoiled. The start of `available_range` of the active media reference is subtracted on
+  reading and returned on writing (`src/libs/kt-otio/src/convert.rs`,
+  `active_available_range`), therefore our `source_in` is counted from the first frame of the
+  file, and a foreign editor gets its own timecode back in place. Fixed by the
+  test t180 (`src/libs/kt-otio/tests/convert.rs`): a clip with an hour of timecode is read as
+  "10 seconds from the start of the file" and after the round is written back as the
+  hour plus 240 frames.
+- This was found not by reasoning but by a live film: the cross-render t179
+  (`src/apps/kt-cli/tests/oc_render.rs`, the material "Sol Levante" with exactly an hour
+  of timecode) — without subtraction the engine drifted an hour into a 162-second file and
+  rendered emptiness.
+- Foreign fields survive the round in full: `available_range`, the metadata and the `extra`
+  of the media reference lie in `Retained` and return to their place, even when we
+  substitute only the file address.
 
-И на этом всё. Дальше начинается то, чего нет:
+And that is all. Beyond this begins what does not exist:
 
-- **В документе адреса нет.** `MediaRef` — это `id` и `path`
-  (`src/libs/kt-model/src/project.rs`); ни таймкода, ни имени катушки в модели
-  не существует, они живут только в сохранённой чужой части файла.
-- **В крейте времени адреса нет.** `src/libs/kt-time/src/lib.rs` — тики,
-  диапазоны, сетка кадров и аудио-burst'ы; ни типа таймкода, ни drop-frame, ни
-  ненулевой точки отсчёта. Ноль зашит: `FpsGrid::frame_index` считает от нуля
-  тиков.
-- **Показать адрес нечем.** `format_timecode`
-  (`src/apps/kt-app/src/util.rs`) печатает `00:01:23.456 F12` — часы, минуты,
-  секунды, МИЛЛИСЕКУНДЫ и отдельно номер кадра. Это не запись отрасли, и
-  прочитать её вслух второму человеку нельзя.
-- **Ввести адрес нельзя.** `parse_timecode` отвергает четырёхчастный ввод
-  (`if parts.len() > 3 { return None }`), то есть строка `01:02:03:14` — мусор;
-  маска ввода Ctrl+L фиксирована шестью цифрами ЧЧММСС (`TC_MASK_DIGITS = 6`),
-  кадров в ней нет вовсе, точность ввода — секунда.
-- Дробных частот у нас нет по построению: 23.976/29.97/59.94 не делят 90000, и
-  `grid_fps` округляет их до ближайшей целой (п.178). Значит drop-frame-адрес
-  нашей моделью времени не выражается — и это не мелочь, а половина вещательного
-  мира.
+- **There is no address in the document.** `MediaRef` is `id` and `path`
+  (`src/libs/kt-model/src/project.rs`); neither a timecode nor a reel name exists in the model,
+  they live only in the preserved foreign part of the file.
+- **There is no address in the time crate.** `src/libs/kt-time/src/lib.rs` — ticks,
+  ranges, the frame grid and the audio bursts; neither a timecode type, nor drop-frame, nor a
+  non-zero origin. Zero is hard-wired: `FpsGrid::frame_index` counts from zero
+  ticks.
+- **There is nothing to show the address with.** `format_timecode`
+  (`src/apps/kt-app/src/util.rs`) prints `00:01:23.456 F12` — hours, minutes,
+  seconds, MILLISECONDS and separately the frame number. This is not a notation of the industry, and it cannot be read aloud to a second person.
+- **The address cannot be entered.** `parse_timecode` rejects a four-part input
+  (`if parts.len() > 3 { return None }`), that is, the string `01:02:03:14` is garbage;
+  the input mask of Ctrl+L is fixed to six digits HHMMSS (`TC_MASK_DIGITS = 6`),
+  there are no frames in it at all, the precision of input is a second.
+- We have no fractional rates by construction: 23.976/29.97/59.94 do not divide 90000, and
+  `grid_fps` rounds them to the nearest whole number (item 178). So a drop-frame address
+  is not expressed by our model of time — and this is not a trifle, but half of the broadcast
+  world.
 
-БЕЗ СЕТИ: ОСТАЁТСЯ — `src/libs/kt-time/src/lib.rs` — вся арифметика адреса остаётся на одной машине и без второго участника: тик целочислен, сетка кадров делит 90000 нацело, «кадр номер N материала» считается точно и повторяется прогон в прогон, а идентичность самого материала уже считается хэшем в индексной базе; не хватает не сети, а НАЧАЛА ОТСЧЁТА — в крейте нет ни типа таймкода, ни ненулевой стартовой точки, поэтому адрес существует как арифметика и не существует как имя.
+OFFLINE: REMAINS — `src/libs/kt-time/src/lib.rs` — the whole arithmetic of the address remains on one machine and without a second participant: the tick is integer, the frame grid divides 90000 exactly, "frame number N of the material" is counted exactly and is repeated run to run, and the identity of the material itself is already computed by a hash in the index database; what is missing is not the network but the ORIGIN OF THE COUNT — the crate has neither a timecode type nor a non-zero starting point, therefore the address exists as arithmetic and does not exist as a name.
 
-ЦЕНА СЕТИ: у обоих обязан быть один и тот же материал с одним и тем же вшитым таймкодом — адрес материала — адрес не переносит кадр, он на него ССЫЛАЕТСЯ, и вторая сторона обязана иметь чем разыменовать ссылку: без общего материала «01:02:03:14 катушка A003» — это строка, к которой не приложить ни кадра.
+NETWORK COST: both sides must have the same material with the same embedded timecode — the media address — the address does not carry a frame, it REFERS to it, and the second side must have a means of dereferencing the reference: without the common material "01:02:03:14 reel A003" is a string to which not a single frame can be attached.
 
-### Чего не хватает
+### What is missing
 
-- Стартовой точки материала в документе (сегодня она есть только в чужой части
-  файла и пропадает у синтетики и у файлов без `available_range`).
-- Записи адреса в отраслевой форме — `ЧЧ:ММ:СС:КК` — и второй строки в
-  показе времени: монтажное время и время материала рядом, как у всех пяти.
-- Ввода адреса материала («перейти к 01:02:03:14 в этом клипе») и поиска по
-  нему: это ровно то, чем второй человек пользуется, читая письмо.
-- Имени катушки: поля нет ни в модели, ни в UI, и подставить его неоткуда.
+- A starting point for the material in the document (today it exists only in a foreign part of the file and disappears for synthetic sources and for files without `available_range`).
+- A recording of the media address in the industry form — `HH:MM:SS:FF` — and a second line in the time display: editorial time and media time side by side, as in all five editors.
+- Entry of the media address ("go to 01:02:03:14 in this clip") and search by it: exactly what a second person uses when reading a letter.
+- A reel name: the field exists neither in the model nor in the UI, and there is nowhere to take it from.
 
-### Что мешает
+### What gets in the way
 
-Показ адреса дёшев, ввод — нет: маска Ctrl+L фиксирована шестью разрядами и
-набирается справа налево (решение пользователя), а адрес материала требует
-седьмого и восьмого разряда и другой опорной точки. Это не «добавить поле», а
-второй режим у уже стоящего виджета, и он обязан пройти правило UI 14 («работает
-повторно», t83/t98) и правило UI 3 (ширина не скачет). Второе препятствие — наши
-дробные частоты: пока 29.97 округляется до 30, честного drop-frame-адреса мы
-показать не можем и обязаны это сказать вслух, а не показать похожие цифры.
+Displaying the address is cheap, entering it is not: the Ctrl+L mask is fixed at six digits and is typed right to left (the user's decision), while the media address needs a seventh and an eighth digit and a different reference point. This is not "add a field" but a second mode of the widget that already exists, and it has to pass UI rule 14 ("works repeatedly", t83/t98) and UI rule 3 (the width does not jump). The second obstacle is our fractional frame rates: while 29.97 is rounded to 30, we cannot show an honest drop-frame address, and we are obliged to say so aloud rather than show similar-looking digits.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Ни одного из двенадцати — и это сильный аргумент «дёшево»: адрес материала не
-трогает ни модель времени (тик остаётся единицей), ни детерминизм, ни кэш, ни
-композицию. Задевает два правила чек-листа UI: 3 (ничего не скачет — ширина
-поля таймкода фиксируется по самому длинному варианту) и 14 (фича работает
-повторно — маска обязана отдавать фокус, это её собственная историческая
-ловушка).
+None of the twelve — and this is the strong argument for "cheap": the media address touches neither the time model (the tick remains the unit), nor determinism, nor the cache, nor the composition. It touches two rules of the UI checklist: 3 (nothing jumps — the width of the timecode field is fixed by the longest variant) and 14 (the feature works repeatedly — the mask must hand back focus, which is its own historical trap).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии: стартовая точка материала в модели и формате; показ и ввод адреса |
-| Где основная работа | kt-otio (стартовая точка из `available_range` в модель, а не только в `Retained`), kt-model (`MediaRef`: начало и имя катушки), kt-app (вторая строка времени, режим ввода), kt-time (запись `ЧЧ:ММ:СС:КК` — единственное место, где ей можно жить) |
-| Формат проекта | не трогает чужое: адрес уже лежит в `available_range` и возвращается на место (t180); наши синтетические источники получают необязательное поле — версия нужна только если начало станет редактируемым |
-| Тесты, которые придётся написать | «показ и ввод — одна и та же точка»: набранный `01:02:03:14` ведёт ровно на тот кадр, который в этой позиции показывает вторая строка; «круг не двигает адрес» (расширение t180 на наши собственные файлы); layout-тест «две строки времени не растят полосу»; отказ для дробных частот вместо похожих цифр |
-| Зависит от | ничего; F-COL-010 (собранная копия обязана нести тот же адрес) и F-MED-005 (переадресация по адресу, а не по имени файла) на неё опираются |
-| Ломает совместимость | нет |
+| Size | M — 2 stages: the starting point of the material in the model and in the format; display and entry of the address |
+| Where the main work is | kt-otio (the starting point from `available_range` into the model, not only into `Retained`), kt-model (`MediaRef`: the start and the reel name), kt-app (the second time line, the entry mode), kt-time (the `HH:MM:SS:FF` notation — the only place where it may live) |
+| Project format | does not touch someone else's data: the address already lies in `available_range` and returns to its place (t180); our synthetic sources get an optional field — a version is needed only if the start becomes editable |
+| Tests to write | "display and entry are one and the same point": a typed `01:02:03:14` leads exactly to the frame that the second line shows at that position; "the round trip does not move the address" (an extension of t180 to our own files); a layout test "two time lines do not grow the strip"; refusal for fractional frame rates instead of similar digits |
+| Depends on | nothing; F-COL-010 (an assembled copy must carry the same address) and F-MED-005 (relinking by address, not by file name) rest on it |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём, и берём целиком локально: адрес материала полезен ОДНОМУ человеку не
-меньше, чем двоим — он переживает и собственную пересборку. Серверная половина
-не нужна вовсе: чтобы адрес работал, нужен не сервер, а общий материал.
+Take it, and take it entirely locally: a media address is useful to ONE person no less than to two — it survives even one's own re-assembly. The server half is not needed at all: for the address to work, what is needed is not a server but shared material.
 
-Честная оценка сделанного: мы закрыли ту часть, которую обычно ломают, — чужой
-таймкод у нас не теряется и не сдвигается (t180, найдено t179), — и не сделали
-ту, ради которой механизм существует: адрес нельзя ни увидеть в отраслевой
-записи, ни ввести, ни назвать вслух. Сегодня он лежит в файле как байт и не
-существует как имя. Это редкий случай, когда «частично» означает не половину
-работы, а её невидимую половину.
+An honest assessment of what has been done: we closed the part that usually breaks — someone else's timecode is not lost or shifted by us (t180, found by t179) — and did not do the part the mechanism exists for: the address can be neither seen in the industry notation, nor entered, nor named aloud. Today it lies in the file as a byte and does not exist as a name. This is a rare case where "partial" means not half the work but its invisible half.
 
-Границы: переносимость проекта на другую машину — F-PRJ-003; починка сломанного
-пути и сбор в папку — F-MED-005; сколько запаса едет с монтажом — F-COL-010
-(там же разобрано, почему обрезка сдвигает адрес и что с этим делать);
-таймкод-генератор как титр — F-TXT-003.
+Boundaries: portability of the project to another machine — F-PRJ-003; repair of a broken path and collection into a folder — F-MED-005; how much margin travels with the edit — F-COL-010 (where it is also analysed why trimming shifts the address and what to do about it); a timecode generator as a title — F-TXT-003.
 
-## Источники
+## Sources
 
 - https://blog.frame.io/2019/03/29/conforming-with-resolve/ — The Beginner's
-  Guide to Conforming with DaVinci Resolve (дата обращения 2026-09-08)
+  Guide to Conforming with DaVinci Resolve (accessed 2026-09-08)
 - https://www.provideocoalition.com/source-timecode-burn-in-comes-to-fcpx-and-is-in-the-other-nles-too/
-  — зачем офлайн-референс с прожжённым таймкодом и почему его просят у монтажа
-  (дата обращения 2026-09-08)
-- Строки таблицы «У кого и как» собраны по составу интерфейсов и справок
-  (Source Timecode и Modify → Timecode у Premiere, Source/Record TC и Data
-  Burn-In у Resolve, Media Properties у VEGAS, эффект Timecode у After Effects);
-  живьём не проверялось — публичного трекера нет ни у одного из пяти
-  (`docs/features/_trackers.md`, «Кого НЕ берём»). Строка VEGAS помечена
-  `[НЕ ПРОВЕРЕНО]` в той части, где речь о линейке таймлайна.
-- Семантика `available_range`/`source_range`/`global_start_time` — эталонная
-  библиотека OpenTimelineIO 0.18.x (`docs/features/_editors.md`,
-  `otio-lib-0.18`) и наш собственный разбор в `src/libs/kt-otio/CLAUDE.md`,
-  раздел «Стартовый таймкод материала (п.180)».
-- Наш код проверен грепом по `src/` 08.09.2026: `kt-time/src/lib.rs`,
-  `kt-otio/src/convert.rs` (вычитание и возврат начала `available_range`),
-  `kt-otio/tests/convert.rs` (t180), `kt-model/src/project.rs` (`MediaRef`),
-  `kt-app/src/util.rs` (`format_timecode`, `parse_timecode`, `TC_MASK_DIGITS`),
-  `kt-cli/tests/oc_render.rs` (t179).
+  — why an offline reference with burned-in timecode is used and why editors are asked for it (accessed 2026-09-08)
+- The rows of the table "Who has it and how" were compiled from the composition of the interfaces and help pages (Source Timecode and Modify → Timecode in Premiere, Source/Record TC and Data Burn-In in Resolve, Media Properties in VEGAS, the Timecode effect in After Effects); not verified live — none of the five has a public tracker (`docs/features/_trackers.md`, "Whom we do NOT take"). The VEGAS row is marked `[NOT VERIFIED]` in the part that concerns the timeline ruler.
+- The semantics of `available_range`/`source_range`/`global_start_time` — the reference library OpenTimelineIO 0.18.x (`docs/features/_editors.md`, `otio-lib-0.18`) and our own analysis in `src/libs/kt-otio/CLAUDE.md`, section "Starting timecode of the material (item 180)".
+- Our code was checked by grep over `src/` on 08.09.2026: `kt-time/src/lib.rs`, `kt-otio/src/convert.rs` (subtraction and return of the `available_range` start), `kt-otio/tests/convert.rs` (t180), `kt-model/src/project.rs` (`MediaRef`), `kt-app/src/util.rs` (`format_timecode`, `parse_timecode`, `TC_MASK_DIGITS`), `kt-cli/tests/oc_render.rs` (t179).

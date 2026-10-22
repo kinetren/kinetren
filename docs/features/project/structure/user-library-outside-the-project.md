@@ -1,12 +1,12 @@
 ---
 id: F-PRJ-004
-title: Пользовательское хранилище между проектами
-status: кандидат
+title: User storage shared between projects
+status: candidate
 priority: B
 cost: L
 category: project/structure
 editors: [resolve-21, after-effects-26, premiere-26, fcp-12, vegas-pro-2026]
-we_have: частично
+we_have: partial
 crates: [kt-app, kt-model, kt-otio]
 invariants: [11]
 ui_rules: [16, 19, 20]
@@ -17,116 +17,54 @@ depends_on: [F-PRJ-003, F-AUT-004]
 checked: 2026-09-21
 ---
 
-# F-PRJ-004 — Пользовательское хранилище между проектами
+# F-PRJ-004 — User storage shared between projects
 
-## Суть
+## Essence
 
-Есть вещи, которые по смыслу принадлежат не проекту, а человеку: его набор
-FX-пресетов, его шаблоны титров, его пресеты экспорта, его раскладка
-клавиш, его шаблоны нового проекта, его шаблонные композиции. Они обязаны
-пережить закрытие проекта и появиться в следующем. Вопрос не «куда положить
-файл», а «чем платят»: всё, что уехало в хранилище пользователя, ушло из
-проекта — и на чужой машине проект этого не найдёт.
+There are things that in meaning belong not to the project but to the person: their set of FX presets, their title templates, their export presets, their keyboard layout, their new-project templates, their template compositions. They must survive the closing of a project and appear in the next one. The question is not "where to put the file" but "what it is paid for with": everything that went into the user's storage has left the project, and on someone else's machine the project will not find it.
 
-Границы. Что именно теряется при переезде проекта — F-PRJ-003
-(`project/structure/project-portability.md`); сбор материала в одну папку —
-F-MED-005; сама библиотека FX-пресетов как фича — F-AUT-004. Эта заметка —
-про МЕСТО, общее для шести фич, и про его обязательную вторую половину.
+Boundaries. What exactly is lost when a project is moved is F-PRJ-003 (`project/structure/project-portability.md`); collecting media into one folder is F-MED-005; the FX preset library itself as a feature is F-AUT-004. This note is about the PLACE shared by six features, and about its mandatory second half.
 
-## У кого и как
+## Who has it and how
 
-Вопрос к каждому: где живёт «моё», переживающее проект, и что с ним
-происходит при переносе на другую машину и при обновлении программы.
+The question for each: where does "mine", which survives the project, live, and what happens to it when the project is moved to another machine and when the program is updated.
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| DaVinci Resolve | 21 | **PowerBins, Power Grades, Templates — внутри БАЗЫ** | сильнейшая строка. У Resolve проект — не файл, а запись в базе данных, и «моё между проектами» лежит ТАМ ЖЕ: PowerBin виден из любого проекта этой базы, PowerGrade — то же самое для грейдов. Следствие структурное: библиотека путешествует не с проектом, а с БАЗОЙ, и переносится её механизмами (экспорт/архив базы), а не копированием файла проекта. Обратная сторона: другая база — другая библиотека, и «отдать коллеге проект» не отдаёт ничего из PowerBin |
-| After Effects | 26.x | папка `Presets` рядом с установкой + локальные шаблоны Essential Graphics | анимационные пресеты `.ffx` лежат файлами в каталоге пользователя/установки и подхватываются в панель Effects & Presets подкаталогами-категориями; шаблоны Motion Graphics имеют «локальную папку шаблонов», назначаемую в настройках. Пресет — отдельный файл, поэтому бэкапится и продаётся (вокруг `.ffx` выросла индустрия), но с проектом не едет ничем |
-| Adobe Premiere | 26.x | профиль версии: `Effect Presets and Custom Items.prfpset`, Libraries | вся пользовательская библиотека эффектов — ОДИН файл в профиле КОНКРЕТНОЙ версии (`Documents/Adobe/Premiere Pro/<версия>/`). Отсюда два хронических класса: переход на новую версию оставляет без пресетов целиком, и импортированные пресеты пропадают при перезапуске. Libraries (облачные) — второй, независимый механизм с собственным жизненным циклом |
-| Final Cut Pro | 12.3 | `~/Movies` (библиотеки) + `~/Library/.../Motion Templates`, Effects Presets | единственный, кто сделал переносимость ЯВНОЙ НАСТРОЙКОЙ: кастомные титры/эффекты/генераторы из Motion по умолчанию лежат в каталоге пользователя и с библиотекой НЕ едут, но в свойствах библиотеки есть переключатель `Motion Content: In Library` и кнопка `Consolidate`. По умолчанию он стоит НЕ в переносимом положении, и Apple прямо пишет, что на сторонний FxPlug он не действует |
-| VEGAS Pro | 2026.0 | реестр + `Documents`, кто как | худший конец шкалы: разные виды пресетов лежат в разных местах (часть — в `Documents`, часть — в реестре Windows), единого «моего каталога» нет. Практическое следствие — чистая переустановка или удаление старой версии уносит часть библиотеки, а какую именно, пользователь узнаёт постфактум |
+| DaVinci Resolve | 21 | **PowerBins, Power Grades, Templates — inside the DATABASE** | the strongest entry. In Resolve a project is not a file but a record in a database, and "mine across projects" lives THERE TOO: a PowerBin is visible from any project of this database, a PowerGrade is the same for grades. The consequence is structural: the library travels not with the project but with the DATABASE, and is moved by its mechanisms (database export/archive), not by copying the project file. The reverse side: another database means another library, and "giving a project to a colleague" gives nothing from the PowerBins |
+| After Effects | 26.x | `Presets` folder next to the installation + local Essential Graphics templates | animation presets `.ffx` are files in the user/installation directory and are picked up in the Effects & Presets panel by subfolders as categories; Motion Graphics templates have a "local templates folder" assigned in the settings. A preset is a separate file, so it gets backed up and sold (an industry has grown around `.ffx`), but it travels with the project by nothing |
+| Adobe Premiere | 26.x | version profile: `Effect Presets and Custom Items.prfpset`, Libraries | the entire user effects library is ONE file in the profile of a SPECIFIC version (`Documents/Adobe/Premiere Pro/<version>/`). Two chronic classes follow from this: switching to a new version leaves you with no presets at all, and imported presets disappear on restart. Libraries (cloud) are a second, independent mechanism with its own life cycle |
+| Final Cut Pro | 12.3 | `~/Movies` (libraries) + `~/Library/.../Motion Templates`, Effects Presets | the only one that made portability an EXPLICIT SETTING: custom titles, effects and generators from Motion are by default in the user directory and do NOT travel with the library, but the library properties have a `Motion Content: In Library` switch and a `Consolidate` button. By default it is NOT in the portable position, and Apple explicitly writes that it has no effect on a third-party FxPlug |
+| VEGAS Pro | 2026.0 | registry + `Documents`, whoever how | the worst end of the scale: different kinds of presets lie in different places (part in `Documents`, part in the Windows registry), and there is no single "my catalog". The practical consequence: a clean reinstallation or removal of an old version takes part of the library with it, and which part the user learns only afterwards |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Каждая фича, положившая своё имущество в пользовательское хранилище,
-ВЫЧЛА из переносимости — и это не побочный эффект, а структурный обмен,
-который признали ровно двое.** Resolve ответил «библиотека — часть базы»:
-она путешествует с базой, а не с проектом, и потому в принципе не может
-«потеряться при переносе проекта» — её там просто нет. Adobe ответил
-«синхронизация через учётную запись»: Libraries живут в облаке, а не рядом
-с файлом. Apple ответил переключателем: `Motion Content: In Library` плюс
-кнопка `Consolidate`, и его надо нажать ДО копирования. Это три разных
-структурных ответа на один и тот же вопрос, и ни один из них не
-«удобство»: у каждого своя цена — чужая база, чужая подписка, забытая
-кнопка. У кого ответа нет вовсе (VEGAS), там пользовательская библиотека и
-есть та зависимость, которая молча не уезжает.
+**1. Every feature that put its own assets into the user storage SUBTRACTED from portability — and this is not a side effect, but a structural trade-off that exactly two have acknowledged.** Resolve answered "the library is part of the database": it travels with the database, not with the project, and therefore in principle cannot "get lost when the project is moved" — it is simply not there. Adobe answered "synchronization through the account": Libraries live in the cloud, not next to the file. Apple answered with a switch: `Motion Content: In Library` plus a `Consolidate` button, and it must be pressed BEFORE copying. These are three different structural answers to the same question, and none of them is "convenience": each has its own price — someone else's database, someone else's subscription, a forgotten button. Where there is no answer at all (VEGAS), the user library is precisely the dependency that silently does not travel.
 
-**2. Монолит в профиле ВЕРСИИ — самая дорогая из дешёвых схем, и платят за
-неё ровно в тот день, когда обновляются.** У Premiere вся пользовательская
-библиотека эффектов — один файл `.prfpset` в каталоге конкретной версии;
-у VEGAS пресеты частью в реестре. Итог одинаков и у обоих: «если ты
-оставишь Vegas Pro 9 и просто поставишь рядом Vegas Pro 10, все твои
-пресеты сохранятся. Если удалить Vegas Pro 9, это удалит твои пресеты»
-(John Rofrano, 23.06.2011). То есть сохранность библиотеки оказывается
-свойством ПРОЦЕДУРЫ УСТАНОВКИ, а не свойством программы, и пользователь об
-этом узнаёт из форума. Отдельный подкласс того же — пресеты, которые не
-переживают даже перезапуск: тред Adobe про это тянется с 2016 по 2023 год,
-а рабочим обходом оказалась папка, которую пользователь создаёт сам.
+**2. A monolith in the VERSION profile is the most expensive of the cheap schemes, and you pay for it exactly on the day you update.** In Premiere the entire user effects library is one `.prfpset` file in the directory of a specific version; in VEGAS some presets are in the registry. The outcome is the same for both: "if you leave Vegas Pro 9 and just install Vegas Pro 10 next to it, all your presets will be kept. If you uninstall Vegas Pro 9, that will delete your presets" (John Rofrano, 23.06.2011). So the preservation of the library turns out to be a property of the INSTALLATION PROCEDURE, not of the program, and the user learns about it from a forum. A separate subclass of the same thing is presets that do not survive even a restart: the Adobe thread about this has run from 2016 to 2023, and the working workaround turned out to be a folder that the user creates by hand.
 
-**3. У хранилища между проектами быстро появляется второй жилец, и он
-приезжает ИЗ ПРОЕКТА, а не снаружи.** Это видно на нас самих. Файл
-`workspace.json` (`src/apps/kt-app/src/user_store.rs`) хранит ширину
-панели метров и последние виды по проектам — а раньше `meters_w` лежал в
-файле проекта (`UiState`), и F-PRJ-003 назвала это ЕДИНСТВЕННЫМ известным
-случаем «настройка уехала с проектом»: открыл чужой проект — панель встала
-по чужой ширине. То есть обмен идёт в обе стороны: хранилище не только
-отнимает у переносимости, но и возвращает ей то, чему в проекте не место.
-Отсюда практический критерий, который стоит записать раньше первой строки
-кода: в проект кладётся то, без чего проект не воспроизводится; в
-хранилище — то, что описывает ЧЕЛОВЕКА, а не работу. Пресет, шаблон и
-раскладка описывают человека; ширина панели — тоже; текст титра, лежащий в
-шаблоне, — уже нет, и потому шаблон обязан вставляться КОПИЕЙ, а не
-ссылкой.
+**3. A second tenant soon appears in a storage between projects, and it arrives FROM THE PROJECT, not from outside.** This is visible in our own code. The file `workspace.json` (`src/apps/kt-app/src/user_store.rs`) stores the width of the meters panel and the recent views per project — but earlier `meters_w` lived in the project file (`UiState`), and F-PRJ-003 named this the ONLY known case of "a setting traveled with the project": open a foreign project and the panel takes the foreign width. So the exchange goes both ways: the storage not only takes away from portability, but also returns to it what has no place in the project. Hence a practical criterion, which should be written down before the first line of code: what goes into the project is what the project cannot be reproduced without; what goes into the storage is what describes the PERSON, not the work. A preset, a template and a layout describe the person; the width of a panel does too; the text of a title lying in a template no longer does, and therefore a template must be inserted as a COPY, not by reference.
 
-## Плюсы
+## Pros
 
-- Одно место вместо шести: каталог, атомарная запись и политика битого
-  файла пишутся один раз, а шесть фич кладут рядом свои файлы. Без него
-  каждая изобретёт своё — и свою политику отказа тоже.
-- Библиотека вне проекта бэкапится, версионируется и передаётся отдельно
-  от работы: вокруг `.ffx` у AE выросла целая индустрия готовых пакетов,
-  чего не случилось бы вокруг записи внутри проекта.
-- «Моё» появляется в новом проекте само, без импорта: именно это и есть
-  смысл фичи, и ни один из пяти без такого места не обошёлся.
-- Библиотека как часть БАЗЫ (Resolve) снимает вопрос «куда делись пресеты
-  при переносе проекта» целиком: их там и не было, а значит нет и тихой
-  потери.
-- Переключатель «положить внутрь проекта» (FCP) — единственная известная
-  форма, при которой хранилище не уменьшает переносимость; он же
-  обязателен по вердикту F-PRJ-003.
+- One place instead of six: the catalog, the atomic write and the policy for a broken file are written once, and the six features each place their own files next to it. Without it each would invent its own, and its own refusal policy too.
+- A library outside the project gets backed up, versioned and transferred separately from the work: an entire industry of ready-made packages has grown around AE's `.ffx`, which would not have happened around a record inside the project.
+- "Mine" appears in a new project by itself, without import: this is exactly the purpose of the feature, and none of the five could do without such a place.
+- A library as part of the DATABASE (Resolve) removes the question "where did the presets go when the project was moved" entirely: they were never there, so there is no silent loss either.
+- A "put inside the project" switch (FCP) is the only known form in which the storage does not reduce portability; it is also mandatory under the verdict of F-PRJ-003.
 
-## Минусы
+## Cons
 
-- Всё, что уехало в хранилище, вычитается из переносимости: проект,
-  ссылающийся на служебный каталог автора, у получателя ломается — и, как
-  показывает Flowblade #1168 (F-PRJ-003), ломается при СОХРАНЕНИИ, то есть
-  после часа работы.
-- Монолит наказывает за обновление и за чистую переустановку; разные виды
-  пресетов в разных местах (VEGAS) наказывают тем же, только частями.
-- У хранилища появляется собственная версия схемы, а значит и собственная
-  миграция, и собственный случай «файл новее программы». Это второй
-  формат в продукте, с теми же обязанностями, что у первого.
-- Конфликт имён и отсутствие истории: библиотека не знает undo, и
-  перезаписанный пресет не возвращается.
-- Хранилище — общее на все копии программы на машине: две запущенные копии
-  пишут в один файл. Тот же класс, что вторая копия и recovery-файл
-  (F-COL-013, Р.42).
-- Подписочная синхронизация (Adobe Libraries) переносит проблему в
-  учётную запись: библиотека становится сервисом со своей доступностью.
+- Everything that went into the storage is subtracted from portability: a project that refers to the author's service directory breaks on the recipient's side, and, as Flowblade #1168 shows (F-PRJ-003), it breaks on SAVING, that is, after an hour of work.
+- A monolith punishes updates and clean reinstallations; different kinds of presets in different places (VEGAS) punish in the same way, only in parts.
+- The storage acquires its own schema version, and therefore its own migration, and its own case of "a file newer than the program". This is a second format in the product, with the same obligations as the first.
+- Name conflicts and the absence of history: the library knows no undo, and an overwritten preset does not come back.
+- The storage is shared by all copies of the program on the machine: two running copies write to one file. The same class as the second copy and the recovery file (F-COL-013, R.42).
+- Subscription synchronization (Adobe Libraries) moves the problem into the account: the library becomes a service with its own availability.
 
-## Что говорят пользователи
+## What users say
 
-Сохранность библиотеки — свойство процедуры установки, а не программы:
+The preservation of a library is a property of the installation procedure, not of the program:
 
 > If you keep Vegas Pro 9 installed and just add Vegas Pro 10, all of your
 > presets will be saved. If you uninstall Vegas Pro 9 that deletes your
@@ -134,8 +72,7 @@ F-MED-005; сама библиотека FX-пресетов как фича —
 > — John Rofrano, Creative COW (VEGAS Pro), 23.06.2011,
 > https://creativecow.net/forums/thread/when-upgrading-do-presets-saveae/
 
-Подкласс помельче и погаже — библиотека, не переживающая даже перезапуск;
-тред идёт с 2016 года:
+A smaller and nastier subclass: a library that does not survive even a restart; the thread runs from 2016:
 
 > i import presets - fine...i can use them normaly - great...i save my
 > project as usual. i start the program the next time and all the imported
@@ -145,206 +82,114 @@ F-MED-005; сама библиотека FX-пресетов как фича —
 
 > Everytime i restart premiere pro 2019 the imported presets are
 > diappeared. I alway gotta reimport them...
-> — Nikolai Reuther, там же, 15.12.2018
+> — Nikolai Reuther, same thread, 15.12.2018
 
-И отрицательный фидбек особого рода — из первой волны базы, про то же
-монолитное хранилище Premiere:
+And negative feedback of a special kind, from the first wave of the base, about the same monolithic storage of Premiere:
 
 > all custom effects presets are gone and my custom bins are gone as well.
 > — Anthony Paglia, Creative COW (Premiere Pro), 14.07.2014,
 > https://creativecow.net/forums/thread/custom-effects-presets-disappeared/
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-**Место заведено в Р.48 и уже держит двух жильцов.**
-`src/apps/kt-app/src/user_store.rs` — общий модуль, чей заголовок прямо
-называет повод: «На отсутствие общего места упирались четыре фичи разведки
-(библиотека FX-пресетов, шаблоны титров, экспорт-пресеты, раскладки
-клавиш) — поэтому модуль сделан ОБЩИМ: каталог, атомарная запись и политика
-битого файла здесь, а конкретные библиотеки кладут рядом свои файлы».
+**The place was set up in R.48 and already holds two tenants.**
+`src/apps/kt-app/src/user_store.rs` is a shared module whose header names the reason directly: "Four reconnaissance features ran into the absence of a shared place (the FX preset library, title templates, export presets, keyboard layouts) — therefore the module is made SHARED: the catalog, the atomic write and the policy for a broken file are here, and the concrete libraries place their own files next to it".
 
-Что там уже решено, дословно по коду:
+What is already settled there, verbatim from the code:
 
-- **Каталог** — `store_dir()`: `$XDG_DATA_HOME/kinotrain` (иначе
-  `$HOME/.local/share/kinotrain`), тот же, где лежит автосейв, «одно место
-  для бэкапа»; подменяется `KT_USER_STORE_DIR` для тестов и живых
-  сценариев.
-- **Два файла рядом**: `fx-presets.json` (`FxPresetStore`,
-  `PRESETS_VERSION = 1`) и `workspace.json` (`Workspace`: `meters_w` и
-  последние виды по проектам).
-- **Проект самодостаточен**: «библиотека — шаблоны вставки, а не ссылки.
-  Потерялся файл библиотеки — проекты целы». Это ровно ответ на
-  Flowblade #1168 из F-PRJ-003, принятый ЗАРАНЕЕ.
-- **Записи хранятся сырыми** (`serde_json::Value`) рядом с разобранной
-  копией: незнакомая запись из будущей версии пропускается при показе, но
-  переживает сохранение — «старая сборка не съедает работу новой». Тот же
-  принцип, что passthrough в `src/libs/kt-otio/src/convert.rs`.
-- **Файл новее — только чтение** (`readonly`), **битый файл не роняет
-  программу**: отодвигается в `fx-presets.json.broken` при первой записи.
-- **Заводские пресеты лежат в бинаре** (`include_str!` из
-  `apps/kt-app/assets/fx-presets-factory.json`) и разбираются ТЕМ ЖЕ кодом,
-  что пользовательский файл, — значит загрузчик проверен на каждом запуске.
-- Тесты: t344 (round-trip файла), t344b (битый/чужая версия), t344c
-  (заводские), t347 (совместимость по реестру) — `src/apps/kt-app` unit
-  `user_store`.
+- **Catalog** — `store_dir()`: `$XDG_DATA_HOME/kinotrain` (otherwise `$HOME/.local/share/kinotrain`), the same place where the autosave lies, "one place for the backup"; overridden by `KT_USER_STORE_DIR` for tests and live scenarios.
+- **Two files side by side**: `fx-presets.json` (`FxPresetStore`, `PRESETS_VERSION = 1`) and `workspace.json` (`Workspace`: `meters_w` and the recent views per project).
+- **The project is self-sufficient**: "the library holds insertion templates, not references. If the library file is lost, the projects are intact." This is exactly the answer to Flowblade #1168 from F-PRJ-003, adopted IN ADVANCE.
+- **Records are stored raw** (`serde_json::Value`) next to the parsed copy: an unknown record from a future version is skipped when shown, but survives saving — "an old build does not eat the work of a new one". The same principle as passthrough in `src/libs/kt-otio/src/convert.rs`.
+- **A file newer than the program is read-only** (`readonly`); **a broken file does not bring the program down**: it is moved aside to `fx-presets.json.broken` on the first write.
+- **Factory presets live in the binary** (`include_str!` from `apps/kt-app/assets/fx-presets-factory.json`) and are parsed by THE SAME code as the user file, so the loader is checked on every launch.
+- Tests: t344 (file round-trip), t344b (broken / foreign version), t344c (factory), t347 (compatibility by registry) — `src/apps/kt-app` unit `user_store`.
 
-**И один долг уже погашен этим местом.** `meters_w` раньше лежал в проекте
-(`UiState`, `src/libs/kt-model/src/project.rs`) и перебивал мою ширину при
-открытии чужого файла — F-PRJ-003 назвала это единственным известным
-случаем «настройка уехала с проектом». Сейчас ширина живёт в
-`workspace.json`, то есть хранилище уже отработало в обратную сторону:
-вернуло переносимости то, чему в проекте не место.
+**And one debt has already been paid off by this place.** `meters_w` used to live in the project (`UiState`, `src/libs/kt-model/src/project.rs`) and overrode my width when a foreign file was opened — F-PRJ-003 named this the only known case of "a setting traveled with the project". Now the width lives in `workspace.json`, so the storage has already worked in the reverse direction: it returned to portability what has no place in the project.
 
-**Чего в проекте нет и не должно быть.** Во всём
-`src/libs/kt-model/src/project.rs` поле с путём ровно одно —
-`MediaRef::path`: ни шрифта, ни LUT, ни плагина, ни каталога кэша, ни
-энкодера (разобрано в F-PRJ-003). Это и есть тот запас переносимости,
-который каждая новая библиотека будет тратить.
+**What is not in the project and must not be.** Across the whole of `src/libs/kt-model/src/project.rs` there is exactly one field with a path — `MediaRef::path`: no font, no LUT, no plugin, no cache directory, no encoder (analyzed in F-PRJ-003). This is that reserve of portability which every new library will spend.
 
-### Чего не хватает
+### What is missing
 
-1. **Переключателя «положить внутрь проекта» нет ни у одного жильца.**
-   Вердикт F-PRJ-003 требует его прямым текстом: «как только появится
-   пользовательское хранилище вне проекта, у него в тот же день обязан
-   появиться переключатель „положить внутрь проекта“». Хранилище появилось
-   в Р.48 — переключатель не появился.
-2. **Нет отчёта «что этому проекту нужно снаружи».** Аналога
-   `Generate Report Only` не существует; ближайшее — список недоступных
-   исходников у ПОЛУЧАТЕЛЯ и поздно (`src/apps/kt-app/src/render_dialog.rs`).
-3. **Нет переноса самого хранилища.** Экспорт/импорт библиотеки одним
-   файлом (аналог `.ffx`, `.sfv`, архива базы Resolve) отсутствует: чтобы
-   унести свои пресеты на вторую машину, надо знать про
-   `$XDG_DATA_HOME/kinotrain` и копировать руками.
-4. **Нет правила, кто следующий.** Из шести претендентов заселён один
-   (F-AUT-004). Остальные — шаблоны титров (F-TXT-002), экспорт-пресеты
-   (F-EXP-001), раскладки клавиш (F-UI-002), шаблоны нового проекта
-   (F-HLP-027) и шаблонные композиции (F-TL-012) — придут каждый со своей
-   схемой, своей версией и своим вопросом «а это едет с проектом?».
-5. **Две копии программы пишут в один каталог.** Для проекта сторож есть
-   (`src/apps/kt-app/src/project_lock.rs`, t362), для хранилища — нет.
+1. **There is no "put inside the project" switch in any of the tenants.**
+   The verdict of F-PRJ-003 requires it in plain text: "as soon as a user storage outside the project appears, a 'put inside the project' switch must appear on the same day". The storage appeared in R.48 — the switch did not appear.
+2. **There is no report "what this project needs from outside".** An analogue of `Generate Report Only` does not exist; the closest thing is the list of unavailable sources at the RECIPIENT's side, and too late (`src/apps/kt-app/src/render_dialog.rs`).
+3. **There is no transfer of the storage itself.** Export/import of a library as a single file (an analogue of `.ffx`, `.sfv`, the Resolve database archive) is absent: to take one's presets to a second machine, one must know about `$XDG_DATA_HOME/kinotrain` and copy by hand.
+4. **There is no rule for who is next.** Of six candidates one is occupied (F-AUT-004). The others — title templates (F-TXT-002), export presets (F-EXP-001), keyboard layouts (F-UI-002), new-project templates (F-HLP-027) and template compositions (F-TL-012) — will each arrive with its own schema, its own version and its own question "does this travel with the project?".
+5. **Two copies of the program write to one directory.** For the project there is a guard (`src/apps/kt-app/src/project_lock.rs`, t362); for the storage there is none.
 
-### Что мешает
+### What gets in the way
 
-Не объём кода, а три упора, и все три — про решения, а не про строки.
+Not the volume of code, but three pressure points, and all three concern decisions, not lines.
 
-**Первый: у «положить внутрь» нет единицы.** Пресет — это
-`FxChainBlock` (`src/libs/kt-model/src/ops.rs`), и положить его в проект
-технически некуда, кроме нового ключа в конверте `metadata["kt"]`; шаблон
-композиции — это целая лента с содержимым; раскладка клавиш в проекте
-бессмысленна вовсе. То есть переключатель, которого требует F-PRJ-003, —
-не один флаг на хранилище, а РАЗНЫЙ ответ у каждого жильца, и это надо
-решить списком, а не общей политикой.
+**First: "put inside" has no unit.** A preset is an `FxChainBlock` (`src/libs/kt-model/src/ops.rs`), and there is technically nowhere to put it in the project except a new key in the envelope `metadata["kt"]`; a template composition is a whole reel with content; a keyboard layout is meaningless in a project altogether. So the switch demanded by F-PRJ-003 is not one flag on the storage, but a DIFFERENT answer for each tenant, and this must be decided as a list, not as a common policy.
 
-**Второй: вставка копией — уже принятое решение, и его нельзя ослаблять
-молча.** `user_store.rs` объявляет «библиотека — шаблоны вставки, а не
-ссылки», и на этом стоит утверждение «потерялся файл библиотеки — проекты
-целы». Первый же жилец, которому захочется ссылки (шаблон композиции,
-обновляемый централизованно), ломает это свойство для ВСЕХ, а не для себя:
-пользователь не различает, какой из его пресетов копия, а какой ссылка.
+**Second: insertion by copy is an already accepted decision, and it must not be weakened silently.** `user_store.rs` declares "the library holds insertion templates, not references", and on this rests the claim "if the library file is lost, the projects are intact". The first tenant that wants references (a template composition, updated centrally) breaks this property for ALL, not just for itself: the user cannot tell which of their presets is a copy and which is a reference.
 
-**Третий: версия схемы у хранилища своя, и миграций у него две стороны.**
-`PRESETS_VERSION` растёт независимо от `KT_META_VERSION`
-(`src/libs/kt-otio/src/meta.rs`), и правило «файл новее — только чтение»
-означает, что старая сборка видит библиотеку неполной. Для одного файла с
-пресетами это приемлемо; для шести — это шесть независимых поводов
-показать пользователю неполный список, и он ни разу не узнает, почему.
+**Third: the storage has its own schema version, and its migration has two sides.** `PRESETS_VERSION` grows independently of `KT_META_VERSION` (`src/libs/kt-otio/src/meta.rs`), and the rule "a file newer than the program is read-only" means that an old build sees the library as incomplete. For one file of presets this is acceptable; for six it is six independent reasons to show the user an incomplete list, and they will never learn why.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Корневых — практически ни одного, и это сильный аргумент «дёшево».
-**№11 (детерминизм)** задевается только косвенно и только при ссылочной
-вставке: проект, чей кадр зависит от файла в каталоге пользователя,
-перестаёт быть воспроизводимым на другой машине — поэтому вставка копией
-и есть форма исполнения инварианта, а не удобство. №1–№10 не при чём:
-ни аудио-формата, ни кэша, ни владения декодером, ни часов, ни экспорта,
-ни dlopen хранилище не касается.
+Root invariants — practically none, and this is a strong argument for "cheap".
+**Invariant 11 (determinism)** is touched only indirectly and only with reference insertion: a project whose frame depends on a file in the user's directory stops being reproducible on another machine — therefore insertion by copy is precisely the form of fulfilling the invariant, not a convenience. Invariants 1–10 are not involved: the storage touches neither the audio format, nor the cache, nor decoder ownership, nor clocks, nor export, nor dlopen.
 
-Правила чек-листа `src/apps/kt-app/CLAUDE.md`: **16** (файл новее или
-битый — ОШИБКА, названная вслух, а не тихо неполный список), **19** (диалог
-обязан сказать, где изменить решение — это про будущий переключатель
-«внутрь проекта»), **20** (библиотека не пополняется «последними
-использованными» сама — только явным сохранением; так и записано в
-вердикте F-AUT-004).
+Checklist rules of `src/apps/kt-app/CLAUDE.md`: **16** (a newer or broken file is an ERROR, named aloud, not a silently incomplete list), **19** (the dialog must say where to change the decision — this concerns the future "put inside the project" switch), **20** (the library is not replenished with "recently used" by itself — only by an explicit save; this is exactly how it is written in the verdict of F-AUT-004).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | L — целый раунд, но не кодом: (1) правило «что едет с проектом» для каждого жильца — S; (2) переключатель «положить внутрь» там, где он осмыслен, плюс отчёт о зависимостях — M; (3) перенос хранилища одним файлом и сторож второй копии — M |
-| Где основная работа | kt-app (`user_store.rs` — общий каталог уже есть, добавляются жильцы и политика; диалог переключателя), kt-model (единица «положить внутрь» для тех жильцов, у кого она есть), kt-otio (ключ конверта, если содержимое ложится в проект) |
-| Формат проекта | сам по себе не трогает; трогает ровно в той части, где жилец переезжает ВНУТРЬ проекта — тогда растёт `KT_META_VERSION` |
-| Тесты, которые придётся написать | «потерялся файл библиотеки — проекты целы» как явный тест, а не как комментарий; «файл хранилища новее — список неполный И об этом сказано» (правило 16, рядом с t344b); две копии программы не затирают библиотеку друг друга (по образцу t362); перенос хранилища round-trip'ом; для каждого жильца — тест, отвечающий «едет с проектом или нет» |
-| Зависит от | F-PRJ-003 (вердикт требует переключателя «внутрь проекта»), F-AUT-004 (единственный заселённый жилец, Р.48). Ждут места: F-TXT-002, F-EXP-001, F-UI-002, F-HLP-027, F-TL-012 |
-| Ломает совместимость | нет; переезд жильца внутрь проекта — только вперёд, старые файлы читаются как есть |
+| Scope | L — a whole round, but not in code: (1) a rule "what travels with the project" for each tenant — S; (2) the "put inside" switch where it makes sense, plus a dependency report — M; (3) transfer of the storage as a single file and a guard for a second copy — M |
+| Where the main work is | kt-app (`user_store.rs` — the shared catalog already exists; tenants and policy are added; the switch dialog), kt-model (the "put inside" unit for those tenants that have one), kt-otio (the envelope key, if the content goes into the project) |
+| Project format | does not touch it by itself; touches it exactly in the part where a tenant moves INSIDE the project — then `KT_META_VERSION` grows |
+| Tests to write | "the library file is lost — the projects are intact" as an explicit test, not as a comment; "the storage file is newer — the list is incomplete AND this is stated" (rule 16, next to t344b); two copies of the program do not overwrite each other's library (on the model of t362); transfer of the storage as a round-trip; for each tenant — a test answering "travels with the project or not" |
+| Depends on | F-PRJ-003 (the verdict requires the "inside the project" switch), F-AUT-004 (the only occupied tenant, R.48). Waiting for a place: F-TXT-002, F-EXP-001, F-UI-002, F-HLP-027, F-TL-012 |
+| Breaks compatibility | no; moving a tenant inside the project goes forward only, old files are read as they are |
 
-## Вердикт
+## Verdict
 
-**Кандидат. Заметка существует не ради новой фичи, а ради того, чтобы
-следующая фича, которой нужно место между проектами, не изобретала его
-заново.** Это вывод №2 первой волны, записанный в README каталога:
-четыре фичи упирались в отсутствие хранилища (F-AUT-004, F-TXT-002,
-F-EXP-001, F-UI-002); позже к ним добавился стартовый экран с шаблонами
-нового проекта (F-HLP-027), а в Р.59 — шаблонные композиции (F-TL-012).
-Шесть претендентов, заселён один.
+**Candidate. The note exists not for the sake of a new feature, but so that the next feature that needs a place between projects does not invent it again.** This is conclusion 2 of the first wave, recorded in the catalog README: four features ran into the absence of a storage (F-AUT-004, F-TXT-002, F-EXP-001, F-UI-002); later the start screen with new-project templates (F-HLP-027) was added to them, and in R.59 template compositions (F-TL-012). Six candidates, one occupied.
 
-Само место с Р.48 есть и сделано правильнее, чем у четырёх из пяти
-редакторов: не монолит в профиле версии (Premiere) и не «частью в реестре»
-(VEGAS), а каталог с атомарной записью, версией схемы, сырым passthrough
-незнакомых записей, политикой битого файла и заводскими записями,
-разбираемыми тем же кодом. Главное же решение принято ещё раньше и записано
-в самом модуле: **вставка копией, а не ссылкой** — «потерялся файл
-библиотеки — проекты целы». Это и есть наш ответ на обмен, который
-F-PRJ-003 называет неизбежным: мы платим переносимостью только за то, чего
-в проекте нет, и ни за что больше.
+The place itself has existed since R.48 and is done more correctly than in four of five editors: not a monolith in the version profile (Premiere) and not "partly in the registry" (VEGAS), but a catalog with an atomic write, a schema version, raw passthrough of unknown records, a policy for a broken file, and factory records parsed by the same code. The main decision, however, was made even earlier and is written in the module itself: **insertion by copy, not by reference** — "if the library file is lost, the projects are intact". This is our answer to the trade-off that F-PRJ-003 calls unavoidable: we pay with portability only for what is not in the project, and for nothing more.
 
-Долг при этом один и назван прямо: **переключателя «положить внутрь
-проекта» нет**, хотя вердикт F-PRJ-003 требует его «в тот же день». Пока
-жилец один и вставка копией, долг не стреляет. Он выстрелит на первом же
-жильце, которому захочется ссылки, — и решать это надо ДО его заселения, а
-не после, потому что пользователь не различает, какой из его пресетов
-копия, а какой ссылка.
+The debt, however, is single and named directly: **there is no "put inside the project" switch**, although the verdict of F-PRJ-003 requires it "on the same day". While there is one tenant and insertion by copy, the debt does not fire. It will fire on the first tenant that wants references, and this must be decided BEFORE that tenant moves in, not after, because the user does not distinguish which of their presets is a copy and which is a reference.
 
-## Источники
+## Sources
 
 - https://creativecow.net/forums/thread/when-upgrading-do-presets-saveae/ —
-  пресеты VEGAS привязаны к установке версии, удаление старой уносит их
-  (John Rofrano, 23.06.2011; дата обращения 2026-09-21)
+  VEGAS presets are tied to the installation of the version; deleting the old one takes them away
+  (John Rofrano, 23.06.2011; access date 2026-09-21)
 - https://community.adobe.com/t5/premiere-pro-discussions/effect-presets-disappear-after-restart-cc2015/m-p/8676875
-  — импортированные пресеты не переживают перезапуск, тред 2016–2023
+  — imported presets do not survive a restart, thread 2016–2023
   (2026-09-21)
 - https://creativecow.net/forums/thread/custom-effects-presets-disappeared/
-  — потеря всей пользовательской библиотеки Premiere вместе с бинами
-  (14.07.2014; взято из разбора F-AUT-004, ссылка перепроверена
+  — loss of the entire user library of Premiere together with bins
+  (14.07.2014; taken from the analysis of F-AUT-004, the link re-checked
   2026-09-21)
 - https://www.vegascreativesoftware.info/us/forum/what-do-i-need-to-do-to-not-lose-custom-settings-upon-fresh-reinstall--147179/
-  — пресеты VEGAS лежат в разных местах, часть в реестре. Домен
-  переехал на `forum.borisfx.com` и отдаёт редирект, содержание взято из
-  поискового сниппета — **[НЕ ПРОВЕРЕНО]** дословно (2026-09-21)
-- Final Cut Pro User Guide 12.3, «Manage Motion content»: `Motion Content:
-  In Library`, `Consolidate` и оговорка про сторонний FxPlug — по разбору
-  F-PRJ-003 (PDF прочитан локально там), в этот заход не переоткрывался
-- DaVinci Resolve 21 Reference Manual: PowerBin и PowerGrade как объекты
-  БАЗЫ, видимые из любого проекта базы — по мануалу (гл. про Media Pool и
-  Gallery); **[НЕ ПРОВЕРЕНО]** живьём, строка опирается на пункт 1 порядка
-  доверия `docs/features/_editors.md`
-- After Effects: `.ffx` в каталоге пресетов и локальная папка шаблонов
-  Essential Graphics — по разбору F-AUT-004 и справке Adobe
-  (`helpx.adobe.com` из этого окружения не открывается, оговорка первой
-  волны в `_editors.md` в силе)
-- Наше: `src/apps/kt-app/src/user_store.rs` (`store_dir`,
+  — VEGAS presets lie in different places, part in the registry. The domain
+  moved to `forum.borisfx.com` and returns a redirect; the content is taken from a search snippet — **[NOT VERIFIED]** verbatim (2026-09-21)
+- Final Cut Pro User Guide 12.3, "Manage Motion content": `Motion Content:
+  In Library`, `Consolidate` and the caveat about a third-party FxPlug — from the analysis of
+  F-PRJ-003 (the PDF was read locally there), not reopened in this pass
+- DaVinci Resolve 21 Reference Manual: PowerBin and PowerGrade as objects of the
+  DATABASE, visible from any project of the database — from the manual (chapters on Media Pool and
+  Gallery); **[NOT VERIFIED]** live, the line relies on item 1 of the trust order in `docs/features/_editors.md`
+- After Effects: `.ffx` in the presets folder and the local folder of Essential Graphics
+  templates — from the analysis of F-AUT-004 and Adobe's help
+  (`helpx.adobe.com` does not open from this environment; the caveat of the first
+  wave in `_editors.md` remains in force)
+- Ours: `src/apps/kt-app/src/user_store.rs` (`store_dir`,
   `FxPresetStore`, `PRESETS_VERSION`, `fx-presets.json`, `workspace.json`,
-  `.broken`, `readonly`, `KT_USER_STORE_DIR`, заводские через
+  `.broken`, `readonly`, `KT_USER_STORE_DIR`, factory records via
   `include_str!`), `src/apps/kt-app/src/app.rs` (`autosave_path`,
   `recovery_path_for`), `src/apps/kt-app/src/project_lock.rs`,
   `src/libs/kt-model/src/ops.rs` (`FxChainBlock`),
   `src/libs/kt-model/src/project.rs` (`MediaRef::path`, `UiState`),
   `src/libs/kt-otio/src/meta.rs` (`KT_META_VERSION`),
-  `docs/features/README.md` (вывод №2 первой волны),
-  `docs/porting-notes.md` пп.343–347
+  `docs/features/README.md` (conclusion 2 of the first wave),
+  `docs/porting-notes.md` items 343–347
 
-Живьём ни один чужой редактор не запускался. Форумные цитаты прочитаны
-дословно на `creativecow.net` и `community.adobe.com`; строки Resolve, FCP
-и AE опираются на мануалы и на смежные заметки базы, строка VEGAS — на
-форумные треды и поисковые сниппеты домена, сменившего владельца.
+No foreign editor was run live. The forum quotes were read verbatim on `creativecow.net` and `community.adobe.com`; the Resolve, FCP and AE lines rely on the manuals and on the related notes of the base, and the VEGAS line relies on forum threads and search snippets of a domain that changed hands.

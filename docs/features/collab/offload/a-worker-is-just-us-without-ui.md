@@ -1,12 +1,12 @@
 ---
 id: F-COL-039
-title: Воркер — это мы же, без интерфейса
-status: кандидат
+title: A worker is us, without the interface
+status: candidate
 priority: B
 cost: S
 category: collab/offload
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, flamenco-3]
-we_have: частично
+we_have: partial
 crates: [kt-gpu, kt-cli, kt-engine, kt-app]
 invariants: [7, 11]
 ui_rules: []
@@ -19,258 +19,127 @@ services: [resolve-project-server, bm-cloud]
 checked: 2026-09-08
 ---
 
-# F-COL-039 — Воркер — это мы же, без интерфейса
+# F-COL-039 — A worker is us, without the interface
 
-## Суть
+## Essence
 
-На ферме нет «программы-рендерера». Есть та же самая программа, запущенная
-ключом командной строки на второй машине: у Resolve это `./Resolve -rr`, у
-After Effects — `aerender`, у Blender — тот же `blender` с параметрами. Для
-монтажёра это выглядит как «отдал соседнему компьютеру», а на деле означает,
-что второй экземпляр редактора обязан посчитать ТО ЖЕ САМОЕ — и вот тут
-выясняется, что «то же самое» никто не обещал. Пока считает одна машина,
-совпадение проверять не с чем и незачем. Как только машин две, детерминизм из
-приятного свойства превращается в требование, за нарушение которого платит не
-тест, а зритель.
+There is no "render program" on a farm. There is the same program, launched with a command-line key on a second machine: for Resolve it is `./Resolve -rr`, for After Effects — `aerender`, for Blender — the same `blender` with parameters. To an editor this looks like "handed it to the neighbouring computer", but in fact it means that a second instance of the editor is obliged to compute EXACTLY THE SAME THING — and it turns out here that nobody promised "the same thing". While one machine computes, there is nothing to check agreement against, and no need to. As soon as there are two machines, determinism stops being a pleasant property and becomes a requirement, for the violation of which the price is paid not by a test, but by the viewer.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 build 66 | нет | headless-режима нет; всё, что похоже на воркера, — тот же C#-скрипт внутри работающего окна (F-EXP-002) |
-| Adobe Premiere | 26.x | Adobe Media Encoder (`ame`) | воркер — отдельный ПРОДУКТ того же вендора, с собственной очередью и watch folder. Совпадение результата гарантируется тем, что кодирует всегда он, а не Premiere |
-| DaVinci Resolve | 21 Studio | Remote Rendering | воркером работает сам Resolve: на второй машине он либо открыт с рабочей областью Remote Rendering, либо поднят из командной строки ключом `-rr`. Оба конца обязаны видеть одну базу проектов и один и тот же материал по согласованным путям |
-| Final Cut Pro | 12.3 | Compressor (+ `qmasterprefs`) | распределение вынесено во второй продукт; сам FCP на другой машине не работает воркером ни в каком виде |
-| After Effects | 26.x | `aerender` | тот же движок без окна; ровно поэтому у AE и получается ферма, а у NLE — нет: элемент очереди адресуется кадрами, а выход — последовательностью, где каждый кадр целиком сделан одной машиной |
+| VEGAS Pro | 2026.0 build 66 | none | there is no headless mode; everything that resembles a worker is the same C# script inside a running window (F-EXP-002) |
+| Adobe Premiere | 26.x | Adobe Media Encoder (`ame`) | the worker is a separate PRODUCT of the same vendor, with its own queue and watch folder. The agreement of the result is guaranteed by the fact that it is always AME that encodes, not Premiere |
+| DaVinci Resolve | 21 Studio | Remote Rendering | the worker is Resolve itself: on a second machine it is either open with the Remote Rendering workspace, or launched from the command line with the `-rr` key. Both ends must see one project database and the same media by agreed paths |
+| Final Cut Pro | 12.3 | Compressor (+ `qmasterprefs`) | distribution is moved into a second product; FCP itself does not work as a worker on another machine in any form |
+| After Effects | 26.x | `aerender` | the same engine without a window; precisely for this reason AE gets a farm, and NLEs do not: a queue item is addressed by frames, and the output is a sequence where each frame is entirely made by one machine |
 
-**Вне ядра.** Строка нужна, потому что в редакторах роль воркера спрятана за
-названием продукта, а на ферме она названа прямо и отделена от задания.
+**Outside the core.** The row is needed because in editors the role of a worker is hidden behind a product name, while on a farm it is named explicitly and separated from the job.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Flamenco | 3.x | worker | manager раздаёт задания, worker запускает ТУ ЖЕ программу командой из задания; облака нет, обе стороны в одной сети (`docs/features/_editors.md`) |
-| OpenCue | 1.x (docs.opencue.io, 2026) | host, proc, service, tags | машина описана данными: теги хоста сравниваются с тегами слоя, и кадр не попадает на машину, у которой нет нужного тега |
+| Flamenco | 3.x | worker | the manager hands out jobs, the worker runs THE SAME program with the command from the job; there is no cloud, both sides are in one network (`docs/features/_editors.md`) |
+| OpenCue | 1.x (docs.opencue.io, 2026) | host, proc, service, tags | the machine is described by data: the host's tags are compared with the layer's tags, and a frame does not land on a machine that lacks the needed tag |
 
-## Фишка фишки
+## The trick behind it
 
-**Воркер — это ключ запуска, а не программа, и цена этого решения — тишина.**
-Руководство по настройке узла Resolve описывает штатный способ поднять его
-через SSH командой `./Resolve -rr` и тут же честно оговаривает, что обратной
-связи о ходе рендера при этом нет: наблюдать приходится либо с той стороны, где
-открыто окно, либо никак. Отсюда неочевидное следствие для устройства
-продукта: у «воркера» нет своего интерфейса не потому, что его не написали, а
-потому, что писать его — значит писать второй продукт (путь Adobe и Apple:
-Media Encoder и Compressor). Все, кто этого не делал, живут с тем, что вторая
-машина работает молча.
+**A worker is a launch key, not a program, and the price of this decision is silence.** The setup guide for a Resolve node describes the standard way of raising it over SSH with the command `./Resolve -rr`, and in the same breath honestly notes that there is no feedback about the progress of the render: one can observe either from the side where the window is open, or not at all. Hence a non-obvious consequence for the design of the product: a "worker" has no interface of its own not because no one wrote one, but because writing it means writing a second product (the path of Adobe and Apple: Media Encoder and Compressor). Everyone who did not do this lives with the second machine working silently.
 
-**Отрасль обходит совпадение результатов, а не обеспечивает его — и обходит
-формой ВЫХОДА.** Там, где ферма реально делит работу (After Effects, 3D),
-выходом почти всегда служит последовательность кадров, и правило
-формулируется в терминах отказа: «Always render to image sequences, not video
-files — if a frame fails, only that frame needs re-rendering». Соль в том, что
-это же правило снимает и вопрос совпадения: каждый кадр целиком посчитан ОДНОЙ
-машиной, и расходиться внутри кадра нечему. Там, где выходом обязан быть один
-файл — то есть в видеомонтаже, — распределять уже нечего, и Resolve честно
-отдаёт задание целиком одной машине, не пытаясь его делить.
+**The industry circumvents the agreement of results rather than ensuring it — and circumvents it by the FORM of the OUTPUT.** Where a farm really divides the work (After Effects, 3D), the output is almost always a sequence of frames, and the rule is formulated in terms of failure: "Always render to image sequences, not video files — if a frame fails, only that frame needs re-rendering". The point is that this same rule also removes the question of agreement: each frame is entirely computed by ONE machine, and there is nothing inside a frame to diverge. Where the output must be a single file — that is, in video editing — there is nothing left to distribute, and Resolve honestly hands the job whole to one machine, without trying to divide it.
 
-**У нас роль воркера уже написана, а его паспорт — нет.** `kt-cli export`
-поднимает headless-устройство и печатает в stderr `video: GPU (<имя>)` либо
-`video: CPU (no GPU: …)`, а `KT_VIDEO_GPU=0` заставляет считать на процессоре
-(`src/apps/kt-cli/src/main.rs`). То есть «мы же, без интерфейса» — это не
-план, а сегодняшний бинарь. Но адаптер выбирается ПРЕДПОЧТЕНИЕМ, а не
-именем: `PowerPreference::from_env().unwrap_or(LowPower)`
-(`src/libs/kt-gpu/src/context.rs:46`), и переменная окружения `WGPU_POWER_PREF`
-меняет ответ на машине с двумя видеокартами. Идентичность устройства при этом
-известна — `adapter_info` превращается в `GpuBackendInfo` с именем, бэкендом и
-признаком софтверного растеризатора (`src/libs/kt-gpu/src/engine.rs:479`), —
-но не попадает ни в ключ кэша, ни в план кадра, ни в выходной файл. Байты
-есть, подписи под ними нет.
+**We already have the worker's role written, but not its passport.** `kt-cli export` raises a headless device and prints to stderr `video: GPU (<name>)` or `video: CPU (no GPU: …)`, and `KT_VIDEO_GPU=0` forces computation on the processor (`src/apps/kt-cli/src/main.rs`). That is, "we are the same, without an interface" is not a plan but today's binary. But the adapter is chosen by PREFERENCE, not by name: `PowerPreference::from_env().unwrap_or(LowPower)` (`src/libs/kt-gpu/src/context.rs:46`), and the environment variable `WGPU_POWER_PREF` changes the answer on a machine with two video cards. The identity of the device is at the same time known — `adapter_info` is turned into a `GpuBackendInfo` with the name, the backend, and the sign of a software rasterizer (`src/libs/kt-gpu/src/engine.rs:479`) — but it enters neither the cache key, nor the frame plan, nor the output file. The bytes are there; the signature under them is not.
 
-## Плюсы
+## Pros
 
-- Воркер не требует ни второй кодовой базы, ни второго формата: если программа
-  умеет считать без окна, она уже умеет быть воркером. У нас это готово.
-- Ключ запуска — самая дешёвая из возможных поверхностей: ни диалога, ни
-  настроек, ни установки. Всё, что нужно объяснить пользователю, помещается в
-  строку.
-- Требование детерминизма, поставленное явно, оздоровляет и одиночную работу:
-  ровно из-за него у нас существуют t183 (байт-в-байт между прогонами на одном
-  устройстве) и t184b (свежий движок против движка экспорта).
-- Выход последовательностью кадров разом решает и отказоустойчивость, и
-  совпадение — и это единственный приём отрасли, который работает без
-  договорённостей между машинами.
+- A worker requires neither a second codebase nor a second format: if a program can compute without a window, it can already be a worker. For us this is ready.
+- The launch key is the cheapest possible surface: no dialog, no settings, no installation. Everything the user needs to be told fits in one line.
+- The determinism requirement, stated explicitly, also benefits single-machine work: precisely because of it we have t183 (byte-for-byte between runs on one device) and t184b (a fresh engine against the export engine).
+- An output as a sequence of frames solves at once both fault tolerance and agreement — and it is the only trick of the industry that works without agreements between machines.
 
-## Минусы
+## Cons
 
-- Молчащий воркер невозможно диагностировать: у Resolve при запуске ключом нет
-  ни прогресса, ни причины отказа, и человек узнаёт результат по наличию файла.
-- «Та же программа» означает «та же версия»: обновление на одной машине
-  превращает ферму в источник расхождений, и в документации это обычно не
-  сказано, а выясняется практикой.
-- Совпадение результата не обещает никто. У нас оно обещано только внутри
-  одного устройства (инвариант 11), и это честнее, чем у большинства, — но
-  ровно поэтому две машины с разными адаптерами дадут два куска, различие
-  которых видно на склейке и невидимо в тестах.
-- Тихий фолбэк ломает даже одинаковые машины: `export_video_gpu()` в
-  `src/apps/kt-app/src/app.rs` при неудаче создания headless-устройства
-  печатает `eprintln!` и возвращает `None` (F-RES-007) — то есть один «воркер»
-  мог бы посчитать на GPU, другой на CPU, и никто бы об этом не узнал.
-- Паспорт машины, не записанный в результат, делает расследование
-  невозможным задним числом: файл есть, а чем он посчитан — уже нет.
+- A silent worker cannot be diagnosed: Resolve launched with the key gives neither progress nor a reason for failure, and a person learns the result from the presence of a file.
+- "The same program" means "the same version": an update on one machine turns the farm into a source of divergence, and the documentation usually does not say so; it is found out in practice.
+- No one promises agreement of the result. For us it is promised only inside one device (invariant 11), and this is more honest than in most cases — but precisely for this reason two machines with different adapters will give two pieces whose difference is visible at the joint and invisible in tests.
+- A silent fallback breaks even identical machines: `export_video_gpu()` in `src/apps/kt-app/src/app.rs`, on failure to create a headless device, prints `eprintln!` and returns `None` (F-RES-007) — that is, one "worker" could compute on GPU and another on CPU, and no one would know.
+- A machine passport not written into the result makes an investigation impossible after the fact: the file is there, but what it was computed with is no longer known.
 
-## Что говорят пользователи
+## What users say
 
-Дословно про то, что узел — это тот же Resolve, поднятый ключом, и про цену
-такого решения:
+Verbatim about the fact that the node is the same Resolve, raised with a key, and about the price of such a solution:
 
 > You can also run this "headless" via the command line with the -rr flag,
 > though this gives you no feedback on render progress.
-> — eposvox, «DaVinci Resolve Remote Render Server Complete Guide
-> (Windows/Linux)», Level1Techs Forums, 12.02.2019,
+> — eposvox, "DaVinci Resolve Remote Render Server Complete Guide
+> (Windows/Linux)", Level1Techs Forums, 12.02.2019,
 > https://forum.level1techs.com/t/davinci-resolve-remote-render-server-complete-guide-windows-linux/138807
 
-Почему ферма выводит последовательность кадров, а не файл — формулировка через
-отказ, а не через совпадение:
+Why a farm outputs a sequence of frames rather than a file — a formulation through failure, not through agreement:
 
 > Always render to image sequences, not video files — if a frame fails, only
 > that frame needs re-rendering.
-> — «How Render Farms Work — Technical Guide (2026)», SuperRenders,
-> опубликовано 04.04.2026, обновлено 07.09.2026,
+> — "How Render Farms Work — Technical Guide (2026)", SuperRenders,
+> published 04.04.2026, updated 07.09.2026,
 > https://superrendersfarm.com/article/how-render-farms-work-technical-guide
 
-Поле `trackers:` пусто сознательно: публичных трекеров у пяти редакторов ядра
-нет (`docs/features/_trackers.md`), а тема распределённого рендера в
-выгруженных трекерах опенсорсных NLE отсутствует как класс — там нет ни ферм,
-ни воркеров. Правило 12 включается непустым полем, и заполнять его ради формы
-значило бы сфабриковать сигнал.
+The `trackers:` field is deliberately empty: there are no public trackers for the five core editors (`docs/features/_trackers.md`), and the topic of distributed rendering is absent as a class from the exported trackers of open-source NLEs — there are no farms or workers there. Rule 12 is satisfied by a non-empty field, and filling it for form's sake would be fabricating a signal.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- `src/apps/kt-cli/src/main.rs` — готовый headless-исполнитель: `export`
-  открывает источники, поднимает `GpuContext::new_headless` +
-  `GpuFxEngine::new`, передаёт исполнителя в `export_mp4_with_backends` и
-  печатает выбранный бэкенд. Третьим аргументом можно закрепить видео-энкодер —
-  это заведено ради воспроизводимости кросс-рендера (тест 158), то есть
-  требование «считай предсказуемо» у нас уже однажды понадобилось.
-- `src/libs/kt-gpu/src/context.rs:46` — `new_headless`: свой адаптер без
-  surface, лимиты повторяют правило egui-wgpu (`downlevel_webgl2` на GL, иначе
-  default; `max_texture_dimension_2d 8192`) именно для того, чтобы поведение
-  шейдеров в GUI и headless совпадало.
-- `src/libs/kt-gpu/src/engine.rs:479` — `GpuBackendInfo`: имя адаптера,
-  бэкенд, признак софтверного растеризатора (`llvmpipe`/`softpipe`/
-  `swiftshader`). Паспорт машины СЧИТАН.
-- Инвариант 11 в его сегодняшней редакции — единственное честное описание
-  границы: аудио байт-в-байт всегда, видео на CPU байт-в-байт против
-  закоммиченного эталона, видео на GPU байт-в-байт только на ОДНОМ устройстве
-  (t183, t184b), между устройствами — только совпадение с CPU в допусках
-  (t181, t182, `FrameTol` из `src/libs/kt-gpu/src/lib.rs`).
-- `src/libs/kt-engine/src/export.rs` — начатый экспорт завершается на своём
-  бэкенде: ошибка GPU уходит `?` и становится ошибкой экспорта, а не поводом
-  дорисовать остаток на процессоре.
+- `src/apps/kt-cli/src/main.rs` — a ready headless executor: `export` opens the sources, raises `GpuContext::new_headless` + `GpuFxEngine::new`, passes the executor into `export_mp4_with_backends`, and prints the chosen backend. A video encoder can be fixed by a third argument — this was established for the sake of cross-render reproducibility (test 158), that is, the requirement "compute predictably" has already been needed by us once.
+- `src/libs/kt-gpu/src/context.rs:46` — `new_headless`: its own adapter without a surface; the limits repeat the egui-wgpu rule (`downlevel_webgl2` on GL, otherwise default; `max_texture_dimension_2d 8192`) precisely so that shader behaviour in the GUI and headless is the same.
+- `src/libs/kt-gpu/src/engine.rs:479` — `GpuBackendInfo`: the adapter name, the backend, the sign of a software rasterizer (`llvmpipe`/`softpipe`/`swiftshader`). The machine's passport is COUNTED.
+- Invariant 11 in its current edition is the only honest description of the boundary: audio byte for byte always; video on CPU byte for byte against the committed reference; video on GPU byte for byte only on ONE device (t183, t184b); between devices — only agreement with CPU within tolerances (t181, t182, `FrameTol` from `src/libs/kt-gpu/src/lib.rs`).
+- `src/libs/kt-engine/src/export.rs` — an export that has started is completed on its own backend: a GPU error propagates with `?` and becomes an export error, rather than a reason to draw the remainder on the processor.
 
-### Чего не хватает
+### What is lacking
 
-- **Идентичность устройства нигде не фиксируется.** `adapter_info` живёт в
-  `GpuContext` и в `GpuBackendInfo`, но не входит ни в ключ пост-FX кэша
-  (`fx_chain_hash`, `src/libs/kt-engine/src/video.rs`), ни в статистику
-  экспорта (`ExportStats` несёт только имя ЭНКОДЕРА,
-  `src/libs/kt-engine/src/export.rs`). Под байтами нет подписи.
-- **Выбор адаптера не воспроизводим по заданию.** `PowerPreference::from_env()`
-  — это переменная окружения `WGPU_POWER_PREF`; на машине с двумя
-  видеокартами один и тот же вызов даёт разные устройства. Способа сказать
-  «считай на этом адаптере» у нас нет, тогда как для энкодера такой способ
-  уже есть (`force_encoder`).
-- **Фолбэк на CPU не виден в результате.** В kt-cli он хотя бы печатается в
-  stderr; в kt-app — только `eprintln!`, а в окне рендера и в отчёте о
-  завершении о бэкенде нет ни строки (F-RES-007).
-- **Кросс-девайсного теста нет и быть не может** в сегодняшнем виде: t183 и
-  t184b проверяют повтор НА ТОМ ЖЕ устройстве, t181/t182 сверяют GPU с CPU в
-  допусках. Утверждение «два воркера дадут одно и то же» не проверяется ничем
-  и не может проверяться на одной машине.
+- **The identity of the device is recorded nowhere.** `adapter_info` lives in `GpuContext` and in `GpuBackendInfo`, but it is not part of either the post-FX cache key (`fx_chain_hash`, `src/libs/kt-engine/src/video.rs`) or the export statistics (`ExportStats` carries only the name of the ENCODER, `src/libs/kt-engine/src/export.rs`). Under the bytes there is no signature.
+- **The adapter choice is not reproducible from the job.** `PowerPreference::from_env()` reads the environment variable `WGPU_POWER_PREF`; on a machine with two video cards the same call gives different devices. We have no way to say "compute on this adapter", whereas for the encoder such a way already exists (`force_encoder`).
+- **The CPU fallback is not visible in the result.** In kt-cli it at least gets printed to stderr; in kt-app — only `eprintln!`, and in the render window and in the completion report there is not a single line about the backend (F-RES-007).
+- **A cross-device test does not exist and cannot exist in its present form:** t183 and t184b check repetition ON THE SAME device, t181/t182 compare GPU with CPU within tolerances. The claim "two workers will give the same result" is not checked by anything and cannot be checked on one machine.
 
-### Что мешает
+### What stands in the way
 
-Инвариант 11 — и мешает он правильно. Он не запрещает второго исполнителя; он
-называет цену: между машинами гарантировано только совпадение с CPU-эталоном в
-допусках, а `FrameTol::THRESHOLD` вообще не ограничивает выброс
-(`outlier_max: 255`, `src/libs/kt-gpu/src/lib.rs`), потому что пороговые
-эффекты флипают 0↔255 у границы. Значит два куска, посчитанные на разных
-адаптерах, законно различаются — и различие это ляжет не внутрь кадра, а на
-стык, где глаз его и увидит. Единственный известный отрасли обход — считать
-единицей выхода целый кадр от одной машины, а не файл от нескольких, — у нас
-упирается в то, что выход обязан быть файлом (инвариант 9).
+Invariant 11 — and it stands in the way correctly. It does not forbid a second executor; it names the price: between machines only agreement with the CPU reference within tolerances is guaranteed, and `FrameTol::THRESHOLD` does not limit outliers at all (`outlier_max: 255`, `src/libs/kt-gpu/src/lib.rs`), because threshold effects flip 0↔255 at a boundary. Therefore two pieces computed on different adapters legitimately differ — and this difference will land not inside a frame but at the joint, where the eye will see it. The only known way the industry bypasses this — to count the unit of output as a whole frame from one machine, rather than a file from several — runs for us into the fact that the output must be a file (invariant 9).
 
-### В категории `collab/` — две обязательные строки (правило 13)
+### In the `collab/` category — two mandatory lines (rule 13)
 
-БЕЗ СЕТИ: ОСТАЁТСЯ — `src/libs/kt-gpu/src/context.rs:46` — роль воркера у нас уже исполняется: kt-cli поднимает headless-устройство тем же кодом композиции, что и окно, и печатает выбранный бэкенд; на одной машине это ровно та программа без интерфейса, которую ферма запускает ключом, и не хватает ей не сети, а подписи под результатом — имя адаптера считано и никуда не записано.
+OFFLINE: REMAINS — `src/libs/kt-gpu/src/context.rs:46` — the worker's role is already executed by us: kt-cli raises a headless device with the same composition code as the window, and prints the chosen backend; on one machine this is exactly the program without an interface that the farm launches with a key, and what it lacks is not a network but a signature under the result — the name of the adapter is counted and written nowhere.
 
-ЦЕНА СЕТИ: вторая машина, чей адаптер обязан совпасть с первым — инвариант 11 — байт-в-байт мы обещаем только на одном устройстве (t183, t184b), между устройствами — совпадение с CPU-эталоном в допусках, поэтому два куска от двух воркеров различаются законно, и различие видно на стыке, а не в тестах.
+NETWORK COST: a second machine whose adapter must match the first — invariant 11 — we promise byte for byte only on one device (t183, t184b); between devices — agreement with the CPU reference within tolerances, so two pieces from two workers differ legitimately, and the difference is visible at the joint, not in the tests.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Инвариант 11 (детерминизм) — главный: он и разрешает воркера, и называет
-границу, за которой воркеров становится двое. Инвариант 7 (код композиции
-один; бэкенд — параметр исполнения, начатый экспорт завершается на своём
-бэкенде) — то, благодаря чему headless-исполнитель вообще является нами, а не
-вторым путём. Правил UI заметка не задевает: у воркера интерфейса нет по
-определению.
+Invariant 11 (determinism) is the main one: it both permits the worker and names the boundary beyond which there are two workers. Invariant 7 (the composition code is one; the backend is a parameter of execution, and a started export completes on its own backend) — the reason why the headless executor is ours at all and not a second path. Rules of the UI are not touched by this note: a worker has no interface by definition.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия: паспорт машины в результат и способ закрепить адаптер |
-| Где основная работа | kt-gpu (выбор адаптера по имени, а не только по предпочтению), kt-engine (`ExportStats` несёт бэкенд и адаптер), kt-app + kt-cli (показать это человеку, а не в stderr) |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | «`ExportStats` называет бэкенд и адаптер, и при принудительном CPU это видно»; «закрепление адаптера по имени выбирает именно его либо отказывает явно» (пара к `force_encoder`); отрицательный: свести кросс-девайсное равенство тестом нельзя — это надо записать в самом тесте |
-| Зависит от | F-COL-038 (форма задания: адаптер и бэкенд — это его поле «требования к машине») |
-| Ломает совместимость | нет |
+| Scope | S — one stage: the machine's passport into the result and a way to fix the adapter |
+| Where the main work is | kt-gpu (adapter choice by name, not only by preference), kt-engine (`ExportStats` carries the backend and the adapter), kt-app + kt-cli (show this to the person, not only in stderr) |
+| Project format | not touched |
+| Tests to write | "`ExportStats` names the backend and the adapter, and under forced CPU this is visible"; "fixing the adapter by name selects exactly it or refuses explicitly" (a pair to `force_encoder`); a negative one: cross-device equality cannot be checked by a test — this must be written in the test itself |
+| Depends on | F-COL-038 (the job's form: the adapter and the backend are its "machine requirements" field) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём локальное ядро: **под результатом должна стоять подпись машины**. Имя
-адаптера, бэкенд и признак софтверного растеризатора уже вычислены
-(`GpuBackendInfo`) — их надо довести до `ExportStats` и до человека, а к
-`force_encoder` добавить симметричное «считай на этом адаптере». Это полезно
-уже сегодня, без всякой второй машины: сейчас, получив странный кадр, мы не
-можем сказать, чем он посчитан.
+We take the local core: **a machine's signature must stand under the result**. The adapter name, the backend, and the software-rasterizer flag are already computed (`GpuBackendInfo`) — they need to be carried into `ExportStats` and to the person, and a symmetric "compute on this adapter" must be added next to `force_encoder`. This is useful already today, without any second machine: now, when we receive a strange frame, we cannot say what it was computed with.
 
-Серверную половину не заводим — второго участника нет. Но заметка обязана
-оставить после себя предупреждение, потому что оно контринтуитивно:
-**наш детерминизм не «сильный», он ЛОКАЛЬНЫЙ**. Инвариант 11 обещает байты на
-одном устройстве, и любое будущее предложение «пусть посчитает вторая машина»
-обязано начинаться с ответа на вопрос, что делать со стыком двух адаптеров.
-Отрасль на этот вопрос ответила отказом делить: Resolve отдаёт задание целиком
-одной машине, а те, кто делит, делят на КАДРЫ и выводят последовательность —
-то есть ровно то, чего нам не разрешает инвариант 9.
+We do not set up the server half — there is no second participant. But the note must leave a warning behind, because it is counter-intuitive: **our determinism is not "strong", it is LOCAL**. Invariant 11 promises bytes on one device, and any future proposal of "let the second machine compute it" must begin with an answer to the question of what to do with the joint of two adapters. The industry answered this question with a refusal to divide: Resolve hands the job whole to one machine, and those who do divide, divide into FRAMES and output a sequence — that is, exactly what invariant 9 does not allow us.
 
-Границы: форма задания — F-COL-038; склейка кусков от разных воркеров
-отвергнута в F-COL-040 (и одна из причин отказа — как раз эта); почему
-«облачный рендер» нигде не оказался рендером — F-COL-041.
+Boundaries: the job's form — F-COL-038; assembling pieces from different workers is rejected in F-COL-040 (and one of the reasons for the rejection is exactly this one); why "cloud rendering" nowhere turned out to be rendering — F-COL-041.
 
-## Источники
+## Sources
 
-- https://forum.level1techs.com/t/davinci-resolve-remote-render-server-complete-guide-windows-linux/138807
-  — узел Resolve через SSH командой `./Resolve -rr`, отсутствие обратной связи,
-  требование общего доступа к материалу и к базе проектов (eposvox, 12.02.2019;
-  дата обращения 2026-09-08)
-- https://superrendersfarm.com/article/how-render-farms-work-technical-guide —
-  «Always render to image sequences, not video files…» (опубликовано
-  04.04.2026, обновлено 07.09.2026; дата обращения 2026-09-08)
-- https://docs.opencue.io/docs/concepts/glossary/ — `host`, `tags`, `service`:
-  машина описана данными, и кадр не попадает туда, где нет нужного тега
-  (2026-09-08)
-- `docs/features/_editors.md`, строка `flamenco-3`; первоисточник
-  `flamenco.blender.org` из этого окружения отдаёт 403 —
-  **[НЕ ПРОВЕРЕНО]** по первоисточнику: точный протокол manager↔worker.
-- Наш код проверен по дереву 08.09.2026: `src/libs/kt-gpu/src/context.rs:46`,
-  `src/libs/kt-gpu/src/engine.rs:479`, `src/libs/kt-gpu/src/lib.rs`
-  (`FrameTol`), `src/libs/kt-engine/src/export.rs`,
-  `src/apps/kt-cli/src/main.rs`, `src/apps/kt-app/src/app.rs`; тесты
-  `src/libs/kt-gpu/tests/parity.rs` (t181, t182, t183) и
-  `src/libs/kt-gpu/tests/gpu_render.rs` (t184, t184b).
-- Соседние заметки как источник по нашему же коду: F-RES-007 (тихий фолбэк
-  экспорта на CPU и отсутствие строки о бэкенде в окне рендера), F-EXP-002
-  (очередь внутренняя, инвариант 9).
+- https://forum.level1techs.com/t/davinci-resolve-remote-render-server-complete-guide-windows-linux/138807 — a Resolve node over SSH with the command `./Resolve -rr`, the absence of feedback, the requirement of shared access to media and to the project database (eposvox, 12.02.2019; access date 2026-09-08)
+- https://superrendersfarm.com/article/how-render-farms-work-technical-guide — "Always render to image sequences, not video files…" (published 04.04.2026, updated 07.09.2026; access date 2026-09-08)
+- https://docs.opencue.io/docs/concepts/glossary/ — `host`, `tags`, `service`: the machine is described by data, and a frame does not go where there is no needed tag (2026-09-08)
+- `docs/features/_editors.md`, row `flamenco-3`; the primary source `flamenco.blender.org` returns 403 from this environment — **[NOT VERIFIED]** against the primary source: the exact manager↔worker protocol.
+- Our code checked against the tree on 08.09.2026: `src/libs/kt-gpu/src/context.rs:46`, `src/libs/kt-gpu/src/engine.rs:479`, `src/libs/kt-gpu/src/lib.rs` (`FrameTol`), `src/libs/kt-engine/src/export.rs`, `src/apps/kt-cli/src/main.rs`, `src/apps/kt-app/src/app.rs`; tests `src/libs/kt-gpu/tests/parity.rs` (t181, t182, t183) and `src/libs/kt-gpu/tests/gpu_render.rs` (t184, t184b).
+- Neighbouring notes as a source on our own code: F-RES-007 (the silent CPU fallback of export and the absence of a backend line in the render window), F-EXP-002 (the queue is internal, invariant 9).

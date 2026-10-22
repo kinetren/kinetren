@@ -1,12 +1,12 @@
 ---
 id: F-HLP-021
-title: «Что нового» при обновлении
-status: кандидат
+title: "What's new" on update
+status: candidate
 priority: B
 cost: M
 category: help/discoverability
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, vscode-1.136, jetbrains-2026.2, blender-5.2, photoshop-27]
-we_have: нет
+we_have: no
 crates: [kt-app, kt-version]
 invariants: [12]
 ui_rules: [9, 13, 17, 18, 19, 20]
@@ -17,375 +17,276 @@ depends_on: [F-HLP-013, F-HLP-023, F-HLP-026, F-HLP-032, F-HLP-033]
 checked: 2026-09-07
 ---
 
-# F-HLP-021 — «Что нового» при обновлении
+# F-HLP-021 — "What's new" on update
 
-## Суть
+## Essence
 
-Список того, что изменилось со сборки, которой человек пользовался вчера: новое
-отдельно, исправленное отдельно, у каждого пункта — версия и дата. Отвечает на
-два разных вопроса: «стоит ли ставить это обновление» (список исправлений) и
-«что теперь можно делать» (список новшеств). Единственный канал, который доходит
-до пользователя, УЖЕ научившегося работать: он больше не читает подсказок,
-потому что всё нужное нашёл — и потому не узнает, что появилось новое.
+A list of what has changed since the build the person used yesterday: the new separately, the fixed separately, and each item has a version and a date. It answers two different questions: "is it worth installing this update" (the list of fixes) and "what can be done now" (the list of novelties). The only channel that reaches the user, who has ALREADY learned to work, is this one: they no longer read hints, because they have found everything they need — and therefore they do not learn that something new has appeared.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | How it is named | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 (build 143+) | Release Announcements на форуме + `readme\Vegas_readme.htm` в каталоге установки + маркетинговая «What's New» | В самой программе — НИЧЕГО: обновление приезжает через отдельное приложение Boris FX Hub, после запуска Vegas никакого уведомления нет, и пользователи это прямо просят (тред билда 143). Заметки о выпуске разбросаны по четырём местам, поэтому историю выпусков модератор собрал РУКАМИ отдельной темой; в ней видно устройство: у каждого билда два раздела — «New features» и «Bug fixes and changes» |
-| Adobe Premiere | 26.x | «What's new» по версиям на helpx + отдельная страница исправлений | [НЕ ПРОВЕРЕНО]: `helpx.adobe.com` из этого окружения не открывается ни напрямую (таймаут), ни через текст-прокси (ошибка HTTP/2 framing), включая зеркало `/in/`. Схема Adobe подтверждена на соседнем продукте той же платформы — Photoshop, вторая таблица: анонс версии в сообществе, где «What's New» и «Bug fixes» — РАЗНЫЕ разделы одного поста |
-| DaVinci Resolve | 21 (линейка 20.x проверена) | «New Features Guide» — отдельный PDF на каждый точечный выпуск + видео «What's New in …» | Не страница, а ДОКУМЕНТ на выпуск: «This New Features Guide provides a focused and comprehensive look at **only the new features** in DaVinci Resolve 20.2» — то есть новшества намеренно вынуты из общего руководства и живут отдельным файлом с датой. Скачивается с сайта поддержки; поведение самой программы при первом запуске после обновления — [НЕ ПРОВЕРЕНО] |
-| Final Cut Pro | 12.3 | «What's new» — ГЛАВА руководства пользователя | Версионированный адрес (`…/whats-new-ver19637ebab/12.3/mac/15.6`), семь пунктов, и у каждого хвост «See <ссылка на главу руководства, где это описано>». Changelog устроен как оглавление в мануал, а не как самостоятельный текст. Исправлений нет вовсе: Apple список починенного для FCP не публикует |
-| Adobe After Effects | 26.x | как у Premiere — одна платформа справки на линейку | [НЕ ПРОВЕРЕНО] по той же причине: helpx недоступен |
+| VEGAS Pro | 2026.0 (build 143+) | Release Announcements on the forum + `readme\Vegas_readme.htm` in the install directory + the marketing "What's New" | In the program itself — NOTHING: the update arrives through a separate application, Boris FX Hub; after Vegas starts there is no notification, and users directly ask for one (the thread of build 143). Release notes are scattered across four places, therefore the history of releases was assembled BY HAND by a moderator in a separate thread; in it the structure is visible: each build has two sections — "New features" and "Bug fixes and changes" |
+| Adobe Premiere | 26.x | "What's new" by version on helpx + a separate page of fixes | [NOT VERIFIED]: `helpx.adobe.com` does not open from this environment either directly (timeout) or through the text proxy (HTTP/2 framing error), including the `/in/` mirror. Adobe's scheme is confirmed on a neighboring product of the same platform — Photoshop, second table: the announcement of a version in the community, where "What's New" and "Bug fixes" are DIFFERENT sections of one post |
+| DaVinci Resolve | 21 (the 20.x line verified) | "New Features Guide" — a separate PDF for each point release + a video "What's New in …" | Not a page but a DOCUMENT per release: "This New Features Guide provides a focused and comprehensive look at **only the new features** in DaVinci Resolve 20.2" — that is, the novelties are deliberately taken out of the general manual and live in a separate file with a date. It is downloaded from the support site; the behavior of the program itself at first launch after the update — [NOT VERIFIED] |
+| Final Cut Pro | 12.3 | "What's new" — a CHAPTER of the user guide | A versioned address (`…/whats-new-ver19637ebab/12.3/mac/15.6`), seven items, and each has a tail "See <link to the chapter of the guide where this is described>". The changelog is built like a table of contents of the manual, not as an independent text. There are no fixes at all: Apple does not publish a list of what was repaired for FCP |
+| Adobe After Effects | 26.x | as for Premiere — one help platform per line | [NOT VERIFIED] for the same reason: helpx is unavailable |
 
-Пять строк ядра описывают, что вендор ПУБЛИКУЕТ, и почти ничего — что делает
-программа. Про поведение при первом запуске после обновления у пяти редакторов
-ядра нашлась ровно одна проверяемая деталь, и та отрицательная (Vegas: не делает
-ничего, жалобы в «Что говорят пользователи»). Поэтому вторая таблица здесь не
-дополнение, а половина предмета.
+The five rows of the core describe what the vendor PUBLISHES, and almost nothing about what the program does. About the behavior at first launch after an update, the five core editors yielded exactly one checkable detail, and that one is negative (Vegas: does nothing; complaints are in "What users say"). Therefore the second table here is not an addition but half of the subject.
 
-**Вне ядра.** Механизм «программа сама показала, что изменилось» родом не из
-видеомонтажа: у пяти NLE это страница на сайте вендора, а устройство — гейт
-показа, выключатель, парный пункт меню — существует только у редакторов кода и
-у Photoshop. Обе детали «Фишки фишки» взяты отсюда.
+**Outside the core.** The mechanism "the program itself showed what has changed" does not come from video editing: for the five NLEs it is a page on the vendor's website, while the device — a display gate, a switch, a paired menu item — exists only in code editors and in Photoshop. Both details of "The trick behind it" are taken from here.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | How it is named | How it works |
 |---|---|---|---|
-| Visual Studio Code | 1.136 | Help → Show Release Notes; отдельно — post-update widget | ДВЕ разные поверхности. (1) Заметки открываются ВКЛАДКОЙ РЕДАКТОРА — обычный документ, который скроллят, ищут и закрывают, тот же пункт есть в меню Help и в палитре команд (`ShowReleaseNotesAction`, `f1: true`). Выключатель объявлен настройкой `update.showReleaseNotes` («Show Release Notes after an update», по умолчанию `true`). (2) `PostUpdateWidgetContribution` — липкая панель 420 px в правом верхнем углу с бейджем, заголовком «New in {version}», кнопками и крестиком; содержимое СКАЧИВАЕТСЯ по адресу выпуска, а не лежит в сборке. Гейт: ключ хранилища `postUpdateWidget/lastKnownVersion` (версия + коммит + время), плюс отказ показывать на лимитированном соединении и если окно не было в фокусе |
-| IntelliJ IDEA | 2026.2 | Help → What's New in IntelliJ IDEA | «When IntelliJ IDEA updates to a **new major release**, it opens the What's New in IntelliJ IDEA tab in the editor» — тоже вкладка-документ, тоже с ручным дублем в меню Help, и с именованным выключателем в настройках обновлений: «Show What's New in the editor after an IDE update». Три решения VS Code повторены независимо: документ вместо попапа, только мажор, парный пункт меню |
-| Blender | 5.2 LTS | Splash Screen → What's New | Особый путь: постоянного «после обновления» нет вообще — сплэш показывается при КАЖДОМ запуске (закрывается щелчком мимо или Esc), в его нижней половине рядом с «Recent Files» стоит пункт «What's New — Open the latest release notes», а версия напечатана в правом верхнем углу картинки. Обновление меняет не наличие поверхности, а её содержимое: при первом запуске новой версии в той же области появляется Quick Set Up |
-| Adobe Photoshop | 27.9.1 (июль 2026) | Анонс версии в официальном сообществе | Пост из трёх частей: «What's New» (каждый пункт ссылкой в справку), «**Bug fixes – Thanks to you!**» — и вот это устройство нигде не описано как фича: каждое исправление сделано ССЫЛКОЙ НА ТРЕД, где о баге сообщили. Список починенного адресован поимённо тем, кто жаловался. 28 ответов, 2217 просмотров — и в ответах спрашивают про свои баги |
+| Visual Studio Code | 1.136 | Help → Show Release Notes; separately — the post-update widget | TWO different surfaces. (1) The notes open as an EDITOR TAB — an ordinary document, which is scrolled, searched and closed; the same item is in the Help menu and in the command palette (`ShowReleaseNotesAction`, `f1: true`). The switch is declared as the setting `update.showReleaseNotes` ("Show Release Notes after an update", default `true`). (2) `PostUpdateWidgetContribution` — a sticky panel of 420 px in the upper right corner with a badge, the heading "New in {version}", buttons and a cross; the content is DOWNLOADED from the address of the release, rather than lying in the build. The gate: the storage key `postUpdateWidget/lastKnownVersion` (version + commit + time), plus a refusal to show it on a metered connection and if the window was not in focus |
+| IntelliJ IDEA | 2026.2 | Help → What's New in IntelliJ IDEA | "When IntelliJ IDEA updates to a **new major release**, it opens the What's New in IntelliJ IDEA tab in the editor" — also a document tab, also with a manual duplicate in the Help menu, and with a named switch in the update settings: "Show What's New in the editor after an IDE update". Three decisions of VS Code are repeated independently: a document instead of a popup, only for a major release, a paired menu item |
+| Blender | 5.2 LTS | Splash Screen → What's New | A special path: there is no permanent "after an update" at all — the splash shows at EVERY launch (it is closed by clicking elsewhere or by Esc), in its lower half next to "Recent Files" stands the item "What's New — Open the latest release notes", and the version is printed in the upper right corner of the picture. The update changes not the presence of the surface but its content: at the first launch of a new version a Quick Set Up appears in the same area |
+| Adobe Photoshop | 27.9.1 (July 2026) | An announcement of the version in the official community | A post in three parts: "What's New" (each item linked to the help), "**Bug fixes – Thanks to you!**" — and this device is nowhere described as a feature: each fix is made by a LINK TO THE THREAD where the bug was reported. The list of what was repaired is addressed by name to those who complained. 28 replies, 2217 views — and in the replies people ask about their own bugs |
 
-## Фишка фишки
+## The trick behind it
 
-Груз, которого одна строка статусбара не вмещает, здесь — **СПИСОК, У КОТОРОГО
-ЕСТЬ ДАТА**: разница между двумя сборками. У неё нет и не может быть экранного
-представителя: навести мышь не на что, потому что «новое» — это ровно то, чего
-пользователь на экране ещё не находил, а «исправленное» вчера выглядело точно
-так же, как сегодня. Наводить не на что и приходить некуда — единственный груз
-в этой волне, который обязан догнать человека сам. У нас он ляжет в две
-поверхности, обе уже существующие: одна строка в окне уведомлений (`app.rs:1103`,
-колокольчик со счётчиком непрочитанного) и полный список — страницей на сайте,
-где растущий текст уже умеют собирать на пяти языках.
+The load that one status-bar line cannot hold is here a **LIST THAT HAS A DATE**: the difference between two builds. It has no and cannot have an on-screen representative: there is nothing to hover over, because "new" is exactly what the user has not yet found on the screen, and "fixed" yesterday looked exactly as it does today. There is nothing to point at and nowhere to come to — the only load in this wave that must catch up with the person by itself. For us it will lie on two surfaces, both already existing: one line in the notifications window (`app.rs:1103`, a bell with a counter of unread) and the full list — as a page on the site, where growing text is already assembled in five languages.
 
-**1. Гейт показа — не «версия сменилась», а «сменился МАЖОР», и это выучено
-дорого.** VS Code хранит в `postUpdateWidget/lastKnownVersion` версию И коммит,
-но сравнивает через `isMajorMinorVersionChange`. Причина — баг 110511 (14
-реакций): аварийные перевыпуски считались новой версией, и «for the August
-release, this meant that occasional users got to see the release notes 4 times».
-JetBrains пришли к тому же независимо: вкладка открывается только на major
-release. Для нас это не тонкость, а вопрос осуществимости: наша версия —
-`ktYY.MM.DD-<hash8>` по дате КОММИТА (`src/libs/kt-version/build.rs`), то есть
-каждая сборка — новая версия. За последние 30 дней в репозитории 207 коммитов.
-Плашка «показать один раз на версию» всплывала бы почти каждый запуск.
+**1. The display gate is not "the version changed" but "the MAJOR changed", and this was learned at a high cost.** VS Code stores in `postUpdateWidget/lastKnownVersion` the version AND the commit, but compares via `isMajorMinorVersionChange`. The reason is bug 110511 (14 reactions): emergency reissues were counted as a new version, and "for the August release, this meant that occasional users got to see the release notes 4 times". JetBrains came to the same thing independently: the tab opens only on a major release. For us this is not a subtlety but a question of feasibility: our version is `ktYY.MM.DD-<hash8>` by the date of the COMMIT (`src/libs/kt-version/build.rs`), that is, every build is a new version. In the last 30 days the repository has 207 commits. A banner "show once per version" would pop up almost every launch.
 
-**2. Список исправлений, где каждая строка — ссылка на жалобу автора.** У Adobe
-раздел называется «Bug fixes – Thanks to you!», и четыре пункта — четыре ссылки
-в треды, где о багах сообщили. Это переворачивает жанр: changelog перестаёт быть
-объявлением вендора и становится РАСПИСКОЙ, адресованной поимённо. Работает и
-обратная сторона: люди читают именно этот раздел, ища СВОЙ пункт, — «is initial
-direction brush problem fixed in this update?». У нас пользователь один, значит
-доля «Thanks to you» — 100 %, и адресат каждой расписки известен заранее.
+**2. A list of fixes where each line is a link to the author's complaint.** At Adobe the section is called "Bug fixes – Thanks to you!", and four items — four links to the threads where the bugs were reported. This turns the genre over: the changelog stops being a vendor's announcement and becomes a RECEIPT, addressed by name. The reverse side also works: people read exactly this section looking for THEIR item — "is initial direction brush problem fixed in this update?". We have one user, so the share of "Thanks to you" is 100 %, and the addressee of each receipt is known in advance.
 
-**3. «Что нового» как оглавление в руководство, а не как документ.** У Apple
-глава живёт ВНУТРИ руководства по версионированному адресу (`/12.3/`), и каждый
-из семи пунктов заканчивается ссылкой на главу, где это описано. Следствие
-неочевидное: такой changelog невозможно написать раньше мануала — он состоит из
-ссылок в него. И второе следствие, видное только при переключении версии
-руководства: старые «What's new» уезжают вместе со старым мануалом, накопленной
-истории у Apple нет вовсе. Resolve решает ту же задачу зеркально — отдельным PDF
-на каждый выпуск («only the new features»), который никуда не девается, но и ни
-на что не ссылается.
+**3. "What's new" as a table of contents of the manual, not as a document.** At Apple the chapter lives INSIDE the manual at a versioned address (`/12.3/`), and each of the seven items ends with a link to the chapter where this is described. The consequence is not obvious: such a changelog cannot be written before the manual — it consists of links into it. And a second consequence, visible only when switching the version of the manual: the old "What's new" moves away together with the old manual, and Apple has no accumulated history at all. Resolve solves the same task in a mirror way — a separate PDF for each release ("only the new features"), which goes nowhere, but also links to nothing.
 
-## Плюсы
+## Pros
 
-- Единственный канал волны, который работает БЕЗ участия пользователя. Все
-  прочие поверхности разведки (палитра F-HLP-015, контекстное меню F-HLP-016,
-  шпаргалка F-HLP-024, описание параметра F-HLP-006) — pull: их открывает тот,
-  кто уже понял, что чего-то не знает. Опытный пользователь этого не понимает по
-  определению: он свою задачу решает и повода искать не имеет.
-- Разделение «новое / исправленное» — не оформление, а два разных читателя.
-  Список исправлений читает тот, кто решает «ставить ли», и он ищет одну свою
-  строку; список новшеств читает тот, кто уже поставил. Слитый воедино текст не
-  отвечает ни одному из них: в нём нельзя ни быстро найти свой баг, ни увидеть,
-  что появилось.
-- Пункт changelog — самая дешёвая единица документации из всех: он пишется один
-  раз, в момент правки, тем, кто правку сделал, и больше не устаревает, потому
-  что привязан к версии. Руководство (F-HLP-023) устаревает при каждой правке,
-  changelog — никогда.
-- Даёт первую в проекте единицу «релиз». Сегодня её нет: git-теги — рабочие
-  (`tested-1`, `nontested-32`, `cpp-reference-final`, `4K`), релизных нет ни
-  одного, и «какие сборки вообще выпускались» в репозитории не записано.
-- Побочно закрывает вопрос «а ту ли программу я запустил»: строка «в этой сборке
-  появилось X» — проверяемое утверждение, которое видно ЗАПУЩЕННОЙ программе, а
-  не только сборочному скрипту (та же боль, что в F-HLP-026, с другой стороны).
+- The only channel of the wave that works WITHOUT the user's participation. All the other surfaces of the reconnaissance (the palette F-HLP-015, the context menu F-HLP-016, the cheat sheet F-HLP-024, the description of a parameter F-HLP-006) are pull: they are opened by the one who has already understood that they do not know something. An experienced user does not understand this by definition: they solve their task and have no reason to search.
+- The division into "new / fixed" is not design but two different readers. The list of fixes is read by the one who decides "whether to install", and they look for one line of their own; the list of novelties is read by the one who has already installed. A text merged into one answers neither of them: in it one cannot quickly find one's own bug, nor see what has appeared.
+- A changelog item is the cheapest unit of documentation of all: it is written once, at the moment of the edit, by the one who made the edit, and it does not become obsolete any more, because it is tied to a version. The manual (F-HLP-023) becomes obsolete with every edit; the changelog — never.
+- It gives the first "release" unit in the project. Today there is none: the git tags are working ones (`tested-1`, `nontested-32`, `cpp-reference-final`, `4K`), there is not a single release one, and "which builds were ever released" is not recorded in the repository.
+- Incidentally it closes the question "is it the program I launched": the line "in this build X has appeared" is a checkable statement, visible to the RUNNING program, not only to the build script (the same pain as in F-HLP-026, from the other side).
 
-## Минусы
+## Cons
 
-- Растёт монотонно и навсегда. Это единственный текст продукта с таким
-  свойством: справка переписывается, changelog только дописывается. Умножается
-  на пять языков (F-HLP-033) — и в отличие от подсказки, которую перевели один
-  раз, здесь перевод требуется КАЖДЫЙ выпуск, иначе доля переведённого падает
-  сама собой при полном бездействии.
-- Написанный из коммитов — не читается. Это не гипотеза: у нас есть буквально
-  такой текст, 268 пунктов `docs/porting-notes.md`, и он написан для агентов —
-  средний пункт 903 символа (медиана 692, максимум 4957), 159 пунктов упоминают
-  номер регрессионного теста. Ни один из них нельзя показать пользователю как
-  есть, и дело не в языке, а в жанре: там объясняется, ПОЧЕМУ так сделано.
-- Требует дисциплины в момент правки, а не в момент выпуска. Написанный задним
-  числом changelog — это работа по всему каталогу разом, и она делается один раз
-  и больше никогда (ровно поэтому у Vegas историю выпусков собирал не вендор, а
-  модератор форума).
-- Показанный сам собой — раздражает мгновенно, и претензия формулируется точно:
-  «Since we open release notes (by default) on each release, there should be a
-  visible way to opt-out». Всё, что показывается без просьбы, обязано нести
-  выключатель на виду (правило 19), иначе платит доверием.
-- Честный список исправлений публикует и то, что было сломано. Для проекта с
-  одним пользователем это дешевле, чем кажется (он сам про эти дефекты и писал),
-  но правило универсально: раздел «исправлено» нельзя вести выборочно — как
-  только из него выпадает неудобное, читать перестают и его.
+- It grows monotonically and forever. This is the only text of the product with such a property: the help is rewritten, the changelog is only appended to. It is multiplied by five languages (F-HLP-033) — and unlike a hint, which was translated once, here translation is required EVERY release, otherwise the share of the translated falls by itself with complete inaction.
+- A text written from commits is not readable. This is not a hypothesis: we have literally such a text, 268 items of `docs/porting-notes.md`, and it is written for agents — the average item is 903 characters (median 692, maximum 4957), 159 items mention the number of a regression test. None of them can be shown to the user as is, and the matter is not the language but the genre: there it is explained WHY it was done this way.
+- It requires discipline at the moment of the edit, not at the moment of release. A changelog written after the fact is work over the whole catalog at once, and it is done once and never again (precisely why the history of Vegas releases was assembled not by the vendor but by a forum moderator).
+- A thing shown by itself irritates instantly, and the complaint is formulated precisely: "Since we open release notes (by default) on each release, there should be a visible way to opt-out". Everything that is shown without a request must carry a visible switch (rule 19), otherwise it pays in trust.
+- An honest list of fixes also publishes what was broken. For a project with one user this is cheaper than it seems (he himself wrote about these defects), but the rule is universal: the section "fixed" cannot be kept selectively — as soon as the inconvenient falls out of it, people stop reading it too.
 
-## Что говорят пользователи
+## What users say
 
-Спрос на канал, дословно — тред нового билда Vegas Pro, день выхода:
+Demand for the channel, verbatim — the thread for the new Vegas Pro build, on release day:
 
 > What would be nice is if there were a notice after I launched Vegas Pro.
-> — arpierre, форум Boris FX, тред «New Vegas Pro build v20260.0.0.143»,
+> — arpierre, Boris FX forum, thread "New Vegas Pro build v20260.0.0.143",
 > 19.06.2026, https://forum.borisfx.com/t/24196
 
-В том же треде — проверка этой надежды и что осталось вместо канала:
+In the same thread — a check of that hope and what was left in its place:
 
 > After updating the Boris FX Hub, I launched Vegas to see if some notice has
 > popped up, but nothing.
-> — bitman, там же, 19.06.2026 (обращение 2026-09-07)
+> — bitman, same thread, 19.06.2026 (accessed 2026-09-07)
 
-Обратная сторона — цена показа без гейта:
+The reverse side — the price of showing it without a gate:
 
 > For the August release, this meant that occasional users got to see the
 > release notes 4 times.
-> — digitarald, VS Code, issue 110511 «Only auto-open release notes for major
-> releases», 12.11.2020, https://github.com/microsoft/vscode/issues/110511
+> — digitarald, VS Code, issue 110511 "Only auto-open release notes for major
+> releases", 12.11.2020, https://github.com/microsoft/vscode/issues/110511
 
-И требование выключателя — от разработчика того же продукта:
+And the demand for an off switch — from the developer of the same product:
 
 > Since we open release notes (by default) on each release, there should be a
 > visible way to opt-out.
 > — eamodio, VS Code, issue 110507, 12.11.2020,
 > https://github.com/microsoft/vscode/issues/110507
 
-Что именно ищут в списке исправлений:
+What people look for in a list of fixes:
 
 > is **initial direction brush** problem fixed in this update?
-> — sbn85, официальное сообщество Adobe, анонс Photoshop 27.9.1, 18.08.2026,
+> — sbn85, official Adobe community, Photoshop 27.9.1 announcement, 18.08.2026,
 > https://community.adobe.com/announcements-710/photoshop-v27-9-1-is-live-explore-ideas-faster-with-firefly-boards-smarter-ai-prompts-and-streamlined-editing-1634244
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-Главное здесь — не «нам нужен changelog» (это известно и без разведки), а то,
-что **исходник для него у нас уже написан и написан не в том жанре**. Пример
-дословный, п.259 `docs/porting-notes.md`:
+The main point here is not "we need a changelog" (that is known without any reconnaissance), but that
+**the source for it is already written, and not in the right genre.** A verbatim example, item 259 of `docs/porting-notes.md`:
 
-> «**Длина морф-блока правится (Р.38 п.9).** «Я не понимаю как менять длинну у
-> морфер события»: `morpher_at` проверял только тело, кромок не было,
-> `Drag::Morph` умел один перенос, а в окне морфера длины не было вовсе. Теперь
-> у блока кромки (`Drag::MorphEdge`): правая меняет длительность, левая двигает
-> начало при СТОЯЩЕМ конце — как у метки-диапазона (правило 20: ничего не
-> отрастает само). Тест 259.»
+> "**The morph block length is editable (R.38 item 9).** "I don't understand how to change the length of a morpher event": `morpher_at` checked only the body, there were no edges, `Drag::Morph` could do only one move, and the morpher window had no length at all. Now the block has edges (`Drag::MorphEdge`): the right edge changes the duration, the left edge moves the start while the end STAYS — as with a range marker (rule 20: nothing grows on its own). Test 259."
 
-Пользователю из этих 470 символов адресована одна фраза: «Морфер-блок теперь
-тянется за края: правый край меняет длину, левый двигает начало». Исчезают имя
-функции, вариант enum'а, номер правила и номер теста — то есть всё, ради чего
-пункт писался. То же с п.267 (2,5 КБ про `FxInstance::LayerMix { amount, from }`,
-посегментный расчёт цепочки и незатронутые golden-эталоны) — пользовательская
-строка: «У морфер-слоя появились сила наложения и фейды: 60 % — это смесь
-обработанной картинки с необработанной». А п.252 и п.264 в список не попадают
-ВООБЩЕ: механизм «тупиков не бывает» и живой сценарий `deadend.py` — изменения в
-нашей работе, а не в его программе. Фильтр здесь так же обязателен, как перевод:
-из 268 пунктов пользовательских — заметно меньше половины.
+For the user, one phrase is addressed out of these 470 characters: "The morpher block now stretches past its edges: the right edge changes the length, the left edge moves the start." The function name, the enum variant, the rule number and the test number all disappear — that is, everything the item was written for. The same goes for item 267 (2.5 KB about `FxInstance::LayerMix { amount, from }`, the segment-by-segment chain computation and the unaffected golden references): the user-facing line is "Morpher layers gained blend strength and fades: 60% is a mix of the processed picture with the unprocessed one." And items 252 and 264 do not make it into the list AT ALL: the "there are no dead ends" mechanism and the live scenario `deadend.py` are changes to our work, not to what its program does. The filter is as mandatory here as the translation: of 268 items, noticeably fewer than half are user-facing.
 
-### Что уже есть
+### What is already there
 
-- **Версия несёт дату коммита**: `kt_version::FULL` = `ktYY.MM.DD-<hash8>`
-  (`src/libs/kt-version/src/lib.rs`, вычисление — `build.rs`); сегодня
-  `kt26.09.07-7cdcc88d`. Вопрос «новее ли эта сборка» решается сравнением строк
-  и changelog для этого не нужен — что снимает половину обычной мотивации и
-  оставляет вторую: «а что в ней изменилось».
-- **Пользовательский жанр УЖЕ существует и уже переводится** — секция
-  `[roadmap]` лендинга: `shipped_title = "Shipped"` и восемь строк вида
-  «Morphers: batch source swaps and effect batches, with bake»
-  (`site/content/en.toml`). Это ровно те фразы, из которых состоит changelog, —
-  но без версий, без дат и без исправлений, и раздел честно объявлен как
-  «Direction, not dates.»: инвентарь возможностей, а не история событий.
-- **Push-поверхность в программе есть, и она не перекрывает**: окно уведомлений
-  (`src/apps/kt-app/src/app.rs:1103`, `win.notices_title`, строки «время +
-  текст», скролл), колокольчик с `notices_unread` и пункт `menu.view.notices`
-  (`src/apps/kt-app/src/toolbar.rs:344`). Кольцо на 200 записей, дедуп подряд
-  идущих. Это готовый адрес для одной строки «сборка обновилась».
-- **Место под метку «последняя виденная версия» есть**: `autosave_path()`
-  (`src/apps/kt-app/src/app.rs:4908`) уже пишет в
-  `$XDG_DATA_HOME/kinotrain/`. Это НЕ «пользовательское хранилище вне проекта»
-  из вывода №1 первой волны (F-AUT-004 / F-TXT-002 / F-EXP-001 / F-UI-002) —
-  там нужна библиотека сущностей; здесь нужна одна строка в уже существующем
-  каталоге, и завести её можно, не открывая тот вопрос.
-- **Конвейер многоязычных страниц готов** (F-HLP-032): `site/build.py`,
-  `translated_min = 0.9` в `site/content/structure.toml`, язык ниже порога
-  собирается, но получает `noindex` и выпадает из sitemap.
-- **Единица «релиз» существует ровно в одном месте и вне репозитория**:
-  `src/scripts/release-build.sh:85` пишет `target/dist-out/LATEST` — версию и
-  имя тарбола. Это всё, что проект помнит о выпусках.
+- **The version carries the commit date**: `kt_version::FULL` = `ktYY.MM.DD-<hash8>`
+  (`src/libs/kt-version/src/lib.rs`, computed in `build.rs`); today it is
+  `kt26.09.07-7cdcc88d`. The question "is this build newer?" is settled by comparing
+  strings, and a changelog is not needed for it — which removes half of the usual
+  motivation and leaves the other half: "so what changed in it?"
+- **The user-facing genre ALREADY exists and is already being translated** — the
+  `[roadmap]` section of the landing page: `shipped_title = "Shipped"` and eight lines like
+  "Morphers: batch source swaps and effect batches, with bake"
+  (`site/content/en.toml`). These are exactly the phrases a changelog is made of — but
+  without versions, without dates and without fixes, and the section is honestly labeled
+  "Direction, not dates.": an inventory of capabilities, not a history of events.
+- **A push surface in the program exists, and it does not overlap**: the notifications
+  window (`src/apps/kt-app/src/app.rs:1103`, `win.notices_title`, rows "time +
+  text", scrolling), the bell with `notices_unread`, and the menu item `menu.view.notices`
+  (`src/apps/kt-app/src/toolbar.rs:344`). A ring of 200 entries, with deduplication of
+  consecutive repeats. This is a ready address for one line "build updated".
+- **A place for the "last seen version" mark exists**: `autosave_path()`
+  (`src/apps/kt-app/src/app.rs:4908`) already writes to
+  `$XDG_DATA_HOME/kinotrain/`. This is NOT the "user storage outside the project" from
+  output no. 1 of the first wave (F-AUT-004 / F-TXT-002 / F-EXP-001 / F-UI-002) — that
+  needs an entity library; here one line in an already existing directory is needed, and
+  it can be created without opening that question.
+- **The multilingual page pipeline is ready** (F-HLP-032): `site/build.py`,
+  `translated_min = 0.9` in `site/content/structure.toml`; a language below the threshold
+  is built, but it gets `noindex` and drops out of the sitemap.
+- **The unit "release" exists in exactly one place, and outside the repository**:
+  `src/scripts/release-build.sh:85` writes `target/dist-out/LATEST` — the version and the
+  tarball name. That is everything the project remembers about releases.
 
-### Чего не хватает
+### What is missing
 
-- CHANGELOG отсутствует полностью. Грепом по всему дереву слово встречается
-  ровно один раз — в `docs/user-feedback.md:1190`, в перечислении того, чего у
-  нас нет.
-- **Нет единицы «релиз»**, а значит нет и гейта, который VS Code и JetBrains
-  выучили дорого: 396 коммитов, 207 за 30 дней, каждый — новая строка версии;
-  релизных тегов нет ни одного.
-- Установка не оставляет следа: `src/packaging/install.sh` кладёт бинари в
-  `~/.local/bin` поверх старых. Ни файла версии, ни записи «обновлено» — узнать
-  об обновлении программа может только сравнив себя с собственной меткой.
-- В интерфейсе нет ни пункта, ни ключа: меню три (`[menu.file]`, `[menu.edit]`,
-  `[menu.view]` в `src/apps/kt-app/i18n/en.toml`), ключей про версию или
-  обновление — ноль (проверено грепом по каталогам).
-- Версия в единственном пользовательском месте вбита руками и уже устарела:
-  `site/content/structure.toml:175` — `tar xf kinotrain-26.08-linux-x86_64.tar.gz`
-  при текущей сборке `kt26.09.07`. Сайт не знает, что вышло позже.
-- Ни одного пункта `porting-notes.md` с пользовательской формулировкой: жанр не
-  предусмотрен форматом, поэтому и не пишется.
+- There is no CHANGELOG at all. A grep of the whole tree finds the word exactly once — in
+  `docs/user-feedback.md:1190`, in the list of what we do not have.
+- **There is no unit "release"**, and therefore no gate, which VS Code and JetBrains learned
+  at a high price: 396 commits, 207 of them in 30 days, each one a new version line; there
+  is not a single release tag.
+- The installation leaves no trace: `src/packaging/install.sh` puts the binaries into
+  `~/.local/bin` on top of the old ones. There is no version file and no "updated" record —
+  the program can learn about an update only by comparing itself with its own mark.
+- The interface has no menu item and no key: there are three menus (`[menu.file]`,
+  `[menu.edit]`, `[menu.view]` in `src/apps/kt-app/i18n/en.toml`), and there are zero keys
+  about the version or about updates (checked by grepping the catalogs).
+- The version in the only user-facing place is typed by hand and is already out of date:
+  `site/content/structure.toml:175` — `tar xf kinotrain-26.08-linux-x86_64.tar.gz`, while
+  the current build is `kt26.09.07`. The site does not know that something newer has come out.
+- Not one item of `porting-notes.md` has a user-facing wording: the genre is not provided
+  for by the format, so it is not written.
 
-### Что мешает
+### What gets in the way
 
-- **Правило 20 (ничего не отрастает само)** — changelog и есть то, что растёт
-  само. Отсюда выбор места: в каталогах приложения растущему тексту не место —
-  522 ключа × 5 языков, предел 160 символов на значение
-  (`src/apps/kt-app/build.rs`, `MAX_VALUE_CHARS`, длиннее ВАЛИТ СБОРКУ), t125
-  не терпит лишних ключей, t100 требует глиф на каждый неASCII-символ. Средний
-  пункт porting-notes в 5–6 раз длиннее нашего же предела строки.
-- **Разведка поправила общее место волны про переводы.** Утверждение «описания
-  эффектов уже переведены на пять языков» неверно: в `site/content/` переведён
-  ТОЛЬКО русский (96 % значений отличаются от английских), а `es`, `zh-Hans` и
-  `ar` совпадают с `en` на все 220 значений, то есть 0 %. В ПРИЛОЖЕНИИ, наоборот,
-  переведено всё (`ru` 97 %, `es` 93 %, `zh-Hans` 98 %, `ar` 98 % от 522 ключей).
-  Для этой заметки вывод прямой: растущий текст обязан жить там, где
-  непереведённое честно помечается `noindex` (сайт), а не там, где полнота
-  каталога — условие сборки (приложение).
-- **Правило 19** (диалог обязан сказать, где потом изменить решение) — то самое,
-  что не выполнено ни одной строкой каталога. Показ «что нового» без видимого
-  выключателя воспроизводит претензию VS Code дословно; выключатель обязан быть
-  назван в самой записи.
-- **Правило 17** (парные способы одинаковы): показанное само обязано открываться
-  и по требованию — пунктом меню, тем же текстом. Иначе push- и pull-каналы
-  разойдутся, а выключивший показ теряет доступ к списку насовсем.
-- **Правило 9 и 13**: плашки, закрывающей рабочую область, быть не должно —
-  и это не только вкус, это тезис волны (попап не предлагаем).
-- **Некуда ссылаться**: у Apple каждый пункт ведёт в главу руководства, у нас
-  руководства нет (F-HLP-023), а ссылки из программы наружу нет вообще ни одной.
-  Полная форма changelog (пункт → страница) в этой заметке недостижима; в
-  доступной форме пункт заканчивается сам на себе.
+- **Rule 20 (nothing grows on its own)** — a changelog is exactly what grows on its own.
+  Hence the choice of place: a growing text has no place in the application's catalogs —
+  522 keys × 5 languages, a limit of 160 characters per value (`src/apps/kt-app/build.rs`,
+  `MAX_VALUE_CHARS`; a longer value BREAKS THE BUILD), t125 does not tolerate extra keys,
+  t100 requires a glyph for every non-ASCII character. The average item in porting-notes
+  is 5–6 times longer than our own per-line limit.
+- **The reconnaissance corrected the shared place of the wave about translations.** The
+  claim "effect descriptions are already translated into five languages" is wrong: in
+  `site/content/` ONLY Russian has been translated (96% of values differ from the English
+  ones), while `es`, `zh-Hans` and `ar` match `en` on all 220 values, that is, 0%. In the
+  APPLICATION, on the contrary, everything is translated (`ru` 97%, `es` 93%, `zh-Hans` 98%,
+  `ar` 98% of 522 keys). For this note the conclusion is direct: growing text has to live
+  where an untranslated language is honestly marked `noindex` (the site), not where the
+  completeness of the catalog is a build condition (the application).
+- **Rule 19** (a dialog must say where the decision can be changed later) — the very thing
+  that is not fulfilled by a single line of the catalog. Showing "what's new" without a
+  visible off switch reproduces VS Code's complaint word for word; the off switch must be
+  named in the entry itself.
+- **Rule 17** (paired ways are identical): what is shown must also open on demand — through
+  a menu item, with the same text. Otherwise the push and pull channels diverge, and someone
+  who switched the display off loses access to the list for good.
+- **Rules 9 and 13**: there must be no banner covering the workspace — and this is not just
+  taste, it is the thesis of the wave (we do not propose a popup).
+- **There is nowhere to link**: Apple has every item lead to a chapter of the guide, we have
+  no guide (F-HLP-023), and there is not a single link from the program to the outside.
+  The full form of a changelog (item → page) is unreachable in this note; in the accessible
+  form an item ends on itself.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **12** (repaint только при движении, в draw-путях ни аллокаций, ни клонов):
-  сравнение версии со сборочной меткой делается ОДИН раз при старте, результат —
-  одна запись в `notices`; ни анимации, ни таймера, ни поверхности, живущей
-  кадрами. Любая «плашка с появлением» инвариант нарушит.
-- Правила UI **9**, **13** (место), **17** (парный пункт меню), **18** (пункт
-  меню говорит ЧТО и ГДЕ), **19** (где выключить), **20** (растёт само) — см.
-  «Что мешает».
-- Решения 1 и 2 разморозки Р.40 (перекрытие, задержка) не задеваются: обе
-  предлагаемые поверхности — существующее окно и внешняя страница, не попап.
-  `theme.rs` и t83 остаются как есть.
+- **12** (repaint only on movement, no allocations or clones in draw paths): the comparison
+  of the version with the build mark is done ONCE at startup, and the result is a single
+  entry in `notices`; there is no animation, no timer, no surface that lives frame by frame.
+  Any "banner with an appearance effect" would break the invariant.
+- UI rules **9**, **13** (place), **17** (paired menu item), **18** (the menu item says WHAT
+  and WHERE), **19** (where to switch it off), **20** (grows on its own) — see "What gets
+  in the way".
+- Decisions 1 and 2 of the R.40 unfreeze (overlap, delay) are not affected: both proposed
+  surfaces are an existing window and an external page, not a popup. `theme.rs` and t83
+  stay as they are.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии раунда: (1) единица «релиз» + пользовательская строка у изменения; (2) страница на сайте и одна запись в программе |
-| Где основная работа | `docs/porting-notes.md` (дисциплина записи, не код), `site/` (страница выпусков через существующий `build.py`), kt-app: сравнение версии с меткой в `$XDG_DATA_HOME/kinotrain/`, одна запись в `notices`, один пункт меню |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | клауза `--check` на пункт porting-notes без пользовательской строки; `site/build.py --check` на страницу выпусков (версия в теле = версия в `LATEST`); `i18n_tests` на новые ключи меню; `reach_tests` на «показанное открывается и вручную» |
-| Зависит от | F-HLP-026 (версия должна быть видна в программе), F-HLP-032 (конвейер страниц), F-HLP-033 (цена пяти языков), F-HLP-013 (колокольчик как адрес), F-HLP-023 (куда ссылаться пунктам) |
-| Ломает совместимость | нет |
+| Size | M — 2 stages of the round: (1) the unit "release" + a user-facing line in the change; (2) a page on the site and one entry in the program |
+| Where the main work is | `docs/porting-notes.md` (writing discipline, not code), `site/` (the release page via the existing `build.py`), kt-app: comparison of the version with the mark in `$XDG_DATA_HOME/kinotrain/`, one entry in `notices`, one menu item |
+| Project format | does not touch it |
+| Tests that will have to be written | a `--check` clause for a porting-notes item without a user-facing line; `site/build.py --check` for the release page (the version in the body = the version in `LATEST`); `i18n_tests` for the new menu keys; `reach_tests` for "what is shown opens on demand too" |
+| Depends on | F-HLP-026 (the version must be visible in the program), F-HLP-032 (the page pipeline), F-HLP-033 (the cost of five languages), F-HLP-013 (the bell as an address), F-HLP-023 (where items can link) |
+| Breaks compatibility | no |
 
-Рамка, а не ТЗ: что считать релизом, где именно лежит метка последней виденной
-версии и как выглядит страница — предмет раунда.
+A frame, not a spec: what counts as a release, where exactly the mark of the last seen
+version lies, and what the page looks like — these are the subject of the round.
 
-## Вердикт
+## Verdict
 
-Берём, но начинать надо не с показа. Пользовательский список изменений у нас не
-«нужно написать» — его нужно ПЕРЕВЕСТИ ИЗ ЖАНРА: исходник есть, 268 пунктов, и
-он написан для агентов. Переводить задним числом дорого и делается один раз;
-писать одну фразу в момент правки — бесплатно. Второе препятствие структурное:
-показывать «что нового» не на что вешать, пока каждая сборка — новая версия, а
-списка выпусков в репозитории нет вовсе.
+We take it, but one must start not with the display. The user-facing list of changes is not
+something we "need to write" — it has to be TRANSLATED FROM ITS GENRE: the source exists,
+268 items, and it was written for agents. Translating after the fact is expensive and is done
+once; writing one phrase at the moment of the edit costs nothing. The second obstacle is
+structural: there is nothing to hang "what's new" on while every build is a new version, and
+there is no list of releases in the repository at all.
 
-ПРОВЕРКА: docs/porting-notes.md — клаузула «каждый новый пункт несёт строку
-`Пользователю:` — одну фразу без имён функций, номеров правил и номеров тестов,
-либо слово «не виден», если изменение пользователю не показывается; пункт без
-такой строки — ошибка `--check`, а не забывчивость автора».
+CHECK: docs/porting-notes.md — a clause "every new item carries a line `User:` — one phrase without function names, rule numbers and test numbers, or the word 'not visible' if the change is not shown to the user; an item without such a line is an error of `--check`, not an author's oversight".
 
-ОТЛОЖЕНО: до F-HLP-023 — форма «пункт → ссылка на главу руководства» (образец
-Apple) недостижима, пока страниц руководства нет; до тех пор пункт списка
-заканчивается сам на себе, и это надо признать, а не имитировать ссылками в
-никуда.
+DEFERRED: until F-HLP-023 the form "item → link to a guide chapter" (the Apple model) is unreachable, since there are no guide pages; until then an item ends on itself, and this has to be acknowledged rather than imitated with links to nowhere.
 
-ОДНА СТРОКА: перекрытие — не трогает | задержка — не трогает | ёмкость — в
-статусбаре ноль новых символов: одна запись про обновление ложится в УЖЕ
-существующее окно уведомлений (`src/apps/kt-app/src/app.rs:1103`, колокольчик
-со счётчиком непрочитанного), а растущий список выпусков — страницей на сайте
-через готовый `site/build.py`, куда приходят намеренно.
+ONE LINE: overlap — untouched | delay — untouched | capacity — the status bar gets zero new
+characters: a single entry about the update lands in the EXISTING notifications window
+(`src/apps/kt-app/src/app.rs:1103`, the bell with the unread counter), and the growing list of
+releases goes onto the site as a page through the ready `site/build.py`, where it belongs by
+design.
 
-## Источники
+## Sources
 
-- Форум Boris FX (VEGAS Pro), тред «New Vegas Pro build v20260.0.0.143»,
-  19.06.2026 — https://forum.borisfx.com/t/24196 (обращение 2026-09-07)
-- Форум Boris FX, тред «Vegas Pro Release History», NickHope, 22.06.2026 (где
-  вендор публикует заметки, `readme\Vegas_readme.htm` в каталоге установки,
-  разделы «New features» / «Bug fixes and changes» у каждого билда) —
-  https://forum.borisfx.com/t/24284 (обращение 2026-09-07)
-- Blackmagic Design, страница поддержки DaVinci Resolve — карточки «DaVinci
-  Resolve 20.2 New Features Guide» и «What's New in DaVinci Resolve 20.2» —
+- Boris FX forum (VEGAS Pro), thread "New Vegas Pro build v20260.0.0.143",
+  19.06.2026 — https://forum.borisfx.com/t/24196 (accessed 2026-09-07)
+- Boris FX forum, thread "Vegas Pro Release History", NickHope, 22.06.2026 (where the vendor
+  publishes the notes, `readme\Vegas_readme.htm` in the install directory, sections "New
+  features" / "Bug fixes and changes" for each build) —
+  https://forum.borisfx.com/t/24284 (accessed 2026-09-07)
+- Blackmagic Design, DaVinci Resolve support page — the cards "DaVinci Resolve 20.2 New
+  Features Guide" and "What's New in DaVinci Resolve 20.2" —
   https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion
-  (обращение 2026-09-07)
-- Apple, руководство Final Cut Pro, глава «What's new in Final Cut Pro for Mac»
-  (версия 12.3) —
+  (accessed 2026-09-07)
+- Apple, Final Cut Pro guide, chapter "What's new in Final Cut Pro for Mac"
+  (version 12.3) —
   https://support.apple.com/guide/final-cut-pro/whats-new-ver19637ebab/12.3/mac/15.6
-  (обращение 2026-09-07)
-- VS Code, исходный код текущей ветки: `update.config.contribution.ts`
-  (настройка `update.showReleaseNotes`, «Show Release Notes after an update»),
-  `update.contribution.ts` (`ShowReleaseNotesAction`, пункт Help и палитра),
+  (accessed 2026-09-07)
+- VS Code, source code of the current branch: `update.config.contribution.ts`
+  (the setting `update.showReleaseNotes`, "Show Release Notes after an update"),
+  `update.contribution.ts` (`ShowReleaseNotesAction`, the Help menu item and the palette),
   `postUpdateWidget.ts` (`postUpdateWidget/lastKnownVersion`,
-  `isMajorMinorVersionChange`, вид и кнопки виджета) —
-  https://github.com/microsoft/vscode (обращение 2026-09-07)
-- VS Code, issues 110511 и 110507 —
-  https://github.com/microsoft/vscode/issues/110511 и
-  https://github.com/microsoft/vscode/issues/110507 (обращение 2026-09-07)
-- JetBrains, справка IntelliJ IDEA, «Update IntelliJ IDEA» (вкладка What's New
-  после мажорного обновления, пункт Help, настройка «Show What's New in the
-  editor after an IDE update») —
-  https://www.jetbrains.com/help/idea/update.html (обращение 2026-09-07)
-- Blender Manual 5.2 LTS, «Splash Screen» (пункт «What's New — Open the latest
-  release notes», версия в углу картинки) —
+  `isMajorMinorVersionChange`, the look and the buttons of the widget) —
+  https://github.com/microsoft/vscode (accessed 2026-09-07)
+- VS Code, issues 110511 and 110507 —
+  https://github.com/microsoft/vscode/issues/110511 and
+  https://github.com/microsoft/vscode/issues/110507 (accessed 2026-09-07)
+- JetBrains, IntelliJ IDEA help, "Update IntelliJ IDEA" (the What's New tab after a major
+  update, the Help menu item, the setting "Show What's New in the editor after an IDE
+  update") — https://www.jetbrains.com/help/idea/update.html (accessed 2026-09-07)
+- Blender Manual 5.2 LTS, "Splash Screen" (the item "What's New — Open the latest release
+  notes", the version in the corner of the picture) —
   https://docs.blender.org/manual/en/latest/interface/window_system/splash.html
-  (обращение 2026-09-07)
-- Официальное сообщество Adobe, анонс Photoshop 27.9.1 (разделы «What's New» и
-  «Bug fixes – Thanks to you!» со ссылками на треды авторов баг-репортов) —
+  (accessed 2026-09-07)
+- Official Adobe community, the Photoshop 27.9.1 announcement (the sections "What's New" and
+  "Bug fixes – Thanks to you!" with links to the threads of the bug-report authors) —
   https://community.adobe.com/announcements-710/photoshop-v27-9-1-is-live-explore-ideas-faster-with-firefly-boards-smarter-ai-prompts-and-streamlined-editing-1634244
-  (обращение 2026-09-07)
-- Живьём не проверялась ни одна программа: доступа из этого окружения нет —
-  ни к пяти редакторам ядра, ни к софту вне ядра (`_editors.md` этого и не
-  предполагает). Строки Premiere и After Effects помечены [НЕ ПРОВЕРЕНО]:
-  `helpx.adobe.com` не открылся ни напрямую (таймаут WebFetch), ни через
-  текст-прокси `r.jina.ai` (ошибка HTTP/2 framing), включая зеркало `/in/`,
-  которое работало в первой волне; уточнение для следующих заметок.
-- Бюджет `WebSearch` в сессии был исчерпан до начала работы (200 из 200), всё
-  добыто прямыми обращениями: Discourse API форума Boris FX (`/t/<id>.json`,
-  `/search.json`), GitHub REST API (`/repos/microsoft/vscode/issues/<n>`),
-  `raw.githubusercontent.com` для исходников VS Code, текст-прокси `r.jina.ai`
-  для docs.blender.org, support.apple.com, jetbrains.com, blackmagicdesign.com и
-  community.adobe.com; поиск — через `search.yahoo.com` тем же прокси
-  (`html.duckduckgo.com` через прокси в этой сессии не отдавал результатов).
-- Данные о нашем состоянии (268 пунктов porting-notes и их длины, 396/207
-  коммитов, покрытие переводов сайта и приложения, `LATEST`, теги) получены
-  подсчётом по репозиторию 2026-09-07, а не из документации.
+  (accessed 2026-09-07)
+- No program was checked live: there is no access from this environment — neither to the five
+  core editors nor to software outside the core (`_editors.md` does not assume it either).
+  The Premiere and After Effects rows are marked [NOT VERIFIED]: `helpx.adobe.com` did not open
+  either directly (WebFetch timeout) or through the text proxy `r.jina.ai` (HTTP/2 framing error),
+  including the `/in/` mirror, which had worked in the first wave; a clarification for the next notes.
+- The WebSearch budget for the session was exhausted before work began (200 of 200), so
+  everything was obtained by direct requests: the Discourse API of the Boris FX forum
+  (`/t/<id>.json`, `/search.json`), the GitHub REST API (`/repos/microsoft/vscode/issues/<n>`),
+  `raw.githubusercontent.com` for the VS Code sources, the text proxy `r.jina.ai` for
+  docs.blender.org, support.apple.com, jetbrains.com, blackmagicdesign.com and
+  community.adobe.com; search went through `search.yahoo.com` via the same proxy
+  (`html.duckduckgo.com` through the proxy returned no results in this session).
+- Data about our state (268 porting-notes items and their lengths, 396/207 commits, the
+  coverage of the site and application translations, `LATEST`, the tags) was obtained by
+  counting over the repository on 2026-09-07, not from documentation.

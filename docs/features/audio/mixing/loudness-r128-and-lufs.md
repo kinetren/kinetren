@@ -1,136 +1,120 @@
 ---
 id: F-AUD-005
-title: Нормализация громкости по стандартам — LUFS, EBU R128, true peak
-status: сделано
+title: Loudness normalization to standards — LUFS, EBU R128, true peak
+status: done
 priority: B
 cost: M
 category: audio/mixing
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: да
+we_have: yes
 crates: [kt-engine, kt-app, kt-media, kt-model]
 invariants: [1, 2, 5, 6, 8, 11, 12]
 ui_rules: [1, 9, 13, 17]
-round: "Р.49"
+round: "R.49"
 point: 370
 tests: [403, 404, 405, 406, 407, 411, 412]
 depends_on: []
 checked: 2026-09-15
 ---
 
-# F-AUD-005 — Нормализация громкости по стандартам — LUFS, EBU R128, true peak
+# F-AUD-005 — Loudness normalization to standards — LUFS, EBU R128, true peak
 
-## Суть
+## Essence
 
-Монтажёр сводит звук на слух и по пиковому метру, отдаёт файл — а площадка
-(YouTube, вещатель) сама приводит его к своей громкости. Если сдал громче нормы,
-площадка приглушает целиком: тихие места проваливаются, динамика, ради которой
-и сводили, съедается. Если тише — звук становится вялым рядом с чужими роликами.
-Метр в dBFS про это не говорит ничего: он меряет ПИК, а площадка меряет
-ГРОМКОСТЬ — воспринимаемую, усреднённую по всему материалу, по стандарту
-ITU-R BS.1770. Нужны два числа: интегрированная громкость в LUFS (попасть в
-целевую) и true peak в dBTP (не превысить потолок), и способ подогнать первое
-одним действием, а не подбором фейдера на слух.
+The editor mixes the sound by ear and by the peak meter, and delivers the file — and the platform
+(YouTube, a broadcaster) brings it to its own loudness by itself. If it was delivered louder than the
+norm, the platform turns it down as a whole: the quiet places sink, and the dynamics for whose sake
+the mix was made get eaten. If it is quieter, the sound becomes limp next to other people's clips.
+The dBFS meter says nothing about this: it measures the PEAK, while the platform measures the
+LOUDNESS — the perceived one, averaged over the whole material, per the ITU-R BS.1770 standard.
+Two numbers are needed: the integrated loudness in LUFS (to hit the target) and the true peak in
+dBTP (not to exceed the ceiling), plus a way to adjust the first in one action rather than by picking
+the fader by ear.
 
-## У кого и как
+## Who has it and how
 
-Вопрос ко всем один: **где живёт метр, есть ли нормализация одним действием, и
-меряется ли громкость при ЭКСПОРТЕ** (то есть у того файла, который реально
-уедет на площадку).
+The question for everyone is one: **where does the meter live, is there normalization in one action,
+and is loudness measured at EXPORT** (that is, for the file that will actually go to the platform).
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Loudness Meters (`View → Window → Loudness Meters`), loudness log | окно метра: M (400 мс), S (3 с), I (за всю программу), LRA и True Peaks. Два режима — «EBU R 128 Mode» (цель −23 LUFS) и «ATSC A/85 Mode» (цель −24 LUFS). Появилось в Vegas Pro 13 build 290 (17.04.2014): «Added loudness meters and logging». **Единственный из пяти, кто пишет громкость при рендере**: галка «Save loudness log next to media file» в Render Options кладёт рядом `<имя>_loud.txt` с именем файла, форматом, режимом метра и значениями по всей длине; отдельная команда `Tools → Generate Loudness Log` — для уже сжатых файлов. Нормализации по LUFS одним действием нет: event-нормализация в Vegas работает по пику/RMS, а не по BS.1770 [НЕ ПРОВЕРЕНО первоисточником] |
-| Adobe Premiere | 26.x | Loudness Meter / Loudness Radar (эффекты), Essential Sound → Auto-Match, Loudness Normalization при экспорте | метр — это ЭФФЕКТ, который вешают на мастер-шину (обычно через FX-слот трек-микшера), а не окно программы. Loudness Radar лицензирован у TC Electronic и **не работает на Apple silicon**, поэтому с 2021 г. на M-машинах Loudness Meter — единственный способ увидеть среднюю громкость. Нормализация одним действием — Essential Sound → Auto-Match, но цель ЗАШИТА на −23 LUFS и полем не правится. При экспорте (Adobe Media Encoder, вкладка Effects) есть Loudness Normalization: выбор ITU BS.1770-3 / ATSC A/85 / EBU R128, True Peak Limiter с временем восстановления и галка «Write Loudness Report» |
-| DaVinci Resolve | 21 | Fairlight: loudness meters в панели мониторинга, loudness graph на таймлайне, `Normalize Audio Levels`, `Analyze Audio Level` | метр встроен в страницу Fairlight: «Loudness meters located at the right side of the monitoring panel let you quickly assess program loudness. Just click the options menu to choose your preferred metering standard.» Метры цветовые: «blue if levels meet the selected standard, yellow for tolerance and red when levels exceed tolerance». Плюс живой график громкости мастер-шины ПРЯМО НА ТАЙМЛАЙНЕ («updates live during playback, so you'll know exactly where the issues are»), плюс офлайн-анализ по правому клику на клипе. Нормализация одним действием есть — `Normalize Audio Levels` «automatically adjusts the level of clips to a specific target level, and you can choose the method used to analyze each audio clip's levels»; методы включают варианты ITU-R BS.1770 наряду с пиковыми |
-| Final Cut Pro | 12.3 | нет метра громкости; «Loudness» — это компрессор | в справке FCP слова LUFS/LKFS/R128/true peak не встречаются вовсе. Анализ звука «Analyzes audio for hum, noise, and loudness» — детектор проблем, а не измеритель; «Loudness: Improves the main audio signal and makes it more uniform» с ползунками Amount и Uniformity, то есть компрессия, а не приведение к целевому числу. Ларри Джордан (2017): «The closest we come to measuring LUFS is the Multimeter in RMS view. However, there's a significant difference between RMS and LUFS, so this should not be considered accurate.» Стандартный путь — сторонний плагин или Compressor |
-| After Effects | 26.x | нет | панель Audio показывает уровень (пик/VU), измерения громкости по BS.1770 нет; пользователи вешают сторонние VST/AU-плагины вроде Youlean Loudness Meter [НЕ ПРОВЕРЕНО первоисточником: helpx.adobe.com из этого окружения не открывается]. Для AE это последовательно: он композитор слоёв, сдача мастера — не его задача |
+| VEGAS Pro | 2026.0 | Loudness Meters (`View → Window → Loudness Meters`), loudness log | the meter window: M (400 ms), S (3 s), I (for the whole program), LRA and True Peaks. Two modes — "EBU R 128 Mode" (target −23 LUFS) and "ATSC A/85 Mode" (target −24 LUFS). Appeared in Vegas Pro 13 build 290 (17.04.2014): "Added loudness meters and logging". **The only one of the five that writes loudness at render**: the checkbox "Save loudness log next to media file" in Render Options puts a `<name>_loud.txt` next to the file with the file name, format, meter mode and values over the whole length; a separate command `Tools → Generate Loudness Log` — for files that are already compressed. There is no one-action LUFS normalization: event normalization in Vegas works by peak/RMS, not by BS.1770 [NOT VERIFIED against the primary source] |
+| Adobe Premiere | 26.x | Loudness Meter / Loudness Radar (effects), Essential Sound → Auto-Match, Loudness Normalization at export | the meter is an EFFECT that is placed on the master bus (usually through an FX slot of the track mixer), not a window of the program. Loudness Radar is licensed from TC Electronic and **does not work on Apple silicon**, therefore since 2021 on M-machines the Loudness Meter is the only way to see the average loudness. One-action normalization is Essential Sound → Auto-Match, but the target is HARD-CODED at −23 LUFS and is not editable in a field. At export (Adobe Media Encoder, the Effects tab) there is Loudness Normalization: a choice of ITU BS.1770-3 / ATSC A/85 / EBU R128, a True Peak Limiter with a recovery time, and the checkbox "Write Loudness Report" |
+| DaVinci Resolve | 21 | Fairlight: loudness meters in the monitoring panel, loudness graph on the timeline, `Normalize Audio Levels`, `Analyze Audio Level` | the meter is built into the Fairlight page: "Loudness meters located at the right side of the monitoring panel let you quickly assess program loudness. Just click the options menu to choose your preferred metering standard." The meters are colored: "blue if levels meet the selected standard, yellow for tolerance and red when levels exceed tolerance". Plus a live loudness graph of the master bus RIGHT ON THE TIMELINE ("updates live during playback, so you'll know exactly where the issues are"), plus offline analysis via right-click on a clip. One-action normalization exists — `Normalize Audio Levels` "automatically adjusts the level of clips to a specific target level, and you can choose the method used to analyze each audio clip's levels"; the methods include variants of ITU-R BS.1770 alongside peak ones |
+| Final Cut Pro | 12.3 | no loudness meter; "Loudness" is a compressor | the FCP help does not contain the words LUFS/LKFS/R128/true peak at all. "Analyzes audio for hum, noise, and loudness" — is a problem detector, not a meter; "Loudness: Improves the main audio signal and makes it more uniform" with sliders Amount and Uniformity, that is, compression, not bringing to a target number. Larry Jordan (2017): "The closest we come to measuring LUFS is the Multimeter in RMS view. However, there's a significant difference between RMS and LUFS, so this should not be considered accurate." The standard path is a third-party plugin or Compressor |
+| After Effects | 26.x | none | the Audio panel shows the level (peak/VU), there is no loudness measurement per BS.1770; users attach third-party VST/AU plugins such as Youlean Loudness Meter [NOT VERIFIED against the primary source: helpx.adobe.com does not open from this environment]. For AE this is consistent: it is a layer compositor, delivering the master is not its task |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Стандарт — это не шкала, а правило, ЧТО НЕ СЧИТАТЬ.** Наивная «средняя
-громкость» и LUFS дают разные числа не из-за K-фильтра, а из-за гейтирования.
-BS.1770 режет материал на блоки по `Tg` = 400 мс с перекрытием 75 %, считает
-громкость каждого блока и дальше применяет ДВА гейта подряд: абсолютный
-Γa = −70 LKFS выбрасывает тишину, а потом относительный Γr считается ПО САМОМУ
-МАТЕРИАЛУ — это громкость, полученная с одним абсолютным гейтом, минус 10 LKFS,
-— и выбрасывает всё, что тише неё. Незаконченный блок в конце интервала не
-используется вообще. Отсюда неочевидное следствие: порог отбора зависит от
-содержимого, поэтому вставка громкого стингера может поднять Γr настолько, что
-из зачёта выпадут тихие сцены, и интегрированная громкость сдвинется «не в ту
-сторону». И второе: **на одном и том же метре два числа считаются РАЗНЫМИ
-гейтами.** LRA (EBU Tech 3342) берёт окно 3 с, а относительный гейт у неё
-−20 LU (а не −10), и результат — разность 10-го и 95-го перцентилей
-распределения: «The lower percentile of 10%, can, for example, prevent the
-fade-out of a music track from dominating Loudness Range. The upper percentile
-of 95% ensures that a single unusually loud sound, such as a gunshot in a movie,
-cannot by itself be responsible for a large Loudness Range.» Ни в одном списке
-возможностей продукта этого нет — там написано «есть метр R128».
+**1. A standard is not a scale but a rule of WHAT NOT TO COUNT.** The naive "average loudness" and
+LUFS give different numbers not because of the K-filter, but because of gating. BS.1770 cuts the
+material into blocks of `Tg` = 400 ms with 75 % overlap, computes the loudness of each block, and then
+applies TWO gates in a row: the absolute Γa = −70 LKFS throws out silence, and then the relative Γr is
+computed FROM THE MATERIAL ITSELF — it is the loudness obtained with the one absolute gate, minus
+10 LKFS — and throws out everything quieter than it. An unfinished block at the end of the interval is
+not used at all. Hence a non-obvious consequence: the selection threshold depends on the content, so
+inserting a loud stinger can raise Γr so much that the quiet scenes drop out of the count, and the
+integrated loudness shifts "in the wrong direction". And second: **on one and the same meter two numbers
+are computed with DIFFERENT gates.** LRA (EBU Tech 3342) takes a 3 s window, and its relative gate is
+−20 LU (not −10), and the result is the difference between the 10th and 95th percentiles of the
+distribution: "The lower percentile of 10%, can, for example, prevent the fade-out of a music track
+from dominating Loudness Range. The upper percentile of 95% ensures that a single unusually loud sound,
+such as a gunshot in a movie, cannot by itself be responsible for a large Loudness Range." None of the
+product feature lists has this — they say "has an R128 meter".
 
-**2. True peak тоже не точен, и −1 dBTP выбран именно поэтому.** Наш метр — это
-ровно тот «peak-sample meter», о котором BS.1770-5 (Annex 2, Attachment 1)
-пишет: «Peak meters in digital audio systems often register “peak-sample”
-rather than “true-peak”… they do not always register the true-peak value of the
-audio signal», и перечисляет три симптома: показания скачут от прогона к
-прогону, перегрузка бывает у файла, где НИ ОДИН сэмпл не близок к полной шкале,
-транзиенты недосчитываются «commonly several dBs». Лечение — передискретизация:
-аттенюация на 12.04 дБ, ×4 (48 → 192 кГц), FIR-интерполятор 48-го порядка на
-4 фазы, модуль, `20·log10`, обратно +12.04 дБ. Но и после этого метр
-недосчитывает: в самой рекомендации есть таблица максимального недобора, и при
-×4 это **0.554 дБ** (f_norm = 0.45) и **0.688 дБ** (f_norm = 0.5) — ×8 даёт
-0.136/0.169. То есть потолок −1 dBTP — это не «круглое число для запаса», а
-почти в точности погрешность ×4-метра, который стандарт же и разрешает.
+**2. True peak is also not exact, and −1 dBTP was chosen precisely for this reason.** Our meter is
+exactly the "peak-sample meter" about which BS.1770-5 (Annex 2, Attachment 1) writes: "Peak meters in
+digital audio systems often register 'peak-sample' rather than 'true-peak'… they do not always register
+the true-peak value of the audio signal", and it lists three symptoms: the readings jump from run to run,
+overload happens on a file where NOT ONE sample is close to full scale, and transients are undercounted
+"commonly several dBs". The cure is oversampling: an attenuation of 12.04 dB, ×4 (48 → 192 kHz), a 48th-order
+FIR interpolator with 4 phases, the modulus, `20·log10`, and back +12.04 dB. But even after this the meter
+undercounts: the recommendation itself contains a table of the maximum shortfall, and at ×4 it is **0.554 dB**
+(f_norm = 0.45) and **0.688 dB** (f_norm = 0.5) — ×8 gives 0.136/0.169. So the −1 dBTP ceiling is not a "round
+number for a margin", but almost exactly the error of the ×4 meter, which the standard itself permits.
 
-**3. Даже там, где громкость меряют при рендере, меряют НЕ ТОТ файл.** Vegas
-пишет loudness log, но, по его же справке, «Loudness logging is performed after
-the plug-in chain, but before any codec is applied», и для сжатых файлов
-предлагает отдельную команду `Tools → Generate Loudness Log`. То есть число в
-логе — это громкость сигнала, отданного кодеку, а не того, что получится после
-AAC; true peak после лоссового кодирования может уехать. Ровно та же граница
-будет и у нас, если мерить в `render_raw_audio_range` (см. ниже) — и об этом
-честнее сказать в интерфейсе, чем сделать вид, что измерен выходной файл.
+**3. Even where loudness is measured at render, the WRONG file is measured.** Vegas writes a loudness log,
+but according to its own help, "Loudness logging is performed after the plug-in chain, but before any codec
+is applied", and for compressed files it offers a separate command `Tools → Generate Loudness Log`. That is,
+the number in the log is the loudness of the signal handed to the codec, not of what comes out after AAC;
+the true peak can drift after lossy encoding. The very same boundary will be ours if we measure in
+`render_raw_audio_range` (see below) — and it is more honest to say this in the interface than to pretend
+that the output file was measured.
 
-## Плюсы
+## Pros
 
-- Гейтирование делает число сравнимым между материалами РАЗНОЙ длины и
-  структуры: 15-секундный ролик и полуторачасовой фильм меряются одинаково,
-  ведущая и хвостовая тишина не влияют. Именно поэтому площадке хватает одного
-  числа, чтобы уравнять весь каталог.
-- Единица линейна по децибелам (1 LU = 1 dB), поэтому приведение к цели — это
-  ОДНО умножение на константу: микс не трогается, он просто сдвигается целиком.
-  Из этого следует, что «нормализовать» не требует нового эффекта и ложится на
-  уже существующее поле усиления.
-- Измерение — чистая функция от сэмплов: один и тот же материал всегда даёт то
-  же число. Значит это не мнение, а проверка, и её можно закрыть регрессионным
-  тестом с эталонными сигналами (EBU Tech 3342 прямо публикует таблицу тестовых
-  сигналов с допусками ±1 LU).
-- True peak меряет дефект, которого в сэмплах ЕЩЁ НЕТ: перегрузку, которая
-  возникнет у слушателя после ЦАП или перекодирования. Пиковый метр физически не
-  может этого увидеть, сколько его ни улучшай.
+- Gating makes the number comparable between materials of DIFFERENT length and structure: a 15-second
+  clip and a one-and-a-half-hour film are measured the same way, and the leading and trailing silence do
+  not affect the result. That is exactly why one number is enough for a platform to level the whole catalog.
+- The unit is linear in decibels (1 LU = 1 dB), so bringing to a target is ONE multiplication by a constant:
+  the mix is not touched, it just shifts as a whole. It follows that "normalize" needs no new effect and fits
+  the already existing gain field.
+- The measurement is a pure function of the samples: the same material always gives the same number. So it
+  is not an opinion but a check, and it can be closed by a regression test with reference signals (EBU Tech
+  3342 publishes outright a table of test signals with tolerances of ±1 LU).
+- True peak measures a defect that does NOT YET exist in the samples: the overload that will arise for the
+  listener after the DAC or re-encoding. A peak meter physically cannot see this, no matter how much it is
+  improved.
 
-## Минусы
+## Cons
 
-- Интегрированная громкость по определению требует прохода по ВСЕМУ материалу:
-  частичного ответа не бывает. Пока не проиграл или не посчитал офлайн — числа
-  нет, а число, которое появляется только после полного прохода, — это число,
-  на которое забывают посмотреть.
-- Порог отбора берётся из самого материала (Γr = абс.-гейтированная громкость
-  − 10 LKFS), поэтому правка одного куска меняет, какие ДРУГИЕ куски попадают в
-  зачёт. Метр перестаёт быть «суммой того, что слышно», и на монтаже это
-  выглядит как непредсказуемость.
-- Приведение к цели одним усилением поднимает и пики: у громкого микса
-  «нормализация одним действием» либо промахивается мимо −1 dBTP, либо тянет за
-  собой лимитер, а лимитер уже МЕНЯЕТ микс. Честная кнопка обязана сказать,
-  что упёрлась в потолок, а не тихо включить динамику.
-- Целевые значения у площадок разные и в большинстве своём площадками не
-  публикуются: вещание задано стандартами (EBU R 128 — −23 LUFS ±0.5 LU,
-  −1 dBTP; ATSC A/85 — −24 LKFS), а стриминговые цифры (порядка −14 LUFS у
-  YouTube и Spotify, −16 LUFS у Apple) известны по сторонним замерам
-  [НЕ ПРОВЕРЕНО первоисточником]. Сдаёшь по числу, которое измерил кто-то другой.
-- LRA на коротком материале врёт: EBU Tech 3342 прямо предупреждает, что у очень
-  коротких программ и у программ с ведущей/хвостовой тишиной значения выходят
-  «misleadingly high». Показывать LRA на 10-секундном событии — вредно.
+- The integrated loudness by definition requires a pass over ALL the material: a partial answer does not
+  exist. Until one has played through or computed it offline there is no number, and a number that appears
+  only after a full pass is a number that people forget to look at.
+- The selection threshold is taken from the material itself (Γr = absolutely-gated loudness − 10 LKFS), so
+  editing one piece changes which OTHER pieces get into the count. The meter stops being "the sum of what is
+  heard", and in editing this looks like unpredictability.
+- Bringing to a target with one gain also raises the peaks: for a loud mix "normalize in one action" either
+  misses −1 dBTP, or drags a limiter behind it, and the limiter ALREADY CHANGES the mix. An honest button must
+  say that it has hit the ceiling, rather than quietly switch the dynamics on.
+- Targets differ between platforms, and most of them are not published by the platforms: broadcasting is set by
+  standards (EBU R 128 — −23 LUFS ±0.5 LU, −1 dBTP; ATSC A/85 — −24 LKFS), while the streaming figures (of the
+  order of −14 LUFS for YouTube and Spotify, −16 LUFS for Apple) are known from third-party measurements [NOT
+  VERIFIED against the primary source]. You deliver by a number that someone else measured.
+- LRA lies on short material: EBU Tech 3342 explicitly warns that for very short programs and for programs with
+  leading/trailing silence the values come out "misleadingly high". Showing LRA on a 10-second event is harmful.
 
-## Что говорят пользователи
+## What users say
 
 > Premiere Pro doesn't allow any adjustability towards the "Loudness Match"
 > feature of the Essential Sounds panel. A -23.00 LUFS is great for broadcast,
@@ -143,106 +127,91 @@ AAC; true peak после лоссового кодирования может �
 > send to Audition or ProTools due to this issue.
 > — R Neil Haugen (Adobe Community Legend), 21.05.2026, https://community.adobe.com/questions-729/auto-match-loudness-has-no-adjustability-1624392
 
-Диагноз обеих реплик один и тот же и для нас важнее самого факта наличия метра:
-**нормализация без выбора цели бесполезна.** Кнопка «привести к стандарту» с
-зашитым числом закрывает ровно один сценарий (вещание) и выталкивает всех
-остальных в чужую программу.
+The diagnosis of both replies is the same, and for us it matters more than the very fact that a meter exists:
+**normalization without a choice of target is useless.** A button "bring to the standard" with a hard-coded
+number serves exactly one scenario (broadcasting) and pushes everyone else into another program.
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/audio-render/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Метр LUFS/пики считает офлайн-служба на f64-суммах, экспорт меряет тем же метром; нормализация — команда, не автомат.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/audio-render/ — the contract is in `spec.md`, the "why" and the paths in the code are in `design.md`.
+The LUFS/peak meter is computed by the offline service on f64 sums; the export measures with the same meter; normalization is a command, not an automatic action.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2–3 стадии; первая стадия («мерить на экспорте и печатать в итоге») — сама по себе S |
-| Где основная работа | kt-engine (`export.rs` — накопитель на проходе; `player.rs` — живой метр рядом с `Meters`), kt-app (`meters.rs` + `render_dialog.rs`), kt-media (`index.rs` — громкость источника в peak-проходе), kt-model (цель нормализации, если её хранить в проекте) |
-| Формат проекта | не трогает, если цель не хранится в проекте; хранить целевое значение и режим (R128/ATSC/своя цифра) — новое поле в `Project`, версия конверта kt |
-| Тесты, которые придётся написать | эталонные сигналы EBU Tech 3342 (шесть тест-кейсов, допуск ±1 LU) и синус 997 Гц 0 dBFS → −3.01 LKFS; интерсэмпловый тест: сигнал, у которого sample peak < 0 dBFS, а true peak > 0; неизменность GOLDEN_AUDIO при включённом измерении; t38-подобный тест «показ громкости не держит 60 fps» |
-| Зависит от | ничего; смежная по классу «офлайн-анализ» — F-AUD-003, F-SPD-004 |
-| Ломает совместимость | нет |
+| Scope | M — 2–3 stages; the first stage ("measure at export and print at the end") is by itself S |
+| Where the main work is | kt-engine (`export.rs` — an accumulator during the pass; `player.rs` — the live meter next to `Meters`), kt-app (`meters.rs` + `render_dialog.rs`), kt-media (`index.rs` — the source loudness in the peak pass), kt-model (the normalization target, if it is stored in the project) |
+| Project format | not touched, if the target is not stored in the project; storing a target value and a mode (R128/ATSC/own number) is a new field in `Project`, a version of the kt envelope |
+| Tests that will have to be written | the reference signals of EBU Tech 3342 (six test cases, tolerance ±1 LU) and a sine 997 Hz at 0 dBFS → −3.01 LKFS; an intersample test: a signal whose sample peak is < 0 dBFS but whose true peak is > 0; unchanged GOLDEN_AUDIO with the measurement enabled; a t38-like test "the display of loudness does not hold 60 fps" |
+| Depends on | nothing; of the same class "offline analysis" — F-AUD-003, F-SPD-004 |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-**Берём, но не целиком и не сразу.** Сильная и дешёвая часть — измерять
-интегрированную громкость, LRA и true peak ПРЯМО НА ПРОХОДЕ ЭКСПОРТА
-(`render_raw_audio_range` и так гоняет весь материал) и печатать результат в
-итоге рендера рядом с кадрами и энкодером; это стадия S, не требует ни нового
-UI, ни формата, ни изменения сигнала, и сразу закрывает главную боль — «сдал и
-узнал о проблеме от площадки». Честная оговорка: Vegas делает это с 2014 года
-(loudness log при рендере), так что идея не наша — но у нас она выходит дешевле,
-потому что не требует отдельного прохода анализа.
+**We take it, but not all of it and not at once.** The strong and cheap part is to measure the integrated
+loudness, LRA and the true peak RIGHT ON THE EXPORT PASS (`render_raw_audio_range` already runs over the
+whole material) and print the result at the end of the render next to the frames and the encoder; this is
+a stage S, it requires neither a new UI, nor a format, nor a change of the signal, and at once closes the
+main pain — "delivered and learned about the problem from the platform". A fair caveat: Vegas has been doing
+this since 2014 (a loudness log at render), so the idea is not ours — but for us it comes cheaper, because it
+does not require a separate analysis pass.
 
-Живой EBU-режим метра (M/S/I/LRA/dBTP в панели) — отдельная стадия и отдельный
-разговор про место на экране. «Нормализация одним действием» берётся только
-вместе с ВЫБОРОМ ЦЕЛИ: обе цитаты выше — про то, что кнопка с зашитым −23 LUFS
-бесполезна всем, кроме вещателей, и выталкивает пользователя в другую программу.
+The live EBU mode of the meter (M/S/I/LRA/dBTP in the panel) is a separate stage and a separate discussion
+about the place on the screen. "Normalization in one action" is taken only together with a CHOICE OF TARGET:
+both quotes above are about the fact that a button with a hard-coded −23 LUFS is useless to everyone except
+broadcasters, and pushes the user into another program.
 
-## Источники
+## Sources
 
-Первоисточники (скачаны и прочитаны целиком):
+Primary sources (downloaded and read in full):
 
-- Rec. ITU-R BS.1770-5 (11.2023) — K-фильтр (Табл. 1, 2), блок 400 мс с
-  перекрытием 75 %, гейты Γa = −70 LKFS и Γr = −10 LKFS, веса каналов, Annex 2
-  «Guidelines for accurate measurement of “true-peak” level» (12.04 dB, ×4,
-  FIR 48-го порядка на 4 фазы) и таблица недобора при разных коэффициентах
-  передискретизации: https://www.itu.int/dms_pubrec/itu-r/rec/bs/R-REC-BS.1770-5-202311-I!!PDF-E.pdf
-  (дата обращения 2026-09-07)
-- EBU Tech 3342 v4 (11.2023) — Loudness Range: окно 3 с, ≥10 Гц, каскадный гейт
-  −70 LUFS / −20 LU, перцентили 10 % и 95 %, таблица тестовых сигналов:
-  https://tech.ebu.ch/docs/tech/tech3342.pdf (дата обращения 2026-09-07)
-- EBU R 128 (сводка): −23 LUFS ±0.5 LU, −1 dBTP, M/S/I:
-  https://en.wikipedia.org/wiki/EBU_R_128 (дата обращения 2026-09-07)
+- Rec. ITU-R BS.1770-5 (11.2023) — the K-filter (Tables 1, 2), a 400 ms block with 75 % overlap, the gates
+  Γa = −70 LKFS and Γr = −10 LKFS, channel weights, Annex 2 "Guidelines for accurate measurement of
+  'true-peak' level" (12.04 dB, ×4, a 48th-order FIR with 4 phases) and the table of shortfall at different
+  oversampling factors: https://www.itu.int/dms_pubrec/itu-r/rec/bs/R-REC-BS.1770-5-202311-I!!PDF-E.pdf
+  (accessed 2026-09-07)
+- EBU Tech 3342 v4 (11.2023) — Loudness Range: a 3 s window, ≥10 Hz, the cascaded gate
+  −70 LUFS / −20 LU, the 10 % and 95 % percentiles, the table of test signals:
+  https://tech.ebu.ch/docs/tech/tech3342.pdf (accessed 2026-09-07)
+- EBU R 128 (summary): −23 LUFS ±0.5 LU, −1 dBTP, M/S/I:
+  https://en.wikipedia.org/wiki/EBU_R_128 (accessed 2026-09-07)
 
-Редакторы:
+Editors:
 
-- VEGAS Pro, официальная справка: окно Loudness Meters (M/S/I/LRA/True Peaks,
-  режимы EBU R 128 и ATSC A/85) —
-  https://help.magix-hub.com/video/vegas/22/en/content/topics/9-audio/loudness_meters.htm ;
-  логирование при рендере, «after the plug-in chain, but before any codec is
-  applied», `Tools → Generate Loudness Log`, файл `_loud.txt` —
-  https://help.magix-hub.com/video/vegas/22/en/content/topics/9-audio/loudness.htm ;
-  «Save loudness log file next to media file» в Render As —
-  https://help.magix-hub.com/video/vegas/21/en/content/topics/render.htm ;
-  «Added loudness meters and logging» (Vegas Pro 13 build 290, 17.04.2014) —
-  https://forum.borisfx.com/t/vegas-pro-release-history/24284 (все — 2026-09-07).
-  Справка проверялась по ветке 22/21: страницы для 2026.0 по этим адресам не
-  открылись, поведение считаем неизменившимся [НЕ ПРОВЕРЕНО]
-- DaVinci Resolve, страница Fairlight на blackmagicdesign.com (цитаты про
-  loudness meters в панели мониторинга, цветовую индикацию, loudness graph на
-  таймлайне и офлайн-анализ по правому клику):
-  https://www.blackmagicdesign.com/products/davinciresolve/fairlight
-  (2026-09-07). Формулировка про `Normalize Audio Levels` взята из руководства
-  Resolve 18 через поисковый сниппет — сам PDF руководства из этого окружения
-  не открывается, состав режимов нормализации [НЕ ПРОВЕРЕНО]
-- Final Cut Pro, официальное руководство: «Analyzes audio for hum, noise, and
-  loudness» —
+- VEGAS Pro, official help: the Loudness Meters window (M/S/I/LRA/True Peaks, the EBU R 128 and ATSC A/85
+  modes) — https://help.magix-hub.com/video/vegas/22/en/content/topics/9-audio/loudness_meters.htm ;
+  logging at render, "after the plug-in chain, but before any codec is applied", `Tools → Generate Loudness
+  Log`, the file `_loud.txt` — https://help.magix-hub.com/video/vegas/22/en/content/topics/9-audio/loudness.htm ;
+  "Save loudness log file next to media file" in Render As — https://help.magix-hub.com/video/vegas/21/en/content/topics/render.htm ;
+  "Added loudness meters and logging" (Vegas Pro 13 build 290, 17.04.2014) —
+  https://forum.borisfx.com/t/vegas-pro-release-history/24284 (all — 2026-09-07).
+  The help was checked along branches 22/21: the pages for 2026.0 did not open at these addresses; we
+  assume the behavior has not changed [NOT VERIFIED]
+- DaVinci Resolve, the Fairlight page on blackmagicdesign.com (the quotes about loudness meters in the
+  monitoring panel, the color indication, the loudness graph on the timeline and offline analysis via
+  right-click): https://www.blackmagicdesign.com/products/davinciresolve/fairlight (2026-09-07). The wording
+  about `Normalize Audio Levels` is taken from the Resolve 18 manual via a search snippet — the manual PDF
+  itself does not open from this environment, the composition of normalization modes [NOT VERIFIED]
+- Final Cut Pro, the official guide: "Analyzes audio for hum, noise, and loudness" —
   https://support.apple.com/guide/final-cut-pro/audio-analysis-options-verb6acaf60/mac ;
-  «Loudness: Improves the main audio signal and makes it more uniform»,
-  ползунки Amount/Uniformity —
+  "Loudness: Improves the main audio signal and makes it more uniform", the Amount/Uniformity sliders —
   https://support.apple.com/guide/final-cut-pro/enhance-audio-verc1fab873/mac
-  (2026-09-07). Слова LUFS/LKFS/R128 в руководстве не встречаются
-- Adobe Premiere: helpx.adobe.com из этого окружения не открывается, поэтому
-  устройство метра и Loudness Normalization при экспорте взяты у Ларри Джордана
-  (метр — эффект на мастер-шине, Loudness Radar не работает на Apple silicon):
-  https://larryjordan.com/articles/premiere-pro-new-loudness-meter/ (16.05.2021)
-  и https://larryjordan.com/articles/adobe-media-encoder-loudness-normalization/
-  (ITU BS.1770-3 / ATSC A/85 / EBU R128, True Peak Limiter, Write Loudness
-  Report); цитата про RMS-мультиметр в FCP —
-  https://larryjordan.com/articles/why-lufs-and-lkfs-are-essential-to-video/
-  (19.02.2017). Фиксированные −23 LUFS у Auto-Match подтверждены веткой
-  сообщества Adobe (цитаты в разделе выше)
-- Целевые значения стриминговых площадок (≈ −14 LUFS у YouTube/Spotify,
-  ≈ −16 LUFS у Apple) первоисточником НЕ подтверждены: сами площадки их не
-  публикуют, в доступных источниках фигурируют оценки сторонних замеров
-  (у Ларри Джордана, 2017: «YouTube normalizes between -12 and -14 LUFS»).
-  Помечено `[НЕ ПРОВЕРЕНО]` в тексте
-- **Поправка к посылке волны:** форум Vegas по адресу
-  `vegascreativesoftware.com/us/forum` больше не существует — он редиректит на
-  Discourse `forum.borisfx.com/c/vegas-pro/55`, где на 2026-09-07 всего ~11
-  тем, а исторический архив тредов недоступен. Живых цитат по громкости оттуда
-  добыть не удалось; `_editors.md` в части «где искать» на этот счёт устарел
+  (2026-09-07). The words LUFS/LKFS/R128 do not occur in the guide
+- Adobe Premiere: helpx.adobe.com does not open from this environment, therefore the device of the meter and
+  Loudness Normalization at export are taken from Larry Jordan (the meter is an effect on the master bus, Loudness
+  Radar does not work on Apple silicon): https://larryjordan.com/articles/premiere-pro-new-loudness-meter/ (16.05.2021)
+  and https://larryjordan.com/articles/adobe-media-encoder-loudness-normalization/
+  (ITU BS.1770-3 / ATSC A/85 / EBU R128, True Peak Limiter, Write Loudness Report); the quote about the RMS
+  multimeter in FCP — https://larryjordan.com/articles/why-lufs-and-lkfs-are-essential-to-video/
+  (19.02.2017). The fixed −23 LUFS of Auto-Match is confirmed by the Adobe community thread (quotes in the section above)
+- The target values of streaming platforms (≈ −14 LUFS for YouTube/Spotify, ≈ −16 LUFS for Apple) are NOT
+  confirmed by a primary source: the platforms themselves do not publish them, the available sources give
+  estimates of third-party measurements (Larry Jordan, 2017: "YouTube normalizes between -12 and -14 LUFS").
+  Marked `[NOT VERIFIED]` in the text
+- **A correction to the premise of the wave:** the Vegas forum at `vegascreativesoftware.com/us/forum` no longer
+  exists — it redirects to the Discourse `forum.borisfx.com/c/vegas-pro/55`, where as of 2026-09-07 there are
+  only about 11 topics, and the historical archive of threads is unavailable. Live quotes about loudness could
+  not be obtained from there; the part of `_editors.md` about "where to look" is outdated on this point
 
-**Реализовано в Р.49** — docs/porting-notes.md п.370
-(тесты t403, t404, t405, t406, t407, t411, t412); дальнейшая жизнь фичи там.
+**Implemented in R.49** — docs/porting-notes.md item 370
+(tests t403, t404, t405, t406, t407, t411, t412); the further life of the feature is there.

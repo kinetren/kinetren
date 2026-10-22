@@ -1,12 +1,12 @@
 ---
 id: F-HLP-002
-title: Info View в Ableton Live: постоянное место под абзац
-status: исследовано
+title: Info View in Ableton Live: a permanent place for a paragraph
+status: researched
 priority: B
 cost: S
 category: help/hints
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, ableton-live-12, blender-5.2, photoshop-27]
-we_have: частично
+we_have: partial
 crates: [kt-app]
 invariants: [12]
 ui_rules: [7, 10, 13]
@@ -17,147 +17,66 @@ depends_on: [F-HLP-001]
 checked: 2026-09-07
 ---
 
-# F-HLP-002 — Info View в Ableton Live: постоянное место под абзац
+# F-HLP-002 — Info View in Ableton Live: a permanent place for a paragraph
 
-## Суть
+## Essence
 
-В левом нижнем углу окна Live стоит прямоугольная область. Она не всплывает и
-не исчезает: пока она открыта, в ней всегда что-то написано про то, под чем
-сейчас курсор — жирный заголовок с именем предмета и под ним абзац в
-несколько строк о том, что это и зачем. Туда же попадает горячая клавиша
-предмета отдельной строкой. Область выключается клавишей `?` или кнопкой в
-левом низу строки состояния, и владелец проекта может ВПИСАТЬ туда свой текст про
-конкретную дорожку или клип — он сохранится в файле проекта.
+In the lower-left corner of the Live window there is a rectangular area. It does not pop up and does not disappear: while it is open, it always shows something written about whatever the cursor is over — a bold heading with the name of the item, and under it a paragraph of several lines about what it is and why. The item's keyboard shortcut goes there too, on a separate line. The area is switched off with the `?` key or with the button at the lower left of the status bar, and the project owner can WRITE into it his own text about a specific track or clip — it is saved in the project file.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет | постоянной области-описания нет; строка состояния обслуживает пункты меню и прогресс, у кнопок — всплывающие тултипы (разбор — F-HLP-001) |
-| Adobe Premiere | 26.x | нет | нет фиксированной области: подсказка всплывает у элемента |
-| DaVinci Resolve | 21 | нет | нет фиксированной области: подсказка всплывает у элемента |
-| Final Cut Pro | 12.3 | нет | нет фиксированной области: подсказка всплывает у кнопки |
-| After Effects | 26.x | панель Info — но не про это | панель показывает пиксели, координаты и время, то есть состояние ДАННЫХ; описания элемента интерфейса в ней нет |
+| VEGAS Pro | 2026.0 | none | there is no permanent description area; the status bar serves menu items and progress, and buttons have pop-up tooltips (analysis — F-HLP-001) |
+| Adobe Premiere | 26.x | none | there is no fixed area: a hint pops up next to the element |
+| DaVinci Resolve | 21 | none | there is no fixed area: a hint pops up next to the element |
+| Final Cut Pro | 12.3 | none | there is no fixed area: a hint pops up next to the button |
+| After Effects | 26.x | the Info panel — but not about this | the panel shows pixels, coordinates and time, that is, the state of DATA; there is no description of an interface element in it |
 
-Пять из пяти: постоянного места под ОПИСАНИЕ элемента нет ни у кого. Поэтому
-вторая таблица обязательна — механизм родом не из видеомонтажа.
+Five out of five: nobody has a permanent place for a DESCRIPTION of an element. That is why the second table is mandatory — the mechanism does not come from video editing.
 
-**Вне ядра.** Без Ableton Live эту заметку писать не о чем: Info View —
-единственный в отрасли массовый продукт, сделавший ровно наш выбор (постоянное
-место вместо попапа) и при этом выбравший ДРУГУЮ ёмкость; Blender и Photoshop
-нужны, чтобы отделить «постоянное место» от «одной строки» — у них это место
-есть, а абзаца нет.
+**Outside the core.** Without Ableton Live there would be nothing to write this note about: Info View is the only mass-market product in the industry that made exactly our choice (a permanent place instead of a popup) and at the same time chose a DIFFERENT capacity; Blender and Photoshop are needed to separate "a permanent place" from "one line" — they have the place, but no paragraph.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Ableton Live | 12.4.5 | Info View | область в левом низу: заголовок + абзац про то, под чем курсор, плюс строка с горячей клавишей; включается `?`; в неё же пишутся заметки пользователя, сохраняемые в проекте |
-| Blender | 5.2 LTS | Status Bar (Keymap Information) | СЛЕВА в полосе состояния — что делают кнопки мыши в текущем инструменте; нажатие Alt перерисовывает полосу в горячие клавиши инструментов (`Alt Click Tool Prompt`). Одна строка, но не про предмет под курсором, а про то, что можно СЕЙЧАС |
-| Photoshop | 27.x | Info panel → Show Tool Hints | внизу панели Info — необязательная строка-подсказка по ВЫБРАННОМУ инструменту (не по тому, что под курсором); включается галкой в опциях панели |
+| Ableton Live | 12.4.5 | Info View | an area at the lower left: a heading + a paragraph about what the cursor is over, plus a line with the keyboard shortcut; switched on with `?`; the user's notes are also written into it, and they are saved in the project |
+| Blender | 5.2 LTS | Status Bar (Keymap Information) | on the LEFT of the status bar — what the mouse buttons do in the current tool; pressing Alt redraws the bar with the tools' keyboard shortcuts (`Alt Click Tool Prompt`). One line, but not about the item under the cursor — about what can be done NOW |
+| Photoshop | 27.x | Info panel → Show Tool Hints | at the bottom of the Info panel — an optional hint line about the SELECTED tool (not about what is under the cursor); switched on by a checkbox in the panel's options |
 
-## Фишка фишки
+## The trick behind it
 
-**Что механизм несёт, чего одна строка вместить не может: абзац «зачем это»
-— и заодно чужой текст.** Груз у нас не денется в строку: он либо не
-приезжает, либо приезжает на другую поверхность.
+**What the mechanism carries that one line cannot hold: a paragraph "what it is for" — and, as a bonus, someone else's text.** Our cargo will not fit into a line: it either does not arrive, or arrives on another surface.
 
-Три детали, которых нет в списке возможностей на сайте.
+Three details that are not in the feature list on the website.
 
-**1. Полезная нагрузка — ДВА поля, а не строка.** У каждого элемента есть
-`Annotation Name` (заголовок) и `Annotation` (тело); это не внутренность, а
-публичное расширение: авторы сторонних устройств Max for Live заполняют оба
-поля в инспекторе Max, и их текст показывается в справочной области ВЕНДОРА
-(«Info text is displayed in the Live Info View when hovering the mouse over a
-parameter», Ableton, m4l-production-guidelines). То есть справочный канал у
-Live — это API, а не набор строк в каталоге. Наша подсказка — один плоский
-`&'static str`, в котором заголовок, назначение и акселератор склеены руками
-переводчика.
+**1. The payload is TWO fields, not a line.** Each element has an `Annotation Name` (heading) and an `Annotation` (body); this is not an internal detail but a public extension: the authors of third-party Max for Live devices fill both fields in the Max inspector, and their text is shown in the vendor's help area ("Info text is displayed in the Live Info View when hovering the mouse over a parameter", Ableton, m4l-production-guidelines). That is, Live's help channel is an API, not a set of lines in a catalog. Our hint is a single flat `&'static str` in which the heading, the purpose and the accelerator are glued together by the translator's hand.
 
-**2. Цена места названа В САМОМ тексте подсказки.** Если навести курсор на
-Info View, он опишет сам себя, и в описании стоит фраза «To save screen space,
-you can hide Info View by clicking the view control at the bottom left corner
-of the Status Bar». Вендор документирует расход прямо в полезной нагрузке.
-Расход измерим: на официальном скриншоте гайдлайнов (окно 2000×1800) панель
-занимает 420×412 px — 21 % ширины и 23 % высоты, около 5 % площади окна, и
-это ПОСТОЯННО, а не в момент наведения. Отдельно видно устройство текста:
-заголовок `Info View`, семь строк тела (308 символов), пустая строка и
-отдельной строкой `[?] Show/Hide Info View` — акселератор не втиснут в
-предложение, у него своё место.
+**2. The price of the space is named IN the text of the hint itself.** If you hover the cursor over Info View, it describes itself, and the description contains the phrase "To save screen space, you can hide Info View by clicking the view control at the bottom left corner of the Status Bar". The vendor documents the expenditure directly in the payload. The expenditure is measurable: on the official screenshot of the guidelines (window 2000×1800) the panel takes 420×412 px — 21 % of the width and 23 % of the height, about 5 % of the window's area, and this is PERMANENT, not at the moment of hovering. Separately one sees the device of the text: the heading `Info View`, seven lines of body (308 characters), an empty line and, on a separate line, `[?] Show/Hide Info View` — the accelerator is not squeezed into a sentence, it has its own place.
 
-**3. В одной области сталкиваются два хозяина.** Та же площадь несёт заметки
-пользователя (`Edit Info Text` в контекстном меню дорожки, клипа, устройства;
-текст сохраняется в Live Set) — и справка вендора их вытесняет: «I wish there
-was an option to ONLY show user text in the help view». А главное — чужой
-текст в этой области виден только под курсором, и через 13 лет после появления
-функции пользователи просят подсвечивать область, если заметка есть, потому
-что забывают о собственных записях. Самая большая справочная область в
-отрасли воспроизводит внутри себя ровно тот дефект, из-за которого заведена
-эта волна: **нельзя навести мышь на то, чего не нашёл** (тезис Р.40,
-разобран в F-HLP-001). Ответом Ableton стала не бо́льшая область, а ВТОРОЙ
-канал: Learn View с видео-уроками, который в Live 12 показывается при первом
-запуске сам.
+**3. Two owners collide in one area.** The same area carries the user's notes (`Edit Info Text` in the context menu of a track, clip, device; the text is saved in the Live Set) — and the vendor's help displaces them: "I wish there was an option to ONLY show user text in the help view". And most importantly — someone else's text in this area is visible only under the cursor, and 13 years after the feature appeared, users ask to highlight the area when a note exists, because they forget their own entries. The largest help area in the industry reproduces inside itself exactly the defect because of which this wave was launched: **one cannot hover the mouse over what one has not found** (the thesis of R.40, analysed in F-HLP-001). Ableton's answer was not a larger area but a SECOND channel: Learn View with video lessons, which in Live 12 is shown by itself on the first launch.
 
-**Как сам Ableton закрывает то, чего Info View не может.** Это самое полезное
-для нас наблюдение, и оно про архитектуру, а не про подсказки. Info View
-отвечает «что это» и, по мануалу, **не называет место настройки** — обратной
-адресации к Settings в нём нет вообще. Вопрос «что тут вообще можно» вендор
-решил не наращиванием Info View, а **отдельным видом**: Learn View со
-структурированными уроками (видео + текст, фильтр по темам, отметка
-«пройдено»), открытым по умолчанию и закрываемым через меню Help. То есть
-единственный в выборке, кто выбрал нашу архитектуру подсказки, при упоре в её
-предел завёл ВТОРУЮ ПОВЕРХНОСТЬ, а не увеличил первую. Для тезиса волны
-(pull решён, push не решён) это прямое подтверждение с чужого поля.
+**How Ableton itself closes what Info View cannot.** This is the most useful observation for us, and it concerns architecture, not hints. Info View answers "what is this" and, per the manual, **does not name the place of a setting** — there is no reverse addressing to Settings in it at all. The question "what can one even do here" the vendor solved not by growing Info View but by a **separate view**: Learn View with structured lessons (video + text, filter by topic, a "completed" mark), open by default and closable via the Help menu. That is, the only one in the sample that chose our architecture of hints, when it ran into its limit, created a SECOND SURFACE rather than enlarging the first. For the wave's thesis (pull is solved, push is not solved) this is direct confirmation from someone else's field.
 
-## Плюсы
+## Pros
 
-- **Ёмкость — следствие формы, а не щедрости.** Область прямоугольная, текст в
-  ней ПЕРЕНОСИТСЯ, поэтому в неё влезает абзац (образец — 308 символов, семь
-  строк). Строка переносить не умеет: её ёмкость ограничена не решением, а
-  геометрией полосы.
-- **Заголовок отделён от тела**, поэтому «что это» читается за одно движение
-  глаз, а «зачем» — только если стал читать дальше. Одна строка вынуждает
-  склеивать оба ответа в одно предложение и всегда показывать оба.
-- **Акселератор — отдельная строка**, а не хвост в скобках. Значит его можно
-  добавить, убрать и перевести отдельно от текста подсказки.
-- **Область — точка расширения.** Автор стороннего устройства пишет в
-  справочный канал хозяина программы, ничего у хозяина не спрашивая.
-- **Выключается одной клавишей и запоминает состояние.** Опытный пользователь
-  забирает 5 % окна себе, новичок оставляет.
-- **Работает и в настройках.** Info View описывает и элементы окна Settings,
-  то есть покрывает диалоги, а не только главное окно.
+- **Capacity is a consequence of the shape, not of generosity.** The area is rectangular and the text in it WRAPS, so a paragraph fits (the sample is 308 characters, seven lines). A line cannot wrap: its capacity is limited not by a decision but by the geometry of the strip.
+- **The heading is separated from the body**, so "what is it" is read in one glance, and "why" only if the reader keeps reading. A single line forces both answers into one sentence and always shows both.
+- **The accelerator is a separate line**, not a tail in brackets. So it can be added, removed and translated separately from the hint text.
+- **The area is an extension point.** The author of a third-party device writes into the host program's help channel without asking the host anything.
+- **It is switched off with one key and remembers its state.** An experienced user takes the 5 % of the window for himself, a newcomer leaves it.
+- **It also works in the settings.** Info View describes the elements of the Settings window too, so it covers dialogs and not only the main window.
 
-## Минусы
+## Cons
 
-- **Постоянные 5 % окна.** Их платят все и всегда, включая тех, кто в область
-  не смотрит; выключатель существует именно потому, что расход заметен.
-- **Глаз ездит через весь экран.** Жалоба, живущая на форуме 15 лет: «The
-  problem is the amount you have to move your attention and eyes takes you away
-  from the very button or area you're interested in» — и это претензия к
-  постоянному месту КАК ТАКОВОМУ, а не к его размеру. Наша строка платит ту же
-  цену, только в другом углу.
-- **Всё или ничего.** Выключив область ради места, пользователь теряет и
-  справку вендора, и собственные заметки: у двух хозяев один выключатель.
-- **Абзац стареет и его чинят по багрепортам.** На форуме отдельным жанром
-  живут «typo in info view for external instrument», «Info View text needs
-  updated for Default Pad function», «Info View describes Transients in MIDI
-  Editor» — то есть текст справки требует сопровождения наравне с кодом, и
-  ошибку в нём ловит пользователь, а не сборка.
-- **Перевод отстаёт.** «After selecting spanish language in Preferences, i have
-  noticed that the Info view, as some interface sections, are partially
-  translated» — абзац в пять раз длиннее строки, и локализация абзацев
-  отстаёт от локализации надписей.
-- **Ширина области зависит от текста.** Пользователи фиксировали, что при
-  перещёлкивании длинных путей в «Open Recent Set» область «increasing and
-  decreasing in width» — тот же артефакт, что у нашей плашки, затирающей
-  метрики слева.
-- **Модификаторы область НЕ отслеживает.** Публичное API — два статических
-  поля на элемент, вариантов «а если зажать Alt» в нём нет; клавиши
-  перечислены ВНУТРИ текста. Динамическую реакцию на зажатый модификатор из
-  трёх поверхностей этой заметки даёт только Blender (Alt перерисовывает
-  keymap в полосе состояния). [НЕ ПРОВЕРЕНО живьём для собственных элементов
-  Live: в мануале, в гайдлайнах M4L и в форумном поиске «info view +
-  modifier» описания такой реакции нет.]
+- **Permanent 5 % of the window.** Everyone pays it all the time, including those who never look at the area; the switch exists precisely because the cost is noticeable.
+- **The eye travels across the whole screen.** A complaint living on the forum for 15 years: "The problem is the amount you have to move your attention and eyes takes you away from the very button or area you're interested in" — and this is an objection to the permanent place AS SUCH, not to its size. Our line pays the same price, only in a different corner.
+- **All or nothing.** Switching the area off for the sake of the space, the user loses both the vendor's help and their own notes: two masters share one switch.
+- **The paragraph ages and gets fixed from bug reports.** On the forum a separate genre lives on: "typo in info view for external instrument", "Info View text needs updated for Default Pad function", "Info View describes Transients in MIDI Editor" — that is, the help text needs maintenance on a par with the code, and the error in it is caught by the user, not by the build.
+- **Translation lags behind.** "After selecting spanish language in Preferences, i have noticed that the Info view, as some interface sections, are partially translated" — a paragraph is five times longer than a line, and localization of paragraphs lags behind localization of labels.
+- **The width of the area depends on the text.** Users recorded that when switching long paths in "Open Recent Set" the area is "increasing and decreasing in width" — the same artifact as our badge that covers the metrics on the left.
+- **The area does NOT track modifiers.** The public API is two static fields per element; there is no "what if Alt is held" variant in it; the keys are listed INSIDE the text. The only dynamic reaction to a held modifier among the three surfaces of this note is given by Blender (Alt redraws the keymap in the status bar). [NOT CHECKED live for Live's own elements: the manual, the M4L guidelines and a forum search for "info view + modifier" contain no description of such a reaction.]
 
-## Что говорят пользователи
+## What users say
 
 > That thing is weird, like it's designed for people in their first week of
 > Live use and then everyone else just closes it and forgets about it.
@@ -165,13 +84,13 @@ was an option to ONLY show user text in the help view». А главное — �
 > https://forum.ableton.com/viewtopic.php?t=160133
 
 > if you know how to use live then what's the point? closed.
-> — seattletruth, там же, 07.03.2011,
+> — seattletruth, same thread, 07.03.2011,
 > https://forum.ableton.com/viewtopic.php?t=160133
 
 > I was really excited when I learned that you could finally put notes into
 > info view for clips, but the fact that it also shows you the help text as you
 > navigate around the program is distracting and annoying.
-> — Tarekith, там же, 07.03.2011,
+> — Tarekith, same thread, 07.03.2011,
 > https://forum.ableton.com/viewtopic.php?t=160133
 
 > The problem is the amount you have to move your attention and eyes takes you
@@ -181,13 +100,13 @@ was an option to ONLY show user text in the help view». А главное — �
 
 > I highly doubt you will ever see this added, it's not even something that has
 > any precedence in the UI currently.
-> — Tarekith о всплывающих подсказках, 07.01.2024,
+> — Tarekith on tooltips, 07.01.2024,
 > https://forum.ableton.com/viewtopic.php?t=236330
 
 > It's pretty ridiculous to have to Google the locations of buttons on a UI
 > because your not sure where to find them.
-> — closetgeek, там же, 07.01.2024 (и следом: покупка полной лицензии «henge
-> very strongly on issues like this»),
+> — closetgeek, same thread, 07.01.2024 (and after it: buying a full license, "henge
+> very strongly on issues like this"),
 > https://forum.ableton.com/viewtopic.php?t=236330
 
 > I think showing the info view under the browser while in full-height would
@@ -200,130 +119,73 @@ was an option to ONLY show user text in the help view». А главное — �
 > — Jon Margulies (Hobotech), hobo-tech.com,
 > https://hobo-tech.com/technologies/livetips/use-the-info-view/
 
-Итог фидбека, важный для вердикта: спор идёт НЕ про ёмкость, а про
-направление и про место. За 20 лет ни один тред не жалуется, что абзац
-слишком велик; жалуются, что ради него надо ехать глазами в угол, и что
-опытному он не нужен ни в каком размере. Это ровно тот вывод, ради которого
-заметка написана: увеличение ёмкости не лечит push.
+The outcome of the feedback, important for the verdict: the dispute is NOT about capacity but about direction and place. In 20 years not a single thread complains that a paragraph is too large; people complain that for its sake the eyes have to travel to the corner, and that an experienced user does not need it at any size. That is exactly the conclusion for which this note is written: increasing the capacity does not cure the push.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- Слот тот же самый: `KtApp::hint` / `hint_into` / `draw_status_hint` /
-  чистая `status_line` в `src/apps/kt-app/src/app.rs`, полоса статусбара
-  заводится в `draw_statusbar` там же. Модель целиком описана в **F-HLP-001** —
-  здесь она не пересказывается.
-- Подсказок ровно 81 (ключи секций `[tb]`, `[tl.hint]`, `[hint]` плюс всё,
-  оканчивающееся на `_hint`, в `src/apps/kt-app/i18n/*.toml`). Средняя длина
-  45 символов (en) / 46 (ru) / 49 (es). Самая длинная — `mrph.below_note`:
-  **145 символов в испанском при потолке 160**, то есть запас 9 %.
-  `tl.hint.clip` — 107 (en) / 109 (ru) / **116 (es)** — уже несёт пять
-  альтернатив с модификаторами в одном предложении: то, что Ableton кладёт в
-  тело и в отдельную строку, у нас склеено запятыми.
-- Абзацы «что это и зачем» у нас УЖЕ написаны и УЖЕ переведены на пять
-  языков — `site/content/*.toml`, секция `[fxdesc]` (10 значений, 36–104
-  символа). В программе их нет: `[fxdesc]` читает только `site/build.py`.
-  Это ровно та полезная нагрузка, ради которой существует Info View.
-- Заграждение против попапов и его страж: `src/apps/kt-app/src/theme.rs`
-  (`tooltip_delay`) и **t83** в `src/apps/kt-app/src/layout_tests.rs`, где
-  проверяется, что подсказка кнопки доехала до `status_line_shown` в ТОМ ЖЕ
-  кадре и что среди слоёв нет ни одного `egui::Order::Tooltip`. Заметка не
-  трогает t83 и ослаблять его не предлагает: всё, что здесь предлагается,
-  рисуется в уже существующей полосе и в уже открытых окнах.
+- The slot is the same: `KtApp::hint` / `hint_into` / `draw_status_hint` / the pure `status_line` in `src/apps/kt-app/src/app.rs`; the status bar strip is set up in `draw_statusbar` in the same file. The model is fully described in **F-HLP-001** — it is not retold here.
+- There are exactly 81 hints (the keys of sections `[tb]`, `[tl.hint]`, `[hint]` plus everything ending in `_hint` in `src/apps/kt-app/i18n/*.toml`). The average length is 45 characters (en) / 46 (ru) / 49 (es). The longest is `mrph.below_note`: **145 characters in Spanish against a ceiling of 160**, that is a margin of 9 %. `tl.hint.clip` is 107 (en) / 109 (ru) / **116 (es)** — it already carries five alternatives with modifiers in one sentence: what Ableton puts in the body and in a separate line, we have glued together with commas.
+- The paragraphs "what it is and why" are ALREADY written for us and ALREADY translated into five languages — `site/content/*.toml`, section `[fxdesc]` (10 values, 36–104 characters). They are not in the program: `[fxdesc]` is read only by `site/build.py`. This is exactly the useful payload for which Info View exists.
+- The guard against popups and its guard test: `src/apps/kt-app/src/theme.rs` (`tooltip_delay`) and **t83** in `src/apps/kt-app/src/layout_tests.rs`, which checks that a button's hint reaches `status_line_shown` in THE SAME frame and that among the layers there is not a single `egui::Order::Tooltip`. This note does not touch t83 and does not propose to weaken it: everything proposed here is drawn in the already existing strip and in already open windows.
 
-### Чего не хватает
+### What is missing
 
-**Никто не знает, какова настоящая ёмкость нашей строки.** Потолок 160
-(`src/apps/kt-app/build.rs`, `MAX_VALUE_CHARS`) считает СИМВОЛЫ и стоит там
-не ради статусбара, а ради арабского: `src/apps/kt-app/src/i18n/bidi.rs`
-переупорядочивает атомы начертания на сборке, и переносить уже
-переупорядоченный текст нельзя — каждая визуальная строка требовала бы своего
-порядка. То есть многострочность у нас закрыта не вкусом, а конвейером
-перевода.
+**Nobody knows the real capacity of our line.** The ceiling of 160 (`src/apps/kt-app/build.rs`, `MAX_VALUE_CHARS`) counts CHARACTERS and stands there not for the sake of the status bar but for the sake of Arabic: `src/apps/kt-app/src/i18n/bidi.rs` reorders the glyph atoms at build time, and already reordered text cannot be wrapped — each visual line would need its own order. That is, multi-line support for us is closed not by taste but by the translation pipeline.
 
-А на экране ограничение другое и не проверяется ничем. `draw_status_hint`
-раскладывает подсказку через `layout_no_wrap`, прижимает плашку к правому краю
-полосы и клампит её левый край по `strip.left()`. Если галлея шире полосы,
-плашка накрывает метрики целиком, а хвост текста уезжает за правый край окна —
-без многоточия и без предупреждения. Минимум окна — `with_min_inner_size([640,
-640])` в `src/apps/kt-app/src/app.rs`; 145 символов пропорциональным 12 px в
-640 px не помещаются заведомо. Ни один тест этого не меряет: **t128**
-(`layout_tests.rs`) меряет заголовки меню, строки перф-панели и чекбокс
-экономного UI — и ни одной из 81 подсказки; **t255** (`reach_tests.rs`)
-требует усечения с многоточием для ИМЁН ИСТОЧНИКОВ, но не для подсказок.
-Правило 7 чек-листа («текст помещается») для главного текстового канала
-программы не закрыто.
+But on screen the limit is different and is checked by nothing. `draw_status_hint` lays out the hint via `layout_no_wrap`, pins the badge to the right edge of the strip and clamps its left edge by `strip.left()`. If the galley is wider than the strip, the badge covers the metrics entirely, and the tail of the text runs past the right edge of the window — without an ellipsis and without a warning. The minimum window size is `with_min_inner_size([640, 640])` in `src/apps/kt-app/src/app.rs`; 145 characters at a proportional 12 px do not fit into 640 px for certain. No test measures this: **t128** (`layout_tests.rs`) measures menu headings, perf-panel rows and the checkbox of the economical UI — and not a single one of the 81 hints; **t255** (`reach_tests.rs`) requires truncation with an ellipsis for SOURCE NAMES, but not for hints. Rule 7 of the checklist ("the text fits") is not closed for the program's main text channel.
 
-### Что мешает
+### What gets in the way
 
-Не код, а порядок вещей: пока бюджет не измерен, любая заметка волны, которая
-захочет «дописать в строку ещё немного», будет спорить о символах, а спорить
-надо о пикселях в самом узком окне и в самом длинном языке. Копировать саму
-область Ableton мешает правило 13 чек-листа (не тратить место впустую) и
-прямой фидбек её же пользователей: 5 % окна постоянно — та цена, за которую
-её и выключают.
+Not code, but the order of things: as long as the budget is not measured, any wave note that wants to "add a bit more to the line" will argue about characters, while it should argue about pixels in the narrowest window and in the longest language. Copying Ableton's area itself is blocked by rule 13 of the checklist (do not waste space) and by direct feedback from its own users: 5 % of the window permanently is the price for which they switch it off.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- Инвариант **12** — задевает, но не нарушается: перенос текста считается
-  egui один раз и кэшируется галлея-кэшем по готовой строке; анимаций и
-  перерисовок «по таймеру» здесь не появляется.
-- Правило **7** (текст помещается) — предмет предлагаемого теста.
-- Правило **10** (подсказка ровно одна и в одном месте) — не трогается:
-  вторая область не заводится.
-- Правило **13** (не тратить место впустую) — причина, по которой область
-  Ableton не копируется.
+- Invariant **12** — touched, but not violated: text wrapping is computed by egui once and cached by the galley cache per finished string; no timer-driven animations or redraws appear here.
+- Rule **7** (the text fits) — the subject of the proposed test.
+- Rule **10** (exactly one hint, in one place) — not touched: a second area is not set up.
+- Rule **13** (do not waste space) — the reason why Ableton's area is not copied.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия раунда |
-| Где основная работа | kt-app: `reach_tests.rs` (замер), при находках — `i18n/*.toml` |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | `reach_tests::hint_fits_the_status_strip` — ширина галлеи каждой из 81 подсказки во всех пяти языках против ширины полосы при минимальном окне |
-| Зависит от | F-HLP-001 |
-| Ломает совместимость | нет |
+| Size | S — one stage of a round |
+| Where the main work is | kt-app: `reach_tests.rs` (measurement), with findings — `i18n/*.toml` |
+| Project format | not touched |
+| Tests to be written | `reach_tests::hint_fits_the_status_strip` — the galley width of each of the 81 hints in all five languages against the strip width at the minimum window size |
+| Depends on | F-HLP-001 |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Info View доказывает, что «постоянное место» и «одна строка» — два разных
-решения, и второе из первого не следует. Ableton выбрал то же место и другую
-ёмкость: прямоугольник с переносом, заголовок отдельно от тела, акселератор
-отдельной строкой, чужой текст наравне со своим. Мы копировать это не будем —
-цену в 5 % окна её собственные пользователи признали неподъёмной, — но обязаны
-перестать называть нашу ёмкость «160 символов»: настоящий предел меряется в
-пикселях полосы при минимальном окне, и сегодня его не знает никто.
+Info View proves that "a permanent place" and "one line" are two different decisions, and the second does not follow from the first. Ableton chose the same place and a different capacity: a rectangle with wrapping, the heading separately from the body, the accelerator as a separate line, someone else's text on a par with its own. We will not copy this — the price of 5 % of the window was judged unbearable by its own users — but we must stop calling our capacity "160 characters": the real limit is measured in pixels of the strip at the minimum window size, and today nobody knows it.
 
-ТЕСТ: reach_tests::hint_fits_the_status_strip — упал бы сегодня: `draw_status_hint` раскладывает подсказку через `layout_no_wrap` и клампит плашку по `strip.left()`, поэтому 145-символьная `mrph.below_note` (es) при минимальном окне 640 px уезжает за правый край без многоточия, а t128 меряет меню и перф-панель и ни одной из 81 подсказки.
+TEST: reach_tests::hint_fits_the_status_strip — would fail today: `draw_status_hint` lays out the hint via `layout_no_wrap` and clamps the badge by `strip.left()`, so the 145-character `mrph.below_note` (es) at the minimum window size of 640 px runs past the right edge without an ellipsis, while t128 measures the menu and the perf panel and not a single one of the 81 hints.
 
-ОДНА СТРОКА: перекрытие — не трогает | задержка — не трогает | ёмкость — в строку не добавляется ни символа (после замера она, скорее всего, УМЕНЬШИТСЯ), абзац «зачем это» уходит на уже открытые окна FX/морфера/перехода, где текст `[fxdesc]` из `site/content/*.toml` уже написан и переведён, а поверхность, которую эта заметка трогает, — сама полоса статусбара, и трогает она в ней только бюджет.
+ONE LINE: overlap — not touched | delay — not touched | capacity — not a single character is added to the line (after measurement it will most likely DECREASE); the paragraph "why is this needed" goes to the already open FX/morpher/transition windows, where the `[fxdesc]` text from `site/content/*.toml` is already written and translated, and the surface this note touches — the status bar strip itself — is touched in it only for its budget.
 
-## Источники
+## Sources
 
 - Ableton Reference Manual v12, 2.2.2 Info View —
-  https://www.ableton.com/en/manual/first-steps/ (обращение 07.09.2026)
+  https://www.ableton.com/en/manual/first-steps/ (accessed 07.09.2026)
 - Ableton Reference Manual v12, 41.1 Showing and Hiding Views (`Shift ?`) —
   https://www.ableton.com/en/manual/live-keyboard-shortcuts/ (07.09.2026)
-- Скриншот `InfoViewL12.png` из мануала (описание Info View самим Info View) —
+- Screenshot `InfoViewL12.png` from the manual (description of Info View by Info View itself) —
   https://ableton-production.imgix.net/live-manual/12/InfoViewL12.png
   (07.09.2026)
-- Max for Live Production Guidelines, раздел «Info Text» + скриншот
-  `images/InfoText.png` (`Info View Text` / `Info View Title` в инспекторе) —
+- Max for Live Production Guidelines, section "Info Text" + screenshot
+  `images/InfoText.png` (`Info View Text` / `Info View Title` in the inspector) —
   https://github.com/Ableton/maxdevtools/blob/main/m4l-production-guidelines/m4l-production-guidelines.md
-  (07.09.2026); замеры площади сделаны по этому скриншоту (2000×1800)
+  (07.09.2026); area measurements were made from this screenshot (2000×1800)
 - forum.ableton.com: t=160133, t=236330, t=251289, t=248345, t=249315,
   t=49532, t=54714 (07.09.2026)
 - Blender 5.2 LTS Manual, Status Bar → Keymap Information —
   https://docs.blender.org/manual/en/latest/interface/window_system/status_bar.html
-  (07.09.2026, через текст-прокси `r.jina.ai`)
-- Adobe: Photoshop image information (Info panel, «Show Tool Hints») —
+  (07.09.2026, via the text proxy `r.jina.ai`)
+- Adobe: Photoshop image information (Info panel, "Show Tool Hints") —
   https://helpx.adobe.com/photoshop/using/image-information.html (07.09.2026,
-  через `r.jina.ai`)
+  via `r.jina.ai`)
 
-Живьём не проверялось ничего: Ableton Live, Blender и Photoshop — софт вне
-ядра, проверка живьём для них не предполагается (`_editors.md`). Строки пяти
-NLE ядра — по документации и по разбору в F-HLP-001; собственных всплывающих
-подсказок у элементов интерфейса Live нет по свидетельствам форума, живой
-проверки этого утверждения тоже не было.
+Nothing was checked live. Ableton Live, Blender and Photoshop are software outside the core, and a live check for them is not assumed (`_editors.md`). The lines of the core's five NLEs are taken from documentation and from the analysis in F-HLP-001; by forum evidence, Live's interface elements have no hints of their own, and this claim was not checked live either.

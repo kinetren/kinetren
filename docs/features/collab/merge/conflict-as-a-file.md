@@ -1,12 +1,12 @@
 ---
 id: F-COL-035
-title: Конфликт как отдельный файл
-status: исследовано
+title: A conflict as a separate file
+status: researched
 priority: C
 cost: S
 category: collab/merge
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, syncthing-2]
-we_have: нет
+we_have: no
 crates: [kt-otio, kt-app]
 invariants: []
 ui_rules: []
@@ -19,217 +19,128 @@ services: [syncthing, bm-cloud, team-projects]
 checked: 2026-09-08
 ---
 
-# F-COL-035 — Конфликт как отдельный файл
+# F-COL-035 — A conflict as a separate file
 
-## Суть
+## Essence
 
-Разошлись. Дальше ровно три исхода: одну версию потеряли молча; человеку показали
-диалог и заставили выбрать целиком; **обе версии оставили, а проигравшую
-переименовали**. Третий исход выглядит отказом от решения задачи — и именно он
-единственный работает в поле, потому что не требует ни от кого быть на связи в
-момент расхождения: победитель остаётся на своём месте под своим именем, а
-проигравший превращается в обычный файл, который лежит рядом и никуда не денется.
+They diverged. From there exactly three outcomes are possible: one version was silently lost; the person was shown a dialog and made to choose one version in full; or **both versions were kept, and the losing one was renamed**. The third outcome looks like a refusal to solve the problem — and it is exactly the only one that works in the field, because it does not require anyone to be online at the moment of divergence: the winner stays in its place under its own name, and the loser becomes an ordinary file that lies beside it and goes nowhere.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет | расхождение не обнаруживается вовсе; «оставить обе» делается человеком через «Сохранить как…» с придуманным на ходу именем |
-| Adobe Premiere | 26.x | Resolve Conflicts (Team Projects) | конфликт — модальный выбор между «взять общую» и «оставить свою», третьего исхода нет; у части пользователей окно приходит ПУСТЫМ, и это не чинят четвёртый год |
-| DaVinci Resolve | 21 | замок бина и таймлайна | конфликт предотвращают, а не разрешают; при синхронизации материала в Blackmagic Cloud расхождение всё-таки кончается файлами с суффиксом `-conflict` — то есть тем же третьим исходом, но непреднамеренно `[источник — forum.blackmagicdesign.com, недоступен для дословной цитаты]` |
-| Final Cut Pro | 12.3 | эксклюзивный замок библиотеки | «The document [Library name] is already in use by [user]» — вторая версия не создаётся никогда, потому что второму просто не дают открыть |
-| After Effects | 26.x | Resolve Conflicts (Team Projects) | наследует модель Premiere целиком, включая её отсутствующую третью ветку |
+| VEGAS Pro | 2026.0 | none | the divergence is not detected at all; "keep both" is done by the person through "Save as…" with a name invented on the spot |
+| Adobe Premiere | 26.x | Resolve Conflicts (Team Projects) | the conflict is a modal choice between "take the shared version" and "keep mine"; there is no third outcome; for some users the window arrives EMPTY, and this has not been fixed for four years |
+| DaVinci Resolve | 21 | lock of bin and timeline | conflicts are prevented, not resolved; when material is synchronised through Blackmagic Cloud, a divergence still ends with files carrying the suffix `-conflict` — that is, the same third outcome, but unintentionally `[source — forum.blackmagicdesign.com, unavailable for verbatim quotation]` |
+| Final Cut Pro | 12.3 | exclusive lock of the library | "The document [Library name] is already in use by [user]" — a second version is never created, because the second person is simply not given the chance to open it |
+| After Effects | 26.x | Resolve Conflicts (Team Projects) | inherits Premiere's model whole, including its absent third branch |
 
-**Вне ядра.** Одна строка, без которой механизм не описать: единственное место, где
-исход расхождения записан формально, до правила тай-брейка.
+**Outside the core.** One row, without which the mechanism cannot be described: the only place where the outcome of a divergence is written down formally, down to the tie-break rule.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Syncthing | 2.x | sync-conflict | проигравший переименовывается в `<имя>.sync-conflict-<дата>-<время>-<кем>.<ext>`; проигрывает файл с более старым временем правки, при равенстве — устройство с бо́льшим значением первых 63 бит device ID; полученные файлы «are treated as normal files» и расходятся по всем узлам |
+| Syncthing | 2.x | sync-conflict | the loser is renamed to `<name>.sync-conflict-<date>-<time>-<who>.<ext>`; the file with the older modification time loses, and on a tie the device with the larger value of the first 63 bits of its device ID wins; the received files "are treated as normal files" and spread to all nodes |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Система сознательно отказывается заводить для конфликта отдельный класс
-объектов.** Проигравший не помечается флагом, не уезжает в специальное хранилище и
-не ждёт в очереди на разрешение — он становится ОБЫЧНЫМ файлом и дальше живёт по
-общим правилам, включая распространение на все узлы. Цена решения видна сразу:
-конфликт нельзя «не заметить» и нельзя потерять при перезапуске, зато он размножается
-— именно поэтому у пользователей Blackmagic Cloud набирается двести с лишним прокси
-с суффиксом `-conflict`.
+**1. The system deliberately refuses to create a separate class of objects for a conflict.** The loser is not marked with a flag, is not moved into a special store, and does not wait in a queue for resolution — it becomes an ORDINARY file and lives on by the general rules, including propagation to all nodes. The cost of this decision is visible at once: a conflict cannot be "not noticed" and cannot be lost on restart, but it multiplies — which is exactly why Blackmagic Cloud users accumulate two hundred-plus proxies with the `-conflict` suffix.
 
-**2. Имя файла оказалось единственным переносимым носителем метаданных.** В имя
-уложены три поля, которым больше негде лежать: дата, время и КЕМ правился
-проигравший. Не в расширенных атрибутах (не переживают копирование), не в отдельном
-журнале (не переживает перенос папки), не внутри файла (у произвольного файла нет
-места для чужих полей) — в имени, потому что имя переносит любая файловая система и
-любой транспорт. Это самое дешёвое хранилище метаданных из существующих и
-одновременно самое хрупкое: его ломает любое переименование.
+**2. The file name turned out to be the only portable carrier of metadata.** Three fields that have nowhere else to lie are packed into the name: the date, the time, and WHO edited the loser. Not in extended attributes (they do not survive copying), not in a separate log (it does not survive moving the folder), not inside the file (an arbitrary file has no place for foreign fields) — in the name, because the name is carried by every file system and every transport. This is the cheapest metadata store among the existing ones and at the same time the most fragile: any renaming breaks it.
 
-**3. Правило исхода выбрано не по содержимому, а по возможности применить его
-ЛОКАЛЬНО.** Проигрывает более старая правка; при равенстве времени — устройство с
-бо́льшими первыми 63 битами идентификатора. Второе правило не имеет отношения к
-данным вообще: его задача — чтобы обе стороны, не переговариваясь, пришли к
-одному и тому же решению о том, кто из них проиграл. Отсюда же требование к среде,
-которое обычно не проговаривают: механизм держится на СРАВНИМЫХ часах двух машин.
+**3. The rule of the outcome is chosen not by content but by the ability to apply it LOCALLY.** The loser is the older edit; on equal time, the device with the larger first 63 bits of its identifier. The second rule has nothing to do with the data at all: its task is to let both sides, without negotiating, arrive at the same decision about which of them lost. Hence follows a requirement on the environment that is usually not spoken of: the mechanism rests on COMPARABLE clocks of two machines.
 
-**4. Отраслевой контраст: там, где есть сервер, третьей ветки нет.** Team Projects
-предлагает ровно два исхода — взять общую версию или оставить свою, — и в живых
-тредах видно, чем это кончается, когда оба не срабатывают. Наличие сервера, вопреки
-ожиданию, УБИРАЕТ самый устойчивый исход, а не добавляет его: сервер обязан иметь
-одну истину, а файловая папка не обязана.
+**4. The industry contrast: where there is a server, there is no third branch.** Team Projects offers exactly two outcomes — take the shared version or keep one's own — and live threads show what comes of it when neither works. The presence of a server, contrary to expectation, REMOVES the most stable outcome rather than adding it: the server must have one truth, while a file folder need not.
 
-## Плюсы
+## Pros
 
-- Ничего не теряется, и это доказуемо: обе версии на диске, обе видны файловым
-  менеджером, обе переживают перезапуск и перенос.
-- Разрешение конфликта откладывается на любой срок и делается человеком тогда,
-  когда он к этому готов, — механизм не требует присутствия в момент расхождения.
-- Реализуется без единого нового формата и без хранилища: имя файла и правило
-  сравнения — всё, что нужно.
-- Работает ровно так же на флешке, на общей папке и в облаке: перенос конфликта
-  ничем не отличается от переноса обычного файла.
+- Nothing is lost, and this is provable: both versions are on disk, both are visible to the file manager, and both survive a restart and a move.
+- Resolving a conflict is postponed for any length of time and is done by a person when they are ready for it — the mechanism does not require presence at the moment of divergence.
+- It is implemented without a single new format and without a store: a file name and a comparison rule are all that is needed.
+- It works exactly the same way on a flash drive, on a shared folder and in the cloud: carrying a conflict is no different from carrying an ordinary file.
 
-## Минусы
+## Cons
 
-- Мусор копится молча: сотни файлов с меткой в имени, которые никто не разбирает,
-  а удалять страшно.
-- Имя как носитель метаданных теряется при первом переименовании и не выдерживает
-  ограничений на длину имени; ни одна программа не обязана его понимать.
-- Правило «проигрывает более старое время правки» опирается на часы двух машин —
-  и на файловых системах с грубым разрешением времени вырождается в тай-брейк по
-  идентификатору устройства.
-- Исход не отвечает на вопрос «что именно разошлось»: два файла лежат рядом, а
-  сравнить их содержимое нечем (F-COL-036).
+- Clutter accumulates silently: hundreds of files with a label in their names that nobody sorts through, and which are frightening to delete.
+- A name as a carrier of metadata is lost at the first renaming and does not survive limits on name length; no program is obliged to understand it.
+- The rule "the older edit time loses" rests on the clocks of two machines — and on file systems with a coarse time resolution it degenerates into a tie-break by device identifier.
+- The outcome does not answer the question "what exactly diverged": two files lie side by side, and there is nothing with which to compare their contents (F-COL-036).
 
-## Что говорят пользователи
+## What users say
 
-Что бывает, когда третьего исхода нет, а первые два не срабатывают:
+What happens when there is no third outcome, and the first two do not work:
 
 > Even though I tried each option like take the share version or keep my version,
 > the conflict could not be solved.
 > — Yijia5C0E, 13.07.2021,
 > https://community.adobe.com/t5/team-projects/team-project-could-not-resolve-the-conflict/td-p/12174435
 
-Формальная сторона третьего исхода — из документации Syncthing, где он единственный
-описан до правила тай-брейка:
+The formal side of the third outcome — from Syncthing's documentation, where it is the only one described before the tie-break rule:
 
 > The file with the older modification time will be marked as the conflicting file
 > and thus be renamed.
-> — Syncthing docs, «Syncing», https://docs.syncthing.net/users/syncing.html
-> (дата обращения 2026-09-08)
+> — Syncthing docs, "Syncing," https://docs.syncthing.net/users/syncing.html
+> (accessed 2026-09-08)
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- **Проект — один текстовый файл, и запись атомарна**: `write_project_atomic`
-  (`src/apps/kt-app/src/app.rs:5051`) пишет во временный файл рядом и переименовывает,
-  так что «две версии рядом» — естественное для нас состояние, а не аварийное.
-- **У нашего документа нет собственного имени.** Имя, которое уезжает в файл, берётся
-  из passthrough-остатков чужого документа (`src/libs/kt-otio/src/convert.rs:529`),
-  и для проекта, созданного нами, оно пустое: чужое имя мы бережём, своего не заводим.
-  Личность документа целиком лежит в имени файла — ровно там же, где Syncthing хранит
-  метку конфликта.
-- **Имя файла программа сочиняет ровно дважды**, и оба раза не про версию: `<имя>.otio`
-  при импорте `.ktproj` (`src/apps/kt-app/src/app.rs:5435`) и имя рендера по
-  содержимому региона (`src/apps/kt-app/src/toolbar.rs:672`). Политики
-  «имя как метка состояния» в программе нет.
-- **Один артефакт, переживающий процесс, у нас уже есть** — файл автосохранения
-  безымянного проекта по фиксированному пути (`autosave_path()`,
-  `src/apps/kt-app/src/app.rs:5020`): без имени, без времени, без владельца, и
-  первый же Ctrl+S в любом экземпляре удаляет его навсегда.
-- **Расхождение мы не обнаруживаем**: mtime файла проекта не читается нигде, вотчера
-  нет, а фоновый автосейв целится в файл пользователя каждые 30 с
-  (`src/apps/kt-app/src/app.rs:1078`).
+- **A project is one text file, and the write is atomic**: `write_project_atomic`
+  (`src/apps/kt-app/src/app.rs:5051`) writes to a temporary file beside it and renames it, so "two versions side by side" is a natural state for us, not an emergency one.
+- **Our document has no name of its own.** The name that travels into the file is taken from the passthrough remainders of a foreign document (`src/libs/kt-otio/src/convert.rs:529`), and for a project created by us it is empty: a foreign name we preserve, our own we do not create. The identity of the document lies wholly in the file name — exactly where Syncthing keeps its conflict label.
+- **The program composes a file name exactly twice**, and neither time is about a version: `<name>.otio` on importing a `.ktproj` (`src/apps/kt-app/src/app.rs:5435`) and the render name derived from the content of a region (`src/apps/kt-app/src/toolbar.rs:672`). There is no policy in the program of "name as a state label."
+- **One artifact that survives the process we already have** — the autosave file of an unnamed project at a fixed path (`autosave_path()`, `src/apps/kt-app/src/app.rs:5020`): without a name, without a time, without an owner, and the first Ctrl+S in any instance deletes it for good.
+- **We do not detect divergence**: the mtime of the project file is read nowhere, there is no watcher, and the background autosave targets the user's file every 30 s (`src/apps/kt-app/src/app.rs:1078`).
 
-БЕЗ СЕТИ: ВЫРОЖДАЕТСЯ — `src/libs/kt-otio/src/convert.rs:529` — исход вырождается в «Сохранить как…» руками: две копии рядом мы делать умеем, а различать их — нет. Имя, которое документ несёт внутри себя, у нашего проекта пустое и заполняется только у чужого файла, поэтому копия и оригинал изнутри неотличимы, и вся метка состояния держится на имени файла, которое никто, кроме человека, не сочиняет.
+OFFLINE: DEGENERATES — `src/libs/kt-otio/src/convert.rs:529` — the outcome degenerates into "Save as…" by hand: we can make two copies side by side, but we cannot tell them apart. The name that a document carries inside itself is empty for our project and is filled in only for a foreign file, so the copy and the original are indistinguishable from the inside, and the whole state label rests on a file name that nobody but a person composes.
 
-ЦЕНА СЕТИ: назвать проигравшего, не спрашивая никого, — общие часы — правило исхода сравнивает время правки двух машин, а у нас нет ни второго времени, ни доверия к своему: mtime файла проекта программа не читает ни разу.
+NETWORK COST: to name the loser without asking anyone — shared clock — the outcome rule compares the edit times of two machines, and we have neither a second time nor trust in our own: the program does not read the mtime of the project file even once.
 
-ЦЕНА СЕТИ: дописать в имя, КЕМ правился проигравший, — учётная запись — третье поле метки не выводится ни из документа, ни из файловой системы: у нас нет ни имени человека, ни идентификатора машины нигде в коде.
+NETWORK COST: to add to the name WHO edited the loser — user account — the third field of the label is derived neither from the document nor from the file system: we have no person's name and no machine identifier anywhere in the code.
 
-### Чего не хватает
+### What is missing
 
-- Обнаружения расхождения — без него третий исход некому запустить (F-COL-013,
-  F-COL-034).
-- Правила именования второй копии: сегодня его сочиняет человек, и потому две копии
-  одного дня различаются словами «финал» и «финал2».
-- Способа посмотреть, чем две копии отличаются: сохранить обе мы можем уже сейчас,
-  а сравнить — нет (F-COL-036).
+- Detection of the divergence — without it the third outcome has no one to trigger it (F-COL-013, F-COL-034).
+- A naming rule for the second copy: today a person invents it, and so two copies from one day are told apart by the words "final" and "final2".
+- A way to look at how two copies differ: we can already keep both, but we cannot compare them (F-COL-036).
 
-### Что мешает
+### What gets in the way
 
-Ничего конструктивного — и это редкий случай. Механизм не требует ни формата, ни
-модели, ни инварианта: он целиком живёт в слое записи файла. Мешает только
-отсутствие сигнала на входе (расхождение не с чем сравнивать) и отсутствие двух из
-трёх полей метки: времени, которому можно верить, и имени того, кто правил. Из
-третьего поля — даты — метка одна не собирается, потому что не отвечает на вопрос
-«чей».
+Nothing constructive — and this is a rare case. The mechanism requires no format, no model, and no invariant: it lives entirely in the file-writing layer. Only two things get in the way: the absence of a signal on input (there is nothing to compare the divergence with), and the absence of two of the three fields of the label — a time one can believe in, and the name of the one who edited. From the third field, the date, a label alone cannot be assembled, because it does not answer the question "whose?"
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Ни одного из двенадцати: механизм не касается ни звука, ни кадра, ни кэша, ни
-времени. Правил чек-листа UI не задевает тоже — вопрос пользователю, если он
-когда-нибудь понадобится, живёт в том же диалоге сохранения, что и сегодня.
+None of the twelve: the mechanism touches neither sound, nor picture, nor cache, nor time. It does not touch the rules of the UI checklist either — the question to the user, should it ever be needed, lives in the same save dialog as today.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — правило имени и одна ветка в пути записи; вся стоимость на входе, в обнаружении расхождения (F-COL-034) |
-| Где основная работа | kt-app (путь записи проекта, имя копии), kt-otio (имя документа внутри файла, если решим его завести) |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | «файл, изменённый снаружи, не перезаписывается, а сохраняется рядом под меткой»; «имя копии детерминировано и не зависит от локали» |
-| Зависит от | F-COL-034 (чем обнаружить расхождение), F-COL-013 (сторож рядом с файлом), F-RES-001 (сколько состояний на диске) |
-| Ломает совместимость | нет |
+| Size | S — the naming rule and one branch in the write path; the whole cost lies at the input, in detecting the divergence (F-COL-034) |
+| Where the main work is | kt-app (the project write path, the name of the copy), kt-otio (the document name inside the file, if we decide to introduce it) |
+| Project format | does not touch it |
+| Tests to write | "a file changed from outside is not overwritten but is saved beside it under a label"; "the name of the copy is deterministic and does not depend on the locale" |
+| Depends on | F-COL-034 (how to detect the divergence), F-COL-013 (a guard beside the file), F-RES-001 (how many states on disk) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Механизм берём как ЗАПАСНОЙ ИСХОД, а не как функцию, и не заводим под него ничего
-своего. Разведка дала здесь самый практичный вывод волны: когда программа обнаружит,
-что файл на диске стал не тем, из которого она читала, у неё будет три ответа, и
-правильный — третий. Перезаписать молча нельзя (потеря), спросить «чью версию
-оставить» нечестно (мы не показываем, чем они отличаются), а сохранить рядом под
-меткой честно всегда и не требует ни сервера, ни часов, ни имени человека — ровно
-потому, что метка нужна не для автоматического разрешения, а для того, чтобы человек
-нашёл вторую версию через неделю.
+We take the mechanism as an EMERGENCY OUTCOME, not as a feature, and we introduce nothing of our own for it. The reconnaissance gave the most practical conclusion of the wave here: when the program detects that the file on disk has become not the one it read from, it will have three answers, and the right one is the third. Overwriting silently is not allowed (loss), asking "whose version to keep" is dishonest (we do not show how they differ), while keeping it beside the file under a label is honest always and requires neither a server, nor clocks, nor a person's name — precisely because the label is needed not for automatic resolution but so that the person can find the second version a week later.
 
-Отдельной строкой — находка про нас самих: **у нашего документа нет своего имени**.
-Чужое имя таймлайна мы бережно возим через круг, а собственный проект пишет туда
-пустую строку, и вся личность документа держится на имени файла. Это делает нас
-структурно ГОТОВЫМИ к схеме Syncthing (метка в имени — единственное место, которое у
-нас и так работает) и одновременно объясняет, почему две копии проекта изнутри
-неразличимы.
+A separate line — a finding about ourselves: **our document has no name of its own**. A foreign timeline's name we carefully carry around the loop, but our own project writes an empty string there, and the whole identity of the document rests on the file name. This makes us structurally READY for Syncthing's scheme (a label in the name — the only place that already works for us) and at the same time explains why two copies of a project are indistinguishable from the inside.
 
-Серверную половину не заводим по общей формуле волны: диалог разрешения конфликта
-предполагает второго участника, а объявить его заметка не имеет права.
+We do not introduce the server half, following the general wave formula: the conflict-resolution dialog presupposes a second participant, and a note has no right to declare one.
 
-Чем отличаемся от соседей. **F-COL-013** (два процесса над одним файлом) — про то,
-как НЕ ДАТЬ разойтись; здесь — что делать, когда уже разошлись, и это принципиально
-другая половина. **F-RES-001** (автосейв и версии проекта) — про то, сколько
-состояний программа держит на диске СВОЕЙ волей; конфликтная копия — состояние,
-рождённое чужой правкой, и её нельзя прореживать по расписанию. **F-COL-024**
-(версия ролика как единица рецензии) — про стопку отданных РЕНДЕРОВ, здесь — про
-две копии одного документа. **F-COL-036** — про то, чем эти две копии сравнить.
+How we differ from neighbours. **F-COL-013** (two processes over one file) is about how NOT to let things diverge; here it is about what to do once they have diverged — a fundamentally different half. **F-RES-001** (autosave and project versions) is about how many states the program keeps on disk by its OWN will; a conflict copy is a state born of someone else's edit, and it cannot be thinned out on a schedule. **F-COL-024** (the version of a reel as a unit of review) is about the pile of RENDERS handed over; here it is about two copies of one document. **F-COL-036** is about how to compare those two copies.
 
-## Источники
+## Sources
 
-- https://docs.syncthing.net/users/syncing.html — схема имени
-  `<filename>.sync-conflict-<date>-<time>-<modifiedBy>.<ext>`, правило исхода по
-  времени правки и тай-брейк по первым 63 битам device ID, «treated as normal
-  files» (дата обращения 2026-09-08)
+- https://docs.syncthing.net/users/syncing.html — the scheme of the name
+  `<filename>.sync-conflict-<date>-<time>-<modifiedBy>.<ext>`, the outcome rule by edit time and the tie-break by the first 63 bits of the device ID, "treated as normal files" (accessed 2026-09-08)
 - https://community.adobe.com/t5/team-projects/team-project-could-not-resolve-the-conflict/td-p/12174435
-  — оба исхода Team Projects не сработали (13.07.2021; дата обращения 2026-09-08)
+  — both outcomes of Team Projects failed to work (13.07.2021; accessed 2026-09-08)
 - https://community.adobe.com/t5/team-projects-discussions/premiere-pro-team-project-resolve-conflicts-empty-window/td-p/11387956
-  — пустое окно разрешения конфликтов (26.08.2020, подтверждение 16.12.2024; дата
-  обращения 2026-09-08)
-- https://support.apple.com/en-us/HT207128 — эксклюзивный замок библиотеки Final
-  Cut: второй версии не возникает, потому что второму не дают открыть (дата
-  обращения 2026-09-08)
-- Файлы `-conflict` в Blackmagic Cloud известны по форумным сообщениям, но
-  `forum.blackmagicdesign.com` закрыт Cloudflare — дословной цитаты с датой
-  получить не удалось, факт приведён с пометкой о недоступности первоисточника.
-- Наш код проверен грепом по `src/` 08.09.2026: `kt-app/src/app.rs`
-  (`write_project_atomic`, `autosave_path`, импорт `.ktproj`, фоновый автосейв),
-  `kt-otio/src/convert.rs` (имя таймлайна из `Retained`),
-  `kt-app/src/toolbar.rs` (единственное сочинённое имя файла).
+  — the empty conflict-resolution window (26.08.2020, confirmed 16.12.2024; accessed 2026-09-08)
+- https://support.apple.com/en-us/HT207128 — Final Cut's exclusive library lock: a second version does not arise, because the second person is not allowed to open it (accessed 2026-09-08)
+- Files with the `-conflict` suffix in Blackmagic Cloud are known from forum messages, but `forum.blackmagicdesign.com` is closed by Cloudflare — a verbatim quotation with a date could not be obtained, so the fact is given with a note that the primary source is unavailable.
+- Our code was checked by grep over `src/` on 08.09.2026: `kt-app/src/app.rs` (`write_project_atomic`, `autosave_path`, the `.ktproj` import, the background autosave), `kt-otio/src/convert.rs` (the timeline name from `Retained`), `kt-app/src/toolbar.rs` (the only composed file name).

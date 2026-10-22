@@ -1,12 +1,12 @@
 ---
 id: F-HLP-027
-title: Стартовый экран: недавние проекты, шаблоны, вход в обучение
-status: кандидат
+title: Start screen: recent projects, templates, entry to learning
+status: candidate
 priority: B
 cost: S
 category: help/onboarding
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, blender-5.2, vscode-1.136, jetbrains-2026.2]
-we_have: нет
+we_have: no
 crates: [kt-app]
 invariants: [12]
 ui_rules: [9, 13, 18, 19, 20]
@@ -18,424 +18,201 @@ trackers: [kde-invent, kde-bugzilla, pitivi, olive, openshot]
 checked: 2026-09-08
 ---
 
-# F-HLP-027 — Стартовый экран: недавние проекты, шаблоны, вход в обучение
+# F-HLP-027 — Start screen: recent projects, templates, entry to learning
 
-## Суть
+## Essence
 
-Что монтажёр видит в первую секунду после запуска, когда проекта ещё нет:
-перечень того, над чем он работал (имя файла и когда), способ начать новый
-проект по заготовке, способ открыть чужой и одну дверь в обучение. Это не
-витрина новостей продукта, а ответ на единственный вопрос первой секунды —
-«где то, что я делал вчера». Всё остальное на этом экране — довесок, и
-именно довесок делает его тем, что отключают.
+What the editor sees in the first second after launch, when there is no project yet: a list of what they worked on (file name and when), a way to start a new project from a template, a way to open someone else's, and one door into training. This is not a showcase of the product's news but an answer to the only question of the first second — "where is what I was doing yesterday". Everything else on this screen is an add-on, and precisely the add-on is what makes it something people turn off.
 
-## У кого и как
+## Who has it and how
 
-Вопрос строки: что стоит на месте пустого окна ПРИ ЗАПУСКЕ (не в пустой
-панели внутри уже открытого проекта — это F-HLP-020) и что делает программа,
-когда её запустили без аргументов.
+The question of the row: what stands in place of the empty window AT LAUNCH (not in the empty panel inside an already open project — that is F-HLP-020) and what the program does when it was launched without arguments.
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 b66 | opening splash screen + «открывать последний проект» | Два независимых ответа на один вопрос, и они дерутся. Есть стартовая заставка, которую можно выключить, и отдельная галка первым пунктом `Options → Preferences → General`, открывающая последний сохранённый проект. Проверено по форуму вендора на build 143 (август 2026): при ВКЛЮЧЁННОЙ заставке галка перестаёт работать. Отдельно есть `VEGAS Hub` — панель стокового медиа (Storyblocks), она к старту не относится и в перпетуальной лицензии частью функций не поставляется |
-| Adobe Premiere | 26.x | Home screen | Отдельное окно поверх пустого приложения: список недавних проектов, «новый», «открыть» и вкладка обучения; часть площади отдана материалам Adobe. **[НЕ ПРОВЕРЕНО: `helpx.adobe.com` отдаёт 404/422 через текст-прокси, `community.adobe.com` и `reddit.com` из этого окружения не открываются — см. «Источники»]** |
-| DaVinci Resolve | 21 | Project Manager | Пустого монтажа при старте не бывает. По руководству: «For most users, Project Manager is the first window you'll see when you open DaVinci Resolve», и «Unlike other applications that rely on your file manager for organizing projects, DaVinci Resolve requires you to do most project organization in the Project Manager» — проект живёт в библиотеке, а не файлом, поэтому стартовый экран здесь не приветствие, а обязательный шаг. Дорога назад названа: кнопка Home внизу справа либо `File > Project Manager` (`Shift-1`). Конфликт с «открывать последнее» решён настройкой `Reload last working project on startup`, но она включается только внутри пресета пользовательских настроек |
-| Final Cut Pro | 12.3 | нет | Стартового экрана НЕТ вовсе, и это осознанный выбор: по руководству, «The first time you open Final Cut Pro, it creates a library file in the Movies folder» — программа сама заводит библиотеку, дальше библиотеки остаются открытыми между запусками. «Недавние» существуют, но подменю: `File > Open Library`, «then choose a library from the submenu» |
-| After Effects | 26.x | Home screen | Тот же механизм Adobe, что у Premiere: общий домашний экран со списком недавних и учебными материалами. **[НЕ ПРОВЕРЕНО: тот же барьер `helpx.adobe.com`]** |
+| VEGAS Pro | 2026.0 b66 | opening splash screen + "open last project" | Two independent answers to one question, and they fight. There is a start splash screen that can be switched off, and a separate checkbox as the first item of `Options → Preferences → General`, which opens the last saved project. Verified on the vendor's forum on build 143 (August 2026): with the splash screen ENABLED, the checkbox stops working. Separately there is `VEGAS Hub` — a panel of stock media (Storyblocks); it has nothing to do with startup, and with a perpetual license some of its functions are not shipped |
+| Adobe Premiere | 26.x | Home screen | A separate window over an empty application: the list of recent projects, "new", "open" and a training tab; part of the area is given to Adobe materials. **[NOT VERIFIED: `helpx.adobe.com` returns 404/422 via the text proxy, `community.adobe.com` and `reddit.com` do not open from this environment — see "Sources"]** |
+| DaVinci Resolve | 21 | Project Manager | There is never an empty edit at startup. According to the manual: "For most users, Project Manager is the first window you'll see when you open DaVinci Resolve", and "Unlike other applications that rely on your file manager for organizing projects, DaVinci Resolve requires you to do most project organization in the Project Manager" — the project lives in a library, not as a file, so the start screen here is not a greeting but a mandatory step. The way back is named: the Home button at the lower right or `File > Project Manager` (`Shift-1`). The conflict with "open last" is resolved by the setting `Reload last working project on startup`, but it is switched on only inside a preset of user settings |
+| Final Cut Pro | 12.3 | none | There is NO start screen at all, and this is a conscious choice: according to the manual, "The first time you open Final Cut Pro, it creates a library file in the Movies folder" — the program creates the library itself, and afterwards the libraries stay open between launches. "Recent" items exist, but in a submenu: `File > Open Library`, "then choose a library from the submenu" |
+| After Effects | 26.x | Home screen | The same Adobe mechanism as in Premiere: a common home screen with the list of recents and training materials. **[NOT VERIFIED: the same `helpx.adobe.com` barrier]** |
 
-**Вне ядра.** Без этих трёх программ фичу описать нельзя: у первой стартовый
-экран — эталон состава (шаблоны + недавние + восстановление сеанса в ОДНОМ
-месте) и эталон цены закрытия; у второй решение оформлено не галкой, а
-перечислением «чем занять пустой слот», что ровно отвечает правилу 13; у
-третьей список недавних дорос до собственного объекта с группами и иконками.
-Из пяти NLE ядра до третьего пункта дотягивается только Resolve (папки в
-Project Manager), а первых двух нет ни у кого: ни явной кнопки восстановления
-сеанса рядом с недавними, ни решения «чем занят пустой слот» вместо галки.
+**Outside the core.** Without these three programs the feature cannot be described: the first one's start screen is the benchmark for the composition (templates + recents + session restore in ONE place) and the benchmark for the price of closing it; the second one's decision is designed not as a checkbox but as an enumeration of "what to fill the empty slot with", which answers rule 13 exactly; the third one's list of recents has grown into its own object with groups and icons. Of the five core NLEs only Resolve reaches the third item (folders in the Project Manager), while the first two are held by nobody: neither an explicit session-restore button next to the recents, nor a decision on "what occupies the empty slot" instead of a checkbox.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Blender | 5.2 LTS | Splash Screen | Нижняя половина заставки — «интерактивная область»: `New File` (шаблоны), `Recent Files`, `Open`, `Recover Last Session`, `What's New`, `Donate to Blender`. Закрывается кликом в любое место окна мимо неё или `Esc` — кнопки «ОК» нет вообще; возвращается через иконку Blender в Topbar → `Splash Screen` |
-| Visual Studio Code | 1.136 | Welcome page | Не галка, а перечисление из семи значений `workbench.startupEditor`: `none`, `welcomePage`, `readme`, `newUntitledFile`, `welcomePageInEmptyWorkbench`, `terminal`, `agentSessionsWelcomePage`. По описанию — «Controls which editor is shown at startup, **if none are restored from the previous session**»: экран занимает слот, который иначе пуст |
-| IntelliJ IDEA | 2026.2 | Welcome screen | Единственное окно, когда проект не открыт. Список недавних — не MRU-хвост, а объект: правый клик → `New Project Group`, произвольная группировка, и своя SVG-иконка на проект («Set Custom Project Icon») |
+| Blender | 5.2 LTS | Splash Screen | The lower half of the splash is an "interactive area": `New File` (templates), `Recent Files`, `Open`, `Recover Last Session`, `What's New`, `Donate to Blender`. It is closed by clicking anywhere in the window outside it or with `Esc` — there is no "OK" button at all; it is brought back via the Blender icon in the Topbar → `Splash Screen` |
+| Visual Studio Code | 1.136 | Welcome page | Not a checkbox, but an enumeration of seven values of `workbench.startupEditor`: `none`, `welcomePage`, `readme`, `newUntitledFile`, `welcomePageInEmptyWorkbench`, `terminal`, `agentSessionsWelcomePage`. According to the description — "Controls which editor is shown at startup, **if none are restored from the previous session**": the screen occupies a slot that would otherwise be empty |
+| IntelliJ IDEA | 2026.2 | Welcome screen | The only window when no project is open. The list of recent projects is not an MRU tail but an object: right click → `New Project Group`, arbitrary grouping, and its own SVG icon per project ("Set Custom Project Icon") |
 
-## Фишка фишки
+## The trick behind it
 
-**Что механизм несёт, чего одна строка статусбара вместить не может:** список
-ЧУЖИХ ИМЁН. Строка несёт одно наше предложение; стартовый экран несёт N строк,
-каждая из которых написана пользователем (имя его файла), кликабельна и несёт
-дату. Ни ёмкость строки, ни её текст этого не заменяют в принципе: чтобы
-навести мышь на «вчерашний проект», надо, чтобы он где-то был нарисован.
+**What the mechanism carries that one status-bar line cannot hold:** a list of OTHER PEOPLE'S NAMES. A line carries one sentence of ours; the start screen carries N lines, each written by the user (the name of his file), clickable, and carrying a date. Neither the capacity of a line nor its text can replace this in principle: to hover the mouse over "yesterday's project", it has to be drawn somewhere.
 
-Три детали, которых нет в списках возможностей.
+Three details that are absent from the lists of features.
 
-1. **Список недавних — единственная справочная поверхность, текст которой
-   пишем не мы.** Имена файлов не переводятся, не считаются в 160-символьный
-   предел `src/apps/kt-app/build.rs`, не требуют новых глифов и не проходят
-   через t125/t131. Вся цена локализации из F-HLP-033 на него почти не
-   распространяется: переводить надо заголовок и два глагола, а не содержимое.
-   Это делает его самой дешёвой «справкой» в проекте — и единственной, которую
-   пользователь ЖДЁТ увидеть, а не терпит.
-2. **Blender делает восстановление сеанса ВЫБОРОМ, а не поведением.** На
-   заставке `Recover Last Session` стоит отдельной строкой рядом с `Recent
-   Files` — то есть аварийный автосейв виден и нажимается руками. У нас ровно
-   тот же автосейв (`src/apps/kt-app/src/app.rs:4908`) подставляется молча и
-   только в третью очередь; пользователю сообщают об этом жёлтой строкой,
-   которая живёт шесть секунд.
-3. **Стартовый экран и «открывать последний проект» — два ответа на один
-   вопрос, и они всегда дерутся.** У VEGAS 2026 build 143 это баг: включённая
-   заставка ломает галку. У Resolve 21 это признанная настройка `Reload last
-   working project on startup`, но включить её можно только «when editing a
-   preset configuration in the Presets panel» — то есть решение о первом
-   экране спрятано на этаж ниже настроек. У нас драки нет ровно потому, что
-   второго ответа нет: мы всегда молча открываем последнее.
+1. **The list of recent items is the only reference surface whose text we do not write.** File names are not translated, are not counted against the 160-character limit of `src/apps/kt-app/build.rs`, do not require new glyphs, and do not pass through t125/t131. The whole localization cost from F-HLP-033 barely applies to it: one has to translate the heading and two verbs, not the content. This makes it the cheapest "help" in the project — and the only one that the user WAITS to see, rather than endures.
+2. **Blender makes session recovery a CHOICE, not a behavior.** On the splash, `Recover Last Session` stands as a separate line next to `Recent Files` — that is, the emergency autosave is visible and is clicked by hand. Ours is the same autosave (`src/apps/kt-app/src/app.rs:4908`), which is substituted silently and only in third priority; the user is told about it by a yellow line that lives for six seconds.
+3. **The start screen and "open the last project" are two answers to one question, and they always fight.** In VEGAS 2026 build 143 this is a bug: an enabled splash breaks the checkbox. In Resolve 21 this is an acknowledged setting `Reload last working project on startup`, but it can be enabled only "when editing a preset configuration in the Presets panel" — that is, the decision about the first screen is hidden a floor below the settings. We have no fight precisely because there is no second answer: we always silently open the last one.
 
-## Плюсы
+## Pros
 
-- Список недавних отвечает на «где вчерашнее» без файлового диалога: путь
-  помнит программа, а пользователь помнит только имя. Это единственный способ
-  вернуться к работе, не зная, куда ты её положил.
-- Стартовый экран — единственный момент, когда у программы есть внимание
-  пользователя и НЕТ работы, которую можно испортить: перекрывать нечего,
-  сбивать жест нечем, поэтому сюда влезает то, что в рабочем окне запрещено.
-- Он учит без тура: пользователь приходит на этот экран НАМЕРЕННО (за своим
-  файлом) — значит, всё, что там лежит рядом, прочитано попутно и бесплатно.
-- Шаблон проекта = набор настроек (fps, размер, состав дорожек) одним кликом.
-  У нас настройки нового проекта зашиты константой 1280×720@30
-  (`src/apps/kt-app/src/app.rs:333`), и поменять их при создании негде.
-- Отдельная строка «восстановить сеанс» делает аварийный автосейв видимым:
-  файл на диске перестаёт быть тайной программы.
+- The list of recent items answers "where is yesterday's work" without a file dialog: the program remembers the path, the user remembers only the name. This is the only way to return to work without knowing where you put it.
+- The start screen is the only moment when the program has the user's attention and there is NO work that can be spoiled: there is nothing to overlap, nothing to disrupt with a gesture, so what is forbidden in the working window fits here.
+- It teaches without a tour: the user comes to this screen DELIBERATELY (for his file) — so everything lying next to it is read along the way, for free.
+- A project template = a set of settings (fps, size, set of tracks) in one click. For us the settings of a new project are hard-coded as the constant 1280×720@30 (`src/apps/kt-app/src/app.rs:333`), and there is nowhere to change them at creation.
+- A separate "restore session" line makes the emergency autosave visible: the file on disk stops being the program's secret.
 
-## Минусы
+## Cons
 
-- Экран, который надо ЗАКРЫТЬ перед работой, берёт секунду на каждом запуске,
-  и это единственная причина, по которой все вендоры дают его отключить.
-  Blender платит меньше всех: заставка закрывается кликом куда угодно, то
-  есть тем самым движением, которым пользователь и так начинает работу.
-- Отключаемость порождает долг по правилу 19: выключив, надо сказать, где
-  включить обратно (F-HLP-009). Дорогу назад прямо в руководстве пишут двое:
-  Blender (иконка в Topbar → `Splash Screen`) и Resolve (кнопка Home либо
-  `File > Project Manager`).
-- **Стартовый экран — самое дорогое место в программе для маркетинга, и у
-  части вендоров он им и стал.** Это видно не по жалобам, а по исходникам:
-  значение `agentSessionsWelcomePage` подменяет стартовую страницу VS Code
-  промо-страницей нового продукта, применяется только пока пользователь не
-  спрятал соответствующую панель (`chatEntitlementService.sentiment.hidden`),
-  и по собственному описанию «Will override the workbench secondary side bar
-  visibility settings» — то есть перебивает настройки раскладки. Сам выбор
-  значения по умолчанию помечен `'experiment': { mode: 'auto' }`: чем занят
-  твой первый экран, решает эксперимент вендора. У Blender мягкий вариант
-  того же — строка `Donate to Blender` на заставке.
-- Список недавних отрастает сам (правило 20 буквально): без предела, порядка
-  и способа очистить он превращается в мусор, а на общей машине — в перечень
-  чужих проектов.
-- Список показывает то, чего уже нет: строка остаётся, файл удалён или лежит
-  на отключённом диске.
-- **Отдельное окно приносит класс дефектов, которого у редактора без него нет,
-  и трекеры называют его поимённо.** Не «монтаж не собирается», а: окно не
-  поднимается над чужими приложениями и не видно в `Alt+Tab` (kde-invent #2124,
-  открыт с 10.01.2026), заставка не фиксированного размера и ломает тайловые WM
-  (kde-bugzilla #513581), падение в простое (kde-invent #2112), фокус и
-  модальность (pitivi #1066, #1672), «вьюер закрывает ассистента» (pitivi
-  #1575). Ни одна из этих задач не про монтаж — это цена второго окна как
-  такового, и платится она на чужих оконных менеджерах, где нас нет.
-- **Список недавних на общей машине — перечень чужих проектов, и это не
-  умозрительно.** В сборке OpenShot образца января 2016 пользователь обнаружил
-  MRU-хвост самого разработчика (openshot #22): в программе лежал список чужих
-  личных файлов, и ни одна строка при этом не сообщала об ошибке, когда файла
-  не было.
-- **Строка списка — это ещё и путь к падению.** У kdenlive половина задач про
-  «недавние» — падения ровно при открытии строки (#430183, #455595, #455834,
-  #519313); список делает одним кликом то, что раньше требовало файлового
-  диалога, поэтому кривой проект открывают чаще и без предупреждения.
+- A screen that must be CLOSED before work takes a second on every launch, and this is the only reason all vendors give a way to turn it off. Blender pays the least: the splash closes by a click anywhere, that is, by the very movement with which the user starts working anyway.
+- Being switchable creates a debt under rule 19: having switched it off, one has to say where to turn it back on (F-HLP-009). The way back is written in the manuals by two: Blender (the icon in the Topbar → `Splash Screen`) and Resolve (the Home button or `File > Project Manager`).
+- **The start screen is the most expensive place in a program for marketing, and for some vendors it has become exactly that.** This is visible not from complaints but from the sources: the value `agentSessionsWelcomePage` replaces the start page of VS Code with a promo page for a new product, applies only while the user has not hidden the corresponding panel (`chatEntitlementService.sentiment.hidden`), and by its own description "Will override the workbench secondary side bar visibility settings" — that is, it overrides the layout settings. The default value itself is marked `'experiment': { mode: 'auto' }`: what your first screen is occupied with is decided by the vendor's experiment. Blender has a soft version of the same thing — the line `Donate to Blender` on the splash.
+- The list of recent items grows by itself (rule 20 literally): without a limit, an order, and a way to clear it, it turns into garbage, and on a shared machine into a list of other people's projects.
+- The list shows what no longer exists: the line stays, the file was deleted or lies on a disconnected disk.
+- **A separate window brings a class of defects that an editor without one does not have, and the trackers name it explicitly.** Not "the edit does not assemble", but: the window does not rise above other applications and is not visible in `Alt+Tab` (kde-invent #2124, open since 10.01.2026), the splash is not of fixed size and breaks tiling WMs (kde-bugzilla #513581), a crash when idle (kde-invent #2112), focus and modality (pitivi #1066, #1672), "the viewer closes the assistant" (pitivi #1575). None of these tasks is about editing — this is the price of a second window as such, and it is paid on other people's window managers, where we are not present.
+- **A list of recent items on a shared machine is a list of other people's projects, and this is not speculative.** In an OpenShot build of January 2016 a user found the MRU tail of the developer himself (openshot #22): the program contained a list of someone else's personal files, and not one line reported an error when the file did not exist.
+- **A list row is also a path to a crash.** For kdenlive, half of the tasks about "recent" are crashes exactly when a list row is opened (#430183, #455595, #455834, #519313); the list does in one click what used to require a file dialog, so broken projects get opened more often and without a warning.
 
-## Что говорят пользователи
+## What users say
 
-> «I have found that if the opening splash screen is turned off the previous
-> file will open. If the splash screen is set to on the file will not open.»
-> — lqbbusse, форум Boris FX / VEGAS Pro, 23.08.2026,
+> "I have found that if the opening splash screen is turned off the previous
+> file will open. If the splash screen is set to on the file will not open."
+> — lqbbusse, Boris FX forum / VEGAS Pro, 23.08.2026,
 > https://forum.borisfx.com/t/open-last-saved-project-doesnt-open-last-saved-project/25165
 
-Тред начался с «My preference is set to always open last saved project, but
-Vegas always just opens a new project» (21.08.2026, VEGAS Pro 2026 build 143);
-второй участник просил подтвердить, что «первый пункт» в
-`Options/Preferences/General` отмечен, и воспроизвести не смог — причина
-нашлась через два дня, и это оказался стартовый экран.
+The thread began with "My preference is set to always open last saved project, but Vegas always just opens a new project" (21.08.2026, VEGAS Pro 2026 build 143); a second participant asked to confirm that the "first item" in `Options/Preferences/General` was checked, and could not reproduce it — the cause was found two days later, and it turned out to be the start screen.
 
-Про пропавшие строки списка — из той же экосистемы (Silhouette, Boris FX):
+About the vanished rows of the list — from the same ecosystem (Silhouette, Boris FX):
 
-> «So I tried some projects in my ‘recent projects’ lists, and some would load
+> "So I tried some projects in my 'recent projects' lists, and some would load
 > (allowing a media drop) and some would not (because they would fail to load
-> for an unknown reason).»
+> for an unknown reason)."
 > — sam.marrocco, 01.01.2023,
 > https://forum.borisfx.com/t/feature-suggestion-no-project-open/15592
 
-Дальше в том же сообщении: проекты были удалены с диска, а единственным
-признаком неудачи было отсутствие имени в заголовке окна. Это ровно тот
-провал, который список недавних создаёт, если не отвечать на пропажу файла.
+Further in the same message: the projects had been deleted from the disk, and the only sign of failure was the absence of a name in the window title. This is exactly the failure that a list of recent items creates if it does not respond to a missing file.
 
-Тезис «стартовый экран — самое дорогое место для маркетинга» больше не держится
-на одних исходниках VS Code. Kdenlive свой стартовый экран построил: запрос
-открыт с ноября 2023, 56 комментариев, реализация приехала в дев-сборку
-25.11.70 и вышла релизом 25.12, а задача до сих пор не закрыта — и её описание
-прямо называет, чем занята нижняя полоса экрана:
+The thesis "the start screen is the most expensive place for marketing" no longer rests only on the sources of VS Code. Kdenlive built its own start screen: the request has been open since November 2023, with 56 comments; the implementation arrived in the dev build 25.11.70 and shipped in the 25.12 release, and the task is still not closed — and its description names exactly what occupies the bottom strip of the screen:
 
-> «When 3 or more projects appear in the list of recent files, a bottom bar
-> displays a button to get involved and a button redirecting to our fund page.»
-> — kde-invent #1787 «Feature : Add a welcome screen», описание задачи (заведена
-> 12.11.2023, описание обновлено 03.04.2026),
+> "When 3 or more projects appear in the list of recent files, a bottom bar
+> displays a button to get involved and a button redirecting to our fund page."
+> — kde-invent #1787 "Feature : Add a welcome screen", task description (filed
+> 12.11.2023, description updated 03.04.2026),
 > https://invent.kde.org/multimedia/kdenlive/-/work_items/1787
 
-Порог включения панели сбора средств — «три проекта в списке»: площадь первой
-секунды монетизируют даже там, где продавать нечего. Там же названо и то, чего
-требует правило 20 — список обязан уметь чиститься:
+The threshold for showing the fundraising panel is "three projects in the list": the first second's area is monetized even where there is nothing to sell. The same task names what rule 20 requires — the list must be able to be cleaned:
 
-> «Both list of recent elements (files / profiles) allow removing single
-> elements from the list or entirely clearing history.»
-> — та же задача, тот же URL.
+> "Both list of recent elements (files / profiles) allow removing single
+> elements from the list or entirely clearing history."
+> — the same task, the same URL.
 
-Что бывает, когда список не чистится и не проверяется, видно по сборке OpenShot
-образца января 2016, в которой пользователь нашёл MRU-хвост самого
-разработчика:
+What happens when a list is neither cleaned nor checked is visible from the OpenShot build of January 2016, in which a user found the developer's own MRU tail:
 
-> «It does not bother me the least but I'd just like for you to know about this.
+> "It does not bother me the least but I'd just like for you to know about this.
 > […] And BTW, there's no error message when I try to load any of the
-> non-existing project files.»
-> — openshot #22 «Menu: File --> Recent Projects contains a list of your
-> (Jonathan) recent projects», 12.01.2016,
+> non-existing project files."
+> — openshot #22 "Menu: File --> Recent Projects contains a list of your
+> (Jonathan) recent projects", 12.01.2016,
 > https://github.com/OpenShot/openshot-qt/issues/22
 
-СИГНАЛ: стартовый экран как ОТДЕЛЬНОЕ ОКНО — 14 задач в pitivi, `welcome (screen|dialog|page|window)|start.?up (wizard|assistant)`; доля 0.5% против 0.2% в kde-invent (4 из 2217)
+SIGNAL: the start screen as a SEPARATE WINDOW — 14 tasks in pitivi, `welcome (screen|dialog|page|window)|start.?up (wizard|assistant)`; the share is 0.5% against 0.2% in kde-invent (4 of 2217)
 
-Считается не «сколько раз просили», а сколько стоило владение. Четырнадцать
-задач pitivi — это биография одного окна: фокус (#1066), ширина кнопок (#1261),
-модальность (#1672), «сделайте его неотменяемым» (#1382), вьюер, закрывающий
-ассистента (#1575), core dump при создании проекта (#1803) — и итог #1302
-«Integrate the welcome / startup assistant dialog in the main window», то есть
-редактор, построивший стартовый экран отдельным окном, кончил тем, что втащил
-его внутрь главного. У kdenlive свои четыре набежали за первые полгода жизни
-экрана — с дев-сборки 25.11.70 до июня 2026: клик по строке недавних открывал
-не тот проект (#2092, 10.11.2025), окно не поднимается над чужими приложениями
-и не попадает в `Alt+Tab` (#2124, 10.01.2026, открыт), падение заставки в
-простое (#2112, 18.12.2025), имя профиля под полосой прокрутки (#2202,
-05.06.2026).
+What is counted is not "how many times it was asked for" but what the ownership cost. Fourteen pitivi tasks are the biography of one window: focus (#1066), button width (#1261), modality (#1672), "make it non-dismissable" (#1382), the viewer closing the assistant (#1575), a core dump when creating a project (#1803) — and the outcome #1302 "Integrate the welcome / startup assistant dialog in the main window", that is, an editor that built its start screen as a separate window ended up pulling it into the main one. kdenlive's own four came in during the first half-year of the screen's life, from the dev build 25.11.70 to June 2026: a click on a recent row opened the wrong project (#2092, 10.11.2025), the window does not rise above other applications and does not appear in `Alt+Tab` (#2124, 10.01.2026, open), the splash crashes when idle (#2112, 18.12.2025), the profile name sits under the scrollbar (#2202, 05.06.2026).
 
-СИГНАЛ: список недавних как предмет задач — 8 задач в kde-bugzilla, `recent(ly)? (used |opened )?(project|file|document)s?|open recent|clear.{0,12}(recent|history)`; доля 0.1% против 0.2% в olive (4 из 1853)
+SIGNAL: the list of recent items as a subject of tasks — 8 tasks in kde-bugzilla, `recent(ly)? (used |opened )?(project|file|document)s?|open recent|clear.{0,12}(recent|history)`; the share is 0.1% against 0.2% in olive (4 of 1853)
 
-Половина восьми — падения ровно в момент открытия строки списка (#430183,
-#455595, #455834, #519313), и ни одна из четырёх не закрыта как FIXED: INVALID,
-UPSTREAM, WORKSFORME и UNCONFIRMED (см. правило «закрыто ≠ починено»,
-`_trackers.md`). Отдельно #499544 «Clear Recent History not working» — очистка,
-которой требует правило 20, тоже ломается. У olive из четырёх задач одна — «[UI]
-Open Recent doesn't work» (#1243), вторая — отказ открыть недавний проект, если
-в пути есть диакритика (#954); третья (#180, «Compilation broken due to recent
-Project UI removal») — ложное срабатывание на слове «recent», и доля 0.2%
-включает его: фильтр по заголовкам чистым не бывает, поэтому он и приводится
-дословно.
+Half of the eight are crashes exactly at the moment of opening a list row (#430183, #455595, #455834, #519313), and none of the four is closed as FIXED: INVALID, UPSTREAM, WORKSFORME or UNCONFIRMED (see the rule "closed ≠ fixed", `_trackers.md`). Separately, #499544 "Clear Recent History not working" — the clearing that rule 20 requires — is also broken. Of olive's four tasks, one is "[UI] Open Recent doesn't work" (#1243), and the second is a refusal to open a recent project when the path contains diacritics (#954); the third (#180, "Compilation broken due to recent Project UI removal") is a false positive on the word "recent", and the 0.2% share includes it: a filter by titles is never clean, which is why it is quoted verbatim.
 
-Живого отзыва про стартовый экран Adobe как рекламную площадку по-прежнему нет:
-`helpx.adobe.com` отдаёт 404 и ошибку HTTP/2 через текст-прокси,
-`community.adobe.com` и `old.reddit.com` отвечают 403. Для тезиса это больше не
-критично — его закрыл трекер kdenlive.
+About the price of the second form of answer — not as a file but as a window. Also, a live review of the Adobe start screen as an advertising platform is still absent: `helpx.adobe.com` returns 404 and an HTTP/2 error through the text proxy, `community.adobe.com` and `old.reddit.com` answer with 403. For the thesis this is no longer critical — it was closed by the kdenlive tracker.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-Порядок восстановления при запуске — `src/apps/kt-app/src/app.rs:5270-5287`:
-аргумент командной строки → `storage.get_string("last_project")` →
-`.filter(|p| p.exists())` → файл автосейва. Хранилище — eframe с фичей
-`persistence` (`src/Cargo.toml:42`), физически `~/.local/share/kinotrain/
-app.ron`: плоская RON-карта строк, в которой сегодня живут ровно два наших
-ключа, `lang` и `last_project` (пишутся в `app.rs:5182-5185`), плюс три
-служебных ключа egui. **Списка недавних нет: хранится ровно один путь, и он
-невидим** — его нельзя ни посмотреть, ни выбрать, он только молча открывается.
+The startup restore order is at `src/apps/kt-app/src/app.rs:5270-5287`: a command-line argument → `storage.get_string("last_project")` → `.filter(|p| p.exists())` → the autosave file. The storage is eframe with the `persistence` feature (`src/Cargo.toml:42`), physically `~/.local/share/kinotrain/app.ron`: a flat RON map of strings, in which today exactly two of our keys live, `lang` and `last_project` (written at `app.rs:5182-5185`), plus three service keys of egui. **There is no list of recent items: exactly one path is stored, and it is invisible** — it cannot be viewed or chosen, it is only silently opened.
 
-Если не нашлось ничего, строится `KtApp::new_empty(Some(tr(k::msg::
-OPEN_A_PROJECT)))` (`app.rs:5287`). Аргумент кладётся в поле `status`
-(`app.rs:481`), а `status_line` (`app.rs:4426`) отдаёт его как
-`HintKind::Status` — жёлтым, `Color32::from_rgb(255, 210, 120)`, ровно
-`STATUS_TTL_MS` = 6000 мс (`app.rs:4096`).
+If nothing is found, `KtApp::new_empty(Some(tr(k::msg::OPEN_A_PROJECT)))` is built (`app.rs:5287`). The argument goes into the field `status` (`app.rs:481`), and `status_line` (`app.rs:4426`) gives it as `HintKind::Status` — in yellow, `Color32::from_rgb(255, 210, 120)`, with exactly `STATUS_TTL_MS` = 6000 ms (`app.rs:4096`).
 
-**Скажу прямо: единственная инструкция первого запуска самоуничтожается через
-шесть секунд — и это ещё лучший случай.** В `status_line` порядок «ошибка →
-наведение → режим → сообщение → дежурная строка», поэтому `hover` стоит ВЫШЕ
-`status` (`app.rs:4439`): первое же движение мыши над любой кнопкой стирает
-приглашение с экрана раньше срока. А через шесть секунд на его месте встаёт
-`hint::IDLE` — «drop a media file on the window — the clip lands under the
-mouse», то есть текст про добавление МЕДИА, а не про то, как открыть проект.
-Пользователь, отошедший за чаем, инструкции не увидит вовсе.
+**To put it plainly: the only instruction of the first launch destroys itself after six seconds — and that is the best case.** In `status_line` the order is "error → hover → mode → message → idle line", so `hover` stands ABOVE `status` (`app.rs:4439`): the first movement of the mouse over any button erases the invitation from the screen before its time. And after six seconds, in its place stands `hint::IDLE` — "drop a media file on the window — the clip lands under the mouse", that is, text about adding MEDIA, not about how to open a project. A user who has stepped away for tea will not see the instruction at all.
 
-Остальное состояние, проверенное по коду:
+Other state, checked by the code:
 
-- Пустой проект — это не пустое окно. `empty_project()` (`app.rs:333`) даёт
-  1280×720@30, одну видео- и одну аудио-дорожку; редактор нарисован целиком.
-  Место при старте у нас НЕ пустует — это ключевой факт для правила 13.
-- `Файл → Новый` (`app.rs:2717`) — это `*self = Self::new_empty(None)`:
-  приглашения нет вовсе, вопроса о несохранённом нет тоже.
-- `last_project` пишется только когда `project_path.is_some()`
-  (`app.rs:5183`), поэтому после `Файл → Новый` в хранилище остаётся
-  ПРЕДЫДУЩИЙ путь, и следующий запуск откроет не то, чем пользователь
-  закончил.
-- `autosave_path()` (`app.rs:4908`) — `~/.local/share/kinotrain/
-  autosave-project.otio`, наш аналог `Recover Last Session`. Он подставляется
-  ТОЛЬКО если `last_project` пуст или файл исчез; при живом `last_project`
-  безымянный автосейв не предлагается никогда и лежит на диске невидимым.
-- Меню `Файл` (`src/apps/kt-app/src/toolbar.rs:246-277`): New · Open… ·
-  Import .ktproj… · Save · Save As… · Render to MP4… · Quit. Пункта
-  «Недавние» нет.
-- Машинерия «файл пропал / файл вернулся» у нас уже написана — но для медиа:
-  `src/libs/kt-media/src/placeholder.rs`, три уровня сообщения и возврат
-  исходника (F-HLP-012).
+- An empty project is not an empty window. `empty_project()` (`app.rs:333`) gives 1280×720@30, one video and one audio track; the editor is drawn whole. The place at startup is NOT empty for us — this is the key fact for rule 13.
+- `File → New` (`app.rs:2717`) is `*self = Self::new_empty(None)`: there is no prompt at all, and no question about unsaved changes either.
+- `last_project` is written only when `project_path.is_some()` (`app.rs:5183`), so after `File → New` the PREVIOUS path remains in the storage, and the next launch will open not what the user finished with.
+- `autosave_path()` (`app.rs:4908`) — `~/.local/share/kinotrain/autosave-project.otio`, our analog of `Recover Last Session`. It is substituted ONLY if `last_project` is empty or the file has disappeared; with a living `last_project`, an unnamed autosave is never offered and lies on disk invisibly.
+- The `File` menu (`src/apps/kt-app/src/toolbar.rs:246-277`): New · Open… · Import .ktproj… · Save · Save As… · Render to MP4… · Quit. There is no "Recent" item.
+- The machinery of "the file went missing / the file came back" is already written for media: `src/libs/kt-media/src/placeholder.rs`, three levels of the message and the return of the source (F-HLP-012).
 
-### Чего не хватает
+### What is missing
 
-Списка вместо одного пути; видимого места, где он лежит, и способа его
-очистить; поверхности первой секунды, которая не умирает по таймеру;
-шаблонов нового проекта; явного «восстановить сеанс» вместо молчаливого
-третьего фолбэка.
+A list instead of one path; a visible place where it lies, and a way to clear it; a first-second surface that does not die on a timer; templates for a new project; an explicit "restore session" instead of a silent third fallback.
 
-### Что мешает
+### What gets in the way
 
-**Формат хранения не мешает вообще.** `app.ron` — плоская карта строк; ключ
-`recent` с N путями стоит одну строку в `save()` и одну в `run()`. Формат
-проекта (`kt-otio`) не трогается вовсе: новой версии kt-секции не требуется,
-миграции нет, старые `.otio` читаются как читались.
+**The storage format gets in the way not at all.** `app.ron` is a flat map of strings; a key `recent` with N paths costs one line in `save()` and one in `run()`. The project format (`kt-otio`) is not touched at all: no new version of the kt section is needed, there is no migration, and old `.otio` files are read as they were read before.
 
-Мешает поведение при пропаже файла. Сегодня `.filter(|p| p.exists())`
-(`app.rs:5274`) молча роняет исчезнувший `last_project` в автосейв, и человек
-получает «Restored the autosave of an unnamed project» вместо «твой проект не
-найден там-то». Список недавних делает эту молчаливость видимой: строка есть,
-файла нет — и вычеркнуть строку нельзя, потому что диск может быть просто
-отключён. Отвечать надо тем же, чем отвечаем на пропавший исходник
-(F-HLP-012, `src/libs/kt-media/src/placeholder.rs`): назвать путь и дать
-вернуть файл.
+What gets in the way is the behavior when a file goes missing. Today `.filter(|p| p.exists())` (`app.rs:5274`) silently drops a vanished `last_project` into the autosave, and the person gets "Restored the autosave of an unnamed project" instead of "your project was not found there". A list of recent items makes this silence visible: the row is there, the file is not — and the row cannot be struck out, because the disk may simply be disconnected. The answer must be the same one we give for a missing source (F-HLP-012, `src/libs/kt-media/src/placeholder.rs`): name the path and offer to return the file.
 
-Мешает `Файл → Новый`, заменяющий приложение целиком без вопроса
-(`app.rs:2717`). Стартовый экран ставит кнопку «новый» вплотную к списку
-недавних, и цена промаха там выше, чем в меню.
+What gets in the way is `File → New`, which replaces the whole application without asking (`app.rs:2717`). The start screen would place the "new" button right next to the list of recent items, and the cost of a miss there is higher than in the menu.
 
-Ограничивает инвариант 12: repaint только при движении, в draw-путях ни
-аллокаций, ни клонов. Стартовый экран у нас обязан быть статикой — никаких
-каруселей, анимированных туров и «что нового» с сетевым запросом.
+It also constrains invariant 12: repaint only on movement, in draw paths no allocations and no clones. The start screen must be a static picture for us — no carousels, no animated tours, no "what's new" with a network request.
 
-### Какие инварианты задевает
+### Which invariants it affects
 
-Инвариант 12 (см. выше) и правила чек-листа 9, 13, 18, 19, 20.
+Invariant 12 (see above) and the checklist rules 9, 13, 18, 19, 20.
 
-- **13 — не тратить место впустую.** Аргумент «стартовый экран не тратит
-  место, он вместо пустого окна» у нас НЕ работает: при запуске место не
-  пустое, там уже полный редактор с двумя дорожками (`app.rs:333`). Модальное
-  окно поверх него — трата в чистом виде. А подменю «Недавние» в меню `Файл`
-  и долгоживущая строка в пустом таймлайне не тратят ничего.
-- **19 — сказать, где вернуть.** Всё, что можно выключить, обязано назвать
-  дорогу назад; у нас правило не выполнено ни одной строкой (F-HLP-009).
-  Заводить отключаемый экран, не закрыв F-HLP-009, — заводить новый долг.
-- **20 — ничего не отрастает само.** Список недавних отрастает по
-  определению, поэтому у него обязаны быть предел, порядок и «очистить»,
-  иначе правило нарушается буквально в первый же день.
-- **18 — пункт меню говорит ЧТО и ГДЕ.** «Недавние» без пути не годится:
-  подпункт несёт имя файла, а полный путь — в нашу строку подсказки при
-  наведении (F-HLP-001), то есть pull-каналом, без попапа.
-- **9 — ничего лишнего.** Всё, что на стартовом экране не список недавних и
-  не «открыть», обязано доказывать своё право на площадь; у вендоров именно
-  здесь заводится реклама.
+- **13 — do not waste space.** The argument "the start screen does not waste space, it stands in place of an empty window" does NOT work for us: at launch the place is not empty; there is a full editor with two tracks (`app.rs:333`). A modal window over it is pure waste. And the submenu "Recent" in the `File` menu and a long-lived line in the empty timeline waste nothing.
+- **19 — say where to get it back.** Everything that can be switched off must name the way back; for us this rule is not met by a single line (F-HLP-009). Introducing a switchable screen without closing F-HLP-009 means introducing a new debt.
+- **20 — nothing grows by itself.** A list of recent items grows by definition, so it must have a limit, an order, and "clear", otherwise the rule is violated literally on the first day.
+- **18 — the menu item says WHAT and WHERE.** "Recent" without a path does not do: the submenu carries the file name, and the full path goes into our hint line on hover (F-HLP-001), that is, via a pull channel, without a popup.
+- **9 — nothing superfluous.** Everything on the start screen that is not the list of recent items and not "open" must prove its right to the area; with vendors it is exactly here that advertising takes hold.
 
-АДРЕС: `src/apps/kt-app/src/app.rs` — класс «строка ведёт в никуда, и
-программа молчит» (openshot #293 «Open recently silently fails if path/file
-don't exist», pitivi #2349) у нас ВОЗМОЖЕН и не ловится ничем: в порядке
-восстановления при запуске стоит `.filter(|p| p.exists())`, и исчезнувший
-`last_project` молча проваливается в `autosave_path()` — пользователь получает
-«Restored the autosave of an unnamed project» вместо имени пропавшего файла.
-Ни имени, ни пути, ни ошибки. Тесты t194 и t199
-(`src/apps/kt-app/src/layout_tests.rs`) стерегут фоновость автосейва и
-невозврат ревизии назад, но на выбор источника при старте не смотрит ни один
-тест: сегодня молчит одна ветка, со списком недавних молчать будут N.
+ADDRESS: `src/apps/kt-app/src/app.rs` — the class "a row leads nowhere, and the program stays silent" (openshot #293 "Open recently silently fails if path/file don't exist", pitivi #2349) is POSSIBLE for us and is not caught by anything: the startup restore order contains `.filter(|p| p.exists())`, and a vanished `last_project` silently falls through to `autosave_path()` — the user gets "Restored the autosave of an unnamed project" instead of the name of the missing file. No name, no path, no error. Tests t194 and t199 (`src/apps/kt-app/src/layout_tests.rs`) guard the background nature of the autosave and the non-return of the revision, but no test looks at the choice of source at startup: today one branch is silent; with a list of recent items, N will be silent.
 
-Второй класс — «отдельное окно» (kde-invent #2124, pitivi #1672, #1575) — у нас
-ВОЗМОЖЕН, и это надо называть прямо: верхнеуровневое окно сверх главного в
-`kt-app` уже есть ровно одно — отделённое превью
-(`src/apps/kt-app/src/app.rs:1014`, `ctx.show_viewport_immediate` на
-`ViewportId::from_hash_of("kt-preview-window")`), и открывает его сам
-пользователь по своей команде. Стартовый экран стал бы вторым таким окном,
-появляющимся БЕЗ просьбы, на каждом запуске и раньше главного, — то есть весь
-счёт #2124 (не поднимается над чужими приложениями, не виден в `Alt+Tab`) и
-#513581 (тайловые WM) переехал бы к нам целиком. Это довод за подменю и
-долгоживущую строку внутри единственного окна, а не за модалку поверх него.
+The second class — "a separate window" (kde-invent #2124, pitivi #1672, #1575) — is POSSIBLE for us, and this must be named directly: a top-level window above the main one already exists in `kt-app` exactly once — the detached preview (`src/apps/kt-app/src/app.rs:1014`, `ctx.show_viewport_immediate` on `ViewportId::from_hash_of("kt-preview-window")`), and the user opens it himself by his own command. A start screen would become a second such window, appearing WITHOUT a request, at every launch and before the main one — that is, the whole account of #2124 (does not rise above other applications, not visible in `Alt+Tab`) and
+#513581 (tiling WMs) would move to us in full. This is an argument for a submenu and a long-lived line inside the single window, not for a modal over it.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия: список недавних + первая строка, которая не умирает. Полноценный стартовый экран с шаблонами — отдельно и дороже (M) |
-| Где основная работа | kt-app: `app.rs` (`run()`, `save()`, состояние «проекта нет»), `toolbar.rs` (меню Файл), каталоги `apps/kt-app/i18n/*.toml` |
-| Формат проекта | не трогает: хранилище живёт вне проекта, в `app.ron` |
-| Тесты, которые придётся написать | `reach_tests::first_run_instruction_outlives_the_status_line`; харнесс-тест подменю «Недавние» (пункты достижимы, пропавший файл даёт ошибку, а не молчание); t125/t100 на новые ключи каталогов |
-| Зависит от | F-HLP-009 (дорога назад), F-HLP-012 (пропавший файл), F-HLP-020 (пустой контейнер), F-HLP-033 (цена строки) |
-| Ломает совместимость | нет |
+| Size | S — one stage: a list of recent items + a first line that does not die. A full start screen with templates is separate and more expensive (M) |
+| Where the main work is | kt-app: `app.rs` (`run()`, `save()`, the state "no project"), `toolbar.rs` (the File menu), the catalogs `apps/kt-app/i18n/*.toml` |
+| Project format | not touched: the storage lives outside the project, in `app.ron` |
+| Tests to write | `reach_tests::first_run_instruction_outlives_the_status_line`; a harness test of the "Recent" submenu (the items are reachable, a missing file gives an error, not silence); t125/t100 on the new catalog keys |
+| Depends on | F-HLP-009 (the way back), F-HLP-012 (a missing file), F-HLP-020 (the empty container), F-HLP-033 (the cost of a line) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём меньшую половину: список недавних (N вместо одного невидимого пути) и
-первую строку, которая не умирает по таймеру. Стартовый экран отдельным окном
-— нет: у нас при запуске не пустое окно, а нарисованный редактор, и модалка
-поверх него нарушает правило 13 в ту же сторону, в какую его нарушает реклама
-у вендоров. Список недавних при этом — самая дешёвая справочная поверхность
-из всех тридцати трёх заметок волны, потому что её текст пишет пользователь.
+We take the smaller half: a list of recent items (N instead of one invisible path) and a first line that does not die on a timer. A start screen as a separate window — no: at launch we do not have an empty window but a drawn editor, and a modal over it violates rule 13 in the same direction as vendors' advertising does. The list of recent items, meanwhile, is the cheapest reference surface of all thirty-three notes of the wave, because its text is written by the user.
 
-ТЕСТ: reach_tests::first_run_instruction_outlives_the_status_line — сегодня
-падает, потому что единственная инструкция первого запуска (`app.rs:5287`,
-`msg::OPEN_A_PROJECT`) приезжает как `HintKind::Status` и через
-`STATUS_TTL_MS` = 6000 мс сменяется на `hint::IDLE` про перетаскивание медиа,
-а любое наведение мыши стирает её и раньше срока (`app.rs:4439`).
+TEST: reach_tests::first_run_instruction_outlives_the_status_line — fails today, because the only instruction of the first launch (`app.rs:5287`, `msg::OPEN_A_PROJECT`) arrives as `HintKind::Status` and after `STATUS_TTL_MS` = 6000 ms is replaced by `hint::IDLE` about dragging media, and any mouse hover erases it even earlier (`app.rs:4439`).
 
-ОТЛОЖЕНО: до F-EXP-001 — шаблоны нового проекта это пятый житель того же
-«пользовательского хранилища вне проекта», что и экспорт-пресеты, FX-пресеты,
-шаблоны титров и раскладки клавиш (вывод №2 первой волны, `docs/features/
-README.md`). Список недавних въезжает в `app.ron` без этой подсистемы,
-шаблоны — нет.
+DEFERRED: until F-EXP-001 — the templates of a new project are the fifth resident of the same "user storage outside the project" as the export presets, FX presets, title templates and key layouts (the conclusion no. 2 of the first wave, `docs/features/README.md`). The list of recent items enters `app.ron` without this subsystem; the templates do not.
 
-## Источники
+## Sources
 
 - https://docs.blender.org/manual/en/latest/interface/window_system/splash.html
-  (дата обращения 2026-09-07) — состав заставки и способ её вернуть.
-- https://github.com/microsoft/vscode — `src/vs/workbench/contrib/
-  welcomeGettingStarted/browser/gettingStarted.contribution.ts`, определение
-  `workbench.startupEditor` и ветка `agentSessionsWelcomePage`
-  (дата обращения 2026-09-07).
+  (access date 2026-09-07) — the composition of the splash and the way to bring it back.
+- https://github.com/microsoft/vscode — `src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts`, the definition of `workbench.startupEditor` and the branch `agentSessionsWelcomePage` (access date 2026-09-07).
 - https://www.jetbrains.com/help/idea/open-close-and-move-projects.html
-  (дата обращения 2026-09-07) — группы проектов и иконки на Welcome screen.
+  (access date 2026-09-07) — project groups and icons on the Welcome screen.
 - https://forum.borisfx.com/t/open-last-saved-project-doesnt-open-last-saved-project/25165
-  (21-23.08.2026) — заставка против «открывать последний проект».
+  (21-23.08.2026) — the splash versus "open the last project".
 - https://forum.borisfx.com/t/feature-suggestion-no-project-open/15592
-  (01.01.2023) — удалённые проекты в списке недавних.
-- https://forum.borisfx.com/t/vegas-hub/22553 (18-25.04.2026) — что такое
-  VEGAS Hub и почему он не стартовый экран.
-- https://support.apple.com/guide/final-cut-pro/welcome/mac — Final Cut Pro
-  User Guide for Mac (Apple Inc., PDF 028-00843), разделы про библиотеки и
-  `File > Open Library`.
+  (01.01.2023) — deleted projects in the list of recent items.
+- https://forum.borisfx.com/t/vegas-hub/22553 (18-25.04.2026) — what VEGAS Hub is and why it is not the start screen.
+- https://support.apple.com/guide/final-cut-pro/welcome/mac — Final Cut Pro User Guide for Mac (Apple Inc., PDF 028-00843), the sections on libraries and `File > Open Library`.
 - https://documents.blackmagicdesign.com/UserManuals/DaVinci_Resolve_21_Reference_Manual.pdf
-  (дата обращения 2026-09-07) — главы «The Project Manager», «Using the
-  Project Manager», «UI Settings» (настройка `Reload last working project on
-  startup`).
-- Трекеры (выгрузка 08.09.2026, дампы в `~/.cache/kinotrain/trackers/`, в
-  репозиторий не попадают — `_trackers.md`, раздел про лицензии):
-  `kde-invent` #1787 (запрос и описание реализации), #2092, #2112, #2124, #2202;
-  `kde-bugzilla` #361395, #430183, #455595, #455834, #499544, #504597, #513581,
-  #519313; `pitivi` #820, #984, #985, #1066, #1261, #1302, #1382, #1575, #1672,
-  #1803, #2183, #2349; `olive` #954, #1243, #2330; `openshot` #22, #293.
-  Оба числа строк `СИГНАЛ:` воспроизводятся `python3
-  src/scripts/tracker-rank.py --query '<фильтр>'` с теми же фильтрами.
-- **Состояние выгрузки на 08.09.2026:** `blender-vse` и `ffmpeg-trac` пусты, у
-  `openshot` дамп неполный (state-файл показывает перезапуск с первой страницы
-  при 4516 записанных задачах из ~4907), поэтому в долях строк `СИГНАЛ:`
-  openshot не участвует — только `pitivi` 2672, `kde-invent` 2217,
-  `kde-bugzilla` 6346 и `olive` 1853, у которых выгрузка помечена `done`.
-  Задачи openshot #22 и #293 цитируются поимённо: их существование от полноты
-  дампа не зависит, доля — зависит.
-- Проверки живьём ни для одной программы не было; для софта вне ядра она и не
-  предполагается (`docs/features/_editors.md`, раздел «Софт вне ядра»).
-- Недоступны из этого окружения: `helpx.adobe.com` (404 и ошибка HTTP/2 через
-  `r.jina.ai`), `community.adobe.com` (403), `reddit.com`/`old.reddit.com`
-  (403), поисковые движки yahoo/duckduckgo/mojeek (CAPTCHA); бюджет
-  `WebSearch` сессии израсходован до начала работы над заметкой. Строки
-  Premiere и After Effects поэтому помечены `[НЕ ПРОВЕРЕНО]`.
+  (access date 2026-09-07) — the chapters "The Project Manager", "Using the Project Manager", "UI Settings" (the setting `Reload last working project on startup`).
+- Trackers (export of 08.09.2026; the dumps are in `~/.cache/kinotrain/trackers/` and do not go into the repository — `_trackers.md`, the section on licenses):
+  `kde-invent` #1787 (the request and the description of the implementation), #2092, #2112, #2124, #2202;
+  `kde-bugzilla` #361395, #430183, #455595, #455834, #499544, #504597, #513581, #519313;
+  `pitivi` #820, #984, #985, #1066, #1261, #1302, #1382, #1575, #1672, #1803, #2183, #2349;
+  `olive` #954, #1243, #2330; `openshot` #22, #293.
+  Both `SIGNAL:` line numbers are reproduced by `python3 src/scripts/tracker-rank.py --query '<filter>'` with the same filters.
+- **State of the export as of 08.09.2026:** `blender-vse` and `ffmpeg-trac` are empty; `openshot` has an incomplete dump (the state file shows a restart from the first page with 4516 tasks recorded out of about 4907), therefore openshot does not take part in the shares of the `SIGNAL:` lines — only `pitivi` 2672, `kde-invent` 2217, `kde-bugzilla` 6346 and `olive` 1853, whose exports are marked `done`. The openshot tasks #22 and #293 are quoted by name: their existence does not depend on the completeness of the dump, the share does.
+- No live check was made for any program; for software outside the core it is not expected (`docs/features/_editors.md`, the section "Software outside the core").
+- Unavailable from this environment: `helpx.adobe.com` (404 and an HTTP/2 error through `r.jina.ai`), `community.adobe.com` (403), `reddit.com`/`old.reddit.com` (403), the search engines yahoo/duckduckgo/mojeek (CAPTCHA); the session's `WebSearch` budget was used up before work on the note began. The Premiere and After Effects rows are therefore marked `[NOT VERIFIED]`.

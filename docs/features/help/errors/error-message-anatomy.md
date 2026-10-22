@@ -1,12 +1,12 @@
 ---
 id: F-HLP-008
-title: Анатомия сообщения об ошибке: причина, следствие, действие
-status: кандидат
+title: Anatomy of an error message: cause, consequence, action
+status: candidate
 priority: B
 cost: M
 category: help/errors
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, vscode-1.136]
-we_have: частично
+we_have: partial
 crates: [kt-app, kt-engine, kt-otio, kt-model]
 invariants: []
 ui_rules: [7, 16, 18, 19]
@@ -17,244 +17,191 @@ depends_on: [F-HLP-010, F-HLP-012, F-HLP-013]
 checked: 2026-09-07
 ---
 
-# F-HLP-008 — Анатомия сообщения об ошибке: причина, следствие, действие
+# F-HLP-008 — Anatomy of an error message: cause, consequence, action
 
-## Суть
+## Essence
 
-Что-то не получилось, и программа говорит об этом одной фразой. Хорошая фраза
-отвечает на три вопроса подряд: ЧТО случилось (причина), что теперь с моей
-работой (следствие) и что делать дальше (действие). Плохая отвечает на нулевой:
-«произошла ошибка». Между ними лежит вся разница между «монтажёр за минуту
-чинит» и «монтажёр идёт на форум с куском текста в буфере обмена».
+Something did not work, and the program says so in one phrase. A good phrase answers three questions in a row:
+WHAT happened (the cause), what that means for my work (the consequence), and what to do next (the action).
+A bad one answers none of them: "an error occurred". Between the two lies the whole difference between "the editor
+fixes it in a minute" and "the editor goes to a forum with a piece of text in the clipboard".
 
-Заметка не про ТО, ЧТО отказ случился (это F-HLP-010, отказ жеста), а про
-ТЕКСТ, который после отказа читают.
+The note is not about WHAT the refusal was (that is F-HLP-010, the refusal of a gesture), but about the TEXT that is
+read after the refusal.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | message box рендера | «An error occurred while creating the media file *(имя)*. The reason for the error could not be determined.» Названы объект и стадия; причина объявлена НЕОПРЕДЕЛЁННОЙ прямым текстом. Ни кода, ни места, ни действия. Формулировка тянется с линейки 10–13, для 2026.0 живьём [НЕ ПРОВЕРЕНО] |
-| Adobe Premiere | 26.x | Error Compiling Movie | Диалог с ЧЕТЫРЬМЯ полями: класс сверху (import / GPU render / out of memory / export / I/O / accelerated render / render), текст, «Error Code» с селекторами снизу и ТАЙМКОД места отказа на таймлайне. Класс 3 = Unknown |
-| DaVinci Resolve | 21 | Render job failed | Строка джоба в очереди краснеет; отдельного текста причины в окне нет, координата — процент, на котором джоб встал. Preferences ▸ User ▸ UI Settings ▸ «Stop renders when a frame or clip cannot be processed» превращает отказ в продолжение [НЕ ПРОВЕРЕНО живьём, описание по 20.x] |
-| Final Cut Pro | 12.3 | алерт «The operation could not be completed» | Причина обобщена до одной фразы; иногда доезжает системный отрицательный код macOS, в окне он не расшифрован и со справкой не связан. Разбор в сообществе сводится к «дублируй секвенцию и снимай эффекты по одному», то есть к поиску координаты руками [НЕ ПРОВЕРЕНО живьём; конкретные номера кодов не подтверждены первоисточником] |
-| After Effects | 26.x | «After Effects error: … ( 86 :: 1 )» | Единственный из пяти, кто ставит СТАБИЛЬНЫЙ парный код в каждое сообщение. Вендор код не документирует: он работает как поисковый ключ, а не как объяснение |
+| VEGAS Pro | 2026.0 | the render message box | "An error occurred while creating the media file *(name)*. The reason for the error could not be determined." The object and the stage are named; the cause is declared UNDETERMINED in plain text. No code, no place, no action. The wording is carried over from the 10–13 line; for 2026.0 — live [NOT VERIFIED] |
+| Adobe Premiere | 26.x | Error Compiling Movie | A dialog with FOUR fields: the class at the top (import / GPU render / out of memory / export / I/O / accelerated render / render), the text, the "Error Code" with selectors at the bottom, and the TIMECODE of the failure's place on the timeline. Class 3 = Unknown |
+| DaVinci Resolve | 21 | Render job failed | The job's row in the queue turns red; there is no separate text of the cause in the window, the coordinate is the percentage at which the job stopped. The preference User ▸ UI Settings ▸ "Stop renders when a frame or clip cannot be processed" turns the refusal into continuation [NOT VERIFIED live, described from 20.x] |
+| Final Cut Pro | 12.3 | the alert "The operation could not be completed" | The cause is generalised to a single phrase; sometimes a macOS negative system code gets through — in the window it is not decoded and is not linked to any help. The community's analysis boils down to "duplicate the sequence and remove the effects one at a time", that is, to searching for the coordinate by hand [NOT VERIFIED live; the specific code numbers are not confirmed by a primary source] |
+| After Effects | 26.x | "After Effects error: … ( 86 :: 1 )" | The only one of the five that puts a STABLE paired code into every message. The vendor does not document the code: it works as a search key, not as an explanation |
 
-Пять из пяти дают причину и (кроме VEGAS) намёк на место. Действие не даёт
-никто: ни одно из пяти сообщений не содержит ни кнопки, ни адреса настройки,
-которой отказ снимается.
+Five out of five give a cause and (except VEGAS) a hint of the place. Nobody gives an action: none of the five
+messages contains a button or an address of the setting by which the refusal is lifted.
 
-**Вне ядра.** Без VS Code фичу описать нельзя: он единственный, у кого три
-части и четвёртая живут в сообщении КОНТРОЛАМИ, а не прозой, — и именно этого
-не делает ни один из пяти редакторов ядра. Строка нужна не для сравнения
-качества текста (тут ядро не хуже), а для формы канала.
+**Outside the core.** Without VS Code the feature cannot be described: it is the only one where the three parts and
+a fourth live in the message as CONTROLS, not as prose — and this is precisely what none of the five core editors
+does. The line is needed not for comparing the quality of the text (here the core is no worse), but for the form of the channel.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Visual Studio Code | 1.136 | Notifications | Уровень объявлен контрактом («three types … Information, Warning, Error»), действие — кнопка ВНУТРИ сообщения, а не совет в тексте; в рекомендациях по UX стоит «Add a **Do not show again** option for every notification» — то есть канал управляем самим пользователем |
+| Visual Studio Code | 1.136 | Notifications | The level is declared as a contract ("three types … Information, Warning, Error"); the action is a button INSIDE the message, not advice in the text; the UX guidelines say "Add a **Do not show again** option for every notification" — that is, the channel is controllable by the user himself |
 
-## Фишка фишки
+## The trick behind it
 
-**Что механизм несёт, чего одна строка статусбара вместить не может.** Он несёт
-КООРДИНАТУ и ЯКОРЬ — два груза, которых нет в тексте про причину, и оба у нас
-уже вычислены и оба выброшены.
+**What the mechanism carries that one status-bar line cannot hold.** It carries a COORDINATE and an ANCHOR — two
+payloads that are not in the text about the cause, and both of which we already compute and both of which we throw away.
 
-*Координата.* Самое ценное поле диалога Premiere — не текст, а таймкод внизу:
-Adobe явно советует смотреть в это место таймлайна. У Resolve координаты как
-поля нет вообще, и монтажёры пользуются процентом прогресса («падает всегда на
-одном и том же проценте — значит, дело в конкретном месте монтажа»), а
-переключатель «не останавливаться на непроцессируемом кадре» существует ровно
-затем, чтобы координат стало БОЛЬШЕ ОДНОЙ: остановка на первом отказе
-показывает один сломанный клип из пяти. То есть три из пяти редакторов ядра
-торгуют координатой вместо причины — и это работает, потому что координата
-действенна и без причины, а причина без координаты не действенна.
+*Coordinate.* The most valuable field of the Premiere dialog is not the text but the timecode at the bottom: Adobe
+explicitly advises looking at that place on the timeline. Resolve has no coordinate field at all, and editors use the
+progress percentage ("it always falls on the same percentage — so the problem is in a specific place of the edit"),
+while the switch "do not stop on an unprocessable frame" exists precisely so that there are MORE coordinates than one:
+stopping at the first refusal shows one broken clip out of five. That is, three of the five core editors trade the
+coordinate instead of the cause — and it works, because the coordinate is actionable even without the cause, while a
+cause without a coordinate is not actionable.
 
-*Якорь.* Второй груз виден только из пяти языков. Текст сообщения переводится,
-и переведённое сообщение ПЕРЕСТАЁТ ИСКАТЬСЯ: «не открылось: …» не находит
-ничего. Поэтому парный код AE `( 86 :: 1 )` — не украшение и не отговорка
-инженера, а единственная часть сообщения, переживающая перевод; она и
-превращает поисковую строку в четвёртую часть «подробнее». Цена показана в том
-же примере: Adobe код не документирует, поэтому поиск ведёт на форумы, а не в
-справку. Якорь — необходимое условие «подробнее», но не достаточное.
+*Anchor.* The second payload is visible only from five languages. The text of a message is translated, and the translated
+message STOPS BEING FOUND: "not opened: …" finds nothing. That is why the paired AE code `( 86 :: 1 )` is not a decoration
+or an engineer's excuse, but the only part of the message that survives translation; it turns the search string into the
+fourth part "more". The price is shown in the same example: Adobe does not document the code, so the search leads to forums,
+not to the help. The anchor is a necessary condition of "more", but not a sufficient one.
 
-*Куда груз денется у нас.* В строку он не поедет: 160 символов и без него
-заняты. Координата уезжает на таймлайн — у нас уже есть выделение
-(`self.selected`, `src/apps/kt-app/src/app.rs`) и прокрутка к находке
-(`search_hits`), а `gpu_required_clips()` уже считает ИМЕННО те id, которые
-пользователь видит в проекте (`slice_origin` разворачивает морфер-куски
-обратно в оригиналы) — и `export.rs:407` берёт от них `.len()`. Якорь уезжает в
-скобки того же сообщения — мы уже дважды так делаем и оба раза случайно.
+*Where the payload goes with us.* It will not go into the line: 160 characters are already occupied without it. The coordinate
+moves to the timeline — we already have the selection (`self.selected`, `src/apps/kt-app/src/app.rs`) and scrolling to a
+find (`search_hits`), and `gpu_required_clips()` already computes EXACTLY the ids that the user sees in the project
+(`slice_origin` unfolds morpher pieces back into the originals) — and `export.rs:407` takes `.len()` from them. The anchor
+moves into the brackets of the same message — we have done this twice already, and both times by accident.
 
-## Плюсы
+## Pros
 
-- Класс ошибки отдельным полем (Premiere) распределяет ответственность ДО
-  чтения текста: «out of memory» и «I/O» ведут в разные места системы, и
-  монтажёр не читает советов про кодеки, когда кончилось место на диске.
-- Координата действенна без причины: половинным делением монтажа виновный клип
-  находится за пять минут, а объяснение при этом так и не понадобилось.
-- Стабильный парный код (AE) не зависит ни от версии, ни от языка интерфейса,
-  поэтому он единственный переживает перевод и служит ключом поиска.
-- Переключатель «не останавливаться» (Resolve) превращает отказ в перепись:
-  первый отказ — одно место, полный проход — все.
-- Уровень как объявленный контракт (VS Code: Information / Warning / Error)
-  даёт красить, фильтровать и считать сообщения, не разбирая их текст.
-- Blender ту же тройку уровней (`INFO`/`WARNING`/`ERROR`) кладёт одновременно в
-  статусбар и в журнал Info — ретроспектива получается бесплатно, из того же
-  вызова; строкой в таблице это не выделено, потому что канал повторяет
-  цветокодированный журнал Events у Premiere.
+- The class of error as a separate field (Premiere) distributes responsibility BEFORE the text is read: "out of memory" and "I/O" lead to different parts of the system,
+  and the editor does not read advice about codecs when the disk is full.
+- The coordinate is actionable without the cause: by halving the edit, the guilty clip is found in five minutes, and no explanation was ever needed.
+- A stable paired code (AE) depends neither on the version nor on the interface language, so it is the only one that survives translation and serves as a search key.
+- The "do not stop" switch (Resolve) turns a refusal into a re-run: the first refusal — one place; a full pass — all of them.
+- A level as a declared contract (VS Code: Information / Warning / Error) allows colouring, filtering and counting messages without parsing their text.
+- Blender puts the same triple of levels (`INFO`/`WARNING`/`ERROR`) into the status bar and into the Info log at once — retrospect comes for free, from the same call;
+  it is not singled out as a row in the table, because the channel repeats the colour-coded Events log of Premiere.
 
-## Минусы
+## Cons
 
-- Класс — это классификация ПОДСИСТЕМЫ, а не причины, поэтому «Unknown»
-  неизбежно становится самым частым классом и обесценивает поле.
-- Координата без причины перекладывает работу на пользователя: официальный FAQ
-  Premiere прямым текстом признаёт, что дальше надо расследовать самому.
-- Код, который вендор не документирует, ищется только в чужих форумах: механика
-  «поиска» работает, обещание «подробнее» — нет.
-- Настройка «не останавливаться» лечит симптом: файл выходит с дырами, а
-  сообщение о дырах — та же одна строка, что и раньше.
-- «Do not show again» — четвёртая часть, которая ГАСИТ канал: пользователь
-  выключает предупреждение раньше, чем успевает понять его, и обратно уже не
-  включает.
-- Формулировка «the reason could not be determined» (VEGAS) честна и
-  бесполезна одновременно: она сообщает состояние программы, а не состояние
-  работы пользователя.
+- The class is a classification of the SUBSYSTEM, not of the cause, so "Unknown" inevitably becomes the most frequent class and devalues the field.
+- A coordinate without a cause shifts the work onto the user: Premiere's official FAQ admits in plain words that the rest must be investigated by oneself.
+- A code that the vendor does not document is searched for only in other people's forums: the mechanics of "searching" work, the promise of "more" does not.
+- The "do not stop" setting treats the symptom: the file comes out with holes, and the message about the holes is the same single line as before.
+- "Do not show again" is a fourth part that SWITCHES THE CHANNEL OFF: the user turns the warning off before he has time to understand it, and does not turn it back on.
+- The phrase "the reason could not be determined" (VEGAS) is honest and useless at once: it reports the state of the program, not the state of the user's work.
 
-## Что говорят пользователи
+## What users say
 
 > Is there anyway to get more detailed information about the error beyond the
 > cryptic 'An Error Occurred while creating the media file (Name of file) The
 > reason for the error could not be determined'?
-> — Nigel O'neill, Creative COW, форум VEGAS Pro, 08.11.2010,
+> — Nigel O'neill, Creative COW, VEGAS Pro forum, 08.11.2010,
 > https://creativecow.net/forums/thread/an-error-occurred-while-creating-the-media-file-na/
 
-Вторая цитата ценна тем, что это не пользователь, а сторона вендора —
-объяснение, ПОЧЕМУ сообщение бывает пустым:
+The second quote is valuable because it comes not from a user, but from the vendor's side — an explanation of WHY the message
+is sometimes empty:
 
 > When an "Error Code" number is triggered as unknown, engineering cannot
 > explain it explicitly in the error dialog box.
-> — Kevin J. Monahan (Adobe), FAQ «Fix Error Compiling Movie errors in Premiere
-> Pro», 18.02.2022,
+> — Kevin J. Monahan (Adobe), FAQ "Fix Error Compiling Movie errors in Premiere
+> Pro", 18.02.2022,
 > https://community.adobe.com/t5/premiere-pro-discussions/faq-fix-error-compiling-movie-errors-in-premiere-pro/m-p/12757295
 
-Там же — признание про цену такой анатомии для монтажёра: «Editors need to do
-some investigation to solve the issue, unfortunately».
+In the same place — an admission about the price of such an anatomy for the editor: "Editors need to do
+some investigation to solve the issue, unfortunately".
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What is already there
 
-Раскол проходит не между «хорошими» и «плохими» сообщениями, а между теми, что
-НАПИСАНЫ, и теми, что ПРОСОЧИЛИСЬ.
+The split runs not between "good" and "bad" messages, but between those that were WRITTEN and those that LEAKED.
 
-**Образцовые — написаны нами, лежат в каталоге, переведены на пять языков**
-(`src/apps/kt-app/i18n/*.toml`, секции `[msg]` и `[perf.note]`):
+**Exemplary ones — written by us, lying in the catalog, translated into five languages**
+(`src/apps/kt-app/i18n/*.toml`, sections `[msg]` and `[perf.note]`):
 
-| Ключ | Причина | Следствие | Действие |
+| Key | Cause | Consequence | Action |
 |---|---|---|---|
-| `msg.media_missing` | «source unavailable» | «a placeholder is shown» — работа продолжается | нет (возврат файла ловится сам, `msg.media_online`) |
-| `msg.software_render` | «no graphics acceleration» | ДВА следствия названы поимённо: «the UI may lag, preview glow is off» | нет — и правильно, пользователь тут бессилен |
-| `msg.video_fx_gpu_lost` | «GPU video renderer lost ({0})» | «switched to the CPU» | нет |
-| `msg.ktproj_import_only` | старый формат | не открывается как проект | **есть, с адресом: «via File / Import .ktproj… only»** |
-| `msg.empty_lanes` | «no events on those tracks» | «the order of empty ones does not matter» — успокоение вместо действия | не нужно |
-| `msg.nothing_to_copy` | «no region and no selection» | «nothing to copy» | подразумевается |
-| `msg.paste_skipped_*` | «no targets survived» / «the tick is taken» | пропущено N, остальное вставлено | нет |
-| `perf.note.low_video_hit` | измерение «video hit {0}%» | **вывод человеческим языком**: «decoding cannot keep up» | нет |
-| `perf.note.eviction_spike` | «{0}/s» | «the cache is too small» | **некуда**: бюджет — `CacheConfig::default()`, `src/libs/kt-engine/src/player.rs:189`, настройки нет |
+| `msg.media_missing` | "source unavailable" | "a placeholder is shown" — work goes on | none (the file's return is caught by itself, `msg.media_online`) |
+| `msg.software_render` | "no graphics acceleration" | TWO consequences named individually: "the UI may lag, preview glow is off" | none — and rightly so, the user is powerless here |
+| `msg.video_fx_gpu_lost` | "GPU video renderer lost ({0})" | "switched to the CPU" | none |
+| `msg.ktproj_import_only` | an old format | does not open as a project | **there is one, with an address: "via File / Import .ktproj… only"** |
+| `msg.empty_lanes` | "no events on those tracks" | "the order of empty ones does not matter" — reassurance instead of an action | not needed |
+| `msg.nothing_to_copy` | "no region and no selection" | "nothing to copy" | implied |
+| `msg.paste_skipped_*` | "no targets survived" / "the tick is taken" | N skipped, the rest pasted | none |
+| `perf.note.low_video_hit` | a measurement "video hit {0}%" | **a conclusion in human language**: "decoding cannot keep up" | none |
+| `perf.note.eviction_spike` | "{0}/s" | "the cache is too small" | **nowhere to go**: the budget is `CacheConfig::default()`, `src/libs/kt-engine/src/player.rs:189`, there is no setting for it |
 
-Семь пороговых сообщений `[perf.note]` (`ui_stall`, `render_underruns`,
+The seven threshold messages of `[perf.note]` (`ui_stall`, `render_underruns`,
 `callback_underruns`, `eviction_spike`, `prefetch_thrash`, `low_video_hit`,
-`offline_changed`) — единственное место в программе, где ИЗМЕРЕНИЕ отделено от
-ВЫВОДА: сначала число, потом фраза на человеческом языке. Это и есть готовый
-образец анатомии.
+`offline_changed`) are the only place in the program where the MEASUREMENT is separated from the
+CONCLUSION: first a number, then a phrase in human language. This is the ready model of the anatomy.
 
-Тот же образец, разложенный по стадиям работы, — отсутствующий исходник
-(Р.33 п.10): `msg.media_missing` при открытии
-(`src/apps/kt-app/src/app.rs:685`), `render.missing_warn` ДО старта рендера
-(`src/apps/kt-app/src/render_dialog.rs:400`), `render.missing_after` в сводке
-после (там же, 556). То, что Resolve прячет в настройку «не останавливаться»,
-у нас поведение по умолчанию. Разбор этой цепочки целиком — **F-HLP-012**,
-здесь она нужна только как доказательство, что анатомия у нас уже есть и
-воспроизводима.
+The same model, laid out by stages of work — a missing source (R.33 item 10): `msg.media_missing` on opening
+(`src/apps/kt-app/src/app.rs:685`), `render.missing_warn` BEFORE the render starts (`src/apps/kt-app/src/render_dialog.rs:400`),
+`render.missing_after` in the summary afterwards (there, 556). What Resolve hides in the setting "do not stop", we have as
+the default behaviour. The analysis of this chain as a whole is **F-HLP-012**; here it is needed only as proof that the
+anatomy is already ours and reproducible.
 
-Есть и правильно устроенный ЯКОРЬ, дважды и оба раза не нарочно:
-`averr()` в `src/libs/kt-ffmpeg/src/source_impl.rs:57` собирает
-`«{контекст}: {av_strerror} ({код})»` — человеческий текст плюс машинный код в
-скобках, ровно так, как это делает AE; и `msg.video_fx_gpu_lost` несёт
-`({0})` = `DeviceLost`. Оба якоря сегодня приезжают внутрь сообщений, у
-которых нет ни справки, ни поиска, куда с якорем идти.
+There is also a correctly built ANCHOR, twice, and both times not on purpose:
+`averr()` in `src/libs/kt-ffmpeg/src/source_impl.rs:57` assembles
+`«{context}: {av_strerror} ({code})»` — a human text plus a machine code in brackets, exactly as AE does it; and
+`msg.video_fx_gpu_lost` carries `({0})` = `DeviceLost`. Both anchors today arrive inside messages that have neither
+help nor a search to take the anchor to.
 
-### Чего не хватает
+### What is missing
 
-**1. Локализованности.** Английская строка `thiserror` уезжает в статусбар мимо
-каталога, мимо t125 и мимо потолка 160 символов. Считано по коду:
+**1. Localisation.** The English string of `thiserror` travels to the status bar past the catalog, past t125 and past
+the 160-character ceiling. Counted from the code:
 
-- `kt_model::CommandError` — 24 варианта (`src/libs/kt-model/src/model.rs:283`);
-- `kt_model::ProjectError` — 33 (`src/libs/kt-model/src/project.rs:3001`), они
-  вкладываются в первый через `InvalidClip`/`InvalidLayout`/
-  `InvalidTransition`/`InvalidCamera`;
-- `kt_otio::Error` — 10 (`src/libs/kt-otio/src/lib.rs:36`), включая
-  `KtMetaBroken`, `UnsupportedSchema`, `UnsupportedRoot`, `NonFinite`;
-- `kt_engine::export::ExportError` — 5 (`src/libs/kt-engine/src/export.rs:280`),
-  включая `GpuRequired` и `FfmpegFailed`;
+- `kt_model::CommandError` — 24 variants (`src/libs/kt-model/src/model.rs:283`);
+- `kt_model::ProjectError` — 33 (`src/libs/kt-model/src/project.rs:3001`); they are nested into the first through
+  `InvalidClip`/`InvalidLayout`/`InvalidTransition`/`InvalidCamera`;
+- `kt_otio::Error` — 10 (`src/libs/kt-otio/src/lib.rs:36`), including `KtMetaBroken`, `UnsupportedSchema`, `UnsupportedRoot`, `NonFinite`;
+- `kt_engine::export::ExportError` — 5 (`src/libs/kt-engine/src/export.rs:280`), including `GpuRequired` and `FfmpegFailed`;
 - `kt_ffmpeg::FfError` — 4, `kt_media::MediaError` — 2.
 
-Итого **77 именованных вариантов, из которых переведён ровно ОДИН**:
-`kt_otio::Error::NotOtio` разбирается по имени в
-`src/apps/kt-app/src/app.rs:4963` и подменяется ключом
-`msg.ktproj_import_only`. Все остальные уходят соседней строкой `Err(e) =>
-Err(e.to_string())`. Сверх 77 есть открытое множество `std::io::Error` и
-14 свободных английских notice-строк, которые kt-otio генерирует прямо в
-библиотеке (`src/libs/kt-otio/src/convert.rs`, `legacy.rs`) и которые
-`app.rs:679` и `app.rs:5343` печатают пользователю как есть.
+In total **77 named variants, of which exactly ONE is translated**: `kt_otio::Error::NotOtio` is recognised by name in
+`src/apps/kt-app/src/app.rs:4963` and is replaced by the key `msg.ktproj_import_only`. All the others go through the
+neighbouring line `Err(e) => Err(e.to_string())`. Beyond the 77 there is an open set of `std::io::Error` and 14 free English
+notice strings which kt-otio generates directly in the library (`src/libs/kt-otio/src/convert.rs`, `legacy.rs`) and which
+`app.rs:679` and `app.rs:5343` print to the user as they are.
 
-**Мест, где чужая строка доходит до пользователя, ДВАДЦАТЬ.** Восемнадцать —
-вызовы `note()`/`warn()` в `src/apps/kt-app/src/app.rs` (357, 679, 685, 777,
-1098, 1984, 2094, 2732, 2796, 3145, 3182, 3777, 4065, 5310, 5317, 5336, 5343,
-5346), два — окно рендера (`render_dialog.rs:239` → `574`, `render_dialog.rs:90`
-→ `400`/`556`). Из двадцати **шесть не имеют вокруг чужого текста ни одного
-нашего слова** — `app.rs:1984`, `2094` (`self.note(e.to_string())` в `apply()` и
-`apply_batch()`), `3145`, `3182`, `4065` (`format!("{path}: {e}")`) и `3777`.
-Остальные четырнадцать заворачивают английский хвост в русскую рамку
-(`msg.open_failed`, `msg.save_failed`, `msg.autosave_failed`,
-`render.error_msg`), что даёт гибрид «не открылось: metadata.kt is unreadable:
-…».
+**Places where a foreign string reaches the user: TWENTY.** Eighteen are calls of `note()`/`warn()` in
+`src/apps/kt-app/src/app.rs` (357, 679, 685, 777, 1098, 1984, 2094, 2732, 2796, 3145, 3182, 3777, 4065, 5310, 5317, 5336, 5343,
+5346), and two are in the render window (`render_dialog.rs:239` → `574`, `render_dialog.rs:90` → `400`/`556`). Of the twenty,
+**six have not a single word of ours around the foreign text** — `app.rs:1984`, `2094` (`self.note(e.to_string())` in `apply()` and
+`apply_batch()`), `3145`, `3182`, `4065` (`format!("{path}: {e}")`) and `3777`. The remaining fourteen wrap the English tail in a
+Russian frame (`msg.open_failed`, `msg.save_failed`, `msg.autosave_failed`, `render.error_msg`), which produces a hybrid
+"not opened: metadata.kt is unreadable: …".
 
-Побочный эффект того же `to_string()`: варианты форматируются через `{0:?}`,
-поэтому пользователь читает `clip ClipId(7) not found` — внутреннее имя типа
-вместо имени клипа, которое у kt-app есть в `names_cache`.
+A side effect of the same `to_string()`: the variants are formatted with `{0:?}`, so the user reads `clip ClipId(7) not found` — an
+internal type name instead of the clip name, which kt-app has in `names_cache`.
 
-**2. Уровня как поля сообщения.** `enum Severity`
-(`src/apps/kt-app/src/app.rs:15`) знает `Info` и `Warn` и не знает `Error`,
-поэтому отвергнутая команда модели идёт тем же уровнем, что «clips copied: 3».
-Уровень — не свойство канала, а ЧАСТЬ анатомии: он говорит «работа
-продолжается» или «работа не сделана» до того, как прочитан текст, и именно им
-VS Code объявляет контракт из трёх видов. Куда попадают сообщения после
-рождения и как их потом перечитать — **F-HLP-013**; можно ли показать сам отказ
-жеста красным — **F-HLP-010**. Здесь важно только, что назвать его нечем.
+**2. A level as a field of the message.** `enum Severity` (`src/apps/kt-app/src/app.rs:15`) knows `Info` and `Warn` and does not know
+`Error`, so a rejected model command travels at the same level as "clips copied: 3". The level is not a property of the channel, but a
+PART of the anatomy: it says "the work goes on" or "the work was not done" before the text is read, and it is by this that VS Code declares
+its contract of three kinds. Where messages go after they are born and how to re-read them later — **F-HLP-013**; whether the refusal of a
+gesture itself can be shown in red — **F-HLP-010**. Here it matters only that there is nothing to name it with.
 
-**3. Четвёртой части.** `grep -c http` по всем пяти каталогам даёт **0**: ни
-одно сообщение никуда не ведёт. Адрес, где решение меняется (правило 19),
-называет ровно одно значение из 522 — `msg.ktproj_import_only`.
+**3. The fourth part.** `grep -c http` over all five catalogs gives **0**: no message leads anywhere. An address where the decision changes
+(rule 19) is named by exactly one value out of 522 — `msg.ktproj_import_only`.
 
-**4. Молчания.** Отказ звукового выхода печатается в `eprintln!`
-(`src/apps/kt-app/src/app.rs:389`) и не доходит до пользователя вообще: звука
-нет, сообщения нет. Это ровно тот класс, из-за которого в Р.35 завели
-`KtMetaBroken`; сам канал «ни одна ошибка не теряется» — предмет F-HLP-013,
-здесь он назван потому, что сообщение без текста — это тоже анатомия, с нулём
-частей из трёх.
+**4. Silence.** A failure of the audio output is printed by `eprintln!` (`src/apps/kt-app/src/app.rs:389`) and does not reach the user at all: there is
+no sound and no message. This is exactly the class because of which `KtMetaBroken` was created in R.35; the channel itself — "no error is lost" — is the subject
+of F-HLP-013, and it is named here because a message without text is also an anatomy, with zero of the three parts.
 
-**5. Отмены, притворяющейся ошибкой.** Нажатая кнопка «Cancel» приводит к
-`ExportError::Cancelled` (`export.rs:517`), и окно рендера красит её красным
-через `render.error_msg`: «Error: export cancelled». Пользователь сделал ровно
-то, что хотел, и получил ошибку.
+**5. Cancellation disguised as an error.** A pressed "Cancel" button leads to `ExportError::Cancelled` (`export.rs:517`), and the render window paints it red
+through `render.error_msg`: "Error: export cancelled". The user did exactly what he wanted and received an error.
 
-### Особый случай: `GpuRequired` знает имена и говорит счёт
+### Special case: `GpuRequired` knows the names and reports a count
 
-`ExportError::GpuRequired(usize)` (`src/libs/kt-engine/src/export.rs:293`) —
-самое дорогое сообщение программы: это единственный ПРЕФЛАЙТ, отказывающий до
-создания файла, и решение Р.29 «тихо испорченный файл хуже честной ошибки».
-Устроено оно так:
+`ExportError::GpuRequired(usize)` (`src/libs/kt-engine/src/export.rs:293`) is the most expensive message of the program: it is the only PREFLIGHT that refuses
+before the file is created, and the R.29 decision "a silently corrupted file is worse than an honest error". It is built like this:
 
 ```
 let need = gpu_required_clips(project);      // export.rs:405 — Vec<ClipId>
@@ -263,132 +210,91 @@ if !need.is_empty() {
 }
 ```
 
-`gpu_required_clips()` (`export.rs:298`) специально приводит id к тем, что
-пользователь ВИДИТ: комментарий в коде говорит прямо — иначе «preflight назвал
-бы синтетические id, которых пользователь в проекте не видит», и ради этого
-куски морфер-слоя схлопываются через `slice_origin`. То есть координата
-посчитана, приведена к пользовательскому виду — и в следующей строке заменена
-на `.len()`. Сообщение получается «project uses 3D effects on *N* clip(s), but
-no GPU is available»: причина есть, следствие есть, координаты нет, действия
-нет, языка нет.
+`gpu_required_clips()` (`export.rs:298`) deliberately reduces the ids to those that the user SEES: the comment in the code says it plainly — otherwise
+"the preflight would name synthetic ids which the user does not see in the project", and for this the pieces of the morpher layer are collapsed through
+`slice_origin`. So the coordinate has been computed, reduced to the user's view — and on the next line it is replaced with `.len()`. The message comes out as
+"project uses 3D effects on *N* clip(s), but no GPU is available": the cause is there, the consequence is there, the coordinates are not there, the action is not
+there, the language is not there.
 
-Мимо проходят ещё две вещи. Первая: диалог настроек рендера умеет
-предупреждать ДО старта — `missing_sources()` считается при открытии
-(`render_dialog.rs:175`) и рисуется в окне (`400`), — но `gpu_required_clips()`
-там не зовут, поэтому единственный настоящий префлайт программы срабатывает
-ПОСЛЕ нажатия «Render…», а не до. Вторая: какой именно эффект требует GPU, не
-названо, хотя `requires_gpu()` спрашивается у конкретного `FxInstance`
+Two more things pass by. First: the render settings dialog can warn BEFORE the start — `missing_sources()` is computed on opening
+(`render_dialog.rs:175`) and is drawn in the window (`400`) — but `gpu_required_clips()` is not called there, so the only real preflight of the program fires
+AFTER pressing "Render…", not before. Second: which exact effect requires the GPU is not named, although `requires_gpu()` is asked of the concrete `FxInstance`
 (`src/libs/kt-model/src/project.rs:2340`).
 
-### Что мешает
+### What gets in the way
 
-Тест t131 (`src/apps/kt-app/src/i18n_tests.rs:219`) запрещает кириллицу в
-литералах ВСЕХ не-тестовых `.rs` воркспейса, а не только kt-app. Значит,
-перевести текст «на месте», в kt-otio или kt-engine, физически нельзя, и
-правильная форма — не «сделать сообщения красивее», а **вернуть на границу
-ЗНАЧЕНИЕ вместо строки**: `e.to_string()` заменяется исчерпывающим `match` по
-варианту в kt-app, и тогда новый вариант в библиотеке валит СБОРКУ, как валит
-её пропущенный ключ каталога. Это тот же приём, которым уже сделан
-`NotOtio`, — надо распространить его на остальные 76.
+The test t131 (`src/apps/kt-app/src/i18n_tests.rs:219`) forbids Cyrillic in the literals of ALL non-test `.rs` files of the workspace, not only
+kt-app. So translating the text "in place", in kt-otio or kt-engine, is physically impossible, and the right form is not "make the messages nicer" but
+**return a VALUE rather than a string at the boundary**: `e.to_string()` is replaced by an exhaustive `match` on the variant in kt-app, and then a new
+variant in the library breaks the BUILD, just as a missing catalog key does. This is the same device that is already used for `NotOtio` — it has to be
+extended to the other 76.
 
-Второй упор — потолок 160 символов (`src/apps/kt-app/build.rs:42`,
-`MAX_VALUE_CHARS`) стоит на ЗНАЧЕНИИ каталога, а не на подставленном
-результате: `msg.media_missing` длиной 52 символа с хвостом `averr` даёт под
-двести. Раздел «Оценка» это учитывает; общий счёт цены строки — F-HLP-033.
+The second bottleneck — the 160-character ceiling (`src/apps/kt-app/build.rs:42`, `MAX_VALUE_CHARS`) — stands on the VALUE of the catalog, not on the
+substituted result: `msg.media_missing` is 52 characters long and, with the `averr` tail, gives almost two hundred. The section "Estimate" takes this into
+account; the overall account of the price of the line — F-HLP-033.
 
-Третий: имена клипов живут в kt-app (`names_cache`), а ошибка рождается в
-kt-engine, который про имена не знает и знать не должен. Значит, координату
-несёт не текст сообщения, а СПИСОК ID в варианте ошибки, и имя ему даёт уже
-kt-app — ровно как `msg.media_missing` получает `label` от
-`crate::util::media_label`.
+The third: the clip names live in kt-app (`names_cache`), and the error is born in kt-engine, which knows nothing about names and should not. So the
+coordinate is carried not by the text of the message, but by the LIST OF IDS in the error variant, and the name is given to it by kt-app — exactly as
+`msg.media_missing` receives `label` from `crate::util::media_label`.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Ни одного из двенадцати корневых — и это главный аргумент «дёшево»: ни модель
-времени, ни кэш, ни потоки, ни детерминизм тут не участвуют.
+None of the twelve root ones — and this is the main argument for "cheap": neither the time model, nor the cache, nor the threads, nor determinism is involved here.
 
-Задевается формат-инвариант **«ошибки загрузки — явные»** (дефект `p` старого
-формата, `docs/porting-notes.md:72`, закрыт тестом 12). Именно он породил
-`KtMetaBroken` в Р.35 (п.243: битая `metadata.kt` открывалась молча, и
-пользователь потерял бы дорожки, морферы и раскладку). Ирония ровно в этом:
-вариант завели, чтобы ошибка была ЯВНОЙ, — и он единственный из десяти, кто
-уезжает к пользователю непереведённой английской строкой.
+The format invariant **"loading errors are explicit"** is touched (the defect `p` of the old format, `docs/porting-notes.md:72`, closed by test 12). It is precisely
+this that produced `KtMetaBroken` in R.35 (item 243: a broken `metadata.kt` was opened silently, and the user would have lost tracks, morphers and the layout). The irony
+lies exactly here: the variant was created so that the error would be EXPLICIT — and it is the only one of the ten that reaches the user as an untranslated English string.
 
-Правила чек-листа UI: **19** (диалог обязан сказать, где потом изменить
-решение) — не выполнено ни `GpuRequired`, ни `eviction_spike`; **18** (говорить
-ЧТО и ГДЕ) — выполнено одним значением из 522; **16** (невозможность =
-ОШИБКА) — нарушено уровнем `Severity`; **7** (текст помещается) — под угрозой
-из-за хвостов, не считаемых потолком 160.
+Rules of the UI checklist: **19** (the dialog must say where the decision can be changed later) — not fulfilled by `GpuRequired` or `eviction_spike`; **18** (say WHAT and WHERE) — fulfilled
+by one value out of 522; **16** (impossibility = an ERROR) — violated by the level `Severity`; **7** (the text fits) — under threat from the tails not counted by the 160 ceiling.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии раунда: (1) граница «значение вместо строки» + ключи каталога; (2) координата отказа и уровень |
-| Где основная работа | kt-app (тотальный `match` → ключи, `Severity::Error`), kt-engine (`GpuRequired` несёт `Vec<ClipId>`, префлайт зовётся из диалога), kt-otio (notice как значение, а не строка) |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | `i18n_tests::every_error_variant_has_a_catalog_key` (исчерпывающий разбор всех вариантов ошибок, ни одного `to_string()` на пути к UI); харнесс-тест «отмена рендера не красная и не ошибка»; харнесс-тест «отказ по 3D называет клипы и выделяет их» |
-| Зависит от | F-HLP-010 (красная строка отказа), F-HLP-012 (цепочка про исходник), F-HLP-013 (канал и журнал), F-HLP-033 (цена строки каталога) |
-| Ломает совместимость | нет |
+| Size | M — 2 stages of the round: (1) the boundary "value instead of string" + the catalog keys; (2) the coordinate of the failure and the level |
+| Where the main work is | kt-app (exhaustive `match` → keys, `Severity::Error`), kt-engine (`GpuRequired` carries `Vec<ClipId>`, the preflight is called from the dialog), kt-otio (the notice as a value, not a string) |
+| Project format | does not touch it |
+| Tests that will have to be written | `i18n_tests::every_error_variant_has_a_catalog_key` (an exhaustive parse of all error variants, not a single `to_string()` on the path to the UI); a harness test "a cancelled render is neither red nor an error"; a harness test "a 3D refusal names the clips and selects them" |
+| Depends on | F-HLP-010 (the red line of a refusal), F-HLP-012 (the chain about the source), F-HLP-013 (the channel and the log), F-HLP-033 (the price of the catalog line) |
+| Breaks compatibility | no |
 
-Рамка, не ТЗ: конкретный набор ключей, формулировки на пяти языках и порядок
-стадий — предмет раунда.
+A frame, not a spec: the concrete set of keys, the wordings in five languages and the order of the stages are the subject of the round.
 
-## Вердикт
+## Verdict
 
-Берём, и берём дёшево: инвариантов не задето ни одного, а образец уже написан
-нами же — `[perf.note]` и три уровня сообщения об отсутствующем исходнике. Речь
-не о том, чтобы научиться писать сообщения, а о том, чтобы ЧЕТЫРЕ ПЯТЫХ
-сообщений программы перестали писаться `thiserror`'ом мимо человека. Отдельно и
-первым делом — `GpuRequired`: она уже посчитала координату и выбросила её в
-той же функции.
+We take it, and cheaply: not a single invariant is touched, and the model has already been written by us — `[perf.note]` and the three levels of the message about a missing source.
+The point is not to learn how to write messages, but for THREE QUARTERS of the program's messages to stop being written by `thiserror` past the person.
+Separately and first of all — `GpuRequired`: it has already computed the coordinate and thrown it away in the same function.
 
-ТЕСТ: i18n_tests::every_error_variant_has_a_catalog_key — сегодня падает на
-первом же варианте: из 77 именованных вариантов ошибок kt-model/kt-otio/
-kt-engine/kt-ffmpeg/kt-media переведён ровно один (`NotOtio` →
-`msg.ktproj_import_only`, `src/apps/kt-app/src/app.rs:4963`), остальные уходят
-к пользователю в двадцати местах, из них шесть — без единого нашего слова
-вокруг, и ни t125 (полнота каталога), ни t131 (кириллица в литералах), ни
-потолок 160 символов (`src/apps/kt-app/build.rs:42`) этого не видят, потому
-что все трое смотрят на КАТАЛОГ, а эти строки в каталог не заходят.
+TEST: i18n_tests::every_error_variant_has_a_catalog_key — today it fails on the first variant: of the 77 named error variants of kt-model/kt-otio/kt-engine/kt-ffmpeg/kt-media exactly one is translated (`NotOtio` → `msg.ktproj_import_only`, `src/apps/kt-app/src/app.rs:4963`); the rest reach the user at twenty places, six of them without a single word of ours around them, and neither t125 (catalog completeness), nor t131 (Cyrillic in literals), nor the 160-character ceiling (`src/apps/kt-app/build.rs:42`) sees this, because all three look at the CATALOG, and these strings do not go into the catalog.
 
-ПРОВЕРКА: src/libs/kt-engine/src/export.rs — клаузула «префлайт возвращает
-`GpuRequired(Vec<ClipId>)`, а не счёт, и вызывается из диалога настроек до
-кнопки, а не из `export_mp4_with_backends` после неё»: `gpu_required_clips()`
-уже приводит id к видимым пользователю через `slice_origin`, и `export.rs:407`
-сегодня стирает эту работу вызовом `.len()`.
+CHECK: src/libs/kt-engine/src/export.rs — the clause "the preflight returns `GpuRequired(Vec<ClipId>)`, not a count, and is called from the settings dialog before the button, not from `export_mp4_with_backends` after it": `gpu_required_clips()` already reduces the ids to those visible to the user through `slice_origin`, and `export.rs:407` today erases this work with the call `.len()`.
 
-## Источники
+## Sources
 
-Живьём ни один из пяти редакторов ядра в этот заход не запускался; проверка
-живьём для софта вне ядра не предполагается (решение Р.40, `_editors.md`).
-Строки таблицы собраны по официальным материалам вендоров и форумам, даты
-обращения — 2026-09-07.
+None of the five core editors was run live in this pass; the Russian-language summary of the rows comes from the official
+materials of the vendors and from forums; the access dates are 2026-09-07.
 
-- FAQ Adobe «Fix Error Compiling Movie errors in Premiere Pro» (состав диалога:
-  класс, таймкод, Error Code; цитата Kevin J. Monahan, 18.02.2022) —
+- Adobe FAQ "Fix Error Compiling Movie errors in Premiere Pro" (the composition of the dialog:
+  class, timecode, Error Code; quote by Kevin J. Monahan, 18.02.2022) —
   https://community.adobe.com/t5/premiere-pro-discussions/faq-fix-error-compiling-movie-errors-in-premiere-pro/m-p/12757295
-- Creative COW, форум VEGAS Pro, тред про «The reason for the error could not
-  be determined» (цитата Nigel O'neill, 08.11.2010) —
+- Creative COW, VEGAS Pro forum, a thread about "The reason for the error could not
+  be determined" (quote by Nigel O'neill, 08.11.2010) —
   https://creativecow.net/forums/thread/an-error-occurred-while-creating-the-media-file-na/
-- Creative COW, форум VEGAS Pro, «Exception thrown by method called» — второй
-  вид того же сообщения —
+- Creative COW, VEGAS Pro forum, "Exception thrown by method called" — the second kind of the same message —
   https://creativecow.net/forums/thread/sony-vegas-12-render-as-an-error-occurred-while/
-- Blackmagic Design Forum, «Render Job failed please help!» (поведение очереди
-  рендера, процент как координата) —
+- Blackmagic Design Forum, "Render Job failed please help!" (the behaviour of the render queue, the percentage as a coordinate) —
   https://forum.blackmagicdesign.com/viewtopic.php?f=21&t=205830
-- Описание настройки Resolve «Stop renders when a frame or clip cannot be
-  processed» (Preferences ▸ User ▸ UI Settings) — вторичный источник, живьём
-  [НЕ ПРОВЕРЕНО] —
+- Description of the Resolve setting "Stop renders when a frame or clip cannot be
+  processed" (Preferences ▸ User ▸ UI Settings) — a secondary source, live
+  [NOT VERIFIED] —
   https://motionarray.com/learn/davinci-resolve/davinci-resolve-render-crashes/
-- Adobe Product Community, треды про «Error 86::1» (форма парного кода AE и то,
-  что вендор его не документирует) —
+- Adobe Product Community, threads about "Error 86::1" (the form of AE's paired code and the fact that the vendor does not document it) —
   https://community.adobe.com/t5/after-effects-discussions/error-86-1-after-effects-2020-in-windows-10/m-p/10782599
-- Apple Support Community, тред про ошибку экспорта Final Cut Pro (форма
-  алерта; текст читался через текст-прокси, разметка форума в окружении не
-  открывается) — https://discussions.apple.com/thread/255390795
-- VS Code UX Guidelines, Notifications (три уровня, кнопки действия, «Do not
-  show again») — https://code.visualstudio.com/api/ux-guidelines/notifications
-- Nielsen Norman Group, «Error-Message Guidelines» — источник формулировки «не
-  обвинять пользователя» и требования конструктивного совета —
+- Apple Support Community, a thread about an export error in Final Cut Pro (the form of the alert; the text was read through a text proxy,
+  the forum's markup does not open in this environment) — https://discussions.apple.com/thread/255390795
+- VS Code UX Guidelines, Notifications (three levels, action buttons, "Do not
+  show again") — https://code.visualstudio.com/api/ux-guidelines/notifications
+- Nielsen Norman Group, "Error-Message Guidelines" — the source of the wording "do not blame the user" and of the requirement for constructive advice —
   https://www.nngroup.com/articles/error-message-guidelines/

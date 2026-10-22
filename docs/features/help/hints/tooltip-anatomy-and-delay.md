@@ -1,12 +1,12 @@
 ---
 id: F-HLP-004
-title: Анатомия всплывающей подсказки: задержка, содержимое, богатые тултипы
-status: исследовано
+title: Anatomy of a tooltip: delay, content, rich tooltips
+status: researched
 priority: B
 cost: M
 category: help/hints
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, photoshop-27, vscode-1.136]
-we_have: нет
+we_have: no
 crates: [kt-app]
 invariants: [12]
 ui_rules: [7, 10, 17]
@@ -17,347 +17,203 @@ depends_on: [F-UI-002, F-HLP-001, F-HLP-002]
 checked: 2026-09-07
 ---
 
-# F-HLP-004 — Анатомия всплывающей подсказки: задержка, содержимое, богатые тултипы
+# F-HLP-004 — Anatomy of a tooltip: delay, content, rich tooltips
 
-## Суть
+## Essence
 
-Монтажёр задерживает курсор на кнопке — и через паузу рядом с курсором, поверх
-интерфейса, всплывает плашка: имя элемента, горячая клавиша, фраза о назначении,
-а в самом дорогом варианте — ещё и немой пятисекундный ролик, показывающий жест.
-Уводишь курсор — плашка исчезает. Она появляется ровно там, куда смотришь, и
-ровно там же закрывает то, на что смотришь; ждать её приходится потому, что без
-паузы она мельтешила бы при каждом проносе мыши через панель.
+The editor hovers the cursor over a button — and after a pause a panel pops up next to the cursor, over the interface: the element's name, the hotkey, a phrase about its purpose, and, in the most expensive variant, also a silent five-second clip showing the gesture. Move the cursor away — the panel disappears. It appears exactly where you are looking, and exactly there it covers what you are looking at; it has to wait, because without the pause it would flicker on every mouse sweep across the panel.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | ToolTip | всплывает у элемента. Несёт то, чего на экране нет: у кнопки эффекта в канальной полоске — ПОЛНОЕ имя плагина и пресета (кнопка узкая); во время драга огибающей — «плавающий ToolTip» с текущим значением; при таскании snap-offset — величину смещения. Выключателя в справке 2026 не описано (проверено по `prefgeneraltab`, `prefdisplay`) |
-| Adobe Premiere | 26.x | Tool Tips | текст вида «Selection Tool (V)» — имя плюс акселератор. Выключатель «Show Tool Tips» появился в General-настройках в CC (в CS6 его не было); часть попапов он не гасит «by design» — данные клипа на таймлайне, данные метки, Start/End/Duration над таймбаром. Точное имя и место галки в 26.x [НЕ ПРОВЕРЕНО]: `helpx.adobe.com` из окружения не открывается |
-| DaVinci Resolve | 21 | Tool tips | **две поверхности сразу**: имя входа/выхода ноды появляется в статусбаре НЕМЕДЛЕННО, и «через несколько мгновений» тот же текст выводится плавающим тултипом поверх ноды. Во время roll-трима тултип показывает offset правки. Общего выключателя в мануале не нашлось: «Show Tips» — локальная галка Spline Editor'а |
-| Final Cut Pro | 12.3 | help tag | всплывашка Apple. Классический груз — то, что подпись СКРЫЛА: у переименованного эффекта help tag показывает исходное имя. Рядом живёт отдельная поверхность того же назначения — окно Skimmer Info (Control-Y), которое показывает данные под скиммером и выключается пунктом меню |
-| After Effects | 26.x | Tool Tips | галка «Show Tool Tips» в Preferences > General. В собственном разделе «user interface tips» Adobe советует не тултип, а держать на виду панель Info. Формулировка выписана из мануала линейки CS5; для 26.x [НЕ ПРОВЕРЕНО] |
+| VEGAS Pro | 2026.0 | ToolTip | pops up at the element. It carries what is not on screen: on the effect button in the channel strip — the FULL name of the plugin and the preset (the button is narrow); during a drag of the envelope — a "floating ToolTip" with the current value; when dragging the snap-offset — the size of the offset. No switch is described in the 2026 help (checked in `prefgeneraltab`, `prefdisplay`) |
+| Adobe Premiere | 26.x | Tool Tips | text like "Selection Tool (V)" — the name plus the accelerator. The "Show Tool Tips" switch appeared in the General settings in CC (there was none in CS6); some pop-ups it does not turn off "by design" — clip data on the timeline, marker data, Start/End/Duration above the time bar. The exact name and location of the checkbox in 26.x [NOT VERIFIED]: `helpx.adobe.com` does not open from the environment |
+| DaVinci Resolve | 21 | Tool tips | **two surfaces at once**: the name of a node's input/output appears in the status bar IMMEDIATELY, and "after a few moments" the same text is shown as a floating tooltip over the node. During a roll trim the tooltip shows the offset of the edit. A common switch was not found in the manual: "Show Tips" is a local checkbox of the Spline Editor |
+| Final Cut Pro | 12.3 | help tag | Apple's pop-up. The classic burden is what the label HID: for a renamed effect the help tag shows the original name. Nearby lives a separate surface with the same purpose — the Skimmer Info window (Control-Y), which shows data under the skimmer and is turned off by a menu item |
+| After Effects | 26.x | Tool Tips | the "Show Tool Tips" checkbox in Preferences > General. In its own section "user interface tips" Adobe advises not a tooltip but keeping the Info panel in view. The wording is copied from the CS5 manual; for 26.x [NOT VERIFIED] |
 
-**Вне ядра.** Без Photoshop верхний конец шкалы не описать: богатые тултипы
-придуманы там, и там же вендор сам разделил их с обычными двумя разными галками.
-VS Code нужен по другой причине: это единственная из просмотренных программ, где
-задержка — не константа в чужом коде, а параметр пользователя, и таких параметров
-у неё три.
+**Outside the core.** Without Photoshop the upper end of the scale cannot be described: rich tooltips were invented there, and there the vendor itself split them from the ordinary ones into two different checkboxes. VS Code is needed for another reason: it is the only one of the programs reviewed where the delay is not a constant in someone else's code but a user parameter, and it has three such parameters.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Photoshop | 27.x | Rich Tool Tips | попап несёт имя инструмента, горячую клавишу, фразу описания и петлю анимации на 5–6 секунд, показывающую инструмент в работе. Две независимые галки на странице Preferences > Tools: «Show Tooltips» гасит все, «Use Rich Tooltips» переводит богатые обратно в обычные. Включено по умолчанию с CC 2018 |
-| Visual Studio Code | 1.136 | hover | `editor.hover.delay` = 300 мс («delay in milliseconds after which the hover is shown»), `editor.hover.hidingDelay` = 300 мс, `editor.hover.sticky` = true («remain visible when mouse is moved over it»), плюс режим `editor.hover.enabled: onKeyboardModifier` — подсказка не по времени, а по зажатому Ctrl/Cmd. Значения — из `src/vs/editor/common/config/editorOptions.ts` |
+| Photoshop | 27.x | Rich Tool Tips | the pop-up carries the tool's name, the hotkey, the description phrase, and a 5–6 second animation loop showing the tool in use. Two independent checkboxes on the Preferences > Tools page: "Show Tooltips" turns off all of them, "Use Rich Tooltips" switches the rich ones back to ordinary. Enabled by default since CC 2018 |
+| Visual Studio Code | 1.136 | hover | `editor.hover.delay` = 300 ms ("delay in milliseconds after which the hover is shown"), `editor.hover.hidingDelay` = 300 ms, `editor.hover.sticky` = true ("remain visible when mouse is moved over it"), plus the mode `editor.hover.enabled: onKeyboardModifier` — the hint is not by time but by a held Ctrl/Cmd. The values are from `src/vs/editor/common/config/editorOptions.ts` |
 
-## Фишка фишки
+## The trick behind it
 
-**Что механизм несёт, чего одна строка статусбара вместить не может.** Ровно два
-груза, и они разной природы. Первый — ВРЕМЯ: богатый тултип показывает не текст
-про жест, а сам жест, петлёй на 5–6 секунд; текстом «перетащите с зажатым Alt»
-это не пересказывается, потому что учит здесь движение, а не слово. Второй —
-РАСПОЛОЖЕНИЕ: обычный тултип приклеен к пикселю и потому может нести строку,
-которой на экране нет вообще, — полное имя плагина, спрятанное усечением, или
-число, живущее только пока идёт драг. Первый груз у нас не денется никуда: он
-запрещён инвариантом 12 (repaint только при движении) и уезжает на сайт, в
-`site/content/*.toml` и `site/screenshots.py`. Второй у нас денется в ту же
-единственную строку — но как ДАННЫЕ, а не как надпись каталога, и сегодня это
-сделано в двух местах из пяти.
+**What the mechanism carries, which a single status bar line cannot hold.** Exactly two payloads, of different natures. The first is TIME: a rich tooltip shows not a text about the gesture but the gesture itself, in a 5–6 second loop; the text "drag while holding Alt" does not retell it, because here what is taught is movement, not a word. The second is LOCATION: an ordinary tooltip is glued to a pixel and therefore can carry a line that is not on screen at all — the full name of a plugin hidden by truncation, or a number that lives only while a drag is in progress. The first payload has nowhere else to go for us: it is forbidden by invariant 12 (repaint only on movement) and moves to the site, into `site/content/*.toml` and `site/screenshots.py`. The second will end up in the same single line — but as DATA, not as a catalog label, and today this is done in two places out of five.
 
-Три детали, которых в списках возможностей нет:
+Three details that are absent from the lists of features:
 
-1. **Resolve держит обе поверхности разом, и разница между ними — только
-   задержка.** В мануале 21 (гл. 63, стр. 1348) это описано буквально: имя входа
-   ноды появляется в статусбаре сразу, а «если подождать ещё несколько мгновений»
-   — тот же самый текст всплывает над нодой. То есть вендор, у которого есть
-   статусбар, всё равно ставит попап — и не как альтернативу, а как отложенный
-   дубль. Это и есть доказательство, что задержка — отдельная ось: содержимое
-   одинаковое, канала два, и различает их таймер.
+1. **Resolve keeps both surfaces at once, and the only difference between them is the delay.** The manual for version 21 (chapter 63, page 1348) describes it literally: the name of the node's input appears in the status bar at once, and "if you wait a few more moments" — the same text pops up over the node. That is, a vendor who has a status bar still puts a pop-up — not as an alternative but as a deferred duplicate. This is the proof that the delay is a separate axis: the content is the same, there are two channels, and a timer distinguishes them.
 
-2. **Богатый тултип дорог не задержкой, а производством.** Кто-то снял по ролику
-   на каждый инструмент, и при следующей смене иконок их надо переснимать.
-   Зато локализуется он лучше обычного: ролик без озвучки и без надписей
-   ([НЕ ПРОВЕРЕНО живьём], по описаниям — экранная запись жеста), переводу
-   подлежат имя, клавиша и фраза, а движение мыши одинаково на всех языках. Плата за
-   это — что выключить его можно только целиком: галка одна на все инструменты,
-   и опытный пользователь гасит вместе с ней те три ролика, которых не видел.
+2. **A rich tooltip is expensive not because of the delay but because of production.** Someone shot a clip for each tool, and with each change of icons they have to be re-shot. But it localizes better than an ordinary one: the clip has no voice-over and no captions ([NOT VERIFIED live], from descriptions — a screen recording of the gesture), only the name, the key and the phrase are subject to translation, while the mouse movement is the same in all languages. The price of this is that it can be turned off only entirely: there is one checkbox for all tools, and an experienced user turns off together with it those three clips he has not seen.
 
-3. **Тултип, который несёт ЧИСЛО, вендор выключить не даёт.** У Premiere галка
-   «Show Tool Tips» по прямому ответу Adobe не гасит попапы с данными клипа,
-   данными метки и Start/End/Duration над таймбаром — «by design». Vegas тем же
-   плавающим тултипом показывает значение огибающей и величину snap-offset во
-   время драга. В этот момент попап перестаёт быть справкой и становится
-   прибором: он привязан к точке, за которую тянут, и уходить ему некуда, потому
-   что глаз в этот момент не в углу окна.
+3. **A tooltip that carries a NUMBER, the vendor does not let you turn off.** In Premiere the "Show Tool Tips" checkbox, by Adobe's direct answer, does not turn off pop-ups with clip data, marker data, and Start/End/Duration above the time bar — "by design". Vegas, with the same floating tooltip, shows the envelope value and the size of the snap-offset during a drag. At that moment the pop-up stops being a reference and becomes an instrument: it is tied to the point being pulled, and it has nowhere to go, because at that moment the eye is not in the corner of the window.
 
-## Плюсы
+## Pros
 
-- Нулевое расстояние от предмета до объяснения: курсор уже там, переводить
-  взгляд не нужно. Это единственное настоящее преимущество формы — всё
-  остальное воспроизводимо на постоянном месте.
-- Попап не занимает места в раскладке, поэтому объяснить можно ЛЮБОЙ элемент,
-  не платя за это пикселями чужой панели (у постоянного места плата обратная —
-  правило 13 чек-листа).
-- Ёмкость не упирается в ширину чужой полосы: абзац, две строки, изображение,
-  видео — форма выдержит что угодно, потому что рисуется своим слоем.
-- Подсказка привязана к виджету, а не к окну: у иконки без подписи это
-  единственный способ узнать назначение, не нажимая её.
-- Акселератор внутри текста («Selection Tool (V)») учит горячей клавише в тот
-  момент, когда рука уже на мыши, — канал обучения, за который не платят ничем.
-- Для программиста он бесплатен: одна строка рядом с виджетом. В нашем же v1
-  таких строк набралось около сорока (`git show cpp-reference-final:mainwindow.cpp`).
+- Zero distance from the object to the explanation: the cursor is already there, there is no need to move the gaze. This is the only real advantage of the form — everything else can be reproduced in a permanent place.
+- The pop-up takes no space in the layout, so ANY element can be explained without paying for it in pixels of someone else's panel (for a permanent place the payment is the reverse — rule 13 of the checklist).
+- The capacity is not limited by the width of someone else's strip: a paragraph, two lines, an image, a video — the form will hold anything, because it is drawn in its own layer.
+- The hint is tied to the widget, not to the window: for an unlabeled icon this is the only way to learn its purpose without pressing it.
+- An accelerator inside the text ("Selection Tool (V)") teaches the hotkey at the moment the hand is already on the mouse — a learning channel that costs nothing.
+- For the programmer it is free: one line next to the widget. In our v1 about forty such lines accumulated (`git show cpp-reference-final:mainwindow.cpp`).
 
-## Минусы
+## Cons
 
-- Перекрывает ровно то, на что смотришь: это не дефект реализации, а свойство
-  выбранного слота.
-- Требует ждать, и настройка задержки — компромисс без хорошего значения: ноль
-  даёт мельтешение при проносе мыши через панель, полсекунды — «не дождёшься»,
-  секунда — новичок не узнает, что подсказка вообще есть.
-- На сенсорном экране наводить нечем: канал просто отсутствует, и всё, что живёт
-  только в нём, там недостижимо.
-- WCAG 2.2, критерий 1.4.13 (уровень AA) требует от всплывающего содержимого трёх
-  свойств: dismissible, hoverable («pointer can be moved over the additional
-  content without the additional content disappearing») и persistent. Попап
-  перестаёт быть текстом и становится объектом со своим поведением — VS Code
-  ровно поэтому держит `sticky` и `hidingDelay` отдельными настройками.
-- Ожидание — источник перерисовки. В egui 0.36.1 ветка ожидания вызывает
-  `request_repaint_after_secs(time_til_tooltip)`, то есть кадр планируется ради
-  того, чтобы через полсекунды показать плашку. Это прямо против инварианта 12.
-- Богатую форму нельзя выключить поштучно, и она включена по умолчанию — отсюда
-  весь отрицательный фидбек ниже: пользователь платит за обучение, которое ему
-  уже не нужно, каждым проносом мыши.
-- «Тултипы выключены» — почти всегда неправда: часть попапов остаётся, потому
-  что несёт данные. Пользователь ищет вторую галку и не находит.
+- It covers exactly what you are looking at: this is not an implementation defect but a property of the chosen slot.
+- It requires waiting, and the delay setting is a compromise with no good value: zero gives flicker when the mouse sweeps across the panel, half a second — "you don't wait", a second — a newcomer does not learn that a hint exists at all.
+- On a touch screen there is nothing to hover with: the channel is simply absent, and everything that lives only in it is unreachable there.
+- WCAG 2.2, criterion 1.4.13 (level AA) requires three properties of popup content: dismissible, hoverable ("pointer can be moved over the additional content without the additional content disappearing") and persistent. The pop-up stops being text and becomes an object with its own behavior — which is exactly why VS Code keeps `sticky` and `hidingDelay` as separate settings.
+- Waiting is a source of repaints. In egui 0.36.1 the waiting branch calls `request_repaint_after_secs(time_til_tooltip)`, that is, a frame is scheduled in order to show the panel half a second later. This is directly against invariant 12.
+- The rich form cannot be turned off piece by piece, and it is enabled by default — hence all the negative feedback below: the user pays, with every mouse sweep, for a lesson he no longer needs.
+- "Tooltips are off" is almost always untrue: some pop-ups remain, because they carry data. The user looks for a second checkbox and does not find it.
 
-## Что говорят пользователи
+## What users say
 
 > Every time I hover my mouse over a tool that I haven't used yet, a gigantic
 > video tutorial popup pops up that shows me how to use the tool.
 > — DexFX, Adobe Community, 12.11.2017, https://community.adobe.com/questions-712/how-do-i-disable-the-annoying-but-helpful-video-windows-that-pop-up-when-hovering-over-a-tool-1059128
 
-Тред живёт девятый год, 35 ответов и 77 тысяч просмотров; ответ «Preferences >
-Tools, снять Enable Rich Tooltips» помечен как правильный.
+The thread has been running for nine years, with 35 replies and 77 thousand views; the answer "Preferences > Tools, uncheck Enable Rich Tooltips" is marked as correct.
 
 > This is my job. Has been for 15 years. I know how to use these applications so
 > both the blue banners and animated pop-ups are a nuisance.
-> — Russell Lord, там же, 17.10.2018
+> — Russell Lord, ibid., 17.10.2018
 
-Обратная сторона — та же фича глазами новичка, и это не пересказ, а живая
-жалоба на её ПРОПАЖУ:
+The reverse side is the same feature through the eyes of a newcomer, and this is not a retelling but a live complaint about its DISAPPEARANCE:
 
 > When i started, the rich tool tips videos have been helpful in explaining what
 > certain tools does etc etc but recently I have realised that they no longer pop
 > up on my screen.
 > — LR_, Adobe Community, 05.08.2025, Photoshop 26.9, https://community.adobe.com/questions-712/turn-on-rich-tool-tips-1181429
 
-Про обычные тултипы в NLE — то же расслоение. Раздражение:
+About ordinary tooltips in NLEs — the same split. Irritation:
 
 > I know, it's small thing, but they drive me nuts!
-> — Steve Martin, Creative COW, тред «Tool Tips – anyone know how to turn off?», 14.04.2013, https://creativecow.net/forums/thread/tool-tips-anyone-know-how-to-turn-offae/
+> — Steve Martin, Creative COW, thread "Tool Tips – anyone know how to turn off?", 14.04.2013, https://creativecow.net/forums/thread/tool-tips-anyone-know-how-to-turn-offae/
 
-И зависимость от акселератора в тексте подсказки — человек заметил его
-исчезновение и завёл тред:
+And the dependence on the accelerator in the text of the hint — a person noticed its disappearance and opened a thread:
 
 > So when I open Premiere pro and hover mouse over tools they show the shortcut
 > but if I open project file and hover over tool they just show the name and
 > shortcut hotkey is not showing.
 > — Mxch, Adobe Community, 17.12.2022, https://community.adobe.com/questions-729/premiere-pro-tool-tips-are-not-showing-shortcuts-while-hovering-mouse-1396829
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-Барьер и его сторож:
+The barrier and its guard:
 
-- `src/apps/kt-app/src/theme.rs:95-96` — `tooltip_delay = 1.0e6`,
-  `tooltip_grace_time = 0.0` с комментарием «п.14 р.8: всплывающих подсказок НЕТ
-  вообще». Дефолты egui 0.36.1 для сравнения: `tooltip_delay = 0.5`,
-  `tooltip_grace_time = 0.2`, `show_tooltips_only_when_still = true` — то есть у
-  библиотеки под нашими руками ровно та же анатомия из трёх параметров, что у
-  VS Code, и мы выкрутили первый до 1 000 000 секунд.
-- `src/apps/kt-app/src/app.rs:1505` `KtApp::hint`, `app.rs:4413` `hint_into`,
-  `app.rs:1274` `draw_status_hint`, чистая `status_line` — модель разобрана в
-  **F-HLP-001**, бюджет полосы меряет **F-HLP-002**; здесь они не переоткрываются.
-- Акселератор вписан в текст подсказки РУКАМИ, ровно в формате Premiere:
-  `src/apps/kt-app/i18n/en.toml`, секция `[tb]` — `play_pause = "Play/Pause
-  (Space)"`, `undo = "Undo (Ctrl+Z)"`, `search = "Search the project (Ctrl+F)"`.
+- `src/apps/kt-app/src/theme.rs:95-96` — `tooltip_delay = 1.0e6`, `tooltip_grace_time = 0.0`, with the comment "item 14 of round 8: there are NO pop-up hints at all". The egui 0.36.1 defaults for comparison: `tooltip_delay = 0.5`, `tooltip_grace_time = 0.2`, `show_tooltips_only_when_still = true` — that is, the library in our hands has exactly the same anatomy of three parameters as VS Code, and we turned the first one up to 1 000 000 seconds.
+- `src/apps/kt-app/src/app.rs:1505` `KtApp::hint`, `app.rs:4413` `hint_into`, `app.rs:1274` `draw_status_hint`, pure `status_line` — the model is analyzed in **F-HLP-001**, the strip's budget is measured by **F-HLP-002**; they are not reopened here.
+- The accelerator is written into the hint text BY HAND, exactly in the Premiere format: `src/apps/kt-app/i18n/en.toml`, section `[tb]` — `play_pause = "Play/Pause (Space)"`, `undo = "Undo (Ctrl+Z)"`, `search = "Search the project (Ctrl+F)"`.
 
-Груз «строка, которой на экране нет», у нас уже ходит в статусную строку —
-в двух местах:
+The payload "a line that is not on screen" already goes to the status line for us — in two places:
 
-- `src/apps/kt-app/src/timeline.rs:2193-2196` — «полное имя дорожки — в
-  подсказке (ярлык может быть усечён)»: `tf!(k::tl::hint::LANE_NAMED, name)`,
-  то есть РАНТАЙМНАЯ строка подставляется в ключ каталога с `{0}`.
-- `src/apps/kt-app/src/timeline.rs:3547-3548` — подпись морф-блока, которая не
-  влезла в блок, уходит в `hover_hint` вместо того, чтобы быть нарисованной.
+- `src/apps/kt-app/src/timeline.rs:2193-2196` — "the full name of the track — in the hint (the label may be truncated)": `tf!(k::tl::hint::LANE_NAMED, name)`, that is, a RUNTIME string is substituted into the catalog key with `{0}`.
+- `src/apps/kt-app/src/timeline.rs:3547-3548` — the caption of a morph block that did not fit into the block goes into `hover_hint` instead of being drawn.
 
-Наследство v1 (эталон UX): около сорока `setToolTip`, из них одиннадцать в
-`fxchaineditorwidget.cpp` объясняли ПАРАМЕТРЫ эффектов — 53–111 символов каждый,
-например «Timeline vs source: below 1 slows (longer event), above 1 speeds up
-(shorter event). 1 = normal.» и «When off, changing playback rate resizes the
-clip. When on, rate still affects playback inside the fixed event.» Плюс один на
-300+ символов (FrontScaler в `mainwindow.cpp`). В v2 из этого не переехало
-ничего: `[fxp]` каталога — только подписи полей («Rate:», «Mix:», «Damp:»),
-описания есть только на уровне ЭФФЕКТА и лежат вне программы, в
-`site/content/*.toml`, секция `[fxdesc]`.
+The v1 legacy (the UX reference): about forty `setToolTip` calls, of which eleven in `fxchaineditorwidget.cpp` explained the PARAMETERS of effects — 53–111 characters each, for example "Timeline vs source: below 1 slows (longer event), above 1 speeds up (shorter event). 1 = normal." and "When off, changing playback rate resizes the clip. When on, rate still affects playback inside the fixed event." Plus one of 300+ characters (FrontScaler in `mainwindow.cpp`). In v2 nothing from this has moved over: the `[fxp]` catalog contains only field labels ("Rate:", "Mix:", "Damp:"), while descriptions exist only at the level of the EFFECT and lie outside the program, in `site/content/*.toml`, section `[fxdesc]`.
 
-### Чего не хватает
+### What is missing
 
-Три живых вызова `on_hover_text`, у которых нет ни единого шанса сработать:
+Three live calls to `on_hover_text` that have not a single chance to fire:
 
-- `src/apps/kt-app/src/widgets.rs:415-416` — голова полосы цепочки,
-  условие `h.label.chars().count() > SLOT_NAME_CHARS` (22) и комментарий
-  «полное имя — в подсказке: усечённое видно, а какой файл подставлен, узнать
-  иначе негде»;
-- `src/apps/kt-app/src/widgets.rs:468-469` — то же для слота FX;
-- `src/apps/kt-app/src/morpher_editor.rs:114-116` — поле источника морфера.
+- `src/apps/kt-app/src/widgets.rs:415-416` — the head of the chain strip, the condition `h.label.chars().count() > SLOT_NAME_CHARS` (22) and the comment "the full name — in the hint: the truncated one is visible, but there is no other way to learn which file was substituted";
+- `src/apps/kt-app/src/widgets.rs:468-469` — the same for the FX slot;
+- `src/apps/kt-app/src/morpher_editor.rs:114-116` — the source field of the morpher.
 
-Под барьером `tooltip_delay = 1.0e6` ни один из них не показывается никогда.
-Проверено и обещание кода «узнать иначе негде»: заголовок FX-окна собирается из
-вида и имени КЛИПА (`src/apps/kt-app/src/fx_editor.rs:128-137`), имени файла в
-нём нет. Одновременно `reach_tests::t255` ТРЕБУЕТ усекать имя — то есть у нас
-записано правило «усекай» и отсутствует парный ответ «а прочитать целиком —
-здесь», хотя для дорожки этот ответ существует. Это ровно тот класс, ради
-которого заведён `reach_tests.rs` (нарушение правила 17: парные способы делают
-одно и то же по-разному), и он не ловится ни одним тестом.
+Under the barrier `tooltip_delay = 1.0e6` none of them is ever shown.
+The code's promise "there is no other way to learn" has also been verified: the title of the FX window is built from the kind and the name of the CLIP (`src/apps/kt-app/src/fx_editor.rs:128-137`), and the file name is not in it. At the same time `reach_tests::t255` REQUIRES the name to be truncated — that is, we have a recorded rule "truncate" and there is no paired answer "read it in full — here", although for the track this answer exists. This is exactly the class of problem for which `reach_tests.rs` was created (violation of rule 17: paired ways do the same thing differently), and no test catches it.
 
-Второе: объяснения параметра эффекта в программе нет вообще. Пользователь видит
-«Time scale:» и ползунок; куда делись две фразы v1, не знает никто.
+Second: the program has no explanation of an effect parameter at all. The user sees "Time scale:" and a slider; where the two phrases of v1 went, nobody knows.
 
-### Что мешает
+### What gets in the way
 
-**t83 (`src/apps/kt-app/src/layout_tests.rs:234`) — разбор.** Тест делает две
-разные вещи. Первая: наводит мышь в три точки (кнопка тулбара, кнопка окна,
-карточка бина) и проверяет ОТРИСОВАННОЕ `status_line_shown` — что текст
-начинается с ожидаемой подсказки и что `HintKind::Hover`; это страж п.1 р.9
-(«КУДА ПРОПАЛИ ПОДСКАЗКИ КНОПОК?!?!?!»), и он про доставку, а не про попапы.
-Вторая — три последние строки: после наведения и двух кадров
-`h.ctx.memory(|m| m.layer_ids().all(|l| l.order != egui::Order::Tooltip))`,
-сообщение при падении — «вернулся всплывающий тултип». Это классовый страж: он
-запрещает не конкретный попап, а ЛЮБОЙ слой порядка `Tooltip` в приложении,
-одной строкой и навсегда.
+**t83 (`src/apps/kt-app/src/layout_tests.rs:234`) — analysis.** The test does two different things. The first: it moves the mouse to three points (a toolbar button, a window button, a bin card) and checks the RENDERED `status_line_shown` — that the text begins with the expected hint and that `HintKind::Hover`; this is the guard of item 1 of round 9 ("WHERE DID THE BUTTON HINTS GO?!?!?!"), and it is about delivery, not about pop-ups. The second — the last three lines: after the hover and two frames, `h.ctx.memory(|m| m.layer_ids().all(|l| l.order != egui::Order::Tooltip))`, with the failure message "a pop-up tooltip has come back". This is a class-wide guard: it forbids not a specific pop-up but ANY layer of order `Tooltip` in the application, with one line and forever.
 
-Чтобы вернуть всплывающие подсказки хоть где-то, пришлось бы ослабить именно
-вторую часть — либо снять проверку, либо сузить её до «кроме вот этих id», и
-тогда страж перестаёт быть классовым: он ловил ЛЮБОЙ будущий `on_hover_text`,
-включая случайно приехавший из виджета egui, а после сужения ловил бы только
-перечисленные. Ровно так уже было с прозой правил, которую Р.38 пришлось
-переносить в тесты. Плюс ослабление t83 само по себе бесполезно: барьер стоит не
-в тесте, а в `theme.rs`, и трогать пришлось бы оба места сразу.
+To bring pop-up hints back anywhere at all, one would have to weaken exactly the second part — either remove the check, or narrow it to "except these ids". Then the guard stops being class-wide: it caught ANY future `on_hover_text`, including one accidentally coming from an egui widget, and after narrowing it would catch only the listed ones. This is exactly what has already happened with the prose of the rules, which Round 38 had to move into tests. Moreover, weakening t83 alone is useless: the barrier stands not in the test but in `theme.rs`, and both places would have to be touched at once.
 
-Слова владельца, которым противоречит любой пересмотр, — дословно:
+The owner's words, which contradict any revision — verbatim:
 
-> я хочу чтобы оно там всегда было, это оно то есть то нету при наведении
-> получается?
-> — `docs/user-feedback.md`, Р.6 (п.15 и решения по теме)
+> I want it to always be there — so, it is absent when hovering?
+> — `docs/user-feedback.md`, R.6 (item 15 and the decisions on the topic)
 
-и требование п.14 р.8, зафиксированное в коде: «всплывающих подсказок НЕТ вообще
-— единственное место подсказки это правый низ строки состояния». Первое — про
-задержку, второе — про перекрытие. Настоящая же дыра лежит в третьем решении
-(ёмкость и направление), которого не принимал никто, и она чинится без единого
-попапа.
+and the requirement of item 14 of round 8, recorded in the code: "there are NO pop-up hints at all — the only place for hints is the bottom right of the status line". The first is about the delay, the second is about overlap. The real hole, however, lies in the third decision (capacity and direction), which nobody made, and it is fixed without a single pop-up.
 
-Третье препятствие — техническое: строка статусбара раскладывается
-`layout_no_wrap` и не усекается (`app.rs:1313-1322`), поэтому длинное имя файла
-уедет за правый край. Это же и мерит **F-HLP-002** — она отвечает на вопрос
-«влезает ли», эта заметка на вопрос «доходит ли вообще»; порядок работ такой:
-сначала бюджет, потом маршрут.
+The third obstacle is technical: the status bar line is laid out by `layout_no_wrap` and is not truncated (`app.rs:1313-1322`), so a long file name will run off the right edge. This is also what **F-HLP-002** measures — it answers the question "does it fit", this note answers "does it reach at all"; the order of work is: first the budget, then the route.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- Инвариант **12** (repaint только при движении, в draw-путях ни аллокаций, ни
-  клонов на кадр): и таймер ожидания попапа, и любая анимация в нём — источники
-  кадров; ролик Photoshop-класса запрещён целиком.
-- Правило **10** (подсказка ровно одна и в одном месте) — предмет спора; не
-  трогаем.
-- Правило **7** (текст помещается) — усечение уже обязательно (t255), и именно
-  оно создало долг.
-- Правило **17** (парные способы одинаковы) — сегодня нарушено: имя дорожки
-  читается целиком, имя источника в цепочке — нет, хотя проблема одна.
-- Цена любой НОВОЙ строки каталога — F-HLP-033; здесь она почти не возникает:
-  рантайм-имя файла не переводится, нужен один ключ с `{0}` того же вида, что
-  уже есть у дорожки.
+- Invariant **12** (repaint only on movement, no allocations or clones per frame on the draw paths): both the hover timer for the pop-up and any animation in it are sources of frames; a clip of the Photoshop class is forbidden entirely.
+- Rule **10** (exactly one hint, in one place) — the subject of the dispute; we do not touch it.
+- Rule **7** (the text fits) — truncation is already mandatory (t255), and it is exactly this that created the debt.
+- Rule **17** (paired ways are identical) — violated today: the track name is read in full, the source name in the chain is not, although the problem is one.
+- The cost of any NEW catalog line — F-HLP-033; here it almost does not arise: the runtime file name is not translated, one key with `{0}` of the same kind as the track already has is needed.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии: (1) маршрут усечённых имён в строку + тест; (2) объяснения параметров как отдельный груз |
-| Где основная работа | kt-app: `widgets.rs`, `morpher_editor.rs`, `reach_tests.rs`, каталоги `i18n/` |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | `reach_tests::elided_label_has_a_reachable_full_name` — на каждое место, где подпись усекается, обязан находиться путь прочитать её целиком без попапа; t83 при этом остаётся зелёным без единой правки |
-| Зависит от | F-HLP-001 (модель строки), F-HLP-002 (бюджет полосы), F-UI-002 (реестр команд), F-HLP-033 (цена строки) |
-| Ломает совместимость | нет |
+| Size | M — 2 stages: (1) the route of truncated names into the line + a test; (2) parameter explanations as a separate payload |
+| Where the main work is | kt-app: `widgets.rs`, `morpher_editor.rs`, `reach_tests.rs`, the `i18n/` catalogs |
+| Project format | does not touch it |
+| Tests that will have to be written | `reach_tests::elided_label_has_a_reachable_full_name` — for each place where a label is truncated there must be a path to read it in full without a pop-up; t83 remains green without a single edit |
+| Depends on | F-HLP-001 (the model of the line), F-HLP-002 (the budget of the strip), F-UI-002 (the registry of commands), F-HLP-033 (the cost of a line) |
+| Breaks compatibility | no |
 
-Про акселератор: **сверх реестра команд (F-UI-002)** показ клавиши в подсказке
-добавляет ровно одно — акселератор перестаёт быть ВПИСАННЫМ РУКАМИ в пять
-каталогов и начинает совпадать с настоящей привязкой. Сегодня «Play/Pause
-(Space)» не врёт только потому, что переназначения клавиш у нас нет; в день,
-когда оно появится, соврут все семьдесят строк сразу. Реестр здесь не
-проектируется — он владеет источником, эта заметка только показом.
+About the accelerator: **beyond the command registry (F-UI-002)** showing the key in the hint adds exactly one thing — the accelerator stops being HAND-WRITTEN into five catalogs and starts matching the real binding. Today "Play/Pause (Space)" is not lying only because we have no key reassignment; on the day it appears, all seventy lines will lie at once. The registry is not designed here — it owns the source, this note is only about display.
 
-## Вердикт
+## Verdict
 
-Форму не берём: попап платит перекрытием и задержкой за одно преимущество —
-нулевое расстояние до предмета, — и оба этих пункта закрыты прямыми решениями
-владельца, а богатая разновидность вдобавок упирается в инвариант 12 и в
-производство роликов, которое мы не потянем. Но и «у нас всё правильно» —
-неправда: три места кода прямо надеются на попап, которого в программе нет с
-р.8, и параметр-проза v1 потеряна целиком. Груз, который в
-строку не влезает, — движение (учить жесту показом); он уходит на сайт. Груз,
-который влезает и не доходит, — усечённое имя; он уходит в ту же строку.
+We do not take the form: a pop-up pays with overlap and delay for a single advantage — zero distance to the object — and both of these points are closed by direct decisions of the owner, while the rich variety additionally runs into invariant 12 and into the production of clips that we will not manage. But "we are all right" is also untrue: three places in the code directly count on a pop-up that has not existed in the program since round 8, and the v1 parameter prose is lost entirely. The payload that does not fit into a line — movement (teaching a gesture by showing it) — goes to the site. The payload that fits but does not reach — the truncated name — goes into the same line.
 
-ТЕСТ: reach_tests::elided_label_has_a_reachable_full_name — сегодня упал бы: усечение подписи обязательно (t255, `SLOT_NAME_CHARS = 22`), а прочитать её целиком можно только у дорожки (`timeline.rs:2196`); три вызова `on_hover_text` в `widgets.rs:416`, `widgets.rs:469` и `morpher_editor.rs:116` глушит барьер `tooltip_delay = 1.0e6` из `theme.rs`, и имя исходника в цепочке FX недостижимо ничем.
+TEST: reach_tests::elided_label_has_a_reachable_full_name — today it would fail: label truncation is mandatory (t255, `SLOT_NAME_CHARS = 22`), and the label can be read in full only for the track (`timeline.rs:2196`); three calls of `on_hover_text` in `widgets.rs:416`, `widgets.rs:469` and `morpher_editor.rs:116` are silenced by the barrier `tooltip_delay = 1.0e6` from `theme.rs`, and the source name in the FX chain is unreachable by any means.
 
-ОДНА СТРОКА: перекрытие — не трогает | задержка — не трогает | ёмкость — плюс один рантайм-аргумент (полное имя усечённой подписи) в ТУ ЖЕ строку статусбара через `hint()`/`hint_into()`, как уже сделано для имени дорожки; ролик и абзац на эту поверхность не берутся вовсе и остаются на сайте.
+ONE LINE: overlap — does not touch | delay — does not touch | capacity — plus one runtime argument (the full name of the truncated label) into THE SAME status bar line via `hint()`/`hint_into()`, as is already done for the track name; the clip and the paragraph are not taken for this surface at all and stay on the site.
 
-## Источники
+## Sources
 
-- VEGAS Pro 2026, официальная справка (Boris FX CDN, дата обращения 2026-09-07):
+- VEGAS Pro 2026, official help (Boris FX CDN, accessed 2026-09-07):
   https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/9-audio/spconsoleopt_audio_track_channel_strips.htm
-  (ToolTip с полным именем плагина и пресета),
+  (ToolTip with the full name of the plugin and preset),
   https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/11-autoscript/adjusting_envelopes.htm
-  (плавающий ToolTip со значением огибающей),
+  (floating ToolTip with the envelope value),
   https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/7-edit/enablesnapping.htm
-  (ToolTip с величиной snap-offset). Проверены `prefgeneraltab.htm` и
-  `prefdisplay.htm` — галки выключения тултипов там не описано.
-- DaVinci Resolve 21 Reference Manual (PDF, дата обращения 2026-09-07): гл. 63
-  «Exploring the Fusion Interface», стр. 1348 — статусбар сразу, тултип «через
-  несколько мгновений»; гл. 45 — тултип с offset при roll-триме; раздел
-  Fusion-настроек — «Show Tips: Toggles whether tooltips are displayed».
-- Final Cut Pro User Guide for Mac (PDF, 2026-09-07): help tag с исходным именем
-  переименованного эффекта; окно Skimmer Info (Control-Y).
-- Adobe After Effects, руководство линейки CS5 (PDF, 2026-09-07): «To show tool
-  tips, select the Show Tool Tips preference (Edit > Preferences > General)» и
-  совет держать на виду панель Info. Для 26.x не перепроверено: `helpx.adobe.com`
-  из этого окружения не открывается (см. `_editors.md`).
-- Adobe Community, тред о rich tooltips (2026-09-07):
+  (ToolTip with the size of the snap-offset). `prefgeneraltab.htm` and
+  `prefdisplay.htm` were checked — the checkbox for turning tooltips off is not described there.
+- DaVinci Resolve 21 Reference Manual (PDF, accessed 2026-09-07): chapter 63
+  "Exploring the Fusion Interface", page 1348 — the status bar at once, the tooltip "after a few moments"; chapter 45 — the tooltip with the offset during a roll trim; the section of Fusion settings — "Show Tips: Toggles whether tooltips are displayed".
+- Final Cut Pro User Guide for Mac (PDF, 2026-09-07): the help tag with the original name of a renamed effect; the Skimmer Info window (Control-Y).
+- Adobe After Effects, manual of the CS5 line (PDF, 2026-09-07): "To show tool tips, select the Show Tool Tips preference (Edit > Preferences > General)" and the advice to keep the Info panel in view. Not re-checked for 26.x: `helpx.adobe.com` does not open from this environment (see `_editors.md`).
+- Adobe Community, thread on rich tooltips (2026-09-07):
   https://community.adobe.com/questions-712/how-do-i-disable-the-annoying-but-helpful-video-windows-that-pop-up-when-hovering-over-a-tool-1059128
-- Adobe Community, «Turn on Rich Tool Tips» (2026-09-07):
+- Adobe Community, "Turn on Rich Tool Tips" (2026-09-07):
   https://community.adobe.com/questions-712/turn-on-rich-tool-tips-1181429
-- Adobe Community, «Premiere pro tool tips are not showing shortcuts…»
+- Adobe Community, "Premiere pro tool tips are not showing shortcuts…"
   (2026-09-07):
   https://community.adobe.com/questions-729/premiere-pro-tool-tips-are-not-showing-shortcuts-while-hovering-mouse-1396829
-- Creative COW, «Tool Tips – anyone know how to turn off?» (2026-09-07), ответ
-  Peter Garaway (Adobe) о попапах, остающихся «by design»:
+- Creative COW, "Tool Tips – anyone know how to turn off?" (2026-09-07), the answer of
+  Peter Garaway (Adobe) about the pop-ups that remain "by design":
   https://creativecow.net/forums/thread/tool-tips-anyone-know-how-to-turn-offae/
-- Ask Tim Grey, «Rich Tooltips», 03.05.2018 — обе галки Preferences > Tools:
+- Ask Tim Grey, "Rich Tooltips", 03.05.2018 — both checkboxes of Preferences > Tools:
   https://asktimgrey.com/2018/05/03/rich-tooltips/
-- Photoshop Essentials, «Rich Tool Tips in Photoshop CC 2018» — состав попапа и
-  длительность анимации: https://www.photoshopessentials.com/basics/rich-tool-tips-photoshop-cc-2018/
+- Photoshop Essentials, "Rich Tool Tips in Photoshop CC 2018" — the composition of the pop-up and the duration of the animation: https://www.photoshopessentials.com/basics/rich-tool-tips-photoshop-cc-2018/
 - W3C, Understanding SC 1.4.13 Content on Hover or Focus (WCAG 2.2, AA):
   https://www.w3.org/WAI/WCAG22/Understanding/content-on-hover-or-focus.html
-- Visual Studio Code, исходники (`src/vs/editor/common/config/editorOptions.ts`,
-  2026-09-07): дефолты `delay: 300`, `hidingDelay: 300`, `sticky: true`,
-  режим `onKeyboardModifier`.
-- GTK 3, `gtk-tooltip-timeout` — дефолт 500 мс (свойство объявлено устаревшим с
-  3.10): https://docs.gtk.org/gtk3/property.Settings.gtk-tooltip-timeout.html
-- egui 0.36.1, локальные исходники: `style.rs` (дефолты 0.5 / 0.2 / `true`),
-  `containers/tooltip.rs` (ветка ожидания с `request_repaint_after_secs`).
-- Наш v1: `git show cpp-reference-final:mainwindow.cpp`,
+- Visual Studio Code, source code (`src/vs/editor/common/config/editorOptions.ts`,
+  2026-09-07): defaults `delay: 300`, `hidingDelay: 300`, `sticky: true`,
+  mode `onKeyboardModifier`.
+- GTK 3, `gtk-tooltip-timeout` — default 500 ms (the property is declared obsolete since 3.10): https://docs.gtk.org/gtk3/property.Settings.gtk-tooltip-timeout.html
+- egui 0.36.1, local sources: `style.rs` (defaults 0.5 / 0.2 / `true`),
+  `containers/tooltip.rs` (the waiting branch with `request_repaint_after_secs`).
+- Our v1: `git show cpp-reference-final:mainwindow.cpp`,
   `git show cpp-reference-final:fxchaineditorwidget.cpp`.
 
-Проверки живьём для программ вне ядра (Photoshop, VS Code) не предполагается —
-их строки объясняют механизм, а не несут вердикт. Строки Premiere и After
-Effects опираются на вторичные источники и мануалы прошлых линеек, что помечено
-в таблице.
+Live checks for programs outside the core (Photoshop, VS Code) are not assumed —
+their lines explain the mechanism, not carry a verdict. The lines about Premiere and After
+Effects rely on secondary sources and manuals of past lines, which is marked in the table.

@@ -1,180 +1,150 @@
 ---
 id: F-TL-011
-title: Раскрытие вложения НА МЕСТЕ
-status: сделано
+title: Expanding a nested item IN PLACE
+status: done
 priority: A
 cost: XL
 category: timeline/structure
 editors: [premiere-26, fcp-12, resolve-21, vegas-pro-2026, after-effects-26]
-we_have: да
+we_have: yes
 crates: [kt-model, kt-app]
 invariants: [3, 7]
 ui_rules: [13, 14, 16, 17, 20]
-round: Р.55, Р.56, Р.58
+round: R.55, R.56, R.58
 point: 441-445, 449-451, 460-462
 tests: [t566, t567, t568, t569, t570, t571, t572, t573, t591, t592, t596, t597, t634, t635, t636, t637, t637b, t637c, t638]
 depends_on: [F-TL-004]
 checked: 2026-09-20
 ---
 
-# F-TL-011 — Раскрытие вложения НА МЕСТЕ
+# F-TL-011 — Expanding a nested item IN PLACE
 
-## Суть
+## Essence
 
-Композиция раскрывается ПРЯМО В ТОМ ЖЕ таймлайне: её дорожки раздвигаются
-под строкой экземпляра, а не заменяют собой вид. Монтажёр поправляет то, что
-внутри, и тут же слышит и видит результат В КОНТЕКСТЕ всей программы — с
-соседями, переходами и цепочкой самого вложения. Полный вход (вид только
-композиции) остаётся вторым режимом, для работы «целиком внутри».
+A composition is expanded RIGHT IN THE SAME timeline: its tracks slide open beneath the instance's row, rather than replacing the view. The editor adjusts what is inside and immediately hears and sees the result IN THE CONTEXT of the whole programme — with its neighbours, transitions and the chain of the nesting itself. The full entry (a view of the composition alone) remains a second mode, for working "entirely inside".
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| Avid Media Composer | 2026 | Expanded nesting (Alt/Option + Step In) | единственный близкий аналог: вложение раскладывается слоями ПРЯМО на дорожках таймлайна, соседние дорожки сдвигаются. Обычный Step In даёт «простое» вложение — вид только содержимого |
-| Adobe Premiere | 26.x | Open in Timeline (двойной клик по nest) | нет раскрытия на месте: секвенция открывается ОТДЕЛЬНОЙ вкладкой таймлайна. Контекст программы при этом не виден; переключение между вкладками — ручное |
-| Final Cut Pro | 12.3 | Open Clip (compound clip) | вид ПОДМЕНЯЕТСЯ содержимым compound-клипа, сверху — крошки пути; за пределами обрезки материал показан приглушённо |
-| DaVinci Resolve | 21 | Open in Timeline / Decompose in Place | два разных жеста: открыть вложение отдельным таймлайном ЛИБО НЕОБРАТИМО разложить его на дорожки (это уже не раскрытие, а разворачивание — у нас `expand_instance`) |
-| VEGAS Pro | 2026 | Nested timeline | вложение — ссылка на `.veg` на диске; открывается отдельной вкладкой. Раскрытия на месте нет |
-| After Effects | 2026 | Open composition | композиция всегда открывается своей панелью таймлайна; «на месте» невыразимо — у AE нет одного таймлайна, в который можно было бы раздвинуть |
+| Avid Media Composer | 2026 | Expanded nesting (Alt/Option + Step In) | the only close analogue: the nesting is unfolded in layers RIGHT ON the timeline's tracks, neighbouring tracks shift. The ordinary Step In gives a "simple" nesting — a view of the content only |
+| Adobe Premiere | 26.x | Open in Timeline (double-click on the nest) | there is no expansion in place: the sequence opens in a SEPARATE timeline tab. The programme's context is not visible at that point; switching between tabs is manual |
+| Final Cut Pro | 12.3 | Open Clip (compound clip) | the view is REPLACED by the contents of the compound clip, with a breadcrumb path at the top; outside the trim the material is shown dimmed |
+| DaVinci Resolve | 21 | Open in Timeline / Decompose in Place | two different gestures: open the nest in a separate timeline OR IRREVERSIBLY decompose it onto tracks (this is no longer an expansion but an unfolding — for us `expand_instance`) |
+| VEGAS Pro | 2026 | Nested timeline | the nest is a reference to a `.veg` on disk; it opens in a separate tab. There is no expansion in place |
+| After Effects | 2026 | Open composition | a composition always opens in its own timeline panel; "in place" cannot be expressed — AE has no single timeline into which one could slide it open |
 
-**Вне ядра.** Без DAW фичу не описать: в видеомонтаже «раскрытие на месте»
-редкость, а в звуке это норма и там же видны его цена и повадки.
+**Outside the core.** Without a DAW the feature cannot be described: in video editing "expansion in place"
+is a rarity, while in audio it is the norm, and there its cost and habits are visible.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| REAPER | 7.x | Folder tracks | родительская дорожка складывает детей; разворот показывает их ПРЯМО В ТОМ ЖЕ окне, и родитель продолжает суммировать. Разворот — состояние вида, не правка проекта |
-| Ableton Live | 12.4.5 | Group Track | то же: группа разворачивается на месте, дети редактируются в общем контексте, воспроизведение не прерывается |
+| REAPER | 7.x | Folder tracks | a parent track folds its children; unfolding shows them RIGHT IN THE SAME window, and the parent continues to sum. Unfolding is a state of the view, not an edit of the project |
+| Ableton Live | 12.4.5 | Group Track | the same: the group unfolds in place, the children are edited in the shared context, playback is not interrupted |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Раскрытие — состояние ВИДА, а не монтажа, и именно поэтому его можно
-делать «не жёстко».** У Resolve рядом стоят два соседних пункта — «Open in
-Timeline» и «Decompose in Place», — и второй НЕОБРАТИМО разбирает вложение
-на дорожки. Разница между ними и есть вся фича: раскрытие обязано
-сворачиваться назад без следа в проекте и без шага истории. Как только оно
-начинает что-то менять в документе, оно перестаёт быть раскрытием и
-становится разворачиванием, которое у нас уже есть (`expand_instance`).
+**1. Expansion is a state of the VIEW, not of the edit, and that is precisely why it can be
+done "non-rigidly".** In Resolve two neighbouring items sit side by side — "Open in
+Timeline" and "Decompose in Place" — and the second IRREVERSIBLY breaks the nest
+down onto tracks. The difference between them is the whole feature: expansion must
+collapse back without a trace in the project and without a history step. As soon as it
+starts changing something in the document, it stops being an expansion and
+becomes an unfolding, which we already have (`expand_instance`).
 
-**2. У DAW разворот группы НЕ прерывает воспроизведение — и это не
-удобство, а следствие устройства.** Дети всегда были в том же графе
-микшера, сворачивание прятало только строки. В видеомонтаже вложение чаще
-всего отдельный документ, поэтому «войти» = «переключить документ», а
-переключение документа рвёт воспроизведение. Кто хочет раскрытие на месте,
-обязан сначала иметь одно пространство адресов и один граф — и тогда
-раскрытие достаётся почти даром.
+**2. In a DAW, unfolding a group does NOT interrupt playback — and this is not a
+convenience but a consequence of the construction.** The children were always in the same mixer
+graph; collapsing merely hid the rows. In video editing a nest is most often
+a separate document, so "entering" = "switching the document", and switching the document
+breaks playback. Whoever wants expansion in place must first have one address space and one
+graph — and then the expansion comes almost for free.
 
-**3. Обрезка вложения и раскрытие ссорятся, и решает это не отрисовка, а
-арифметика трима.** У раскрытого вложения по бокам остаётся материал за
-окном экземпляра. Показать его мало — его хотят ВПУСКАТЬ, потянув край. У
-FCP такой материал приглушён, но тянуть его в развёрнутом виде нельзя. Чтобы
-можно было, трим обязан двигать `start` и `source_in` НА ОДНУ дельту: тогда
-содержимое полосы стоит на экране неподвижно, а окно наезжает на него, как
-шторка. Двигай трим только одно из двух — и материал поехал бы под рукой.
+**3. Trimming a nest and expansion quarrel, and it is settled not by drawing but by the
+arithmetic of the trim.** In an expanded nest, material beyond the window of the instance remains at the sides. Showing it is not enough — one wants to ADMIT it by pulling the edge. In FCP such material is dimmed, but it cannot be pulled while expanded. For it to be possible, the trim must move `start` and `source_in` by ONE delta: then the content of the strip stands still on the screen while the window slides over it, like a blind. Move only one of the two in the trim — and the material would drift away from under the hand.
 
-## Плюсы
+## Pros
 
-- Правка внутри слышна и видна СРАЗУ в контексте всей программы: соседи,
-  переходы и цепочка самого вложения на месте, потому что играет корень.
-- Свернуть раскрытие — это забыть про него, а не откатить: ни шага истории,
-  ни следа в файле.
-- Снап и магнит работают ЧЕРЕЗ границу: событие внутри композиции можно
-  выровнять по корневому событию, чего в отдельном таймлайне нельзя в
-  принципе.
-- Хвосты за обрезкой видны и достижимы, а не «где-то там внутри».
+- An edit inside is heard and seen AT ONCE in the context of the whole programme: neighbours,
+  transitions and the chain of the nesting itself are in place, because the root is playing.
+- Collapsing the expansion means forgetting about it, not rolling it back: no history step,
+  no trace in the file.
+- Snap and magnet work ACROSS the boundary: an event inside a composition can be aligned to a root-level event, which in a separate timeline is impossible
+  in principle.
+- The tails beyond the trim are visible and reachable, not "somewhere in there".
 
-## Минусы
+## Cons
 
-- На экране одновременно две системы координат, и «чья это строка» надо
-  показывать, иначе человек правит не то, что думает.
-- Ссылочная семантика становится опаснее: правка в раскрытии меняет ВСЕ
-  места, где стоит лента, а выглядит как обычный драг на таймлайне.
-- Номера дорожек перестают быть просто номерами: любая вставка или удаление
-  дорожки обязана знать про полосу.
-- Глубокая вложенность нечитаема: четыре уровня раскрытия — это четыре
-  уровня затемнения и рамок на два десятка строк.
+- Two coordinate systems are on the screen at once, and "whose row this is" has to be shown, otherwise a person edits not what they think.
+- Reference semantics become more dangerous: an edit inside the expansion changes ALL the places where the reel stands, yet it looks like an ordinary drag on the timeline.
+- Track numbers stop being mere numbers: any insertion or deletion of a track has to know about the band.
+- A deep nesting is unreadable: four levels of expansion are four levels of dimming and frames over two dozen rows.
 
-## Что говорят пользователи
+## What users say
 
-НЕТ ЦИТАТ: дословных отзывов именно про «expanded nesting» Avid и про
-раскрытие на месте в видеомонтаже найти не удалось — сетевой поиск в этой
-сессии недоступен, а выдумывать цитату со ссылкой нельзя (правило 4
-`README.md`). Что известно без цитирования: у Premiere, VEGAS и AE фичи нет
-вовсе, у Resolve соседний пункт делает НЕОБРАТИМОЕ разложение — и именно
-это соседство чаще всего и обсуждают. Раздел обязан быть дополнен цитатами
-при первой же волне с доступом к сети.
+NO QUOTES: verbatim reviews about exactly "expanded nesting" in Avid and about expansion in place in video editing could not be found — network search is unavailable in this session, and a quote with a link cannot be made up (rule 4 of `README.md`). What is known without quoting: Premiere, VEGAS and AE have no such feature at all, and in Resolve the neighbouring item does an IRREVERSIBLE decomposition — and it is precisely this adjacency that is most often discussed. The section must be supplemented with quotes at the first wave with network access.
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/compositions/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Раскрытие ленты на месте — полоса в родительском виде; раскрыть и собрать — побайтовое тождество, правка из полосы доезжает до ленты.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/compositions/ — the contract is in `spec.md`, the "why" and the paths in the code are in `design.md`.
+Expansion of the reel in place — a band in the parent view; expanding and collapsing are a byte-for-byte identity, and an edit from the band reaches the reel.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | XL — вид полосы, хват края, правила выделения, жесты, предупреждение ×N, тесты и живой сценарий |
-| Где основная работа | kt-app (`timeline.rs`, `app.rs`); модель уже сделана |
-| Формат проекта | НЕ трогается: раскрытие — рабочее место, а не работа |
-| Тесты | t566-t569 сделаны; впереди — вид, хват края, выделение, жесты, ×N |
-| Зависит от | F-TL-004 (вложенные секвенции) |
-| Ломает совместимость | нет |
+| Size | XL — the view of the band, the grab of the edge, the selection rules, gestures, the ×N warning, tests and a live scenario |
+| Where the main work is | kt-app (`timeline.rs`, `app.rs`); the model is already done |
+| Project format | NOT touched: expansion is a workplace, not work |
+| Tests | t566-t569 are done; ahead — the view, the grab of the edge, the selection, gestures, ×N |
+| Depends on | F-TL-004 (nested sequences) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-**Берём, и берём как режим ПО УМОЛЧАНИЮ** — прямая просьба владельца
-(Р.55, претензия 9). Обоснование не в удобстве, а в том, что у нас
-раскрытие стоит дёшево там, где у всех дорого: одно пространство адресов и
-один граф уже есть с Р.50, движок и так играет корень, а трим уже двигает
-`start` и `source_in` вместе. Из пяти редакторов ядра фича есть только у
-Avid, которого в ядре нет, — то есть мы не догоняем, а делаем то, чего у
-сравниваемых нет.
+**We take it, and take it as the mode BY DEFAULT** — a direct request of the owner
+(R.55, complaint 9). The justification lies not in convenience but in the fact that for us
+expansion is cheap where it is expensive for everyone: one address space and
+one graph have existed since R.50, the engine already plays the root, and the trim already moves
+`start` and `source_in` together. Of the five core editors the feature exists only in
+Avid, which is not in the core — that is, we are not catching up, but doing what the compared ones do not have.
 
-Полный вход остаётся: «поработать целиком внутри» — законный сценарий, и
-именно там играет сама лента со своего нуля (Р.55, п.434).
+The full entry remains: "work entirely inside" is a legitimate scenario, and
+it is precisely there that the reel itself plays from its own zero (R.55, item 434).
 
-## Ход работы
+## Progress
 
-**Модель сделана (Р.55, пп.441-442).** `Band` с двумя смещениями,
-`merge_reel`/`unmerge_reel` с побайтовым тождеством (t566), рабочий вид
-`bench` рядом с каноном, полосы в undo-снимке, `Band::after_batch`
-исчерпывающим `match` (t568), адресация правок не понадобилась вовсе
+**The model is done (R.55, items 441-442).** `Band` with two offsets,
+`merge_reel`/`unmerge_reel` with byte-for-byte identity (t566), the working view
+`bench` next to the canon, the bands in the undo snapshot, `Band::after_batch`
+as an exhaustive `match` (t568), addressing of edits was not needed at all
 (t569).
 
-**Видимая часть сделана (Р.55, п.445).** Жесты (двойной клик и Enter —
-раскрытие, названный пункт меню — полный вход), Esc-каскад, тон и подписи
-строк полосы, рамка блока, вуаль хвостов, хват края окна прямо в полосе
-(`Drag::NestWindow`), правило «выделение в одной ленте», предупреждение
-×N, тесты t570-t573 (живой `nestopen.py` переехал в них целиком, Р.68: его
-утверждения были про документ и про то, что играет).
+**The visible part is done (R.55, item 445).** The gestures (double-click and Enter —
+expansion, the named menu item — full entry), the Esc cascade, the tone and labels
+of the band's rows, the frame of the block, the veil over the tails, the grab of the window edge directly in the band
+(`Drag::NestWindow`), the rule "selection within one reel", the ×N warning, tests t570-t573 (the live `nestopen.py` was moved into them entirely, R.68: its assertions were about the document and about what is playing).
 
-**Полоса ВНУТРИ полного входа (Р.58, п.460).** Претензия владельца:
-«открывая композицию не могу раскрыть в ней вложенную». Модель этого не
-запрещала (канон после `swap_reel` — текущая лента, базы считаются от неё);
-сняты два сторожа приложения, каскад Enter внутри тот же, что в корне.
-Тесты t634 (приложение), t635 (модель); живой `nestenter.py` переехал в
-них в Р.68 — шаг 4 целиком держит t634.
+**The band INSIDE the full entry (R.58, item 460).** The owner's complaint:
+"when I open a composition I cannot expand a nested one inside it". The model did not forbid this (the canon after `swap_reel` is the current reel, the bases are computed from it); two application-level guards were removed, the Enter cascade inside is the same as at the root.
+Tests t634 (application), t635 (model); the live `nestenter.py` was moved into
+them in R.68 — step 4 is held entirely by t634.
 
-**Полосы переживают смену контекста (Р.58, п.461).** Решение владельца —
-пересмотр Р.56 п.5: восстанавливается ВСЁ, включая полосу, через которую
-вошли вторым Enter (`NestStep::band` — при входе, `KtApp::reel_bands` — при
-выходе; хранится `ClipId`, полоса пересчитывается). Тест t636, t457
-переписан; шаг 5 живого `nestenter.py` переехал в t636 (Р.68).
+**The bands survive a change of context (R.58, item 461).** The owner's decision —
+a revision of R.56 item 5: EVERYTHING is restored, including the band through which one entered by the second Enter (`NestStep::band` — on entry, `KtApp::reel_bands` — on exit; a `ClipId` is stored, the band is recomputed). Test t636, t457
+rewritten; step 5 of the live `nestenter.py` was moved into t636 (R.68).
 
-**Зона до нуля внутри полного входа (Р.58, п.462).** Событие уезжает левее
-нуля ленты (`KtApp::time_floor`), показывается под вуалью, курсор и
-воспроизведение туда не заходят (`CURSOR_FLOOR`); отрицательный `start`
-едет в файл (`kt.start`, v8). Тесты t637/t637b/t637c/t638 (живой `nestzero.py` переехал в них в Р.68:
-драг события прокликан живьём в `select`/`level`/`corner`).
+**The zone down to zero inside the full entry (R.58, item 462).** An event moves to the left of
+the reel's zero (`KtApp::time_floor`), is shown under the veil, and the cursor and playback do not go there (`CURSOR_FLOOR`); a negative `start`
+goes into the file (`kt.start`, v8). Tests t637/t637b/t637c/t638 (the live `nestzero.py` was moved into them in R.68:
+the drag of the event was clicked through live in `select`/`level`/`corner`).
 
-**Осталось за рамками раунда:** рекурсивное раскрытие (стоит константа
-«одна полоса за раз»), и четыре найденных разведкой упора из раздела «Что
-мешает» — имена дорожек при обмене контекста, `trim_max_end` за концом
-содержимого, `overlap_layers` разных лент в одном виде и подсветка окна
-морфера через границу полосы.
+**Left outside the round:** recursive expansion (the constant "one band at a time" stands), and four
+snags found by the reconnaissance from the section "What gets in the way" — the track names when the context is exchanged, `trim_max_end` beyond the end
+of the content, `overlap_layers` of different reels in one view, and the highlighting of the morpher
+window across the band boundary.
 
-## Источники
+## Sources
 
-- `docs/features/timeline/structure/nested-sequences.md` (F-TL-004) — разведка
-  вложенных секвенций, на которой стоит эта заметка.
-- `docs/porting-notes.md`, пп.378-395 (Р.50) и пп.434-443 (Р.55).
-- `docs/user-feedback.md`, раздел Р.55 — претензия 9 дословно и решения владельца.
+- `docs/features/timeline/structure/nested-sequences.md` (F-TL-004) — the reconnaissance
+  of nested sequences on which this note stands.
+- `docs/porting-notes.md`, items 378-395 (R.50) and items 434-443 (R.55).
+- `docs/user-feedback.md`, section R.55 — complaint 9 verbatim and the owner's decisions.

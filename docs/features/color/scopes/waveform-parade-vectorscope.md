@@ -1,12 +1,12 @@
 ---
 id: F-CLR-005
-title: Приборы — waveform, parade, вектороскоп, гистограмма, false color
-status: кандидат
+title: Scopes — waveform, parade, vectorscope, histogram, false color
+status: candidate
 priority: B
 cost: M
 category: color/scopes
 editors: [vegas-pro-2026, premiere-26, resolve-20, fcp-12, after-effects-26]
-we_have: нет
+we_have: no
 crates: [kt-app]
 invariants: [4, 7, 8, 11, 12]
 ui_rules: [3, 6, 9, 13]
@@ -17,106 +17,47 @@ depends_on: []
 checked: 2026-09-07
 ---
 
-# F-CLR-005 — Приборы — waveform, parade, вектороскоп, гистограмма, false color
+# F-CLR-005 — Scopes — waveform, parade, vectorscope, histogram, false color
 
-## Суть
+## Essence
 
-Пять способов посмотреть на ОДИН кадр числами вместо глаз. Waveform кладёт
-яркость по горизонтали кадра: столбик графика стоит там же, где столбик
-пикселей, поэтому видно не только «пересвет», но и ГДЕ он — небо слева или
-лицо в центре. Parade разносит те же данные по R, G, B: разъехавшиеся низы
-трёх графов — это цветовой сдвиг в тенях, по нему ставят баланс белого.
-Вектороскоп — круг: угол = оттенок, радиус = насыщенность. Гистограмма
-теряет положение в кадре, зато считает, СКОЛЬКО пикселей на каждом уровне.
-False color красит сам кадр зонами экспозиции — он пришёл с камерных
-мониторов, и им пользуются те, кто снимал.
+Five ways to look at ONE frame through numbers instead of eyes. The waveform puts brightness along the horizontal axis of the frame: a column of the graph stands at the same place as the column of pixels, so you see not only "clipping" but WHERE it is — sky on the left or a face in the centre. The parade spreads the same data into R, G and B: the bottoms of the three graphs that have drifted apart are a colour shift in the shadows, and white balance is set by them. The vectorscope is a circle: angle = hue, radius = saturation. The histogram loses the position in the frame, but counts HOW MANY pixels there are at each level. False colour paints the picture itself with zones of exposure — it came from camera monitors, and it is used by those who shot the footage.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| DaVinci Resolve | 20.3.2 | Video Scopes | пять приборов (Waveform, Parade, Vectorscope, Histogram, CIE Chromaticity) в ОТДЕЛЬНОМ плавающем окне (Cmd-Shift-W) или на втором экране; раскладки 1/2/4/9-up, причём в одной раскладке можно поставить ТРИ вектороскопа с разными тональными диапазонами (Low/Mid/High) и смотреть их разом. Шкала waveform/parade переключается: 10 бит (умолчание), 12 бит, проценты 0–100, мВ, HDR-ниты. Отдельно — качество отрисовки High/Medium/Low/Auto «для медленных станций», Low Pass Filter (сглаживание трассы) и Extents (обводка истинных выбросов), Display Qualifier Focus (пипетка во вьюере обводит кружком выбранные пиксели ПРЯМО В ГРАФЕ прибора). Мануал прямо пишет, что приборы GPU-ускорены и всё равно едят реалтайм, а их закрытие «освобождает всю обработку» |
-| Adobe Premiere | 26.x | Lumetri Scopes; плюс приборы нового Color mode | классика — панель Lumetri Scopes (Window → Lumetri Scopes), вкладка рядом с Effect Controls. В 2026-м Adobe выкатила новый Color mode со своими приборами, и по форуму видно, чем он отличается от старой панели: waveform там КЛАМПИТ сигнал в 0–100 (не видно, ушло ли за пределы), а сами приборы всплывают поверх program monitor без регулируемой панели. Пользователи просят вернуть «unclamp» и не убивать Lumetri-панель при слиянии режимов |
-| Final Cut Pro | 12.3 | Video Scopes | приборы живут ВНУТРИ вьюера (Cmd-7), делят с картинкой её место; до четырёх приборов сразу, 12 раскладок. Waveform: RGB Parade, RGB Overlay, отдельные R/G/B, Luma, Luminance (только PQ), Chroma, Y'CbCr Parade; шкалы IRE, мВ, ниты. Вектороскоп: опорный уровень 100 % или 133 %, поворот сетки Vector/Mark3 (красный сверху либо справа), Show/Hide Skin Tone Indicator. False color нет — вместо него Range Check: УЗОР поверх кадра (Luma / Saturation / All), пороги зависят от цветового пространства проекта |
-| VEGAS Pro | 2026.0 | Video Scopes | та же панель, что и в прошлой линейке: в списке нового за 2026 (речь-в-текст, Storyblocks, Z-Depth 2.0, титры Continuum, 4:2:2 на Blackwell) приборов нет ВООБЩЕ. Настройки — четыре галки: Enable ST.2084 HDR Scope, Skin Tone Line, 7.5 IRE Setup, Studio RGB (16/64 to 235/940). Линия skin tone включается галкой, её угол по умолчанию 123° («11 часов») и его можно ПОМЕНЯТЬ. Умолчание Studio RGB осталось от времён, когда проект по умолчанию был 8-bit limited, — и с тех пор не менялось |
-| After Effects | 26.x | панель Lumetri Scopes | **живьём не проверено**: справка Adobe (helpx.adobe.com) из окружения проверки недоступна, а в r/AfterEffects за полгода обсуждений приборов нет ни одного. Структурно модель другая: монитора программы нет, прибор меряет вьюер композиции, а глубина проекта переключается (8/16/32 бита на канал), из-за чего вопрос «в каких единицах шкала» решается не так, как в NLE |
+| DaVinci Resolve | 20.3.2 | Video Scopes | five instruments (Waveform, Parade, Vectorscope, Histogram, CIE Chromaticity) in a SEPARATE floating window (Cmd-Shift-W) or on a second screen; layouts 1/2/4/9-up, and within one layout you can place THREE vectorscopes with different tonal ranges (Low/Mid/High) and watch them at once. The waveform/parade scale switches: 10-bit (default), 12-bit, percent 0–100, mV, HDR nits. Separately — drawing quality High/Medium/Low/Auto "for slow workstations", a Low Pass Filter (smoothing of the trace) and Extents (outlining of true excursions), and Display Qualifier Focus (the eyedropper in the viewer circles the chosen pixels RIGHT IN THE GRAPH of the instrument). The manual says plainly that the instruments are GPU-accelerated and still eat real-time, and that closing them "frees all processing" |
+| Adobe Premiere | 26.x | Lumetri Scopes; plus the instruments of the new Color mode | the classic is the Lumetri Scopes panel (Window → Lumetri Scopes), a tab next to Effect Controls. In 2026 Adobe shipped a new Color mode with its own instruments, and the forum shows how it differs from the old panel: the waveform there CLAMPS the signal to 0–100 (you cannot see whether it went beyond the limits), and the instruments pop up over the program monitor without an adjustable panel. Users ask to bring back "unclamped" display and not to kill the Lumetri panel when the modes are merged |
+| Final Cut Pro | 12.3 | Video Scopes | the instruments live INSIDE the viewer (Cmd-7), sharing its space with the picture; up to four instruments at once, 12 layouts. Waveform: RGB Parade, RGB Overlay, separate R/G/B, Luma, Luminance (PQ only), Chroma, Y'CbCr Parade; scales IRE, mV, nits. Vectorscope: reference level 100 % or 133 %, the grid rotated Vector/Mark3 (red at the top or on the right), Show/Hide Skin Tone Indicator. There is no false colour — instead there is Range Check: a PATTERN over the picture (Luma / Saturation / All), with thresholds that depend on the colour space of the project |
+| VEGAS Pro | 2026.0 | Video Scopes | the same panel as in the previous line: in the new list for 2026 (speech-to-text, Storyblocks, Z-Depth 2.0, Continuum titles, 4:2:2 on Blackwell) there are NO instruments at all. Settings — four ticks: Enable ST.2084 HDR Scope, Skin Tone Line, 7.5 IRE Setup, Studio RGB (16/64 to 235/940). The skin tone line is switched on with a tick; its angle by default is 123° ("11 o'clock") and it CAN be changed. The Studio RGB default has stayed from the time when the project default was 8-bit limited — and has not changed since then |
+| After Effects | 26.x | the Lumetri Scopes panel | **not checked live**: Adobe's help (helpx.adobe.com) is unavailable from the verification environment, and in r/AfterEffects over the last six months there is not a single discussion of the instruments. The model is structurally different: there is no program monitor, the instrument measures the composition viewer, and the project depth is switched (8/16/32 bits per channel), so the question "in what units is the scale" is answered not the way it is in an NLE |
 
-## Фишка фишки
+## The trick behind it
 
-**1. «Линия кожи» — это не про кожу, а про угол.** Resolve называет её
-честно: «optional skin tone reference graticule (otherwise known as the
-In-phase reference)» — то есть ось I старого NTSC-кодирования, а не
-измеренная антропология. FCP описывает её как диагональ «between the yellow
-and red color bar targets», Vegas ставит на 123°. Практический смысл в том,
-ЧТО именно по ней проверяется: угол, то есть ОТТЕНОК. Темнее или светлее
-кожа — это радиус (насыщенность) и высота на waveform, а не другой угол,
-поэтому линия одна на все типы кожи и «выставить кожу» = довернуть оттенок,
-а не подтащить облако к центру. Отсюда и рабочий приём из форумов: замаскировать
-всё, кроме лица, — и совмещать с линией уже пик, а не общее облако кадра.
-Из пяти редакторов угол линии даёт менять только Vegas; Resolve и FCP —
-только включить/выключить.
+**1. The "skin tone line" is not about skin but about an angle.** Resolve names it honestly: "optional skin tone reference graticule (otherwise known as the In-phase reference)" — that is, the I axis of the old NTSC encoding, not a measured anthropology. FCP describes it as a diagonal "between the yellow and red color bar targets", and Vegas sets it at 123°. The practical meaning is in WHAT is checked along it: the angle, that is, the HUE. Darker or lighter skin is the radius (saturation) and the height on the waveform, not a different angle; so the line is one for all skin types, and "setting the skin" = turning the hue, not dragging the cloud towards the centre. Hence the working technique from the forums: mask out everything except the face, and align the peak, not the whole cloud of the frame, with the line. Of the five editors, only Vegas lets you change the angle of the line; Resolve and FCP only let you switch it on and off.
 
-**2. Сглаживание трассы врёт ровно про то, ради чего прибор открывали.**
-У Resolve есть Low Pass Filter — фильтр шума, делающий график читаемым, — и
-мануал В ТОМ ЖЕ АБЗАЦЕ предупреждает, что с ним «highlight and shadow
-excursions on the graph seem a bit shy of where they actually are», и
-рекомендует включать Extents (обводку истинных выбросов). То есть красивая
-трасса систематически занижает клиппинг — единственное, за чем к прибору и
-приходят. Это же объясняет, почему у каждого прибора там отдельный ползунок
-яркости графа: яркая трасса показывает мелкие детали, но перестаёт показывать,
-где сигнала МНОГО, а где единичные пиксели.
+**2. Smoothing the trace lies about exactly what the instrument was opened for.** Resolve has a Low Pass Filter — a noise filter that makes the graph readable — and the manual, IN THE SAME PARAGRAPH, warns that with it the "highlight and shadow excursions on the graph seem a bit shy of where they actually are", and recommends turning on Extents (outlining true excursions). So a pretty trace systematically understates clipping — which is the only thing people come to the instrument for. This also explains why each instrument there has a separate brightness slider for the graph: a bright trace shows fine detail but stops showing where the signal is MANY and where there are single pixels.
 
-**3. Шкала — это галка, и её умолчание может врать.** Blackmagic решил
-вопрос радикально: WFM и Parade показывают 10-битные full-range данные
-0–1023 ВСЕГДА, независимо от Video/Data Level в настройках проекта, —
-«a window into how the image is being processed prior to being output».
-Vegas сделал наоборот: галка Studio RGB (16/64 to 235/940), причём умолчание
-отстало от смены умолчания проекта, и на форуме это разбирают до сих пор —
-при неверной галке кадр читается как клиппующий, хотя не клиппует. Тот же
-класс — «7.5 IRE Setup»: сдвиг чёрного на 7.5 единиц, наследие NTSC, которое
-до сих пор стоит галкой рядом.
+**3. The scale is a tick box, and its default can mislead.** Blackmagic settled the question radically: WFM and Parade always show 10-bit full-range data 0–1023, regardless of the Video/Data Level setting in the project — "a window into how the image is being processed prior to being output". Vegas did the opposite: the Studio RGB tick (16/64 to 235/940), and the default fell behind the change of the project default, and the forum still discusses this — with the wrong tick, a frame reads as clipping when it does not clip. The same class: "7.5 IRE Setup" — a shift of black by 7.5 units, a legacy of NTSC, which still sits as a tick box beside it.
 
-## Плюсы
+## Pros
 
-- Прибор ничего не меняет в кадре, поэтому у него нет ни undo, ни состояния
-  в модели, ни влияния на эталоны рендера: его можно поставить в продукт,
-  где цветокоррекции ещё нет вовсе, и он сразу отвечает на вопрос «этот
-  исходник уже клиппит?» и «на каком уровне встал экспорт».
-- Он считается по ГОТОВОМУ кадру, а не по плану сцены, поэтому один и тот
-  же код обслуживает любой бэкенд отрисовки: разные исполнители отдают одни
-  и те же RGBA-байты, и второго пути композиции не появляется.
-- Parade даёт баланс белого без единого инструмента цвета: чтобы увидеть
-  зелёный сдвиг в тенях, ничего крутить не надо — достаточно, чтобы низ
-  зелёного графа стоял выше низов красного и синего.
-- Waveform и гистограмма не заменяют друг друга по устройству, а не «по
-  вкусу»: waveform сохраняет горизонтальную координату (видно, какая часть
-  кадра выбита), гистограмма её теряет, но считает количество пикселей на
-  уровне. Поэтому у всех пяти редакторов они стоят рядом.
-- False color устроен иначе всех: он не строит график, а перекрашивает сам
-  кадр зонами, — и потому читается тем же взглядом и тем же опытом, что
-  камерный монитор на площадке.
+- The scope changes nothing in the frame, so it has no undo, no state in the model, and no influence on render references: it can be added to a product where color correction does not exist at all, and it immediately answers the questions "is this source already clipping?" and "at what level did the export land?".
+- It is computed from the FINISHED frame, not from the scene plan, so one and the same code serves any render backend: different executors return the same RGBA bytes, and no second composition path appears.
+- The parade gives white balance without a single color tool: to see a green shift in the shadows, nothing needs to be turned — it is enough that the bottoms of the green graph stand higher than the bottoms of the red and blue.
+- The waveform and the histogram do not replace each other by design, not "by taste": the waveform keeps the horizontal coordinate (one can see which part of the frame is blown out), the histogram loses it but counts the pixels at each level. That is why all five editors place them side by side.
+- False color works differently from all the others: it does not build a graph, it recolors the frame itself by zones — and is therefore read with the same eye and the same experience as the camera monitor on set.
 
-## Минусы
+## Cons
 
-- Цена — полный проход по кадру на КАЖДЫЙ кадр, и это видно: Blackmagic
-  держит для приборов отдельный переключатель качества (High/Medium/Low/Auto)
-  и пишет, что закрытие окна приборов возвращает обработку гриду.
-- Прибор требует места, и все пятеро платят по-разному: FCP отдаёт приборам
-  часть вьюера (картинка ужимается), новый Color mode Premiere накрывает
-  ими program monitor, Resolve вынес их в отдельное окно — и получил лишнее
-  окно.
-- Ручек на один прибор больше, чем на иной эффект: у вектороскопа Resolve
-  их десять (тональный диапазон, Colorize, Extents, Combine, яркость графа,
-  яркость сетки, Low/High Range, 2×, skin tone, graticule) — и это ради
-  ПОКАЗА, без единого изменения картинки.
-- Показания зависят от галки шкалы: Studio RGB / 7.5 IRE сдвигают чтение на
-  16 и 7.5 единиц соответственно, и ошибка в галке даёт ложный клиппинг —
-  ровно то, за чем прибор и открывали.
-- Без инструмента правки прибор ставит диагноз и не лечит: он честно скажет
-  «пересвечено», но выбор останется между другим дублем и другой экспозицией
-  экспорта.
+- The price is a full pass over the frame on EVERY frame, and this is visible: Blackmagic keeps a separate quality switch for the scopes (High/Medium/Low/Auto) and writes that closing the scopes window returns processing to the grid.
+- A scope takes space, and all five pay differently: FCP gives the scopes part of the viewer (the picture is shrunk), the new Color mode of Premiere covers the program monitor with them, Resolve moved them into a separate window — and got an extra window.
+- A single scope has more knobs than a typical effect: the vectorscope in Resolve has ten of them (tonal range, Colorize, Extents, Combine, graph brightness, grid brightness, Low/High Range, 2×, skin tone, graticule) — and all of that is for DISPLAY, without a single change to the picture.
+- The readings depend on the scale checkbox: Studio RGB / 7.5 IRE shift the reading by 16 and 7.5 units respectively, and an error in the checkbox produces false clipping — exactly what the scope was opened to check.
+- Without an editing tool the scope makes a diagnosis and does not cure: it will honestly say "overexposed", but the choice remains between another take and a different export exposure.
 
-## Что говорят пользователи
+## What users say
 
 > Please add back in the ability to "unclamp" the signal on the waveform
 > monitor so we can see if the signal is going above 100 or below 0 like you
@@ -130,191 +71,170 @@ Vegas сделал наоборот: галка Studio RGB (16/64 to 235/940), �
 
 > Btw, the Skin Tone line is on the Vectorscope. The default is at 11 o'clock
 > (123 degrees) which is an alignment reference for Caucasian skin tone.
-> — Howard-Vigorita, форум Boris FX (VEGAS Pro), 10.08.2026, https://forum.borisfx.com/t/video-scopes-settings/25018
+> — Howard-Vigorita, Boris FX forum (VEGAS Pro), 10.08.2026, https://forum.borisfx.com/t/video-scopes-settings/25018
 
 > 8bit Limited Range was the project default once upon a time but they didn't
 > change the scopes default when that changed. Be nice if it had an Auto
 > option.
-> — Howard-Vigorita, форум Boris FX (VEGAS Pro), 10.08.2026, https://forum.borisfx.com/t/video-scopes-settings/25018
+> — Howard-Vigorita, Boris FX forum (VEGAS Pro), 10.08.2026, https://forum.borisfx.com/t/video-scopes-settings/25018
 
 > Nearly every video editing program has a skin tone line in the scopes
 > window. Line up the color of the skin on that line (actually just above a
 > small amount) and you have accurate Caucasian skin tones.
 > — u/denalidenizen, r/colorists, 01.03.2026, https://www.reddit.com/r/colorists/comments/1rbkxcb/skintones_andor/o7z2g23/
 
-Контр-реплика в том же сообществе — против веры в линию как в закон:
+A counter-reply in the same community — against believing in the line as if it were law:
 
 > Depends on the scene. For daylight you might want the skin to be close to
 > the skin tone line. For Bar Scene... Neon Lights.. the Skin can be anything.
 > — u/I-am-into-movies, r/colorists, 21.01.2026, https://www.reddit.com/r/colorists/comments/1qj6a1r/when_do_you_throw_out_the_search_for_good_skin/o0x37mw/
 
-И про то, ради чего прибор вообще заводят раньше грейда, — в ответе на
-классический вопрос «почему у меня всё выглядит иначе на другом экране»
-(дальше в том же сообщении: контролировать можно только своё окружение,
-«That and trusting your ears (eyes) and meters (scopes)»):
+And on what the scope is opened for before grading at all — in a reply to the classic question "why does everything look different on another screen" (further in the same post: you can control only your own environment, "That and trusting your ears (eyes) and meters (scopes)"):
 
 > You mix (or color grade) in a properly calibrated and balanced environment.
 > — u/whyareyouemailingme, r/davinciresolve, 05.09.2026, https://www.reddit.com/r/davinciresolve/comments/1w80jtx/how_do_you_mix_audio_for_phones_tablets_and_tvs/p7yzfbw/
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- **Готовый кадр в оперативке, каждый новый кадр, на обоих бэкендах.**
+- **A finished frame in RAM, every new frame, on both backends.**
   `Player::compose_preview_into` (`src/libs/kt-engine/src/player.rs:555`)
-  пишет RGBA8 в переданный `Vec<u8>`; в UI это `KtApp::preview_buf`, и он
-  ПЕРЕИСПОЛЬЗУЕТСЯ между кадрами (`src/apps/kt-app/src/app.rs`, ветка
-  `if need { … }` вокруг `compose_preview_into`, там же `ColorImage` и
-  заливка текстуры).
-- **Readback на GPU-пути уже сделан и уже оплачен.**
-  `exec.execute_into(&plan, out)` (`player.rs:582`) уходит в
-  `Inner::execute` (`src/libs/kt-gpu/src/engine.rs:579`), который читает
-  композит обратно в CPU-буфер и мемоизирует байты в `ReadbackCache`
-  (`src/libs/kt-gpu/src/pool.rs:138`, бюджет `READBACK_BUDGET` = 64 МБ,
-  ключ — хэш плана, `engine.rs:23`). Отдельный readback «ради прибора» не
-  нужен: egui всё равно грузит кадр как `ColorImage`.
-- **Считать будет ровно раз на НОВЫЙ кадр.** Ключ превью выровнен по сетке
-  fps (`preview_key_tick`, инвариант 12, t39), перекомпозит идёт только при
-  `need`, а `preview_key` помнит и «полноту» кадра. Прибор, повешенный на
-  ту же ветку, наследует эту частоту бесплатно.
-- **Рисовать умеем.** Многосерийные rolling-графики с выносками —
-  `src/apps/kt-app/src/graphs.rs` (кольцо 180 сэмплов, до 5 серий, общая
-  шкала, `Axis::Percent` / `LinearAuto`). Тысячи примитивов за кадр
-  собираются в один `egui::Mesh` — `src/apps/kt-app/src/meters.rs` (два
-  места), это прямое правило `src/apps/kt-app/CLAUDE.md` (t40). Второй
-  готовый приём — собрать картинку в буфер и залить текстурой, как glow-мип
-  превью (`app.rs`, каждый 4-й кадр).
-- **Место и его память.** Правая панель `meters_col` со своей полосой-
-  сепаратором и пределами `METERS_W_MIN`/`METERS_W_MAX`
-  (`src/apps/kt-app/src/app.rs`), ширина живёт в `UiState.meters_w`
-  (`src/libs/kt-model/src/project.rs:1275`) и ездит в файл проекта через
+  writes RGBA8 into the passed `Vec<u8>`; in the UI this is `KtApp::preview_buf`, and it is
+  REUSED between frames (`src/apps/kt-app/src/app.rs`, the `if need { … }` branch around `compose_preview_into`, and there the `ColorImage` and the texture upload).
+- **The readback on the GPU path is already done and already paid for.**
+  `exec.execute_into(&plan, out)` (`player.rs:582`) goes into
+  `Inner::execute` (`src/libs/kt-gpu/src/engine.rs:579`), which reads the composite back into a CPU buffer and memoizes the bytes in `ReadbackCache`
+  (`src/libs/kt-gpu/src/pool.rs:138`, budget `READBACK_BUDGET` = 64 MB, key — the plan hash, `engine.rs:23`). A separate readback "for the sake of the scope" is not needed: egui loads the frame as a `ColorImage` anyway.
+- **It will compute exactly once per NEW frame.** The preview key is aligned to the fps grid (`preview_key_tick`, invariant 12, t39), recomposition happens only when `need` is set, and `preview_key` also remembers the "completeness" of the frame. A scope hung on the same branch inherits this frequency for free.
+- **We know how to draw.** Multi-series rolling graphs with callouts —
+  `src/apps/kt-app/src/graphs.rs` (a ring of 180 samples, up to 5 series, a common scale, `Axis::Percent` / `LinearAuto`). Thousands of primitives per frame are
+  collected into one `egui::Mesh` — `src/apps/kt-app/src/meters.rs` (two
+  places); this is a direct rule of `src/apps/kt-app/CLAUDE.md` (t40). The second ready technique is to assemble the picture in a buffer and upload it as a texture, like the glow mip of the preview (`app.rs`, every 4th frame).
+- **A place for it and its memory.** The right panel `meters_col` with its own separator strip
+  and the limits `METERS_W_MIN`/`METERS_W_MAX`
+  (`src/apps/kt-app/src/app.rs`); the width lives in `UiState.meters_w`
+  (`src/libs/kt-model/src/project.rs:1275`) and travels into the project file through
   `metadata.kt.ui` (`src/libs/kt-otio/src/meta.rs`).
-- **Отдельное окно программа уже умеет:** деатач превью через
-  `show_viewport_immediate` (п.51, `src/apps/kt-app/CLAUDE.md`) — путь
-  «как у Resolve» не закрыт.
-- **Есть чем тестировать вёрстку:** `egui_kittest::Harness` гоняет настоящие
-  кадры без окна и GPU (`src/apps/kt-app/src/layout_tests.rs`).
+- **The program already knows how to do a separate window:** detaching the preview via
+  `show_viewport_immediate` (item 51, `src/apps/kt-app/CLAUDE.md`) — the path "like Resolve's" is not closed.
+- **There is something to test the layout with:** `egui_kittest::Harness` runs real
+  frames without a window or GPU (`src/apps/kt-app/src/layout_tests.rs`).
 
-### Чего не хватает
+### What is missing
 
-- Приборов нет ни одного: `grep -rniE "histogram|vectorscope|parade|false
-  ?color|гистограм|вектороскоп"` по `src/` даёт РОВНО одно совпадение —
-  гистограмма РАЗНИЦЫ кадров в `kt_gpu::assert_frames_close`
-  (`src/libs/kt-gpu/src/lib.rs:39`), тестовая диагностика, не прибор.
-- Не решено, ЧТО меряем. Превью считается в `preview_quality` — доле
-  разрешения проекта (1/16, 1/8, 1/4, 1/2, 1/1 в
-  `src/apps/kt-app/src/app.rs::draw_preview_controls`; умолчание 640×360,
-  `src/libs/kt-engine/src/player.rs:264`). Это НЕ даунскейл экспортного
-  кадра: качество входит в ключ кэша, источник декодируется сразу в этот
-  размер. Прибор по превью на 1/4 честно показывает то, что видит
-  пользователь, и может не показать клиппинг, который будет в экспорте
-  (`compose_export_into`, `src/libs/kt-engine/src/video.rs:405`, считает в
-  полном разрешении проекта).
-- Нет шкалы, которую можно подписать честно. После декода тракт — RGBA8;
-  `sws_getContext` (`src/libs/kt-ffmpeg/src/source_impl.rs:922`) зовётся
-  БЕЗ `sws_setColorspaceDetails`, то есть трактовка диапазона отдана
-  умолчанию swscale, а в kt-gpu все текстуры `Rgba8Uint`
-  (`src/libs/kt-gpu/CLAUDE.md`). 10-битная шкала 0–1023 у нас была бы
-  враньём; честны только 0–255 и 0–100 %. Заодно это вопрос, который у
-  Vegas превратился в многолетний форумный тред, — его надо закрыть один
-  раз и вслух, а не галкой с отставшим умолчанием.
-- Нет «картинки ДО грейда», потому что нет грейда, — но развилку надо
-  зафиксировать заранее: «после» — это готовый `preview_buf` и ноль нового
-  кода; «до» — это ВТОРАЯ композиция того же тика.
-- Нет зума/панорамы превью (искать нечего — их в `app.rs` нет), поэтому
-  вопрос «какая часть кадра меряется» сегодня имеет простой ответ «весь
-  кадр превью». Но выбор всё равно есть: превью ПРОЕКТА или превью
-  МАТЕРИАЛА в бине (t169) — прибор обязан говорить, что именно он мерит.
+- There are no instruments at all: `grep -rniE "histogram|vectorscope|parade|false
+  ?color|гистограм|вектороскоп"` over `src/` returns EXACTLY one match —
+  the histogram of frame DIFFERENCES in `kt_gpu::assert_frames_close`
+  (`src/libs/kt-gpu/src/lib.rs:39`), which is test diagnostics, not an instrument.
+- It is not decided WHAT we measure. The preview is computed at `preview_quality` —
+  a fraction of the project resolution (1/16, 1/8, 1/4, 1/2, 1/1 in
+  `src/apps/kt-app/src/app.rs::draw_preview_controls`; default 640×360,
+  `src/libs/kt-engine/src/player.rs:264`). This is NOT a downscale of the export
+  frame: quality is part of the cache key, and the source is decoded straight to
+  that size. An instrument on the 1/4 preview honestly shows what the user sees, and
+  may fail to show clipping that will be present in the export
+  (`compose_export_into`, `src/libs/kt-engine/src/video.rs:405`, computes at the
+  full project resolution).
+- There is no scale that can be honestly labeled. After decoding, the path is RGBA8;
+  `sws_getContext` (`src/libs/kt-ffmpeg/src/source_impl.rs:922`) is called WITHOUT
+  `sws_setColorspaceDetails`, so the interpretation of the range is left to the
+  swscale default, while in kt-gpu all textures are `Rgba8Uint`
+  (`src/libs/kt-gpu/CLAUDE.md`). A 10-bit scale of 0–1023 would be a lie for us;
+  only 0–255 and 0–100 % are honest. Besides, this is a question that Vegas turned
+  into a years-long forum thread — it has to be settled once and out loud, not with
+  a checkbox and a stale default.
+- There is no "picture BEFORE the grade", because there is no grade — but the fork
+  has to be fixed in advance: "after" is the ready `preview_buf` and zero new code;
+  "before" is a SECOND composition of the same tick.
+- There is no zoom/pan for the preview (there is nothing to search for — there are none
+  in `app.rs`), so the question "which part of the frame is measured" today has a simple
+  answer: "the whole preview frame". But the choice still exists: the PROJECT preview or
+  the MATERIAL preview in the bin (t169) — the instrument must say what exactly it measures.
 
-### Что мешает
+### What gets in the way
 
-- **Шейдерный путь у нас закрыт архитектурно.** `src/libs/kt-gpu/CLAUDE.md`
-  запрещает compute-пассы (дефолтный device egui-wgpu на GL-бэкенде
-  создаётся с downlevel_webgl2-лимитами, а live-check гоняет llvmpipe) и
-  запрещает атомики (условие детерминизма на устройстве, t183). Гистограмма
-  без атомиков — это либо 256 фрагментных пассов, либо сортировка; проход по
-  кадру 640×360, который уже лежит в памяти, — это 230 тыс. пикселей и
-  дешевле любой такой конструкции. На 1/1 в 4K это 8.3 млн пикселей, и там
-  решает уже не бэкенд, а ЧАСТОТА: считать обязано на новый кадр, а не на
-  UI-кадр.
-- **Место.** Правило 13 чек-листа (`src/apps/kt-app/CLAUDE.md`) прямо
-  запрещает заводить новую полосу, пока не проверено «нельзя ли поставить на
-  уже занятое»; при этом вектороскоп по природе квадратный, а панель метров
-  по умолчанию ~70 pt шириной. Это решение по вёрстке, а не по коду, и оно
-  главное в фиче.
-- **Правило 9 «ничего лишнего» против правды прибора.** Десять
-  переключателей вектороскопа Resolve чек-лист не пропустит, но со
-  сглаживанием и без обводки выбросов прибор систематически занижает
-  клиппинг (см. «Фишка фишки»). Что из этого включено НАВСЕГДА, а что
-  вынесено ручкой, придётся решить явно.
-- **Любой новый текст в UI** — это каталоги `apps/kt-app/i18n/*.toml`,
-  тесты t100/t125/t128 и пересборка сабсетов шрифтов
-  (`python3 scripts/subset-fonts.py`).
+- **The shader path is architecturally closed for us.** `src/libs/kt-gpu/CLAUDE.md`
+  forbids compute passes (the default egui-wgpu device on the GL backend is created with
+  downlevel_webgl2 limits, and the live check runs on llvmpipe) and forbids atomics
+  (a condition of determinism on the device, t183). A histogram without atomics is either
+  256 fragment passes or a sort; a pass over a 640×360 frame that already sits in memory
+  is 230 thousand pixels and cheaper than any such construction. At 1/1 in 4K it is
+  8.3 million pixels, and there the deciding factor is no longer the backend but the
+  FREQUENCY: it must be computed for each new frame, not for each UI frame.
+- **Space.** Rule 13 of the checklist (`src/apps/kt-app/CLAUDE.md`) explicitly forbids
+  opening a new strip until it has been checked whether it can go on something already
+  occupied; meanwhile a vectorscope is square by nature, and the meter panel is by default
+  ~70 pt wide. This is a layout decision, not a code one, and it is the main thing in the feature.
+- **Rule 9 "nothing superfluous" against the truth of the instrument.** Resolve's ten
+  vectorscope toggles would not pass the checklist, but without smoothing and without
+  outlier outlining the instrument systematically understates clipping (see "The trick
+  behind it"). What is included FOREVER and what is moved to a knob has to be decided explicitly.
+- **Any new UI text** — these are the catalogs `apps/kt-app/i18n/*.toml`, tests
+  t100/t125/t128 and a rebuild of the font subsets (`python3 scripts/subset-fonts.py`).
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **7 (код композиции один)** — НЕ задевает, пока прибор читает готовый
-  кадр. Отдельный «шейдер прибора» или композиция «до грейда» немедленно
-  превращают его во второй путь, и это надо считать ценой, а не деталью.
-- **12 (repaint только при движении)** — задевает прямо: на паузе прибор
-  обязан не считаться и не просить перерисовку, по образцу
-  `MeterState::is_active()` (t38, t20-repaint). Затухающего состояния у него
-  нет вовсе — это в плюс.
-- **11 (детерминизм)** — не задевает: прибор только показывает,
-  GOLDEN_VIDEO/GOLDEN_AUDIO не трогаются.
-- **4 (кэш — единственная правда о coverage) и 8 (скролл/зум не порождает
-  декода)** — не задевает при условии, что прибор берёт УЖЕ составленный
-  кадр и никогда не заказывает свой.
-- Правила UI: **3** (ничего не скачет при смене прибора — ширина
-  фиксируется галлеей), **6** (у растяжки панели есть min и max), **9**
-  (ничего лишнего), **13** (не тратить место впустую).
+- **7 (one composition code)** — does NOT touch it, as long as the instrument reads a
+  finished frame. A separate "instrument shader" or a composition "before the grade"
+  immediately turns it into a second path, and that has to be counted as a cost, not a detail.
+- **12 (repaint only on motion)** — touches it directly: while paused the instrument must
+  not compute and must not request a redraw, following the pattern of
+  `MeterState::is_active()` (t38, t20-repaint). It has no decaying state at all — that is a plus.
+- **11 (determinism)** — does not touch it: the instrument only displays;
+  GOLDEN_VIDEO/GOLDEN_AUDIO are not affected.
+- **4 (cache is the only truth about coverage) and 8 (scroll/zoom does not generate decode)** —
+  do not touch it, on the condition that the instrument takes an ALREADY composed frame
+  and never orders its own.
+- UI rules: **3** (nothing jumps when the instrument changes — the width is fixed by a gallery),
+  **6** (the panel stretch has a min and a max), **9** (nothing superfluous),
+  **13** (do not waste space).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии: один прибор с панелью и решённой шкалой, затем остальные виды |
-| Где основная работа | kt-app целиком: расчёт по готовому кадру + отрисовка (меш либо текстура) + вёрстка панели. Движок не трогается: `compose_preview_into` уже отдаёт байты |
-| Формат проекта | не трогает: одно поле в `UiState` (`src/libs/kt-model/src/project.rs:1249`) с `#[serde(default)]`, как `meters_w`; перепроверить round-trip kt-otio (t144–t147) |
-| Тесты, которые придётся написать | unit на синтетическом кадре (полосы 0/128/255 → известные числа парада, гистограммы и угла вектороскопа; детерминизм между прогонами); `layout_tests.rs` — панель не раздувается и не скачет при смене прибора (класс t76/t86), на паузе repaint отпущен (класс t20-repaint); t100/t125 на новые тексты |
-| Зависит от | ни от чего. Обратное верно: цветокоррекция (колёса, кривые, LUT) без приборов — гадание, поэтому эта заметка идёт ПЕРЕД ними |
-| Ломает совместимость | нет |
+| Size | M — 2 stages: one instrument with a panel and a settled scale, then the other kinds |
+| Where the main work is | kt-app as a whole: computation on the finished frame + drawing (mesh or texture) + panel layout. The engine is not touched: `compose_preview_into` already yields the bytes |
+| Project format | not touched: one field in `UiState` (`src/libs/kt-model/src/project.rs:1249`) with `#[serde(default)]`, like `meters_w`; re-check the kt-otio round-trip (t144–t147) |
+| Tests that will have to be written | unit on a synthetic frame (bars 0/128/255 → known numbers of the parade, histograms and the vectorscope angle; determinism between runs); `layout_tests.rs` — the panel does not swell and does not jump when the instrument changes (class t76/t86), on pause the repaint is released (class t20-repaint); t100/t125 for the new texts |
+| Depends on | nothing. The reverse is true: color correction (wheels, curves, LUT) without instruments is guesswork, so this note goes BEFORE them |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём, и первой в цветовой ветке. Единственная «цветовая» фича, которая
-ничего не меняет в картинке: ноль риска для инвариантов 7 и 11, ноль
-изменений формата, вся работа в kt-app. Она полезна сама по себе даже
-сегодня — показывает клиппинг у исходников и уровень готового экспорта, —
-и она же обязательное условие для остальных заметок цветовой ветки
-(F-CLR-001 «колёса», F-CLR-003 «вторичная коррекция» и соседние): ставить
-баланс белого «на глаз» на некалиброванном мониторе бессмысленно, о чём
-монтажёры и пишут.
-Главный вопрос фичи не алгоритмический, а два вёрсточных: где прибор живёт
-(панель метров / деатач-окно) и в каких единицах подписана шкала — второе
-у Vegas не решено до сих пор.
+We take it, and first in the color branch. It is the only "color" feature that changes
+nothing in the picture: zero risk for invariants 7 and 11, zero changes to the format,
+all the work is in kt-app. It is useful in itself even today — it shows clipping in the
+sources and the level of the finished export — and it is also a prerequisite for the
+other notes of the color branch (F-CLR-001 "wheels", F-CLR-003 "secondary correction"
+and the neighbouring ones): setting white balance "by eye" on an uncalibrated monitor
+makes no sense, which is what editors write about.
+The main question of the feature is not algorithmic but two layout questions: where the
+instrument lives (the meter panel / a detached window) and in what units the scale is
+labeled — the second one Vegas has still not resolved.
 
-## Источники
+## Sources
 
-- DaVinci Resolve 20 Reference Manual, глава 127 «Viewers, Monitoring, and
-  Video Scopes», с. 3008–3022 (шкалы, Low Pass Filter/Extents, качество
-  отрисовки, опции каждого прибора) — https://documents.blackmagicdesign.com/UserManuals/DaVinci_Resolve_20_Reference_Manual.pdf (дата обращения 2026-09-07)
-- Final Cut Pro User Guide: «Video scopes», «Display video scopes»,
-  «Waveform monitor display options», «Vectorscope display options»,
-  «Detect out-of-gamut colors» — https://support.apple.com/guide/final-cut-pro/video-scopes-ver4a3c67b8/mac (дата обращения 2026-09-07)
-- VEGAS Pro 2026 Online Help, «What's New» (приборов в списке нового нет) —
-  https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/1-before/whatsnew.htm (дата обращения 2026-09-07)
-- Форум Boris FX (VEGAS Pro), тред «Video Scopes Settings?», 09–11.08.2026
-  (четыре галки настроек, угол линии skin tone, отставшее умолчание Studio
-  RGB) — https://forum.borisfx.com/t/video-scopes-settings/25018 (дата обращения 2026-09-07)
-- r/premiere: «Announcing Premiere's new Color mode» (клампинг waveform),
-  «The new color panel effects pane is a complete…» (приборы поверх program
-  monitor), «What is everyone's current thoughts on Color mode» —
-  https://www.reddit.com/r/premiere/comments/1sm5fes/announcing_premieres_new_color_mode/ , https://www.reddit.com/r/premiere/comments/1sozula/the_new_color_panel_effects_pane_is_a_complete/ (дата обращения 2026-09-07)
-- r/colorists: треды про линию skin tone и её пределы —
-  https://www.reddit.com/r/colorists/comments/1rbkxcb/skintones_andor/ , https://www.reddit.com/r/colorists/comments/1qj6a1r/when_do_you_throw_out_the_search_for_good_skin/ , https://www.reddit.com/r/colorists/comments/1qkycdd/xrite_colour_check_currently_working_with_davinci/ (дата обращения 2026-09-07)
-- **Не проверено живьём:** справка Adobe (helpx.adobe.com) из окружения
-  проверки недоступна (CloudFront блокирует запросы), поэтому состав настроек
-  панели Lumetri Scopes в Premiere и наличие такой панели в After Effects
-  взяты не из первоисточника, а из форумных обсуждений; строка After Effects
-  в таблице помечена как непроверенная.
+- DaVinci Resolve 20 Reference Manual, chapter 127 "Viewers, Monitoring, and
+  Video Scopes", pp. 3008–3022 (scales, Low Pass Filter/Extents, drawing quality, the
+  options of each instrument) — https://documents.blackmagicdesign.com/UserManuals/DaVinci_Resolve_20_Reference_Manual.pdf (accessed 2026-09-07)
+- Final Cut Pro User Guide: "Video scopes", "Display video scopes",
+  "Waveform monitor display options", "Vectorscope display options",
+  "Detect out-of-gamut colors" — https://support.apple.com/guide/final-cut-pro/video-scopes-ver4a3c67b8/mac (accessed 2026-09-07)
+- VEGAS Pro 2026 Online Help, "What's New" (no instruments in the list of new things) —
+  https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/1-before/whatsnew.htm (accessed 2026-09-07)
+- Boris FX forum (VEGAS Pro), thread "Video Scopes Settings?", 09–11.08.2026
+  (four checkbox settings, the angle of the skin tone line, the stale Studio
+  RGB default) — https://forum.borisfx.com/t/video-scopes-settings/25018 (accessed 2026-09-07)
+- r/premiere: "Announcing Premiere's new Color mode" (clamping of the waveform),
+  "The new color panel effects pane is a complete…" (instruments over the program
+  monitor), "What is everyone's current thoughts on Color mode" —
+  https://www.reddit.com/r/premiere/comments/1sm5fes/announcing_premieres_new_color_mode/ , https://www.reddit.com/r/premiere/comments/1sozula/the_new_color_panel_effects_pane_is_a_complete/ (accessed 2026-09-07)
+- r/colorists: threads about the skin tone line and its limits —
+  https://www.reddit.com/r/colorists/comments/1rbkxcb/skintones_andor/ , https://www.reddit.com/r/colorists/comments/1qj6a1r/when_do_you_throw_out_the_search_for_good_skin/ , https://www.reddit.com/r/colorists/comments/1qkycdd/xrite_colour_check_currently_working_with_davinci/ (accessed 2026-09-07)
+- **Not verified live:** the Adobe help (helpx.adobe.com) is unavailable from the
+  verification environment (CloudFront blocks the requests), so the composition of the
+  Lumetri Scopes settings in Premiere and the presence of such a panel in After Effects
+  are taken not from the primary source but from forum discussions; the After Effects
+  row in the table is marked as unverified.

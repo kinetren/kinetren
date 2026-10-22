@@ -1,133 +1,129 @@
 ---
 id: F-AUT-009
-title: Форма отрезка кривой: не только линейно и сглажено
-status: сделано
+title: Curve segment shape: not only linear and smooth
+status: done
 priority: B
 cost: M
 category: automation/keyframes
 editors: [vegas-pro-2026, after-effects-26, premiere-26, resolve-21, fcp-12]
-we_have: частично
+we_have: partial
 crates: [kt-model, kt-app, kt-otio, kt-engine]
 invariants: [7, 11]
 ui_rules: [1, 16, 20]
-round: Р.61
+round: R.61
 point: 461
 tests: [t695, t695b, t696, t697, t698, t698b, t698c]
 depends_on: [F-AUT-001]
 checked: 2026-09-22
 ---
 
-# F-AUT-009 — Форма отрезка кривой: не только линейно и сглажено
+# F-AUT-009 — Curve segment shape: not only linear and smooth
 
-## Суть
+## Essence
 
-Между двумя ключами значение чем-то соединено, и это «чем-то» у монтажёра
-есть мнение. Он хочет, чтобы ЭТОТ участок шёл прямой, ЭТОТ — с медленным
-стартом, ЭТОТ — держал значение и прыгнул, а вон тот кусок вообще
-зигзагом. Вопрос не в красоте: длинный плавный наезд и шестикадровая дрожь
-— это две разные формы на одной и той же кривой, и одной галкой на всю
-кривую они не выражаются.
+Between two keyframes the value is connected by something, and this "something" is
+an opinion the editor has. He wants THIS stretch to go straight, THAT one to start
+slowly, THIS one to hold the value and then jump, and that piece over there to go
+in a zigzag. The question is not aesthetics: a long smooth push and a six-frame
+tremor are two different shapes on the same curve, and one checkbox for the whole
+curve cannot express them.
 
-## У кого и как
+## Who has it and how
 
-Ключевой вопрос к каждому: КОМУ принадлежит форма — отрезку между ключами
-или сторонам самого ключа.
+The key question for each: WHO owns the shape, the segment between the keys or the
+sides of the key itself.
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Fade Types у сегмента огибающей | **строка происхождения.** Форма принадлежит ОТРЕЗКУ: правый клик по участку огибающей между двумя точками → меню видов, и участок меняет форму, не трогая соседей. Набор закрытый: Linear, Fast, Slow, Smooth, Sharp, Hold (в служебных настройках они же лежат числами: 2 = fast log, 1 = linear, −2 = slow log, 4 = smooth cubic, −4 = sharp cubic). Ручек нет и тянуть нечего; вид отрезка по умолчанию задаётся не в проекте, а внутренней настройкой программы (`eDefEnvAudioASRType`). Это в точности то, о чём просит владелец: «включить всем кривые третьего порядка, зигзаги, прямые» — только без зигзагов и без своей формулы |
-| After Effects | 26.x | Keyframe Interpolation + Easy Ease | форма принадлежит КЛЮЧУ, и у ключа их две — входная и выходная сторона: Linear / Bezier / Continuous Bezier / Auto Bezier / Hold, плюс Easy Ease (F9). Ручка описывается числом: диалог Keyframe Velocity даёт скорость и influence 0.1…100 %. Отрезок между двумя ключами формы не имеет — он результат выходной стороны левого и входной стороны правого |
-| Adobe Premiere | 26.x | Temporal Interpolation (правый клик по ключу) | та же модель, что у AE, беднее: Linear / Bezier / Auto Bezier / Continuous Bezier / Hold, Ease In и Ease Out ставятся по отдельности, единой кнопки «Easy Ease» нет, и это висит отдельной заявкой. Умолчание — Linear для темпоральной стороны; задать своё умолчание нельзя |
-| DaVinci Resolve | 21 | Ease In / Ease Out у ромба Inspector + Curve Editor | форма у КЛЮЧА: правый клик по оранжевому ромбу даёт Linear / Ease In / Ease Out / Ease In and Out, ручки — только в Curve Editor. Параметров у самого ease нет: жёсткость одна и та же, и на форуме Blackmagic лежит просьба сделать её квадратичной/кубической, потому что штатная слишком резкая. В 20.1 механизм чинили, и проекты, созданные до 20, читаются с прежним (неверным) смыслом |
-| Final Cut Pro | 12.3 | интерполяция ключа в Video Animation editor | форма у КЛЮЧА: правый клик → Linear / Ease / Ease In / Ease Out; отдельных ручек нет, кривизну участка задают `Command`-драгом по самой линии между ключами — то есть жестом ПО ОТРЕЗКУ, но правит он всё равно стороны соседних ключей |
+| VEGAS Pro | 2026.0 | Fade Types of an envelope segment | **a line of origin.** The shape belongs to the SEGMENT: right-click a part of the envelope between two points → a menu of types, and that part changes shape without touching its neighbours. The set is closed: Linear, Fast, Slow, Smooth, Sharp, Hold (in the service settings they are stored as numbers: 2 = fast log, 1 = linear, −2 = slow log, 4 = smooth cubic, −4 = sharp cubic). There are no handles and nothing to drag; the default type of a segment is set not in the project but by an internal setting of the program (`eDefEnvAudioASRType`). This is exactly what the owner asks for: "turn on third-order curves for everyone, zigzags, straight lines" — only without zigzags and without one's own formula |
+| After Effects | 26.x | Keyframe Interpolation + Easy Ease | the shape belongs to the KEY, and a key has two: an incoming and an outgoing side. Linear / Bezier / Continuous Bezier / Auto Bezier / Hold, plus Easy Ease (F9). The handle is described by a number: the Keyframe Velocity dialog gives speed and influence 0.1…100 %. A segment between two keys has no shape of its own: it is the result of the outgoing side of the left key and the incoming side of the right key |
+| Adobe Premiere | 26.x | Temporal Interpolation (right-click a key) | the same model as AE, but poorer: Linear / Bezier / Auto Bezier / Continuous Bezier / Hold; Ease In and Ease Out are set separately, there is no single "Easy Ease" button, and this hangs as a separate request. The default is Linear for the temporal side; you cannot set your own default |
+| DaVinci Resolve | 21 | Ease In / Ease Out on the diamond in Inspector + Curve Editor | the shape belongs to the KEY: right-click the orange diamond gives Linear / Ease In / Ease Out / Ease In and Out; handles exist only in the Curve Editor. The ease itself has no parameters: its stiffness is always the same, and the Blackmagic forum has a request to make it quadratic/cubic, because the built-in one is too harsh. In 20.1 the mechanism was fixed, and projects created before 20 are read with the old (wrong) meaning |
+| Final Cut Pro | 12.3 | key interpolation in the Video Animation editor | the shape belongs to the KEY: right-click → Linear / Ease / Ease In / Ease Out; there are no separate handles, the curvature of a stretch is set by `Command`-dragging the line itself between the keys — that is a gesture ON THE SEGMENT, but it still changes the sides of the neighbouring keys |
 
-## Фишка фишки
+## The trick behind it
 
-**1. «Форма у ОТРЕЗКА» и «форма у СТОРОН КЛЮЧА» — это два разных
-механизма, а не два интерфейса к одному, и программа, у которой есть только
-один, пожизненно получает заявки про второй.** Разница видна на одной
-фразе. «Сделай вот этот кусок зигзагом» — это высказывание про отрезок:
-участок имеет собственный характер, соседние не трогаются, ключей не
-прибавляется. «Выезжай из этой позы помягче» — это высказывание про ключ:
-меняется сторона, и она меняет ОБА примыкающих отрезка сразу. У Vegas есть
-первое и нет второго, поэтому там нельзя сделать «мягкий выход и жёсткий
-вход» в одной точке; у AE/Premiere/Resolve/FCP есть второе и нет первого,
-поэтому там «этот участок держит, а следующий линейный» выражается только
-типом Hold, а всё остальное приходится собирать из двух половинок соседних
-ключей. Показательно, что и там, и там просят ровно недостающую половину:
-у Adobe — «было бы неплохо иметь автоматические пресеты, где можно задать
-умолчание интерполяции для первого, последнего и средних ключей»
-(morphinapg, 28.02.2025) — то есть форму, назначаемую не жестом по ключу, а
-правилом; у Vegas — способ поменять вид отрезка по умолчанию, который
-нашёлся только во внутренних настройках программы.
+**1. "Shape of the SEGMENT" and "shape of the SIDES OF A KEY" are two different
+mechanisms, not two interfaces to one. A program that has only one of them is
+doomed to get requests for the other for the rest of its life.** The difference is
+visible in a single phrase. "Make this piece zigzag" is a statement about the
+segment: the stretch has its own character, the neighbouring stretches are not
+touched, no keys are added. "Ease out of this pose more softly" is a statement about
+the key: a side changes, and it changes BOTH adjoining segments at once. Vegas has
+the first and not the second, so there it is impossible to have "a soft exit and a
+hard entry" at one point; AE/Premiere/Resolve/FCP have the second and not the first,
+so there "this stretch holds and the next one is linear" is expressed only by the
+Hold type, and everything else has to be assembled from the two halves of the
+neighbouring keys. Tellingly, both camps ask for exactly the missing half. Adobe
+users ask for "automatic presets where you could define the default interpolation
+for first, last and middle keyframes" (morphinapg, 28.02.2025), that is, a shape
+assigned not by a gesture on a key but by a rule. Vegas users want a way to change
+the default type of a segment, which was found only in the program's internal
+settings.
 
-**2. Закрытый набор форм дешевле ручек не потому, что их меньше, а потому
-что форма становится ЧИСЛОМ в файле, а не геометрией.** У Vegas вид
-отрезка сериализуется маленьким целым (1, 2, −2, 4, −4), и из этого
-следуют три вещи, которых нет у безье-ручек: форму видно в диффе файла
-проекта; она переносится между отрезками одной командой; и она не может
-быть «почти той же самой» — её нельзя случайно зацепить мышью и сдвинуть
-на полпикселя. Обратная сторона названа там же: раз форма — закрытый
-список, добавление шестого вида это правка формата, а не жест
-пользователя, и «своя кривая» невыразима в принципе. Ровно по этой развилке
-и проходит просьба владельца: закрытый набор («третьего порядка», «прямые»,
-«зигзаги») — это Vegas, а «формула генерации от времени» — это уже не
-форма отрезка, а источник значения, то есть F-AUT-007.
+**2. A closed set of shapes is cheaper than handles not because there are fewer of
+them, but because the shape becomes a NUMBER in the file, not geometry.** In Vegas
+the type of a segment is serialized as a small integer (1, 2, −2, 4, −4), and three
+things follow that bezier handles do not have: the shape is visible in the diff of
+the project file; it is transferred between segments with one command; and it cannot
+be "almost the same" — it cannot be caught by the mouse and nudged by half a pixel.
+The other side is named there too: since the shape is a closed list, adding a sixth
+type is a change to the format, not a gesture of the user, and a "custom curve" is
+inexpressible in principle. The owner's request runs exactly along this divide: a
+closed set ("third-order", "straight", "zigzags") is Vegas, while a "formula that
+generates from time" is no longer a shape of a segment but a source of value, that is
+F-AUT-007.
 
-**3. Жёсткость ease почти нигде не параметр, и это отдельный класс
-претензий, который не лечится добавлением ещё одного вида.** У AE
-жёсткость — число (influence 0.1…100 %, Easy Ease ставит 33 % на обе
-стороны), и потому там просят не «другой ease», а кнопку. У Resolve
-жёсткость зашита, и на форуме Blackmagic лежит просьба заменить её на
-квадратичную или кубическую — то есть люди спорят не о наличии сглаживания,
-а о его СТЕПЕНИ. Вывод для любого, кто заводит закрытый набор: у каждого
-вида, кроме линейного и hold, почти сразу появляется запрос на один
-числовой параметр, и место под него стоит предусмотреть в самом начале,
-иначе шестой вид будет называться «Smooth 2».
+**3. The stiffness of an ease is almost nowhere a parameter, and this is a separate
+class of complaints that is not cured by adding one more type.** In AE the stiffness
+is a number (influence 0.1…100 %, Easy Ease sets 33 % on both sides), so there users
+ask not for "another ease" but for a button. In Resolve the stiffness is fixed, and
+the Blackmagic forum has a request to replace it with a quadratic or cubic one, that
+is, people argue not about the presence of smoothing but about its DEGREE. The
+conclusion for anyone who introduces a closed set: almost every type except linear
+and hold quickly acquires a request for one numeric parameter, and the place for it
+should be provided at the very beginning, otherwise the sixth type will be called
+"Smooth 2".
 
-## Плюсы
+## Pros
 
-- Форма у отрезка — это ровно то, что человек имеет в виду, когда говорит
-  «вот этот кусок»: правка локальна, соседние участки не шевелятся, ключей
-  не прибавляется.
-- Закрытый набор безопасен: ручку нельзя случайно зацепить, кривая не
-  становится немонотонной сама, и вид кривой одинаков у всех пользователей
-  — тот же аргумент, которым F-AUT-001 защищает вариант Vegas/FCP.
-- Форма как маленькое число сериализуется, диффится, копируется и
-  печатается; её можно поставить командой на все отрезки сразу — именно
-  этого просят в заявке Adobe.
-- Hold перестаёт быть костылём «продублируй ключ за кадр до»: ступенчатая
-  анимация не удваивает число ключей.
-- Вычисление остаётся полиномом от нормированной позиции отрезка: никаких
-  итераций, никакого решения уравнений — то есть детерминизм (инвариант 11)
-  не страдает, в отличие от x-монотонных безье (F-AUT-001, п.2 «Что
-  мешает»).
+- The shape of a segment is exactly what a person means when he says "this piece":
+  the edit is local, neighbouring stretches do not move, no keys are added.
+- A closed set is safe: a handle cannot be caught by accident, the curve does not
+  become non-monotonic by itself, and the curve type is the same for all users —
+  the same argument by which F-AUT-001 protects the Vegas/FCP variant.
+- A shape as a small number is serialized, diffed, copied and printed; it can be
+  applied to all segments at once with one command — exactly what the Adobe request
+  asks for.
+- Hold stops being a crutch of "duplicate the key one frame before": stepped
+  animation does not double the number of keys.
+- The computation stays a polynomial in the normalized position within the segment:
+  no iterations, no solving of equations — so determinism (invariant 11) does not
+  suffer, unlike x-monotonic beziers (F-AUT-001, item 2 "What gets in the way").
 
-## Минусы
+## Cons
 
-- Форма у отрезка не выражает разного характера входа и выхода в одной
-  точке: «мягко приехал и резко тронулся» на языке отрезков невыразимо.
-- Закрытый набор — это формат: шестой вид добавляется версией конверта, а
-  не пользователем, и «своя кривая» остаётся недостижимой.
-- Умолчание становится настройкой: у Vegas вид отрезка по умолчанию живёт
-  во внутренних настройках программы, а не в проекте, — значит один и тот
-  же файл у двух монтажёров ведёт себя по-разному на новых точках. Тот же
-  класс, что `Lock Envelopes to Events` в F-AUT-002.
-- Форма на отрезке и форма на ключе не переводятся друг в друга без потерь,
-  поэтому импорт чужих проектов (и экспорт наших) обязан выбрать, что
-  теряет.
-- Каждый вид, кроме линейного и hold, почти сразу просит числовой параметр
-  жёсткости — и без него спор «слишком резко / слишком мягко» не решается
-  вовсе (Resolve).
-- Формы на отрезках удваивают объём операций над кривой: реверс обязан
-  зеркалить не только ключи, но и формы (и менять асимметричные Fast/Slow
-  местами), Split — резать список форм, обрезка — не терять форму
-  спрятанного отрезка.
+- The shape of a segment cannot express different character of entry and exit at one
+  point: "arrived softly and started abruptly" is inexpressible in the language of
+  segments.
+- A closed set is a format: a sixth type is added by a version of the envelope, not by
+  the user, and a "custom curve" stays unreachable.
+- The default becomes a setting: in Vegas the default type of a segment lives in the
+  program's internal settings, not in the project — so the same file behaves
+  differently for two editors on new points. The same class as `Lock Envelopes to
+  Events` in F-AUT-002.
+- The shape on a segment and the shape on a key do not convert into each other without
+  loss, so importing foreign projects (and exporting ours) must choose what is lost.
+- Each type except linear and hold quickly asks for a numeric stiffness parameter — and
+  without it the dispute "too harsh / too soft" is not settled at all (Resolve).
+- Shapes on segments double the amount of operations on a curve: reverse must mirror
+  not only the keys but also the shapes (and swap asymmetric Fast/Slow), Split must cut
+  the list of shapes, trimming must not lose the shape of a hidden segment.
 
-## Что говорят пользователи
+## What users say
 
-Со стороны «форма у ключа» просят не новый вид, а ПРАВИЛО: назначать форму
-не жестом, а умолчанием.
+On the "shape of a key" side, users ask not for a new type but for a RULE: assign the
+shape not by a gesture but by default.
 
 > it would be nice to have automatic presets where we could define the
 > default keyframe interpolation for first, last, and middle keyframes,
@@ -135,8 +131,8 @@ checked: 2026-09-22
 > — morphinapg, Adobe Premiere Pro feature request, 28.02.2025,
 > https://community.adobe.com/feature-requests-730/easy-ease-keyframe-interpolation-1328338
 
-Со стороны «форма у отрезка» просят ровно зеркальное — задать вид по
-умолчанию, и находится он в служебных настройках, а не в интерфейсе:
+On the "shape of a segment" side users ask for the exact mirror — set the default
+type — and it is found in the service settings, not in the interface:
 
 > One would think that Sony would have the forethought to be able to
 > specify a fade type.
@@ -145,125 +141,110 @@ checked: 2026-09-22
 
 > In the Internal Prefs panel, look for eDefEnvAudioASRType...Change the
 > value to your preference.
-> — Matt Crowley, там же, 08.09.2010
+> — Matt Crowley, same thread, 08.09.2010
 
-А это — про жёсткость, которой нет параметра: спор идёт не о наличии
-сглаживания, а о его степени.
+And this one is about stiffness, which has no parameter: the dispute is not about
+whether there is smoothing, but about its degree.
 
 > Easing Curves in Keyframe Editor are too extreme.
-> — заголовок темы на форуме Blackmagic Design (DaVinci Resolve),
+> — thread title on the Blackmagic Design forum (DaVinci Resolve),
 > https://forum.blackmagicdesign.com/viewtopic.php?t=218938
-> — страница отдаёт 403 из этого окружения, заголовок и суть просьбы
-> (заменить на квадратичную/кубическую) взяты из поискового сниппета;
-> дословность тела сообщения **НЕ подтверждена** (2026-09-21)
+> — the page returns 403 from this environment; the title and the substance of the
+> request (replace with quadratic/cubic) are taken from the search snippet; the
+> wording of the message body is **NOT CONFIRMED** (2026-09-21)
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/automation/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Форма отрезка живёт на КЛЮЧЕ, у каждого вида свои параметры; зигзаг признан формой отрезка (пересмотр п.3), амплитуда в единицах параметра; у скорости варпа только прямая.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/automation/ — the contract is in `spec.md`, the "why" and the code paths are in `design.md`.
+The shape of a segment lives on the KEY; each type has its own parameters. The zigzag is recognized as a shape of a segment (revision of item 3), its amplitude in units of the parameter; for the speed of a warp only the straight line is allowed.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2–3 стадии: форма в модели и в `curve_value`, перенос форм всеми операциями над кривой, правый клик по отрезку и команда «всем разом» |
-| Где основная работа | kt-model (список форм у `ParamCurve`, `curve_value`, зеркало при реверсе), kt-app (`automation.rs` — попадание по отрезку, показ вида; команда на всю кривую), kt-otio (конверт) |
-| Формат проекта | трогает: у кривой появляется список форм. Умолчание (сегодняшние две формы) не сериализуется — приём `AudioCurve` и `is_default_curve` в `src/libs/kt-otio/src/meta.rs` уже обкатан, и файлы без форм остаются байт-стабильными |
-| Тесты, которые придётся написать | значение на границе отрезков непрерывно при любой паре форм; реверс меняет асимметричные формы местами; Split и обрезка не теряют форму спрятанного отрезка; форма на `rate` отвергается ЯВНО; GOLDEN_* не шелохнулись; round-trip формата рядом с t192/t222 |
-| Зависит от | F-AUT-001 (безье-ручки — та же линия с другого конца, решать вместе), F-AUT-002 (домен ключа), F-AUT-007 (форма «по формуле» — уже не форма отрезка, а источник значения) |
-| Ломает совместимость | вперёд нет, назад да — файл с непустым списком форм старая сборка обязана отвергнуть явно |
+| Size | M — 2–3 stages: the shape in the model and in `curve_value`; carrying shapes through all operations on a curve; right-click on a segment and the command "all at once" |
+| Where the main work is | kt-model (list of shapes on `ParamCurve`, `curve_value`, mirroring on reverse), kt-app (`automation.rs` — hit on a segment, showing the type; the command for the whole curve), kt-otio (envelope) |
+| Project format | touches it: a curve gets a list of shapes. The default (today's two shapes) is not serialized — the `AudioCurve` and `is_default_curve` technique in `src/libs/kt-otio/src/meta.rs` is already proven, and files without shapes stay byte-stable |
+| Tests to write | value at the boundary of segments is continuous for any pair of shapes; reverse swaps asymmetric shapes; Split and trimming do not lose the shape of a hidden segment; a shape on `rate` is rejected EXPLICITLY; GOLDEN_* did not move; round-trip of the format next to t192/t222 |
+| Depends on | F-AUT-001 (bezier handles — the same line from the other end, to be decided together), F-AUT-002 (key domain), F-AUT-007 (a shape "by formula" is no longer a shape of a segment, but a source of value) |
+| Breaks compatibility | forward no, backward yes — an old build must explicitly reject a file with a non-empty list of shapes |
 
-## Вердикт
+## Verdict
 
-**Кандидат — и решать его надо ОДНИМ решением вместе с F-AUT-001, потому
-что обе заметки правят одну и ту же линию с противоположных концов.**
-Разведка разложила просьбу владельца («задавать формы отрезков… можно
-включить всем кривые третьего порядка, можно зигзаги, можно прямые, можно
-менять параметры кривых или задать формулу генерации от времени, а можно и
-отдельную кривую сконфигурировать по своему») на три разных механизма, и их
-нельзя брать одной стадией:
+**Candidate — and it must be decided with ONE decision together with F-AUT-001, because both notes correct one and the same line from opposite ends.**
+The reconnaissance broke the owner's request ("setting segment shapes… you can turn on
+third-order curves for everyone, you can have zigzags, you can have straight lines, you
+can change the parameters of the curves or set a formula that generates from time, or
+configure a separate curve your own way") into three different mechanisms, and they
+cannot be taken in one stage:
 
-1. **Закрытый набор форм НА ОТРЕЗКЕ** — это Vegas, и это наш эталонный
-   редактор по UX: форма правым кликом по участку, соседи не трогаются,
-   форма сериализуется маленьким числом. Дёшево, детерминированно, ложится
-   в `curve_value` и повторяет уже обкатанный у нас приём `AudioCurve`.
-2. **«Включить всем разом»** — это не новая форма, а команда над кривой, и
-   она же закрывает заявку Adobe про умолчание. Держать это настройкой
-   МАШИНЫ, как сделал Vegas (`eDefEnvAudioASRType`), нельзя: получим ровно
-   тот класс, который F-AUT-002 нашла у `Lock Envelopes to Events`, — один
-   файл, два поведения.
-3. **«Формула генерации от времени» и «зигзаг» — это уже не форма
-   отрезка**, а другой ИСТОЧНИК значения, то есть F-AUT-007. Зигзаг,
-   заданный числом периодов, ключами не выражается вовсе, и пытаться
-   впихнуть его шестым видом в закрытый список — прямой путь к «Smooth 2».
+1. **A closed set of shapes ON THE SEGMENT** — this is Vegas, and it is our reference
+   editor for UX: the shape by right-clicking a part, neighbours untouched, the shape
+   serialized as a small number. Cheap, deterministic, fits into `curve_value`, and
+   repeats the technique we have already proven with `AudioCurve`.
+2. **"Turn it on for everyone at once"** — this is not a new shape but a command over
+   the curve, and it also closes the Adobe request about the default interpolation.
+   Keeping this as a setting of the MACHINE, as Vegas did (`eDefEnvAudioASRType`), is not
+   acceptable: we would get exactly the class that F-AUT-002 found in `Lock Envelopes to
+   Events` — one file, two behaviours.
+3. **"A formula that generates from time" and "zigzag" are no longer a shape of a
+   segment**, but another SOURCE of value, that is F-AUT-007. A zigzag specified by a
+   number of periods cannot be expressed by keys at all, and trying to squeeze it in as a
+   sixth type into the closed list is the direct road to "Smooth 2".
 
-Две оговорки, которые надо записать до начала работы. Первая: у каждого
-вида, кроме линейного и hold, почти сразу просят числовой параметр
-жёсткости (Resolve), и место под него стоит предусмотреть сразу, а не
-шестым видом. Вторая: `rate` остаётся исключением навсегда —
-`src/libs/kt-model/src/warp.rs:575` уже сегодня выбрасывает `ease` у
-скорости, потому что замкнутая форма обратной карты варпа стоит на
-кусочно-линейном профиле; новая форма обязана выбрасываться там же и
-показываться пользователю ошибкой, а не тишиной.
+Two caveats that must be written down before work starts. The first: for every type
+except linear and hold, a numeric stiffness parameter is almost immediately requested
+(Resolve), and room for it should be provided at once, not as a sixth type. The second:
+`rate` remains an exception forever — `src/libs/kt-model/src/warp.rs:575` already today
+discards `ease` on speed, because the closed-form inverse map of the warp stands on a
+piecewise-linear profile; a new shape must be discarded in the same place and shown to
+the user as an error, not as silence.
 
-### ПЕРЕСМОТР пункта 3 (Р.61, решение владельца)
+### REVISION of item 3 (R.61, owner's decision)
 
-**Пункт 3 выше — «формула генерации от времени и зигзаг — это уже не форма отрезка, а
-другой ИСТОЧНИК значения» — в части ЗИГЗАГА пересмотрен.** Владелец решил: зигзаг есть
-форма на отрезке между двумя соседними ключами, наравне с прямой и третьим порядком.
+**Item 3 above — "a formula that generates from time and a zigzag are no longer a shape of a segment, but another SOURCE of value" — is revised in the part about the ZIGZAG.** The owner decided: a zigzag is a shape on the segment between two adjacent keys, on a par with the straight line and third-order.
 
-Причина решения: у зигзага между двумя ключами есть начало и конец, и задаются они
-ключами; источник же описывает кривую ЦЕЛИКОМ и ключей не имеет вовсе. Смешивать их
-значило бы требовать формулу там, где человек хочет «вот на этом куске подрожи».
+The reason for the decision: a zigzag between two keys has a beginning and an end, and they are set by the keys; a source, on the other hand, describes the curve AS A WHOLE and has no keys at all. Mixing them would mean demanding a formula where a person wants "jitter on this piece".
 
-Следствие, которое заметка предсказала верно и которое принято ВМЕСТЕ с решением: у формы
-обязан быть свой набор параметров, а не одно число жёсткости (оговорка 1 выше). Поэтому
-форма — перечисление с данными: прямая без параметров, третий порядок и ease с натяжением,
-зигзаг с числом периодов, амплитудой и профилем. Шестой вид при такой форме не ломает ни
-файл, ни экран, и «Smooth 2» не возникает.
+A consequence, which the note predicted correctly and which was accepted TOGETHER with the decision: a shape must have its own set of parameters, not a single stiffness number (caveat 1 above). Therefore a shape is an enumeration with data: a straight line without parameters, third order and ease with a tension, a zigzag with a number of periods, an amplitude and a profile. With such a shape, a sixth type breaks neither the file nor the screen, and "Smooth 2" does not arise.
 
-Отдельно найдено при разборе: **амплитуда зигзага задаётся в единицах параметра, а не
-долей перепада между ключами** — самый частый зигзаг есть дрожание вокруг ПОСТОЯННОГО
-значения, где перепад равен нулю; клампится паспортом цели.
+Separately found during the analysis: **the zigzag amplitude is set in units of the parameter, not as a fraction of the difference between the keys** — the most common zigzag is jitter around a CONSTANT value, where the difference is zero; it is clamped by the target's passport.
 
-Пункт 3 в части «формула генерации от времени» остаётся в силе: это источник (F-AUT-007).
-Пункты 1 и 2 в силе полностью, оговорка про `rate` — тем более: скорость принимает только
-прямую и отказывает громко.
-## Источники
+Item 3 remains in force in the part about "a formula that generates from time": it is a source (F-AUT-007). Items 1 and 2 remain in force entirely, and the caveat about `rate` is even more so: speed accepts only the straight line and refuses loudly.
+
+## Sources
 
 - https://help.magix-hub.com/video/vegas/22/en/content/topics/11-autoscript/adjusting_envelopes.htm
-  — «right-click an envelope segment and choose a command»: форма
-  принадлежит отрезку (2026-09-21)
+  — "right-click an envelope segment and choose a command": the shape
+  belongs to the segment (2026-09-21)
 - https://creativecow.net/forums/thread/setting-default-fade-types-did-i-read-correctly/
-  — виды отрезка числами (2 = fast log, 1 = linear, −2 = slow log,
-  4 = smooth cubic, −4 = sharp cubic) и `eDefEnvAudioASRType` как
-  умолчание в служебных настройках; цитаты Wayne Grauel и Matt Crowley
-  (2026-09-21)
+  — the types of a segment as numbers (2 = fast log, 1 = linear, −2 = slow log,
+  4 = smooth cubic, −4 = sharp cubic) and `eDefEnvAudioASRType` as the default in the
+  service settings; quotes by Wayne Grauel and Matt Crowley (2026-09-21)
 - https://community.adobe.com/feature-requests-730/easy-ease-keyframe-interpolation-1328338
-  — просьба про умолчание интерполяции для первого/последнего/средних
-  ключей, 28.02.2025 (2026-09-21)
-- https://forum.blackmagicdesign.com/viewtopic.php?t=218938 — «Easing
-  Curves in Keyframe Editor are too extreme», просьба про
-  квадратичную/кубическую жёсткость. Страница отдаёт 403, содержание — из
-  поискового сниппета, **[НЕ ПРОВЕРЕНО]** дословно (2026-09-21)
+  — the request about the default interpolation for first/last/middle keys,
+  28.02.2025 (2026-09-21)
+- https://forum.blackmagicdesign.com/viewtopic.php?t=218938 — "Easing
+  Curves in Keyframe Editor are too extreme", the request about quadratic/cubic
+  stiffness. The page returns 403; the content is from a search snippet, **[NOT VERIFIED]**
+  verbatim (2026-09-21)
 - https://helpx.adobe.com/after-effects/using/keyframe-interpolation.html
-  и https://ae-scripting.docsforadobe.dev/other/keyframeease/ — виды
-  интерполяции у КЛЮЧА и influence 0.1…100 % (по разбору F-AUT-001, в этот
-  заход не переоткрывались)
+  and https://ae-scripting.docsforadobe.dev/other/keyframeease/ — interpolation types
+  at the KEY and influence 0.1…100 % (from the analysis of F-AUT-001, not re-opened in
+  this pass)
 - https://support.apple.com/guide/final-cut-pro/adjust-effect-curves-ver8e3f1f04/mac
-  — Linear / Ease / Ease In / Ease Out и `Command`-драг по линии (по
-  разбору F-AUT-001)
-- https://davinciresolveclub.com/davinci-resolve-keyframes-curve-editor/ —
-  ease у ромба Inspector и ручки только в Curve Editor (2026-09-21)
-- Наше: `src/libs/kt-model/src/project.rs` (`ParamCurve`, `curve_value`,
+  — Linear / Ease / Ease In / Ease Out and `Command`-drag along the line (from the
+  analysis of F-AUT-001)
+- https://davinciresolveclub.com/davinci-resolve-keyframes-curve-editor/ — ease on the
+  Inspector diamond and handles only in the Curve Editor (2026-09-21)
+- Ours: `src/libs/kt-model/src/project.rs` (`ParamCurve`, `curve_value`,
   `AudioCurve:731`), `src/libs/kt-model/src/warp.rs:575`,
   `src/libs/kt-otio/src/meta.rs` (`is_default_curve`),
   `src/libs/kt-engine/src/video.rs:184` (`fx_chain_hash`),
   `src/apps/kt-app/src/automation.rs`,
-  `src/apps/kt-app/src/fx_editor.rs`, `docs/user-feedback.md` раздел
-  «Раунд Р.59»
+  `src/apps/kt-app/src/fx_editor.rs`, `docs/user-feedback.md` section
+  "Round R.59"
 
-Живьём ни один чужой редактор не запускался: Vegas — по справке MAGIX/Boris
-FX и Creative COW, Adobe — по справке и форуму идей, Resolve — по
-стороннему разбору и поисковому сниппету форума Blackmagic (сам форум
-отдаёт 403 из этого окружения, оговорка первой волны в `_editors.md`
-остаётся в силе), FCP — по руководству Apple.
+No editor was run live: Vegas from the MAGIX/Boris FX help and Creative COW, Adobe from
+the help and the feature-request forum, Resolve from a third-party analysis and a search
+snippet of the Blackmagic forum (the forum itself returns 403 from this environment, the
+caveat of the first wave in `_editors.md` remains in force), FCP from Apple's manual.

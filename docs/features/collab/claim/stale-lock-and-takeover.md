@@ -1,12 +1,12 @@
 ---
 id: F-COL-014
-title: Замок, переживший владельца
-status: кандидат
+title: A lock that outlives its owner
+status: candidate
 priority: B
 cost: S
 category: collab/claim
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: no
 crates: [kt-app]
 invariants: []
 ui_rules: [5, 19]
@@ -19,216 +19,126 @@ services: [premiere-productions, fcp-shared-library, team-projects]
 checked: 2026-09-08
 ---
 
-# F-COL-014 — Замок, переживший владельца
+# F-COL-014 — A lock that outlives its owner
 
-## Суть
+## Essence
 
-Программа упала, машину выключили из розетки, ноутбук уехал в отпуск вместе с
-владельцем — а объявление «занято» осталось лежать. Документ занят тем, кого
-больше нет. Главный отказ пессимистичных схем — не конфликт двух правок, а
-именно это: работа стоит, виноватых нет, и вопрос звучит не «как снять
-таймаутом», а «кто имеет право отобрать и что при этом потеряется у прежнего
-владельца, если он всё-таки жив».
+The program crashed, the machine was unplugged from the socket, the laptop went on vacation together with its owner — and the "busy" declaration stayed lying there. The document is held by someone who no longer exists. The main failure of pessimistic schemes is not a conflict of two edits but exactly this: work stands still, there is no one to blame, and the question sounds not "how to remove it by a timeout" but "who has the right to take it away, and what will be lost on the part of the previous owner if he is nevertheless alive".
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет | замка нет — переживать нечему; цена та же, что у любого отсутствующего механизма: тупика не бывает, но и защиты нет [НЕ ПРОВЕРЕНО живьём] |
-| Adobe Premiere | 26.x | `.prlock` в папке продакшена | при аварийном завершении файл остаётся; штатной команды «снять» в программе нет — снятие есть удаление файла в файловом менеджере. Кто вправе это сделать, вендор не пишет; ответ пользователю приходит от MVP сообщества (цитаты ниже) |
-| DaVinci Resolve | 21 | Collaboration, замок в записи базы | замок живёт в базе, а не в файле, поэтому переживает не процесс, а сеанс; штатной процедуры отъёма у второго пользователя в документации нет, а жалобы на «таймлайн заперт пользователем, у которого он не открыт» есть [НЕ ПРОВЕРЕНО: `forum.blackmagicdesign.com` закрыт Cloudflare, только сниппеты поиска] |
-| Final Cut Pro | 12.3 | эксклюзивный замок библиотеки | Apple документирует СООБЩЕНИЕ («already in use by [user] on [Mac].local»), а не процедуру: что делать, если названный Mac больше не включится, в справке не сказано [НЕ ПРОВЕРЕНО живьём] |
-| After Effects | 26.x | Team Projects, замок секвенции на сервере | сервер есть, а залипание всё равно есть — потому что замок снимает не «отпускание», а ПУБЛИКАЦИЯ: ушедший не опубликовав оставляет остальных в view-only, и это конструкция, а не сбой сети |
+| VEGAS Pro | 2026.0 | none | there is no lock — there is nothing to survive; the price is the same as for any absent mechanism: there is no deadlock, but also no protection [NOT VERIFIED live] |
+| Adobe Premiere | 26.x | `.prlock` in the production folder | after an abnormal termination the file remains; there is no standard "release" command in the program — removal is deleting the file in the file manager. Who has the right to do this, the vendor does not write; the answer to the user comes from a community MVP (quotes below) |
+| DaVinci Resolve | 21 | Collaboration, a lock in the database record | the lock lives in the database, not in a file, therefore it survives not the process but the session; there is no standard procedure in the documentation for seizing it from a second user, but there are complaints about "the timeline is locked by a user who does not have it open" [NOT VERIFIED: `forum.blackmagicdesign.com` is blocked by Cloudflare, only search snippets] |
+| Final Cut Pro | 12.3 | an exclusive lock of the library | Apple documents a MESSAGE ("already in use by [user] on [Mac].local"), not a procedure: what to do if the named Mac will not turn on again is not said in the help [NOT VERIFIED live] |
+| After Effects | 26.x | Team Projects, a lock of the sequence on the server | there is a server, but sticking still happens anyway — because the lock is released not by "letting go" but by PUBLICATION: one who left without publishing leaves the others in view-only, and this is a design, not a network failure |
 
-## Фишка фишки
+## The trick behind it
 
-**Таймаут не лечит — он ломает.** Замок, который снимается сам через N минут,
-снимает его у ЖИВОГО: монтажёр вышел покурить, ответил на звонок, ушёл рендерить
-в другой программе — и вернулся к документу, который уже занял сосед, а его
-собственные несохранённые правки стали мусором. Поэтому отрасль во всех пяти
-случаях выбрала ручной отъём. Обратная сторона выбора: **ни один вендор не
-документирует, КТО имеет право отобрать.** У Premiere это выясняется опытным
-путём и означает «любой, у кого есть доступ на запись в каталог продакшена» —
-то есть право отъёма вынесено из программы в права файловой системы и с ролями
-внутри проекта не связано никак.
+**A timeout does not cure — it breaks.** A lock that releases itself after N minutes releases it from a LIVE one: the editor stepped out for a smoke, answered a call, went to render in another program — and came back to a document that a neighbor has already taken, and his own unsaved edits became garbage. Therefore the industry in all five cases chose manual seizure. The reverse side of the choice: **not a single vendor documents WHO has the right to take it away.** For Premiere this is found out empirically and means "anyone who has write access to the production folder" — that is, the right of seizure is moved out of the program into file system rights and is not tied to roles inside the project at all.
 
-**Второй слой — в объявлении нечего прочитать, чтобы решить.** `.prlock` называет
-машину и человека, но не несёт ни идентификатора процесса, ни времени, ни
-обновляемой отметки жизни. Значит программа не может даже ПОДСКАЗАТЬ, жив ли
-владелец: разница между «он сейчас печатает» и «его ноутбук утонул» в файле не
-выражена ничем. Решение целиком человеческое, и единственный способ его принять —
-позвонить и спросить. Показательно, что типичный вопрос звучит не «как снять», а
-«можно ли мне вообще это трогать» (цитата ниже): человек боится не сложности
-операции, а того, что она чужая.
+**The second layer — there is nothing to read in the declaration in order to decide.** `.prlock` names the machine and the person, but carries neither a process identifier, nor a time, nor an updated mark of life. Therefore the program cannot even SUGGEST whether the owner is alive: the difference between "he is typing right now" and "his laptop drowned" is not expressed in the file by anything. The decision is entirely human, and the only way to make it is to call and ask. Tellingly, the typical question sounds not "how to remove it" but "am I allowed to touch this at all" (quote below): a person fears not the complexity of the operation but that it is someone else's.
 
-**Третий слой — залипание не лечится и сервером.** У Team Projects хозяин
-известен поимённо, соединение живое, и всё равно люди сидят в view-only, потому
-что замок привязан не к присутствию, а к состоянию «есть неопубликованные
-правки». Владелец, ушедший не опубликовав, и владелец, которого нет, для
-остальных неотличимы. То есть переход к серверу переносит проблему, а не
-устраняет её: пока снятие замка требует ДЕЙСТВИЯ владельца, отсутствие владельца
-остаётся тупиком.
+**The third layer — sticking is not cured by the server either.** In Team Projects the owner is known by name, the connection is alive, and still people sit in view-only, because the lock is tied not to presence but to the state "there are unpublished edits". An owner who left without publishing and an owner who is absent are indistinguishable for the others. That is, the transition to a server moves the problem, it does not remove it: while removing the lock requires an ACTION by the owner, the absence of the owner remains a dead end.
 
-## Плюсы
+## Pros
 
-- Ручной отъём честен: он не притворяется, что программа знает про живость
-  соседа, и оставляет решение тому, кто может позвонить.
-- Замок-файл снимается инструментами вне редактора — файловым менеджером,
-  скриптом, администратором тома; чинится даже тогда, когда программа не
-  запускается.
-- Отсутствие таймаута означает отсутствие класса отказов «у меня отобрали, пока
-  я обедал», а он дороже простоя: простой виден, потеря правок — нет.
+- Manual seizure is honest: it does not pretend that the program knows about the liveness of the neighbor, and it leaves the decision to the one who can make a call.
+- A file lock is removed by tools outside the editor — a file manager, a script, the volume administrator; it is fixed even when the program does not start.
+- The absence of a timeout means the absence of the class of failures "they took it away while I was at lunch", and that is more expensive than downtime: downtime is visible, the loss of edits is not.
 
-## Минусы
+## Cons
 
-- Тупик по умолчанию: если владелец недоступен, работа стоит до вмешательства
-  человека, который знает про существование файла-объявления. Пользователь,
-  который про него не знает, видит просто «нельзя».
-- Право отъёма не выражено в программе, поэтому его нельзя ни выдать, ни
-  ограничить: оно совпадает с правом записи в каталог.
-- Отобравший не узнаёт, что потерял прежний владелец, а прежний владелец не
-  узнаёт, что у него отобрали, — пока не попробует сохранить.
-- Сообщение называет машину, а не человека, и после смены компьютера
-  («Home Desktop») уже не помогает опознать виновника.
+- A deadlock by default: if the owner is unavailable, the work stands until a person intervenes who knows about the existence of the declaration file. A user who does not know about it simply sees "cannot".
+- The right of seizure is not expressed in the program, so it can be neither granted nor restricted: it coincides with the right to write into the directory.
+- The one who seized does not learn what the previous owner lost, and the previous owner does not learn that it was taken away from him — until he tries to save.
+- The message names the machine, not the person, and after a change of computer ("Home Desktop") it no longer helps to identify the culprit.
 
-## Что говорят пользователи
+## What users say
 
-Точнее всего вопрос про право формулирует тот, кто работает один и всё равно не
-решается тронуть чужой на вид файл:
+The question of the right is put most precisely by someone who works alone and still does not dare to touch a file that looks like someone else's:
 
 > Since I don't know what use the locks are, I'm not sure I'm free to delete
 > them.
-> — Wholeo, «Can I delete .prlock files?», Adobe Product Community, 20.12.2021,
+> — Wholeo, "Can I delete .prlock files?", Adobe Product Community, 20.12.2021,
 > https://community.adobe.com/t5/premiere-pro-discussions/can-i-delete-prlock-files/td-p/12605679
 
-Ответ приходит не от вендора, а от MVP сообщества, и он же — вся документация
-отрасли по вопросу «кто вправе»:
+The answer comes not from the vendor but from a community MVP, and it is also the whole of the industry's documentation on the question "who is entitled":
 
 > Those are there just 'cause if someone is using them, another user can't come
 > in to write to the project at the same time. For us using Productions as a
 > solo operator, just delete 'em.
-> — R Neil Haugen, там же, 20.12.2021,
+> — R Neil Haugen, same thread, 20.12.2021,
 > https://community.adobe.com/t5/premiere-pro-discussions/can-i-delete-prlock-files/td-p/12605679
 
-`trackers:` пуст сознательно (правило 12): темы «замок от упавшего процесса» в
-выгруженном корпусе двенадцати трекеров опенсорса нет как класса — совместная
-работа там представлена одной настоящей просьбой на 25 442 задачу, и подобранный
-под форму фильтр был бы не находкой, а украшением.
+`trackers:` is empty deliberately (rule 12): the topic "a lock left by a crashed process" does not exist as a class in the exported corpus of twelve open-source trackers — joint work is represented there by one real request out of 25,442 tasks, and a filter picked to fit the form would be not a finding but decoration.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- `src/apps/kt-app/src/app.rs:5020` — `autosave_path()`: ЕДИНСТВЕННЫЙ артефакт,
-  который у нас переживает процесс, — recovery-файл безымянного проекта. Путь
-  фиксирован (`~/.local/share/kinotrain/autosave-project.otio`), одинаков для
-  всех экземпляров и не содержит ни pid, ни имени, ни времени.
-- `src/apps/kt-app/src/app.rs:5388` — при старте программа молча УСЫНОВЛЯЕТ
-  этот файл, если нет `last_project`: чужая (или своя прошлая) незавершённая
-  работа открывается как своя.
-- `src/apps/kt-app/src/app.rs:2814` — первый же Ctrl+S в ЛЮБОМ экземпляре
-  удаляет recovery-файл: `remove_file(autosave_path())`. Право «отобрать и
-  уничтожить» есть у каждого и не спрашивается ни у кого.
-- `src/apps/kt-app/src/app.rs:5063` — `atomic_tmp_path`: при падении между
-  записью и `rename` рядом с проектом остаётся `<проект>.otio.tmp` — сирота с
-  детерминированным именем, которую никто не ищет, не показывает и не удаляет;
-  следующая запись молча перезапишет её содержимым нового писателя.
-- `src/apps/kt-app/src/app.rs:5300` — `on_exit`: единственная точка «прибраться
-  на выходе». Она не отпускает ничего, а ПИШЕТ, и при падении не выполняется
-  вовсе — то есть срабатывает ровно в том случае, когда замок и так снялся бы.
+- `src/apps/kt-app/src/app.rs:5020` — `autosave_path()`: the ONLY artifact that we have that survives the process — the recovery file of an unnamed project. The path is fixed (`~/.local/share/kinotrain/autosave-project.otio`), the same for all instances, and contains neither a pid, nor a name, nor a time.
+- `src/apps/kt-app/src/app.rs:5388` — at startup the program silently ADOPTS this file if there is no `last_project`: someone else's (or one's own past) unfinished work is opened as one's own.
+- `src/apps/kt-app/src/app.rs:2814` — the very first Ctrl+S in ANY instance deletes the recovery file: `remove_file(autosave_path())`. The right to "seize and destroy" belongs to everyone and is not asked of anyone.
+- `src/apps/kt-app/src/app.rs:5063` — `atomic_tmp_path`: if the program falls between the write and `rename`, `<project>.otio.tmp` remains next to the project — an orphan with a deterministic name that nobody searches for, shows or deletes; the next write will silently overwrite it with the content of the new writer.
+- `src/apps/kt-app/src/app.rs:5300` — `on_exit`: the only point of "tidying up on exit". It releases nothing, but WRITES, and when the program crashes it is not executed at all — that is, it fires exactly in the case when the lock would have been released anyway.
 
-### Чего не хватает
+### What is missing
 
-- Самого замка: снимать нечего, потому что занимать нечем (F-COL-013).
-- Признака живости у любого нашего артефакта. Ни `.tmp`, ни recovery-файл не
-  несут ни pid, ни времени, ни имени машины — то есть отличить «сосед сейчас
-  пишет» от «остался с прошлого падения» нечем даже внутри одной машины, где
-  ответ у операционной системы есть.
-- Разговора при отъёме. Правило UI 19 требует, чтобы диалог называл место
-  возврата решения, а сегодня решение «удалить чужое» принимается за человека и
-  молча (Ctrl+S сносит recovery, чей бы он ни был).
-- Следа. Журнала правок у нас нет вовсе: undo — снимки целого `Project` в памяти
-  (`src/libs/kt-model/src/model.rs`), поэтому сказать отобравшему, что именно он
-  прервал, будет нечем и после появления замка.
+- The lock itself: there is nothing to release, because there is nothing to hold it with (F-COL-013).
+- A sign of liveness for any of our artifacts. Neither the `.tmp` file nor the recovery file carries a pid, a time, or the name of the machine — that is, there is no way to distinguish "a neighbor is writing right now" from "left over from a past crash" even within one machine, where the operating system does have the answer.
+- A conversation at seizure. UI rule 19 requires that a dialog name the place where the decision can be returned, and today the decision "delete someone else's" is made by a person silently (Ctrl+S removes the recovery file, whoever's it is).
+- A trace. We have no edit log at all: undo consists of snapshots of the whole `Project` in memory (`src/libs/kt-model/src/model.rs`), so there will be nothing to tell the one who seized what exactly he interrupted, even after the lock appears.
 
-### Что мешает
+### What gets in the way
 
-Мешает не код, а порядок принятия решения. Отъём — единственная операция во всей
-теме, у которой нет правильного автоматического ответа: программа обязана
-показать, ЧТО известно (кто, когда, с какой машины, жив ли процесс, если он на
-этой же машине), и оставить нажатие человеку. Значит цена фичи — не файл, а
-диалог и формулировки, а у нас нет ни понятия пользователя, ни имени машины в
-документе. Второе препятствие — наша собственная привычка: `remove_file` без
-вопроса уже написан и работает, и добавление вопроса выглядит регрессией
-удобства, пока рядом не появится второй экземпляр программы.
+What gets in the way is not the code but the order of making a decision. Seizure is the only operation in the whole topic that has no correct automatic answer: the program must show WHAT is known (who, when, from which machine, whether the process is alive, if it is on this same machine) and leave the press to the person. So the price of the feature is not the file but the dialog and the wording, and we have neither a concept of a user nor the name of a machine in the document. The second obstacle is our own habit: `remove_file` without a question is already written and works, and adding a question looks like a regression of convenience until a second instance of the program appears next to it.
 
-### В категории `collab/` — две обязательные строки (правило 13)
+### In category `collab/` — two mandatory lines (rule 13)
 
-БЕЗ СЕТИ: НЕ ОСТАЁТСЯ — `src/apps/kt-app/src/app.rs:5020` — замка нет ни в каком виде, поэтому пережить владельца нечему; место, где отсутствие видно, — единственный наш артефакт, который переживает процесс: recovery-файл безымянного проекта лежит по одному фиксированному пути без имени, времени и владельца, любой второй экземпляр молча усыновляет его при старте, а первый же Ctrl+S в любом экземпляре удаляет его навсегда и ни у кого не спрашивает.
+OFFLINE: DOES NOT REMAIN — `src/apps/kt-app/src/app.rs:5020` — there is no lock in any form, so there is nothing to survive the owner; the place where the absence is visible is our only artifact that survives the process: the recovery file of an unnamed project lies at one fixed path without a name, time or owner, any second instance silently adopts it at startup, and the first Ctrl+S in any instance deletes it forever and asks no one.
 
-ЦЕНА СЕТИ: отличить упавшего владельца от живого — общие часы — живость выражается либо отметкой, которую владелец обновляет, либо ответом самого владельца, и обе формы требуют согласованного времени: на одной машине хватило бы идентификатора процесса, а между машинами остаётся только время файла, приходящее с ЧУЖИХ часов, поэтому «занято минуту назад» и «занято год назад» становятся одинаково недоказуемыми.
+NETWORK COST: to tell a fallen owner from a live one — the shared clock — liveness is expressed either by a mark that the owner updates or by the answer of the owner himself, and both forms require a coordinated time: on one machine a process identifier would be enough, but between machines only the file time remains, coming from someone else's clock, so "busy a minute ago" and "busy a year ago" become equally unprovable.
 
-ЦЕНА СЕТИ: сказать, кто вправе отобрать — права доступа — сегодня право отъёма совпадает с правом записи в каталог и потому не выражается в программе никак; чтобы его выдать или ограничить, нужен список людей и их ролей, а не второе место, куда написать то же самое.
+NETWORK COST: to say who is entitled to seize — access rights — today the right of seizure coincides with the right to write into the directory, and therefore is not expressed in the program in any way; to grant or restrict it, a list of people and their roles is needed, not a second place to write the same thing.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Ни одного из двенадцати: тема живёт целиком в `kt-app`, рядом с записью проекта.
-Из правил чек-листа `src/apps/kt-app/CLAUDE.md` задеты два. П.5 «действие не
-гасит соседнее состояние» нарушается уже сегодня и без всякой сети: Ctrl+S в
-одном экземпляре удаляет recovery-файл, принадлежащий другому. П.19 «диалог
-обязан сказать, где потом изменить решение» — рамка для будущего окна отъёма:
-это единственное место темы, где человек нажимает кнопку с необратимым для
-соседа последствием.
+None of the twelve: the topic lives entirely in `kt-app`, next to the project record. Of the checklist rules in `src/apps/kt-app/CLAUDE.md` two are touched. Item 5 "an action does not switch off a neighboring state" is already violated today and without any network: Ctrl+S in one instance deletes the recovery file belonging to another. Item 19 "a dialog must say where the decision can be changed later" is the frame for a future seizure window: this is the only place in the topic where a person presses a button whose consequence is irreversible for a neighbor.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия раунда поверх F-COL-013: содержимое объявления, чтение его при открытии, окно «занято — кем, когда, отобрать» |
-| Где основная работа | kt-app (`app.rs`: открытие, окно отъёма, судьба recovery-файла и `.tmp`-сироты) |
-| Формат проекта | не трогает: всё живёт в объявлении рядом и в диалоге |
-| Тесты, которые придётся написать | объявление, оставшееся от процесса, которого нет, показывается как занятие с датой; отъём требует подтверждения; Ctrl+S не удаляет recovery-файл чужого экземпляра (сегодня падает); осиротевший `.tmp` не превращается в проект |
-| Зависит от | F-COL-013 (без объявления снимать нечего) |
-| Ломает совместимость | нет |
+| Volume | S — one stage of the round on top of F-COL-013: the content of the declaration, reading it on opening, a window "busy — by whom, when, seize?" |
+| Where the main work is | kt-app (`app.rs`: opening, the seizure window, the fate of the recovery file and of the `.tmp` orphans) |
+| Project format | does not touch it: everything lives in the declaration next to it and in the dialog |
+| Tests that will have to be written | a declaration left by a process that no longer exists is shown as a busy state with a date; seizure requires confirmation; Ctrl+S does not delete the recovery file of another instance (today it fails); an orphaned `.tmp` does not turn into a project |
+| Depends on | F-COL-013 (without a declaration there is nothing to remove) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём вместе с F-COL-013 и ровно в её объёме: занятие без процедуры снятия —
-это тупик, который мы сами себе построим. Локальная половина здесь неожиданно
-богата, потому что на ОДНОЙ машине живость владельца проверяема (процесс либо
-есть, либо нет), а у нас уже сегодня лежит артефакт, переживающий процесс, и
-любой имеет право его молча уничтожить. То есть чинить надо не гипотетическое
-сетевое будущее, а сегодняшнее правило «первый сохранивший стирает чужой
-recovery».
+We take it together with F-COL-013 and exactly in its volume: a claim without a removal procedure is a dead end that we would be building for ourselves. The local half is unexpectedly rich here, because on ONE machine the liveness of the owner is verifiable (the process either exists or does not), and we already have today an artifact that survives the process, and anyone has the right to silently destroy it. That is, what needs fixing is not a hypothetical network future but today's rule "the first one to save erases someone else's recovery".
 
-Таймаут не заводим ни в каком виде и записываем это как решение: замок,
-снимающийся сам, отбирает документ у живого и превращает простой (видимый) в
-потерю правок (невидимую). Автоматическим остаётся ровно одно — сообщение о
-том, что занявшего процесса на ЭТОЙ машине больше нет; кнопку нажимает человек.
+We do not introduce a timeout in any form and we record this as a decision: a lock that releases itself takes the document away from a live one and turns a visible downtime into an invisible loss of edits. The only thing that remains automatic is one message — that the process holding the claim on THIS machine no longer exists; the person presses the button.
 
-Серверную половину не заводим по формуле F-PRJ-003 и F-PRJ-001: право отъёма как
-право требует списка людей, а второго участника нет.
+We do not open the server half by the formula of F-PRJ-003 and F-PRJ-001: the right of seizure as a right requires a list of people, and there is no second participant.
 
-Границы: само занятие и объявление рядом с файлом — F-COL-013; что разрешено,
-пока занято другим, — F-COL-015; служебные спутники проекта и правило их
-удаления — F-COL-002; кто вправе удалить МАТЕРИАЛ — F-COL-006; восстановление
-после падения как таковое — F-RES-004; несохранённая работа при выходе —
-F-RES-005.
+Boundaries: the claim itself and the declaration next to the file — F-COL-013; what is allowed while it is taken by another — F-COL-015; the project's auxiliary companions and the rule for their deletion — F-COL-002; who is entitled to delete the MATERIAL — F-COL-006; recovery after a crash as such — F-RES-004; unsaved work on exit — F-RES-005.
 
-## Источники
+## Sources
 
 - https://community.adobe.com/t5/premiere-pro-discussions/can-i-delete-prlock-files/td-p/12605679
-  — Adobe Product Community, тред от 20.12.2021 (дата обращения 2026-09-08).
+  — Adobe Product Community, thread of 20.12.2021 (access date 2026-09-08).
 - https://community.adobe.com/t5/team-projects-discussions/premiere-team-projects-giving-me-quot-view-only-quot-even-though-i-am-the-only-editor-online/td-p/15055508
-  — залипший view-only при живом сервере, 24.12.2024 (дата обращения
+  — a stuck view-only with a live server, 24.12.2024 (access date
   2026-09-08).
 - https://www.blackmagicdesign.com/products/davinciresolve/collaboration —
-  «until unlocked by the current user»: снятие замка описано как действие
-  владельца (дата обращения 2026-09-08).
-- https://support.apple.com/en-us/HT207128 — Apple: сообщение о занятой
-  библиотеке; процедуры отъёма в документе нет (дата обращения 2026-09-08).
-- Строки Resolve по залипанию замков — только сниппеты поиска:
-  `forum.blackmagicdesign.com` закрыт Cloudflare, дословных цитат с датами
-  оттуда получить нельзя; помечено `[НЕ ПРОВЕРЕНО]` в таблице.
-- Наш код прочитан 08.09.2026: `src/apps/kt-app/src/app.rs` (2814, 5020, 5063,
-  5300, 5313, 5388), `src/libs/kt-model/src/model.rs` (undo — снимки проекта).
+  "until unlocked by the current user": removing the lock is described as an action of the owner (access date 2026-09-08).
+- https://support.apple.com/en-us/HT207128 — Apple: the message about a busy library; there is no seizure procedure in the document (access date 2026-09-08).
+- The Resolve lines about sticking locks — only search snippets: `forum.blackmagicdesign.com` is blocked by Cloudflare, so verbatim quotes with dates cannot be obtained from there; marked `[NOT VERIFIED]` in the table.
+- Our code was read on 08.09.2026: `src/apps/kt-app/src/app.rs` (2814, 5020, 5063,
+  5300, 5313, 5388), `src/libs/kt-model/src/model.rs` (undo — project snapshots).

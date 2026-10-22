@@ -1,197 +1,157 @@
 ---
 id: F-UI-001
-title: Экранные контролы во вьюере: рамка трансформации, ручки, разметка
-status: сделано
+title: On-screen controls in the viewer: transform frame, handles, guides
+status: done
 priority: B
 cost: M
 category: ui/viewer
 editors: [after-effects-26, premiere-26, resolve-21, fcp-12, vegas-pro-2026]
-we_have: да
+we_have: yes
 crates: [kt-app, kt-engine, kt-gpu, kt-model]
 invariants: [7, 12]
 ui_rules: [1, 2, 3, 6, 9, 10, 13, 15, 16, 17, 20]
-round: "Р.64"
-point: "change geometry-on-screen-controls (летопись заморожена на §470)"
+round: "R.64"
+point: "change geometry-on-screen-controls (chronicle frozen at §470)"
 tests: [759, 760, 761, 762, 763, 764, 765, 766]
 depends_on: []
 checked: 2026-09-25
 ---
 
-# F-UI-001 — Экранные контролы во вьюере: рамка трансформации, ручки, разметка
+# F-UI-001 — On-screen controls in the viewer: transform frame, handles, guides
 
-## Суть
+## Essence
 
-Правка положения, масштаба и поворота картинки прямо в окне превью:
-вокруг слоя рисуется рамка с восемью ручками, в её центре — точка
-привязки, сбоку — ручка вращения; кроп тянется своими ручками, маска —
-точками с безье-касательными, движение по ключам показано траекторией.
-Поверх кадра же лежит разметка, которая никуда не рендерится: сетка,
-направляющие, центр, безопасные зоны для титров и действия. И там же
-живут режимы сравнения — «до/до» и «до/после» в одном кадре, разделённом
-шторкой. Всё это переключается кнопкой «показать/скрыть»: контролы лежат
-ровно на том, ради чего человек в кадр и смотрит.
+Editing the position, scale and rotation of the picture directly in the preview window: around
+the layer a frame with eight handles is drawn, at its centre — the anchor point, on the side — the
+rotation handle; the crop is stretched by its own handles, the mask by points with Bézier tangents,
+and movement by keyframes is shown as a trajectory. On top of the frame lies markup that is never
+rendered anywhere: a grid, guides, the centre, safe zones for titles and action. And there too live
+the comparison modes — "before/before" and "before/after" in one frame, divided by a wipe. All of this
+is switched by a "show/hide" button: the controls lie exactly on what a person looks at the frame for.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it is built |
 |---|---|---|---|
-| After Effects | 26.x | Layer Controls, Anchor Point (Pan Behind) tool, Motion Path, Guides / Proportional Grid / Title-Action Safe | ЭТАЛОН. Контролы есть, пока слой выделен: рамка, якорь «прицелом», касательные масок, траектория движения с ручками. Якорь двигается ОТДЕЛЬНЫМ инструментом (`Y`), и это единственный жест, правящий два параметра сразу (цитата ниже). Разметка — линейки, направляющие, пропорциональная сетка, title/action safe (Preferences → Grids & Guides). Всё гасится одной командой `View > Show Layer Controls` (Ctrl+Shift+H), состав — `View Options` (Ctrl+Alt+U). При проигрывании контролы гасятся САМИ, и Adobe объясняет зачем (цитата ниже) |
-| Adobe Premiere | 26.x | Motion / transform handles в Program Monitor, Comparison View, Safe Margins | Контролы появляются только когда в Effect Controls ВЫДЕЛЕНО слово Motion (или другой эффект с пространственным параметром) — отсюда классическая претензия «не могу их вызвать» (цитата ниже). Второй способ — двойной клик в Program Monitor. Safe Margins — в меню-гаечнике монитора. Сравнение вынесено в Comparison View: Side by Side, Vertical Split, Horizontal Split — сравниваются КАДРЫ монтажа, а не «с эффектом / без» |
-| DaVinci Resolve | 21 | Transform / Crop / Dynamic Zoom (Timeline Viewer), View → Viewer Overlay, Safe Area, Split Screen + Image Wipe (Color) | Контролы включаются кнопкой «Transform/Crop/Dynamic Zoom button at the bottom left of the Timeline Viewer», активен ровно ОДИН набор: «These on-screen controls can also be selected by choosing an option from the View > Viewer Overlay submenu». Выбранный оверлей гасится `Shift-\`` либо пунктом Show Controls в меню вьюера. Safe-зоны — `View > Safe Area`, с отдельными переключателями частей. Сравнение — развитый инструмент страницы Color: панель Wipe / Split Screen / Highlight, шторка с кадром из галереи или другой ВЕРСИЕЙ грейда |
-| Final Cut Pro | 12.3 | Onscreen controls (Transform Shift-T / Crop Shift-C / Distort / Reorient), Title & Action Zones, Comparison Viewer | «Many effects, transitions, and other items use onscreen controls, superimposed over the video in the viewer». Включаются меню в ЛЕВОМ нижнем углу вьюера; разметка — в ПРАВОМ верхнем (`Show Title/Action Zones`, title-safe = внутренние 80 %, action-safe = 90 %, «Output (exported) media files are not affected»). Угловые ручки держат пропорции, боковые их меняют, белый кружок ПОКАЗЫВАЕТ якорь, синяя ручка вращения физически растёт ИЗ этого кружка. Про якорь Apple пишет прямо: «Anchor X and Y… **This control isn't available in the onscreen controls**». Сравнения шторкой нет вовсе — вместо него ВТОРОЙ вьюер рядом (Comparison Viewer, Control-Command-6, режимы Saved / Timeline) |
-| VEGAS Pro | 2026.0 | Event Pan/Crop (отдельное окно), Overlays, Split-Screen View, Crop OFX (interact controls) | Трансформации СОБЫТИЯ в главном превью нет: Pan/Crop — своё окно со своим холстом и рамкой поверх исходного кадра (там же и своя точка вращения — «drag the point at the center of the selection point»), а результат смотрят в другом окне. В самом Video Preview — только разметка (Overlays: Grid, Safe Areas «outer border… visible on a television screen», внутренняя для титров, изоляция каналов, 360°) и Split-Screen View: сравнение «FX Bypassed» либо «Clipboard», причём область сравнения — ПРОИЗВОЛЬНЫЙ прямоугольник, который тянут мышью (пресеты Select Left/Right Half, Select All). Исключение, которое легко пропустить: OFX-плагины ручки в превью рисуют — документация 2026 противопоставляет «Crop OFX… offers an intuitive way to crop using the **Video Preview interact controls**» внутреннему Pan/Crop с его отдельным окном |
-| Kinotrain | — | нет | Поверх кадра нет ни одного интерактивного элемента, кроме одного `ui.interact` с `Sense::click()` (play/pause и двойной клик — отделить окно). Рисуется рамка в 1 px, скрим «Загрузка» и ambient-glow. Ни ручек, ни якоря, ни сетки, ни safe-зон, ни сравнения. При этом параметры под контрол уже есть: у `Pan3d` — pos/rot/scale И `anchor_x`/`anchor_y` |
+| After Effects | 26.x | Layer Controls, Anchor Point (Pan Behind) tool, Motion Path, Guides / Proportional Grid / Title-Action Safe | THE REFERENCE. Controls exist while the layer is selected: the frame, the anchor as a "crosshair", the mask tangents, the motion trajectory with handles. The anchor is moved by a SEPARATE tool (`Y`), and this is the only gesture that edits two parameters at once (quote below). The markup — rulers, guides, proportional grid, title/action safe (Preferences → Grids & Guides). Everything is hidden by one command `View > Show Layer Controls` (Ctrl+Shift+H), the composition is set by `View Options` (Ctrl+Alt+U). During playback the controls hide THEMSELVES, and Adobe explains why (quote below) |
+| Adobe Premiere | 26.x | Motion / transform handles in Program Monitor, Comparison View, Safe Margins | Controls appear only when the word Motion (or another effect with a spatial parameter) is SELECTED in Effect Controls — hence the classic complaint "I cannot call them up" (quote below). The second way — a double click in the Program Monitor. Safe Margins — in the monitor's wrench menu. Comparison is moved to Comparison View: Side by Side, Vertical Split, Horizontal Split — the FRAMES of the edit are compared, not "with effect / without effect" |
+| DaVinci Resolve | 21 | Transform / Crop / Dynamic Zoom (Timeline Viewer), View → Viewer Overlay, Safe Area, Split Screen + Image Wipe (Color) | The controls are switched on by the "Transform/Crop/Dynamic Zoom button at the bottom left of the Timeline Viewer", exactly ONE set is active: "These on-screen controls can also be selected by choosing an option from the View > Viewer Overlay submenu". The chosen overlay is hidden with `Shift-\`` or the Show Controls item in the viewer menu. Safe zones — `View > Safe Area`, with separate toggles for parts. Comparison — a developed tool of the Color page: the Wipe / Split Screen / Highlight panel, a wipe with a frame from the gallery or another VERSION of the grade |
+| Final Cut Pro | 12.3 | Onscreen controls (Transform Shift-T / Crop Shift-C / Distort / Reorient), Title & Action Zones, Comparison Viewer | "Many effects, transitions, and other items use onscreen controls, superimposed over the video in the viewer". They are switched on by menus in the BOTTOM LEFT corner of the viewer; the markup — in the TOP RIGHT (`Show Title/Action Zones`, title-safe = the inner 80%, action-safe = 90%, "Output (exported) media files are not affected"). Corner handles keep proportions, side handles change them, a white circle SHOWS the anchor, and the blue rotation handle physically grows OUT of this circle. About the anchor Apple writes directly: "Anchor X and Y… **This control isn't available in the onscreen controls**". There is no wipe comparison at all — instead a SECOND viewer beside it (Comparison Viewer, Control-Command-6, modes Saved / Timeline) |
+| VEGAS Pro | 2026.0 | Event Pan/Crop (a separate window), Overlays, Split-Screen View, Crop OFX (interact controls) | There is no transformation of the EVENT in the main preview: Pan/Crop is its own window with its own canvas and a frame over the source picture (there is also its own rotation point — "drag the point at the center of the selection point"), and the result is watched in another window. In the Video Preview itself there is only markup (Overlays: Grid, Safe Areas "outer border… visible on a television screen", the inner one for titles, channel isolation, 360°) and Split-Screen View: a comparison of "FX Bypassed" or "Clipboard", with the comparison area being an ARBITRARY rectangle dragged with the mouse (presets Select Left/Right Half, Select All). An exception that is easy to miss: OFX plug-ins DO draw handles in the preview — the 2026 documentation contrasts "Crop OFX… offers an intuitive way to crop using the **Video Preview interact controls**" with the internal Pan/Crop and its separate window |
+| Kinotrain | — | none | Over the frame there is not one interactive element, except a single `ui.interact` with `Sense::click()` (play/pause, and double-click to detach the window). A 1 px frame, the "Loading" scrim and the ambient glow are drawn. No handles, no anchor, no grid, no safe zones, no comparison. At the same time the parameters for the control already exist: `Pan3d` has pos/rot/scale AND `anchor_x`/`anchor_y` |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Точка привязки — единственная ручка, которая обязана менять ДВА
-параметра сразу, и именно из-за этого её либо прячут, либо выносят в
-отдельный инструмент; а компенсация ломается на повороте.** Позиция слоя
-меряется ДО якоря, поэтому «просто сдвинуть якорь» невозможно: слой
-поедет. After Effects решает это тем, что жест и число намеренно делают
-РАЗНОЕ — «The Anchor Point tool, sometimes called the Pan Behind tool in
-the toolbar, moves the Anchor Point around the layer without changing the
-position», тогда как правка того же якоря числом в таймлайне «the
-Position property does not change, so the layer moves» (обе цитаты —
-Rick Gerard, ниже). То есть у самого известного редактора парные способы
-одного действия УМЫШЛЕННО неэквивалентны — из-за этого новички годами не
-понимают, почему «крутится не вокруг того». Apple пошла в другую сторону
-и записала отказ прямо в справку: белый кружок якорь ПОКАЗЫВАЕТ, но
-«This control isn't available in the onscreen controls» — единственный
-параметр трансформации без экранного контрола, потому что перетаскивание
-якоря столкнулось бы с жестом «тянуть внутри картинки = двигать её».
-Vegas спрятал его ещё глубже: точка вращения есть, но живёт внутри
-отдельного окна Pan/Crop. И у самой компенсации есть дно, о которое
-бьются в форумах: она считается в НЕПОВЁРНУТОЙ системе координат, и
-«It works perfectly until I rotate the layer, at which point when I move
-the Anchor Point, the layer also shifts position» (цитата ниже). Для нас
-это готовый тест-кейс: у `Pan3d` повороты идут порядком ZXY, и сдвиг
-якоря обязан компенсироваться ТОЙ ЖЕ матрицей, иначе повторим чужой баг.
+**1. The anchor point is the only handle that MUST change TWO parameters at once, and for that reason
+it is either hidden or moved into a separate tool; and the compensation breaks on rotation.** The layer
+position is measured BEFORE the anchor, so "simply shift the anchor" is impossible: the layer will move.
+After Effects solves this by making the gesture and the number deliberately do DIFFERENT things — "The
+Anchor Point tool, sometimes called the Pan Behind tool in the toolbar, moves the Anchor Point around the
+layer without changing the position", whereas editing the same anchor as a number in the timeline "the
+Position property does not change, so the layer moves" (both quotes are from Rick Gerard, below). That is,
+in the most famous editor the paired ways of one action are DELIBERATELY non-equivalent — because of this,
+newcomers understand for years why "it rotates around the wrong place". Apple went the other way and wrote
+the refusal straight into the help: the white circle SHOWS the anchor, but "This control isn't available in
+the onscreen controls" — the only transformation parameter without an on-screen control, because dragging the
+anchor would collide with the gesture "drag inside the picture = move it". Vegas hid it even deeper: the
+rotation point exists, but lives inside the separate Pan/Crop window. And the compensation itself has a bottom
+over which people stumble on forums: it is computed in the UNROTATED coordinate system, and "It works perfectly
+until I rotate the layer, at which point when I move the Anchor Point, the layer also shifts position" (quote
+below). For us this is a ready-made test case: `Pan3d` rotations go in ZXY order, and an anchor shift must be
+compensated by THE SAME matrix, otherwise we would repeat someone else's bug.
 
-Побочная деталь того же узла, и лучшая находка по эргономике: у FCP
-ручка вращения — синий «стебель», физически ВЫРАСТАЮЩИЙ из кружка
-якоря, поэтому связь «эта ручка крутит вокруг вот этой точки» видна без
-объяснений. У Resolve ручка вращения лежит в центре изображения
-отдельно — и в апреле 2026 продакт-менеджеру Blackmagic пришлось лично
-объяснять пользователю, где она, потому что тот искал её по краям рамки,
-как в фоторедакторах.
+A side detail of the same node, and the best finding on ergonomics: in FCP the rotation handle is a blue
+"stem" that PHYSICALLY GROWS out of the anchor circle, so the link "this handle rotates around that point" is
+visible without explanations. In Resolve the rotation handle lies in the centre of the image, separately — and
+in April 2026 a Blackmagic product manager had to personally explain to a user where it was, because the user
+was looking for it along the edges of the frame, as in photo editors.
 
-**2. Контрол живёт в координатах ЭКРАНА, параметр — в координатах КАДРА,
-и когда между ними встаёт доля разрешения, ломается именно попадание
-мышью.** Vegas выбрал радикальный вариант: убрал СВОЮ трансформацию из
-превью в собственное окно с собственным холстом — и получил целый класс
-жалоб вида «the image in the event pan/crop tool doesn't match up to the
-image in the preview window or the render» (цитата ниже). Показательно,
-что чужим OFX-плагинам он ручки в превью рисовать РАЗРЕШАЕТ: то есть
-дело не в невозможности, а в том, что своя старая подсистема живёт в
-другом пространстве координат и переезжать не стала. Цена другого варианта
-видна у Premiere: контролы рисуются поверх настоящего кадра, но
-показываются, только когда в Effect Controls выделен нужный эффект, —
-и половина вопросов на форуме не про трансформацию, а про то, как её
-вообще увидеть — вплоть до того, что у одного из спрашивающих ручки
-вернулись только после переноса Program Monitor на другой монитор и
-изменения его размера, а стандартный совет экспертов в таких тредах —
-уменьшить ЗУМ монитора программы. Это самое близкое к нашей проблеме,
-что вообще нашлось в чужих форумах: видимость и попадание в контрол
-зависят от масштаба показа превью. Наш собственный код показывает, где
-это ломается численно: превью в 1/16 от 1920×1080 — это 120×66
-(округление до чётного режет 67.5 до 66), соотношение сторон 1.818
-против 1.778, а `world_scale` в плане берётся ТОЛЬКО по ширине.
+**2. The control lives in SCREEN coordinates, the parameter in FRAME coordinates, and when a resolution factor
+stands between them, it is precisely the mouse hit that breaks.** Vegas chose the radical variant: it moved its
+OWN transformation out of the preview into its own window with its own canvas — and got a whole class of
+complaints like "the image in the event pan/crop tool doesn't match up to the image in the preview window or the
+render" (quote below). Tellingly, it ALLOWS foreign OFX plug-ins to draw handles in the preview: that is, the
+matter is not impossibility, but that its own old subsystem lives in another coordinate space and did not move.
+The price of the other variant is visible in Premiere: the controls are drawn over the real frame, but are shown
+only when the needed effect is selected in Effect Controls — and half the questions on the forum are not about
+transformation but about how to see it at all — up to the point where for one of the askers the handles came back
+only after moving the Program Monitor to another monitor and changing its size, and the standard expert advice in
+such threads is to reduce the zoom of the program monitor. This is the closest thing to our problem found in
+other forums: visibility and hitting a control depend on the display scale of the preview. Our own code shows where
+this breaks numerically: a preview at 1/16 of 1920×1080 is 120×66 (rounding to an even number cuts 67.5 to 66), an
+aspect ratio of 1.818 against 1.778, and `world_scale` in the plan is taken ONLY from the width.
 
-**3. «Сравнить до и после» — это не оверлей, а второй композит того же
-тика, и «до» у всех означает разное.** У Vegas Split-Screen View
-сравнивает кадр с ним же БЕЗ всех видео-эффектов либо с содержимым
-БУФЕРА ОБМЕНА, и делит кадр не шторкой, а произвольным прямоугольником,
-который тянут мышью. У Premiere Comparison View сравнивает два КАДРА
-монтажа (Side by Side / Vertical Split / Horizontal Split) и про эффекты
-не знает вовсе. У Resolve шторка на странице Color сравнивает с кадром из
-галереи или с другой ВЕРСИЕЙ грейда, то есть «до» — это «до этого узла».
-У FCP шторки нет вовсе: там второй вьюер рядом (Comparison Viewer). Одно
-и то же название кнопки в четырёх редакторах отвечает на четыре разных
-вопроса, и выбирать, на какой отвечаем мы, придётся отдельно.
+**3. "Compare before and after" is not an overlay, but a second composite of the same tick, and "before" means
+different things to everyone.** Vegas Split-Screen View compares the frame with ITSELF WITHOUT all video effects,
+or with the contents of the CLIPBOARD, and divides the frame not with a wipe but with an arbitrary rectangle dragged
+by the mouse. Premiere Comparison View compares two FRAMES of the edit (Side by Side / Vertical Split / Horizontal
+Split) and knows nothing about effects. Resolve's wipe on the Color page compares with a frame from the gallery or
+with another VERSION of the grade, that is, "before" means "before this node". FCP has no wipe at all: there is a
+second viewer beside it (Comparison Viewer). One and the same button name in four editors answers four different
+questions, and we will have to choose separately which one we answer.
 
-Обратная сторона того же — переключатель «скрыть контролы», и он не
-роскошь. Adobe гасит их при проигрывании САМА и объясняет прямым
-текстом: «Layer Controls are intentionally hidden during preview playback
-so masks and shape paths don't get in the way»; Apple — так же
-автоматически и без права выбора. Resolve оставил это на человека — и
-получил обе цены сразу: жалобу «there is no direct way to turn the on
-screen controls on/off. You either need to look away from the screen to
-find the Ctrl+k keys or go down two levels of right click menu» и
-пользователей, покупающих ТРЕТИЙ монитор под чистый выход, чтобы видеть
-кадр без оверлеев. Причём гасить надо не всё скопом: главный мусор — не
-ручки, а траектория, потому что overlay рисует ключи ВСЕХ клипов сразу
-(«there are so many line and control points that appear, i literally
-cannot even see the video content under it all. It's like a birds nest»),
-и запрос звучит как «hide the vectors and still be able to transform with
-a mouse». Раздельного тумблера «ручки / траектория» нет ни у кого из
-пяти.
+The reverse side of the same is the switch "hide controls", and it is not a luxury. Adobe hides them ITSELF during
+playback and says plainly: "Layer Controls are intentionally hidden during preview playback so masks and shape paths
+don't get in the way"; Apple does the same automatically and without a choice. Resolve left this to the person and
+got both prices at once: the complaint "there is no direct way to turn the on screen controls on/off. You either need
+to look away from the screen to find the Ctrl+k keys or go down two levels of right click menu", and users buying a
+THIRD monitor for a clean output to see the frame without overlays. Moreover, one must hide not everything at once:
+the main junk is not the handles but the trajectory, because the overlay draws the keys of ALL clips at once ("there
+are so many line and control points that appear, i literally cannot even see the video content under it all. It's
+like a birds nest"), and the request reads "hide the vectors and still be able to transform with a mouse". There is
+no separate toggle "handles / trajectory" in any of the five.
 
-## Плюсы
+## Pros
 
-- Контрол не занимает места: он лежит поверх уже существующего кадра.
-  Это единственный класс интерфейса, который добавляет действия, не
-  отнимая ни строки, ни колонки (правило 13 чек-листа — прямой аргумент ЗА).
-- Одно движение мыши выражает пару чисел сразу: точка на экране — это
-  (x, y), а в сетке параметров это два поля и взгляд на кадр между ними.
-- Масштаб жеста задаётся кадром, а не диапазоном числа: «поставить слой
-  вот сюда» не требует знать, что позиция меряется в мировых пикселях,
-  а якорь — в долях слоя.
-- Ручка вращения показывает ЦЕНТР вращения тем, что нарисована вместе с
-  якорем: невидимая связь «вокруг чего крутится» становится картинкой.
-- Разметка (сетка, safe-зоны, центр) — не эффект: она не попадает в
-  экспорт, не меняет ни одного числа и гасится целиком одной командой.
-- Режим сравнения не знает, что сравнивает: это два композита одного
-  тика, поэтому он работает на любом материале и любом наборе эффектов.
-- У Vegas видно, что разметку можно завести ОТДЕЛЬНО от трансформации:
-  Overlays в Video Preview есть, а ручек своей трансформации там нет. То
-  есть фичу можно брать по частям, и разметка — самая дешёвая часть.
+- A control takes no space: it lies over an already existing frame. This is the only class of interface
+  that adds actions without taking away a single row or column (rule 13 of the checklist — a direct argument FOR).
+- One movement of the mouse expresses a pair of numbers at once: a point on the screen is (x, y), and in a grid
+  of parameters that is two fields and a glance at the frame between them.
+- The scale of the gesture is set by the frame, not by the range of the number: "put the layer HERE" does not require
+  knowing that the position is measured in world pixels and the anchor in fractions of the layer.
+- The rotation handle shows the CENTRE of rotation by being drawn together with the anchor: the invisible link
+  "what it rotates around" becomes a picture.
+- The markup (grid, safe zones, centre) is not an effect: it does not get into the export, does not change a single
+  number, and is hidden entirely by one command.
+- The comparison mode does not know what it compares: it is two composites of one tick, so it works on any material
+  and any set of effects.
+- Vegas shows that the markup can be introduced SEPARATELY from the transformation: Overlays exist in the Video
+  Preview, but there are no handles of its own transformation there. That is, the feature can be taken in parts, and
+  the markup is the cheapest part.
 
-## Минусы
+## Cons
 
-- Контролы закрывают то, ради чего человек смотрит в кадр. Отсюда у
-  одних ручной выключатель (AE — Ctrl+Shift+H, Resolve — Show Controls),
-  у других жёсткое автоматическое правило: «Onscreen controls are always
-  hidden when you play clips in the timeline» (FCP) — там их не прячут по
-  желанию, их прячут всегда.
-- Точность жеста падает вместе с качеством превью: ручка в 8 экранных px
-  на превью в 1/16 соответствует сотне пикселей кадра, и «поставить
-  ровно 100 %» мышью невозможно в принципе — числовое поле остаётся
-  обязательным.
-- Один кадр обслуживает несколько инструментов (трансформация, кроп,
-  маска, траектория), и они конкурируют за ту же мышь. Отсюда развилка:
-  либо активен ровно один набор (Resolve, `View > Viewer Overlay`), либо
-  контролы привязаны к выделению эффекта (Premiere) — и оба варианта
-  порождают вопрос «где мои ручки».
-- Каждый дополнительный «гейт видимости» умножает вопрос «где мои
-  ручки»: у Resolve OFX-контрол виден, только если ОДНОВРЕМЕННО включён
-  Open FX Overlay во вьюере и On-Screen Controls в инспекторе, и это
-  стабильный источник обращений.
-- Траектория движения — не украшение, а мусор: у Resolve оверлей
-  трансформации рисует ключи не только текущего клипа, и через десяток
-  ключей кадра под ними не видно вовсе. Значит выключатель нужен не
-  один общий, а раздельный: ручки отдельно, траектория отдельно.
-- Сдвиг якоря переписывает смысл ВСЕХ уже поставленных ключей вращения
-  и масштаба; жест при этом один, и undo-шаг один. А компенсация,
-  удерживающая картинку на месте, у эталона ломается на повёрнутом слое.
-- Разделение «правка в своём окне, показ в главном» (Vegas) экономит
-  всю математику попадания, но платит рассогласованием двух картинок —
-  и это подтверждённая жалобами цена, а не теория.
-- Перетаскивание требует, чтобы кадр пересобирался на каждое движение
-  мыши: контрол без живой картинки бесполезен, а живая картинка — это
-  полный перекомпозит кадра в темпе жеста.
+- The controls cover what a person looks at the frame for. Hence some have a manual switch (AE — Ctrl+Shift+H,
+  Resolve — Show Controls), while others have a rigid automatic rule: "Onscreen controls are always hidden when you
+  play clips in the timeline" (FCP) — there they are not hidden at will, they are always hidden.
+- The precision of the gesture falls together with the quality of the preview: a handle of 8 screen px on a preview
+  at 1/16 corresponds to a hundred pixels of the frame, and "set exactly 100%" with the mouse is impossible in
+  principle — the numeric field remains mandatory.
+- One frame serves several tools (transformation, crop, mask, trajectory), and they compete for the same mouse.
+  Hence the fork: either exactly one set is active (Resolve, `View > Viewer Overlay`), or the controls are tied to
+  the selection of an effect (Premiere) — and both variants produce the question "where are my handles".
+- Every additional "visibility gate" multiplies the question "where are my handles": in Resolve an OFX control is
+  visible only if BOTH Open FX Overlay in the viewer AND On-Screen Controls in the inspector are switched on, and this
+  is a steady source of enquiries.
+- The movement trajectory is not decoration but junk: in Resolve the transformation overlay draws the keys not only
+  of the current clip, and after a dozen keys the frame beneath them is not visible at all. So the switch is needed not
+  as one common toggle, but as separate ones: handles separately, trajectory separately.
+- Shifting the anchor rewrites the meaning of ALL already placed rotation and scale keys; the gesture is one, and the
+  undo step is one. Yet the compensation that holds the picture in place breaks on a rotated layer in the reference.
+- Separation "edit in one's own window, display in the main one" (Vegas) saves all the mathematics of the hit, but pays
+  with a mismatch of two pictures — and this is a price confirmed by complaints, not a theory.
+- Dragging requires the frame to be rebuilt on every mouse movement: a control without a live picture is useless, and
+  a live picture is a full recomposition of the frame at the tempo of the gesture.
 
-## Что говорят пользователи
+## What users say
 
-Классическая формулировка непонимания якоря — человек меняет число и
-получает не то, чего ждал:
+The classic formulation of the anchor's incomprehensibility — a person changes a number and gets not what they expected:
 
 > Anchor Point is 612, 360 according to timeline data. When you change
 > the Anchor Point value to 0, 0 only still moves not anchor point.
 > — MahaMN, Adobe Community, 24.05.2022, https://community.adobe.com/t5/after-effects-discussions/anchor-point-issue/m-p/12978119
 
-Ответ эксперта в том же треде и есть «фишка фишки» в одной строке —
-инструмент и число делают РАЗНОЕ:
+The expert's answer in the same thread is the "trick behind it" in one line — the tool and the number do DIFFERENT things:
 
 > The Anchor Point tool, sometimes called the Pan Behind tool in the
 > toolbar, moves the Anchor Point around the layer without changing the
@@ -199,8 +159,7 @@ a mouse». Раздельного тумблера «ручки / траекто
 > properties.
 > — Rick Gerard, Adobe Community, 25.05.2022, https://community.adobe.com/t5/after-effects-discussions/anchor-point-issue/m-p/12978119
 
-И дно самой компенсации: инструмент держит картинку на месте ровно до
-первого поворота слоя —
+And the bottom of the compensation itself: the tool holds the picture in place only until the first rotation of the layer —
 
 > the problem is that when the anchor point moves, the layer moves with
 > it (the pan-behind tool won't help in this case, it only messes up the
@@ -209,27 +168,25 @@ a mouse». Раздельного тумблера «ручки / траекто
 
 > It works perfectly until I rotate the layer, at which point when I move
 > the Anchor Point, the layer also shifts position.
-> — там же, тот же тред (попытка скомпенсировать выражением)
+> — same place, same thread (an attempt to compensate with an expression)
 
-Цена решения «контролы показываются только при выделенном эффекте»
-(Premiere) — вопрос не про трансформацию, а про то, как её увидеть:
+The price of the solution "controls are shown only when an effect is selected" (Premiere) is a question not about
+transformation but about how to see it:
 
 > Sometimes without even trying, transform handles appear in my program
 > window. But whenever I want them, it's always a battle to make them
 > show up.
 > — Steve Zeeeee, Adobe Community, 08.08.2020, https://community.adobe.com/t5/premiere-pro-discussions/where-are-my-transform-handles/m-p/11346974/highlight/true
 
-Цена противоположного решения — «правим в своём окне, смотрим в другом»
-(Vegas Event Pan/Crop):
+The price of the opposite solution — "edit in one's own window, look in another" (Vegas Event Pan/Crop):
 
-> the image in the event pan/crop tool doesn't match up to the image in
-> the preview window or the render
+> the image in the event pan/crop tool doesn't match up to the
+> image in the preview window or the render
 > — Daniel Johnson, Creative COW, 15.07.2019, https://creativecow.net/forums/thread/image-crop-doesnt-match-preview-or-render/
 
-Она же — в большом списке претензий к VEGAS Pro 2026 на официальном
-форуме Boris FX (автор сам помечает текст как «Translated using GPT» —
-это машинный перевод его корейского оригинала, поэтому цитата точная, но
-формулировка не авторская):
+The same, in a long list of complaints about VEGAS Pro 2026 on the official Boris FX forum (the author himself marks
+the text as "Translated using GPT" — this is a machine translation of his Korean original, so the quote is exact, but
+the wording is not his own):
 
 > The workflow is also slower than adjusting the event directly in the
 > Preview window, as in Premiere Pro.
@@ -237,16 +194,15 @@ a mouse». Раздельного тумблера «ручки / траекто
 
 > When using masks, the Pan/Crop window where the actual editing takes
 > place is separated from the Preview window where the result appears.
-> — там же
+> — same place
 
-Зачем нужен выключатель контролов — официальный ответ Adobe:
+Why the switch for the controls exists — Adobe's official answer:
 
 > Layer Controls are intentionally hidden during preview playback so
 > masks and shape paths don't get in the way.
 > — Nishu Kushwaha, Adobe Community Manager, 03.06.2026, https://community.adobe.com/questions-529/layer-controls-are-not-staying-visible-1626156
 
-И что бывает, когда выключатель есть, но спрятан, а траектория рисуется
-целиком:
+And what happens when the switch exists but is hidden, while the trajectory is drawn in full:
 
 > But there are so many line and control points that appear, i literally
 > cannot even see the video content under it all. It's like a birds nest.
@@ -257,8 +213,7 @@ a mouse». Раздельного тумблера «ручки / траекто
 > to find the Ctrl+k keys or go down two levels of right click menu.
 > — Iain Fisher, Blackmagic Forum, 28.01.2026, https://forum.blackmagicdesign.com/viewtopic.php?f=22&t=232477
 
-Первоисточник о том, что якорь — исключение среди контролов, и о том,
-что при воспроизведении контролы гасятся всегда:
+The primary source on the anchor being an exception among the controls, and on the controls always being hidden during playback:
 
 > Anchor X and Y: Move the image's center point (the point that the image
 > rotates around). Note: This control isn't available in the onscreen
@@ -268,143 +223,125 @@ a mouse». Раздельного тумблера «ручки / траекто
 > Onscreen controls are always hidden when you play clips in the timeline.
 > — Final Cut Pro User Guide, Apple, https://support.apple.com/guide/final-cut-pro/show-onscreen-controls-verbd553847/mac
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/ui-timeline/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Рамка трансформации ведущего узла «Геометрия» над кадром превью (перенос, восемь ручек
-масштаба, поворот, якорь с компенсацией, кроп) и раздел полей «Трансформация» рядом с ней;
-прямоугольник размещения считает ОДНА функция `kt-fx::geom`, общая с рендером.
-Камеры и `Pan3d`, маски, траектория ключей, разметка и режимы сравнения — не входят.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/ui-timeline/ — the contract is in `spec.md`, the "why" and the paths in the code are in `design.md`.
+The transformation frame of the leading "Geometry" node over the preview frame (move, eight scale handles, rotation, anchor with compensation, crop) and the "Transformation" fields section beside it;
+the placement rectangle is computed by ONE function `kt-fx::geom`, shared with rendering.
+Cameras and `Pan3d`, masks, the keyframe trajectory, the markup and the comparison modes are not included.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2–3 стадии. С1: общая геометрия (перенос `pan3d_mvp` из kt-gpu в общий код + обращение «экран → плоскость слоя», починка гейта перекомпозиции и масштаба по вертикали). С2: ОДИН общий виджет контрола над кадром (рамка, 8 ручек, якорь, вращение) на `Pan3d` и камерах, парный к `params_grid`. С3: разметка (safe-зоны, сетка, центр) и переключатель показа |
-| Где основная работа | kt-app (`app.rs::draw_preview` + новый общий виджет рядом с `widgets.rs`/`automation.rs`), kt-engine (`video_plan.rs` — геометрия слоя наружу), kt-gpu (матрица становится общей, а не своей) |
-| Формат проекта | не трогает: правятся существующие поля существующими командами. Состояние «показывать контролы/сетку» — вьюпорт, а он по решению Р.7.1 хранится в проекте |
-| Тесты, которые придётся написать | харнесс `layout_tests.rs`: попадание в ручку с первого раза и её хват-зона; жест якоря не двигает картинку — **и на повёрнутом слое тоже** (чужой баг из цитат); экранный жест и `params_grid` дают одно и то же число (правило 17); один undo на жест; контролы гаснут при воспроизведении; тумблеры «ручки» и «траектория» независимы. Чистые функции: «экран → кадр» на всех пяти долях (включая 120×66) и обратно, обращение MVP против прямой — всё на CPU, без адаптера. Живой сценарий в `src/scripts/live/`: перетащил слой — пиксель в кадре СМЕНИЛСЯ (`pixel_settled(differs_from=…)`), плюс `img_rect` в `KT_GEOM_DUMP` |
-| Зависит от | ничего обязательного. Обратная зависимость сильнее: F-MSK-001 (маски) и F-TXT-001 (текст) обе упираются в «нет ни одного жеста над кадром» — эта работа их разблокирует |
-| Ломает совместимость | нет |
+| Volume | M — 2–3 stages. S1: shared geometry (moving `pan3d_mvp` from kt-gpu into shared code + the conversion "screen → layer plane", fixing the recomposition gate and the vertical scale). S2: ONE shared control widget over the frame (frame, 8 handles, anchor, rotation) on `Pan3d` and cameras, paired with `params_grid`. S3: markup (safe zones, grid, centre) and the show switch |
+| Where the main work is | kt-app (`app.rs::draw_preview` + a new shared widget next to `widgets.rs`/`automation.rs`), kt-engine (`video_plan.rs` — layer geometry outward), kt-gpu (the matrix becomes shared, not its own) |
+| Project format | not touched: existing fields are corrected by existing commands. The state "show controls/grid" is viewport state, and by the decision of R.7.1 it is stored in the project |
+| Tests that will have to be written | harness `layout_tests.rs`: a hit on a handle the first time and its grab zone; the anchor gesture does not move the picture — **and on a rotated layer too** (someone else's bug from the quotes); the screen gesture and `params_grid` give the same number (rule 17); one undo per gesture; the controls fade during playback; the "handles" and "trajectory" toggles are independent. Pure functions: "screen → frame" at all five fractions (including 120×66) and back, inversion of the MVP against the direct one — all on the CPU, without an adapter. A live scenario in `src/scripts/live/`: drag a layer — the pixel in the frame has CHANGED (`pixel_settled(differs_from=…)`), plus `img_rect` in `KT_GEOM_DUMP` |
+| Depends on | nothing mandatory. The reverse dependency is stronger: F-MSK-001 (masks) and F-TXT-001 (text) both run into "not one gesture over the frame exists" — this work unblocks them |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём, но начинать не с рамки, а с геометрии. Параметры под контрол уже
-есть целиком (`Pan3d` с якорем, камеры с look-at), формат не меняется,
-места на экране контрол не занимает — по соотношению «цена/эффект» это
-самая дешёвая из оставшихся крупных UI-фич.
+Take it, but start not with the frame, but with the geometry. The parameters for the control are all
+already there (`Pan3d` with the anchor, cameras with look-at), the format does not change, and it takes no
+place on the screen — by the "cost/effect" ratio it is the cheapest of the remaining large UI features.
 
-Решающий аргумент — камеры. `CameraParams` — семь чисел, из которых
-позиция и точка интереса заданы в мировых пикселях, а повороты в
-градусах ZXY; выставлять кадр камеры вслепую через `DragValue` в окне
-свойств никто в здравом уме не станет. Пока экранного контрола нет, вся
-ветка Р.29 (3D, несколько камер, курс «в сторону After Effects» —
-формулировка владельца) остаётся недоступной практически, а не
-технически.
+The decisive argument is cameras. `CameraParams` is seven numbers, of which the position and the point of
+interest are set in world pixels, and the rotations in degrees ZXY; nobody in their right mind will set a
+camera frame blindly through a `DragValue` in the properties window. Until a screen control exists, the whole
+branch of R.29 (3D, several cameras, the course "towards After Effects" — the owner's wording) remains practically,
+not technically, unavailable.
 
-Первым делом чинятся два дефекта, которые контрол вскроет немедленно и
-которые полезны сами по себе: гейт перекомпозиции превью, не смотрящий на
-ревизию модели, и превью на 1/16–1/8, не подобное кадру проекта. Режимы
-сравнения (split-screen, шторка «до/после») в этот заход не входят: это
-второй композит того же тика и отдельная заметка — там своя развилка
-«что считать стороной „до“».
+First of all, two defects are fixed, which the control will expose immediately and which are useful in themselves:
+the preview recomposition gate, which does not look at the model revision, and the preview at 1/16–1/8 that is not
+similar to the project frame. The comparison modes (split-screen, the "before/after" wipe) are NOT part of this pass:
+they are a second composite of the same tick and a separate note — there is a separate fork of their own there,
+"what counts as the side of 'before'".
 
-### Итог Р.64 (2026-09-25)
+### Outcome of R.64 (2026-09-25)
 
-СДЕЛАНО: рамка трансформации над кадром у выделенного видео-события — перенос за тело,
-восемь ручек масштаба, поворот (Shift — 15°), якорь с компенсацией позиции (верной и на
-повёрнутом слое, где у AE дефект), четыре ручки кропа; один шаг истории на жест, живая
-картинка в темпе жеста, параметр с кривой правится КЛЮЧОМ. Оба дефекта, названные выше как
-«вскроются немедленно», закрыты: гейт перекомпозиции — ещё в Р.62 (t722b), подобие доли
-превью — здесь (t765, ближайшая ЧЁТНАЯ пара). Поля приведены в раздел «Трансформация»
-(группы, пары X/Y, единицы, ползунки, схема рамки, сброс).
+DONE: the transformation frame over the frame of the selected video event — move by the body, eight scale handles,
+rotation (Shift — 15°), anchor with position compensation (correct also on a rotated layer, where AE has the defect),
+four crop handles; one history step per gesture, a live picture at the tempo of the gesture, a parameter with a curve
+is edited by a KEYFRAME. Both defects named above as "will be exposed immediately" are closed: the recomposition gate —
+already in R.62 (t722b), the similarity of the preview fraction — here (t765, the nearest EVEN pair). The fields were
+brought into the "Transformation" section (groups, X/Y pairs, units, sliders, the frame scheme, reset).
 
-ОТЛОЖЕНО и почему: экранные контролы КАМЕР и `Pan3d` (свои единицы — мировые px — и своя
-развилка «какая камера активна под курсором»), маски и траектория ключей (свой набор ручек
-над тем же кадром), разметка (safe-зоны, сетка, центр) и режимы сравнения «до/после»
-(второй композит того же тика). Каждое — отдельный набор над кадром и отдельный ответ на
-вопрос «где мои ручки»; решать их за владельца одним заходом нельзя.
+DEFERRED and why: the screen controls of CAMERAS and `Pan3d` (their own units — world px — and their own fork "which camera
+is active under the cursor"), masks and the keyframe trajectory (their own set of handles over the same frame), the markup
+(safe zones, grid, centre) and the comparison modes "before/after" (a second composite of the same tick). Each is a separate
+set over the frame and a separate answer to the question "where are my handles"; they cannot be decided for the owner in one pass.
 
-## Источники
+## Sources
 
-- Final Cut Pro User Guide, «Intro to onscreen controls» (дата обращения
+- Final Cut Pro User Guide, "Intro to onscreen controls" (accessed
   2026-09-07) — https://support.apple.com/guide/final-cut-pro/intro-to-onscreen-controls-verbd553437/mac
-- Final Cut Pro User Guide, «Show onscreen controls» —
+- Final Cut Pro User Guide, "Show onscreen controls" —
   https://support.apple.com/guide/final-cut-pro/show-onscreen-controls-verbd553847/mac
-- Final Cut Pro User Guide, «Resize, move, and rotate clips» —
+- Final Cut Pro User Guide, "Resize, move, and rotate clips" —
   https://support.apple.com/guide/final-cut-pro/resize-move-and-rotate-clips-verfc8a4713/mac
-- VEGAS Pro Help (MAGIX), «Split-screen previews» —
+- VEGAS Pro Help (MAGIX), "Split-screen previews" —
   https://help.magix-hub.com/video/vegas/22/en/content/topics/5-preview/split-screen_previews.htm
-- VEGAS Pro Help (MAGIX), «Using the Video Preview window» (Overlays:
+- VEGAS Pro Help (MAGIX), "Using the Video Preview window" (Overlays:
   Grid, Safe Areas) —
   https://help.magix-hub.com/video/vegas/22/en/content/topics/5-preview/videopreview.htm
-- VEGAS Pro Help (MAGIX), обзор Pan/Crop —
+- VEGAS Pro Help (MAGIX), Pan/Crop overview —
   https://help.magix-hub.com/video/vegas/23/en/content/topics/7-edit/pan-crop-overview.htm
-- Adobe Community, тред «Anchor Point Issue» —
+- Adobe Community, thread "Anchor Point Issue" —
   https://community.adobe.com/t5/after-effects-discussions/anchor-point-issue/m-p/12978119
-- Adobe Community, тред «Where are my transform handles?» —
+- Adobe Community, thread "Where are my transform handles?" —
   https://community.adobe.com/t5/premiere-pro-discussions/where-are-my-transform-handles/m-p/11346974/highlight/true
-- Creative COW, тред «Image crop doesn't match preview or render» —
+- Creative COW, thread "Image crop doesn't match preview or render" —
   https://creativecow.net/forums/thread/image-crop-doesnt-match-preview-or-render/
-- VEGAS Pro 2026, документация на CDN Boris FX: список кнопок Video
-  Preview и оговорка про Crop OFX —
+- VEGAS Pro 2026, Boris FX CDN documentation: the list of Video
+  Preview buttons and the caveat about Crop OFX —
   https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/5-preview/videopreview.htm
-  и https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/7-edit/pan-crop-overview.htm
-- Boris FX Forum, «Suggestions for Boris Regarding VEGAS Pro 2026» —
+  and https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/7-edit/pan-crop-overview.htm
+- Boris FX Forum, "Suggestions for Boris Regarding VEGAS Pro 2026" —
   https://forum.borisfx.com/t/suggestions-for-boris-regarding-vegas-pro-2026-very-long-post/24911/2
-  (автор помечает текст как машинный перевод с корейского)
-- Creative COW, тред «Animate anchor point without moving layer» —
+  (the author marks the text as a machine translation from Korean)
+- Creative COW, thread "Animate anchor point without moving layer" —
   https://creativecow.net/forums/thread/animate-anchor-point-without-moving-layer/
-- Blackmagic Forum: «Transform tool overlay has unwanted vectors to
-  Keyframes» — https://forum.blackmagicdesign.com/viewtopic.php?f=21&t=212742 ;
-  тред о переключателе контролов —
+- Blackmagic Forum: "Transform tool overlay has unwanted vectors to
+  Keyframes" — https://forum.blackmagicdesign.com/viewtopic.php?f=21&t=212742 ;
+  thread on the switch for the controls —
   https://forum.blackmagicdesign.com/viewtopic.php?f=22&t=232477
-- Adobe Community, «Layer Controls are not staying visible» —
+- Adobe Community, "Layer Controls are not staying visible" —
   https://community.adobe.com/questions-529/layer-controls-are-not-staying-visible-1626156
-- DaVinci Resolve, страница Color на сайте Blackmagic (Wipe / Split
-  Screen / Highlight, стили галереи) —
+- DaVinci Resolve, the Color page on the Blackmagic site (Wipe /
+  Split Screen / Highlight, gallery styles) —
   https://www.blackmagicdesign.com/products/davinciresolve/color
-- Формулировки руководства Resolve («Transform/Crop/Dynamic Zoom button
-  at the bottom left of the Timeline Viewer»; «View > Viewer Overlay
-  submenu»; `Shift-\``; `View > Safe Area`) взяты из зеркал официального
-  руководства (18.6 и 17) —
+- The wording of the Resolve manual ("Transform/Crop/Dynamic Zoom button
+  at the bottom left of the Timeline Viewer"; "View > Viewer Overlay
+  submenu"; `Shift-\``; `View > Safe Area`) is taken from mirrors of the official
+  manual (18.6 and 17) —
   https://www.steakunderwater.com/VFXPedia/__man/Resolve18-6/DaVinciResolve18_Manual_files/part2092.htm
-  и https://manualzz.com/doc/o/235u5a/blackmagic-davinci-resolve-17-instruction-manual-compositing-and-transforms-in-the-timeline
-  **[НЕ ПРОВЕРЕНО по руководству Resolve 21]**: прямые страницы зеркал из
-  этого окружения отдавали 403/404, версия 21 живьём не сверялась;
-  механику независимо подтверждает продакт-менеджер Blackmagic в треде
+  and https://manualzz.com/doc/o/235u5a/blackmagic-davinci-resolve-17-instruction-manual-compositing-and-transforms-in-the-timeline
+  **[NOT VERIFIED against the Resolve 21 manual]**: the direct mirror pages returned 403/404 from this environment, version 21 was not checked live;
+  the mechanics are independently confirmed by a Blackmagic product manager in the thread
   https://forum.blackmagicdesign.com/viewtopic.php?f=21&t=234723 (14.04.2026).
-- Названия режимов Premiere Comparison View (Side by Side / Vertical
-  Split / Horizontal Split), Safe Margins в меню Program Monitor и
-  команда After Effects `View > Show Layer Controls` (Ctrl+Shift+H,
-  состав — `View Options`, Ctrl+Alt+U) взяты из сниппетов справки Adobe
-  и подтверждений экспертов Adobe Community (в том числе Todd Kopriva,
+- The names of the Premiere Comparison View modes (Side by Side / Vertical
+  Split / Horizontal Split), Safe Margins in the Program Monitor menu, and the After Effects
+  command `View > Show Layer Controls` (Ctrl+Shift+H, the composition — `View Options`, Ctrl+Alt+U) are taken from snippets of Adobe's help
+  and confirmations by Adobe Community experts (including Todd Kopriva,
   Creative COW, 18.03.2010 —
   https://creativecow.net/forums/thread/cant-see-bounding-boxes-or-pan-behind-tool/):
-  `helpx.adobe.com` из этого окружения не открывается **[НЕ ПРОВЕРЕНО
-  первоисточником]**.
-- Про попадание мышью на превью в ДОЛЕ разрешения (half/quarter) прямых
-  жалоб в чужих форумах найти не удалось — ближайшее — советы менять
-  размер и зум Program Monitor, чтобы контролы появились. Численный
-  пример 120×66 посчитан по нашему коду, а не взят из чужого багрепорта.
-- Все утверждения «у нас есть / у нас нет» проверены грепом по `src/` и
-  чтением кода на коммите `995899c`; поведение живьём не запускалось —
-  соответствующие места помечены в тексте.
+  `helpx.adobe.com` does not open from this environment **[NOT VERIFIED against the primary source]**.
+- No direct complaints in other forums were found about mouse hits on the preview at a FRACTION of the resolution (half/quarter) — the closest are
+  the tips to change the size and zoom of the Program Monitor so that the controls appear. The numeric example 120×66 was computed from our code, not taken from someone else's bug report.
+- All statements "we have / we do not have" were checked by grep over `src/` and by reading the code at commit `995899c`; the behaviour was not run live —
+  the corresponding places are marked in the text.
 
-## Kinotrain: change `geometry-on-screen-controls` следом за Р.63
+## Kinotrain: change `geometry-on-screen-controls` following R.63
 
-Владелец в Р.63 сказал прямо: **«fx геометрии по прежнему очень скуден,
-сплошные скучные поля ввода, даже в Vegas и то лучше сделано, а нам надо
-лучше чем в vegas, в том же Pr/Ae это удобнее чем в Vegas, нужно удобнее
-всех делать. КАК МИНИМУМ у нас должно быть редактирование прям в превью
-удобное, это как минимум»**. Спрошенный прямо, он уточнил: экранные
-контролы — **в ДОПОЛНЕНИЕ к полям, а не вместо них**, и сами поля «в
-нормальном виде».
+In R.63 the owner said directly: **"the geometry fx is still very poor, solid boring input fields, even in Vegas it is done better, and we need it
+better than in Vegas, in the same Pr/Ae it is more convenient than in Vegas, we need to make it more convenient than everyone. AT MINIMUM we must have
+editing right in the preview that is convenient, that is the minimum"**. Asked directly, he clarified: the on-screen controls are **IN ADDITION to the
+fields, not instead of them**, and the fields themselves "in a normal form".
 
-Отсюда вердикт по этой фиче меняется с «кандидат» на «делаем следующим
-change» — `geometry-on-screen-controls`: рамка трансформации ведущего узла
-«Геометрия» прямо в превью (перетаскивание, углы, поворот, якорь), при
-сохранении числовых полей и их автоматизации. Разведка выше (Vegas Pan/Crop,
-Premiere Motion, AE Layer Controls) — вход в эту работу.
+Hence the verdict on this feature changes from "candidate" to "we do the next
+change" — `geometry-on-screen-controls`: the transformation frame of the leading "Geometry" node directly in the preview (dragging, corners, rotation, anchor), while keeping the numeric fields and their automation. The reconnaissance above (Vegas Pan/Crop,
+Premiere Motion, AE Layer Controls) is the entry to this work.
 
-**Реализовано в Р.64** — change `geometry-on-screen-controls`; дальнейшая жизнь фичи —
-в `openspec/specs/ui-timeline/` и `openspec/specs/video-plan/`.
+**Implemented in R.64** — change `geometry-on-screen-controls`; the further life of the feature is
+in `openspec/specs/ui-timeline/` and `openspec/specs/video-plan/`.

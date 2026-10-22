@@ -1,12 +1,12 @@
 ---
 id: F-MPH-001
-title: Adjustment Events в VEGAS Pro
-status: кандидат
+title: Adjustment Events in VEGAS Pro
+status: candidate
 priority: B
 cost: L
 category: morpher/analogues
 editors: [vegas-pro-2026, premiere-26, resolve-20, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-model, kt-engine, kt-gpu, kt-otio, kt-app]
 invariants: [4, 7, 11]
 ui_rules: [13, 17, 20]
@@ -17,103 +17,96 @@ depends_on: []
 checked: 2026-09-07
 ---
 
-# F-MPH-001 — Adjustment Events в VEGAS Pro
+# F-MPH-001 — Adjustment Events in VEGAS Pro
 
-## Суть
+## Essence
 
-Монтажёр кладёт на верхнюю видео-дорожку пустое событие-«прокладку» и
-вешает на него обычные видео-эффекты. Всё, что лежит НИЖЕ по дорожкам и
-попадает под это событие по времени, показывается уже обработанным. Блок
-двигают, тримят, режут, копируют и выключают как любой клип: где он
-накрыл — там грейд есть, где кончился — нет. Тянут уголок-фейд — эффект
-не выключается рывком, а въезжает и уезжает. Ставят два таких блока
-подряд с перекрытием — получается переход между двумя грейдами.
+The editor places an empty "spacer" event on the top video track and hangs ordinary video effects on it.
+Everything that lies BELOW on the tracks and falls under this event by time is shown already processed. The block
+is moved, trimmed, cut, copied and switched off like any clip: where it covers, the grade is there;
+where it ends, it is not. Pull its corner fade — the effect is not switched off with a jerk, but slides in and out. Two such blocks are placed
+one after another with an overlap — and you get a transition between two grades.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 (механика с 21, 2023) | Adjustment Event | событие на настоящей видео-дорожке; по умолчанию действует на композит ВСЕХ дорожек ниже, сузить — только через Make Compositing Child; есть непрозрачность и уголковые фейды |
-| Adobe Premiere | 26.x | Adjustment Layer | синтетический клип из панели проекта; действует на всё ниже на время своей длины; Opacity в Effect Controls = сила эффекта |
-| DaVinci Resolve | 20.3.2 | Adjustment Clip | «получает текущий композит нижних дорожек, обрабатывает и отдаёт дальше»; инспектор даёт transform/crop/opacity; выборочно пропустить промежуточный слой нельзя |
-| Final Cut Pro | 12.3 (появилось в 11.1, март 2025) | Adjustment Clip | прозрачный клип поверх; «эффекты применяются ко всем клипам ниже по таймлайну»; своя роль в ролях, длина клипа = зона действия |
-| After Effects | 26.x | Adjustment Layer | галка-переключатель у обычного слоя; действует на слои ниже в ТОЙ ЖЕ композиции и только в свой отрезок времени; маска и режим наложения слоя ограничивают эффект по площади кадра |
+| VEGAS Pro | 2026.0 (mechanics since 21, 2023) | Adjustment Event | an event on a real video track; by default acts on the composite of ALL tracks below, narrowed only via Make Compositing Child; has opacity and corner fades |
+| Adobe Premiere | 26.x | Adjustment Layer | a synthetic clip from the project panel; acts on everything below for the duration of its length; Opacity in Effect Controls = the strength of the effect |
+| DaVinci Resolve | 20.3.2 | Adjustment Clip | "receives the current composite of the lower tracks, processes it and passes it on"; the Inspector gives transform/crop/opacity; it is not possible to selectively skip an intermediate layer |
+| Final Cut Pro | 12.3 (appeared in 11.1, March 2025) | Adjustment Clip | a transparent clip on top; "effects are applied to all clips below it in the timeline"; its own role in roles, the clip length = the zone of action |
+| After Effects | 26.x | Adjustment Layer | a checkbox switch on an ordinary layer; acts on the layers below in THE SAME composition and only for its own time span; the layer's mask and blend mode limit the effect by the area of the frame |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Прозрачность работает как wet/dry, а не как затемнение.** Для
-обычного события фоном служит то, что под ним; для adjustment-события
-фоном служит РОВНО ТОТ ЖЕ кадр, который является его источником —
-композит нижних дорожек. Поэтому один и тот же код прозрачности события
-даёт не «уход в чёрное», а смешение обработанной картинки с
-необработанной. Справка это подтверждает не формулой, а следствием:
-непрозрачность и фейды нужны, чтобы «easily bring effects in and out,
-create sophisticated custom transitions». То есть уголок-фейд у блока —
-это разгон СИЛЫ эффекта, а кроссфейд двух adjustment-событий —
-готовый переход между грейдами, и никакого «wet/dry»-параметра внутри
-каждого плагина для этого не требуется.
+**1. Opacity works as wet/dry, not as darkening.** For an
+ordinary event the background is what lies under it; for an adjustment event
+the background is EXACTLY THE SAME frame that is its source —
+the composite of the lower tracks. Therefore the same opacity code of the event
+gives not "fading to black" but a mix of the processed picture with the
+unprocessed one. The help confirms this not with a formula but with a consequence:
+opacity and fades are needed to "easily bring effects in and out,
+create sophisticated custom transitions". That is, the corner fade of a block is
+a ramp of the effect's STRENGTH, and a crossfade of two adjustment events is
+a ready-made transition between grades, and no "wet/dry" parameter inside
+each plugin is required for this.
 
-**2. Вход эффекта — смикшированный кадр, а не список клипов.** Место
-adjustment-события в конвейере пользователи описывают как «примерно
-post-compositing Track FX»: к моменту его работы нижние дорожки уже
-сложены вместе со своими переходами, track motion и PiP-раскладкой.
-Отсюда три неочевидных следствия. Маска или Cookie Cutter на
-adjustment-событии режет ОБЛАСТЬ КАДРА, а не перечень целей — «этот угол
-экрана размыть» становится однокликовой операцией. Цветокоррекция видит
-уже смешанные источники, поэтому подтягивать разные log-кривые двух
-камер одним adjustment-событием нельзя в принципе. И FX-плагин на нём
-теряет собственные режимы предпросмотра: подложка всегда непустая, и
-«Composite over checkerboard» у Title Studio на adjustment-событии не
-даёт ничего, хотя на пустом событии работает.
+**2. The input of the effect is the mixed frame, not a list of clips.** The place
+of the adjustment event in the pipeline is described by users as "roughly
+post-compositing Track FX": by the time it works, the lower tracks have already been stacked together with their transitions, track motion and PiP layout.
+Hence three non-obvious consequences. A mask or Cookie Cutter on
+an adjustment event cuts the AREA OF THE FRAME, not a list of targets — "blur this corner of the
+screen" becomes a one-click operation. Colour correction sees
+the already mixed sources, so pulling different log curves of two
+cameras with one adjustment event is impossible in principle. And an FX plugin on it
+loses its own preview modes: the backing is always non-empty, and
+"Composite over checkerboard" in Title Studio does nothing on an adjustment event,
+although it works on an empty event.
 
-**3. Область действия ограничивается не выбором дорожек, а
-компоновочным родством.** Кнопки «действовать на дорожки 3 и 5» нет:
-единственный способ сузить «всё, что ниже» — сделать нужные дорожки
-compositing children дорожки-носителя. То есть ограничение зоны действия
-эффекта перестраивает структуру композиции проекта, и наоборот —
-перестройка компоновки молча меняет зону действия грейда.
+**3. The scope is limited not by the choice of tracks, but by
+compositing kinship.** There is no button "act on tracks 3 and 5":
+the only way to narrow "everything below" is to make the needed tracks
+compositing children of the carrier track. That is, limiting the zone of action
+of an effect rebuilds the structure of the project's composition, and conversely —
+rebuilding the composition silently changes the zone of action of the grade.
 
-## Плюсы
+## Pros
 
-- Adjustment-событие — обычное событие: трим, сплит, cut/copy/paste,
-  Mute, Lock, имя, до 32 эффектов в цепочке. Новых жестов и нового окна
-  учить не надо, зона действия правится теми же движениями мыши, что
-  границы клипа.
-- Правка одной цепочки переписывает весь отрезок монтажа: сорок клипов
-  под блоком меняются одним действием и одним шагом undo, а сравнение
-  «до/после» — это Mute одного события.
-- Раз вход — композит, эффект не «протекает» в стык: переход между
-  нижними клипами уже посчитан, и грейд ложится на результат, а не
-  дважды на обе половины стыка.
-- Порядок применения виден глазами: несколько adjustment-дорожек и
-  событий складываются кумулятивно по геометрии дорожек, а не по
-  скрытому порядку в списке эффектов.
-- Сила эффекта живёт на СОБЫТИИ, а не внутри плагина, поэтому
-  разгоняется одинаково для любой цепочки — включая те плагины, у
-  которых своего параметра «сила» нет.
+- An adjustment event is an ordinary event: trim, split, cut/copy/paste,
+  Mute, Lock, a name, up to 32 effects in the chain. There are no new gestures and no new
+  window to learn; the zone of action is edited with the same mouse movements as the
+  boundaries of a clip.
+- Editing one chain rewrites the whole stretch of the edit: forty clips
+  under the block change with one action and one undo step, and the comparison
+  "before/after" is a Mute of one event.
+- Since the input is the composite, the effect does not "leak" into the join: the transition between
+  the lower clips is already computed, and the grade lands on the result, not twice on both halves of the join.
+- The order of application is visible to the eye: several adjustment tracks and
+  events add up cumulatively by the geometry of the tracks, not by a hidden order in the list of effects.
+- The strength of the effect lives on the EVENT, not inside the plugin, so it ramps
+  the same way for any chain — including those plugins that have no "strength" parameter of their own.
 
-## Минусы
+## Cons
 
-- Событие занимает настоящую видео-дорожку, и на ней в это время нельзя
-  держать материал: каждый независимый грейд — это +1 дорожка в проекте.
-- По умолчанию бьёт по ВСЕМ нижним дорожкам; сузить можно только
-  переделкой компоновки в parent/child, из-за чего «локальный грейд»
-  оказывается глобальной правкой структуры проекта.
-- Адресовать конкретные клипы нельзя: адресуется геометрия дорожек ×
-  окно времени. Если нужный клип уехал на другую дорожку, он выпал из
-  зоны действия молча.
-- «Обычное событие» — только на словах: справка честно оговаривает, что
-  реверс и Velocity-огибающая на adjustment-события не действуют.
-- Вход эффекта никогда не пуст (под ним всегда есть композит), поэтому
-  плагины с собственным предпросмотром на прозрачном фоне на нём ломаются,
-  а тяжёлые FX кладут превью — кэш строится по полному кадру подложки.
-- Только видео: звук нижних дорожек adjustment-событие не трогает
-  вообще, для аудио аналога нет.
-- В релизе 2026 (первом под Boris FX) механику не трогали — весь бюджет
-  ушёл в титры Continuum, Z-Depth 2.0 и Blackwell; в списке нового и в
-  патч-нотах build 105 adjustment-события не упоминаются ни разу.
+- The event occupies a real video track, and during that time nothing else can be held on it: each independent grade is +1 track in the project.
+- By default it hits ALL the lower tracks; it can be narrowed only by
+  rebuilding the composition in parent/child, because of which a "local grade"
+  turns into a global edit of the project's structure.
+- Specific clips cannot be addressed: what is addressed is the geometry of the tracks ×
+  the time window. If the needed clip has moved to another track, it has silently fallen out of
+  the zone of action.
+- "An ordinary event" is so only in words: the help honestly notes that
+  reverse and the Velocity envelope do not act on adjustment events.
+- The input of the effect is never empty (there is always a composite underneath), so
+  plugins with their own preview on a transparent background break on it,
+  and heavy FX spoil the preview — the cache is built on the full frame of the backing.
+- Video only: the adjustment event does not touch the sound of the lower tracks at all;
+  there is no audio analogue.
+- In the 2026 release (the first under Boris FX) the mechanics were not touched — the whole budget
+  went to the Continuum titles, Z-Depth 2.0 and Blackwell; in the new-features list and in the
+  patch notes of build 105 adjustment events are not mentioned even once.
 
-## Что говорят пользователи
+## What users say
 
 > By the way, I prefer using Adjustment Event over Track Motion and Track
 > FX. Adjustment Event is at approximately `Post-Compositing Track FX` in
@@ -129,109 +122,106 @@ compositing children дорожки-носителя. То есть ограни
 
 > The setting has does not chnage anything. The video frames are still in
 > the background and the preview is very slow.
-> — harold.linke о «Composite over Checkboard» для Title Studio на
-> adjustment-событии, 17.05.2026,
+> — harold.linke about "Composite over Checkboard" for Title Studio on an
+> adjustment event, 17.05.2026,
 > https://forum.borisfx.com/t/title-studio-composite-over-checkerboard-not-working-for-adjustment-events-and-fx-on-video-clip/23568
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-Прямой аналог — морфер: `MorpherEvent` в
-`src/libs/kt-model/src/project.rs` (структура ~стр. 569,
-`MorphTargets::Below` — «всё, что ниже строки»), применяется в
-`Project::effective_clips()` (там же, ~стр. 2948) до построения плана,
-кумулятивно снизу вверх по `(Reverse(row), MorphId)`. Морфер сильнее
-Vegas в трёх местах: живёт на СВОЕЙ фиолетовой дорожке и не отнимает
-видео-дорожку (`LaneKind::Morph` в
-`src/apps/kt-app/src/timeline.rs`); адресуется не только «ниже», но и
-замороженным списком, метками-диапазонами и именованными областями
-(`MorphTargets::Clips/Marks/Areas`); умеет подменять сам ИСТОЧНИК и
-сдвигать `source_in` (`MorphPatch` в том же файле, ~стр. 677), а не
-только вешать FX — то, чего в Vegas нет вовсе. Аудио-цепочка у морфера
-тоже есть (`MorphPatch::audio_fx`), у Vegas аналога нет.
+The direct analogue is the morpher: `MorpherEvent` in
+`src/libs/kt-model/src/project.rs` (the structure at ~line 569,
+`MorphTargets::Below` — "everything below the line"), applied in
+`Project::effective_clips()` (same file, ~line 2948) before the plan is built,
+cumulatively from bottom to top by `(Reverse(row), MorphId)`. The morpher is stronger than
+Vegas in three places: it lives on ITS OWN purple track and does not take up a video track (`LaneKind::Morph` in
+`src/apps/kt-app/src/timeline.rs`); it addresses not only "below" but also a
+frozen list, mark ranges and named areas
+(`MorphTargets::Clips/Marks/Areas`); it can replace the SOURCE itself and
+shift `source_in` (`MorphPatch` in the same file, ~line 677), not
+only hang FX — which Vegas does not have at all. The morpher also has an audio chain
+(`MorphPatch::audio_fx`); Vegas has no analogue.
 
-Механика «силы» у нас построена, но не подключена к морферу:
-непрозрачность события `ClipEvent::opacity` (Р.28 п.12 — линия по верху
-клипа, тянется мышью), уголковые фейды и `alpha_k` слоя в
-`src/libs/kt-engine/src/video_plan.rs`, 16 видов переходов с кривыми в
-`src/libs/kt-engine/src/transitions.rs`, автоматизация `ParamCurve` с
-общим виджетом `src/apps/kt-app/src/automation.rs`.
+The "strength" mechanics we have are built, but not connected to the morpher:
+the opacity of the event `ClipEvent::opacity` (R.28 item 12 — a line along the top of the
+clip, dragged with the mouse), the corner fades and the layer's `alpha_k` in
+`src/libs/kt-engine/src/video_plan.rs`, 16 kinds of transitions with curves in
+`src/libs/kt-engine/src/transitions.rs`, the automation `ParamCurve` with the
+common widget `src/apps/kt-app/src/automation.rs`.
 
-### Чего не хватает
+### What is missing
 
-- Силы наложения. У `MorpherEvent` нет ни поля непрозрачности, ни
-  кривой: `MorphPatch::apply_to()` просто дописывает цепочку
-  (`c.fx.extend(add)`), а редактор передаёт `auto: None` в `ChainEdit`
-  (`src/apps/kt-app/src/morpher_editor.rs`, ~стр. 380). Наложение
-  бинарное — ровно то расхождение, с которого п.245 и начался.
-- Фейдов по краям блока и трима. `Drag::Morph` в
-  `src/apps/kt-app/src/timeline.rs` меняет только `start`; команд
-  тримa/сплита морфера в `src/libs/kt-model/src/model.rs` нет
-  (`AddMorpher`/`SetMorpher`/`RemoveMorpher`/`BakeMorpher`), длина
-  правится только числом в окне.
-- Обработки СМИКШИРОВАННОГО кадра. У нас FX считаются пер-слой, а
-  композит (`alpha_over`/`dissolve`) идёт после них — `PlanLayer` в
-  `src/libs/kt-engine/src/video_plan.rs`. Морфер поэтому не «слой над
-  картинкой», а массовая правка клипов: маска по площади кадра и грейд
-  поверх PiP-раскладки в этой модели невыразимы.
+- Blend strength. `MorpherEvent` has neither an opacity field nor
+  a curve: `MorphPatch::apply_to()` simply appends the chain
+  (`c.fx.extend(add)`), and the editor passes `auto: None` into `ChainEdit`
+  (`src/apps/kt-app/src/morpher_editor.rs`, ~line 380). The blending
+  is binary — exactly the discrepancy with which item 245 began.
+- Fades at the edges of the block and trim. `Drag::Morph` in
+  `src/apps/kt-app/src/timeline.rs` changes only `start`; there are no trim/split
+  commands for the morpher in `src/libs/kt-model/src/model.rs`
+  (`AddMorpher`/`SetMorpher`/`RemoveMorpher`/`BakeMorpher`), the length is edited only
+  by a number in the window.
+- Processing of the MIXED frame. For us the FX are computed per layer, and the
+  composite (`alpha_over`/`dissolve`) comes after them — `PlanLayer` in
+  `src/libs/kt-engine/src/video_plan.rs`. Therefore the morpher is not a "layer over the
+  picture" but a mass edit of clips: a mask by the area of the frame and a grade
+  over a PiP layout are inexpressible in this model.
 
-### Что мешает
+### What gets in the way
 
-Не объём кода, а место в конвейере. Стадия «FX над готовым композитом»
-обязана появиться внутри `VideoRenderer::frame_plan`
-(`src/libs/kt-engine/src/video.rs`) и быть исполнена ОБОИМИ
-исполнителями — CPU `compose_plan_cpu` и GPU из `src/libs/kt-gpu/`;
-иначе это второй путь рендеринга. Дальше упирается в кэш: пост-FX
-мемоизация адресуется `SourceId` + `fx_hash` слоя
-(`src/libs/kt-cache`), а у композита источника нет — нужен новый вид
-ключа, и он же определяет полоски прогретости. Ползунок силы этой
-стадии не требует и упирается только в UI: морф-строка втрое ниже строки
-клипов (`THIN_ROW_DIV` в `src/apps/kt-app/src/timeline.rs`), и линии
-уровня с уголками-фейдами там физически негде жить в том же виде, что у
-клипа.
+It is not the amount of code but the place in the pipeline. The stage "FX over the finished composite"
+must appear inside `VideoRenderer::frame_plan`
+(`src/libs/kt-engine/src/video.rs`) and be executed by BOTH
+executors — the CPU `compose_plan_cpu` and the GPU from `src/libs/kt-gpu/`;
+otherwise it is a second rendering path. Further, it runs into the cache: the post-FX
+memoization is addressed by `SourceId` + the layer's `fx_hash`
+(`src/libs/kt-cache`), while the source's composite has none — a new kind of
+key is needed, and it also determines the coverage bars. The strength slider of this
+stage does not require it and runs only into the UI: the morph row is three times lower than the row of
+clips (`THIN_ROW_DIV` in `src/apps/kt-app/src/timeline.rs`), and the level lines
+with corner fades physically have nowhere to live in the same form as on a
+clip.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Корневой `CLAUDE.md`: №7 (код композиции один — стадия над композитом
-пишется в `frame_plan`, а не в бэкенд; на одном бэкенде превью ==
-экспорт байт-в-байт), №4 (кэш — единственная правда о coverage: новый
-вид пост-FX ключа), №11 (детерминизм: GOLDEN_VIDEO обязан остаться
-нетронутым при силе 1.0, кросс-бэкенд — только через
-`kt_gpu::assert_frames_close`). Аудио-сторона морфера дополнительно
-задевает №2 — сила аудио-наложения не может считаться нигде, кроме
-аудио-render-потока. Правила UI `src/apps/kt-app/CLAUDE.md`: 13 (не
-тратить место впустую — тонкая морф-строка), 17 (парные способы: сила
-должна ставиться и мышью по блоку, и числом в окне), 20 (ничего не
-отрастает само — фейд не появляется у морфера сам по себе).
+Root `CLAUDE.md`: No. 7 (the composition code is one — the stage over the composite is
+written in `frame_plan`, not in a backend; on one backend preview ==
+export byte for byte), No. 4 (the cache is the only truth about coverage: a new
+kind of post-FX key), No. 11 (determinism: GOLDEN_VIDEO must remain
+untouched at strength 1.0, cross-backend — only via
+`kt_gpu::assert_frames_close`). The audio side of the morpher additionally
+touches No. 2 — the audio blend strength cannot be computed anywhere except
+the audio-render thread. UI rules in `src/apps/kt-app/CLAUDE.md`: 13 (do not
+waste space — the thin morph row), 17 (paired ways: the strength
+must be settable both with the mouse on the block and with a number in the window), 20 (nothing
+grows by itself — a fade does not appear on the morpher by itself).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | L — полный паритет тянет на раунд; отдельно «сила наложения + уголковые фейды у морф-блока» — M |
-| Где основная работа | kt-model (поле силы и кривая у `MorpherEvent`), kt-engine (`video_plan` — смешение обработанного с исходным; стадия над композитом), kt-gpu (зеркало смешения), kt-app (линия уровня и уголки на тонкой морф-строке), kt-otio (запись силы) |
-| Формат проекта | нужна новая версия .otio: силу старый ридер потерял бы молча (правило Р.29), сериализация умолчания 1.0 пропускается — старые файлы байт-стабильны |
-| Тесты, которые придётся написать | round-trip модели и .otio с силой; `morpher_render` (t36) — bake == рендер при силе < 1; конформанс CPU↔GPU через `kt_gpu::assert_frames_close`; layout-тест линии уровня и уголков на морф-блоке; `golden_export` без изменений при силе 1.0 |
-| Зависит от | ничего: `ParamCurve`, уровни слоя и уголковые фейды уже есть |
-| Ломает совместимость | нет — умолчание 1.0 воспроизводит текущее поведение |
+| Size | L — full parity is a round; separately "blend strength + corner fades on the morph block" — M |
+| Where the main work is | kt-model (the strength field and the curve of `MorpherEvent`), kt-engine (`video_plan` — blending the processed with the source; the stage over the composite), kt-gpu (the mirror of the blending), kt-app (the level line and corners on the thin morph row), kt-otio (writing the strength) |
+| Project format | a new version of .otio is needed: an old reader would silently lose the strength (rule R.29); the serialisation of the default 1.0 is skipped — old files stay byte-stable |
+| Tests that will have to be written | a round-trip of the model and .otio with the strength; `morpher_render` (t36) — bake == render at strength < 1; CPU↔GPU conformance via `kt_gpu::assert_frames_close`; a layout test of the level line and the corners on the morph block; `golden_export` unchanged at strength 1.0 |
+| Depends on | nothing: `ParamCurve`, the layer levels and the corner fades already exist |
+| Breaks compatibility | no — the default 1.0 reproduces the current behaviour |
 
-## Вердикт
+## Verdict
 
-Берём, но в два приёма. Сила наложения и уголковые фейды у морф-блока —
-прямая просьба пользователя (п.245: «морфер в Vegas позволяет ползунком
-управлять прозрачностью наложения эффектов, а у нас — нет») и работа в
-модели плюс UI, без нового пути рендеринга; сюда же трим блока мышью,
-иначе фейды некуда цеплять. Обработку СМИКШИРОВАННОГО композита нижних
-дорожек в эту заметку не берём: это стадия в `frame_plan` и новый вид
-ключа пост-FX кэша, то есть инварианты 7 и 4 целиком — ей нужна
-отдельная заметка в `morpher/gaps/`. По остальному мы Vegas уже
-обгоняем: своя дорожка вместо украденной видео-дорожки, адресация
-метками и областями, подмена источника и аудио-цепочка.
+We take it, but in two steps. The blend strength and the corner fades on the morph block are
+a direct request from the user (item 245: "the morpher in Vegas lets you control the transparency of the effect blend with a slider, and we do not"), and the work is in the
+model plus the UI, without a new rendering path; the trim of the block with the mouse goes here too,
+otherwise the fades have nowhere to attach. Processing of the MIXED composite of the lower
+tracks we do not take into this note: that is a stage in `frame_plan` and a new kind of
+post-FX cache key, that is, invariants 7 and 4 in full — it needs a separate note in `morpher/gaps/`.
+In everything else we already outpace Vegas: our own track instead of a stolen video track, addressing by
+marks and areas, source replacement, and the audio chain.
 
-## Источники
+## Sources
 
-- https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/adjustmentevents.htm (дата обращения 2026-09-07)
+- https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/adjustmentevents.htm (access date 2026-09-07)
 - https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/adjustmenttracks.htm (2026-09-07)
 - https://forum.borisfx.com/t/revisiting-an-old-bug-with-track-fx-vs-event-fx/25189 (2026-09-07)
 - https://forum.borisfx.com/t/title-studio-composite-over-checkerboard-not-working-for-adjustment-events-and-fx-on-video-clip/23568 (2026-09-07)
@@ -244,6 +234,6 @@ Vegas в трёх местах: живёт на СВОЕЙ фиолетовой 
 - https://support.apple.com/guide/final-cut-pro/add-adjustment-clips-verfda63436e/mac (2026-09-07)
 - https://helpx.adobe.com/premiere/desktop/add-video-effects/apply-video-effects/create-adjustment-layers.html (2026-09-07)
 
-Живьём VEGAS не запускался: механика собрана из официальной справки
-версии 22 и форума Boris FX (треды 2026 г.). Строки Premiere/Resolve/
-FCP/AE — по документации и разборам, без проверки за клавиатурой.
+VEGAS was not run live: the mechanics are compiled from the official help of
+version 22 and the Boris FX forum (threads of 2026). The Premiere/Resolve/
+FCP/AE rows are based on documentation and analyses, without checking at the keyboard.

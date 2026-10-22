@@ -1,131 +1,122 @@
 ---
 id: F-AUT-004
-title: Пресеты эффектов, которые несут анимацию
-status: сделано
+title: Effect presets that carry animation
+status: done
 priority: B
 cost: M
 category: automation/presets
 editors: [premiere-26, vegas-pro-2026, resolve-20, fcp-12, after-effects-26]
-we_have: да
+we_have: yes
 crates: [kt-model, kt-app, kt-otio]
 invariants: [3, 11]
 ui_rules: [4, 17, 20]
-round: "Р.48"
+round: "R.48"
 point: 345
 tests: [344, 345, 346, 347]
 depends_on: [F-AUT-002, F-MPH-008]
 checked: 2026-09-14
 ---
 
-# F-AUT-004 — Пресеты эффектов, которые несут анимацию
+# F-AUT-004 — Effect presets that carry animation
 
-## Суть
+## Essence
 
-Монтажёр один раз выстроил эффект с ключевыми кадрами — наезд на всю длину
-кадра, дрожь на шесть кадров у склейки, выцветание к концу — и хочет положить
-это на сорок других клипов, не повторяя жест сорок раз. Он даёт настройке имя,
-она встаёт в тот же список, откуда берутся штатные эффекты, и переживает
-закрытие проекта. Вопрос не «сохранились ли ползунки», а «сохранилась ли
-АНИМАЦИЯ» — и что она сделает с клипом, у которого своя длина.
+The editor once built an effect with keyframes — a push over the whole length of the frame, a
+six-frame tremor at a cut, a fade toward the end — and wants to put this on forty other clips
+without repeating the gesture forty times. He gives the setting a name, it appears in the same
+list from which the standard effects come, and it survives closing the project. The question is
+not "were the sliders saved" but "was the ANIMATION saved" — and what it will do to a clip that
+has a different length.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| Adobe Premiere | 26.x | Effect Preset (Save Preset…) | правый клик по эффекту в Effect Controls; диалог требует ВЫБРАТЬ один из трёх режимов переноса анимации — Scale / Anchor to In Point / Anchor to Out Point; всё хранится в одном файле профиля `Effect Presets and Custom Items.prfpset` |
-| VEGAS Pro | 2026 | Preset + FX Package (плагин-цепочка) | пресет плагина — снимок ОДНОГО набора значений, ключей не несёт; ключи переезжают только через FX Package («Save As» в Plug-In Chooser) — файл `.sfv` в каталоге пакетов, вместе с порядком цепочки; политики чужой длительности нет вовсе |
-| DaVinci Resolve | 20 | Still / PowerGrade в Gallery | стилл несёт всё дерево нод; режим выбирается НЕ при сохранении, а при применении — правый клик по фону Gallery → Apply Grades Using: Keyframes Aligning Source Timecode / Keyframes Aligning Start Frames / No Keyframes. Растяжения нет ни в одном из трёх |
-| Final Cut Pro | 12 | Effects Preset (Save Effects Preset) | галочками отмечается, какие атрибуты войдут; при наличии ключей — переключатель Stretch to Fit (умолчание) / Maintain Timing; файлы лежат в `~/Library/Application Support/ProApps/Effects Presets/` и попадают в браузер эффектов наравне со штатными |
-| After Effects | 26 | Animation Preset `.ffx` | пакует эффекты, значения, ключи И выражения, но ровно для ОДНОГО слоя; ложится на слой от текущего положения указателя времени — длительность слоя не спрашивается и не учитывается |
+| Adobe Premiere | 26.x | Effect Preset (Save Preset…) | right-click an effect in Effect Controls; the dialog requires choosing one of three modes for carrying the animation over — Scale / Anchor to In Point / Anchor to Out Point; everything is stored in a single profile file `Effect Presets and Custom Items.prfpset` |
+| VEGAS Pro | 2026 | Preset + FX Package (a plug-in chain) | a plug-in preset is a snapshot of ONE set of values, it carries no keys; keys travel only through an FX Package ("Save As" in the Plug-In Chooser) — an `.sfv` file in the packages directory, together with the order of the chain; there is no policy for a foreign duration at all |
+| DaVinci Resolve | 20 | Still / PowerGrade in the Gallery | a still carries the whole tree of nodes; the mode is chosen NOT when saving but when applying — right-click on the Gallery background → Apply Grades Using: Keyframes Aligning Source Timecode / Keyframes Aligning Start Frames / No Keyframes. None of the three has stretching |
+| Final Cut Pro | 12 | Effects Preset (Save Effects Preset) | checkboxes mark which attributes go in; when keys are present — a switch Stretch to Fit (default) / Maintain Timing; the files live in `~/Library/Application Support/ProApps/Effects Presets/` and appear in the effects browser alongside the standard ones |
+| After Effects | 26 | Animation Preset `.ffx` | packs effects, values, keys AND expressions, but for ONE layer only; it is applied to the layer from the current position of the time pointer — the layer's duration is neither asked nor taken into account |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Пресет — это не «ключи», а «ключи ПЛЮС политика чужой длительности», и
-редакторы расходятся в том, ГДЕ эта политика живёт.** Adobe и Apple вшивают её
-в момент СОХРАНЕНИЯ: у Premiere три взаимоисключающих режима (Scale, Anchor to
-In Point, Anchor to Out Point) — выбрать оба якоря сразу нельзя, и это не
-недосмотр, а следствие того, что режим — свойство пресета, а не применения.
-Resolve сделал наоборот: стилл в Gallery всегда несёт ключи как есть, а решение
-принимается в момент ПРИМЕНЕНИЯ, пунктом меню «Apply Grades Using» — по
-исходному таймкоду (для того же материала и его дублей) или по началу события
-(для чужого кадра). Разница практическая: у Adobe библиотека из ста пресетов
-хранит сто вшитых решений, и «тот же пресет, но по-другому» — это второй
-пресет; у Resolve одно решение действует на всё, что применяется дальше, и
-забытый переключатель тихо портит следующие двадцать клипов.
+**1. A preset is not "keys" but "keys PLUS a policy for a foreign duration", and the editors
+differ in WHERE that policy lives.** Adobe and Apple bake it in at the moment of SAVING: in
+Premiere there are three mutually exclusive modes (Scale, Anchor to In Point, Anchor to Out Point)
+— you cannot pick both anchors at once, and this is not an oversight but a consequence of the
+mode being a property of the preset, not of the application. Resolve did the opposite: a still in
+the Gallery always carries its keys as they are, and the decision is made at the moment of
+APPLYING, through the item "Apply Grades Using" — by the source timecode (for the same material
+and its duplicates) or by the start of the event (for a foreign frame). The practical difference:
+at Adobe a library of a hundred presets stores a hundred baked-in decisions, and "the same preset,
+but differently" is a second preset; at Resolve one decision applies to everything applied after
+it, and a forgotten switch quietly spoils the next twenty clips.
 
-**2. Растянуть анимацию можно, но правильно это только для половины пресетов, и
-третьего варианта не существует.** Возьмём пресет, построенный на 4-секундном
-клипе: две секунды движения от начала. Кладём на клип вдвое короче.
-_Scale_ — движение сжимается до секунды: значения целы, темп удвоен. Для «наезд
-на всю длину» это ровно то, что нужно; для «дрожь длиной шесть кадров» — брак,
-дрожь станет трёхкадровой и превратится в щелчок.
-_Anchor to In Point_ — расстояние от входа до первого ключа сохранено, движение
-честные две секунды, но клип кончается на середине жеста: конечного значения
-зритель не увидит никогда.
-_Anchor to Out Point_ — зеркально: ключи отсчитываются от выхода и уезжают
-ЗА точку входа, клип открывается уже посреди движения.
-Ни один из трёх не верен всегда, потому что в одном и том же типе данных живут
-два разных смысла: «анимация НА ВСЮ ДЛИНУ события» и «жест фиксированной
-длительности у края». Отличить их по самим ключам невозможно — их отличает
-намерение автора. Поэтому «просто скопировать ключи» не решение: голый набор
-ключей молчит о том, что делать с чужой длиной, а любое единственное умолчание
-неверно ровно в половине случаев. FCP это признаёт честнее всех — умолчание
-Stretch to Fit, но переключатель Maintain Timing стоит рядом в том же окне.
+**2. Stretching an animation is possible, but correct for only half of the presets, and a third
+variant does not exist.** Take a preset built on a 4-second clip: two seconds of movement from the
+start. We place it on a clip that is half as long. _Scale_ — the movement is compressed into one
+second: the values are intact, the tempo doubles. For "a push over the whole length" this is
+exactly right; for "a six-frame tremor" it is a defect: the tremor becomes three frames and turns
+into a click. _Anchor to In Point_ — the distance from the in point to the first key is kept, the
+movement is an honest two seconds, but the clip ends in the middle of the gesture: the final value
+is never seen by the viewer. _Anchor to Out Point_ — the mirror: the keys are counted from the out
+point and move BEFORE the in point, the clip opens already in the middle of the movement. None of
+the three is always right, because one and the same data type holds two different meanings: "the
+animation over the WHOLE LENGTH of the event" and "a gesture of fixed duration at the edge".
+The keys alone cannot tell them apart — only the author's intention can. Therefore "just copy the
+keys" is not a solution: a bare set of keys is silent about what to do with a foreign length, and
+any single default is wrong in exactly half of the cases. FCP admits this more honestly than the
+others: the default is Stretch to Fit, but the Maintain Timing switch sits next to it in the same
+window.
 
-**3. Vegas показывает, чего стоит отсутствие такой политики.** Там пресет
-плагина физически не умеет держать больше одного набора значений, а ключи
-переезжают только «пакетом» — той же кнопкой, что сохраняет всю цепочку. Пакет
-кладёт ключи как есть, без всякой привязки к длине, и пользователи двадцать лет
-обходят это сохранением фрагмента проекта в отдельный `.veg` и «Paste Event
-Attributes». Побочный эффект: пакет — единственный способ, и потому в Vegas
-«библиотека анимаций» и «библиотека цепочек» — это один и тот же список, из
-которого нельзя достать один эффект.
+**3. Vegas shows what the absence of such a policy costs.** There a plug-in preset physically cannot
+hold more than one set of values, and keys travel only as a "package" — with the same button that
+saves the whole chain. The package puts the keys in as they are, with no tie to length, and users
+for twenty years have been getting around this by saving a fragment of the project to a separate
+`.veg` file and using "Paste Event Attributes". A side effect: the package is the only way, and so
+in Vegas the "animation library" and the "chain library" are one and the same list, from which one
+effect cannot be extracted.
 
-**4. У AE пресет несёт ВЫРАЖЕНИЯ и вообще не думает о длительности.** `.ffx`
-пакует эффекты, значения, ключи и выражения — но только для одного слоя, и
-ложится от указателя времени. Слой у AE не «кусок материала», его длина —
-свойство слоя, а не пресета, поэтому вопрос «что делать с чужой длиной» там
-просто не задаётся: за подгонку отвечает выражение, которое автор пресета
-написал сам. Это самый мощный и самый непереносимый вариант из пяти.
+**4. AE's preset carries EXPRESSIONS and does not think about duration at all.** The `.ffx` packs
+effects, values, keys and expressions — but only for one layer, and it lands from the time pointer.
+A layer in AE is not a "piece of material", its length is a property of the layer rather than of the
+preset, so the question "what to do with a foreign length" is simply not asked there: the fitting is
+handled by an expression that the author of the preset wrote himself. This is the most powerful and
+the least portable of the five variants.
 
-## Плюсы
+## Pros
 
-- Политика, вшитая в момент сохранения (Premiere, FCP), делает пресет
-  самодостаточным: файл переезжает на чужую машину и ведёт себя там так же, без
-  «а какой у тебя стоит режим применения».
-- Политика, выбираемая при применении (Resolve), позволяет одним стиллом закрыть
-  два сценария — возврат грейда на тот же материал по исходному таймкоду и
-  перенос на чужой кадр по началу события; хранить два стилла не нужно.
-- Именованная библиотека кладёт пользовательскую анимацию в ТОТ ЖЕ список, что
-  и штатные эффекты (FCP — в браузер эффектов, AE — в Effects & Presets
-  подкаталогами-категориями): поиск, категории и способ применения не
-  раздваиваются на «свои» и «чужие».
-- Пресет как отдельный файл на диске (`.ffx` у AE, `.sfv` у Vegas, каталог
-  `Effects Presets` у FCP), а не запись внутри проекта, бэкапится,
-  версионируется и продаётся: вокруг `.ffx` выросла целая индустрия готовых
-  пакетов, чего не случилось бы вокруг записи внутри проекта.
+- A policy baked in at the moment of saving (Premiere, FCP) makes the preset self-sufficient: the file
+  travels to another machine and behaves there the same way, with no "and which mode did you have set
+  for applying".
+- A policy chosen at the moment of applying (Resolve) lets one still cover two scenarios — returning a
+  grade to the same material by its source timecode, and transferring it to a foreign frame by the start
+  of the event; there is no need to keep two stills.
+- A named library puts user animation into THE SAME list as the standard effects (FCP — into the effects
+  browser; AE — into Effects & Presets as subfolders-categories): search, categories and the way of
+  applying do not split into "our own" and "foreign".
+- A preset as a separate file on disk (`.ffx` for AE, `.sfv` for Vegas, the `Effects Presets` directory for
+  FCP), not an entry inside the project, is backed up, versioned and sold: an entire industry of ready-made
+  packs grew around `.ffx`, which would not have happened around an entry inside the project.
 
-## Минусы
+## Cons
 
-- Три режима у Premiere взаимоисключающие: «якорь к входу И к выходу» — то есть
-  «держать края, тянуть середину» — не выражается вовсе, хотя это ровно то, что
-  просят для титров и подложек.
-- Монолитное хранилище наказывает за обновление: у Premiere вся пользовательская
-  библиотека — один файл `Effect Presets and Custom Items.prfpset` в профиле
-  версии, и переход на новую версию (или синхронизация каталога облаком)
-  регулярно оставляет людей без пресетов целиком, а не по одному.
-- Решение при применении (Resolve) — скрытое глобальное состояние: переключатель
-  живёт в контекстном меню фона Gallery, ничего в интерфейсе не напоминает, что
-  он стоит в «No Keyframes», и ошибка обнаруживается на просмотре, а не на
-  применении.
-- Пресет с растяжением ломает всё, что должно идти в реальном времени:
-  растянутая «дрожь» перестаёт быть дрожью, растянутый стробоскоп меняет период.
-  Редакторы не различают параметры, которые можно тянуть по времени, и те,
-  у которых есть собственный период.
-- У Vegas ключи не отделяются от цепочки: чтобы взять из библиотеки один
-  анимированный эффект, приходится притащить пакет целиком и вычистить лишнее.
+- The three Premiere modes are mutually exclusive: "anchor to the in point AND to the out point" — that is,
+  "hold the edges, stretch the middle" — is not expressible at all, although that is exactly what is asked
+  for titles and backgrounds.
+- A monolithic store punishes updates: at Premiere the whole user library is one file, `Effect Presets and
+  Custom Items.prfpset`, in the profile of the version, and a move to a new version (or syncing the catalogue
+  via a cloud) regularly leaves people without their presets entirely, not one at a time.
+- A decision at the moment of applying (Resolve) is a hidden global state: the switch lives in the context menu
+  of the Gallery background, nothing in the interface reminds that it is set to "No Keyframes", and the error
+  is discovered on viewing, not on applying.
+- A preset with stretching breaks everything that must run in real time: a stretched "tremor" stops being a
+  tremor, a stretched strobe changes its period. Editors do not distinguish parameters that can be stretched in
+  time from those that have their own period.
+- At Vegas the keys are not separated from the chain: to take one animated effect from the library, one has to
+  drag in the whole package and clean out the excess.
 
-## Что говорят пользователи
+## What users say
 
 > preset doesnt do that… it only copies 1 position, not the whole animation
 > — Graham Bernard, Creative COW (VEGAS Pro), 04.03.2017,
@@ -145,71 +136,70 @@ Attributes». Побочный эффект: пакет — единственн
 > — Anthony Paglia, Creative COW (Premiere Pro), 14.07.2014,
 > https://creativecow.net/forums/thread/custom-effects-presets-disappeared/
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/automation/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Пресет несёт кривые; вставка цепочки в морфер и в клип — одна команда `append_chain_block`; хранилище пресетов — файл пользователя с проверкой по реестру.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/automation/ — the contract is in `spec.md`, the "why" and the code paths are in `design.md`.
+A preset carries curves; inserting a chain into a morpher and into a clip is one command, `append_chain_block`; the preset store is the user's file, checked against the registry.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2–3 стадии: хранилище именованных блоков, режим переноса, место в пикере |
-| Где основная работа | kt-model (операция над кривой + поле режима в блоке), kt-app (сохранение под именем, пикер, окно выбора режима) |
-| Формат проекта | ПРОЕКТ не трогает: пресет живёт вне `.otio`. Но заводит новое хранилище уровня приложения — вопрос открыт |
-| Тесты, которые придётся написать | round-trip блока с режимом в kt-model; таблица «пресет на клип вдвое короче/длиннее» для трёх режимов (значения и позиции ключей — точные); харнесс-тест пикера с пользовательской записью; регресс на дефект морфера (кривые доезжают) |
-| Зависит от | F-AUT-002 (домен ключа), F-MPH-008 (потеря огибающих в морфере) |
-| Ломает совместимость | нет |
+| Size | M — 2–3 stages: a store of named blocks, a carry-over mode, a place in the picker |
+| Where the main work is | kt-model (curve operation + a mode field in the block), kt-app (saving under a name, the picker, the mode-selection dialog) |
+| Project format | does not touch the PROJECT: the preset lives outside `.otio`. But it introduces a new store at the application level — the question is open |
+| Tests to write | round-trip of a block with a mode in kt-model; a table "preset on a clip half as long / longer" for the three modes (values and key positions are exact); a harness test of the picker with a user record; a regression for the morpher defect (curves get lost) |
+| Depends on | F-AUT-002 (key domain), F-MPH-008 (loss of envelopes in the morpher) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-**Берём, но не первым.** Половина механики уже стоит: блоки в `ops.rs`
-сериализуемы, `rebase` — это готовый «Anchor to In Point», а `fx_registry` —
-готовое место для именованных записей. Не хватает трёх вещей, и все три —
-отдельные решения, а не код: чем растягивать кривую (F-AUT-002), где хранить
-библиотеку и что делать с молчаливой потерей огибающих в морфере (F-MPH-008).
-Заводить библиотеку раньше, чем закрыт F-MPH-008, нельзя: она превратит
-единичную потерю кривых в систематическую.
+**We take it, but not first.** Half of the mechanics already stands: the blocks in `ops.rs` are
+serializable, `rebase` is a ready "Anchor to In Point", and `fx_registry` is a ready place for named
+records. Three things are missing, and all three are separate decisions, not code: how to stretch a
+curve (F-AUT-002), where to keep the library, and what to do about the silent loss of envelopes in the
+morpher (F-MPH-008). Starting the library before F-MPH-008 is closed is not allowed: it would turn an
+isolated loss of curves into a systematic one.
 
-## Источники
+## Sources
 
-- Effect presets в Premiere, три режима переноса (Scale / Anchor to In Point /
+- Effect presets in Premiere, the three carry-over modes (Scale / Anchor to In Point /
   Anchor to Out Point): https://www.premiumbeat.com/blog/create-custom-effect-presets-in-premiere-pro/
-  (дата обращения 2026-09-07)
-- Взаимоисключающие якоря, тред с ответом Community Expert:
+  (accessed 2026-09-07)
+- Mutually exclusive anchors, a thread with an answer from a Community Expert:
   https://community.adobe.com/t5/premiere-pro-discussions/how-to-save-a-preset-with-both-anchor-to-in-point-and-anchor-to-out-point-selected/td-p/13370740
-  (дата обращения 2026-09-07)
-- Ключи пресета не появляются при Anchor to Out / Scale:
+  (accessed 2026-09-07)
+- Keys of a preset do not appear with Anchor to Out / Scale:
   https://community.adobe.com/t5/premiere-pro-discussions/subtitle-presets-are-not-keyframing-correclty/td-p/13900755
-  (дата обращения 2026-09-07)
-- «Scale Attribute Times» в Paste Attributes — родственный механизм Premiere:
+  (accessed 2026-09-07)
+- "Scale Attribute Times" in Paste Attributes — a related Premiere mechanism:
   https://community.adobe.com/t5/premiere-pro-discussions/copy-and-paste-effect-relatively-to-clip-length/m-p/15079185/highlight/true
-  (дата обращения 2026-09-07)
-- Хранилище пресетов Premiere (`Effect Presets and Custom Items.prfpset`) и их
-  пропажа: https://creativecow.net/forums/thread/custom-effects-presets-disappeared/
-  (дата обращения 2026-09-07)
-- Vegas: пресет — снимок одного набора значений, ключи только пакетом:
+  (accessed 2026-09-07)
+- Premiere's preset store (`Effect Presets and Custom Items.prfpset`) and their disappearance:
+  https://creativecow.net/forums/thread/custom-effects-presets-disappeared/
+  (accessed 2026-09-07)
+- Vegas: a preset is a snapshot of one set of values, keys only as a package:
   https://creativecow.net/forums/thread/how-to-save-preset-for-crop-animationae/
-  и https://creativecow.net/forums/thread/saving-multiple-keyframes-in-one-preset/
-  (дата обращения 2026-09-07)
-- Vegas, справка по FX-пакетам (состав пакета; про ключи справка молчит —
-  поведение известно только по форуму):
+  and https://creativecow.net/forums/thread/saving-multiple-keyframes-in-one-preset/
+  (accessed 2026-09-07)
+- Vegas, help on FX packages (the contents of a package; the help is silent about keys — the
+  behaviour is known only from the forum):
   https://help.magix-hub.com/video/vegas/23/en/content/topics/8-design/creating_fx_packages.htm
-  (дата обращения 2026-09-07)
-- FCP: Stretch to Fit / Maintain Timing и каталог `Effects Presets`:
+  (accessed 2026-09-07)
+- FCP: Stretch to Fit / Maintain Timing and the `Effects Presets` directory:
   https://support.apple.com/guide/final-cut-pro/save-video-effects-presets-ver462c2078f/mac
-  (дата обращения 2026-09-07)
-- After Effects: состав `.ffx` (эффекты, значения, ключи, выражения; один слой):
+  (accessed 2026-09-07)
+- After Effects: the contents of `.ffx` (effects, values, keys, expressions; one layer):
   https://helpx.adobe.com/after-effects/using/effects-animation-presets-overview.html
-  (дата обращения 2026-09-07)
-- Resolve: «Apply Grades Using» — Source Timecode / Start Frames / No Keyframes:
+  (accessed 2026-09-07)
+- Resolve: "Apply Grades Using" — Source Timecode / Start Frames / No Keyframes:
   https://davinciresolveclub.com/copy-color-grade-davinci-resolve/
-  (дата обращения 2026-09-07)
-- Resolve: PowerGrade как статичный грейд без ключей и трекинга:
-  https://pixeltoolspost.com/blogs/resolve/powergrades (дата обращения 2026-09-07)
-- Живьём в редакторах не проверялось: Premiere/FCP/AE/Resolve — по официальной
-  справке и форумным тредам, Vegas — по справке и Creative COW.
+  (accessed 2026-09-07)
+- Resolve: PowerGrade as a static grade without keys and tracking:
+  https://pixeltoolspost.com/blogs/resolve/powergrades (accessed 2026-09-07)
+- Not checked live in the editors: Premiere/FCP/AE/Resolve — from the official help and forum
+  threads, Vegas — from the help and Creative COW.
 
-**Реализовано в Р.48** — docs/porting-notes.md пп.342-346 (t342-t347);
-дальнейшая жизнь фичи там. Режимы переноса кривых кроме «вход к входу»
-(Scale, Anchor-Out) остаются за F-AUT-002 — в раунде сделан только тот,
-что уже был канонической механикой копипаста.
+**Implemented in R.48** — docs/porting-notes.md items 342-346 (t342-t347); the further life of the
+feature is recorded there. The carry-over modes other than "in point to in point" (Scale,
+Anchor-Out) remain with F-AUT-002 — the round did only the one that was already the canonical
+mechanic of copy-paste.

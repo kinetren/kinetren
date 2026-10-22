@@ -1,12 +1,12 @@
 ---
 id: F-COL-017
-title: Где живёт замок — в файле, рядом с файлом или в базе
-status: исследовано
+title: Where the lock lives — in the file, next to the file or in a database
+status: researched
 priority: B
 cost: S
 category: collab/claim
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, syncthing-2]
-we_have: нет
+we_have: no
 crates: [kt-model, kt-otio, kt-media, kt-app]
 invariants: []
 ui_rules: []
@@ -19,96 +19,53 @@ services: [premiere-productions, fcp-shared-library, resolve-project-server, syn
 checked: 2026-09-08
 ---
 
-# F-COL-017 — Где живёт замок — в файле, рядом с файлом или в базе
+# F-COL-017 — Where the lock lives — in the file, next to the file or in a database
 
-## Суть
+## Essence
 
-Допустим, занятие решили сделать. Остаётся вопрос, который выглядит технической
-мелочью и на деле решает всё: где физически лежит признак «занято». Мест ровно
-три — внутри самого документа, отдельным файлом рядом с ним, в базе, которой
-документ принадлежит. Монтажёру это видно с той стороны, где болит: замок,
-переживший падение программы, не даёт открыть СВОЙ ЖЕ проект; замок, скопированный
-вместе с папкой, приезжает занятым к тому, кому его отдали; замок, который живёт в
-базе, вместе с базой и отваливается.
+Suppose the claim has been decided to be made. There remains a question that looks like a technical detail and in fact decides everything: where physically the sign "busy" lives. There are exactly three places — inside the document itself, in a separate file next to it, in the database to which the document belongs. The editor sees this from the side where it hurts: a lock that survived a crash of the program does not let him open HIS OWN project; a lock copied together with the folder arrives busy to whoever was given it; a lock that lives in the database falls off together with the database.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет | замка нет нигде: `.veg` — обычный файл, и признака занятости у него не существует ни внутри, ни рядом |
-| Adobe Premiere | 26.x | `.prlock` (Productions) | РЯДОМ: на каждый занятый `.prproj` появляется одноимённый файл `.prlock` с именем учётки; наличие файла и есть весь замок, удаление файла снимает занятие, копирование папки копирует и его |
-| DaVinci Resolve | 21 | замок как поле записи в библиотеке проектов | В БАЗЕ: сам документ живёт записями PostgreSQL, признак «занято» — такое же поле такой же записи; отдельного носителя нет, потому что и отдельного файла нет |
-| Final Cut Pro | 12.3 | скрытые файлы внутри пакета библиотеки | ВНУТРИ: библиотека — пакет-каталог, и служебные файлы занятия лежат в нём же; занять значит записать в библиотеку, а падение оставляет запись, и второй (в том числе ты сам завтра) получает «already in use by …» |
-| After Effects | 26.x | нет | проект AE — файл, замка нет; в Team Projects занятие принадлежит сервису и лежит на его стороне, а не в документе |
+| VEGAS Pro | 2026.0 | none | there is no lock anywhere: `.veg` is an ordinary file, and it has no sign of busyness either inside or next to it |
+| Adobe Premiere | 26.x | `.prlock` (Productions) | NEXT TO: for each busy `.prproj` a same-named `.prlock` file appears with the account name; the presence of the file is the whole lock, deleting the file releases the claim, copying the folder copies it too |
+| DaVinci Resolve | 21 | a lock as a field of a record in the project library | IN THE DATABASE: the document itself lives as PostgreSQL records, the sign "busy" is the same field of the same record; there is no separate carrier, because there is no separate file either |
+| Final Cut Pro | 12.3 | hidden files inside the library package | INSIDE: the library is a package-directory, and the service files of the claim lie in it too; to claim means to write into the library, and a crash leaves the record, and a second person (including yourself tomorrow) gets "already in use by …" |
+| After Effects | 26.x | none | the AE project is a file, there is no lock; in Team Projects the claim belongs to the service and lives on its side, not in the document |
 
-**Вне ядра.** Без Syncthing вопрос «где живёт состояние» не описать: это
-единственная система в нашем реестре, где выбор места сформулирован явно и
-доведён до правила — состояние никогда не попадает в сами данные.
+**Outside the core.** Without Syncthing the question "where does the state live" cannot be described: it is the only system in our registry where the choice of place is formulated explicitly and brought to a rule — state never gets into the data itself.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Syncthing | 2.x | `.stfolder`, `.stignore`, база в каталоге конфигурации | РЯДОМ и НИКОГДА внутри: байты синхронизируемого файла не трогаются вообще, поэтому у файла нет состояния — состояние есть у папки; конфликт не предотвращается, а именуется задним числом переименованием проигравшего |
+| Syncthing | 2.x | `.stfolder`, `.stignore`, a database in the configuration directory | NEXT TO and NEVER inside: the bytes of the synchronized file are not touched at all, therefore the file has no state — the state belongs to the folder; a conflict is not prevented but is named after the fact by renaming the loser |
 
-## Фишка фишки
+## The trick behind it
 
-**Замок ВНУТРИ документа означает, что «занять» = «записать», и этим он
-уничтожает единственное свойство, ради которого документ делают файлом, —
-неизменность байтов, пока ты ничего не менял.** Открыл проект — и файл на диске уже
-другой: другая длина, другой mtime, другая контрольная сумма. Все последствия
-сыплются оттуда: система резервного копирования видит изменение там, где правки не
-было; синхронизатор папок разносит «изменённый» файл по узлам; сравнение двух
-версий показывает разницу, которой нет; а падение оставляет занятие внутри
-документа навсегда — снять его можно только правкой самого документа. Именно
-поэтому все файловые редакторы кладут замок РЯДОМ, а базные — в базу, и ни один не
-кладёт его внутрь. Единственное исключение — Final Cut, и оно кажущееся: его
-библиотека не файл, а каталог-пакет, то есть служебный файл там всё равно лежит
-рядом, просто внутри общей обёртки. Цену этого исключения видно в единственной
-форме, в какой она вообще бывает видна пользователю: после падения человека не
-пускает в его собственную библиотеку его собственное имя.
+**A lock INSIDE the document means that "to claim" = "to write", and by this it destroys the only property for whose sake a document is made a file — the immutability of the bytes while you have changed nothing.** You opened the project — and the file on disk is already different: another length, another mtime, another checksum. All consequences pour from there: the backup system sees a change where there was no edit; the folder synchronizer spreads the "changed" file across the nodes; a comparison of two versions shows a difference that does not exist; and a crash leaves the claim inside the document forever — it can be removed only by editing the document itself. Precisely for this reason all file editors put the lock NEXT TO it, and database ones put it into the database, and none puts it inside. The only exception is Final Cut, and it is apparent: its library is not a file but a package-directory, that is, the service file still lies next to the rest, simply inside a common wrapper. The price of this exception is visible in the only form in which it is visible to the user at all: after a crash, the person is not let into his own library by his own name.
 
-**Второй слой: замок рядом наследует все свойства обычного файла — и хорошие, и
-плохие.** Он копируется вместе с папкой (Productions переносит занятие в копию),
-он не удаляется при аварийном выходе (падение оставляет `.prlock`), он снимается
-руками из проводника — то есть замок, о котором программа не знает, что он её.
-Обратная сторона та же: именно потому, что это обычный файл, его можно удалить, не
-трогая работу. Замок внутри документа так снять нельзя.
+**The second layer: a lock next to the document inherits all properties of an ordinary file — both good and bad.** It is copied together with the folder (Productions carries the claim into the copy), it is not removed on abnormal exit (a crash leaves `.prlock`), it is removed by hand from Explorer — that is, a lock the program does not know is its own. The reverse side is the same: precisely because it is an ordinary file, it can be deleted without touching the work. A lock inside the document cannot be removed that way.
 
-**Третий слой, который редко замечают: место замка задаёт, что происходит при
-рассинхронизации ЧАСОВ.** У Productions известный класс отказов лечится
-синхронизацией часов машин: признак занятости лежит в файловой системе, и решение
-«занято или нет» принимается по её метаданным, а не по содержимому. Замок в базе
-от часов не зависит вовсе — там время одно, серверное. Это второе (после
-байт-стабильности) свойство, по которому выбор места нельзя отложить «на потом»:
-он определяет, чем именно программа будет ошибаться.
+**The third layer, which is rarely noticed: the place of the lock determines what happens when the CLOCKS are out of sync.** Productions has a known class of failures that is cured by synchronizing the clocks of the machines: the sign of busyness lies in the file system, and the decision "busy or not" is made from its metadata, not from the content. A lock in the database does not depend on clocks at all — there the time is one, the server's. This is the second property (after byte-stability) by which the choice of place cannot be postponed "for later": it determines what exactly the program will be wrong about.
 
-## Плюсы
+## Pros
 
-- Замок рядом не трогает документ: файл проекта остаётся байт-в-байт тем же, что
-  и был, и все инструменты, которые про него ничего не знают (резервное
-  копирование, git, синхронизация папок), продолжают работать правильно.
-- Замок рядом снимается без программы — тем же способом, каким удаляют любой файл;
-  в отрасли это фактический протокол восстановления после падения.
-- Замок в базе снимает вопрос целиком: у документа нет отдельного носителя, потому
-  что нет и отдельного документа. Заодно исчезает класс «замок остался, а хозяина
-  нет»: сессию видно самой базе.
-- Место замка можно менять, не меняя формат документа, — ровно потому, что он вне
-  документа.
+- A lock next to the document does not touch the document: the project file stays byte-for-byte the same as it was, and all tools that know nothing about it (backup, git, folder synchronization) continue to work correctly.
+- A lock next to the document is removed without the program — by the same means by which any file is deleted; in the industry this is the factual protocol of recovery after a crash.
+- A lock in the database removes the question entirely: the document has no separate carrier, because there is no separate document either. At the same time the class "the lock remained, but the owner is gone" disappears: the session is visible to the database itself.
+- The place of the lock can be changed without changing the document format — precisely because it is outside the document.
 
-## Минусы
+## Cons
 
-- Замок рядом — это второй файл, а значит вторая история отказов: не скопировался,
-  скопировался лишний раз, не удалился после падения, удалён посторонним.
-- Замок рядом не переживает переупаковки: отдать проект архивом или через
-  файлообменник значит отдать его вместе с занятием либо потерять занятие молча.
-- Замок в базе требует базы, то есть сервера, учётных записей и администрирования;
-  это самое дорогое из трёх мест и единственное, которое нельзя завести в одиночку.
-- Замок внутри документа не имеет ни одного плюса, кроме кажущейся простоты: он
-  ломает байт-стабильность, переживает падение и не снимается ничем, кроме правки
-  самого документа.
+- A lock next to the document is a second file, and therefore a second history of failures: not copied, copied one time too many, not removed after a crash, removed by an outsider.
+- A lock next to the document does not survive repackaging: handing the project over as an archive or through a file-sharing service means handing it over together with the claim, or silently losing the claim.
+- A lock in the database requires a database, that is, a server, user accounts and administration; this is the most expensive of the three places and the only one that cannot be set up alone.
+- A lock inside the document has not a single advantage except apparent simplicity: it breaks byte-stability, survives a crash, and is not removed by anything except an edit of the document itself.
 
-## Что говорят пользователи
+## What users say
 
-Замок рядом — обычный файл, и обращаются с ним как с обычным файлом:
+A lock next to the document is an ordinary file, and it is handled as an ordinary file:
 
 > But when I open the sequence in the copied project, a prlock file is generated
 > and the name of the account pops back into the Project Locked column in the
@@ -116,140 +73,81 @@ checked: 2026-09-08
 > — lori_petersen_waite, 31.01.2023,
 > https://community.adobe.com/t5/premiere-pro-discussions/productions-prlock/m-p/13543552
 
-Замок внутри документа отвечает единственной формулировкой, в которой видно, что
-занял тебя ты сам, — после падения программы:
+A lock inside the document answers with the only wording in which it is visible that you yourself took it — after a crash of the program:
 
 > The operation couldn't be completed. Permission denied, "[library name]" is
 > already in use by "[my name]" on "macintosh-d49a2006fa98.local".
-> — David Shore, «"[Library] is already in use."», Creative COW, 18.10.2017,
+> — David Shore, "\"[Library] is already in use.\"", Creative COW, 18.10.2017,
 > https://creativecow.net/forums/thread/library-is-already-in-use/
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- Документ — один текстовый файл OpenTimelineIO, и его байтовая стабильность
-  проверяется тестом: t144 (`src/libs/kt-otio/tests/format.rs:141`) требует
-  `write(parse(write(x))) == write(x)` и на нашем, и на чужом документе. Любое
-  поле, которое меняется от ОТКРЫТИЯ файла, ломает это свойство не в теории, а в
-  конкретном ассерте.
-- Наша секция в чужом формате — `metadata.kt` (`src/libs/kt-otio/src/meta.rs`):
-  единственное место, куда «занято» технически влезло бы, — и одновременно
-  единственное место, которое обязано выдерживать круг без изменений.
-- Прецедент состояния сеанса ВНУТРИ документа уже есть, и он ровно один: регион и
-  loop (`KtTransport`, `src/libs/kt-otio/src/meta.rs:126`) плюс вьюпорт (`ui`).
-  Правила у него специальные: t96 (`src/apps/kt-app/src/layout_tests.rs:550`)
-  требует, чтобы такие «правки удобства» НЕ поднимали звёздочку и НЕ запускали
-  автосейв — они доезжают на диск попутно, вместе с ближайшей правкой содержимого.
-- Место «рядом с проектом» у нас занято и объявлено кэшем:
-  `<project>.ktindex.db` (`src/libs/kt-media/src/index.rs`) при ЛЮБОЙ ошибке
-  открытия удаляется и создаётся заново, и в F-COL-002 это зафиксировано решением
-  «sidecar не станет местом для данных».
-- Сторожа занятия нет: `write_project_guarded` (`src/apps/kt-app/src/app.rs:5036`)
-  сравнивает ревизию модели в памяти нашего процесса, а `flock`, `create_new`,
-  проверка mtime и однократный запуск в коде не встречаются ни разу.
+- The document is one text file of OpenTimelineIO, and its byte-stability is checked by a test: t144 (`src/libs/kt-otio/tests/format.rs:141`) requires `write(parse(write(x))) == write(x)` both on our document and on a foreign one. Any field that changes from OPENING the file breaks this property not in theory but in a concrete assert.
+- Our section in the foreign format — `metadata.kt` (`src/libs/kt-otio/src/meta.rs`): the only place where "busy" would technically fit — and at the same time the only place that is obliged to survive the round trip without changes.
+- A precedent for session state INSIDE the document already exists, and there is exactly one: the region and loop (`KtTransport`, `src/libs/kt-otio/src/meta.rs:126`) plus the viewport (`ui`). Its rules are special: t96 (`src/apps/kt-app/src/layout_tests.rs:550`) requires that such "convenience edits" do NOT raise the asterisk and do NOT trigger autosave — they reach the disk incidentally, together with the nearest edit of content.
+- The place "next to the project" is already occupied with us and declared a cache: `<project>.ktindex.db` (`src/libs/kt-media/src/index.rs`) on ANY opening error is deleted and created anew, and in F-COL-002 this is recorded by the decision "a sidecar will not become a place for data".
+- There is no guard of the claim: `write_project_guarded` (`src/apps/kt-app/src/app.rs:5036`) compares the model revision in the memory of our process, while `flock`, `create_new`, a check of mtime and a single launch do not occur in the code even once.
 
-БЕЗ СЕТИ: ВЫРОЖДАЕТСЯ — `src/libs/kt-model/src/model.rs:437` — вопрос «где живёт замок» вырождается в уже отвеченный вопрос «где живёт состояние сеанса»: регион, loop и вьюпорт лежат ВНУТРИ документа, вне undo и вне звёздочки, и доезжают на диск попутно. Занятие в этом же месте меняло бы байты файла, ничего не меняя в монтаже, и сохранялось бы неизвестно когда — то есть заведомо позже, чем нужно замку.
+OFFLINE: DEGENERATES — `src/libs/kt-model/src/model.rs:437` — the question "where does the lock live" degenerates into the already answered question "where does the session state live": the region, loop and viewport lie INSIDE the document, outside undo and outside the asterisk, and reach the disk incidentally. A claim in this same place would change the bytes of the file without changing anything in the editing, and would be saved at an unknown time — that is, certainly later than the lock needs.
 
-ЦЕНА СЕТИ: замок обязан лежать там, где его читает ВТОРОЙ, а не там, где его переписывает первый, — учётная запись — занявшему нужно имя, переживающее его процесс: у Final Cut в сообщении стоят учётка и имя машины, и без них замок не отличает чужого от собственного вчерашнего.
+NETWORK COST: the lock must lie where it is read by the SECOND person, not where it is rewritten by the first — the user account — the one who took it needs a name that survives his process: Final Cut's message contains the account and the machine name, and without them the lock does not distinguish a stranger's from one's own yesterday's.
 
-ЦЕНА СЕТИ: носитель занятия, который переживает не только процесс, но и переупаковку проекта, — проект-как-база — единственный существующий сегодня спутник, `.ktindex.db`, по доктрине кэша удаляется при любой непонятой ошибке открытия, а любой новый файл рядом уезжает и приезжает вместе с папкой, поэтому «занято» без владельца записи живёт ровно до первого копирования.
+NETWORK COST: the carrier of the claim that survives not only the process but also the repackaging of the project — project-as-database — the only companion that exists today, `.ktindex.db`, by the doctrine of the cache is deleted on any misunderstood opening error, and any new file next to it travels away and comes back together with the folder, therefore "busy" without an owner of the record lives exactly until the first copying.
 
-### Чего не хватает
+### What is missing
 
-- Ничего, что стоило бы завести сейчас: замка нет, потому что нет второго
-  участника. Не хватает записанного РЕШЕНИЯ о месте — без него первая же попытка
-  сделать «занято» пойдёт по пути наименьшего сопротивления, то есть в
-  `metadata.kt`, где уже лежат регион и вьюпорт.
-- Отдельно не хватает того, что нужно и в одиночку: обнаружения внешнего изменения
-  файла проекта (`kt-app` не читает mtime нигде). Это не замок, но это тот же
-  вопрос — «кто ещё писал в мой файл», и он к сети отношения не имеет.
+- Nothing that would be worth setting up now: there is no lock, because there is no second participant. What is missing is a recorded DECISION about the place — without it the very first attempt to make "busy" will go by the path of least resistance, that is, into `metadata.kt`, where the region and the viewport already lie.
+- Separately, what is needed even alone is missing: detection of an external change to the project file (`kt-app` does not read mtime anywhere). This is not a lock, but it is the same question — "who else wrote into my file" — and it has no relation to the network.
 
-### Что мешает
+### What gets in the way
 
-Не техника, а уже принятые решения, которые сужают выбор до одного варианта. Внутри
-документа нельзя — там байт-стабильность круга (t144) и правило «удобства не грязнят
-проект» (t96): признак занятости обязан попадать на диск НЕМЕДЛЕННО, а всё, что лежит
-в этой части документа, попадает туда попутно, вместе с ближайшей правкой содержимого.
-В существующий спутник нельзя — там доктрина кэша: `.ktindex.db` удаляется при любой
-непонятой ошибке открытия (F-COL-002), и носитель занятия в таком месте
-самоуничтожается. В базу нельзя — базы нет, и она требует второго участника. Остаётся
-ровно одно место: ОТДЕЛЬНЫЙ файл-объявление рядом с проектом, ничей кэш и не часть
-документа, — то самое, к которому независимо приходит F-COL-013.
+Not the technology, but decisions already taken that narrow the choice to one variant. Inside the document it is not allowed — there is the byte-stability of the round trip (t144) and the rule "convenience does not dirty the project" (t96): the sign of busyness must get onto the disk IMMEDIATELY, and everything that lies in this part of the document gets there incidentally, together with the nearest edit of content. Into the existing companion it is not allowed — there is the cache doctrine: `.ktindex.db` is deleted on any misunderstood opening error (F-COL-002), and a carrier of the claim in such a place would destroy itself. Into the database it is not allowed — there is no database, and it requires a second participant. Exactly one place remains: a SEPARATE declaration file next to the project, nobody's cache and not part of the document — the very one to which F-COL-013 arrives independently.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Ни одного из двенадцати. Задевает два регресс-теста, и оба — как ограничители, а не
-как предмет правки: t144 (идемпотентность записи) и t96 (правки удобства не грязнят
-проект и не запускают автосейв).
+None of the twelve. It touches two regression tests, and both as limiters, not as the subject of editing: t144 (idempotence of the write) and t96 (convenience edits do not dirty the project and do not trigger autosave).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — сегодня это одно записанное решение о месте; сам замок без второго участника не начинается |
-| Где основная работа | kt-otio (граница `metadata.kt`), kt-media (правило жизни файла-спутника), kt-app (единственный писатель проекта) |
-| Формат проекта | не трогает и не должен: место замка выбрано ВНЕ документа именно для этого |
-| Тесты, которые придётся написать | ни одного нового: t144 и t96 уже стерегут обе закрытые двери |
-| Зависит от | F-COL-002 (правило жизни файла-спутника), F-COL-013 (объявление рядом с файлом), F-COL-016 (что именно занимается) |
-| Ломает совместимость | нет |
+| Volume | S — today this is one recorded decision about the place; the lock itself does not start without a second participant |
+| Where the main work is | kt-otio (the boundary of `metadata.kt`), kt-media (the rule of life of the companion file), kt-app (the only writer of the project) |
+| Project format | does not touch it and must not: the place of the lock was chosen OUTSIDE the document precisely for this |
+| Tests that will have to be written | none new: t144 and t96 already guard both closed doors |
+| Depends on | F-COL-002 (the rule of life of the companion file), F-COL-013 (a declaration next to the file), F-COL-016 (what exactly is claimed) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Замок не заводим — второго участника нет. Но заметка нужна ради решения, которое
-дешевле принять сейчас, чем откатывать потом: **`metadata.kt` для признака занятости
-закрыт**. Причина не вкусовая и проверяется тестом: занятие внутри документа
-означает, что открытие файла меняет его байты, а у нас байт-стабильность круга —
-проверяемое свойство формата (t144) и главный аргумент переносимости (F-COL-007).
-Вторая дверь закрыта нашим же решением из F-COL-002: в существующий спутник
-`.ktindex.db` класть нельзя ничего, что не пересчитывается, — он объявлен кэшем и
-удаляется при любой непонятой ошибке. Третья, база, требует того самого второго
-участника. То есть вопрос «где живёт замок» решается ДО постановки задачи и имеет
-ровно один ответ — отдельный файл-объявление рядом с проектом; тем ценнее, что
-F-COL-013 приходит к нему же с другой стороны, от двух наших собственных процессов.
+We do not set up the lock — there is no second participant. But the note is needed for the sake of a decision that is cheaper to take now than to roll back later: **`metadata.kt` is closed for the sign of busyness**. The reason is not a matter of taste and is verified by a test: a claim inside the document means that opening the file changes its bytes, and for us the byte-stability of the round trip is a verifiable property of the format (t144) and the main argument for portability (F-COL-007). The second door is closed by our own decision from F-COL-002: into the existing companion `.ktindex.db` nothing may be put that is not recomputed — it is declared a cache and is deleted on any misunderstood error. The third, the database, requires that very second participant. That is, the question "where does the lock live" is settled BEFORE the task is posed and has exactly one answer — a separate declaration file next to the project; the more valuable because F-COL-013 arrives at it too, from the other side, from our own two processes.
 
-Побочный вывод, годный уже сегодня и без всякого замка: мы — единственный писатель
-своего файла только по договорённости с самими собой. `write_project_guarded`
-сторожит нас от нашего же фонового автосейва и ничего не знает о втором процессе, а
-внешняя правка открытого проекта у нас уже возможна (kt-cli пишет тот же файл;
-F-EXT-002 честно называет это небезопасным). Дешёвая половина здесь — не занять
-файл, а ЗАМЕТИТЬ, что его тронули.
+A side conclusion, valid already today and without any lock: we are the only writer of our file only by agreement with ourselves. `write_project_guarded` guards us from our own background autosave and knows nothing about a second process, and an external edit of an open project is already possible with us (kt-cli writes the same file; F-EXT-002 honestly calls this unsafe). The cheap half here is not to occupy the file, but to NOTICE that it has been touched.
 
-Чем отличаемся от соседей. **F-COL-013** (два процесса над одним файлом проекта) —
-про то, что объявление рядом с файлом нам нужно уже сегодня и почему блокировка ядра
-для этого непригодна; здесь предмет уже: перебор ВСЕХ ТРЁХ мест и доказательство, что
-две двери из трёх закрыты нашими собственными решениями, а не отсутствием второго
-человека. **F-COL-014** (замок, переживший владельца) — про снятие и право отъёма,
-то есть про жизнь замка ПОСЛЕ того, как место выбрано. **F-COL-002** (служебное рядом
-с проектом) — про файл-спутник как кэш и про его гибель на общем диске; здесь спутник
-рассматривается как кандидат на место, и решение оттуда используется как готовый
-ответ. **F-COL-016** — про то, ЧТО занимается (единица), здесь — про то, ГДЕ лежит
-признак. **F-RES-002** (атомарная запись и fsync) — про то, как байты попадают на
-диск; здесь — про то, какие байты вообще имеют право появиться в документе.
-**F-RES-001** (автосейв и версии) — про второе состояние на диске для ОДНОГО
-человека.
+How we differ from our neighbors. **F-COL-013** (two processes over one project file) is about the fact that a declaration next to the file is needed by us already today and why a kernel lock is unsuitable for this; here the subject is already the enumeration of ALL THREE places and the proof that two doors out of three are closed by our own decisions, not by the absence of a second person. **F-COL-014** (a lock that outlived its owner) is about removal and the right of seizure, that is, about the life of the lock AFTER the place has been chosen. **F-COL-002** (the companion next to the project) is about the companion file as a cache and about its death on a shared disk; here the companion is considered as a candidate for the place, and the decision from there is used as a ready answer. **F-COL-016** is about WHAT is claimed (the unit); here it is about WHERE the sign lies. **F-RES-002** (atomic write and fsync) is about how the bytes get onto the disk; here it is about which bytes have the right to appear in the document at all. **F-RES-001** (autosave and versions) is about a second state on disk for ONE person.
 
-## Источники
+## Sources
 
 - https://community.adobe.com/t5/premiere-pro-discussions/productions-prlock/m-p/13543552
-  — `.prlock` рядом с `.prproj`, копирование папки и удаление файла как способ снять
-  замок (31.01.2023, дата обращения 2026-09-08)
+  — `.prlock` next to `.prproj`, copying the folder and deleting the file as a way to release
+  the lock (31.01.2023, access date 2026-09-08)
 - https://community.adobe.com/t5/premiere-pro-discussions/issue-with-productions-showing-projects-as-locked-when-they-are-not/td-p/14579493
-  — «проекты показаны занятыми, хотя не заняты»: остаточные файлы замка и
-  рассинхронизация часов машин (дата обращения 2026-09-08)
-- https://creativecow.net/forums/thread/library-is-already-in-use/ — занятие внутри
-  пакета библиотеки Final Cut и сообщение с собственным именем после падения
-  (18.10.2017, дата обращения 2026-09-08)
-- https://docs.syncthing.net/users/syncing.html — модель, где состояние никогда не
-  попадает в сами данные, а конфликт именуется задним числом (дата обращения
-  2026-09-08)
-- Места и типы носителей сведены в `docs/features/_services.md`: `общая папка`
-  (замок рядом с файлом), `свой сервер` и `сервис` (замок в базе).
-- Строки VEGAS и After Effects отражают отсутствие механизма; публичного трекера нет
-  ни у одного из пяти (`docs/features/_trackers.md`, «Кого НЕ берём»).
-- Наш код и тесты проверены грепом по `src/` 08.09.2026: `kt-otio/src/meta.rs`
-  (`KtTransport`, секция `kt`), `kt-otio/tests/format.rs` (t144),
+  — "projects shown as busy although they are not busy": residual lock files and
+  clock desynchronization of the machines (access date 2026-09-08)
+- https://creativecow.net/forums/thread/library-is-already-in-use/ — a claim inside the
+  Final Cut library package and the message with one's own name after a crash
+  (18.10.2017, access date 2026-09-08)
+- https://docs.syncthing.net/users/syncing.html — the model where state never gets into the
+  data itself, and a conflict is named after the fact (access date 2026-09-08)
+- The places and carrier types are summarized in `docs/features/_services.md`: `shared folder`
+  (a lock next to the file), `own server` and `service` (a lock in the database).
+- The VEGAS and After Effects rows reflect the absence of a mechanism; none of the five has a public tracker
+  (`docs/features/_trackers.md`, "Whom we do NOT take").
+- Our code and tests were checked by grep over `src/` on 08.09.2026: `kt-otio/src/meta.rs`
+  (`KtTransport`, section `kt`), `kt-otio/tests/format.rs` (t144),
   `kt-model/src/model.rs` (`set_region`, `set_loop_enabled`, `set_ui_state`),
   `kt-app/src/layout_tests.rs` (t96), `kt-app/src/app.rs`
-  (`write_project_guarded`), `kt-media/src/index.rs` (удаление базы при ошибке
-  открытия).
+  (`write_project_guarded`), `kt-media/src/index.rs` (deletion of the database on an opening
+  error).

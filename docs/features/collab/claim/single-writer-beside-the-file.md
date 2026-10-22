@@ -1,12 +1,12 @@
 ---
 id: F-COL-013
-title: Два процесса над одним файлом проекта
-status: кандидат
+title: Two processes on one project file
+status: candidate
 priority: B
 cost: S
 category: collab/claim
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, sqlite-3.50]
-we_have: частично
+we_have: partial
 crates: [kt-app, kt-cli, kt-otio]
 invariants: []
 ui_rules: [12]
@@ -19,231 +19,153 @@ services: [premiere-productions, fcp-shared-library, resolve-project-server]
 checked: 2026-09-08
 ---
 
-# F-COL-013 — Два процесса над одним файлом проекта
+# F-COL-013 — Two processes on one project file
 
-## Суть
+## Essence
 
-Один документ, два открывших. Вопрос не «как слить правки» (сливать не умеет
-никто), а как второй узнаёт, что первый уже внутри, — ДО того как оба сохранят.
-Отраслевой ответ дан задолго до облаков и работает вовсе без сервера: рядом с
-документом кладётся файл-объявление «занято», и его существование — весь
-протокол. Монтажёр видит это как замок на иконке проекта и подпись, чья машина
-держит; ничего больше в механизме нет.
+One document, two openers. The question is not "how to merge edits" (nobody knows how to merge), but how the second
+one learns that the first one is already inside — BEFORE both save. The industry answer was given long before the clouds
+and works entirely without a server: next to the document a declaration file "occupied" is placed, and its existence is
+the whole protocol. The editor sees it as a lock on the project icon and a caption naming whose machine holds it; nothing
+more exists in the mechanism.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет | второй экземпляр открывает тот же `.veg` свободно, рядом с проектом ничего не появляется; выигрывает тот, кто сохранил последним, и узнаётся это по содержимому, а не по сообщению [НЕ ПРОВЕРЕНО живьём: механизм отсутствует и в списке возможностей, и в справке] |
-| Adobe Premiere | 26.x | Productions, файл `.prlock` | **сервера у Productions нет вовсе**: занятие выражено файлом `<имя>.prlock` рядом с `.prproj` в общей папке. Появляется при открытии проекта, исчезает при закрытии; внутри — машина и пользователь, то есть замок называет ХОЗЯИНА, а не сессию |
-| DaVinci Resolve | 21 | Collaboration, disk database / PostgreSQL | проект перестаёт быть файлом: занимается ЗАПИСЬ базы, и порознь — бин и таймлайн. Формулировка вендора: «Bins and timelines are "read only" until unlocked by the current user» |
-| Final Cut Pro | 12.3 | эксклюзивный замок библиотеки | единица занятия — вся библиотека целиком; второму не достаётся даже режима просмотра: «The document [Library name] is already in use by [user] on [Mac].local» |
-| After Effects | 26.x | на уровне файла нет | `.aep` не занимается ничем; занятие появляется только внутри Team Projects, то есть при живом сервере — бессерверной половины у Adobe в AE не осталось [НЕ ПРОВЕРЕНО живьём] |
+| VEGAS Pro | 2026.0 | none | a second instance opens the same `.veg` freely, nothing appears next to the project; the one who saved last wins, and this is recognized by the content, not by a message [NOT VERIFIED live: the mechanism is absent both from the feature list and from the help] |
+| Adobe Premiere | 26.x | Productions, the `.prlock` file | **Productions has no server at all**: the occupation is expressed by a file `<name>.prlock` next to the `.prproj` in the shared folder. It appears when the project is opened and disappears when it is closed; inside — the machine and the user, that is, the lock names the OWNER, not the session |
+| DaVinci Resolve | 21 | Collaboration, disk database / PostgreSQL | the project ceases to be a file: the RECORD of the database is occupied, and separately — the bin and the timeline. The vendor's wording: "Bins and timelines are "read only" until unlocked by the current user" |
+| Final Cut Pro | 12.3 | an exclusive lock of the library | the unit of occupation is the whole library; the second person does not even get a view mode: "The document [Library name] is already in use by [user] on [Mac].local" |
+| After Effects | 26.x | none at the file level | `.aep` is not occupied by anything; occupation appears only inside Team Projects, that is, with a live server — no serverless half remains at Adobe in AE [NOT VERIFIED live] |
 
-**Вне ядра.** Без SQLite не объяснить главного: ПОЧЕМУ отраслевой бессерверный
-замок — это отдельный файл, а не блокировка, которую даёт операционная система.
-Библиотека вендорена в нашем же дереве зависимостей, и её исходник читается
-офлайн.
+**Outside the core.** Without SQLite one cannot explain the main thing: WHY the industry's serverless
+lock is a separate file, and not a lock provided by the operating system. The library is vendored in our
+own dependency tree, and its source can be read offline.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| SQLite | 3.50.2 (`libsqlite3-sys` 0.35.0, наш `src/Cargo.lock`) | POSIX advisory locks в `os_unix.c` | лок ядра снимается при закрытии ЛЮБОГО дескриптора на этот файл в процессе и переопределяется собственным же процессом через другой дескриптор; SQLite обходит это, ведя счёт локов на inode и откладывая `close()`. Тот, кто не может позволить себе такой бухгалтерии, кладёт рядом файл |
+| SQLite | 3.50.2 (`libsqlite3-sys` 0.35.0, our `src/Cargo.lock`) | POSIX advisory locks in `os_unix.c` | the kernel lock is released when ANY descriptor to this file is closed within the process, and is re-established by the same process through another descriptor; SQLite works around this by keeping a count of locks per inode and deferring `close()`. Whoever cannot afford such bookkeeping puts a file next to it |
 
-## Фишка фишки
+## The trick behind it
 
-**Замок Productions — не состояние процесса, а ДАННЫЕ В ПАПКЕ, и это видно по
-тому, как он ломается.** Файл `.prlock` копируется вместе с папкой продакшена:
-скопировал каталог, пока проекты были открыты, — и копия на другой машине
-приезжает уже занятой, причём хозяином указан компьютер, а не Adobe ID
-(MichaelMarkham, цитата ниже). Ни один серверный замок так не умеет — состояние
-на сервере не копируется вместе с байтами. Это не побочный эффект, а прямая цена
-бессерверности: чтобы объявление пережило выключение программы и доехало на
-чужую машину, оно обязано быть файлом, а всё, что является файлом, копируется,
-попадает в бэкап и восстанавливается из бэкапа вместе с содержимым.
+**The Productions lock is not a state of a process but DATA IN A FOLDER, and this is visible from the way it
+breaks.** The `.prlock` file is copied along with the production folder: copy the directory while projects were open
+— and the copy on another machine arrives already occupied, with the computer, not the Adobe ID, named as the owner
+(MichaelMarkham, quote below). No server lock behaves this way — the state on the server is not copied along with the
+bytes. This is not a side effect but the direct price of serverlessness: for the declaration to survive the program's
+shutdown and reach another machine, it must be a file, and everything that is a file gets copied, falls into a backup and
+is restored from a backup together with its contents.
 
-**Второй слой — почему именно файл, а не блокировка ядра.** «Настоящий» замок
-операционной системы для этой задачи непригоден дважды: POSIX advisory lock
-умирает вместе с процессом (и, хуже, при закрытии любого другого дескриптора на
-тот же файл — см. цитату из нашего же `sqlite3.c`), а по сетевым файловым
-системам не работает вовсе. То есть он не умеет ни пережить владельца, ни
-доехать до второй машины — ровно двух вещей, ради которых замок и заводят. Файл
-рядом умеет обе, и платит за это тем, что снимать его приходится руками
-(F-COL-014).
+**The second layer — why precisely a file and not a kernel lock.** The "real" operating-system lock is unsuitable for this
+task twice over: a POSIX advisory lock dies together with the process (and, worse, when any other descriptor to the same file
+is closed — see the quote from our own `sqlite3.c`), and over network file systems it does not work at all. That is, it can
+neither survive the owner nor reach a second machine — precisely the two things for which a lock is set up. A file next to it can
+do both, and pays for this by having to be removed by hand (F-COL-014).
 
-**Третий слой — гранулярность всегда равна единице ЗАПИСИ, а не единице
-правки.** Premiere пишет проект целиком — занимает проект целиком; Final Cut
-пишет библиотеку — занимает библиотеку; Resolve хранит бины и таймлайны
-отдельными записями базы — занимает их врозь. Клип не блокирует НИКТО, и это не
-недоработка: меньшая единица потребовала бы уметь записать часть документа, а
-записать часть документа не умеет ни один из пяти. Наш случай тем и определён:
-проект — один `.otio`, значит доступная нам единица занятия ровно одна — файл.
+**The third layer — the granularity always equals the unit of RECORDING, not the unit of editing.** Premiere writes the project
+as a whole — occupies the project as a whole; Final Cut writes the library — occupies the library; Resolve keeps bins and timelines as
+separate database records — occupies them separately. A clip is locked by NOBODY, and this is not an oversight: a smaller unit would
+require being able to write part of a document, and not one of the five can write part of a document. Our case is defined by this:
+the project is one `.otio`, so the unit of occupation available to us is exactly one — the file.
 
-## Плюсы
+## Pros
 
-- Механизм работает на голой файловой системе: флешка, смонтированный том,
-  папка внутри одной машины — везде одинаково, потому что «занято» выражено
-  существованием файла, а не сеансом.
-- Объявление переживает выключение программы, поэтому им можно защитить и
-  сценарий «первый забыл закрыть и ушёл», а не только «оба сидят одновременно».
-- Замок в каталоге виден инструментами, которые о редакторе не знают вовсе:
-  файловым менеджером, скриптом, бэкапом. Отладка не требует ни лога сервера, ни
-  учётной записи.
-- Гранулярность «файл» ничего не стоит проектировать: она уже задана тем, как
-  документ записывается на диск.
+- The mechanism works on a bare file system: a flash drive, a mounted volume, a folder inside one machine. It behaves the same everywhere, because "busy" is expressed by the existence of a file, not by a session.
+- The declaration survives the program being shut down, so it can protect the scenario "the first one forgot to close it and left", not only "both sit in it at the same time".
+- A lock in a directory is visible to tools that know nothing about the editor: a file manager, a script, a backup. Debugging needs neither a server log nor a user account.
+- Granularity "file" costs nothing to design: it is already set by how the document is written to disk.
 
-## Минусы
+## Cons
 
-- Копируется вместе с содержимым: копия папки приезжает занятой, и человек
-  получает замок там, где никто ничего не открывал.
-- Ничего не гарантирует. Это ОБЪЯВЛЕНИЕ: второй писатель, который его не
-  проверяет (чужая программа, скрипт, наш собственный CLI), запишет файл поверх,
-  и замок об этом даже не узнает.
-- Хозяин назван машиной и пользователем, а живость его не выражена ничем — ни
-  временем, ни идентификатором процесса; отсюда весь сюжет F-COL-014.
-- На сетевых томах поведение зависит от протокола, а не от редактора: `.prlock`
-  создаётся и удаляется штатными файловыми операциями, и их семантика на SMB/NFS
-  своя.
+- It is copied together with the content: a copy of the folder arrives busy, and the person gets a lock where nobody opened anything.
+- It guarantees nothing. It is a DECLARATION: a second writer that does not check it (a foreign program, a script, our own CLI) will overwrite the file, and the lock does not even find out.
+- The owner is named by machine and user, but its liveness is not expressed by anything: neither by time nor by a process identifier; hence the whole plot of F-COL-014.
+- On network volumes the behavior depends on the protocol, not on the editor: `.prlock` is created and removed by ordinary file operations, and their semantics on SMB/NFS are their own.
 
-## Что говорят пользователи
+## What users say
 
-Самое точное описание «замка как данных» — от человека, который скопировал папку
-продакшена и получил занятый проект на своей же второй машине:
+The most precise description of "the lock as data" comes from a person who copied a production folder and got a busy project on his own second machine:
 
 > I tried to open one of those projects and it is locked to my Home Desktop (not
 > my adobe ID) so I can't make any changes to it.
-> — MichaelMarkham, «Need to take control of a locked project in a production»,
+> — MichaelMarkham, "Need to take control of a locked project in a production",
 > Adobe Product Community, 24.05.2020,
 > https://community.adobe.com/t5/premiere-pro-discussions/need-to-take-control-of-a-locked-project-in-a-production/td-p/11155482
 
-Почему бессерверный замок в отрасли — файл, а не блокировка ядра, сформулировано
-не у редакторов, а в исходнике библиотеки, которую мы сами и линкуем:
+Why a serverless lock is a file in the industry, and not a kernel lock, is stated not by editors but in the source of the library that we link ourselves:
 
 > POSIX advisory locks are broken by design. ANSI STD 1003.1 (1996) section
 > 6.5.2.2 lines 483 through 490 specify that when a process sets or clears a
 > lock, that operation overrides any prior locks set by the same process.
-> — SQLite, комментарий в `os_unix.c`; проверено по вендоренному
-> `sqlite3.c` (libsqlite3-sys 0.35.0, строка 39919), 08.09.2026,
+> — SQLite, comment in `os_unix.c`; checked against the vendored
+> `sqlite3.c` (libsqlite3-sys 0.35.0, line 39919), 08.09.2026,
 > https://www.sqlite.org/lockingv3.html
 
-`trackers:` пуст сознательно (правило 12): у пяти редакторов ядра публичных
-трекеров нет, а в выгруженном корпусе двенадцати трекеров опенсорса тема
-совместной работы отсутствует как класс — одна настоящая просьба на 25 442
-задачу. Подобрать фильтр ради формы значило бы сфабриковать сигнал.
+`trackers:` is empty deliberately (rule 12): the five editors of the core have no public trackers, and in the exported corpus of twelve open-source trackers the topic of shared work is absent as a class: one real request per 25,442 tasks. Picking a filter just to fill the form would mean fabricating a signal.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- `src/apps/kt-app/src/app.rs:5036` — `write_project_guarded`: сторож ОДНОГО
-  писателя. Сравнивает ревизию модели, которую несёт готовый JSON, с ревизией
-  последнего записанного снимка и отказывается писать устаревшее. Заведён в Р.32
-  против конкретной гонки: фоновый автосейв перетирал более свежий Ctrl+S.
-- `src/apps/kt-app/src/app.rs:5051` — `write_project_atomic`: tmp рядом плюс
-  `rename`. Имя временного файла детерминировано (`atomic_tmp_path`, строка
-  5063): `<полное имя>.tmp`, без pid и без случайной части.
-- `src/apps/kt-app/src/app.rs:538` — `KtApp::open`: читает файл, поднимает
-  воркеры, ставит `saved_rev` в НОЛЬ. Ни проверки, что файл кем-то занят, ни
-  отметки «теперь занят я», ни запоминания времени файла.
-- `src/apps/kt-app/src/app.rs:1078` — фоновый автосейв каждые 30 с целится в
-  файл пользователя (`project_path`), а не в отдельную версию.
-- `src/apps/kt-cli/src/main.rs` — ВТОРОЙ писатель внутри нашего же продукта:
-  `new`, `convert`, `demo`, `roundtrip` пишут `.otio` голым `std::fs::write`
-  (строки 146, 177, 192, 222) — без сторожа и даже без tmp+rename.
-- `src/apps/kt-app/src/app.rs:5382` — старт восстанавливает `last_project` из
-  egui-storage, общего для всех экземпляров: два запущенных kt-app по умолчанию
-  открывают ОДИН И ТОТ ЖЕ проект.
+- `src/apps/kt-app/src/app.rs:5036` — `write_project_guarded`: a guard of ONE writer. It compares the model revision carried by the ready JSON with the revision of the last written snapshot and refuses to write a stale one. Introduced in R.32 against a concrete race: the background autosave overwrote a newer Ctrl+S.
+- `src/apps/kt-app/src/app.rs:5051` — `write_project_atomic`: a tmp file next to it plus `rename`. The name of the temporary file is deterministic (`atomic_tmp_path`, line 5063): `<full name>.tmp`, without a pid and without a random part.
+- `src/apps/kt-app/src/app.rs:538` — `KtApp::open`: reads the file, starts the workers, sets `saved_rev` to ZERO. No check that the file is busy by someone, no mark "now it is busy by me", no recording of the file time.
+- `src/apps/kt-app/src/app.rs:1078` — the background autosave every 30 s targets the user's file (`project_path`), not a separate version.
+- `src/apps/kt-cli/src/main.rs` — a SECOND writer inside our own product: `new`, `convert`, `demo`, `roundtrip` write `.otio` with a bare `std::fs::write` (lines 146, 177, 192, 222) — without a guard and even without tmp+rename.
+- `src/apps/kt-app/src/app.rs:5382` — startup restores `last_project` from egui-storage, which is shared by all instances: two running kt-app processes by default open ONE AND THE SAME project.
 
-### Чего не хватает
+### What is missing
 
-- Любого утверждения о файле на диске. Сторож знает только свою ревизию в
-  памяти, а `saved_rev` у каждого процесса начинается с нуля — то есть две
-  программы над одним файлом ведут две одинаковые нумерации, и ни одна из них не
-  является ревизией ДОКУМЕНТА.
-- Слышимого отказа. `write_project_guarded` умеет сказать «не писал»
-  (`Ok(false)`), но все три вызова этот ответ выбрасывают: `.map(|_| ())` в
-  Ctrl+S (строка 2805) и в потоке автосейва (1093), `let _ =` в `on_exit`
-  (5313). В Ctrl+S это прямо приводит к сообщению «Сохранено» на записи, которой
-  не было.
-- Владельца у временного файла. Имя `<проект>.otio.tmp` одинаково у всех
-  писателей: два процесса, пишущих один проект, встречаются на нём, и `rename`
-  переносит в документ то, что успел дописать не ты.
-- Имени того, кто занял. Понятия пользователя в модели нет вовсе, а
-  идентификаторы сущностей выдаются как «максимум + 1»
-  (`src/apps/kt-app/src/app.rs:3110`) и у двоих совпадают.
+- Any statement about the file on disk. The guard knows only its revision in memory, and `saved_rev` of each process starts from zero — that is, two programs over one file keep two identical numberings, and neither of them is a revision of the DOCUMENT.
+- An audible refusal. `write_project_guarded` can say "did not write" (`Ok(false)`), but all three calls throw this answer away: `.map(|_| ())` in Ctrl+S (line 2805) and in the autosave thread (1093), `let _ =` in `on_exit` (5313). In Ctrl+S this directly leads to the message "Saved" on a write that did not happen.
+- An owner of the temporary file. The name `<project>.otio.tmp` is the same for all writers: two processes writing one project meet on it, and `rename` carries into the document what the other one managed to append, not what you wrote.
+- A name of the one who took it. The model has no concept of a user at all, and entity identifiers are issued as "maximum + 1" (`src/apps/kt-app/src/app.rs:3110`), and two of them coincide.
 
-### Что мешает
+### What gets in the way
 
-Ничего дорогого: и проверка, и создание, и удаление объявления — файловые
-операции рядом с уже существующей записью проекта, в одном файле `app.rs`.
-Мешает единственное — вся сегодняшняя дисциплина сохранности построена на
-допущении «писатель ровно один»: звёздочка в заголовке, `dirty_content`,
-`saved_rev`, автосейв в пользовательский файл и удаление recovery при Ctrl+S.
-Второй писатель ломает не запись, а это допущение, и потому дешёвая правка
-обязана быть сделана целиком, а не наполовину: объявление, которое никто не
-читает при открытии, хуже отсутствующего — оно создаёт видимость защиты.
+Nothing expensive: checking, creating and removing the declaration are all file operations next to the existing project record, in one file `app.rs`. What gets in the way is one thing: all of today's save-safety discipline is built on the assumption "exactly one writer": the asterisk in the title, `dirty_content`, `saved_rev`, the autosave into the user's file, and deleting recovery on Ctrl+S. A second writer breaks not the write itself but this assumption, and therefore a cheap change must be made whole, not halfway: a declaration that nobody reads on opening is worse than none, because it creates the appearance of protection.
 
-### В категории `collab/` — две обязательные строки (правило 13)
+### In category `collab/` — two mandatory lines (rule 13)
 
-БЕЗ СЕТИ: ВЫРОЖДАЕТСЯ — `src/apps/kt-app/src/app.rs:5036` — механизм занятия у нас есть, но выродился до одного процесса: сторож сравнивает ревизию модели в СВОЕЙ памяти, начинает счёт с нуля при каждом открытии и про файл на диске не знает ничего, поэтому честно разводит фоновый автосейв с Ctrl+S внутри одной программы и ничего не может сказать про второй kt-app или про kt-cli, пишущий тот же `.otio` голым `fs::write` без tmp и без сторожа.
+OFFLINE: DEGENERATES — `src/apps/kt-app/src/app.rs:5036` — we do have the claim mechanism, but it has degenerated to one process: the guard compares the model revision in ITS OWN memory, starts counting from zero at every opening, and knows nothing about the file on disk; therefore it honestly separates the background autosave from Ctrl+S inside one program, and cannot say anything about a second kt-app or about kt-cli writing the same `.otio` with a bare `fs::write` without tmp and without the guard.
 
-ЦЕНА СЕТИ: имя того, кто занял, — учётная запись — объявление рядом с файлом отрасль пишет не пустым: внутри машина и человек, и именно это делает его читаемым для второго; у нас понятия пользователя нет ни в модели, ни в формате, а идентификаторы выдаются как «максимум + 1» и у двоих совпадают, поэтому объявить занятие мы можем, а назвать занявшего — нет.
+NETWORK COST: the name of the one who took it — the user account — the industry does not leave empty in the declaration next to the file: inside it there is a machine and a person, and exactly this makes it readable for the second one; we have no concept of a user either in the model or in the format, and identifiers are issued as "maximum + 1" and two of them coincide, so we can declare the claim, but cannot name the one who took it.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Ни одного из двенадцати — и это главный аргумент за дешевизну. Занятие живёт
-целиком в `kt-app`, рядом с записью проекта: движка, модели времени, кэша и
-экспорта оно не касается. Из правил чек-листа `src/apps/kt-app/CLAUDE.md`
-задето одно — п.12 «фоновая работа не мешает»: сегодня фоновый автосейв пишет в
-пользовательский файл каждые 30 с, ничего не спрашивая, и именно он превращает
-второго открывшего из наблюдателя в писателя. Отказ, который придётся показать,
-подчиняется п.16 (невозможность действия — ошибка, а не блёклая подсказка).
+None of the twelve — and this is the main argument for cheapness. The claim lives entirely in `kt-app`, next to the project record: it does not touch the engine, the time model, the cache or export. Of the checklist rules in `src/apps/kt-app/CLAUDE.md` one is touched: item 12 "background work does not get in the way": today the background autosave writes into the user's file every 30 s without asking, and it is exactly this that turns a second opener from an observer into a writer. The refusal that will have to be shown is subject to item 16 (an impossible action is an error, not a faded hint).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия раунда: создание и снятие объявления, проверка при открытии, честный ответ сторожа |
-| Где основная работа | kt-app (`app.rs`: `open`, `save`, автосейв, `on_exit`), kt-cli (тот же путь записи вместо `fs::write`) |
-| Формат проекта | не трогает: объявление — отдельный файл рядом, в `.otio` не попадает |
-| Тесты, которые придётся написать | второй экземпляр над занятым файлом не пишет и говорит об этом; `Ok(false)` сторожа не отчитывается как «Сохранено» (сегодня падает); имя временного файла различается у двух писателей; kt-cli уважает объявление kt-app |
-| Зависит от | F-COL-014 (снятие объявления, пережившего владельца) — без неё занятие превращается в тупик |
-| Ломает совместимость | нет: чужая программа и старая наша просто не увидят лишний файл рядом |
+| Volume | S — one stage of the round: creating and removing the declaration, a check on opening, an honest answer from the guard |
+| Where the main work is | kt-app (`app.rs`: `open`, `save`, autosave, `on_exit`), kt-cli (the same write path instead of `fs::write`) |
+| Project format | does not touch it: the declaration is a separate file next to it, it does not get into `.otio` |
+| Tests that will have to be written | a second instance over a busy file does not write and says so; the guard's `Ok(false)` is not reported as "Saved" (today it fails); the temporary file name differs for two writers; kt-cli respects the declaration of kt-app |
+| Depends on | F-COL-014 (removing a declaration that outlived its owner) — without it the claim turns into a dead end |
+| Breaks compatibility | no: a foreign program and our old one simply will not see the extra file next to it |
 
-## Вердикт
+## Verdict
 
-Берём локальную половину, и она вся локальная: механизм отрасли, у которого
-сервера НЕТ ВОВСЕ (Premiere Productions), выражается файловыми операциями рядом
-с проектом и не требует ни второго участника, ни учётной записи. Прямо сейчас он
-чинит нашу же однопроцессную дыру: kt-app и kt-cli пишут один `.otio` без
-всякого согласования, а два kt-app по умолчанию открывают один и тот же
-последний проект. Это и есть конкретный адрес оговорке F-EXT-002 «пока проект
-открыт, внешняя правка небезопасна»: небезопасность выражается не запретом в
-документации, а объявлением на диске.
+We take the local half, and all of it is local: the industry mechanism that has NO server AT ALL (Premiere Productions) is expressed by file operations next to the project and requires neither a second participant nor a user account. Right now it fixes our own single-process hole: kt-app and kt-cli write one `.otio` without any coordination, and two kt-app processes by default open one and the same last project. This is exactly the concrete address for the caveat of F-EXT-002 "while the project is open, an external edit is unsafe": the unsafety is expressed not by a prohibition in the documentation but by a declaration on disk.
 
-Серверную половину не заводим по формуле F-PRJ-003 и F-PRJ-001: чтобы объявление
-называло ЧЕЛОВЕКА, нужна учётная запись, а второго участника нет. Занятие без
-имени владельца всё равно полезно — оно отвечает на вопрос «свободно ли», и
-только на вопрос «у кого» ответить не может.
+We do not open the server half by the formula of F-PRJ-003 and F-PRJ-001: for the declaration to name a PERSON, a user account is needed, and there is no second participant. A claim without the owner's name is useful anyway — it answers the question "is it free", and only cannot answer "by whom".
 
-Границы: снятие замка, пережившего владельца, и право отъёма — F-COL-014; что
-именно можно делать, пока файл занят другим, — F-COL-015; служебные спутники
-проекта и правило их уничтожения — F-COL-002; автосейв поверх файла или
-рядом — F-RES-001; атомарность записи и `fsync` — F-RES-002; проект, открытый на
-другой машине, — F-PRJ-003.
+Boundaries: removing a lock that outlived its owner, and the right to seize it — F-COL-014; what exactly may be done while the file is taken by another — F-COL-015; the project's auxiliary companions and the rule for destroying them — F-COL-002; autosave over the file or next to it — F-RES-001; atomicity of the write and `fsync` — F-RES-002; a project opened on another machine — F-PRJ-003.
 
-## Источники
+## Sources
 
 - https://community.adobe.com/t5/premiere-pro-discussions/need-to-take-control-of-a-locked-project-in-a-production/td-p/11155482
-  — Adobe Product Community, тред от 24.05.2020 (дата обращения 2026-09-08).
-- https://www.sqlite.org/lockingv3.html — «File Locking And Concurrency In
-  SQLite Version 3» (дата обращения 2026-09-08). Цитата сверена офлайн по
-  вендоренному `sqlite3.c` (libsqlite3-sys 0.35.0, строка 39919).
+  — Adobe Product Community, thread of 24.05.2020 (access date 2026-09-08).
+- https://www.sqlite.org/lockingv3.html — "File Locking And Concurrency In
+  SQLite Version 3" (access date 2026-09-08). The quote was checked offline against the
+  vendored `sqlite3.c` (libsqlite3-sys 0.35.0, line 39919).
 - https://www.blackmagicdesign.com/products/davinciresolve/collaboration —
-  формулировка про read-only бины и таймлайны (дата обращения 2026-09-08).
-- https://support.apple.com/en-us/HT207128 — Apple, общий том для библиотеки
-  Final Cut и сообщение «already in use» (дата обращения 2026-09-08).
-- Строки VEGAS и After Effects — по документации и составу каталогов, живьём не
-  проверялись; помечено `[НЕ ПРОВЕРЕНО]` прямо в таблице.
-- Наш код прочитан 08.09.2026: `src/apps/kt-app/src/app.rs` (538, 1078, 2805,
+  the wording about read-only bins and timelines (access date 2026-09-08).
+- https://support.apple.com/en-us/HT207128 — Apple, a shared volume for the Final Cut library and the message "already in use" (access date 2026-09-08).
+- The VEGAS and After Effects rows — from documentation and the composition of the catalogs, not checked live; marked `[NOT VERIFIED]` directly in the table.
+- Our code was read on 08.09.2026: `src/apps/kt-app/src/app.rs` (538, 1078, 2805,
   2814, 3110, 5020, 5036, 5051, 5063, 5313, 5382),
   `src/apps/kt-cli/src/main.rs` (146, 177, 192, 222).

@@ -1,16 +1,16 @@
 ---
 id: F-AUD-011
-title: Distortion / сатурация и Bitcrusher
-status: сделано
+title: Distortion / saturation and Bitcrusher
+status: done
 priority: B
 cost: S
 category: audio/processing
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: да
+we_have: yes
 crates: [kt-model, kt-fx, kt-app]
 invariants: [1, 11]
 ui_rules: []
-round: "Р.47"
+round: "R.47"
 point: 327
 tests: [322, 323, 324]
 depends_on: []
@@ -19,89 +19,78 @@ services: []
 checked: 2026-09-14
 ---
 
-# F-AUD-011 — Distortion / сатурация и Bitcrusher
+# F-AUD-011 — Distortion / saturation and Bitcrusher
 
-## Суть
+## Essence
 
-Управляемая «грязь»: мягкое насыщение (перегруз голоса/гитары, «горячий»
-бас) и lo-fi-деградация (биты + частота — звук рации, старой игры,
-телефона). Монтажёру это «сделать голос злым», «звук из динамика»,
-«эстетика VHS для звука» — парный эффект к нашему видео-VHS.
+Controllable "dirt": soft saturation (an overdriven voice/guitar, a "hot" bass) and lo-fi degradation (bit-depth +
+sample rate reduction — the sound of a walkie-talkie, an old game, a phone). For the editor this is "make the voice
+angry", "the sound from a speaker", "the VHS aesthetic for sound" — a paired effect to our video VHS.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| Vegas Pro | 2026.0 | Distortion (DirectX FX) | несколько кривых насыщения на выбор, drive/output |
-| Adobe Premiere | 26 | Distortion (Audio Effects) | одна ручка Amount + Tone; в комплекте пресеты «radio/phone» на базе EQ+dist |
-| DaVinci Resolve | 21 | Distortion (Fairlight FX) | выбор типа (soft/hard clip, tape), drive, пост-фильтр |
-| Final Cut Pro | 12.3 | Distortion / Bitcrusher (Logic-набор) | оба как отдельные Logic-плагины; у Bitcrusher — resolution и downsampling |
-| After Effects | 26 | нет | штатного аудио-дисторшна нет — люди уводят звук в Audition |
+| Vegas Pro | 2026.0 | Distortion (DirectX FX) | several saturation curves to choose from, drive/output |
+| Adobe Premiere | 26 | Distortion (Audio Effects) | one Amount knob + Tone; the kit includes "radio/phone" presets based on EQ+dist |
+| DaVinci Resolve | 21 | Distortion (Fairlight FX) | a choice of type (soft/hard clip, tape), drive, a post-filter |
+| Final Cut Pro | 12.3 | Distortion / Bitcrusher (a Logic set) | both as separate Logic plugins; Bitcrusher has resolution and downsampling |
+| After Effects | 26 | none | there is no built-in audio distortion — people move the sound to Audition |
 
-**Вне ядра.** Bitcrusher как самостоятельный прибор — из DAW-культуры.
+**Outside the core.** Bitcrusher as a standalone device — from DAW culture.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Ableton Live | 12.4.5 | Redux | два независимых блока: битовая глубина (квант) и downsample (удержание сэмпла); наглядно, что это ДВЕ разные деградации |
+| Ableton Live | 12.4.5 | Redux | two independent blocks: bit depth (quantization) and downsample (sample hold); it shows clearly that these are TWO different degradations |
 
-## Фишка фишки
+## The trick behind it
 
-Уровень-компенсация: у всех зрелых реализаций drive поднимает вход, но
-выход компенсируется (делителем или авто-нормализацией), так что ручка
-меняет ХАРАКТЕР, а не громкость, — иначе A/B-сравнение бессмысленно и
-пользователь путает «громче» с «лучше». У Bitcrusher две независимые оси
-(глубина в битах и частота удержания), и обе слышимо разные: биты дают
-шумовой пол, downsample — алиасные призвуки; сливать их в одну ручку —
-типовая ошибка дешёвых реализаций. Третья деталь: сетка удержания
-downsample обязана быть привязана к материалу, не к моменту запуска —
-иначе два рендера одного клипа дают разные артефакты.
+Level compensation: in all mature implementations the drive raises the input, but the output is compensated (by a divider
+or by auto-normalization), so the knob changes the CHARACTER, not the loudness — otherwise an A/B comparison makes no sense,
+and the user confuses "louder" with "better". Bitcrusher has two independent axes (depth in bits and hold frequency), and
+both are audibly different: bits give a noise floor, downsample gives aliased overtones; merging them into one knob is a
+typical error of cheap implementations. A third detail: the hold grid of the downsample must be tied to the material, not
+to the moment of launch — otherwise two renders of one clip give different artifacts.
 
-## Плюсы
+## Pros
 
-- Оба эффекта безпамятные (кроме держателя сэмпла) — нулевой хвост,
-  тривиальный seek, самый дешёвый класс аудио-эффектов.
-- softclip x/(1+|x|) — алгебраический: без libm-сюрпризов между
-  платформами, детерминизм бесплатно.
+- Both effects are memoryless (except the sample hold) — zero tail, trivial seek, the cheapest class of audio effects.
+- softclip x/(1+|x|) is algebraic: no libm surprises between platforms, determinism for free.
 
-## Минусы
+## Cons
 
-- Честный дисторшн просит оверсэмплинг против алиаса от насыщения;
-  без него на ярких источниках слышны зеркальные частоты (принято как
-  сознательная цена первой версии — как у большинства NLE-реализаций).
+- An honest distortion asks for oversampling against aliasing from saturation; without it, mirror frequencies are audible
+  on bright sources (accepted as a deliberate price of the first version — as in most NLE implementations).
 
-## Что говорят пользователи
+## What users say
 
-НЕТ ЦИТАТ: разведка велась по официальной документации и справке пяти
-редакторов из памяти модели (срез знаний 2026-01); дословный форумный
-фрагмент со ссылкой без живого доступа к треду не воспроизводим — факты
-таблицы проверяемы по руководствам вендоров из раздела «Источники».
+NO QUOTES: the research was done from the official documentation and the help of five editors from the memory of the model (knowledge cutoff 2026-01); a verbatim forum fragment with a link cannot be reproduced without live access to the thread — the facts of the table are verifiable by the vendors' manuals from the "Sources" section.
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/audio-fx/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Дисторшн/биткраш — поточечные узлы без состояния, детерминизм байт-в-байт.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/audio-fx/ — the contract is in `spec.md`, the "why" and the paths in the code are in `design.md`.
+Distortion/bitcrush are pointwise nodes without state, byte-for-byte determinism.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S |
-| Где основная работа | kt-fx (два узла по ~60 строк) |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | порядок слотов слышен (тихо→перегруз ≠ перегруз→тихо); crusher поднимает шумовой пол; rate 48000 прозрачен |
-| Зависит от | узловой цепочки |
-| Ломает совместимость | нет |
+| Scope | S |
+| Where the main work is | kt-fx (two nodes of ~60 lines each) |
+| Project format | not touched |
+| Tests that will have to be written | the order of the slots is audible (quiet→overdrive ≠ overdrive→quiet); the crusher raises the noise floor; rate 48000 is transparent |
+| Depends on | the node chain |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём оба в Р.47: Distortion (drive_db/tone/mix, softclip с компенсацией
-/√g) и Bitcrusher (bits дробные 1–16, rate_hz, mix; сетка от позиции
-клипа). Оверсэмплинг — вне объёма (отдельным заходом, если алиас
-помешает на практике).
+Take both in R.47: Distortion (drive_db/tone/mix, softclip with compensation /√g) and Bitcrusher (bits fractional 1–16,
+rate_hz, mix; the grid is from the clip's position). Oversampling is outside the scope (a separate pass, if aliasing gets
+in the way in practice).
 
-## Источники
+## Sources
 
-- https://helpx.adobe.com/premiere/using/audio-effects-transitions.html (дата обращения 2026-09-14)
-- https://support.apple.com/guide/logicpro/welcome/mac (дата обращения 2026-09-14)
-- https://www.ableton.com/en/live-manual/ (дата обращения 2026-09-14)
+- https://helpx.adobe.com/premiere/using/audio-effects-transitions.html (accessed 2026-09-14)
+- https://support.apple.com/guide/logicpro/welcome/mac (accessed 2026-09-14)
+- https://www.ableton.com/en/live-manual/ (accessed 2026-09-14)
 
-**Реализовано в Р.47** — docs/porting-notes.md п.327 (t323/t324); дальнейшая жизнь фичи там.
+**Implemented in R.47** — docs/porting-notes.md item 327 (t323/t324); the further life of the feature is there.

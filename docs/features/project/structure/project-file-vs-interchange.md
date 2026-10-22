@@ -1,16 +1,16 @@
 ---
 id: F-PRJ-005
-title: Формат ПРОЕКТА против формата ОБМЕНА
-status: принято
+title: PROJECT format versus EXCHANGE format
+status: accepted
 priority: A
 cost: L
 category: project/structure
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, kdenlive-26.08, otio-lib-0.18]
-we_have: да
+we_have: yes
 crates: [kt-otio, kt-model, kt-app, kt-cli]
 invariants: [11]
 ui_rules: [19, 20]
-round: 70  # закрыт, спеки слиты 03.10.2026
+round: 70  # closed, specs merged 2026-10-03
 point: null
 tests: [t810, t811, t812, t813, t814, t815, t816, t817, t818, t819, t820, t821, t822]
 depends_on: [F-PRJ-002, F-PRJ-003, F-RES-003]
@@ -18,154 +18,117 @@ trackers: []
 checked: 2026-10-03
 ---
 
-# F-PRJ-005 — Формат ПРОЕКТА против формата ОБМЕНА
+# F-PRJ-005 — PROJECT format versus EXCHANGE format
 
-## Суть
+## Essence
 
-У редактора два разных файла, и их легко спутать: **файл проекта** (в нём живёт
-работа, он переписывается каждым автосейвом) и **файл обмена** (его отдают в
-чужую программу). Требования к ним противоположны. Обменный обязан быть
-САМОДОСТАТОЧНЫМ: читатель не знает наших соглашений, поэтому всё, что он должен
-увидеть, лежит в нём развёрнутым. Проектный обязан хранить каждую сущность ОДИН
-РАЗ и ссылаться на неё, иначе повторное использование (вложенная композиция,
-поставленная в пяти местах) множит файл.
+An editor has two different files, and they are easy to confuse: the **project file** (where the work lives; it is rewritten by every autosave) and the **exchange file** (it is handed to a foreign program). The requirements for them are opposite. The exchange file must be SELF-SUFFICIENT: the reader does not know our conventions, so everything it must show lies in it in expanded form. The project file must store each entity ONCE and refer to it, otherwise reuse (a nested composition placed in five places) multiplies the file.
 
-Kinotrain до Р.70 держал проект в обменном формате (OpenTimelineIO) и платил за
-это ровно тем, от чего обменный формат и не защищает: тело композиции
-записывалось заново в КАЖДЫЙ её экземпляр, и у владельца три ленты дали
-**15 220 клипов и 115 МБ** на файл, который автосейв пишет регулярно.
+Until R.70 Kinotrain kept the project in the exchange format (OpenTimelineIO) and paid for it with exactly what the exchange format does not protect against: the body of a composition was written anew into EACH of its instances, and for the owner three reels gave **15 220 clips and 115 MB** per file, which autosave writes regularly.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Файл проекта | Файл обмена |
+| Editor | Project file | Exchange file |
 |---|---|---|
-| DaVinci Resolve 21 | **база данных** (Resolve Disk Database — каталог, которым управляет сама программа; у студий PostgreSQL на сетевом хранилище) | `.drp` — ZIP с XML, делается явной командой `File → Export Project`; AAF/EDL/XML/OTIO |
-| Final Cut Pro 12 | **бандл-каталог** `.fcpbundle`, внутри `.flexolibrary`/`.fcpevent` — базы SQLite | FCPXML |
-| Adobe Premiere 26 | `.prproj` — свой контейнер, сжатие при сохранении включено по умолчанию и отключается ради скорости | AAF/EDL/XML/OTIO |
-| After Effects 26 | `.aep` — свой двоичный; `.aepx` — его же XML-вид | — |
-| VEGAS Pro 2026 | `.veg` — свой двоичный | AAF/EDL/XML |
-| Kdenlive 26.08 | MLT XML — обменный формат движка, на котором Kdenlive и построен | тот же MLT XML |
-| OTIO 0.18 | — (библиотека, не редактор) | собственно формат обмена |
+| DaVinci Resolve 21 | **a database** (Resolve Disk Database — a catalog managed by the program itself; studios have PostgreSQL on network storage) | `.drp` — a ZIP with XML, made by an explicit command `File → Export Project`; AAF/EDL/XML/OTIO |
+| Final Cut Pro 12 | a **bundle catalog** `.fcpbundle`, inside `.flexolibrary`/`.fcpevent` — SQLite databases | FCPXML |
+| Adobe Premiere 26 | `.prproj` — its own container, compression on save is enabled by default and is disabled for speed | AAF/EDL/XML/OTIO |
+| After Effects 26 | `.aep` — its own binary; `.aepx` — the same thing in XML form | — |
+| VEGAS Pro 2026 | `.veg` — its own binary | AAF/EDL/XML |
+| Kdenlive 26.08 | MLT XML — the exchange format of the engine on which Kdenlive is built | the same MLT XML |
+| OTIO 0.18 | — (a library, not an editor) | the exchange format itself |
 
-## Фишка фишки
+## The trick behind it
 
-**Ни один крупный редактор не живёт в обменном формате — и это не вкусовщина, а
-следствие того, что в обменном формате НЕТ ОБЪЕКТНОЙ ИДЕНТИЧНОСТИ.** В JSON OTIO
-(как и в FCPXML, и в AAF-композициях) нельзя написать «вот эта композиция — та же
-самая, что выше»: ссылка на объект в документе не выражается, выражается только
-вложенное содержимое. Поэтому самодостаточность и неповторяемость — требования
-взаимоисключающие, и редакторы выбирают разное для разных файлов.
+**No major editor lives in an exchange format — and this is not a matter of taste, but a consequence of the fact that an exchange format has NO OBJECT IDENTITY.** In OTIO JSON (as in FCPXML and in AAF compositions) one cannot write "this composition is the same one as above": a reference to an object in the document is not expressed, only nested content is expressed. Therefore self-sufficiency and non-repetition are mutually exclusive requirements, and the editors choose differently for different files.
 
-Деталь, которой нет в списках возможностей: Resolve хранит проект **записью в
-базе**, а `.drp` умеет делать только по явной команде человека — то есть обмен у
-него не является сохранением вообще. FCP прячет внутри `.fcpbundle` базы SQLite,
-то есть у «файла» проекта на самом деле реляционная середина. Premiere ближе всех
-к нам (свой контейнер + сжатие), и именно у него публично видно цену ошибки:
-сжатие при сохранении жмёт на 30–50 %, работает ОДНИМ ядром и отключается ради
-скорости — то есть размер проектного файла у него уже стал проблемой
-производительности, а не места на диске.
+A detail that is absent from the feature lists: Resolve stores the project as a **record in a database**, and `.drp` can be produced only by an explicit command from a person — that is, for it exchange is not saving at all. FCP hides SQLite databases inside `.fcpbundle`, that is, the "file" of a project is in fact a relational middle. Premiere is the closest to us (its own container + compression), and it is precisely there that the price of the error is publicly visible: compression on save cuts 30–50 %, works on ONE core and is disabled for speed — that is, the size of its project file has already become a performance problem, not a problem of disk space.
 
-Второе наблюдение, прямо относящееся к нашему §464: **Premiere хорошо умеет
-только ОДИН уровень вложения** — A в B работает, B в C начинает вести себя
-странно. Ответ Adobe на разрастание — не чинить формат, а РАЗРЕЗАТЬ проект на
-части (workflow «Productions»). То есть отрасль уже уткнулась в ту же стену, и
-обходит её организационно, а не инженерно.
+A second observation, directly related to our §464: **Premiere copes well with only ONE level of nesting** — A in B works, B in C starts behaving strangely. Adobe's answer to growth is not to fix the format, but to CUT the project into parts (the "Productions" workflow). That is, the industry has already run into the same wall, and goes around it organizationally rather than engineeringly.
 
-## Плюсы
+## Pros
 
-- Файл проекта становится размером с МОДЕЛЬ, а не с её развёртку: замер Р.70 на
-  синтетической сцене (лента из 10 клипов, два уровня вложения по 8 экземпляров)
-  — `.otio` 1.97 МБ против 3.9 КБ прямой сериализации модели, **501×**; на сцене
-  40/8/8 — 7.36 МБ против 7.9 КБ, **929×**. Плоский проект без повторов — 17×.
-- Автосейв перестаёт быть событием: писать мегабайты каждые полминуты — это и
-  задержка интерфейса, и износ диска, и окно потери при падении.
-- Модель перестаёт протискиваться сквозь чужую схему. Сегодня морферы, камеры,
-  карта слоёв, наложенные переходы, публичные параметры, высоты строк и порядок
-  дорожек живут в «конверте» `metadata.kt` — то есть в обменном формате лежит
-  наш формат, завёрнутый в чужой.
-- Ломающие изменения становятся дешёвыми: версия своя, каскада совместимости с
-  чужой схемой нет.
+- The project file becomes the size of the MODEL, not of its expansion: the measurement of R.70 on a synthetic scene (a reel of 10 clips, two nesting levels with 8 instances each)
+  — `.otio` 1.97 MB against 3.9 KB of direct model serialization, **501×**; on a scene
+  40/8/8 — 7.36 MB against 7.9 KB, **929×**. A flat project without repeats — 17×.
+- Autosave stops being an event: writing megabytes every half a minute is both interface lag, disk wear, and a loss window on a crash.
+- The model stops being squeezed through a foreign schema. Today morphers, cameras, the layer map, overlapping transitions, public parameters, row heights and the track order live in the `metadata.kt` "envelope" — that is, our format wrapped in someone else's, lies in the exchange format.
+- Breaking changes become cheap: the version is our own, and there is no cascade of compatibility with a foreign schema.
 
-## Минусы
+## Cons
 
-- **Чужой редактор больше не откроет файл проекта напрямую.** Сегодня `.otio`
-  можно отдать в Resolve как есть; завтра для этого понадобится явный экспорт.
-  Это ровно тот размен, который делают все остальные, но у нас он был наоборот.
-- Нужны ДВЕ двери вместо одной: импорт существующих `.otio`-проектов владельца и
-  экспорт в `.otio` для обмена. Обе придётся держать и проверять.
-- Свой формат — своя ответственность за живучесть: читатель чужой версии,
-  поведение при обрыве записи, восстановление. У обменного формата эту работу
-  частично делала чужая экосистема.
-- Пока формат свой и молодой, «открылось, а части монтажа нет» (F-RES-003)
-  становится вероятнее, а не менее вероятным.
+- **A foreign editor will no longer open the project file directly.** Today `.otio`
+  can be handed to Resolve as is; tomorrow an explicit export will be needed for that.
+  This is exactly the trade that all the others make, but for us it was the other way round.
+- TWO doors are needed instead of one: importing existing `.otio` projects of the owner and
+  exporting to `.otio` for exchange. Both will have to be maintained and verified.
+- Our own format means our own responsibility for durability: the reader of a foreign version,
+  behavior when a write is cut off, recovery. With an exchange format, a foreign ecosystem
+  partly did this work.
+- While the format is our own and young, "it opened, but part of the edit is missing" (F-RES-003)
+  becomes more likely, not less.
 
-## Что говорят пользователи
+## What users say
 
-Premiere, Adobe Community, duanecwilson, 06.02.2019 — о файле проекта без медиа
+Premiere, Adobe Community, duanecwilson, 06.02.2019 — about a project file without media
 (https://community.adobe.com/t5/premiere-pro-discussions/help-reducing-huge-project-file-prproj/td-p/10352545):
 
 > my project file (not including media) is almost 1GB in size, and every time I
 > save it, or it is auto-saved, it creates another 1GB file.
 
-Там же, о цене сохранения:
+There, about the price of saving:
 
 > it still takes a full minute or two to save it.
 
-Отрицательный опыт отрасли читается и в обходных путях: Adobe отвечает на
-разрастание не форматом, а разрезанием проекта («Productions»), а сжатие при
-сохранении в Premiere отключается ради скорости — то есть пользователю
-предлагают выбирать между размером файла и временем сохранения.
+The industry's negative experience can also be read in the workarounds: Adobe answers growth not with a format but by cutting the project ("Productions"), and compression on
+save in Premiere is disabled for speed — that is, the user is offered a choice between the size of the file and the time of saving.
 
-Наш собственный владелец (`docs/user-feedback.md`, Р.68 и Р.70): три ленты дали
-115 МБ и 15 220 клипов; решение — «мы уходим от otio-формата, оставляем otio
-только на экспорт и делаем breaking changes чтобы наш формат стал в сто раз
-лучше».
+Our own owner (`docs/user-feedback.md`, R.68 and R.70): three reels gave
+115 MB and 15 220 clips; the decision — "we are moving away from the otio format, leaving otio
+only for export, and making breaking changes so that our format becomes a hundred times
+better".
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
 CAPABILITY: openspec/specs/project-format/
 
-Проект переезжает в СВОЙ формат, `.otio` остаётся дверью наружу (экспорт) и
-дверью внутрь для существующих файлов (импорт, правило Р.67).
-Решение владельца 02.10.2026, раунд Р.70; ломающие изменения разрешены прямо.
-Замер «до»: 17× на плоском проекте, 501× и 929× на вложенных сценах.
+The project moves into ITS OWN format, `.otio` remains a door outward (export) and
+a door inward for existing files (import, rule R.67).
+The owner's decision of 02.10.2026, round R.70; breaking changes are explicitly allowed.
+The "before" measurement: 17× on a flat project, 501× and 929× on nested scenes.
 
-## Оценка
+## Estimate
 
-Цена L: формат, чтение, запись, импорт `.otio`, экспорт `.otio`, автосейв и
-восстановление, каскад версий своего формата, живые сценарии на обе двери.
-Выигрыш измерим и велик (сотни раз по размеру файла), и он же снимает отдельную
-задачу §464 целиком — разрастание исчезает по построению, а не затыкается.
+Cost L: the format, reading, writing, `.otio` import, `.otio` export, autosave and recovery, a cascade of versions of our own format, live scenarios for both doors.
+The gain is measurable and large (hundreds of times in file size), and it also removes the separate task §464 entirely — the growth disappears by construction, rather than being plugged.
 
-## Вердикт
+## Verdict
 
-**ПРИНЯТО (Р.70, решение владельца).** Обменный формат и формат проекта — разные
-файлы с противоположными требованиями; попытка усидеть на обоих стульях и дала
-115 МБ. Берём разделение, которое отрасль сделала до нас, и берём его целиком:
-проект в своём формате, OTIO — на экспорт и импорт.
+**ACCEPTED (R.70, the owner's decision).** The exchange format and the project format are different files with opposite requirements; the attempt to sit on both chairs gave
+115 MB. We take the separation that the industry made before us, and take it whole:
+the project in its own format, OTIO — for export and import.
 
-Отвергнуто вместе с этим: вариант Р.68 «раскрывать вложение на один уровень» —
-он опирался на неверную посылку, будто тела лент уже лежат в конверте
-`kt.sequences`; на деле поля с клипами там нет вовсе, и усечение глубины отняло
-бы содержимое у НАШЕГО читателя.
+Rejected along with this: the R.68 option "expand a nest by one level" —
+it rested on the wrong premise that the bodies of reels already lie in the envelope
+`kt.sequences`; in fact there are no fields with clips there at all, and truncating the depth would take the content away from OUR reader.
 
-**СДЕЛАНО (Р.70, 03.10.2026).** Файл проекта `.kt` — `kt_model::project_file`
-(построчный детерминированный JSON модели, версия на корне, отказ вперёд);
-OTIO — две двери: `File → Import older Kinotrain project…` (легаси `.ktproj`,
-наш старый и чужой `.otio` — одно правило `kt_otio::import_interchange`) и
-`File → Export → OpenTimelineIO…` (самодостаточно, тело ленты в каждом
-экземпляре, чужой passthrough возвращён). Автосейв и восстановление —
-`<имя>.recovery.kt`. Замер на сцене 10/8/8: файл проекта в 234× меньше файла
-обмена (построчный против компактного стоил 2×, и это цена git). kt-cli: `new`/
-`demo` пишут `.kt`, `import`/`export-otio` — двери, `render`/`probe`/`export`
-читают только `.kt`. Живые сценарии ходят в программу через те же двери
+**DONE (R.70, 03.10.2026).** The project file `.kt` — `kt_model::project_file`
+(line-by-line deterministic JSON of the model, a version at the root, refusal forward);
+OTIO — two doors: `File → Import older Kinotrain project…` (legacy `.ktproj`,
+our old and a foreign `.otio` — one rule `kt_otio::import_interchange`) and
+`File → Export → OpenTimelineIO…` (self-sufficient, the body of a reel in each
+instance, foreign passthrough restored). Autosave and recovery —
+`<name>.recovery.kt`. Measurement on the scene 10/8/8: the project file is 234× smaller than the
+exchange file (line-by-line against compact cost 2×, and this is the price of git). kt-cli: `new`/
+`demo` write `.kt`, `import`/`export-otio` are the doors, `render`/`probe`/`export`
+read only `.kt`. Live scenarios go into the program through the same doors
 (`kt_live.import_project`/`export_project`).
 
-## Источники
+## Sources
 
-- https://www.danielgrindrod.com/blog/databases — Resolve Disk Database против PostgreSQL (прочитано 02.10.2026)
-- https://cutconvert.com/guides/what-is-a-drp-file — `.drp` как ZIP с XML, делается явной командой (02.10.2026)
-- https://preservation.tylerthorsted.com/2023/12/15/final-cut-pro/ — `.fcpbundle`, внутри `.flexolibrary`/`.fcpevent` (SQLite) (02.10.2026)
-- https://community.adobe.com/t5/premiere-pro-discussions/help-reducing-huge-project-file-prproj/td-p/10352545 — цитаты duanecwilson, 06.02.2019 (02.10.2026)
-- https://vakago-tools.com/faster-saving-times-in-premiere-p/ — сжатие проекта при сохранении: 30–50 %, одно ядро, отключается (02.10.2026)
-- https://blog.frame.io/2024/09/30/ultimate-guide-to-premiere-pro-productions/ — «Productions» как ответ на большие проекты; один уровень вложения (02.10.2026)
+- https://www.danielgrindrod.com/blog/databases — Resolve Disk Database versus PostgreSQL (read 02.10.2026)
+- https://cutconvert.com/guides/what-is-a-drp-file — `.drp` as a ZIP with XML, made by an explicit command (02.10.2026)
+- https://preservation.tylerthorsted.com/2023/12/15/final-cut-pro/ — `.fcpbundle`, inside `.flexolibrary`/`.fcpevent` (SQLite) (02.10.2026)
+- https://community.adobe.com/t5/premiere-pro-discussions/help-reducing-huge-project-file-prproj/td-p/10352545 — quotes by duanecwilson, 06.02.2019 (02.10.2026)
+- https://vakago-tools.com/faster-saving-times-in-premiere-p/ — project compression on save: 30–50 %, one core, disabled (02.10.2026)
+- https://blog.frame.io/2024/09/30/ultimate-guide-to-premiere-pro-productions/ — "Productions" as the answer to large projects; one level of nesting (02.10.2026)

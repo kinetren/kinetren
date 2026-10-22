@@ -1,12 +1,12 @@
 ---
 id: F-COL-019
-title: Кто сейчас в проекте
-status: исследовано
+title: Who is in the project now
+status: researched
 priority: C
 cost: M
 category: collab/claim
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, vscode-1.136]
-we_have: частично
+we_have: partial
 crates: [kt-model, kt-app, kt-engine]
 invariants: [12]
 ui_rules: []
@@ -19,88 +19,85 @@ services: [team-projects, bm-cloud, frame-io]
 checked: 2026-09-08
 ---
 
-# F-COL-019 — Кто сейчас в проекте
+# F-COL-019 — Who is in the project now
 
-## Суть
+## Essence
 
-Второй человек либо есть в документе прямо сейчас, либо нет, и от этого зависит
-каждое решение монтажёра: можно ли трогать эту секвенцию, стоит ли писать в чат,
-почему кусок вдруг стал только для чтения. Программа знает ответ — замок она держит
-именно по этому признаку, — но говорит его редко и в самом неудобном месте: в момент
-отказа. Отдельный, куда более амбициозный вопрос — где именно второй сейчас стоит и
-что видит; его в монтажных редакторах не решает никто.
+The second person is either in the document right now or is not, and every decision of the
+editor depends on this: whether this sequence can be touched, whether to write in the chat,
+why a piece has suddenly become read-only. The program knows the answer — it holds the lock
+precisely on this sign — but says it rarely and at the most inconvenient place: at the moment
+of refusal. A separate, far more ambitious question — where exactly the second one now stands
+and what they see — nobody in the editing editors solves.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет | совместной работы нет, присутствие не выражено ничем: в проекте всегда один, и программа об этом не рассуждает |
-| Adobe Premiere | 26.x | колонка «Project Locked» (Productions), колонка «Changes» и подпись в правом верхнем углу таймлайна (Team Projects) | присутствие — ПРОИЗВОДНАЯ замка: показывается не человек, а имя того, кто занял объект. Чужого курсора нет; узнать «кто именно там» предлагают, глядя на колонку списка или на подпись у таймлайна |
-| DaVinci Resolve | 21 | read-only у занятых бинов и таймлайнов + встроенный чат | тот же принцип плюс единственный в отрасли канал прямого разговора внутри программы: «кто здесь» отвечается тем, что объект занят, а «что он делает» — текстом, который человек напишет сам |
-| Final Cut Pro | 12.3 | сообщение при попытке открыть библиотеку | присутствие видно РОВНО ОДИН раз и только как отказ: «already in use by [user] on [Mac].local». Пока не попробовал открыть — не знаешь |
-| After Effects | 26.x | своего нет; через Team Projects — тот же список и та же подпись | у файлового проекта присутствия нет вовсе; в сервисе AE наследует чужую поверхность целиком |
+| VEGAS Pro | 2026.0 | none | there is no shared work, presence is expressed by nothing: in the project there is always one, and the program does not reason about it |
+| Adobe Premiere | 26.x | the "Project Locked" column (Productions), the "Changes" column and a caption in the top right corner of the timeline (Team Projects) | presence is a DERIVATIVE of the lock: it is not a person that is shown but the name of the one who occupied the object. There is no foreign cursor; to learn "who exactly is there" you are offered to look at the list column or at the caption by the timeline |
+| DaVinci Resolve | 21 | read-only for occupied bins and timelines + built-in chat | the same principle plus the industry's only channel of direct conversation inside the program: "who is here" is answered by the object being occupied, and "what they are doing" — by text which the person writes themselves |
+| Final Cut Pro | 12.3 | a message when trying to open the library | presence is seen EXACTLY ONCE and only as a refusal: "already in use by [user] on [Mac].local". Until you try to open it, you do not know |
+| After Effects | 26.x | has none of its own; through Team Projects — the same list and the same caption | a file project has no presence at all; in the service AE inherits someone else's surface entirely |
 
-**Вне ядра.** Без текстового редактора фишку не показать: только рядом с ним видно,
-что монтажным редакторам мешает не сложность, а предмет.
+**Outside the core.** Without a text editor the trick cannot be shown: only next to it
+does it become visible that what hinders editing people is not complexity but the subject.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Visual Studio Code | 1.136 (Live Share) | co-editing, participants list, follow | чужой курсор и выделение рисуются прямо в документе с флажком-именем, участники перечислены списком, а «follow» синхронизирует твой редактор с чужим файлом и позицией прокрутки. Работает потому, что позиция в тексте И ЕСТЬ содержимое: показав курсор, ты показал всё |
+| Visual Studio Code | 1.136 (Live Share) | co-editing, participants list, follow | a foreign cursor and selection are drawn right in the document with a name flag, participants are listed, and "follow" synchronizes your editor with the foreign file and scroll position. It works because the position in the text IS the content: by showing the cursor you have shown everything |
 
-## Фишка фишки
+## The trick behind it
 
-**Ни один монтажный редактор не рисует чужой плейхед, хотя офисные и текстовые
-редакторы рисуют чужой курсор двадцать лет, — и причина не в сложности, а в том, что
-показывать пришлось бы КАДР, а не позицию.** В тексте позиция самодостаточна: строка
-42 видна обоим, и чужой курсор в ней немедленно осмыслен. В монтаже «он на 00:04:12»
-не значит почти ничего: у второго там своя доля разрешения превью, свой набор
-включённых эффектов, свой бэкенд и, если он в другой секвенции, вообще другой
-материал. Чтобы чужая позиция стала сообщением, надо передать картинку с его
-машины, — а это уже не присутствие, а видеосвязь. Поэтому отрасль остановилась на
-шаг раньше и присутствие выражает ТЕКСТОМ: колонкой в списке, подписью в углу,
-чатом.
+**No editing program draws a foreign playhead, although office and text editors have drawn
+a foreign cursor for twenty years — and the reason is not complexity but that what would have
+to be shown is a FRAME, not a position.** In text a position is self-sufficient: line 42 is
+visible to both, and a foreign cursor in it is immediately meaningful. In editing, "he is at
+00:04:12" means almost nothing: the second one has their own preview resolution share, their own
+set of enabled effects, their own backend and, if they are in another sequence, altogether different
+material. For a foreign position to become a message, one must transmit the picture from their
+machine — and that is no longer presence but video communication. Therefore the industry stopped
+one step earlier and expresses presence in TEXT: a column in a list, a caption in the corner, a chat.
 
-**Второй слой: присутствие нигде не измеряется отдельно — оно вычисляется из
-ЗАМКА.** «Кто здесь» отвечается через «кто занял», и поэтому качество ответа ровно
-такое же, как качество замка: когда замок ошибается, присутствие врёт. Отсюда
-регулярный класс жалоб «мне дали только чтение, хотя я один», и отсюда же ответ
-поддержки, который сам называет всю доступную поверхность: посмотрите колонку списка
-или подпись у таймлайна, там написано, кого программа СЧИТАЕТ работающим. Из
-присутствия как отдельного факта — кто открыл, когда, жив ли ещё — не сделано
-ничего; есть только тень замка.
+**Second layer: presence is nowhere measured separately — it is computed from the LOCK.** "Who is
+here" is answered by "who occupied", and therefore the quality of the answer is exactly the quality
+of the lock: when the lock errs, presence lies. Hence the regular class of complaints "I was given only
+read access although I am alone", and hence the support answer that itself names the entire available
+surface: look at the list column or at the caption by the timeline, there it is written who the program
+CONSIDERS to be working. From presence as a separate fact — who opened, when, whether still alive — nothing
+has been made; there is only the shadow of the lock.
 
-**Третий слой: единственная форма присутствия, которая в монтаже прижилась, —
-асинхронная.** Чат Resolve и комментарии Frame.io работают потому, что не требуют
-одновременности: сообщение адресовано не позиции курсора, а кадру и человеку, и
-читается когда угодно. Живое присутствие в монтаже так и осталось не решённым, а
-обойдённым.
+**Third layer: the only form of presence that has taken root in editing is asynchronous.** Resolve's chat
+and Frame.io comments work because they do not require simultaneity: a message is addressed not to the
+cursor position but to the frame and the person, and is read at any time. Live presence in editing has
+remained unsolved — it has been bypassed.
 
-## Плюсы
+## Pros
 
-- Присутствие, выведенное из замка, ничего не стоит: раз замок уже есть, «кто здесь»
-  — это его же поле, показанное колонкой. Отдельного канала не нужно.
-- Текстовая поверхность (колонка, подпись, чат) не требует одновременности и
-  переживает обрыв связи: сообщение не протухает так, как протухает координата.
-- Чат внутри программы решает главное, ради чего хотят видеть чужой курсор:
-  договориться, кто чем занят, — и делает это словами, которые остаются.
-- Отказ как форма присутствия («already in use by …») хотя бы называет человека и
-  машину: это самая бедная поверхность, но она однозначна.
+- Presence derived from the lock costs nothing: since the lock already exists, "who is here" is
+  its very field, shown as a column. No separate channel is needed.
+- A text surface (column, caption, chat) does not require simultaneity and survives a broken connection:
+  a message does not go stale the way a coordinate goes stale.
+- A chat inside the program solves the main thing for which people want to see a foreign cursor:
+  to agree on who is doing what — and does it in words that remain.
+- Refusal as a form of presence ("already in use by …") at least names the person and the machine: it is
+  the poorest surface, but it is unambiguous.
 
-## Минусы
+## Cons
 
-- Присутствие врёт ровно там, где врёт замок, и человек остаётся без объяснения:
-  «только чтение, хотя я один» — это отказ, у которого нет второй половины.
-- Присутствие видно поздно: у Final Cut — в момент, когда уже попробовал открыть; у
-  Productions — колонкой, в которую надо догадаться посмотреть.
-- Из присутствия нельзя понять НАМЕРЕНИЕ: «занято Аней» не отвечает на вопрос,
-  ушла ли Аня обедать с открытым проектом. Живости у признака нет.
-- Чужая позиция не выражается вовсе, и вместе с ней не выражается самое частое
-  желание совместной работы — «покажи, что ты смотришь»; его заменяют
-  демонстрацией экрана, то есть инструментом вне редактора.
+- Presence lies exactly where the lock lies, and the person is left without an explanation:
+  "read only although I am alone" is a refusal that has no second half.
+- Presence is seen late: at Final Cut — at the moment one has already tried to open; at Productions — in a
+  column one has to guess to look at.
+- From presence one cannot understand INTENT: "occupied by Anya" does not answer whether Anya has gone to lunch
+  with the project open. The sign has no liveness.
+- A foreign position is not expressed at all, and together with it the most frequent desire of shared work is
+  not expressed — "show me what you are looking at"; it is replaced by screen sharing, that is, a tool outside
+  the editor.
 
-## Что говорят пользователи
+## What users say
 
-Присутствие как тень замка — и что бывает, когда тень легла неверно:
+Presence as the shadow of the lock — and what happens when the shadow falls wrongly:
 
 > It seems like Premiere is booting me from editing the sequence because I am editing
 > it.
@@ -108,139 +105,128 @@ checked: 2026-09-08
 > the only editor online», 24.12.2024,
 > https://community.adobe.com/questions-79/premiere-team-projects-giving-me-view-only-even-though-i-am-the-only-editor-online-1498367
 
-Ответ Adobe в том же треде перечисляет всю поверхность присутствия целиком — колонка
-и подпись в углу:
+Adobe's answer in the same thread lists the entire surface of presence in full — the column
+and the caption in the corner:
 
 > Does it mention which collaborator Premiere thinks is working on the sequence?
 > Either in the "Changes" column in the Team Project panel (list view) or at the
 > top-right when opening the a sequence in the timeline.
-> — Udo_Pawlik (Adobe Employee), 24.12.2024, тот же тред
+> — Udo_Pawlik (Adobe Employee), 24.12.2024, the same thread
 
-Единственный прямой канал «человек человеку» внутри монтажной программы — текст:
+The only direct "person to person" channel inside an editing program is text:
 
 > DaVinci Resolve features built in chat so team members can talk about shots, review
 > tasks and share creative ideas without leaving the software.
 > — Blackmagic Design, «DaVinci Resolve — Collaboration»,
 > https://www.blackmagicdesign.com/products/davinciresolve/collaboration
-> (дата обращения 2026-09-08)
+> (accessed 2026-09-08)
 
-Для сравнения — как это выглядит там, где позиция и есть содержимое:
+For comparison — how it looks where the position is the content itself:
 
 > Participants can see cursors and edits. They can also see selections you make.
 > — Microsoft Learn, «Co-edit in Visual Studio Code — Live Share», 22.01.2022,
 > https://learn.microsoft.com/en-us/visualstudio/liveshare/use/coedit-follow-focus-visual-studio-code
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- Носитель «где был другой» у нас существует и едет в файле проекта: `UiState`
-  (`src/libs/kt-model/src/project.rs:1571`) хранит `cursor`, `view_start`,
-  `ticks_per_px`, раскладку бина, ширину метров и имена дорожек.
-- Он кладётся в документ вне undo — `set_ui_state`
-  (`src/libs/kt-model/src/model.rs:446`), рядом с регионом и loop, — и попадает на
-  диск попутно с ближайшим сохранением содержимого (t96) либо при выходе
+- The carrier of "where the other one was" exists with us and travels in the project file: `UiState`
+  (`src/libs/kt-model/src/project.rs:1571`) stores `cursor`, `view_start`, `ticks_per_px`, the bin layout,
+  the meter width and the track names.
+- It is put into the document outside undo — `set_ui_state` (`src/libs/kt-model/src/model.rs:446`), next to
+  the region and loop — and reaches the disk along with the nearest save of content (t96) or on exit
   (`src/apps/kt-app/src/app.rs:5308`).
-- И он ПРИМЕНЯЕТСЯ при открытии, молча и целиком: `src/apps/kt-app/src/app.rs:707`
-  ставит зум, левый край вью и делает `player.seek(Tick(ui.cursor))`. Открыв проект,
-  сохранённый чужой рукой, я получаю чужой плейхед в качестве своего.
-- Показ позиции у нас уже отвязан от квантов мастер-часов: `video_playhead`
-  (`src/libs/kt-engine/src/player.rs:493`) интерполирует позицию ПОКАЗА между
-  шагами аудио-колбэка по локальному `Instant::now()` (инвариант 12, тест 56).
-- Ни имени человека, ни учётной записи, ни времени последнего открытия в документе
-  нет: у `UiState` нет автора, и вторая такая же запись просто затирает первую.
+- And it is APPLIED on opening, silently and entirely: `src/apps/kt-app/src/app.rs:707` sets the zoom, the left
+  edge of the view and does `player.seek(Tick(ui.cursor))`. Having opened a project saved by someone else's hand,
+  I get the other person's playhead as my own.
+- The display of position with us is already decoupled from the quanta of the master clock: `video_playhead`
+  (`src/libs/kt-engine/src/player.rs:493`) interpolates the position of the DISPLAY between the steps of the audio
+  callback by the local `Instant::now()` (invariant 12, test 56).
+- Neither a person's name, nor an account, nor the time of the last opening exists in the document: `UiState` has
+  no author, and a second such record simply overwrites the first.
 
-БЕЗ СЕТИ: ВЫРОЖДАЕТСЯ — `src/libs/kt-model/src/model.rs:446` — присутствие вырождается в запись об ОДНОМ участнике, живущую внутри документа: курсор, вьюпорт и зум кладутся в проект вне undo и при открытии применяются молча. «Где был другой» у нас, таким образом, уже реализовано в самой сильной форме — не показывается рядом с моим, а подменяет мой, стоит открыть файл, сохранённый чужой рукой.
+OFFLINE: DEGENERATES — `src/libs/kt-model/src/model.rs:446` — presence degenerates into a record about ONE participant, living inside the document: the cursor, the viewport and the zoom are put into the project outside undo and are applied silently on opening. "Where the other one was" is, thus, already implemented with us in the strongest form — it is not shown next to mine, it replaces mine, as soon as a file saved by someone else's hand is opened.
 
-ЦЕНА СЕТИ: чужая позиция, которая ДВИЖЕТСЯ, — общие часы · инвариант 12 — позиция показа выводится из НАШЕГО аудио-колбэка и интерполируется по локальным часам, а у чужого плейхеда на моей машине источника хода нет: без общего времени присланная координата стареет ровно на столько, сколько шла.
+NETWORK COST: a foreign position that MOVES — shared clock · invariant 12 — the display position is derived from OUR audio callback and is interpolated by local clocks, while a foreign playhead has no source of motion on my machine: without common time a transmitted coordinate ages by exactly as much as it has travelled.
 
-ЦЕНА СЕТИ: сказать, КТО именно в проекте, — учётная запись — у записи о вьюпорте нет автора, а идентификаторы у нас локальные («максимум + 1»), так что второй вьюпорт негде держать и не на что повесить: он затирает первый.
+NETWORK COST: to say WHO exactly is in the project — an account — a viewport record has no author, and our identifiers are local ("maximum + 1"), so there is nowhere to keep a second viewport and nothing on which to hang it: it overwrites the first.
 
-### Чего не хватает
+### What is missing
 
-- Не чужого плейхеда — его не показывает никто, и нам он не нужен, — а честности с
-  собственной записью: сегодня чужой курсор применяется без спроса и без следа, и
-  человек не знает, почему проект открылся не в начале.
-- Признака «этот файл открыт кем-то ещё» — самой бедной формы присутствия, той, что
-  у Final Cut. У нас нет ни замка, ни чтения mtime, ни проверки на второй экземпляр.
-- Места, где человек мог бы оставить сообщение к КАДРУ, а не к позиции: у метки есть
-  время, длительность, имя и цвет и нет ни автора, ни текста
-  (`src/libs/kt-model/src/project.rs:1459`).
+- Not a foreign playhead — nobody shows it, and we do not need it — but honesty toward our own record: today a
+  foreign cursor is applied without asking and without a trace, and the person does not know why the project
+  opened not at the beginning.
+- A sign of "this file is open by someone else" — the poorest form of presence, the one that Final Cut has. We
+  have neither a lock, nor a read of mtime, nor a check for a second instance.
+- A place where a person could leave a message to a FRAME, not to a position: a marker has a time, a duration,
+  a name and a color, and has neither an author nor text (`src/libs/kt-model/src/project.rs:1459`).
 
-### Что мешает
+### What gets in the way
 
-Показ чужой позиции упирается не в передачу числа, а в то, что число без картинки
-бессмысленно, а картинка у второго своя: доля разрешения превью входит в ключ кэша
-(инвариант 4), бэкенд может быть другим, и декодером владеет ровно один
-MediaWorker (инвариант 5) — чужой кадр в нашей архитектуре не откуда взять, кроме
-как декодировав его у себя, то есть посчитав заново. Второе препятствие — часы:
-всё, что движется, у нас подчинено аудио-колбэку (инварианты 6 и 12), и присланная
-координата не имеет в нашем времени ни начала, ни хода.
+Showing a foreign position runs not into transmitting a number, but into the fact that a number without a picture
+is meaningless, and the picture at the other end is its own: the share of preview resolution enters the cache key
+(invariant 4), the backend may be different, and exactly one MediaWorker owns the decoder (invariant 5) — a foreign
+frame cannot be obtained in our architecture except by decoding it on our side, that is, by recalculating it. The
+second obstacle is the clock: everything that moves with us is subordinate to the audio callback (invariants 6 and 12),
+and a transmitted coordinate has neither a beginning nor a motion in our time.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Инвариант 12 (позиция показа интерполируется между шагами мастер-часов, сырой
-`transport.playhead()` при игре не читается) — прямо: он описывает, откуда берётся
-движение нашего плейхеда, и объясняет, почему у чужого его не будет. Косвенно —
-инвариант 4 (доля разрешения в ключе кэша) и инвариант 5 (единственный владелец
-декодера): они делают «чужой кадр» невыразимым иначе, чем пересчётом у себя.
+Invariant 12 (the display position is interpolated between the steps of the master clock; the raw
+`transport.playhead()` is not read during playback) — directly: it describes where the motion of our playhead
+comes from, and explains why the foreign one will not have it. Indirectly — invariant 4 (the share of resolution in
+the cache key) and invariant 5 (the sole owner of the decoder): they make a "foreign frame" inexpressible other than by
+recalculation on one's own side.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии, и обе локальные: спросить про чужой вьюпорт при открытии, заметить второго писателя файла |
-| Где основная работа | kt-app (открытие проекта, поверхность сообщения), kt-model (авторство записи о вьюпорте, если она вообще станет данными) |
-| Формат проекта | не трогает: `ui` в конверте уже есть, новых полей не нужно |
-| Тесты, которые придётся написать | «открытие чужого файла не двигает мой курсор молча»; layout-тест строки о втором писателе |
-| Зависит от | F-COL-017 (место признака занятости), F-UI-005 (метка-данные у события — сосед по «сообщению к кадру») |
-| Ломает совместимость | нет |
+| Size | M — 2 stages, and both local: ask about a foreign viewport on opening, notice a second writer of the file |
+| Where the main work is | kt-app (project opening, the message surface), kt-model (authorship of the viewport record, if it ever becomes data at all) |
+| Project format | not touched: `ui` in the envelope already exists, no new fields are needed |
+| Tests to write | "opening a foreign file does not move my cursor silently"; a layout test of the line about a second writer |
+| Depends on | F-COL-017 (the place of the busy sign), F-UI-005 (the marker-data on an event — a neighbor on "a message to the frame") |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Присутствия не заводим — второго участника нет, а живой чужой плейхед не заводит
-никто и с участником: в монтаже позиция без кадра ничего не сообщает, и это не наша
-бедность, а свойство предмета. Забираем из разведки два наблюдения, оба применимые
-в одиночку. Первое: **у нас уже есть присутствие в самой сильной и самой невежливой
-форме** — сохранённый в документе чужой курсор и вьюпорт применяются при открытии
-молча, то есть чужая позиция не показывается рядом с моей, а становится моей.
-Стоит либо спрашивать, либо не двигать курсор при открытии чужого файла. Второе:
-самая бедная поверхность присутствия — «этот файл уже кем-то тронут» — не требует
-ни сервера, ни учётных записей, и она же нужна нам по совсем другой причине
-(F-COL-018: отмена после внешней записи молча стирает её).
+We do not set up presence — there is no second participant, and a live foreign playhead is set up by no one even with
+a participant: in editing a position without a frame reports nothing, and this is not our poverty but a property of the
+subject. From the reconnaissance we take two observations, both applicable alone. First: **we already have presence in its
+strongest and most impolite form** — a foreign cursor and viewport saved in the document are applied silently on opening,
+that is, the foreign position is not shown next to mine, it becomes mine. One should either ask, or not move the cursor when a
+foreign file is opened. Second: the poorest surface of presence — "this file has already been touched by someone" — requires
+neither a server nor accounts, and it is needed by us for an entirely different reason too (F-COL-018: undo after an external
+write silently erases it).
 
-Отдельно фиксируем как решение: **чужой кадр мы не показываем и не пересылаем**.
-Любая будущая просьба «покажи, что видит второй» разбивается об инварианты 4 и 5 —
-кадр придётся считать у себя, а значит это будет НЕ его кадр.
+Separately we record as a decision: **we do not show or transmit a foreign frame.** Any future request "show what the second
+one sees" breaks against invariants 4 and 5 — the frame would have to be computed on our side, which means it will NOT be their frame.
 
-Чем отличаемся от соседей. **F-COL-014** (замок, переживший владельца) — про то, что
-делать, когда признак занятости врёт; здесь — про то, что этот же признак является
-ЕДИНСТВЕННЫМ источником сведений о людях, и потому его вранью нечем возразить.
-**F-COL-013** (два процесса над одним файлом) — про объявление занятия; присутствие
-живёт на той же поверхности, но отвечает на другой вопрос — не «свободно ли», а «кто
-и жив ли он». **F-COL-012** (владелец дорожки) — про принадлежность, которая
-переживает снятие замка; здесь — про факт присутствия здесь и сейчас.
-**F-COL-016** — про то, что занимается; присутствие в этой паре — производная.
-**F-UI-005** (цвет клипа как данные) и метка-данные у события — про сообщение,
-привязанное к КАДРУ; это соседняя половина того же разговора, но она асинхронная и
-живёт в `review/`. **F-UI-003** (раскладки окон) — про то же поле `UiState`, но с
-точки зрения удобства одного человека, а не следа второго.
+How we differ from neighbors. **F-COL-014** (a lock that outlived its owner) is about what to do when the busy sign lies; here it is
+about the fact that this same sign is the ONLY source of information about people, and therefore its lie has nothing to object with.
+**F-COL-013** (two processes over one file) is about declaring occupation; presence lives on the same surface but answers a different
+question — not "is it free" but "who and is he alive". **F-COL-012** (the owner of a track) is about belonging that outlives the lifting of
+the lock; here it is about the fact of presence here and now. **F-COL-016** is about what is occupied; presence in this pair is derived.
+**F-UI-005** (color of a clip as data) and marker-data on an event are about a message tied to a FRAME; this is the neighboring half of the same
+conversation, but it is asynchronous and lives in `review/`. **F-UI-003** (window layouts) is about the same `UiState` field, but from the point of view
+of one person's convenience, not of the trace of a second one.
 
-## Источники
+## Sources
 
 - https://community.adobe.com/questions-79/premiere-team-projects-giving-me-view-only-even-though-i-am-the-only-editor-online-1498367
-  — «view only», хотя в проекте один, и перечисление всей поверхности присутствия
-  (24.12.2024, дата обращения 2026-09-08)
-- https://www.blackmagicdesign.com/products/davinciresolve/collaboration — встроенный
-  чат и read-only у занятых бинов и таймлайнов (дата обращения 2026-09-08)
+  — "view only" although there is one person in the project, and the enumeration of the entire surface of presence
+  (24.12.2024, accessed 2026-09-08)
+- https://www.blackmagicdesign.com/products/davinciresolve/collaboration — the built-in chat and read-only for
+  occupied bins and timelines (accessed 2026-09-08)
 - https://learn.microsoft.com/en-us/visualstudio/liveshare/use/coedit-follow-focus-visual-studio-code
-  — чужие курсоры, выделения, флажок с именем и режим «follow» (22.01.2022, дата
-  обращения 2026-09-08)
-- https://creativecow.net/forums/thread/library-is-already-in-use/ — присутствие как
-  единственное сообщение в момент отказа (18.10.2017, дата обращения 2026-09-08)
-- Строки VEGAS и After Effects отражают отсутствие механизма; публичного трекера нет
-  ни у одного из пяти (`docs/features/_trackers.md`, «Кого НЕ берём»).
-- Наш код проверен грепом по `src/` 08.09.2026: `kt-model/src/project.rs`
+  — foreign cursors, selections, a name flag and the "follow" mode (22.01.2022, accessed 2026-09-08)
+- https://creativecow.net/forums/thread/library-is-already-in-use/ — presence as the only message at the moment
+  of refusal (18.10.2017, accessed 2026-09-08)
+- The VEGAS and After Effects rows reflect the absence of a mechanism; there is no public tracker for any of the five
+  (`docs/features/_trackers.md`, "Whom we do NOT take").
+- Our code was checked by grep over `src/` on 08.09.2026: `kt-model/src/project.rs`
   (`UiState`, `Marker`), `kt-model/src/model.rs` (`set_ui_state`),
-  `kt-app/src/app.rs` (восстановление вьюпорта и `player.seek` при открытии, запись
-  при выходе), `kt-engine/src/player.rs` (`video_playhead`).
+  `kt-app/src/app.rs` (restoring the viewport and `player.seek` on opening, saving
+  on exit), `kt-engine/src/player.rs` (`video_playhead`).

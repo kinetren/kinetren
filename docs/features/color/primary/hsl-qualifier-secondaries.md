@@ -1,12 +1,12 @@
 ---
 id: F-CLR-003
-title: Вторичная коррекция: HSL-qualifier, окна и трекинг
-status: кандидат
+title: Secondary correction: HSL qualifier, windows and tracking
+status: candidate
 priority: B
 cost: XL
 category: color/primary
 editors: [resolve-20, premiere-26, fcp-12, vegas-pro-2026, after-effects-26]
-we_have: нет
+we_have: no
 crates: [kt-model, kt-fx, kt-engine, kt-gpu, kt-cache, kt-otio, kt-app]
 invariants: [4, 5, 7, 8, 11, 12]
 ui_rules: [1, 2, 6, 13, 16, 20]
@@ -17,139 +17,51 @@ depends_on: []
 checked: 2026-09-07
 ---
 
-# F-CLR-003 — Вторичная коррекция: HSL-qualifier, окна и трекинг
+# F-CLR-003 — Secondary correction: HSL qualifier, windows and tracking
 
-## Суть
+## Essence
 
-Первичная коррекция крутит ручку на ВЕСЬ кадр. Вторичная сначала выделяет
-кусок кадра, а красит только его: «небо синее», «кожу теплее», «эта одна
-красная вывеска в углу — приглушить». Выделение бывает двух родов —
-по ЦВЕТУ (диапазон Hue/Saturation/Luminance с порогами и мягкостью краёв)
-и по МЕСТУ (power window: эллипс, прямоугольник, градиент, безье-форма,
-едущая за объектом на трекинге). Работают они в паре: цвет отвечает на
-«что», окно — на «где», и в пересечении получается то, ради чего слово
-«грейдинг» вообще отличается от слова «яркость».
+Primary correction turns a knob for the WHOLE frame. Secondary correction first selects a piece of the frame and grades only that: "the sky is blue", "warmer skin", "this one red sign in the corner — mute it". Selection comes in two kinds: by COLOUR (a Hue/Saturation/Luminance range with thresholds and soft edges) and by PLACE (a power window: an ellipse, a rectangle, a gradient, a Bézier shape, or one that follows an object through tracking). They work as a pair: colour answers "what", the window answers "where", and their intersection is what the word "grading" means as opposed to "brightness".
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| DaVinci Resolve | 20.3.2 | Qualifier (HSL/RGB/LUM/3D) + Power Windows + Tracker | ЭТАЛОН. Матte — отдельный сигнал ноды («ключ»): у каждой ноды есть вход Key In и выход Key Out, qualifier и окна складываются В КЛЮЧ, окна умеют булеву комбинацию, `Key Output Gain` ослабляет вклад ноды целиком. Три группы диапазона, и они УСТРОЕНЫ ПО-РАЗНОМУ: у Hue — `Hue Center`, `Hue Width`, ОДНА `Hue Soft` и `Hue Symmetry` (наклон спада); у Sat и Lum — не центр с шириной, а пара границ `Low`/`High` и ДВЕ независимые мягкости `Low Soft`/`High Soft`. Отдельная панель чистки матte — Pre-Filter, Clean Black, Black Clip, Clean White, White Clip, Blur Radius, In/Out Ratio, **Morph Operation (Shrink/Grow/Opening/Closing) + Morph Radius**, Denoise, триада Shadow/Midtone/Highlight, Post-Filter. Qualifier и окно по умолчанию ПЕРЕСЕКАЮТСЯ, переключатель `Qualifier matte` (Matte/Mask) в палитре Key меняет пересечение на сложение. Весь тракт — 32-bit float всегда. Трекер (Pan/Tilt/Zoom/Rotate/Perspective 3D) везёт окно за объектом |
-| Adobe Premiere | 26.x | Lumetri Color → HSL Secondary | Есть Key с пипетками «+»/«−», три диапазонных слайдера с четырьмя ручками (внутренние = плато, внешние = мягкость), просмотр маски тремя режимами — `Color/Gray`, `Color/Black`, `White/Black` — плюс НЕДОКУМЕНТИРОВАННАЯ кнопка инверсии матte рядом с ними (самый частый вопрос на форуме Adobe: «выделение не работает, меняется всё видео» — ответ именно в ней). В Refine ровно два параметра, Denoise и Blur: морфологического shrink/grow нет. Коррекция после выделения — не только одно колесо: иконкой над ним переключается на классические ТРЁХЧАСТНЫЕ колёса (тени/средние/света). Урезан по СТРУКТУРЕ, а не по числу ручек: матte внутренний — наружу не выходит, второй вторички в одном инстансе нет (нужен второй Lumetri), окна внутри Lumetri нет вовсе (маска живёт у ЭФФЕКТА в Effect Controls), коррекция после выделения — фиксированный короткий список (колесо, Temperature/Tint/Contrast/Sharpen/Saturation), кривых там нет |
-| Final Cut Pro | 12.3 | Color Mask (3D / HSL) + Shape Mask + Auto Mask и Magnetic Mask | Маски — свойство КОНКРЕТНОГО эффекта коррекции. Цветовая маска бывает ДВУХ видов: «3D mask — creates a color mask that lets you add or remove surrounding colors by dragging the Softness slider» и «HSL mask — …adjust hue, saturation, and luma values independently» (то же деление 3D-кеер / HSL, что у Resolve). Комбинация названа Apple прямо: «To limit the area of the image affected by a color mask, you can add one or more shape masks». Направление действия — кнопки Inside/Outside, плюс «invert (flop) the masked and unmasked areas». Отдельно — нейросетевые Auto Mask и Magnetic Mask и объектный трекер |
-| VEGAS Pro | 2026.0 | Secondary Color Corrector (плагин v1) + Bézier Masking + Mocha VEGAS | Плагин старый и с тех пор почти не менялся: пипетка «выбрать диапазон», Hue/Sat/Lum с границами и smoothness, чекбоксы «показать маску» и «инвертировать», коррекция цветовым колесом. Собственного окна у плагина нет — форма делается ОТДЕЛЬНЫМ инструментом (Bézier-маска с моушн-трекингом, с VP17 умеет перспективу), а planar-трекинг приехал плагином Mocha, у которого теперь своя категория на форуме Boris FX |
-| After Effects | 26.x | Keylight, Color Range/Extract, маски слоя, Roto Brush 3, Mocha AE | ДРУГАЯ ПАРАДИГМА: результат кеера — АЛЬФА СЛОЯ, а не выделение для коррекции. Чтобы «сделать только небо синее», слой дублируют, на копии выбивают всё кроме неба, копию красят и кладут поверх — три объекта вместо одной ручки. Зато у Keylight есть то, чего нет ни у кого: дропдаун View с шестью режимами показа промежуточных сигналов (Source, Screen Matte, Status, Intermediate Result, Corrected Source, Final Result) |
-| Kinotrain | — | нет | Цветокоррекции нет вообще; масок нет ни в каком виде (греп по `src/` на `mask`/`matte`/`bezier`/`roto` даёт только маску ввода таймкода и OTIO-`Track`); трекинга нет. Ближайшее по смыслу — `Greenscreen` в `src/libs/kt-fx/src/video.rs`: вырожденный qualifier, умеющий только выбросить выделенное в прозрачность |
+| DaVinci Resolve | 20.3.2 | Qualifier (HSL/RGB/LUM/3D) + Power Windows + Tracker | THE BENCHMARK. The matte is a separate signal of the node ("key"): each node has a Key In input and a Key Out output; the qualifier and the windows add up INTO A KEY; the windows can be combined with Boolean operations; `Key Output Gain` weakens a node's contribution as a whole. Three range groups, and they are BUILT DIFFERENTLY: for Hue — `Hue Center`, `Hue Width`, ONE `Hue Soft` and `Hue Symmetry` (the slope of the falloff); for Sat and Lum — not a centre with a width but a pair of boundaries `Low`/`High` and TWO independent softnesses `Low Soft`/`High Soft`. A separate panel for cleaning the matte — Pre-Filter, Clean Black, Black Clip, Clean White, White Clip, Blur Radius, In/Out Ratio, **Morph Operation (Shrink/Grow/Opening/Closing) + Morph Radius**, Denoise, the Shadow/Midtone/Highlight triad, Post-Filter. The qualifier and the window intersect by default; the `Qualifier matte` switch (Matte/Mask) in the Key palette changes the intersection into a sum. The whole path is always 32-bit float. The tracker (Pan/Tilt/Zoom/Rotate/Perspective 3D) carries the window along with an object |
+| Adobe Premiere | 26.x | Lumetri Color → HSL Secondary | It has a Key with "+" and "−" eyedroppers, three range sliders with four handles each (the inner ones are the plateau, the outer ones the softness), a mask preview in three modes — `Color/Gray`, `Color/Black`, `White/Black` — plus an UNDOCUMENTED invert-matte button next to them (the most frequent question on Adobe's forum: "the selection doesn't work, the whole video changes" — the answer is that button). In Refine there are exactly two parameters, Denoise and Blur: there is no morphological shrink/grow. The correction after the selection is not just one wheel: an icon above it switches to classic THREE-PART wheels (shadows/midtones/highlights). It is limited in STRUCTURE, not in the number of handles: the internal matte does not leave the effect; there is no second secondary within one instance (a second Lumetri is needed); there is no window inside Lumetri at all (the mask lives on the EFFECT in Effect Controls); the correction after selection is a fixed short list (wheel, Temperature/Tint/Contrast/Sharpen/Saturation); there are no curves there |
+| Final Cut Pro | 12.3 | Color Mask (3D / HSL) + Shape Mask + Auto Mask and Magnetic Mask | Masks are a property of a SPECIFIC correction effect. A colour mask comes in two kinds: a "3D mask", which adds or removes surrounding colours with a single Softness slider, and an "HSL mask", which adjusts hue, saturation and luma independently (the same split as Resolve's 3D and HSL). Apple names the combination directly: to limit the area of the image affected by a colour mask, you can add one or more shape masks. The direction of action is set by the Inside/Outside buttons, plus inverting ("flopping") the masked and unmasked areas. Separately there are neural-network Auto Mask and Magnetic Mask and an object tracker |
+| VEGAS Pro | 2026.0 | Secondary Color Corrector (plugin v1) + Bézier Masking + Mocha VEGAS | The plugin is old and has barely changed since: an eyedropper to "select a range", Hue/Sat/Lum with boundaries and smoothness, checkboxes "show mask" and "invert", correction with a colour wheel. The plugin has no window of its own: the shape is made with a SEPARATE tool (a Bézier mask with motion tracking; since VP17 it can do perspective), and planar tracking came with the Mocha plugin, which now has its own category on the Boris FX forum |
+| After Effects | 26.x | Keylight, Color Range/Extract, layer masks, Roto Brush 3, Mocha AE | A DIFFERENT PARADIGM: the result of a keyer is the LAYER'S ALPHA, not a selection for correction. To "make only the sky blue", the layer is duplicated, everything except the sky is cut out of the copy, the copy is coloured and placed on top — three objects instead of one knob. But Keylight has something nobody else has: a View dropdown with six modes for displaying intermediate signals (Source, Screen Matte, Status, Intermediate Result, Corrected Source, Final Result) |
+| Kinotrain | — | none | There is no colour correction at all; there are no masks in any form (a grep of `src/` for `mask`/`matte`/`bezier`/`roto` gives only the timecode input mask and the OTIO `Track`); there is no tracking. The nearest in meaning is `Greenscreen` in `src/libs/kt-fx/src/video.rs`: a degenerate qualifier that can only throw the selected area into transparency |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Инструмент бесполезен без ОТДЕЛЬНОГО РЕЖИМА ПОКАЗА, и режим этот
-нужен не один, а семейством — причём рабочий из них тот, который ВРЁТ.**
-Матte настраивается не по картинке (на картинке разница между «выделено
-на 100 %» и «выделено на 97 %» не видна вообще), а по специальному виду.
-У Resolve это Highlight (Shift+H) с переключением фона и отдельный показ
-матte чёрно-белым; у Premiere — кнопки предпросмотра маски прямо в
-секции; у старого плагина Vegas — простой чекбокс «показать маску».
-Но самый показательный режим —
-`Status` у Keylight: он не показывает матte как есть, он ПЕРЕКРАШИВАЕТ
-его так, чтобы «почти чёрное» стало заметно отличаться от чёрного.
-Именно этим и настраивают Clip Black / Clip White: глазом на честном ч/б
-матte пиксель со значением 3 из 255 неотличим от нуля, а он — источник
-всего последующего шума. То есть первая фишка вторички — не пипетка и не
-слайдеры, а СПЕЦИАЛЬНЫЙ НЕЧЕСТНЫЙ ПРОСМОТР, и без него ни один из пяти
-редакторов настроить нельзя.
+**1. A tool is useless without a SEPARATE VIEW MODE, and there is not one such mode but a family of them — and the one that works is the one that LIES.** The matte is not adjusted by looking at the picture (on the picture, the difference between "selected at 100 %" and "selected at 97 %" is not visible at all), but by a special view. In Resolve this is Highlight (Shift+H) with a switchable background and a separate black-and-white view of the matte; in Premiere there are mask preview buttons right in the section; in the old VEGAS plugin there is a simple "show mask" checkbox. But the most telling mode is `Status` in Keylight: it does not show the matte as it is, it RECOLOURS it so that "almost black" becomes clearly different from black. This is exactly how Clip Black / Clip White are set: by eye, on an honest black-and-white matte, a pixel with the value 3 out of 255 is indistinguishable from zero, yet it is the source of all the subsequent noise. So the first trick of secondary correction is not the eyedropper or the sliders, but a SPECIAL DISHONEST VIEW, and without it none of the five editors can be configured.
 
-**2. Окно нужно не чтобы ограничить площадь, а чтобы РАЗРЕШИТЬ грубый
-qualifier.** Очевидное объяснение пары «qualifier И окно» — «выделим цвет
-и отрежем лишнее». Настоящая причина обратная: без окна порог приходится
-затягивать до предела, потому что тот же оттенок есть ещё в пяти местах
-кадра, — а затянутый порог как раз и режет полутона, оставляя рваный
-край. Окно снимает это ограничение: всё, что qualifier поймал бы лишнего,
-и так лежит вне окна, поэтому диапазон можно взять ШИРЕ, мягкость больше
-и матte выходит чище — притом что ни одна ручка самого qualifier'а
-«качество» не называется. Отсюда же следует, почему не хватает чего-то
-одного: qualifier разваливается там, где цвета не разделяются
-(классическое «белая рубашка на белом фоне» — цитата ниже), а окно
-разваливается там, где объект шевелится, и лечится трекингом, а не
-порогами. И третий участник той же связки — ИНВЕРСИЯ: «всё, кроме
-кожи» настраивается тем же выделением кожи, а не вторым выделением
-всего остального, поэтому у каждого из пяти редакторов инвертирование
-стоит галкой рядом с выделением, а не отдельным инструментом.
+**2. The window is needed not to limit the area but to PERMIT a coarse qualifier.** The obvious explanation for the pair "qualifier AND window" is "select the colour and cut off the rest". The real reason is the reverse: without a window, the threshold has to be pulled to its limit, because the same hue also occurs in five other places in the frame — and a pulled-tight threshold cuts out the midtones, leaving a ragged edge. The window removes this constraint: everything the qualifier would catch by mistake already lies outside the window, so the range can be taken WIDER, the softness can be greater, and the matte comes out cleaner — even though none of the qualifier's own knobs is called "quality". This also explains why one thing is not enough: the qualifier falls apart where colours are not separable (the classic "white shirt on a white background" case — described below), while the window falls apart where the object moves, and it is cured by tracking, not by thresholds. The third participant in this pair is INVERSION: "everything except the skin" is set up with the same selection of the skin, not with a second selection of everything else, which is why in each of the five editors inversion is a tick box next to the selection rather than a separate tool.
 
-**3. Шум маски задаёт ФОРМАТ ИСТОЧНИКА, а не алгоритм; и «сжать маску»
-физически невозможно без её размытия.** Порог по цвету на h264 8 бит
-4:2:0 берётся не с той картинки, которую видит человек: цветность лежит в
-четверть разрешения, поэтому оттенок постоянен внутри блока 2×2, а
-DCT-квантование гуляет им от кадра к кадру на единицы. Жёсткий порог
-превращает это гуляние в мерцающий блочный узор — маска шумит НА СТАТИКЕ,
-и подтянуть порог не помогает: сдвигается граница, а не убирается дрожь.
-На ProRes 422 (10 бит, 4:2:2) тот же порог даёт чистый край, потому что
-и уровней вчетверо больше, и цветность полной высоты, — то есть «работает
-на ProRes, разваливается на h264» это не про алгоритм. Из-за этого чистка
-матte и существует как отдельная панель; и там прячется вторая половина
-детали: сжать выделение можно ДВУМЯ разными способами, и они не
-взаимозаменяемы. Морфологический — `Morph Operation` (Shrink / Grow /
-Opening / Closing) с `Morph Radius`: честная эрозия и дилатация, край
-двигается без размытия, а Opening/Closing затыкают дыры и убирают
-крапины. Фильтровый — `Blur Radius` с `In/Out Ratio`: размыть кромку и
-сместить, на какую её сторону сядет край; `In/Out Ratio` работает и при
-НУЛЕВОМ блюре, заполняя мелкие дыры. У Premiere из этих двух семейств
-нет ни одного: в Refine только `Denoise` и `Blur`, то есть сжать
-выделение нечем вовсе — и это, а не число ручек, делает его вторичку
-урезанной.
+**3. The noise of a mask is set by the SOURCE FORMAT, not by the algorithm; and "shrinking the mask" is physically impossible without blurring it.** A colour threshold on 8-bit 4:2:0 H.264 is taken not from the picture the human sees: the chroma lives at a quarter of the resolution, so the hue is constant within a 2×2 block, and DCT quantisation makes it wander from frame to frame by a unit or so. A hard threshold turns this wandering into a flickering block pattern — the mask shimmers ON A STATIC SHOT, and raising the threshold does not help: the boundary shifts, but the tremble is not removed. On ProRes 422 (10-bit, 4:2:2) the same threshold gives a clean edge, because there are four times as many levels and the chroma is at full height — so "works on ProRes, falls apart on H.264" is not a question of the algorithm. This is why cleaning the matte exists as a separate panel; and there the second half of the detail is hidden: a selection can be shrunk in TWO different ways, and they are not interchangeable. The morphological one — `Morph Operation` (Shrink / Grow / Opening / Closing) with `Morph Radius`: honest erosion and dilation, the edge moves without blurring, while Opening/Closing plug holes and remove specks. The filter one — `Blur Radius` with `In/Out Ratio`: blur the edge and shift which side the edge lands on; `In/Out Ratio` also works with ZERO blur, filling small holes. Premiere has neither of these two families: in Refine there is only `Denoise` and `Blur`, so there is no way to shrink a selection at all — and that, not the number of handles, is what makes its secondary correction limited.
 
-## Плюсы
+## Pros
 
-- Матte как ОТДЕЛЬНЫЙ сигнал (Resolve) даёт переиспользование: то же
-  выделение подаётся на вход другой ноды и красит второй раз без второй
-  настройки. Матte как альфа (AE) этого не даёт по построению — альфу
-  съедает композит.
-- Пара «цвет + форма» покрывает разные отказы: там, где не разделяются
-  цвета, спасает форма, где не стоит на месте объект — трекинг формы.
-  Ни один из двух инструментов в одиночку эти два случая не закрывает,
-  и это следствие устройства, а не недоработки.
-- Диапазонное выделение автоматически следует за содержимым: небо
-  остаётся выделенным, когда камера панорамирует, без единого ключа.
-  Окно за то же самое платит трекингом — то есть ключами на каждый кадр.
-- У FCP маски принадлежат КОНКРЕТНОМУ эффекту коррекции, а не клипу:
-  два грейда на одном клипе имеют каждый свою пару масок, и «то же
-  размытие с разной силой в двух местах кадра» выражается без дубля
-  клипа.
-- Просмотр матte — единственная часть инструмента, которая ничего не
-  считает и ничего не пишет в проект: это чистый режим отображения,
-  поэтому он дешёвый и поэтому он есть у всех пяти.
+- A matte as a SEPARATE signal (Resolve) allows reuse: the same selection is fed into the input of another node and colours a second time without a second setup. A matte as alpha (AE) does not allow this by construction — the compositor consumes the alpha.
+- The pair "colour + shape" covers different failures: where colours do not separate, shape saves the day; where the object does not stay still, shape tracking does. Neither tool alone covers both cases, and this is a consequence of the design, not a shortcoming.
+- A range selection automatically follows the content: the sky stays selected when the camera pans, without a single keyframe. A window pays for the same thing with tracking — that is, with keys on every frame.
+- In FCP, masks belong to a SPECIFIC correction effect, not to the clip: two grades on one clip each have their own pair of masks, and "the same blur at different strengths in two places of the frame" is expressed without duplicating the clip.
+- The matte view is the only part of the tool that computes nothing and writes nothing into the project: it is a pure display mode, which is why it is cheap and why all five have it.
 
-## Минусы
+## Cons
 
-- Панель чистки матte существует ровно потому, что выделение по цвету на
-  сжатом материале шумит. То есть половина ручек инструмента — это
-  компенсация формата источника, и на 10-битном материале они не нужны;
-  пользователь при этом видит одинаково длинный список ручек в обоих
-  случаях и не знает, какие из них ему трогать.
-- Choke неотделим от размытия (см. «Фишка фишки» 3), поэтому «подрезать
-  край на 2 пикселя» неизбежно делает край мягче. Скрыть это нельзя, и
-  каждый редактор просто выкладывает обе ручки рядом.
-- Матте, спрятанный внутрь эффекта (Premiere), запирает вторичку в один
-  экземпляр: вторая вторичка = второй Lumetri поверх первого, и порядок
-  их применения становится частью результата, хотя пользователь просил
-  «ещё одно выделение».
-- Окно, привязанное к эффекту, и окно, привязанное к слою, — разные
-  вещи, и у AE это стоит целой парадигмы: маска слоя режет ВЕСЬ слой,
-  поэтому вторичка требует дубля слоя, а дубль слоя — это второй проход
-  декодера по тому же материалу.
-- Трекинг пишет ключи в проект сам. Это единственная часть вторички,
-  которая порождает данные без явного жеста пользователя, и именно она
-  ломает предсказуемость: перетрекать = перезаписать чужие ключи.
-- Нейросетевая маска не отменяет чистку матte, а только заменяет способ
-  его получить: у Auto Mask в FCP ручки ровно те же — Shrink/Expand,
-  Erode, Blur. То есть «умное выделение» убирает пипетку и пороги, но
-  оставляет всю вторую половину инструмента; экономии на панели чистки
-  оно не даёт.
+- The matte cleanup panel exists precisely because color selection on compressed material is noisy. That is, half of the tool's knobs are compensation for the source format, and on 10-bit material they are not needed; the user, however, sees an equally long list of knobs in both cases and does not know which of them to touch.
+- Choke is inseparable from blurring (see "The trick behind it" 3), so "trimming the edge by 2 pixels" inevitably makes the edge softer. This cannot be hidden, and every editor simply lays out both knobs side by side.
+- A matte hidden inside the effect (Premiere) locks the secondary into a single instance: a second secondary = a second Lumetri on top of the first, and the order of their application becomes part of the result, although the user asked for "one more selection".
+- A window bound to an effect and a window bound to a layer are different things, and in AE this has cost an entire paradigm: a layer mask cuts the WHOLE layer, so a secondary requires a duplicate of the layer, and a duplicate of the layer is a second pass of the decoder over the same material.
+- Tracking writes keys into the project by itself. This is the only part of a secondary that produces data without an explicit gesture from the user, and it is exactly this that breaks predictability: re-tracking = overwriting someone else's keys.
+- A neural-network mask does not cancel matte cleanup, it only replaces the way of obtaining the matte: Auto Mask in FCP has exactly the same knobs — Shrink/Expand, Erode, Blur. So "smart selection" removes the eyedropper and the thresholds, but leaves the entire second half of the tool; it gives no saving on the cleanup panel.
 
-## Что говорят пользователи
+## What users say
 
-Тред, в котором ровно за пять реплик проходят все грани фичи. Задача —
-перекрасить рубашку в интервью, то есть каноническая вторичка:
+A thread in which all facets of the feature come up in exactly five replies. The task is to recolor a shirt in an interview, that is, the canonical secondary:
 
 > Just wondering why you're turning to Boris for this and not using a
 > selective color-corrector in your host? (e.g. Vegas's "secondary color
@@ -157,289 +69,135 @@ Opening / Closing) с `Morph Radius`: честная эрозия и дилат�
 > — RedRob, Boris FX Forum, 04.11.2020,
 > https://forum.borisfx.com/t/worflow-question/9472
 
-Автор темы пробует эталонный инструмент и упирается в предел, который
-не лечится ни одной ручкой qualifier'а:
+The author of the topic tries the reference tool and runs into a limit that cannot be cured by any knob of the qualifier:
 
 > I have been testing with the qualifier in Davinci but it didn't work
 > very well. The model has got a white shirt filmed on a white backdrop
 > so that complicate things.
-> — torbjorn, там же, 04.11.2020
+> — torbjorn, same thread, 04.11.2020
 
-Ответ в том же треде — это, по сути, формулировка границы применимости
-выделения по цвету:
+The reply in the same thread is, in essence, a statement of the limit of applicability of color selection:
 
 > White on white is unfortunately a rotoscoping situation every time.
-> — maryp, там же, 04.11.2020
+> — maryp, same thread, 04.11.2020
 
-А это уже 2026 год и обратная сторона: люди берут ВТОРИЧКУ вместо
-специализированного кеера, потому что порог по диапазону с мягкостью
-оказывается надёжнее хромакея:
+And this is already 2026 and the reverse side: people take a SECONDARY instead of a specialised keyer, because a range threshold with softness turns out to be more reliable than chroma key:
 
 > I find that works more reliably than the chroma key Fx.
 > — RogerS, Boris FX Forum, 27.04.2026,
 > https://forum.borisfx.com/t/quick-green-creen-compositing-with-built-in-channel-blend-secondary-color-corrector/22928
 
-Последняя цитата важна для нас отдельно: у нас есть ровно кеер и нет
-вторички, а пользователи чужого редактора идут в противоположную сторону.
+The last quote matters to us separately: we have exactly a keyer and no secondary, while users of another editor go in the opposite direction.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-Больше, чем кажется. Все четыре «генератора матte», из которых состоит
-вторичка, у нас уже написаны — просто подключены к чужим потребителям.
+More than it seems. All four "matte generators" of which a secondary consists are already written in our code — they are simply connected to other consumers.
 
-- **Выделение по цвету с порогом и мягкостью** — `greenscreen` в
-  `src/libs/kt-fx/src/video.rs` (стр. 348). Евклидово расстояние до
-  ключевого цвета, `tolerance` — внешний порог, `tolerance − softness` —
-  внутреннее плато, между ними линейная рампа, плюс `spill`. Это
-  буквально qualifier по RGB (режим `RGB` в терминах Resolve), и он же
-  единственный, потому что HSL-разложения у нас нет нигде. Спека
-  параметров — `params_for!` в `src/libs/kt-model/src/project.rs`
-  (~стр. 2340), WGSL-зеркало — `src/libs/kt-gpu/src/shaders/`.
-- **Выделение по ЯРКОСТИ с порогом и мягкостью** — ядро `MODE_LUMA` в
-  `src/libs/kt-engine/src/transitions.rs` (~стр. 350): считает люму
-  кадра и гонит её через `front_mask(l, k, softness)`. Это готовый
-  LUM-qualifier, только его результат уходит в `mix4(a, b, w)` — выбор
-  между двумя кадрами.
-- **Параметрические ОКНА с мягкостью** — там же: `MODE_IRIS` (~стр. 317)
-  даёт круг, ромб и прямоугольник через расстояние от центра, `MODE_WIPE`
-  (~стр. 310) — линейный градиент по произвольному направлению. Это
-  ровно Circle / Rectangle / Gradient power window из Resolve, с
-  мягкостью через `smoothstep`.
-- **Общий кусок всех трёх** — `front_mask(s, k, soft)` в том же файле
-  (стр. 229): «координата → вес 0..1 с мягким фронтом». Одна функция,
-  CPU-эталон, WGSL-зеркало в
-  `src/libs/kt-gpu/src/shaders/composite.wgsl`, конформанс держат t224
-  (виды переходов), t181/t182 (GPU против CPU) и t225. То есть
-  математика окна у нас не только написана, но и отзеркалена, и
-  затестирована — под другой вывеской.
-- **Размытие матte** — тоже есть, случайно: `bilinear_into_scalar`
-  (`src/libs/kt-fx/src/video.rs`, ~стр. 270) усредняет ВСЕ ЧЕТЫРЕ
-  канала, а `blur` сохраняет `has_alpha`. Поэтому `Blur` после
-  `Greenscreen` в цепочке уже размывает альфу — это половина choke.
-- **Анимация и трекинг-совместимая схема данных** — `ParamCurve` и
+- **Color selection with threshold and softness** — `greenscreen` in
+  `src/libs/kt-fx/src/video.rs` (line 348). Euclidean distance to the
+  key color, `tolerance` — the outer threshold, `tolerance − softness` — the
+  inner plateau, with a linear ramp between them, plus `spill`. This is literally a qualifier by RGB (the `RGB` mode in Resolve's terms), and it is the only one, because there is no HSL decomposition anywhere in our code. The parameter spec is `params_for!` in `src/libs/kt-model/src/project.rs`
+  (~line 2340), the WGSL mirror is in `src/libs/kt-gpu/src/shaders/`.
+- **Selection by LUMA with threshold and softness** — the `MODE_LUMA` core in
+  `src/libs/kt-engine/src/transitions.rs` (~line 350): it computes the luma
+  of the frame and runs it through `front_mask(l, k, softness)`. This is a ready
+  LUM qualifier, except its result goes into `mix4(a, b, w)` — the choice
+  between two frames.
+- **Parametric WINDOWS with softness** — there too: `MODE_IRIS` (~line 317)
+  gives a circle, a diamond and a rectangle via distance from the center, `MODE_WIPE`
+  (~line 310) — a linear gradient in an arbitrary direction. This is exactly
+  the Circle / Rectangle / Gradient power window from Resolve, with
+  softness via `smoothstep`.
+- **The common piece of all three** — `front_mask(s, k, soft)` in the same file
+  (line 229): "coordinate → weight 0..1 with a soft front". One function,
+  the CPU reference, the WGSL mirror in
+  `src/libs/kt-gpu/src/shaders/composite.wgsl`; conformance is held by t224
+  (transition kinds), t181/t182 (GPU against CPU) and t225. So the window math
+  is not only written by us but also mirrored and tested — under a different name.
+- **Matte blurring** — also present, by accident: `bilinear_into_scalar`
+  (`src/libs/kt-fx/src/video.rs`, ~line 270) averages ALL FOUR
+  channels, and `blur` preserves `has_alpha`. Therefore `Blur` after
+  `Greenscreen` in the chain already blurs the alpha — this is half of the choke.
+- **Animation and a tracking-compatible data scheme** — `ParamCurve` and
   `AutoKey { t: Tick, v: f64 }` (`src/libs/kt-model/src/project.rs`,
-  ~стр. 1611–1627). Ключ хранится в тике МАТЕРИАЛА, а ось кривой — время
-  события (Р.37), кривые разрешаются один раз при построении плана
-  (`LayerSrc.fx` в `src/libs/kt-engine/src/video_plan.rs`). Результат
-  трекинга — это набор скалярных кривых по кадрам, и он ложится сюда без
-  единой новой сущности.
-- **Место для эффекта** — категория `KEY` уже заведена в реестре
-  (`src/apps/kt-app/src/fx_registry.rs`, ~стр. 35), там сейчас один
+  ~lines 1611–1627). The key is stored in the MATERIAL tick, and the curve's axis is the event time
+  (R.37); curves are resolved once when the plan is built
+  (`LayerSrc.fx` in `src/libs/kt-engine/src/video_plan.rs`). The tracking result is a set of scalar curves by frame, and it lands here without a single new entity.
+- **A place for the effect** — the `KEY` category is already set up in the registry
+  (`src/apps/kt-app/src/fx_registry.rs`, ~line 35); at present it holds one
   `Greenscreen`.
-- **Порядок вычислений в нашу пользу.** FX считаются ПЕР-СЛОЙ, композит
-  идёт после (`src/libs/kt-engine/src/video_plan.rs`, `PlanLayer::One` /
-  `Dissolve`, исполнение — `apply_video_chain_pooled`,
-  `src/libs/kt-fx/src/video.rs`, стр. 61). Для вторички это именно то,
-  что нужно: грейдят СНЯТЫЙ ПЛАН, а не готовый композит, — как нода
-  клипа в Resolve и как цепочка события в Vegas. Слой-морфер при этом
-  дописывает свои эффекты в цепочку каждой цели (`c.fx.extend(add)` в
-  `MorphPatch::apply_to`), то есть qualifier с морфера отработает по
-  каждому клипу отдельно — для выделения по цвету это лучше, чем
-  «по композиту», хотя и отличается от ожиданий от adjustment-слоя.
+- **Order of computation in our favour.** FX are computed PER LAYER, the composite
+  goes after (`src/libs/kt-engine/src/video_plan.rs`, `PlanLayer::One` /
+  `Dissolve`; execution — `apply_video_chain_pooled`,
+  `src/libs/kt-fx/src/video.rs`, line 61). For a secondary this is exactly
+  what is needed: they grade the CAPTURED PLAN, not a finished composite — like the clip node
+  in Resolve and like the event chain in Vegas. The morpher layer, meanwhile, appends its effects to the chain of each target (`c.fx.extend(add)` in
+  `MorphPatch::apply_to`), so a qualifier from the morpher will run on each clip separately — for color selection this is better than "on the composite", although it differs from expectations of an adjustment layer.
 
-### Чего не хватает
+### What is missing
 
-- **Собственно цветокоррекции.** Выделять есть чем, красить — нечем:
-  греп по `saturation|brightness|contrast|gamma|hue|lut` в `kt-fx`,
-  `kt-gpu` и спеках `kt-model` не даёт ни одного эффекта. Вторичка без
-  первички — это выделение, которое некуда применить.
-- **Матte как отдельный сигнал.** У нас кадр — это `Frame { rgba, has_alpha }`
-  и ничего больше; четвёртый байт — альфа, и её потребляет композит.
-- **Режима показа матte нет и завести его негде**: `draw_preview`
-  (`src/apps/kt-app/src/app.rs`, стр. 3095) знает ровно один вид —
-  готовый композит из `compose_preview_into`; `VideoGpuExec::execute_into`
-  тоже отдаёт только финальный RGBA.
-- **Операций над матte** (denoise, clean black/white, choke с
-  направлением) нет: `Blur` размывает альфу, но пережать уровень после
-  размытия нечем.
-- **Геометрии в модели нет вообще.** Единственная наша «область» —
-  `MorphTargets::Areas` (`src/libs/kt-model/src/project.rs`, стр. 617) —
-  это ВРЕМЯ × ДОРОЖКИ, а не пиксели.
-- **Пипетки по кадру нет.** То, что в комментарии `fx_editor.rs` названо
-  пипеткой, — это `ui.color_edit_button_rgb` (стр. 635), палитра egui.
-  Взять цвет неба ИЗ КАРТИНКИ нельзя ни для `Greenscreen`, ни для
-  `Edges`, ни для `Glow`; для qualifier'а это не украшение, а способ
-  задать начальное значение.
-- **Трекинга нет ни в каком виде.**
+- **Colour correction itself.** There is a way to select, but nothing to paint with: a grep for `saturation|brightness|contrast|gamma|hue|lut` in `kt-fx`, `kt-gpu` and the `kt-model` specs gives not one effect. A secondary without a primary is a selection with nowhere to apply it.
+- **A matte as a separate signal.** For us a frame is `Frame { rgba, has_alpha }` and nothing more; the fourth byte is alpha, and the compositor consumes it.
+- **A matte display mode does not exist, and there is nowhere to put one**: `draw_preview` (`src/apps/kt-app/src/app.rs`, line 3095) knows exactly one view — the finished composite from `compose_preview_into`; `VideoGpuExec::execute_into` also returns only the final RGBA.
+- **Operations on the matte** (denoise, clean black/white, choke with a direction) do not exist: `Blur` blurs the alpha, but there is nothing to tighten the level after blurring.
+- **There is no geometry in the model at all.** Our only "area" — `MorphTargets::Areas` (`src/libs/kt-model/src/project.rs`, line 617) — is TIME × TRACKS, not pixels.
+- **There is no eyedropper on the frame.** What the comment in `fx_editor.rs` calls an eyedropper is `ui.color_edit_button_rgb` (line 635), the egui palette. You cannot take the colour of the sky FROM THE PICTURE for `Greenscreen`, `Edges` or `Glow`; for a qualifier this is not decoration but the way to set the starting value.
+- **There is no tracking in any form.**
 
-### Что мешает
+### What gets in the way
 
-- **`ParamSpec` умеет только скаляр.** `src/libs/kt-model/src/project.rs`
-  (стр. 2203): `{ name, min, max, default, step, unit, kind }` — одно
-  число с диапазоном, и на этом стоит весь UI (правило «числовой
-  параметр рисуется ТОЛЬКО `param_row`/`params_grid`») и вся
-  автоматизация (`ParamCurve.param` — имя скалярного поля). Отсюда
-  ЖЁСТКАЯ развилка: **эллипс/прямоугольник/градиент — это 6–8 скаляров,
-  которые ложатся в существующую машинерию целиком** (и рисуются, и
-  автоматизируются, и трекуются, и уезжают в GPU-униформу без единой
-  новой сущности), **а безье-форма не ложится никак** — список точек
-  переменной длины не выражается в `ParamSpec`, не автоматизируется
-  `ParamCurve` и требует своего редактора поверх превью. Граница цены
-  проходит ровно здесь, а не по «маски/не маски».
-- **Альфу молча уничтожают два эффекта из десяти.** `edges` пишет
-  `p[3] = 255` и возвращает `has_alpha: false`
-  (`src/libs/kt-fx/src/video.rs`, стр. 424 и 453), так же ведёт себя
-  `event_grid` (стр. 716 и 737): цепочка `Greenscreen → Edges` теряет
-  ключ без единого предупреждения. `glow` альфу сохраняет, но пишет
-  только каналы 0..2 (стр. 688) — свечение, добавленное в выбитый
-  пиксель, невидимо. Значит «матte в альфе» — не вариант: нужен либо
-  отдельный канал, живущий сквозь цепочку, либо матte, замкнутый внутри
-  одного эффекта (qualifier и коррекция в одном слоте — как HSL
-  Secondary у Premiere, со всеми её минусами).
-- **Тракт восьмибитный ЦЕЛИКОМ, и это не «когда-нибудь поправим».**
-  Декод — `sws_scale` в `AV_PIX_FMT_RGBA` с флагом `SWS_FAST_BILINEAR`
-  (`src/libs/kt-ffmpeg/src/source_impl.rs`, ~стр. 928); все текстуры
-  GPU — `Rgba8Uint` (`src/libs/kt-gpu/src/pool.rs`, стр. 13); экспорт —
-  обратно в `YUV420P`. То есть мы стоим ровно в том углу, где qualifier
-  шумит сильнее всего (см. «Фишка фишки» 3), и панель чистки матte у
-  нас будет не украшением, а обязательной частью.
-- **Превью считается в ДРУГОМ разрешении, чем экспорт**, и цвет пикселя
-  от этого меняется. `preview_quality` по умолчанию 640×360
-  (`src/libs/kt-engine/src/player.rs`, стр. 264), пользователь выбирает
-  долю 1/16…1/1 (`src/apps/kt-app/src/app.rs`, стр. 3490), и доля
-  уходит прямо в `sws_scale` как целевой размер. Даунскейл УСРЕДНЯЕТ
-  шум: матte, настроенный на превью в 1/4, на экспорте будет грязнее —
-  причём инвариант 7 при этом не нарушен (превью == экспорт байт-в-байт
-  только при одинаковом Quality). Это первый наш инструмент, у которого
-  «посмотреть в превью» перестанет быть достаточным, и об этом придётся
-  сказать пользователю явно.
-- **Ключ пост-FX кэша.** `fx_chain_hash` (`src/libs/kt-engine/src/video.rs`,
-  стр. 153) хэширует Debug цепочки и геометрию — новые поля туда попадут
-  сами, а вот матte-режим показа НЕ должен попасть в тот же ключ, иначе
-  переключение просмотра будет выбрасывать прогретые кадры.
-- **Пул GPU-текстур — ping-pong на одну текстуру** (`acquire` в
-  `src/libs/kt-gpu/src/pool.rs`, стр. 57). Отдельный канал матte,
-  живущий сквозь цепочку, — это вторая текстура на слой в полёте и
-  ревизия бюджета VRAM.
-- **Трекинг ломает инварианты доставки кадров.** Он обязан читать
-  подряд идущие кадры источника — а декодером владеет ровно один
-  MediaWorker (инвариант 5), и «скролл/зум не порождает декод-запросов»
-  (инвариант 8) написано именно про то, что UI не имеет права дёргать
-  декодер. Значит трекинг — это отдельная приоритетная задача в очереди
-  воркера с прогрессом и отменой, а не «пробежались по кадрам в
-  UI-потоке».
-- **Формат.** Любое из перечисленного поднимает `KT_META_VERSION`
-  (`src/libs/kt-otio/src/meta.rs`, стр. 17, сейчас 4) до 5.
+- **`ParamSpec` handles only scalars.** `src/libs/kt-model/src/project.rs` (line 2203): `{ name, min, max, default, step, unit, kind }` — one number with a range, and on this rests the entire UI (the rule "a numeric parameter is drawn ONLY by `param_row`/`params_grid`") and the entire automation (`ParamCurve.param` — the name of a scalar field). This gives a HARD fork: **an ellipse / rectangle / gradient is 6–8 scalars, which fit the existing machinery in full** (they are drawn, automated, tracked, and go into the GPU uniform with no new entity at all), **but a Bézier shape does not fit at all** — a list of points of variable length cannot be expressed in `ParamSpec`, is not automated by `ParamCurve`, and requires its own editor on top of the preview. The price boundary runs exactly here, not at "masks / no masks".
+- **Two effects silently destroy alpha out of ten.** `edges` writes `p[3] = 255` and returns `has_alpha: false` (`src/libs/kt-fx/src/video.rs`, lines 424 and 453); `event_grid` behaves the same way (lines 716 and 737): the chain `Greenscreen → Edges` loses the key without a single warning. `glow` preserves alpha but writes only channels 0..2 (line 688) — a glow added to a knocked-out pixel is invisible. So "a matte in the alpha" is not an option: one needs either a separate channel that lives through the chain, or a matte enclosed inside a single effect (the qualifier and the correction in one slot — like HSL Secondary in Premiere, with all its drawbacks).
+- **The path is 8-bit ENTIRELY, and this is not "we'll fix it someday".** Decoding is `sws_scale` into `AV_PIX_FMT_RGBA` with the `SWS_FAST_BILINEAR` flag (`src/libs/kt-ffmpeg/src/source_impl.rs`, around line 928); all GPU textures are `Rgba8Uint` (`src/libs/kt-gpu/src/pool.rs`, line 13); export goes back to `YUV420P`. So we stand precisely in the corner where a qualifier is noisiest (see "The trick behind it", item 3), and our matte-cleaning panel will be not a decoration but a mandatory part.
+- **The preview is computed at a DIFFERENT resolution from the export**, and the colour of a pixel changes because of this. `preview_quality` by default is 640×360 (`src/libs/kt-engine/src/player.rs`, line 264); the user chooses a fraction from 1/16 to 1/1 (`src/apps/kt-app/src/app.rs`, line 3490); and the fraction goes straight into `sws_scale` as the target size. Downscaling AVERAGES the noise: a matte tuned on a 1/4 preview will be dirtier on export — and invariant 7 is not broken by this (preview == export byte for byte only at the same Quality). This is the first tool of ours for which "look in the preview" will stop being sufficient, and this will have to be stated to the user explicitly.
+- **The post-FX cache key.** `fx_chain_hash` (`src/libs/kt-engine/src/video.rs`, line 153) hashes the Debug of the chain and the geometry — new fields will get in there by themselves, but the matte display mode must NOT get into the same key, otherwise switching the view will throw away the warmed frames.
+- **The GPU texture pool is ping-pong over one texture** (`acquire` in `src/libs/kt-gpu/src/pool.rs`, line 57). A separate matte channel that lives through the chain is a second texture per layer in flight, and a revision of the VRAM budget.
+- **Tracking breaks the frame-delivery invariants.** It has to read consecutive frames of the source, and the decoder is owned by exactly one MediaWorker (invariant 5), and "scrolling/zooming does not generate decode requests" (invariant 8) is written precisely about the UI not being allowed to poke the decoder. So tracking is a separate high-priority task in the worker's queue, with progress and cancellation, not "we ran through the frames in the UI thread".
+- **Format.** Any of the above raises `KT_META_VERSION` (`src/libs/kt-otio/src/meta.rs`, line 17, currently 4) to 5.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **№7 «код композиции ОДИН» — и он тут в нашу пользу.** Матte, окно и
-  их пересечение — это ВЕСА, а веса инвариант перечисляет поимённо как
-  то, что считается один раз в плане и лишь исполняется бэкендом.
-  Поскольку qualifier и окно живут ВНУТРИ слоя (FX пер-слой до
-  композита), новой стадии композита они не заводят — в отличие от
-  track matte «слой берёт альфу соседнего слоя», который её потребует.
-- **№11 детерминизм.** CPU — байт-в-байт против GOLDEN_VIDEO, GPU
-  против CPU только через `kt_gpu::assert_frames_close`; умолчание
-  нового параметра обязано быть прежним поведением байт-в-байт
-  (`src/libs/kt-fx/CLAUDE.md`), иначе едут 26 golden'ов t26 и t67.
-  Пороговые операции при этом — худший случай для допусков CPU↔GPU:
-  расхождение в младшем бите ДО порога даёт разницу в целый пиксель
-  ПОСЛЕ. Допуск придётся формулировать по доле разошедшихся пикселей, а
-  не по амплитуде, — и это решение стоит принять до, а не после.
-- **№4 кэш — единственная правда о coverage**: параметры выделения
-  входят в ключ пост-FX, режим ПОКАЗА матte — не входит.
-- **№5 и №8** — трекинг ходит за кадрами только через очередь
-  MediaWorker; ни один UI-жест не превращается в декод напрямую.
-- **№12** — просмотр матte и ручки окна поверх превью не имеют права
-  ни аллоцировать в draw-пути, ни держать repaint в простое.
-- Правила UI `src/apps/kt-app/CLAUDE.md`: **1** (ручки окна тянут
-  мышью — хват-зона шире рисунка), **2** (пипетка и просмотр матte
-  работают при ВОСПРОИЗВЕДЕНИИ, а не только на паузе), **6** (у окна
-  есть min и max), **13** (переключатель просмотра матte встаёт в уже
-  занятое место полосы превью, а не новой строкой), **16**
-  (невозможность — ошибкой: «эта форма не поддерживает трекинг», а не
-  серым hover'ом), **20** «ничего не отрастает само» — и вот тут
-  прямое столкновение: **трекер по определению ПИШЕТ ключи за
-  пользователя**. Значит он обязан быть явным действием с явным
-  результатом (кнопка «трекать», прогресс, один undo-шаг, видимые
-  ключи в том же виджете `automation::draw`), а не фоновой магией.
+- **No. 7 "one composition code" — and here it works in our favour.** The matte, the window and their intersection are WEIGHTS, and the invariant enumerates weights by name as something computed once in the plan and only executed by the backend. Since the qualifier and the window live INSIDE the layer (FX are per layer, before compositing), they do not introduce a new compositing stage — unlike a track matte, where "a layer takes the alpha of the neighbouring layer", which would require one.
+- **No. 11 determinism.** CPU — byte-identical against GOLDEN_VIDEO; GPU against CPU only via `kt_gpu::assert_frames_close`; the default of a new parameter must be the previous behaviour byte for byte (`src/libs/kt-fx/CLAUDE.md`), otherwise 26 goldens of t26 and t67 move. Threshold operations are the worst case for CPU↔GPU tolerances: a discrepancy in the least significant bit BEFORE the threshold gives a difference of a whole pixel AFTER it. The tolerance will have to be formulated as a fraction of disagreeing pixels, not as an amplitude — and this decision should be made before, not after.
+- **No. 4 the cache is the only truth about coverage**: the selection parameters enter the post-FX key; the matte DISPLAY mode does not.
+- **No. 5 and No. 8** — tracking walks through frames only via the MediaWorker queue; no UI gesture turns into a decode directly.
+- **No. 12** — the matte view and the window handles over the preview may neither allocate in the draw path nor keep the repaint going while idle.
+- UI rules of `src/apps/kt-app/CLAUDE.md`: **1** (window handles are dragged with the mouse — the grab zone is wider than the drawing), **2** (the eyedropper and the matte view work DURING PLAYBACK, not only when paused), **6** (a window has a min and a max), **13** (the matte view switch sits in an already occupied place of the preview strip, not on a new row), **16** (impossibility is shown as an error: "this shape does not support tracking", not as a greyed-out hover), **20** "nothing grows on its own" — and here is a direct clash: **a tracker by definition WRITES keys on the user's behalf**. So it has to be an explicit action with an explicit result (a "track" button, progress, one undo step, visible keys in the same `automation::draw` widget), not background magic.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | XL, и он раскладывается на три ЧЕСТНО разделимые части: (а) HSL-qualifier с чисткой матte и режимом показа — **M**, потому что ядро уже есть (`greenscreen` + `front_mask`) и новых сущностей в модели нет; (б) параметрическое окно (эллипс/прямоугольник/градиент) — **M**, потому что это скаляры и они ложатся в `ParamSpec`/`ParamCurve`/GPU-униформу как есть; (в) безье-форма, roto и трекинг — **L…XL** каждая, потому что ломают схему параметров и трогают инварианты 5 и 8 |
-| Где основная работа | kt-fx (qualifier + операции над матte, скаляр и AVX2), kt-gpu (WGSL-зеркала, второй канал в ping-pong), kt-model (поля и спеки; при окне — геометрия), kt-engine (ключ кэша, план), kt-app (просмотр матte, пипетка ПО КАДРУ, ручки окна поверх превью), kt-otio (v5) |
-| Формат проекта | нужна v5 (`KT_META_VERSION` 4 → 5); умолчания не сериализуются — старые файлы байт-стабильны |
-| Тесты, которые придётся написать | конформанс CPU↔GPU по образцу t181, но с ДОЛЕВЫМ допуском (пороговые ядра, см. инвариант 11); «умолчание == прежние байты» на GOLDEN_VIDEO, t26 и t67; матte как функция (одинаковый вход → одинаковый матte) на обоих бэкендах; режим показа матte НЕ инвалидирует пост-FX кэш (по образцу t66); round-trip модели и чтение файлов без новых полей; харнесс-тесты в `layout_tests.rs` — пипетка по превью, переключатель просмотра, тяга ручек окна; при трекинге — что задача идёт через очередь MediaWorker и отменяется (по образцу scheduler/t27) |
-| Зависит от | первичной коррекции: без неё выделение некуда применить. Заметка о кривых (`F-CLR-002`) и заметка о первичных ручках — раньше этой |
-| Ломает совместимость | нет |
+| Size | XL, and it splits into three HONESTLY separable parts: (a) an HSL qualifier with matte cleaning and a display mode — **M**, because the kernel already exists (`greenscreen` + `front_mask`) and there are no new entities in the model; (b) a parametric window (ellipse/rectangle/gradient) — **M**, because these are scalars and they fit `ParamSpec`/`ParamCurve`/the GPU uniform as they are; (c) a Bézier shape, roto and tracking — **L…XL** each, because they break the parameter scheme and touch invariants 5 and 8 |
+| Where the main work is | kt-fx (qualifier + operations on the matte, scalar and AVX2), kt-gpu (WGSL mirrors, a second channel in ping-pong), kt-model (fields and specs; with a window — geometry), kt-engine (the cache key, the plan), kt-app (the matte view, the eyedropper ON THE FRAME, window handles over the preview), kt-otio (v5) |
+| Project format | needs v5 (`KT_META_VERSION` 4 → 5); defaults are not serialised — old files stay byte-stable |
+| Tests to write | CPU↔GPU conformance on the pattern of t181, but with a FRACTIONAL tolerance (threshold kernels, see invariant 11); "default == previous bytes" on GOLDEN_VIDEO, t26 and t67; the matte as a function (identical input → identical matte) on both backends; the matte display mode does NOT invalidate the post-FX cache (on the pattern of t66); round-trip of the model and reading of files without the new fields; harness tests in `layout_tests.rs` — the eyedropper on the preview, the view switch, dragging the window handles; with tracking — that the task goes through the MediaWorker queue and is cancelled (on the pattern of scheduler/t27) |
+| Depends on | primary correction: without it the selection has nowhere to be applied. The note on curves (`F-CLR-002`) and the note on primary wheels come before this one |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-**Берём, но не целиком и не первой.** Вторичка без первичной коррекции
-бессмысленна: у нас есть чем выделять и нечего применять. Порядок —
-первичка, потом qualifier, потом окно, и только потом (если вообще)
-безье с трекингом.
+**We take it, but not all of it and not first.** Secondary correction without primary correction is pointless: we have what to select with and nothing to apply. The order is: primary, then the qualifier, then the window, and only then (if at all) Bézier with tracking.
 
-Главный вывод разведки не «нам нужны маски», а **где проходит граница
-цены**: она проходит не между «маски есть» и «масок нет», а между
-СКАЛЯРНОЙ геометрией и ПРОИЗВОЛЬНОЙ. Эллипс, прямоугольник и градиент —
-это несколько чисел, а числа у нас уже умеют всё: рисоваться по
-`ParamSpec`, анимироваться `ParamCurve`, ехать в GPU-униформу, считаться
-в плане один раз для превью и экспорта. Ядра для них написаны и
-отзеркалены — `front_mask`/`MODE_IRIS`/`MODE_WIPE` из переходов. Безье и
-roto не выражаются в этой схеме ни одним полем и тянут за собой второй
-редактор параметров, чего прямо запрещает правило единого виджета.
+The main conclusion of the reconnaissance is not "we need masks" but **where the price boundary runs**: it does not run between "masks exist" and "no masks", but between SCALAR geometry and ARBITRARY geometry. An ellipse, a rectangle and a gradient are a handful of numbers, and numbers already do everything for us: they are drawn via `ParamSpec`, animated via `ParamCurve`, go into the GPU uniform, and are computed once in the plan for both preview and export. The kernels for them are written and mirrored — `front_mask`/`MODE_IRIS`/`MODE_WIPE` from the transitions. Bézier and roto are not expressed in this scheme by any field, and they drag in a second parameter editor, which the single-widget rule explicitly forbids.
 
-Отдельно и до начала работы надо признать два наших упора, о которых
-чужие обзоры не расскажут: тракт восьмибитный целиком (значит панель
-чистки матte обязательна, а не опциональна) и превью считается в другом
-разрешении, чем экспорт (значит «настроил и посмотрел» перестанет быть
-достаточным впервые за всю программу). И ещё одно, самое дешёвое и
-самое недооценённое: **режим показа матte важнее половины ручек**. Его
-имеет смысл сделать даже раньше самого qualifier'а — он же немедленно
-чинит `Greenscreen`, который сегодня настраивают вслепую.
+Separately, and before work begins, two of our limitations must be acknowledged that outside reviews will not mention: the path is 8-bit entirely (so the matte-cleaning panel is mandatory, not optional), and the preview is computed at a different resolution from the export (so "set it up and look" will for the first time in the programme stop being sufficient). And one more thing, the cheapest and most underrated: **the matte display mode matters more than half of the knobs**. It is worth making even before the qualifier itself — it would immediately fix `Greenscreen`, which today is configured blind.
 
-## Источники
+## Sources
 
-- https://forum.borisfx.com/t/worflow-question/9472 — тред «перекрасить рубашку»: вторичка как штатный ответ, предел qualifier'а на «белое на белом», вывод «rotoscoping situation» (дата обращения 2026-09-07)
-- https://forum.borisfx.com/t/quick-green-creen-compositing-with-built-in-channel-blend-secondary-color-corrector/22928 — 2026: Secondary Color Corrector используют ВМЕСТО хромакея, «works more reliably than the chroma key Fx» (2026-09-07)
-- https://forum.borisfx.com/ — форум VEGAS переехал к Boris FX (`vegascreativesoftware.info` отдаёт 301 сюда); среди категорий есть отдельная «Mocha VEGAS» — planar-трекинг у Vegas приезжает плагином, а не встроен (2026-09-07)
-- https://forum.borisfx.com/t/vegas-pro-release-history/24284 — история релизов VEGAS: моушн-трекинг Bézier-инструмента с перспективой заявлен ещё в VP17 (build 321, 23.09.2019) (2026-09-07)
-- https://support.apple.com/guide/final-cut-pro/intro-to-color-masks-ver40b008a7/mac — FCP: «A color mask isolates a particular color in an image», два вида маски (3D mask с одним Softness против HSL mask с раздельными hue/saturation/luma), Inside/Outside, «invert (flop) the masked and unmasked areas» и прямая формулировка пересечения: «To limit the area of the image affected by a color mask, you can add one or more shape masks» (2026-09-07)
-- https://support.apple.com/guide/final-cut-pro/use-the-auto-mask-ver6c261d07c/mac — FCP: «Auto Mask analyzes your video and instantly isolates recognized objects such as people, facial features, hair, skin, clothing, skies, foliage, and animals», и при этом ручки чистки те же самые — Shrink/Expand, Erode, Blur (2026-09-07)
-- Код (прочитан, не пересказан по аналогии): `src/libs/kt-fx/src/video.rs`,
-  `src/libs/kt-engine/src/transitions.rs`, `src/libs/kt-engine/src/video.rs`,
-  `src/libs/kt-engine/src/video_plan.rs`, `src/libs/kt-gpu/src/pool.rs`,
-  `src/libs/kt-gpu/src/engine.rs`, `src/libs/kt-model/src/project.rs`,
-  `src/libs/kt-ffmpeg/src/source_impl.rs`, `src/libs/kt-cache/src/lib.rs`,
-  `src/libs/kt-otio/src/meta.rs`, `src/apps/kt-app/src/fx_editor.rs`,
-  `src/apps/kt-app/src/fx_registry.rs`, `src/apps/kt-app/src/app.rs`
-- `docs/user-feedback.md` Р.18 п.6 (цветокоррекция и LUT в публичном
-  роадмапе — выбор пользователя) и Р.29 («хотелось бы идти в сторону
-  After Effects, т.е. у эффектов композитный движок должен быть»)
+- https://forum.borisfx.com/t/worflow-question/9472 — the "re-colour the shirt" thread: secondary correction as the standard answer, the limit of the qualifier on "white on white", the verdict "a rotoscoping situation" (accessed 2026-09-07)
+- https://forum.borisfx.com/t/quick-green-creen-compositing-with-built-in-channel-blend-secondary-color-corrector/22928 — 2026: the Secondary Color Corrector is used INSTEAD OF chroma key, reported as more reliable than the chroma key effect (2026-09-07)
+- https://forum.borisfx.com/ — the VEGAS forum has moved to Boris FX (`vegascreativesoftware.info` returns 301 here); among its categories is a separate "Mocha VEGAS" — planar tracking in Vegas comes as a plugin, not built in (2026-09-07)
+- https://forum.borisfx.com/t/vegas-pro-release-history/24284 — the release history of VEGAS: motion tracking with perspective for the Bézier tool is stated already in VP17 (build 321, 23.09.2019) (2026-09-07)
+- https://support.apple.com/guide/final-cut-pro/intro-to-color-masks-ver40b008a7/mac — FCP: a colour mask isolates a particular colour in an image; two kinds of mask (the 3D mask with a single Softness against the HSL mask with separate hue, saturation and luma); Inside/Outside; inverting ("flopping") the masked and unmasked areas; and the direct statement of the intersection: to limit the area affected by a colour mask, add one or more shape masks (2026-09-07)
+- https://support.apple.com/guide/final-cut-pro/use-the-auto-mask-ver6c261d07c/mac — FCP: Auto Mask analyses the video and isolates recognised objects such as people, facial features, hair, skin, clothing, skies, foliage and animals; and the cleaning controls are the same ones — Shrink/Expand, Erode, Blur (2026-09-07)
+- Code (read, not paraphrased by analogy): `src/libs/kt-fx/src/video.rs`, `src/libs/kt-engine/src/transitions.rs`, `src/libs/kt-engine/src/video.rs`, `src/libs/kt-engine/src/video_plan.rs`, `src/libs/kt-gpu/src/pool.rs`, `src/libs/kt-gpu/src/engine.rs`, `src/libs/kt-model/src/project.rs`, `src/libs/kt-ffmpeg/src/source_impl.rs`, `src/libs/kt-cache/src/lib.rs`, `src/libs/kt-otio/src/meta.rs`, `src/apps/kt-app/src/fx_editor.rs`, `src/apps/kt-app/src/fx_registry.rs`, `src/apps/kt-app/src/app.rs`
+- `docs/user-feedback.md` R.18 item 6 (colour correction and LUTs on the public roadmap — the owner's choice) and R.29 ("I would like to move towards After Effects, i.e. effects should have a compositing engine")
 
-Живьём ни один из пяти редакторов не запускался. Честно о степени
-проверки: формулировки FCP взяты со страниц справки Apple ДОСЛОВНО;
-форумные цитаты сверены с сырыми постами (`/raw/<тема>/<номер>`), а не
-с пересказом. Устройство панелей Vegas SCC и Keylight описано по
-официальной справке и общеизвестной механике этих инструментов;
-ДОСЛОВНЫХ форумных цитат из helpx.adobe.com, forum.blackmagicdesign.com
-и reddit здесь нет — все три в момент написания были недоступны, и
-искомого фидбека «qualifier falls apart on 8-bit footage» подтвердить не
-удалось.
+None of the five editors was launched live. A candid statement of how far the check went: the FCP wording is taken from Apple's help pages VERBATIM; the forum quotes were checked against the raw posts (`/raw/<topic>/<number>`), not against a paraphrase. The construction of the Vegas SCC and Keylight panels is described from the official help and the generally known mechanics of these tools; there are NO verbatim forum quotes from helpx.adobe.com, forum.blackmagicdesign.com and Reddit here — all three were unavailable at the time of writing, and the sought-after feedback "qualifier falls apart on 8-bit footage" could not be confirmed.
 
-**Правка от 2026-09-07 (после написания).** Подписи ручек Resolve и
-Premiere, стоявшие здесь с флагом «перепроверить», ПЕРЕПРОВЕРЕНЫ по
-первоисточникам: DaVinci Resolve 20/21 Reference Manual (гл. 137
-Qualifier, 138 Power Windows, 146 Key palette) и справка Adobe по HSL
-Secondary. Исправлены три вещи: асимметрия Hue (центр+ширина+одна
-мягкость+симметрия) против Sat/Lum (границы Low/High + две мягкости);
-полный состав Matte Finesse, где есть морфологические Shrink/Grow —
-прежнее утверждение «сжать выделение не размыв нельзя в принципе» было
-НЕВЕРНЫМ; точные имена режимов показа маски у Premiere и наличие
-трёхчастных колёс внутри HSL Secondary.
+**Correction of 2026-09-07 (after writing).** The labels of the Resolve and Premiere handles, which stood here flagged "to re-check", were RE-CHECKED against primary sources: the DaVinci Resolve 20/21 Reference Manual (ch. 137 Qualifier, 138 Power Windows, 146 Key palette) and Adobe's help on HSL Secondary. Three things were corrected: the asymmetry of Hue (centre + width + one softness + symmetry) against Sat/Lum (Low/High boundaries + two softnesses); the full composition of Matte Finesse, which includes the morphological Shrink/Grow — the earlier claim that "you cannot shrink a selection without blurring it, in principle" was WRONG; and the exact names of the mask preview modes in Premiere and the presence of three-part wheels inside HSL Secondary.
 
-По After Effects шесть пунктов остаются БЕЗ первоисточника (механика
-Compositing Options → Effect Mask, Roto Brush 3, Hue/Saturation Channel
-Range, параметры Color Range/Extract/Linear Color Key, наличие HSL
-Secondary в тамошнем Lumetri, разрядность проекта 8/16/32 bpc и её
-влияние на матte): `helpx.adobe.com` недоступен, `web.archive.org`
-отдавал 429 на восьми попытках подряд по каждой из семи страниц. Их
-нужно добирать с машины с доступом к справке Adobe либо с установленным
-AE 26.x — заполнять по памяти в технической заметке нельзя. Утверждения «у нас есть / у нас нет»
-проверены грепом по `src/` и чтением файлов, а не по брифингу.
+Six items about After Effects remain WITHOUT a primary source (the mechanics of Compositing Options → Effect Mask, Roto Brush 3, the Hue/Saturation Channel Range, the parameters of Color Range / Extract / Linear Color Key, the presence of HSL Secondary in its Lumetri, the project bit depth 8/16/32 bpc and its effect on the matte): `helpx.adobe.com` is unavailable, and `web.archive.org` returned 429 on eight attempts in a row for each of the seven pages. They must be filled in from a machine with access to Adobe's help, or with AE 26.x installed — they cannot be filled in from memory in a technical note. The statements "we have / we don't have" were checked by grep over `src/` and by reading the files, not from the brief.

@@ -1,12 +1,12 @@
 ---
 id: F-TL-005
-title: Мультикамерный монтаж
-status: исследовано
+title: Multicam editing
+status: researched
 priority: C
 cost: XL
 category: timeline/structure
 editors: [vegas-pro-2026, premiere-26, resolve-21, resolve-20, fcp-12, after-effects-26]
-we_have: нет
+we_have: no
 crates: [kt-model, kt-engine, kt-cache, kt-app, kt-otio]
 invariants: [3, 4, 5, 7, 8, 12]
 ui_rules: [2, 9, 12, 13, 17]
@@ -17,129 +17,98 @@ depends_on: [F-SPD-004, F-TL-004]
 checked: 2026-09-07
 ---
 
-# F-TL-005 — Мультикамерный монтаж
+# F-TL-005 — Multicam editing
 
-## Суть
+## Essence
 
-Одно событие снято тремя-девятью камерами одновременно: концерт, интервью на
-две камеры и петличку, стрим с пультом. Монтажёр видит все камеры сразу в
-сетке, включает воспроизведение и жмёт цифры 1–9, как режиссёр на пульте, —
-программа сама режет и переключает камеру в момент нажатия. За один проход
-получается черновая нарезка всего дубля. Потом стыки правятся обычным
-roll-тримом: точка переключения — это просто склейка. В конце мультикам-клип
-можно «раскрыть» в обычные события и работать с ними как всегда.
+One event is shot by three to nine cameras at once: a concert, an interview on
+two cameras and a lapel mic, a stream with a switcher. The editor sees all the cameras at once in a
+grid, starts playback and presses the digits 1–9, like a director at the switcher —
+the programme itself cuts and switches the camera at the moment of the keypress. In one pass
+a rough cut of the whole take is obtained. The joints are then corrected with an ordinary
+roll trim: the switch point is simply a splice. At the end the multicam clip can be
+"expanded" into ordinary events and worked with as usual.
 
-## У кого и как
+## Who has it and how
 
-Ключевой вопрос ко всем один: **чем является мультикам-клип структурно** —
-вложенной секвенцией, контейнером в бине или набором альтернатив у одного
-события. От этого зависит всё остальное: куда ложатся эффекты, что делает
-«раскрытие» и что происходит со звуком.
+The key question for all of them is one: **what the multicam clip is structurally** —
+a nested sequence, a container in the bin, or a set of alternatives on one
+event. Everything else depends on this: where the effects go, what "expansion" does
+and what happens to the sound.
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Multicamera editing (`Tools → Multicamera`) | **не вложенность, а ТЕЙКИ**: несколько дорожек сводятся в одну мультикамерную, каждое событие несёт несколько takes, активен ровно один. Сетка — прямо в окне превью («a multicamera tiled view showing the contents of all takes simultaneously. The active take is highlighted with a colored border»). Выбор тейка «splits the event at the call point and switches the active take». Обратно — «Expand to multiple tracks» с опцией удалить неиспользованные тейки |
-| Adobe Premiere | 26 | Multi-camera source sequence | **вложенная секвенция-источник**: из бина создаётся source sequence, она кладётся на таймлайн как клип, в Program Monitor включается Multi-Camera; переключение цифрами. Отдельный переключатель «Multi-Camera Audio Follows Video» (виден в `Edit → Keyboard Shortcuts`). Разбор обратно — Flatten |
-| DaVinci Resolve | 21 (и 20) | Multicam Clip (Edit) **и** Sync Bin (Cut) — два разных механизма | Multicam Clip: «full multicam interface … with 4, 9, 16, 25 or more cameras», «you can even step into the multicam clip to trim and color correct angles independently». Sync Bin — **принципиально другое**: объекта «мультикам-клип» нет вовсе, бин показывает клипы, синхронные текущей точке таймлайна, и source overwrite кладёт выбранный «perfectly synced to the clip below». BMD прямо называет это «much better than a traditional multi-cam feature». Studio-only: AI Multicam SmartSwitch (Resolve 20) |
-| Final Cut Pro | 12.3 | Multicam clip + Angle Viewer + angle editor | **контейнер в браузере**, группирующий существующие клипы события. Angle Viewer — «banks of 2, 4, 9, or 16 angles»; клик = cut&switch (режет и переключает), Option-клик = switch (меняет угол без реза). Angle editor открывается двойным кликом, углы — строки; правки родителя «inherited by all of its child clips, in all projects» |
-| After Effects | 26 | нет | вложенные композиции есть, монтажной мультикамеры нет — у AE нет самой модели «дубль, снятый N камерами» |
+| VEGAS Pro | 2026.0 | Multicamera editing (`Tools → Multicamera`) | **not nesting, but TAKES**: several tracks are merged into one multicamera track, each event carries several takes, exactly one is active. The grid is right in the preview window ("a multicamera tiled view showing the contents of all takes simultaneously. The active take is highlighted with a colored border"). Choosing a take "splits the event at the call point and switches the active take". Backwards — "Expand to multiple tracks" with an option to delete unused takes |
+| Adobe Premiere | 26 | Multi-camera source sequence | **a nested source sequence**: from the bin a source sequence is created, it is placed on the timeline as a clip, Multi-Camera is switched on in the Program Monitor; switching by digits. A separate toggle "Multi-Camera Audio Follows Video" (visible in `Edit → Keyboard Shortcuts`). The reverse operation — Flatten |
+| DaVinci Resolve | 21 (and 20) | Multicam Clip (Edit) **and** Sync Bin (Cut) — two different mechanisms | Multicam Clip: "full multicam interface … with 4, 9, 16, 25 or more cameras", "you can even step into the multicam clip to trim and color correct angles independently". Sync Bin is **fundamentally different** — there is no "multicam clip" object at all: the bin shows the clips synchronous with the current point of the timeline, and source overwrite places the selected one "perfectly synced to the clip below". BMD explicitly calls this "much better than a traditional multi-cam feature". Studio-only: AI Multicam SmartSwitch (Resolve 20) |
+| Final Cut Pro | 12.3 | Multicam clip + Angle Viewer + angle editor | **a container in the browser** that groups existing clips of the event. Angle Viewer — "banks of 2, 4, 9, or 16 angles"; a click = cut&switch (cuts and switches), Option-click = switch (changes the angle without a cut). The angle editor opens by double-click, the angles are rows; the parent's edits are "inherited by all of its child clips, in all projects" |
+| After Effects | 26 | none | nested compositions exist, but there is no editing multicam — AE has no model at all of "an event shot by N cameras" |
 
-## Фишка фишки
+## The trick behind it
 
-**Первое: переключение угла — это не монтаж, а смена параметра, и потому у
-разных СВОЙСТВ клипа при переключении разная судьба.** Apple документирует это
-буквально по пунктам: при смене угла «Video and audio effects», «Keyframing
-(including audio volume and panning)» и «Role assignments» привязаны к
-конкретному углу и НЕ переносятся, а split edits, маркеры, connected clips и
-ретайминг остаются на месте. То есть один и тот же жест для половины свойств —
-безобидная смена параметра, а для другой половины — молчаливая потеря работы:
-покрасил кадр, передумал, переключил угол — грейд исчез, а замедление осталось.
-И зеркальная ловушка на другом конце: эффект, положенный на мультикам-клип
-СНАРУЖИ, применяется к тому, что играет, то есть ко всем углам сразу, включая
-те, которые в этой склейке никогда не появятся. Resolve разводит эти два места
-явно («step into the multicam clip to trim and color correct angles
-independently»), FCP — двумя разными поверхностями (таймлайн и angle editor).
-Ни один список возможностей об этом не говорит.
+**First: switching an angle is not an edit but a change of parameter, and therefore different
+PROPERTIES of the clip have different fates on switching.** Apple documents this
+literally, item by item: when the angle is changed, "Video and audio effects", "Keyframing
+(including audio volume and panning)" and "Role assignments" are bound to the
+specific angle and are NOT carried over, while split edits, markers, connected clips and
+retiming stay in place. That is, one and the same gesture is a harmless change of parameter for
+half of the properties, and a silent loss of work for the other half:
+you coloured the frame, changed your mind, switched the angle — the grade disappeared, while the slow-motion stayed.
+And there is a mirror trap at the other end: an effect laid on the multicam clip
+FROM OUTSIDE is applied to what is playing, that is, to all the angles at once, including
+those that will never appear in this splice. Resolve separates these two places
+explicitly ("step into the multicam clip to trim and color correct angles
+independently"), FCP — with two different surfaces (the timeline and the angle editor).
+No list of features says anything about this.
 
-**Второе: звук при переключении почти никогда не должен следовать за видео — и
-это ровно то место, где спотыкаются все.** Умолчание «переключаем и то и
-другое» физически правильно для концерта, где у каждой камеры свой осмысленный
-источник, и вредно для речи: каждая склейка меняет микрофон, а вместе с ним
-тембр, room tone и уровень. Поэтому у Premiere заведён отдельный переключатель
-«Multi-Camera Audio Follows Video», у FCP — три режима (оба / только видео /
-только аудио, последние два через модификатор), а Resolve 21 добавил вариант
-«All Angles». Справка VEGAS о звуке в мультикамерном режиме молчит вовсе.
-Практический рецепт всюду один: чистый микс рекордера лежит отдельной
-непрерывной дорожкой, а переключается ТОЛЬКО видео.
+**Second: when switching, the sound should almost never follow the video — and
+this is exactly the place where everyone trips.** The default "we switch both" is physically correct for a concert, where each camera has its own meaningful
+source, and harmful for speech: every splice changes the microphone, and together with it
+the timbre, room tone and level. Therefore Premiere has a separate toggle
+"Multi-Camera Audio Follows Video", FCP has three modes (both / video only /
+audio only, the last two via a modifier), and Resolve 21 added a variant
+"All Angles". The VEGAS help is silent about sound in multicamera mode altogether.
+The practical recipe everywhere is one: the clean mix of the recorder lies on a separate
+continuous track, and ONLY the video is switched.
 
-**Третье: Vegas честно пишет цену сетки, и цена эта — выключенная обработка.**
-В мультикамерном режиме «video envelopes, effects, and motion are bypassed in
-the Video Preview window to preserve your playback frame rate», плюс отдельно:
-«VEGAS Pro can preview many takes at once in multicamera mode, but your computer
-performance will limit the playback frame rate». То есть сетка углов — это не
-N честных превью, а N сырых декодов, и всё, что делает картинку правильной,
-выключено ровно в тот момент, когда монтажёр принимает решение. Это не
-недоработка, а единственный способ показать девять потоков в реальном времени
-на обычной машине: N углов = N одновременных декодов, и никакой алгоритм этого
-не отменяет.
+**Third: Vegas honestly writes the price of the grid, and this price is disabled processing.**
+In multicamera mode "video envelopes, effects, and motion are bypassed in
+the Video Preview window to preserve your playback frame rate", plus separately:
+"VEGAS Pro can preview many takes at once in multicamera mode, but your computer
+performance will limit the playback frame rate". That is, the grid of angles is not
+N honest previews but N raw decodes, and everything that makes the picture correct is
+switched off exactly at the moment the editor makes the decision. This is not
+a shortcoming but the only way to show nine streams in real time
+on an ordinary machine: N angles = N simultaneous decodes, and no algorithm
+cancels this.
 
-**Четвёртое, про рекламу: «AI Multicam SmartSwitch» (Resolve 20, Studio) — это
-автоматическая расстановка переключений по активному говорящему.** По разбору
-davinciresolveclub, инструмент «analyzes the active speaker, audio, lip movement
-and whether an angle is wide or close», и там же честно: «The result is a
-starting timeline, not a finished edit» — он путается на закадровом голосе,
-перекрывающейся речи, смехе, молчаливой реакции и на угле без полезного звука.
-[НЕ ПРОВЕРЕНО по первоисточнику: на текущих страницах blackmagicdesign.com
-(Resolve 21) слова SmartSwitch уже нет — фича описана только во вторичных
-источниках и в архиве анонса Resolve 20.]
+**Fourth, about the advertising: "AI Multicam SmartSwitch" (Resolve 20, Studio) is
+an automatic placement of switches by the active speaker.** According to the analysis by davinciresolveclub, the tool "analyzes the active speaker, audio, lip movement
+and whether an angle is wide or close", and there, honestly: "The result is a
+starting timeline, not a finished edit" — it gets confused by off-screen voices,
+overlapping speech, laughter, silent reactions, and an angle without useful sound.
+[NOT VERIFIED against the primary source: on the current blackmagicdesign.com pages
+(Resolve 21) the word SmartSwitch is no longer there — the feature is described only in secondary
+sources and in the archive of the Resolve 20 announcement.]
 
-## Плюсы
+## Pros
 
-- Синхронизация живёт в ОДНОМ месте на весь проект: правка внутри
-  мультикам-клипа расходится по всем эпизодам сразу (FCP: изменения родителя
-  «inherited by all of its child clips, in all projects»). Без объекта
-  пришлось бы чинить каждый эпизод отдельно.
-- Переключение — это мутация одного поля, а не пара «разрезать + заменить
-  источник»: концерт на 200 склеек даёт 200 смен параметра, а не 400 команд
-  монтажа, и повтор нарезки поверх старой не оставляет мусора.
-- Точка переключения структурно является обычным стыком, поэтому правка после
-  живого прохода не требует ни одной новой операции: работает тот же
-  roll-трим, что и везде.
-- Sync Bin выигрывает тем, чего у него НЕТ: объекта. Не нужно ни создавать
-  мультикам-клип, ни раскрывать его обратно, ни решать, где живут эффекты —
-  на таймлайне сразу лежат обычные клипы.
-- Живой проход даёт черновик за время дубля: 40-минутное интервью
-  «смонтировано» вчерне за 40 минут, а не за пять часов ручного поиска склеек.
+- Synchronization lives in ONE place for the whole project: an edit inside a multicam clip propagates to all episodes at once (FCP: changes to the parent are "inherited by all of its child clips, in all projects"). Without an object, every episode would have to be fixed separately.
+- Switching is a mutation of a single field, not a pair of "cut + replace the source": a concert with 200 splices gives 200 parameter changes, not 400 editing commands, and re-cutting on top of an old cut leaves no garbage.
+- The switch point is structurally an ordinary junction, so an edit after a live pass needs no new operation at all: the same roll trim works as everywhere else.
+- Sync Bin wins through what it does NOT have: an object. There is no need to create a multicam clip, to unpack it back, or to decide where the effects live — ordinary clips sit on the timeline right away.
+- A live pass gives a rough cut in the time of the duplicate: a 40-minute interview is "edited" roughly in 40 minutes, not in five hours of manual searching for splices.
 
-## Минусы
+## Cons
 
-- N углов = N одновременных декодов, и платится это кадрами в секунду ровно в
-  тот момент, когда нужна отзывчивость. Обходится либо прокси (FCP прямо
-  советует «Set Final Cut Pro to use proxy media» и «Create optimized media for
-  multicam clips»), либо выключением обработки (Vegas). Оба обхода означают,
-  что монтажёр принимает решение НЕ по той картинке, которую получит.
-- Эффекты, привязанные к углу, теряются при переключении (FCP), а эффекты,
-  положенные снаружи, применяются ко всем углам. Одна и та же фраза «наложил
-  эффект на мультикам-клип» означает два разных результата, и какой именно —
-  зависит от того, в какой поверхности ты был.
-- Умолчание «звук следует за видео» портит речь, и лечится оно не настройкой
-  клипа, а перестройкой всего проекта: отдельная непрерывная дорожка чистого
-  звука, переключение только видео.
-- Мультикамера бесполезна без синхронизации, а синхронизация — это ОДНО число
-  на весь дубль (см. F-SPD-004): при расхождении кварцев камеры и рекордера
-  дубль, сведённый по хлопушке, к концу разъезжается, и мультикам-клип
-  разъезжается вместе с ним целиком.
-- SmartSwitch экономит первый проход и добавляет третий: по разбору, результат
-  требует трёх просмотров (точность говорящего, темп, стыки и техническое
-  качество), потому что автомат уверенно ошибается на смехе и закадровом
-  голосе.
-- [НЕ ПРОВЕРЕНО] По сниппету поисковика к теме forum.blackmagicdesign.com
-  t=201395 («Very slow playback»), углы мультикама у Resolve «might still be
-  calculated during playback even though their viewer is hidden» — то есть за
-  сетку платят даже те, кто её закрыл. Сам тред отдаёт 403, подтвердить не
-  удалось; пункт оставлен как гипотеза о классе дефекта, а не как факт.
+- N angles = N simultaneous decodes, and the cost is paid in frames per second at exactly the moment when responsiveness is needed. It is worked around either with proxies (FCP explicitly advises "Set Final Cut Pro to use proxy media" and "Create optimized media for multicam clips") or by turning processing off (Vegas). Both workarounds mean that the editor makes the decision NOT on the picture they will actually get.
+- Effects attached to an angle are lost on switching (FCP), while effects placed outside apply to all angles. The same phrase "applied an effect to the multicam clip" means two different results, and which one depends on the surface you were on.
+- The default "audio follows video" spoils speech, and it is cured not by a clip setting but by rebuilding the whole project: a separate continuous track of clean audio, with only the video switching.
+- A multicam is useless without synchronization, and synchronization is ONE number for the whole take (see F-SPD-004): if the clocks of the camera and the recorder drift apart, a take synced by the clapper slides apart toward its end, and the multicam clip slides apart with it, as a whole.
+- SmartSwitch saves the first pass and adds a third: according to the analysis, the result requires three viewings (speaker accuracy, pacing, junctions and technical quality), because the automatic tool confidently errs on laughter and voice-over.
+- [NOT VERIFIED] From a search-engine snippet for the topic at forum.blackmagicdesign.com t=201395 ("Very slow playback"), the multicam angles in Resolve "might still be calculated during playback even though their viewer is hidden" — that is, the grid's cost is paid even by those who have closed it. The thread itself returns 403, and this could not be confirmed; the item is kept as a hypothesis about a class of defect, not as a fact.
 
-## Что говорят пользователи
+## What users say
 
 > The problem being that I have two characters and therefore two audio tracks
 > but when I do my multicam sequence I set the synchronization to the audio but
@@ -148,239 +117,83 @@ starting timeline, not a finished edit» — он путается на зака
 > — Elisa35574238nk52, Adobe Support Community, 05.01.2025,
 > https://community.adobe.com/t5/premiere-pro-discussions/multicam-and-some-micro-problem-sound/m-p/15074101
 
-Ровно тот сценарий, ради которого мультикамеру и заводят (интервью на две
-камеры и две петлички), и первое же, обо что человек спотыкается, — не
-переключение картинки, а звук: мультикам взял микрофон КАМЕРЫ, потому что
-синхронизировался по нему. Эксперт в том же треде отвечает не «включи опцию»,
-а «открой секвенцию и перебери аудио-дорожки руками».
+This is exactly the scenario for which multicam is set up (an interview on two cameras and two lapel mics), and the first thing a person trips over is not the switching of the picture but the sound: the multicam took the CAMERA's microphone, because it synchronized by it. The expert in the same thread answers not with "turn on the option" but with "open the sequence and go through the audio tracks by hand".
 
-Искал дополнительно фидбек про производительность («multicam performance»,
-«FCP multicam vs premiere», «resolve sync bin multicam») — треды нашлись
-(forum.blackmagicdesign.com: «Multicam 2x2 performance issue», 12.07.2025;
-«Choppy multicam playback», четыре угла; «Switch Multicam Angle grayed out»,
-08.01.2026), но forum.blackmagicdesign.com отдаёт 403 на прямую загрузку темы,
-мобильное зеркало не проходит по сертификату, а reddit из этого окружения
-недоступен. Цитировать по сниппету поисковика не стал.
+I additionally searched for feedback on performance ("multicam performance", "FCP multicam vs premiere", "resolve sync bin multicam") — threads were found (forum.blackmagicdesign.com: "Multicam 2x2 performance issue", 12.07.2025; "Choppy multicam playback", four angles; "Switch Multicam Angle grayed out", 08.01.2026), but forum.blackmagicdesign.com returns 403 for a direct load of the thread, the mobile mirror fails the certificate check, and reddit is unavailable from this environment. I did not quote from the search-engine snippets.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-**Главное — поправка к посылке. N одновременных живых декодов у нас УЖЕ ЕСТЬ.**
-Инвариант №5 читается «ровно один MediaWorker владеет ОДНИМ источником», а не
-«один воркер на приложение»: `MediaWorker::spawn_with_stats` заводит поток с
-именем `media-worker-{id}` на КАЖДЫЙ `MediaId`
-(`src/libs/kt-engine/src/worker.rs:111`), карта воркеров —
-`HashMap<MediaId, MediaWorker>` (`src/libs/kt-engine/src/player.rs:645`),
-заполняется по одному на каждый `MediaRef` проекта
-(`src/apps/kt-app/src/app.rs:359`). Проект с девятью файлами прямо сейчас
-держит девять открытых FFmpeg-декодеров в девяти потоках, и верхнего предела
-нет — ни LRU по источникам, ни константы `MAX_OPEN_SOURCES` в движке. Значит
-мультикамера НЕ бросает вызов инварианту №5. Она бросает вызов кэшу и
-приоритетам.
+**The main thing — a correction to the premise. We ALREADY HAVE N simultaneous live decodes.**
+Invariant No. 5 reads "exactly one MediaWorker owns ONE source", not "one worker per application": `MediaWorker::spawn_with_stats` starts a thread named `media-worker-{id}` for EACH `MediaId` (`src/libs/kt-engine/src/worker.rs:111`), the worker map is `HashMap<MediaId, MediaWorker>` (`src/libs/kt-engine/src/player.rs:645`), and it is filled one per each `MediaRef` of the project (`src/apps/kt-app/src/app.rs:359`). A project with nine files right now holds nine open FFmpeg decoders in nine threads, and there is no upper limit — neither an LRU over sources nor a constant `MAX_OPEN_SOURCES` in the engine. So multicam does NOT challenge invariant No. 5. It challenges the cache and the priorities.
 
-- **Приоритетная очередь и generation-отмена.** `DecodeRequest { kind, prio,
-  generation }` (`src/libs/kt-engine/src/worker.rs:61`), `Priority` —
-  `Playback | NearPrefetch | FarPrefetch | Thumbnail`
-  (`src/libs/kt-engine/src/lib.rs:198`), выбор следующего `pick_next`
-  (`worker.rs:347`), отмена `cancel_generations_below` (`worker.rs:152`) из
-  `Player::seek` (`player.rs:434`). **`Priority::Thumbnail` в рабочем коде не
-  сабмитится ни разу** — во всём workspace он встречается ровно один раз, в
-  переборе приоритетов при доборе спана (`worker.rs:236`). Свободная ступень
-  приоритета для «ячеек сетки» уже объявлена.
-- **Кэш.** `BurstKey { source, kind, idx }` (`src/libs/kt-cache/src/lib.rs:44`),
-  **quality — часть ключа видео** (`BurstKind::Video { quality }`, там же :19),
-  лимиты `CacheConfig::default()` = 64 МБ аудио + 512 МБ видео
-  (`kt-cache/src/lib.rs:73`), ставятся в `Player::new`
-  (`src/libs/kt-engine/src/player.rs:187`); LRU-вытеснение только из
-  превышенного пула (`kt-cache/src/lib.rs:429`), счётчик `unused_evictions` —
-  «выселено до первого чтения», то есть prefetch-thrash (`там же :189, :451`),
-  `coverage()` (:460) — единственная правда о прогретости (инвариант №4).
-- **Доля разрешения превью 1/16…1/1.** `fracs = [1/16, 1/8, 1/4, 1/2, 1]`
-  (`src/apps/kt-app/src/app.rs:3490`), подписи и комбо (`app.rs:3548`),
-  применение `set_preview_quality` (`app.rs:3560`), хранение и геттер
-  (`player.rs:351`). Глубина упреждения считается ОТ неё и от бюджета кэша:
-  `video_lookahead_ticks` (`player.rs:959`). Готовый рычаг «сетка идёт грубее
-  главного превью».
-- **Деатач превью — настоящее второе окно.** `ctx.show_viewport_immediate`
-  с `ViewportId::from_hash_of("kt-preview-window")`
-  (`src/apps/kt-app/src/app.rs:952`), флаг `preview_detached` (`app.rs:95`),
-  двойной клик по превью (`PreviewClick::ToggleDetach`), Esc возвращает.
-  Готовое место под сетку углов, не ломающее раскладку главного окна.
-- **Сетка миниатюр уже существует и идёт МИМО движка.** Медиа-бин
-  (`src/apps/kt-app/src/bin_panel.rs`, карточки 128×72, скраб по наведению)
-  питается `ThumbService` (`src/apps/kt-app/src/thumbs.rs`): свой поток, свои
-  короткоживущие `FfmpegSource`, `MAX_OPEN_SOURCES = 4` (`thumbs.rs:111`),
-  jpeg персистится в sidecar `<project>.ktindex.db`. Это буквально «сетка
-  углов из тумбнейлов» — только не живая.
-- **Ближайший родственник переключения угла — морфер.**
-  `MorphPatch.media: Option<MediaId>` подменяет источник у всех клипов,
-  накрытых блоком (`src/libs/kt-model/src/project.rs:677`), `apply_to` пишет
-  `c.media` и `c.source_in`, `src_off` — выключатель подмены С СОХРАНЕНИЕМ
-  настроек (`project.rs:687`), цели `Below | Clips | Marks | Areas`
-  (`project.rs:608`), применяется в `Project::effective_clips()` — движок
-  морфера не видит (`src/libs/kt-engine/src/video.rs:254`), есть
-  `BakeMorpher` (`src/libs/kt-model/src/model.rs:228`). И, что важнее всего,
-  морфер-слой РЕЖЕТ частично накрытую цель (`SLICE_TAG`, `project.rs:1078`) —
-  это ровно вегасовская механика «выбор тейка splits the event at the call
-  point».
-- **Согласованная мутация пары A/V** уже есть прецедентом:
-  `sync_warp_to_link_group` (`src/libs/kt-model/src/model.rs:28`, тест 248) —
-  правило живёт в модели, а не в окне, потому что мутация прилетает ещё из
-  копипаста, bake, ридера формата и kt-cli.
-- **Замена источника на живом плеере**: `Player::replace_media` гасит воркер →
-  `cache.invalidate_source` → поднимает новый (`player.rs:463`), тест 211.
-- **Синхронизация** — предпосылка, разобрана в F-SPD-004: peak-пирамида уже
-  построена и лежит в памяти (`src/libs/kt-media/src/index.rs`), корреляции
-  нет ни строки.
+- **Priority queue and generation cancellation.** `DecodeRequest { kind, prio, generation }` (`src/libs/kt-engine/src/worker.rs:61`), `Priority` — `Playback | NearPrefetch | FarPrefetch | Thumbnail` (`src/libs/kt-engine/src/lib.rs:198`), selection of the next one `pick_next` (`worker.rs:347`), cancellation `cancel_generations_below` (`worker.rs:152`) from `Player::seek` (`player.rs:434`). **`Priority::Thumbnail` is never submitted in the working code** — across the whole workspace it occurs exactly once, in the iteration over priorities when a span is filled (`worker.rs:236`). A free priority level for the "grid cells" is already declared.
+- **Cache.** `BurstKey { source, kind, idx }` (`src/libs/kt-cache/src/lib.rs:44`), **quality is part of the video key** (`BurstKind::Video { quality }`, same file :19), the limits of `CacheConfig::default()` = 64 MB audio + 512 MB video (`kt-cache/src/lib.rs:73`) are set in `Player::new` (`src/libs/kt-engine/src/player.rs:187`); LRU eviction only from an overfilled pool (`kt-cache/src/lib.rs:429`), the counter `unused_evictions` — "evicted before the first read", that is, prefetch thrash (`same file :189, :451`), `coverage()` (:460) — the only truth about warmth (invariant No. 4).
+- **Preview resolution fraction 1/16…1/1.** `fracs = [1/16, 1/8, 1/4, 1/2, 1]` (`src/apps/kt-app/src/app.rs:3490`), labels and combo box (`app.rs:3548`), application of `set_preview_quality` (`app.rs:3560`), storage and getter (`player.rs:351`). The lookahead depth is computed FROM it and from the cache budget: `video_lookahead_ticks` (`player.rs:959`). A ready-made lever for "the grid runs coarser than the main preview".
+- **Detached preview is a real second window.** `ctx.show_viewport_immediate` with `ViewportId::from_hash_of("kt-preview-window")` (`src/apps/kt-app/src/app.rs:952`), the flag `preview_detached` (`app.rs:95`), a double click on the preview (`PreviewClick::ToggleDetach`), Esc returns it. A ready-made place for the angle grid that does not break the layout of the main window.
+- **A grid of thumbnails already exists and goes AROUND the engine.** The media bin (`src/apps/kt-app/src/bin_panel.rs`, cards 128×72, scrubbing on hover) is fed by `ThumbService` (`src/apps/kt-app/src/thumbs.rs`): its own thread, its own short-lived `FfmpegSource` instances, `MAX_OPEN_SOURCES = 4` (`thumbs.rs:111`), JPEGs are persisted in the sidecar `<project>.ktindex.db`. This is literally "an angle grid made of thumbnails" — only not a live one.
+- **The closest relative of the angle switch is the morpher.** `MorphPatch.media: Option<MediaId>` substitutes the source for all clips covered by the block (`src/libs/kt-model/src/project.rs:677`), `apply_to` writes `c.media` and `c.source_in`, `src_off` is the switch for the substitution WHILE KEEPING the settings (`project.rs:687`), the targets `Below | Clips | Marks | Areas` (`project.rs:608`), it is applied in `Project::effective_clips()` — the morpher engine does not see it (`src/libs/kt-engine/src/video.rs:254`), there is `BakeMorpher` (`src/libs/kt-model/src/model.rs:228`). And, most important of all, the morpher layer SLICES a partially covered target (`SLICE_TAG`, `project.rs:1078`) — this is exactly the Vegas mechanism of "take selection splits the event at the call point".
+- **A coordinated mutation of the A/V pair** already has a precedent: `sync_warp_to_link_group` (`src/libs/kt-model/src/model.rs:28`, test 248) — the rule lives in the model, not in the window, because the mutation arrives also from copy-paste, bake, the format reader and kt-cli.
+- **Replacing the source on a live player**: `Player::replace_media` stops the worker → `cache.invalidate_source` → starts a new one (`player.rs:463`), test 211.
+- **Synchronization** is a prerequisite, analyzed in F-SPD-004: the peak pyramid is already built and lies in memory (`src/libs/kt-media/src/index.rs`), but there is not a single line of correlation.
 
-### Чего не хватает
+### What is missing
 
-- **Мультикамеры в коде нет вообще**: грепом по `src/` — ноль. Слово `angle`
-  у нас занято углом ВАЙПА (`TransitionKind::Wipe { dir, angle, softness }`,
-  `src/libs/kt-model/src/project.rs`), к камере отношения не имеет.
-- **Вложенности нет** (F-TL-004): `nested_example.otio` лежит в фикстурах как
-  ЧУЖОЙ материал, вложенные `Stack` роняются в `ForeignEvent`, и
-  `docs/porting-notes.md:335` прямо говорит: сравнивать с melt нечего, «пока
-  вложенные композиции не поддержаны». Пути «мультикам-клип как вложенная
-  секвенция» подо всё это подложить нечего.
-- **У события ровно один источник**: `ClipEvent.media: MediaId`
-  (`src/libs/kt-model/src/project.rs:1512`), `MediaRef { id, path }` (там же
-  :1496). Ни списка альтернатив у события, ни набора каналов у медиа.
-- **Второго источника запросов на декод нет.** Живой композит превью
-  вызывается ровно ОДИН раз за UI-кадр — единственный call-site
-  `self.player.compose_preview_into(...)` (`src/apps/kt-app/src/app.rs:3135`),
-  и он греет кадры только для слоёв ИЗ ПЛАНА (`video.layers_at(aligned)`,
-  `player.rs:560`). Неактивные углы в план не попадают, значит их никто
-  никогда не запросит и не согреет: сетка требует явного отдельного
-  заказчика кадров.
-- **Формата под это нет**: `.otio` с конвертом `metadata.kt`
-  (`src/libs/kt-otio/`) не знает ни мультикам-клипа, ни углов, ни тейков.
+- **There are no multicams in the code at all**: a grep over `src/` gives zero. The word `angle` is already taken in our code by the angle of the WIPE (`TransitionKind::Wipe { dir, angle, softness }`, `src/libs/kt-model/src/project.rs`), which has nothing to do with a camera.
+- **There is no nesting** (F-TL-004): `nested_example.otio` lies in the fixtures as FOREIGN material, nested `Stack`s are dropped into `ForeignEvent`, and `docs/porting-notes.md:335` says directly that there is nothing to compare against melt, "until nested compositions are supported". There is nothing to put under the "multicam clip as a nested sequence" path.
+- **An event has exactly one source**: `ClipEvent.media: MediaId` (`src/libs/kt-model/src/project.rs:1512`), `MediaRef { id, path }` (same file :1496). There is neither a list of alternatives on the event nor a set of channels on the media.
+- **There is no second source of decode requests.** The live composite of the preview is called exactly ONE time per UI frame — the single call site `self.player.compose_preview_into(...)` (`src/apps/kt-app/src/app.rs:3135`), and it warms frames only for the layers FROM THE PLAN (`video.layers_at(aligned)`, `player.rs:560`). Inactive angles do not get into the plan, so nobody will ever request or warm them: the grid requires an explicit separate consumer of frames.
+- **There is no format for this**: `.otio` with the `metadata.kt` envelope (`src/libs/kt-otio/`) knows neither multicam clips, nor angles, nor takes.
 
-### Что мешает
+### What gets in the way
 
-1. **Не инвариант №5, а инвариант №4 — бюджет кэша, и quality в ключе.**
-   512 МБ видео — общий котёл на ВСЕ источники. Кадр RGBA 960×540 — 2.07 МБ;
-   девять углов на доле 1/2 съедают весь бюджет за 247 кадров, то есть меньше
-   чем за 1.1 с упреждения при 25 fps, после чего `unused_evictions`
-   (`src/libs/kt-cache/src/lib.rs:451`) начинает расти — тот самый
-   prefetch-thrash, который перф-панель уже умеет показывать. На доле 1/16
-   (120×68, 33 КБ) девять углов с двухсекундным упреждением стоят 14.7 МБ,
-   то есть даром. Вывод: сетка ОБЯЗАНА идти на своей грубой доле — а раз
-   quality входит в ключ (`BurstKind::Video { quality }`), активный угол будет
-   лежать в кэше ДВАЖДЫ: раз для главного превью, раз для своей ячейки. Это не
-   дефект, это цена, и назвать её надо заранее. Побочный эффект того же
-   свойства уже виден сегодня: смена доли обнуляет полоски прогретости в
-   таймлайне (`src/apps/kt-app/src/timeline.rs:1253`).
-2. **Инвариант №12 и правило UI 12: сетка не имеет права греть систему.**
-   Vegas решил это выключением обработки и честно написал об этом в справке.
-   Нам такое решение доступно дешевле: ячейка сетки — это ОДИН слой, без
-   `frame_plan`, без FX и переходов. Но тогда сетка показывает не то, что
-   попадёт в монтаж, а инвариант №7 говорит «код композиции ОДИН». Разрешается
-   это только тем, что сетка — инструмент ВЫБОРА УГЛА, а не превью результата,
-   и обязана быть помечена как сырой материал явно; иначе мы молча повторим
-   вегасовскую ловушку. Отдельно: на паузе без движения ячейки обязаны браться
-   из тумб (`src/apps/kt-app/src/thumbs.rs`), а живой декод включаться только
-   при воспроизведении — иначе поедет инвариант №8.
-3. **Мультикам-клип структурно негде разместить, и путей ровно два.**
-   (а) «По-вегасовски», через тейки: набор альтернативных `MediaId` у СОБЫТИЯ,
-   активный — один. Ложится на существующую модель почти без насилия:
-   переключение = мутация поля + рез события (механика реза уже написана для
-   морфер-слоя, `SLICE_TAG`), «раскрытие» не нужно вовсе — события и так
-   обычные, а формат получает одно новое поле с умолчанием «как раньше».
-   (б) «По-фэйркатовски», через вложенную секвенцию: объект в бине, angle
-   editor как вторая поверхность, эффекты в двух местах. Путь (б) дороже на
-   порядок и целиком висит на F-TL-004.
-4. **Пара A/V у нас — два события в link-группе, и это неожиданно помогает.**
-   `ClipEvent.link_group` (`src/libs/kt-model/src/project.rs:1507`): режим
-   «переключать только видео» — это просто мутация видео-события, аудио никто
-   не трогает. То есть ПРАВИЛЬНОЕ умолчание («звук не следует за видео»,
-   ровно то, на чём спотыкается автор цитаты выше) получается у нас само, а
-   неправильное надо писать специально — согласованной мутацией пары, для
-   которой прецедент уже есть (`sync_warp_to_link_group`,
-   `src/libs/kt-model/src/model.rs:28`). Редкий случай, когда наша структура
-   лучше чужой; терять это не надо.
-5. **Живое переключение — это поток undo-шагов.** Правило UI 2 требует, чтобы
-   переключение работало во время воспроизведения (иначе фичи нет вовсе), а
-   правка модели на ходу у нас безопасна по инварианту №3 (diff цепочек по
-   clip id, FX-состояние переживает мутацию). Но каждое нажатие 1–9 — это
-   команда, и проход по 40-минутному концерту даст сотни шагов истории,
-   в которых потом невозможно откатиться к «до прохода». Нужна коалесценция
-   сессии (`apply_coalesced` уже используется для оконных сессий, п.248
-   `docs/porting-notes.md`) или явное «один живой проход = один шаг».
-6. **Приоритеты очереди придётся разделить.** Девять углов — девять воркеров,
-   и если ячейки начнут слать `Priority::Playback`, активный угол потеряет
-   преимущество и главное превью начнёт голодать (а голод у нас по инварианту
-   №5 законно даёт «последний кадр» — то есть сетка будет застревать
-   незаметно). Свободная ступень уже объявлена и не используется:
-   `Priority::Thumbnail` (`src/libs/kt-engine/src/lib.rs:198`, единственное
-   упоминание в коде — `worker.rs:236`).
-7. **Без F-SPD-004 фича мертва.** Мультикамера начинается с того, что углы уже
-   сведены; у нас есть только магнит A/V по близости стартов
-   (`kt_model::ops::magnetize_commands`, `src/libs/kt-model/src/ops.rs:591`),
-   который сам требует, чтобы всё было почти сведено, да ещё и подрезает
-   партнёра.
+1. **Not invariant No. 5 but invariant No. 4 — the cache budget, and quality in the key.**
+   512 MB of video is a common pool for ALL sources. A 960×540 RGBA frame is 2.07 MB; nine angles at the 1/2 fraction eat the whole budget in 247 frames, that is, less than 1.1 s of lookahead at 25 fps, after which `unused_evictions` (`src/libs/kt-cache/src/lib.rs:451`) starts to grow — the very prefetch thrash that the performance panel can already show. At the 1/16 fraction (120×68, 33 KB) nine angles with a two-second lookahead cost 14.7 MB, that is, for free. Conclusion: the grid MUST run at its own coarse fraction — and since quality is part of the key (`BurstKind::Video { quality }`), the active angle will lie in the cache TWICE: once for the main preview, once for its own cell. This is not a defect, it is the price, and it has to be named in advance. A side effect of the same property is already visible today: changing the fraction zeroes the coverage bars in the timeline (`src/apps/kt-app/src/timeline.rs:1253`).
+2. **Invariant No. 12 and UI rule 12: the grid has no right to heat up the system.**
+   Vegas solved this by turning processing off and honestly wrote about it in the help. For us that solution is available more cheaply: a grid cell is ONE layer, without `frame_plan`, without FX and transitions. But then the grid shows not what will get into the edit, and invariant No. 7 says "composition code is ONE". This is resolved only by the grid being an ANGLE-CHOOSING tool, not a preview of the result, and it must be explicitly marked as raw material; otherwise we would silently repeat the Vegas trap. Separately: while paused, without motion, the cells must be taken from thumbnails (`src/apps/kt-app/src/thumbs.rs`), and live decode must be switched on only during playback — otherwise invariant No. 8 will be violated.
+3. **The multicam clip structurally has nowhere to be placed, and there are exactly two paths.**
+   (a) "The Vegas way", through takes: a set of alternative `MediaId`s on the EVENT, one active. It fits the existing model almost without violence: switching = mutation of a field + a cut of the event (the cut mechanics are already written for the morpher layer, `SLICE_TAG`), "unpacking" is not needed at all — the events are ordinary anyway, and the format gets one new field with the default "as before".
+   (b) "The Final Cut way", through a nested sequence: an object in the bin, an angle editor as a second surface, effects in two places. Path (b) is an order of magnitude more expensive and hangs entirely on F-TL-004.
+4. **Our A/V pair is two events in a link group, and this unexpectedly helps.**
+   `ClipEvent.link_group` (`src/libs/kt-model/src/project.rs:1507`): the mode "switch only the video" is simply a mutation of the video event; nobody touches the audio. That is, the CORRECT default ("the sound does not follow the video", exactly what the author of the quote above trips over) comes out of our structure by itself, while the incorrect one would have to be written specially — as a coordinated mutation of the pair, for which a precedent already exists (`sync_warp_to_link_group`, `src/libs/kt-model/src/model.rs:28`). A rare case where our structure is better than the foreign one; it should not be lost.
+5. **Live switching is a stream of undo steps.** UI rule 2 requires that switching works during playback (otherwise there is no feature at all), and a model edit on the fly is safe for us under invariant No. 3 (diff of chains by clip id, FX state survives the mutation). But every press of 1–9 is a command, and a pass through a 40-minute concert gives hundreds of history steps, after which it is impossible to roll back to "before the pass". What is needed is session coalescing (`apply_coalesced` is already used for window sessions, item 248 of `docs/porting-notes.md`) or an explicit "one live pass = one step".
+6. **The queue priorities will have to be split.** Nine angles means nine workers, and if the cells start submitting `Priority::Playback`, the active angle loses its advantage and the main preview starts to starve (and starvation under our invariant No. 5 legitimately yields "the last frame" — that is, the grid will get stuck unnoticed). The free level is already declared and unused: `Priority::Thumbnail` (`src/libs/kt-engine/src/lib.rs:198`, the only mention in the code — `worker.rs:236`).
+7. **Without F-SPD-004 the feature is dead.** Multicam begins with the angles already being synchronized; we have only the A/V magnet by start proximity (`kt_model::ops::magnetize_commands`, `src/libs/kt-model/src/ops.rs:591`), which itself requires that everything is almost aligned already, and also trims the partner.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **№4 (кэш — единственная правда о coverage)** — задевается прямо и сильнее
-  всего: требования множатся на N, quality в ключе даёт двойное хранение
-  активного угла, `unused_evictions` становится основной метрикой здоровья.
-- **№5 (декодером владеет ровно один MediaWorker)** — **не нарушается**;
-  воркер уже заводится по одному на источник, N живых декодов — сегодняшняя
-  норма. Это главная поправка к постановке задачи.
-- **№3 (правка модели не уничтожает FX-состояние)** — используется: живой
-  проход мутирует модель десятки раз в минуту, и хвосты реверба обязаны
-  выжить.
-- **№7 (код композиции один)** — задевается на грани: ячейка сетки не должна
-  становиться вторым путём показа. Спасает только явная трактовка «сетка — это
-  выбор материала, а не превью результата».
-- **№8 (скролл/зум не порождает декод-запросов)** — сетка на паузе обязана
-  жить тумбами, а не декодом.
-- **№12 (UI греет систему только при движении)** — девять ячеек не имеют права
-  перерисовываться чаще, чем движется картинка; V-fps и V-пропуски перф-панели
-  становятся приёмочным критерием.
-- **Правило UI 2** — переключение обязано работать при воспроизведении;
-  гейт «только на паузе» здесь убивает всю фичу.
-- **Правило UI 9** — «звук следует за видео» рисуется модификатором или
-  иконкой режима, а не новой галочкой.
-- **Правило UI 13** — сетка живёт в уже существующем деатач-окне превью
-  (`src/apps/kt-app/src/app.rs:952`), а не в новой панели на всю ширину.
-- **Правило UI 17** — цифры 1–9, клик по ячейке и пункт меню обязаны делать
-  ровно одно и то же, включая случай «выделено несколько событий».
+- **No. 4 (the cache is the only truth about coverage)** — touched directly and more than anything else: the requirements multiply by N, quality in the key gives double storage of the active angle, `unused_evictions` becomes the main health metric.
+- **No. 5 (exactly one MediaWorker owns the decoder)** — **not violated**; a worker is already created one per source, N live decoders is today's norm. This is the main correction to the task statement.
+- **No. 3 (a model edit does not destroy FX state)** — used: a live pass mutates the model dozens of times a minute, and reverb tails must survive.
+- **No. 7 (composition code is one)** — touched at the edge: a grid cell must not become a second display path. Only the explicit reading "the grid is a choice of material, not a preview of the result" saves it.
+- **No. 8 (scroll/zoom does not generate decode requests)** — the grid, while paused, must live on thumbnails, not on decoding.
+- **No. 12 (the UI heats the system only during motion)** — nine cells have no right to redraw more often than the picture moves; V-fps and V-drops of the performance panel become the acceptance criterion.
+- **UI rule 2** — switching must work during playback; a "paused only" gate here kills the whole feature.
+- **UI rule 9** — "the sound follows the video" is drawn by a modifier or a mode icon, not by a new checkbox.
+- **UI rule 13** — the grid lives in the already existing detached preview window (`src/apps/kt-app/src/app.rs:952`), not in a new full-width panel.
+- **UI rule 17** — the digits 1–9, a click on a cell and a menu item must do exactly the same thing, including the case "several events are selected".
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | XL — целый раунд плюс новое поле формата; путь через вложенность (б) — два раунда, и один из них чужой (F-TL-004) |
-| Где основная работа | kt-model (набор альтернатив у события, команда переключения, коалесценция прохода), kt-app (сетка в деатач-окне превью, клавиши 1–9, режим звука), kt-engine (второй заказчик кадров + ступень приоритета для ячеек), kt-cache (бюджет сетки отдельно от превью), kt-otio (поле в формате) |
-| Формат проекта | нужна новая версия: список альтернативных `MediaId` у `ClipEvent`; умолчание «одна альтернатива» = прежнее поведение байт-в-байт, старые файлы читаются как есть |
-| Тесты, которые придётся написать | модель: переключение = мутация активного + рез события в точке, живой проход схлопывается в один undo-шаг, `BakeMorpher`-подобное раскрытие; kt-cache: ячейки не выбивают главное превью (`unused_evictions` ограничен), активный угол на двух качествах; kt-engine: заказ ячеек приоритетом ниже `Playback`; kt-app layout: сетка в деатач-окне, 1–9 при воспроизведении, «только видео» по умолчанию, N ячеек не роняют V-fps; kt-otio: round-trip нового поля + чтение файлов без него |
-| Зависит от | F-SPD-004 (жёстко: без синхронизации фича бессмысленна), F-TL-004 (только для пути «вложенность»; путь «тейки» от неё НЕ зависит) |
-| Ломает совместимость | нет на пути «тейки» (новое поле с умолчанием); да на пути «вложенность» |
+| Size | XL — a whole round plus a new format field; the nesting path (b) is two rounds, and one of them belongs to someone else (F-TL-004) |
+| Where the main work is | kt-model (a set of alternatives on the event, the switch command, pass coalescing), kt-app (the grid in the detached preview window, keys 1–9, the sound mode), kt-engine (a second consumer of frames + a priority level for the cells), kt-cache (the grid budget separate from the preview), kt-otio (a field in the format) |
+| Project format | a new version is needed: a list of alternative `MediaId`s on `ClipEvent`; the default "one alternative" = the previous behavior byte for byte, old files are read as they are |
+| Tests that will have to be written | model: switching = mutation of the active one + a cut of the event at the point, a live pass collapses into one undo step, an unpacking similar to `BakeMorpher`; kt-cache: the cells do not evict the main preview (`unused_evictions` is bounded), the active angle at two qualities; kt-engine: the cells' requests at a priority below `Playback`; kt-app layout: the grid in the detached window, 1–9 during playback, "video only" by default, N cells do not drop V-fps; kt-otio: round-trip of the new field + reading files without it |
+| Depends on | F-SPD-004 (hard: without synchronization the feature is pointless), F-TL-004 (only for the "nesting" path; the "takes" path does NOT depend on it) |
+| Breaks compatibility | no on the "takes" path (a new field with a default); yes on the "nesting" path |
 
-## Вердикт
+## Verdict
 
-Не берём сейчас. Приоритет C честный: это фича для концертов, интервью и
-стримов, а не для всех, и она полностью бесполезна без синхронизации
-(F-SPD-004), которой ещё нет.
+Not taking it now. Priority C is honest: this is a feature for concerts, interviews and streams, not for everyone, and it is completely useless without synchronization (F-SPD-004), which does not exist yet.
 
-Главное, что стоило выяснить: **посылка «мультикам ломает инвариант №5»
-неверна** — N живых декодов у нас уже работают, воркер заводится на КАЖДЫЙ
-источник (`src/libs/kt-engine/src/worker.rs:111`). Упирается фича не в
-декодеры, а в бюджет кэша (инвариант №4, 512 МБ на всё) и в тишину интерфейса
-(инвариант №12); оба решаются грубой долей разрешения для ячеек и свободной,
-никем не занятой ступенью `Priority::Thumbnail`.
+The main thing worth finding out: **the premise "multicam breaks invariant No. 5" is wrong** — N live decoders already work for us, a worker is created for EVERY source (`src/libs/kt-engine/src/worker.rs:111`). The feature runs into not the decoders but the cache budget (invariant No. 4, 512 MB for everything) and the silence of the interface (invariant No. 12); both are solved by a coarse resolution fraction for the cells and the free, unused `Priority::Thumbnail` level.
 
-Когда возьмём — брать вегасовским путём (набор альтернатив у события), а не
-фэйркатовским (вложенная секвенция): он ложится на уже написанное (рез цели
-морфер-слоем, `src_off`, link-группа), не требует F-TL-004 и даёт «раскрытие»
-даром, потому что раскрывать нечего. И сохранить наше случайное преимущество:
-у нас звук по умолчанию НЕ следует за видео, потому что видео и аудио — два
-события, а не одно.
+When we take it, we take the Vegas path (a set of alternatives on the event), not the Final Cut one (a nested sequence): it fits what is already written (cutting the target by the morpher layer, `src_off`, the link group), does not require F-TL-004, and gives "unpacking" for free, because there is nothing to unpack. And we keep our accidental advantage: by default, our sound does NOT follow the video, because video and audio are two events, not one.
 
-## Источники
+## Sources
 
 - Apple. Final Cut Pro User Guide — Intro to multicam editing;
   Cut and switch camera angles; Sync and adjust camera angles; Edit multicam
@@ -390,43 +203,34 @@ starting timeline, not a finished edit» — он путается на зака
   https://support.apple.com/guide/final-cut-pro/sync-and-adjust-camera-angles-ver23c76b1a/mac ·
   https://support.apple.com/guide/final-cut-pro/edit-multicam-clips-ver23c76d65/mac ·
   https://support.apple.com/guide/final-cut-pro/multicam-editing-tips-verb1160b2d/mac
-  (дата обращения 2026-09-07)
+  (accessed 2026-09-07)
 - MAGIX/Boris FX. VEGAS Pro Help — Editing multicamera video; Editing
-  multicamera shoots (версия 22; страницы под 2026 на help.magix-hub.com не
-  опубликованы, проверено — 404).
+  multicamera shoots (version 22; pages for 2026 are not published on help.magix-hub.com, checked — 404).
   https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/editing_multicamera_video.htm ·
   https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/editing_multicamera_shoots.htm
-  (дата обращения 2026-09-07)
+  (accessed 2026-09-07)
 - Blackmagic Design. DaVinci Resolve — Edit page; Cut page (Sync Bin);
   What's new (Resolve 21).
   https://www.blackmagicdesign.com/products/davinciresolve/edit ·
   https://www.blackmagicdesign.com/products/davinciresolve/cut ·
   https://www.blackmagicdesign.com/products/davinciresolve/whatsnew
-  (дата обращения 2026-09-07)
-- Adobe Support Community. «Multicam and some micro problem sound»,
-  05.01.2025 — цитата раздела «Что говорят пользователи».
+  (accessed 2026-09-07)
+- Adobe Support Community. "Multicam and some micro problem sound",
+  05.01.2025 — the quote from the section "What users say".
   https://community.adobe.com/t5/premiere-pro-discussions/multicam-and-some-micro-problem-sound/m-p/15074101
-  (дата обращения 2026-09-07)
-- Creative COW. «Audio follows video in multicam» (Herb Sevush, 10.03.2014) —
-  тред без ответов, ценен самой формулировкой вопроса Adobe.
+  (accessed 2026-09-07)
+- Creative COW. "Audio follows video in multicam" (Herb Sevush, 10.03.2014) —
+  a thread without replies, valuable for the wording of Adobe's question itself.
   https://creativecow.net/forums/thread/audio-follows-video-in-multicam-aeaeaeae/
-  (дата обращения 2026-09-07)
-- davinciresolveclub.com. «DaVinci Resolve Multicam Editing: Sync to
-  SmartSwitch» — **вторичный источник**, единственный доступный подробный
-  разбор SmartSwitch; из него взяты описание анализа (активный говорящий,
-  звук, движение губ, план крупный/общий) и оговорка «The result is a starting
-  timeline, not a finished edit».
+  (accessed 2026-09-07)
+- davinciresolveclub.com. "DaVinci Resolve Multicam Editing: Sync to
+  SmartSwitch" — **a secondary source**, the only available detailed analysis of SmartSwitch; taken from it are the description of the analysis (active speaker,
+  sound, lip movement, close-up/wide shot plan) and the caveat "The result is a starting
+  timeline, not a finished edit".
   https://davinciresolveclub.com/davinci-resolve-multicam-editing/
-  (дата обращения 2026-09-07)
+  (accessed 2026-09-07)
 
-**Чего подтвердить не удалось.** Страницы Premiere на `helpx.adobe.com`
-(включая новый путь `helpx.adobe.com/premiere/desktop/edit-projects/...`) из
-этого окружения не открываются — строка Premiere собрана по Adobe Support
-Community, Creative COW и заголовкам страниц справки, найденным поиском; формул
-Adobe дословно не цитирую. Первоисточник по «AI Multicam SmartSwitch» не
-найден: на blackmagicdesign.com сейчас документирована Resolve 21, где этого
-слова нет, а анонс Resolve 20 недоступен (web.archive.org заблокирован) —
-пункт помечен `[НЕ ПРОВЕРЕНО]`. Треды forum.blackmagicdesign.com о
-производительности мультикама отдают 403 при прямой загрузке, мобильное
-зеркало не проходит по TLS-сертификату, reddit недоступен целиком; бюджет
-`WebSearch` в сессии исчерпан, поиск шёл прямыми запросами к Yahoo.
+**What could not be confirmed.** The Premiere pages on `helpx.adobe.com`
+(including the new path `helpx.adobe.com/premiere/desktop/edit-projects/...`) do not open from this environment — the Premiere line is assembled from the Adobe Support
+Community, Creative COW and the titles of help pages found by search; I do not quote Adobe's formulas verbatim. A primary source for "AI Multicam SmartSwitch" was not
+found: blackmagicdesign.com currently documents Resolve 21, where this word does not appear, and the Resolve 20 announcement is unavailable (web.archive.org is blocked) — the item is marked `[NOT VERIFIED]`. The forum.blackmagicdesign.com threads on multicam performance return 403 on direct load, the mobile mirror fails the TLS certificate, reddit is unavailable entirely; the `WebSearch` budget in the session is exhausted, and the search went through direct queries to Yahoo.

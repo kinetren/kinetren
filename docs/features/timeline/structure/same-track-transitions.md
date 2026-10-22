@@ -1,16 +1,16 @@
 ---
 id: F-TL-010
-title: Переход между клипами на одной дорожке
-status: уже-есть
+title: Transition between clips on one track
+status: already-have
 priority: B
 cost: M
 category: timeline/structure
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, kdenlive-26.08]
-we_have: да
+we_have: yes
 crates: [kt-model, kt-engine, kt-otio, kt-app]
 invariants: [7, 11]
 ui_rules: [16, 19, 20]
-round: Р.28
+round: R.28
 point: 162
 tests: [135, 136, 137, 155, 159, 162, 163, 164, 165, 173, 176, 223, 225, 226, 227, 462, 463, 464, 465, 466]
 depends_on: []
@@ -18,138 +18,55 @@ trackers: [kde-invent, kde-bugzilla, pitivi]
 checked: 2026-09-16
 ---
 
-# F-TL-010 — Переход между клипами на одной дорожке
+# F-TL-010 — Transition between clips on one track
 
-## Суть
+## Essence
 
-Два соседних события на ОДНОЙ дорожке переходят друг в друга: картинка
-растворяется, звук перетекает. Монтажёру не важно, как это устроено внутри;
-ему важно, что ради секунды растворения не надо заводить вторую дорожку,
-тащить туда второй клип и выравнивать их руками. Ровно это и есть предмет
-живого запроса kde-invent #796 «Same track transitions» — редактор, у
-которого дорожка была строгой последовательностью, добавлял наложение
-задним числом и три года чинил последствия.
+Two neighboring events on ONE track pass into each other: the picture dissolves, the sound flows over. It does not matter to the editor how this is built inside; what matters is that for the sake of a second of dissolve one does not have to create a second track, drag a second clip there and align them by hand. This is exactly the subject of the live request kde-invent #796 "Same track transitions" — an editor whose track was a strict sequence added an overlap after the fact and for three years fixed the consequences.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Automatic Crossfades (Options); Fade Type / Transition в ПКМ по зоне наезда | наложил событие на соседнее НА ТОЙ ЖЕ дорожке — кроссфейд появился сам, отдельной команды нет. ПКМ по зоне наложения даёт кривую фейда (fast/slow/linear/smooth/sharp) и подмену кроссфейда на любой другой вид перехода |
-| Adobe Premiere | 26.x | Cross Dissolve на точке склейки; Clip handles settings | клипы остаются ВСТЫК, переход съедает материал за срезом («handles»). Материала нет — диалог «Insufficient media. This transition will contain repeated frames», и переход достраивается повторёнными кадрами. Наложение на одной дорожке невозможно: верхний клип перезаписывает нижний, а запрос «сделать кроссфейд наложением» с 2023 г. висит открытым в Adobe Ideas |
-| DaVinci Resolve | 21 | Cross Dissolve на точке склейки | то же устройство и та же авария: не хватает handles — «not enough media», лечится подрезкой обоих клипов у стыка на 15–30 кадров, чтобы «спрятанные» кадры появились. Перетаскивание клипа на соседа — overwrite, а не переход |
-| Final Cut Pro | 12.3 | переход на точке склейки сюжетной линии (Command+T) | магнитная линия последовательна ПО ОПРЕДЕЛЕНИЮ: наложить два клипа в ней нельзя, второй уходит связанным клипом этажом выше. Переходу нужна «extra media beyond clip edges»; её нет — диалог предлагает укоротить клипы и весь проект |
-| After Effects | 26.x | нет: перехода как объекта не существует | «дорожка» = слой, слои перекрываются по определению и всегда. Кроссфейд делают ключами Opacity на двух слоях. Поэтому вопрос «переход на одной дорожке» здесь не задаётся — и спросить «какой это вид перехода» не у кого: объекта нет |
+| VEGAS Pro | 2026.0 | Automatic Crossfades (Options); Fade Type / Transition via the right-click on the overlap zone | you place an event over the neighbor ON THE SAME track — the crossfade appears by itself, there is no separate command. A right-click on the overlap zone gives the fade curve (fast/slow/linear/smooth/sharp) and the replacement of the crossfade with any other kind of transition |
+| Adobe Premiere | 26.x | Cross Dissolve at the cut point; Clip handles settings | the clips stay BUTT-JOINED, the transition eats material beyond the cut ("handles"). There is no material — the dialog "Insufficient media. This transition will contain repeated frames", and the transition is completed with repeated frames. An overlap on one track is impossible: the upper clip overwrites the lower one, and the request "make the crossfade an overlap" has been hanging open in Adobe Ideas since 2023 |
+| DaVinci Resolve | 21 | Cross Dissolve at the cut point | the same device and the same failure: not enough handles — "not enough media", cured by trimming both clips at the junction by 15–30 frames so that the "hidden" frames appear. Dragging a clip onto its neighbor is an overwrite, not a transition |
+| Final Cut Pro | 12.3 | a transition at the cut point of the storyline (Command+T) | the magnetic line is sequential BY DEFINITION: two clips cannot be overlapped in it, the second goes off as a connected clip one level up. The transition needs "extra media beyond clip edges"; there is none — the dialog suggests shortening the clips and the whole project |
+| After Effects | 26.x | none: a transition as an object does not exist | a "track" is a layer, layers overlap by definition and always. A crossfade is made with Opacity keyframes on two layers. Therefore the question "a transition on one track" is not asked here — and there is nobody to ask "what kind of transition is this": there is no object |
 
-**Вне ядра.** Без Kdenlive эту заметку написать нельзя: это единственный
-публично прослеживаемый случай, когда редактор с последовательной дорожкой
-добавил наложение задним числом, и в трекере видно, чем он заплатил.
+**Outside the core.** This note could not be written without Kdenlive: it is the only publicly traceable case in which an editor with a sequential track added an overlap after the fact, and the tracker shows what it paid.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Kdenlive | 26.08.0 | Mix Clips (с 20.12, «same track transition») | у каждой дорожки ВНУТРИ два плейлиста; «микс» кладёт один из пары клипов во второй плейлист той же дорожки, и наложение получается там, где в модели MLT дорожка по-прежнему строго последовательна. Наружу это видно как отдельная подсистема с собственными командами, собственным диалогом и собственными падениями |
+| Kdenlive | 26.08.0 | Mix Clips (since 20.12, "same track transition") | each track has TWO playlists INSIDE; a "mix" puts one of a pair of clips into the second playlist of the same track, and the overlap results where, in the MLT model, the track is still strictly sequential. Outwardly this appears as a separate subsystem with its own commands, its own dialog and its own crashes |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Переход — это ВСЕГДА наложение; редакторы различаются только тем, где
-они его прячут.** Формулировка справки Apple прямая: переходу нужно
-перекрывающееся видео с обеих сторон склейки. Тайников ровно три, и у
-каждого своя авария. За срезом, в подрезанном материале (Premiere, Resolve,
-FCP) — авария «handles кончились»: диалог «insufficient media», повторённые
-кадры или предложение укоротить проект. На соседней дорожке (родословная
-MLT/GES: Kdenlive до 20.12, Shotcut, Pitivi) — авария «две дорожки ради
-секунды», и она же ломает порядок клипов: pitivi #573 в 2009 г. описывает,
-что запрет наложения на слое не давал даже поменять клипы местами. На самой
-дорожке видимым перекрытием (VEGAS и мы) — авария «наложил и не заметил».
-Выбора «без цены» в этом списке нет; есть выбор, какую цену показывать
-пользователю.
+**1. A transition is ALWAYS an overlap; editors differ only in where they hide it.** The Apple help wording is direct: a transition needs overlapping video on both sides of the cut. There are exactly three hiding places, and each has its own failure. Beyond the cut, in trimmed material (Premiere, Resolve, FCP) — the failure "the handles ran out": the "insufficient media" dialog, repeated frames, or a suggestion to shorten the project. On a neighboring track (the MLT/GES lineage: Kdenlive before 20.12, Shotcut, Pitivi) — the failure "two tracks for the sake of a second", and it also breaks the order of clips: pitivi #573 from 2009 describes how the ban on overlap on a layer did not even allow swapping clips. On the track itself, as a visible overlap (VEGAS and us) — the failure "placed it and did not notice". There is no choice "without a price" in this list; there is a choice of which price to show the user.
 
-**2. Kdenlive не отменил вторую дорожку — он спрятал её внутрь дорожки, и
-мы сделали ровно то же самое, только в файле.** Assert из падения
-kde-invent #1499 называет механизм дословно:
+**2. Kdenlive did not cancel the second track — it hid it inside the track, and we did exactly the same thing, only in the file.** The assert from the crash of kde-invent #1499 names the mechanism verbatim:
 `m_playlists[sourcePlaylist].is_blank_at(position) &&`
-`m_playlists[destPlaylist].is_blank_at(position)` в `trackmodel.cpp` — у
-дорожки два плейлиста, и «микс» переселяет клип из одного в другой. У нас
-та же геометрия живёт на границе формата: в OTIO у клипа НЕТ поля «начало
-на таймлайне», позиция задаётся порядком детей дорожки, поэтому два
-одновременно звучащих клипа в одном Track невыразимы физически (прямой
-вопрос пользователя «ТОЧНО НЕЛЬЗЯ ПРОСТО ИГНОРИРУЯ СТАНДАРТ ПИСАТЬ С
-ПЕРЕСЛАИВАНИЯМИ?», Р.28). Наши наложения пишутся соседними Track плюс
-карта `KtLayers { video: [n], audio: [n] }` в `metadata["kt"]`, и чтение
-складывает их обратно. То есть двух-дорожечный обходной приём мы не
-отменили — мы вынесли его туда, где пользователь его не видит, и научили
-читателя его разбирать (t165). Разница с Kdenlive не в наличии шва, а в его
-месте: у них шов в модели редактирования и падает на undo ресайза микса, у
-нас — в сериализации и проверяется round-trip'ом.
+`m_playlists[destPlaylist].is_blank_at(position)` in `trackmodel.cpp` — a track has two playlists, and the "mix" relocates a clip from one to the other. We have the same geometry living on the format boundary: in OTIO a clip has NO "start on the timeline" field, the position is set by the order of the track's children, so two simultaneously sounding clips in one Track cannot be expressed physically (the direct question of the user, R.28: "CAN'T WE JUST IGNORE THE STANDARD AND WRITE OVERLAPS?"). Our overlaps are written as adjacent Tracks plus the map `KtLayers { video: [n], audio: [n] }` in `metadata["kt"]`, and reading assembles them back. That is, we did not cancel the two-track workaround — we moved it to where the user does not see it, and taught the reader to parse it (t165). The difference from Kdenlive is not in the presence of a seam but in its place: they have the seam in the editing model and it crashes on undo of a mix resize; we have it in serialization and it is checked by a round-trip.
 
-**3. Кроссфейд не равен двум полупрозрачным слоям, и это видно СНИЗУ.**
-Один и тот же дефект независимо заведён в двух не связанных кодовых базах:
-pitivi #2583 «Lower layers visible beneath crossfaded top layers» и
-kde-bugzilla #456830 «Mix Clips compositions transition applies to lower
-layers». Механика: пара кладётся на композит двумя слоями с альфой 0.5, и
-нижняя дорожка просвечивает на 0.5·0.5 = 25 % ровно посередине перехода.
-Лечится это не подбором альфы, а тем, что пара обязана схлопнуться в ОДИН
-слой ДО композита. У нас так и сделано: `PlanLayer::Dissolve { a, b, k,
-alpha_k }` разрешает пару в один результат `a·(1−k) + b·k` и только потом
-умножает его на альфу — просвечивать снизу нечему в принципе. Звук отвечает
-на тот же вопрос другим законом: не 0.5/0.5, а `√(1−t)`/`√t`, потому что
-сохранять надо мощность, а не амплитуду.
+**3. A crossfade is not equal to two semi-transparent layers, and this is visible FROM BELOW.** The same defect was independently filed in two unrelated codebases: pitivi #2583 "Lower layers visible beneath crossfaded top layers" and kde-bugzilla #456830 "Mix Clips compositions transition applies to lower layers". The mechanism: the pair is put on the composite as two layers with alpha 0.5, and the lower track shows through at 0.5·0.5 = 25 % exactly in the middle of the transition. It is cured not by picking the alpha, but by the pair having to collapse into ONE layer BEFORE the composite. We do exactly this: `PlanLayer::Dissolve { a, b, k, alpha_k }` resolves the pair into one result `a·(1−k) + b·k` and only then multiplies it by the alpha — there is in principle nothing to show through from below. Sound answers the same question by another law: not 0.5/0.5, but `√(1−t)`/`√t`, because power must be preserved, not amplitude.
 
-## Плюсы
+## Pros
 
-- Наложение — состояние, а не команда. Жест переноса при `overlap_layers`
-  возвращает `MovePlan::Free` на любом наезде: батч
-  `[MoveClip, TrimEnd, TrimStart, AddTransition]` не собирается вовсе, и
-  «растащил обратно» возвращает ровно то, что было, потому что ничего не
-  срезано (t163). Класс дефектов «material lost under the crossfade»
-  (Р.26) у нас закрыт не восстановлением материала, а тем, что его не
-  трогают.
-- Чужой и старый монтаж импортируется один-в-один: 1952 клипа, 5 видео- и
-  3 аудиодорожки, 76 наложений — и ни одной новой дорожки (п.164, t164).
-  Прежний конвертер разворачивал тот же файл в ~40 видеодорожек, то есть
-  сам порождал ту боль, ради которой заводят F-TL-010.
-- Переход — самостоятельный объект, а не свойство пары: 16 видов
-  (`TransitionKind`, t223), кривые ПАРАМЕТРОВ вида поверх них
-  (`TransitionEvent.auto`, t225/t232), кривая аудио-кроссфейда отдельно
-  (`AudioCurve`, t226). Фейд у края дорожки — тот же объект с одним живым
-  концом (`is_fade`, t155), поэтому «фейд» и «переход» не разъезжаются в
-  двух разных кусках кода.
-- Ключ кривой вида хранится в тиках от НАЧАЛА ОКНА перехода, а не в долях
-  окна: правка края окна открывает и прячет ключи, как обрезка клипа, а не
-  растягивает анимацию.
-- Диалога «не хватает материала» нет ни одного. Окно перехода берёт
-  handles через `head_ext`/`tail_ext`, а когда их нет — недостающая
-  половина получает полный вес, кадр не повторяется, звук не щёлкает и
-  underrun не выставляется (t137, t136).
+- An overlap is a state, not a command. The move gesture under `overlap_layers` returns `MovePlan::Free` on any overlap: the batch `[MoveClip, TrimEnd, TrimStart, AddTransition]` is not assembled at all, and "dragging it back" returns exactly what was there, because nothing was cut (t163). The defect class "material lost under the crossfade" (R.26) is closed for us not by restoring material, but by not touching it.
+- A foreign or old edit is imported one-to-one: 1952 clips, 5 video and 3 audio tracks, 76 overlaps — and not a single new track (item 164, t164). The former converter unfolded the same file into ~40 video tracks, that is, it itself produced the pain for whose sake F-TL-010 is opened.
+- A transition is an independent object, not a property of a pair: 16 kinds (`TransitionKind`, t223), curves of the kind's PARAMETERS on top of them (`TransitionEvent.auto`, t225/t232), the audio crossfade curve separately (`AudioCurve`, t226). A fade at the edge of a track is the same object with one live end (`is_fade`, t155), so "fade" and "transition" do not diverge into two different pieces of code.
+- The key of a kind's curve is stored in ticks from the START of the transition window, not in fractions of the window: an edit of the window's edge opens and hides the keys, like a clip trim, rather than stretching the animation.
+- There is not a single "not enough material" dialog. The transition window takes the handles via `head_ext`/`tail_ext`, and when there are none — the missing half gets full weight, the frame is not repeated, the sound does not click and no underrun is raised (t137, t136).
 
-## Минусы
+## Cons
 
-- **Наложение и переход — два механизма, и они не встречаются.**
-  `check_transition_full` требует `a.start + a.duration == b.start`, иначе
-  `TransitionNotAtJoint`. Значит 16 видов, кривые и регулируемое окно
-  доступны только на клипах ВСТЫК, а на настоящем наложении — только
-  кроссфейд у звука. Пользователь, наложивший клипы (то есть сделавший
-  «как в Vegas»), вида перехода выбрать не может.
-- **Видео при наложении не смешивается вообще.** Правило Vegas ставит
-  поздний клип сверху непрозрачным (`sort_by_key((Reverse(lane), start))`,
-  t162), то есть наложение картинки — это жёсткий срез. Один и тот же жест
-  на двух половинах A/V-пары даёт разный результат: звук перетекает,
-  картинка щёлкает.
-- **1/N при трёх и более — разрыв, а не продолжение.** Двое дают √-закон
-  (по 0.707 в середине), трое — ровно 1/3 каждому. В кадре, где появляется
-  третий клип, вес двух первых падает скачком с ~0.7 до 0.33. Это
-  сознательная верность семантике v1 (в проекте пользователя 14 таких
-  зон), но цена у неё есть, и она не сглажена.
-- **Наложение ничем не помечено на полосе.** Painter рисует поздний клип
-  поверх раннего обычным прямоугольником; ни штриховки, ни X-образных
-  кривых кроссфейда, как в VEGAS. Случайное наложение визуально
-  неотличимо от клипа, который просто там начинается, — а хвост соседа под
-  ним при этом ЗВУЧИТ.
-- **Выключателя у `overlap_layers` нет.** Опция включена по умолчанию,
-  читается моделью, движком и конвертером, но во всём `apps/` нет ни
-  команды, ни пункта меню, ни плашки — поле может стать `false` только из
-  файла, который наша же программа записать не умеет.
+- **Overlap and transition are two mechanisms, and they never meet.** `check_transition_full` requires `a.start + a.duration == b.start`, otherwise `TransitionNotAtJoint`. So the 16 kinds, the curves and the adjustable window are available only on clips BUTT-JOINED, and on a real overlap only the audio crossfade. A user who overlapped clips (that is, did "as in Vegas") cannot choose a transition kind.
+- **Video does not blend at all on overlap.** The Vegas rule puts the later clip on top as opaque (`sort_by_key((Reverse(lane), start))`, t162), so an overlap of the picture is a hard cut. The same gesture on the two halves of an A/V pair gives different results: the sound flows over, the picture clicks.
+- **1/N with three or more is a break, not a continuation.** Two give the √ law (0.707 each at the middle), three give exactly 1/3 to each. In the frame where the third clip appears, the weight of the first two drops abruptly from ~0.7 to 0.33. This is a deliberate fidelity to the semantics of v1 (14 such zones in the user's project), but the price is there, and it is not smoothed.
+- **An overlap is not marked on the strip in any way.** The painter draws the later clip over the earlier one as an ordinary rectangle; there is no hatching and no X-shaped crossfade curves, as in VEGAS. An accidental overlap is visually indistinguishable from a clip that simply starts there — while the tail of the neighbor under it SOUNDS.
+- **There is no switch for `overlap_layers`.** The option is on by default, is read by the model, the engine and the converter, but across the whole `apps/` there is neither a command, nor a menu item, nor a badge — the field can become `false` only from a file that our own program cannot write.
 
-## Что говорят пользователи
+## What users say
 
 > Currently, there is a mechanism in place to prevent the user from
 > overlapping clips onto a single layer, because the auto
@@ -157,8 +74,7 @@ alpha_k }` разрешает пару в один результат `a·(1−k
 > — pitivi #573, 26.07.2009,
 > https://gitlab.gnome.org/GNOME/pitivi/-/work_items/573
 
-Тот же отчёт называет и побочный ущерб запрета: клипы нельзя поменять
-местами, потому что для этого их пришлось бы провести друг сквозь друга.
+The same report also names the side damage of the ban: clips cannot be swapped, because to do so they would have to be driven through one another.
 
 > Without this functionality, I can't see how one can feasibly create a
 > timeline with multiple clips with transitions between them.
@@ -175,8 +91,7 @@ alpha_k }` разрешает пару в один результат `a·(1−k
 > — kde-invent #796, 18.09.2020,
 > https://invent.kde.org/multimedia/kdenlive/-/work_items/796
 
-Имя так и не поменяли, и через восемь месяцев прилетело возражение ровно
-об этом:
+The name was never changed, and eight months later an objection came in on exactly this:
 
 > To avoid the word "Transition" in a video editing software is not a good
 > idea.
@@ -187,137 +102,89 @@ alpha_k }` разрешает пару в один результат `a·(1−k
 > sort of "guess & check" method, you've got to have the right amount of
 > handle frames before you add it.
 > — Adobe Ideas, «Add a crossfade by overlapping audio or video clips in
-> the timeline», 24.01.2023, статус Open for Voting,
+> the timeline», 24.01.2023, status Open for Voting,
 > https://community.adobe.com/t5/premiere-pro-ideas/add-a-crossfade-by-overlapping-audio-or-video-clips-in-the-timeline/idi-p/13515690
 
-СИГНАЛ: переход на одной дорожке как ОТДЕЛЬНАЯ подсистема — 17 задач в kde-bugzilla, `same.?track transition|single.?track transition|\bmix(ed|es|ing)? clips?\b|\bmix (zone|transition|duration|clip)|\bmix\b.{0,20}\b(track|timeline|transition)`; доля 0.3% против 0.0% (ни одной из 2672) в pitivi
+SIGNAL: a transition on one track as a SEPARATE subsystem — 17 tasks in kde-bugzilla, `same.?track transition|single.?track transition|\bmix(ed|es|ing)? clips?\b|\bmix (zone|transition|duration|clip)|\bmix\b.{0,20}\b(track|timeline|transition)`; share 0.3% against 0.0% (none of 2672) in pitivi
 
-СИГНАЛ: нижний слой просвечивает сквозь кроссфейд — 2 задачи в pitivi, `(lower|underlying|background|other) (track|layer)s?.{0,30}(visible|bleed|show|appear)|bleed.{0,20}through|applies to lower`; доля 0.1% против 0.0% (1 задача из 6346) в kde-bugzilla
+SIGNAL: the lower layer shows through the crossfade — 2 tasks in pitivi, `(lower|underlying|background|other) (track|layer)s?.{0,30}(visible|bleed|show|appear)|bleed.{0,20}through|applies to lower`; share 0.1% against 0.0% (1 task of 6346) in kde-bugzilla
 
-СИГНАЛ: право наложить клипы как отдельная просьба — 3 задачи в pitivi, `(allow|enable|let|don.?t block|permit|easy|easier).{0,25}overlap|overlapping clips?|overlap.{0,20}(clips?|events?).{0,20}(same|one|a) (track|layer)`; доля 0.1% против 0.0% (1 задача из 2217) в kde-invent
+SIGNAL: the right to overlap clips as a separate request — 3 tasks in pitivi, `(allow|enable|let|don.?t block|permit|easy|easier).{0,25}overlap|overlapping clips?|overlap.{0,20}(clips?|events?).{0,20}(same|one|a) (track|layer)`; share 0.1% against 0.0% (1 task of 2217) in kde-invent
 
-Как читать первое число. 17 задач Kdenlive — это НЕ «пользователи просят
-переход»: сама фича закрыта в 20.12, и всё, что после, — счёт её
-последствий. По годам: 2016 — 1 (старый внутренний mix/composite, ещё до
-фичи), 2021 — 8 (реверс направления, звук против видео, крэши при
-переносе), 2022 — 4 (порча таймлайна, «не хватает кадров», просвет нижних
-слоёв), 2023 — 1, 2024 — 3. Kdenlive заплатил за наложение тремя годами
-дефектов В САМОМ МЕХАНИЗМЕ; ноль у Pitivi — не признак
-благополучия, а признак того, что там отдельного механизма нет и ломаться
-нечему (свою цену Pitivi платит другим счётом — вторым СИГНАЛом).
+How to read the first number. The 17 Kdenlive tasks are NOT "users asking for a transition": the feature itself was closed in 20.12, and everything after is the count of its consequences. By year: 2016 — 1 (the old internal mix/composite, before the feature), 2021 — 8 (reversal of direction, sound against video, crashes on moving), 2022 — 4 (damage to the timeline, "not enough frames", the bleed-through of lower layers), 2023 — 1, 2024 — 3. Kdenlive paid for the overlap with three years of defects IN THE MECHANISM ITSELF; zero at Pitivi is not a sign of well-being, but a sign that there is no separate mechanism there and nothing to break (Pitivi pays its price with a different account — the second SIGNAL).
 
-Ловушка лексикона, найденная здесь и полезная следующей заметке: слово
-`transition` даёт в kde-bugzilla 1388 из 6346 = 21.9 %, но 1322 из них
-приходят из полей `component` «Video Effects & Transitions» (1245) и
-«Audio Effects & Transitions» (77), а не из текста задачи. `match()` в
-`tracker-rank.py` ищет по «заголовок + метки + компонент», поэтому любой
-фильтр из одного общего слова обязан быть проверен на совпадение с именем
-компонента, иначе заметка отчитается о находке размером с целый раздел
-трекера.
+A lexicon trap found here, useful for the next note: the word `transition` gives in kde-bugzilla 1388 of 6346 = 21.9 %, but 1322 of them come from the `component` fields "Video Effects & Transitions" (1245) and "Audio Effects & Transitions" (77), not from the text of the task. `match()` in `tracker-rank.py` searches over "title + labels + component", so any filter made of one common word must be checked for a match against the component name, otherwise the note will report a finding the size of an entire section of the tracker.
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/transitions/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Уже есть: переход на наложении одной дорожки — окно = зона перекрытия, без собственных ручек; без перехода жест меняет только позицию.
-АДРЕС: src/apps/kt-app/src/timeline.rs — класс «наложил и не заметил» у нас ВОЗМОЖЕН, и его не ловит ничто: painter рисует поздний клип поверх раннего обычным прямоугольником без пометки зоны, `overlap_layers` не имеет ни команды, ни пункта меню, ни плашки (проверено грепом: вне тестов поле упоминается во всём `apps/` ровно дважды — в `plan_move` и `plan_move_block`; варианта `Command`, который его меняет, нет вообще, то есть `false` может прийти только из файла, который наша же программа записать не умеет), а `check_transition_full` в `src/libs/kt-model/src/project.rs` отказывает переходу на наложении (`TransitionNotAtJoint`) — то есть 16 видов недоступны ровно там, где кроссфейд уже звучит.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/transitions/ — the contract is in `spec.md`, the "why" and the code paths are in `design.md`.
+Already there: a transition on the overlap of one track — the window = the overlap zone, without its own handles; without a transition the gesture changes only the position.
+ADDRESS: src/apps/kt-app/src/timeline.rs — the class "placed it and did not notice" is POSSIBLE with us, and nothing catches it: the painter draws the later clip over the earlier one as an ordinary rectangle without marking the zone, `overlap_layers` has neither a command nor a menu item nor a badge (checked by grep: outside tests the field is mentioned across the whole `apps/` exactly twice — in `plan_move` and `plan_move_block`; there is no `Command` variant that changes it at all, so `false` can arrive only from a file that our own program cannot write), and `check_transition_full` in `src/libs/kt-model/src/project.rs` refuses a transition on an overlap (`TransitionNotAtJoint`) — that is, the 16 kinds are unavailable exactly where the crossfade already sounds.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии: показ зоны наложения + выключатель и плашка (S); переход поверх наложения (M, отдельным решением) |
-| Где основная работа | kt-app (полоса, контекстное меню, плашка); kt-model — только если снимать «только встык» |
-| Формат проекта | не трогает: `KtLayers` и `TransitionEvent` уже в v3; переход на наложении потребует хозяина окна и, вероятно, поля |
-| Тесты, которые придётся написать | харнесс: зона наложения помечена и отличима от соседнего клипа; выключатель переводит проект и плашка называет место возврата (правило 19); при снятии «только встык» — новый round-trip t165 и конформанс CPU↔GPU на паре, у которой окно задано телами |
-| Зависит от | — |
-| Ломает совместимость | нет (пп. 1–2); переход на наложении — да, потребует чтения старых файлов «как есть» |
+| Size | M — 2 stages: showing the overlap zone + a switch and a badge (S); a transition on top of an overlap (M, as a separate decision) |
+| Where the main work is | kt-app (the strip, the context menu, the badge); kt-model — only if "butt-joined only" is removed |
+| Project format | does not touch it: `KtLayers` and `TransitionEvent` are already in v3; a transition on an overlap will require an owner of the window and, probably, a field |
+| Tests that will have to be written | harness: the overlap zone is marked and distinguishable from the neighboring clip; the switch changes the project and the badge names the place of return (rule 19); on removing "butt-joined only" — a new round-trip t165 and CPU↔GPU conformance on a pair whose window is set by bodies |
+| Depends on | — |
+| Breaks compatibility | no (items 1–2); a transition on an overlap — yes, it will require reading old files "as they are" |
 
-## Вердикт
+## Verdict
 
-Берём в части показа и выключателя, не берём в части «переход поверх
-наложения» без отдельного решения: там цена не в коде, а в том, что окно
-перехода получает второго хозяина, и именно на этом месте Kdenlive
-получил три года дефектов.
+We take it in the part of display and the switch, and do not take it in the part "a transition on top of an overlap" without a separate decision: there the price is not in the code but in the fact that the transition window acquires a second owner, and exactly at this point Kdenlive got three years of defects.
 
-**Ред. Р.51 (2026-09-16): отдельное решение ПРИНЯТО владельцем** — переход
-обязан работать и на наложении («симбиоз двух событий», прямой ответ на
-AskUserQuestion). Вопрос «кто хозяин окна» решён так: окно наложенного
-перехода — это САМА зона перекрытия `[b.start, a.end)`, режим не хранится
-и выводится из геометрии пары, `in/out_offset` в этом режиме не
-используются; переход законен только на чистой паре «лесенкой» (третий
-клип в окне — ошибка валидации, 1/N-зоны остаются без переходов). Урок
-Kdenlive учтён выбором «окно не имеет собственных ручек»: оно следует за
-тримом клипов, и подсистемы-двойника с её undo-падениями не появляется.
-Реализация и тесты — раунд Р.51 в `docs/porting-notes.md`.
+**Ed. R.51 (2026-09-16): a separate decision was ADOPTED by the owner** — a transition must work on an overlap too ("symbiosis of two events", a direct answer to AskUserQuestion). The question "who owns the window" is resolved so: the window of an overlapped transition is the overlap zone ITSELF `[b.start, a.end)`, the mode is not stored and is derived from the geometry of the pair, `in/out_offset` are not used in this mode; a transition is legal only on a clean pair in a "staircase" (a third clip in the window is a validation error, 1/N zones remain without transitions). The Kdenlive lesson is taken into account by the choice "the window has no handles of its own": it follows the trim of the clips, and no twin subsystem with its undo crashes appears. Implementation and tests — the round R.51 in `docs/porting-notes.md`.
 
-УЖЕ-ЕСТЬ: src/libs/kt-model/src/project.rs (`overlap_layers`,
-`TransitionEvent`) — разведка уточнила формулировку так: **мы не
-«поддерживаем переходы на одной дорожке», мы разрешили НАЛОЖЕНИЯ, а
-переходы у нас — отдельный объект на СТЫКЕ, и эти две вещи до сих пор не
-встретились.** Обещания разные и цены у них разные. «Поддерживаем
-переходы на одной дорожке» — это обещание Kdenlive, и оно стоило ему
-17 задач в bugzilla и 6 в invent за четыре года. Наше обещание —
-«наложение законно и ничего не режет», и его цена другая: наложение
-невидимо на полосе, звучит там, где картинка щёлкает, и не умеет ни
-одного из 16 видов. Второе уточнение того же порядка: двух-дорожечный
-обходной приём мы не отменили, а вынесли в файл (`KtLayers`), потому что
-в OTIO два одновременных клипа в одном Track невыразимы физически, — так
-что «одна дорожка» верно про экран и неверно про диск.
+ALREADY-HAVE: src/libs/kt-model/src/project.rs (`overlap_layers`, `TransitionEvent`) — the reconnaissance refined the wording: **we do not "support transitions on one track", we allowed OVERLAPS, and our transitions are a separate object at the JOINT, and these two things have not met so far.** The promises are different and their prices are different. "We support transitions on one track" is the promise of Kdenlive, and it cost it 17 tasks in bugzilla and 6 in invent over four years. Our promise is "an overlap is legal and cuts nothing", and its price is different: the overlap is invisible on the strip, sounds where the picture clicks, and cannot do any of the 16 kinds. A second refinement of the same order: we did not cancel the two-track workaround, we moved it into the file (`KtLayers`), because in OTIO two simultaneous clips in one Track are physically inexpressible — so "one track" is true about the screen and false about the disk.
 
-## Источники
+## Sources
 
-Трекеры (дампы `~/.cache/kinotrain/trackers/`, вне репозитория; числа
-воспроизводятся `python3 src/scripts/tracker-rank.py --query …`):
+Trackers (dumps in `~/.cache/kinotrain/trackers/`, outside the repository; the numbers are reproduced by `python3 src/scripts/tracker-rank.py --query …`):
 
-- kde-invent #796 «Same track transitions», 18.09.2020, закрыт 09.08.2024,
-  33 комментария: https://invent.kde.org/multimedia/kdenlive/-/work_items/796
-- kde-invent #874, #875, #1070, #1499, #1504 — эффект дорожки после микса,
-  отсутствующий QtQuick.Shapes, спор об имени, assert на undo ресайза,
-  «mix clip stopped working»
+- kde-invent #796 "Same track transitions", 18.09.2020, closed 09.08.2024,
+  33 comments: https://invent.kde.org/multimedia/kdenlive/-/work_items/796
+- kde-invent #874, #875, #1070, #1499, #1504 — the track effect after a mix, the missing QtQuick.Shapes, the dispute over the name, an assert on undo of a resize,
+  "mix clip stopped working"
 - kde-bugzilla #365887, #436846, #440019, #440020, #441999, #442066,
   #442088, #442317, #445626, #453536, #453537, #456830, #457783, #469416,
-  #483679, #484181, #493108 — те самые 17
-- kde-bugzilla #486562 «odd behavior when applying a transition on two
-  clips on the same track», 04.05.2024, CONFIRMED — в 17 не входит (в
-  заголовке нет слова mix), но описывает тот же стык:
+  #483679, #484181, #493108 — the very 17
+- kde-bugzilla #486562 "odd behavior when applying a transition on two
+  clips on the same track", 04.05.2024, CONFIRMED — not included in the 17 (the title has no word mix), but describes the same joint:
   https://bugs.kde.org/show_bug.cgi?id=486562
-- pitivi #398, #573, #1318, #1408, #1915, #2044, #2162, #2583 — наложение
-  как запрет, как жест и как источник просвета нижних слоёв
-- Дата выгрузки в реестре `docs/features/_trackers.md` (колонки «Дамп от»
-  и sha256 на момент письма ещё не заполнены — выгрузка волны шла фоном).
+- pitivi #398, #573, #1318, #1408, #1915, #2044, #2162, #2583 — the overlap as a ban, as a gesture and as the source of the bleed-through of lower layers
+- The export date in the registry `docs/features/_trackers.md` (the columns "Dump from" and sha256 at the time of writing are not yet filled — the export of the wave was running in the background).
 
-Документация и сообщества (дата обращения 08.09.2026):
+Documentation and communities (accessed 08.09.2026):
 
-- VEGAS Pro 2026, «Automatic crossfades»:
+- VEGAS Pro 2026, "Automatic crossfades":
   https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/7-edit/autocrossfades.htm
-- Adobe, «Clip handles settings»:
+- Adobe, "Clip handles settings":
   https://helpx.adobe.com/lv/premiere/desktop/add-video-effects/apply-video-transitions/clip-handles-settings.html
-- Adobe Ideas, «Add a crossfade by overlapping audio or video clips in the
-  timeline», 24.01.2023:
+- Adobe Ideas, "Add a crossfade by overlapping audio or video clips in the
+  timeline", 24.01.2023:
   https://community.adobe.com/t5/premiere-pro-ideas/add-a-crossfade-by-overlapping-audio-or-video-clips-in-the-timeline/idi-p/13515690
-- Adobe Community, «What does "Insufficient media. This transition will
-  contain repeated frames" mean?»:
+- Adobe Community, "What does "Insufficient media. This transition will
+  contain repeated frames" mean?":
   https://community.adobe.com/questions-729/what-does-insufficient-media-this-transition-will-contain-repeated-frames-mean-1376361
-- Blackmagic Forum, «Add transitions insufficient handles»:
+- Blackmagic Forum, "Add transitions insufficient handles":
   https://forum.blackmagicdesign.com/viewtopic.php?f=21&t=83114
-- Apple Community, «Not Enough Extra Media Beyond Clip Edges»:
+- Apple Community, "Not Enough Extra Media Beyond Clip Edges":
   https://discussions.apple.com/thread/8469386
 
-Наше:
+Ours:
 
 - `src/libs/kt-model/src/project.rs` (`overlap_layers`, `TransitionEvent`,
   `check_transition_full`, `TransitionKind`), `ops.rs` (`upgrade_legacy`),
   `src/libs/kt-engine/src/audio.rs` (`overlap_weight`, `overlap_at`),
-  `video.rs` (порядок Vegas, `TransAnim`), `video_plan.rs`
+  `video.rs` (the Vegas order, `TransAnim`), `video_plan.rs`
   (`PlanLayer::Dissolve`), `transitions.rs` (`TransMix::of`),
-  `src/libs/kt-otio/src/convert.rs` и `meta.rs` (`KtLayers`),
+  `src/libs/kt-otio/src/convert.rs` and `meta.rs` (`KtLayers`),
   `src/apps/kt-app/src/timeline.rs` (`plan_move`, `plan_move_block`,
   `draw_order`, `corner_fade_len`), `src/scripts/live/overlap.py`.
-- `docs/porting-notes.md` пп.161–164, 177; `docs/user-feedback.md` Р.24
-  п.6, Р.26 целиком, Р.28 пп.5/6/9 и решения 1–3.
+- `docs/porting-notes.md` items 161–164, 177; `docs/user-feedback.md` R.24
+  item 6, R.26 in full, R.28 items 5/6/9 and decisions 1–3.
 
-Оговорка о методе: живьём ни один чужой редактор не запускался.
-`helpx.adobe.com`, `discussions.apple.com` и `forum.blackmagicdesign.com`
-в этот заход открывались через поисковые сниппеты, дословно прочитана
-только страница Adobe Ideas; строки Resolve и FCP опираются на справку и
-сообщества, а не на проверку. Все цитаты из трекеров прочитаны дословно в
-локальных дампах.
+Note on method: no foreign editor was run live. `helpx.adobe.com`, `discussions.apple.com` and `forum.blackmagicdesign.com`
+were opened in this pass only through search snippets; only the Adobe Ideas page was read verbatim; the Resolve and FCP lines rely on help pages and communities, not on verification. All quotes from the trackers were read verbatim from the local dumps.

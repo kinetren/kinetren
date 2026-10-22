@@ -1,12 +1,12 @@
 ---
 id: F-UI-005
-title: Цвет клипа как данные и как оформление
-status: кандидат
+title: Clip colour as data and as decoration
+status: candidate
 priority: B
 cost: M
 category: ui/viewer
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-app, kt-model, kt-otio]
 invariants: [12]
 ui_rules: [13]
@@ -18,144 +18,105 @@ trackers: [kde-invent, kde-bugzilla, flowblade, pitivi, olive, openshot, lossles
 checked: 2026-09-08
 ---
 
-# F-UI-005 — Цвет клипа как данные и как оформление
+# F-UI-005 — Clip colour as data and as decoration
 
-## Суть
+## Essence
 
-В одном прямоугольнике на таймлайне живут два разных предмета. Первый — **метка,
-которую ставит монтажёр**: «этот дубль забракован», «это интервью», «сюда
-вернуться». Это данные проекта, они переживают сохранение и едут в другую
-программу. Второй — **оформление**: чем редактор отличает видео от звука,
-выделенное от невыделенного, отсутствующий исходник от целого. Это тема, и она
-принадлежит программе, а не проекту.
+Two different things live in one rectangle on the timeline. The first is a **mark that the editor sets**: "this take is rejected", "this is an interview", "come back here". This is project data, it survives saving and travels to another program. The second is **appearance**: what lets the editor tell video from audio, selected from unselected, a missing source from a whole one. This is a theme, and it belongs to the program, not to the project.
 
-Их путают, потому что оба выражаются заливкой одного и того же пикселя. А на этой
-же площади рисуются имя клипа, филмстрип и волноформа — то, ради чего на клип и
-смотрят.
+They are confused because both are expressed by filling the same pixel. And on this very same area the clip's name, filmstrip and waveform are drawn — the very things for which people look at the clip.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Track Display Color | своей метки у события нет: «The color of the event corresponds to the color of the track header»; цвет выбирается у ДОРОЖКИ, набор цветов правится в Preferences → Display |
-| Adobe Premiere | 26.x | Label | 16 цветов, у каждого редактируемое ИМЯ (Preferences → Labels: Label Colors + Label Defaults по типу материала); метка есть и у элемента бина, и у события на таймлайне, а переключатель «Show Source Clip Name and Label» решает, ЧЬЮ показывать |
-| DaVinci Resolve | 21 | Clip Color · Flag · Marker | три отдельных механизма, разведённых по ОБЛАСТИ ДЕЙСТВИЯ: флаг живёт у исходника и красит все его экземпляры в таймлайне и фильтруется; маркер — кадр внутри события; Clip Color объявлен визуальным разделением соседей и в фильтрах не участвует |
-| Final Cut Pro | 12.3 | Roles | отдельной метки нет вовсе: клип красится цветом РОЛИ («Roles are metadata text and color labels»), пять ролей по умолчанию (Video, Titles, Dialogue, Music, Effects), цвет роли меняется в редакторе ролей — анонимный цвет невозможен в принципе |
-| After Effects | 26.x | Label | колонка Label со свотчем + полоса слоя тем же цветом; 16 меток с редактируемыми именами; `Edit > Label > Select Label Group` делает цвет ЗАПРОСОМ на выделение; имена меток видны, только если расширить колонку |
+| VEGAS Pro | 2026.0 | Track Display Color | The event has no mark of its own: "The color of the event corresponds to the color of the track header"; the color is chosen for the TRACK, and the color set is edited in Preferences → Display |
+| Adobe Premiere | 26.x | Label | 16 colors, each with an editable NAME (Preferences → Labels: Label Colors + Label Defaults by media type); a label exists both on a bin item and on an event on the timeline, and the "Show Source Clip Name and Label" switch decides WHOSE label to show |
+| DaVinci Resolve | 21 | Clip Color · Flag · Marker | Three separate mechanisms, separated by SCOPE OF ACTION: a flag lives on the source and colors all its instances in the timeline and is filterable; a marker is a frame inside an event; Clip Color is declared a visual separation of neighbours and does not take part in filters |
+| Final Cut Pro | 12.3 | Roles | There is no separate label at all: a clip is colored with the color of its ROLE ("Roles are metadata text and color labels"), five roles by default (Video, Titles, Dialogue, Music, Effects), and the color of a role is changed in the role editor — an anonymous color is impossible in principle |
+| After Effects | 26.x | Label | A Label column with a swatch + the layer bar in the same color; 16 labels with editable names; `Edit > Label > Select Label Group` turns the color into a QUERY for selection; label names are visible only if the column is widened |
 
-**Вне ядра.** Без эталонной библиотеки OTIO нельзя сказать, где цвет-данные
-ЛЕЖИТ: наш формат проекта — это её схема, и в 2025 г. она этот вопрос закрыла.
+**Outside the core.** Without the reference library OTIO one cannot say where the color data
+LIVES: our project format is its schema, and in 2025 it closed this question.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| OpenTimelineIO | 0.18 | `Item.color` | поле на `Item` (родитель Clip и Track), необязательное; значение — `Color`: четыре доубля RGBA **плюс необязательное `name`**, `from_hex`/`to_hex`, набор готовых констант. Сериализуется как примитив, не как объект, — чтобы адаптер сам решал, класть ли туда именованную метку чужого NLE или сырой RGB |
-| Kdenlive | 26.08 | цвета типов клипов | зашиты в код и выведены из палитры приложения (`timelinecontroller.cpp`); настраиваемость — открытая просьба kde-invent #2146 (2026-03-01) |
+| OpenTimelineIO | 0.18 | `Item.color` | A field on `Item` (the parent of Clip and Track), optional; the value is `Color`: four doubles RGBA **plus an optional `name`**, `from_hex`/`to_hex`, a set of ready-made constants. It is serialized as a primitive, not as an object — so that the adapter itself decides whether to put there a named label of a foreign NLE or raw RGB |
+| Kdenlive | 26.08 | clip type colors | hard-coded into the code and derived from the application's palette (`timelinecontroller.cpp`); configurability is an open request kde-invent #2146 (2026-03-01) |
 
-## Фишка фишки
+## The trick behind it
 
-**1. У зрелого механизма цвет не бывает анонимным.** Метка живёт в паре с именем
-не для красоты: цвет помнит смысл ровно до тех пор, пока его помнит автор. В
-Premiere имя метки редактируется прямо в настройках; в Final Cut цвета отдельно
-от роли не существует — он её проекция; и когда OTIO спустя два года спора
-закрыл issue #1614, в схему попал не RGB, а `Color` с полем `name` ВНУТРИ
-значения. Три независимых решения об одном: цвет — это подпись, у которой есть
-краска, а не краска, у которой иногда бывает подпись.
+**1. In a mature mechanism a color is never anonymous.** A label lives in a pair with a name not for beauty: a color remembers its meaning only as long as the author remembers it. In Premiere the name of a label is edited directly in the settings; in Final Cut a color separate from the role does not exist — it is the role's projection; and when OTIO, two years into a dispute, closed issue #1614, the schema got not an RGB but a `Color` with a `name` field INSIDE the value. Three independent decisions about one thing: a color is a caption that has paint, not paint that sometimes has a caption.
 
-**2. Resolve развёл цвета не по виду, а по ОБЛАСТИ ДЕЙСТВИЯ — и одному из трёх
-честно отказал в смысле.** Флаг принадлежит исходнику и потому красит все его
-экземпляры разом (отвечает на вопрос «где ещё этот дубль»), маркер принадлежит
-кадру, а Clip Color принадлежит событию — и про него прямо сказано, что он
-служит визуальному разделению соседей и в фильтры не входит. То есть один из
-трёх цветных механизмов объявлен УКРАШЕНИЕМ, и это записано в справке, а не
-угадывается. Ровно та граница, которую запросы вида «дайте палитру» стирают.
+**2. Resolve separated colors not by appearance but by SCOPE OF ACTION — and honestly denied meaning to one of the three.** The flag belongs to the source and therefore colors all its instances at once (it answers the question "where else is this take"), the marker belongs to the frame, and Clip Color belongs to the event — and it is stated outright that it serves the visual separation of neighbours and does not go into filters. That is, one of the three colored mechanisms is declared DECORATION, and this is written in the help, not guessed. Exactly the boundary that requests of the form "give us a palette" erase.
 
-**3. У цвета есть владелец, и владельцев двое.** Один и тот же материал — это
-элемент бина и событие на таймлайне; метка может быть у обоих и может не
-совпадать. Premiere вынес это в переключатель вида («Show Source Clip Name and
-Label»), то есть признал, что вопрос «чей цвет ты сейчас видишь» — постоянный, а
-не разовый. Заливка, выведенная из ИСТОЧНИКА, и метка, поставленная НА КЛИП, —
-разные каналы, и их нельзя рисовать одной краской.
+**3. A color has an owner, and there are two owners.** One and the same material is a bin item and an event on the timeline; the label may be on both and may not match. Premiere moved this into a view switch ("Show Source Clip Name and Label"), that is, it acknowledged that the question "whose color are you seeing right now" is a permanent one, not a one-time one. A fill derived from the SOURCE and a label placed ON THE CLIP are different channels, and they cannot be drawn in one paint.
 
-## Плюсы
+## Pros
 
-- Метка с именем превращается в оператор выборки: `Select Label Group` в AE
-  выделяет всю группу одним действием — по цвету можно не только смотреть, но и
-  искать. Цвет без имени такого не умеет: его не сформулировать в фильтре.
-- Область действия у флага — исходник, поэтому «где ещё этот дубль» отвечается
-  без поиска по бину: пометил один экземпляр — окрасились все.
-- У ролей (FCP) смысл нельзя рассинхронизировать с цветом: цвет вычисляется из
-  метаданных, а не красится руками, поэтому не устаревает при правке проекта.
-- С OTIO 0.18 у цвета-данных есть СТАНДАРТНОЕ место (`Item.color`) — он
-  переносится между программами, а не оседает в приватных метаданных.
+- A label with a name turns into a selection operator: `Select Label Group` in AE selects the whole group in one
+  action — by colour you can not only look but also search. A colour without a name cannot do this: it cannot be
+  expressed in a filter.
+- The flag's scope is the source, so "where else is this duplicate" is answered without searching the bin: mark
+  one instance and all of them take the colour.
+- With roles (FCP) the meaning cannot fall out of sync with the colour: the colour is computed from metadata, not
+  painted by hand, so it does not go stale when the project is edited.
+- With OTIO 0.18 colour data has a STANDARD place (`Item.color`) — it is carried between programs, rather than
+  settling in private metadata.
 
-## Минусы
+## Cons
 
-- Цвет отнимает площадь у содержимого. В Final Cut, чтобы увидеть цвета ролей у
-  видео, клипы приходится РАЗВЕРНУТЬ (иначе цвет не показывают); в AE имя метки
-  по умолчанию не видно — нужно расширить колонку. Цена «яркой палитры» — те же
-  пиксели, на которых живут волноформа и филмстрип.
-- Алгоритмическая палитра + фиксированный передний план = неограниченный разброс
-  контраста. Как только цвета генерируются, а индикаторы поверх них нарисованы
-  одной краской, часть комбинаций становится нечитаемой, и никакая правка палитры
-  этого не лечит — лечит только зависимость переднего плана от фона.
-- Цвет как ЕДИНСТВЕННЫЙ канал различения отсекает часть пользователей и часть
-  ситуаций (тёмная/светлая тема, дальтонизм, дешёвая матрица). Поэтому у
-  состояний, которые нельзя пропустить, цвет обязан дублироваться формой или
-  подписью.
-- Метка, у которой нет имени, через неделю не значит ничего: смысл хранится в
-  голове автора, а не в проекте.
+- Colour takes area away from the content. In Final Cut, to see role colours on video, clips have to be EXPANDED
+  (otherwise the colour is not shown); in AE the label name is not visible by default — the column has to be
+  widened. The price of a "bright palette" is the same pixels on which the waveform and the filmstrip live.
+- An algorithmic palette plus a fixed foreground = unbounded spread of contrast. As soon as colours are generated
+  and the indicators over them are drawn in one paint, some combinations become unreadable, and no palette edit
+  cures this — only making the foreground depend on the background does.
+- Colour as the ONLY channel of distinction excludes some users and some situations (dark/light theme, colour
+  blindness, a cheap matrix). Therefore for states that must not be missed, colour has to be duplicated by a shape
+  or a caption.
+- A label that has no name means nothing a week later: the meaning is stored in the author's head, not in the project.
 
-## Что говорят пользователи
+## What users say
 
-СИГНАЛ: цвет клипа как настройка, а не как дефект — 2 задачи в flowblade, `(timeline|clips?|events?|tracks?|nodes?)[^.]{0,22}colou?rs\b|colou?rs\b[^.]{0,18}(for|of|on|to)[^.]{0,14}(clips?|timeline|tracks?|nodes?)|colou?r.?(cod(ed|ing)|tag|palette|scheme)[^.]{0,25}(clip|timeline|track)|(clip|timeline|track)[^.]{0,25}colou?r.?(cod(ed|ing)|tag|palette)`; доля 0.2% против 0.0% (ни одной из 6346) в kde-bugzilla
+SIGNAL: clip colour as a setting, not as a defect — 2 tasks in flowblade, `(timeline|clips?|events?|tracks?|nodes?)[^.]{0,22}colou?rs\b|colou?rs\b[^.]{0,18}(for|of|on|to)[^.]{0,14}(clips?|timeline|tracks?|nodes?)|colou?r.?(cod(ed|ing)|tag|palette|scheme)[^.]{0,25}(clip|timeline|track)|(clip|timeline|track)[^.]{0,25}colou?r.?(cod(ed|ing)|tag|palette)`; share 0.2% against 0.0% (none of 6346) in kde-bugzilla
 
-Фильтр даёт девять задач на пять трекеров (flowblade 2, kde-invent 2, pitivi 3,
-olive 1, openshot 1) — и ни одной в kde-bugzilla, самом большом трекере ЖАЛОБ.
-Все девять — запросы. Это и есть находка: «цвет клипа неправильный» невозможно
-подать как дефект, потому что нарушать нечего; предмет существует только там, где
-принимают хотелки. Вдвое выше доля у flowblade — единственного из пяти, где
-пользовательский цвет клипа УЖЕ есть, и обе тамошние задачи не про «дайте
-палитру», а про то, что оттенки в ней несогласованы между собой.
+The filter gives nine tasks across five trackers (flowblade 2, kde-invent 2, pitivi 3, olive 1, openshot 1) — and not one in kde-bugzilla, the largest tracker of COMPLAINTS. All nine are requests. This is the finding: "the clip colour is wrong" cannot be filed as a defect, because there is nothing to violate; the subject exists only where wishes are accepted. The share is twice as high at flowblade — the only one of the five where a user clip colour ALREADY exists, and both tasks there are not about "give us a palette" but about the shades in it not being consistent with one another.
 
-Просьба, с которой всё начинается, всегда тройная — палитра, метка и
-читаемость в одном тексте:
+The request with which everything begins is always triple — palette, label and readability in one text:
 
 > Bonus: * Make the audio waveforms clearer. * Add ability to color tag clips.
-> — kde-invent #445 «Improve timeline clips color palette», 20.11.2019 (70
-> комментариев, закрыта 21.04.2024), https://invent.kde.org/multimedia/kdenlive/-/work_items/445
+> — kde-invent #445 "Improve timeline clips color palette", 20.11.2019 (70
+> comments, closed 21.04.2024), https://invent.kde.org/multimedia/kdenlive/-/work_items/445
 
-Цена генерируемой палитры, дословно:
+The price of a generated palette, verbatim:
 
 > Observe that the the white timeline & playback indicators against these
 > high-lightness colours are not easily visible due to the contrast ratio.
-> — losslesscut #1199 «Segment colour scheme generate results in poor contrast
-> ratio», 18.06.2022, открыта, https://github.com/mifi/lossless-cut/issues/1199
+> — losslesscut #1199 "Segment colour scheme generate results in poor contrast
+> ratio", 18.06.2022, open, https://github.com/mifi/lossless-cut/issues/1199
 
-Что подпись делает с содержимым под ней (закрыта как INVALID — то есть даже не
-признана предметом):
+What a caption does to the content beneath it (closed as INVALID — that is, not even recognised as a subject):
 
 > clip labels in tracks should be in clip centres because putting them right next
 > to clip start obscures audio signal
 > — kde-bugzilla #480108, 20.01.2024, RESOLVED INVALID,
 > https://bugs.kde.org/show_bug.cgi?id=480108
 
-Та же боль через два года и уже с рабочим сценарием — найти тишину в начале
-клипа, чтобы отрезать её:
+The same pain two years later and already with a working scenario — finding the silence at the start of a clip in order to cut it:
 
 > i can't see the audio waveform to correctly CUT a video piece (usually there is
 > an empty without voice space at every clip start) i need to cut this little
 > piece of "no voice".
-> — kde-invent #2179, 01.05.2026, открыта,
+> — kde-invent #2179, 01.05.2026, open,
 > https://invent.kde.org/multimedia/kdenlive/-/work_items/2179
 
-И цвет без имени глазами того, кто его увидел впервые (закрыта автором через
-девять минут):
+And a colour without a name, through the eyes of someone who sees it for the first time (closed by its author after nine minutes):
 
 > What do colors on Timeline mean?
 > — olive #1208, 21.09.2020, https://github.com/olive-editor/olive/issues/1208
 
-Со стороны редакторов ядра — объявление Adobe о том, что вопрос «чей цвет
-показывать» стал переключателем вида:
+From the side of the core editors — Adobe's announcement that the question "whose colour to show" became a view switch:
 
 > Now, this option has been removed from the Project Settings and can be found as
 > a view option in the wrench menu in the Timeline panel called "Show Source Clip
@@ -163,124 +124,109 @@ olive 1, openshot 1) — и ни одной в kde-bugzilla, самом боль
 > — Adobe Premiere Pro Beta Discussions, 31.03.2021,
 > https://community.adobe.com/t5/premiere-pro-beta-discussions/discuss-new-way-to-control-how-label-colors-and-clip-names-are-displayed-in-the-timeline/td-p/11940375
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-- **Заливка клипа — хэш ПУТИ**: `clip_color()` в
-  `src/apps/kt-app/src/timeline.rs` (порт `colorFromPath` из v1) даёт
-  `80 + h%120` по каждому каналу. Это не тема и не метка, а третье: канал
-  ИДЕНТИЧНОСТИ ИСТОЧНИКА. Он уже работает в двух местах — заливка события и
-  полупрозрачные ручки перехода (замыкание `handle_fill` там же), где он
-  показывает, чей материал продолжается за стыком.
-- **Аудио гасится ×0.55 ради волноформы** (`fill.gamma_multiply(0.55)`) — то есть
-  конфликт «цвет против содержимого» у нас уже осознан и однажды разрешён в
-  пользу содержимого.
-- **Стерео-волноформа двумя цветами** L/R (`col_l`/`col_r` в блоке
-  «стерео-волноформа») — ровно то, что просят в kde-invent #2095 («the same color for the waveform make the L R just
-  confusing»); здесь мы впереди источника.
-- **Имя клипа** — белым по чёрной плашке alpha 140 в левом верхнем углу
-  (блок «имя клипа на плашке»), гасится у аудио-половины A/V-пары (`names()`
-  в `src/apps/kt-app/src/app.rs`). Плашка — наш ответ на openshot #1425 («glow
-  behind track name makes it unreadable»), гашение половины — на «кашу из букв».
-- **Отсутствующий исходник** красится двумя каналами сразу — заливка и контур
-  (ветка `if is_offline`), а не одним цветом.
-- **Единственная настоящая пользовательская метка у нас — у ОБЛАСТИ**:
-  `MarkedArea.color` (`src/libs/kt-model/src/project.rs`) и палитра из пяти
-  цветов `AREA_PALETTE` в `src/apps/kt-app/src/theme.rs`. Заведена Р.38 п.1
-  ровно потому, что поле в формате было, а UI к нему не было.
-- **`Marker.color`** (`src/libs/kt-model/src/project.rs`) — OTIO-энум («GREEN»
-  по умолчанию, `Marker::default_color()` в `src/libs/kt-otio/src/schema.rs`):
-  round-trip чужих файлов есть, а рисуются все метки янтарным (`amber` в блоке
-  «маркеры» того же файла). Тот же дефект, который Р.38 п.1 закрыла у областей,
-  у меток открыт.
-- **Тема одна, тёмная**: `Visuals::dark()` в `theme::apply()`, светлой нет
-  вовсе — половина чужой боли («сменил тему — потерял волноформу», kde-invent #40) у нас
-  отсутствует по решению, а не случайно.
-- **Чужой `Item.color` не теряется**: у `Clip` в
-  `src/libs/kt-otio/src/schema.rs` есть `#[serde(flatten)] extra`, поэтому файл
-  из OTIO 0.18 проходит насквозь (t145) — мы его просто не показываем.
+- **The clip fill is a hash of the PATH**: `clip_color()` in `src/apps/kt-app/src/timeline.rs` (a port of
+  `colorFromPath` from v1) gives `80 + h%120` per channel. It is not a theme and not a label, but a third thing:
+  the channel of the SOURCE'S IDENTITY. It already works in two places — the event fill and the translucent
+  transition handles (the closure `handle_fill` there), where it shows whose material continues across the join.
+- **Audio is dimmed ×0.55 for the sake of the waveform** (`fill.gamma_multiply(0.55)`) — that is, the conflict
+  "colour against content" is already recognised with us and was once resolved in favour of the content.
+- **The stereo waveform in two colours** L/R (`col_l`/`col_r` in the "stereo waveform" block) — exactly what is asked
+  for in kde-invent #2095 ("the same color for the waveform make the L R just
+  confusing"); here we are ahead of the source.
+- **The clip name** — white on a black plate at alpha 140 in the top-left corner (the "clip name on a plate" block),
+  dimmed for the audio half of an A/V pair (`names()` in `src/apps/kt-app/src/app.rs`). The plate is our answer to
+  openshot #1425 ("glow behind track name makes it unreadable"), dimming the half is the answer to "a mess of letters".
+- **A missing source** is painted with two channels at once — the fill and the outline (the `if is_offline` branch),
+  not with one colour.
+- **The only real user label we have is on the AREA**: `MarkedArea.color` (`src/libs/kt-model/src/project.rs`) and
+  the palette of five colours `AREA_PALETTE` in `src/apps/kt-app/src/theme.rs`. It was introduced by R.38 item 1
+  precisely because the field existed in the format, but the UI for it did not.
+- **`Marker.color`** (`src/libs/kt-model/src/project.rs`) — an OTIO enum ("GREEN" by default, `Marker::default_color()`
+  in `src/libs/kt-otio/src/schema.rs`): round-trip of foreign files exists, but all markers are drawn in amber (`amber`
+  in the "markers" block of the same file). The same defect that R.38 item 1 closed for areas remains open for markers.
+- **One theme, dark**: `Visuals::dark()` in `theme::apply()`, there is no light one at all — half of someone else's pain
+  ("changed the theme — lost the waveform", kde-invent #40) is absent with us by decision, not by chance.
+- **A foreign `Item.color` is not lost**: `Clip` in `src/libs/kt-otio/src/schema.rs` has `#[serde(flatten)] extra`, so a
+  file from OTIO 0.18 passes through (t145) — we simply do not show it.
 
-### Чего не хватает
+### What is missing
 
-- У `ClipEvent` (`src/libs/kt-model/src/project.rs`) нет ни поля цвета, ни
-  своего имени: метку поставить физически некуда, а имя всегда равно имени файла.
-- Бин и таймлайн не связаны цветом: `bin_panel.rs` не зовёт `clip_color` вообще,
-  так что «чей цвет показывать» у нас даже не возникает — показывать нечего.
-- Ни одной проверки контраста. `t100` считает глифы, `t128` — ширину надписи;
-  цвет не смотрит никто.
+- `ClipEvent` (`src/libs/kt-model/src/project.rs`) has neither a colour field nor its own name:
+  there is physically nowhere to put a label, and the name is always the file name.
+- The bin and the timeline are not linked by colour: `bin_panel.rs` does not call `clip_color` at
+  all, so the question "whose colour to show" does not even arise with us — there is nothing to show.
+- Not a single contrast check. `t100` counts glyphs, `t128` measures the width of a caption; nobody
+  looks at colour.
 
-### Что мешает
+### What gets in the way
 
-Не объём кода, а **занятость каналов**. На клипе уже говорят цветом: заливка —
-идентичность исходника, белый контур — выделение, белый полупрозрачный — ховер,
-красный — offline, жёлтая линия — уровень, янтарный — метка, бирюзовый — область,
-фиолетовый — морфер. Свободного цвета под пользовательскую метку нет, а новую
-полосу под неё заводить запрещает правило 13 чек-листа UI и прямое требование
-Р.13 п.2 (`docs/user-feedback.md`):
+Not the volume of code, but the **occupancy of channels**. On the clip colour already speaks: the fill
+is the identity of the source, the white outline is selection, the translucent white is hover, red is
+offline, the yellow line is level, amber is a marker, turquoise is an area, purple is the morpher. There
+is no free colour for a user label, and rule 13 of the UI checklist and the direct requirement of
+R.13 item 2 (`docs/user-feedback.md`) forbid opening a new strip for it:
 
-> «я не говорил что на клипы заезжать нельзя — я сказал что кашу не надо
-> устраивать из букв… ты мог бы и догадаться как минимум писать имена треков
-> АККУРАТ под именами клипов самих».
+> "I did not say that one may not drive onto the clips — I said not to make a mess out of letters…
+> you could at least have guessed to write track names EXACTLY under the names of the clips themselves."
 
-То есть метка обязана встать на УЖЕ занятое место (кромка клипа, разрыв контура,
-плашка имени), а не отобрать пиксели у волноформы и филмстрипа.
+So the label must sit on an ALREADY occupied place (the clip's edge, a break in the outline, the name
+plate), and must not take pixels away from the waveform and the filmstrip.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **12** (repaint только при движении, ни аллокаций, ни клонов в draw-путях):
-  цвет метки обязан лечь в тот же кэш по `model_rev`, что и `names()`, а не
-  считаться на кадр; палитра не должна добавлять шейпов — заливка меткой это тот
-  же один прямоугольник.
-- **Правило 13 чек-листа UI** — новая полоса под метку невозможна.
-- Формат: `Item.color` — СТАНДАРТНОЕ поле OTIO, и старая сборка его сохраняет
-  через `extra`. По критерию «версия по содержимому» (`kt-otio/CLAUDE.md`, п.189:
-  один Pan3d версию не бампает, потому что у старого ридера foreign-passthrough)
-  наш `kt.v` бампать не нужно.
+- **12** (repaint only on movement, no allocations, no clones in draw paths): the label colour must land in
+  the same cache keyed by `model_rev` as `names()`, and not be computed per frame; the palette must not add
+  shapes — the label fill is the same single rectangle.
+- **Rule 13 of the UI checklist** — a new strip under the label is impossible.
+- Format: `Item.color` is a STANDARD OTIO field, and the old build preserves it through `extra`. Under the
+  criterion "version by content" (`kt-otio/CLAUDE.md`, item 189: one Pan3d does not bump the version, because
+  an old reader has foreign passthrough) our `kt.v` does not need bumping.
 
-АДРЕС: src/apps/kt-app/src/timeline.rs, `clip_color()` — возможен, и его не ловит ничто: заливка события берётся из хэша пути (80..199 по каналу), а всё, что рисуется поверх, покрашено фиксированно; контраст белого к заливке гуляет от 8.06:1 до 1.69:1 и ниже 3:1 у 40% куба значений `clip_color`, так что 2-пиксельный белый контур выделения на светлом хэше исчезает — это класс losslesscut #1199, и ни один наш тест цвет не измеряет.
+ADDRESS: src/apps/kt-app/src/timeline.rs, `clip_color()` — possible, and nothing catches it: the event fill is taken from the hash of the path (80..199 per channel), and everything drawn on top is painted with fixed colours; the contrast of white against the fill wanders from 8.06:1 down to 1.69:1, and below 3:1 for 40% of the cube of `clip_color` values, so a 2-pixel white selection outline on a light hash disappears — this is the class of losslesscut #1199, and not one of our tests measures colour.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2–3 стадии раунда |
-| Где основная работа | kt-model (поле метки: цвет + имя у `ClipEvent`), kt-app (пикер, рисование на занятом месте, страж контраста), kt-otio (`Item.color` наружу и внутрь) |
-| Формат проекта | наш `kt.v` не трогает: `Item.color` — стандартное поле OTIO 0.18, старая сборка сохраняет его через `extra` |
-| Тесты, которые придётся написать | контраст переднего плана к заливке по всему кубу `clip_color` (порог и на белый контур, и на волноформу); round-trip `Item.color` с именем и без; layout-тест «метка не отобрала ни пикселя у волноформы»; t100 на имена меток |
-| Зависит от | ничего; смежные — F-MED-001 (умные папки и разметка: метка обязана попадать в поиск) и F-UI-001 |
-| Ломает совместимость | нет |
+| Volume | M — 2–3 stages of a round |
+| Where the main work is | kt-model (the label field: colour + name on `ClipEvent`), kt-app (the picker, drawing on an occupied place, the contrast guard), kt-otio (`Item.color` outward and inward) |
+| Project format | our `kt.v` is not touched: `Item.color` is a standard OTIO 0.18 field, the old build keeps it through `extra` |
+| Tests that will have to be written | contrast of foreground against fill across the whole `clip_color` cube (a threshold for both the white outline and the waveform); round-trip of `Item.color` with a name and without; a layout test "the label took not a single pixel from the waveform"; t100 on label names |
+| Depends on | nothing; adjacent — F-MED-001 (smart folders and tagging: the label must get into search) and F-UI-001 |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём, но как ДВЕ вещи, а не одну. **Первая — метка-данные у события: цвет плюс
-имя**, потому что все три зрелых механизма (Premiere, FCP, OTIO) сошлись на том,
-что анонимный цвет — это мусор через неделю, а место в формате уже стандартное.
-**Вторая — не фича, а страж**: контраст переднего плана к заливке нужно
-измерять тестом, потому что заливку у нас выбирает хэш, а не человек, и на 40%
-значений белое выделение на ней не читается. Первая без второй сделает ровно то,
-на что жалуются в losslesscut #1199.
+Take it, but as TWO things, not one. **The first — a label-data on the event: colour plus name**, because
+all three mature mechanisms (Premiere, FCP, OTIO) converged on the point that an anonymous colour is rubbish
+after a week, and the place in the format is already standard. **The second — not a feature but a guard**:
+the contrast of the foreground against the fill must be measured by a test, because the fill with us is chosen
+by a hash, not by a person, and on 40% of the values the white selection is not readable on it. The first without
+the second will do exactly what losslesscut #1199 complains about.
 
-Что НЕ берём: настраиваемую палитру типов клипов (kde-invent #2146) — у нас
-одна тёмная тема по решению, и различие видео/аудио/морфер/камера уже несут
-дорожки; и цвет как единственный канал состояния — offline у нас уже говорит
-двумя каналами, это правило и остаётся.
+What we do NOT take: a customisable palette of clip types (kde-invent #2146) — we have one dark theme by decision,
+and the difference between video/audio/morpher/camera is already carried by the tracks; and colour as the only
+channel of state — offline already speaks with us through two channels, and this rule stays.
 
-## Источники
+## Sources
 
-- kde-invent #445 «Improve timeline clips color palette», https://invent.kde.org/multimedia/kdenlive/-/work_items/445 (обращение 2026-09-08)
+- kde-invent #445 "Improve timeline clips color palette", https://invent.kde.org/multimedia/kdenlive/-/work_items/445 (accessed 2026-09-08)
 - kde-invent #2146, #2179, #2095, #40 — https://invent.kde.org/multimedia/kdenlive/-/work_items/2146 · /2179 · /2095 · /40 (2026-09-08)
 - kde-bugzilla #480108, https://bugs.kde.org/show_bug.cgi?id=480108 (2026-09-08)
 - losslesscut #1199, https://github.com/mifi/lossless-cut/issues/1199 (2026-09-08)
-- olive #1208 и #1384, https://github.com/olive-editor/olive/issues/1208 · /1384 (2026-09-08)
-- openshot #1425 «Remove timeline clutter», https://github.com/OpenShot/openshot-qt/issues/1425 (2026-09-08)
-- flowblade #1045 и #1141, https://github.com/jliljebl/flowblade/issues/1045 · /1141 (2026-09-08)
+- olive #1208 and #1384, https://github.com/olive-editor/olive/issues/1208 · /1384 (2026-09-08)
+- openshot #1425 "Remove timeline clutter", https://github.com/OpenShot/openshot-qt/issues/1425 (2026-09-08)
+- flowblade #1045 and #1141, https://github.com/jliljebl/flowblade/issues/1045 · /1141 (2026-09-08)
 - pitivi #269, #1328, #2270, https://gitlab.gnome.org/GNOME/pitivi/-/work_items/269 · /1328 · /2270 (2026-09-08)
-- otio #1614 и PR #1887/#1915 (`Item.color`, слит 11.08.2025, веха Public Beta 18), https://github.com/AcademySoftwareFoundation/OpenTimelineIO/issues/1614 (2026-09-08)
-- Числа воспроизводятся: `python3 src/scripts/tracker-rank.py --query '<фильтр СИГНАЛа>'`; дампы в `~/.cache/kinotrain/trackers/` (в репозиторий не попадают)
-- VEGAS Pro, справка: https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/events_intro.htm (2026-09-08). Портал отдаёт страницы линейки 22; страницы 2026.0 в открытом доступе не нашлось, механизм с тех пор не менялся по документации
-- Adobe Premiere, Labels preferences: https://helpx.adobe.com/premiere/desktop/get-started/preferences-and-settings/labels-preferences.html и обсуждение беты (ссылка выше), 2026-09-08
-- Apple, Final Cut Pro — роли и их цвета: https://support.apple.com/guide/final-cut-pro/intro-to-roles-verb71cbcbe/mac и https://support.apple.com/guide/final-cut-pro/change-role-colors-or-names-verbd20e0664/mac (2026-09-08)
-- Adobe After Effects — метки слоёв: https://helpx.adobe.com/after-effects/using/layers.html (2026-09-08)
-- Resolve: механизм (флаг у исходника, маркер у кадра, Clip Color без фильтрации) взят из руководства DaVinci Resolve и вторичных разборов; зеркало руководства (`steakunderwater.com`) отдало 404, а `forum.blackmagicdesign.com` — 403, как и в первой волне. Дословной цитаты по Resolve поэтому нет
-- Старый форум VEGAS (`vegascreativesoftware.info`, тред «Color coding individual clips») теперь редиректит на `forum.borisfx.com` без сохранения тредов — смена издателя, зафиксированная в `_editors.md`; цитату оттуда взять не удалось
+- otio #1614 and PR #1887/#1915 (`Item.color`, merged 11.08.2025, milestone Public Beta 18), https://github.com/AcademySoftwareFoundation/OpenTimelineIO/issues/1614 (2026-09-08)
+- The numbers are reproducible: `python3 src/scripts/tracker-rank.py --query '<SIGNAL filter>'`; dumps in `~/.cache/kinotrain/trackers/` (not committed to the repository)
+- VEGAS Pro, help: https://help.magix-hub.com/video/vegas/22/en/content/topics/7-edit/events_intro.htm (2026-09-08). The portal serves the 22 line's pages; 2026.0 pages were not found publicly, the mechanism has not changed in the documentation since then
+- Adobe Premiere, Labels preferences: https://helpx.adobe.com/premiere/desktop/get-started/preferences-and-settings/labels-preferences.html and the beta discussion (link above), 2026-09-08
+- Apple, Final Cut Pro — roles and their colours: https://support.apple.com/guide/final-cut-pro/intro-to-roles-verb71cbcbe/mac and https://support.apple.com/guide/final-cut-pro/change-role-colors-or-names-verbd20e0664/mac (2026-09-08)
+- Adobe After Effects — layer labels: https://helpx.adobe.com/after-effects/using/layers.html (2026-09-08)
+- Resolve: the mechanism (a flag on the source, a marker on the frame, Clip Color without filtering) is taken from the DaVinci Resolve manual and secondary analyses; the manual's mirror (`steakunderwater.com`) returned 404, and `forum.blackmagicdesign.com` — 403, as in the first wave. Therefore there is no verbatim quote for Resolve
+- The old VEGAS forum (`vegascreativesoftware.info`, thread "Color coding individual clips") now redirects to `forum.borisfx.com` without preserving threads — a change of publisher recorded in `_editors.md`; a quote from there could not be obtained

@@ -1,12 +1,12 @@
 ---
 id: F-HLP-001
-title: Наша модель — одна строка подсказки в правом низу статусбара
-status: уже-есть
+title: Our model — one hint line at the bottom right of the status bar
+status: already-have
 priority: B
 cost: S
 category: help/hints
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, ableton-live-12]
-we_have: да
+we_have: yes
 crates: [kt-app]
 invariants: [12]
 ui_rules: [10, 13, 16]
@@ -17,199 +17,122 @@ depends_on: []
 checked: 2026-09-07
 ---
 
-# F-HLP-001 — Наша модель — одна строка подсказки в правом низу статусбара
+# F-HLP-001 — Our model — one hint line at the bottom right of the status bar
 
-## Суть
+## Essence
 
-Монтажёр водит мышью по программе, и в правом нижнем углу окна — в полосе,
-которая и так там есть, — молча меняется одна строка: что это за предмет под
-курсором и что с ним можно сделать. Ничего не всплывает, ничего не закрывает
-кадр, ждать нечего: текст меняется в том же кадре, в котором курсор доехал.
-Та же строка — единственное место, где программа кричит об ошибке жеста
-(красным), сообщает о выполненном действии и, когда делать нечего, показывает
-дежурную фразу.
+The editor moves the mouse over the program, and in the bottom right corner of the window — in the strip that is there anyway — one line silently changes: what this object under the cursor is and what can be done with it. Nothing pops up, nothing covers the frame, there is nothing to wait for: the text changes in the same frame in which the cursor has moved. The same line is the only place where the program shouts about a gesture error (in red), reports a completed action and, when there is nothing to do, shows a standby phrase.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Status Bar | полоса внизу окна: help text при наведении на пункт МЕНЮ, доступное время записи, прогресс-метры долгих операций. У кнопок — обычные всплывающие тултипы поверх интерфейса. Механизм описан в мануалах линейки 14–17; для 2026 [НЕ ПРОВЕРЕНО] |
-| Adobe Premiere | 26.x | Tool Tips + clip data popup | фиксированной строки-подсказки нет. Тултипы выключаются в настройках, а попап с данными клипа при наведении на событие таймлайна — нет, «by design» (ответ Adobe Community Expert, 02.10.2025) |
-| DaVinci Resolve | 21 | Tool tips | фиксированной строки нет, подсказка всплывает у элемента; управление задержкой/выключением — предмет просьб на форуме BMD, а не настройка [НЕ ПРОВЕРЕНО живьём] |
-| Final Cut Pro | 12.3 | Tool tips | нет строки: подсказка всплывает у кнопки, горячая клавиша вписана в её текст [НЕ ПРОВЕРЕНО живьём] |
-| After Effects | 26.x | Tool Tips / панель Info | нет строки. Панель Info показывает пиксели, координаты и время — состояние ДАННЫХ, а не назначение элемента интерфейса [НЕ ПРОВЕРЕНО живьём] |
+| VEGAS Pro | 2026.0 | Status Bar | a strip at the bottom of the window: help text when hovering over a MENU item, the available recording time, progress meters of long operations. Buttons have ordinary popup tooltips over the interface. The mechanism is described in the manuals of the 14–17 line; for 2026 [NOT CHECKED] |
+| Adobe Premiere | 26.x | Tool Tips + clip data popup | there is no fixed hint line. Tooltips are switched off in the settings, while the popup with clip data on hovering over an event of the timeline — no, "by design" (the answer of an Adobe Community Expert, 02.10.2025) |
+| DaVinci Resolve | 21 | Tool tips | there is no fixed line, the hint pops up at the element; control of the delay/switching off is the subject of requests on the BMD forum, not a setting [NOT CHECKED live] |
+| Final Cut Pro | 12.3 | Tool tips | there is no line: the hint pops up at the button, the hotkey is written into its text [NOT CHECKED live] |
+| After Effects | 26.x | Tool Tips / Info panel | there is no line. The Info panel shows pixels, coordinates and time — the state of DATA, not the purpose of an interface element [NOT CHECKED live] |
 
-Пять из пяти: фиксированной области-описания под курсором нет ни у кого, кроме
-VEGAS, и там она обслуживает только МЕНЮ. Поэтому вторая таблица обязательна —
-механизм родом не из видеомонтажа, и без него нашу строку не с чем сравнить.
+Five out of five: a fixed description area under the cursor belongs to no one except VEGAS, and there it serves only the MENU. Therefore the second table is mandatory — the mechanism does not come from video editing, and without it our line has nothing to be compared with.
 
-**Вне ядра.** Без Ableton Live эту фичу описать нельзя: наша строка — прямой
-потомок его Info View, а не урезанный тултип, и спорить о ней, не назвав
-предка, значит спорить о вкусе.
+**Outside the core.** Without Ableton Live this feature cannot be described: our line is a direct descendant of its Info View, not a truncated tooltip, and to argue about it without naming the ancestor means arguing about taste.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Ableton Live | 12.4.5 | Info View | фиксированная область в углу окна: пишет, что такое то, под чем курсор, — не перекрывая и не задерживая. Подробный разбор — **F-HLP-002**, здесь только происхождение |
+| Ableton Live | 12.4.5 | Info View | a fixed area in the corner of the window: writes what the thing under the cursor is — without covering and without delaying. The detailed analysis — **F-HLP-002**, here only the origin |
 
-## Фишка фишки
+## The trick behind it
 
-**Что механизм несёт, чего одна строка вместить не может.** Наша строка несёт
-ровно то, что помещается в 160 символов о предмете ПОД КУРСОРОМ. Вместить она
-не может АДРЕС — где искать предмет, на который никто не навёл. И этот груз у
-нас не девается никуда: он лежит на семи из девятнадцати претензий Р.38.
+**What the mechanism carries that one line cannot hold.** Our line carries exactly what fits in 160 characters about the object UNDER THE CURSOR. It cannot hold an ADDRESS — where to look for an object that nobody has pointed at. And this load does not disappear for us anywhere: it lies on seven of the nineteen complaints of R.38.
 
-Строка — идеальный **pull**-канал: спросил (навёл) — получил ответ. И она не
-является **push**-каналом вообще: нельзя навести мышь на то, чего не нашёл.
-Ниже — доказательство по всем семи претензиям Р.38 вида «я не понимаю как»
-(`docs/user-feedback.md`, раздел «Раунд Р.38»). Ни одна не лечится ни ёмкостью
-строки, ни её формулировкой.
+The line is an ideal **pull** channel: you ask (point) — you get an answer. And it is not a **push** channel at all: you cannot point the mouse at what you have not found. Below is the proof over all seven R.38 complaints of the form "I don't understand how" (`docs/user-feedback.md`, section "Round R.38"). None of them is cured either by the capacity of the line or by its wording.
 
-| Р.38 | Претензия (дословно) | На что надо было навести | Почему строка не лечит |
+| R.38 | Complaint (verbatim) | What had to be pointed at | Why the line does not cure it |
 |---|---|---|---|
-| п.1 | «я не понимаю как удалить saved area region, я его сохранил и он теперь висит, не понимаю как его переименовать - пкм ничего не дает» | на область на таймлайне — он навёл и нажал ПКМ | `RemoveArea`/`RenameArea`/`SetAreaRange`/`SetAreaLanes` были осиротевшими командами: покрыты юнит-тестами, ни одного вызова во всём `apps/`. Строка описывает достижимое; глагола она не создаёт |
-| п.2 | «я не могу никак добавить морфер-событие на морфер трек» | на кнопку `tb.add_morpher` в тулбаре — а он смотрел на пустую морф-дорожку | над дорожкой строка отвечала `tl.hint.empty` («ЛКМ — курсор, драг — регион…») — честно про место, но не про то, ГДЕ лежит команда, создающая предмет |
-| п.3 | «add morpher layer тоже странно работает» | не на что: правило «есть регион — по региону, нет — от курсора» принадлежит команде | пока рука на кнопке — предмета ещё нет; когда предмет появился — курсор над результатом. Наводить не на что ни до, ни после |
-| п.5 | «не понимаю как работает камерный трек» | на камерный блок | `tl.hint.camera` перечисляет жесты («drag to move, edges resize, RMB — menu, double click — properties») и молчит о том, ЗАЧЕМ камера и на что действует. «Зачем» — абзац, а предел значения 160 символов, и в него надо уложить пять языков |
-| п.9 | «я не понимаю как менять длинну у морфер события» | на УЗКУЮ кромку блока | ответ есть и он в строке (`tl.hint.morph_edge`), но показывается, только когда курсор уже на кромке. Знание о жесте спрятано за самим жестом — pull-тупик в чистом виде |
-| п.14 | «в таймлайне автоматизации я не понимаю как зазумится» | не на что: зум был жестом без предмета | вылечила КНОПКА (замок связи с таймлайном, решение п.4 Р.38), и подсказка `fx.axis_link_hint` появилась лишь потому, что появился видимый контрол. Текст пришёл вторым, а не первым |
-| п.16 | «ощущение что у эффектов есть какое-то отдельное "дефолтное" состояние значений» | ни на что: это неверная ментальная модель | поле правит БАЗУ, а показывает значение кривой. Нужны два предложения И в тот момент, когда человек видит несоответствие, а не когда наводит мышь на поле |
+| item 1 | "I don't understand how to delete a saved area region, I saved it and it now hangs there, I don't understand how to rename it — RMB gives nothing" | the area on the timeline — he pointed and pressed RMB | `RemoveArea`/`RenameArea`/`SetAreaRange`/`SetAreaLanes` were orphaned commands: covered by unit tests, not a single call in the whole `apps/`. The line describes what is reachable; it does not create a verb |
+| item 2 | "I cannot add a morpher event to a morpher track in any way" | the `tb.add_morpher` button in the toolbar — and he was looking at the empty morph track | above the track the line answered `tl.hint.empty` ("LMB — cursor, drag — region…") — honest about the place, but not about WHERE the command that creates the object lies |
+| item 3 | "add morpher layer also works strangely" | nothing to point at: the rule "there is a region — by region, there is none — from the cursor" belongs to the command | while the hand is on the button, there is no object yet; when the object has appeared — the cursor is above the result. There is nothing to point at either before or after |
+| item 5 | "I don't understand how the camera track works" | the camera block | `tl.hint.camera` lists the gestures ("drag to move, edges resize, RMB — menu, double click — properties") and is silent about WHY the camera exists and what it acts on. "Why" is a paragraph, and the value limit is 160 characters, and it has to fit five languages |
+| item 9 | "I don't understand how to change the length of a morpher event" | the NARROW edge of the block | the answer exists and it is in the line (`tl.hint.morph_edge`), but it is shown only when the cursor is already on the edge. Knowledge of the gesture is hidden behind the gesture itself — a pure pull dead end |
+| item 14 | "in the automation timeline I don't understand how to zoom" | nothing to point at: zoom was a gesture without an object | the BUTTON cured it (the link lock with the timeline, the decision of item 4 of R.38), and the hint `fx.axis_link_hint` appeared only because a visible control appeared. The text came second, not first |
+| item 16 | "the feeling that the effects have some separate 'default' state of values" | nothing: this is a wrong mental model | the field edits the BASE, and shows the value of the curve. Two sentences are needed AND at the moment when the person sees the discrepancy, not when he hovers the mouse over the field |
 
-Отсюда — вывод, который переворачивает постановку: крик «**КУДА ПРОПАЛИ
-ПОДСКАЗКИ КНОПОК?!?!?!**» (Р.9 п.1) и «я не понимаю как удалить saved area
-region» (Р.38 п.1) — не одна задача, решённая наполовину. Это две разные
-задачи. Первая (pull) решена и закрыта регресс-стражем t83. Вторая (push) не
-решена и этой поверхностью не решается в принципе.
+From this follows the conclusion that reverses the statement: the cry "**WHERE DID THE BUTTON HINTS GO?!?!?!**" (R.9 item 1) and "I don't understand how to delete a saved area region" (R.38 item 1) are not one task solved halfway. These are two different tasks. The first (pull) is solved and closed by the regression guard t83. The second (push) is not solved and in principle is not solved by this surface.
 
-## Плюсы
+## Pros
 
-- **Место одно и известно заранее** (правило 10 чек-листа): подсказку не надо
-  искать глазами — она не «где-то у курсора», а всегда в одном углу.
-  Пользователь смотрит туда привычкой, а не поиском.
-- **Нулевая задержка.** `tooltip_grace_time = 0.0`, а сама подсказка собирается
-  за кадр в `hover_hint` и рисуется ПОСЛЕДНЕЙ операцией кадра
-  (`self.draw_status_hint(&ctx)`, `src/apps/kt-app/src/app.rs:1162`). t83
-  проверяет ОТРИСОВАННОЕ (`status_line_shown`), а не внутреннее поле, — прошлые
-  тесты читали поле после кадра и были ложно-зелёными.
-- **Ничего не перекрывается.** Слой `Order::Foreground`, `interactable(false)`,
-  прямоугольник — уже существующая полоса статусбара `exact_size(20.0)`. Ни
-  превью, ни таймлайн не закрываются никогда: претензия «description pops up in
-  the way» у нас невыразима как класс.
-- **Ошибка перебивает наведение.** Порядок в чистой `status_line`: ошибка →
-  наведение → режим → сообщение → дежурная строка; t172 требует
-  `HintKind::Error` ровно в момент упора жеста и подсветки препятствия
-  (правило 16: невозможность действия — ошибка, а не блёклая подсказка).
-- **Ноль расхода места** (правило 13): строка живёт на полосе, заведённой ради
-  колокольчика и счётчиков, и длинная подсказка сознательно ЗАТИРАЕТ метрики
-  слева — комментарий в коде: «она важнее». Новой полосы ради подсказок не
-  заведено ни одной.
-- **Подсказка машинно-проверяема как правда о достижимости.** t253 роняет
-  сборку, если указатель стоит НА сущности, а строка говорит «пустое место».
-  Такого свойства у всплывающего тултипа быть не может: у попапа нет одной
-  точки, из которой тест прочитает «что программа сказала пользователю», а у
-  нас есть — `status_line_shown`.
+- **The place is single and known in advance** (rule 10 of the checklist): the hint does not have to be searched with the eyes — it is not "somewhere at the cursor", but always in one corner. The user looks there out of habit, not by searching.
+- **Zero delay.** `tooltip_grace_time = 0.0`, and the hint itself is assembled within the frame in `hover_hint` and is drawn as the LAST operation of the frame (`self.draw_status_hint(&ctx)`, `src/apps/kt-app/src/app.rs:1162`). t83 checks what is DRAWN (`status_line_shown`), not an internal field — earlier tests read the field after the frame and were falsely green.
+- **Nothing is covered.** Layer `Order::Foreground`, `interactable(false)`, a rectangle — the already existing status-bar strip `exact_size(20.0)`. Neither the preview nor the timeline is ever covered: the complaint "description pops up in the way" is inexpressible with us as a class.
+- **An error overrides hovering.** The order in the pure `status_line`: error → hover → mode → message → standby line; t172 requires `HintKind::Error` exactly at the moment of a gesture's stop and of the obstacle highlight (rule 16: an impossible action is an error, not a faded hint).
+- **Zero use of space** (rule 13): the line lives on the strip set up for the bell and the counters, and the long hint deliberately ERASES the metrics on the left — a comment in the code: "it is more important". Not a single new strip has been set up for hints.
+- **The hint is machine-checkable as the truth about reachability.** t253 breaks the build if the pointer stands ON an entity while the line says "empty place". A popup tooltip cannot have such a property: a popup has no single point from which a test reads "what the program said to the user", while we have one — `status_line_shown`.
 
-## Минусы
+## Cons
 
-- **Одна физическая строка, один `layout_no_wrap`.** Ни переносов, ни второй
-  строки. Потолок значения каталога — 160 символов
-  (`src/apps/kt-app/build.rs:42`, `MAX_VALUE_CHARS`; длиннее ВАЛИТ сборку с
-  «split it into two keys»). Самая длинная живая подсказка — `tl.hint.clip`:
-  107 символов (en) / 109 (ru), то есть запас уже меньше трети.
-- **Одна за раз, и режим проигрывает наведению.** `HintKind::Mode` стоит ниже
-  `Hover`, а таймлайн ставит `hover_hint` в КАЖДОЙ своей точке (последняя ветка
-  разбора зоны — `tl.hint.empty`). Значит состояние «ты сейчас в режиме X, выйти —
-  Esc» на этой поверхности невыразимо: над самой большой площадью окна режимная
-  строка не видна никогда [вывод по коду; порядок закрыт юнит-тестом
-  `status_line`, живой сцены нет].
-- **Транзиентность.** Убрал мышь — текста нет. Нечего перечитать, нечего
-  скопировать, нечего показать другому человеку.
-- **Требует наведения** — то самое, ради чего написана «Фишка фишки».
-- **В узком окне текст не усекается.** Плита прижимается к левому краю полосы
-  (`.max(strip.left())`), а галлея рисуется от неё во всю натуральную ширину:
-  при минимальном окне 640 px (t86) подсказка в 107 символов (~600 px при 12 px
-  шрифте) занимает полосу целиком и уходит за правый край. Правило 7 закрыто
-  тестом для ИМЁН (t255), но не для самой подсказки [оценка по коду].
-- **Две короткие аллокации на кадр** (`text.clone()` в галлею + копия в
-  `status_line_shown`) — против буквы инварианта 12. Терпимо ровно потому, что
-  подсказка одна и короткая; богатая подсказка сделала бы эту статью заметной.
-- **Что физически не влезает:** аккорд из нескольких клавиш (акселератор
-  вписан в текст руками — «Play/Pause (Space)» в `[tb]`, реестра команд нет,
-  см. F-UI-002); объяснение «зачем»; картинка; список вариантов; состояние
-  режима.
+- **One physical line, one `layout_no_wrap`.** No wrapping, no second line. The ceiling of a catalog value is 160 characters (`src/apps/kt-app/build.rs:42`, `MAX_VALUE_CHARS`; a longer one BREAKS the build with "split it into two keys"). The longest live hint — `tl.hint.clip`: 107 characters (en) / 109 (ru), that is, the margin is already less than a third.
+- **One at a time, and the mode loses to hovering.** `HintKind::Mode` stands below `Hover`, and the timeline sets `hover_hint` at EACH of its points (the last branch of the zone analysis — `tl.hint.empty`). So the state "you are now in mode X, exit — Esc" is inexpressible on this surface: over the largest area of the window the mode line is never visible [a conclusion from the code; the order is closed by the unit test of `status_line`, there is no live scene].
+- **Transience.** Move the mouse away — there is no text. Nothing to re-read, nothing to copy, nothing to show to another person.
+- **It requires hovering** — exactly what "the trick behind it" is written for.
+- **In a narrow window the text is not truncated.** The plate is pinned to the left edge of the strip (`.max(strip.left())`), and the galley is drawn from it across its full natural width: at the minimum window of 640 px (t86) a hint of 107 characters (~600 px at a 12 px font) takes up the whole strip and runs past the right edge. Rule 7 is closed by a test for NAMES (t255), but not for the hint itself [an estimate from the code].
+- **Two short allocations per frame** (`text.clone()` into the galley + a copy into `status_line_shown`) — against the letter of invariant 12. Tolerable exactly because the hint is one and short; a rich hint would make this item noticeable.
+- **What physically does not fit:** a chord of several keys (the accelerator is written into the text by hand — "Play/Pause (Space)" in `[tb]`, there is no command registry, see F-UI-002); the explanation "why"; a picture; a list of options; the state of a mode.
 
-## Что говорят пользователи
+## What users say
 
-Владелец — по одному разу на каждое из двух принятых решений; оба
-воспроизведены дословно из `docs/user-feedback.md`.
+The owner — once for each of the two accepted decisions; both are reproduced verbatim from `docs/user-feedback.md`.
 
-> «я хочу чтобы оно там всегда было, это оно то есть то нету при наведении
-> получается?»
-> — владелец, Р.6 (задержка), `docs/user-feedback.md`, 2026
+> "I want it to be there always, is that it, that it's gone when hovering, is that what happens?"
+> — the owner, R.6 (delay), `docs/user-feedback.md`, 2026
 
-> «**КУДА ПРОПАЛИ ПОДСКАЗКИ КНОПОК?!?!?!** … ты этот пункт сделал не до конца!
-> Перепроверь все подсказки которые ты правил»
-> — владелец, Р.9 п.1 (pull-канал сломался — и это заметили немедленно),
-> `docs/user-feedback.md`, 2026
+> "**WHERE DID THE BUTTON HINTS GO?!?!?!** … you did not finish this item! Recheck all the hints that you edited"
+> — the owner, R.9 item 1 (the pull channel broke — and this was noticed immediately), `docs/user-feedback.md`, 2026
 
-Чужие пользователи — про цену противоположного выбора (попапа):
+Other users — about the price of the opposite choice (a popup):
 
-> «the control descriptions hover there while I'm attempting to adjust a
-> parameter so that I can not see what I am adjusting»
+> "the control descriptions hover there while I'm attempting to adjust a
+> parameter so that I can not see what I am adjusting"
 > — Brian Cooney, Creative COW, 21.10.2013,
 > https://creativecow.net/forums/thread/tool-tips-anyone-know-how-to-turn-offae/
 
-> «All Effects boxes show useless info popups when I'm trying to adjust a
-> parameter»
-> — Ken Bronowski, там же, 23.07.2014,
+> "All Effects boxes show useless info popups when I'm trying to adjust a
+> parameter"
+> — Ken Bronowski, same thread, 23.07.2014,
 > https://creativecow.net/forums/thread/tool-tips-anyone-know-how-to-turn-offae/
 
-> «Its not a bug but by design. Alas there is no way to disable this feature.»
-> — Ann Bens (Community Expert) о попапе данных клипа в Premiere, Adobe
+> "Its not a bug but by design. Alas there is no way to disable this feature."
+> — Ann Bens (Community Expert) about the clip data popup in Premiere, Adobe
 > Community, 02.10.2025,
 > https://community.adobe.com/t5/premiere-pro-discussions/how-do-i-stop-premiere-pro-from-showing-a-clip-data-window-when-the-cursor-is-hovering-over-a-clip-i/td-p/15530239
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/ui-reach/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Уже есть: одна строка подсказки внизу вместо тултипов — t83 держит запрет всплывающих окон (правило 10 kt-app).
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/ui-reach/ — the contract is in `spec.md`, the "why" and the paths in the code are in `design.md`.
+Already there: one hint line at the bottom instead of tooltips — t83 holds the ban on popup windows (rule 10 of kt-app).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — работы по этой заметке нет: механизм в проде с р.8 и покрыт t83/t172/t253 |
-| Где основная работа | kt-app: `app.rs` (`hint`, `hint_into`, `status_line`, `draw_status_hint`), `theme.rs`, каталоги `i18n/` |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | по этой заметке — ни одного; при желании закрыть «узкое окно» — харнесс-тест усечения подсказки при 640 px |
-| Зависит от | ничего. Push-канал — предмет остальных заметок волны; реестр команд и акселераторы — F-UI-002 |
-| Ломает совместимость | нет |
+| Size | S — there is no work under this note: the mechanism has been in production since R.8 and is covered by t83/t172/t253 |
+| Where the main work is | kt-app: `app.rs` (`hint`, `hint_into`, `status_line`, `draw_status_hint`), `theme.rs`, the catalogs `i18n/` |
+| Project format | not touched |
+| Tests to be written | under this note — none; if one wishes to close the "narrow window" — a harness test of hint truncation at 640 px |
+| Depends on | nothing. The push channel is the subject of the other notes of the wave; the command registry and accelerators — F-UI-002 |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Модель остаётся ровно такой, какая есть: одна строка, ноль попапов, ноль
-задержки. Все три спорных решения Р.40 в этой заметке закрыты так — перекрытие
-и задержка не трогаются по прямым словам владельца, а ёмкость строки не
-увеличивается, потому что увеличение её не лечит ничего из семи претензий.
+The model remains exactly as it is: one line, zero popups, zero delay. All three disputed decisions of R.40 are closed in this note as follows — overlap and delay are not touched according to the owner's direct words, while the capacity of the line does not grow, because growing it cures nothing of the seven complaints.
 
-УЖЕ-ЕСТЬ: app::status_line в src/apps/kt-app/src/app.rs — разведка изменила формулировку решения: неточно «у нас нет подсказок, у нас одна строка», точно «у нас решён pull-канал и не решён push, и это две разные задачи, из которых вторая не лечится ни ёмкостью строки, ни её текстом».
+ALREADY-HAVE: app::status_line in src/apps/kt-app/src/app.rs — the reconnaissance changed the wording of the decision: not the inaccurate "we have no hints, we have one line", but the accurate "we have solved the pull channel and not solved the push, and these are two different tasks, of which the second is not cured either by the capacity of the line or by its text".
 
-ОДНА СТРОКА: перекрытие — не трогает | задержка — не трогает | ёмкость — не растёт ни на символ (160 символов, один `layout_no_wrap`, одна подсказка за раз), весь push уезжает на ВТОРЫЕ поверхности — контекстное меню, саму подпись, окно, куда приходят намеренно, — и ими владеют остальные заметки волны.
+ONE LINE: overlap — not touched | delay — not touched | capacity — does not grow by a single character (160 characters, one `layout_no_wrap`, one hint at a time); the whole push moves to the SECOND surfaces — the context menu, the label itself, the window where things come on purpose — and they are owned by the other notes of the wave.
 
-## Источники
+## Sources
 
-- `docs/user-feedback.md`, разделы Р.6, Р.9 п.1, Р.38, Р.40 (дата обращения
-  2026-09-07) — обе реплики владельца и все девятнадцать претензий Р.38.
-- Код: `src/apps/kt-app/src/app.rs`, `theme.rs`, `timeline.rs`,
-  `layout_tests.rs` (t83, t86, t172), `reach_tests.rs` (t253),
-  `build.rs`, `src/apps/kt-app/i18n/*.toml` (2026-09-07).
-- https://creativecow.net/forums/thread/tool-tips-anyone-know-how-to-turn-offae/
-  (дата обращения 2026-09-07) — цитаты о попапе, закрывающем регулируемый
-  параметр.
-- https://community.adobe.com/t5/premiere-pro-discussions/how-do-i-stop-premiere-pro-from-showing-a-clip-data-window-when-the-cursor-is-hovering-over-a-clip-i/td-p/15530239
-  (дата обращения 2026-09-07) — попап данных клипа не отключается «by design».
-- Мануалы VEGAS Pro линейки 14–17 (status bar: help text по пунктам меню,
-  время записи, прогресс-метры), найдены поиском 2026-09-07; для версии 2026
-  живьём не проверялось.
-- Строка Ableton Live — по разбору F-HLP-002 и `_editors.md`; проверка живьём
-  для софта вне ядра не предполагается (правило раздела «Софт вне ядра»).
-  Строки Resolve, FCP и After Effects опираются на документацию и форумы,
-  живьём не проверялись — помечено в таблице.
+- `docs/user-feedback.md`, sections R.6, R.9 item 1, R.38, R.40 (accessed 2026-09-07) — both remarks of the owner and all nineteen complaints of R.38.
+- Code: `src/apps/kt-app/src/app.rs`, `theme.rs`, `timeline.rs`, `layout_tests.rs` (t83, t86, t172), `reach_tests.rs` (t253), `build.rs`, `src/apps/kt-app/i18n/*.toml` (2026-09-07).
+- https://creativecow.net/forums/thread/tool-tips-anyone-know-how-to-turn-offae/ (accessed 2026-09-07) — quotes about a popup that covers an adjusted parameter.
+- https://community.adobe.com/t5/premiere-pro-discussions/how-do-i-stop-premiere-pro-from-showing-a-clip-data-window-when-the-cursor-is-hovering-over-a-clip-i/td-p/15530239 (accessed 2026-09-07) — the clip data popup cannot be switched off "by design".
+- VEGAS Pro manuals of the 14–17 line (status bar: help text for menu items, recording time, progress meters), found by search 2026-09-07; for version 2026 not checked live.
+- The Ableton Live line — from the analysis in F-HLP-002 and `_editors.md`; a live check for software outside the core is not assumed (the rule of the section "Software outside the core"). The Resolve, FCP and After Effects lines rely on documentation and forums, not checked live — marked in the table.

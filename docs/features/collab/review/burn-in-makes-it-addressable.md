@@ -1,12 +1,12 @@
 ---
 id: F-COL-025
-title: Чем реплика адресуется в чужом плеере
-status: кандидат
+title: How a comment is addressed in someone else's player
+status: candidate
 priority: B
 cost: M
 category: collab/review
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: no
 crates: [kt-fx, kt-engine, kt-media, kt-model, kt-app]
 invariants: [7, 11]
 ui_rules: [8]
@@ -19,227 +19,134 @@ services: [frame-io]
 checked: 2026-09-08
 ---
 
-# F-COL-025 — Чем реплика адресуется в чужом плеере
+# F-COL-025 — How a comment is addressed in someone else's player
 
-## Суть
+## Essence
 
-Человек, которому отдали ролик, смотрит его не в редакторе. У него плеер в
-телефоне, вкладка браузера или пересланный файл в мессенджере, и замечание он
-пишет словами: «на четвёртой минуте лицо слишком тёмное». Чтобы это замечание
-попало в монтаж, в его фразе обязан быть АДРЕС, и взять адрес ему неоткуда,
-кроме самой картинки. Поэтому просмотровая копия отличается от мастера ровно
-двумя вещами: в кадр вжигается таймкод и имя версии.
+The person to whom a video was handed over watches it not in the editor. They have a player on the phone, a browser tab, or a file forwarded in a messenger, and they write the remark in words: "at the fourth minute the face is too dark." For this remark to get into the edit, its phrase must contain an ADDRESS, and they have nowhere to take the address from except the picture itself. That is why the review copy differs from the master in exactly two things: a timecode and the name of the version are burned into the frame.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | медиа-генератор Timecode | текст кладётся СОБЫТИЕМ на дорожку, то есть burn-in живёт внутри монтажа и уезжает в мастер, если про него забыть — **[НЕ ПРОВЕРЕНО]** по справке линейки 2026 |
-| Adobe Premiere | 26.x | эффект Timecode на дорожке; «Metadata & Timecode Burn-in» в Adobe Media Encoder | два разных места и две разные судьбы: эффект виден в превью и едет с монтажом, наложение энкодера в превью не существует вовсе и живёт в задании выдачи |
-| DaVinci Resolve | 21 | Data Burn-In (Workspace), с отдельным переключателем для рендера | настройка уровня РАБОЧЕГО ПРОСТРАНСТВА, а не клипа: набор полей (таймкод источника, таймкод монтажа, имя файла, произвольный текст) собирается один раз и включается перед выдачей — **[НЕ ПРОВЕРЕНО]** в части точного состава полей 21-й версии |
-| Final Cut Pro | 12.3 | родного burn-in нет; генератор таймкода и сторонние плагины | исторически догоняющий: прожечь таймкод ИСТОЧНИКА тут стало возможно позже всех, и делают это чужими титрами — **[НЕ ПРОВЕРЕНО]** |
-| After Effects | 26.x | эффект Timecode с режимом Source Timecode | слой поверх композиции, то есть тот же «эффект на дорожке», что у Premiere: виден в превью, уезжает в мастер при забывчивости |
+| VEGAS Pro | 2026.0 | Timecode media generator | the text is placed as an EVENT on a track, so the burn-in lives inside the edit and travels into the master if one forgets about it — **[NOT VERIFIED]** against the 2026 product help |
+| Adobe Premiere | 26.x | Timecode effect on a track; "Metadata & Timecode Burn-in" in Adobe Media Encoder | two different places and two different fates: the effect is visible in the preview and travels with the edit, the encoder's overlay does not exist in the preview at all and lives in the export job |
+| DaVinci Resolve | 21 | Data Burn-In (Workspace), with a separate switch for rendering | a setting of the WORKING SPACE level, not of the clip: a set of fields (source timecode, edit timecode, file name, arbitrary text) is assembled once and switched on before output — **[NOT VERIFIED]** as to the exact set of fields in version 21 |
+| Final Cut Pro | 12.3 | no native burn-in; timecode generator and third-party plugins | historically catching up: burning in the SOURCE timecode became possible here later than anywhere else, and it is done with third-party titles — **[NOT VERIFIED]** |
+| After Effects | 26.x | Timecode effect with the Source Timecode mode | a layer above the composition, that is, the same "effect on a track" as in Premiere: visible in the preview, travels into the master if one is forgetful |
 
-## Фишка фишки
+## The trick behind it
 
-**1. Адрес, нарисованный ПЛЕЕРОМ, не переживает пересылку — переживают только
-пиксели.** Сервис рецензии показывает таймкод рядом с окном, и пока человек
-сидит на его странице, всё работает. Но ролик выкладывают в мессенджер,
-пересылают дальше, скачивают и открывают в системном плеере — и от адреса не
-остаётся ничего: чужой плеер считает время от нуля файла, а мессенджер по
-дороге ещё и перекодирует картинку. Вжигание — это не украшение и не привычка
-телевидения, а единственная часть ролика, которая едет ВМЕСТЕ с изображением.
+**1. An address drawn by the PLAYER does not survive forwarding — only pixels survive.** The review service shows the timecode next to the window, and while a person sits on its page, everything works. But the video gets posted to a messenger, forwarded on, downloaded and opened in a system player — and nothing of the address remains: the foreign player counts time from zero of the file, and the messenger on the way also re-encodes the picture. Burn-in is not decoration or a television habit, but the only part of the video that travels TOGETHER with the image.
 
-**2. Вжигают ВСЕГДА две вещи, и вторая важнее первой.** Таймкод отвечает на
-вопрос «где», имя версии — на вопрос «в чём»; без второго первое двусмысленно,
-потому что «00:04:12» есть в каждой версии, и замечание, пришедшее через день,
-невозможно отличить от замечания к предыдущему кругу. Отсюда правило, которого
-нет ни в одном списке возможностей: имя версии в углу стоит дороже таймкода,
-хотя выглядит мельче.
+**2. Two things are ALWAYS burned in, and the second is more important than the first.** The timecode answers "where," the name of the version answers "in what"; without the second the first is ambiguous, because "00:04:12" is in every version, and a remark that arrives a day later cannot be told apart from a remark about the previous round. Hence a rule that is in none of the lists of features: the name of the version in the corner is worth more than the timecode, although it looks smaller.
 
-**3. Таймкодов в кадре тоже два, и умирают они в разное время.** Таймкод
-источника вшит камерой и не двигается ничем; таймкод монтажа сдвигается целиком
-от одной вставки. Поэтому серьёзная просмотровая копия несёт оба: по первому
-находят материал, по второму разговаривают внутри одной версии — и как только
-версия сменилась, второй адрес мёртв, а первый жив.
+**3. There are two timecodes in the frame too, and they die at different times.** The source timecode is burned in by the camera and moves by nothing; the edit timecode shifts entirely from one insertion. Therefore a serious review copy carries both: by the first one finds the material, by the second one talks within one version — and as soon as the version has changed, the second address is dead while the first is alive.
 
-**4. Механически burn-in почти везде живёт ВНЕ таймлайна — и это осознанный
-выбор с ценой.** У Resolve это настройка рабочего пространства, у Adobe —
-наложение в энкодере: так его нельзя случайно оставить в мастере. Плата ровно
-та, которую видит рецензент: в превью одно, в выданном файле другое. Там, где
-burn-in сделан событием на дорожке (VEGAS, слой в After Effects), картинка
-честная, зато забытый титр уезжает в чистовой ролик — известный способ
-опозориться.
+**4. Mechanically, burn-in almost everywhere lives OUTSIDE the timeline — and this is a conscious choice with a price.** In Resolve it is a workspace setting, in Adobe it is an overlay in the encoder: that way it cannot be accidentally left in the master. The cost is exactly what the reviewer sees: one thing in the preview, another in the exported file. Where burn-in is made as an event on a track (VEGAS, a layer in After Effects), the picture is honest, but a forgotten title travels into the final cut — a known way to disgrace oneself.
 
-## Плюсы
+## Pros
 
-- Не требует от второй стороны НИЧЕГО: ни программы, ни учётной записи, ни
-  доступа к проекту. Дешевле механизма для разговора двоих в отрасли нет.
-- Переживает пересылку, перекодирование и смену плеера — то есть ровно те три
-  события, которые убивают все прочие способы указать на кадр.
-- Работает без сети и без сервиса: файл на флешке адресуем так же, как файл по
-  ссылке.
-- Делает замечание проверяемым задним числом: цифры видны на самом кадре, а не
-  в переписке рядом с ним.
+- Requires NOTHING of the other side: no program, no account, no access to the project. In the industry there is no cheaper mechanism for a conversation between two people.
+- Survives forwarding, re-encoding and a change of player — that is, exactly the three events that kill all other ways of pointing at a frame.
+- Works without a network and without a service: a file on a flash drive is addressable in the same way as a file by link.
+- Makes a remark verifiable after the fact: the numbers are visible on the frame itself, not in the correspondence next to it.
 
-## Минусы
+## Cons
 
-- Портит картинку: просмотровая копия перестаёт быть тем, что оценивают
-  визуально, и разговор о цвете и кадрировании идёт поверх надписи.
-- Требует ОТДЕЛЬНОГО рендера: появляется второй файл, который потом путают с
-  чистовым, — классика, из-за которой burn-in и вынесли в настройки выдачи.
-- Забытый переключатель работает в обе стороны: то мастер с цифрами, то
-  просмотровая копия без адреса, и обе ошибки обнаруживаются у адресата.
-- Адрес в кадре читает человек и переносит руками: обратный путь в монтаж
-  вжиганием не решается вовсе (F-COL-026).
-- Мелкий шрифт и сжатие мессенджера: цифры, вжатые в 720p и пережатые дважды,
-  перестают читаться — размер надписи оказывается параметром, о котором никто не
-  думает заранее.
+- It spoils the picture: the review copy stops being what is judged visually, and the conversation about color and framing goes on top of the caption.
+- It requires a SEPARATE render: a second file appears, which is later confused with the final cut — a classic, and the reason burn-in was moved into the output settings.
+- A forgotten switch works in both directions: either the master with the numbers, or a review copy without the address, and both errors are discovered by the addressee.
+- The address in the frame is read by a person and carried over by hand: the return path into the edit is not solved by burn-in at all (F-COL-026).
+- Small type and messenger compression: numbers squeezed into 720p and compressed twice stop being legible — the caption size turns out to be a parameter that nobody thinks about in advance.
 
-## Что говорят пользователи
+## What users say
 
-Формулировка причины — почему именно ИСТОЧНИК, а не время окна монтажа:
+The wording of the reason — why it is the SOURCE timecode and not the time of the edit window:
 
 > I want to send some smaller version of the clips to someone on DVD and have
 > them make notes that reflect the original/source timecode rather than the
 > timeline window numbers.
-> — Bruce Schultz, Creative COW, «Source timecode burn in???», 30.04.2009,
+> — Bruce Schultz, Creative COW, "Source timecode burn in???", 30.04.2009,
 > https://creativecow.net/forums/thread/source-timecode-burn-inaeaeae/
 
-И то же самое со стороны заказчика, семью годами позже:
+And the same from the side of a client, seven years later:
 
 > Client wants burn-in source timecode, files names and record timecode, among
 > other things.
-> — olivac44, Adobe Community, «Premiere Pro CC and Burn In Timecode/Source
-> Name», 28.07.2016,
+> — olivac44, Adobe Community, "Premiere Pro CC and Burn In Timecode/Source
+> Name," 28.07.2016,
 > https://community.adobe.com/t5/premiere-pro-discussions/premiere-pro-cc-and-burn-in-timecode-source-name/td-p/8441009
 
-Обе реплики просят одно и то же и обе — не про удобство: без адреса в кадре
-замечание не конвертируется в правку.
+Both remarks ask for the same thing, and neither is about convenience: without an address in the frame, a remark is not converted into an edit.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-Честный ответ: **текст в пиксели мы кладём ровно в одном месте, и место это —
-не то.**
+An honest answer: **we put text into pixels in exactly one place, and that place is the wrong one.**
 
-- `src/libs/kt-media/src/placeholder.rs` — заглушка недоступного файла рисует
-  ИМЯ ФАЙЛА встроенным пиксельным шрифтом 3×5. Шрифт заведён именно ради
-  повторяемости: «он не зависит ни от системных шрифтов, ни от рендерера egui,
-  поэтому кадр детерминирован и одинаков в превью, экспорте и тестах». То есть
-  самая трудная часть вжигания — детерминированный растровый текст в кадре —
-  у нас уже написана и закрыта тестом (t208).
-- Но это ИСТОЧНИК, а не наложение: он заменяет содержимое, а не пишет поверх
-  него, кадр у него 640×360 по умолчанию, а таблица глифов — ASCII, где всё
-  остальное показывается как «?».
-- Время в надпись превращает `format_timecode`
-  (`src/apps/kt-app/src/util.rs`): «00:01:23.456 F12» — часы, минуты, секунды,
-  МИЛЛИСЕКУНДЫ и отдельно номер кадра. Это не отраслевая запись (разбор —
-  F-COL-011), и уходит она в painter тулбара.
-- Видео-FX десять (`video_fx_templates` в `src/apps/kt-app/src/fx_editor.rs`:
-  Pan, Mirror, Blur, Greenscreen, Edges, Noise, VHS, Glow, Pan 3D, EventGrid), и
-  ни один не принимает строку: параметр эффекта описан `ParamSpec`
-  (`src/libs/kt-model/src/project.rs`) — `min`, `max`, `default`, `step` типа
-  `f64`. Текстового параметра в этой системе нет по построению, и это не
-  недосмотр: спека одновременно задаёт диапазон автоматизации, а строку
-  анимировать нечем.
+- `src/libs/kt-media/src/placeholder.rs` — the stub for an unavailable file draws the FILE NAME with a built-in 3×5 pixel font. The font was introduced precisely for repeatability: "it depends neither on system fonts nor on the egui renderer, so the frame is deterministic and identical in preview, export and tests." That is, the hardest part of burn-in — deterministic raster text in a frame — is already written by us and closed by a test (t208).
+- But this is a SOURCE, not an overlay: it replaces the content, rather than writing on top of it; its frame is 640×360 by default, and its glyph table is ASCII, where everything else is shown as "?".
+- Time is turned into a caption by `format_timecode` (`src/apps/kt-app/src/util.rs`): "00:01:23.456 F12" — hours, minutes, seconds, MILLISECONDS and separately the frame number. This is not an industry notation (analysis — F-COL-011), and it goes to the painter of the toolbar.
+- There are ten video FX (`video_fx_templates` in `src/apps/kt-app/src/fx_editor.rs`: Pan, Mirror, Blur, Greenscreen, Edges, Noise, VHS, Glow, Pan 3D, EventGrid), and not one accepts a string: an effect parameter is described by `ParamSpec` (`src/libs/kt-model/src/project.rs`) — `min`, `max`, `default`, `step` of type `f64`. A text parameter does not exist in this system by construction, and this is not an oversight: the spec simultaneously defines the automation range, and there is nothing to animate a string with.
 
-БЕЗ СЕТИ: НЕ ОСТАЁТСЯ — `src/apps/kt-app/src/util.rs:217` — отсутствие видно ровно здесь: единственная функция, превращающая время в надпись, отдаёт строку painter'у тулбара, и дороги из неё в кадр нет — ни один из десяти видео-FX не принимает строку, а спека параметра числовая по построению. Сегодня адрес в чужом плеере человек дописывает словами в сообщение рядом с файлом, и при первой же пересылке файл и сообщение расходятся навсегда.
+OFFLINE: DOES NOT REMAIN — `src/apps/kt-app/src/util.rs:217` — the absence is visible exactly here: the only function that turns time into a caption gives the string to the toolbar painter, and there is no road from it into the frame — not one of the ten video FX accepts a string, and the parameter spec is numeric by construction. Today a person adds the address for the other player in words in a message next to the file, and at the first forwarding the file and the message diverge forever.
 
-ЦЕНА СЕТИ: имя версии в углу кадра обязано быть выдано ОДНИМ источником, а не каждым у себя — учётная запись — прожжённая подпись «v4» стоит ровно столько, сколько стоит уверенность, что чужой v4 — это не другой ролик; наши идентификаторы выдаются как «максимум + 1», и то же правило на двух машинах даёт два разных ролика с одной и той же подписью.
+NETWORK COST: the name of the version in the corner of the frame must be issued by ONE source, not by each on its own — the user account — a burned-in "v4" costs exactly as much as the confidence that someone else's v4 is not a different video; our identifiers are issued as "maximum + 1," and the same rule on two machines gives two different videos with the same label.
 
-### Чего не хватает
+### What is missing
 
-- Наложения текста в кадр: стадии композита, которая пишет поверх готового
-  кадра, а не вместо него.
-- Отраслевой записи адреса `ЧЧ:ММ:СС:КК` и стартовой точки материала —
-  вжигать «00:04:12.333 F07» бессмысленно, вслух это не читается (F-COL-011).
-- Имени версии как данных: сегодня его неоткуда взять, потому что версии ролика
-  у нас нет вовсе (F-COL-024).
-- Режима выдачи «просмотровая копия»: одного переключателя, который делает
-  второй файл иным, чем мастер, и говорит об этом вслух.
+- Overlaying text onto the frame: a compositing stage that writes on top of a finished frame, rather than instead of it.
+- An industry notation of the address `HH:MM:SS:FF` and a starting point of the material — burning in "00:04:12.333 F07" is pointless, it is not read aloud (F-COL-011).
+- The name of the version as data: today it cannot be obtained from anywhere, because the video's versions do not exist with us at all (F-COL-024).
+- A "review copy" export mode: a single switch that makes the second file differ from the master and says so out loud.
 
-### Что мешает
+### What blocks it
 
-**Главное препятствие — инвариант 7, и оно же главная развилка.** Отрасль
-кладёт burn-in в настройки ВЫДАЧИ именно для того, чтобы его не было видно в
-превью; у нас так нельзя: слои, порядок, веса и уровни считает один код
-(`VideoRenderer::frame_plan`), и превью с экспортом обязаны совпадать
-байт-в-байт на одном бэкенде (t11/t67/t184). Значит вжигание у нас — часть
-плана кадра и видно в окне, а «показать без надписи» становится отдельным
-осознанным решением, а не побочным эффектом того, что наложение живёт в
-энкодере. Это не мешает фиче, но запрещает списать её устройство у соседей.
+**The main obstacle is invariant 7, and it is also the main fork.** The industry puts burn-in into the EXPORT settings precisely so that it is not visible in the preview; for us this is impossible: layers, order, weights and levels are computed by one code (`VideoRenderer::frame_plan`), and the preview and the export must match byte for byte on one backend (t11/t67/t184). So burn-in with us is part of the frame plan and is visible in the window, and "show without the caption" becomes a separate conscious decision, not a side effect of the overlay living in the encoder. This does not prevent the feature, but it forbids copying its design from neighbors.
 
-Второе препятствие — шрифт. Пиксельная таблица 3×5 знает латиницу, цифры и
-пунктуацию; имя версии по-китайски выйдет строкой «?», а интерфейс у нас
-переведён на пять языков. Настоящий шрифтовой стек в движке при этом мгновенно
-ссорится с инвариантом 11: системный шрифт означает разный растр на разных
-машинах и красный GOLDEN_VIDEO.
+The second obstacle — the font. The 3×5 pixel table knows Latin, digits and punctuation; a version name in Chinese will come out as a string of "?", and our interface is translated into five languages. A real font stack in the engine, meanwhile, instantly clashes with invariant 11: a system font means a different raster on different machines and a red GOLDEN_VIDEO.
 
-Третье — ввод: строковый параметр не рисуется `params_grid`, и «просто
-поставить TextEdit» запрещено правилом 8 чек-листа.
+The third — input: a string parameter is not drawn by `params_grid`, and "just put a TextEdit" is forbidden by rule 8 of the checklist.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **7 (код композиции один).** Вжигание обязано пройти через `frame_plan`;
-  наложения «только при экспорте» у нас быть не может — это второй путь
-  композиции.
-- **11 (детерминизм).** Растр надписи обязан совпадать между прогонами;
-  встроенный пиксельный шрифт заглушки — уже готовый ответ на это требование, и
-  единственный, который не тянет за собой системные шрифты.
+- **7 (one composition code).** Burn-in must pass through `frame_plan`; an overlay "only at export" cannot exist with us — that would be a second path of composition.
+- **11 (determinism).** The raster of the caption must coincide between runs; the built-in pixel font of the stub is already a ready answer to this requirement, and the only one that does not drag in system fonts.
 
-Правил UI задевает одно — 8: поле для имени версии рисуется в той же сетке
-параметров, что и всё остальное, а не отдельным виджетом «как получится».
+Of the UI rules, one is touched — 8: the field for the version name is drawn in the same grid of parameters as everything else, not as a separate widget "however it turns out."
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии: наложение текста в плане кадра (общий растровый шрифт, вынесенный из заглушки); источники надписи — адрес и имя версии |
-| Где основная работа | kt-fx (стадия наложения), kt-engine (место в `frame_plan` и в экспорте), kt-media (шрифт переезжает из заглушки в общее место), kt-app (переключатель просмотровой копии) |
-| Формат проекта | нужна версия формата, если надпись — часть документа; как параметр выдачи формат не трогает вовсе |
-| Тесты, которые придётся написать | «превью == экспорт с вжиганием» (расширение t67/t184 — иначе нарушен инвариант 7); «растр надписи байт-в-байт между прогонами» (в духе t208); «неASCII не превращает подпись в частокол вопросительных знаков — либо отказ, либо честная транслитерация» |
-| Зависит от | F-COL-024 (имя версии как данные), F-COL-011 (адрес в отраслевой записи), F-TXT-001 (титры — соседняя, но другая задача) |
-| Ломает совместимость | нет |
+| Size | M — 2 stages: text overlay in the frame plan (a shared raster font, moved out of the stub); sources of the caption — the address and the version name |
+| Where the main work is | kt-fx (the overlay stage), kt-engine (the place in `frame_plan` and in export), kt-media (the font moves from the stub to a common place), kt-app (the review-copy switch) |
+| Project format | a format version is needed if the caption is part of the document; as an output parameter it does not touch the format at all |
+| Tests that will have to be written | "preview == export with burn-in" (an extension of t67/t184 — otherwise invariant 7 is broken); "the raster of the caption is byte-for-byte identical between runs" (in the spirit of t208); "a non-ASCII name does not turn the label into a fence of question marks — either a refusal or an honest transliteration" |
+| Depends on | F-COL-024 (the version name as data), F-COL-011 (the address in industry notation), F-TXT-001 (titles — a neighboring but different task) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём, и берём целиком локально: вжигание — единственная фича этой волны,
-которая не требует от второй стороны ничего вообще, в этом её смысл. Серверная
-половина здесь отсутствует не по бедности, а по природе механизма: он
-специально устроен так, чтобы работать в чужом плеере без нас.
+We take it, and we take it entirely locally: burn-in is the only feature of this wave that requires nothing at all of the other side — that is its very meaning. The server half is absent here not for lack of means, but by the nature of the mechanism: it is deliberately built to work in someone else's player without us.
 
-Честная оценка сделанного: у нас есть самая неочевидная часть — детерминированный
-пиксельный текст в кадре, — и она стоит на входе конвейера вместо выхода. Мы
-умеем нарисовать надпись ВМЕСТО пропавшего материала и не умеем нарисовать её
-ПОВЕРХ существующего. Разница между этими двумя предложениями и есть вся работа.
+An honest assessment of what has been done: we have the least obvious part — deterministic pixel text in a frame — and it stands at the input of the pipeline instead of at the output. We know how to draw a caption INSTEAD OF missing material and do not know how to draw it ON TOP OF existing material. The difference between these two sentences is the whole job.
 
-Отличие от F-TXT-001 (титры): там текст — содержание, его пишет человек, он
-анимируется и он часть произведения. Здесь текст — служебная подпись, её
-содержимое берётся из документа (адрес, номер версии), её нельзя править
-покадрово, она обязана быть детерминированной и обязана существовать в пути
-экспорта. Требования почти противоположные, поэтому и заметки две.
+The difference from F-TXT-001 (titles): there text is content, a person writes it, it is animated, and it is part of the work. Here text is a service caption, its content is taken from the document (address, version number), it cannot be edited frame by frame, it must be deterministic, and it must exist in the export path. The requirements are almost opposite, which is why there are two notes.
 
-Границы: адрес как таковой (таймкод источника, катушка) — F-COL-011; версия
-ролика, чьё имя вжигается, — F-COL-024; что делать с репликой, приехавшей
-обратно, — F-COL-026; титры и генераторы — F-TXT-001 и F-TXT-003.
+Boundaries: the address as such (source timecode, reel) — F-COL-011; the version of the video whose name is burned in — F-COL-024; what to do with a remark that came back — F-COL-026; titles and generators — F-TXT-001 and F-TXT-003.
 
-## Источники
+## Sources
 
-- https://creativecow.net/forums/thread/source-timecode-burn-inaeaeae/ — зачем
-  просмотровой копии таймкод ИСТОЧНИКА, а не время окна монтажа (дата обращения
-  2026-09-08)
+- https://creativecow.net/forums/thread/source-timecode-burn-inaeaeae/ — why the review copy needs the SOURCE timecode and not the time of the edit window (access date 2026-09-08)
 - https://community.adobe.com/t5/premiere-pro-discussions/premiere-pro-cc-and-burn-in-timecode-source-name/td-p/8441009
-  — требование заказчика: таймкод источника, имена файлов и таймкод монтажа в
-  выданном файле (дата обращения 2026-09-08)
+  — the client's requirement: source timecode, file names and edit timecode in the delivered file (access date 2026-09-08)
 - https://community.adobe.com/t5/premiere-pro-beta-bugs/nonsense-appearing-in-metadata-amp-timecode-burn-in-effect-using-ame/idi-p/15506146
-  — подтверждение, что у Adobe наложение живёт ещё и в энкодере, отдельно от
-  эффекта на дорожке (дата обращения 2026-09-08)
-- Строки VEGAS, Resolve и Final Cut собраны по составу интерфейсов и справок;
-  живьём не проверялись, пометки `[НЕ ПРОВЕРЕНО]` стоят в самой таблице
-- Наш код проверен чтением 08.09.2026: `src/apps/kt-app/src/util.rs`
-  (`format_timecode`), `src/libs/kt-media/src/placeholder.rs` (шрифт 3×5,
-  детерминизм, ASCII-таблица), `src/apps/kt-app/src/fx_editor.rs`
-  (`video_fx_templates` — десять эффектов), `src/libs/kt-model/src/project.rs`
-  (`ParamSpec`), корневой `CLAUDE.md` (инварианты 7 и 11)
+  — confirmation that at Adobe the overlay also lives in the encoder, separately from the effect on the track (access date 2026-09-08)
+- The rows for VEGAS, Resolve and Final Cut were compiled from the composition of interfaces and help pages; they were not checked live, the `[NOT VERIFIED]` marks stand in the table itself
+- Our code checked by reading on 08.09.2026: `src/apps/kt-app/src/util.rs`
+  (`format_timecode`), `src/libs/kt-media/src/placeholder.rs` (3×5 font, determinism, ASCII table), `src/apps/kt-app/src/fx_editor.rs`
+  (`video_fx_templates` — ten effects), `src/libs/kt-model/src/project.rs`
+  (`ParamSpec`), root `CLAUDE.md` (invariants 7 and 11)

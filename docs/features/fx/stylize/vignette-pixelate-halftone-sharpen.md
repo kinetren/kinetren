@@ -1,16 +1,16 @@
 ---
 id: F-FX-001
-title: Стилизация — Vignette, Pixelate, Halftone, Sharpen
-status: сделано
+title: Stylization — Vignette, Pixelate, Halftone, Sharpen
+status: done
 priority: A
 cost: M
 category: fx/stylize
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: да
+we_have: yes
 crates: [kt-model, kt-fx, kt-gpu, kt-app]
 invariants: [7, 11]
 ui_rules: []
-round: "Р.47"
+round: "R.47"
 point: 334
 tests: [328, 329, 330, 332]
 depends_on: []
@@ -19,89 +19,65 @@ services: []
 checked: 2026-09-14
 ---
 
-# F-FX-001 — Стилизация — Vignette, Pixelate, Halftone, Sharpen
+# F-FX-001 — Stylization — Vignette, Pixelate, Halftone, Sharpen
 
-## Суть
+## Essence
 
-Четыре «взгляда» на кадр: затемнение углов (виньетка), мозаика
-(пикселизация лиц и номеров — и стиль), газетный растр (halftone),
-резкость (unsharp). Монтажёру это самые ходовые стилизации после
-цветокоррекции; pixelate вдобавок — рабочий инструмент «замазать лицо».
+Four "looks" at the frame: darkening of the corners (vignette), mosaic (pixelation of faces and numbers — and a style), newspaper halftone, sharpness (unsharp). For the editor these are the most common stylisations after
+colour correction; pixelate, moreover, is a working tool for "blurring out a face".
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| Vegas Pro | 2026.0 | Vignette / Pixelate / Sharpen (Video FX) | OFX-эффекты события; у Vignette овал с растушёвкой, у Sharpen одна ручка |
-| Adobe Premiere | 26 | Vignette (Lumetri) / Mosaic / Unsharp Mask | виньетка живёт ВНУТРИ Lumetri (цветокоррекции), мозаика и резкость — отдельные эффекты |
-| DaVinci Resolve | 21 | Vignette / Mosaic Blur / Sharpen (ResolveFX) | у Sharpen радиус и «coring» (порог, ниже которого не трогать — защита шума) |
-| Final Cut Pro | 12.3 | Vignette / Censor (Pixelate) / Sharpen | Censor — готовый инструмент «замазать» с формой; halftone в наборе Comic-стилей |
-| After Effects | 26 | нет штатной Vignette / Mosaic / CC Half Tone / Unsharp Mask | виньетку делают маской на Solid — отсутствие штатной считается известной странностью; Half Tone — из набора Cycore |
+| Vegas Pro | 2026.0 | Vignette / Pixelate / Sharpen (Video FX) | OFX effects of the event; Vignette has an oval with feathering, Sharpen has one handle |
+| Adobe Premiere | 26 | Vignette (Lumetri) / Mosaic / Unsharp Mask | the vignette lives INSIDE Lumetri (colour correction), mosaic and sharpness are separate effects |
+| DaVinci Resolve | 21 | Vignette / Mosaic Blur / Sharpen (ResolveFX) | Sharpen has a radius and "coring" (a threshold below which one does not touch — noise protection) |
+| Final Cut Pro | 12.3 | Vignette / Censor (Pixelate) / Sharpen | Censor is a ready tool to "blur out" with a shape; halftone is in the set of Comic styles |
+| After Effects | 26 | no standard Vignette / Mosaic / CC Half Tone / Unsharp Mask | the vignette is made with a mask on a Solid — the absence of a standard one is considered a known oddity; Half Tone is from the Cycore set |
 
-## Фишка фишки
+## The trick behind it
 
-Sharpen у всех зрелых реализаций — не свёртка «+резкость», а unsharp по
-РАЗМЫТОЙ копии: out = src + (src − blur(src))·amount, и радиус —
-это радиус того самого blur; поэтому резкость масштабируется с
-разрешением так же, как blur, и у Resolve есть coring-порог против
-подчёркивания шума. Pixelate в FCP — это «Censor»: продукт понимает, что
-главный сценарий — замазать, и даёт форму/трекинг, а не только ячейку.
-Halftone честный меряет ЛОКАЛЬНУЮ яркость под точкой (среднее ячейки),
-дешёвый — порог по координате; разница видна на градиентах: у дешёвого
-точки не растут плавно. Виньетка Premiere живёт внутри цветокоррекции —
-то есть применяется ПОСЛЕ грейда, и это осознанный порядок по умолчанию.
+Sharpen in all mature implementations is not a convolution "+sharpness", but an unsharp mask on a BLURRED copy: out = src + (src − blur(src))·amount, and the radius is the radius of that very blur; therefore the sharpness scales with the resolution just like the blur, and Resolve has a coring threshold against sharpening the noise. Pixelate in FCP is "Censor": the product understands that the main scenario is blurring out, and gives a shape/tracking, not just a cell. An honest halftone measures the LOCAL brightness under the dot (the average of the cell); a cheap one — a threshold on the coordinate; the difference is visible on gradients: with the cheap one the dots do not grow smoothly. The vignette of Premiere lives inside colour correction — that is, it is applied AFTER the grade, and this is a deliberate default order.
 
-## Плюсы
+## Pros
 
-- Pixelate — целочисленная копия пикселей: байт-в-байт между CPU и GPU
-  достижим (класс EXACT), редкий случай среди стилизаций.
-- Unsharp переиспользует наш мип-даунскейл блюра — резкость получает
-  K×-инвариантность вида бесплатно (тот же закон step·K).
-- Виньетка — поточечный эффект с координатой: поглощается в слитый
-  гео-проход и «зумится» вместе с картинкой внутри цепочки.
+- Pixelate is an integer copy of pixels: byte-for-byte equality between CPU and GPU is achievable (class EXACT), a rare case among stylisations.
+- Unsharp reuses our mip downscale of the blur — the sharpness gets K×-invariance of the kind for free (the same law step·K).
+- The vignette is a per-point effect with a coordinate: it is absorbed into the merged geometry pass and "zooms" together with the picture inside the chain.
 
-## Минусы
+## Cons
 
-- Halftone — пороговый эффект: внутри гео-серии суперсемплинг усредняет
-  точки; честное место ему — барьер (после гео), и это фиксируется
-  классификацией.
-- Sharpen поднимает шум и звон на контурах при больших amount — это
-  свойство unsharp, coring оставлен на потом.
+- Halftone is a threshold effect: inside a geometry series the supersampling averages the dots; its honest place is a barrier (after the geometry), and this is fixed by the classification.
+- Sharpen raises noise and ringing on contours at large amounts — a property of unsharp; the coring is left for later.
 
-## Что говорят пользователи
+## What users say
 
-НЕТ ЦИТАТ: разведка велась по официальной документации и справке пяти
-редакторов из памяти модели (срез знаний 2026-01); дословный форумный
-фрагмент со ссылкой без живого доступа к треду не воспроизводим — факты
-таблицы проверяемы по руководствам вендоров из раздела «Источники».
+NO QUOTES: the reconnaissance was carried out from the official documentation and help of five editors from the model's memory (knowledge cut-off 2026-01); a verbatim forum fragment with a link, without live access to the thread, cannot be reproduced — the facts of the table are verifiable from the vendors' manuals listed in the "Sources" section.
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/video-fx/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Стилизация — поточечные и барьерные виды реестра; виньетка — отдельная стадия плана.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/video-fx/ — the contract in `spec.md`, the "why" and the paths in the code in `design.md`.
+Stylisation — the per-point and barrier kinds of the registry; the vignette — a separate stage of the plan.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M |
-| Где основная работа | kt-fx (ядра), kt-gpu (3 пасса + тапы) |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | golden-цикл; конформанс-классы; K×-инвариантность (t303); «блоки константны», «дисперсия растёт», «два уровня растра» |
-| Зависит от | замков первой видео-волны (tap-код 4 бита) |
-| Ломает совместимость | нет |
+| Size | M |
+| Where the main work is | kt-fx (kernels), kt-gpu (3 passes + taps) |
+| Project format | not touched |
+| Tests to write | golden cycle; conformance classes; K×-invariance (t303); "blocks are constant", "dispersion grows", "two levels of raster" |
+| Depends on | the locks of the first video wave (tap code 4 bits) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём все четыре в Р.47: Vignette — поточечный тап с координатой стадии;
-Pixelate — барьер EXACT (ячейка ×K); Halftone — барьер с узором в
-логических координатах (порог THRESHOLD); Sharpen — unsharp по мипу
-блюра (step·K). Формы/трекинг «Censor» — не берём (маски — отдельная
-категория MSK), coring у Sharpen — потом по жалобе.
+We take all four in R.47: Vignette — a per-point tap with the stage coordinate; Pixelate — an EXACT barrier (the cell ×K); Halftone — a barrier with a pattern in logical coordinates (threshold THRESHOLD); Sharpen — an unsharp mask over the mip of the blur (step·K). The shape/tracking of "Censor" — we do not take (masks are a separate category MSK); the coring of Sharpen — later, on a complaint.
 
-## Источники
+## Sources
 
-- https://www.blackmagicdesign.com/products/davinciresolve (дата обращения 2026-09-14)
-- https://helpx.adobe.com/premiere/using/effects-reference.html (дата обращения 2026-09-14)
-- https://support.apple.com/guide/final-cut-pro/welcome/mac (дата обращения 2026-09-14)
+- https://www.blackmagicdesign.com/products/davinciresolve (access date 2026-09-14)
+- https://helpx.adobe.com/premiere/using/effects-reference.html (access date 2026-09-14)
+- https://support.apple.com/guide/final-cut-pro/welcome/mac (access date 2026-09-14)
 
-**Реализовано в Р.47** — docs/porting-notes.md пп.332/334 (t330/t332); дальнейшая жизнь фичи там.
+**Implemented in R.47** — docs/porting-notes.md items 332/334 (t330/t332); the further life of the feature is there.

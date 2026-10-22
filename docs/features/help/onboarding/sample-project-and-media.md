@@ -1,12 +1,12 @@
 ---
 id: F-HLP-029
-title: Демо-проект и материал к нему
-status: кандидат
+title: Demo project and its footage
+status: candidate
 priority: B
 cost: M
 category: help/onboarding
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, blender-5.2, vscode-1.136]
-we_have: частично
+we_have: partial
 crates: [kt-cli, kt-app, kt-media]
 invariants: [8, 9, 10]
 ui_rules: [17, 18, 20]
@@ -18,405 +18,189 @@ trackers: [otio, mlt, openshot, pitivi]
 checked: 2026-09-08
 ---
 
-# F-HLP-029 — Демо-проект и материал к нему
+# F-HLP-029 — Demo project and its footage
 
-## Суть
+## Essence
 
-Программа приносит с собой один уже собранный монтаж и материал, на котором он
-собран. Монтажёр открывает его в первую минуту и получает то, чего не даёт ни
-подсказка, ни урок: чужую готовую работу, которую можно играть, разбирать по
-частям, ломать и рендерить. Демо отвечает не на вопрос «что делает эта кнопка»,
-а на вопрос «как выглядит правильно собранный проект» — на который в интерфейсе
-не отвечает ничто.
+The program ships with one already assembled edit and the material it was assembled from. In the first minute the editor opens it and gets what neither a hint nor a lesson gives: someone else's finished work that can be played, taken apart piece by piece, broken and rendered. A demo answers not the question "what does this button do" but the question "what does a properly assembled project look like" — which the interface answers nowhere.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет | пункта «открыть демо-проект» в программе найти не удалось; учебный материал живёт вне её — уроки и треды форума, где ссылки на .veg дают сами пользователи. [НЕ ПРОВЕРЕНО]: онлайн-справка линейки 2026 (`borisfx.com/Documentation/vegas/2026/en/`, адрес из F-HLP-032) на дату проверки отдаёт 404 |
-| Adobe Premiere | 26.x | панель Learn | пошаговые уроки внутри окна, ведущие по НАСТОЯЩЕМУ интерфейсу на приложенном материале; отдельного «демо-проекта» как файла нет. [НЕ ПРОВЕРЕНО]: helpx отдаёт из этого окружения только навигацию, содержимого страниц не видно |
-| DaVinci Resolve | 21 | нет | в поставке демо-проекта нет; учит вендор книгами-практикумами («This official hands on training guide… a series of practical exercises»), материал уроков распространяется отдельной загрузкой. [НЕ ПРОВЕРЕНО]: объём загрузки уроков |
-| Final Cut Pro | 12.3 | Download Demo Project | **пункт в меню самой программы**: `Final Cut Pro ‣ Download Demo Project`, пользователь выбирает каталог, куда сохранить библиотеку; в ней ДВА проекта («Allie Sherlock Music Video», «Introducing Allie Sherlock»), Keyword Collections и Smart Collections, построенные Transcript Search и Visual Search |
-| Adobe After Effects | 26.x | стартовый экран с шаблонами | новый проект начинается не с пустоты, а с выбора заготовки. [НЕ ПРОВЕРЕНО]: тот же барьер helpx, что у Premiere |
+| VEGAS Pro | 2026.0 | none | I could not find a "open demo project" item in the program; the learning material lives outside it — lessons and forum threads where users themselves post links to .veg files. [NOT VERIFIED]: the online help for the 2026 line (`borisfx.com/Documentation/vegas/2026/en/`, the address from F-HLP-032) returned 404 on the check date |
+| Adobe Premiere | 26.x | Learn panel | step-by-step lessons inside the window, leading through the REAL interface on attached material; there is no separate "demo project" as a file. [NOT VERIFIED]: from this environment helpx returns only navigation, the page contents are not visible |
+| DaVinci Resolve | 21 | none | there is no demo project in the distribution; the vendor teaches with workbooks ("This official hands on training guide… a series of practical exercises"), and the lesson material is distributed as a separate download. [NOT VERIFIED]: the size of the lesson download |
+| Final Cut Pro | 12.3 | Download Demo Project | **an item in the program's own menu**: `Final Cut Pro ‣ Download Demo Project`; the user chooses the folder where the library is saved; in it there are TWO projects ("Allie Sherlock Music Video", "Introducing Allie Sherlock"), Keyword Collections and Smart Collections built by Transcript Search and Visual Search |
+| Adobe After Effects | 26.x | start screen with templates | a new project does not start from emptiness but from a choice of a template. [NOT VERIFIED]: the same helpx barrier as for Premiere |
 
-Из пяти ядра ровно один — Final Cut Pro — считает демо-проект ЧАСТЬЮ ПРОГРАММЫ,
-а не частью сайта. И он же единственный, кто не кладёт его в установщик:
-демо качается по требованию, в каталог, который назвал пользователь.
+Of the five core editors, exactly one — Final Cut Pro — considers the demo project PART OF THE PROGRAM, not part of the website. And it is also the only one that does not put it into the installer: the demo is downloaded on request, into a folder the user named.
 
-**Вне ядра.** Механизм «программа несёт стартовый файл и набор демо-файлов»
-родился не в видеомонтаже; в NLE он выродился в «скачайте материал уроков», и
-пятью строками ядра его устройство описать нечем. Blender здесь —
-ПРОИСХОЖДЕНИЕ механизма и источник «фишки фишки» ниже; VS Code нужен как
-противоположный полюс: сознательный отказ от демо-проекта в пользу
-чек-листа по СВОЕМУ проекту.
+**Outside the core.** The mechanism "the program carries a starter file and a set of demo files" was not born in video editing; in NLEs it degenerated into "download the lesson material", and it cannot be described by five lines of the core. Blender is here the ORIGIN of the mechanism and the source of "the trick behind the trick" below; VS Code is needed as the opposite pole: a deliberate refusal of a demo project in favor of a checklist for YOUR OWN project.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Blender | 5.2 LTS | Startup File · Application Templates · Demo Files | три разных вещи под одной крышей. `File ‣ Defaults ‣ Save Startup File` делает ТЕКУЩУЮ сцену тем, что открывается при запуске; `File ‣ New ‣ …` предлагает шаблоны приложения (среди них Video Editing — готовое рабочее место монтажёра: Sequencer, Preview, урезанный Properties, сцена 1920×1080 24 fps длиной 10 с); демо-файлы (сцена каждой заставки, сцены Geometry Nodes) качаются с сайта отдельно и в установщик не входят. `File ‣ Defaults ‣ Load Factory Settings` возвращает и стартовый файл, и настройки |
-| Visual Studio Code | 1.136 | Walkthroughs | «multi-step checklist featuring rich content» — чек-лист с картинками и кнопкой-действием у каждого шага, живущий на стартовой странице. Демо-проекта нет ПРИНЦИПИАЛЬНО: шаги ведут по проекту пользователя, а не по чужому |
+| Blender | 5.2 LTS | Startup File · Application Templates · Demo Files | three different things under one roof. `File ‣ Defaults ‣ Save Startup File` makes the CURRENT scene what opens at launch; `File ‣ New ‣ …` offers application templates (among them Video Editing — a ready workspace for the editor: Sequencer, Preview, a trimmed Properties panel, a scene 1920×1080 at 24 fps, 10 s long); demo files (the scene of each splash, Geometry Nodes scenes) are downloaded from the site separately and are not in the installer. `File ‣ Defaults ‣ Load Factory Settings` returns both the startup file and the settings |
+| Visual Studio Code | 1.136 | Walkthroughs | "multi-step checklist featuring rich content" — a checklist with pictures and an action button at each step, living on the start page. There is deliberately NO demo project: the steps lead through the user's project, not someone else's |
 
-## Фишка фишки
+## The trick behind it
 
-Груз, которого одна строка статусбара не вмещает в принципе, здесь —
-**СОСТОЯНИЕ: целиком собранная работа**. Строка несёт глагол («что делает эта
-кнопка»), демо несёт существительное — шесть дорожек с именами, шестнадцать
-клипов, переход, регион с loop, кривые на эффектах и морфер поверх двух
-событий, причём в правильных отношениях друг с другом. Такой груз не
-сокращается: его нельзя пересказать в 160 символов, потому что ценность в
-связях, а не в перечне. У нас этот груз УЖЕ упакован — 57 КБ `.otio`, которые
-пишет `kt-cli demo`, — и упирается не в текст и не в перевод, а в восемь
-файлов, которых нет.
+What one status-bar line cannot hold in principle is here — **STATE: a fully assembled work**. A line carries a verb ("what this button does"); a demo carries a noun — six named tracks, sixteen clips, a transition, a loop region, curves on effects, and a morpher over two events, all in the right relations to one another. Such cargo does not get shorter: it cannot be retold in 160 characters, because its value is in the connections, not in the list. We already have this cargo PACKED — 57 KB of `.otio` that `kt-cli demo` writes — and it runs into not text and not translation, but into eight files that do not exist.
 
-**1. Демо у Blender спроектирован как непортящийся, и это отдельная работа, а
-не побочный эффект.** Шаблон приложения держит СВОЮ конфигурацию:
-`./config/{APP_TEMPLATE_ID}/startup.blend` вместо `./config/startup.blend`.
-Манул говорит прямо: «Bundled blend-files `startup.blend` and `userpref.blend`
-are considered _Factory Settings_ and are never overwritten», а для отката есть
-отдельная команда «Load Template Factory Settings» — точный аналог общего Load
-Factory Settings, но в границах шаблона. Смысл конструкции: учиться на демо
-можно только если его не жалко, а не жалко его только если возврат гарантирован
-и не трогает твои настройки. Кто открывает демо оригиналом, у того второго раза
-не будет.
+**1. Blender's demo is designed to be non-destructive, and this is separate work, not a side effect.** An application template keeps ITS OWN configuration: `./config/{APP_TEMPLATE_ID}/startup.blend` instead of `./config/startup.blend`. The manual says plainly: "Bundled blend-files `startup.blend` and `userpref.blend` are considered _Factory Settings_ and are never overwritten", and for rollback there is a separate command "Load Template Factory Settings" — the exact analog of the general Load Factory Settings, but within the bounds of the template. The point of the construction: one can learn from a demo only if it is not a pity to lose it, and it is not a pity only if return is guaranteed and does not touch your own settings. Whoever opens the demo as the original has no second time.
 
-**2. Final Cut Pro не кладёт демо в установщик, и это не про размер дистрибутива
-— это про владение.** `Final Cut Pro ‣ Download Demo Project` просит указать
-каталог: библиотека с первой секунды лежит там, где велел пользователь, и
-является ЕГО копией. Апдейт программы её не перезапишет, а испортить её —
-нормальный исход, а не поломка поставки. Ровно та же мысль, что у Blender,
-достигнутая другим способом: демо обязано быть копией.
+**2. Final Cut Pro does not put the demo into the installer, and this is not about the size of the distribution — it is about ownership.** `Final Cut Pro ‣ Download Demo Project` asks for a folder: from the first second the library lies where the user told it to, and IS HIS COPY. A program update will not overwrite it, and breaking it is a normal outcome, not a fault of the delivery. Exactly the same thought as Blender's, reached by another route: a demo must be a copy.
 
-**3. Наше демо — единственная форма справки в проекте, которая не может
-протухнуть молча, и ровно поэтому видно, что она протухла наполовину.** Его
-гоняет обычный `cargo test` (`src/apps/kt-cli/tests/cli.rs`, t151: в файле
-обязаны быть `Transition.1` и `Marker.2`, а `roundtrip` — байт-стабилен) и
-конвейер скриншотов сайта. Но проверяется СХЕМА ФАЙЛА, а не то, что монтаж
-играется: тот же бинарь, который демо написал, отказывается его отрендерить —
-`kt-cli demo d.otio && kt-cli render d.otio o.wav` выходит с кодом 1 на первом
-же пути (`src/apps/kt-cli/src/main.rs:60`, `return 1` вместо заглушки). Демо,
-за которым стоит тест, но нет материала, — это проверенная схема пустоты.
+**3. Our demo is the only form of help in the project that cannot go stale silently — and that is exactly why it is visible that it has gone half-stale.** The ordinary `cargo test` runs it (`src/apps/kt-cli/tests/cli.rs`, t151: the file must contain `Transition.1` and `Marker.2`, and `roundtrip` must be byte-stable), and so does the screenshot pipeline of the site. But what is checked is the SCHEMA of the file, not whether the edit plays: the same binary that wrote the demo refuses to render it — `kt-cli demo d.otio && kt-cli render d.otio o.wav` exits with code 1 on the very first path (`src/apps/kt-cli/src/main.rs:60`, `return 1` instead of a placeholder). A demo that has a test behind it but no material is a verified schema of emptiness.
 
-## Плюсы
+## Pros
 
-- **Учит структуре, а не функциям.** Ни подсказка, ни пункт меню, ни описание
-  эффекта не могут показать, что дорожки называют, регион ставят на кусок,
-  который переслушивают, а морфер вешают на две соседние сцены сразу. Демо
-  показывает это одним взглядом, потому что несёт готовые ОТНОШЕНИЯ.
-- **Не устаревает молча, если его открывают тестом.** Формат едет вперёд —
-  генератор демо перестаёт компилироваться или его файл перестаёт совпадать с
-  golden. Из всех справочных артефактов такое свойство есть только у демо и у
-  скриншотов (F-HLP-032); у прозы его нет никакого.
-- **Обратимость делает смелым.** Устройство Blender (своя конфигурация у
-  шаблона) и устройство Apple (копия в каталоге пользователя) дают одно и то
-  же следствие: испортить демо — это нормальный ход обучения, а не потеря
-  поставки. Пользователь начинает жать на всё.
-- **Демо — единственный вход, где справка не требует чтения.** Он работает и
-  для того, кто вообще не открывает документацию (по опыту Р.38 это наш
-  владелец: претензии приходят из программы, не из вопросов к тексту).
-- **У нас он почти бесплатен.** Генератор уже написан, уже вызывается в
-  конвейере и уже даёт валидный проект: `p.normalize()` и `p.validate()` стоят
-  последними строками `demo_project()`.
+- **It teaches structure, not functions.** Neither a hint, nor a menu item, nor an effect description can show that tracks are named, that a region is set on a piece that is listened to again, and that a morpher is hung on two neighboring scenes at once. A demo shows this at one glance, because it carries ready-made RELATIONS.
+- **It does not go stale silently if it is opened by a test.** The format moves forward — the demo generator stops compiling, or its file stops matching the golden. Of all the reference artifacts, only the demo and the screenshots (F-HLP-032) have this property; prose has none.
+- **Reversibility makes one bold.** Blender's design (its own configuration for the template) and Apple's design (a copy in the user's folder) give the same consequence: breaking the demo is a normal move in learning, not a loss of delivery. The user starts pressing everything.
+- **The demo is the only entry point where the help requires no reading.** It works even for someone who never opens the documentation (by the experience of R.38 this is our owner: complaints come from the program, not from questions to the text).
+- **For us it is almost free.** The generator is already written, already called in the pipeline, and already yields a valid project: `p.normalize()` and `p.validate()` stand as the last lines of `demo_project()`.
 
-## Минусы
+## Cons
 
-- **Демо, собранное чтобы впечатлить, не учит.** Ровно это возражение и звучит
-  в цитате ниже: сцена, показывающая мастерство автора, для новичка нечитаема.
-  Демо-проект — учебный жанр, а не витрина, и это два разных файла.
-- **Материал — самая дорогая часть.** У Resolve и Premiere он вынесен в
-  отдельную загрузку именно поэтому. Всё, что мы положим в тарбол, мы будем
-  таскать в каждом релизе и обязаны будем держать декодируемым.
-- **Демо стареет иначе, чем код.** Файл проекта ловится тестом; ПРАВИЛЬНОСТЬ
-  монтажа — нет. Если завтра морфер научится делать иначе, демо останется
-  синтаксически верным и содержательно устаревшим, а сказать об этом некому.
-- **Синтетический материал не показывает главного.** Разобрать по нему
-  структуру можно, а увидеть, как выглядит и звучит настоящий исходник —
-  нельзя; филмстрип из мандельброта не учит смотреть филмстрип.
-- **Демо-проект — соблазн стать вторым лицом продукта.** У Blender демо-файлы
-  давно живут отдельной жизнью (заставка каждого релиза); поддерживать это
-  дороже, чем кажется, и к обучению отношения уже не имеет.
-- **Сломанный пример живёт в поставке годами, и чинить его приходят по второму
-  кругу.** Один и тот же пример из `README.md` OpenTimelineIO приехал в трекер
-  дважды с разницей в год (#1554 24.02.2023, #1694 10.02.2024), пример
-  `flatten_video_tracks.py` падал исключением (#811). Тест «файл соответствует
-  схеме» такого не ловит по построению — это ровно наш t151, и это цена, а не
-  гипотеза.
-- **Материал упирается в лицензию и в место хранения раньше, чем в вес.** Когда
-  консорциум, ведущий OpenTimelineIO — формат, в котором мы храним проект, —
-  собрался сделать демо-таймлайн, первыми вопросами стали «каков минимум по формату материала» и «хранить ли
-  его централизованно, и если да, то где» (otio #699, 14.05.2020). То есть
-  решение «положим в тарбол настоящее видео» приносит не только байты, но и
-  правовой хвост в каждом релизе — и объяснение, откуда взялась каждая секунда.
+- **A demo built to impress does not teach.** This very objection sounds in the quote below: a scene that shows the author's mastery is unreadable for a novice. A demo project is a teaching genre, not a showcase, and these are two different files.
+- **The material is the most expensive part.** Resolve and Premiere have moved it into a separate download for exactly this reason. Whatever we put into the tarball we will carry in every release, and we will have to keep it decodable.
+- **A demo ages differently from code.** The project file is caught by a test; the CORRECTNESS of the edit is not. If tomorrow the morpher learns to work differently, the demo stays syntactically correct and substantively outdated, and there is no one to tell about it.
+- **Synthetic material does not show the main thing.** One can analyze the structure from it, but one cannot see what a real source looks like and sounds like; a filmstrip made of a Mandelbrot set does not teach one how to look at a filmstrip.
+- **A demo project is a temptation to become a second face of the product.** Blender's demo files have long lived a separate life (the splash of each release); maintaining that is more expensive than it seems, and it no longer has to do with learning.
+- **A broken example lives in the distribution for years, and people come back to fix it a second time.** The same example from the OpenTimelineIO `README.md` came to the tracker twice, a year apart (#1554 on 24.02.2023, #1694 on 10.02.2024); the example `flatten_video_tracks.py` crashed with an exception (#811). A test "the file matches the schema" does not catch this by construction — this is exactly our t151, and it is a cost, not a hypothesis.
+- **Material runs into licensing and storage sooner than into weight.** When the consortium behind OpenTimelineIO — the format in which we store the project — set out to make a demo timeline, the first questions were "what is the minimum for the format of the material" and "whether to store it centrally, and if so, where" (otio #699, 14.05.2020). That means the decision "put a real video into the tarball" brings not only bytes but a legal tail in every release — and an explanation of where every second came from.
 
-## Что говорят пользователи
+## What users say
 
-Демо-файл как документация устройства — за этим их и открывают:
+A demo file as documentation of a mechanism — that is what people open it for:
 
 > I knew the gear was driven by a driver, but I never play with drivers so I
 > downloaded the file to check it out and learn something.
 > — Bobo_The_Imp, 17.02.2020,
 > https://blenderartists.org/t/distance-driver-being-messed-up-by-follow-path-constraint/1207534
 
-Обратная сторона, дословно про предложение взять эффектную сцену в комплект
-демо-файлов релиза:
+The reverse side, verbatim, about the proposal to include a spectacular scene in the release's demo files:
 
 > I don’t think so, this is way too complicated for beginners to learn anything.
 > — Xeofrios, 22.06.2023,
 > https://blenderartists.org/t/3d-artists-hate-this-one-weird-donut-trick/1469959
 
-Со стороны пяти NLE живых цитат по-прежнему нет (форумы вендоров трекерами не
-являются, `_trackers.md`), зато есть трекер, который говорит ровно о нашем
-дефекте. `OpenTimelineIO` — референсная библиотека того самого формата, в
-котором мы храним проект (писатель у нас свой, `kt-otio`), и её пример из
-`README.md` приезжал в трекер сломанным дважды с разницей в год:
+From the side of the five NLEs there are still no live quotes (vendor forums are not trackers, `_trackers.md`), but there is a tracker that speaks exactly about our defect. `OpenTimelineIO` is the reference library of the very format in which we store the project (the writer is our own, `kt-otio`), and its example from `README.md` came to the tracker broken twice, a year apart:
 
-> «The Python example from `README.md` returns an error.»
-> — otio #1554 «Example in the README does not work», 24.02.2023,
+> "The Python example from `README.md` returns an error."
+> — otio #1554 "Example in the README does not work", 24.02.2023,
 > https://github.com/AcademySoftwareFoundation/OpenTimelineIO/issues/1554
 
-> «I expected the sample code to run without errors.»
-> — otio #1694 «Sample Python code throws an error», 10.02.2024,
+> "I expected the sample code to run without errors."
+> — otio #1694 "Sample Python code throws an error", 10.02.2024,
 > https://github.com/AcademySoftwareFoundation/OpenTimelineIO/issues/1694
 
-Второй заводили на том же примере, той же строкой и с той же ошибкой
-`AttributeError`, что и первый, — то есть между двумя отчётами пример
-оставался сломанным в поставке. Тот же класс отдельно на программе-примере:
+The second was filed on the same example, with the same line and the same `AttributeError` as the first — that is, between the two reports the example stayed broken in the distribution. The same class, on a sample program separately:
 
-> «The flatten_video_tracks.py example program fails with an exception.»
-> — otio #811 «flatten_video_tracks example is broken», 07.10.2020,
+> "The flatten_video_tracks.py example program fails with an exception."
+> — otio #811 "flatten_video_tracks example is broken", 07.10.2020,
 > https://github.com/AcademySoftwareFoundation/OpenTimelineIO/issues/811
 
-СИГНАЛ: пример из поставки, который не запускается — 3 задачи в otio, `\b(example|demo)s?\b[^.]{0,30}(broken|does ?n.?t work|not work|fail|error|throw|outdated)|\bsample\b[^.]{0,20}\b(code|project|file|data|media)\b[^.]{0,30}(broken|error|throw|fail|not work)`; доля 0.4% против 0.2% в mlt (1 из 601)
+SIGNAL: an example from the distribution that does not run — 3 tasks in otio, `\b(example|demo)s?\b[^.]{0,30}(broken|does ?n.?t work|not work|fail|error|throw|outdated)|\bsample\b[^.]{0,20}\b(code|project|file|data|media)\b[^.]{0,30}(broken|error|throw|fail|not work)`; the share is 0.4% against 0.2% in mlt (1 of 601)
 
-Числа маленькие, и это часть находки: класс редкий, потому что примеров в
-поставке почти ни у кого нет — но там, где они есть, они ломаются и лежат
-сломанными. Единственная задача `mlt` — наш случай слово в слово: демо «My Name
-is..» из комплекта самой библиотеки падало не от API, а на файлах, которых нет
-(«Failed to load "+My name is Inigo Montoya.txt"», #35, 12.12.2013, закрыта).
-Разница только в том, что у mlt это заметил посторонний человек на macOS, а у
-нас несуществующие исходники демо не видит ни один тест: t151 в них не
-заглядывает.
+The numbers are small, and that is part of the finding: the class is rare, because almost nobody has examples in the distribution — but where they exist, they break and lie broken. The single task in `mlt` is our case word for word: the demo "My Name is.." from the library's own kit failed not because of the API but because of files that do not exist ("Failed to load "+My name is Inigo Montoya.txt"", #35, 12.12.2013, closed). The only difference is that at mlt this was noticed by an outside person on macOS, while for us the nonexistent source files of the demo are seen by no test: t151 does not look into them.
 
-Про цену второй формы ответа — не файлом, а окном. У OpenShot есть встроенное
-обучение всплывающими окнами, и трекер знает о нём 13 задач про САМО окно:
-«Cant dismiss tutorial popup window» (#1949), «Tutorial resizes window» (#736),
-«Tutorial blocked by taskbar» (#794), «Every time a tutorial window pops up, it
-forces the application out of maximized» (#1447). Долей это число здесь не
-считается: дамп openshot неполный (см. «Источники»), так что 13 — нижняя
-граница, а не доля. Смысл в другом: у ответа формы «файл» своей оконной
-механики нет вовсе, ломаться в нём нечему, и цена демо-проекта целиком в
-материале, а не в поведении.
+About the price of the second form of answer — not a file but a window. OpenShot has built-in learning via pop-up windows, and the tracker knows 13 tasks about the WINDOW ITSELF: "Cant dismiss tutorial popup window" (#1949), "Tutorial resizes window" (#736), "Tutorial blocked by taskbar" (#794), "Every time a tutorial window pops up, it forces the application out of maximized" (#1447). The share is not computed here: the openshot dump is incomplete (see "Sources"), so 13 is a lower bound, not a share. The point is different: the "file" form of answer has no window mechanics of its own, there is nothing in it to break, and the price of the demo project as a whole lies in the material, not in behavior.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-**Генератор демо-монтажа целиком.** `src/apps/kt-cli/src/main.rs:363`,
-`demo_project()` — 213 строк, комментарий в шапке честно называет назначение:
-«Демо-монтаж для скриншотов сайта (порт `gen_project` из `site/screenshots.py`
-— убирает второго писателя формата, Р.24 этап 11)». Что он строит (проверено
-запуском `kt-cli demo`, 57 040 байт, `v: 3`):
+**The whole demo-edit generator.** `src/apps/kt-cli/src/main.rs:363`, `demo_project()` — 213 lines; the comment in the header honestly states the purpose: "Demo edit for the site screenshots (a port of `gen_project` from `site/screenshots.py` — it removes the second writer of the format, R.24 stage 11)". What it builds (checked by running `kt-cli demo`: 57 040 bytes, `v: 3`):
 
-- **шесть именованных дорожек** через `UiState.lane_names`: видео MAIN /
-  OVERLAY / PLATES, звук DIALOG / MUSIC / AMBIENCE, плюс морф-дорожка BATCH;
-- **16 клипов**: шесть подряд на MAIN (0–100 с), три на OVERLAY, один на
-  PLATES, диалог двумя кусками, музыка двумя, эмбиенс двумя;
-- **шесть меток** с именами — COLD OPEN, INTERVIEW IN, B-ROLL, NIGHT CITY,
-  MUSIC SWELL, OUTRO;
-- **регион 34–66 с и `loop_enabled = true`** — то есть демо открывается уже в
-  режиме, о котором Р.38 спрашивал «я не понимаю как удалить saved area region»;
-- **FX-цепочки**: Pan на трёх клипах, шум, EventGrid, glow, VHS,
-  Mirror + edges, а на музыке — SlowedReverb;
-- **автоматизация двух видов**: кривые `rate`/`mix` у SlowedReverb в тиках
-  МАТЕРИАЛА клипа и ход камеры кривыми `pan_x`/`pan_y`/`zoom` с `ease: true`;
-- **переход**: честный кроссфейд между музыкальными клипами, `in_offset` и
-  `out_offset` по 2 с;
-- **морфер**: FX-батч 48–80 с на дорожке BATCH, `MorphTargets::Clips` на два
-  события, патч `glow(0.5)`;
-- **состояние бина**: свободная раскладка, группы CAMERA (5 медиа) и SOUND
-  (3 медиа, `locked: true`), позиция курсора и зум таймлайна.
+- **six named tracks** via `UiState.lane_names`: video MAIN / OVERLAY / PLATES, audio DIALOG / MUSIC / AMBIENCE, plus the morph track BATCH;
+- **16 clips**: six in a row on MAIN (0–100 s), three on OVERLAY, one on PLATES, dialog in two pieces, music in two, ambience in two;
+- **six markers** with names — COLD OPEN, INTERVIEW IN, B-ROLL, NIGHT CITY, MUSIC SWELL, OUTRO;
+- **a region 34–66 s with `loop_enabled = true`** — that is, the demo opens already in the mode about which R.38 asked "I do not understand how to delete the saved area region";
+- **FX chains**: Pan on three clips, noise, EventGrid, glow, VHS, Mirror + edges, and SlowedReverb on the music;
+- **automation of two kinds**: `rate`/`mix` curves of SlowedReverb in ticks of the clip's MATERIAL, and the camera movement with `pan_x`/`pan_y`/`zoom` curves with `ease: true`;
+- **a transition**: an honest crossfade between the music clips, `in_offset` and `out_offset` of 2 s each;
+- **a morpher**: an FX batch of 48–80 s on the BATCH track, `MorphTargets::Clips` on two events, a `glow(0.5)` patch;
+- **bin state**: a free layout, groups CAMERA (5 media) and SOUND (3 media, `locked: true`), the cursor position and the timeline zoom.
 
-Это ровно тот список, который в такой заметке обычно приходится обещать. Он у
-нас написан, валидируется на выходе (`p.validate().expect("demo project is
-valid")`) и проверяется тестом t151.
+This is exactly the list that such a note usually has to promise. We have it written, it is validated on output (`p.validate().expect("demo project is valid")`), and it is checked by test t151.
 
-**Второй демо-проект, о котором легко забыть:** `src/fixtures/demo-3d.otio` —
-закоммиченный golden камер и Pan3d (t189, `src/libs/kt-otio/tests/convert.rs`).
-Он тоже ссылается на несуществующие `media/m1.mp4` и `media/m2.mp4`, и как
-демонстрация никем не используется.
+**A second demo project that is easy to forget:** `src/fixtures/demo-3d.otio` — the committed golden of cameras and Pan3d (t189, `src/libs/kt-otio/tests/convert.rs`). It too refers to the nonexistent `media/m1.mp4` and `media/m2.mp4`, and as a demonstration nobody uses it.
 
-### Чего не хватает
+### What is missing
 
-**1. Материала.** Восемь путей в файле — `media/drone_coast.mp4`,
-`city_night_broll.mp4`, `interview_camA.mp4`, `colorbars_plate.mp4`,
-`gradient_wash.mp4`, `music_bed.flac`, `voiceover_take3.wav`, `room_tone.wav` —
-и ни одного из этих файлов не существует. Их делает `gen_media()` в
-`site/screenshots.py`: пять `lavfi`-видео (mandelbrot, life, testsrc2,
-smptehdbars, gradients) и три звука (aevalsrc, anoisesrc) ВНЕШНИМ бинарником
-`ffmpeg`. Скрипт живёт в `site/`, в поставку не входит и из программы
-недостижим. Тезис «наш демо-проект самодостаточен, потому что материал
-синтетический» проверку не прошёл: синтетические источники (`synth:`) в этом
-проекте не используются вообще.
+**1. The material.** Eight paths in the file — `media/drone_coast.mp4`, `city_night_broll.mp4`, `interview_camA.mp4`, `colorbars_plate.mp4`, `gradient_wash.mp4`, `music_bed.flac`, `voiceover_take3.wav`, `room_tone.wav` — and not one of these files exists. They are made by `gen_media()` in `site/screenshots.py`: five `lavfi` videos (mandelbrot, life, testsrc2, smptehdbars, gradients) and three sounds (aevalsrc, anoisesrc) by an EXTERNAL `ffmpeg` binary. The script lives in `site/`, is not part of the distribution, and is unreachable from the program. The thesis "our demo project is self-sufficient because the material is synthetic" did not pass the check: the synthetic sources (`synth:`) are not used in this project at all.
 
-**2. Пути из GUI.** Меню Файл (`src/apps/kt-app/src/toolbar.rs:246`) — ровно
-семь пунктов: New, Open…, Import .ktproj…, | Save (Ctrl+S), Save As…, | Render
-to MP4…, | Quit. Демо-проекта нет ни в меню, ни на пустом состоянии, ни в
-поиске Ctrl+F. `New` даёт чистый лист — то самое место, где FCP предлагает
-скачать демо.
+**2. Paths from the GUI.** The File menu (`src/apps/kt-app/src/toolbar.rs:246`) has exactly seven items: New, Open…, Import .ktproj…, | Save (Ctrl+S), Save As…, | Render to MP4…, | Quit. There is no demo project in the menu, nor in the empty state, nor in the Ctrl+F search. `New` gives a clean sheet — exactly the place where FCP offers to download a demo.
 
-**3. Реестра команд у самого kt-cli.** Сообщение о неизвестной команде
-(`src/apps/kt-cli/src/main.rs:354`) перечисляет «version, new, roundtrip,
-render, export» — **`demo` и `convert` в нём отсутствуют, хотя обе реализованы
-в том же `match`** (строки 152 и 184). Полноценного `--help` нет: `kt-cli
---help` печатает то же сообщение и выходит с кодом 2 (проверено запуском). То
-есть единственный существующий вход в демо не назван даже там, где программа
-перечисляет свои входы. Это ровно правило 20 наоборот: команда не отросла сама,
-а осиротела — родственный случай тому, что t252 ловит в GUI.
+**3. A command registry in kt-cli itself.** The message about an unknown command (`src/apps/kt-cli/src/main.rs:354`) lists "version, new, roundtrip, render, export" — **`demo` and `convert` are absent from it, although both are implemented in the same `match`** (lines 152 and 184). There is no full `--help`: `kt-cli --help` prints the same message and exits with code 2 (checked by running). So the only existing entry to the demo is not named even where the program lists its entries. This is exactly rule 20 turned inside out: a command did not grow by itself, it was orphaned — a relative of what t252 catches in the GUI.
 
-### Что мешает
+### What gets in the way
 
-**Материал упирается в развилку из трёх путей, и у каждого свой упор.**
+**The material runs into a fork of three paths, and each has its own sticking point.**
 
-- **`synth:` — самодостаточно, но показывает не то.** Схема поддержана всюду:
-  разбор в `src/apps/kt-app/src/util.rs:13` (регистронезависимый с Р.33) и в
-  `src/apps/kt-cli/src/main.rs:21`, `docs/file-format.md` возит её verbatim
-  (п.147). Но: тумбы для таких медиа ОТКЛЮЧЕНЫ явным фильтром
-  `filter(|m| !m.path.starts_with("synth:"))` (`src/apps/kt-app/src/thumbs.rs:171`
-  и `add_media` там же), кадр синтетики — сплошной цвет, кодирующий номер тика
-  (`src/libs/kt-media/src/synthetic.rs`, `read_video_frame`), а длительность
-  источника в приложении зашита часом (`util.rs:42`). Про это уже написано
-  прямо в п.161 `docs/porting-notes.md`: «`synth:`-источники в приложении дают
-  только звук — сценариям про ПРЕВЬЮ нужен настоящий файл». Демо на `synth:`
-  оставит пустыми филмстрип и превью — то есть ровно то, ради чего демо
-  открывают. Волноформы, кстати, будут: пирамида пиков для `synth:` строится
-  в процессе (`util.rs:102`).
-- **Файлы в тарболе — вес и старение.** Зато настоящая картинка, и тогда демо
-  честно показывает, как выглядит материал.
-- **Генерация при первом открытии — упор в инварианты.** Сегодняшний генератор
-  зовёт внешний `ffmpeg`, а продукт себе этого не позволяет: инвариант 9
-  («ни временных файлов, ни внешнего бинарника `ffmpeg`») и инвариант 10
-  (бинарь не линкуется с libav\*, всё через dlopen). Внутри программы тот же
-  материал пришлось бы писать `kt_ffmpeg::Muxer` — то есть демо-медиа
-  становится обычным экспортом, у которого источник кадров синтетический.
-  Отдельно: `release-build.sh` проверяет «ldd без libav\*», и любое решение,
-  тянущее файлы в тарбол, проходит мимо этой проверки, но не мимо её духа.
+- **`synth:` — self-sufficient, but shows the wrong thing.** The scheme is supported everywhere: parsing in `src/apps/kt-app/src/util.rs:13` (case-insensitive since R.33) and in `src/apps/kt-cli/src/main.rs:21`; `docs/file-format.md` carries it verbatim (item 147). But: thumbnails for such media are DISABLED by an explicit filter `filter(|m| !m.path.starts_with("synth:"))` (`src/apps/kt-app/src/thumbs.rs:171` and `add_media` there), the frame of the synthetic source is a solid color encoding the tick number (`src/libs/kt-media/src/synthetic.rs`, `read_video_frame`), and the source duration in the application is hard-coded at some hour (`util.rs:42`). This is already written directly in item 161 of `docs/porting-notes.md`: "`synth:` sources in the application give only sound — scenarios about the PREVIEW need a real file". A demo on `synth:` would leave the filmstrip and previews empty — that is, exactly what the demo is opened for. Waveforms, by the way, will be there: the peak pyramid for `synth:` is built in process (`util.rs:102`).
+- **Files in the tarball — weight and aging.** But then the picture is real, and the demo honestly shows what the material looks like.
+- **Generation on first opening — a clash with the invariants.** Today's generator calls an external `ffmpeg`, and the product does not allow itself that: invariant 9 ("no temporary files and no external `ffmpeg` binary") and invariant 10 (the binary is not linked with libav\*, everything goes through dlopen). Inside the program the same material would have to be written by `kt_ffmpeg::Muxer` — that is, the demo media becomes an ordinary export whose frame source is synthetic. Separately: `release-build.sh` checks "ldd without libav\*", and any solution that pulls files into the tarball passes this check without violating its spirit.
 
-**Инвариант 8 добавляет ступеньку.** Тумбы берутся из sidecar
-`<project>.ktindex.db`, «пока индекса нет — плейсхолдеры». Свежесозданное демо
-первые секунды выглядит недостроенным независимо от того, каким путём получен
-материал; для ПЕРВОГО впечатления это важнее, чем для рабочего проекта.
+**Invariant 8 adds a step.** Thumbnails are taken from the sidecar `<project>.ktindex.db`, and "while there is no index — placeholders". A freshly created demo looks unfinished for the first seconds, regardless of how the material was obtained; for the FIRST impression this matters more than for a working project.
 
-**Правило 20 («ничего не отрастает само»)** запрещает молча создавать каталоги
-в `$HOME`: место для демо обязан назвать пользователь — как это и сделано у
-Apple. **Правило 17 (парные способы одинаковы)** нарушено дважды и в разные
-стороны: `demo` умеет CLI и не умеет GUI; открыть проект умеет GUI (с
-заглушками, п.207), а отрендерить его CLI отказывается совсем. **Правило 18**
-требует, чтобы пункт меню сказал ЧТО и ГДЕ: «Открыть демо-проект» обязан
-сказать, куда файл ляжет, до того как ляжет.
+**Rule 20 ("nothing grows by itself")** forbids silently creating directories in `$HOME`: the place for the demo must be named by the user — as Apple did. **Rule 17 (paired ways are the same)** is violated twice and in opposite directions: `demo` works in the CLI and does not work in the GUI; opening a project works in the GUI (with stubs, item 207), while rendering it in the CLI refuses altogether. **Rule 18** requires a menu item to say WHAT and WHERE: "Open demo project" must say where the file will land before it lands.
 
-### Какие инварианты задевает
+### Which invariants it affects
 
-Корневой `CLAUDE.md`: **8** (тумбы/волноформы из sidecar — демо на старте будет
-с плейсхолдерами), **9** и **10** (генерация материала внутри продукта — только
-через `kt_ffmpeg::Muxer`, внешний `ffmpeg` запрещён). Инвариант 12 не
-задевается: демо — это файл, а не анимация, repaint от него не растёт.
-Чек-лист UI: **17** (парные способы), **18** (пункт меню говорит ЧТО и ГДЕ),
-**20** (ничего не отрастает само, каталог называет пользователь).
+The root `CLAUDE.md`: **8** (thumbnails/waveforms from the sidecar — the demo will start with placeholders), **9** and **10** (generating the material inside the product — only through `kt_ffmpeg::Muxer`, an external `ffmpeg` is forbidden). Invariant 12 is not affected: the demo is a file, not an animation, so repaint does not grow because of it. UI checklist: **17** (paired ways), **18** (the menu item says WHAT and WHERE), **20** (nothing grows by itself, the user names the folder).
 
-АДРЕС: `src/apps/kt-cli/src/main.rs:60` — класс «пример из поставки не
-запускается» (otio #1554, #1694, #811; mlt #35) у нас ВОЗМОЖЕН, уже случился и
-не ловится ничем: на первом же отсутствующем исходнике render печатает
-`{resolved}: {e}` и делает `return 1` вместо `open_source_or_placeholder`,
-которым в той же ситуации пользуется GUI
-(`src/libs/kt-media/src/placeholder.rs`, F-HLP-012). Демо пишет тот же бинарь
-(`demo_project()`, `main.rs:363`), и восемь путей в `media/` не существуют ни в
-поставке, ни в дереве. Единственный страж — t151
-(`src/apps/kt-cli/tests/cli.rs`) — проверяет СХЕМУ файла (`Transition.1`,
-`Marker.2`, байт-стабильный `roundtrip`) и не открывает ни одного медиа, так
-что «пример не запускается» проходит мимо него по построению: у otio ровно так
-же тесты формата оставались зелёными весь год между #1554 и #1694, пока пример
-из README падал.
+ADDRESS: `src/apps/kt-cli/src/main.rs:60` — the class "an example from the distribution does not run" (otio #1554, #1694, #811; mlt #35) is POSSIBLE for us, has already happened, and is not caught by anything: at the first missing source, render prints `{resolved}: {e}` and does `return 1` instead of `open_source_or_placeholder`, which the GUI uses in the same situation (`src/libs/kt-media/src/placeholder.rs`, F-HLP-012). The demo is written by the same binary (`demo_project()`, `main.rs:363`), and the eight paths in `media/` exist neither in the distribution nor in the tree. The only guard is t151 (`src/apps/kt-cli/tests/cli.rs`): it checks the SCHEMA of the file (`Transition.1`, `Marker.2`, a byte-stable `roundtrip`) and opens not a single media, so "the example does not run" passes it by construction: in otio exactly the same way the format tests stayed green all year between #1554 and #1694, while the example from the README was crashing.
 
-Дефект «demo пишет то, что render не читает» уже вынесен отдельной задачей;
-заметке он нужен как доказательство, что класс наш, а не чужой.
+The defect "demo writes what render does not read" has already been moved into a separate task; for this note it is needed as proof that the class is ours, not someone else's.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии раунда: материал (чем именно наполнить) и вход (пункт меню + список команд CLI) |
-| Где основная работа | kt-cli (материал и реестр команд), kt-app (пункт меню, сохранение копии), kt-media (что играет, пока индекса нет) |
-| Формат проекта | не трогает: демо пишет штатный `kt_otio::save_project`, файл сегодня `v: 3` |
-| Тесты, которые придётся написать | `cli::demo_renders_out_of_the_box` (demo → render без ручной подготовки); проверка «список команд в сообщении об ошибке == набор веток диспетчера»; харнесс-тест пункта меню в семье t76 |
-| Зависит от | F-HLP-032 (конвейер уже гоняет демо), F-HLP-012 (заглушки — фолбэк, если материал всё-таки потерян), F-HLP-020 (пустое состояние — второе место, откуда демо предлагают) |
-| Ломает совместимость | нет |
+| Size | M — 2 stages of the round: the material (what exactly to fill it with) and the entry (a menu item + the CLI command list) |
+| Where the main work is | kt-cli (the material and the command registry), kt-app (the menu item, saving a copy), kt-media (what plays while there is no index) |
+| Project format | not touched: the demo writes the standard `kt_otio::save_project`, the file is `v: 3` today |
+| Tests to write | `cli::demo_renders_out_of_the_box` (demo → render without manual preparation); a check "the command list in the unknown-command message == the set of dispatcher branches"; a harness test of the menu item in the t76 family |
+| Depends on | F-HLP-032 (the pipeline already runs the demo), F-HLP-012 (stubs — the fallback if the material is lost anyway), F-HLP-020 (the empty state — the second place from which the demo is offered) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём. Дешевле, чем выглядит: монтаж уже написан, проверен тестом и каждый раз
-проезжает через конвейер скриншотов — не хватает материала и двери. Разведка
-поменяла постановку в одном месте: задача не «сделать демо-проект», а «сделать
-имеющийся демо-проект открываемым», и главный дефект не в GUI, а в том, что
-файл ссылается на восемь несуществующих исходников.
+We take it. Cheaper than it looks: the edit is already written, checked by a test, and every time passes through the screenshot pipeline — what is missing is the material and the door. The reconnaissance changed the framing in one place: the task is not "make a demo project" but "make the existing demo project openable", and the main defect is not in the GUI but in the fact that the file refers to eight nonexistent sources.
 
-ТЕСТ: cli::demo_renders_out_of_the_box — сегодня падает, и это проверено
-запуском: `kt-cli demo d.otio` пишет 57 КБ и код 0, а следом `kt-cli render
-d.otio o.wav` печатает «media/drone_coast.mp4: decode failed: opening file: No
-such file or directory (-2)» и выходит с кодом 1 на ПЕРВОМ же из восьми путей
-(`src/apps/kt-cli/src/main.rs:60` — `return 1` вместо `open_source_or_placeholder`,
-которым в той же ситуации пользуется GUI).
+TEST: cli::demo_renders_out_of_the_box — fails today, and this is verified by running: `kt-cli demo d.otio` writes 57 KB and exits with code 0, and then `kt-cli render d.otio o.wav` prints "media/drone_coast.mp4: decode failed: opening file: No such file or directory (-2)" and exits with code 1 on the FIRST of the eight paths (`src/apps/kt-cli/src/main.rs:60` — `return 1` instead of `open_source_or_placeholder`, which the GUI uses in the same situation).
 
-ПРОВЕРКА: src/apps/kt-cli/src/main.rs — клаузула «список команд в сообщении
-о неизвестной команде собирается из того же места, что и ветки диспетчера:
-`demo` и `convert` либо названы в обоих, либо ни в одном»; сегодня строка 354
-перечисляет пять команд из семи, а `kt-cli --help` попадает в ту же ветку и
-выходит с кодом 2.
+CHECK: src/apps/kt-cli/src/main.rs — the clause "the command list in the message about an unknown command is assembled from the same place as the dispatcher branches: `demo` and `convert` are either named in both or in neither"; today line 354 lists five commands out of seven, and `kt-cli --help` falls into the same branch and exits with code 2.
 
-ОТЛОЖЕНО: до F-HLP-020 — где именно предлагать демо (пустое состояние против
-пункта меню Файл) решается там; здесь фиксируется только требование, что путь
-из GUI обязан быть и обязан открывать КОПИЮ в каталоге, который назвал
-пользователь, а не оригинал из поставки.
+DEFERRED: until F-HLP-020 — where exactly to offer the demo (the empty state versus the File menu item) is decided there; here only the requirement is fixed that the path from the GUI must open a COPY in the folder the user named, and not the original from the distribution.
 
-## Источники
+## Sources
 
-- `src/apps/kt-cli/src/main.rs` (`demo_project()`, диспетчер команд),
-  `src/apps/kt-cli/tests/cli.rs` (t151), `site/screenshots.py` (`gen_media`,
-  `gen_project`), `src/apps/kt-app/src/toolbar.rs`,
-  `src/apps/kt-app/src/thumbs.rs`, `src/apps/kt-app/src/util.rs`,
-  `src/libs/kt-media/src/synthetic.rs`, `docs/porting-notes.md` пп. 147, 161,
-  206–209, `docs/file-format.md` — прочитано и проверено запуском бинарей
-  `src/target/debug/kt-cli` 07.09.2026.
-- Final Cut Pro 12.3, «Download a demo project»:
+- `src/apps/kt-cli/src/main.rs` (`demo_project()`, the command dispatcher), `src/apps/kt-cli/tests/cli.rs` (t151), `site/screenshots.py` (`gen_media`, `gen_project`), `src/apps/kt-app/src/toolbar.rs`, `src/apps/kt-app/src/thumbs.rs`, `src/apps/kt-app/src/util.rs`, `src/libs/kt-media/src/synthetic.rs`, `docs/porting-notes.md` items 147, 161, 206–209, `docs/file-format.md` — read and checked by running the binary `src/target/debug/kt-cli` on 07.09.2026.
+- Final Cut Pro 12.3, "Download a demo project":
   https://support.apple.com/guide/final-cut-pro/download-a-demo-project-ver4dec14a61/mac
-  (дата обращения 2026-09-07; страница помечена 26.08.2026)
-- Blender 5.2 LTS Manual, «Application Templates»:
+  (access date 2026-09-07; the page is marked 26.08.2026)
+- Blender 5.2 LTS Manual, "Application Templates":
   https://docs.blender.org/manual/en/latest/advanced/app_templates.html
-  (дата обращения 2026-09-07)
-- Blender 5.2 LTS Manual, «Defaults» (Save Startup File / Load Factory
-  Settings):
+  (access date 2026-09-07)
+- Blender 5.2 LTS Manual, "Defaults" (Save Startup File / Load Factory Settings):
   https://docs.blender.org/manual/en/latest/getting_started/configuration/defaults.html
-  (дата обращения 2026-09-07)
-- Blender 5.2 LTS Manual, «Video Editing App Template»:
+  (access date 2026-09-07)
+- Blender 5.2 LTS Manual, "Video Editing App Template":
   https://docs.blender.org/manual/en/latest/video_editing/setup/app_template.html
-  (дата обращения 2026-09-07)
-- Blender Demo Files (демо-файлы качаются отдельно, в установщик не входят):
-  https://www.blender.org/download/demo-files/ (дата обращения 2026-09-07)
-- VS Code 1.136, UX Guidelines, «Walkthroughs»:
+  (access date 2026-09-07)
+- Blender Demo Files (the demo files are downloaded separately, not in the installer):
+  https://www.blender.org/download/demo-files/ (access date 2026-09-07)
+- VS Code 1.136, UX Guidelines, "Walkthroughs":
   https://code.visualstudio.com/api/ux-guidelines/walkthroughs
-  (дата обращения 2026-09-07; страница помечена 02.09.2026)
-- DaVinci Resolve 21, страница Training (книги-практикумы, материал уроков
-  отдельно): https://www.blackmagicdesign.com/products/davinciresolve/training
-  (дата обращения 2026-09-07)
-- Цитаты: blenderartists.org, треды 1207534 и 1469959 (см. раздел выше).
-- Трекеры (выгрузка 08.09.2026, дампы в `~/.cache/kinotrain/trackers/`, в
-  репозиторий не попадают — `_trackers.md`, раздел про лицензии): `otio` #699,
-  #811, #1554, #1694; `mlt` #35; `openshot` #736, #794, #1447, #1949 (и ещё 9
-  того же класса); `pitivi` #1536. Число строки `СИГНАЛ:` воспроизводится
-  `python3 src/scripts/tracker-rank.py --query '<фильтр>'` с тем же фильтром.
-- **Состояние выгрузки на 08.09.2026:** `blender-vse` и `ffmpeg-trac` пусты, у
-  `openshot` дамп неполный (state-файл показывает перезапуск с первой страницы
-  при 4516 записанных задачах из ~4907). Поэтому в доле строки `СИГНАЛ:`
-  участвуют только `otio` 680 и `mlt` 601 — оба с `done: true`, — а тринадцать
-  задач openshot про окно обучения приведены счётом без доли.
-- Проверки живьём для программ вне ядра не предполагается (правило
-  `_editors.md`); строки Premiere, After Effects и VEGAS Pro помечены
-  `[НЕ ПРОВЕРЕНО]` — helpx и справка Boris FX из этого окружения содержимого
-  не отдают, а бюджет `WebSearch` сессии исчерпан.
+  (access date 2026-09-07; the page is marked 02.09.2026)
+- DaVinci Resolve 21, the Training page (workbooks; the lesson material separately):
+  https://www.blackmagicdesign.com/products/davinciresolve/training
+  (access date 2026-09-07)
+- Quotes: blenderartists.org, threads 1207534 and 1469959 (see the section above).
+- Trackers (export of 08.09.2026; the dumps are in `~/.cache/kinotrain/trackers/` and do not go into the repository — `_trackers.md`, the section on licenses): `otio` #699, #811, #1554, #1694; `mlt` #35; `openshot` #736, #794, #1447, #1949 (and 9 more of the same class); `pitivi` #1536. The number in the `SIGNAL:` line is reproduced by `python3 src/scripts/tracker-rank.py --query '<filter>'` with the same filter.
+- **State of the export as of 08.09.2026:** `blender-vse` and `ffmpeg-trac` are empty; `openshot` has an incomplete dump (the state file shows a restart from the first page with 4516 tasks recorded out of about 4907). Therefore only `otio` 680 and `mlt` 601 — both with `done: true` — take part in the share of the `SIGNAL:` line, and the thirteen openshot tasks about the tutorial window are given as a count without a share.
+- No live verification is expected for programs outside the core (the `_editors.md` rule); the Premiere, After Effects and VEGAS Pro rows are marked `[NOT VERIFIED]` — helpx and the Boris FX help do not give out their content from this environment, and the session's `WebSearch` budget was exhausted.

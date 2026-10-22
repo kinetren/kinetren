@@ -1,12 +1,12 @@
 ---
 id: F-RES-010
-title: Отзывчивость под нагрузкой: программа жива, но не отвечает
-status: кандидат
+title: Responsiveness under load: the program is alive but not responding
+status: candidate
 priority: B
 cost: M
 category: resilience/performance
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-app, kt-engine, kt-media]
 invariants: [5, 6, 8, 12]
 ui_rules: [12, 16, 19]
@@ -18,102 +18,93 @@ trackers: [kde-bugzilla, kde-invent, pitivi]
 checked: 2026-09-08
 ---
 
-# F-RES-010 — Отзывчивость под нагрузкой: программа жива, но не отвечает
+# F-RES-010 — Responsiveness under load: the program is alive but not responding
 
-## Суть
+## Essence
 
-Монтажёр отличает «медленно» от «сломалось» по одному признаку: реагирует ли
-окно. Рендер, идущий сорок минут, — нормальная работа; таймлайн, который не
-скроллится две секунды после щелчка колесом, — дефект, даже если через две
-секунды всё нарисовалось. Тема этой заметки — не скорость вычислений, а то,
-что происходит с ВВОДОМ, пока вычисление идёт: принимается ли клик, едет ли
-курсор, идёт ли звук, видно ли, что программа занята и чем.
+The editor tells "slow" apart from "broken" by one sign: does the window react. A render that runs
+for forty minutes is normal work; a timeline that does not scroll for two seconds after a wheel click is a defect, even if
+after two seconds everything has been drawn. The subject of this note is not the speed of computation but
+what happens with INPUT while the computation runs: whether a click is accepted, whether the cursor moves,
+whether the sound plays, and whether it is visible that the program is busy and with what.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | peak-файлы `.sfk` рядом с медиа [НЕ ПРОВЕРЕНО] | волноформа считается один раз при добавлении файла и лежит сайдкаром; повторное открытие проекта её не пересчитывает. Общего окна фоновых задач в справке не нашлось |
-| Adobe Premiere | 26 | Media Cache (`.pek` пики, `.cfa` конформ) + панель Progress | импорт кладёт пики и разжатый звук в ОБЩИЙ кэш-каталог (один на все проекты), конформинг идёт фоном, клип доступен до его окончания [НЕ ПРОВЕРЕНО] |
-| DaVinci Resolve | 21 | фоновые задачи медиа-пула + render cache | Optimized Media / Proxy и кэш переходов считаются фоном, состояние показано цветной полосой под линейкой таймлайна [НЕ ПРОВЕРЕНО] |
-| Final Cut Pro | 12 | Background Tasks (Window → Background Tasks, ⌘9) | отдельное ОКНО СПИСКА задач: строка на задачу, процент, Pause / Resume / Cancel у каждой. Единственный из пяти, кто показывает фоновую работу как объект, которым можно управлять (подробнее — F-HLP-013) |
-| After Effects | 26 | Multi-Frame Rendering + disk cache | длинные операции идут в UI-потоке с модальным прогрессом и отменой по Esc; фоновая очередь есть только у сетевого рендера [НЕ ПРОВЕРЕНО] |
+| VEGAS Pro | 2026.0 | peak files `.sfk` next to the media [NOT VERIFIED] | the waveform is computed once when the file is added and lies as a sidecar; reopening the project does not recompute it. No general background-task window was found in the help |
+| Adobe Premiere | 26 | Media Cache (`.pek` peaks, `.cfa` conform) + Progress panel | import puts peaks and decompressed audio into a SHARED cache directory (one for all projects), conforming runs in the background, and the clip is available before it finishes [NOT VERIFIED] |
+| DaVinci Resolve | 21 | media-pool background tasks + render cache | Optimized Media / Proxy and the transition cache are computed in the background, and the state is shown by a coloured strip under the timeline ruler [NOT VERIFIED] |
+| Final Cut Pro | 12 | Background Tasks (Window → Background Tasks, ⌘9) | a separate LIST WINDOW of tasks: a line per task, a percentage, Pause / Resume / Cancel on each. The only one of the five that shows background work as an object that can be controlled (more in F-HLP-013) |
+| After Effects | 26 | Multi-Frame Rendering + disk cache | long operations run on the UI thread with modal progress and cancellation by Esc; a background queue exists only for network rendering [NOT VERIFIED] |
 
-Открытые редакторы (Kdenlive, Pitivi) строкой сравнения здесь не идут — они
-источники счёта, а не механизма (`_editors.md`, раздел «Открытый софт»). Их
-устройство разобрано ниже как объяснение, откуда берётся счёт.
+Open-source editors (Kdenlive, Pitivi) do not appear here as comparison rows — they are
+sources of the count, not of the mechanism (`_editors.md`, section "Open-source software"). Their
+design is analysed below as an explanation of where the count comes from.
 
-## Фишка фишки
+## The trick behind it
 
-**Первое.** Тормозит не «код рисования», а ОТСУТСТВИЕ ПРИОРИТЕТА У ЗАДАЧИ.
-Сопровождающий Kdenlive в списке причин замедлений пишет прямым текстом, что
-фоновые задачи создаются через `QtConcurrent::Map`, который не умеет менять
-приоритет, и что обходной путь — запускать внешние процессы с `nice`, как это
-делает Shotcut. Отсюда следствие, которого нет ни в одном списке возможностей:
-у них «отключить волноформы» ДЕЙСТВИТЕЛЬНО лечит зависание при зуме — не
-потому, что волноформы тяжёлые сами по себе, а потому, что они заняли тот же
-безприоритетный пул, в который встаёт и работа, нужная прямо сейчас. Пока
-приоритета нет, любая фоновая мелочь конкурирует с воспроизведением на равных.
+**First.** What slows things down is not the "drawing code" but the ABSENCE OF PRIORITY FOR A TASK.
+The Kdenlive maintainer writes plainly, in the list of causes of slowdowns, that
+background tasks are created through `QtConcurrent::Map`, which cannot change
+priority, and that the workaround is to launch external processes with `nice`, as
+Shotcut does. From this follows a consequence that is absent from every list of features:
+for them, "disable waveforms" really cures the freeze on zoom — not
+because waveforms are heavy in themselves, but because they occupy the same no-priority pool into which the work needed
+right now also gets queued. As long as there is no priority, any small background
+job competes with playback on equal terms.
 
-**Второе.** В том же списке 2019 года стоит невыполненным пункт «разный кэш
-для аудио и видео, чтобы звук был гладким, а видео дёрганым». То есть
-деградация «звук не рвётся, картинка замирает» у них — не свойство
-архитектуры, а пожелание в TODO. Это ровно то, что у нас записано
-инвариантами 5 и 6 и держится тестами, и разница между «хочется» и
-«инвариант» здесь и есть вся разница в поведении под нагрузкой.
+**Second.** In the same 2019 list there is an unfulfilled item: "separate cache
+for audio and video, so that the sound is smooth and the video is jerky". That is, the degradation "the sound does not break up, the picture freezes" is for them not a property of the
+architecture but a wish in the TODO. This is exactly what is recorded for us in
+invariants 5 and 6 and held up by tests, and the difference between "we would like" and
+"invariant" is the whole difference in behaviour under load.
 
-**Третье.** У Pitivi волноформа пересчитывается при движении playhead: автор
-задачи замечает, что рисунок под курсором МЕНЯЕТСЯ, и делает из этого вывод,
-что она считается заново при каждом сдвиге. Волноформа там — функция ВИДА, а
-не функция файла. Ровно поэтому у них зум и скролл стоят декодов, а у нас — по
-инварианту 8 — не стоят ничего: пирамида пиков есть свойство медиа и не знает
-про вид.
+**Third.** In Pitivi the waveform is recomputed when the playhead moves: the author of the
+task notices that the drawing under the cursor CHANGES, and concludes from this
+that it is recomputed on every shift. The waveform there is a function of the VIEW, not
+a function of the file. Precisely for this reason they have zoom and scroll cost decodes, while for us —
+under invariant 8 — they cost nothing: the peak pyramid is a property of the media and knows
+nothing about the view.
 
-## Плюсы
+## Pros
 
-- Приоритетная очередь с generation-отменой делает возможным то, чего
-  безприоритетный пул не умеет в принципе: seek обесценивает уже поставленную
-  работу, а не ждёт её завершения.
-- Отдельные кэши и правило «playback читает ТОЛЬКО кэш» превращают промах в
-  деградацию, а не в ожидание: тишина или замерший кадр вместо остановки окна.
-- Волноформа и филмстрип из индекса стоят O(пикселей вида), а не
-  O(длительности материала): девятичасовой клип рисуется тем же кодом и за то
-  же время, что девятисекундный.
-- Мастер-часы в аудио-колбэке отвязывают ход звука от загрузки UI: перегруз
-  интерфейса не двигает воспроизведение.
+- A priority queue with generation-based cancellation makes possible what a no-priority pool cannot do at all:
+  a seek makes already-queued work obsolete, rather than waiting for it to complete.
+- Separate caches and the rule "playback reads ONLY the cache" turn a miss into degradation, not into waiting: silence or a frozen frame instead of stopping the window.
+- The waveform and filmstrip from the index cost O(pixels of the view), not O(length of the material): a nine-hour clip is drawn by the same code and in the same time as a nine-second one.
+- The master clock in the audio callback decouples the progress of sound from the UI load: an overloaded interface does not move playback.
 
-## Минусы
+## Cons
 
-- Деградация МОЛЧАЛИВА. Тишина плюс замерший кадр выглядит для монтажёра ровно
-  как «программа повисла»; underrun-счётчик честен, но живёт в перф-панели,
-  которую надо сначала открыть.
-- Приоритет работает ВНУТРИ одного источника. Между источниками планировщика
-  нет: сто медиа — это сто воркеров, конкурирующих за диск без арбитра.
-- Один поток и один открытый декодер на каждое медиа проекта, безусловно, с
-  момента загрузки — цена платится за файлы, которых сегодня не касались.
-- «Фоновость» перекладывает ожидание с UI-потока, но сама по себе о нём не
-  сообщает: работа без прогресса и без отмены отличается от зависания только
-  тем, что окно перерисовывается.
+- The degradation is SILENT. Silence plus a frozen frame looks to the editor exactly
+  like "the program has hung"; the underrun counter is honest, but it lives in the performance panel,
+  which first has to be opened.
+- Priority works INSIDE one source. There is no arbitration between the scheduler's sources:
+  a hundred media files are a hundred workers competing for the disk with no arbiter.
+- One thread and one open decoder for every media of the project, unconditionally, from the moment of loading — the cost is paid for files that have not been touched today.
+- "Backgroundness" moves the waiting off the UI thread, but by itself does not report it: work without progress and without cancellation differs from a freeze
+  only in that the window keeps redrawing.
 
-## Что говорят пользователи
+## What users say
 
-СИГНАЛ: зависания интерфейса — 159 задач в kde-bugzilla, `freeze|unresponsive|not respond|lag|stutter|beachball`; доля 2.5% против 1.6% в pitivi
+SIGNAL: interface freezes — 159 tasks in kde-bugzilla, `freeze|unresponsive|not respond|lag|stutter|beachball`; a share of 2.5% against 1.6% in pitivi
 
-Третий трекер той же выгрузки, kde-invent, даёт 41 задачу из 2217 — 1.8%.
+The third tracker of the same export, kde-invent, gives 41 tasks out of 2217 — 1.8%.
 
-Сравнение, ради которого заметка и заведена: «медленно рендерит» в том же
-kde-bugzilla — 21 задача,
-`slow.*(render|export|encod)|(render|export|encod).*slow`, доля 0.3% против
-0.0% в pitivi. **Разрыв в восемь раз.** Люди почти не жалуются на то, что
-кодирование идёт долго; они жалуются на то, что окно не отвечает. Это и есть
-граница между «ожидаемо и терпимо» и «дефект».
+The comparison for which the note was opened: "renders slowly" in the same
+kde-bugzilla — 21 tasks,
+`slow.*(render|export|encod)|(render|export|encod).*slow`, a share of 0.3% against
+0.0% in pitivi. **A gap of eight times.** People almost never complain that encoding takes a long time;
+they complain that the window does not respond. This is the boundary between "expected and tolerable" and
+"defect".
 
-Оговорка о качестве счёта, без которой цифра темы врёт: лексикон
-`_trackers.md` даёт теме «производительность» 966 задач, но его регексп
-содержит `ram` без границ слова, и он ловит `frame`, `program`, `parameter`.
-С `\bram\b` остаётся 271. Мой фильтр от этого не зависит (в нём такого куска
-нет), но число 966 в шапке темы — верхняя оценка, а не размер боли. Строку
-лексикона стоит починить отдельно.
+A caveat about the quality of the count, without which the topic's figure is misleading: the lexicon in
+`_trackers.md` gives the topic "performance" 966 tasks, but its regexp
+contains `ram` without word boundaries, and it catches `frame`, `program`, `parameter`.
+With `\bram\b` 271 remain. My filter does not depend on this (it has no such fragment),
+but the number 966 in the topic header is an upper estimate, not the size of the pain. The lexicon
+line should be fixed separately.
 
 > The performance issues manifest as significant lag and unresponsiveness of
 > the entire application when attempting to zoom in the timeline (Ctrl +
@@ -123,7 +114,7 @@ kde-bugzilla — 21 задача,
 
 > Jobs are created with QtConcurrent::Map which doesn't support adjusting job
 > priority.
-> — kde-invent #439 (правка сопровождающего в теле задачи), задача от
+> — kde-invent #439 (a maintainer's edit in the task body), task of
 > 15.11.2019, https://invent.kde.org/multimedia/kdenlive/-/work_items/439
 
 > But it takes some 1-2 hours to open up my project.
@@ -134,148 +125,128 @@ kde-bugzilla — 21 задача,
 > — pitivi #1316, 19.05.2013,
 > https://gitlab.gnome.org/GNOME/pitivi/-/work_items/1316
 
-Свой пользователь жаловался на этот же класс дословно: «раз в ~30сек программа
-подвисает а на графике падает FPS до 0, будто бы какой-то таймаут происходит.
-даже воспроизведение не надо жать» (`docs/user-feedback.md`, Р.31 п.2).
-Причина была ровно та, что и у чужих, — синхронная запись проекта в
-UI-потоке из `eframe::App::save` каждые 30 секунд (п.197).
+Our own user complained about this same class word for word: "every ~30 sec the program freezes and on the graph FPS drops to 0, as if some timeout is happening.
+even playback doesn't need to be pressed" (`docs/user-feedback.md`, R.31 item 2).
+The cause was exactly the same as in the others' case — a synchronous project save in the
+UI thread from `eframe::App::save` every 30 seconds (item 197).
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-АДРЕС: src/libs/kt-engine/src/worker.rs — класс «зум и воспроизведение упёрлись
-в декодер» у нас невозможен: очередь приоритетная и с generation-отменой, а
-playback ходит через `CacheFetcher` и не ждёт декод вовсе. Класс «UI-поток ждёт
-файл» ВОЗМОЖЕН и не ловится ничем, кроме постфактум-записи в журнал:
-`src/apps/kt-app/src/app.rs`, `KtApp::open` → `build_player` открывает КАЖДОЕ
-медиа проекта синхронно, в том же кадре, из которого вызван пункт меню.
+ADDRESS: src/libs/kt-engine/src/worker.rs — the class "zoom and playback ran into the decoder" is impossible for us: the queue is priority-based and with generation-based cancellation, and playback goes through `CacheFetcher` and does not wait for decoding at all. The class "the UI thread waits for a file" is POSSIBLE and is not caught by anything except a post-factum entry in the log: `src/apps/kt-app/src/app.rs`, `KtApp::open` → `build_player` opens EVERY media of the project synchronously, in the same frame from which the menu item was invoked.
 
-### Что уже есть
+### What already exists
 
-- `src/libs/kt-engine/src/worker.rs` — один поток на медиа, ЭКСКЛЮЗИВНО
-  владеющий декодером (инвариант 5). Очередь: строгий порядок Playback >
-  NearPrefetch > FarPrefetch > Thumbnail; при равном приоритете — ближайший
-  ключ ВПЕРЁД по курсору декодера (анти-ping-pong, назад только когда вперёд
-  пусто); dedup по ключу; `cancel_generations_below` выбрасывает работу
-  устаревших поколений при seek; negative-кэш `failed_video`/`failed_audio`,
-  чтобы префетч не гонял декодер в вечные seek'и за EOF. Курсоры аудио и видео
-  РАЗДЕЛЬНЫЕ — общий заставлял видео зигзагом следовать за аудио.
-- `src/libs/kt-engine/src/fetch.rs` — `CacheFetcher` умеет только кэш; промах
-  = `None` = тишина плюс underrun. Ожидания декода в realtime-пути нет
-  физически, а не по договорённости.
-- `src/apps/kt-app/src/audio_out.rs` — в cpal-колбэке ни аллокаций, ни локов,
-  только чтение SPSC-кольца; недобор кадров считается underrun'ом и выдаёт
-  тишину (инвариант 6).
-- `src/apps/kt-app/src/app.rs` (композиция превью) — неполный композит НЕ
-  затирает картинку: держится последний ПОЛНЫЙ кадр, `incomplete_since`
-  отмеряет, сколько мы уже неполны.
-- Инвариант 8 закрыт `src/libs/kt-engine/tests/viewport.rs` (тест 13): 500
-  случайных перерисовок вьюпорта обязаны дать НОЛЬ новых обращений к источнику.
-  Волноформа берёт уровень пирамиды по зуму
-  (`src/apps/kt-app/src/timeline.rs`), тумбы — из sidecar-БД
-  (`src/libs/kt-media/src/index.rs`), шаг тумбов КВАНТОВАН к лестнице
-  `THUMB_STEP_LADDER` (`src/apps/kt-app/src/thumbs.rs`) именно потому, что
-  непрерывная зависимость от зума давала новый набор ключей на каждый щелчок
-  колеса. Это и есть наш ответ на kde-invent #1082, написанный до того, как мы
-  его прочитали.
-- Детектор застоя уже стоит: кадр UI-потока длиннее 100 мс пишет «ui stall N
-  ms» в журнал перф-панели (`src/apps/kt-app/src/app.rs`, п.197), а замирание
-  playhead при игре — событие `Ev::Stall` в кольце чёрного ящика
+- `src/libs/kt-engine/src/worker.rs` — one thread per media, EXCLUSIVELY owning
+  the decoder (invariant 5). Queue: strict order Playback >
+  NearPrefetch > FarPrefetch > Thumbnail; at equal priority — the nearest
+  key FORWARD from the decoder cursor (anti-ping-pong, backward only when forward
+  is empty); dedup by key; `cancel_generations_below` discards the work of
+  stale generations on seek; a negative cache `failed_video`/`failed_audio`,
+  so that prefetch does not drive the decoder into endless seeks past EOF. The audio and video cursors are SEPARATE —
+  a shared one made the video zigzag after the audio.
+- `src/libs/kt-engine/src/fetch.rs` — `CacheFetcher` handles only the cache; a miss =
+  `None` = silence plus underrun. Waiting for decoding in the realtime path does not exist
+  physically, not by agreement.
+- `src/apps/kt-app/src/audio_out.rs` — in the cpal callback there are no allocations and no locks,
+  only reading of the SPSC ring; a shortfall of frames is counted as an underrun and produces
+  silence (invariant 6).
+- `src/apps/kt-app/src/app.rs` (preview composition) — an incomplete composite does NOT overwrite the picture: the last COMPLETE frame is held, and `incomplete_since`
+  measures how long we have been incomplete.
+- Invariant 8 is closed by `src/libs/kt-engine/tests/viewport.rs` (test 13): 500
+  random redraws of the viewport must produce ZERO new requests to the source.
+  The waveform takes the pyramid level from the zoom
+  (`src/apps/kt-app/src/timeline.rs`), thumbnails come from the sidecar DB
+  (`src/libs/kt-media/src/index.rs`), and the thumbnail step is QUANTISED to the ladder
+  `THUMB_STEP_LADDER` (`src/apps/kt-app/src/thumbs.rs`) precisely because a continuous
+  dependence on zoom gave a new set of keys on every wheel click. This is our answer to kde-invent #1082, written before we read it.
+- The stall detector is already in place: a UI-thread frame longer than 100 ms writes "ui stall N
+  ms" to the performance-panel log (`src/apps/kt-app/src/app.rs`, item 197), and a freeze of the
+  playhead during playback is the `Ev::Stall` event in the black-box ring
   (`src/libs/kt-engine/src/flight.rs`).
-- Периодический автосейв вынесен в фоновый поток (п.197, тест 194) — та самая
-  жалоба «подвисает раз в 30 секунд» закрыта.
+- The periodic autosave is moved to a background thread (item 197, test 194) — the very complaint "freezes every 30 seconds" is closed.
 
-### Чего не хватает
+### What is missing
 
-- **Открытие проекта синхронно.** `KtApp::open` → `build_player`
-  (`src/apps/kt-app/src/app.rs`) в цикле зовёт `open_source_or_placeholder`
-  на каждое медиа. Внутри — `FfmpegSource::open_indexed`
-  (`src/libs/kt-media/src/ffmpeg.rs`): при первом знакомстве с файлом это
-  ПОЛНЫЙ скан пакетного индекса, а `MediaIndexDb::ensure_media`
-  (`src/libs/kt-media/src/index.rs`) при несовпавшем mtime ещё и читает файл
-  целиком ради xxhash. Всё это — в кадре UI. Второе открытие дёшево (индекс
-  персистится, тест 34), первое — линейно по объёму материала. Сценарий
-  kde-invent #1266 у нас не смягчён ничем.
-- **Импорт синхронный.** Дроп файлов идёт циклом по `dropped`, и каждый
-  `add_media` открывает источник в том же кадре: тридцать файлов = тридцать
-  последовательных открытий FFmpeg в одном `update()`.
-- **У фоновой работы нет ни лица, ни ручки.** `spawn_index_worker`
-  (`src/apps/kt-app/src/util.rs`) — fire-and-forget: ни хэндла, ни прогресса,
-  ни флага отмены, ни дедупа между вызовами (новый поток на каждое открытие и
-  на каждое добавление медиа). `ThumbService` устроен так же. Единственный
-  прогресс во всей программе — рендер-диалог
-  (`src/apps/kt-app/src/render_dialog.rs`). Отмену забирает F-RES-012, но
-  «сколько осталось и чем занят» — эта заметка.
-- **Стол виден только постфактум и только в перф-панели.** `ui stall` идёт в
-  `perf.note`, а не в `note`/колокольчик, и панель надо открыть заранее.
-  Максимума времени кадра панель не показывает вовсе: `PerfState` считает
-  СРЕДНИЙ fps за окно замера, а четырёхсекундный стол в среднем выглядит как
-  просто низкий fps.
-- **Планировщик кончается на границе медиа.** Приоритеты честны внутри
-  воркера; между воркерами арбитра нет, и поток на медиа заводится безусловно
-  при загрузке (`Player::new`, `src/libs/kt-engine/src/player.rs`).
+- **Opening a project is synchronous.** `KtApp::open` → `build_player`
+  (`src/apps/kt-app/src/app.rs`) in a loop calls `open_source_or_placeholder`
+  on every media. Inside — `FfmpegSource::open_indexed`
+  (`src/libs/kt-media/src/ffmpeg.rs`): on first acquaintance with a file this is a
+  FULL scan of the packet index, and `MediaIndexDb::ensure_media`
+  (`src/libs/kt-media/src/index.rs`), when the mtime does not match, also reads the file
+  in full for the sake of xxhash. All of this runs in the UI frame. The second opening is cheap (the index is persisted, test 34), the first one is linear in the volume of the material. The kde-invent #1266 scenario is not softened by anything for us.
+- **Import is synchronous.** Dropping files runs a loop over `dropped`, and each
+  `add_media` opens the source in the same frame: thirty files = thirty
+  sequential FFmpeg openings in one `update()`.
+- **Background work has neither a face nor a handle.** `spawn_index_worker`
+  (`src/apps/kt-app/src/util.rs`) is fire-and-forget: no handle, no progress,
+  no cancel flag, and no deduplication between calls (a new thread for every opening and
+  for every media addition). `ThumbService` is built the same way. The only progress in the whole
+  program is the render dialog
+  (`src/apps/kt-app/src/render_dialog.rs`). Cancellation is covered by F-RES-012, but
+  "how much is left and what is it busy with" — that is this note.
+- **The freeze is visible only after the fact and only in the performance panel.** `ui stall` goes to
+  `perf.note`, not to `note`/the bell, and the panel has to be opened in advance.
+  The panel does not show the maximum frame time at all: `PerfState` computes the AVERAGE fps over the measurement window, and a four-second freeze looks on average
+  like merely low fps.
+- **The scheduler ends at the media boundary.** Priorities are honest within
+  a worker; there is no arbiter between workers, and a thread per media is started unconditionally
+  at loading (`Player::new`, `src/libs/kt-engine/src/player.rs`).
 
-### Что мешает
+### What gets in the way
 
-`KtApp::open` возвращает готовое `KtApp` и подменяет `*self` целиком — это
-удобно и делает открытие атомарным, но ровно поэтому его нельзя просто увести
-в поток: половина полей (`egui::TextureHandle`, аудиовыход) не `Send` и живёт
-UI-потоком. Асинхронное открытие требует расщепить открытие на «модель +
-источники» (уводится) и «ресурсы окна» (остаётся), а до тех пор придётся
-показывать модальный прогресс — что уже честнее молчания.
+`KtApp::open` returns a ready `KtApp` and replaces `*self` entirely — this is convenient and makes
+opening atomic, but precisely for this reason it cannot simply be moved to a thread: half of the fields
+(`egui::TextureHandle`, the audio output) are not `Send` and live on the
+UI thread. Asynchronous opening requires splitting the opening into "model + sources" (moved out) and
+"window resources" (stays), and until then one will have to show modal progress — which is already more honest than silence.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Инварианты 5, 6, 8, 12 — все четыре ПОДТВЕРЖДАЮТСЯ, ни один не расшатывается:
-работа целиком в том, чтобы распространить их правило («ждать нельзя,
-деградировать можно») на пути открытия и импорта, где сегодня их нет. Правила
-чек-листа UI: 12 (фоновая работа не мешает), 16 (невозможность — как ошибка, а
-не молчание), 19 (диалог говорит, где это потом изменить).
+Invariants 5, 6, 8, 12 — all four are CONFIRMED, none is shaken:
+the whole work consists in extending their rule ("you cannot wait, you can degrade") to the paths of opening and importing, where today it does not apply. The UI checklist
+rules: 12 (background work does not interfere), 16 (impossibility is an error, not silence), 19 (the dialog says where it can be changed later).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2–3 стадии раунда |
-| Где основная работа | kt-app (расщепление `KtApp::open`, поверхность фоновых задач), kt-media (открытие источника с уступкой) |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | харнесс: открытие проекта не даёт кадра длиннее N мс; «ui stall» попадает в видимую поверхность, а не только в журнал; максимум времени кадра в перф-панели |
-| Зависит от | F-RES-012 (отмена), F-HLP-013 (журнал и колокольчик) |
-| Ломает совместимость | нет |
+| Scope | M — 2–3 stages of the round |
+| Where the main work is | kt-app (splitting `KtApp::open`, background-task surface), kt-media (opening the source with yielding) |
+| Project format | does not touch it |
+| Tests that will have to be written | harness: opening a project does not produce a frame longer than N ms; "ui stall" reaches the visible surface, not only the log; maximum frame time in the performance panel |
+| Depends on | F-RES-012 (cancellation), F-HLP-013 (log and bell) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём, приоритет B. Движковая половина темы у нас закрыта сильнее, чем у любого
-из источников счёта: приоритетная очередь, деградация вместо ожидания и
-инвариант 8 отвечают ровно на те задачи, которые в трекерах висят с 2013 и 2019
-годов. Не A потому, что оставшаяся половина — не отзывчивость монтажа, а
-отзывчивость ОТКРЫТИЯ и ИМПОРТА, и монтажёр её обходит ожиданием.
+Take it, priority B. The engine half of the topic is closed for us more strongly than in any of the
+sources of the count: the priority queue, degradation instead of waiting, and invariant 8 answer exactly those tasks that have hung in the trackers since 2013 and 2019.
+Not A because the remaining half is not the responsiveness of editing but the responsiveness of OPENING and IMPORT, and the editor works around it by waiting.
 
-Открытая часть — одна и конкретная: `KtApp::open` и `add_media` ждут файлы в
-кадре UI, а вся фоновая работа безлика. Пока её нет, «программа занята» и
-«программа повисла» у нас отличаются только тем, что во втором случае мы это
-записали в журнал, которого пользователь не открывал.
+The open part is one and concrete: `KtApp::open` and `add_media` wait for files in the UI
+frame, and all background work is faceless. Until it exists, "the program is busy" and
+"the program has hung" differ for us only in that in the second case we wrote it to a log the user never opened.
 
-## Источники
+## Sources
 
 - kde-invent #1082 — https://invent.kde.org/multimedia/kdenlive/-/work_items/1082
-  (задача от 23.05.2021, обращение 2026-09-08)
+  (task of 23.05.2021, accessed 2026-09-08)
 - kde-invent #439 — https://invent.kde.org/multimedia/kdenlive/-/work_items/439
-  (задача от 15.11.2019, обращение 2026-09-08)
+  (task of 15.11.2019, accessed 2026-09-08)
 - kde-invent #1266 — https://invent.kde.org/multimedia/kdenlive/-/work_items/1266
-  (задача от 02.12.2021, обращение 2026-09-08)
-- kde-invent #102, #1422 — то же, обращение 2026-09-08
+  (task of 02.12.2021, accessed 2026-09-08)
+- kde-invent #102, #1422 — same, accessed 2026-09-08
 - pitivi #1316 — https://gitlab.gnome.org/GNOME/pitivi/-/work_items/1316
-  (задача от 19.05.2013, обращение 2026-09-08)
-- pitivi #748, #2036 — то же, обращение 2026-09-08
-- kde-bugzilla #475205 «Performance: UI freezes when handling big projects» —
-  https://bugs.kde.org/show_bug.cgi?id=475205 (2023-10-04, обращение 2026-09-08)
-- Счёт воспроизводится:
-  `python3 src/scripts/tracker-rank.py --query '<фильтр>'`; на дату написания
-  в кэше выгружены ТОЛЬКО kde-bugzilla, kde-invent и pitivi — остальные девять
-  трекеров реестра ещё качались, и доли по ним в заметке отсутствуют.
-- Строки пяти редакторов ядра — по документации вендоров, живьём не
-  проверялось (пометка `[НЕ ПРОВЕРЕНО]` в таблице); FCP Background Tasks
-  сверен с разбором в F-HLP-013.
-- Наш код читан напрямую: `src/libs/kt-engine/src/{worker,fetch,player,flight}.rs`,
+  (task of 19.05.2013, accessed 2026-09-08)
+- pitivi #748, #2036 — same, accessed 2026-09-08
+- kde-bugzilla #475205 "Performance: UI freezes when handling big projects" —
+  https://bugs.kde.org/show_bug.cgi?id=475205 (2023-10-04, accessed 2026-09-08)
+- The count is reproducible:
+  `python3 src/scripts/tracker-rank.py --query '<filter>'`; as of the date of writing
+  ONLY kde-bugzilla, kde-invent and pitivi were exported to the cache — the other nine
+  trackers of the registry were still downloading, and their shares are absent from the note.
+- The rows for the five core editors — from vendor documentation, not checked live
+  (marked `[NOT VERIFIED]` in the table); the FCP Background Tasks row is cross-checked with the analysis in F-HLP-013.
+- Our code was read directly: `src/libs/kt-engine/src/{worker,fetch,player,flight}.rs`,
   `src/apps/kt-app/src/{app,util,thumbs,timeline,audio_out}.rs`,
   `src/libs/kt-media/src/{ffmpeg,index}.rs`, `src/libs/kt-engine/tests/viewport.rs`.

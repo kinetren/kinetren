@@ -1,12 +1,12 @@
 ---
 id: F-HLP-012
-title: Отсутствующий исходник: как редактор об этом говорит
-status: исследовано
+title: Missing source: how the editor reports it
+status: researched
 priority: B
 cost: M
 category: help/errors
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-media, kt-app, kt-model, kt-engine]
 invariants: [5, 11]
 ui_rules: [13, 18, 19]
@@ -17,359 +17,165 @@ depends_on: []
 checked: 2026-09-07
 ---
 
-# F-HLP-012 — Отсутствующий исходник: как редактор об этом говорит
+# F-HLP-012 — Missing source: how the editor reports it
 
-## Суть
+## Essence
 
-Файл, на который ссылается монтаж, исчез: диск отключили, папку
-переименовали, клиент прислал материал заново в другой каталог. Монтажёр
-задаёт четыре вопроса подряд — ЧТО пропало, ГДЕ в фильме теперь дыра, можно
-ли работать и рендерить дальше, и ЧЕМ это чинится. Плохой редактор отвечает
-на них одним модальным окном при открытии и красной заливкой на всё
-остальное время. Хороший отвечает в четырёх разных местах, потому что вопросы
-задаются в четыре разных момента.
+A file that the edit refers to has disappeared: the disk was disconnected, the folder was renamed, the client sent the material again into another directory. The editor asks four questions in a row — WHAT is missing, WHERE in the film the hole is now, whether one can keep working and rendering, and WITH WHAT it can be fixed. A poor editor answers all of them with one modal window on opening and a red fill for the rest of the time. A good one answers in four different places, because the questions are asked at four different moments.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Offline media / Resolve Offline Media | при добавлении недоступного файла всплывает список офлайн-файлов со статусами `Offline` / `Probable Match` / `Found`; кнопки Smart Search (угадать), Browse (указать руками), Leave Offline; событие с офлайн-медиа остаётся на таймлайне, но пользователи упираются в рендер |
-| Adobe Premiere | 26.x | Media Offline / Link Media | красная плашка «MEDIA OFFLINE» в программном мониторе и в самом экспорте; диалог Link Media: `Locate`, галка «Relink others automatically» и набор `Match File Properties` (File Name, File Extension, Media Start) — найденный файл тянет за собой остальные; экспорт не блокируется, а предупреждает |
-| DaVinci Resolve | 21 | Media Offline / Relink Media | оранжевый значок Relink Media в Media Pool, диалог показывает ИМЕНА ТОМОВ, откуда материал брался; `Relink Selected Clips` ищет по имени и таймкоду в выбранном каталоге, при неудаче предлагает «deep search»; `Change Source Folder` переносит путь целиком; Edit Index умеет «Show Offline Clips Only»; при постановке в Render Queue — окно-предупреждение «cancel / add anyway» |
-| Final Cut Pro | 12.3 | Missing File | красный кадр с жёлтым треугольником в браузере, вьюере и на таймлайне; `File > Relink Files > Original Media`, окно по умолчанию показывает только пропавшее, `Locate All` / `Locate Selected`, снизу счёт «3 of 3 files matched»; замена обязана совпасть по типу, кадровой частоте и каналам звука; команду relink НЕЛЬЗЯ отменить |
-| After Effects | 26.x | Missing footage / Placeholder | в Project panel имя курсивом и метка `Missing`, в композиции — плейсхолдер-цветополосы; чинится двойным кликом по строке проекта либо `File > Replace Footage > File`; эффекты, применённые к пропавшему слою, остаются целы; цветополосы уезжают в рендер |
+| VEGAS Pro | 2026.0 | Offline media / Resolve Offline Media | when an unavailable file is added, a list of offline files pops up with the statuses `Offline` / `Probable Match` / `Found`; buttons Smart Search (guess), Browse (point by hand), Leave Offline; an event with offline media stays on the timeline, but users run into trouble at render time |
+| Adobe Premiere | 26.x | Media Offline / Link Media | a red plate "MEDIA OFFLINE" in the program monitor and in the export itself; the Link Media dialog: `Locate`, the checkbox "Relink others automatically" and the set `Match File Properties` (File Name, File Extension, Media Start) — the found file pulls the others along; export is not blocked but warns |
+| DaVinci Resolve | 21 | Media Offline / Relink Media | an orange Relink Media icon in the Media Pool; the dialog shows the NAMES OF THE VOLUMES the material came from; `Relink Selected Clips` searches by name and timecode in the chosen folder and, on failure, offers "deep search"; `Change Source Folder` moves the whole path; Edit Index can "Show Offline Clips Only"; when placed in the Render Queue — a warning window "cancel / add anyway" |
+| Final Cut Pro | 12.3 | Missing File | a red frame with a yellow triangle in the browser, the viewer and on the timeline; `File > Relink Files > Original Media`; the window by default shows only what is missing; `Locate All` / `Locate Selected`; at the bottom the count "3 of 3 files matched"; the replacement must match type, frame rate and audio channels; the relink command CANNOT be undone |
+| After Effects | 26.x | Missing footage / Placeholder | in the Project panel the name is in italics with a `Missing` label, in the composition — a placeholder of colour bars; it is fixed by double-clicking the project row or with `File > Replace Footage > File`; effects applied to the missing layer stay intact; the colour bars go into the render |
 
-Второй таблицы (софт вне ядра) здесь нет сознательно: механизм родом ровно
-из видеомонтажа, все пять строк ядра заполнены, и «фишка фишки» взята из
-ядра — по критериям `_editors.md` строка вне ядра была бы водой.
+A second table (software outside the core) is deliberately absent: the mechanism comes precisely from video editing, all five core rows are filled, and the "trick behind it" is taken from the core — by the criteria of `_editors.md` a row outside the core would be filler.
 
-## Фишка фишки
+## The trick behind it
 
-**Груз, который не влезает в строку статусбара, — это ЧУЖОЕ ИМЯ, вписанное в
-САМ КАДР.** Строка статусбара живёт до следующего наведения и умирает вместе
-с сессией; кадр уезжает в видеопоток, в экспортированный файл, в скриншот
-клиента и в стоп-кадр через год. У нас этот груз уже доехал: `render()` в
-`src/libs/kt-media/src/placeholder.rs` рисует имя файла встроенным шрифтом
-3×5 прямо в RGBA. Ни один из пяти редакторов ядра имени в кадр не пишет.
+**The cargo that does not fit into a status-bar line is a FOREIGN NAME written into the FRAME ITSELF.** A status-bar line lives until the next hover and dies with the session; the frame travels into the video stream, the exported file, the client's screenshot and a still a year later. For us this cargo has already arrived: `render()` in `src/libs/kt-media/src/placeholder.rs` draws the file name with the built-in 3×5 font directly into RGBA. None of the five core editors writes the name into the frame.
 
-1. **Заглушка, которая не называет себя, чинится только из проекта.** У AE
-   плейсхолдер — дословно «A still image of color bars»: одна и та же
-   картинка на любой пропавший файл. У Premiere и Resolve в кадре стоят слова
-   «MEDIA OFFLINE», у FCP — красный кадр со значком, у Vegas — чёрное
-   событие. Имя во всех пяти живёт ОТДЕЛЬНО (курсив в Project panel, строка в
-   Media Pool, Edit Index). Практическое следствие видно только когда
-   поработал: скриншот испорченного рендера, присланный заказчиком, у них не
-   содержит ни бита диагностики — «у вас тут полосы», и всё; чинить идут в
-   проект и глазами ищут, какой из сорока клипов красный. У нас тот же
-   скриншот называет файл.
+1. **A stub that does not name itself can be fixed only from the project.** In AE the placeholder is literally "A still image of color bars": the same picture for any missing file. In Premiere and Resolve the words "MEDIA OFFLINE" stand in the frame, in FCP — a red frame with an icon, in Vegas — a black event. In all five the name lives SEPARATELY (italics in the Project panel, a row in the Media Pool, the Edit Index). The practical consequence shows only after some work: a screenshot of a damaged render sent by the client contains not a single bit of diagnostics — "you have stripes here", and that is all; they go to the project and look with their eyes for which of forty clips is red. For us the same screenshot names the file.
 
-2. **Пакетный relink — это не «та же папка», это УГАДАННАЯ ЗАКОНОМЕРНОСТЬ.**
-   Самый сильный вариант у FCP: указал `File1_A` вместо `File1` — и он
-   пойдёт искать `File2_A`, `File3_A`, а если исходники лежали в двух
-   соседних папках, будет смотреть в папках, соседних с выбранной. Resolve
-   делает это в два прохода (сначала по СТАРЫМ путям как по подсказке — это
-   быстро, потом «deep search» по всем подкаталогам) и умеет вывести из
-   одного попадания относительный маппинг томов («Automatically setup when
-   relinking»). AE обходится одной фразой: «In most cases, you need to relink
-   only one footage file». Общее у всех: чинится не файл, а ГИПОТЕЗА о том,
-   как переехала вся папка.
+2. **Batch relink is not "the same folder", it is a GUESSED REGULARITY.** The strongest variant is in FCP: you point at `File1_A` instead of `File1` — and it goes looking for `File2_A`, `File3_A`, and if the sources lay in two neighbouring folders, it will look in the folders next to the chosen one. Resolve does it in two passes (first along the OLD paths as a hint — this is fast — then a "deep search" across all subdirectories) and can derive a relative volume mapping from one hit ("Automatically setup when relinking"). AE gets by with one phrase: "In most cases, you need to relink only one footage file". Common to all: what gets repaired is not a file but a HYPOTHESIS about how the whole folder moved.
 
-3. **Частичное совпадение — там, где редакторы расходятся сильнее всего.**
-   Resolve даёт выбрать строгость руками: `Loose Filename Match` игнорирует
-   расширение (можно подменить материал файлом ДРУГОГО формата), `Tight
-   Filename Match` требует совпадения расширения. FCP наоборот запрещает:
-   замена обязана совпасть по типу, кадровой частоте и каналам звука, а сам
-   relink не откатывается через undo — цена ошибки максимальна. Vegas честнее
-   всех показывает, что он ГАДАЕТ: в списке рядом со статусом `Found` (выбрал
-   человек) стоит отдельный статус `Probable Match` (нашёл Smart Search).
-   Никто из пяти при этом не обещает, что подставленный файл той же ДЛИНЫ:
-   таймкод и хвост события остаются на совести монтажёра.
+3. **Partial matching is where the editors diverge most.** Resolve lets you choose the strictness by hand: `Loose Filename Match` ignores the extension (you can substitute the material with a file of ANOTHER format), `Tight Filename Match` requires the extension to match. FCP forbids instead: the replacement must match type, frame rate and audio channels, and the relink itself does not roll back via undo — the cost of an error is maximal. Vegas is the most honest about GUESSING: in the list, next to the status `Found` (chosen by a person) there is a separate status `Probable Match` (found by Smart Search). None of the five, however, promises that the substituted file will have the same LENGTH: the timecode and the tail of the event remain the editor's responsibility.
 
-## Плюсы
+## Pros
 
-- Заглушка — обычный `MediaSource`, а не особый случай: движок о ней не
-  знает. Поэтому она едет по тому же пути, что и настоящий файл, — превью,
-  prefetch, кэш, морферы, FX, экспорт, и инвариант 5 (декодером владеет ровно
-  один MediaWorker) не задет ни одной строкой.
-- Длительность заглушки — 1000 часов, `fps: None`. Монтаж не обрезается по
-  пропавшему файлу, и сетка кадров остаётся ПРОЕКТНОЙ. Сравните с советом
-  мануала AE «set the placeholder to the same size, duration, and frame rate
-  as the actual footage» — там несовпадение длины ломает слой.
-- Шрифт 3×5 вшит в крейт, поэтому кадр детерминирован и не зависит ни от
-  системных шрифтов, ни от egui: имя в кадре не ломает инвариант 11
-  (побайтовое совпадение прогонов и эталона), и превью == экспорт.
-- Пути пишутся ОТНОСИТЕЛЬНО файла проекта (решение Р.24 п.7,
-  `src/libs/kt-otio/src/url.rs`). Самая частая причина relink у всех пяти —
-  «переехала папка целиком» — у нас не наступает вовсе.
-- Четыре сообщения стоят в четырёх точках ПРИНЯТИЯ РЕШЕНИЯ, а не в одном
-  журнале: при открытии, перед стартом рендера, в сводке после, при возврате
-  файла. Ни одно из них не завело новой полосы в интерфейсе — предупреждение
-  и счётчики живут внутри уже существующих окон (правило 13).
-- Расщепление «поимённо против сводки» вышло само из устройства: `warn()`
-  перетирает единственный слот `status`, поэтому в статусбаре остаётся
-  ПОСЛЕДНЕЕ сообщение — сводка «недоступных исходников: N», а поимённый
-  список целиком лежит в колокольчике.
+- The stub is an ordinary `MediaSource`, not a special case: the engine does not know about it. Therefore it travels the same path as a real file — preview, prefetch, cache, morphers, FX, export — and invariant 5 (exactly one MediaWorker owns the decoder) is not touched by a single line.
+- The stub's duration is 1000 hours, `fps: None`. The edit is not trimmed by the missing file, and the frame grid stays the PROJECT's. Compare with the AE manual's advice "set the placeholder to the same size, duration, and frame rate as the actual footage" — there a mismatch in length breaks the layer.
+- The 3×5 font is built into the crate, so the frame is deterministic and depends neither on system fonts nor on egui: the name in the frame does not break invariant 11 (byte-for-byte equality of runs and reference), and preview == export.
+- Paths are written RELATIVE to the project file (decision R.24 item 7, `src/libs/kt-otio/src/url.rs`). The most frequent cause of relink for all five — "the whole folder moved" — does not happen for us at all.
+- Four messages stand at four points where a DECISION is made, not in one log: on opening, before the render starts, in the summary after it, when the file returns. None of them created a new strip in the interface — the warning and the counters live inside windows that already exist (rule 13).
+- The split "by name versus summary" came out of the design itself: `warn()` overwrites the single `status` slot, so the status bar keeps the LAST message — the summary "unavailable sources: N" — while the by-name list lies whole in the bell.
 
-## Минусы
+## Cons
 
-- Relink'а нет ни в каком виде. В `kt_model::Command` есть `AddMedia` и
-  `RemoveMedia` и нет ничего, что меняло бы `MediaRef::path`, поэтому
-  единственный путь починки — вернуть файл на прежнее место; всё остальное
-  делается текстовым редактором по `.otio`.
-- Сообщение называет файл и не называет действия. Правило 19 («диалог обязан
-  сказать, где потом изменить решение») не выполняется — и не может, пока
-  действия не существует.
-- Плейсхолдер ставится ровно на двух входах — открытие проекта и старт
-  рендера. Файл, исчезнувший при уже открытом проекте, заглушки не получает:
-  сторож его заметит и повесит значок на карточку бина, но у плеера остаётся
-  живой декодер, а обратной замены «настоящий → заглушка» в коде нет.
-- «Пропал» определяется двумя разными способами: предупреждение ДО старта
-  считает пропавшим то, чего нет на диске (`exists()`), а заглушку получает
-  то, что не ОТКРЫЛОСЬ. Битый или неподдерживаемый файл лежит на месте,
-  предупреждения не вызывает и всплывает только в сводке ПОСЛЕ рендера.
-- Причина берётся из `thiserror` по-английски и уезжает в текст уведомления
-  мимо каталогов i18n: русский интерфейс показывает русскую рамку сообщения с
-  английской серединой.
-- Имя не-ASCII превращается в `?????` (сознательно — ради детерминизма
-  кадра). Ровно для кириллических и иероглифических имён кадр перестаёт
-  выполнять то единственное, ради чего в него вписывали имя.
-- Сторож строит список путей ОДИН РАЗ при открытии проекта: медиа,
-  добавленное позже, не отслеживается, и вернуться из офлайна оно не сможет.
+- There is no relink in any form. `kt_model::Command` has `AddMedia` and `RemoveMedia` and nothing that would change `MediaRef::path`, so the only way to repair is to put the file back in its old place; everything else is done by a text editor on the `.otio`.
+- The message names the file and does not name an action. Rule 19 ("the dialog must say where the decision can be changed later") is not met — and cannot be met while no action exists.
+- The placeholder is placed at exactly two entries — opening a project and starting a render. A file that disappears while a project is already open gets no placeholder: the guard will notice it and put a badge on the bin card, but the player keeps a live decoder, and there is no reverse replacement "real → placeholder" in the code.
+- "Missing" is determined in two different ways: the warning BEFORE the start counts as missing what is not on disk (`exists()`), while the placeholder is given to what did not OPEN. A broken or unsupported file lies in place, triggers no warning and surfaces only in the summary AFTER the render.
+- The reason is taken from `thiserror` in English and goes into the notification text bypassing the i18n catalogues: the Russian interface shows a Russian frame around an English middle.
+- A non-ASCII name becomes `?????` (deliberately — for the determinism of the frame). For Cyrillic and CJK names precisely, the frame stops doing the one thing it was written for: carrying the name.
+- The guard builds the list of paths ONCE, when a project is opened: media added later is not tracked, and it cannot come back from offline.
 
-## Что говорят пользователи
+## What users say
 
-> Exported video has 'MEDIA OFFLINE' plastered over random shots. Once again,
-> those shots ARE THERE inside Premiere.
+> Exported video has 'MEDIA OFFLINE' plastered over random shots. Once again, those shots ARE THERE inside Premiere.
 > — UK TV Professional, 11.08.2023, https://community.adobe.com/t5/premiere-pro-discussions/export-tells-me-quot-media-offline-quot-but-it-s-visable-in-premiere/td-p/13999862
 
 > I export and then at some point in the exported file the media offline
 > graphic pops up. Sadly i have now lost all trust in premiere.
 > — David Payne, 23.03.2018, https://creativecow.net/forums/thread/media-offline-graphic-on-export-but-timeline-is-fi/
 
-Про предупреждение ДО старта — тот же тред, четырьмя днями позже, и это
-ровно наш второй уровень:
+The warning BEFORE the start — the same thread, four days later, and this is exactly our second level:
 
 > The new adobe media encoder actually warns me about an offline file. Now,
 > this is GREAT...
 > — David Payne, 26.03.2018, https://creativecow.net/forums/thread/media-offline-graphic-on-export-but-timeline-is-fi/
 
-Про блокировку рендера у Vegas (наш п.10 Р.33 написан против ровно этого):
+On the render block in Vegas (our item 10 of R.33 was written against exactly this):
 
 > now I can't render the video
 > — Martin Saur, https://creativecow.net/forums/thread/cant-render-video-because-of-offline-media/
 
-И про безымянную заглушку у AE — жалоба не на то, что имени нет, а на то,
-что заглушка КРИЧИТ, ничего при этом не сообщая:
+And on the nameless stub of AE — the complaint is not that the name is absent but that the stub SHOUTS while telling nothing:
 
 > the big loud colour bars are more of a hassle than a black frame which I
 > may be able to get away with from time to time.
 > — Mag_44, 06.12.2005, https://creativecow.net/forums/thread/can-you-toggle-off-the-missing-footage-colour-bars/
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-Первоисточник требования — `docs/user-feedback.md`, Р.33 п.10, дословно:
+The primary source of the requirement is `docs/user-feedback.md`, R.33 item 10, verbatim:
 
-> «при рендере и превью отсутсвие исходников не должно быть блокером, нужно
-> уведомлять юзера и рендерить, для отсутствующего видео надо подставлять
-> placeholder».
+> "During render and preview, a missing source must not be a blocker: notify the user and render anyway; for missing video a placeholder must be substituted." (Owner's request, R.33 item 10.)
 
-И его же ответ на уточняющий вопрос, тем же раундом:
+And his answer to a clarifying question, in the same round:
 
-> «Placeholder отсутствующего видео — тёмная плашка с именем файла и значком
-> («сразу видно, ЧЕГО не хватает»); аудио — тишина. Уведомления:
-> notice-список при открытии проекта, предупреждение в рендер-диалоге ДО
-> старта, счётчики потерянного в сводке ПОСЛЕ».
+> "The placeholder for missing video is a dark plate with the file name and an icon ('immediately visible WHAT is missing'); audio is silence. Notifications: the notice list when the project opens, a warning in the render dialog BEFORE the start, and counters of what was lost in the summary AFTER." (Owner's answer to a clarifying question, same round.)
 
-Сделано (пп. 206-209 `docs/porting-notes.md`: заглушка, открытие, рендер,
-возврат — четыре «половины» одного пункта пользователя):
+Done in items 206-209 of `docs/porting-notes.md` (the stub, opening, render, return — four "halves" of one owner request):
 
-- Сама заглушка — `src/libs/kt-media/src/placeholder.rs`: тёмный кадр с
-  оранжевой рамкой, значок плёнки, имя файла шрифтом 3×5, тишина в аудио,
-  длительность 1000 часов, `fps: None`, кадр кэшируется по `Quality`. Тест
-  208 там же: кадр детерминирован, не зависит от времени, разные имена дают
-  разные кадры, не-ASCII заменяется на `?`.
-- Уровень (а), открытие проекта: `src/apps/kt-app/src/util.rs:59`
-  (`open_source_or_placeholder`) возвращает пару «источник + ошибка», а
-  `src/apps/kt-app/src/app.rs:684` шлёт ОТДЕЛЬНЫЙ `warn()` на каждый файл с
-  системной причиной (`media_missing`) и следом одну `note()` со сводкой
-  (`media_missing_count`). До этого раунда выживала только ПОСЛЕДНЯЯ ошибка,
-  а клип оставался вообще без источника и превью висело в «Loading».
-- Уровень (б), перед рендером: `src/apps/kt-app/src/render_dialog.rs:101`
-  (`missing_sources`) и предупреждение в окне настроек (строка `missing_warn`
-  — «недоступных исходников (N), они попадут в файл заглушками: …»).
-- Уровень (в), после рендера: `render_dialog.rs:80` (`open_all`) копит имена,
-  сводка печатает `missing_after` и `missing_layers` —
-  `ExportStats.missing_video_layers` (`src/libs/kt-engine/src/export.rs:53`)
-  до этого раунда в GUI не показывался вовсе, и неполный рендер выглядел
-  успехом.
-- Уровень (г), возврат файла: сторож `src/apps/kt-app/src/util.rs:183`
-  опрашивает существование раз в 900 мс, `KtApp::poll_returned_sources`
-  (`app.rs:2131`) переоткрывает файл В ФОНЕ и подменяет источник через
-  `Player::replace_media` (`src/libs/kt-engine/src/player.rs:463`), после
-  чего приходит `media_online`. Порядок в движке важен: гасим воркер →
-  инвалидируем его кадры → поднимаем новый.
-- Пятая поверхность, которую легко проглядеть: карточка бина офлайн-медиа
-  получает значок предупреждения и в тумбе, и в подписи
-  (`src/apps/kt-app/src/bin_panel.rs:692` и `:783`), а наведение кладёт
-  полный путь в строку статусбара.
-- Регресс-стражи: t209 (проект с двумя пропавшими открывается, ОБА названы,
-  превью укомплектовывается), t210 (рендер идёт и предупреждает), t211
-  (вернувшийся файл заменяет заглушку) — `layout_tests.rs:3944`, `:3871`,
-  `:3795`; движковая половина t211 — `kt-engine/tests/player_dynamic.rs:204`.
+- The stub itself — `src/libs/kt-media/src/placeholder.rs`: a dark frame with an orange border, a film icon, the file name in the 3×5 font, silence in audio, a duration of 1000 hours, `fps: None`; the frame is cached by `Quality`. Test 208 there: the frame is deterministic, does not depend on time, different names give different frames, non-ASCII is replaced by `?`.
+- Level (a), opening the project: `src/apps/kt-app/src/util.rs:59` (`open_source_or_placeholder`) returns a pair "source + error", and `src/apps/kt-app/src/app.rs:684` sends a SEPARATE `warn()` for each file with the system cause (`media_missing`) and then one `note()` with the summary (`media_missing_count`). Before this round only the LAST error survived, and the clip remained without any source at all, and the preview hung in "Loading".
+- Level (b), before the render: `src/apps/kt-app/src/render_dialog.rs:101` (`missing_sources`) and the warning in the settings window (the `missing_warn` string — "unavailable sources (N), they will get into the file as placeholders: …").
+- Level (c), after the render: `render_dialog.rs:80` (`open_all`) accumulates the names, and the summary prints `missing_after` and `missing_layers` — `ExportStats.missing_video_layers` (`src/libs/kt-engine/src/export.rs:53`). Before this round it was not shown in the GUI at all, and an incomplete render looked like success.
+- Level (d), the file returns: the guard `src/apps/kt-app/src/util.rs:183` polls existence every 900 ms, `KtApp::poll_returned_sources` (`app.rs:2131`) reopens the file IN THE BACKGROUND and swaps the source through `Player::replace_media` (`src/libs/kt-engine/src/player.rs:463`), after which `media_online` arrives. The order in the engine matters: stop the worker → invalidate its frames → bring up the new one.
+- A fifth surface that is easy to overlook: a bin card of offline media gets a warning badge both in the thumbnail and in the caption (`src/apps/kt-app/src/bin_panel.rs:692` and `:783`), and hovering puts the full path into the status-bar line.
+- Regression guards: t209 (a project with two missing files opens, BOTH are named, the preview is assembled), t210 (the render goes on and warns), t211 (a returned file replaces the placeholder) — `layout_tests.rs:3944`, `:3871`, `:3795`; the engine half of t211 — `kt-engine/tests/player_dynamic.rs:204`.
 
-### Чего не хватает
+### What is missing
 
-1. **Relink — никакого.** Грепом по `src/`: `SetMediaPath` не существует,
-   `MediaRef::path` после `AddMedia` неизменяем, диалога «указать новый путь»
-   нет. Это главный пробел заметки: у всех пяти редакторов ядра это
-   центральная команда домена, а у нас единственный сценарий починки —
-   «положи файл обратно».
-2. **kt-cli всё ещё блокер.** `src/apps/kt-cli/src/main.rs:56` и `:283` при
-   первом же неоткрывшемся файле печатают ошибку и возвращают 1. Требование
-   Р.33 п.10 закрыто в GUI и не закрыто в headless-пути, которым ходят CI и
-   любой пакетный рендер.
-3. **Обратной подмены нет**: настоящий источник → заглушка на ходу.
-4. **Список пропавших некуда нажать.** У Resolve есть «Show Offline Clips
-   Only» в Edit Index — переход к дыре в монтаже. У нас имя лежит в
-   колокольчике текстом, и найти событие можно только глазами (поиск Ctrl+F
-   по проекту ищет медиа, но связи «уведомление → событие» нет).
-5. **Ни одно из четырёх сообщений не говорит, ЧЕМ чинить** (правило 19).
+1. **Relink — none at all.** By grep over `src/`: `SetMediaPath` does not exist, `MediaRef::path` is immutable after `AddMedia`, and there is no dialog "point to a new path". This is the main gap of the note: in all five core editors this is the central command of the domain, while for us the only scenario of repair is "put the file back".
+2. **kt-cli is still a blocker.** `src/apps/kt-cli/src/main.rs:56` and `:283` print an error and return 1 at the first file that does not open. The R.33 item 10 requirement is closed in the GUI and is not closed in the headless path that CI and any batch render use.
+3. **There is no reverse substitution**: a live source → placeholder on the fly.
+4. **The list of missing files has nowhere to click.** Resolve has "Show Offline Clips Only" in the Edit Index — a jump to the hole in the edit. For us the name lies in the bell as text, and the event can be found only by eye (Ctrl+F across the project searches media, but there is no link "notification → event").
+5. **None of the four messages says HOW to repair** (rule 19).
 
-### Что мешает
+### What gets in the way
 
-Меньше, чем кажется. UI-половина relink уже написана и оттестирована для
-другой задачи: `crate::widgets::media_picker` /`media_picker_raw`
-(`src/apps/kt-app/src/widgets.rs:612` и `:657`) — поле источника морфера с
-поиском, DnD файла и выбором из медиа проекта (Р.33 С2, тест 218). Не хватает
-модельной половины: команды правки пути с undo и решения, что делать с
-`ktindex.db` (пакетный индекс, пирамида пиков и тумбы привязаны к медиа и
-после подмены протухают целиком).
+Less than it seems. The UI half of the relink is already written and tested for another task: `crate::widgets::media_picker` / `media_picker_raw` (`src/apps/kt-app/src/widgets.rs:612` and `:657`) — the source field of the morpher with search, file DnD and a choice from the project's media (R.33 C2, test 218). What is missing is the model half: a command for changing the path with undo, and a decision about what to do with `ktindex.db` (the batch index, the peak pyramid and the thumbnails are tied to the media and go completely stale after a substitution).
 
-Три конструктивных упора:
+Three structural constraints:
 
-- **Сторож живёт со списком путей, снятым при открытии.** Правка пути обязана
-  его пересобирать, иначе «починил и не отпустило».
-- **`.otio` уже умеет несколько `media_references` с активным ключом**
-  (`src/libs/kt-otio/src/convert.rs:50`) — там же и место для будущих прокси
-  (F-MED-002). Relink обязан менять активную ссылку, а не затирать чужие:
-  passthrough чужих файлов держится тестами t144-t147.
-- **Цена текста.** Каждая новая строка справки — пять языков, предел 160
-  символов (`src/apps/kt-app/build.rs` валит сборку), глифы (t100), сабсеты,
-  bidi, t125/t128/t131; подробности не пересчитываем — F-HLP-033. Поэтому
-  «где починить» обязано влезть в ОДНУ фразу внутри уже существующего
-  уведомления, а не стать абзацем.
+- **The guard lives with the list of paths taken at opening.** A path change must rebuild it, otherwise "repaired, and it did not let go".
+- **`.otio` already supports several `media_references` with an active key** (`src/libs/kt-otio/src/convert.rs:50`) — that is also the place for future proxies (F-MED-002). Relink must change the ACTIVE reference rather than overwrite the others: the passthrough of foreign files is held by tests t144–t147.
+- **The price of text.** Every new help line means five languages, a limit of 160 characters (`src/apps/kt-app/build.rs` fails the build), glyphs (t100), font subsets, bidi, t125/t128/t131; the details are not recounted here — F-HLP-033. Therefore "where to repair it" has to fit into ONE phrase inside the already existing notification, not become a paragraph.
 
-Отдельно стоит запомнить предупреждение FCP «You can't undo the Relink Files
-command»: у нас undo есть на всё, и relink без undo был бы единственным
-исключением — то есть его в таком виде делать нельзя.
+Separately, it is worth remembering FCP's warning "You can't undo the Relink Files command": we have undo for everything, and a relink without undo would be the only exception — so it cannot be done in that form.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Инвариант 5 (одним источником владеет один MediaWorker) — подмена обязана
-идти через `Player::replace_media`, а не мимо; инвариант 11 (детерминизм) —
-кадр заглушки уже в GOLDEN-путях, менять его рисование нельзя без пересчёта
-эталонов. Правила чек-листа `src/apps/kt-app/CLAUDE.md`: 13 (не заводить
-новых полос — предупреждения живут внутри существующих окон), 18 (пункт меню
-говорит ЧТО и ГДЕ), 19 (диалог говорит, где вернуть решение) — нарушено
-сегодня.
+Invariant 5 (one MediaWorker owns one source) — the substitution must go through `Player::replace_media`, not around it; invariant 11 (determinism) — the placeholder frame is already in the GOLDEN paths, and its drawing cannot be changed without recomputing the references. The rules of the checklist in `src/apps/kt-app/CLAUDE.md`: 13 (do not create new strips — warnings live inside the existing windows), 18 (a menu item says WHAT and WHERE), 19 (the dialog says where the decision is returned) — broken today.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2-3 стадии раунда |
-| Где основная работа | kt-model (команда правки пути + undo), kt-app (диалог relink на готовом `media_picker`, пересборка сторожа, тексты), kt-cli (заглушка вместо `return 1`) |
-| Формат проекта | не трогает: путь и так лежит в `target_url`, версия не растёт |
-| Тесты, которые придётся написать | `reach_tests::offline_message_offers_a_way_back` (сообщение называет существующую команду починки); round-trip модели на правку пути; харнесс-тест «указал один файл — подхватились соседние из той же папки»; тест kt-cli «рендер с пропавшим исходником идёт и печатает счётчики»; инвалидация `ktindex.db` после подмены |
-| Зависит от | ничего; пересекается с F-MED-002 (прокси — та же подмена источника) |
-| Ломает совместимость | нет |
+| Scope | M — 2-3 stages of the round |
+| Where the main work is | kt-model (a command for changing the path + undo), kt-app (the relink dialog on the ready `media_picker`, rebuilding the guard, the texts), kt-cli (a placeholder instead of `return 1`) |
+| Project format | not touched: the path is already in `target_url`, the version does not grow |
+| Tests to write | `reach_tests::offline_message_offers_a_way_back` (the message names an existing repair command); a round-trip of the model on a path change; a harness test "point to one file → the neighbours from the same folder are picked up"; a kt-cli test "a render with a missing source goes on and prints the counters"; invalidation of `ktindex.db` after a substitution |
+| Depends on | nothing; overlaps with F-MED-002 (a proxy is the same source substitution) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Четыре уровня сообщений и заглушка с именем в кадре — лучшее, что есть в
-проекте по части сообщений, и разведка это подтвердила с неожиданной
-стороны: имени файла В КАДРЕ нет ни у одного из пяти редакторов ядра, то есть
-здесь мы не догоняем, а идём впереди. Менять в этой части нечего.
+The four levels of messages and the placeholder with the name in the frame are the best there is in the project in terms of messages, and the reconnaissance confirmed this from an unexpected side: the file name IN THE FRAME is absent in all five core editors, so here we are not catching up, we are ahead. Nothing needs to change in this part.
 
-Разведка изменила не решение, а его ГРАНИЦУ. Р.33 п.10 разбирал вопрос
-«можно ли работать дальше» и ответил на него полностью. Вопрос «чем это
-чинится» он не разбирал вовсе — и оказалось, что ответа у нас нет ни в
-сообщениях, ни в модели: сообщение честно называет файл и молча предполагает,
-что пользователь положит его обратно руками. У всех пяти редакторов на этом
-месте стоит центральная команда домена с пакетным поиском. Плюс два конца
-того же требования, оставшиеся незакрытыми: `kt-cli` при пропавшем файле
-по-прежнему возвращает 1, а обратной подмены «живой источник → заглушка» при
-исчезновении файла на ходу не существует.
+The reconnaissance changed not the decision but its BOUNDARY. R.33 item 10 dealt with the question "can one keep working?" and answered it completely. The question "with what is it repaired?" it did not deal with at all — and it turned out that we have no answer to it, neither in the messages nor in the model: the message honestly names the file and tacitly assumes the user will put it back by hand. All five editors have a central domain command with a batch search at this place. Plus two ends of the same requirement that remain open: `kt-cli` still returns 1 when a file is missing, and a reverse substitution "live source → placeholder" when a file disappears on the fly does not exist.
 
-ТЕСТ: reach_tests::offline_message_offers_a_way_back — сегодня падает,
-потому что все четыре сообщения об офлайне (`media_missing`,
-`media_missing_count`, `missing_warn`, `missing_after` — `i18n/*.toml`
-строки 441-443 и 512-514) называют ИМЯ файла и не называют ни одного
-действия, которым это чинят: в `kt_model::Command` нет ни одного варианта,
-меняющего `MediaRef::path`, а `src/apps/kt-cli/src/main.rs:56` на том же
-событии возвращает 1 вместо заглушки.
+TEST: reach_tests::offline_message_offers_a_way_back — fails today, because all four messages about offline (`media_missing`, `media_missing_count`, `missing_warn`, `missing_after` — lines 441-443 and 512-514 of `i18n/*.toml`) name the file and do not name a single action by which it is repaired: `kt_model::Command` has no variant that changes `MediaRef::path`, and `src/apps/kt-cli/src/main.rs:56` on the same event returns 1 instead of a placeholder.
 
-ОДНА СТРОКА: перекрытие — не трогает | задержка — не трогает | ёмкость —
-фраза «где починить» дописывается в ТЕКСТ уже существующего уведомления и в
-контекстное меню карточки бина, сам relink живёт в окне, куда приходят
-намеренно (готовый `media_picker`); ни нового слоя, ни попапа.
+ONE LINE: overlap — not touched | delay — not touched | capacity — the phrase "where to repair it" is added to the TEXT of the already existing notification and to the context menu of the bin card; the relink itself lives in a window to which the user comes deliberately (the ready `media_picker`); no new layer, no popup.
 
-## Источники
+## Sources
 
-Живьём ни один из пяти редакторов не запускался. Ядро — по мануалам вендоров
-(Resolve и FCP читались локально из PDF, поиск по тексту), Premiere — через
-поисковый индекс: `helpx.adobe.com` не открывается из этого окружения ни
-напрямую, ни через текст-прокси (страница отдаёт только навигацию), поэтому
-формулировки диалога Link Media взяты из индексированного текста тех же
-страниц и из официального сообщества Adobe. Дата обращения ко всем —
-2026-09-07.
+Live, none of the five editors was launched. The core — from the manuals of the vendors (Resolve and FCP were read locally from PDF, by text search), Premiere — through the search index: `helpx.adobe.com` does not open from this environment either directly or through the text proxy (the page gives only navigation), therefore the wording of the Link Media dialog is taken from the indexed text of the same pages and from the official Adobe community. The access date for all of them is 2026-09-07.
 
-**Ядро.**
+**Core.**
 
-- DaVinci Resolve 21 Reference Manual (PDF, прочитан локально): Ch. 17
-  «Relinking Media Simply» с. 414-416 (Relink Media, Relink Selected Clips,
-  deep search, Change Source Folder), Ch. 6 с. 168 «Automatically setup when
-  relinking», Ch. 22 с. 503 Loose/Tight Filename Match, Ch. 187 с. 4212
-  «Media Offline Warning in Render Queue», Edit Index «Show Offline Clips
-  Only» —
+- DaVinci Resolve 21 Reference Manual (PDF, read locally): Ch. 17 "Relinking Media Simply" pp. 414-416 (Relink Media, Relink Selected Clips, deep search, Change Source Folder), Ch. 6 p. 168 "Automatically setup when relinking", Ch. 22 p. 503 Loose/Tight Filename Match, Ch. 187 p. 4212 "Media Offline Warning in Render Queue", Edit Index "Show Offline Clips Only" —
   https://documents.blackmagicdesign.com/UserManuals/DaVinci_Resolve_21_Reference_Manual.pdf
-- Final Cut Pro User Guide for Mac 12.3 (PDF, прочитан локально): «Relink
-  clips to media files» с. 855-857 (Locate All / Locate Selected, счёт
-  совпадений, вывод закономерности имён `File1_A` → `File2_A`, требование
-  совпадения типа/fps/каналов, «You can't undo the Relink Files command»),
-  «Alert icons» — Missing File; веб-версия той же страницы —
+- Final Cut Pro User Guide for Mac 12.3 (PDF, read locally): "Relink clips to media files" pp. 855-857 (Locate All / Locate Selected, the count of matches, the output of the naming regularity `File1_A` → `File2_A`, the requirement of matching type/fps/channels, "You can't undo the Relink Files command"), "Alert icons" — Missing File; the web version of the same page —
   https://support.apple.com/guide/final-cut-pro/relink-clips-to-media-files-ver26f5c8c9/mac
-- Adobe Premiere 26, «Relink offline media automatically» и «Relink offline
-  clips» — https://helpx.adobe.com/premiere/desktop/organize-media/file-organization/relink-offline-media-automatically.html
-  и https://helpx.adobe.com/premiere/desktop/organize-media/ingest-proxy-workflow/relink-offline-clips.html
-  (страницы читались через поисковый индекс, см. оговорку выше)
-- After Effects: механизм плейсхолдера и цветополос описан дословно в
-  «Placeholders and proxies» / «Work with placeholders and missing footage
-  items» мануала After Effects CS5 (прочитан локально), формулировки «A
-  still image of color bars», «In most cases, you need to relink only one
-  footage file» — оттуда. `[НЕ ПРОВЕРЕНО]` для 26.x: что механизм не менялся,
-  подтверждается только вторичными источниками и форумными тредами.
-- VEGAS Pro: диалог «Resolve Offline Media» со статусами `Offline` /
-  `Probable Match` / `Found` и кнопками Smart Search / Browse / Leave Offline
-  описан в мануале VEGAS Pro 9 (прочитан локально, раздел «Resolving offline
-  media files», с. 85). `[НЕ ПРОВЕРЕНО]` для 2026.0: в онлайн-справке Boris
-  FX и MAGIX раздела о пропавших файлах найти не удалось (проверены
-  `3-projects/open.htm` и `4-media/project_media.htm` в обеих справках),
-  подтверждение современного поведения — только форумное.
+- Adobe Premiere 26, "Relink offline media automatically" and "Relink offline clips" — https://helpx.adobe.com/premiere/desktop/organize-media/file-organization/relink-offline-media-automatically.html and https://helpx.adobe.com/premiere/desktop/organize-media/ingest-proxy-workflow/relink-offline-clips.html (the pages were read through the search index, see the caveat above)
+- After Effects: the mechanism of the placeholder and of the colour bars is described verbatim in "Placeholders and proxies" / "Work with placeholders and missing footage items" of the After Effects CS5 manual (read locally); the wordings "A still image of color bars" and "In most cases, you need to relink only one footage file" are from there. `[NOT VERIFIED]` for 26.x: that the mechanism has not changed is confirmed only by secondary sources and forum threads.
+- VEGAS Pro: the "Resolve Offline Media" dialog with the statuses `Offline` / `Probable Match` / `Found` and the buttons Smart Search / Browse / Leave Offline is described in the VEGAS Pro 9 manual (read locally, section "Resolving offline media files", p. 85). `[NOT VERIFIED]` for 2026.0: the online help of Boris FX and MAGIX has no section on missing files (`3-projects/open.htm` and `4-media/project_media.htm` were checked in both helps); the confirmation of the modern behaviour is only from forums.
 
-**Форумы (цитаты).**
+**Forums (quotes).**
 
 - https://community.adobe.com/t5/premiere-pro-discussions/export-tells-me-quot-media-offline-quot-but-it-s-visable-in-premiere/td-p/13999862
 - https://creativecow.net/forums/thread/media-offline-graphic-on-export-but-timeline-is-fi/
 - https://creativecow.net/forums/thread/cant-render-video-because-of-offline-media/
 - https://creativecow.net/forums/thread/can-you-toggle-off-the-missing-footage-colour-bars/
 
-**Что искали и НЕ нашли** (чтобы следующая волна не искала заново): описания
-пропавшего материала в онлайн-справке VEGAS 2026 (`open.htm`,
-`project_media.htm`); подтверждения по первоисточнику, что Premiere и FCP
-именно ПРЕДУПРЕЖДАЮТ перед экспортом с офлайн-материалом, а не блокируют его
-(у Resolve это в мануале есть прямо, у Premiere — только форумно, у FCP не
-нашли ничего); хотя бы одного редактора, который пишет ИМЯ пропавшего файла в
-кадр-заглушку — не нашли ни одного, и это и есть «фишка фишки» заметки.
+**What was searched for and NOT found** (so that the next wave does not search again): descriptions of missing material in the online help of VEGAS 2026 (`open.htm`, `project_media.htm`); confirmation from a primary source that Premiere and FCP actually WARN before an export with offline material rather than block it (for Resolve this is stated directly in the manual, for Premiere — only in forums, for FCP we found nothing); at least one editor that writes the NAME of the missing file into the placeholder frame — we did not find a single one, and this is the "trick behind the trick" of the note.

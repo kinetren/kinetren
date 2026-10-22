@@ -1,12 +1,12 @@
 ---
 id: F-COL-002
-title: Служебное рядом с проектом — кэш, индекс и замок на общем диске
-status: кандидат
+title: Service data next to the project — cache, index and lock on a shared drive
+status: candidate
 priority: B
 cost: S
 category: collab/assets
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, sqlite-3.50]
-we_have: частично
+we_have: partial
 crates: [kt-media, kt-app, kt-cli]
 invariants: [8]
 ui_rules: [12]
@@ -19,109 +19,119 @@ services: [premiere-productions, resolve-project-server, fcp-shared-library, syn
 checked: 2026-09-08
 ---
 
-# F-COL-002 — Служебное рядом с проектом — кэш, индекс и замок на общем диске
+# F-COL-002 — Service data next to the project — cache, index and lock on a shared drive
 
-## Суть
+## Essence
 
-У всякого редактора, кроме самого проекта, есть служебное: пики волноформ,
-тумбнейлы, кэш кадров, индексы перемотки, файл-замок. Оно лежит либо рядом с
-проектом, либо рядом с материалом, либо внутри бандла — и на одной машине его
-никто не замечает, потому что оно молча пересоздаётся. На общем диске первым
-ломается именно оно: не проект и не материал, а невидимый спутник, который никто
-не считал данными и потому не защищал. Монтажёр видит это как «таймлайн из синего
-стал красным» и не связывает с тем, что просто сохранил проект.
+Every editor, apart from the project itself, has auxiliary data: waveform peaks,
+thumbnails, frame caches, seek indexes, a lock file. It lies either next to the
+project, next to the media, or inside the bundle, and on a single machine nobody
+notices it, because it is silently regenerated. On a shared disk the first thing
+to break is exactly this: not the project and not the media, but an invisible
+companion that nobody counted as data and therefore nobody protected. The editor
+sees it as "the timeline went from blue to red" and does not connect it with the
+fact that they had just saved the project.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Peak files (`.sfk`) | пики кладутся РЯДОМ С МЕДИА, а не рядом с проектом: спутник привязан к материалу и уезжает вместе с папкой материала, а не с монтажом [НЕ ПРОВЕРЕНО живьём: механизм наследован от Sound Forge и в списке возможностей 2026 не описан] |
-| Adobe Premiere | 26.x | Media Cache (`.cfa`/`.pek`) + Media Cache Database; `.prlock` | служебное РАЗВЕДЕНО по назначению: тяжёлый кэш — в отдельном настраиваемом каталоге (по умолчанию не на шаре), а рядом с проектом на общем томе лежит только замок в один байт смысла — «занято» |
-| DaVinci Resolve | 21 | Disk database, CacheClip, Gallery stills | всё служебное — каталоги рядом с проектной базой; на SMB3 кэш стирается при сохранении проекта (см. цитату), и рекомендованный выход — унести базу в PostgreSQL, то есть перестать быть файлом |
-| Final Cut Pro | 12.3 | Render files, Peaks, Thumbnails внутри бандла библиотеки | спутник спрятан ВНУТРЬ документа: на шару он попадает по построению, вместе с библиотекой, и потому наследует её эксклюзивный замок целиком |
-| After Effects | 26.x | Disk Cache + Conformed Media (`.cfa`, `.pek`) | кэш вынесен в свой каталог и не привязан к проекту вовсе: спутник переживает проект, а не наоборот [НЕ ПРОВЕРЕНО живьём] |
+| VEGAS Pro | 2026.0 | Peak files (`.sfk`) | peaks are stored NEXT TO THE MEDIA, not next to the project: the companion is tied to the material and moves with the media folder, not with the edit [NOT VERIFIED live: the mechanism is inherited from Sound Forge and is not described in the 2026 feature list] |
+| Adobe Premiere | 26.x | Media Cache (`.cfa`/`.pek`) + Media Cache Database; `.prlock` | the auxiliary data is SEPARATED by purpose: the heavy cache goes to a separate configurable directory (by default not on the share), while next to the project on the shared volume only a lock file lies, which means one thing: "busy" |
+| DaVinci Resolve | 21 | Disk database, CacheClip, Gallery stills | all auxiliary data is in directories next to the project database; on SMB3 the cache is wiped when the project is saved (see the quote), and the recommended way out is to move the database to PostgreSQL, that is, to stop being a file |
+| Final Cut Pro | 12.3 | Render files, Peaks, Thumbnails inside the library bundle | the companion is hidden INSIDE the document: on a share it arrives by construction, together with the library, and therefore inherits the library's exclusive lock as a whole |
+| After Effects | 26.x | Disk Cache + Conformed Media (`.cfa`, `.pek`) | the cache is placed in its own directory and is not tied to the project at all: the companion outlives the project, not the other way around [NOT VERIFIED live] |
 
-**Вне ядра.** Без SQLite эту заметку написать нельзя: у пяти редакторов ядра
-служебное описано только по составу («кэш, пики, тумбы»), а ПРИЧИНА, по которой
-оно не работает через сеть, сформулирована ровно в одном месте отрасли — в
-документации SQLite, и именно этот механизм у нас включён.
+**Outside the core.** This note could not be written without SQLite: for the five
+core editors the auxiliary data is described only by its composition ("cache,
+peaks, thumbnails"), while the REASON it does not work over the network is
+formulated in exactly one place in the industry, in the SQLite documentation, and
+precisely this mechanism is enabled in our build.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| SQLite | 3.50.2 (вендорена в `libsqlite3-sys` 0.35.0, наш `src/Cargo.lock`) | WAL, wal-index (`-shm`) | журнал упреждающей записи требует, чтобы все процессы разделяли небольшой участок памяти; сделано это mmap-ом файла `-shm` В ТОМ ЖЕ каталоге, где база, — поэтому запрет на сетевую ФС не «оптимизация», а следствие устройства |
+| SQLite | 3.50.2 (vendored in `libsqlite3-sys` 0.35.0, our `src/Cargo.lock`) | WAL, wal-index (`-shm`) | the write-ahead log requires all processes to share a small region of memory; this is done by mmap-ing the `-shm` file IN THE SAME directory as the database, so the ban on network filesystems is not an "optimization" but a consequence of the design |
 
-## Фишка фишки
+## The trick behind it
 
-**Ломается не база, а её невидимый второй файл.** WAL-режим держит указатель на
-конец журнала не в базе, а в отдельном `-shm`, который мапится в память ВСЕМИ
-процессами, открывшими базу; сетевая файловая система разделяемую память между
-хостами не даёт, и потому SQLite запрещает WAL по сети не из осторожности, а
-конструктивно. Практическое следствие, которого нет ни в одном списке
-возможностей: база на шаре не «работает медленнее» и не «иногда сбоит» — она не
-открывается вовсе, причём отказ приходит из-за файла, о существовании которого
-пользователь не знает и которого он в каталоге не видел.
+**It is not the database that breaks, but its invisible second file.** WAL mode
+keeps the pointer to the end of the log not in the database but in a separate
+`-shm` file, which is mapped into memory by ALL processes that opened the
+database; a network filesystem does not provide shared memory between hosts, and
+therefore SQLite forbids WAL over the network not out of caution but by design.
+The practical consequence, which is absent from every feature list: a database on
+a share does not "work more slowly" and does not "sometimes fail" — it does not
+open at all, and moreover the refusal comes because of a file whose existence the
+user does not know about and has never seen in the directory.
 
-**Второй слой той же фишки — что делает программа, получив этот отказ.** У нас
-sidecar объявлен КЭШЕМ, и доктрина кэша доведена до конца буквально: любая
-ошибка открытия — битый файл, чужая схема, недоступный замок — приводит к
-`remove_file` и созданию пустой базы заново (`MediaIndexDb::open`,
-`src/libs/kt-media/src/index.rs`). На одной машине это правильно и спасает от
-падения. На общем диске то же самое правило означает, что двое, открывшие проект
-с сетевой шары, по кругу сносят друг другу индекс — без единого сообщения, без
-следа в журнале и без замедления, которое можно было бы заметить: работа просто
-никогда не заканчивается, потому что каждый раз начинается с нуля.
+**The second layer of the same trick is what the program does on receiving this
+refusal.** Our sidecar is declared a CACHE, and the cache doctrine is carried out
+literally: any opening error — a corrupt file, a foreign schema, an unavailable
+lock — leads to `remove_file` and to creating an empty database anew
+(`MediaIndexDb::open`, `src/libs/kt-media/src/index.rs`). On one machine this is
+correct and prevents a crash. On a shared disk the same rule means that two people
+who open a project from a network share delete each other's index in a loop —
+without a single message, without a trace in the log, and without a slowdown that
+could be noticed: the work simply never finishes, because each time it starts from
+zero.
 
-**Третий слой — и он виден уже на ОДНОЙ машине.** Sidecar задуман спутником
-проекта: «лежит рядом с файлом проекта → переносится вместе с ним»
-(`docs/media-index.md`), а в схеме про `path` написано «как в проекте
-(относительный)». Код пишет туда результат резолва, то есть АБСОЛЮТНЫЙ путь
-(`ensure_media`). Спутник, который умеет переноситься вместе с проектом, не
-переживает переноса: после перемещения папки ни одна строка `media` не находится
-по ключу, и пики, тумбы и пакетный индекс строятся заново — хотя байты те же и
-`xxh3` совпал бы посимвольно. Доказательство ценности разведки: расхождение кода
-с собственной документацией нашлось не там, где его искали.
+**The third layer — and it is already visible on ONE machine.** The sidecar is
+designed as a companion of the project: "lies next to the project file → moves
+with it" (`docs/media-index.md`), and the schema says about `path` "as in the
+project (relative)". The code writes the result of resolution there, that is, an
+ABSOLUTE path (`ensure_media`). A companion that is meant to move with the project
+does not survive the move: after the folder is relocated, not a single `media` row
+is found by its key, and the peaks, thumbnails and batch index are built again —
+although the bytes are the same and `xxh3` would match character for character.
+This is the proof of the value of reconnaissance: a divergence between the code and
+its own documentation was found not where it was being looked for.
 
-## Плюсы
+## Pros
 
-- Служебное рядом с проектом переносится вместе с ним и не требует ни настройки,
-  ни каталога «где-то в системе»: скопировал папку — унёс и прогретость.
-- Доктрина «это кэш, падать из-за него нельзя» снимает целый класс отказов: битый
-  или чужой sidecar не мешает открыть проект вообще никак.
-- Одна база на проект даёт естественную единицу очистки: удалил файл — удалил всю
-  прогретость этого монтажа, и ничего постороннего не задел.
-- Инвариант 8 (скролл и зум не порождают декодов) держится ровно на этом файле, и
-  потому у нас есть ЕДИНСТВЕННОЕ место, где хранится вся производная от
-  материала, — редкая роскошь: у Premiere это три разных механизма, у Resolve —
-  четыре.
+- Auxiliary data kept next to the project travels with it and requires neither
+  configuration nor a directory "somewhere in the system": copy the folder — and
+  you take the warmth with it too.
+- The doctrine "this is a cache, it must not fail because of it" removes a whole
+  class of failures: a corrupt or foreign sidecar does not prevent the project from
+  opening in any way at all.
+- One database per project gives a natural unit of cleanup: delete the file — and
+  you have deleted all the warmth of this edit, and nothing else was touched.
+- Invariant 8 (scrolling and zooming do not produce decodes) rests precisely on this
+  file, and therefore we have a SINGLE place where everything derived from the
+  material is stored — a rare luxury: Premiere has three different mechanisms for
+  this, Resolve has four.
 
-## Минусы
+## Cons
 
-- **Правило «любая ошибка открытия → удалить и создать заново» не различает
-  причин.** Битая база и недоступный замок обрабатываются одинаково, а на сетевой
-  ФС вторая причина — постоянная. Механизм самолечения превращается в механизм
-  взаимного уничтожения ровно в тот момент, когда открывающих становится двое.
-- **Тот же выстрел возможен и без сети, внутри одной машины.** Sidecar открывают
-  независимо и одновременно index-воркер, тумбы, открытие источников
-  (`FfmpegSource::open_indexed`), поток `reopen-media` и отдельным ПРОЦЕССОМ —
-  `kt-cli` (`src/apps/kt-cli/src/main.rs`). Соединения короткоживущие, WAL и
-  `busy_timeout` 5 с рассчитаны на конкуренцию потоков, но при исчерпании
-  таймаута проигравший не ждёт и не жалуется — он УДАЛЯЕТ файл, с которым в этот
-  момент работает победитель.
-- Ключ строки — абсолютный путь, вопреки собственной документации: перенос
-  проекта обнуляет весь индекс, хотя содержимое файлов не менялось.
-- Идентичность файла — размер и mtime (`xxh3` считается только при вставке и при
-  расхождении mtime). На сетевых ФС mtime как раз и врёт: разная гранулярность,
-  разные часы, копирование без сохранения времени. Быстрый путь «size+mtime
-  совпали → доверяем» на шаре опаснее, чем локально, а медленный путь честен и
-  стоит полного чтения файла.
-- Пользователь не узнаёт об этом никогда: удаление и пересоздание базы не
-  печатают ни строки, а `spawn_index_worker` молча проглатывает `Err`
-  (`.ok()`) — сигнал «прогретость не копится» до человека не доходит.
+- **The rule "any opening error → delete and create anew" does not distinguish
+  causes.** A broken database and an unavailable lock are handled the same way, and
+  on a network filesystem the second cause is permanent. The self-healing mechanism
+  turns into a mutual-destruction mechanism exactly at the moment when there are two
+  openers.
+- **The same shot is possible without a network, inside one machine.** The sidecar
+  is opened independently and simultaneously by the index worker, the thumbnails,
+  the opening of sources (`FfmpegSource::open_indexed`), the `reopen-media` thread,
+  and by a separate PROCESS — `kt-cli` (`src/apps/kt-cli/src/main.rs`). The
+  connections are short-lived; WAL and `busy_timeout` of 5 s are designed for
+  contention between threads, but when the timeout is exhausted the loser does not
+  wait and does not complain — it DELETES the file with which the winner is working
+  at that moment.
+- The row key is the absolute path, contrary to the code's own documentation:
+  moving the project zeroes the entire index, although the contents of the files
+  did not change.
+- File identity is size and mtime (`xxh3` is computed only on insertion and when
+  mtime diverges). On network filesystems mtime is exactly what lies: different
+  granularity, different clocks, copying without preserving times. The fast path
+  "size+mtime match → trust" is more dangerous on a share than locally, while the
+  slow path is honest and costs a full read of the file.
+- The user never learns about this: deletion and re-creation of the database print
+  not a single line, and `spawn_index_worker` silently swallows the `Err`
+  (`.ok()`) — the signal "warmth is not accumulating" does not reach the person.
 
-## Что говорят пользователи
+## What users say
 
-Самая точная формулировка класса — заголовок и первая фраза треда колориста,
-который перенёс кэш на NAS:
+The most precise formulation of the class is the title and the first sentence of
+the thread of a colorist who moved the cache to a NAS:
 
 > if I put the cache files folder onto this NAS via an SMB3 share, merely saving
 > my project trashes all of the cache files.
@@ -129,139 +139,145 @@ sidecar объявлен КЭШЕМ, и доктрина кэша доведен
 > whenever a project is saved», Lift Gamma Gain, 15.09.2017,
 > https://www.liftgammagain.com/forum/index.php?threads/resolves-cache-files-stored-on-a-nas-via-smb3-are-trashed-whenever-a-project-is-saved.9573/
 
-Причина названа в том же треде и ровно та же, что у Apple в F-COL-001, — служебное
-опирается на возможности файловой системы, которых у протокола нет:
+The cause is named in the same thread and is exactly the same as Apple's in
+F-COL-001: the auxiliary data relies on filesystem features that the protocol does
+not have:
 
 > The disk database would almost certainly depend on native attributes to
 > function.
-> — Juan Salvo, там же, 2017,
+> — Juan Salvo, ibid., 2017,
 > https://www.liftgammagain.com/forum/index.php?threads/resolves-cache-files-stored-on-a-nas-via-smb3-are-trashed-whenever-a-project-is-saved.9573/
 
-Механизм, из-за которого это неизбежно, сформулирован в документации SQLite —
-той самой версии, что вендорена у нас:
+The mechanism that makes this unavoidable is formulated in the SQLite
+documentation — the very version that is vendored in our build:
 
 > All processes using a database must be on the same host computer; WAL does not
 > work over a network filesystem.
-> — SQLite, «Write-Ahead Logging», раздел 2.1 (дата обращения 08.09.2026),
+> — SQLite, «Write-Ahead Logging», section 2.1 (accessed 08.09.2026),
 > https://www.sqlite.org/wal.html
 
-Отдельный сюжет — замок как служебный файл: в Productions он остаётся на общем
-томе после падения, и владелец его снять не может, потому что не видит.
-Показательно, что в треде спор идёт о ФАЙЛЕ, а не о состоянии: «If we open the
-projects on another machine the .prlock files appear. Closing the project removes
-those files» (atedwards, 25.04.2024,
+A separate story is the lock as an auxiliary file: in Productions it remains on the
+shared volume after a crash, and the owner cannot remove it, because cannot see it.
+It is telling that in the thread the dispute is about the FILE, not about the state:
+"If we open the projects on another machine the .prlock files appear. Closing the
+project removes those files" (atedwards, 25.04.2024,
 https://community.adobe.com/t5/premiere-pro-discussions/issue-with-productions-showing-projects-as-locked-when-they-are-not/td-p/14579493).
 
-`trackers:` пуст сознательно (правило 12): у пяти редакторов ядра публичных
-трекеров нет, а в двенадцати выгруженных трекерах опенсорса тема совместной
-работы отсутствует как класс. Число, которого нет, лучше пустого поля, чем
-подобранного фильтра.
+`trackers:` is empty deliberately (rule 12): the five core editors have no public
+trackers, and in the twelve exported open-source trackers the topic of collaborative
+work is absent as a class. A number that does not exist is better than an empty
+field, than a fabricated filter.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
 - `src/libs/kt-media/src/index.rs` — `MediaIndexDb::open` (WAL, `busy_timeout`
-  5 с, `remove_file` при любой ошибке), `ensure_media` (идентичность: размер и
-  mtime, при расхождении — `xxh3`), `purge_media` (инвалидация ТОЛЬКО одного
-  media_id), таблицы `media`/`packet_index`/`audio_peaks`/`thumbnails`/`poster`.
-- `docs/media-index.md` — правила инвалидации 1–5 и обещание «переносится вместе
-  с проектом», с которым код разошёлся.
-- `src/apps/kt-app/src/util.rs` — `spawn_index_worker` и
-  `open_source_or_placeholder`: обе точки открывают базу как `Option` и молча
-  живут без неё.
-- `src/apps/kt-app/src/thumbs.rs`, `src/apps/kt-cli/src/main.rs` — ещё два
-  независимых открывателя того же файла, второй — в отдельном процессе.
-- Инвариант 8 в чистом виде: пока sidecar жив, скролл и зум не порождают ни
-  одного декода; когда его нет — плейсхолдеры и никакого сообщения.
+  5 s, `remove_file` on any error), `ensure_media` (identity: size and mtime, on
+  divergence — `xxh3`), `purge_media` (invalidation of ONLY one media_id), tables
+  `media`/`packet_index`/`audio_peaks`/`thumbnails`/`poster`.
+- `docs/media-index.md` — invalidation rules 1–5 and the promise "moves together
+  with the project", from which the code has diverged.
+- `src/apps/kt-app/src/util.rs` — `spawn_index_worker` and
+  `open_source_or_placeholder`: both points open the database as an `Option` and
+  silently live without it.
+- `src/apps/kt-app/src/thumbs.rs`, `src/apps/kt-cli/src/main.rs` — two more
+  independent openers of the same file, the second one in a separate process.
+- Invariant 8 in pure form: while the sidecar is alive, scrolling and zooming do not
+  produce a single decode; when it is absent — placeholders and no message.
 
-### Чего не хватает
+### What is missing
 
-- Различения причин отказа при открытии. Сегодня `Err(_) => remove_file` —
-  единственная ветка; «база занята/недоступна» и «база битая» требуют разных
-  действий, и первая на общем томе постоянна.
-- Места для sidecar, не совпадающего с местом проекта. Это ровно второй вывод
-  первой волны (README, «пользовательское хранилище вне проекта»): четыре фичи
-  уже упёрлись в его отсутствие, и sidecar на шаре — пятая.
-- Согласия кода с документацией по ключу строки `media`: либо относительный путь
-  (и тогда спутник переносится), либо честная запись в `docs/media-index.md`, что
-  ключ абсолютный и перенос обнуляет индекс.
-- Любого сигнала человеку о том, что прогретость не копится: правило UI 12
-  требует, чтобы фоновая работа не мешала, но не запрещает ей отчитываться.
+- Distinguishing the causes of a refusal on opening. Today `Err(_) => remove_file` is
+  the only branch; "database busy/unavailable" and "database corrupt" require
+  different actions, and the first is permanent on a shared volume.
+- A place for a sidecar that does not coincide with the project's place. This is
+  exactly the second conclusion of the first wave (README, "user storage outside the
+  project"): four features have already run into its absence, and a sidecar on a
+  share would be the fifth.
+- Agreement of the code with the documentation on the key of the `media` row: either
+  a relative path (and then the companion moves), or an honest entry in
+  `docs/media-index.md` that the key is absolute and that a move zeroes the index.
+- Any signal to the person that warmth is not accumulating: UI rule 12 requires that
+  background work not get in the way, but it does not forbid it from reporting.
 
-### Что мешает
+### What gets in the way
 
-Ничего дорогого: все три правки — внутри одного файла и не трогают ни схему БД,
-ни формат проекта. Мешает единственное — доктрина «это кэш, потеря не ошибка»
-написана в шапке `index.rs` и в `docs/media-index.md` как безусловная, и любое
-различение причин выглядит её нарушением. Различать надо не «ошибка/не ошибка», а
-«моя ошибка/чужая»: чужую базу нельзя удалять, даже если своя в таком состоянии
-подлежала бы пересозданию.
+Nothing expensive: all three fixes are inside one file and touch neither the DB
+schema nor the project format. The only obstacle is that the doctrine "this is a
+cache, loss is not an error" is written in the header of `index.rs` and in
+`docs/media-index.md` as unconditional, and any distinction of causes looks like a
+violation of it. One must distinguish not "error/not error" but "my error/someone
+else's": someone else's database must not be deleted, even if one's own, in such a
+state, would be subject to re-creation.
 
-### В категории `collab/` — две обязательные строки (правило 13)
+### In the `collab/` category — two mandatory lines (rule 13)
 
-БЕЗ СЕТИ: ВЫРОЖДАЕТСЯ — `src/libs/kt-media/src/index.rs:151` — sidecar задуман спутником проекта и переносится вместе с ним, но ключ строки `media` — абсолютный путь резолвленного файла, поэтому перенос папки на ОДНОЙ машине обнуляет весь индекс: ни одна строка не находится, пики, тумбы и пакетный индекс строятся заново, хотя байты те же и хэш совпал бы.
+OFFLINE: DEGENERATES — `src/libs/kt-media/src/index.rs:151` — the sidecar is designed as a companion of the project and moves together with it, but the key of the `media` row is the absolute path of the resolved file, therefore moving the folder on ONE machine zeroes the entire index: not a single row is found, the peaks, thumbnails and batch index are built again, although the bytes are the same and the hash would match.
 
-ЦЕНА СЕТИ: владелец служебной базы вместо файла рядом (у Resolve это PostgreSQL) — инвариант 8 · проект-как-база — вся прогретость, на которой держится «скролл не декодирует», живёт в одном файле с WAL, а WAL требует разделяемой памяти всех открывших: на общем томе её нет, и файл начинает не тормозить, а уничтожаться.
+NETWORK COST: an owner of the auxiliary database instead of a file next to it (for Resolve this is PostgreSQL) — invariant 8 · project-as-database — all the warmth on which "scrolling does not decode" rests lives in one file with a WAL, and the WAL requires shared memory of all who have opened it: on a shared volume it is absent, and the file starts not to slow down but to be destroyed.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Инвариант 8 (скролл и зум не порождают декод-запросов; волноформы — из
-peak-пирамиды, тумбы — из sidecar-индекса) — единственный, и он задет напрямую:
-без sidecar инвариант формально соблюдён (декодов по-прежнему нет), а обещание
-нарушено — на месте картинок навсегда остаются плейсхолдеры. Правило UI 12
-(фоновая работа не мешает и не дёргает интерфейс) — граница, в которую обязано
-уложиться будущее сообщение.
+Invariant 8 (scrolling and zooming do not produce decode requests; waveforms come
+from the peak pyramid, thumbnails from the sidecar index) — the only one, and it is
+touched directly: without the sidecar the invariant is formally observed (there are
+still no decodes), but the promise is broken — placeholders remain forever in place
+of the pictures. UI rule 12 (background work does not get in the way and does not
+jerk the interface) is the boundary that future messages must fit into.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия раунда; всё внутри `index.rs` и `docs/media-index.md` |
-| Где основная работа | kt-media (различение причин отказа, ключ строки), kt-app (сигнал «индекс не строится») |
-| Формат проекта | не трогает; схема sidecar не меняется (ключ строки — не `SCHEMA_VERSION`, но перенос ключа потребует однократной перестройки) |
-| Тесты, которые придётся написать | открытие базы, помеченной только на чтение, не удаляет её; два процесса, открывшие один sidecar, не сносят друг другу строки; перенос проекта вместе с sidecar сохраняет пики и тумбы (сегодня падает) |
-| Зависит от | F-COL-001 (там про требования к протоколу вообще), F-RES-001 (автосейв — соседний спутник проекта) |
-| Ломает совместимость | нет: пересоздание sidecar — штатное поведение по построению |
+| Size | S — one stage of a round; everything inside `index.rs` and `docs/media-index.md` |
+| Where the main work is | kt-media (distinguishing causes of refusal, row key), kt-app (signal "index is not being built") |
+| Project format | not touched; the sidecar schema does not change (the row key is not `SCHEMA_VERSION`, but moving the key will require a one-time rebuild) |
+| Tests to write | opening a database marked read-only does not delete it; two processes that open one sidecar do not delete each other's rows; moving the project together with the sidecar keeps peaks and thumbnails (today it fails) |
+| Depends on | F-COL-001 (there, about protocol requirements in general), F-RES-001 (autosave — a neighboring companion of the project) |
+| Breaks compatibility | no: re-creating the sidecar is standard behavior by construction |
 
-## Вердикт
+## Verdict
 
-Берём локальную половину, и она дешёвая: перестать удалять базу, причину отказа
-которой мы не поняли, и привести ключ строки в согласие с собственной
-документацией. Обе правки нужны на ОДНОЙ машине — вторая чинит потерю индекса при
-переносе проекта, первая закрывает гонку между нашими же двумя процессами
-(`kt-app` и `kt-cli` на одном `<project>.ktindex.db`), — и обе заодно снимают
-худший сетевой сценарий, где двое по кругу сносят друг другу прогретость молча.
+We take the local half, and it is cheap: stop deleting a database whose refusal
+cause we did not understand, and bring the row key into agreement with our own
+documentation. Both fixes are needed on ONE machine — the second repairs the loss of
+the index when the project is moved, the first closes the race between our own two
+processes (`kt-app` and `kt-cli` on the same `<project>.ktindex.db`) — and both at the
+same time remove the worst network scenario, where two people silently delete each
+other's warmth in a loop.
 
-Серверную половину не заводим: владелец базы (PostgreSQL у Resolve) требует
-второго участника, а его нет. Формула та же, что у F-PRJ-003 и F-PRJ-001.
+We do not open the server half: the database owner (PostgreSQL at Resolve) requires
+a second participant, and there is none. The formula is the same as for F-PRJ-003
+and F-PRJ-001.
 
-Отдельно записать как решение: **sidecar не станет местом для данных.** Всё, что
-нельзя пересчитать из материала, в него класть нельзя — именно потому, что
-`remove_file` при любой ошибке останется. Как только туда попадёт хоть одно
-пользовательское поле, доктрина кэша перестанет быть верной, а правило удаления
-превратится в потерю работы.
+Separately, to record as a decision: **the sidecar will not become a place for data.**
+Everything that cannot be recomputed from the material must not be put into it — precisely
+because `remove_file` on any error will remain. As soon as even one user-entered field
+lands there, the cache doctrine stops being true, and the deletion rule turns into loss
+of work.
 
-Границы: требования к протоколу и общий том вообще — F-COL-001; производные,
-которые РАЗДАЮТ второму человеку (прокси, тумбы как товар) — F-COL-005, здесь же
-предмет — сам файл-спутник и правило его уничтожения; автосейв рядом с
-проектом — F-RES-001; атомарность записи проекта — F-RES-002; «материал ещё не
-приехал» — F-COL-003.
+Boundaries: requirements for the protocol and a shared volume in general — F-COL-001;
+derivatives that are HANDED OUT to a second person (proxies, thumbnails as a product) —
+F-COL-005; here the subject is the companion file itself and the rule for its
+destruction; autosave next to the project — F-RES-001; atomicity of writing the project —
+F-RES-002; "the material has not arrived yet" — F-COL-003.
 
-## Источники
+## Sources
 
-- https://www.sqlite.org/wal.html — SQLite, «Write-Ahead Logging», разделы про
-  сетевые ФС и `-shm` (дата обращения 2026-09-08). Проверяется офлайн по
-  вендоренному `sqlite3.c` в нашем же дереве зависимостей.
+- https://www.sqlite.org/wal.html — SQLite, "Write-Ahead Logging", sections on
+  network filesystems and `-shm` (accessed 2026-09-08). Verifiable offline against the
+  vendored `sqlite3.c` in our own dependency tree.
 - https://www.liftgammagain.com/forum/index.php?threads/resolves-cache-files-stored-on-a-nas-via-smb3-are-trashed-whenever-a-project-is-saved.9573/
-  — Lift Gamma Gain, тред от 15.09.2017 (дата обращения 2026-09-08).
+  — Lift Gamma Gain, thread of 15.09.2017 (accessed 2026-09-08).
 - https://community.adobe.com/t5/premiere-pro-discussions/issue-with-productions-showing-projects-as-locked-when-they-are-not/td-p/14579493
-  — Adobe Product Community, 25.04.2024 (дата обращения 2026-09-08).
+  — Adobe Product Community, 25.04.2024 (accessed 2026-09-08).
 - https://www.blackmagicdesign.com/products/davinciresolve/collaboration —
-  варианты размещения базы у Resolve (дата обращения 2026-09-08).
-- Состав служебного у VEGAS и After Effects взят по документации и составу
-  каталогов, живьём не проверялся — помечено `[НЕ ПРОВЕРЕНО]` прямо в таблице.
-- Наш код и документация проверены чтением 08.09.2026:
+  placement options for the Resolve database (accessed 2026-09-08).
+- The composition of the auxiliary data of VEGAS and After Effects is taken from the
+  documentation and the set of directories, not checked live — marked `[NOT VERIFIED]`
+  directly in the table.
+- Our code and documentation were verified by reading on 08.09.2026:
   `src/libs/kt-media/src/index.rs`, `docs/media-index.md`,
   `src/apps/kt-app/src/util.rs`, `src/apps/kt-app/src/thumbs.rs`,
   `src/apps/kt-cli/src/main.rs`.

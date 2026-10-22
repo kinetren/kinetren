@@ -1,16 +1,16 @@
 ---
 id: F-CMP-001
-title: Конкатенация трансформов
-status: сделано
+title: Concatenation of transforms
+status: done
 priority: A
 cost: XL
 category: compositing/transforms
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, nuke-17]
-we_have: да
+we_have: yes
 crates: [kt-fx, kt-gpu, kt-engine, kt-model]
 invariants: [7, 11]
 ui_rules: []
-round: Р.44
+round: R.44
 point: 307
 tests: [296, 297, 298, 299, 300, 301]
 depends_on: []
@@ -19,68 +19,46 @@ services: []
 checked: 2026-09-13
 ---
 
-# F-CMP-001 — Конкатенация трансформов
+# F-CMP-001 — Concatenation of transforms
 
-## Суть
+## Essence
 
-Подряд стоящие геометрические операции (сдвиг, зум, зеркало, сетка,
-3D-перспектива) исполняются как ОДНА перевыборка исходного кадра, а не как
-цепочка растеризаций «каждый эффект в свой буфер». Глазами монтажёра:
-«уменьшил сеткой 2×2, потом призумил обратно» возвращает резкую картинку —
-а не мыло из увеличенных пикселей промежуточного растра.
+Consecutive geometric operations (shift, zoom, mirror, grid, 3D perspective) are executed as ONE resampling of the source frame, rather than as a chain of rasterizations "each effect into its own buffer". For the editor: "shrink with a 2×2 grid, then zoom back in" returns a sharp picture — and not the blur of enlarged pixels of an intermediate raster.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| Vegas Pro | 2026.0 | нет | Pan/Crop, Track Motion и каждый OFX-эффект — отдельная растровая стадия конвейера; цепочка трансформов не схлопывается |
-| Adobe Premiere | 26.x | нет | у клипа ровно один встроенный трансформ (Motion), цепочки трансформов нет как понятия; вложенная секвенция — растр в размере секвенции (мыло нестов — F-TL-004) |
-| DaVinci Resolve | 21 | частично (Fusion) | на Edit-странице нет; внутри Fusion трансформ-ноды конкатенируются по модели Nuke (по документации, живьём не проверялось) |
-| Final Cut Pro | 12.3 | нет | встроенный трансформ один на клип; compound clip растеризуется в своём размере |
-| After Effects | 26.x | Collapse Transformations / Continuously Rasterize | переключатель на слое: трансформы прекомпа и родителя схлопываются в один ресемпл, но при этом меняется и порядок применения масок/эффектов слоя |
+| Vegas Pro | 2026.0 | none | Pan/Crop, Track Motion and every OFX effect is a separate raster stage of the pipeline; a chain of transforms does not collapse |
+| Adobe Premiere | 26.x | none | a clip has exactly one built-in transform (Motion); there is no concept of a transform chain; a nested sequence is a raster at the size of the sequence (the blur of nests — F-TL-004) |
+| DaVinci Resolve | 21 | partly (Fusion) | not on the Edit page; inside Fusion transform nodes are concatenated on the Nuke model (per the documentation, not checked live) |
+| Final Cut Pro | 12.3 | none | a built-in transform, one per clip; a compound clip is rasterized at its own size |
+| After Effects | 26.x | Collapse Transformations / Continuously Rasterize | a switch on the layer: the transforms of the precomp and the parent collapse into one resample, but the order of application of the layer's masks/effects also changes |
 
-**Вне ядра.** Без Nuke фичу не описать: конкатенация — его термин, и правило
-качества сформулировано там.
+**Outside the core.** Without Nuke this feature cannot be described: concatenation is its term, and the quality rule is formulated there.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Foundry Nuke | 17.0 | Concatenation | смежные 2D-трансформ-ноды (Transform, Reformat, Tracker, GridWarp, STMap…) схлопываются в одну операцию; фильтрация — один раз |
+| Foundry Nuke | 17.0 | Concatenation | adjacent 2D transform nodes (Transform, Reformat, Tracker, GridWarp, STMap…) collapse into one operation; filtering is done once |
 
-## Фишка фишки
+## The trick behind it
 
-Конкатенация в Nuke — не оптимизация скорости, а правило КАЧЕСТВА, и у него
-три неочевидных следствия. (1) Фильтр всей серии задаёт ПОСЛЕДНЯЯ нода —
-настройки фильтрации промежуточных трансформов игнорируются, поэтому
-композеры осознанно выбирают фильтр в конце цепочки. (2) Серию рвёт ЛЮБАЯ
-не-трансформ-нода между трансформами — даже Crop, даже цветовой Grade — и
-рвёт МОЛЧА: индикатора нет, разрыв диагностируют по внезапно замылившейся
-картинке; отсюда дисциплина «все трансформы держи рядом, цвет — до или
-после». (3) У AE аналог (Collapse Transformations) — переключатель, потому
-что там схлопывание МЕНЯЕТ СЕМАНТИКУ (порядок масок и эффектов прекомпа), и
-пользователи его то включают, то выключают; у Nuke конкатенация семантику не
-меняет и потому включена всегда, без переключателя. Для нас это прямой
-аргумент «слияние без тумблера»: если слитый результат математически равен
-пошаговому (минус потери), выбирать нечего.
+Concatenation in Nuke is not a speed optimization but a QUALITY rule, and it has three non-obvious consequences. (1) The filter for the whole series is set by the LAST node — the filtering settings of the intermediate transforms are ignored, so compositors deliberately choose the filter at the end of the chain. (2) The series is broken by ANY non-transform node between transforms — even Crop, even a colour Grade — and it is broken SILENTLY: there is no indicator; the break is diagnosed by a suddenly blurred picture; hence the discipline "keep all transforms together, colour before or after". (3) AE has an analogue (Collapse Transformations) — a switch, because there the collapse CHANGES THE SEMANTICS (the order of the precomp's masks and effects), and users turn it on and off; Nuke's concatenation does not change semantics and is therefore always on, with no switch. For us this is a direct argument for "merging without a toggle": if the merged result mathematically equals the step-by-step one (minus losses), there is nothing to choose.
 
-## Плюсы
+## Pros
 
-- Качество: «фильтрация неизбежно разрушает детали» (мотивировка Foundry
-  дословно: «As filtering unavoidably destroys some image detail, it's
+- Quality: "filtering unavoidably destroys some image detail" (Foundry's reasoning verbatim: "As filtering unavoidably destroys some image detail, it's
   important to concatenate as many nodes as possible in order to preserve
-  image quality»), и серия из N трансформов платит эту цену один раз, а не N.
-- Скорость: одна перевыборка вместо N полных растеризаций — слитая серия
-  ДЕШЕВЛЕ пошаговой (меньше пассов и трафика памяти).
-- Точность: между шагами исчезают промежуточные 8-битные квантования.
+  image quality"), and a series of N transforms pays this price once, not N times.
+- Speed: one resampling instead of N full rasterizations — a merged series is CHEAPER than the step-by-step one (fewer passes and less memory traffic).
+- Accuracy: intermediate 8-bit quantizations disappear between the steps.
 
-## Минусы
+## Cons
 
-- Работает только для операций с замкнутым отображением «выходной пиксель →
-  точка входа»; любая пиксельная операция (цвет, блюр, зерно) — барьер, и в
-  Nuke он рвёт серию молча — предмет жалоб и обучающих разборов.
-- AE-вариант (collapse) платит сменой семантики порядка масок/эффектов — см.
-  цитаты ниже: «effects … will no longer work quite the same».
+- It works only for operations with a closed mapping "output pixel → entry point of the input"; any pixel operation (colour, blur, grain) is a barrier, and in Nuke it breaks the series silently — a subject of complaints and training breakdowns.
+- The AE variant (collapse) pays with a change in the semantics of the order of masks/effects — see the quotes below: "effects … will no longer work quite the same".
 
-## Что говорят пользователи
+## What users say
 
 > Notice how the 3 nodes handling image transformation are all grouped
 > together? Nuke is smart enough to combine the Reformat, Transform & Tracker
@@ -88,7 +66,7 @@ checked: 2026-09-13
 > — Ben McEwan, benmcewan.com, 22.04.2019,
 > https://benmcewan.com/blog/2019/04/22/back-to-basics-a-brief-lesson-on-image-filtering-node-concatentation/
 
-Про цену AE-варианта (тред, уже запиненный в F-TL-004):
+About the price of the AE variant (a thread already pinned in F-TL-004):
 
 > The downside is that effects applied to the precomp layer will no longer
 > work quite the same.
@@ -100,59 +78,49 @@ checked: 2026-09-13
 > — Gary Reisman, Creative COW, 03.05.2018,
 > https://creativecow.net/forums/thread/collapse-transformations-continuous-rasterise-rem/
 
-## Как ложится на Kinotrain
-CAPABILITY: openspec/specs/video-plan/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Подряд идущие геометрические FX исполняются одним проходом обратных отображений; план цепочки строит `plan_chain`, GPU-зеркало правится тем же коммитом.
+## How it fits Kinotrain
+CAPABILITY: openspec/specs/video-plan/ — the contract is in `spec.md`, the "why" and code paths are in `design.md`.
+Consecutive geometric FX are executed in one pass of inverse mappings; the plan of the chain is built by `plan_chain`, and the GPU mirror is edited in the same commit.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | XL — раунд с ревизией инвариантов 7 и 11 |
-| Где основная работа | kt-fx (общая программа обратных отображений), kt-gpu (слитый WGSL-пасс), kt-engine (ключ пост-FX кэша, снос GpuRequired) |
-| Формат проекта | не трогает (FxInstance и параметры не меняются) |
-| Тесты, которые придётся написать | байт-паритет серий длины 1; конформанс CPU↔GPU слитых серий; «нетто-единичная цепочка сохраняет детализацию»; правила краёв; стейл кэша по камере |
-| Зависит от | — |
-| Ломает совместимость | картинка мульти-гео цепочек меняется (резче); санкционировано Р.44 |
+| Size | XL — a round with a revision of invariants 7 and 11 |
+| Where the main work is | kt-fx (the common inverse-mapping program), kt-gpu (the merged WGSL pass), kt-engine (the post-FX cache key, removal of GpuRequired) |
+| Project format | not touched (FxInstance and parameters do not change) |
+| Tests that will have to be written | byte-parity of series of length 1; CPU↔GPU conformance of merged series; "a net-unit chain preserves detail"; edge rules; camera-stale cache |
+| Depends on | — |
+| Breaks compatibility | the picture of multi-geometry chains changes (sharper); sanctioned by R.44 |
 
-## Вердикт
+## Verdict
 
-Берём (решение владельца, Р.44): слияние ВСЕГДА и без переключателя — серия
-длины 1 без минификации байт-в-байт равна сегодняшнему проходу, поэтому
-вопроса «когда включать» не существует. Вместе с ним: Pan3d на CPU (снятие
-«3D только GPU» Р.29) и суперсемплинг по якобиану при минификации.
-СДЕЛАНО в Р.44 (пп.306-310, тесты t296-t301, t66d): пересчёт голденов не
-понадобился — box-суперсемплинг при ×2 арифметически совпал со старой
-билинейкой (п.309).
+We take it (the owner's decision, R.44): merging ALWAYS and without a switch — a series of length 1 without minification is byte-for-byte equal to today's pass, so
+there is no question of "when to enable". Together with it: Pan3d on CPU (removing the "3D only on GPU" of R.29) and supersampling by the Jacobian under minification.
+DONE in R.44 (items 306–310, tests t296–t301, t66d): recalculation of the goldens was not needed — box supersampling at ×2 arithmetically matched the old bilinear (item 309).
 
-Стадии (1) и (2) СДЕЛАНЫ в Р.45 (пп.311-315, тесты t302-t306): поточечные
-Greenscreen/Noise поглощаются в слитый проход tap-опами, нелокальные
-Blur/Glow/Edges/VHS исполняются в K× при «сжатие выше + зум ниже»
-(K = квант min(зум хвоста, сжатие), потолок-константа 4096).
+Stages (1) and (2) are DONE in R.45 (items 311–315, tests t302–t306): point-wise Greenscreen/Noise are absorbed into the merged pass as tap ops, non-local
+Blur/Glow/Edges/VHS are executed in K× when "compression above + zoom below" (K = quantum of min(zoom of the tail, compression), ceiling constant 4096).
 
-Стадия (3) СДЕЛАНА в Р.46 (пп.317-323, тесты t308-t318): при нетто-зуме
-цепочки >100 % пре-FX кадр декодируется в S×Quality (S — целая ступень
-1..4 на клип: сколько просит цепочка × сколько даёт запас натива ×
-потолок буферов). Squeeze-cap Р.45 наконец получил честный источник
-деталей — ступень сеет аккумулятор сжатия. Размер декода стал частью
-ЗАКАЗА `layers_at`/`wanted_frames`: иначе префетч грел бы одно, а
-композит читал другое (t247d по оси размера). Мера: на файле 512×288 в
-проекте 128×72 с зумом ×2 контраст готового кадра вырос с 0.0 до 223.0
-из ≈255 (t315, red-proof на коммите до раунда).
+Stage (3) is DONE in R.46 (items 317–323, tests t308–t318): at a net zoom of the chain above 100 % the pre-FX frame is decoded at S×Quality (S — an integer step
+1..4 per clip: how much the chain asks × how much the native gives in reserve ×
+the buffer ceiling). The squeeze-cap of R.45 finally got an honest source
+of detail — the step seeds the compression accumulator. The size of the decode became part of
+the ORDER `layers_at`/`wanted_frames`: otherwise prefetch would warm one thing and the composite would read another (t247d on the size axis). Measure: on a 512×288 file in
+a 128×72 project with zoom ×2, the contrast of the finished frame grew from 0.0 to 223.0
+out of ≈255 (t315, red-proof on the commit before the round).
 
-ВЕРДИКТ ЗАКРЫТ ЦЕЛИКОМ: все три стадии сделаны. Осталась только
-необязательная оптимизация — AVX2 слитого прохода по правилу 1.3×.
+THE VERDICT IS CLOSED IN FULL: all three stages are done. Only an
+optional optimization remains — AVX2 of the merged pass per the 1.3× rule.
 
-## Источники
+## Sources
 
 - https://learn.foundry.com/nuke/content/comp_environment/transforming_elements/node_concatenation.html
-  (документация Foundry «How Nodes Concatenate»; дата обращения 2026-09-13)
+  (Foundry documentation "How Nodes Concatenate"; accessed 2026-09-13)
 - https://benmcewan.com/blog/2019/04/22/back-to-basics-a-brief-lesson-on-image-filtering-node-concatentation/
-  (дата обращения 2026-09-13)
+  (accessed 2026-09-13)
 - https://www.cgchannel.com/2026/02/foundry-releases-nuke-17-0-nukex-17-0-nuke-studio-17-0/
-  (версия Nuke 17.0, 26.02.2026; дата обращения 2026-09-13)
+  (Nuke version 17.0, 26.02.2026; accessed 2026-09-13)
 - https://creativecow.net/forums/thread/collapse-transformations-continuous-rasterise-rem/
-  (цитаты про AE collapse; впервые запинены в F-TL-004)
-- Строки Vegas/Premiere/FCP — по устройству их конвейеров и документации,
-  живьём не проверялось; Fusion-конкатенация — по документации Blackmagic,
-  живьём не проверялось.
+  (quotes about AE collapse; first pinned in F-TL-004)
+- The Vegas/Premiere/FCP rows — from the structure of their pipelines and documentation, not checked live; the Fusion concatenation — from Blackmagic documentation, not checked live.

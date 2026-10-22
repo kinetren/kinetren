@@ -1,12 +1,12 @@
 ---
 id: F-HLP-011
-title: Проверка проекта до старта рендера
-status: кандидат
+title: Project check before render starts
+status: candidate
 priority: B
 cost: M
 category: help/errors
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, vscode-1.136]
-we_have: частично
+we_have: partial
 crates: [kt-engine, kt-app, kt-media]
 invariants: [7, 9]
 ui_rules: [9, 16, 19]
@@ -17,302 +17,138 @@ depends_on: [F-HLP-008, F-EXP-002]
 checked: 2026-09-07
 ---
 
-# F-HLP-011 — Проверка проекта до старта рендера
+# F-HLP-011 — Project check before render starts
 
-## Суть
+## Essence
 
-Монтажёр жмёт «Рендер» и уходит. Через сорок минут он возвращается либо к
-готовому файлу, либо к сообщению о том, что можно было сказать в первую
-секунду: места на диске не хватило, исходник пропал, энкодера нет,
-выделен пустой регион. Preflight — это список всего, что программа знает
-про предстоящий рендер, показанный ОДИН раз перед кнопкой, с разделением
-«нельзя» и «получится не то, что ты думаешь».
+The editor presses "Render" and walks away. Forty minutes later he returns either to a finished file or to a message about what could have been said in the very first second: there was not enough disk space, a source went missing, the encoder is absent, an empty region was selected. Preflight is the list of everything the program knows about the upcoming render, shown ONCE before the button, with a split between "cannot" and "will not come out as you think".
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | нет: своей проверки перед стартом нет | «Render As» ничего не проверяет. Раздел «Estimated Properties» — в окне ПРОГРЕССА, то есть уже после кнопки: разворачивается в остаток свободного места на диске, ожидаемую полную длительность рендера и время окончания. Цифра цены есть, но приходит, когда цену уже начали платить. [проверено по справке линейки 21; в 2026 раздел, судя по составу окна, тот же — живьём НЕ ПРОВЕРЕНО] |
-| Adobe Premiere | 26.x | предупреждение при экспорте | Отдельного отчёта нет, есть точечные предупреждения. Про офлайн: «Offline material is present in this export and will be encoded using the offline media graphic» — предупреждение, не отказ, и оно называет СОДЕРЖИМОЕ будущего файла. Срабатывает и на клип, ВЫКЛЮЧЕННЫЙ в монтаже. Место на диске сверяется с оценкой размера — оценка систематически занижена (мультиплексирование требует ещё столько же) |
-| DaVinci Resolve | 21 | предупреждение при ДОБАВЛЕНИИ задания в очередь | Момент проверки перенесён с «Render» на «Add to Render Queue»: по мануалу, задание с офлайн-материалом даёт предупреждение, и можно отменить добавление либо добавить, зная, что рендеришь офлайн. Отдельно — настройка, обрывающая рендер, когда он ДОШЁЛ до офлайн-клипа. В Deliver, вкладка File, — грубая оценка того, сколько места останется после рендера; к выбранному кодеку она не чувствительна |
-| Final Cut Pro | 12.3 | БЛОКЕР при Share | Единственный из пяти, кто именно отказывает: «[project] has missing or offline titles, effects, generators, or media». Категория названа, виновник — нет; ложные срабатывания известны (эффект Deinterlace, выключенный в Info, но живой в Effects). Есть и второй отказ, узкий: «This item cannot be shared while it is still referencing media on the camera» |
-| After Effects | 26.x | перед рендером — нет; отдельный ОТЧЁТ — есть | Пропавший материал молча рендерится цветными полосами (AE сам подставляет плейсхолдер). Зато есть единственный в пятёрке отчёт-файл: File > Dependencies > Collect Files, галка «Generate Report Only» — Report.txt со списком того, что не найдено, БЕЗ копирования файлов. Проверки свободного места нет вовсе — её просят фичереквестом |
+| VEGAS Pro | 2026.0 | none: there is no check of its own before the start | "Render As" checks nothing. The "Estimated Properties" section is in the PROGRESS window, that is, after the button: it expands into the remaining free disk space, the expected total duration of the render and the end time. The price figure exists, but it arrives when the price has already started to be paid. [checked against the help of line 21; in 2026 the section, judging by the composition of the window, is the same — NOT CHECKED live] |
+| Adobe Premiere | 26.x | a warning at export | There is no separate report, there are point warnings. About offline: "Offline material is present in this export and will be encoded using the offline media graphic" — a warning, not a refusal, and it names the CONTENT of the future file. It also fires for a clip that is DISABLED in the edit. Disk space is checked against an estimate of the size — the estimate is systematically understated (multiplexing requires as much again) |
+| DaVinci Resolve | 21 | a warning when a job is ADDED to the queue | The moment of the check has moved from "Render" to "Add to Render Queue": according to the manual, a job with offline material gives a warning, and one can cancel the addition or add it knowing that one renders offline. Separately — a setting that aborts the render when it REACHED an offline clip. In Deliver, the File tab — a rough estimate of how much space will remain after the render; it is insensitive to the chosen codec |
+| Final Cut Pro | 12.3 | a BLOCKER at Share | The only one of the five that actually refuses: "[project] has missing or offline titles, effects, generators, or media". The category is named, the culprit is not. False positives are known (the Deinterlace effect, disabled in Info but live in Effects). There is also a second refusal, a narrow one: "This item cannot be shared while it is still referencing media on the camera" |
+| After Effects | 26.x | before the render — no; a separate REPORT — yes | Missing material is silently rendered as colour bars (AE substitutes the placeholder itself). But there is the only report file in the five: File > Dependencies > Collect Files, the checkbox "Generate Report Only" — Report.txt with the list of what was not found, WITHOUT copying files. There is no free-space check at all — it is requested as a feature request |
 
-**Вне ядра.** Без VS Code не описать третью кнопку: у пяти NLE отказ либо
-блокирует, либо пропускает, и ни один не предлагает ПЕРЕЙТИ к виновнику — а
-это ровно то, чего не хватает сообщению FCP.
+**Outside the core.** Without VS Code the third button cannot be described: of the five NLEs a refusal either blocks or lets through, and none of them offers to GO to the culprit — and that is exactly what the FCP message lacks.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | What it is called | How it works |
 |---|---|---|---|
-| Visual Studio Code | 1.136 | «Error exists after running preLaunchTask 'build'.» | Четыре кнопки: Open launch.json · Show Errors · Cancel · Debug Anyway. Политика вынесена в настройку «On Task Errors» (значение `prompt` возвращает диалог тем, кто его отключил): пользователь решает ОДИН раз, блокер это или предупреждение. Сам список находок живёт отдельно от момента запуска — в панели Problems, где у каждой строки свой адрес в коде и своя серьёзность |
+| Visual Studio Code | 1.136 | "Error exists after running preLaunchTask 'build'." | Four buttons: Open launch.json · Show Errors · Cancel · Debug Anyway. The policy is taken out into the setting "On Task Errors" (the value `prompt` returns the dialog to those who disabled it): the user decides ONCE whether it is a blocker or a warning. The list of findings lives separately from the moment of launch — in the Problems panel, where each row has its own address in the code and its own severity |
 
-## Фишка фишки
+## The trick behind it
 
-Груз, который preflight несёт и который одна строка статусбара вместить не
-может, — это СПИСОК: несколько находок сразу, у каждой своя тяжесть и свой
-адрес. Строка показывает по одной штуке и только тому, кто уже навёл мышь;
-здесь же надо показать всё разом тому, кто ещё ничего не заподозрил. У нас
-этот груз ложится в тело УЖЕ ОТКРЫТОГО окна настроек рендера, между
-настройками и кнопкой «Старт», — окна, куда пользователь пришёл сам.
+The cargo that preflight carries and that one status-bar line cannot hold is a LIST: several findings at once, each with its own weight and its own address. A line shows one at a time and only to the one who has already hovered; here everything has to be shown at once to the one who has not yet suspected anything. For us this cargo goes into the body of an ALREADY OPEN render-settings window, between the settings and the "Start" button — a window the user came to on his own.
 
-Три детали, которых нет в списках возможностей.
+Three details that are absent from the feature lists.
 
-1. **Resolve перенёс проверку с кнопки «Render» на «Add to Render Queue».**
-   Это не косметика: очередь — последний момент, когда правка ещё дешёвая, а
-   до самой кнопки могут пройти часы. Второй, более старый механизм —
-   настройка «оборвать рендер на офлайн-клипе» — стоит ровно столько времени
-   рендера, сколько до проблемы: обрыв на 42-й минуте сорокапятиминутной
-   программы съедает 42 минуты. Именно эта арифметика и породила первый
-   механизм.
-2. **Предупреждение Premiere описывает не проект, а БУДУЩИЙ ФАЙЛ:** «will be
-   encoded using the offline media graphic». Разница практическая: сообщение
-   про проект просит пойти чинить, сообщение про файл позволяет принять
-   решение не выходя из экспорта — «да, эти четыре секунды пусть будут
-   плашкой». Обратная сторона в «Минусах»: оно не знает, попадёт ли клип в
-   рендер вообще.
-3. **Отчёт AE — это файл, а не модальное окно,** и делает его галка,
-   которая говорит «только проверь, больше ничего не делай» (Generate Report
-   Only внутри Collect Files). Отчёт переживает диалог: его можно приложить к
-   письму «вот чего мне не хватает», чего ни одно всплывающее окно не умеет.
+1. **Resolve moved the check from the "Render" button to "Add to Render Queue".** This is not cosmetics: the queue is the last moment when an edit is still cheap, and before the button itself hours may pass. The second, older mechanism — the setting "abort the render at an offline clip" — costs exactly as much render time as there is until the problem: an abort at the 42nd minute of a forty-five-minute programme eats 42 minutes. It is exactly this arithmetic that gave rise to the first mechanism.
+2. **The Premiere warning describes not the project but the FUTURE FILE:** "will be encoded using the offline media graphic". The practical difference: a message about the project asks you to go and fix it, a message about the file lets you decide without leaving the export — "yes, let those four seconds be a banner". The downside, in "Cons": it does not know whether the clip will get into the render at all.
+3. **The AE report is a file, not a modal window,** and it is made by a checkbox that says "only check, do nothing else" (Generate Report Only inside Collect Files). The report survives the dialog: it can be attached to an email "here is what I am missing", which no pop-up window can do.
 
-## Плюсы
+## Pros
 
-- Один список в одном месте перед одной кнопкой — цена узнавания платится
-  один раз. Иначе она платится по разу за находку, и каждый раз это цена
-  рендера, а не цена диалога.
-- Проверка до старта не расходует ресурс, который защищает: она стоит
-  миллисекунды, а сторожит часы. Механизм «обрывать, когда дойдём»
-  (Resolve) стоит ровно столько, сколько до проблемы.
-- Типизация «блокер / предупреждение» позволяет ОДНОМУ механизму держать
-  и отказ, и «получится не то»: Premiere и Resolve дают кнопку «всё равно»,
-  FCP не даёт, и обе позиции законны — лишь бы их выбирал автор, а не случай.
-- Список с адресами (Problems в VS Code) превращает отказ в действие:
-  третья кнопка ведёт к виновнику вместо того, чтобы просто не пустить.
+- One list in one place before one button — the price of recognition is paid once. Otherwise it is paid once per finding, and each time it is the price of the render, not the price of the dialog.
+- A check before the start consumes no resource that it protects: it costs milliseconds, while it guards hours. The "abort when we reach it" mechanism (Resolve) costs exactly as much as there is until the problem.
+- Typing "blocker / warning" lets ONE mechanism hold both the refusal and "it will come out not as you think": Premiere and Resolve give a button "anyway", FCP does not — and both positions are legitimate, as long as the author chooses them and not chance.
+- A list with addresses (Problems in VS Code) turns a refusal into an action: the third button leads to the culprit instead of merely not letting you through.
 
-## Минусы
+## Cons
 
-- Проверка знает ПРОЕКТ, а рендерится РЕНДЕР. Premiere ругается на офлайн у
-  выключенного клипа, который в файл не попадёт. Ложная тревога дороже, чем
-  кажется: она обучает жать «всё равно» вслепую, и следующая — настоящая —
-  тревога тоже будет пропущена.
-- Оценка свободного места врёт по устройству: реальный расход зависит от
-  кодека и от временной копии при мультиплексировании, и практический совет
-  сообществ — держать втрое-вчетверо больше, чем показала оценка. Проверка,
-  которая сказала «места хватит» и ошиблась, хуже отсутствия проверки:
-  теперь виновата программа.
-- Блокер без имени виновника (FCP) превращает проверку в загадку: программа
-  ЗНАЕТ объект, потому что нашла его, но в сообщении отдаёт лишь категорию.
-- Отчёт-файл (AE) не мешает и не помогает: его надо вспомнить и запустить
-  руками, поэтому его запускают уже после того, как обожглись.
+- The check knows the PROJECT, while the render renders the RENDER. Premiere warns about an offline clip that is disabled and will not get into the file. A false alarm is more expensive than it seems: it trains people to press "anyway" blindly, and the next — real — alarm will be skipped too.
+- The estimate of free space lies depending on the device: the real consumption depends on the codec and on the temporary copy during multiplexing, and the practical advice of the communities is to keep three to four times what the estimate showed. A check that said "there is enough space" and was wrong is worse than no check: now the program is to blame.
+- A blocker without the culprit's name (FCP) turns the check into a puzzle: the program KNOWS the object, because it found it, but the message gives only the category.
+- The report file (AE) does not interfere and does not help: one has to remember it and run it by hand, so it is run only after one has already been burned.
 
-## Что говорят пользователи
+## What users say
 
-Про цену позднего обнаружения — автор запроса на предупреждение в очереди
-Resolve (Mel Matsuoka, 08.11.2019), про обрыв рендера на 42-й минуте
-45-минутной программы:
+On the price of a late discovery — the author of the request for a warning in the Resolve queue (Mel Matsuoka, 08.11.2019), about an abort of the render at the 42nd minute of a 45-minute programme:
 
 > «you wouldn't know about it until after you've wasted all that time»
 > — forum.blackmagicdesign.com, 08.11.2019,
 > https://forum.blackmagicdesign.com/viewtopic.php?f=33&t=102245
 
-Остальное пересказом, без кавычек. Фичереквест к After Effects от
-09.04.2026 просит ровно preflight по месту: оценить размер очереди, сверить
-со свободным местом на дисках назначения и предупредить; худший случай, по
-словам автора, — поставить пачку заданий на ночь и утром обнаружить, что не
-отрендерилось НИ ОДНО, потому что места не хватило первому в очереди
+The rest is retold, without quotation marks. A feature request for After Effects dated 09.04.2026 asks for exactly a preflight by place: estimate the size of the queue, compare it with the free space on the destination disks and warn; the worst case, in the words of the author, is to queue a batch for the night and find in the morning that NOT ONE thing rendered, because there was not enough space for the first in the queue
 (https://community.adobe.com/feature-requests-530/after-effects-available-space-check-at-render-time-1556977).
-Отрицательная сторона механизма — там же, у Premiere: пользователь
-BrianDavison (11.05.2023) считает лишним предупреждение об офлайне у
-ВЫКЛЮЧЕННОГО клипа, которого в экспорте всё равно не будет
+The negative side of the mechanism — there too, from Premiere: the user BrianDavison (11.05.2023) considers the warning about offline material of a DISABLED clip, which will not appear in the export anyway, to be superfluous
 (https://community.adobe.com/questions-729/on-export-premiere-warns-about-offline-clips-in-sequence-even-if-clip-is-disabled-1410012).
-Про безымянный блокер FCP — Larry Jordan называет это сообщение самым
-загадочным и самым мучительным в программе и отдельно отмечает, что оно не
-говорит, какой клип виноват
+About FCP's nameless blocker — Larry Jordan calls this message the most mysterious and the most painful in the program, and separately notes that it does not say which clip is at fault
 (https://larryjordan.com/articles/potential-export-bug-in-final-cut-pro-11-2/).
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-Проверок ровно ДВЕ, и это подтверждается грепом (`preflight`, `GpuRequired`,
-`missing_sources` по всему `src/`).
+There are exactly TWO checks, and this is confirmed by grep (`preflight`, `GpuRequired`, `missing_sources` across the whole `src/`).
 
-1. **Отказ — один.** `ExportError::GpuRequired(usize)` в
-   `src/libs/kt-engine/src/export.rs:293`; срабатывает в
-   `export_mp4_with_backends` (там же, строки 403–408) до создания муксера,
-   когда `backends.video_gpu.is_none()`, а `gpu_required_clips()` вернул
-   непустой список. Решение записано прямо в коде и звучит как готовая
-   формулировка всей заметки: «Р.29: в проекте 3D-эффекты, а GPU-движка нет.
-   Отказ ДО старта — тихо испорченный файл (клипы без 3D) хуже честной
-   ошибки». Сам список считается по `effective_clips()` и схлопывает куски
-   морфер-слоя в исходный клип (`slice_origin`), чтобы не называть
-   синтетические id, которых пользователь в проекте не видит (export.rs:296–309).
-2. **Предупреждение — одно.** `missing_sources()` в
-   `src/apps/kt-app/src/render_dialog.rs:101`; список собирается в
-   `start_render()` и показывается в окне настроек ДО кнопки «Старт»
-   (render_dialog.rs:400) ключом `render.missing_warn` («недоступных
-   исходников (N), они попадут в файл заглушками: …»). Это ПРЕДУПРЕЖДЕНИЕ, а
-   не отказ, и так решено сознательно — прямая просьба владельца, Р.33 п.10:
-   «при рендере и превью отсутсвие исходников не должно быть блокером, нужно
-   уведомлять юзера и рендерить, для отсутствующего видео надо подставлять
-   placeholder». Реализация — п.208 `docs/porting-notes.md`, страж — t210
-   (`layout_tests.rs:3871`), который проверяет именно доезд списка до окна
-   настроек. Менять это на отказ НЕЛЬЗЯ.
+1. **One refusal.** `ExportError::GpuRequired(usize)` in `src/libs/kt-engine/src/export.rs:293`; it fires in `export_mp4_with_backends` (there too, lines 403–408) before the muxer is created, when `backends.video_gpu.is_none()` and `gpu_required_clips()` returned a non-empty list. The decision is written directly in the code and sounds like a ready formulation of the whole note: "R.29: the project has 3D effects, and there is no GPU engine. A refusal BEFORE the start — a silently spoiled file (clips without 3D) is worse than an honest error." The list itself is computed through `effective_clips()` and collapses the pieces of a morpher layer into the source clip (`slice_origin`), so as not to name synthetic ids that the user does not see in the project (export.rs:296–309).
+2. **One warning.** `missing_sources()` in `src/apps/kt-app/src/render_dialog.rs:101`; the list is assembled in `start_render()` and shown in the settings window BEFORE the "Start" button (render_dialog.rs:400) under the key `render.missing_warn` ("unavailable sources (N), they will get into the file as placeholders: …"). This is a WARNING, not a refusal, and it was decided so deliberately — a direct request of the owner, R.33 item 10: "during render and preview the absence of sources must not be a blocker; the user must be notified and the render must proceed; for missing video a placeholder must be substituted". Implementation — item 208 of `docs/porting-notes.md`, the guard — t210 (`layout_tests.rs:3871`), which checks exactly that the list reaches the settings window. Changing this to a refusal is NOT allowed.
 
-То есть различие «блокер vs предупреждение», которое у пяти редакторов
-получилось случайно, у нас уже сделано осознанно и по разным поводам:
-GPU — блокер, потому что молчаливый результат отличается от задуманного;
-заглушки — предупреждение, потому что результат отличается ВИДИМО и
-пользователь этого попросил.
+So the difference "blocker vs warning", which in the five editors came about by chance, we already have made deliberately and for different reasons: the GPU is a blocker, because a silent result differs from the intended one; the stubs are a warning, because the result differs VISIBLY and the user asked for it.
 
-Три соседних механизма, которые не preflight, но входят в ту же честность:
-сводка ПОСЛЕ рендера называет заглушки и потерянные слои
-(`render.missing_after`, `render.missing_layers`, render_dialog.rs:551–568);
-ошибка и отмена удаляют недописанный файл (`cleanup_on_err`,
-export.rs:468–471); видео-энкодер выбирается РЕАЛЬНОЙ попыткой открытия
-(`src/libs/kt-ffmpeg/src/muxer_impl.rs:78–165`) — и, что важнее для этой
-заметки, вся цепочка проб происходит ДО `avio_open`, поэтому неудачный
-энкодер не оставляет на диске пустого файла. Это прямое следствие инварианта
-9: экспорт внутрипроцессный, значит мы одни из всех можем ответить «этот
-энкодер откроется» не гаданием, а фактом.
+Three neighbouring mechanisms that are not preflight, but belong to the same honesty: the summary AFTER the render names the stubs and the lost layers (`render.missing_after`, `render.missing_layers`, render_dialog.rs:551–568); an error and a cancel delete the unfinished file (`cleanup_on_err`, export.rs:468–471); the video encoder is chosen by a REAL opening attempt (`src/libs/kt-ffmpeg/src/muxer_impl.rs:78–165`) — and, more important for this note, the whole chain of probes happens BEFORE `avio_open`, so an unsuccessful encoder leaves no empty file on disk. This is a direct consequence of invariant 9: the export is in-process, so of all of us we are the ones who can answer "this encoder will open" not by guessing but by a fact.
 
-### Чего не хватает
+### What is missing
 
-Ни одного из перечисленного НЕТ (проверено грепом; `statvfs`, `free_space`,
-`disk` по `src/` не встречаются вовсе):
+None of the listed items EXISTS (checked by grep; `statvfs`, `free_space`, `disk` do not occur in `src/` at all):
 
-- **Свободное место.** Не проверяется никак и нигде.
-- **Файл-назначение.** Совпадение выхода с исходником ПРОЕКТА не
-  проверяется: `launch_render()` берёт путь из системного диалога сохранения
-  и не сверяет его с `project.media`. Цена высокая из-за `cleanup_on_err`:
-  рендер поверх собственного исходника не только портит источник, но и
-  удаляет его при ошибке — вместе с недописанным выходом это один и тот же
-  файл.
-- **Пустой рендер.** `project_range()` (export.rs:71) на пустом проекте даёт
-  ноль, `total_video`/`total_audio` становятся нулями, циклы не выполняются
-  ни разу — муксер честно пишет валидный файл без кадров и возвращает `Ok`.
-  Успех с нулевым содержимым. У kt-cli такая проверка ЕСТЬ, но только в
-  wav-пути: «empty project - nothing to render» (`apps/kt-cli/src/main.rs:67`).
-- **Энкодер.** Комбобокс окна настроек заполняется
-  `kt_media::muxer::available_encoders()`, а это `avcodec_find_encoder_by_name`
-  — НАЛИЧИЕ в сборке, не открываемость. Хуже: закреплённый энкодер отключает
-  фолбэк (в цикле `muxer_impl.rs` все прочие кандидаты пропускаются), и
-  выбор `h264_nvenc` на машине без драйвера превращает автовыбор,
-  описанный инвариантом 9, в гарантированную ошибку. Список, который окно
-  показывает, и список, который реально откроется, — разные, и это видно
-  только из кода.
-- **Разрешение.** Комбобокс предлагает фиксированные варианты и `Max (w×h)`;
-  что будет при другом соотношении сторон, не сказано, а letterbox/pillarbox
-  в композиторе отсутствует (грепом `aspect` находится только
-  `kt-engine/src/transitions.rs`) — картинка растянется молча. Это ровно
-  случай «получится не то, что ты думаешь», то есть предупреждение, не отказ.
-- **Клипы за пределами таймлайна** — не наш дефект: `project_range()` берёт
-  максимум из материала и `timeline_end`, поэтому за краем ничего не
-  теряется. Проверять нечего.
-- **Адресность единственного отказа.** `GpuRequired` несёт `usize`, хотя
-  `gpu_required_clips()` вернул именно ID клипов — список посчитан и
-  выброшен. В окно он приезжает через `res.map_err(|e| e.to_string())`
-  английской строкой thiserror внутрь `render.error_msg` («Ошибка: {0}»):
-  рамка переведена, начинка — нет, каталогов не касается, t125 её не видит,
-  и правило 19 («диалог говорит, где потом изменить решение») не выполнено —
-  ни слова про `KT_VIDEO_GPU`, про CPU-путь и про то, какие клипы разоружить.
-- **Область проверки шире рендера.** `missing_sources()` перебирает
-  `project.media` целиком — то есть весь бин, а не то, что попадёт в файл.
-  Предупреждение придёт из-за материала, лежащего в бине без единого клипа,
-  и из-за материала за пределами региона. Это дословно претензия
-  BrianDavison к Premiere, только у нас она пока никем не высказана.
-- **GUI и CLI расходятся.** На одном и том же проекте окно рендера подставит
-  заглушку и продолжит, а `kt-cli export` откажется целиком
-  (`main.rs:287` и `295–300`: первая же неоткрывшаяся строка `project.media`
-  → выход 1). Решение Р.33 п.10 доехало до GUI и не доехало до CLI.
+- **Free space.** It is not checked anywhere, in any way.
+- **The destination file.** Whether the output matches the project's SOURCE is not checked: `launch_render()` takes the path from the system save dialog and does not compare it with `project.media`. The cost is high because of `cleanup_on_err`: a render over its own source not only spoils the source, but also deletes it on error — together with the unfinished output it is one and the same file.
+- **An empty render.** `project_range()` (export.rs:71) on an empty project gives zero, `total_video`/`total_audio` become zeros, the loops do not run even once — the muxer honestly writes a valid file without frames and returns `Ok`. Success with zero content. kt-cli HAS such a check, but only in the wav path: "empty project - nothing to render" (`apps/kt-cli/src/main.rs:67`).
+- **The encoder.** The combo box of the settings window is filled by `kt_media::muxer::available_encoders()`, and that is `avcodec_find_encoder_by_name` — PRESENCE in the build, not openability. Worse: a pinned encoder turns off the fallback (in the loop of `muxer_impl.rs` all other candidates are skipped), and choosing `h264_nvenc` on a machine without a driver turns the automatic choice described in invariant 9 into a guaranteed error. The list that the window shows and the list that actually opens are different, and this is visible only from the code.
+- **Resolution.** The combo box offers fixed variants and `Max (w×h)`; what happens with another aspect ratio is not said, and letterbox/pillarbox is absent in the compositor (grep for `aspect` finds only `kt-engine/src/transitions.rs`) — the picture will be silently stretched. This is exactly the case "it will come out not as you think", that is, a warning, not a refusal.
+- **Clips outside the timeline** — not our defect: `project_range()` takes the maximum of the material and `timeline_end`, so nothing beyond the edge is lost. There is nothing to check.
+- **The addressability of the single refusal.** `GpuRequired` carries a `usize`, although `gpu_required_clips()` returned exactly the clip IDs — the list was computed and thrown away. It reaches the window through `res.map_err(|e| e.to_string())` as an English thiserror string inside `render.error_msg` ("Error: {0}"): the frame is translated, the contents are not; the catalogues do not touch it, t125 does not see it, and rule 19 ("the dialog says where to change the decision later") is not met — not a word about `KT_VIDEO_GPU`, about the CPU path, and about which clips to disarm.
+- **The scope of the check is wider than the render.** `missing_sources()` walks `project.media` as a whole — that is, the entire bin, not what will get into the file. The warning will come because of material that lies in the bin without a single clip, and because of material outside the region. This is word for word BrianDavison's complaint about Premiere, except that for us no one has voiced it yet.
+- **GUI and CLI diverge.** On the same project the render window will substitute a placeholder and go on, while `kt-cli export` refuses the whole thing (`main.rs:287` and `295–300`: the first non-opening row of `project.media` → exit 1). The decision of R.33 item 10 reached the GUI and did not reach the CLI.
 
-### Что мешает
+### What gets in the way
 
-Свободное место требует `statvfs`, а прямой зависимости `libc`/`rustix` нет
-ни у одного нашего крейта (грепом по всем `Cargo.toml`); в графе `libc`
-0.2.189 присутствует транзитивно, так что цена — одна строка в `kt-app`, но
-не в ядре: правило «не тащить зависимости в kt-time/kt-model/kt-fx/kt-cache
-и ядро kt-engine» запрещает вносить её туда, где считается остальной
-preflight. То есть список находок придётся собирать из двух источников —
-движкового (проект и его клипы) и приложенческого (диск, путь, права).
+Free space requires `statvfs`, and there is no direct dependency on `libc`/`rustix` in any of our crates (by grep over all `Cargo.toml`); `libc` 0.2.189 is present transitively in the graph, so the price is one line in `kt-app`, but not in the core: the rule "do not pull dependencies into kt-time/kt-model/kt-fx/kt-cache and the kt-engine core" forbids adding it where the rest of the preflight is computed. That means the list of findings will have to be assembled from two sources — the engine's (the project and its clips) and the application's (the disk, the path, the permissions).
 
-Второй упор — момент, когда становится известен бэкенд. `export_video_gpu()`
-(`src/apps/kt-app/src/app.rs:5215`) поднимает свой headless-девайс ВНУТРИ
-рендер-потока, уже после диалога сохранения; отказ по GPU физически не может
-возникнуть в окне настроек, пока решение о бэкенде принимается позже, чем
-это окно закрывается. Инвариант 7 («начатый экспорт завершается на бэкенде,
-на котором начался») делает это не мелочью, а требованием: раз бэкенд нельзя
-сменить посреди экспорта, вопрос «а он вообще будет?» обязан быть задан ДО
-старта, а не в потоке.
+The second constraint is the moment when the backend becomes known. `export_video_gpu()` (`src/apps/kt-app/src/app.rs:5215`) raises its own headless device INSIDE the render thread, after the save dialog; a GPU refusal physically cannot arise in the settings window, while the decision about the backend is made later than this window closes. Invariant 7 ("a started export finishes on the backend on which it started") makes this not a detail but a requirement: since the backend cannot be changed mid-export, the question "will it be there at all?" has to be asked BEFORE the start, not in the thread.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-- **Инвариант 7** — начатый экспорт завершается на своём бэкенде, значит
-  проверка «этот проект на этом бэкенде рендерится?» обязана произойти до
-  старта. Сегодняшний `GpuRequired` эту логику уже воплощает, но с опозданием
-  на один поток.
-- **Инвариант 9** — экспорт внутрипроцессный: доступность энкодера мы
-  проверяем не гаданием, а `avcodec_open2`. Это наша сильная сторона, и в
-  preflight она обязана оказаться на кнопке, а не за ней.
-- **Правило 16** (невозможность действия — ОШИБКА, а не блёклая подсказка)
-  и **правило 9** (очевидных надписей не делать: список «всё в порядке» из
-  восьми зелёных галок — мусор; молчание и есть «всё в порядке»).
-- **Правило 19** — диалог говорит, где потом изменить решение; сегодня не
-  выполнено ни строкой, и отказ по GPU — первый кандидат на исправление.
-- Инвариант 12 не задевается: список считается один раз при открытии окна,
-  а не на кадр.
+- **Invariant 7** — a started export finishes on its own backend, so the check "is this project rendered on this backend?" must happen before the start. Today's `GpuRequired` already embodies this logic, but a thread late.
+- **Invariant 9** — the export is in-process: we check the availability of the encoder not by guessing but by `avcodec_open2`. This is our strong side, and in preflight it must end up on the button, not behind it.
+- **Rule 16** (the impossibility of an action is an ERROR, not a faded hint) and **rule 9** (do not make obvious labels: a list of "everything is fine" with eight green ticks is junk; silence is "everything is fine").
+- **Rule 19** — the dialog says where the decision can be changed later; today this is not met in a single line, and the GPU refusal is the first candidate for correction.
+- Invariant 12 is not touched: the list is computed once when the window opens, not per frame.
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2 стадии: список находок в движке + вторая поверхность в окне настроек |
-| Где основная работа | kt-engine (чистая функция «проект + опции → находки»), kt-app (показ и то, что требует диска и пути), i18n |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | `reach_tests::preflight_names_what_it_refuses` (отказ переведён и называет виновника); юнит на пустой диапазон и на выход, совпавший с исходником; расширение t210 на область «только то, что попадёт в файл» |
-| Зависит от | F-HLP-008 (анатомия сообщения: что / почему / где чинить), F-EXP-002 (очередь рендера — она про фон и очередь, здесь только отказ до старта) |
-| Ломает совместимость | нет |
+| Scope | M — 2 stages: the list of findings in the engine + a second surface in the settings window |
+| Where the main work is | kt-engine (a pure function "project + options → findings"), kt-app (the display and what requires the disk and the path), i18n |
+| Project format | not touched |
+| Tests to write | `reach_tests::preflight_names_what_it_refuses` (the refusal is translated and names the culprit); a unit test on an empty range and on an output that coincides with a source; an extension of t210 to the scope "only what gets into the file" |
+| Depends on | F-HLP-008 (the anatomy of a message: what / why / where to repair), F-EXP-002 (the render queue — it is about background and queueing, here only the refusal before the start) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём. Проверка у нас не отсутствует — она посчитана и потеряна по дороге:
-единственный отказ знает имена клипов и отдаёт число, знает язык интерфейса
-и говорит по-английски, знает про CPU-путь и не предлагает его. Дешевле
-всего начать не с новых проверок, а с адресности той, что есть.
+We take it. The check is not absent in our case — it is computed and lost along the way: the single refusal knows the names of the clips and gives a number, knows the interface language and speaks English, knows about the CPU path and does not offer it. The cheapest thing is to start not with new checks but with the addressability of the ones we have.
 
-ТЕСТ: reach_tests::preflight_names_what_it_refuses — сегодня падает: единственный отказ до старта (`ExportError::GpuRequired`, `src/libs/kt-engine/src/export.rs:293`) несёт `usize` вместо посчитанных `gpu_required_clips()` id и приезжает в окно через `res.map_err(|e| e.to_string())` английской строкой thiserror внутрь `render.error_msg`, мимо каталогов i18n и мимо t125.
+TEST: reach_tests::preflight_names_what_it_refuses — fails today: the single refusal before the start (`ExportError::GpuRequired`, `src/libs/kt-engine/src/export.rs:293`) carries a `usize` instead of the computed `gpu_required_clips()` ids and reaches the window through `res.map_err(|e| e.to_string())` as an English thiserror string inside `render.error_msg`, bypassing the i18n catalogues and t125.
 
-ОДНА СТРОКА: перекрытие — не трогает | задержка — не трогает | ёмкость — в строке статусбара ноль новых символов; список находок ложится в тело УЖЕ ОТКРЫТОГО окна настроек рендера, между настройками и кнопкой «Старт», где сегодня стоит одно предупреждение о заглушках (`render_dialog.rs:400`).
+ONE LINE: overlap — not touched | delay — not touched | capacity — zero new characters in the status-bar strip; the list of findings lies in the body of the ALREADY OPEN render-settings window, between the settings and the "Start" button, where today stands a single warning about the stubs (`render_dialog.rs:400`).
 
-## Источники
+## Sources
 
-- https://forum.blackmagicdesign.com/viewtopic.php?f=33&t=102245 — запрос
-  предупреждения об офлайне в очереди Resolve (дата обращения 2026-09-07,
-  через текст-прокси `r.jina.ai`)
-- https://www.steakunderwater.com/VFXPedia/__man/Resolve18-6/DaVinciResolve18_Manual_files/part3956.htm
-  — мануал Resolve, «Using the Render Queue»: предупреждение при добавлении
-  задания с офлайн-материалом (страница напрямую не открылась, текст получен
-  из поисковой выдачи по точной фразе; дата обращения 2026-09-07)
-- https://community.adobe.com/t5/Premiere-Pro/quot-Offline-material-is-present-in-this-export-and-will-be/td-p/3932408
-  — дословный текст предупреждения Premiere (2026-09-07)
-- https://community.adobe.com/questions-729/on-export-premiere-warns-about-offline-clips-in-sequence-even-if-clip-is-disabled-1410012
-  — предупреждение срабатывает на выключенный клип (2026-09-07)
-- https://community.adobe.com/feature-requests-530/after-effects-available-space-check-at-render-time-1556977
-  — фичереквест «проверять свободное место» к AE, 09.04.2026 (2026-09-07)
-- https://community.adobe.com/t5/adobe-media-encoder-discussions/rendering-keeps-failing-after-filling-up-c-drive/td-p/10839707
-  — рендер падает в конце, когда кончается диск (2026-09-07)
-- https://larryjordan.com/articles/potential-export-bug-in-final-cut-pro-11-2/
-  — сообщение FCP «has missing or offline titles, effects, generators, or
-  media» и то, что оно не называет клип (2026-09-07)
-- https://support.apple.com/en-us/HT207791 — второй отказ FCP при Share
-  (материал на камере/карте) (2026-09-07)
-- https://help.magix-hub.com/video/vegas/21/en/content/topics/render.htm —
-  «Estimated Properties» окна прогресса VEGAS (2026-09-07)
-- https://helpx.adobe.com/after-effects/desktop/work-with-footage-items/manage-footage-items/footage-items.html
-  — цветные полосы как автоматический плейсхолдер пропавшего материала
-  (2026-09-07)
-- https://github.com/microsoft/vscode/issues/68084 — текст диалога VS Code и
-  его кнопки (2026-09-07)
-- Пять строк ядра собраны по документации и форумам вендоров; живьём ни один
-  редактор в этом окружении не запускался. Строка вне ядра (VS Code) — тем
-  более: проверка живьём для не-NLE не предполагается (`_editors.md`).
+- https://forum.blackmagicdesign.com/viewtopic.php?f=33&t=102245 — the request for an offline warning in the Resolve queue (accessed 2026-09-07, through the text proxy `r.jina.ai`)
+- https://www.steakunderwater.com/VFXPedia/__man/Resolve18-6/DaVinciResolve18_Manual_files/part3956.htm — the Resolve manual, "Using the Render Queue": the warning when adding a job with offline material (the page did not open directly; the text was obtained from search results by an exact phrase; accessed 2026-09-07)
+- https://community.adobe.com/t5/Premiere-Pro/quot-Offline-material-is-present-in-this-export-and-will-be/td-p/3932408 — the verbatim text of the Premiere warning (2026-09-07)
+- https://community.adobe.com/questions-729/on-export-premiere-warns-about-offline-clips-in-sequence-even-if-clip-is-disabled-1410012 — the warning fires for a disabled clip (2026-09-07)
+- https://community.adobe.com/feature-requests-530/after-effects-available-space-check-at-render-time-1556977 — the feature request "check free space" for AE, 09.04.2026 (2026-09-07)
+- https://community.adobe.com/t5/adobe-media-encoder-discussions/rendering-keeps-failing-after-filling-up-c-drive/td-p/10839707 — the render fails at the end when the disk runs out (2026-09-07)
+- https://larryjordan.com/articles/potential-export-bug-in-final-cut-pro-11-2/ — the FCP message "has missing or offline titles, effects, generators, or media" and the fact that it does not name the clip (2026-09-07)
+- https://support.apple.com/en-us/HT207791 — the second FCP refusal at Share (material on a camera/card) (2026-09-07)
+- https://help.magix-hub.com/video/vegas/21/en/content/topics/render.htm — "Estimated Properties" of the VEGAS progress window (2026-09-07)
+- https://helpx.adobe.com/after-effects/desktop/work-with-footage-items/manage-footage-items/footage-items.html — the colour bars as the automatic placeholder for missing material (2026-09-07)
+- https://github.com/microsoft/vscode/issues/68084 — the text of the VS Code dialog and its buttons (2026-09-07)
+- The five core rows were assembled from the documentation and forums of the vendors; live, none of the editors was launched in this environment. The row outside the core (VS Code) — all the more so: a live check for non-NLEs is not assumed (`_editors.md`).

@@ -1,12 +1,12 @@
 ---
 id: F-HLP-018
-title: Подпись, которая сама себя объясняет — «что» и «где» прямо в названии
-status: кандидат
+title: A label that explains itself — "what" and "where" right in the name
+status: candidate
 priority: B
 cost: S
 category: help/discoverability
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, vscode-1.136, jetbrains-2026.2]
-we_have: частично
+we_have: partial
 crates: [kt-app]
 invariants: []
 ui_rules: [7, 13, 17, 18]
@@ -18,488 +18,193 @@ trackers: [kde-invent, kde-bugzilla, pitivi, openshot]
 checked: 2026-09-08
 ---
 
-# F-HLP-018 — Подпись, которая сама себя объясняет — «что» и «где» прямо в названии
+# F-HLP-018 — A label that explains itself — "what" and "where" right in the name
 
-## Суть
+## Essence
 
-Самая дешёвая справка — правильное название пункта. Подпись говорит не только
-глагол, но и объект и место: не «Fade out», а «затухание в конце события»; не
-«Remove crossfade», а «убрать переход со следующим клипом». Монтажёр читает её
-до нажатия, потому что иначе не выберет, — и потому это единственная справочная
-поверхность, мимо которой нельзя пройти. У нас это записано правилом 18
-чек-листа и — редкий случай — выражено машинной проверкой t171.
+The cheapest help is a correctly named item. The label says not only the verb but also the object and the place: not "Fade out" but "fade at the end of the event"; not "Remove crossfade" but "remove the transition with the next clip". The editor reads it before pressing, because otherwise they cannot choose — and therefore this is the only help surface that cannot be passed by. We have this recorded in rule 18 of the checklist and — a rare case — expressed as a machine check, t171.
 
-## У кого и как
+## Who has it and how
 
-Смотрим не на то, есть ли у редактора меню (оно есть у всех), а на то, есть ли
-у него ПРАВИЛО формулировки и виден ли след этого правила — переименования в
-release notes, документированный формат подписи, запрет на одну надпись у двух
-действий.
+We look not at whether the editor has a menu (all of them do), but at whether it has a RULE for wording and whether the trace of this rule is visible — renames in release notes, a documented format for labels, a ban on one label for two actions.
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | How it is named | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026 | штатные меню Windows, глагол+объект | Правило есть де-факто (`Delete Track`, `Insert/Remove Envelope ▸ Volume`), публичного гайдлайна по надписям SCS/Boris FX не публиковали, и различимость держится редактурой. [НЕ ПРОВЕРЕНО: `vegascreativesoftware.com/version-history/` отдаёт JS-оболочку без текста версий, так что и переименований по ней не видно — ни подтвердить, ни опровергнуть] |
-| Adobe Premiere | 26 | Title Case + объект в подписи | Подписи именуют результат, а не механизм: `Ripple Delete` против `Delete`, `Paste Insert` против `Paste`. Пара «Delete / Ripple Delete» — эталон случая, где одна надпись без второго слова означала бы разрушение монтажа [НЕ ПРОВЕРЕНО: `helpx.adobe.com` из этого окружения не отвечает вовсе (таймаут и HTTP 000), состав пунктов — по вторичным источникам] |
-| DaVinci Resolve | 21 | подпись, зависящая от страницы | Одно и то же слово на Edit, Fusion и Fairlight означает разное, и различимость даёт не текст, а страница: контекст берётся из корня интерфейса. Обратная сторона — при переносе привычки между страницами подпись перестаёт быть самодостаточной. [НЕ ПРОВЕРЕНО: what's-new на `blackmagicdesign.com` — маркетинговая страница, слов `renam`/`now called` не содержит; настоящие release notes лежат PDF-ами] |
-| Final Cut Pro | 12.3 | Title Case, глагол+объект; поиск по описанию команды | **Единственный из пяти, у кого исправление неверной подписи попало в release notes открытым текстом** (10.4.1: `Reset Point of View` → `Reset Angle`, «is now listed correctly»; 10.4.4: `Join Clips` и `Join Captions` схлопнуты в одну команду). Плюс Command Editor ищет команду по словам ОПИСАНИЯ, то есть текст рядом с командой — поисковый индекс, а не украшение (F-HLP-017): у формулировки есть вторая, машинная роль |
-| After Effects | 26 | подпись+горячая клавиша; много одноимённых пунктов в разных панелях | Худший из пяти по «где»: `Delete` живёт у слоя, у маски, у ключа и у эффекта, и различает их только панель, в которой открыто меню. Модель «объект определяется фокусом» позволяет держать подписи короткими ценой того, что подпись сама по себе не отвечает на вопрос «что именно исчезнет» [НЕ ПРОВЕРЕНО, тот же недоступный `helpx.adobe.com`] |
+| VEGAS Pro | 2026 | standard Windows menus, verb+object | A rule exists de facto (`Delete Track`, `Insert/Remove Envelope ▸ Volume`); SCS/Boris FX have not published a public guideline on labels, and distinguishability is held by editing. [NOT VERIFIED: `vegascreativesoftware.com/version-history/` returns a JS shell without the text of the versions, so renames cannot be seen there either — neither confirmed nor refuted] |
+| Adobe Premiere | 26 | Title Case + object in the label | Labels name the result, not the mechanism: `Ripple Delete` versus `Delete`, `Paste Insert` versus `Paste`. The pair "Delete / Ripple Delete" is the reference case where one label without the second word would mean destruction of the edit [NOT VERIFIED: `helpx.adobe.com` does not respond at all from this environment (timeout and HTTP 000), the composition of items is from secondary sources] |
+| DaVinci Resolve | 21 | a label that depends on the page | The same word on Edit, Fusion and Fairlight means different things, and distinguishability is given not by the text but by the page: the context is taken from the root of the interface. The reverse side — when the habit is carried between pages, the label stops being self-sufficient. [NOT VERIFIED: the what's-new on `blackmagicdesign.com` is a marketing page, it contains no words `renam`/`now called`; the real release notes are PDFs] |
+| Final Cut Pro | 12.3 | Title Case, verb+object; search by the command's description | **The only one of the five whose correction of an incorrect label made it into the release notes in plain text** (10.4.1: `Reset Point of View` → `Reset Angle`, "is now listed correctly"; 10.4.4: `Join Clips` and `Join Captions` merged into one command). Plus, the Command Editor searches for a command by the words of its DESCRIPTION, that is, the text next to the command is a search index, not decoration (F-HLP-017): the wording has a second, machine role |
+| After Effects | 26 | label + hotkey; many identically named items in different panels | The worst of the five by "where": `Delete` lives on a layer, on a mask, on a keyframe and on an effect, and only the panel in which the menu is open distinguishes them. The model "the object is determined by focus" allows keeping labels short at the price that the label by itself does not answer the question "what exactly will disappear" [NOT VERIFIED, the same unavailable `helpx.adobe.com`] |
 
-**Вне ядра.** Правило формулировки подписи в видеомонтаже не опубликовано
-никем: у всех пяти оно реконструируется по поведению. Написанным текстом оно
-существует только вне NLE — и там же существует поверхность, которой нет ни у
-одного видеоредактора: список, где подписи ВСЕХ команд видны разом и одноимённые
-строки заметны без всякого теста.
+**Outside the core.** The rule for wording labels is not published by anyone in video editing: for all five it is reconstructed from behavior. It exists written down only outside NLEs — and there too exists a surface that none of the video editors has: a list where the labels of ALL commands are visible at once and identically named rows are noticeable without any test.
 
-| Программа | Версия | Как называется | Как устроено |
+| Program | Version | How it is named | How it works |
 |---|---|---|---|
-| Visual Studio Code | 1.136 | Command Palette; UX Guidelines, страница Command Palette | Норматив короткий и, вопреки репутации, слабый: «Use clear names for commands», «Group commands together in the same category», «Don't … Use emojis in command names». Формат «Категория: Команда» («Git: Commit») правилом НЕ объявлен — категория просто выносится палитрой в префикс, и «где» попадает в подпись как побочный эффект показа. Работает это не нормой, а поверхностью: палитра выкладывает сотни команд подряд, и одноимённые видно глазом |
-| IntelliJ IDEA | 2026.2 | UI Guidelines, страница Button | Единственный источник, где наше правило 18 записано нормой почти дословно: «The label should be short, not more than five words. If it's not obvious what element the button is related to, add more words to make it clear.» И приоритет расставлен явно — «Prefer clear labels to short ones», то есть спор «различимо против коротко» решён в пользу различимости. Плюс «Write the label as an imperative verb» и список исключений, куда `OK` попадает как терпимое, а не как образец |
+| Visual Studio Code | 1.136 | Command Palette; UX Guidelines, Command Palette page | The norm is short and, contrary to its reputation, weak: "Use clear names for commands", "Group commands together in the same category", "Don't … Use emojis in command names". The format "Category: Command" ("Git: Commit") is NOT declared as a rule — the category is simply moved by the palette into a prefix, and "where" gets into the label as a side effect of display. It works not by norm but by surface: the palette lays out hundreds of commands in a row, and identically named ones are visible to the eye |
+| IntelliJ IDEA | 2026.2 | UI Guidelines, Button page | The only source where our rule 18 is recorded as a norm almost verbatim: "The label should be short, not more than five words. If it's not obvious what element the button is related to, add more words to make it clear." And the priority is set explicitly — "Prefer clear labels to short ones", that is, the dispute "distinguishable versus short" is resolved in favor of distinguishability. Plus "Write the label as an imperative verb" and a list of exceptions where `OK` appears as tolerable rather than as a model |
 
-**Написанное правило есть ещё у троих, и все трое не NLE.** Apple HIG про
-кнопки алертов: «Avoid using OK as the default button title unless the alert is
-purely informational». GNOME HIG: «Label the affirmative button with a specific
-imperative verb… This is clearer than a generic label like OK or Done». Самая
-полная формулировка — у Microsoft (Win32 UX Guide, помечен самой Microsoft как
-неактуальный с Windows 7), и она буквально описывает эскалацию, которой нам не
-хватает: «Use a direct object (a noun after the verb) when the object is not
-apparent from context» — с тремя ступенями `Add` (acceptable) → `Add Items`
-(better) → `Add Selected Items` (best). Отдельной строкой таблицы они не
-заведены: ключей в `_editors.md` у них нет, а механизм тот же, что у JetBrains.
+**A written rule exists in three more, and all three are not NLEs.** Apple HIG on alert buttons: "Avoid using OK as the default button title unless the alert is purely informational". GNOME HIG: "Label the affirmative button with a specific imperative verb… This is clearer than a generic label like OK or Done". The most complete wording is Microsoft's (Win32 UX Guide, marked by Microsoft itself as outdated since Windows 7), and it literally describes an escalation we lack: "Use a direct object (a noun after the verb) when the object is not apparent from context" — with three steps `Add` (acceptable) → `Add Items` (better) → `Add Selected Items` (best). They are not entered as a separate row of the table: they have no keys in `_editors.md`, and the mechanism is the same as in JetBrains.
 
-## Фишка фишки
+## The trick behind it
 
-Груз подписи — не текст, а **момент и соседство**. Строка статусбара отвечает
-тому, кто уже спросил мышью, и показывает ровно одну подсказку за раз; подпись
-читают ДО действия и читают в СТОЛБЦЕ, среди восьми соседей. Отсюда груз,
-который наша строка не поднимет физически: **смысл подписи наполовину
-разностный** — «Удалить» значит «не восемь остальных». У нас этот груз денется
-на саму подпись и больше никуда: единственная поверхность, где два названия
-стоят рядом одновременно, — это меню, комбо-бокс и тулбар, то есть ровно те
-места, где подпись и живёт.
+The weight of a label is not the text but **the moment and the neighborhood**. The status-bar line answers the one who has already asked with the mouse, and shows exactly one hint at a time; a label is read BEFORE the action, and it is read in a COLUMN, among eight neighbors. Hence a weight that our line will not physically lift: **the meaning of a label is half differential** — "Delete" means "not the eight others". For us this weight goes into the label itself and nowhere else: the only surface where two names stand side by side at the same time is the menu, the combo box and the toolbar, that is, exactly the places where the label lives.
 
-Три детали, которых нет ни в одном списке возможностей.
+Three details that are not in any list of features.
 
-1. **Неоднозначность — свойство НАБОРА, а не строки, и поэтому её нельзя
-   увидеть в исходнике.** Подпись `Delete (Del)` не врёт в одиночку: она врёт
-   рядом с тремя разными объектами. А тот, кто пишет и переводит подписи, видит
-   строки — по одной, в порядке ключей файла, — тогда как пользователь видит
-   столбец. У нас это разошлось буквально: `[trn.cat] wipe = "Wipes"` и
-   `[trn.kind] wipe = "Wipe"` лежат в `i18n/en.toml` в шести строках друг от
-   друга (577 и 583) и на экране рисуются в двух пикселях друг от друга —
-   заголовок семейства и первый пункт под ним в комбо-боксе выбора вида
-   перехода (`transition_editor.rs:164` и `:168`). В китайском и арабском
-   каталогах это ОДНА И ТА ЖЕ строка: 划像 над 划像, مسح над مسح. Переводчик
-   сделал две безупречные строки; неоднозначным стал их набор, а набора не
-   видит никто.
+1. **Ambiguity is a property of the SET, not of a line, and therefore it cannot be seen in the source.** The label `Delete (Del)` does not lie alone: it lies next to three different objects. And the one who writes and translates labels sees lines — one at a time, in the order of the keys in the file — while the user sees a column. For us this has literally come apart: `[trn.cat] wipe = "Wipes"` and `[trn.kind] wipe = "Wipe"` lie in `i18n/en.toml` six lines apart from each other (577 and 583) and are drawn on the screen two pixels apart — the family header and the first item under it in the combo box of the transition kind selection (`transition_editor.rs:164` and `:168`). In the Chinese and Arabic catalogs it is ONE AND THE SAME line: 划像 above 划像, مسح above مسح. The translator made two flawless lines; the set became ambiguous, and nobody sees the set.
 
-2. **Правильная подпись экономит не время, а UNDO.** Неверная подсказка стоит
-   повторного взгляда; неверная подпись стоит выполненного действия — к моменту,
-   когда человек понял, дело уже сделано. И цена у ошибки несимметричная: у нас
-   один ключ `render.cancel` = «Отмена» стоит на ДВУХ кнопках — «закрыть окно
-   настроек, ничего не начав» (`render_dialog.rs:416`) и «прервать идущий
-   рендер» (`render_dialog.rs:531`). Первое стоит нуля, второе — всего, что
-   закодировано. Это ровно дефект п.171 («одна надпись на четыре разных
-   действия»), выживший на другом экране.
+2. **A correct label saves not time but UNDO.** An incorrect hint costs a repeated glance; an incorrect label costs an executed action — by the time the person has understood, the deed is done. And the price of the error is asymmetric: we have one key `render.cancel` = "Cancel" on TWO buttons — "close the settings window without having started anything" (`render_dialog.rs:416`) and "interrupt the render in progress" (`render_dialog.rs:531`). The first costs nothing, the second costs everything that has been encoded. This is exactly the defect of item 171 ("one label for four different actions"), surviving on another screen.
 
-3. **Подпись — единственная справочная поверхность, у которой есть машинно
-   проверяемое свойство, и отрасль этим свойством не пользуется.** «Текст
-   понятен» проверить нельзя; «две команды различимы» — предикат над готовым
-   каталогом, проверяемый без запуска программы, во всех пяти языках сразу. Всё
-   найденное в отрасли работает на ВХОДЕ, а не на выходе: `msgctxt`/`pgettext` у
-   gettext и аргумент disambiguation у Qt дают переводчику контекст, а правила
-   Mozilla запрещают переиспользовать строку — но ни один из трёх не проверяет
-   РЕЗУЛЬТАТ, то есть что две переведённые подписи в собранном интерфейсе
-   действительно различаются. Мануал gettext ставит задачу нашими же словами и
-   на нашем же примере — меню `File` (Open, New) и меню `Printer` (Select, Open,
-   Connect): «But in two places the string passed into the function would be
-   Open. The translations might not be the same and therefore we are in the
-   dilemma described above.» Решение там — дать контекст, а не сверить итог.
-   [НЕ ПРОВЕРЕНО: утверждение «инструмента проверки итоговой различимости нет ни
-   у кого» — отрицательное и слабое; гайдлайны l10n KDE/GNOME/Mozilla целиком не
-   прочёсаны.] Наш собственный масштаб стоит назвать так же честно: ВСЯ машинная
-   проверка различимости в программе — это три `assert_ne!` в `i18n_tests.rs`
-   (строки 292, 297, 304), все три внутри t171, на 8 значений из 522.
+3. **A label is the only help surface that has a machine-verifiable property, and the industry does not use this property.** "The text is clear" cannot be checked; "two commands are distinguishable" is a predicate over a finished catalog, checkable without running the program, in all five languages at once. Everything found in the industry works on the INPUT, not the output: `msgctxt`/`pgettext` in gettext and the disambiguation argument in Qt give the translator context, and Mozilla's rules forbid reusing a string — but none of the three checks the RESULT, that is, whether the two translated labels in the assembled interface really differ. The gettext manual sets the task in our own words and on our own example — the `File` menu (Open, New) and the `Printer` menu (Select, Open, Connect): "But in two places the string passed into the function would be Open. The translations might not be the same and therefore we are in the dilemma described above." The solution there is to give context, not to check the outcome. [NOT VERIFIED: the claim "no one has a tool for checking the final distinguishability" is negative and weak; the l10n guidelines of KDE/GNOME/Mozilla have not been fully combed through.] Our own scale should be named just as honestly: ALL the machine checking of distinguishability in the program consists of three `assert_ne!` in `i18n_tests.rs` (lines 292, 297, 304), all three inside t171, over 8 values out of 522.
 
-## Плюсы
+## Pros
 
-- Канал нельзя не прочитать. Выбор пункта физически требует чтения его
-  названия, поэтому охват равен 100 % тех, кто дошёл до меню, и не зависит ни
-  от привычки наводить мышь, ни от знания про F1, ни от того, открыл ли человек
-  когда-нибудь руководство. Ни одна другая справочная поверхность этим свойством
-  не обладает.
-- Ноль новых пикселей и ноль новых кадров: место под текст уже занято, меняется
-  только текст. Правило 13 («не тратить место впустую») не задевается вообще, а
-  инвариант 12 (repaint только при движении) — тем более: строка статическая.
-- Правка не требует кода. Одна подпись — одно значение в пяти каталогах, ноль
-  строк Rust; цена посчитана в F-HLP-033 и не растёт от количества исправленных
-  подписей нелинейно.
-- Свойство формулируется как предикат и потому переживает автора: «эти две
-  команды различимы» проверяется машиной в каждом языке, тогда как «понятно
-  сформулировано» — только вкусом ревьюера, который через год уйдёт.
-- Ошибка ловится ДО действия, а не после. Все остальные поверхности домена
-  (F-HLP-008 ошибки, F-HLP-013 журнал, F-HLP-010 упор жеста) объясняют уже
-  случившееся; подпись — единственная, которая работает раньше.
-- Совместима с решениями владельца пп.1-2 (п.14 р.8) дословно и без оговорок:
-  ничего не всплывает, ничего не перекрывается, никакой задержки нет — текст
-  нарисован внутри пункта, который пользователь и так открыл.
+- The channel cannot be not read. Choosing an item physically requires reading its name, so the reach equals 100 % of those who got to the menu, and it does not depend on the habit of hovering with the mouse, on knowing about F1, or on whether the person has ever opened the manual. No other help surface has this property.
+- Zero new pixels and zero new frames: the place for the text is already occupied, only the text changes. Rule 13 ("do not waste space") is not touched at all, and invariant 12 (repaint only on motion) — even less so: the line is static.
+- The fix requires no code. One label — one value in five catalogs, zero lines of Rust; the cost is counted in F-HLP-033 and does not grow non-linearly with the number of labels corrected.
+- The property is formulated as a predicate and therefore outlives its author: "these two commands are distinguishable" is checked by a machine in every language, whereas "clearly worded" is only the taste of a reviewer who will leave in a year.
+- The error is caught BEFORE the action, not after. All the other surfaces of the domain (F-HLP-008 errors, F-HLP-013 log, F-HLP-010 the grip of a gesture) explain what has already happened; the label is the only one that works earlier.
+- Compatible with the owner's decisions of items 1–2 (item 14 of round 8) word for word and without reservations: nothing pops up, nothing overlaps, there is no delay — the text is drawn inside the item that the user has already opened.
 
-## Минусы
+## Cons
 
-- Различимость покупается длиной, а длина конечна. Самая длинная подпись меню в
-  нашем каталоге — это фикс п.171 («Remove the transition with the previous
-  clip», 44 символа), четвёртая по длине — его же пара (40), при средней длине
-  подписи меню 17.4 (89 подписей в `[menu.*]`, `[tl.menu]`, `[tl.lane]`,
-  `[bin.menu]`). Предел `src/apps/kt-app/build.rs` — 160 символов на значение,
-  и он валит сборку; t128 меряет бюджет ширины. Правило 18 и правило 7 тянут в
-  разные стороны, и это не разрешается один раз навсегда — это торг на каждой
-  подписи. Отрасль, впрочем, торг уже разрешила в одну сторону: JetBrains пишет
-  «Prefer clear labels to short ones», Microsoft — «Use a direct object … when
-  the object is not apparent from context». У нас такого приоритета не записано
-  нигде, и потому каждый спор начинается заново.
-- Подпись говорит «что» и «где», но не «зачем» и не «чем платишь». «Убрать
-  переход со следующим клипом» не говорит, что тела событий при этом не
-  изменятся (п.20 чек-листа) — это уже груз абзаца, и он уезжает в окно эффекта
-  (F-HLP-006) и на сайт (F-HLP-023).
-- Правило 18 конфликтует с правилом 17. Чтобы подпись назвала «где», один и тот
-  же глагол приходится размножать по объектам: `Удалить` → `Удалить дорожку`,
-  `Удалить морфер`, `Удалить область`, `Удалить камеру` — четыре ключа вместо
-  одного, то есть двадцать значений вместо пяти. Экономия на переиспользовании
-  ключа — это ровно то, чем оплачена сегодняшняя неоднозначность.
-- Неоднозначность возникает ЗАДНИМ ЧИСЛОМ. Новая сущность с тем же глаголом
-  делает вчерашнюю безупречную подпись двусмысленной, ничего при этом не меняя
-  в ней самой. Автор новой сущности не имеет причины перечитывать чужие
-  подписи, и без машинной проверки такой регресс не виден никому.
-- Перевод — самостоятельный источник неоднозначности, и автор английской
-  подписи его не видит и увидеть не может. Безупречный английский набор
-  схлопывается в другом языке: у нас 13 таких совпадений (10 различных пар) в
-  четырёх каталогах при 17 парах, уже одинаковых в английском.
-- Акселератор, вписанный в переводимую фразу, едет вместе с ней при
-  переиспользовании ключа — и приезжает туда, где он неверен. Это цена не
-  подписи как таковой, а решения хранить аккорд внутри текста (F-HLP-017).
-- **Переписать подпись — это войти в очередь, а не выйти из неё.** Трекер
-  показал цену на одном слове: у Kdenlive подпись `Wipe` просили переименовать
-  дважды и в РАЗНОЕ — #329 (2019) в «wipe/fade», #605 в «TRANSITION», обе
-  закрыты; в 2026-м #2219 просит расщепить `Image Sequence` на два имени, а
-  #2128 показывает третий ход, когда уже сделанное переименование портит
-  чужую подпись. Спор о названии не разрешается однократно, и «домести класс»
-  означает согласиться платить по нему повторно.
-- **Обратной связи по этому классу не будет.** Восемь задач на 25 442 записи
-  одиннадцати трекеров рейтинга (0.03 %) — значит, ждать жалоб бесполезно: неверная подпись
-  не оставляет следа, по которому пишут баг. Отсюда следствие, неприятное для
-  оценки объёма: без машинного предиката мы не узнаем ни что класс есть, ни
-  что он выметен, — «сколько ещё осталось» не измеряется ничем внешним.
+- Distinguishability is bought with length, and length is finite. The longest menu label in our catalog is the fix of item 171 ("Remove the transition with the previous clip", 44 characters), the fourth-longest is its pair (40), with an average menu label length of 17.4 (89 labels in `[menu.*]`, `[tl.menu]`, `[tl.lane]`, `[bin.menu]`). The limit in `src/apps/kt-app/build.rs` is 160 characters per value, and it breaks the build; t128 measures the width budget. Rule 18 and rule 7 pull in different directions, and this is not resolved once and for all — it is a bargain over every label. The industry, however, has already resolved the bargain in one direction: JetBrains writes "Prefer clear labels to short ones", Microsoft — "Use a direct object … when the object is not apparent from context". We have no such priority recorded anywhere, and therefore every dispute starts over.
+- A label says "what" and "where", but not "why" and not "what you pay with". "Remove the transition with the next clip" does not say that the bodies of the events will not change in the process (item 20 of the checklist) — this is already the weight of a paragraph, and it moves into the effect window (F-HLP-006) and onto the site (F-HLP-023).
+- Rule 18 conflicts with rule 17. For a label to name "where", the same verb has to be multiplied by object: `Удалить` → "Delete track", "Delete morpher", "Delete region", "Delete camera" — four keys instead of one, that is, twenty values instead of five. The saving on reusing a key is exactly what today's ambiguity is paid for.
+- Ambiguity arises RETROACTIVELY. A new entity with the same verb makes yesterday's flawless label ambiguous, without changing anything in it. The author of the new entity has no reason to reread others' labels, and without a machine check such a regression is visible to no one.
+- Translation is an independent source of ambiguity, and the author of the English label does not see it and cannot see it. A flawless English set collapses in another language: we have 13 such coincidences (10 distinct pairs) in four catalogs out of 17 pairs that are already identical in English.
+- An accelerator written into a translated phrase travels with it when the key is reused — and arrives where it is wrong. This is the cost not of the label as such, but of the decision to keep the chord inside the text (F-HLP-017).
+- **Rewriting a label means entering a queue, not leaving one.** The tracker showed the price on a single word: Kdenlive's `Wipe` label was asked to be renamed twice and in DIFFERENT ways — #329 (2019) into "wipe/fade", #605 into "TRANSITION", both closed; in 2026 #2219 asks to split `Image Sequence` into two names, and #2128 shows a third move, when a rename already done spoils someone else's label. The dispute over a name is not resolved once, and "tidying the class up" means agreeing to pay for it again.
+- **There will be no feedback on this class.** Eight tasks out of 25,442 records of eleven rating trackers (0.03 %) — which means waiting for complaints is pointless: an incorrect label leaves no trace by which a bug is filed. The person pressed, got the wrong thing, pressed undo and moved on. Hence a consequence that is unpleasant for estimating the size: without a machine predicate we will not learn either that the class exists or that it has been swept clean — "how much is still left" is not measured by anything external.
 
-## Что говорят пользователи
+## What users say
 
-СИГНАЛ: «подпись непонятна» как зарегистрированный дефект — 2 задачи в kde-invent, `(menu|label|button|command|option|item|wording|caption|entry|name)[^.]{0,30}(confus|misleading|unclear|ambiguous|not obvious|misnomer|misnamed)|(confus|misleading|unclear|ambiguous|misnamed)[^.]{0,30}(menu|label|button|command|option|item|wording|caption|entry|name)`; доля 0.1% против 0.0% (1 задача из 6346) в kde-bugzilla
+SIGNAL: "the label is confusing" as a registered defect — 2 tasks in kde-invent, `(menu|label|button|command|option|item|wording|caption|entry|name)[^.]{0,30}(confus|misleading|unclear|ambiguous|not obvious|misnomer|misnamed)|(confus|misleading|unclear|ambiguous|misnamed)[^.]{0,30}(menu|label|button|command|option|item|wording|caption|entry|name)`; share 0.1% against 0.0% (1 task out of 6346) in kde-bugzilla
 
-СИГНАЛ: «переименовать X в Y» как самостоятельная просьба — 4 задачи в kde-invent, `renam\w*[^.]{0,40}\bto\b`; доля 0.2% против 0.0% (1 задача из 6346) в kde-bugzilla и 0.4% (3 из 680) в otio
+SIGNAL: "rename X to Y" as an independent request — 4 tasks in kde-invent, `renam\w*[^.]{0,40}\bto\b`; share 0.2% against 0.0% (1 task out of 6346) in kde-bugzilla and 0.4% (3 out of 680) in otio
 
-Первый счёт нужно читать как отрицательный результат, и он важнее любого
-положительного: на 25 442 записи одиннадцати трекеров корпуса `nle` по этому фильтру нашлось
-**восемь** задач (0.03 %), из них две — ложные срабатывания. Класс существует —
-и почти не регистрируется. Причина видна из его же устройства: неверная подпись
-не оставляет следа, по которому пишут баг, — человек нажал, получил не то,
-нажал undo и пошёл дальше. Значит внешней обратной связи по этому классу не
-будет ни у кого, включая нас, и единственный доступный сторож — машина.
+The first count must be read as a negative result, and it matters more than any positive one: across 25,442 records of eleven trackers of the `nle` corpus this filter found **eight** tasks (0.03 %), of which two are false positives. The class exists — and is almost never registered. The reason is visible from its very structure: an incorrect label leaves no trace by which a bug is filed — the person pressed, got the wrong thing, pressed undo and moved on. So there will be no external feedback on this class from anyone, including us, and the only available watchman is a machine.
 
-Второй счёт объясняет, где такие задачи всё-таки заводятся. Два трекера ОДНОГО
-продукта: в пользовательской Bugzilla просьба «переименовать X в Y» — одна
-задача из 6346, в разработческом invent — четыре из 2217. Переименование
-подписи заводит не пострадавший, а сопровождающий; вершина списка — otio (0.4 %,
-3 из 680), где имя типа И ЕСТЬ API, то есть цена ошибки в названии максимальна.
+The second count explains where such tasks are nonetheless filed. Two trackers of ONE product: in the user-facing Bugzilla the request "rename X to Y" is one task out of 6346, in the developer invent it is four out of 2217. A label rename is filed not by the one who was harmed but by a maintainer; at the top of the list is otio (0.4 %, 3 out of 680), where the type name IS the API, that is, the cost of an error in a name is at its maximum.
 
-Самый точный документ по теме — наш собственный: претензия владельца Р.28 п.4,
-из которой родилось правило 18. Она ценна тем, что человек описывает не вкус, а
-механику ошибки — он не понял ГДЕ, и вторая подпись оказалась прямой ложью:
+The most precise document on the subject is our own: the claim of the owner, Round 28 item 4, from which rule 18 was born. It is valuable because the person describes not a taste but the mechanics of the error — he did not understand WHERE, and the second label turned out to be a direct lie:
 
-> «fade out — вообще не понятно по названию пункта куда он добавит этот out…
-> И надпись "Remove crossfade" тоже не очевидно, оказывается она fadeout с
-> конца убирает».
-> — Р.28 п.4, `docs/user-feedback.md`; разбор и фикс — п.171 `docs/porting-notes.md`
+> "fade out — it is not understood at all from the name of the item where it will add this out… And the label 'Remove crossfade' is also not obvious, it turns out it removes the fadeout from the end."
+> — Round 28 item 4, `docs/user-feedback.md`; analysis and fix — item 171 `docs/porting-notes.md`
 
-Внешнее подтверждение нашлось в двух видах — как признание вендора и как живая
-заявка в трекере. Apple — единственный из пяти, кто написал «подпись была
-неправильной» в release notes:
+External confirmation was found in two forms — as a vendor's admission and as a live request in a tracker. Apple is the only one of the five who wrote "the label was incorrect" in the release notes:
 
-> «Command Editor function of "Reset Point of View" is now listed correctly as
-> Reset Angle.»
-> — Apple, Final Cut Pro release notes, раздел версии 10.4.1, https://support.apple.com/en-us/102825 (обращение 2026-09-07)
+> "Command Editor function of 'Reset Point of View' is now listed correctly as Reset Angle."
+> — Apple, Final Cut Pro release notes, section of version 10.4.1, https://support.apple.com/en-us/102825 (accessed 2026-09-07)
 
-А вот наш дефект слово в слово, у чужого NLE: подпись не говорит, НАД ЧЕМ
-сработает, потому что один термин достался двум разным сущностям. Это одна из
-тех восьми задач, что дал первый счёт, — и вес у неё соответствующий: заведена
-21.01.2026, закрыта через 24 дня, 3 комментария и 2 голоса.
+And here is our defect word for word, in a foreign NLE: the label does not say WHAT it will act on, because one term went to two different entities. This is one of those eight tasks that the first count gave — and its weight is appropriate: filed 21.01.2026, closed after 24 days, 3 comments and 2 votes.
 
-> «Do we want to implement a feature that deletes all timeline markers?
-> `Delete All Markers` only works on (clip) markers.»
-> — Kdenlive, issue #2128 «Marker Menu Confusing», 21.01.2026, https://invent.kde.org/multimedia/kdenlive/-/work_items/2128 (обращение 2026-09-07)
+> "Do we want to implement a feature that deletes all timeline markers? `Delete All Markers` only works on (clip) markers."
+> — Kdenlive, issue #2128 "Marker Menu Confusing", 21.01.2026, https://invent.kde.org/multimedia/kdenlive/-/work_items/2128 (accessed 2026-09-07)
 
-Там же названа и ПРИЧИНА, полезная нам как предупреждение: коллизия появилась
-после прошлого переименования (`Guides` → `Markers`), то есть одна правка
-подписи сделала двусмысленной чужую, которую никто не трогал.
+There the CAUSE is also named, useful to us as a warning: the collision appeared after the previous rename (`Guides` → `Markers`), that is, one correction of a label made someone else's label, which nobody touched, ambiguous.
 
-Вторая из тех восьми — тоже Kdenlive и тоже про «где», причём пользователь сам
-формулирует требование правила 18: подпись обязана сказать, над КАКОЙ точкой
-сработает.
+The second of those eight — also Kdenlive and also about "where", and the user himself formulates the requirement of rule 18: the label must say at WHICH point the action will act.
 
-> «for EXAMPLE the **ADD/REMOVE GUIDE** option is creating a guide where the
-> CURSOR is ..and not where the mouse pointer is. … or "explain" WHERE the
-> action is supposed to be placed ( MOUSE POINTER or TIMELINE CURSOR ? )»
-> — Kdenlive, issue #1666 «right mouse button menus on timeline are
-> "confusional"», 10.04.2023,
-> https://invent.kde.org/multimedia/kdenlive/-/work_items/1666 (обращение 2026-09-08)
+> "for EXAMPLE the **ADD/REMOVE GUIDE** option is creating a guide where the CURSOR is ..and not where the mouse pointer is. … or 'explain' WHERE the action is supposed to be placed ( MOUSE POINTER or TIMELINE CURSOR ? )"
+> — Kdenlive, issue #1666 "right mouse button menus on timeline are 'confusional'", 10.04.2023, https://invent.kde.org/multimedia/kdenlive/-/work_items/1666 (accessed 2026-09-08)
 
-Третья — половина «что», у третьего редактора: подпись называет величину, а не
-то, на что она влияет, и человек перебирает четыре надписи, пока не найдёт
-пятую.
-
-> «…I'm messing with `Duration`, `End`, `Start`, `Time`, only to eventually
+The third — the half "what", of a third editor: the label names a quantity, not what it affects, and the person goes through four labels until he finds the fifth.
+> "…I'm messing with `Duration`, `End`, `Start`, `Time`, only to eventually
 > discover that Position was the property I needed to adjust to change the start
-> time!»
-> — OpenShot, issue #1339 «Confusing Properties Labels», 05.03.2018,
-> https://github.com/OpenShot/openshot-qt/issues/1339 (обращение 2026-09-08)
+> time!"
+> — OpenShot, issue #1339 "Confusing Properties Labels", 05.03.2018,
+> https://github.com/OpenShot/openshot-qt/issues/1339 (accessed 2026-09-08)
 
-Чего найти не удалось: жалоб пользователей платной пятёрки. Искал форумные
-жалобы на неоднозначные подписи и документированные переименования —
-`helpx.adobe.com`
-не отвечает вовсе (таймаут и HTTP 000), `forum.blackmagicdesign.com` отдаёт
-Cloudflare-челлендж на поисковый URL, `vegascreativesoftware.com/version-history`
-— JS-оболочку без текста, `reddit.com` и `web.archive.org` из этого окружения не
-открываются (`_editors.md`, «Что было недоступно»). Побочный отрицательный факт,
-который стоит записать: в 100 последних релизах Shotcut (GitHub Releases API, до
-v26.9.6) нет ни одной строки со словами `renam`/`now called` — переименование
-подписи в changelog видеоредакторов почти не попадает и живёт в трекере как
-жалоба, а не в release notes как правка.
+What could not be found: complaints from users of the paid five. I searched for forum complaints about ambiguous labels and documented renames — `helpx.adobe.com` does not respond at all (timeout and HTTP 000), `forum.blackmagicdesign.com` returns a Cloudflare challenge for the search URL, `vegascreativesoftware.com/version-history` returns a JS shell without text, and `reddit.com` and `web.archive.org` do not open from this environment (`_editors.md`, "What was unavailable"). A side negative fact worth recording: in the last 100 Shotcut releases (GitHub Releases API, up to v26.9.6) there is not a single line with the words `renam`/`now called` — a rename of a label almost never appears in the changelog of video editors and lives in the tracker as a complaint, not in the release notes as a correction.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-АДРЕС: `src/apps/kt-app/src/timeline.rs` — класс возможен, и его не ловит
-ничто: один ключ `tl.menu.delete` = «Удалить (Del)» стоит на трёх РАЗНЫХ
-командах — `delete_selected()`, `Command::RemoveCamera`, `Command::RemoveArea`
-(три вызова `ui.button(tr(k::tl::menu::DELETE))`, сегодня строки 4761, 4985 и
-5045; номера в тексте ниже — прошлой ревизии), тогда как вся машинная
-различимость подписей в программе — три `assert_ne!` в
-`src/apps/kt-app/src/i18n_tests.rs` (t171) на 8 значений из 522. Трекер
-добавляет к этому механизм появления: у Kdenlive коллизия #2128 родилась не из
-плохой подписи, а из ПЕРЕИМЕНОВАНИЯ (`Guides` → `Markers`), после которого
-безупречная вчера `Delete All Markers` стала двусмысленной, — то есть регресс
-такого рода приходит из правки соседней строки, и поймать его может только
-предикат над готовым каталогом, а не ревью автора.
+ADDRESS: `src/apps/kt-app/src/timeline.rs` — the class is possible, and nothing catches it: one key `tl.menu.delete` = "Удалить (Del)" (Delete (Del)) stands on three DIFFERENT commands — `delete_selected()`, `Command::RemoveCamera`, `Command::RemoveArea` (three calls `ui.button(tr(k::tl::menu::DELETE))`, today at lines 4761, 4985 and 5045; the numbers in the text below are from the previous revision), whereas all the machine distinguishability of labels in the program is three `assert_ne!` in `src/apps/kt-app/src/i18n_tests.rs` (t171) over 8 values out of 522. The tracker adds a mechanism of appearance to this: in Kdenlive the collision #2128 was born not from a bad label but from a RENAME (`Guides` → `Markers`), after which `Delete All Markers`, flawless yesterday, became ambiguous — that is, a regression of this kind comes from editing the neighboring line, and only a predicate over the finished catalog can catch it, not the author's review.
 
-### Что уже есть
+### What already exists
 
-**Правило.** Пункт 18 чек-листа `src/apps/kt-app/CLAUDE.md`: «Название пункта
-меню говорит, ЧТО и ГДЕ произойдёт. „Fade out“ не годится: затухание бывает и в
-начале, и в конце события. „Remove crossfade“, который на деле убирает фейд с
-конца, — врёт пользователю».
+**The rule.** Item 18 of the checklist in `src/apps/kt-app/CLAUDE.md`: "The name of a menu item says WHAT and WHERE will happen. 'Fade out' does not do: a fade can be at the beginning or at the end of an event. 'Remove crossfade', which in fact removes the fade from the end, lies to the user."
 
-**Разбор дефекта.** П.171 `docs/porting-notes.md`: одна надпись
-`remove_transition` стояла на ЧЕТЫРЁХ разных действиях; она разбита по паре
-(фейд/кроссфейд) × (наш конец/наше начало) на `remove_fade_start/_end` и
-`remove_crossfade_next/_prev`, а `fade_in/fade_out` получили «в начале/в конце
-события». В каталоге это сегодня `tl.menu.remove_fade_start` = «Remove the fade
-at the clip start» и `tl.menu.remove_transition_next` = «Remove the transition
-with the next clip» — сами ключи, заметим, названы не так, как обещает п.171
-(`remove_crossfade_*`): даже запись о фиксе разошлась с кодом в именовании.
+**Analysis of the defect.** Item 171 of `docs/porting-notes.md`: one label `remove_transition` stood on FOUR different actions; it was split by the pair (fade/crossfade) × (our end/our start) into `remove_fade_start/_end` and `remove_crossfade_next/_prev`, and `fade_in/fade_out` received "at the start/at the end of the event". In the catalog this today is `tl.menu.remove_fade_start` = "Remove the fade at the clip start" and `tl.menu.remove_transition_next` = "Remove the transition with the next clip" — note, the keys themselves are not named as item 171 promises (`remove_crossfade_*`): even the record of the fix diverged from the code in its naming.
 
-**Проверка.** t171 `src/apps/kt-app/src/i18n_tests.rs:278`
-(`t171_transition_menu_labels_say_what_and_where`) берёт группу из четырёх
-ключей снятия и требует ПОПАРНОЙ различимости всех шести пар, затем отдельно
-`FADE_IN` ≠ `FADE_OUT` и `MARKER_HERE` ≠ `MARKER_REGION`. Ключевое — цикл
-`for lang in Lang::ALL` снаружи: проверка идёт в КАЖДОМ языке, и мотив записан в
-самом тесте — «перевод „в одно слово“ вернёт ту же неоднозначность». Это и есть
-прецедент, на который опирается вся вторая волна: **правило текста, ставшее
-машинной проверкой**, — то же, чем закончился Р.38 («проза ничего не роняет»,
-t252–t255).
+**The check.** t171 `src/apps/kt-app/src/i18n_tests.rs:278` (`t171_transition_menu_labels_say_what_and_where`) takes a group of four removal keys and requires PAIRWISE distinguishability of all six pairs, then separately `FADE_IN` ≠ `FADE_OUT` and `MARKER_HERE` ≠ `MARKER_REGION`. The key point is the outer loop `for lang in Lang::ALL`: the check runs in EVERY language, and the motive is written in the test itself — "a translation 'into one word' will bring back the same ambiguity". This is the precedent on which the whole second wave rests: **a text rule that became a machine check** — the same thing that ended Round 38 ("prose drops nothing", t252–t255).
 
-**Домашний стиль, который уже сложился и нигде не записан.** В каталоге
-`src/apps/kt-app/i18n/en.toml` скобку несут 17 подписей меню из 89, и в десяти
-из семнадцати в ней стоит ПОСЛЕДСТВИЕ, а не акселератор: `bake_batch` = «Bake
-the FX batch (write effects into clips)», `reset_gain` = «Reset volume (0 dB)»,
-`bin.menu.group_one` = «Group (lock this card)». Тот же приём в окнах:
-`fx.disable` = «Disable the effect (bypass)», `fx.cancel` = «Cancel (revert)».
-Второй приём — счётчик в подписи: `tl.lane.delete_n` = «Delete track ({0} events)»,
-`delete_morph_n`, `delete_camera_n` — подпись называет размер последствия. Третий
-— подпись, меняющаяся по контексту: `marker_here` ↔ `marker_region` (п.170) и
-заголовок меню `area_title` = «Area: {0}», который даёт «где» соседним пунктам
-(`area_from_region` = «Set range from the region» читается однозначно только
-под ним). Секция `[tl.lane]` — образец сплошь: `Delete track`, `Rename track…`,
-`Insert track above`.
+**The house style that has already formed and is recorded nowhere.** In the catalog `src/apps/kt-app/i18n/en.toml`, 17 of the 89 menu labels carry a parenthesis, and in ten of the seventeen the parenthesis holds a CONSEQUENCE, not an accelerator: `bake_batch` = "Bake the FX batch (write effects into clips)", `reset_gain` = "Reset volume (0 dB)", `bin.menu.group_one` = "Group (lock this card)". The same device in windows: `fx.disable` = "Disable the effect (bypass)", `fx.cancel` = "Cancel (revert)". The second device is a counter in the label: `tl.lane.delete_n` = "Delete track ({0} events)", `delete_morph_n`, `delete_camera_n` — the label names the size of the consequence. The third is a label that changes with context: `marker_here` ↔ `marker_region` (item 170) and the menu title `area_title` = "Area: {0}", which gives "where" to the neighboring items (`area_from_region` = "Set range from the region" is read unambiguously only under it). The `[tl.lane]` section is a model through and through: `Delete track`, `Rename track…`, `Insert track above`.
 
-### Чего не хватает
+### What is missing
 
-Правило 18 применено ТОЧЕЧНО — к тем четырём подписям, на которые пожаловались,
-— и класс не выметен. Четыре группы находок, все проверены грепом по
-`src/apps/kt-app`.
+Rule 18 was applied POINTWISE — to those four labels that were complained about — and the class has not been swept clean. Four groups of findings, all checked by grep over `src/apps/kt-app`.
 
-**(1) Одна подпись на разные действия — тот же дефект, что п.171.**
+**(1) One label for different actions — the same defect as item 171.**
 
-- `tl.menu.delete` = «Удалить (Del)» стоит на ТРЁХ вызовах в
-  `timeline.rs`: 4352 — удалить это событие (`delete_selected`), 4576 — удалить
-  камеру (`RemoveCamera`), 4636 — удалить область (`RemoveArea`). Плюс тот же
-  текст, но другим ключом `tb.delete` — на кнопке тулбара (`toolbar.rs:582`) и
-  `menu.edit.delete` = «Удалить» в меню Edit (`toolbar.rs:297`), оба зовут
-  `delete_action`.
-- И акселератор в этой подписи врёт ДВАЖДЫ, по-разному. Про область это уже
-  нашла F-HLP-016: `Del` область не удаляет, потому что в
-  `KtApp::delete_action` (`app.rs:2582`) ветки области нет. Своё, новое: у
-  СОБЫТИЯ `Del` делает не то, что пункт с той же подписью, и это записано
-  комментарием прямо под ним — пункт зовёт `delete_selected()` с пометкой
-  «именно ЭТОТ клип (+группа), а не содержимое региона (п.10)», тогда как
-  `delete_action` при нарисованном регионе уходит в `delete_region`. То есть
-  подпись «Удалить (Del)» обещает клавишу, про которую в соседней строке кода
-  объяснено, почему она делает другое (правило 17).
-- `render.cancel` = «Отмена» на двух кнопках с несопоставимой ценой
-  (`render_dialog.rs:416` и `:531`, разобрано в «Фишке»).
-- `tl.menu.rename` = «Переименовать…» на области (`timeline.rs:4591`) и на метке
-  (`:4697`); третий объект — карточка/группа бина той же строкой, но своим
-  ключом `bin.menu.rename` (`bin_panel.rs:528`). Ни один из трёх не называет,
-  что именно переименовывается, хотя у дорожки это сделано правильно:
-  `tl.lane.rename` = «Rename track…».
+- `tl.menu.delete` = "Удалить (Del)" (Delete (Del)) stands on THREE calls in `timeline.rs`: 4352 — delete this event (`delete_selected`), 4576 — delete the camera (`RemoveCamera`), 4636 — delete the area (`RemoveArea`). Plus the same text under another key `tb.delete` — on the toolbar button (`toolbar.rs:582`) and `menu.edit.delete` = "Delete" in the Edit menu (`toolbar.rs:297`); both call `delete_action`.
+- And the accelerator in this label lies TWICE, in different ways. About the area this has already been found by F-HLP-016: `Del` does not delete the area, because in `KtApp::delete_action` (`app.rs:2582`) there is no area branch. Something of its own, new: for an EVENT, `Del` does something other than the item with the same label, and this is written in a comment right under it — the item calls `delete_selected()` with the note "exactly THIS clip (+group), not the contents of the region (item 10)", whereas `delete_action`, when a region is drawn, goes to `delete_region`. That is, the label "Delete (Del)" promises a key about which the neighboring line of code explains why it does something different (rule 17).
+- `render.cancel` = "Cancel" (Отмена) on two buttons with incomparable cost (`render_dialog.rs:416` and `:531`, analyzed in "The trick").
+- `tl.menu.rename` = "Rename…" (Переименовать…) on the area (`timeline.rs:4591`) and on the marker (`:4697`); a third object — a bin card/group — in the same line, but under its own key `bin.menu.rename` (`bin_panel.rs:528`). None of the three names what is being renamed, although for the track this is done correctly: `tl.lane.rename` = "Rename track…".
 
-**(2) Неоднозначность, созданную переводом, не ловит никто.** Сегодня в
-каталогах 13 совпадений значений (10 различных пар), которых НЕТ в английском:
-`fx.ease`(«Ease») = `perf.smoothing`(«Smoothing») в ru/es/ar;
-`trn.cat.wipe`(«Wipes») = `trn.kind.wipe`(«Wipe») в zh-Hans и ar — заголовок
-семейства и первый пункт под ним в одном комбо-боксе;
-`tb.zoom_in`(«Zoom in») = `win.maximize`(«Maximize») в ar — две кнопки в одной
-верхней полосе, у которых подсказка статусбара становится одним словом
-(`toolbar.rs:205` и `:601`); `mrph.on_areas_n`(«Areas: {0}») =
-`tl.menu.area_title`(«Area: {0}») в zh-Hans; `menu.file.quit`(«Quit») =
-`mrph.fade_out`(«out») в ar. Это ровно то, от чего защищает t171, — но t171
-знает про восемь ключей.
+**(2) Ambiguity created by translation is not caught by anyone.** Today the catalogs contain 13 coincidences of values (10 distinct pairs) that are NOT present in English: `fx.ease` ("Ease") = `perf.smoothing` ("Smoothing") in ru/es/ar; `trn.cat.wipe` ("Wipes") = `trn.kind.wipe` ("Wipe") in zh-Hans and ar — the family header and the first item under it in one combo box; `tb.zoom_in` ("Zoom in") = `win.maximize` ("Maximize") in ar — two buttons in one top strip, whose status-bar hint becomes one word (`toolbar.rs:205` and `:601`); `mrph.on_areas_n` ("Areas: {0}") = `tl.menu.area_title` ("Area: {0}") in zh-Hans; `menu.file.quit` ("Quit") = `mrph.fade_out` ("out") in ar. This is exactly what t171 protects against — but t171 knows about eight keys.
 
-**(3) Подписи, которые не говорят ни «что», ни «где».** `mrph.fade_in` = «in» и
-`mrph.fade_out` = «out» в окне морфера (`morpher_editor.rs:445-446`) — то самое
-слово из претензии Р.28 п.4, дожившее до сегодня в другом окне: в меню
-таймлайна его исправили, в окне морфера — нет. Дальше: `perf.log_clear` =
-«Clear» (что очистить?), `tl.menu.area_color` = «Colour», `fx.remove_slot` =
-«Delete slot», `fx.done` = «Done» рядом с честной `fx.cancel` = «Cancel
-(revert)» — из пары кнопок последствие называет только одна, хотя «Done» здесь
-означает «закрыть, правки уже применены». Всего однословных подписей меню — 20
-из 89, и лишь три из двадцати законны: это заголовки самих меню (File, Edit,
-View).
+**(3) Labels that say neither "what" nor "where".** `mrph.fade_in` = "in" and `mrph.fade_out` = "out" in the morpher window (`morpher_editor.rs:445-446`) — exactly the word from the claim of Round 28 item 4, which survived to today in another window: in the timeline menu it was fixed, in the morpher window it was not. Further: `perf.log_clear` = "Clear" (clear what?), `tl.menu.area_color` = "Colour", `fx.remove_slot` = "Delete slot", `fx.done` = "Done" next to the honest `fx.cancel` = "Cancel (revert)" — of the pair of buttons only one names the consequence, although "Done" here means "close, the edits are already applied". In all there are 20 one-word menu labels out of 89, and only three of the twenty are legitimate: these are the titles of the menus themselves (File, Edit, View).
+**(4) The existing tests of this class do not see it, and it is visible why.** t253 (`reach_tests.rs:422`) asks "does the entity have an item with such a label" and itself enumerates `tr(k::tl::menu::DELETE)` for the event (`:617`), the area (`:630`) and the camera (`:644`) — that is, the collision is written into the test's table and the test is green. This is not a defect of t253: reachability and distinguishability are different properties, and the first is honestly checked. t128 (`layout_tests.rs:1899`) measures length, that is, it presses in the other direction, and measures the three menu titles and eight lines of the performance panel — not a single context menu.
 
-**(4) Существующие тесты этого класса не видят, и видно почему.** t253
-(`reach_tests.rs:422`) спрашивает «есть ли у сущности пункт с такой подписью» и
-сам же перечисляет `tr(k::tl::menu::DELETE)` для события (`:617`), области
-(`:630`) и камеры (`:644`) — то есть коллизия записана в таблице теста и тест
-зелёный. Это не дефект t253: достижимость и различимость — разные свойства, и
-первое честно проверено. t128 (`layout_tests.rs:1899`) меряет длину, то есть
-давит в обратную сторону, и меряет три заголовка меню и восемь строк
-перф-панели — ни одного контекстного меню.
+### What gets in the way
 
-### Что мешает
+Not the volume, but three constructive obstacles.
 
-Не объём, а три конструктивных упора.
+The first: **"the same label" is not a defect in itself**. Rule 17 REQUIRES the same label for the same action: `tb.region_clear` and `tl.menu.region_clear` must match, because it is one command by two paths. A naive check "all values are unique" would fail on 17 legitimate pairs in English alone. So the predicate is not "the strings differ" but "one string → one action", and it requires knowing the ACTION, not only the text.
 
-Первый: **«одинаковая подпись» — не дефект сама по себе**. Правило 17 ТРЕБУЕТ
-одинаковой подписи для одинакового действия: `tb.region_clear` и
-`tl.menu.region_clear` обязаны совпадать, потому что это одна команда двумя
-путями. Наивная проверка «все значения уникальны» упала бы на 17 законных пар
-только в английском. Значит, предикат — не «строки различны», а «одна строка →
-одно действие», и он требует знать ДЕЙСТВИЕ, а не только текст.
+The second: **the link "label → action" does not exist for us as data**. A label reaches the screen as a literal at the call site (`ui.button(tr(k::tl::menu::DELETE))`), and there is nowhere to ask "which other commands carry this label" — this is exactly the command registry owned by F-UI-002. **What this note adds BEYOND the registry:** the registry answers the question "which commands exist and which key invokes them", whereas here a different predicate is needed — "do two DIFFERENT commands carry one label, and did two different labels collapse into one in one of the five translations". The registry makes this possible, but does not itself ask this question.
 
-Второй: **связи «подпись → действие» у нас не существует как данных**. Подпись
-попадает на экран литералом в месте вызова (`ui.button(tr(k::tl::menu::DELETE))`),
-и спросить «какие ещё команды носят эту подпись» негде — это ровно тот реестр
-команд, которым владеет F-UI-002. **Что эта заметка добавляет СВЕРХ реестра:**
-реестр отвечает на вопрос «какие команды есть и какой клавишей вызываются», а
-здесь нужен другой предикат — «не носят ли две РАЗНЫЕ команды одну подпись, и
-не схлопнулись ли две разные подписи в одном из пяти переводов». Реестр это
-делает возможным, но сам такого вопроса не задаёт.
+The third: **half of the check does not wait for the registry**. Item (2) — the collapse in translation — is a predicate over finished catalogs: the set of pairs that must differ is given as a list, and the check runs over `tables::TABLES` without a harness and without UI code, exactly as t171 does today. The cheap half separates cleanly from the expensive half.
 
-Третий: **половина проверки не ждёт реестра**. Пункт (2) — схлопывание при
-переводе — это предикат над готовыми каталогами: набор пар, которые обязаны
-различаться, задаётся списком, а проверка идёт по `tables::TABLES` без харнесса
-и без кода UI, ровно как t171 сегодня. Дешёвая половина отделяется от дорогой
-чисто.
+The fourth obstacle, which must be named honestly: **the fix costs length**. "Delete area 'intro'" instead of "Delete (Del)" — that is plus a dozen characters × 5 languages in places where the menu width is already set by the longest line (rule 13, t128). The ladder of lengthening is known and was not invented by us — Microsoft formulates it as `Add` → `Add Items` → `Add Selected Items`, adding a word exactly up to the moment when the object stops being non-obvious. Part of the fixes, however, is cheaper to make not by lengthening the label but by the menu title, as already done for the area (`area_title` = "Area: {0}"): "where" goes into the header and is not paid for by each item separately.
 
-Четвёртый упор, который надо назвать честно: **исправление стоит длины**.
-«Удалить область „intro“» вместо «Удалить (Del)» — это плюс десяток символов ×
-5 языков в местах, где ширина меню уже задана самой длинной строкой (правило
-13, t128). Лестница удлинения известна и не нами придумана — Microsoft
-формулирует её как `Add` → `Add Items` → `Add Selected Items`, добавляя слово
-ровно до того момента, когда объект перестаёт быть неочевидным. Часть
-исправлений при этом дешевле делать не удлинением подписи, а заголовком меню,
-как уже сделано у области (`area_title` = «Area: {0}»): «где» уходит в шапку и
-не оплачивается каждым пунктом отдельно.
+### Which invariants it touches
 
-### Какие инварианты задевает
+Invariants 1–12 of the root `CLAUDE.md` — **none**: the text is static, not a single new repaint, not a single allocation in the draw path, does not touch the project format. This is a strong argument for "cheap". Checklist rules of `src/apps/kt-app/CLAUDE.md`: 18 (directly), 17 (paired ways — an accelerator in the label must be correct for ITS entity), 7 and 13 (the label must fit, and space is not wasted) — and it is precisely 7/13 that set the ceiling for the fix.
 
-Инварианты 1–12 корневого `CLAUDE.md` — **ни одного**: текст статический, ни
-одного нового repaint, ни одной аллокации в draw-пути, формата проекта не
-касается. Это сильный аргумент «дёшево». Правила чек-листа
-`src/apps/kt-app/CLAUDE.md`: 18 (прямо), 17 (парные способы — акселератор в
-подписи обязан быть верен для СВОЕЙ сущности), 7 и 13 (подпись обязана влезть,
-а место не тратится впустую) — и именно 7/13 задают потолок исправлению.
+## Estimate
 
-## Оценка
-
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | S — одна стадия раунда: тест плюс правка подписей в пяти каталогах |
-| Где основная работа | `src/apps/kt-app/src/i18n_tests.rs` (проверка), `src/apps/kt-app/i18n/*.toml` (подписи), точечно `timeline.rs`/`render_dialog.rs`/`morpher_editor.rs` (расщепление переиспользованных ключей) |
-| Формат проекта | не трогает |
-| Тесты, которые придётся написать | `i18n_tests::one_label_is_one_action` — две половины: (а) объявленные группы «эти подписи обязаны различаться» проверяются во всех пяти языках (обобщение t171 с 8 ключей на класс), (б) значение, стоящее на двух РАЗНЫХ командах, — ошибка; вторая половина ждёт реестра команд |
-| Зависит от | F-UI-002 (реестр — для половины «подпись → действие»), F-HLP-016 (правый клик), F-HLP-017 (аккорд внутри подписи), F-HLP-033 (цена пяти каталогов) |
-| Ломает совместимость | нет |
+| Size | S — one stage of the round: a test plus correction of labels in five catalogs |
+| Where the main work is | `src/apps/kt-app/src/i18n_tests.rs` (the check), `src/apps/kt-app/i18n/*.toml` (labels), point-wise `timeline.rs`/`render_dialog.rs`/`morpher_editor.rs` (splitting reused keys) |
+| Project format | does not touch it |
+| Tests that will have to be written | `i18n_tests::one_label_is_one_action` — two halves: (a) the declared groups "these labels must differ" are checked in all five languages (a generalization of t171 from 8 keys to a class), (b) a value standing on two DIFFERENT commands is an error; the second half awaits the command registry |
+| Depends on | F-UI-002 (the registry — for the half "label → action"), F-HLP-016 (right click), F-HLP-017 (a chord inside the label), F-HLP-033 (the cost of five catalogs) |
+| Breaks compatibility | no |
 
-Рамка, не ТЗ: какие именно группы объявить и какие подписи переписать —
-решение раунда, а не заметки.
+A frame, not a specification: which exact groups to declare and which labels to rewrite is a decision of the round, not of the notes.
 
-## Вердикт
+## Verdict
 
-Берём, и берём первой из дешёвых: это единственная позиция домена, где
-поверхность уже существует, кода не требует, стоит одной строки на язык — а
-проверяемость доказана нашим же t171. Заметка не предлагает новой поверхности:
-она предлагает домести класс, для которого правило и прецедент проверки уже
-написаны, и перестать чинить его по одной жалобе.
+We take it, and we take it first of the cheap ones: this is the only position of the domain where the surface already exists, requires no code, costs one line per language — and its verifiability is proven by our own t171. The note does not propose a new surface: it proposes to sweep up the class for which the rule and the check precedent are already written, and to stop fixing it one complaint at a time.
 
-ТЕСТ: i18n_tests::one_label_is_one_action — сегодня падает трижды, и все три
-падения видны одним чтением файлов, без запуска программы. (1) Ключ
-`tl.menu.delete` = «Удалить (Del)» стоит на трёх разных командах
-(`timeline.rs:4352` — `delete_selected`, `:4576` — `RemoveCamera`, `:4636` —
-`RemoveArea`), а `render.cancel` = «Отмена» — на «закрыть окно настроек»
-(`render_dialog.rs:416`) и «прервать идущий рендер» (`render_dialog.rs:531`).
-(2) В переводах 13 совпадений значений (10 пар), которых нет в английском, и
-худшее из них — `trn.cat.wipe` = `trn.kind.wipe` в zh-Hans и ar: заголовок
-семейства и первый пункт под ним в одном комбо-боксе выбора вида перехода
-(`transition_editor.rs:164`, `:168`). (3) Вся сегодняшняя машинная различимость
-— три `assert_ne!` в `i18n_tests.rs` (292, 297, 304), все внутри t171, на 8
-значений из 522.
+TEST: i18n_tests::one_label_is_one_action — today it fails three times, and all three failures are visible by one reading of the files, without running the program. (1) The key `tl.menu.delete` = "Удалить (Del)" (Delete (Del)) stands on three different commands (`timeline.rs:4352` — `delete_selected`, `:4576` — `RemoveCamera`, `:4636` — `RemoveArea`), and `render.cancel` = "Cancel" stands on "close the settings window" (`render_dialog.rs:416`) and "interrupt the render in progress" (`render_dialog.rs:531`). (2) In the translations there are 13 coincidences of values (10 pairs) that are absent in English, and the worst of them is `trn.cat.wipe` = `trn.kind.wipe` in zh-Hans and ar: the family header and the first item under it in one combo box for choosing the transition kind (`transition_editor.rs:164`, `:168`). (3) All of today's machine distinguishability — three `assert_ne!` in `i18n_tests.rs` (292, 297, 304), all inside t171, over 8 values out of 522.
 
-ОДНА СТРОКА: перекрытие — не трогает | задержка — не трогает | ёмкость — в
-строке статусбара ноль новых символов, поверхность вообще не она: груз
-ложится на САМУ ПОДПИСЬ пункта меню, кнопки и заголовка комбо-бокса —
-на место, которое уже занято текстом и где меняется только текст.
+ONE LINE: overlap — not touched | delay — not touched | capacity — zero new characters in the status-bar line, the surface is not it at all: the load falls on the label ITSELF of the menu item, button and combo-box header — on a place already occupied by text, where only the text changes.
 
-## Источники
+## Sources
 
-- `docs/user-feedback.md`, Р.28 п.4 — первоисточник правила (дата обращения 2026-09-07)
-- `docs/porting-notes.md`, п.171 — разбор дефекта и фикс (2026-09-07)
+- `docs/user-feedback.md`, Round 28 item 4 — the primary source of the rule (accessed 2026-09-07)
+- `docs/porting-notes.md`, item 171 — analysis of the defect and the fix (2026-09-07)
 - `src/apps/kt-app/src/i18n_tests.rs:270-311` — t171 (2026-09-07)
-- `src/apps/kt-app/CLAUDE.md`, чек-лист пп.7, 13, 17, 18 (2026-09-07)
-- https://support.apple.com/en-us/102825 — Final Cut Pro release notes, переименование `Reset Point of View` → `Reset Angle` в 10.4.1 (дата обращения 2026-09-07)
-- https://invent.kde.org/multimedia/kdenlive/-/work_items/2128 — Kdenlive, «Marker Menu Confusing» (дата обращения 2026-09-07)
-- https://invent.kde.org/multimedia/kdenlive/-/work_items/2219 — Kdenlive, «Rename "Image Sequence" to "Image Slideshow"»: один термин на две разные операции импорта (дата обращения 2026-09-07)
-- https://invent.kde.org/multimedia/kdenlive/-/work_items/1666 — Kdenlive, «right mouse button menus on timeline are "confusional"»: пользователь требует, чтобы подпись сказала «где» (дата обращения 2026-09-08)
-- https://github.com/OpenShot/openshot-qt/issues/1339 — OpenShot, «Confusing Properties Labels»: подпись называет величину, а не то, на что она влияет (дата обращения 2026-09-08)
-- https://invent.kde.org/multimedia/kdenlive/-/work_items/329 и https://invent.kde.org/multimedia/kdenlive/-/work_items/605 — две несовместимые просьбы переименовать одну и ту же подпись `Wipe` (дата обращения 2026-09-08)
-- Трекеры (третья волна, Р.41): выгрузки из `~/.cache/kinotrain/trackers/{kde-invent,kde-bugzilla,pitivi,openshot}.jsonl`; оба счёта воспроизводятся `python3 src/scripts/tracker-rank.py --query …` с фильтрами из строк `СИГНАЛ:` (2026-09-08)
-- https://code.visualstudio.com/api/ux-guidelines/command-palette — VS Code UX Guidelines: «Use clear names for commands», «Group commands together in the same category» (дата обращения 2026-09-07)
-- https://plugins.jetbrains.com/docs/intellij/button.html — IntelliJ Platform UI Guidelines, раздел Button: «Prefer clear labels to short ones» (дата обращения 2026-09-07; прежний адрес `jetbrains.github.io/ui/` отдаёт 404)
-- https://developer.apple.com/design/human-interface-guidelines/alerts — Apple HIG про `OK` (дата обращения 2026-09-07)
-- https://developer.gnome.org/hig/patterns/feedback/dialogs.html — GNOME HIG про императивный глагол в кнопке (дата обращения 2026-09-07)
-- https://learn.microsoft.com/en-us/windows/win32/uxguide/ctrl-command-buttons — Windows UX Guide: «Use a direct object … when the object is not apparent from context», ступени `Add`/`Add Items`/`Add Selected Items` (дата обращения 2026-09-07; сама Microsoft помечает страницу как неактуальную с Windows 7)
-- https://www.gnu.org/software/gettext/manual/html_node/Contexts.html — gettext, `msgctxt` и пример с двумя `Open` (дата обращения 2026-09-07)
-- https://doc.qt.io/qt-6/i18n-source-translation.html — Qt, аргумент disambiguation в `tr()` (дата обращения 2026-09-07)
-- https://mozilla-l10n.github.io/documentation/localization/dev_best_practices.html — Mozilla l10n: не переиспользовать строку между пунктом меню и заголовком экрана (дата обращения 2026-09-07)
-- Строки Premiere, After Effects, Resolve и VEGAS — по вторичным источникам:
-  `helpx.adobe.com` не отвечает, what's-new Blackmagic не содержит
-  переименований, version-history VEGAS отдаётся без текста
-  (`docs/features/_editors.md`, «Что было недоступно»); живьём не проверялось
-- Программы вне ядра (VS Code, IntelliJ IDEA) и цитаты Apple / GNOME /
-  Microsoft / gettext живьём не проверялись — только публичная документация,
-  как и предусмотрено `_editors.md`
+- `src/apps/kt-app/CLAUDE.md`, checklist items 7, 13, 17, 18 (2026-09-07)
+- https://support.apple.com/en-us/102825 — Final Cut Pro release notes, the rename `Reset Point of View` → `Reset Angle` in 10.4.1 (accessed 2026-09-07)
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/2128 — Kdenlive, "Marker Menu Confusing" (accessed 2026-09-07)
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/2219 — Kdenlive, "Rename 'Image Sequence' to 'Image Slideshow'": one term for two different import operations (accessed 2026-09-07)
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/1666 — Kdenlive, "right mouse button menus on timeline are 'confusional'": the user requires that the label say "where" (accessed 2026-09-08)
+- https://github.com/OpenShot/openshot-qt/issues/1339 — OpenShot, "Confusing Properties Labels": the label names a quantity, not what it affects (accessed 2026-09-08)
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/329 and https://invent.kde.org/multimedia/kdenlive/-/work_items/605 — two mutually incompatible requests to rename one and the same label `Wipe` (accessed 2026-09-08)
+- Trackers (third wave, R.41): dumps from `~/.cache/kinotrain/trackers/{kde-invent,kde-bugzilla,pitivi,openshot}.jsonl`; both counts are reproduced by `python3 src/scripts/tracker-rank.py --query …` with the filters from the `SIGNAL:` lines (2026-09-08)
+- https://code.visualstudio.com/api/ux-guidelines/command-palette — VS Code UX Guidelines: "Use clear names for commands", "Group commands together in the same category" (accessed 2026-09-07)
+- https://plugins.jetbrains.com/docs/intellij/button.html — IntelliJ Platform UI Guidelines, the Button section: "Prefer clear labels to short ones" (accessed 2026-09-07; the former address `jetbrains.github.io/ui/` returns 404)
+- https://developer.apple.com/design/human-interface-guidelines/alerts — Apple HIG on `OK` (accessed 2026-09-07)
+- https://developer.gnome.org/hig/patterns/feedback/dialogs.html — GNOME HIG on an imperative verb in a button (accessed 2026-09-07)
+- https://learn.microsoft.com/en-us/windows/win32/uxguide/ctrl-command-buttons — Windows UX Guide: "Use a direct object … when the object is not apparent from context", the steps `Add`/`Add Items`/`Add Selected Items` (accessed 2026-09-07; Microsoft itself marks the page as outdated since Windows 7)
+- https://www.gnu.org/software/gettext/manual/html_node/Contexts.html — gettext, `msgctxt` and the example with two `Open` (accessed 2026-09-07)
+- https://doc.qt.io/qt-6/i18n-source-translation.html — Qt, the disambiguation argument in `tr()` (accessed 2026-09-07)
+- https://mozilla-l10n.github.io/documentation/localization/dev_best_practices.html — Mozilla l10n: do not reuse a string between a menu item and a screen title (accessed 2026-09-07)
+- The strings of Premiere, After Effects, Resolve and VEGAS — from secondary sources: `helpx.adobe.com` does not respond, the Blackmagic what's-new contains no renames, the VEGAS version-history is served without text (`docs/features/_editors.md`, "What was unavailable"); not checked live
+- Programs outside the core (VS Code, IntelliJ IDEA) and the quotes from Apple / GNOME / Microsoft / gettext were not checked live — only public documentation, as `_editors.md` provides

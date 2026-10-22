@@ -1,12 +1,12 @@
 ---
 id: F-TL-002
-title: Slip и slide — тримы, не меняющие длину
-status: кандидат
+title: Slip and slide — trims that do not change length
+status: candidate
 priority: B
 cost: S
 category: timeline/trimming
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-model, kt-app]
 invariants: [4, 5, 8]
 ui_rules: [1, 13, 16, 17, 20]
@@ -17,198 +17,171 @@ depends_on: [F-AUT-002]
 checked: 2026-09-07
 ---
 
-# F-TL-002 — Slip и slide — тримы, не меняющие длину
+# F-TL-002 — Slip and slide — trims that do not change length
 
-## Суть
+## Essence
 
-Монтаж собран, длительности утверждены, но внутри одного события кадр не
-тот: актёр начинает реплику на полсекунды позже, чем нужно. Обрезать нельзя
-— поедет весь дальнейший тайминг. **Slip**: событие стоит на месте, под ним
-протягивается материал — те же три секунды, но взятые с другого места файла.
-**Slide**: материал в событии остаётся тот же, а само событие едет вправо
-или влево, и ровно на столько же удлиняется один сосед и укорачивается
-другой. В обоих случаях суммарная длина фильма не меняется ни на кадр — это
-и есть причина, по которой оба жеста существуют отдельно от обычного трима.
+The edit is assembled, the durations are approved, but inside one event the frame is
+wrong: the actor starts the line half a second later than needed. You cannot trim
+it — the entire subsequent timing would move. **Slip**: the event stays in place, and the material under it is pulled through — the same three seconds, but taken from a different place in the file.
+**Slide**: the material inside the event stays the same, while the event itself moves right
+or left, and one neighbour gets longer by exactly the same amount as the other gets shorter. In both cases the total length of the film does not change by a single frame — and
+this is the reason both gestures exist separately from the ordinary trim.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 | Slip Tool / Slide Tool + модификаторы | Справка формулирует пару зеркально: «When you slip an event, your event maintains its place on the timeline, but the media file moves in the direction you drag» и «When you slide an event, the media file maintains its place on the timeline, but the event moves in the direction you drag». Два способа на каждое: инструмент из палитры либо модификатор без смены инструмента — «Use the Slip tool or hold Alt while dragging an event», «Use the Slide tool or hold Ctrl+Alt while dragging an event». Отдельным пунктом идёт slip-trim КРАЯ («hold Alt while dragging the right or left edge»): край едет, а материал под ним стоит — то есть Alt инвертирует смысл обычного трима. Инструменты переключаются по кругу клавишей D (назад — Shift+D), выделенной буквы у slip/slide нет |
-| Adobe Premiere | 26.x | Slip Tool / Slide Tool | Определения (цитата сотрудника Adobe в официальном сообществе, дословно из справки): «A slip edit shifts a clip's In and Out points forward or backward by the same number of frames in a single action. By dragging with the Slip tool, you can change a clip's starting and ending frames without changing its duration or affecting adjacent clips» и «A slide edit shifts a clip in time while trimming adjacent clips to compensate for the move». Отдельные инструменты палитры, клавиши **Y** и **U** [НЕ ПРОВЕРЕНО — `helpx.adobe.com` из этого окружения не открывается, страница `perform-slip-edits.html` существует, но недоступна; в роликах и списках горячих клавиш фигурируют именно Y/U]. Ключи эффектов при slip едут ЗА КАДРАМИ (см. «Фишка фишки», п.4) |
-| DaVinci Resolve | 21 | Trim Edit Mode (T) | Отдельных инструментов НЕТ: один режим, а вид трима выбирается тем, где внутри прямоугольника клипа стоит курсор. «In Resolve, trim is a dynamic process. When you're in the Trim Edit mode, you can complete different trim edits depending on where you place your cursor on the clip»: у самого края — ripple, точно на стыке — roll, «place the cursor on the frame thumbnails to perform a slip edit», а slide — «placing the cursor underneath the thumbnail previews and onto the area with the clip's filename». То есть горизонтальный драг значит четыре разные вещи в зависимости от Y [НЕ ПРОВЕРЕНО по первоисточнику: `forum.blackmagicdesign.com` и поиск по нему отдают 403, факты взяты из вторичного разбора] |
-| Final Cut Pro | 12.3 | Trim tool (T), slide — Option-drag | Slip: «Performing a slip edit doesn't change a clip's position or duration in the timeline, but instead changes what portion of the clip's media appears in the timeline» — инструментом Trim (T, можно держать временно) тянуть тело клипа. Slide: тот же инструмент, но **Option**-drag; «When you slide a clip, the adjacent clips get longer and shorter to accommodate the change in the clip's position». Единственный из пяти, кто явно ПОКАЗЫВАЕТ исчерпание запаса: «If either the start point or the end point turns red as you drag, you've reached the end of the available media for that side of the clip». Двухоконный показ — переключатель Option-U |
-| After Effects | 26.x | Pan Behind / Anchor Point tool (Y) | Дорожек и соседей нет, поэтому slide как понятия не существует: слои лежат параллельно, двигать нечего. Slip есть и делается инструментом Pan Behind (Y) по телу слоя в таймлайне. Принципиальная разница с NLE: у AE домен ключа — время СЛОЯ, поэтому при протяжке «All keyframes, etc should remain in place while you slide the clip around» (форумная формулировка) — материал едет, анимация стоит. Именно это поведение и просят у Premiere отдельной заявкой |
+| VEGAS Pro | 2026.0 | Slip Tool / Slide Tool + modifiers | The help states the pair as mirror images: "When you slip an event, your event maintains its place on the timeline, but the media file moves in the direction you drag" and "When you slide an event, the media file maintains its place on the timeline, but the event moves in the direction you drag". Two ways for each: a tool from the palette, or a modifier without switching tools — "Use the Slip tool or hold Alt while dragging an event", "Use the Slide tool or hold Ctrl+Alt while dragging an event". A separate item is slip-trim of the EDGE ("hold Alt while dragging the right or left edge"): the edge moves, while the material under it stays — that is, Alt inverts the meaning of the ordinary trim. The tools cycle with the D key (backwards — Shift+D); slip/slide have no highlighted letter |
+| Adobe Premiere | 26.x | Slip Tool / Slide Tool | Definitions (a quote from an Adobe employee in the official community, verbatim from the help): "A slip edit shifts a clip's In and Out points forward or backward by the same number of frames in a single action. By dragging with the Slip tool, you can change a clip's starting and ending frames without changing its duration or affecting adjacent clips" and "A slide edit shifts a clip in time while trimming adjacent clips to compensate for the move". Separate palette tools, keys **Y** and **U** [NOT VERIFIED — `helpx.adobe.com` does not open from this environment; the page `perform-slip-edits.html` exists but is unavailable; tutorials and shortcut lists feature exactly Y/U]. Effect keyframes during a slip move WITH THE FRAMES (see "The trick behind it", item 4) |
+| DaVinci Resolve | 21 | Trim Edit Mode (T) | There are NO separate tools: one mode, and the type of trim is chosen by where inside the clip's rectangle the cursor sits. "In Resolve, trim is a dynamic process. When you're in the Trim Edit mode, you can complete different trim edits depending on where you place your cursor on the clip": at the very edge — ripple, exactly at the junction — roll, "place the cursor on the frame thumbnails to perform a slip edit", and slide — "placing the cursor underneath the thumbnail previews and onto the area with the clip's filename". That is, a horizontal drag means four different things depending on Y [NOT VERIFIED against the primary source: `forum.blackmagicdesign.com` and searches on it return 403; the facts are taken from a secondary analysis] |
+| Final Cut Pro | 12.3 | Trim tool (T), slide — Option-drag | Slip: "Performing a slip edit doesn't change a clip's position or duration in the timeline, but instead changes what portion of the clip's media appears in the timeline" — with the Trim tool (T, can be held temporarily) drag the body of the clip. Slide: the same tool, but **Option**-drag; "When you slide a clip, the adjacent clips get longer and shorter to accommodate the change in the clip's position". The only one of the five that explicitly SHOWS the exhaustion of the margin: "If either the start point or the end point turns red as you drag, you've reached the end of the available media for that side of the clip". Two-up display — the Option-U toggle |
+| After Effects | 26.x | Pan Behind / Anchor Point tool (Y) | There are no tracks and no neighbours, so slide as a concept does not exist: layers lie in parallel, there is nothing to move. Slip exists and is done with the Pan Behind tool (Y) on the body of the layer in the timeline. The fundamental difference from the NLEs: in AE the keyframe domain is the time of the LAYER, so when dragging "All keyframes, etc should remain in place while you slide the clip around" (a forum formulation) — the material moves, the animation stays. This exact behaviour is what is requested from Premiere in a separate request |
 
-Ripple (четвёртый член семьи) у нас отсутствует как понятие и разбирается
-отдельно; единственный след в коде — комментарий `// Без ripple.` в
-`src/libs/kt-model/src/ops.rs`. Про ripple как переключатель МОДЕЛИ при
-смене скорости — F-SPD-001.
+Ripple (the fourth member of the family) is absent from our vocabulary as a concept and is analysed
+separately; the only trace in the code is the comment "English: "no ripple"" in
+`src/libs/kt-model/src/ops.rs`. About ripple as a MODEL switch on
+a speed change — F-SPD-001.
 
-### Четыре трима одной семьи
+### Four trims of one family
 
-Таблица, ради которой заметку стоило писать. Все четыре — это один и тот же
-горизонтальный драг; различаются они тем, ЧТО объявлено неприкосновенным.
+The table for the sake of which this note was worth writing. All four are the same
+horizontal drag; they differ in WHAT is declared untouchable.
 
-| Трим | За что тянут | Границы события | Материал под событием | Соседи | Длина фильма |
+| Trim | What is dragged | Event boundaries | Material under the event | Neighbours | Film length |
 |---|---|---|---|---|---|
-| **ripple** | край | один край едет | открывается/прячется | всё, что ЗА событием, едет | **меняется** |
-| **roll** | стык двух событий | оба края у стыка едут | у обоих открывается/прячется | только пара у стыка | та же |
-| **slip** | середину | **не меняются** | **едет** | не трогаются вовсе | та же |
-| **slide** | середину | **едут оба** | **не меняется** | два соседа меняют длину | та же |
+| **ripple** | the edge | one edge moves | opens/hides | everything BEHIND the event moves | **changes** |
+| **roll** | the junction of two events | both edges at the junction move | both open/hide | only the pair at the junction | the same |
+| **slip** | the middle | **do not change** | **moves** | are not touched at all | the same |
+| **slide** | the middle | **both move** | **do not change** | the two neighbours change length | the same |
 
-Читать по столбцу «что сохраняется»: ripple сохраняет содержимое всех
-событий и жертвует таймингом фильма; roll сохраняет тайминг и жертвует
-содержимым двух событий; slip сохраняет ВСЮ раскладку и жертвует только
-содержимым одного события; slide сохраняет содержимое своего события и
-жертвует содержимым двух соседей. Отсюда и практическое правило: slip —
-единственный трим, который вообще ничего не может сломать в чужой работе, а
-slide — единственный, который меняет длину событий, за которые не тянули.
+Read by the "what is preserved" column: ripple preserves the content of all
+events and sacrifices the timing of the film; roll preserves the timing and sacrifices
+the content of two events; slip preserves the WHOLE layout and sacrifices only
+the content of one event; slide preserves the content of its own event and
+sacrifices the content of two neighbours. Hence the practical rule: slip is
+the only trim that cannot break anything in someone else's work at all, and
+slide is the only one that changes the length of events that were not dragged.
 
-У нас из четырёх есть **roll** (`Drag::TransitionBody`, батч
-`TrimEnd`+`TrimStart` — `src/apps/kt-app/src/timeline.rs`), нет ripple,
-slip и slide. При этом «slip целой области» у нас есть в неожиданном месте —
-см. «Как ложится на Kinotrain».
+Of the four, we have **roll** (`Drag::TransitionBody`, a batch
+`TrimEnd`+`TrimStart` — `src/apps/kt-app/src/timeline.rs`), and we have no ripple,
+slip or slide. At the same time, "slip of a whole area" exists with us in an unexpected place —
+see "How it fits Kinotrain".
 
-## Фишка фишки
+## The trick behind it
 
-**1. У slip есть предусловие, которого нет ни у одного другого трима, — и
-пять редакторов отвечают на него по-разному, а видно ответ только у
-одного.** Slip требует, чтобы за границами события ОСТАВАЛСЯ материал
-(handles): протянуть можно ровно настолько, насколько файл длиннее
-вырезанного куска. У события, взятого от первого кадра файла до последнего,
-slip физически невозможен, и жест просто не даёт результата. Для
-пользователя это выглядит как поломка инструмента, а не как отсутствие
-запаса: единственный найденный тред ровно об этом («Фишка фишки» здесь
-подтверждается фидбеком дословно — см. цитату ниже). Дальше начинаются
-различия. **Final Cut** красит точку входа или выхода в КРАСНЫЙ, как только
-упёрся, — «you've reached the end of the available media for that side of
-the clip». **Premiere** не показывает ничего: жест просто перестаёт
-двигаться, и разбираться приходится на форуме. **VEGAS** не упирается
-вовсе: у события есть переключатель Loop, и при выходе за конец файла
-материал начинает ПОВТОРЯТЬСЯ — «Enabling the Loop switch on an event will
+**1. Slip has a precondition that no other trim has — and
+five editors answer it differently, while the answer is visible in only one.** Slip requires that material REMAINS beyond the boundaries of the event (handles): you can pull only as far as the file is longer than
+the cut piece. For an event taken from the first frame of the file to the last,
+slip is physically impossible, and the gesture simply gives no result. For the
+user this looks like a tool malfunction rather than a lack of margin: the only thread found is exactly about this ("The trick behind it" is confirmed here by the feedback verbatim — see the quote below). Then the differences begin. **Final Cut** paints the entry or exit point RED as soon as it hits the limit — "you've reached the end of the available media for that side of
+the clip". **Premiere** shows nothing: the gesture just stops moving, and one has to figure it out on the forum. **VEGAS** does not hit a limit at all: the event has a Loop switch, and when it is pulled past the end of the file
+the material starts to REPEAT — "Enabling the Loop switch on an event will
 allow you to drag the right edge of the event out and have it repeat the
-file over and over rather than inserting silence». То есть на один и тот же
-вопрос «что за краем материала» отрасль даёт три несовместимых ответа:
-красная метка, тишина без объяснения и бесконечное повторение.
+file over and over rather than inserting silence". That is, to one and the same
+question "what is beyond the edge of the material" the industry gives three incompatible answers:
+a red mark, silence without explanation, and endless repetition.
 
-**2. Resolve решил проблему «жест уже занят» вертикальными полосами внутри
-клипа, а не отдельными инструментами.** В Trim Edit Mode один и тот же
-горизонтальный драг означает четыре разные операции в зависимости от того,
-на какой ВЫСОТЕ прямоугольника клипа стоит курсор: у самого края — ripple,
-на стыке — roll, на полосе тумбнейлов — slip, ниже тумбнейлов, на полосе с
-именем файла, — slide. Это единственная из пяти реализаций, где не нужно ни
-менять инструмент, ни держать модификатор, — и цена ровно та, что видна
-сразу: полоса имени файла перестаёт быть надписью и становится хват-зоной,
-а промах на несколько пикселей вверх даёт не тот трим. Остальные четверо
-предпочли явную смену режима: Premiere и FCP — инструмент, VEGAS — и
-инструмент, и модификатор (Alt / Ctrl+Alt), AE — инструмент Pan Behind.
-Никто из пяти не отдал slip'у голый драг за середину: середина везде занята
-переносом события.
+**2. Resolve solved the problem of "the gesture is already taken" with vertical stripes inside
+the clip, not with separate tools.** In Trim Edit Mode one and the same
+horizontal drag means four different operations depending on the
+HEIGHT of the clip's rectangle at which the cursor sits: at the very edge — ripple,
+at the junction — roll, on the thumbnail strip — slip, below the thumbnails, on the strip with
+the file name — slide. This is the only one of the five implementations where one needs neither
+to change the tool nor to hold a modifier — and the price is exactly what is visible
+at once: the file-name strip stops being a label and becomes a grab zone,
+and a miss of a few pixels upward gives the wrong trim. The other four
+preferred an explicit change of mode: Premiere and FCP — a tool, VEGAS — both
+a tool and a modifier (Alt / Ctrl+Alt), AE — the Pan Behind tool.
+None of the five gave slip a bare drag over the middle: the middle is everywhere occupied by
+moving the event.
 
-**3. Во время slip'а редактор показывает ДВА кадра, и это не украшение, а
-следствие того, что у slip'а две точки интереса.** У ripple правится один
-край — интересен один кадр; у roll и slip интересны два (уходящий и
-приходящий; у slip — новый первый и новый последний кадр самого события), и
-настроить стык, видя один из них, невозможно. Apple вынесла это в отдельный
-переключатель (View → «Show 2–Up When Trimming», Option-U) и включает его на
-ripple, roll, slip, slide и в precision editor. Обратная сторона всплывает
-там, где картинку в вьюере нужно видеть ЦЕЛИКОМ: пользователь, сводивший
-XML с оффлайн-референсом через Difference Mode, жалуется, что двух- и
-четырёхоконный показ закрывает ему composite, и получает ответ, что мышью
-его можно погасить Shift'ом, а с клавиатуры — никак. То есть двухоконный
-показ обязателен для настройки стыка и мешает при любой другой задаче, и
-только один из пяти дал ему выключатель.
+**3. During a slip the editor shows TWO frames, and this is not decoration but a
+consequence of slip having two points of interest.** In ripple one edge is edited — one frame is of interest; in roll and slip two are of interest (the outgoing and the incoming; in slip — the new first and the new last frame of the event itself), and it is impossible to set up a junction while seeing only one of them. Apple moved this into a separate switch (View → "Show 2–Up When Trimming", Option-U) and turns it on for
+ripple, roll, slip, slide and in the precision editor. The reverse side surfaces
+where the picture in the viewer must be seen ENTIRELY: a user who was matching
+an XML against an offline reference via Difference Mode complains that the two- and
+four-up display covers his composite, and receives the answer that it can be turned off with the mouse via Shift, and from the keyboard — not at all. That is, the two-up
+display is mandatory for setting up a junction and gets in the way for any other
+task, and only one of the five gave it a toggle.
 
-**4. Slip — это лакмус на домен ключа автоматизации, и именно на нём
-Premiere и After Effects расходятся, хотя их считают одинаковыми.** Это
-прямое продолжение F-AUT-002 («Домен ключа — материал источника или время
-таймлайна»), где slip назван лакмусом; здесь — сторона слипа. Границы
-события при slip'е неподвижны, движется только материал, поэтому вопрос
-«где теперь анимация» задан в чистом виде, без примеси сдвигов и обрезок. У
-**Premiere** ключ адресован материалом клипа, и при slip'е анимация уезжает
-ВМЕСТЕ С КАДРАМИ — настолько неудобно, что на форуме идей висит заявка
-«Allow clip to be slipped without moving its keyframes!» с готовым
-предложением: обычный slip оставляет ключи на месте, а перенос — по
-Ctrl/Cmd. Отвечающий эксперт Adobe замечает, что это совпало бы с
-поведением AE при Pan Behind, — и у **AE** действительно наоборот: «All
-keyframes, etc should remain in place while you slide the clip around».
-Причина не в удобстве, а в домене: у Premiere ключ живёт в материале, у AE —
-во времени слоя. Третья деталь оттуда же и самая для нас важная: штатный
-обход в мире Adobe — **вынести эффект на adjustment layer и слипать клип
-ПОД ним**, потому что у слоя своё время и его ключи материал под собой не
-видят.
+**4. Slip is the litmus test for the keyframe domain of automation, and it is exactly here that
+Premiere and After Effects diverge, although they are considered the same.** This is a
+direct continuation of F-AUT-002 ("The keyframe domain — the source material or the time of the timeline"), where slip is named the litmus test; here — the side of slip. The
+boundaries of the event during a slip are fixed, only the material moves, so the question
+"where is the animation now" is asked in its pure form, without a mixture of shifts and trims. In
+**Premiere** the keyframe is addressed to the material of the clip, and during a slip the animation moves
+ALONG WITH THE FRAMES — so inconvenient that a request hangs in the ideas forum: "Allow clip to be slipped without moving its keyframes!" with a ready
+proposal: an ordinary slip leaves the keys in place, and the move is done with
+Ctrl/Cmd. An Adobe expert answering notes that this would coincide with
+the AE behaviour under Pan Behind — and in **AE** it is indeed the reverse: "All
+keyframes, etc should remain in place while you slide the clip around".
+The reason is not convenience but the domain: in Premiere the key lives in the material, in AE —
+in the time of the layer. A third detail from the same place and the most important for us: the standard workaround in the Adobe world is — **to put the effect on an adjustment layer and slip the clip
+UNDER it**, because the layer has its own time, and its keys do not see the material beneath it.
 
-## Плюсы
+## Pros
 
-Пункты — следствия УСТРОЙСТВА этих двух тримов, а не оценки.
+The items are consequences of the DESIGN of these two trims, not ratings.
 
-- Slip не может испортить чужую работу: он не трогает ни одной границы на
-  таймлайне, поэтому синхронность с другими дорожками, метки, регион,
-  переходы и весь дальнейший тайминг переживают его без единого изменения.
-  Это единственный трим, который безопасно делать в утверждённом монтаже.
-- Slip — операция ровно над одним полем (точкой входа в материал), поэтому
-  она обратима арифметически: протянул на N и обратно на N — состояние
-  побитово прежнее. Ни ripple, ни slide такого не дают: у них в игре длины
-  соседей и клампы.
-- Slide держит суммарную длину тройки «сосед — событие — сосед»
-  постоянной, поэтому его можно делать внутри уже смонтированной сцены,
-  не задевая ничего за её пределами: он локален, в отличие от ripple.
-- Пара slip+slide покрывает две ортогональные ошибки монтажа — «взял не тот
-  кусок» и «поставил не в тот момент» — не смешивая их. Обычным тримом
-  каждая из них правится двумя жестами, причём между жестами монтаж
-  находится в заведомо неверном состоянии (длина уже поехала, а
-  компенсация ещё нет).
-- У обоих есть ровно один параметр — смещение в кадрах, — поэтому у обоих
-  бесплатно появляется клавиатурная форма («на кадр влево/вправо», «на
-  десять»), а у неё точность, которой драг мышью не даёт в принципе. Apple
-  раздаёт её через запятую/точку, и это тот же жест, что у ripple и roll.
+- Slip cannot spoil someone else's work: it does not touch a single boundary on the
+  timeline, so sync with other tracks, markers, the region,
+  transitions and the entire subsequent timing survive it without a single change.
+  This is the only trim that is safe to do in an approved edit.
+- Slip is an operation on exactly one field (the entry point into the material), so
+  it is reversible arithmetically: pulled by N and back by N — the state is bitwise
+  the same as before. Neither ripple nor slide gives this: they involve the lengths
+  of neighbours and clamps.
+- Slide keeps the total length of the triple "neighbour — event — neighbour"
+  constant, so it can be done inside an already edited scene
+  without touching anything beyond its limits: it is local, unlike ripple.
+- The slip+slide pair covers two orthogonal editing mistakes — "took the wrong
+  piece" and "placed it at the wrong moment" — without mixing them. With an ordinary
+  trim each of them is corrected with two gestures, and between the gestures the edit
+  is in a state that is known to be wrong (the length has already shifted, but the compensation has not yet).
+- Both have exactly one parameter — an offset in frames — so both get a keyboard
+  form for free ("one frame left/right", "by ten"), and it has a precision that a mouse drag
+  cannot give in principle. Apple provides it via comma/period, and this is the same
+  gesture as for ripple and roll.
 
-## Минусы
+## Cons
 
-- **Slip упирается в конец файла, и это состояние надо УМЕТЬ ПОКАЗАТЬ.**
-  Ограничение живёт не в монтаже, а в исходнике, то есть за пределами
-  таймлайна: пользователь не видит причину на экране и объясняет отказ
-  поломкой. Один из пяти (FCP) красит край, остальные молчат.
-- **У slip'а нет естественных точек притяжения.** Магнит в NLE ловит
-  границы событий, метки, курсор — всё это координаты ТАЙМЛАЙНА, а slip
-  двигает координату МАТЕРИАЛА, у которой на таймлайне нет отметок вовсе.
-  Единственные осмысленные упоры — концы запаса, то есть ровно те, где
-  жест и так заканчивается.
-- **Slide меняет длину событий, за которые пользователь не тянул.** Это его
-  определение, а не побочный эффект: «the adjacent clips get longer and
-  shorter». Отменить его частично нельзя, и если сосед был подрезан по
-  смыслу (реплика, такт), slide молча съедает этот смысл.
-- **Slide неопределён на краях.** Слева или справа нет соседа — компенсации
-  не из чего сделать, и жест либо превращается в обычный перенос, либо
-  запрещается; ни один из пяти не документирует, что именно он делает в
-  этом случае.
-- **Пара slip/slide путается у пользователей систематически.** Названия
-  почти одинаковы, а результаты противоположны, и вопрос «это ведь так
-  работает?» задают даже те, кто описал обе операции верно (см. цитату).
-  Это цена того, что оба жеста — один и тот же горизонтальный драг за
-  середину, различающийся только модификатором или выбранным инструментом.
-- **Slip выносит наружу домен ключей, о котором пользователь не знал.**
-  Пока анимации нет, slip — безобидная операция; как только на событии
-  появились кривые, тот же жест начинает либо увозить их, либо оставлять, и
-  какое из двух поведений «правильное», отрасль не решила (заявка к
-  Premiere открыта с 2023 года).
+- **Slip runs into the end of the file, and this state must be ABLE TO BE SHOWN.**
+  The limit lives not in the edit but in the source, that is, outside the
+  timeline: the user does not see the cause on screen and explains the refusal
+  as a malfunction. One of the five (FCP) paints the edge, the others stay silent.
+- **Slip has no natural points of attraction.** Magnet in an NLE catches
+  event boundaries, markers, the cursor — all of these are TIMELINE coordinates, while slip
+  moves the MATERIAL coordinate, which has no marks on the timeline at all.
+  The only meaningful stops are the ends of the margin, that is, exactly the places where
+  the gesture ends anyway.
+- **Slide changes the length of events that the user did not drag.** This is its definition, not a side effect: "the adjacent clips get longer and
+  shorter". It cannot be partially undone, and if a neighbour was trimmed for a reason (a line, a beat), slide silently eats that meaning.
+- **Slide is undefined at the edges.** There is no neighbour on the left or right — there is nothing to compensate with, and the gesture either turns into an ordinary move or is forbidden; none of the five documents what exactly it does in
+  this case.
+- **The slip/slide pair is systematically confused by users.** The names
+  are almost identical, while the results are opposite, and the question "this is how it works, right?" is asked even by those who described both operations correctly (see the quote).
+  This is the price of both gestures being the same horizontal drag over the middle, differing only by a modifier or the selected tool.
+- **Slip brings out a keyframe domain the user did not know about.**
+  While there is no animation, slip is a harmless operation; as soon as curves appear on the event, the same gesture starts either to carry them away or to leave them, and
+  which of the two behaviours is "correct" the industry has not decided (the request to
+  Premiere has been open since 2023).
 
-## Что говорят пользователи
+## What users say
 
 > I've been doing some basic editing, and I need to use the slip tool.
 > Unfortunately it only has worked SOME of the time.
 > — MIWV, Adobe Support Community, 15.12.2018, https://community.adobe.com/t5/premiere-pro-discussions/slip-tool-not-working-well-sometimes/td-p/10242148
 
-Ответ в том же треде объясняет, почему это не баг, и заодно формулирует
-предусловие слипа лучше всякой справки:
+The reply in the same thread explains why this is not a bug, and at the same time formulates
+the precondition of slip better than any help page:
 
 > Sounds like you just hit the end of a clip ... slip has to have those
 > extra frames to slip to.
-> — R Neil Haugen, там же, 15.12.2018, https://community.adobe.com/t5/premiere-pro-discussions/slip-tool-not-working-well-sometimes/td-p/10242148
+> — R Neil Haugen, same place, 15.12.2018, https://community.adobe.com/t5/premiere-pro-discussions/slip-tool-not-working-well-sometimes/td-p/10242148
 
-Про путаницу двух названий — вопрос, в котором пользователь сам же даёт
-верное определение обеих операций и всё равно не уверен:
+About the confusion of the two names — a question in which the user himself gives the
+correct definition of both operations and is still unsure:
 
 > Slip tool is the one that does not change the overall duration of the
 > clip, but changes the beginning and end point of the clip. Slide tool on
@@ -216,16 +189,15 @@ keyframes, etc should remain in place while you slide the clip around».
 > surrounding clip. Is this correct?
 > — AloneInTheDark0104, Adobe Support Community, 30.04.2019, https://community.adobe.com/questions-729/slip-and-slide-tool-adobe-premiere-1351115
 
-Про двухоконный показ — редкий случай, когда обязательную для трима вещь
-просят ВЫКЛЮЧИТЬ, и оказывается, что с клавиатуры нельзя:
+About the two-up display — a rare case where something mandatory for a trim
+is asked to be turned OFF, and it turns out this cannot be done from the keyboard:
 
 > If you use the mouse, you can hold the Shift key to disable the 4-up
 > preview. Currently, it's not possible to disable the 4-up/2-up when using
 > keyboard editing.
 > — Rohit Gupta, Creative COW, 26.02.2016, https://creativecow.net/forums/thread/slip-slide-without-the-annoying-4-up-viewae/
 
-Про то, что в AE slip делается «не тем» инструментом и ключи при этом
-стоят на месте:
+About the fact that in AE slip is done with the "wrong" tool and the keys stay in place:
 
 > For a slip edit, In the timeline shorten your clip so that it is shorter
 > than the timeline, then use the Pan Behind tool (Y) on the faded out bar
@@ -233,212 +205,179 @@ keyframes, etc should remain in place while you slide the clip around».
 > the clip around.
 > — Daniel Waldron, Creative COW, 13.01.2015, https://creativecow.net/forums/thread/slip-slide-or-slide-edit-tool-in-ae/
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What already exists
 
-**Модель готова целиком; не готов ЖЕСТ.** Это главный вывод раздела, и он
-проверяется по коду, а не по ощущению.
+**The model is ready in full; the GESTURE is not.** This is the main conclusion of the section, and it is verified
+by the code, not by feeling.
 
-- `ClipEvent` (`src/libs/kt-model/src/project.rs`) держит `start`,
-  `duration` и `source_in` тремя независимыми полями. **Slip — это правка
-  ОДНОГО поля `source_in` при неизменных `start` и `duration`.** Никакой
-  другой структуры для него не нужно.
-- Перевод «тик таймлайна → тик материала» существует ровно в одном месте —
-  `clip_material_at` и парная к ней `clip_timeline_at` там же, — и обе
-  берут `source_in` параметром. Ни рендер, ни префетч, ни превью не знают о
-  `source_in` ничего сверх этого, поэтому изменение поля автоматически
-  правильно доходит до всех потребителей (инвариант №7: код композиции
-  один).
-- Формат проекта slip НЕ ТРОГАЕТ: `source_in` уезжает в OTIO как начало
-  `source_range` (`src/libs/kt-otio/src/convert.rs`), а ключи автоматизации
-  с v3 хранятся в тиках материала — форма записи от слипа не зависит,
-  версия файла не поднимается.
-- **Roll у нас уже сделан и показывает форму, в которой делается slide:**
-  `Drag::TransitionBody` на отпускании шлёт батч
+- `ClipEvent` (`src/libs/kt-model/src/project.rs`) holds `start`,
+  `duration` and `source_in` as three independent fields. **Slip is an edit of
+  ONE field, `source_in`, with `start` and `duration` unchanged.** No other
+  structure is needed for it.
+- The conversion "timeline tick → material tick" exists in exactly one place —
+  `clip_material_at`, and the paired `clip_timeline_at` next to it — and both
+  take `source_in` as a parameter. Neither the render, nor the prefetch, nor the preview knows anything about
+  `source_in` beyond this, so a change of the field reaches all consumers automatically
+  and correctly (invariant No. 7: the composition code is one).
+- The project format is NOT TOUCHED by slip: `source_in` goes into OTIO as the start of the
+  `source_range` (`src/libs/kt-otio/src/convert.rs`), and automation keys since v3 are stored
+  in material ticks — the way of writing does not depend on slip, and the file version is not raised.
+- **Roll is already implemented with us and shows the form in which slide is done:**
+  `Drag::TransitionBody` on release sends the batch
   `[TrimEnd{a}, TrimStart{b}]` (`src/apps/kt-app/src/timeline.rs`).
-  Slide — тот же батч плюс перенос середины:
-  `[TrimEnd{левый сосед}, MoveClip{событие}, TrimStart{правый сосед}]`,
-  **все три команды уже существуют** (`src/libs/kt-model/src/model.rs`).
-  `TimelineModel::simulate` проверяет перекрытия ОДИН раз по результату
-  батча, а `reconcile_transitions` зовётся тоже один раз — значит
-  промежуточные состояния слайда законны ровно так же, как у roll.
-- Арифметика соседей для slide уже написана: `room_left` / `room_right` /
-  `obstacles` в `src/libs/kt-model/src/ops.rs` считают, насколько можно
-  двинуться, не задев чужое, с учётом всей link-группы и чужих
-  плейсхолдеров. Их же использует `restore_handles` — прецедент операции,
-  которая раздаёт материал соседям по правилам.
-- **Slip у нас уже есть — но как СЛОЙ, а не как жест.** `MorphPatch`
-  (`src/libs/kt-model/src/project.rs`) несёт поля `source_in_delta` и
-  `absolute_source_in`, а `apply_to` пишет ими `c.source_in` целям морфера
-  в `Project::effective_clips()`. То есть морфер умеет **недеструктивно
-  слипать целую именованную область** (время × дорожки), кумулятивно,
-  через undo, с `BakeMorpher` для вписывания результата. Больше того:
-  частично накрытая цель РЕЖЕТСЯ, поэтому морфер слипает КУСОК события без
-  явного разреза — такого нет ни у кого из пяти. Чего у морфера нет —
-  жеста «протянуть мышью» и обратной связи: значение вбивается числом в
+  Slide is the same batch plus moving the middle:
+  `[TrimEnd{left neighbour}, MoveClip{event}, TrimStart{right neighbour}]`,
+  **all three commands already exist** (`src/libs/kt-model/src/model.rs`).
+  `TimelineModel::simulate` checks overlaps ONCE on the result of the batch, and `reconcile_transitions` is also called once — so
+  the intermediate states of a slide are legitimate in exactly the same way as for roll.
+- The arithmetic of neighbours for slide is already written: `room_left` / `room_right` /
+  `obstacles` in `src/libs/kt-model/src/ops.rs` compute how far one can move without
+  touching someone else's, taking into account the whole link group and foreign
+  placeholders. The same are used by `restore_handles` — a precedent for an operation that
+  hands out material to neighbours according to the rules.
+- **Slip is already present with us — but as a LAYER, not as a gesture.** `MorphPatch`
+  (`src/libs/kt-model/src/project.rs`) carries the fields `source_in_delta` and
+  `absolute_source_in`, and `apply_to` writes `c.source_in` to the targets of the morpher
+  in `Project::effective_clips()` with them. That is, the morpher can **non-destructively
+  slip a whole named area** (time × tracks), cumulatively,
+  through undo, with `BakeMorpher` to write the result in. Moreover: a partially covered target is CUT,
+  therefore the morpher slips a PIECE of an event without an explicit cut — none of the five has this. What the morpher does not have is the
+  gesture "drag with the mouse" and feedback: the value is typed as a number in
   `src/apps/kt-app/src/morpher_editor.rs`.
-- Домен ключей автоматизации у нас — тик МАТЕРИАЛА (`AutoKey.t`,
-  F-AUT-002), а ось окна автоматизации — `range = (source_in, source_in +
-  duration)` (`clip_ctx` в `src/apps/kt-app/src/automation.rs`). Значит
-  при слипе окно поедет, а ключи останутся на своих кадрах: **поведение
-  премьеровское — анимация уезжает вместе с картинкой — и получается само,
-  без единой строки кода.** Ровно то, что F-AUT-002 предсказал в п.3
-  «Фишки фишки».
-- Прецедент «инструмент-тумблер в тулбаре» уже стоит: `sel_tool` в
-  `src/apps/kt-app/src/toolbar.rs` («как в vegas — toggle-button»,
-  Р.33 п.7). Для slip/slide это готовая форма, не требующая изобретать
-  палитру инструментов.
+- The keyframe domain of automation with us is the MATERIAL tick (`AutoKey.t`,
+  F-AUT-002), and the axis of the automation window is `range = (source_in, source_in +
+  duration)` (`clip_ctx` in `src/apps/kt-app/src/automation.rs`). So
+  on slip the window will move, while the keys stay on their frames: **the Premiere behaviour — the animation moves along with the picture — comes out by itself, without a single line of code.**
+  Exactly what F-AUT-002 predicted in item 3 of "The trick behind it".
+- A precedent for the "tool toggle in the toolbar" already exists: `sel_tool` in
+  `src/apps/kt-app/src/toolbar.rs` ("as in vegas — toggle-button",
+  R.33 item 7). For slip/slide this is a ready-made form that does not require inventing a palette of tools.
 
-### Чего не хватает
+### What is missing
 
-- **Команды, которая пишет только `source_in`.** Сейчас `source_in` меняют
-  лишь `TrimStart`/`TrimEnd` (и то в связке со `start`/`duration`, с
-  зеркальной веткой для `reversed`) и `clip_slice`. Формально slip
-  выразим уже сегодня батчем из трёх существующих команд («расширить
-  вправо, обрезать слева, вернуть на место»), и `simulate` его пропустит —
-  но это трюк: он проходит через клампы `MIN_CLIP_DURATION`, тащит за
-  собой всю link-группу дважды и оставляет в undo одну запись с
-  непонятным смыслом. Честная форма — одна команда с `delta`.
-- **Жеста нет ни одного.** Все 14 вариантов `Drag` в
+- **A command that writes only `source_in`.** Today `source_in` is changed only by
+  `TrimStart`/`TrimEnd` (and then in conjunction with `start`/`duration`, with a
+  mirrored branch for `reversed`) and `clip_slice`. Formally, slip is
+  expressible today as a batch of three existing commands ("extend right, trim left, put back in place"), and `simulate` will let it pass —
+  but this is a trick: it goes through the clamps of `MIN_CLIP_DURATION`, drags
+  the whole link group along twice, and leaves one record in undo with an
+  unclear meaning. The honest form is one command with a `delta`.
+- **Not a single gesture exists.** All 14 variants of `Drag` in
   `src/apps/kt-app/src/timeline.rs` — `Clip(DragState{Move|TrimStart|
   TrimEnd})`, `Fade`, `Level`, `LaneRow`, `Scrub`, `Region`, `Rubber`,
   `RegionEdge`, `Marker`, `MarkerEdge`, `TransitionEdge`,
-  `TransitionBody`, `Morph`, `Camera` — и ни одного, который двигал бы
-  материал.
-- **Модель не знает длину исходника.** `MediaRef` — это `{id, path}` и
-  больше ничего, поэтому «упёрся в конец файла» в `check_on` проверить
-  НЕЧЕМ: единственный сторож — `source_in >= 0`, то есть только левый край.
-  Длину знает UI и притом асинхронно:
+  `TransitionBody`, `Morph`, `Camera` — and not one of them moves the material.
+- **The model does not know the length of the source.** `MediaRef` is `{id, path}` and
+  nothing more, so there is NOTHING to check "ran into the end of the file" with in `check_on`: the only guard is `source_in >= 0`, that is, only the left edge.
+  The UI knows the length, and asynchronously at that:
   `ThumbService::duration_or_probe` (`src/apps/kt-app/src/thumbs.rs`)
-  возвращает `Option<Tick>` и ставит заявку воркеру, если ещё не знает.
-  За правым краем материала движок ведёт себя как при EOF — negative-кэш и
-  замерший последний кадр/тишина, без ошибки. То есть у нас сегодня
-  premiere-вариант «молча», причём даже без остановки жеста.
-- Двухоконного показа при триме нет и близко: превью одно
-  (`src/apps/kt-app/src/app.rs`), режима «два кадра» не существует.
+  returns `Option<Tick>` and queues a request to the worker if it does not know yet.
+  Beyond the right edge of the material the engine behaves as at EOF — a negative cache and
+  a frozen last frame / silence, without an error. That is, today we have the Premiere variant "silently", and even without stopping the gesture.
+- There is no two-up display during a trim, and nothing close to it: the preview is one
+  (`src/apps/kt-app/src/app.rs`), a "two frames" mode does not exist.
 
-### Что мешает
+### What gets in the way
 
-- **Место под жест.** Верхняя полоса события `top_strip_h` (35 % высоты
-  строки, максимум 12 px) занята ручками фейда и линией уровня по прямой
-  просьбе пользователя (Р.28 п.12, `docs/user-feedback.md`) — трогать её
-  нельзя. Середина занята `Move`, края — тримами, окна переходов лежат
-  ВНУТРИ тел клипов и имеют приоритет над клип-зонами. Свободны:
-  **модификатор Alt** (грепом по `src/apps/kt-app/src/timeline.rs` —
-  `modifiers.alt` не встречается ни разу; `Ctrl` занят под снятие магнита и
-  набор выделения, `Shift` — под регион по двойному клику) и **средняя
-  кнопка мыши** (в коде приложения не используется). Вегасовская раскладка
-  Alt = slip, Ctrl+Alt = slide ложится на нас без единого конфликта; но
-  Ctrl в ней означает «плюс ещё модификатор», а у нас Ctrl уже значит
-  «магнит выключен», и совмещение придётся объявить явно.
-- **Магнит.** Вопрос «магнитится ли slip» не имеет очевидного ответа:
-  `snap_targets` (`src/apps/kt-app/src/timeline.rs`) собирает границы
-  чужих клипов, метки, границы региона, playhead и ноль — всё это отметки
-  ТАЙМЛАЙНА, а slip двигает материал, у которого отметок на таймлайне нет.
-  Прямолинейное «магнитить как всё» даст жест, который прыгает к чужим
-  границам без всякого смысла. Осмысленных упоров ровно два — концы
-  запаса, — и они по правилу №16 чек-листа обязаны быть ОШИБКОЙ (подсветка
-  причины), а не молчаливым замиранием; правило №4 при этом требует,
-  чтобы полезное поведение было умолчанием, а модификатор его выключал.
-- **Slide против правила №20** («ничего не отрастает и не отрубается
-  само»). Slide по определению меняет длину двух событий, за которые
-  пользователь не тянул. Это не запрет — это требование: slide обязан быть
-  ЯВНО выбранным режимом или модификатором, никогда не умолчанием драга, и
-  должен показывать, какие именно соседи поедут (правило №16 — препятствие
-  подсвечивается).
-- **Slide и переходы.** `reconcile_transitions`
-  (`src/libs/kt-model/src/model.rs`) после батча клампит `in_offset` и
-  `out_offset` длительностями сторон и УБИВАЕТ переход, у которого стороны
-  перестали быть встык. Slide события, у которого с соседом есть
-  кроссфейд, укорачивает соседа — и молча подрежет окно перехода. Это
-  снова правило №20, и это не гипотеза: та же машинка уже работает у roll.
-- **Живое превью слипа — первый жест, который во время драга просит НОВЫЙ
-  материал.** Курсор при слипе обычно стоит внутри события, значит на
-  каждом шаге драга показываемый кадр другой, то есть требуется декод.
-  Инвариант №8 («скролл/зум не порождает декод-запросов») формально про
-  скролл, но дух его тот же, а инвариант №5 требует, чтобы запросы шли
-  через приоритетную очередь MediaWorker с generation-отменой, а не
-  напрямую. Прогретость полосок при этом обязана считаться кэшем
-  (инвариант №4), а не отдельной бухгалтерией: слип сдвигает окно нужного
-  материала целиком, и старое покрытие мгновенно перестаёт быть верным.
-- **Морфер-слой не спасает от «slip уводит ключи».** Штатный обход мира
-  Adobe — вынести эффект на adjustment layer и слипать клип под ним — у нас
-  не работает: у `MorphPatch` есть `video_fx`/`audio_fx`, но НЕТ поля
-  `fx_auto` (F-MPH-008), то есть эффекты слоя анимировать нечем. Если
-  «slip без переноса ключей» когда-нибудь понадобится, обходного пути через
-  морфер не будет — понадобится либо модификатор у самого слипа, либо
-  кривые у слоя.
+- **Room for the gesture.** The top strip of the event `top_strip_h` (35% of the row height, at most 12 px) is occupied by the fade handles and the level line at the direct
+  request of the user (R.28 item 12, `docs/user-feedback.md`) — it must not be touched. The middle is occupied by `Move`, the edges by trims, the transition windows lie
+  INSIDE the clip bodies and have priority over the clip zones. Free are:
+  the **Alt modifier** (grep over `src/apps/kt-app/src/timeline.rs` — `modifiers.alt` does not occur even once; `Ctrl` is taken for disabling the magnet and
+  building a selection, `Shift` — for the region on double-click) and the **middle mouse button** (not used in the application code). The Vegas layout
+  Alt = slip, Ctrl+Alt = slide fits us without a single conflict; but
+  in it Ctrl means "plus one more modifier", while with us Ctrl already means
+  "magnet off", and the combination will have to be declared explicitly.
+- **Magnet.** The question "does slip snap" has no obvious answer:
+  `snap_targets` (`src/apps/kt-app/src/timeline.rs`) collects the boundaries of other
+  clips, markers, the boundaries of the region, the playhead and zero — all of these are marks
+  of the TIMELINE, while slip moves the material, which has no marks on the timeline. A straightforward
+  "snap it like everything else" will give a gesture that jumps to other
+  boundaries for no reason at all. There are exactly two meaningful stops — the ends
+  of the margin — and under rule No. 16 of the checklist they must be an ERROR (highlighting the
+  cause), not a silent stop; rule No. 4, meanwhile, requires
+  that the useful behaviour be the default, and a modifier turn it off.
+- **Slide against rule No. 20** ("nothing grows back or gets cut off by itself"). Slide by definition changes the length of two events that
+  the user did not drag. This is not a prohibition — it is a requirement: slide must be an EXPLICITLY
+  chosen mode or modifier, never the default of a drag, and must show which exact neighbours will move (rule No. 16 — the obstacle is highlighted).
+- **Slide and transitions.** `reconcile_transitions`
+  (`src/libs/kt-model/src/model.rs`) after the batch clamps `in_offset` and
+  `out_offset` to the durations of the sides and KILLS a transition whose sides have
+  stopped being butt-joined. A slide of an event that has a crossfade with its neighbour shortens the neighbour — and will silently trim the transition window. This is
+  rule No. 20 again, and it is not a hypothesis: the same machinery already works for roll.
+- **A live slip preview is the first gesture that, during a drag, asks for NEW material.** With slip the cursor usually sits inside the event, so
+  at each step of the drag the displayed frame is different, that is, decoding is required.
+  Invariant No. 8 ("scroll/zoom does not generate decode requests") is formally about scrolling, but its spirit is the same, and invariant No. 5 requires that the requests go
+  through the priority queue of MediaWorker with generation-cancellation, not directly. The warmth of the strips must at the same time be computed by the cache
+  (invariant No. 4), not by separate bookkeeping: a slip shifts the window of the needed
+  material as a whole, and the old coverage instantly stops being correct.
+- **The morpher layer does not save you from "slip carries the keys away".** The standard
+  Adobe workaround — put the effect on an adjustment layer and slip the clip under it — does not work for us: `MorphPatch` has `video_fx`/`audio_fx`, but NO
+  `fx_auto` field (F-MPH-008), that is, there is nothing to animate the layer's effects with. If "slip without moving the keys" is ever needed, there will be no
+  workaround through the morpher — one will need either a modifier on slip itself, or
+  curves on the layer.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-Корневой `CLAUDE.md`: **№4** (прогретость после слипа считает кэш, отдельной
-бухгалтерии не заводить), **№5** (кадры для живого превью — только через
-очередь MediaWorker с generation-отменой), **№8** (по духу: жест не должен
-превращаться в поток декод-запросов). Инварианты №7 и №11 НЕ задеты и это
-важно: slip не добавляет второго пути композиции и не меняет ни одного
-эталона — `GOLDEN_AUDIO`/`GOLDEN_VIDEO` остаются нетронутыми, потому что
-меняется только поле модели.
+The root `CLAUDE.md`: **No. 4** (after a slip the warmth is counted by the cache; do not create separate bookkeeping), **No. 5** (frames for the live preview — only through
+the MediaWorker queue with generation-cancellation), **No. 8** (in spirit: the gesture must not turn into a stream of decode requests). Invariants No. 7 and No. 11 are NOT touched, and this
+matters: slip does not add a second path of composition and does not change a single reference — `GOLDEN_AUDIO`/`GOLDEN_VIDEO` remain untouched, because
+only the model field changes.
 
-Чек-лист `src/apps/kt-app/CLAUDE.md`: **№1** (в 12-пиксельную полосу
-попасть мышью — если пойдём путём Resolve с полосами по высоте, это главный
-риск), **№13** (не заводить новую полосу ради жеста — ставить на уже
-занятое место модификатором), **№16** (упор в конец материала показывается
-как ОШИБКА с подсветкой причины, а не молчанием и не блёклой подсказкой),
-**№17** (парные способы: жест + пункт контекст-меню события ведут себя
-одинаково; меню клипа уже есть в `timeline.rs` и содержит Copy/Paste/
-Delete/Split/FX/Reverse — slip/slide встают туда), **№20** (slide трогает
-соседей — только явным режимом).
+The checklist of `src/apps/kt-app/CLAUDE.md`: **No. 1** (hitting a 12-pixel strip with the mouse — if we go the Resolve way with strips by height, this is the main
+risk), **No. 13** (do not create a new strip for the sake of a gesture — put it on an already
+occupied place with a modifier), **No. 16** (a push against the end of the material is shown
+as an ERROR with the cause highlighted, not with silence and not with a faded hint), **No. 17** (paired ways: the gesture and the item of the event's context menu behave
+identically; the clip menu already exists in `timeline.rs` and contains Copy/Paste/
+Delete/Split/FX/Reverse — slip/slide fit there), **No. 20** (slide touches the neighbours — only by an explicit mode).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | **S** — одна стадия. Slip: одна команда `SlipClip{id, delta}` в `kt-model` (правит только `source_in`, для `reversed` знак тот же — окно материала `[source_in, source_in+duration)` одно на оба случая) + вариант `Drag` + пункты меню + строки i18n. Slide: НОВЫХ команд ноль, батч из трёх существующих + вариант `Drag`. Двухоконное превью в оценку НЕ входит — это отдельная фича и отдельная заметка |
-| Где основная работа | `src/apps/kt-app/src/timeline.rs` (жест, зоны, показ упора), `src/libs/kt-model/src/{model.rs,ops.rs}` (команда + сборка батча слайда) |
-| Формат проекта | **не трогает**: `source_in` уже сериализуется, ключи автоматизации с v3 лежат в тиках материала, версия файла не поднимается |
-| Тесты, которые придётся написать | модель: slip не меняет `start`/`duration` и не трогает `fx_auto` (и обратимость: +N и −N дают исходное состояние побитово); slip у `reversed` события двигает окно материала в ту же сторону; slide сохраняет сумму длин тройки и не убивает переход у стыка; slip не может увести `source_in` ниже нуля; харнесс-тест жеста в `src/apps/kt-app/src/layout_tests.rs` (попадание мышью, показ упора как ошибки, парность жеста и пункта меню — правило №17); i18n-тесты t100/t125/t128 на новые строки |
-| Зависит от | F-AUT-002 (домен ключа; slip — его лакмус, поведение получается само) |
-| Ломает совместимость | нет |
+| Volume | **S** — one stage. Slip: one command `SlipClip{id, delta}` in `kt-model` (it edits only `source_in`; for `reversed` the sign is the same — the material window `[source_in, source_in+duration)` is one and the same for both cases) + a variant of `Drag` + menu items + i18n strings. Slide: ZERO new commands, a batch of three existing ones + a variant of `Drag`. The two-up preview is NOT part of the estimate — it is a separate feature and a separate note |
+| Where the main work is | `src/apps/kt-app/src/timeline.rs` (the gesture, zones, showing the stop), `src/libs/kt-model/src/{model.rs,ops.rs}` (the command + assembling the slide batch) |
+| Project format | **not touched**: `source_in` is already serialized, automation keys since v3 lie in material ticks, the file version is not raised |
+| Tests that will have to be written | model: slip does not change `start`/`duration` and does not touch `fx_auto` (and reversibility: +N and −N give the original state bitwise); slip of a `reversed` event moves the material window in the same direction; slide preserves the sum of the lengths of the triple and does not kill the transition at the junction; slip cannot take `source_in` below zero; a harness test of the gesture in `src/apps/kt-app/src/layout_tests.rs` (hitting with the mouse, showing the stop as an error, pairing of the gesture and the menu item — rule No. 17); i18n tests t100/t125/t128 for the new strings |
+| Depends on | F-AUT-002 (the keyframe domain; slip is its litmus test, the behaviour comes out by itself) |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-**Берём, slip первым.** Редкий случай, когда фича из списка «чего у нас
-нет» на поверку упирается не в архитектуру, а в один недостающий жест:
-модель разложена ровно так, как slip и требует (`source_in` — отдельное
-поле, перевод «тик → кадр» в одном месте), формат не двигается, эталоны не
-перегенерируются, а slide вообще выражается батчем из уже написанных команд
-по образцу существующего roll. Дорогого в этой фиче ровно две вещи, и обе
-не про slip как таковой: **показать упор в конец материала** (модель длины
-исходника не знает, знает асинхронно UI — а по правилу №16 упор обязан быть
-видимой ошибкой, иначе повторим претензию из процитированного треда «работал
-через раз») и **двухоконное превью**, без которого настраивать стык всё
-равно придётся на глаз, — последнее выносится в отдельную заметку и в
-оценку не входит. Slide берём вторым и только явным режимом: он единственный
-из четырёх тримов меняет то, за что пользователь не тянул, а это прямое
-столкновение с правилом №20.
+**We take it, slip first.** A rare case where a feature from the list "what we do not have"
+on inspection rests not on architecture but on one missing gesture:
+the model is laid out exactly as slip requires (`source_in` is a separate
+field, the "tick → frame" conversion is in one place), the format does not move, the references do not
+need regeneration, and slide is expressible at all as a batch of commands already written, following the
+existing roll as a pattern. Exactly two things in this feature are expensive, and neither
+is about slip as such: **showing the push against the end of the material** (the model does not know the length of the
+source, the UI knows it asynchronously — and under rule No. 16 the stop must be a
+visible error, otherwise we will repeat the complaint from the quoted thread "worked
+sometimes") and **the two-up preview**, without which setting up a junction will
+still have to be done by eye — the latter is moved into a separate note and is not in the
+estimate. We take slide second and only as an explicit mode: it is the only one of the four trims that
+changes what the user did not drag, and that is a direct clash with rule No. 20.
 
-## Источники
+## Sources
 
-- https://help.magix-hub.com/video/vegas/23/en/content/topics/7-edit/slipping_and_sliding_events.htm — определения slip/slide и модификаторы Alt / Ctrl+Alt дословно (дата обращения 2026-09-07). Справка читалась в ветке 23; для 2026.0 отдельной ветки на хосте не нашлось (`/2026/` → 404), поэтому строка таблицы помечена версией из `_editors.md`, а проверка — по ближайшей доступной ветке
-- https://help.magix-hub.com/video/vegas/23/en/content/topics/7-edit/tool.htm — палитра инструментов Vegas (Slip Tool, Slide Tool), переключение по D / Shift+D (2026-09-07)
-- http://vegaspro.helpmax.net/en/using-vegas-software/editing-events-on-the-timeline/applying-switches-to-events/ — переключатель Loop события: за концом файла материал повторяется, а не даёт тишину. ВТОРИЧНЫЙ источник (зеркало справки Vegas), первоисточник по этому пункту не открылся (2026-09-07)
-- https://community.adobe.com/questions-729/slip-and-slide-tool-adobe-premiere-1351115 — официальные определения slip edit и slide edit (ответ сотрудника Adobe, отмечен как правильный), плюс вопрос пользователя о путанице (2026-09-07)
-- https://community.adobe.com/t5/premiere-pro-discussions/slip-tool-not-working-well-sometimes/td-p/10242148 — «slip has to have those extra frames to slip to» (2026-09-07)
-- https://community.adobe.com/feature-requests-730/allow-clip-to-be-slipped-without-moving-its-keyframes-1329704 — заявка «slip без переноса ключей» и ответ про совпадение с поведением AE Pan Behind; там же обход через adjustment layer (2026-09-07)
-- https://support.apple.com/guide/final-cut-pro/make-slip-edits-ver1632d8e4/mac — определение slip edit и красная индикация конца доступного материала (2026-09-07)
-- https://support.apple.com/guide/final-cut-pro/make-slide-edits-ver1632caff/mac — slide через Option-drag, соседи меняют длину (2026-09-07)
-- https://support.apple.com/guide/final-cut-pro/show-a-two-up-display-in-the-viewer-ver3363b235/mac — двухоконный показ, Option-U, список тримов, для которых он появляется (2026-09-07)
-- https://www.premiumbeat.com/blog/dynamic-trim-tool-resolve/ — Trim Edit Mode и выбор вида трима положением курсора по высоте клипа. ВТОРИЧНЫЙ источник: первоисточник (Resolve Reference Manual) и `forum.blackmagicdesign.com` из этого окружения отдают 403, поэтому строка Resolve помечена `[НЕ ПРОВЕРЕНО]` (2026-09-07)
-- https://creativecow.net/forums/thread/slip-slide-without-the-annoying-4-up-viewae/ — жалоба на принудительный 2-up/4-up и Shift как единственный выключатель (2026-09-07)
-- https://creativecow.net/forums/thread/slip-slide-or-slide-edit-tool-in-ae/ — Pan Behind (Y) как slip в AE, ключи остаются на месте (2026-09-07)
-- Клавиши Premiere **Y** (Slip) и **U** (Slide) первоисточником НЕ
-  подтверждены: `helpx.adobe.com` из этого окружения не открывается
-  (страница `premiere/desktop/edit-projects/trim-clips/perform-slip-edits.html`
-  существует и видна в выдаче, но недоступна), `defkey` отдаёт 403.
-  Найденные подтверждения — только заголовки обучающих роликов, что по
-  правилам `_editors.md` подтверждение, а не источник
-- Код Kinotrain: `src/libs/kt-model/src/{model.rs,ops.rs,project.rs}`,
+- https://help.magix-hub.com/video/vegas/23/en/content/topics/7-edit/slipping_and_sliding_events.htm — the definitions of slip/slide and the modifiers Alt / Ctrl+Alt verbatim (accessed 2026-09-07). The help was read on branch 23; for 2026.0 no separate branch was found on the host (`/2026/` → 404), so the table row is marked with the version from `_editors.md`, and the check is by the nearest available branch
+- https://help.magix-hub.com/video/vegas/23/en/content/topics/7-edit/tool.htm — the Vegas tool palette (Slip Tool, Slide Tool), switching with D / Shift+D (2026-09-07)
+- http://vegaspro.helpmax.net/en/using-vegas-software/editing-events-on-the-timeline/applying-switches-to-events/ — the Loop switch of an event: beyond the end of the file the material repeats rather than giving silence. A SECONDARY source (a mirror of the Vegas help); the primary source for this item did not open (2026-09-07)
+- https://community.adobe.com/questions-729/slip-and-slide-tool-adobe-premiere-1351115 — the official definitions of slip edit and slide edit (an Adobe employee's answer, marked as correct), plus a user's question about the confusion (2026-09-07)
+- https://community.adobe.com/t5/premiere-pro-discussions/slip-tool-not-working-well-sometimes/td-p/10242148 — "slip has to have those extra frames to slip to" (2026-09-07)
+- https://community.adobe.com/feature-requests-730/allow-clip-to-be-slipped-without-moving-its-keyframes-1329704 — the request "slip without moving the keyframes" and the reply about the match with the AE Pan Behind behaviour; there also the workaround through an adjustment layer (2026-09-07)
+- https://support.apple.com/guide/final-cut-pro/make-slip-edits-ver1632d8e4/mac — the definition of slip edit and the red indication of the end of the available material (2026-09-07)
+- https://support.apple.com/guide/final-cut-pro/make-slide-edits-ver1632caff/mac — slide via Option-drag, the neighbours change length (2026-09-07)
+- https://support.apple.com/guide/final-cut-pro/show-a-two-up-display-in-the-viewer-ver3363b235/mac — the two-up display, Option-U, the list of trims for which it appears (2026-09-07)
+- https://www.premiumbeat.com/blog/dynamic-trim-tool-resolve/ — Trim Edit Mode and the choice of the type of trim by the position of the cursor along the height of the clip. A SECONDARY source: the primary source (the Resolve Reference Manual) and `forum.blackmagicdesign.com` return 403 from this environment, so the Resolve row is marked `[NOT VERIFIED]` (2026-09-07)
+- https://creativecow.net/forums/thread/slip-slide-without-the-annoying-4-up-viewae/ — a complaint about the forced 2-up/4-up and Shift as the only switch (2026-09-07)
+- https://creativecow.net/forums/thread/slip-slide-or-slide-edit-tool-in-ae/ — Pan Behind (Y) as slip in AE, the keys stay in place (2026-09-07)
+- The Premiere keys **Y** (Slip) and **U** (Slide) are NOT confirmed by the primary source: `helpx.adobe.com` does not open from this environment
+  (the page `premiere/desktop/edit-projects/trim-clips/perform-slip-edits.html`
+  exists and is visible in the results, but is unavailable), `defkey` returns 403.
+  The confirmations found are only the titles of training videos, which by the rules of `_editors.md` is a confirmation, not a source
+- Kinotrain code: `src/libs/kt-model/src/{model.rs,ops.rs,project.rs}`,
   `src/libs/kt-otio/src/convert.rs`, `src/apps/kt-app/src/{timeline.rs,
-  toolbar.rs,thumbs.rs,automation.rs}`, `docs/user-feedback.md` (Р.26, Р.28
-  п.12), `docs/porting-notes.md` (п.246)
+  toolbar.rs,thumbs.rs,automation.rs}`, `docs/user-feedback.md` (R.26, R.28
+  item 12), `docs/porting-notes.md` (item 246)

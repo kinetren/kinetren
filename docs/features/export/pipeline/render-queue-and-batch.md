@@ -1,12 +1,12 @@
 ---
 id: F-EXP-002
-title: Очередь рендера и фоновый экспорт
-status: кандидат
+title: Render queue and background export
+status: candidate
 priority: B
 cost: M
 category: export/pipeline
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: partial
 crates: [kt-app, kt-engine, kt-gpu, kt-model, kt-cli]
 invariants: [5, 7, 9, 12]
 ui_rules: [2, 12, 13, 16, 20]
@@ -17,316 +17,269 @@ depends_on: []
 checked: 2026-09-07
 ---
 
-# F-EXP-002 — Очередь рендера и фоновый экспорт
+# F-EXP-002 — Render queue and background export
 
-## Суть
+## Essence
 
-Монтажёр хочет поставить пять заданий и уйти: этот регион в 1080p для
-заказчика, тот же кусок в 720p для мессенджера, весь фильм в мастер-качестве,
-три помеченных сцены отдельными файлами. Сегодня у нас это пять походов через
-окно настроек с ожиданием у экрана между ними. Вторая половина требования —
-чтобы во время рендера можно было монтировать дальше, а не сидеть перед
-прогресс-баром.
+The editor wants to set five jobs and walk away: this region in 1080p for
+the client, the same piece in 720p for a messenger, the whole film in master quality,
+three marked scenes as separate files. Today for us this is five trips through the
+settings window with waiting at the screen between them. The second half of the requirement is
+that during rendering one can keep editing, rather than sitting in front of a
+progress bar.
 
-## У кого и как
+## Who has it and how
 
-| Редактор | Версия | Как называется | Как устроено |
+| Editor | Version | What it is called | How it works |
 |---|---|---|---|
-| VEGAS Pro | 2026.0 b66 | `Batch Render` | НЕ функция, а C#-скрипт из комплекта (`Batch Render.cs` в `Script Menu`) плюс DLL-расширение. Рендерит проект / выделение / **каждый регион отдельным файлом**, сразу по нескольким шаблонам рендера; имя выходного файла собирается из имени региона. Живёт вне продукта и ломается вместе с API: в известных ошибках сборки 66 — «The Batch Render script is not functional», чинит сообщество (`Batch Render 2.0`, апрель 2026). Своей очереди в самом редакторе нет |
-| Adobe Premiere | 26.x | `Export` против отправки в **Adobe Media Encoder** | две кнопки в режиме экспорта: рендер внутри Premiere (редактор занят) и постановка в очередь ОТДЕЛЬНОГО приложения. AME — самостоятельный процесс со своей очередью, пресетами и **watch folders**; пока он кодирует, монтаж продолжается. Классическая цена — рассинхрон: AME работает не с тем, что сейчас на экране [НЕ ПРОВЕРЕНО: точная механика снимка — `helpx.adobe.com` и reddit из этого окружения не открываются] |
-| DaVinci Resolve | 21 | `Deliver` → **Render Queue** | очередь ВНУТРИ редактора: настроил формат → `Add to Render Queue` → в списке накапливаются задания (разные таймлайны, диапазоны, форматы) → `Start Render`. Официально: «a render queue for exporting multiple jobs». Отдельным переключателем `Single clip` / `Individual clips` одно задание нарезает таймлайн на файлы по клипам. Есть удалённый рендер на другую машину (Studio) — единственный штатный способ «рендерить и монтировать одновременно» |
-| Final Cut Pro | 12.3 | очереди нет; `Batch sharing` + `Compressor` | экспорт — фоновая задача (`Background Tasks`, ⌘9) наравне с импортом и рендером. `Batch sharing`: «You can export multiple projects, clips, or clip ranges at once», но «You can't mix projects and clips in a batch share». Связка с `destination bundles` даёт несколько форматов «all in a single step». Настоящая очередь вынесена в отдельное приложение **Compressor** (batch, chained jobs, droplets, watch folders) |
-| After Effects | 26.x | `Render Queue` (панель) | очередь внутри приложения; пока она идёт, AE занят. Ключевое отличие от всех: у ОДНОГО элемента очереди может быть несколько `Output Module`, «An OutputModule object of a RenderQueueItem generates a single file or sequence via a render operation» — то есть N файлов за одну операцию рендера. Альтернатива — `Add to Adobe Media Encoder Queue` (тот же отдельный процесс, что у Premiere) |
+| VEGAS Pro | 2026.0 b66 | `Batch Render` | NOT a function, but a C# script from the kit (`Batch Render.cs` in `Script Menu`) plus a DLL extension. It renders the project / selection / **each region as a separate file**, at once across several render templates; the output file name is built from the region's name. It lives outside the product and breaks together with the API: among the known bugs of build 66 — "The Batch Render script is not functional", fixed by the community (`Batch Render 2.0`, April 2026). There is no queue of its own in the editor itself |
+| Adobe Premiere | 26.x | `Export` versus sending to **Adobe Media Encoder** | two buttons in the export mode: rendering inside Premiere (the editor is busy) and placing into the queue of a SEPARATE application. AME is an independent process with its own queue, presets and **watch folders**; while it encodes, editing continues. The classic price is desynchronization: AME works with not what is now on the screen [NOT VERIFIED: the exact mechanics of the snapshot — `helpx.adobe.com` and reddit do not open from this environment] |
+| DaVinci Resolve | 21 | `Deliver` → **Render Queue** | a queue INSIDE the editor: you configure the format → `Add to Render Queue` → jobs accumulate in the list (different timelines, ranges, formats) → `Start Render`. Officially: "a render queue for exporting multiple jobs". With a separate switch `Single clip` / `Individual clips`, one job cuts the timeline into files per clip. There is remote rendering to another machine (Studio) — the only standard way to "render and edit at the same time" |
+| Final Cut Pro | 12.3 | no queue; `Batch sharing` + `Compressor` | export is a background task (`Background Tasks`, ⌘9) on a par with import and rendering. `Batch sharing`: "You can export multiple projects, clips, or clip ranges at once", but "You can't mix projects and clips in a batch share". The link with `destination bundles` gives several formats "all in a single step". The real queue is moved to a separate application **Compressor** (batch, chained jobs, droplets, watch folders) |
+| After Effects | 26.x | `Render Queue` (panel) | a queue inside the application; while it runs, AE is busy. The key difference from all others: ONE queue item can have several `Output Module`s, "An OutputModule object of a RenderQueueItem generates a single file or sequence via a render operation" — that is, N files in one render operation. The alternative is `Add to Adobe Media Encoder Queue` (the same separate process as Premiere's) |
 
-## Фишка фишки
+## The trick behind it
 
-**«Фоновый экспорт» у Final Cut — это работа В ПРОСТОЕ, а не параллельно.**
-Sharing у Apple честно лежит в списке фоновых задач вместе с импортом,
-транскодом и анализом, и там же написана цена: «If you actively use Final
+**"Background export" in Final Cut is work IN IDLE TIME, not in parallel.**
+Apple's Sharing honestly lies in the list of background tasks together with import,
+transcoding and analysis, and the price is written there too: "If you actively use Final
 Cut Pro while background tasks are running, the background tasks are
-paused». То есть кнопка «экспортируй фоном» не даёт монтировать и
-рендерить одновременно — она даёт рендерить, ПОКА ТЫ НЕ ТРОГАЕШЬ
-программу. Следствие неочевидное и обратное ожиданию: чем активнее
-пользуешься редактором, тем дольше идёт «фоновый» экспорт, и «поставил и
-ушёл» у FCP работает буквально — надо уйти. Именно поэтому у Apple рядом
-живёт Compressor: настоящая параллельность у них вынесена в другой
-процесс, а не сделана внутри.
+paused". That is, the button "export in the background" does not let you edit and
+render at the same time — it lets you render WHILE YOU DON'T TOUCH
+the program. The consequence is non-obvious and the reverse of what one expects: the more actively
+you use the editor, the longer the "background" export takes, and "set it and
+walk away" works in FCP literally — you have to walk away. That is exactly why Apple keeps Compressor
+alongside: real parallelism is moved to another
+process rather than done inside.
 
-**У After Effects экономия сидит не в очереди, а в элементе очереди.**
-Очередь из N заданий — это N полных проходов: декод, композит, кодирование
-на каждое. Один элемент с N `Output Module` — это ОДИН проход композита и N
-файлов на выходе, и в API это записано прямо: output module «generates a
-single file or sequence via a render operation». Практическая разница
-видна на «мастер + прокси + превью для клиента»: у Resolve и AME это три
-задания и тройная стоимость декода, у AE — одно. Обратная сторона той же
-детали: все выходы обязаны иметь общий рендер, поэтому разное разрешение
-или разная область кадра снова разваливаются на отдельные задания —
-экономия работает ровно там, где отличаются только кодек и контейнер.
+**In After Effects the saving is not in the queue but in the queue item.**
+A queue of N jobs is N full passes: decode, composite, encoding for each. One item with N `Output Module`s is ONE pass of the composite and N
+files at the output, and the API states this directly: an output module "generates a
+single file or sequence via a render operation". The practical difference
+is visible on "master + proxy + preview for the client": in Resolve and AME these are three
+jobs and triple the cost of decoding, in AE — one. The reverse side of the same
+detail: all outputs must have a common render, therefore a different resolution
+or a different frame region again falls apart into separate jobs — the saving works exactly where
+only the codec and container differ.
 
-**У VEGAS очередь вынесена в скрипт, и оба следствия этого видны в
-трекере.** Первое: она регулярно умирает при смене версии — в известных
-ошибках VEGAS Pro 2026 build 66 значится «The Batch Render script is not
-functional», и рабочую сборку пользователи получают друг от друга, а не от
-издателя. Второе, тоньше: задание там — это РЕГИОН, и имя выходного файла
-берётся из имени региона, поэтому пакетный рендер спотыкается о вещи, о
-которых функция уровня продукта не спотыкалась бы: «not all characters that
-are legal in region names are legal in Windows file names» — двоеточия,
-кавычки и слэши в именах сцен роняют весь прогон.
+**In VEGAS the queue is moved into a script, and both consequences of this are visible
+in the tracker.** The first: it regularly dies on a version change — among the known
+bugs of VEGAS Pro 2026 build 66 is "The Batch Render script is not
+functional", and a working build users get from each other, not from the publisher. The second, subtler: the job there is a REGION, and the output file name
+is taken from the region's name, therefore batch rendering stumbles over things that a product-level
+function would not stumble over: "not all characters that
+are legal in region names are legal in Windows file names" — colons, quotes and slashes in scene names bring down the whole run.
 
-## Плюсы
+## Pros
 
-- Задание = уже существующая разметка (регион, метка-диапазон, клип), а не
-  отдельная сущность: «нарезать серию на 12 сцен» — это один прогон по
-  меткам, а не 12 ручных выставлений границ и 12 диалогов сохранения.
-- Очередь ВНУТРИ редактора видит живую модель, поэтому у неё физически не
-  может быть рассинхрона «отрендерилось не то, что на экране»; платит она
-  тем, что редактор занят (Resolve, AE).
-- Очередь в ОТДЕЛЬНОМ процессе освобождает редактор полностью и переживает
-  его падение; платит тем, что рендерит снимок/сохранённый файл, и любая
-  правка после постановки в очередь в выход не попадает.
-- Несколько выходов на один элемент (AE) снимают N-кратный декод и композит
-  там, где форматы отличаются только упаковкой.
-- Watch folder — очередь без интерфейса: «designate any folder … that
-  automatically transcodes any media files you add to it». Автоматизация
-  достаётся тому, у кого нет ни скриптового API, ни желания его изучать.
+- A job = an already existing markup (region, marker-range, clip), not a separate entity: "cut the series into 12 scenes" is one run by
+  markers, not 12 manual placements of boundaries and 12 save dialogs.
+- A queue INSIDE the editor sees the live model, so it physically cannot have a desync "rendered not what is on the screen"; it pays
+  for this with the editor being busy (Resolve, AE).
+- A queue in a SEPARATE process frees the editor completely and survives its crash; it pays
+  by rendering a snapshot/saved file, and any edit after queueing does not reach the output.
+- Several outputs per item (AE) remove the N-fold decode and composite
+  where the formats differ only in packaging.
+- A watch folder is a queue without an interface: "designate any folder … that
+  automatically transcodes any media files you add to it". Automation goes to
+  those who have neither a scripting API nor the wish to study it.
 
-## Минусы
+## Cons
 
-- «Фон» без явного правила приоритета превращается либо в тормозящий
-  редактор, либо в стоящую очередь: Apple выбрала второе и написала это в
-  справке, остальные не пишут ничего, и пользователь узнаёт правило опытом.
-- Отдельный процесс требует снимка проекта, а снимок требует дисциплины
-  сохранения; отсюда вечный класс жалоб «экспортировалось не то» у связки
-  Premiere + AME.
-- Очередь превращает настройки экспорта в обязательный пресет: без
-  сохранённых наборов «пять заданий в пяти форматах» означает пять
-  прогонов по всей форме настроек.
-- Задание, названное по разметке (регион/клип), наследует её проблемы —
-  недопустимые символы в имени файла (VEGAS) или невозможность переименовать
-  выход вообще (Resolve `Individual clips` берёт имя источника
-  [НЕ ПРОВЕРЕНО: деталь из поискового индекса, первоисточник не открылся]).
-- Реализация «сбоку» (скрипт, расширение) не переживает версии продукта:
-  в текущем VEGAS штатный пакетный рендер просто не работает.
+- "Background" without an explicit priority rule turns either into a sluggish
+  editor or into a standing queue: Apple chose the second and wrote it in the help, the others write nothing, and the user learns the rule by experience.
+- A separate process requires a project snapshot, and a snapshot requires discipline
+  in saving; hence the eternal class of complaints "the wrong thing was exported" with the
+  Premiere + AME bundle.
+- A queue turns export settings into a mandatory preset: without
+  saved sets, "five jobs in five formats" means five passes through the whole settings form.
+- A job named after the markup (region/clip) inherits its problems — illegal characters in the file name (VEGAS) or the impossibility of renaming the output at all (Resolve `Individual clips` takes the source name
+  [NOT VERIFIED: a detail from the search index, the primary source did not open]).
+- An implementation "on the side" (a script, an extension) does not survive a product version:
+  in the current VEGAS the standard batch render simply does not work.
 
-## Что говорят пользователи
+## What users say
 
 > This was reported with a simple edit to fix it by @Jetdv on the old forum
 > but Vegas2026 is still being distributed with it unfixed.
-> — Howard Vigorita, «Batch Render script still broken (fixed in b143)»,
+> — Howard Vigorita, "Batch Render script still broken (fixed in b143)",
 > 02.04.2026, https://forum.borisfx.com/t/batch-render-script-still-broken-fixed-in-b143/21682
 
-Официальные примечания к выпуску VEGAS Pro 2026 build 66 (27.03.2026,
-https://forum.borisfx.com/t/release-vegas-pro-2026-build-66/21161) держат
-это в списке известных ошибок дословно:
+The official release notes of VEGAS Pro 2026 build 66 (27.03.2026,
+https://forum.borisfx.com/t/release-vegas-pro-2026-build-66/21161) keep
+this in the list of known bugs, verbatim:
 
 > The Batch Render script is not functional
 
-Про модель «отдельное приложение» — формулировка практика:
+About the model of "a separate application" — the wording of a practitioner:
 
 > It queues exports in the background while you continue editing or
 > browsing, effectively decoupling creative work from render time.
-> — Michele Smith, «Efficient Workflows: Exporting Video Content for Multiple
-> Social Media Platforms Simultaneously», 05.11.2025,
+> — Michele Smith, "Efficient Workflows: Exporting Video Content for Multiple
+> Social Media Platforms Simultaneously", 05.11.2025,
 > https://larryjordan.com/articles/efficient-workflows-exporting-video-content-for-multiple-social-media-platforms-simultaneously/
 
-Отрицательного фидбека именно про «AME отрендерил старую версию» найти
-живьём не удалось: `reddit.com`, `helpx.adobe.com` и поиск по
-`community.adobe.com` из этого окружения закрыты (поисковый индекс на этот
-запрос выдаёт треды r/premiere и community.adobe.com, но сами страницы не
-открываются). Класс жалоб существует, точная механика снимка — не
-подтверждена.
+Negative feedback specifically about "AME rendered the old version" could not be found
+live: `reddit.com`, `helpx.adobe.com` and the search of
+`community.adobe.com` are closed from this environment (the search index for this query returns threads from r/premiere and community.adobe.com, but the pages themselves do not
+open). The class of complaints exists; the exact mechanics of the snapshot —
+not confirmed.
 
-## Как ложится на Kinotrain
+## How it fits Kinotrain
 
-### Что уже есть
+### What is already there
 
-Фоновый экспорт у нас УЖЕ работает, и работает именно так, как его хотят
-получить от очереди:
+Background export WORKS for us ALREADY, and works exactly the way one wants to get it from a queue:
 
-- `KtApp::launch_render` в `src/apps/kt-app/src/render_dialog.rs` делает
-  `let project = self.model.project().clone()` и уносит клон в отдельный
-  поток `"render"`. Это уже СНИМОК: правки таймлайна после старта на
-  идущий рендер не влияют.
-- Источники экспорта открываются свои (`open_all` там же, комментарий в
-  шапке файла: «со СВЕЖИМИ FfmpegSource (не декодеры плеера)»), поэтому
-  рендер не спорит с воспроизведением за декодер — инвариант №5 не задет
-  по построению.
-- Окно прогресса `draw_render_dialog` — обычное `egui::Window`, не
-  модальное. Монтировать во время рендера уже физически можно.
-- GPU-исполнитель экспорта — свой headless-девайс (`export_video_gpu()` в
-  `src/apps/kt-app/src/app.rs`, `GpuContext::new_headless` в
-  `src/libs/kt-gpu/src/context.rs`), очередь UI с экспортом не делится
-  (п.185 `docs/porting-notes.md`).
-- `RenderJob` (`src/apps/kt-app/src/render_dialog.rs`) уже несёт всё, из
-  чего состоит строка очереди: канал прогресса, `cancel`, `pause`,
-  `ExportOptions`, путь выхода, список заглушек, статистику скорости.
-- Имя выхода уже собирается по шаблону пользователя
-  (`render_file_name`/`sanitize_name_part`, тест t201): недопустимые в имени
-  файла символы заменяются, а имя региона подставляется, только если с ним
-  СОВПАДАЕТ метка-диапазон (`default_render_name`). Это ровно та задача, на
-  которой спотыкается VEGAS Batch Render, и у нас она уже решена.
-- Кандидаты в задания уже описаны в модели: `Marker` с `duration` и
-  `is_range()`, `MarkedArea` (имя = адрес, единое пространство имён с
-  метками) — `src/libs/kt-model/src/project.rs`.
-- Снимок проекта дёшев и это доказано: undo — снапшоты целого `Project`
-  (`push_undo`, `MAX_UNDO = 80` в `src/libs/kt-model/src/model.rs`), то
-  есть в обычной работе мы клонируем проект по восемьдесят раз подряд.
-- Прецедент фоновой работы с проектом под сторожем — `write_project_guarded`
-  в `src/apps/kt-app/src/app.rs` (п.199): фоновый автосейв сверяет
-  ревизию и отменяет себя, если на диске уже новее.
-- Headless-рендер существует отдельно: `kt-cli export <in.otio> <out.mp4>
-  [encoder]` в `src/apps/kt-cli/src/main.rs`.
+- `KtApp::launch_render` in `src/apps/kt-app/src/render_dialog.rs` does
+  `let project = self.model.project().clone()` and hands the clone to a separate
+  thread `"render"`. This is already a SNAPSHOT: timeline edits after the start do not affect the running render.
+- The export sources are opened separately (`open_all` there, a comment in the file header: "with FRESH FfmpegSource (not the player's decoders)"), so the render does not contend with playback for the decoder — invariant No. 5 is not touched by construction.
+- The progress window `draw_render_dialog` is an ordinary `egui::Window`, not modal. Editing during rendering is already physically possible.
+- The GPU executor of the export is its own headless device (`export_video_gpu()` in
+  `src/apps/kt-app/src/app.rs`, `GpuContext::new_headless` in
+  `src/libs/kt-gpu/src/context.rs`); the UI queue does not share it with export
+  (item 185 of `docs/porting-notes.md`).
+- `RenderJob` (`src/apps/kt-app/src/render_dialog.rs`) already carries everything of which a queue row consists:
+  the progress channel, `cancel`, `pause`, `ExportOptions`, the output path, the list of stubs, speed statistics.
+- The output name is already built from the user's template
+  (`render_file_name`/`sanitize_name_part`, test t201): characters illegal in a file name
+  are replaced, and the region's name is substituted only if the marker-range
+  MATCHES it (`default_render_name`). This is exactly the task on which VEGAS Batch Render stumbles, and for us it is already solved.
+- Candidates for jobs are already described in the model: `Marker` with `duration` and
+  `is_range()`, `MarkedArea` (the name = the address, a single namespace shared with
+  markers) — `src/libs/kt-model/src/project.rs`.
+- A project snapshot is cheap, and this is proven: undo — snapshots of the whole `Project`
+  (`push_undo`, `MAX_UNDO = 80` in `src/libs/kt-model/src/model.rs`), that is,
+  in ordinary work we clone the project eighty times in a row.
+- A precedent for background work with the project under a guard — `write_project_guarded`
+  in `src/apps/kt-app/src/app.rs` (item 199): the background autosave compares
+  the revision and cancels itself if a newer one is already on disk.
+- Headless rendering exists separately: `kt-cli export <in.otio> <out.mp4>
+  [encoder]` in `src/apps/kt-cli/src/main.rs`.
 
-### Чего не хватает
+### What is missing
 
-- Списка заданий и его состояний (ждёт / идёт / готово / упало / отменено)
-  и решения, переживает ли он выход из программы.
-- Настроек на задание. `ExportOptions` есть, а пресетов нет — очередь из
-  пяти разных форматов означает пять проходов по форме настроек.
-- Пути на задание: `rfd::FileDialog` открывается синхронно внутри
-  `launch_render`, то есть путь спрашивается ровно в момент старта.
-- Источника заданий: «регионы → задания», «метки-диапазоны → задания»,
-  «именованные области → задания» кода не имеет.
-- Разрешения ставить второе задание: `start_render` отвечает
-  `render.already_running` и выходит.
-- Полноты kt-cli: `export` жёстко берёт `ExportOptions::default()` и
-  `range = None` — ни диапазона, ни разрешения, ни CRF, ни битрейта, ни
-  регионов. Всё это есть в движке, но наружу в CLI не выведено.
+- A list of jobs and their states (waiting / running / done / failed / cancelled)
+  and a decision on whether it survives exiting the program.
+- Settings per job. `ExportOptions` exists, but there are no presets — a queue of
+  five different formats means five passes through the settings form.
+- A path per job: `rfd::FileDialog` opens synchronously inside
+  `launch_render`, that is, the path is asked for at exactly the moment of starting.
+- A source of jobs: "regions → jobs", "marker-ranges → jobs",
+  "named areas → jobs" have no code.
+- Permission to put a second job in: `start_render` answers
+  `render.already_running` and exits.
+- Completeness of kt-cli: `export` hard-codes `ExportOptions::default()` and
+  `range = None` — no range, no resolution, no CRF, no bitrate, no
+  regions. All of this exists in the engine, but is not exposed to the CLI.
 
-### Что мешает
+### What gets in the way
 
-1. **Модель «отдельное приложение» нам закрыта инвариантом №9.** Экспорт
-   полностью внутрипроцессный: libavformat/libavcodec системного FFmpeg
-   через dlopen (`src/libs/kt-ffmpeg/`), ни временных файлов, ни внешнего
-   `ffmpeg`, ни mkfifo — и `export_mp4_with_backends`
-   (`src/libs/kt-engine/src/export.rs`) держит муксер в своём процессе.
-   Второго бинаря-энкодера у нас нет и по этому инварианту не будет.
-   Сказать это надо прямо: **очередь у нас может быть только внутренней**.
-   При этом главная боль модели AME — «рендерится не тот снимок» — у нас
-   отсутствует по построению: снимок лежит в памяти, сохранять проект ради
-   рендера не нужно.
-2. **Инвариант №7: начатый экспорт завершается на своём бэкенде.** Значит
-   бэкенд выбирается при СТАРТЕ задания, а не при постановке в очередь, и
-   ошибка GPU посреди задания — ошибка ЭТОГО задания, а не повод молча
-   доделать его на CPU. Побочно: сейчас headless-девайс поднимается на
-   каждый джоб; для прогона очереди разумнее один на прогон — но это
-   именно решение раунда, а не вопрос заметки.
-3. **Инвариант №12 и правило 12 чек-листа — тут у нас уже висит дефект.**
-   В `src/apps/kt-app/src/app.rs` признак `animating` включает
-   `self.render_job.is_some()` безусловно, а `render_job` живёт до тех пор,
-   пока пользователь не нажмёт OK в окне итога. То есть после ЗАВЕРШЕНИЯ
-   рендера интерфейс продолжает перерисовываться 60 раз в секунду — ровно
-   то, о чём была жалоба Р.31: «иногда если вызвать окно рендера то fps
-   тоже падает и не восстанавливается пока не закрою»
-   (`docs/user-feedback.md`). Для тридцатисекундного экспорта это мелочь,
-   для очереди на час — тот самый «UI греет систему». Очередь обязана
-   перерисовываться по приходу прогресса (он и так шлётся раз в 10 кадров
-   и раз в секунду аудио), а не безусловно.
-4. **Правила 16 и 20.** Упавшее задание обязано остаться в списке и быть
-   показанным как ОШИБКА, а не пропущено: сегодня `ExportError` живёт в
-   одном окне и умирает вместе с ним, а `cleanup_on_err` в
-   `src/libs/kt-engine/src/export.rs` ещё и удаляет частичный файл —
-   правильное поведение для одного рендера, но очередь обязана сказать, что
-   именно и почему не получилось, и не «доправлять» остальные задания сама.
-5. **Цена наивной очереди по числу проходов.** `export_mp4_with_backends`
-   принимает ДВА независимых набора источников (`open_all` зовётся дважды
-   в `launch_render`) и рендерит сначала всё видео, потом весь звук в один
-   муксер. Значит одно задание — уже два полных прохода по материалу, а
-   очередь из N форматов — 2N. «Несколько выходов из одного прохода» (то,
-   что у AE делают `Output Module`) — это правка `export_mp4_*` под
-   несколько муксеров на один поток кадров, то есть работа в kt-engine, а
-   не в UI. Отдельная задача с отдельной ценой.
-6. **Развилка «чей снимок».** Клон делается на СТАРТЕ задания. Для очереди
-   это значит, что задание, поставленное сейчас и стартовавшее через час,
-   отрендерит модель через час. Это ровно та развилка, из-за которой у
-   Premiere две кнопки, и её надо решить явно: снимок на ПОСТАНОВКУ честнее
-   и совпадает со смыслом «поставил и ушёл», а стоит он одного
-   `Project::clone()` на задание.
+1. **The model "a separate application" is closed to us by invariant No. 9.** Export
+   is fully in-process: libavformat/libavcodec of the system FFmpeg
+   through dlopen (`src/libs/kt-ffmpeg/`), no temporary files, no external
+   `ffmpeg`, no mkfifo — and `export_mp4_with_backends`
+   (`src/libs/kt-engine/src/export.rs`) keeps the muxer in its own process.
+   We have no second encoder binary, and under this invariant there will not be one.
+   This must be said directly: **the queue for us can only be internal**.
+   At the same time the main pain of the AME model — "a not-the-right snapshot is rendered" — is absent for us by construction: the snapshot lies in memory, and there is no need to save the project in order to render.
+2. **Invariant No. 7: a started export completes on its own backend.** Therefore the backend is chosen at the START of the job, not at queueing, and a GPU error in the middle of a job is an error of THIS job, not a reason to quietly finish it on the CPU. Incidentally: at present the headless device is brought up for each job; for a queue run it is more sensible to have one per run — but that is
+   precisely a decision of the round, not a question of the note.
+3. **Invariant No. 12 and rule 12 of the checklist — here we already have a defect.**
+   In `src/apps/kt-app/src/app.rs` the `animating` flag includes
+   `self.render_job.is_some()` unconditionally, and `render_job` lives until the user presses OK in the summary window. That is, after the render has FINISHED the interface keeps redrawing 60 times per second — exactly
+   what the complaint of R.31 was about: "sometimes when I call the render window the fps
+   also drops and does not recover until I close it"
+   (`docs/user-feedback.md`). For a thirty-second export this is a trifle;
+   for a queue of an hour it is that same "UI heats the system". The queue must redraw on the arrival of progress (which is sent anyway every 10 frames and once a second for audio), not unconditionally.
+4. **Rules 16 and 20.** A failed job must remain in the list and be shown as an ERROR, not skipped: today `ExportError` lives in
+   one window and dies together with it, and `cleanup_on_err` in
+   `src/libs/kt-engine/src/export.rs` also deletes the partial file —
+   the correct behaviour for a single render, but the queue must say
+   exactly what and why did not work, and must not "fix up" the other jobs on its own.
+5. **The price of a naive queue in number of passes.** `export_mp4_with_backends`
+   accepts TWO independent sets of sources (`open_all` is called twice
+   in `launch_render`) and renders first all the video, then all the sound into one muxer. So one job is already two full passes over the material, and a queue of N formats is 2N. "Several outputs from one pass" (what AE does with `Output Module`) is a change of `export_mp4_*` to several muxers on one stream of frames, that is, work in kt-engine, not in the UI. A separate task with a separate price.
+6. **The fork "whose snapshot".** The clone is made at the START of the job. For a queue this means that a job queued now and started an hour later will render the model as of an hour later. This is exactly the fork because of which Premiere has two buttons, and it must be decided explicitly: a snapshot at QUEUEING is more honest and matches the meaning of "set it and walk away", and it costs one
+   `Project::clone()` per job.
 
-### Какие инварианты задевает
+### Which invariants it touches
 
-№9 (закрывает модель отдельного приложения — очередь только внутренняя),
-№7 (бэкенд фиксируется на старте задания, ошибка GPU = ошибка задания),
-№12 (перерисовка только при движении — сейчас нарушено окном рендера),
-№5 (не нарушается: экспорт открывает свои источники, но это и есть причина,
-по которой монтаж и рендер одновременно вообще возможны).
-Правила `src/apps/kt-app/CLAUDE.md`: 2 (работает во время
-воспроизведения), 12 (фоновая работа не мешает), 13 (не тратить место
-впустую — списку заданий отдельная панель не полагается), 16 (упавшее
-задание — ошибка, а не блёклая подсказка), 20 (очередь ничего не
-доправляет за пользователя).
+No. 9 (the model of a separate application is closed — the queue is internal only),
+No. 7 (the backend is fixed at the start of the job, a GPU error = an error of the job),
+No. 12 (redrawing only on motion — now violated by the render window),
+No. 5 (not violated: export opens its own sources, but this is precisely the reason
+why editing and rendering at the same time are possible at all).
+Rules of `src/apps/kt-app/CLAUDE.md`: 2 (works during
+playback), 12 (background work does not get in the way), 13 (do not waste
+space — the job list does not get a separate panel), 16 (a failed
+job is an error, not a faded hint), 20 (the queue does not fix anything on the user's behalf).
 
-## Оценка
+## Estimate
 
-| Что | Ответ |
+| What | Answer |
 |---|---|
-| Объём | M — 2–3 стадии раунда |
-| Где основная работа | kt-app: `Vec<RenderJob>` вместо `Option`, состояния заданий, источник заданий из регионов/меток/областей, честная перерисовка. kt-engine — только вынести «один прогон» и отдать ошибку конкретному заданию |
-| Формат проекта | не трогает, если очередь живёт в сессии; персистентная очередь — это `metadata.kt` и новая версия схемы в kt-otio |
-| Тесты, которые придётся написать | харнесс-тест окна очереди (порядок, отмена одного задания, упавшее задание видно и остаётся в списке); unit «регионы/метки-диапазоны/области → задания» + имена по шаблону t201; тест «во время очереди UI не перерисовывается безусловно» — пара к t38/t20-repaint; kt-engine: два задания подряд на ОДНОМ headless-девайсе |
-| Зависит от | пресетов экспорта (заметка категории `export/` ещё не написана): без них очередь разнородных форматов теряет смысл |
-| Ломает совместимость | нет |
+| Size | M — 2–3 stages of the round |
+| Where the main work is | kt-app: `Vec<RenderJob>` instead of `Option`, job states, a source of jobs from regions/markers/areas, honest redrawing. kt-engine — only to extract "one run" and deliver an error to a specific job |
+| Project format | not touched if the queue lives in the session; a persistent queue is `metadata.kt` and a new schema version in kt-otio |
+| Tests that will have to be written | a harness test of the queue window (order, cancelling one job, a failed job visible and remaining in the list); unit "regions/marker-ranges/areas → jobs" + names by template t201; a test "during the queue the UI is not redrawn unconditionally" — a pair to t38/t20-repaint; kt-engine: two jobs in a row on ONE headless device |
+| Depends on | export presets (the note of the category `export/` is not yet written): without them a queue of heterogeneous formats loses its meaning |
+| Breaks compatibility | no |
 
-## Вердикт
+## Verdict
 
-Берём, но в облегчённом виде: очередь внутренняя (иначе — инвариант №9),
-задания из УЖЕ существующей разметки (регион, метка-диапазон, именованная
-область), снимок проекта на постановку задания. Дорогую часть — «несколько
-выходов из одного прохода» по образцу `Output Module` — в эту заметку не
-тянем: это правка kt-engine, а не очереди, и ей нужна своя заметка.
+We take it, but in a lightened form: the queue is internal (otherwise — invariant No. 9),
+jobs come from the ALREADY existing markup (region, marker-range, named
+area), and the project snapshot is taken at the time the job is queued. The expensive part — "several
+outputs from one pass" on the model of `Output Module` — we do not drag into this note: it is a change in kt-engine, not in the queue, and it needs its own note.
 
-**Явная рекомендация по «отдать это kt-cli»: нет, очередь делаем в GUI.**
-`kt-cli export` действительно закрывает «отрендерить пачку ПРОЕКТОВ» одним
-циклом в shell, но типовое задание очереди — «пять кусков ОДНОГО проекта в
-разных форматах», а CLI сегодня умеет только весь проект целиком с
-`ExportOptions::default()`: ни `--range`, ни разрешения, ни CRF, ни
-регионов (`src/apps/kt-cli/src/main.rs`). Чтобы очередь жила в скрипте,
-пришлось бы либо довести CLI до полного набора опций и научить его
-разметке, либо порождать по временному `.otio` на задание — то есть
-написать всю логику «разметка → задание → параметры» всё равно, только с
-выводом в терминал. Монтаж идёт в GUI, разметка живёт в GUI, снимок модели
-доступен только в GUI — очередь принадлежит туда же. Опции `--range`,
-`--crf`, `--resolution` в CLI полезно вывести побочно: они уже есть в
-`ExportOptions`, стоят десятка строк и дают воспроизводимый headless-прогон
-для тестов.
+**An explicit recommendation on "hand this to kt-cli": no, we make the queue in the GUI.**
+`kt-cli export` does indeed cover "render a batch of PROJECTS" in one
+loop of the shell, but a typical queue job is "five pieces of ONE project in
+different formats", and the CLI today can only do the whole project at once with
+`ExportOptions::default()`: no `--range`, no resolution, no CRF, no
+regions (`src/apps/kt-cli/src/main.rs`). For the queue to live in a script, one would have to either bring the CLI to the full set of options and teach it
+the markup, or generate a temporary `.otio` per job — that is, write
+the whole logic "markup → job → parameters" anyway, only with output to the terminal. Editing goes on in the GUI, the markup lives in the GUI, the model snapshot is available only in the GUI — the queue belongs there too. The options `--range`,
+`--crf`, `--resolution` in the CLI are useful to expose as a side effect: they already exist in
+`ExportOptions`, cost a dozen lines and give a reproducible headless run for tests.
 
-## Источники
+## Sources
 
 - https://forum.borisfx.com/t/release-vegas-pro-2026-build-66/21161 —
-  примечания к выпуску VEGAS Pro 2026 build 66, известная ошибка «The Batch
-  Render script is not functional» (дата обращения 2026-09-07)
+  release notes of VEGAS Pro 2026 build 66, the known bug "The Batch
+  Render script is not functional" (accessed 2026-09-07)
 - https://forum.borisfx.com/t/batch-render-script-still-broken-fixed-in-b143/21682
-  — тред о сломанном скрипте, цитата (2026-09-07)
+  — a thread about the broken script, quote (2026-09-07)
 - https://forum.borisfx.com/t/batch-render-2-0-now-compatible-with-vegas-pro-2026/22856
-  — общинная починка скрипта, состав установки: C#-скрипт в `Script Menu` +
-  DLL в `Application Extensions` (2026-09-07)
-- https://forum.borisfx.com/t/batch-render-with-unicode/25418 — имена
-  регионов как имена выходных файлов и недопустимые символы (2026-09-07)
+  — the community fix of the script, the composition of the installation: a C# script in `Script Menu` +
+  a DLL in `Application Extensions` (2026-09-07)
+- https://forum.borisfx.com/t/batch-render-with-unicode/25418 — region names as
+  output file names and illegal characters (2026-09-07)
 - https://www.blackmagicdesign.com/products/davinciresolve/deliver —
-  «a render queue for exporting multiple jobs» (2026-09-07)
+  "a render queue for exporting multiple jobs" (2026-09-07)
 - https://support.apple.com/guide/final-cut-pro/view-background-tasks-ver64e71609/mac
-  — состав фоновых задач и правило «background tasks are paused»
+  — the composition of background tasks and the rule "background tasks are paused"
   (2026-09-07)
 - https://support.apple.com/guide/final-cut-pro/batch-sharing-verd4e0cf686/mac
-  — batch sharing и destination bundles (2026-09-07)
+  — batch sharing and destination bundles (2026-09-07)
 - https://support.apple.com/guide/compressor/create-and-use-watch-folders-cpsra6b76395/mac
-  — определение watch folder (2026-09-07)
-- https://ae-scripting.docsforadobe.dev/renderqueue/outputmodule/ и
+  — the definition of a watch folder (2026-09-07)
+- https://ae-scripting.docsforadobe.dev/renderqueue/outputmodule/ and
   https://ae-scripting.docsforadobe.dev/renderqueue/renderqueueitem/ —
-  `OutputModule` / `numOutputModules`. Это общинное зеркало руководства по
-  скриптингу After Effects, а не сайт Adobe; взято потому, что
-  `helpx.adobe.com` недоступен (2026-09-07)
+  `OutputModule` / `numOutputModules`. This is a community mirror of the After Effects scripting guide, not an Adobe site; taken because
+  `helpx.adobe.com` is unavailable (2026-09-07)
 - https://larryjordan.com/articles/efficient-workflows-exporting-video-content-for-multiple-social-media-platforms-simultaneously/
-  — цитата про фоновую очередь AME (2026-09-07)
-- Строки Premiere и After Effects опираются на вторичные источники:
-  `helpx.adobe.com`, `www.adobe.com`, `reddit.com` и поиск по
-  `community.adobe.com` из этого окружения не открываются (проверено
-  2026-09-07, «proxy refused»/403). Механика снимка проекта при отправке в
-  Media Encoder и наличие переключателя `Individual clips` в Resolve
-  подтверждены только поисковыми сниппетами — помечены [НЕ ПРОВЕРЕНО].
-- Код: `src/apps/kt-app/src/render_dialog.rs`,
+  — a quote about the background queue of AME (2026-09-07)
+- The Premiere and After Effects rows rely on secondary sources:
+  `helpx.adobe.com`, `www.adobe.com`, `reddit.com` and the search of
+  `community.adobe.com` do not open from this environment (checked
+  2026-09-07, "proxy refused"/403). The mechanics of the project snapshot when sent to Media Encoder and the presence of the `Individual clips` switch in Resolve
+  are confirmed only by search snippets — marked [NOT VERIFIED].
+- Code: `src/apps/kt-app/src/render_dialog.rs`,
   `src/apps/kt-app/src/app.rs`, `src/libs/kt-engine/src/export.rs`,
   `src/libs/kt-gpu/src/context.rs`, `src/libs/kt-model/src/model.rs`,
   `src/libs/kt-model/src/project.rs`, `src/apps/kt-cli/src/main.rs`;
-  `docs/user-feedback.md` (Р.31, жалоба про FPS при окне рендера),
-  `docs/porting-notes.md` пп.185, 199.
+  `docs/user-feedback.md` (R.31, the complaint about FPS during the render window),
+  `docs/porting-notes.md` items 185, 199.
