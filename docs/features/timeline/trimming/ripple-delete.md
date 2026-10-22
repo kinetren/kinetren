@@ -406,7 +406,7 @@ Resolve 18.6 (`steakunderwater.com/VFXPedia/__man/Resolve18-6/`), но прям�
 `discussions.apple.com` недоступны, бюджет `WebSearch` исчерпан — поиск шёл
 прямыми запросами к Yahoo. Живьём ни один из пяти редакторов не запускался.
 
-**Код проверен грепом** по рабочему дереву на коммите `ae92b89` (ветка
+**Код проверен грепом** по рабочему дереву на коммите `0732ea8` (ветка
 `threed`): `src/libs/kt-model/src/ops.rs`, `src/libs/kt-model/src/model.rs`,
 `src/libs/kt-model/src/project.rs`,
 `src/apps/kt-app/src/{app,timeline,toolbar}.rs`.

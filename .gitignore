@@ -14,7 +14,7 @@ Thumbs.db
 *.ktindex.db-wal
 *.ktindex.db-shm
 
-# Python-кэш (site/build.py)
+# Python cache
 __pycache__/
 *.pyc
 # настоящий фильм для кросс-рендера (тест 179): 320 МБ, качается

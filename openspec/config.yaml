@@ -41,8 +41,7 @@ context: |
 
   Летописи: `docs/user-feedback.md` — слова и решения владельца по раундам (первоисточник,
   дописывается ПЕРЕД работой); `docs/features/` — разведка ЧУЖИХ редакторов (наши решения
-  там только ссылкой `CAPABILITY:`); `docs/porting-notes.md` — заморожен на §470
-  (история порта, новые главы не пишутся). Перед новой функцией — заметка в docs/features/
+  там только ссылкой `CAPABILITY:`). Перед новой функцией — заметка в docs/features/
   (`python3 src/scripts/features-index.py --check`).
 
 rules:
