@@ -37,6 +37,7 @@
 | `bm-cloud` | Blackmagic Cloud | сервис | Blackmagic; Resolve 21 Studio | **бин и таймлайн** | учётка + библиотека проектов как услуга | 2026-09-08 |
 | `resolve-project-server` | DaVinci Resolve Project Server | свой сервер | Blackmagic; ставится сам, PostgreSQL | **бин и таймлайн** | СВОЙ хост в своей сети; учётка не нужна | 2026-09-08 |
 | `fcp-shared-library` | Final Cut: общая библиотека | общая папка | Apple; FCP 12 | **вся библиотека целиком** | том, видимый обеим машинам; SMB — Samba ≥ 4.3.4 | 2026-09-08 |
+| `posthog` | PostHog Cloud (EU region, `eu.i.posthog.com`) | сервис | PostHog Inc.; not tied to any editor — receives product-analytics events over a public POST endpoint (`/i/v0/e/`, `/batch/`) | does not claim anything: it only receives events, nothing on our side waits for it | the owner's project token built into the binary + their host; the person running the program needs no account | 2026-10-22 |
 | `syncthing` | Syncthing | инструмент | ничей, свободный; ПРОИСХОЖДЕНИЕ двусторонней синхронизации | не занимает: разрешает задним числом | вторая машина, но НЕ сервер | 2026-09-08 |
 
 Тип: `сервис` (чужой хост) · `свой сервер` (ставишь сам) · `общая папка` (сеть только как
