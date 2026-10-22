@@ -181,6 +181,20 @@ kt-cli export project.kt out.mp4
 - [Keyboard and mouse](docs/guide/shortcuts.md)
 - [Contributing](CONTRIBUTING.md)
 
+## Privacy
+
+Release builds send anonymous usage statistics to [PostHog](https://posthog.com) (servers in
+the EU), so we can see how many people run Kinetren, how long a session lasts and how often it
+ends without a clean close. On the first start the program says so in the notices window.
+
+- **Sent:** program start and clean close, session length, version, OS and processor type,
+  interface language, and a random install number that is not tied to you or your computer.
+- **NOT sent:** projects, file names and paths, media, frames or sound, your name, the
+  computer name. The IP address is not stored.
+- **Turn it off:** View / Send anonymous usage statistics, or start with
+  `KINETREN_TELEMETRY=0` (or `DO_NOT_TRACK=1`). A plain `cargo build` carries no key and
+  sends nothing; `make` and the release tarball do.
+
 ## Community
 
 Questions, ideas and bug reports: join the [Discord server](https://discord.gg/w8enAWJSc)

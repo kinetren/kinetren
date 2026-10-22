@@ -675,6 +675,9 @@ mod tests {
         }
         let me = std::fs::read_to_string(root.join("apps/kt-app/src/telemetry.rs")).unwrap();
         assert!(me.contains(&format!("option_env!(\"{}\")", "KINETREN_POSTHOG_KEY")));
+        let rb = std::fs::read_to_string(root.join("scripts/release-build.sh")).unwrap();
+        assert!(rb.contains("-e KINETREN_POSTHOG_KEY"), "release-build.sh does not pass the key");
+        assert!(rb.contains("packaging/posthog-key"), "release-build.sh does not read the key file");
         if cfg!(debug_assertions) {
             assert!(key().is_none(), "a debug build carries the key");
         }

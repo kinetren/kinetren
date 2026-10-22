@@ -90,11 +90,18 @@ delivery_checks() { # delivery_checks <dir> <bin...>
 # переменная сильнее конфига — cargo берёт её. Ускоритель разработки не имеет
 # права стать условием сборки того, что уезжает людям.
 BIN_DIR="target/dist-container/dist"
+# Anonymous usage telemetry (change telemetry-posthog): the public, write-only PostHog
+# project key enters ONLY the release binary (option_env! in telemetry.rs); cargo run, tests,
+# finish.sh and the live scenarios build without it and never report. An empty or missing
+# file gives a release that sends nothing.
+KINETREN_POSTHOG_KEY=$(tr -d '[:space:]' < packaging/posthog-key 2>/dev/null || true)
+
 if ! docker run --rm --network=host -u "$UID_GID" \
     -v "$PWD:/work" -w /work -v "$REGISTRY:/usr/local/cargo/registry" \
     -e CARGO_TARGET_DIR=/work/target/dist-container \
     -e RUSTFLAGS= \
     -e KT_VERSION_FULL="$KT_VERSION_FULL" -e KT_VERSION_SHORT="$KT_VERSION_SHORT" \
+    -e KINETREN_POSTHOG_KEY="$KINETREN_POSTHOG_KEY" \
     "$IMAGE" bash -c "set -euo pipefail
 $(declare -f delivery_checks)
 cargo build --profile dist -p kt-app -p kt-cli

@@ -22,10 +22,10 @@
 
 ## 3. Release build and docs
 
-- [ ] 3.1 After `github-ci-docker-build` has committed its `release-build.sh` stage: add `src/packaging/posthog-key` with the key the owner supplied (design.md, Open Questions) and pass `-e KINETREN_POSTHOG_KEY="$(cat …)"` into the container `docker run` in `src/scripts/release-build.sh`; verify t842 and that `release-build.sh` with an empty key still builds (no key → sends nothing)
-- [ ] 3.2 README "Privacy" paragraph: what is sent, what is NOT sent (the same two lists as the notice), where to switch it off (View menu, `KINETREN_TELEMETRY=0`, `DO_NOT_TRACK=1`); verify `readme-check.py --check` if the README guard covers it
-- [ ] 3.3 Owner steps listed in the report (not done by the agent): create the PostHog EU project, enable "Discard client IP data", confirm the project is in EU; a dashboard with launches, mean `duration_s`, and starts without `app_closed` by `$session_id`
-- [ ] 3.4 Commit stage 3
+- [x] 3.1 After `github-ci-docker-build` has committed its `release-build.sh` stage: add `src/packaging/posthog-key` with the key the owner supplied (design.md, Open Questions) and pass `-e KINETREN_POSTHOG_KEY="$(cat …)"` into the container `docker run` in `src/scripts/release-build.sh`; verify t842 and that `release-build.sh` with an empty key still builds (no key → sends nothing)
+- [x] 3.2 README "Privacy" paragraph: what is sent, what is NOT sent (the same two lists as the notice), where to switch it off (View menu, `KINETREN_TELEMETRY=0`, `DO_NOT_TRACK=1`); verify `readme-check.py --check` if the README guard covers it
+- [x] 3.3 Owner steps listed in the report (not done by the agent): create the PostHog EU project, enable "Discard client IP data", confirm the project is in EU; a dashboard with launches, mean `duration_s`, and starts without `app_closed` by `$session_id`
+- [x] 3.4 Commit stage 3
 
 ## 4. Finish
 
