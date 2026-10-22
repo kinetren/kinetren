@@ -2,7 +2,7 @@
 
 ## 0. Records before code
 
-- [ ] 0.1 Append the owner's words and decisions of 2026-10-22 (PostHog free, opt-out, exit event only, one EU region after the time-zone question) to `docs/user-feedback.md`; verify the entry names this change
+- [ ] 0.1 Append the owner's words and decisions of 2026-10-22 (PostHog free, opt-out, exit event only, one EU region after the time-zone question, own client not a heavy SDK, the notice lists what is sent and what is NOT sent) to `docs/user-feedback.md`; verify the entry names this change
 - [ ] 0.2 Feature note in `docs/features/` plus a `posthog` row in `docs/features/_services.md`; correct the "no HTTP crate in Cargo.lock" sentence of rule 13 in `docs/features/README.md`; verify `python3 src/scripts/features-index.py --check` is green
 
 ## 1. Core module (no UI)
@@ -17,7 +17,7 @@
 
 - [ ] 2.1 `KtApp` holds `Telemetry`; resolve consent in the `run_native` closure from env + `cc.storage` `telemetry`; `app_started` on the first `update`; `save` stores `telemetry`; move the value across every `*self = app` / `*self = Self::new_empty(..)` (File → New/Open, recovery) so New/Open never sends a second start; verify t836 and a harness check that File → New keeps the session id
 - [ ] 2.2 `on_exit`: after the recovery write, enqueue `app_closed` and wait within the 2 s budget; verify the durability tests stay green (t351…, `openspec show durability --type spec`) and t841
-- [ ] 2.3 First-start notice through `KtApp::warn`-style notices (info, once) and the View menu checkbox next to Language (disabled with hover text when the build has no key); strings in all five catalogs `src/apps/kt-app/i18n/{en,ru,es,ar,zh-Hans}.toml`; verify t840 (`reach_tests.rs`, with the ПУТЬ line), `font_tests.rs`, `i18n_tests.rs`, `layout_tests.rs`
+- [ ] 2.3 First-start notice through `KtApp::warn`-style notices (info, once) with the "sent" / "NOT sent" lists and the same lists as the checkbox hover text and the View menu checkbox next to Language (disabled with hover text when the build has no key); strings in all five catalogs `src/apps/kt-app/i18n/{en,ru,es,ar,zh-Hans}.toml`; verify t840 (`reach_tests.rs`, with the ПУТЬ line), `font_tests.rs`, `i18n_tests.rs`, `layout_tests.rs`
 - [ ] 2.4 Commit stage 2
 
 ## 3. Release build and docs

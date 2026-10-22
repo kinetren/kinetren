@@ -68,12 +68,21 @@ Telemetry SHALL be enabled unless any of these holds: the build has no project k
 environment has `KINETREN_TELEMETRY=0` (or `off`/`false`) or `DO_NOT_TRACK=1`; the person
 turned it off. The choice SHALL be stored in eframe storage under `telemetry` (`on`/`off`)
 next to `lang`. On the first start of a build with a key (no stored choice), the program
-SHALL post one notice to the notices window naming what is sent and where it is switched off,
-and store `on`; the notice MUST NOT be shown again. The View menu SHALL carry a checkbox
+SHALL post one notice to the notices window and store `on`; the notice MUST NOT be shown
+again. The notice SHALL list, item by item: what IS sent (program start and clean close, session
+length, program version, OS and processor type, interface language, a random install number
+not tied to the person or the machine) and where it goes (PostHog, EU servers); what is NOT
+sent (projects, file names and paths, media, frames or sound, the person's name, the computer
+name, the IP address is not stored); and how to switch it off (the View menu item, or
+`KINETREN_TELEMETRY=0`). The same lists SHALL be shown as the checkbox's hover text, and both
+come from one catalog entry per list, so the notice and the hover text cannot disagree. The View menu SHALL carry a checkbox
 "Send anonymous usage statistics" next to Language; turning it off during a session SHALL
 cancel that session's `app_closed`. With no key in the build, the checkbox is shown disabled
 with a hover text saying this build does not send statistics.
-Why: the owner chose opt-out over opt-in (2026-10-22). Opt-out is honest only if the person
+Why: the owner chose opt-out over opt-in (2026-10-22). Research for F-COL-046 showed that
+Audacity's 2021 telemetry was opt-in and still drew a backlash, because people could not see
+what was collected; so the owner asked (2026-10-22) for the notice to list concretely what is
+sent and, to reassure, what is NOT sent. Opt-out is honest only if the person
 is told on the first start and the switch is where the other per-machine preferences are
 (rule 13 of the kt-app checklist: no new strip for a setting). `DO_NOT_TRACK` is the shared
 convention of command-line tools; honouring it costs one line.
@@ -90,10 +99,11 @@ convention of command-line tools; honouring it costs one line.
 - **WHEN** the harness app starts with a key and no stored choice, then opens View, then
   restarts with the stored state
 - **THEN** the notices list holds the telemetry notice once after the first start and not
-  after the restart; View holds the checkbox, checked; unchecking it sets the stored value to
+  after the restart; in every catalog the notice text contains both the "sent" and the "not
+  sent" list and the View menu item name, and the checkbox hover text holds the same two lists; View holds the checkbox, checked; unchecking it sets the stored value to
   `off` and the recording sink receives no `app_closed` on exit
-- **ПУТЬ** start Kinetren for the first time → a notice says anonymous statistics are sent and
-  points to View → open View → the checkbox "Send anonymous usage statistics" is checked next
+- **ПУТЬ** start Kinetren for the first time → a notice lists what is sent, what is NOT sent
+  (projects, files, media, names, IP) and points to View → open View → the checkbox "Send anonymous usage statistics" is checked next
   to Language → uncheck it → it stays unchecked after a restart, and no notice appears again
 - **TEST** t840 (`src/apps/kt-app/src/reach_tests.rs`)
 

@@ -59,8 +59,10 @@ first_start }` — pure, so the whole table is one unit test (t839). Order: no k
 `KINETREN_TELEMETRY` in `0|off|false` or `DO_NOT_TRACK=1` → off; stored `off` → off; stored
 `on` → on; nothing stored → on + `first_start`. The env cannot turn telemetry ON against a
 stored `off` (an override that re-enables what the person disabled would be a dark pattern).
-First start posts one notice and stores `on` at the next `save`; the notice text names the
-three things sent and the View menu item.
+First start posts one notice and stores `on` at the next `save`. The notice lists what is
+sent, what is NOT sent (projects, file names and paths, media, names of the person and the
+computer, stored IP) and the View menu item (owner, 2026-10-22, after the Audacity finding in
+F-COL-046); the checkbox's hover text repeats the two lists from the same catalog entries.
 
 ### D5. Thread and exit budget
 `Telemetry::start` spawns one thread `kt-telemetry` with a `sync_channel(4)`; `send` uses
