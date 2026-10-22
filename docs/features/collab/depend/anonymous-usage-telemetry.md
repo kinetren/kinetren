@@ -1,18 +1,18 @@
 ---
 id: F-COL-046
 title: Anonymous usage telemetry — launches, time in the program, clean exit
-status: кандидат
+status: сделано
 priority: C
 cost: M
 category: collab/depend
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, vscode-1.136, blender-5.2]
-we_have: нет
+we_have: да
 crates: [kt-app, kt-version]
 invariants: [12]
 ui_rules: []
-round: null
-point: null
-tests: []
+round: "telemetry-posthog"
+point: "change telemetry-posthog (летопись заморожена на §470)"
+tests: [836, 837, 838, 839, 840, 841, 842, 843]
 depends_on: []
 trackers: []
 services: [posthog]
@@ -135,63 +135,10 @@ noticed only when it goes wrong.
 
 ## Как ложится на Kinotrain
 
-CAPABILITY: openspec/specs/durability/
-(the closest existing capability: `openspec/specs/telemetry/` does not exist yet and the
-checker requires an existing one; the planned change `telemetry-posthog` is to create it.)
-
-### Что уже есть
-
-- `src/apps/kt-app/src/app.rs:9013` — `pub fn run()`: the single start; `data_dir()` is
-  resolved first (`:9017`), `eframe::run_native("kinetren", …)` at `:9043`,
-  `install_panic_hook()` at `:9058`, and at `:9079` `take_crash_report()` turns the last
-  session's panic into a warning. This is the place where «a session started» is known.
-- `src/apps/kt-app/src/app.rs:8957` — `fn on_exit`: the one point of a normal close; it
-  already blocks up to 5 s on the background autosave (`recv_timeout`) and writes recovery.
-  `:8943` — `fn save(&mut self, storage…)` stores `lang` and `last_project` in eframe's
-  storage every 30 s; a «notice was shown» flag and the switch belong to the same storage.
-  `:9050` — `KT_LANG` env override read before storage: the existing pattern for an env
-  override of a stored choice.
-- `src/apps/kt-app/src/journal.rs` — `data_dir()` (`$XDG_DATA_HOME/kinetren`, the single
-  resolver for recovery, journal, locks and eframe storage), `install_panic_hook()`,
-  `crash_path()`, `take_crash_report()`. A panic already leaves a file and is reported
-  locally at the next start; SIGKILL, abort and power loss leave nothing.
-- `src/apps/kt-app/src/toolbar.rs:473` — the Language submenu inside the View menu,
-  placed there by checklist rule 13 («no new strip for it»); the natural neighbour for a
-  usage-data switch.
-- `src/libs/kt-version/src/lib.rs` — `FULL`/`SHORT` and `display()` switching on
-  `cfg!(debug_assertions)`: the build-type fact that must also gate reporting.
-- `src/Cargo.lock` — 509 packages, none of `reqwest|hyper|ureq|rustls|native-tls|openssl|
-  tokio|http`; no `std::net` or `TcpStream` anywhere in `src/`. There is no network code
-  today, in any form.
-
-### Чего не хватает
-
-A session id, a start event, an exit event that is flushed before the process ends, a
-first-start notice, the switch and its env override (including honouring `DO_NOT_TRACK`),
-and a translated notice text in every catalogue under `src/apps/kt-app/i18n/`.
-
-### Что мешает
-
-Two copies of the program share one eframe storage (F-COL-045): the «notice shown» flag
-and the switch are per machine-user, not per copy — acceptable, but the second copy must
-not show the notice again or overwrite the first copy's choice. `on_exit` is not reached
-at all when the app is re-created in place (`*self = app`, see `Drop for KtApp`), which is
-correct for telemetry (that is not an exit) but means the exit event cannot be tied to
-`Drop`.
-
-### В категории `collab/` — две обязательные строки (правило 13)
-
+CAPABILITY: openspec/specs/telemetry/ — contract in `spec.md`, why and code paths in `design.md`.
+Two anonymous events (start after the first frame, clean close with the session length) from our own PostHog client in `src/apps/kt-app/src/telemetry.rs`; on by default, said once with what is and is NOT sent, switched off in View; only release builds carry the key.
 БЕЗ СЕТИ: ВЫРОЖДАЕТСЯ — `src/apps/kt-app/src/journal.rs` — on one machine «did the last session end cleanly» already degenerates into the panic report: the hook writes kt-app-crash.txt into the data directory and the next start shows it once, so a panic is known locally; launches, session length and every non-panic death (kill, abort, power loss) are recorded nowhere, and nothing is ever summed across machines.
-
 ЦЕНА СЕТИ: summing starts and exits over every installation into daily users, session length and the clean-exit share — внешний исполнитель — the aggregation is done by PostHog's host, not by our process; without it each copy knows only its own last panic, and the question «how many people run this build and how often it dies» has no one to answer it.
-
-### Какие инварианты задевает
-
-Invariant 12 (UI does not heat the system): sending must not wake repaints or run in a
-draw path; it lives on its own thread and only at start and exit. Invariant 10 (no
-linking with libav*) is untouched, but the release guard in `scripts/release-build.sh`
-also checks the `GLIBC_` ceiling, which a TLS crate with native code must pass. Invariant
-11 (no wall-clock in offline paths) is not touched: kt-cli and export never report.
 
 ## Оценка
 
@@ -206,11 +153,10 @@ also checks the `GLIBC_` ceiling, which a TLS crate with native code must pass. 
 
 ## Вердикт
 
-Taken: `кандидат` → planned OpenSpec change `telemetry-posthog` (new capability
-`telemetry`). Why: two anonymous events answer «how many run it and how often it dies»,
-which nothing in the tree can answer today, at the price of one dependency and one
-notice — and the research says the price of failure is trust, so the notice must name
-the host and region and the switch must be where the notice says.
+Done in change `telemetry-posthog` (2026-10-22, capability `telemetry`). Taken because two
+anonymous events answer «how many run it and how often it dies», which nothing in the tree
+could answer; the research said the price of failure is trust, so the notice names the host,
+the region, what is sent and what is NOT sent, and the switch is where the notice says.
 
 ## Источники
 

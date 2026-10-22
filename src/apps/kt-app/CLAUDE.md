@@ -1,6 +1,6 @@
 # kt-app (eframe/egui GUI)
 
-> Контракты крейта и обязательные тесты — `openspec/specs/{ui-timeline,ui-reach,durability}/spec.md`, причины решений — `design.md` рядом.
+> Контракты крейта и обязательные тесты — `openspec/specs/{ui-timeline,ui-reach,durability,telemetry}/spec.md`, причины решений — `design.md` рядом.
 
 UI-инварианты, выстраданные раундами 4–5 (детали и номера тестов — docs/porting-notes.md 38–94). Нарушение любого — регрессия производительности или UX.
 

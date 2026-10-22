@@ -114,7 +114,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 даёт требования и сценарии capability, у каждого сценария — строка `TEST tNNN (путь)`.
 Capability по поведению: time-model, transport, audio-render, video-plan, video-fx, audio-fx,
 transitions, automation, morpher, compositions, generators, media-index, export,
-project-format, durability, ui-timeline, ui-reach. У каждого `CLAUDE.md` крейта первой
+project-format, durability, ui-timeline, ui-reach, telemetry. У каждого `CLAUDE.md` крейта первой
 строкой стоит, какие capability его накрывают. **Любая правка UI** — kt-app `reach_tests.rs`
 (`ui-reach`) и `layout_tests.rs` (`ui-timeline`); любой текст в UI — `font_tests.rs`/`i18n_tests.rs`.
 

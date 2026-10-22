@@ -387,7 +387,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-COL-004 | Материал, который синхронизируют во время съёмки | исследовано | C | M | частично | `collab/assets/sync-while-shooting.md` |
 | F-COL-007 | Чем именно отдают монтаж: AAF, OMF, EDL, XML | исследовано | C | M | частично | `collab/handoff/interchange-formats.md` |
 | F-COL-019 | Кто сейчас в проекте | исследовано | C | M | частично | `collab/claim/presence-and-whose-cursor.md` |
-| F-COL-046 | Anonymous usage telemetry — launches, time in the program, clean exit | кандидат | C | M | нет | `collab/depend/anonymous-usage-telemetry.md` |
+| F-COL-046 | Anonymous usage telemetry — launches, time in the program, clean exit | сделано | C | M | да | `collab/depend/anonymous-usage-telemetry.md` |
 | F-EXP-003 | Smart render — копирование нетронутых кусков без перекодирования | кандидат | C | M | нет | `export/pipeline/smart-render-passthrough.md` |
 | F-EXT-002 | Скриптинг и автоматизация — API для своих операций над проектом | кандидат | C | M | частично | `plugins/scripting/scripting-api.md` |
 | F-HLP-022 | Контекстная справка по F1: страница про то, на что смотришь | исследовано | C | M | нет | `help/reference/f1-context-help.md` |

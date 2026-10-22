@@ -37,7 +37,7 @@ context: |
 
   Capability (по поведению): time-model, transport, audio-render, video-plan, video-fx,
   audio-fx, transitions, automation, morpher, compositions, generators, media-index,
-  export, project-format, durability, ui-timeline, ui-reach.
+  export, project-format, durability, ui-timeline, ui-reach, telemetry.
 
   Летописи: `docs/user-feedback.md` — слова и решения владельца по раундам (первоисточник,
   дописывается ПЕРЕД работой); `docs/features/` — разведка ЧУЖИХ редакторов (наши решения
