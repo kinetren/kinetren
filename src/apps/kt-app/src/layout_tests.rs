@@ -17341,3 +17341,23 @@ fn t815_recovery_of_a_nested_scene_is_orders_of_magnitude_smaller() {
     assert_eq!(kt_model::project_file::from_text(&std::fs::read_to_string(&rec).unwrap()).unwrap().project, p);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Test 843 (telemetry-posthog): the live-scenario dump stays valid JSON when a notice spans
+/// several lines. The telemetry notice (sent / NOT sent lists) is the first multi-line one,
+/// and its raw line break made `geom.json` unreadable: every live scenario then waited for a
+/// first frame that the dump could no longer report.
+#[test]
+fn t843_geometry_dump_survives_a_multi_line_notice() {
+    let mut h = harness();
+    let path = std::env::temp_dir().join(format!("kt-geom-t843-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    h.state_mut().geom_dump_path = Some(path.to_string_lossy().into_owned());
+    h.state_mut().note("first line\nsecond \"quoted\" line\tend");
+    h.state_mut().geom_dumped_at = None;
+    h.step();
+    let text = std::fs::read_to_string(&path).expect("the dump is written");
+    let _ = std::fs::remove_file(&path);
+    let v: serde_json::Value = serde_json::from_str(&text).expect("the dump is valid JSON");
+    let first = v["notices"][0].as_str().unwrap_or_default();
+    assert!(first.contains("first line | second") && first.ends_with("end"), "{first}");
+}

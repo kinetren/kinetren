@@ -107,6 +107,13 @@ convention of command-line tools; honouring it costs one line.
   to Language → uncheck it → it stays unchecked after a restart, and no notice appears again
 - **TEST** t840 (`src/apps/kt-app/src/reach_tests.rs`)
 
+#### Scenario: The multi-line notice keeps the live-scenario dump readable
+- **WHEN** a notice with line breaks, quotes and a tab is posted while `KT_GEOM_DUMP` is set
+- **THEN** the dump is valid JSON and the notice reads with ` | ` in place of each break.
+  Found by the live check of this change: the first multi-line notice in the program made
+  `geom.json` unparsable, and every live scenario waited for a frame it could not see
+- **TEST** t843 (`src/apps/kt-app/src/layout_tests.rs`)
+
 ### Requirement: Sending never blocks the UI and never holds the exit
 
 Events SHALL be sent from one background thread fed by a bounded channel; the UI thread only

@@ -1167,7 +1167,12 @@ impl KtApp {
                 .iter()
                 .rev()
                 .take(5)
-                .map(|n| format!("\"{}\"", n.text.replace('\\', "/").replace('"', "'")))
+                // a multi-line notice (telemetry's lists) must not break the hand-built
+                // JSON: line breaks become " | ", as in the journal (t843)
+                .map(|n| {
+                    let t = n.text.replace('\\', "/").replace('"', "'");
+                    format!("\"{}\"", t.replace(['\n', '\r', '\t'], " | "))
+                })
                 .collect::<Vec<_>>()
                 .join(","),
             screen.width(),
