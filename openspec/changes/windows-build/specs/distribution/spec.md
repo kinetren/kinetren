@@ -25,7 +25,7 @@ licence duties for distributing it.
 #### Scenario: The Windows parts of the tree are consistent
 - **WHEN** `src/scripts/dist-check.py --check` runs on the repository; then on temporary copies where, one at a time, the Dockerfile lacks the `windows` stage, the Makefile lacks `windows` or `windows-test`, the release workflow doesn't attach the zip, the CI workflow lacks the Windows job, `release-build.sh` lacks the PE import check, or the zip recipe adds a `*.dll`
 - **THEN** the repository passes; each copy fails and the violation is reported with its file
-- **TEST** t859 (`src/apps/kt-cli/tests/dist_guard.rs`)
+- **TEST** t860 (`src/apps/kt-cli/tests/dist_guard.rs`)
 
 #### Scenario: The zip passes the delivery checks
 - **WHEN** `make windows` finishes
@@ -50,7 +50,7 @@ on the Windows runner.
 #### Scenario: The Windows job runs the cross-built archive
 - **WHEN** `dist-check.py --check` reads `ci.yml`
 - **THEN** the Windows job runs on `windows-latest`, depends on the Linux job, downloads the nextest archive and the pinned FFmpeg (verifying its SHA-256), runs `cargo nextest run --archive-file …` with no compilation step, and uploads only a failure log with `retention-days ≤ 3`; the archive itself is passed between jobs with `retention-days: 1`
-- **TEST** t859 (`src/apps/kt-cli/tests/dist_guard.rs`)
+- **TEST** t860 (`src/apps/kt-cli/tests/dist_guard.rs`)
 
 ### Requirement: A release carries the Windows zip
 The release workflow SHALL build the Windows zip through `release-build.sh --target windows`
@@ -62,4 +62,4 @@ complete and send Windows users to an older version.
 #### Scenario: A tag produces both assets
 - **WHEN** the owner pushes a `v*` tag on a commit of the default branch
 - **THEN** the release has the Linux tarball and the Windows zip, each with its `.sha256`, and `sha256sum -c` passes on both pairs; the zip unpacked on a clean Windows 10/11 starts `kinetren.exe`, shows the "FFmpeg not found" notice, and after **Download** plays a clip
-- **TEST** manual check after the first tag with this change, recorded in `tasks.md`; the workflow shape is t859
+- **TEST** manual check after the first tag with this change, recorded in `tasks.md`; the workflow shape is t860

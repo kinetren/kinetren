@@ -21,4 +21,4 @@ reports only the mix format.
 #### Scenario: 44.1 kHz and 6-channel devices
 - **WHEN** the edge converts 1 s of a 1 kHz stereo sine (L) and silence (R) for a 44.1 kHz stereo device, a 48 kHz 6-channel device and a 48 kHz stereo device, filling in callback-sized chunks of 441, 512 and 1024 frames under an allocation-counting allocator
 - **THEN** the 44.1 kHz output has 44 100 ± 1 frames per 48 000 consumed, and its spectrum peaks at 1 kHz with images above 20 kHz at least 60 dB down; the 6-channel output has the sine in channel 0 and exact zeros in channels 1–5; the stereo output equals the input byte for byte; zero allocations happen during the fills
-- **TEST** t856 (`src/apps/kt-app/src/audio_out.rs`)
+- **TEST** t857 (`src/apps/kt-app/src/audio_out.rs`)

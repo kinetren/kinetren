@@ -24,7 +24,7 @@ mouse. A notice without buttons would be a dead end ("create, but can't manage",
 - **WHEN** the app starts with the FFmpeg search limited to an empty folder and a project with one video clip; the notice's **Locate folder…** gets a folder without DLLs, then a folder with a complete set; then *View → FFmpeg…* is opened. On Windows the complete set is the pinned gyan.dev build. On Linux the test's search seam reports that folder as complete and loads the system FFmpeg behind it, so the same UI path runs in CI on both OSes
 - **THEN** before: the notice is shown once, the clip is a placeholder, the window lists the empty folder as rejected; the folder without DLLs is refused with "no avcodec-*.dll" and the choice is unchanged; after the complete folder: the clip shows frames without a restart, the window shows the folder and the loaded version, and the choice is in the saved settings
 - **PATH** start → notice "FFmpeg not found" over the timeline, clip drawn as a placeholder → **Locate folder…** → folder picker → pick the folder with DLLs → notice closes, the clip's filmstrip and the preview show frames → View → FFmpeg… → window: folder path, "FFmpeg 8.1.2 (avcodec 62.x)", no rejected list except the empty folder
-- **TEST** t849 (`src/apps/kt-app/src/reach_tests.rs`)
+- **TEST** t850 (`src/apps/kt-app/src/reach_tests.rs`)
 
 ### Requirement: UI language on Windows comes from the user's locale
 On first start, when no language has been chosen, the UI language SHALL come from
@@ -37,7 +37,7 @@ Why: these variables are unset on Windows, so every Windows user started in Engl
 - **WHEN** detection runs with injected sources: no variables and OS locale `ru-RU`; no variables and `zh-Hans-CN`; `LANG=es_ES.UTF-8` and OS locale `ru-RU`; no variables and `fr-FR`
 - **THEN** the languages are Russian, Chinese, Spanish (the variable wins) and none (English is used)
 - **PATH** there is no gesture: the first start of `kinetren.exe` on a Windows account whose display language is Russian (no LANG set) shows the menu bar, toolbar hints and dialogs in Russian at once; after View → Language → English the choice wins on every next start
-- **TEST** t860 (`src/apps/kt-app/src/i18n_tests.rs`)
+- **TEST** t861 (`src/apps/kt-app/src/i18n_tests.rs`)
 
 ### Requirement: Windows window behaviour matches Linux where the user can see it
 On Windows a dropped file SHALL land where the pointer is when it is released over the

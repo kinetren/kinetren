@@ -37,7 +37,7 @@ the other. On Windows the lock was a stub "always free", and two copies wrote on
 #### Scenario: The lock key is normalized, the pid is read while the lock is busy
 - **WHEN** the lock key is computed for `C:\Proj\a.kt`, `c:\proj\A.kt`, `\\?\C:\Proj\a.kt` and `C:/Proj/a.kt` by the Windows rule (a pure function, checked on any OS); on Windows the project is held by one handle and taken by a second
 - **THEN** all four keys are equal, and by the Linux rule `/p/a.kt` and `/p/A.kt` differ; the second handle gets `Busy` with the holder's pid, read from the pid file
-- **TEST** t851 (`src/apps/kt-app/src/project_lock.rs`)
+- **TEST** t852 (`src/apps/kt-app/src/project_lock.rs`)
 
 ### Requirement: Per-user data lives in `kinetren`; the former directory is moved once
 The application's per-user data directory SHALL be `$XDG_DATA_HOME/kinetren` (falling
@@ -75,7 +75,7 @@ any `kinotrain` folder found there.
 #### Scenario: Directory per OS, never the working directory
 - **WHEN** the resolver runs with injected environments: Linux with `XDG_DATA_HOME`; Linux with only `HOME`; Linux with neither; Windows with Roaming and Local known folders and no `HOME`; Windows with known folders unavailable; each time with a `kinotrain/` folder in the working directory
 - **THEN** the results are `$XDG_DATA_HOME/kinetren`, `~/.local/share/kinetren`, the temp directory (with a warning), `%APPDATA%\kinetren\data` with downloads under `%LOCALAPPDATA%\kinetren`, and the temp directory (with a warning); the `kinotrain/` folder in the working directory is untouched in every case
-- **TEST** t850 (`src/libs/kt-dirs/tests/dirs.rs`)
+- **TEST** t851 (`src/libs/kt-dirs/tests/dirs.rs`)
 
 ## ADDED Requirements
 
@@ -95,4 +95,4 @@ opened for `fsync` there; write-through is the platform's way to make the rename
 #### Scenario: Retry within the budget, then an honest failure
 - **WHEN** the replace runs through an injected file system that answers "sharing violation" twice and then succeeds; then one that answers it for longer than the budget
 - **THEN** the first write succeeds with `dir_synced == true` after exactly three attempts; the second returns an error that names the sharing violation, the project is unchanged and no temporary file remains
-- **TEST** t852 (`src/libs/kt-otio/tests/io.rs`)
+- **TEST** t853 (`src/libs/kt-otio/tests/io.rs`)

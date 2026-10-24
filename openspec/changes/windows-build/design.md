@@ -126,7 +126,7 @@ The order of directories is the spec's (media-index). The decisions inside it:
   has no other third-party DLLs, because codecs are linked into avcodec.
 - **Opening on Linux:** unchanged for SONAMEs. A `KINETREN_FFMPEG_DIR` candidate is opened by
   full paths in the same dependency order; `ld.so` then matches NEEDED by SONAME to the
-  already-loaded copies. This gives developers and t848 a way to point at a specific build
+  already-loaded copies. This gives developers and t849 a way to point at a specific build
   on both OSes.
 - **Retry:** the `OnceLock<Result<…>>` becomes `OnceLock<Loaded>` (success, forever) plus a
   `Mutex<Option<Report>>` holding the last failure. `backend()` returns the loaded backend,
@@ -180,7 +180,7 @@ The order of directories is the spec's (media-index). The decisions inside it:
 - **Job model:** a `BgJob` (progress, cancel, `Drop` stops the thread), like analysis jobs.
   The UI polls it and repaints only while it moves (invariant 12).
 - **Test seam:** debug-only `KT_FFMPEG_DOWNLOAD_URL` and hash override, the pattern of
-  `KT_TELEMETRY_URL`. t847 serves a committed tiny `.7z` fixture
+  `KT_TELEMETRY_URL`. t848 serves a committed tiny `.7z` fixture
   (`src/fixtures/ffmpeg-mini.7z`, a few KB, made by `src/fixtures/gen-ffmpeg-mini.sh` with
   stub DLL files) from a local `TcpListener`.
 - **Licence:** the confirmation dialog names gyan.dev, the version, the size and "GPLv3",
@@ -199,7 +199,7 @@ The order of directories is the spec's (media-index). The decisions inside it:
 This is a new crate, `src/libs/kt-dirs`, with no dependencies besides `windows-sys` under
 `cfg(windows)` (`SHGetKnownFolderPath` for `FOLDERID_RoamingAppData` and
 `FOLDERID_LocalAppData`). It provides `data_dir()` and `local_dir()`, both over an injected
-`Env` for tests (t850). kt-app and kt-cli both use it, so the second copy in kt-cli
+`Env` for tests (t851). kt-app and kt-cli both use it, so the second copy in kt-cli
 goes away. The kinotrain migration stays in kt-app, compiled only for Linux, and runs only
 against a resolved per-user root. kt-app also passes `NativeOptions::persistence_path`
 derived from `data_dir()`, so eframe and we can't drift apart. A task checks that on Linux
@@ -256,7 +256,7 @@ touched. The journal rotation and `user_store` call the same function.
 `url.rs` functions take `PathFlavor::{Posix, Windows}`, with `PathFlavor::NATIVE` for
 production callers. They work on strings: drive letter `X:` plus a separator, UNC `\\host\
 share`, the verbatim prefix, case folding for Windows comparison. Because they're pure,
-t853–t855 run the Windows rules on Linux CI and the Posix rules on Windows CI.
+t854–t856 run the Windows rules on Linux CI and the Posix rules on Windows CI.
 
 - **"Absolute" on reading is the union of both flavors** (`/…`, `X:\…`, `X:/…`, `\\…`). A
   path absolute anywhere is never joined to the project directory. On the native OS it
@@ -283,7 +283,7 @@ preallocated to cover the largest callback cpal reports. The callback pulls whol
 chunks from the ring as the FIFO runs low. The playhead advances by the engine frames
 consumed (invariant 6 counts what the engine handed out), and latency compensation adds the
 resampler's delay converted to engine frames. Mono gets (L+R)/2. Allocation-freeness is
-proven in t856 with a counting global allocator in the test binary.
+proven in t857 with a counting global allocator in the test binary.
 
 - **Why at the edge and not in the render thread:** the ring and the playhead stay in engine
   frames, and nothing upstream learns about device rates (invariant 1).
@@ -305,13 +305,13 @@ proven in t856 with a counting global allocator in the test binary.
   - mpeg4: `q:v`
 
   The muxer converts through swscale to the candidate's pixel format, so NV12 for QSV costs
-  one conversion. `cfg(target_os)` only selects which list production uses; t857 checks
+  one conversion. `cfg(target_os)` only selects which list production uses; t858 checks
   both lists.
 - **Goldens:** each golden constant becomes a table
   `&[(os, arch, value, provenance)]`. Lookup is by `(target_os, target_arch)`; a missing
-  entry gives a skip with a named reason. t858 guards that the delivered platforms have
+  entry gives a skip with a named reason. t859 guards that the delivered platforms have
   entries. The Windows values are taken from the first green Windows CI run of the archive
-  (D11), and the provenance line names the run. So t858 lands in the same stage that
+  (D11), and the provenance line names the run. So t859 lands in the same stage that
   commits them, not earlier.
 - **Revision of the export decision "constants on linux/x86_64":** it was a single platform
   because there was a single delivery. Now there are two deliveries, and determinism

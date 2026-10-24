@@ -74,22 +74,22 @@ installing FFmpeg — exactly at the moment when the user has just done what the
 #### Scenario: The search order on Windows and the DLL names by major
 - **WHEN** the search plan is built over substituted environment and file system: the chosen directory, the variable, the directory next to the exe, the download directory, a `PATH` of three directories, known locations; a complete set 8 lies in a known location, a complete set 7 — in the chosen directory
 - **THEN** the user's directory with major 7 is chosen; the names of the five DLLs of each major match the table of the requirement; the loading order inside the set is avutil, swresample, swscale, avcodec, avformat; the plan function is pure and checked on any OS
-- **TEST** t843 (`src/libs/kt-ffmpeg/tests/loader_plan.rs`)
+- **TEST** t844 (`src/libs/kt-ffmpeg/tests/loader_plan.rs`)
 
 #### Scenario: Rejected directories are named with a reason; a winget link is resolved
 - **WHEN** `PATH` contains: a directory with a static `ffmpeg.exe` without DLLs; the `WinGet\Links` directory with an `ffmpeg.exe` link to a package where a complete set 8 lies; a directory with `avcodec-63.dll` (FFmpeg 9); a directory where `avcodec-62.dll` is present but `avutil-60.dll` is not
 - **THEN** the directory of the link's target is chosen; the report lists each rejected directory with a reason ("static build — no DLLs", "FFmpeg 9 (avcodec-63) is not supported", "no avutil-60.dll")
-- **TEST** t844 (`src/libs/kt-ffmpeg/tests/loader_plan.rs`)
+- **TEST** t845 (`src/libs/kt-ffmpeg/tests/loader_plan.rs`)
 
 #### Scenario: The set is loaded from one directory (Windows)
 - **WHEN** on Windows (or under wine) the pinned gyan.dev 8.1.2 build is loaded from a directory, and a directory with a different `avutil-60.dll` stands earlier in `PATH`
 - **THEN** the load succeeds, `avcodec_version()` gives major 62, and the path of each of the five modules lies in the chosen directory; without the pinned build on the machine the test is skipped with a named reason
-- **TEST** t845 (`src/libs/kt-ffmpeg/tests/loader_windows.rs`)
+- **TEST** t846 (`src/libs/kt-ffmpeg/tests/loader_windows.rs`)
 
 #### Scenario: A failure is not remembered, success is remembered forever
 - **WHEN** the first load runs with an empty list of directories, then a directory with a complete set is added and a rescan is called, then the rescan is called again
 - **THEN** the first load is an error with the search report; the second is a success; the third returns the same loaded set, without opening the libraries again
-- **TEST** t846 (`src/libs/kt-ffmpeg/tests/loader_plan.rs`)
+- **TEST** t847 (`src/libs/kt-ffmpeg/tests/loader_plan.rs`)
 
 ## ADDED Requirements
 
@@ -117,7 +117,7 @@ under its license.
 #### Scenario: Check, unpacking and atomic installation
 - **WHEN** the loader receives from a local test server a small 7z archive of the same structure (`<root>/bin/*.dll`, `<root>/LICENSE`, `<root>/bin/ffmpeg.exe`, `<root>/include/…`), first with a wrong hash, then with the right one; then the download is cancelled midway; then the server cuts the connection
 - **THEN** with a wrong hash the download directory is empty and the error names the expected and the received hash; with the right one `8.1.2\` appears with only the DLLs and the license (without exe and include), and there are no temporary directories; cancellation and a break leave the download directory empty
-- **TEST** t847 (`src/apps/kt-app/src/ffmpeg_setup.rs`)
+- **TEST** t848 (`src/apps/kt-app/src/ffmpeg_setup.rs`)
 
 ### Requirement: The FFmpeg search report is visible to the person and to kt-cli
 The FFmpeg search result SHALL be available as a report: the chosen directory (or the SONAME on
@@ -133,4 +133,4 @@ what to do.
 #### Scenario: kt-cli prints the report
 - **WHEN** `kt-cli ffmpeg` is started with `KINETREN_FFMPEG_DIR` pointing at an empty directory, and with FFmpeg available by the usual path; then without an available FFmpeg
 - **THEN** in the first case the output names the empty directory as rejected ("no avcodec-*.dll"), the chosen candidate and its version, exit code 0; in the second — the list of rejected ones and a hint for its OS, a non-zero exit code
-- **TEST** t848 (`src/apps/kt-cli/tests/cli.rs`)
+- **TEST** t849 (`src/apps/kt-cli/tests/cli.rs`)

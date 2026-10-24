@@ -1721,6 +1721,25 @@ project is in EU. After the Audacity finding of F-COL-046:
 — the first-start notice and the menu checkbox's hover text list what IS sent and what is
 NOT sent. Change `openspec/changes/telemetry-posthog`.
 
+## Windows build (2026-10-22)
+
+> we need a build for windows, it touches many things.. the same search and work with libavcodec.dll? how to find it..
+
+**Answers (AskUserQuestion, 2026-10-22):** FFmpeg on Windows —
+
+> item 1. + make it possible to download the shared build from https://www.gyan.dev/ffmpeg/builds/#release-builds
+
+that is, the rule "no FFmpeg build of our own" stays: the program *finds* the user's installed
+shared FFmpeg (the folder he chose, `KINETREN_FFMPEG_DIR`, `ffmpeg\` next to the exe, `PATH`
+including winget's links, scoop/winget/`C:\ffmpeg`) and, on a click, downloads gyan.dev's shared
+release build; no DLLs in our zip. Toolchain — *cross-build in Docker (mingw)*. Delivery — *a
+portable zip* (no installer, no signing yet).
+
+**Found before the plan:** gyan.dev's "latest release" link already serves FFmpeg 9.0.2, which
+the loader (majors 6/7/8) does not support. The download is therefore pinned to
+`ffmpeg-8.1.2-full_build-shared.7z` with a SHA-256 committed in our source; FFmpeg 9 is a
+separate change (Linux needs it too). Change `openspec/changes/windows-build`.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

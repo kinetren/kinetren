@@ -40,7 +40,7 @@ open with YUV420P at all.
 #### Scenario: The candidate list and its settings per OS
 - **WHEN** the candidate list and the opening settings are built for Linux and for Windows (a pure function, checked on any OS)
 - **THEN** the order matches the requirement for each OS; `h264_vaapi` is only in the Linux list, `h264_amf` and `h264_mf` — only in the Windows list; `h264_qsv` has the pixel format NV12; each candidate has a quality setting
-- **TEST** t857 (`src/libs/kt-ffmpeg/tests/encoders.rs`)
+- **TEST** t858 (`src/libs/kt-ffmpeg/tests/encoders.rs`)
 
 ### Requirement: Golden references for raw streams
 The raw stream functions (`render_raw_audio`/`render_raw_video`) SHALL deliver audio f32
@@ -76,4 +76,4 @@ for all OSes would keep Windows red forever, and its absence would be unguarded.
 #### Scenario: Each shipped platform has its own constants
 - **WHEN** the reference tables (export, title, video FX, FX thumbnails, merging of geometry series) are read by the guard
 - **THEN** each platform from the shipped list (linux/x86_64, windows/x86_64) has an entry in each table, and each entry has a provenance line (machine, run); on a platform without an entry the comparison test is skipped with a named reason, rather than passing silently
-- **TEST** t858 (`src/libs/kt-engine/tests/golden_export.rs`)
+- **TEST** t859 (`src/libs/kt-engine/tests/golden_export.rs`)
