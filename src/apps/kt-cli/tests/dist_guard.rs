@@ -27,6 +27,10 @@ fn guard(root: &Path) -> (bool, String) {
 
 #[test]
 fn t834_the_committed_tree_is_consistent() {
+    if cfg!(windows) {
+        eprintln!("t834 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
     let (ok, text) = guard(&repo());
     assert!(ok, "distribution guard is red:\n{text}");
 }
@@ -64,6 +68,10 @@ fn edit(dir: &Path, file: &str, from: &str, to: &str) {
 
 #[test]
 fn t835_guard_catches_each_class_of_drift() {
+    if cfg!(windows) {
+        eprintln!("t835 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
     let dir = copy_tree("clean");
     let (ok, text) = guard(&dir);
     assert!(ok, "an unchanged copy must pass:\n{text}");
@@ -119,6 +127,72 @@ fn t835_guard_catches_each_class_of_drift() {
     ];
     for (tag, brk, want) in cases {
         let dir = copy_tree(tag);
+        brk(&dir);
+        let (ok, text) = guard(&dir);
+        assert!(!ok, "{tag}: the guard must fail:\n{text}");
+        assert!(text.contains(want), "{tag}: expected {want:?} in:\n{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// t860 (windows-build, distribution): the Windows parts of the tree are consistent, and the
+/// guard catches each Windows class of drift.
+#[test]
+fn t860_guard_catches_windows_drift() {
+    if cfg!(windows) {
+        eprintln!("t860 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    let dir = copy_tree("win-clean");
+    let (ok, text) = guard(&dir);
+    assert!(ok, "an unchanged copy must pass:\n{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    type Break = fn(&Path);
+    let cases: [(&str, Break, &str); 8] = [
+        (
+            "stage",
+            |d| edit(d, "src/packaging/Dockerfile", "FROM base AS windows", "FROM base AS win"),
+            "src/packaging/Dockerfile: no `FROM base AS windows` stage",
+        ),
+        (
+            "last-stage",
+            |d| edit(d, "src/packaging/Dockerfile", "\nFROM base AS linux\n", "\n"),
+            "src/packaging/Dockerfile: the last stage must be `FROM base AS linux`",
+        ),
+        (
+            "make-windows-test",
+            |d| edit(d, "Makefile", "\nwindows-test:", "\nwin-test:"),
+            "Makefile: target `windows-test` is missing",
+        ),
+        (
+            "release-zip",
+            |d| edit(d, ".github/workflows/release.yml", "release-build.sh --target windows", "release-build.sh"),
+            ".github/workflows/release.yml: must build the Windows zip",
+        ),
+        (
+            "ci-job",
+            |d| edit(d, ".github/workflows/ci.yml", "\n  windows-test:\n", "\n  win-test:\n"),
+            ".github/workflows/ci.yml: no `windows-test` job",
+        ),
+        (
+            "ci-compiles",
+            |d| edit(d, ".github/workflows/ci.yml", "      - name: Tests (the cross-built archive, no compilation)\n", "      - name: Build\n        run: cargo build\n\n      - name: Tests (the cross-built archive, no compilation)\n"),
+            ".github/workflows/ci.yml: nothing is compiled on the Windows runner",
+        ),
+        (
+            "pe-check",
+            |d| edit(d, "src/scripts/release-build.sh", "pe_checks() {", "pe_skipped() {"),
+            "src/scripts/release-build.sh: no PE import check",
+        ),
+        (
+            "dll-in-zip",
+            |d| edit(d, "src/scripts/release-build.sh", "    cp packaging/README-windows.txt \"$STAGE/\"\n", "    cp packaging/README-windows.txt \"$STAGE/\"\n    cp target/ffmpeg-win/8.1.2/avcodec-62.dll \"$STAGE/\"\n"),
+            "src/scripts/release-build.sh: the zip must carry no DLL",
+        ),
+    ];
+    for (tag, brk, want) in cases {
+        let dir = copy_tree(&format!("win-{tag}"));
         brk(&dir);
         let (ok, text) = guard(&dir);
         assert!(!ok, "{tag}: the guard must fail:\n{text}");

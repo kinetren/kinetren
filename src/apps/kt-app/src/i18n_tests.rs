@@ -236,7 +236,7 @@ fn t131_source_language_is_english() {
                 Some(at) => &src[..at],
                 None => &src[..],
             };
-            let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().into_owned();
+            let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
             for (line, ch) in crate::font_tests::literal_chars(ui_part) {
                 if is_cyrillic(ch) {
                     bad.push(format!("{rel}:{line}"));

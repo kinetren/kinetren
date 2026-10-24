@@ -47,6 +47,10 @@ RUN dpkg --add-architecture i386 && apt-get update \
 # does not cross stages, so it is not named again here)
 RUN rustup target add x86_64-pc-windows-gnu \
     && chmod -R a+w /usr/local/rustup /usr/local/cargo
+# nextest runs the cross-built tests under wine (`make windows-test`) and packs the archive
+# the windows-latest CI job runs; the same version as the host's finish.sh
+RUN curl -fsSL https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.146/cargo-nextest-0.9.146-x86_64-unknown-linux-gnu.tar.gz \
+    | tar xzf - -C /usr/local/cargo/bin && cargo nextest --version
 ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
     CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc \
     AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar \

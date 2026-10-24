@@ -1,0 +1,25 @@
+# Line endings (change windows-build): the tree is LF everywhere, also in a Windows checkout.
+# Byte-exact fixtures (.otio goldens, .kt projects) are read and compared as bytes, and git on a
+# Windows runner converts to CRLF by default (core.autocrlf=true) — they would go red there.
+* text=auto eol=lf
+
+# Binary: never touched by the conversion
+*.png binary
+*.webp binary
+*.ico binary
+*.ttf binary
+*.otf binary
+*.db binary
+*.db-shm binary
+*.db-wal binary
+*.7z binary
+*.zip binary
+*.mp4 binary
+*.mov binary
+*.flac binary
+*.m4a binary
+*.ogg binary
+*.jpg binary
+
+# Upstream OpenTimelineIO samples are kept byte for byte as published (some are CRLF)
+src/fixtures/otio-samples/** -text

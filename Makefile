@@ -25,6 +25,9 @@ build: docker-check ## build the release tarball in Docker (src/target/dist-out)
 windows: docker-check ## cross-build the Windows zip in Docker (src/target/dist-out)
 	$(RUST)/scripts/release-build.sh --target windows
 
+windows-test: docker-check ## developers: the workspace tests for Windows under wine, in Docker
+	$(RUST)/scripts/windows-test.sh
+
 docker-check:
 	@command -v docker > /dev/null || { \
 	  echo "make: Docker is required to build Kinetren: https://docs.docker.com/engine/install/"; \

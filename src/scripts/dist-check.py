@@ -7,7 +7,11 @@ of its own; the root Makefile has the documented targets; the CI workflow is
 read-only, cancels superseded runs and uploads nothing that lingers; the
 release workflow runs only on `v*` tags with `contents: write` and nothing
 else; the README's install section names `make` and `make install`; the GUI
-binary is `kinetren` wherever a person meets it.
+binary is `kinetren` wherever a person meets it. The Windows delivery (change
+windows-build): the `windows` stage of the same Dockerfile (and a final `linux`
+stage, so a plain build stays Linux), `make windows` / `make windows-test`, the PE
+import check and no DLL in the zip, the release attaching the zip, and the CI job
+that runs the cross-built archive on windows-latest without compiling there.
 
 The workflows are checked by line patterns, not parsed: the standard library
 has no YAML parser, and these are shape guarantees, not a YAML validator.
@@ -155,6 +159,50 @@ def check_release(r):
         r.err(RELEASE, "`gh release create --verify-tag` with the tarball and its .sha256 is required")
 
 
+def check_windows(r):
+    df = r.read(DOCKERFILE)
+    if df is not None:
+        froms = re.findall(r"^FROM\s+(.*)$", df, re.M)
+        if not any(re.match(r"base\s+AS\s+windows\s*$", f) for f in froms):
+            r.err(DOCKERFILE, "no `FROM base AS windows` stage (the Windows cross-build)")
+        if not froms or not re.match(r"base\s+AS\s+linux\s*$", froms[-1]):
+            r.err(DOCKERFILE, "the last stage must be `FROM base AS linux`: a plain build stays Linux")
+    mk = r.read(MAKEFILE)
+    if mk is not None:
+        for t in ["windows", "windows-test"]:
+            if not re.search(rf"^{t}:", mk, re.M):
+                r.err(MAKEFILE, f"target `{t}` is missing")
+    rb = r.read(RELEASE_BUILD)
+    if rb is not None:
+        if "pe_checks()" not in rb or "x86_64-w64-mingw32-objdump" not in rb:
+            r.err(RELEASE_BUILD, "no PE import check (`pe_checks` with mingw objdump): invariant 10 on Windows")
+        if re.search(r"^\s*cp\b[^\n]*\.dll", rb, re.M | re.I):
+            r.err(RELEASE_BUILD, "the zip must carry no DLL: FFmpeg is found or downloaded, never shipped")
+    rel = r.read(RELEASE)
+    if rel is not None:
+        if "release-build.sh --target windows" not in rel:
+            r.err(RELEASE, "must build the Windows zip with `release-build.sh --target windows`")
+        if "windows-x86_64.zip" not in rel or "windows-x86_64.zip.sha256" not in rel:
+            r.err(RELEASE, "must attach the Windows zip and its .sha256")
+    ci = r.read(CI)
+    if ci is not None:
+        job = re.search(r"^  windows-test:\s*\n((?:    .*\n|\s*\n)*)", ci, re.M)
+        if not job:
+            r.err(CI, "no `windows-test` job")
+        else:
+            body = job.group(1)
+            if not re.search(r"runs-on:\s*windows-latest", body):
+                r.err(CI, "the windows-test job runs on `windows-latest`")
+            if not re.search(r"needs:\s*windows-build", body):
+                r.err(CI, "the windows-test job needs `windows-build` (the cross-built archive)")
+            if "nextest run --archive-file" not in body:
+                r.err(CI, "the windows-test job runs `cargo nextest run --archive-file …`")
+            if re.search(r"cargo (build|test)\b", body):
+                r.err(CI, "nothing is compiled on the Windows runner (one toolchain: the cross-build)")
+            if "sha256sum -c" not in body:
+                r.err(CI, "the Windows job checks the pinned FFmpeg's SHA-256")
+
+
 def check_readme(r):
     md = r.read(README)
     if md is None:
@@ -201,6 +249,7 @@ def main():
     check_make(r)
     check_ci(r, pinned)
     check_release(r)
+    check_windows(r)
     check_readme(r)
     check_binary_name(r)
     if r.errors:

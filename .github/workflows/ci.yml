@@ -1,5 +1,7 @@
 # Every push and pull request: build, clippy, workspace tests, repository
-# guards (capability `distribution`, change github-ci-docker-build).
+# guards (capability `distribution`, change github-ci-docker-build); and the
+# Windows tests (change windows-build): the cross-built nextest archive runs on a
+# real windows-latest runner — nothing is compiled there.
 #
 # Not here, on purpose: GPU conformance (no adapter on the runner — those tests
 # skip themselves) and the live Xvfb scenarios; both stay in finish.sh on a
@@ -105,4 +107,94 @@ jobs:
         with:
           name: nextest-log
           path: nextest.log
+          retention-days: 3
+
+  windows-build:
+    # The Windows test binaries are cross-built in the `windows` stage of the build
+    # container (one toolchain: the owner's choice), with the fixtures generated on
+    # Linux; both travel to the windows-latest job and expire after a day.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fixtures
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          bash src/fixtures/gen.sh
+
+      - name: Build container (windows stage)
+        working-directory: src
+        run: docker build --network=host --target windows -t kinetren-build:windows -f packaging/Dockerfile packaging
+
+      - name: Windows test archive
+        # the repository at /kt, the build in /kt/src: the compile-time paths of the tests
+        # are /kt/src/…, which the Windows job makes valid with a junction D:\kt
+        run: |
+          docker run --rm --network=host -u "$(id -u):$(id -g)" -v "$PWD:/kt" -w /kt/src \
+            -e CARGO_TARGET_DIR=/kt/src/target/win-container -e RUSTFLAGS= -e CARGO_PROFILE_DEV_DEBUG=0 \
+            kinetren-build:windows \
+            cargo nextest archive --target x86_64-pc-windows-gnu --workspace \
+              --archive-file /kt/src/target/windows-tests.tar.zst
+
+      - name: Upload the archive and the fixtures for the Windows job
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-tests
+          path: |
+            src/target/windows-tests.tar.zst
+            src/fixtures/out
+          retention-days: 1
+
+  windows-test:
+    needs: windows-build
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Download the archive and the fixtures
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-tests
+          path: src
+
+      - name: The pinned FFmpeg build (gyan.dev 8.1.2, hash checked)
+        # the same pin as the program's Download button and scripts/fetch-ffmpeg-win.sh
+        run: |
+          curl -fsSL --retry 3 -o ffmpeg.7z https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.1.2-full_build-shared.7z
+          echo "cba748035c21ce1431d0823c7a3a711f38616f89f87a265dceddf9b7f6749d2d  ffmpeg.7z" | sha256sum -c
+          7z e -y -bd -osrc/target/ffmpeg-win/8.1.2 ffmpeg.7z '*/bin/*.dll' '*/LICENSE' > /dev/null
+          ls src/target/ffmpeg-win/8.1.2
+
+      - name: The checkout where the tests' compile-time paths point
+        # /kt/src/… was baked in by the cross-build; on Windows a rooted path means the
+        # current drive, so D:\kt must be the checkout
+        shell: cmd
+        run: mklink /J D:\kt "%GITHUB_WORKSPACE%"
+
+      - name: Tests (the cross-built archive, no compilation)
+        working-directory: src
+        env:
+          KT_FFMPEG_WIN_DIR: ${{ github.workspace }}\src\target\ffmpeg-win\8.1.2
+          KINETREN_FFMPEG_DIR: ${{ github.workspace }}\src\target\ffmpeg-win\8.1.2
+        run: |
+          set -o pipefail
+          cargo nextest run --archive-file target/windows-tests.tar.zst --workspace-remap /d/kt/src \
+            --no-fail-fast 2>&1 | tee ../nextest-windows.log
+
+      - name: Upload the test log of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-windows-log
+          path: nextest-windows.log
           retention-days: 3

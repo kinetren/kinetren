@@ -1,5 +1,6 @@
-# A pushed `v*` tag becomes a GitHub Release with the portable tarball and its
-# .sha256 (capability `distribution`, change github-ci-docker-build).
+# A pushed `v*` tag becomes a GitHub Release with the portable Linux tarball, the
+# portable Windows zip and their .sha256 files (capability `distribution`, changes
+# github-ci-docker-build and windows-build). If either build fails, no release is made.
 #
 # The tarball is built by src/scripts/release-build.sh through
 # src/packaging/Dockerfile, exactly as `make` does locally, so the delivery
@@ -39,6 +40,11 @@ jobs:
       - name: Build the tarball in the build container
         run: src/scripts/release-build.sh
 
+      - name: Build the Windows zip in the build container
+        # the windows stage of the same Dockerfile; the PE import check runs inside, and
+        # this target cleans only its own packages, so the tarball above stays
+        run: src/scripts/release-build.sh --target windows
+
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -48,4 +54,5 @@ jobs:
           PRE=()
           case "$TAG" in *-*) PRE=(--prerelease) ;; esac
           gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes "${PRE[@]}" \
-            kinetren-*.tar.gz kinetren-*.tar.gz.sha256
+            kinetren-*.tar.gz kinetren-*.tar.gz.sha256 \
+            kinetren-*-windows-x86_64.zip kinetren-*-windows-x86_64.zip.sha256

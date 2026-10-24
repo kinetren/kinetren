@@ -1426,7 +1426,10 @@ fn t433_the_sidecar_is_advisory_not_authoritative() {
 /// committed .otio files at once.
 #[test]
 fn t433b_version_cascade_did_not_move_old_files() {
-    let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures"));
+    // absolute: on Windows a rooted path without a drive letter is not absolute, and the
+    // writer would not relativise against it
+    let dir = std::path::absolute(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures")).unwrap();
+    let dir = dir.as_path();
     let mut seen = 0;
     for e in std::fs::read_dir(dir).expect("fixture catalog") {
         let path = e.unwrap().path();

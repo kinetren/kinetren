@@ -611,7 +611,12 @@ fn t748b_probe_names_the_material_end() {
 fn showcase_sources(tag: &str) -> std::path::PathBuf {
     static GEN: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    // on Windows the fixtures come generated with the test archive (no bash to run gen.sh)
+    let pregenerated = cfg!(windows) && fixtures.join("out").is_dir();
     GEN.get_or_init(|| {
+        if pregenerated {
+            return;
+        }
         let st = Command::new("bash")
             .arg(fixtures.join("gen.sh"))
             .current_dir(&fixtures)
@@ -827,23 +832,27 @@ fn t831_cli_and_app_agree_on_the_lock_directory() {
     std::fs::create_dir_all(&dir).unwrap();
     let project = dir.join("locked.kt");
     std::fs::write(&project, "{}").unwrap();
-    // the lock name: FNV-1a of the absolute path (project_lock.rs)
+    // the lock name: FNV-1a of the (on Windows normalised) absolute path, kt_dirs::locks —
+    // the one function kt-app and kt-cli share
     let abs = std::path::absolute(&project).unwrap();
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in abs.to_string_lossy().as_bytes() {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x100_0000_01b3);
-    }
-    for (data, pid) in [("kinetren", "4242"), ("kinotrain", "4343")] {
+    let h = kt_dirs::locks::stem(&abs.to_string_lossy(), kt_dirs::Os::NATIVE);
+    // the former name existed only on Linux; on Windows the data directory is redirected
+    // with KINETREN_DATA_DIR (the known folders cannot be redirected per process)
+    let cases: &[(&str, &str)] =
+        if cfg!(windows) { &[("kinetren", "4242")] } else { &[("kinetren", "4242"), ("kinotrain", "4343")] };
+    for &(data, pid) in cases {
         let xdg = dir.join(format!("xdg-{data}"));
         let locks = xdg.join(data).join("locks");
         std::fs::create_dir_all(&locks).unwrap();
-        std::fs::write(locks.join(format!("{h:016x}.lock")), format!("{pid}\n")).unwrap();
-        let st = cli()
-            .args(["demo", project.to_str().unwrap(), "--force"])
-            .env("XDG_DATA_HOME", &xdg)
-            .output()
-            .unwrap();
+        std::fs::write(locks.join(format!("{h}.lock")), format!("{pid}\n")).unwrap();
+        let mut cmd = cli();
+        cmd.args(["demo", project.to_str().unwrap(), "--force"]);
+        if cfg!(windows) {
+            cmd.env("KINETREN_DATA_DIR", xdg.join(data));
+        } else {
+            cmd.env("XDG_DATA_HOME", &xdg);
+        }
+        let st = cmd.output().unwrap();
         assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
         let err = String::from_utf8_lossy(&st.stderr);
         assert!(err.contains(&format!("process {pid}")), "{data}: the holder is reported: {err}");
@@ -874,7 +883,8 @@ fn t849_cli_prints_the_ffmpeg_search_report() {
     let out = run("1");
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains(&format!("{empty_s}: no avcodec")), "the empty folder is rejected: {text}");
-    if kt_media::ffmpeg::backend_info().is_some() {
+    // with the system fallback on, Linux loads the system FFmpeg; Windows has none
+    if cfg!(target_os = "linux") && kt_media::ffmpeg::backend_info().is_some() {
         assert!(out.status.success(), "{text}");
         assert!(text.starts_with("loaded: FFmpeg "), "the loaded candidate and version: {text}");
     }

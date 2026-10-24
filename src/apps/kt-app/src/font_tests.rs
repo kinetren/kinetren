@@ -242,7 +242,7 @@ fn walk(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, St
             continue;
         }
         if p.extension().map(|x| x == "rs").unwrap_or(false) {
-            let name = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().into_owned();
+            let name = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
             if name.ends_with("_tests.rs") {
                 continue;
             }

@@ -26,6 +26,10 @@ fn guard(root: &Path) -> (bool, String) {
 
 #[test]
 fn t826_readme_and_guide_pass_the_guard() {
+    if cfg!(windows) {
+        eprintln!("t826 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
     let (ok, text) = guard(&repo());
     assert!(ok, "README/docs guard is red:\n{text}");
 }
@@ -61,6 +65,10 @@ fn clean_tree(tag: &str) -> PathBuf {
 
 #[test]
 fn t827_guard_catches_each_class_of_defect() {
+    if cfg!(windows) {
+        eprintln!("t827 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
     let dir = clean_tree("clean");
     let (ok, text) = guard(&dir);
     assert!(ok, "the clean tree must pass:\n{text}");

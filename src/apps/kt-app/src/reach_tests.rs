@@ -1643,7 +1643,8 @@ fn collect_rs(dir: &std::path::Path, out: &mut Vec<String>) {
         } else if p.extension().is_some_and(|x| x == "rs")
             && let Ok(rel) = p.strip_prefix(&root)
         {
-            out.push(rel.to_string_lossy().into_owned());
+            // one separator on every OS: the guards compare against `libs/…` paths
+            out.push(rel.to_string_lossy().replace('\\', "/"));
         }
     }
 }
@@ -3431,6 +3432,10 @@ fn t789b_formula_help_reachable_from_every_carrier() {
 /// USER FIRST? … THIS NEEDS RADICAL CHANGE!”.
 #[test]
 fn t799_ui_scenarios_describe_the_user_path() {
+    if cfg!(windows) {
+        eprintln!("t799 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
     // CARGO_MANIFEST_DIR = src/apps/kt-app; the tree root is three levels up
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let script = root.join("src/scripts/specs-user-path.py");
@@ -3505,6 +3510,10 @@ fn t799_ui_scenarios_describe_the_user_path() {
 /// and the guard checks this.
 #[test]
 fn t800_finish_stages_name_their_price() {
+    if cfg!(windows) {
+        eprintln!("t800 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let script = root.join("src/scripts/finish-budget.py");
     let finish_path = root.join("src/scripts/finish.sh");
@@ -3693,6 +3702,10 @@ fn t802_workers_are_isolated() {
 /// characters (the same measure as the PATH guard).
 #[test]
 fn t803_live_scenarios_wait_for_the_program() {
+    if cfg!(windows) {
+        eprintln!("t803 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
     let root = workspace_root();
     let guard = root.join("scripts/live-sleeps.py");
     assert!(guard.exists(), "guard is not in place: {}", guard.display());
@@ -3822,6 +3835,10 @@ fn t805_bench_channel_is_dead_without_env() {
 /// “tests from specs are not weakened” protects against.
 #[test]
 fn t804_live_coverage_names_untouched_places() {
+    if cfg!(windows) {
+        eprintln!("t804 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
     let root = workspace_root();
     let guard = root.join("scripts/live-coverage.py");
     assert!(guard.exists(), "guard is not in place: {}", guard.display());
@@ -3972,6 +3989,10 @@ fn t806_track_verbs_have_a_live_aim() {
 /// instead of a regression — the actual number is printed by the run (`live-check.sh`).
 #[test]
 fn t808_live_sleep_is_enumerable_everywhere_and_capped() {
+    if cfg!(windows) {
+        eprintln!("t808 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
     let root = workspace_root();
     let guard = root.join("scripts/live-sleeps.py");
     let driver = root.join("scripts/ui-probe.py");
@@ -4069,6 +4090,10 @@ fn t808_live_sleep_is_enumerable_everywhere_and_capped() {
 /// accidentally unchanged after bisection, when all runs were green.
 #[test]
 fn t807_a_gesture_waits_for_input_the_program_has_read() {
+    if cfg!(windows) {
+        eprintln!("t807 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
     let root = workspace_root();
     let guard = root.join("scripts/live-sleeps.py");
     let framework = root.join("scripts/live/kt_live.py");
@@ -4158,6 +4183,10 @@ fn t807_a_gesture_waits_for_input_the_program_has_read() {
 /// on the virtual screen).
 #[test]
 fn t809_a_screen_point_is_read_from_x_with_the_shot_as_reference() {
+    if cfg!(windows) {
+        eprintln!("t809 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
     let root = workspace_root();
     let driver = std::fs::read_to_string(root.join("scripts/ui-probe.py")).unwrap();
     let fw = std::fs::read_to_string(root.join("scripts/live/kt_live.py")).unwrap();

@@ -5745,7 +5745,10 @@ fn t363_second_copy_has_its_own_tmp_and_recovery() {
         tmp.display()
     );
     assert!(tmp.to_string_lossy().ends_with(".tmp"));
-    assert!(tmp.to_string_lossy().starts_with("/w/film.kt."), "part of the project name was eaten");
+    // the file name, not the whole path: Windows rebuilds the path with its own separator
+    let tmp_name = tmp.file_name().unwrap().to_string_lossy().to_string();
+    assert!(tmp_name.starts_with("film.kt."), "part of the project name was eaten");
+    assert_eq!(tmp.parent(), Some(std::path::Path::new("/w")), "the temporary file lives next to the project");
 
     let mut h = harness();
     let app = h.state_mut();
@@ -17084,11 +17087,14 @@ fn harness_still(exists: bool) -> (Harness<'static, KtApp>, std::path::PathBuf) 
     if exists {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/out/still.jpg");
-        let st = std::process::Command::new("bash")
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/gen.sh"))
-            .status()
-            .expect("gen.sh");
-        assert!(st.success());
+        // on Windows the fixtures come generated with the test archive (no bash there)
+        if !(cfg!(windows) && src.exists()) {
+            let st = std::process::Command::new("bash")
+                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/gen.sh"))
+                .status()
+                .expect("gen.sh");
+            assert!(st.success());
+        }
         std::fs::copy(&src, &img).expect("copy of the fixture");
     }
     let path = dir.join("still.kt");
@@ -17203,7 +17209,7 @@ fn t797_added_media_path_becomes_absolute() {
     let rel = "sources/x.jpg";
     let abs = KtApp::absolute_media_path(rel);
     assert!(std::path::Path::new(&abs).is_absolute(), "path stayed relative: {abs}");
-    assert!(abs.ends_with("sources/x.jpg"), "path is distorted: {abs}");
+    assert!(abs.replace('\\', "/").ends_with("sources/x.jpg"), "path is distorted: {abs}");
     // pseudo-paths are left untouched
     assert_eq!(KtApp::absolute_media_path("synth:Ramp"), "synth:Ramp");
     assert_eq!(KtApp::absolute_media_path("gen:solid"), "gen:solid");

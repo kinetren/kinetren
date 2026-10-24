@@ -47,7 +47,14 @@ pub struct Dirs {
 }
 
 /// Resolve the directories. Pure: nothing is created.
+///
+/// `KINETREN_DATA_DIR` (absolute) replaces the data AND local directory on every OS: what
+/// `XDG_DATA_HOME` gives tests and live runs on Linux, it gives them on Windows too (the
+/// known folders cannot be redirected per process).
 pub fn resolve(env: &dyn Env) -> Dirs {
+    if let Some(d) = env.var_os("KINETREN_DATA_DIR").map(PathBuf::from).filter(|p| p.is_absolute()) {
+        return Dirs { data: d.clone(), local: d, fallback: false };
+    }
     match env.os() {
         Os::Linux => {
             // "absolute" by the rules of the OS planned FOR, not of the host (the Linux rules

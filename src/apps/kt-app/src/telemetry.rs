@@ -180,12 +180,16 @@ pub struct HttpSink {
 
 impl HttpSink {
     pub fn new(url: impl Into<String>) -> Self {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
+        let url = url.into();
+        let mut b = ureq::Agent::config_builder()
             .timeout_connect(Some(CONNECT_TIMEOUT))
-            .timeout_global(Some(TOTAL_TIMEOUT))
-            .build()
-            .into();
-        HttpSink { agent, url: url.into() }
+            .timeout_global(Some(TOTAL_TIMEOUT));
+        // the environment's proxy is never right for the machine itself (the live check's
+        // local capture server; a container's forced proxy broke t841 under wine)
+        if ["http://127.0.0.1", "http://localhost", "http://[::1]"].iter().any(|p| url.starts_with(p)) {
+            b = b.proxy(None);
+        }
+        HttpSink { agent: b.build().into(), url }
     }
 
     /// The EU endpoint; a debug build honours `KT_TELEMETRY_URL` for the live check, a

@@ -77,6 +77,14 @@ fn t851_directories_per_os_never_the_working_directory() {
     assert_eq!(d.data, PathBuf::from("/tmp-for-test/kinetren/data"));
     assert!(d.fallback);
 
+    // the explicit override, on both OSes
+    let ov = std::env::temp_dir().join("kt-t851-override");
+    let ov_s: &'static str = Box::leak(ov.to_string_lossy().into_owned().into_boxed_str());
+    for os in [Os::Linux, Os::Windows] {
+        let f = Fake { os, vars: [("KINETREN_DATA_DIR", ov_s)].into_iter().collect(), roaming: None, local: None };
+        assert_eq!(resolve(&f), Dirs { data: ov.clone(), local: ov.clone(), fallback: false });
+    }
+
     // nothing above created, moved or touched the working directory's folder
     assert_eq!(std::fs::read_to_string(cwd.join(former).join("fx-presets.json")).unwrap(), "[1]");
     assert!(!cwd.join("kinetren").exists());

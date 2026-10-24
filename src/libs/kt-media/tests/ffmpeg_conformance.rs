@@ -13,7 +13,12 @@ static GEN: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
 fn fixture(name: &str) -> String {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    // on Windows the fixtures come generated with the test archive (no bash to run gen.sh)
+    let pregenerated = cfg!(windows) && dir.join("out").is_dir();
     GEN.get_or_init(|| {
+        if pregenerated {
+            return;
+        }
         let st = std::process::Command::new("bash")
             .arg(dir.join("gen.sh"))
             .status()
