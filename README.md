@@ -1,35 +1,22 @@
-<p align="center">
-  <img src="src/packaging/kinetren.svg" width="96" height="96" alt="Kinetren logo">
-</p>
+# <img src="src/packaging/kinetren.svg" width="40" height="40" align="center" alt=""> kinetren
 
-<h1 align="center">Kinetren</h1>
+**A free, source-available video editor for Linux.**
+[kinetren.com](https://kinetren.com) · [Discord](https://discord.gg/w8enAWJSc) · [Download](https://github.com/kinetren/kinetren/releases)
 
-<p align="center">
-  <b>A free, source-available video editor for Linux.</b>
-</p>
+[![License: kinetren Non-Commercial 1.0](https://img.shields.io/badge/license-kinetren%20Non--Commercial%201.0-blue)](LICENSE)
+![Platform: Linux x86-64](https://img.shields.io/badge/platform-Linux%20x86--64-informational)
+![FFmpeg 6, 7, 8](https://img.shields.io/badge/FFmpeg-6%20%7C%207%20%7C%208-green?logo=ffmpeg)
+[![Latest release](https://img.shields.io/github/v/release/kinetren/kinetren?include_prereleases&label=release)](https://github.com/kinetren/kinetren/releases)
+[![Last commit](https://img.shields.io/github/last-commit/kinetren/kinetren)](https://github.com/kinetren/kinetren/commits)
+[![GitHub stars](https://img.shields.io/github/stars/kinetren/kinetren?style=flat)](https://github.com/kinetren/kinetren/stargazers)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/w8enAWJSc)
 
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Kinetren%20Non--Commercial%201.0-blue" alt="License: Kinetren Non-Commercial 1.0"></a>
-  <img src="https://img.shields.io/badge/platform-Linux%20x86--64-informational" alt="Platform: Linux x86-64">
-  <img src="https://img.shields.io/badge/FFmpeg-6%20%7C%207%20%7C%208-green?logo=ffmpeg" alt="FFmpeg 6, 7, 8">
-  <a href="https://github.com/kinetren/kinetren/releases"><img src="https://img.shields.io/github/v/release/kinetren/kinetren?include_prereleases&amp;label=release" alt="Latest release"></a>
-  <a href="https://github.com/kinetren/kinetren/commits"><img src="https://img.shields.io/github/last-commit/kinetren/kinetren" alt="Last commit"></a>
-  <a href="https://github.com/kinetren/kinetren/stargazers"><img src="https://img.shields.io/github/stars/kinetren/kinetren?style=flat" alt="GitHub stars"></a>
-  <a href="https://discord.gg/w8enAWJSc"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&amp;logoColor=white" alt="Discord"></a>
-</p>
-
-<p align="center">
-  <a href="http://kinetren.com"><b>kinetren.com</b></a> ·
-  <a href="https://discord.gg/w8enAWJSc"><b>Discord</b></a> ·
-  <a href="https://github.com/kinetren/kinetren/releases"><b>Download</b></a>
-</p>
-
-Kinetren is free to download, use, study, modify and share. It gives you a multi-track
+kinetren is free to download, use, study, modify and share. It gives you a multi-track
 timeline with real-time preview, nested reels, 33 transitions, 26 video and 18 audio
 effects, curve automation on every parameter, Slowed+Reverb for picture and sound,
 titles and generators. Export to MP4 renders exactly what the preview shows.
 
-![Kinetren during playback: the media bin in free layout, a vertical clip over its blurred backdrop in the preview, live level meters, the timeline with titles, montage, music and a morpher](docs/images/hero.webp)
+![kinetren during playback: the media bin in free layout, a vertical clip over its blurred backdrop in the preview, live level meters, the timeline with titles, montage, music and a morpher](docs/images/hero.webp)
 
 ## Features
 
@@ -125,11 +112,11 @@ result.
 
 Live numbers on playback, cache and decoding, for when something is slow.
 
-Kinetren speaks English, Spanish, Simplified Chinese, Russian and Arabic.
+kinetren speaks English, Spanish, Simplified Chinese, Russian and Arabic.
 
 ## Install
 
-Kinetren runs on Linux x86-64 with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora
+kinetren runs on Linux x86-64 with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora
 36 and later). It uses the FFmpeg 6, 7 or 8 already installed on your system, ALSA for
 sound, and any GPU driver with Vulkan or OpenGL. Without a GPU it falls back to the CPU.
 
@@ -140,7 +127,7 @@ sound, and any GPU driver with Vulkan or OpenGL. Without a GPU it falls back to 
 ./install.sh
 ```
 
-Kinetren then appears in your applications menu (`kinetren` from a terminal).
+kinetren then appears in your applications menu (`kinetren` from a terminal).
 
 **From source:** all you need is Docker, make and git. The build runs in a container
 and produces the same archive as a release:
@@ -160,7 +147,7 @@ the other commands. Building with your own Rust toolchain is described in
 from [Releases](https://github.com/kinetren/kinetren/releases), unpack it anywhere and
 start `kinetren.exe`; nothing is installed. FFmpeg is not in the zip. On the first start
 the program offers **Download** (the FFmpeg 8.1.2 shared build by gyan.dev, GPLv3, about
-57 MB, checked against a checksum built into Kinetren) or **Locate folder…** for a shared
+57 MB, checked against a checksum built into kinetren) or **Locate folder…** for a shared
 FFmpeg 6, 7 or 8 you already have, for example
 `winget install Gyan.FFmpeg.Shared --version 8.1.2`. *View → FFmpeg…* shows which folder
 is used and why others were not. The executables are not code-signed yet, so SmartScreen
@@ -194,7 +181,7 @@ kt-cli export project.kt out.mp4
 ## Privacy
 
 Release builds send anonymous usage statistics to [PostHog](https://posthog.com) (servers in
-the EU), so we can see how many people run Kinetren, how long a session lasts and how often it
+the EU), so we can see how many people run kinetren, how long a session lasts and how often it
 ends without a clean close. On the first start the program says so in the notices window.
 
 - **Sent:** program start and clean close, session length, version, OS and processor type,
@@ -208,12 +195,12 @@ ends without a clean close. On the first start the program says so in the notice
 ## Community
 
 Questions, ideas and bug reports: join the [Discord server](https://discord.gg/w8enAWJSc)
-or visit [kinetren.com](http://kinetren.com).
+or visit [kinetren.com](https://kinetren.com).
 
 ## License
 
-Kinetren is **free and source-available** under the
-[Kinetren Non-Commercial License 1.0](LICENSE). You may use, study, modify and share it,
-but not sell or monetize the program itself without a license from Kinetren. What you
+kinetren is **free and source-available** under the
+[kinetren Non-Commercial License 1.0](LICENSE). You may use, study, modify and share it,
+but not sell or monetize the program itself without a license from kinetren. What you
 make with it is yours: videos, audio and projects carry no restrictions, paid work
 included.
