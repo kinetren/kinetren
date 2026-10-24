@@ -5,7 +5,8 @@ use xxhash_rust::xxh3::xxh3_64;
 
 #[test]
 fn dump() {
-    let dir = std::env::var("KT_DUMP_DIR").unwrap_or_else(|_| "/tmp".into());
+    let dir = std::env::var("KT_DUMP_DIR")
+        .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
     for (name, w, h, alpha) in
         [("ref", 320u32, 180u32, false), ("ref-alpha", 320, 180, true), ("icon", 96, 54, false)]
     {

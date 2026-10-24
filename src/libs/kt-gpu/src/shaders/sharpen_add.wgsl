@@ -7,11 +7,10 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let c = textureLoad(T0, p, 0);
     let b = textureLoad(T1, p, 0);
     let a = P.f0.x;
-    var o = vec3<f32>(0.0);
-    for (var i = 0; i < 3; i = i + 1) {
-        let s = f32(c[i]);
-        o[i] = s + (s - f32(b[i])) * a;
-    }
+    // No write through a dynamic vector index: FXC (wgpu's D3D12 compiler on Windows) rejects
+    // it when it cannot unroll the loop (windows-build). Same per-channel arithmetic.
+    let s = vec3<f32>(c.rgb);
+    let o = s + (s - vec3<f32>(b.rgb)) * a;
     let rgb = vec3<u32>(clamp(round(o), vec3<f32>(0.0), vec3<f32>(255.0)));
     return vec4<u32>(rgb, c.a);
 }

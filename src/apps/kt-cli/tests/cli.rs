@@ -8,8 +8,17 @@
 
 use std::process::Command;
 
+/// The kt-cli binary. A cross-built test archive runs on another machine (windows-build: the
+/// Windows CI job), where the compile-time `CARGO_BIN_EXE_kt-cli` is a path of the build
+/// container; nextest gives the remapped path at run time.
+fn kt_cli_exe() -> std::ffi::OsString {
+    std::env::var_os("NEXTEST_BIN_EXE_kt-cli")
+        .or_else(|| std::env::var_os("NEXTEST_BIN_EXE_kt_cli"))
+        .unwrap_or_else(|| env!("CARGO_BIN_EXE_kt-cli").into())
+}
+
 fn cli() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_kt-cli"))
+    Command::new(kt_cli_exe())
 }
 
 #[test]

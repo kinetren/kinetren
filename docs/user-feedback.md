@@ -1740,6 +1740,19 @@ the loader (majors 6/7/8) does not support. The download is therefore pinned to
 `ffmpeg-8.1.2-full_build-shared.7z` with a SHA-256 committed in our source; FFmpeg 9 is a
 separate change (Linux needs it too). Change `openspec/changes/windows-build`.
 
+**First push (2026-10-25):**
+
+> I pushed — some tests died there
+
+The first real CI run: Linux 1128/1129 (t809 needs `xdpyinfo`, absent on the runner),
+Windows 1086/1126. The Windows failures were real, not only the runner: FXC (wgpu's D3D12
+shader compiler) rejects writes through a dynamic vector index (greenscreen, and the same
+pattern in noise/composite/sharpen), and the error escaped the validation scope as an
+INTERNAL one — the program would have crashed instead of falling back to the CPU; mingw's
+`round` returns 1 for `round(0.49999999999999994)`, which every `.round()` of the CPU
+reference used. The rest were test paths baked in at compile time (kt-cli's binary) and
+Linux-only test paths.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

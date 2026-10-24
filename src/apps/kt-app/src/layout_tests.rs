@@ -79,6 +79,14 @@ pub(crate) fn harness_sized(w: f32, h: f32) -> Harness<'static, KtApp> {
     hh
 }
 
+/// A path whose write certainly fails on every OS: a directory under a regular FILE.
+/// (`/proc/self/no-such-dir` was Linux-only: on Windows it is `C:\proc\…` and gets created.)
+pub(crate) fn unwritable_path(tag: &str) -> std::path::PathBuf {
+    let f = std::env::temp_dir().join(format!("kt-unwritable-{tag}-{}", std::process::id()));
+    std::fs::write(&f, b"a file, not a directory").unwrap();
+    f.join("sub").join("x.kt")
+}
+
 /// The ACTUAL rectangle of the panel (not the requested size: the egui separator
 /// lives at the actual boundary, and exactly the divergence between them is
 /// that very trap “the strip does not move”).
@@ -5428,7 +5436,7 @@ fn t370_save_and_go_does_not_go_when_save_failed() {
     use kt_model::*;
     let mut h = harness();
     let app = h.state_mut();
-    app.project_path = Some(std::path::PathBuf::from("/proc/self/no-such-dir/x.kt"));
+    app.project_path = Some(unwritable_path("save"));
     app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
     app.model_rev += 1;
     app.dirty_content = true;
@@ -6077,7 +6085,7 @@ fn t356_repeated_notice_still_marks_unread() {
     // a project write error arrives as a warning, exactly
     let app = h.state_mut();
     app.notices.clear();
-    app.project_path = Some(std::path::PathBuf::from("/proc/self/no-such-dir/x.kt"));
+    app.project_path = Some(unwritable_path("save"));
     app.model_rev += 1;
     app.dirty_content = true;
     app.save();

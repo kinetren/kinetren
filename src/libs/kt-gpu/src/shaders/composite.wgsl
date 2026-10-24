@@ -43,13 +43,16 @@ fn blend_over(dst: vec4<u32>, src: vec4<u32>, blend_mode: u32, has_alpha: u32, l
     if (has_alpha == 1u) { sa = f32(src.a) / 255.0; }
     let k = sa * (f32(level_k) / 4096.0);
     if (k <= 0.0) { return dst; }
-    var rgb = vec3<f32>(0.0);
-    for (var ch = 0u; ch < 3u; ch = ch + 1u) {
-        let b = f32(dst[ch]) / 255.0;
-        let a = f32(src[ch]) / 255.0;
-        let m = clamp(blend_ch(blend_mode, b, a), 0.0, 1.0);
-        rgb[ch] = b + (m - b) * k;
-    }
+    // No write through a dynamic vector index: FXC (wgpu's D3D12 compiler on Windows) rejects
+    // it when it cannot unroll the loop (windows-build). Same per-channel arithmetic.
+    let b = vec3<f32>(dst.rgb) / 255.0;
+    let a = vec3<f32>(src.rgb) / 255.0;
+    let m = clamp(
+        vec3<f32>(blend_ch(blend_mode, b.x, a.x), blend_ch(blend_mode, b.y, a.y), blend_ch(blend_mode, b.z, a.z)),
+        vec3<f32>(0.0),
+        vec3<f32>(1.0),
+    );
+    let rgb = b + (m - b) * k;
     let da = f32(dst.a) / 255.0;
     let oa = k + da * (1.0 - k);
     let c = clamp(floor(vec4<f32>(rgb * 255.0 + 0.5, oa * 255.0 + 0.5)), vec4<f32>(0.0), vec4<f32>(255.0));

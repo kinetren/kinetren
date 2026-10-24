@@ -14,3 +14,9 @@ The time model of the whole engine. Zero dependencies (except serde).
 ## Must not
 - Add float time to the public API (except explicit `*_secs_f64` for UI/debugging).
 - Add dependencies.
+
+## The Windows GNU `round` (windows-build)
+- `src/libm_fix.rs` (only `cfg(all(windows, target_env = "gnu"))`) defines `round`/`roundf`:
+  mingw's own return 1 for `round(0.49999999999999994)`, and every `.round()` of the CPU
+  reference went through them. kt-time is in every binary, so the linker takes these first.
+  Do not move the module to a crate that some binary does not link.

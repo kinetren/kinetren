@@ -261,7 +261,7 @@ mod tests {
         assert_eq!(old.len(), ROTATE_BYTES as usize + 1, "old data lost on rotation");
 
         // an unreachable path — silently past it: the journal does not dare to bring the program down
-        write_to(Path::new("/proc/self/no-such-dir/kt.log"), "WARN", "ignored");
+        write_to(&crate::layout_tests::unwritable_path("journal").with_file_name("kt-test.log"), "WARN", "ignored");
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 

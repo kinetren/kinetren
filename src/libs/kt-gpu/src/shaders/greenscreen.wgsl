@@ -24,7 +24,11 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
         let other = max(rgb[(kc + 1u) % 3u], rgb[(kc + 2u) % 3u]);
         if (rgb[kc] > other) {
             let v = f32(rgb[kc]);
-            rgb[kc] = u32(round(v - (v - f32(other)) * spill));
+            // no write through a dynamic index (`rgb[kc] = …`): FXC, the D3D12 shader
+            // compiler wgpu uses on Windows, rejects it ("array reference cannot be used as
+            // an l-value; not natively addressable", windows-build). Same arithmetic.
+            let nv = u32(round(v - (v - f32(other)) * spill));
+            rgb = select(rgb, vec3<u32>(nv), vec3<bool>(kc == 0u, kc == 1u, kc == 2u));
         }
     }
     return vec4<u32>(rgb, a);

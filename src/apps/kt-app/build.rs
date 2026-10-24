@@ -305,7 +305,10 @@ fn windows_resource() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
-    let ico = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packaging/kinetren.ico");
+    // the run-time variable: a build-script binary reused from another checkout path would
+    // carry a stale compile-time `env!` path
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR");
+    let ico = Path::new(&manifest).join("../../packaging/kinetren.ico");
     println!("cargo:rerun-if-changed={}", ico.display());
     println!("cargo:rerun-if-env-changed=KT_VERSION_FULL");
     let version = std::env::var("KT_VERSION_FULL").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());

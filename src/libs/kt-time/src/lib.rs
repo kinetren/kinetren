@@ -4,6 +4,11 @@
 //! audio burst (1024 frames @ 48 kHz = 1920 ticks). All times in the engine and in the
 //! project format are expressed in ticks; milliseconds — only at the UI boundary.
 
+
+// mingw's round/roundf get the half boundary wrong (windows-build, t198)
+#[cfg(all(windows, target_env = "gnu"))]
+mod libm_fix;
+
 use serde::{Deserialize, Serialize};
 
 /// Tick frequency, Hz.

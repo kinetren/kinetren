@@ -158,7 +158,7 @@ fn prepare(env: &Env, sample: &str, out: &Path) -> Result<Prep, String> {
 /// `File → Import` (R.70): `kt-cli export` reads only `.kt`.
 fn import_prepared(prepared: &Path) -> Result<PathBuf, String> {
     let kt = prepared.with_extension("kt");
-    let o = Command::new(env!("CARGO_BIN_EXE_kt-cli"))
+    let o = Command::new(std::env::var_os("NEXTEST_BIN_EXE_kt-cli").unwrap_or_else(|| env!("CARGO_BIN_EXE_kt-cli").into()))
         .arg("import")
         .arg(prepared)
         .arg(&kt)
@@ -173,7 +173,7 @@ fn import_prepared(prepared: &Path) -> Result<PathBuf, String> {
 
 fn render_ours(prepared: &Path, out: &Path) -> Result<u64, String> {
     let project = import_prepared(prepared)?;
-    let o = Command::new(env!("CARGO_BIN_EXE_kt-cli"))
+    let o = Command::new(std::env::var_os("NEXTEST_BIN_EXE_kt-cli").unwrap_or_else(|| env!("CARGO_BIN_EXE_kt-cli").into()))
         .arg("export")
         .arg(&project)
         .arg(out)

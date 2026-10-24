@@ -814,6 +814,11 @@ impl GpuFxEngine {
                 || name_l.contains("microsoft basic render"),
         };
 
+        // Two scopes: a shader the backend's compiler rejects (FXC on D3D12: "not natively
+        // addressable", windows-build) is an INTERNAL error, not a validation one. With only
+        // the validation scope it escaped to the default handler, which panics — a crash on
+        // Windows instead of the CPU fallback (invariant 7). Popped in reverse order.
+        let internal_scope = device.push_error_scope(wgpu::ErrorFilter::Internal);
         let err_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("kt-gpu layout"),
@@ -927,7 +932,9 @@ impl GpuFxEngine {
             multiview_mask: None,
             cache: None,
         });
-        if let Some(e) = pollster::block_on(err_scope.pop()) {
+        let validation = pollster::block_on(err_scope.pop());
+        let internal = pollster::block_on(internal_scope.pop());
+        if let Some(e) = validation.or(internal) {
             return Err(GpuInitError::Pipeline(e.to_string()));
         }
         let pipes: [wgpu::RenderPipeline; PIPE_COUNT] =

@@ -47,10 +47,13 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
         let rgb = clamp(vec3<i32>(c.rgb) + vec3<i32>(off), vec3<i32>(0), vec3<i32>(255));
         return vec4<u32>(vec3<u32>(rgb), c.a);
     }
-    var rgb = vec3<i32>(c.rgb);
-    for (var ch = 0u; ch < 3u; ch = ch + 1u) {
-        let off = off_of(nh(g.x ^ nh(g.y ^ nh((ch + 1u) ^ P.u0.x))), k);
-        rgb[ch] = clamp(rgb[ch] + off, 0, 255);
-    }
+    // No write through a dynamic vector index: FXC (wgpu's D3D12 compiler on Windows) rejects
+    // it when it cannot unroll the loop (windows-build). Same per-channel arithmetic.
+    let off = vec3<i32>(
+        off_of(nh(g.x ^ nh(g.y ^ nh(1u ^ P.u0.x))), k),
+        off_of(nh(g.x ^ nh(g.y ^ nh(2u ^ P.u0.x))), k),
+        off_of(nh(g.x ^ nh(g.y ^ nh(3u ^ P.u0.x))), k),
+    );
+    let rgb = clamp(vec3<i32>(c.rgb) + off, vec3<i32>(0), vec3<i32>(255));
     return vec4<u32>(vec3<u32>(rgb), c.a);
 }
