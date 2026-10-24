@@ -3,6 +3,10 @@
 //!
 //! UI invariants — see the root CLAUDE.md (No. 3, No. 8).
 
+// A release build on Windows is a GUI program: no console window next to it (windows-build).
+// Debug builds keep the console for eprintln diagnostics.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod analysis;
 mod app;
 mod audio_out;

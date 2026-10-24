@@ -7758,7 +7758,24 @@ fn dnd_pointer_pos(ctx: &egui::Context) -> Option<egui::Pos2> {
     (p.x >= 0.0 && p.y >= 0.0).then_some(p)
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Windows (windows-build): winit does not report the pointer during an OLE drag either —
+/// the same reading of the pointer in screen pixels, from `GetCursorPos`. Before, every drop
+/// landed at the playhead and the silhouette did not follow the pointer.
+#[cfg(windows)]
+fn dnd_pointer_pos(ctx: &egui::Context) -> Option<egui::Pos2> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut pt = POINT { x: 0, y: 0 };
+    if unsafe { GetCursorPos(&mut pt) } == 0 {
+        return None;
+    }
+    let inner = ctx.input(|i| i.viewport().inner_rect)?;
+    let ppp = ctx.pixels_per_point();
+    let p = egui::pos2(pt.x as f32 / ppp - inner.min.x, pt.y as f32 / ppp - inner.min.y);
+    (p.x >= 0.0 && p.y >= 0.0).then_some(p)
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
 fn dnd_pointer_pos(_ctx: &egui::Context) -> Option<egui::Pos2> {
     None
 }
@@ -8944,6 +8961,8 @@ impl eframe::App for KtApp {
                         || name.contains("llvmpipe")
                         || name.contains("softpipe")
                         || name.contains("swiftshader")
+                        // Windows' software rasterizer (WARP)
+                        || name.contains("microsoft basic render")
                 })
                 .unwrap_or(false);
             self.sw_render = Some(sw);

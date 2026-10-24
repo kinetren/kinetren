@@ -47,6 +47,7 @@ fn fail(msg: String) -> ! {
 }
 
 fn main() {
+    windows_resource();
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("i18n");
     println!("cargo:rerun-if-changed={}", dir.display());
 
@@ -295,4 +296,46 @@ fn gen_tables(
         .collect();
     let _ = writeln!(s, "pub static ENDONYM: [&str; 5] = [{}];", endonyms.join(", "));
     s
+}
+
+/// kinetren.exe carries the Kinetren icon and its version (windows-build): Explorer shows them
+/// in the file list and in Properties. Only for a Windows TARGET (a cross-build runs this script
+/// on Linux, so `cfg!(windows)` would describe the wrong machine); mingw's windres compiles it.
+fn windows_resource() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+    let ico = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packaging/kinetren.ico");
+    println!("cargo:rerun-if-changed={}", ico.display());
+    println!("cargo:rerun-if-env-changed=KT_VERSION_FULL");
+    let version = std::env::var("KT_VERSION_FULL").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+    let ico = ico.canonicalize().expect("packaging/kinetren.ico").to_string_lossy().replace('\\', "/");
+    let rc = format!(
+        r#"1 ICON "{ico}"
+1 VERSIONINFO
+FILEVERSION 0,1,0,0
+PRODUCTVERSION 0,1,0,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"
+    BEGIN
+      VALUE "CompanyName", "Kinetren"
+      VALUE "FileDescription", "Kinetren video editor"
+      VALUE "FileVersion", "{version}"
+      VALUE "ProductName", "Kinetren"
+      VALUE "ProductVersion", "{version}"
+      VALUE "OriginalFilename", "kinetren.exe"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END
+"#
+    );
+    let out = Path::new(&std::env::var("OUT_DIR").unwrap()).join("kinetren.rc");
+    std::fs::write(&out, rc).expect("write kinetren.rc");
+    embed_resource::compile(&out, embed_resource::NONE).manifest_optional().expect("compile kinetren.rc");
 }

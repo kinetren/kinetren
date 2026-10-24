@@ -406,3 +406,18 @@ fn t759b_transform_form_labels_are_translated_and_carry_no_units() {
     }
     i18n::set_lang(Lang::Ru);
 }
+
+/// t861 (windows-build, ui-reach): without LC_ALL/LC_MESSAGES/LANG the OS locale name
+/// decides (Windows); a set variable still wins; an unknown language falls back to English.
+#[test]
+fn t861_language_from_the_os_locale_when_no_variable() {
+    use crate::i18n::detect::detect;
+    let none = |_: &str| None::<String>;
+    assert_eq!(detect(&none, Some("ru-RU".into())), Some(Lang::Ru));
+    assert_eq!(detect(&none, Some("zh-Hans-CN".into())), Some(Lang::Zh));
+    let lang_es = |v: &str| (v == "LANG").then(|| "es_ES.UTF-8".to_string());
+    assert_eq!(detect(&lang_es, Some("ru-RU".into())), Some(Lang::Es), "the variable wins");
+    assert_eq!(detect(&none, Some("fr-FR".into())), None, "unknown → English by the caller");
+    assert_eq!(detect(&none, None), None);
+}
+

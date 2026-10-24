@@ -9,6 +9,7 @@
 //! all of its hardware acceleration.
 
 pub mod api;
+pub mod encoders;
 pub mod loader;
 pub mod search;
 

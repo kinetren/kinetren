@@ -809,7 +809,9 @@ impl GpuFxEngine {
             software: ai.device_type == wgpu::DeviceType::Cpu
                 || name_l.contains("llvmpipe")
                 || name_l.contains("softpipe")
-                || name_l.contains("swiftshader"),
+                || name_l.contains("swiftshader")
+                // Windows' software rasterizer (WARP)
+                || name_l.contains("microsoft basic render"),
         };
 
         let err_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);

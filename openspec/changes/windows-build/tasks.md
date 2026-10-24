@@ -50,12 +50,12 @@ change.
 
 ## 6. Audio output, encoders, small Windows behaviour
 
-- [ ] 6.1 `audio_out.rs` `OutputEdge` (Direct / Map / Resample; rubato fixed-in with a preallocated FIFO; playhead in engine frames; resampler delay in latency compensation); verify t857 (counting allocator) and that the transport tests listed by `openspec show transport --type spec` stay green
-- [ ] 6.2 `video_encoder_candidates(os)` with per-candidate pixel format and quality options; QSV via NV12; vaapi only on Linux; amf and mf on Windows; verify t858 (`src/libs/kt-ffmpeg/tests/encoders.rs`) and t25/t33 green on Linux
-- [ ] 6.3 Locale from `GetUserDefaultLocaleName` behind an injectable source; verify t861 (`src/apps/kt-app/src/i18n_tests.rs`)
-- [ ] 6.4 Windows `dnd_pointer_pos` (`GetCursorPos` + `ScreenToClient`), `windows_subsystem = "windows"` for release, `src/packaging/kinetren.ico` plus the version resource via `winresource` in kt-app `build.rs` (target-gated), WARP in the software-adapter names; verify the zip's exe shows the icon (`x86_64-w64-mingw32-objdump -x` lists the resource) and record the manual Windows check (drop on the second lane at about 10 s, no console, icon and version in Properties) here
-- [ ] 6.5 Forced panic in the Windows dist exe under wine: the crash report holds function names; if it doesn't, apply the D1 fallback (`strip = "none"` + `debug = 1` for the Windows dist target only) and re-check
-- [ ] 6.6 Commit stage 6
+- [x] 6.1 `audio_out.rs` `OutputEdge` (Direct / Map / Resample; rubato fixed-in with a preallocated FIFO; playhead in engine frames; resampler delay in latency compensation); verify t857 (counting allocator) and that the transport tests listed by `openspec show transport --type spec` stay green
+- [x] 6.2 `video_encoder_candidates(os)` with per-candidate pixel format and quality options; QSV via NV12; vaapi only on Linux; amf and mf on Windows; verify t858 (`src/libs/kt-ffmpeg/tests/encoders.rs`) and t25/t33 green on Linux
+- [x] 6.3 Locale from `GetUserDefaultLocaleName` behind an injectable source; verify t861 (`src/apps/kt-app/src/i18n_tests.rs`)
+- [ ] 6.4 Windows `dnd_pointer_pos` (`GetCursorPos` + `ScreenToClient`), `windows_subsystem = "windows"` for release, `src/packaging/kinetren.ico` plus the version resource via `winresource` in kt-app `build.rs` (target-gated), WARP in the software-adapter names; verify the zip's exe shows the icon (`x86_64-w64-mingw32-objdump -x` lists the resource) and record the manual Windows check (drop on the second lane at about 10 s, no console, icon and version in Properties) here. **2026-10-24:** implemented (GetCursorPos with the Linux formula, `windows_subsystem` for release, `packaging/kinetren.ico` from `packaging/make-ico.py` + VERSIONINFO via `embed-resource`, WARP name); the cross-built exe has a `.rsrc` with the icon and the version strings. **Pending: the manual check on real Windows** (the box stays open until someone runs it)
+- [x] 6.5 Forced panic in the Windows dist exe under wine: the crash report holds function names; if it doesn't, apply the D1 fallback (`strip = "none"` + `debug = 1` for the Windows dist target only) and re-check. **2026-10-24:** a probe built with the dist settings (thin LTO, `strip = "debuginfo"`, `debug = 1`) for x86_64-pc-windows-gnu prints a backtrace under wine with function names (`btcheck::kinetren_marker_function`, `btcheck::main`): the COFF symbol table survives, no fallback needed
+- [x] 6.6 Commit stage 6
 
 ## 7. Tests on Windows, CI and release
 

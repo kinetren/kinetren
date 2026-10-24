@@ -1,8 +1,9 @@
 // In-process MP4 muxer (h264 + aac). INCLUDED into each version
 // module together with source_impl.rs — the types match the loaded version.
 //
-// It replaces the former shell-out to the ffmpeg binary: codecs are taken from the SYSTEM
-// FFmpeg, so its hardware encoders (nvenc/vaapi/qsv) are available.
+// It replaces the former shell-out to the ffmpeg binary: codecs are taken from the
+// installed FFmpeg, so its hardware encoders are available. The cascade per OS and each
+// candidate's pixel format and options: `crate::encoders` (windows-build).
 
 use crate::MuxConfig;
 
@@ -11,24 +12,27 @@ const AVFMT_GLOBALHEADER: c_int = 0x0040;
 const AVIO_FLAG_WRITE: c_int = 2;
 const AV_CODEC_FLAG_GLOBAL_HEADER: c_int = 1 << 22;
 
-/// Video encoder candidates in descending order of preference: hardware first.
-const VIDEO_ENCODERS: &[(&str, bool)] = &[
-    ("h264_nvenc", true),
-    ("h264_vaapi", true),
-    ("h264_qsv", true),
-    ("libx264", false),
-    ("mpeg4", false),
-];
+/// The cascade of this OS.
+fn video_encoders() -> Vec<crate::encoders::EncoderSpec> {
+    crate::encoders::video_encoder_candidates(crate::search::Os::NATIVE)
+}
+
+fn av_pix(p: crate::encoders::PixFmt) -> ffi::AVPixelFormat {
+    match p {
+        crate::encoders::PixFmt::Yuv420p => ffi::AV_PIX_FMT_YUV420P,
+        crate::encoders::PixFmt::Nv12 => ffi::AV_PIX_FMT_NV12,
+    }
+}
 
 /// Encoders available in the system (for the UI).
 pub fn available_encoders(api: &Api) -> Vec<String> {
-    VIDEO_ENCODERS
+    video_encoders()
         .iter()
-        .filter(|(name, _)| {
-            let c = CString::new(*name).unwrap();
+        .filter(|e| {
+            let c = CString::new(e.name).unwrap();
             !unsafe { (api.avcodec_find_encoder_by_name)(c.as_ptr()) }.is_null()
         })
-        .map(|(name, _)| name.to_string())
+        .map(|e| e.name.to_string())
         .collect()
 }
 
@@ -90,9 +94,10 @@ impl Muxer {
         };
         // during the probes, the FFmpeg log is silenced (failed candidates are normal)
         unsafe { (api.av_log_set_level)(8) }; // AV_LOG_FATAL
-        let mut opened: Option<(String, *mut ffi::AVCodecContext)> = None;
+        let mut opened: Option<(String, *mut ffi::AVCodecContext, ffi::AVPixelFormat)> = None;
         let mut last_err = String::new();
-        for (name, _hw) in VIDEO_ENCODERS {
+        for spec in video_encoders() {
+            let name = &spec.name;
             if let Some(pref) = &cfg.force_encoder
                 && pref != name
             {
@@ -109,7 +114,7 @@ impl Muxer {
                 (*ctx).height = height;
                 (*ctx).time_base = tb(1, cfg.fps as c_int);
                 (*ctx).framerate = tb(cfg.fps as c_int, 1);
-                (*ctx).pix_fmt = ffi::AV_PIX_FMT_YUV420P;
+                (*ctx).pix_fmt = av_pix(spec.pix);
                 (*ctx).gop_size = cfg.fps as c_int * 2;
                 (*ctx).max_b_frames = 0;
                 if global_header {
@@ -117,41 +122,21 @@ impl Muxer {
                 }
             }
             let mut vopts: *mut ffi::AVDictionary = core::ptr::null_mut();
-            if let Some(bps) = cfg.video_bitrate {
-                // target bitrate mode (item 9)
-                unsafe { (*ctx).bit_rate = bps as i64 };
-                match *name {
-                    "libx264" => {
-                        set(&mut vopts, "preset", "veryfast");
-                        set(&mut vopts, "maxrate", &(bps as u64 * 3 / 2).to_string());
-                        set(&mut vopts, "bufsize", &(bps as u64 * 2).to_string());
-                    }
-                    "h264_nvenc" => {
-                        set(&mut vopts, "preset", "p4");
-                        set(&mut vopts, "rc", "vbr");
-                    }
-                    _ => {}
+            let opts = match cfg.video_bitrate {
+                Some(bps) => {
+                    // target bitrate mode (item 9)
+                    unsafe { (*ctx).bit_rate = bps as i64 };
+                    spec.bitrate_options(bps)
                 }
-            } else {
-                match *name {
-                    "libx264" => {
-                        set(&mut vopts, "preset", "veryfast");
-                        set(&mut vopts, "crf", &cfg.quality.to_string());
-                    }
-                    "h264_nvenc" => {
-                        set(&mut vopts, "preset", "p4");
-                        set(&mut vopts, "rc", "vbr");
-                        set(&mut vopts, "cq", &cfg.quality.to_string());
-                    }
-                    "h264_qsv" => set(&mut vopts, "global_quality", &cfg.quality.to_string()),
-                    "h264_vaapi" => set(&mut vopts, "qp", &cfg.quality.to_string()),
-                    _ => {}
-                }
+                None => spec.quality_options(cfg.quality),
+            };
+            for (k, v) in &opts {
+                set(&mut vopts, k, v);
             }
             let r = unsafe { (api.avcodec_open2)(ctx, codec, &mut vopts) };
             unsafe { (api.av_dict_free)(&mut vopts) };
             if r >= 0 {
-                opened = Some((name.to_string(), ctx));
+                opened = Some((name.to_string(), ctx, av_pix(spec.pix)));
                 break;
             }
             last_err = format!("{name}: code {r}");
@@ -159,7 +144,7 @@ impl Muxer {
             unsafe { (api.avcodec_free_context)(&mut ctx) };
         }
         unsafe { (api.av_log_set_level)(16) }; // back to AV_LOG_ERROR
-        let (enc_name, venc) = opened.ok_or_else(|| {
+        let (enc_name, venc, vpix) = opened.ok_or_else(|| {
             FfError::Av(format!(
                 "no video encoder could be opened (last error: {last_err})"
             ))
@@ -222,7 +207,7 @@ impl Muxer {
         // --- working buffers ---
         let vframe = unsafe { (api.av_frame_alloc)() };
         unsafe {
-            (*vframe).format = ffi::AV_PIX_FMT_YUV420P;
+            (*vframe).format = vpix;
             (*vframe).width = width;
             (*vframe).height = height;
             (api.av_frame_get_buffer)(vframe, 0);
@@ -242,7 +227,7 @@ impl Muxer {
                 ffi::AV_PIX_FMT_RGBA,
                 width,
                 height,
-                ffi::AV_PIX_FMT_YUV420P,
+                vpix,
                 ffi::SWS_BILINEAR as c_int,
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),

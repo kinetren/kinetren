@@ -29,6 +29,8 @@ kt-fx = { workspace = true }
 kt-gpu = { workspace = true }
 eframe = { workspace = true }
 cpal = { workspace = true }
+# band-limited conversion at the audio output edge for devices not at 48 kHz (windows-build)
+rubato = { workspace = true }
 rtrb = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 xxhash-rust = { workspace = true }
@@ -39,6 +41,8 @@ arboard = "3.6"
 serde_json.workspace = true
 # Arabic text order (R.19): egui 0.36 shapes the cursive script but does not reorder
 unicode-bidi = "0.3"
+# the icon and version resource of kinetren.exe (windows-build); runs only for a Windows target
+embed-resource = "3.0"
 # anonymous usage telemetry (change telemetry-posthog): our own PostHog capture client on a
 # blocking HTTP client; rustls with bundled roots — no OpenSSL, nothing new in `ldd`
 ureq = { version = "3.5", default-features = false, features = ["rustls"] }
@@ -49,6 +53,8 @@ sha2 = "0.10"
 # translation catalogs are compiled into static tables (apps/kt-app/build.rs)
 [build-dependencies]
 unicode-bidi = "0.3"
+# the icon and version resource of kinetren.exe (windows-build); runs only for a Windows target
+embed-resource = "3.0"
 
 # layout and interaction harness tests (rule item 9 round 8): without wgpu/snapshot —
 # pure CPU, without window and GPU
@@ -58,8 +64,15 @@ sevenz-rust2 = { version = "0.24", default-features = false, features = ["compre
 egui_kittest = { version = "0.36.1", default-features = false }
 # glyph coverage check (Test 100, item 12 round 11); version already in the egui graph
 ab_glyph = "0.2"
+# the spectrum of the output edge (t857)
+realfft = { workspace = true }
 
 # cursor position during file DnD: winit/X11 does not provide the coordinates of
 # XdndPosition (item 2 v1.4) — we read the pointer directly
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = "0.13"
+
+# Windows (windows-build): the UI language from the user's locale, the pointer during an
+# OLE drag (winit does not report it)
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi"] }
