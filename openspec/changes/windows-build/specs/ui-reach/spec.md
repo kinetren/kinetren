@@ -36,6 +36,7 @@ Why: these variables are unset on Windows, so every Windows user started in Engl
 #### Scenario: Locale name of the OS when no variable is set
 - **WHEN** detection runs with injected sources: no variables and OS locale `ru-RU`; no variables and `zh-Hans-CN`; `LANG=es_ES.UTF-8` and OS locale `ru-RU`; no variables and `fr-FR`
 - **THEN** the languages are Russian, Chinese, Spanish (the variable wins) and none (English is used)
+- **PATH** there is no gesture: the first start of `kinetren.exe` on a Windows account whose display language is Russian (no LANG set) shows the menu bar, toolbar hints and dialogs in Russian at once; after View → Language → English the choice wins on every next start
 - **TEST** t860 (`src/apps/kt-app/src/i18n_tests.rs`)
 
 ### Requirement: Windows window behaviour matches Linux where the user can see it

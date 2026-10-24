@@ -3485,7 +3485,7 @@ fn t799_ui_scenarios_describe_the_user_path() {
         "the guard is not called from finish.sh: the rule again holds only as prose"
     );
     assert!(
-        finish.contains("steps of live scenarios"),
+        finish.contains("live scenario steps"),
         "finish.sh does not print the list of PATH steps — the report again has no pictures"
     );
 }
