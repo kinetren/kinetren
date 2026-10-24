@@ -118,4 +118,4 @@ Take it. This is probably the cheapest real feature in the whole base: the path 
 
 Verification limits: `helpx.adobe.com` and `reddit.com` do not open from this environment, `forum.blackmagicdesign.com` returned 403 on access, the Vegas forum has moved to `forum.borisfx.com` and its search returns an empty page. Therefore the Premiere and After Effects rows rest on adobe.com / the Adobe community and secondary sources; the number of bands in After Effects' Parametric EQ and the makeup of the VEGAS Track EQ bands are marked `[NOT VERIFIED]` right in the table. The names, number and roles of the bands in Resolve and FCP are taken from primary sources (blackmagicdesign.com, support.apple.com).
 
-**Implemented in R.47–R.48** — the three-band EQ came in R.47 (item 327), the interactive frequency-response graph in R.48 (item 347, t348–t350). Further life of the feature — docs/porting-notes.md.
+**Implemented in R.47–R.48** — the three-band EQ came in R.47 (item 327), the interactive frequency-response graph in R.48 (item 347, t348–t350). Further life of the feature — its OpenSpec capability.

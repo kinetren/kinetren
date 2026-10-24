@@ -139,7 +139,7 @@ Background export WORKS for us ALREADY, and works exactly the way one wants to g
 - The GPU executor of the export is its own headless device (`export_video_gpu()` in
   `src/apps/kt-app/src/app.rs`, `GpuContext::new_headless` in
   `src/libs/kt-gpu/src/context.rs`); the UI queue does not share it with export
-  (item 185 of `docs/porting-notes.md`).
+  (item 185).
 - `RenderJob` (`src/apps/kt-app/src/render_dialog.rs`) already carries everything of which a queue row consists:
   the progress channel, `cancel`, `pause`, `ExportOptions`, the output path, the list of stubs, speed statistics.
 - The output name is already built from the user's template
@@ -282,4 +282,4 @@ the whole logic "markup → job → parameters" anyway, only with output to the 
   `src/libs/kt-gpu/src/context.rs`, `src/libs/kt-model/src/model.rs`,
   `src/libs/kt-model/src/project.rs`, `src/apps/kt-cli/src/main.rs`;
   `docs/user-feedback.md` (R.31, the complaint about FPS during the render window),
-  `docs/porting-notes.md` items 185, 199.
+  items 185, 199.

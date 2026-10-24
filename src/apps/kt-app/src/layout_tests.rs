@@ -1980,7 +1980,7 @@ fn t128_labels_fit_their_budget() {
     }
 }
 
-/// Test 139 (item 139 of porting-notes, R.24): the plan of the Move drag. A single
+/// Test 139 (item 139, R.24): the plan of the Move drag. A single
 /// partial overlap = crossfade; a multi-overlap / absorption / tiny overlap /
 /// vertical move into an occupied spot — a clamp (the user's decision, item 10).
 #[test]
@@ -2165,7 +2165,7 @@ fn t139_drag_overlap_creates_crossfade() {
     p.validate().expect("result is valid");
 }
 
-/// Test 140 (item 140 of porting-notes, R.24): drags of the edges/body of the transition and
+/// Test 140 (item 140, R.24): drags of the edges/body of the transition and
 /// the drawing geometry.
 #[test]
 fn t140_transition_edge_and_body_drags() {
@@ -2278,7 +2278,7 @@ fn t140_transition_edge_and_body_drags() {
     assert!(r.top() > 50.0 && r.bottom() < 90.0, "strip inside the track row");
 }
 
-/// Test 163 (item 163 of porting-notes, R.28): with layering the gesture cuts NOTHING.
+/// Test 163 (item 163, R.28): with layering the gesture cuts NOTHING.
 /// The user's requirement verbatim: “however much there was, that much must remain…
 /// NOTHING ANYWHERE MUST GROW BACK OR BE CUT OFF”.
 #[test]
@@ -2382,7 +2382,7 @@ fn t163_overlap_drag_changes_nothing_but_position() {
     }
 }
 
-/// Test 160 (item 160 of porting-notes, R.26): overlapped — pulled apart — the material
+/// Test 160 (item 160, R.26): overlapped — pulled apart — the material
 /// came back. The user's complaint: “in Sony Vegas, if you pull apart
 /// overlapping events — what was overlapping remains, without trimming”.
 #[test]
@@ -2478,7 +2478,7 @@ fn t160_pulling_apart_restores_trimmed_material() {
     assert!(l.top() > 50.0 && r.bottom() < 90.0, "handles inside the track row");
 }
 
-/// Test 157 (item 157 of porting-notes, R.25): the fade at the edge in the UI — the window grab,
+/// Test 157 (item 157, R.25): the fade at the edge in the UI — the window grab,
 /// the live drag of the edge and the absence of a neighbor do not interfere with either.
 #[test]
 fn t157_fade_edge_drag_without_neighbour() {
@@ -2572,7 +2572,7 @@ fn t157_fade_edge_drag_without_neighbour() {
     assert!(t.out_offset <= Tick(90_000), "the window is clamped by the clip body: {t:?}");
 }
 
-/// Test 142 (item 142 of porting-notes, R.24): range markers in the UI. The M gesture —
+/// Test 142 (item 142, R.24): range markers in the UI. The M gesture —
 /// verbatim by the user's decision: “with a region selected and the cursor in it, m gives
 /// marked_range; with the cursor outside the region — a single marker at the cursor”;
 /// a repeated M is a toggle; the edges and snap/stop see both edges.
@@ -2667,7 +2667,7 @@ fn t142_marker_end_drag() {
     assert!((m.duration.0 - 50_000).abs() <= 1_000, "duration ~50000: {:?}", m.duration);
 }
 
-/// Test 150 (item 150 of porting-notes, R.24): the application's file IO — .kt.
+/// Test 150 (item 150, R.24): the application's file IO — .kt.
 #[test]
 fn t150_project_io_is_otio() {
     use std::path::{Path, PathBuf};

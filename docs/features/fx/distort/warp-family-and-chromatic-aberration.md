@@ -79,4 +79,4 @@ We take all five in R.47: LensDistort (k1/k2, minus = correction), Twirl (quadra
 - https://helpx.adobe.com/premiere/using/effects-reference.html (access date 2026-09-14)
 - https://www.blackmagicdesign.com/products/davinciresolve (access date 2026-09-14)
 
-**Implemented in R.47** — docs/porting-notes.md items 334–335 (t332/t333); the further life of the feature is there.
+**Implemented in R.47** — items 334–335 (t332/t333).

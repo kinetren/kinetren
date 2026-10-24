@@ -1,4 +1,4 @@
-//! Test 149 (item 149 of porting-notes, R.24): conformance with the REFERENCE
+//! Test 149 (item 149, R.24): conformance with the REFERENCE
 //! Python library OpenTimelineIO (the format has no official JSON Schema —
 //! only the implementation is normative).
 //!

@@ -90,7 +90,7 @@ The second count explains where such tasks are nonetheless filed. Two trackers o
 The most precise document on the subject is our own: the claim of the owner, Round 28 item 4, from which rule 18 was born. It is valuable because the person describes not a taste but the mechanics of the error — he did not understand WHERE, and the second label turned out to be a direct lie:
 
 > "fade out — it is not understood at all from the name of the item where it will add this out… And the label 'Remove crossfade' is also not obvious, it turns out it removes the fadeout from the end."
-> — Round 28 item 4, `docs/user-feedback.md`; analysis and fix — item 171 `docs/porting-notes.md`
+> — Round 28 item 4, `docs/user-feedback.md`; analysis and fix — item 171
 
 External confirmation was found in two forms — as a vendor's admission and as a live request in a tracker. Apple is the only one of the five who wrote "the label was incorrect" in the release notes:
 
@@ -126,7 +126,7 @@ ADDRESS: `src/apps/kt-app/src/timeline.rs` — the class is possible, and nothin
 
 **The rule.** Item 18 of the checklist in `src/apps/kt-app/CLAUDE.md`: "The name of a menu item says WHAT and WHERE will happen. 'Fade out' does not do: a fade can be at the beginning or at the end of an event. 'Remove crossfade', which in fact removes the fade from the end, lies to the user."
 
-**Analysis of the defect.** Item 171 of `docs/porting-notes.md`: one label `remove_transition` stood on FOUR different actions; it was split by the pair (fade/crossfade) × (our end/our start) into `remove_fade_start/_end` and `remove_crossfade_next/_prev`, and `fade_in/fade_out` received "at the start/at the end of the event". In the catalog this today is `tl.menu.remove_fade_start` = "Remove the fade at the clip start" and `tl.menu.remove_transition_next` = "Remove the transition with the next clip" — note, the keys themselves are not named as item 171 promises (`remove_crossfade_*`): even the record of the fix diverged from the code in its naming.
+**Analysis of the defect.** Item 171: one label `remove_transition` stood on FOUR different actions; it was split by the pair (fade/crossfade) × (our end/our start) into `remove_fade_start/_end` and `remove_crossfade_next/_prev`, and `fade_in/fade_out` received "at the start/at the end of the event". In the catalog this today is `tl.menu.remove_fade_start` = "Remove the fade at the clip start" and `tl.menu.remove_transition_next` = "Remove the transition with the next clip" — note, the keys themselves are not named as item 171 promises (`remove_crossfade_*`): even the record of the fix diverged from the code in its naming.
 
 **The check.** t171 `src/apps/kt-app/src/i18n_tests.rs:278` (`t171_transition_menu_labels_say_what_and_where`) takes a group of four removal keys and requires PAIRWISE distinguishability of all six pairs, then separately `FADE_IN` ≠ `FADE_OUT` and `MARKER_HERE` ≠ `MARKER_REGION`. The key point is the outer loop `for lang in Lang::ALL`: the check runs in EVERY language, and the motive is written in the test itself — "a translation 'into one word' will bring back the same ambiguity". This is the precedent on which the whole second wave rests: **a text rule that became a machine check** — the same thing that ended Round 38 ("prose drops nothing", t252–t255).
 
@@ -188,7 +188,7 @@ ONE LINE: overlap — not touched | delay — not touched | capacity — zero ne
 ## Sources
 
 - `docs/user-feedback.md`, Round 28 item 4 — the primary source of the rule (accessed 2026-09-07)
-- `docs/porting-notes.md`, item 171 — analysis of the defect and the fix (2026-09-07)
+- item 171 — analysis of the defect and the fix (2026-09-07)
 - `src/apps/kt-app/src/i18n_tests.rs:270-311` — t171 (2026-09-07)
 - `src/apps/kt-app/CLAUDE.md`, checklist items 7, 13, 17, 18 (2026-09-07)
 - https://support.apple.com/en-us/102825 — Final Cut Pro release notes, the rename `Reset Point of View` → `Reset Angle` in 10.4.1 (accessed 2026-09-07)

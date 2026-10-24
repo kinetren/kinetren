@@ -1,4 +1,4 @@
-//! Test 13 (docs/porting-notes.md): timeline scroll/zoom does not produce
+//! Test 13: timeline scroll/zoom does not produce
 //! decode requests (invariant 8). The old engine, on every viewport shift,
 //! re-decoded thumbnails/waveforms from scratch (defect m).
 //!

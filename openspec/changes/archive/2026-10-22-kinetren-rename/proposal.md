@@ -29,7 +29,7 @@ marker. A half-renamed program is worse than either name.
   installs the new ones.
 - The landing page (`site/`) and the live development documents (root `CLAUDE.md`, crate
   notes, current spec texts that quote UI strings) use the new name. Historical
-  chronicles (`docs/porting-notes.md`, owner quotes in `docs/user-feedback.md`, archived
+  chronicles (owner quotes in `docs/user-feedback.md`, archived
   changes) are left as written.
 
 ## Capabilities

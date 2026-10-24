@@ -323,7 +323,7 @@ fn t154_clip_without_media_reference_survives() {
     );
 }
 
-/// Test 165 (item 165 of porting-notes, R.28): a track with an OVERLAP moves into
+/// Test 165 (item 165, R.28): a track with an OVERLAP moves into
 /// adjacent Tracks and is assembled back into one. In OTIO the clip position is
 /// the order of the track's children, so otherwise the overlap would wreck the edit.
 #[test]

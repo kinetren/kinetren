@@ -1,4 +1,4 @@
-//! Test 179 (item 179 of porting-notes): cross-render of a REAL film.
+//! Test 179 (item 179): cross-render of a REAL film.
 //!
 //! The user’s proposal: “somewhere on the internet I came across opensource OTIO
 //! files of public films — I propose taking some film whose sources weigh less

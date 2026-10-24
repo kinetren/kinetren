@@ -162,7 +162,7 @@ accepts the stream number from outside.
 
 Panning exists and is not routing: `FxInstance::Gain { db, pan }` (`src/libs/kt-model/src/project.rs:2182`)
 is applied in `src/libs/kt-fx/src/lib.rs:828` by the linear law `pan_l *= 1−p`, `pan_r *= 1+p` with
-clipping at 1.0 (item 228 of `docs/porting-notes.md`). The multiplier never exceeds one, therefore `pan`
+clipping at 1.0 (item 228). The multiplier never exceeds one, therefore `pan`
 can only REDUCE a side: "the left channel into both ears" is inexpressible with it, and "the left channel
 in the left ear" is the only thing that can be obtained. We have only two audio effects (`Gain` and
 `Slowed+Reverb`, `src/apps/kt-app/src/fx_registry.rs:52`) — there is nowhere to put routing even as an effect.

@@ -25,7 +25,7 @@ See proposal.md — Why. Constraints that set the shape:
 - `docs/features/*` returns to its role: the base of other editors' features.
 
 **Non-Goals:**
-- Do not rewrite history: `user-feedback.md` is not touched, `porting-notes.md` is frozen, not
+- Do not rewrite history: `user-feedback.md` is not touched, the porting log is frozen, not
   cleaned. Feature notes with status "done" remain frozen (rule 7 of the README) — only the
   "How it fits" section is cut out of them.
 - Do not change code, tests, invariants. Do not rename tests.
@@ -93,10 +93,10 @@ For each capability: (1) collect its lines from the three sources by the table i
 tests tNNN and by the paths `src/…` — more precise than by headings); (2) write `spec.md`;
 (3) write `design.md`; (4) truncate "How it fits" in the affected feature notes to a reference;
 (5) `openspec validate --strict` and `features-index.py --check`. Only after all 17 — `config.yaml`,
-freezing of porting-notes, cleaning of CLAUDE.md. So until the last step the old chronicles remain
+freezing of the porting log, cleaning of CLAUDE.md. So until the last step the old chronicles remain
 intact, and the work is reversible.
 
-### D5. `porting-notes.md` is frozen, not cleaned
+### D5. The porting log is frozen, not cleaned
 
 The defect catalogue of the old engine and the chapters of the rounds are the history of the port.
 Cleaning would cost more than the transfer and would destroy the context that the commits refer to.

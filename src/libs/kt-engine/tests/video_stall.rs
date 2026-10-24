@@ -1,4 +1,4 @@
-//! Tests 27-28 (docs/porting-notes.md, items 19-20): the video cache does not “stall”
+//! Tests 27-28 (items 19-20): the video cache does not “stall”
 //! under a stream of Playback requests, EOF keys are not re-decoded,
 //! coverage with a span gives honest strips.
 

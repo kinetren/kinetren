@@ -98,4 +98,4 @@ the "the tail darkens" trick). Tempo sync is not taken — the project has no co
 - https://www.blackmagicdesign.com/products/davinciresolve/fairlight (accessed 2026-09-14)
 - https://support.apple.com/guide/final-cut-pro/welcome/mac (accessed 2026-09-14)
 
-**Implemented in R.47** — docs/porting-notes.md items 329 (t326); the further life of the feature is there.
+**Implemented in R.47** — items 329 (t326).

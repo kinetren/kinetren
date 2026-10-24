@@ -442,7 +442,7 @@ fn overlapping_clips(clips: &[AudioClip], covers: &OverlapMap) -> Vec<bool> {
 }
 
 /// The clip’s weight from OVERLAPPING with its neighbours on the track (the return of the v1 semantics,
-/// removed in R.24 together with the legality of overlaps; porting-notes item 2:
+/// removed in R.24 together with the legality of overlaps; item 2:
 /// “equal-power crossfade when two clips of one audio track overlap, 1/N
 /// for 3+”). On butted clips it is inert — weight 1.0, therefore projects with explicit
 /// transitions (and the GOLDEN references) do not change.

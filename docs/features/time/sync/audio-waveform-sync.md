@@ -188,5 +188,5 @@ field in `MediaInfo`, and without a generator on the shoot it is still useless.
 - The Premiere limit "one video clip + up to 16 audio clips per merged clip"
   is DELIBERATELY not asserted in the text of the note: there was nothing to confirm it with
 
-**Implemented in R.49** - docs/porting-notes.md item 374
-(tests t413, t414, t415, t416, t417, t418, t419); the further life of the feature is there.
+**Implemented in R.49** - item 374
+(tests t413, t414, t415, t416, t417, t418, t419).

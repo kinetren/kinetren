@@ -1,4 +1,4 @@
-//! Test 35 (docs/porting-notes.md): the morpher system in the model.
+//! Test 35: the morpher system in the model.
 //! A port of v1 with the correction of the defects of reconnaissance: D1 (FX batch live),
 //! D5 (cleanup/inheritance of targets), D6 (undo for everything), D11 (order by id).
 

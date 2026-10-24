@@ -1,4 +1,4 @@
-//! Test 136 (item 136 of porting-notes, R.24): audio crossfade by TRANSITIONS.
+//! Test 136 (item 136, R.24): audio crossfade by TRANSITIONS.
 //!
 //! The equal-power weights come from the TransitionEvent (the fade windows), and the “handles” read
 //! the source beyond the edges of the used piece. The cornerstone assert: converting an old overlap

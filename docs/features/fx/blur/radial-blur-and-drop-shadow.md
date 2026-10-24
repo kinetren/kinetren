@@ -97,4 +97,4 @@ added later as a mode.
 - https://helpx.adobe.com/premiere/using/effects-reference.html (access date 2026-09-14)
 - https://www.blackmagicdesign.com/products/davinciresolve (access date 2026-09-14)
 
-**Implemented in R.47** — docs/porting-notes.md item 334 (t332); the further life of the feature is there.
+**Implemented in R.47** — item 334 (t332).

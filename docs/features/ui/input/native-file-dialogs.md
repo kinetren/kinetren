@@ -200,8 +200,7 @@ ADDRESS: src/apps/kt-app/src/app.rs:2723 — the class "our own file picker grew
   highlighting of the track, a ghost of the clip and a snap line; the position is read
   directly from the X server (`dnd_pointer_pos`, `src/apps/kt-app/src/app.rs:4298`),
   because winit drops the coordinates of `XdndPosition`; the lifetime rule of the position
-  is the pure function `dnd_keep_hover` (test 47 and its addition, items 47/52 of
-  `docs/porting-notes.md`).
+  is the pure function `dnd_keep_hover` (test 47 and its addition, items 47/52).
 - A drop understands three targets: `.otio` opens as a project, a file dropped into the
   source field of an open morpher replaces the source (t218), everything else becomes media
   plus clips on the track under the cursor.

@@ -1,6 +1,6 @@
 //! The burst cache. The single truth about “warmth” (invariant 4):
 //! coverage for the UI is a query to the cache itself, with no separate bookkeeping
-//! (the old ms-buckets — defect g in docs/porting-notes.md — lied in four
+//! (the old ms-buckets — defect g of v1 — lied in four
 //! ways; here there is structurally nothing to lie with: the interval set is updated in the same
 //! operations as the cache itself).
 //!

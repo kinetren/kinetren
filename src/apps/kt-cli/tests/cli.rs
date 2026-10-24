@@ -1,4 +1,4 @@
-//! Test 151 (item 151 of porting-notes, R.24; R.70 — its own format): kt-cli on
+//! Test 151 (item 151, R.24; R.70 — its own format): kt-cli on
 //! a `.kt` project file and two exchange doors.
 //!
 //! new/demo write a project file of their own format; export-otio gives a

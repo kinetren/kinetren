@@ -1,4 +1,4 @@
-//! Test 49 (docs/porting-notes.md, item 6 v1.4): the display order of tracks.
+//! Test 49 (item 6 v1.4): the display order of tracks.
 //! Since R.62 (change B) the rows are a VECTOR OF OBJECT TRACKS: `normalize_lane_order`
 //! remains a pure function of normalizing the order of a permutation (duplicates and garbage
 //! are stripped, missing ones are appended), `lane_order_insert/remove` — the shift-aware

@@ -2,7 +2,7 @@
 
 > Crate contracts and mandatory tests — `openspec/specs/{ui-timeline,ui-reach,durability,telemetry}/spec.md`, the reasons for decisions — `design.md` next to them.
 
-UI invariants earned through the rounds 4–5 (details and test numbers — docs/porting-notes.md 38–94). Violating any of them is a performance or UX regression.
+UI invariants earned through the rounds 4–5 (details and test numbers — items 38–94). Violating any of them is a performance or UX regression.
 
 ## Redraw and frame cost (items 38–40, 53, 57)
 
@@ -98,7 +98,7 @@ UI invariants earned through the rounds 4–5 (details and test numbers — docs
 - **Not a single label outside the catalog.** `tr(k::section::CONSTANT)` for strings without arguments, `tf!(key, a, b)` — with arguments (placeholders are positional, `{0}`/`{1}`: Chinese and Arabic regularly need a different order). The constant's path is written IN FULL: test 125 searches for usage by it, and an abbreviated `use` would hide the key.
 - **There is no plural form.** We write "noun: N", not "copied N clips": this is the user's rule from the wording "the Russian sample is shown as data: "clips copied: {}"", and it also removes the tables of plural forms for five languages.
 - **The order of fonts in `install_fonts` must not change.** The Noto subsets go AFTER Ubuntu-Light and Phosphor: Latin and Cyrillic must stay behind Ubuntu-Light (Noto CJK contains them too), the PUA icons — behind Phosphor. The precision of the predicate "an atom of an Arabic letterform" in `i18n::bidi` holds on this order, and on it the whole order of Arabic text rests.
-- **Arabic: egui 0.36 shapes the cursive script, but does NOT reorder.** The runs are cut by the font letterform (a space breaks the phrase), harfrust reverses the glyphs inside a run itself, and the runs are laid out in logical order. Therefore the WORDS are rearranged, and the characters inside a word remain logical; a per-character `reorder_line` makes it worse. The analysis — `src/i18n/bidi.rs` and item 126 of porting-notes.
+- **Arabic: egui 0.36 shapes the cursive script, but does NOT reorder.** The runs are cut by the font letterform (a space breaks the phrase), harfrust reverses the glyphs inside a run itself, and the runs are laid out in logical order. Therefore the WORDS are rearranged, and the characters inside a word remain logical; a per-character `reorder_line` makes it worse. The analysis — `src/i18n/bidi.rs` and item 126.
 - **The contents of a `TextEdit` are never reordered** — only the catalog strings. Otherwise the cursor and the selection would diverge from what is shown.
 - **The window title ≠ its id.** `Window::new(title)` derives the `Id` from the title, and the window position lives under it: every window must have an explicit `.id()`, otherwise changing the language will reset the position of the dialog (test 129).
 - **Strings assembled in a background thread must not be translated** — the language lives in the TLS of the UI thread. DATA travels over the channel, and the string is concatenated at display time (this is how the render result summary is done).
@@ -194,7 +194,7 @@ An item of the checklist without the mark "closed by test N" is a request for a 
 
 ### A test asserts the CONSEQUENCE and probes FROM WHERE THE PERSON ACTS (R.40)
 
-The rules above were written down — and did not work: the R.38 mechanism turned out green on a program where three of its own items did not work. The analysis — `docs/porting-notes.md` 280, the complaints verbatim — `docs/user-feedback.md`, R.40.
+The rules above were written down — and did not work: the R.38 mechanism turned out green on a program where three of its own items did not work. The analysis — item 280, the complaints verbatim — `docs/user-feedback.md`, R.40.
 
 - **"The field got set" and "the item is in the menu" are not consequences.** t262 asserted "`lane_heights` got a value, `row_h` changed" — true, but the event was drawn at the base height just as before, and was drawn that way. What must be asserted is what the person sees and does: the rectangle grew, a click hit it, the block moved, the frame caught it.
 - **The point from which the test acts is part of the assertion.** t253 pressed RMB at `rect.left() − 30`, that is, in the HEADER of a row 34 px wide, where I had put the menu item myself. A person presses on the track and got the menu of empty space. Therefore `scene()` in `reach_tests.rs` returns a LIST of places, and every entity is probed from EVERY place: a new place of action is added to this list, and not "checked separately later".

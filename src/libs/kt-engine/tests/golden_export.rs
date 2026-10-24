@@ -1,4 +1,4 @@
-//! Test 11 (docs/porting-notes.md): golden export.
+//! Test 11: golden export.
 //! - raw streams (RGBA + f32) are deterministic from run to run;
 //! - the hashes match the committed references (platform binding:
 //!   linux x86_64 — on another platform libm/sinc coefficients may give

@@ -2,7 +2,7 @@
 
 SQLite (rusqlite, bundled). It lives next to the project file → it moves together with it. It is a **cache**: loss or corruption is not an error — the DB is rebuilt by the background worker. It is not committed to git.
 
-Purpose: remove any on-demand decodes for the UI (waveforms, thumbnails — defect m in `porting-notes.md`) and any scanning of files on project open (probe, seek indexes — defect j).
+Purpose: remove any on-demand decodes for the UI (waveforms, thumbnails — defect m of v1) and any scanning of files on project open (probe, seek indexes — defect j).
 
 ## Schema (schema_version = 2)
 

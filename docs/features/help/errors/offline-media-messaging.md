@@ -102,7 +102,7 @@ And his answer to a clarifying question, in the same round:
 
 > "The placeholder for missing video is a dark plate with the file name and an icon ('immediately visible WHAT is missing'); audio is silence. Notifications: the notice list when the project opens, a warning in the render dialog BEFORE the start, and counters of what was lost in the summary AFTER." (Owner's answer to a clarifying question, same round.)
 
-Done in items 206-209 of `docs/porting-notes.md` (the stub, opening, render, return — four "halves" of one owner request):
+Done in items 206-209 (the stub, opening, render, return — four "halves" of one owner request):
 
 - The stub itself — `src/libs/kt-media/src/placeholder.rs`: a dark frame with an orange border, a film icon, the file name in the 3×5 font, silence in audio, a duration of 1000 hours, `fps: None`; the frame is cached by `Quality`. Test 208 there: the frame is deterministic, does not depend on time, different names give different frames, non-ASCII is replaced by `?`.
 - Level (a), opening the project: `src/apps/kt-app/src/util.rs:59` (`open_source_or_placeholder`) returns a pair "source + error", and `src/apps/kt-app/src/app.rs:684` sends a SEPARATE `warn()` for each file with the system cause (`media_missing`) and then one `note()` with the summary (`media_missing_count`). Before this round only the LAST error survived, and the clip remained without any source at all, and the preview hung in "Loading".

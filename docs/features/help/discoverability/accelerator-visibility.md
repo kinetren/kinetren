@@ -209,4 +209,4 @@ Both `SIGNAL:` lines and the breakdown "42 requests across eight trackers" are r
 
 Internal sources (checked by grep and reading on 2026-09-07; the references to `toolbar.rs`, `timeline.rs`, `app.rs` and the catalogs were re-checked on 2026-09-08): `src/apps/kt-app/src/toolbar.rs:239-345`, `src/apps/kt-app/src/app.rs:3890-4020` and `:4101`, `src/apps/kt-app/src/timeline.rs:1258-1320` and `:4341-4732`, `src/apps/kt-app/src/i18n_tests.rs:134`, `src/apps/kt-app/i18n/*.toml` (522 values in each), `site/content/structure.toml` (`[keys.*]`), `site/content/*.toml` (`[keys]`), `site/build.py:665-680`, `src/libs/kt-model/src/model.rs:98`. The behavior of egui was checked against the sources of the installed versions: `egui-0.36.1/src/widgets/button.rs:217-237`, `egui-0.36.1/src/context.rs:1731`, `egui-0.36.1/src/data/input/keyboard_shortcut.rs:11`, `epaint-0.36.1/src/text/text_layout.rs:262-270`.
 
-**Implemented in R.49** — docs/porting-notes.md item 362 (tests t392, t393); the further life of the feature is recorded there.
+**Implemented in R.49** — item 362 (tests t392, t393).

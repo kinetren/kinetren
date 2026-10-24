@@ -1,4 +1,4 @@
-//! Test 158 (item 158 of porting-notes, R.25): CROSS-RENDER conformance — foreign
+//! Test 158 (item 158, R.25): CROSS-RENDER conformance — foreign
 //! .otio files are rendered by us and by melt (MLT, the engine of Kdenlive/Shotcut), and the results
 //! are compared frame by frame.
 //!

@@ -102,7 +102,7 @@ The direction of discovery is always the same: an expert notices it, not the own
 
 The industry argument here is the second one. The first — local, and unique of its kind:
 **our first launch on someone else's hardware has already happened, and it was R.31.** The owner
-launched the build on AMD/RADV and wrote verbatim: "Right now my computer says there is no gpu acceleration" — and right after it the text of a pipeline creation error plus the line of the perf panel "GPU: AMD Radeon Graphics (RADV RAPHAEL_MENDOCINO) / Vulkan, FX: CPU". Four porting-notes items (194–197) came out of one message. This is the only known test of the domain we have, and it says one thing: what works is not "a message about the hardware", but a message that carries the CAUSE.
+launched the build on AMD/RADV and wrote verbatim: "Right now my computer says there is no gpu acceleration" — and right after it the text of a pipeline creation error plus the line of the perf panel "GPU: AMD Radeon Graphics (RADV RAPHAEL_MENDOCINO) / Vulkan, FX: CPU". Four items (194–197) came out of one message. This is the only known test of the domain we have, and it says one thing: what works is not "a message about the hardware", but a message that carries the CAUSE.
 
 ### What already exists
 

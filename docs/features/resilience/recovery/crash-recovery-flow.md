@@ -245,8 +245,7 @@ properties get fixed (63 % genuine fixes against 43 % for the crashes themselves
 - Our code is the primary source for all claims about "us":
   `src/apps/kt-app/src/app.rs`, `src/apps/kt-app/src/main.rs`,
   `src/apps/kt-app/src/layout_tests.rs`, `src/libs/kt-engine/src/flight.rs`,
-  `src/Cargo.toml`, items 96, 150, 175, 197, 199, 200 of
-  `docs/porting-notes.md`.
+  `src/Cargo.toml`, items 96, 150, 175, 197, 199, 200.
 
-**Implemented in R.49** — docs/porting-notes.md item 353
+**Implemented in R.49** — item 353
 (tests t357, t358, t359, t360, t361, t365, t366, t367, t368, t373, t374, t375); the feature's later history is there.

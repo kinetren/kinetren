@@ -241,7 +241,7 @@ coordinate is carried not by the text of the message, but by the LIST OF IDS in 
 
 None of the twelve root ones — and this is the main argument for "cheap": neither the time model, nor the cache, nor the threads, nor determinism is involved here.
 
-The format invariant **"loading errors are explicit"** is touched (the defect `p` of the old format, `docs/porting-notes.md:72`, closed by test 12). It is precisely
+The format invariant **"loading errors are explicit"** is touched (the defect `p` of the old format, closed by test 12). It is precisely
 this that produced `KtMetaBroken` in R.35 (item 243: a broken `metadata.kt` was opened silently, and the user would have lost tracks, morphers and the layout). The irony
 lies exactly here: the variant was created so that the error would be EXPLICIT — and it is the only one of the ten that reaches the user as an untranslated English string.
 

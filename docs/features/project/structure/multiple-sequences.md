@@ -181,7 +181,7 @@ official manuals, not on feedback.
   The same in `src/libs/kt-otio/CLAUDE.md`: "SerializableCollection root →
   error". This is not a guess: in `src/libs/kt-otio/tests/format.rs` (test 146)
   a collection root is directly checked as `Err(Error::UnsupportedRoot(_))`,
-  and `docs/porting-notes.md` item 146 records "A root that is not a Timeline
+  and item 146 records "A root that is not a Timeline
   (SerializableCollection) → refusal". The feature means reversing this decision.
 - **Undo — full snapshots.** `TimelineModel { project, undo: Vec<Project>,
   redo: Vec<Project> }` and `MAX_UNDO = 80` in
@@ -343,7 +343,7 @@ two decisions by the owner are needed: whether a sequence inherits the document'
   `src/libs/kt-otio/tests/format.rs`, `src/libs/kt-otio/CLAUDE.md`,
   `src/libs/kt-engine/src/player.rs`, `src/libs/kt-media/src/index.rs`,
   `src/apps/kt-app/src/{app.rs,bin_panel.rs,render_dialog.rs}`,
-  `docs/file-format.md`, `docs/porting-notes.md` item 146,
+  `docs/file-format.md`, item 146,
   `docs/user-feedback.md` (R.28, R.35).
 
 What could not be verified. The Adobe help (`helpx.adobe.com`) and reddit do not open from

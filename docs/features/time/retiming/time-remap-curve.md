@@ -182,8 +182,7 @@ And about the fixed window of the event in VEGAS (there were no answers in the t
 
 ### What already exists
 
-**Variable video speed has been WORKING in Kinotrain since R.37** (items 246–251 of
-`docs/porting-notes.md`). The design:
+**Variable video speed has been WORKING in Kinotrain since R.37** (items 246–251). The design:
 
 - The speed curve is an ordinary automation of the `rate` parameter of the `SlowedReverb` effect
   (`src/libs/kt-model/src/project.rs`, spec
@@ -266,7 +265,7 @@ The "material" tick of a key for us is a disguised offset along the body of the 
   is projected into the first half of the event instead of all of it. R.37 C4 moved the waveform and the filmstrip to the warp map, but coverage - not. Invariant No. 4
   is not contradicted by this (the truth about coverage is still one, from
   `BurstCache::coverage()`), but "pixel → burst index" is computed by a second, linear
-  formula. **Found while writing this note; NOT recorded in `docs/porting-notes.md`.**
+  formula. **Found while writing this note; NOT recorded elsewhere.**
 
 **Zero and minus rest not on a precondition of the span reader, but on something else.** This is important to clarify, because the verdict of
 F-SPD-001 names the reason as "keys strictly increase". In fact this precondition holds by construction:

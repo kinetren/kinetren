@@ -160,7 +160,7 @@ list of what can be chosen at all — six rows of the grid:**
 5. **Audio** — not a choice but a LABEL: `AAC, 48 kHz stereo`.
 6. **Container** — also a label: `MP4 (+faststart)`.
 
-Plus a warning about unavailable sources (item 208 of `docs/porting-notes.md`) and
+Plus a warning about unavailable sources (item 208) and
 the "Render…" / "Cancel" buttons. The range is not shown in the window at all: `launch_render`
 (line 180) silently takes `project.region`, and if there is no region — the whole project.
 

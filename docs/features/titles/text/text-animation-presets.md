@@ -181,7 +181,7 @@ What NOT to do: do not create a fourth automation domain for the sake of "typed 
 
 **Done in R.53 (items 423–424).** The condition written down before the code was fulfilled verbatim: there is no time in kt-text, the animation arrives as two numbers from kt-media (`reveal`/`reveal_soft` and `offset`), the layout is computed once over the full string, and at full visibility the EXACTLY prior branch is taken — the golden of the title did not move. The clusters are given by harfrust for free, so there was no need to create our own segmenter. Motion — the shift of the whole block with a quantum of 1/64 px. A fourth automation domain was not created, as promised: the duration is a parameter of the title (`anim_secs`).
 
-A known limitation, written down honestly: with a soft reveal the outline "clicks" at the midpoint (the EDT is computed over the binarized silhouette); the typewriter does not have this. Further life of the feature — `docs/porting-notes.md` items 423–424.
+A known limitation, written down honestly: with a soft reveal the outline "clicks" at the midpoint (the EDT is computed over the binarized silhouette); the typewriter does not have this. Further life of the feature — items 423–424.
 
 ## Sources
 
@@ -241,4 +241,4 @@ Internal sources: `src/apps/kt-app/src/i18n/bidi.rs`,
 `src/libs/kt-engine/src/video_plan.rs`,
 `src/libs/kt-engine/tests/golden_export.rs`,
 `src/apps/kt-app/src/util.rs`, `src/apps/kt-app/src/render_dialog.rs`,
-`docs/porting-notes.md` (items 126, 221), `docs/features/_trackers.md`.
+items 126, 221, `docs/features/_trackers.md`.

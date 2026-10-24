@@ -2,7 +2,7 @@
 //! Schema and invalidation rules — docs/media-index.md. This is a CACHE: loss or
 //! corruption is not an error, the DB is recreated. Solves defects m (storm of
 //! thumbnail/waveform decodes on scroll/zoom) and j (rescanning files on
-//! every launch) — see docs/porting-notes.md.
+//! every launch).
 
 use crate::{MediaSource, PEAK_BLOCK_FRAMES};
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS};

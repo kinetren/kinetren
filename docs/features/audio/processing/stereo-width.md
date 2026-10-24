@@ -76,4 +76,4 @@ Take it in R.47: one width knob 0..2 with an explicit pass-through at 1.0. The f
 - https://www.blackmagicdesign.com/products/davinciresolve/fairlight (accessed 2026-09-14)
 - https://helpx.adobe.com/premiere/using/audio-effects-transitions.html (accessed 2026-09-14)
 
-**Implemented in R.47** — docs/porting-notes.md item 327 (t324); further life of the feature is there.
+**Implemented in R.47** — item 327 (t324).

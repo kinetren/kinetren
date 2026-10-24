@@ -22,7 +22,7 @@
 
 ## 4. Docs and site
 
-- [x] 4.1 Root `CLAUDE.md`, crate `CLAUDE.md` notes, `openspec/config.yaml`, live spec texts that quote UI strings (via this change's deltas at archive), `docs/architecture.md`, `docs/file-format.md`: the program is Kinetren; `docs/porting-notes.md` and quotes stay. Verify with `grep -rn Kinotrain` reviewed by hand
+- [x] 4.1 Root `CLAUDE.md`, crate `CLAUDE.md` notes, `openspec/config.yaml`, live spec texts that quote UI strings (via this change's deltas at archive), `docs/architecture.md`, `docs/file-format.md`: the program is Kinetren; the porting log and quotes stay. Verify with `grep -rn Kinotrain` reviewed by hand
 - [x] 4.2 `site/`: content catalogs, structure, the logo file; `python3 site/build.py --check` green after `python3 site/build.py`; README icon path updated to the renamed SVG; `readme-check.py --check` green
 - [x] 4.3 Commit stage 4
 

@@ -1,4 +1,4 @@
-//! Test 21 (docs/porting-notes.md, items 14/15): the video path without decode storms —
+//! Test 21 (items 14/15): the video path without decode storms —
 //! a sequential run decodes each frame once and never backwards;
 //! a repeated run over a warm cache — zero decodes; a mixed audio+video
 //! queue does not zigzag the decoder (separate cursors).

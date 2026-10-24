@@ -157,7 +157,7 @@ although the cause is the last keyframe at the three-minute mark
   `amount`/`opacity`/`mix`: there are `media`, `source_in_delta`,
   `absolute_source_in`, `src_off`, `video_fx`, `audio_fx`, `video_bypass`,
   `audio_bypass`, and that is all. The morpher is binary: `enabled` — on/off. This is exactly the
-  discrepancy because of which the base was created (item 245 of `docs/porting-notes.md`).
+  discrepancy because of which the base was created (item 245).
 - **Automation in the morpher chain**: `chain_strip` is called with `auto: None`,
   whereas for an event the FX editor shows curves (`ParamCurve`/`AutoKey`,
   `src/apps/kt-app/src/automation.rs`).

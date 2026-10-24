@@ -5,7 +5,7 @@
 The project is moving to OpenSpec, but its project decisions lie not where OpenSpec reads them.
 Today one decision of a round is smeared across five chronicles: `docs/features/*`
 (63,500 lines, of which ~36 % is "How it fits Kinotrain", that is, our decisions, not the survey of
-other editors), `docs/porting-notes.md` (7,191 lines; from §440 on it is a log of rounds in the
+other editors), the porting log (7,191 lines; from §440 on it is a log of rounds in the
 genre "what was / cause / rule", not a catalogue of defects), `docs/user-feedback.md` (2,637 lines of
 the owner's decisions), `docs/architecture.md` (150 lines, empty) and the test table in the root
 `CLAUDE.md` (lines of 5 KB each). A new change in OpenSpec will not see any of this automatically:
@@ -24,7 +24,7 @@ in the long term OpenSpec reads only `openspec/specs/<capability>/spec.md` and `
   - `docs/features/*`: the section "How it fits Kinotrain" and the "our" parts of the "Verdict" move
     into the capability's `design.md`; 3–5 lines and a reference to the capability remain in the
     note. The survey of other editors, "the trick behind it", quotes — are not touched.
-  - `docs/porting-notes.md`: rules and their tests → `spec.md`; "what was / cause" → `design.md`.
+  - the porting log: rules and their tests → `spec.md`; "what was / cause" → `design.md`.
     The file is **frozen at §470** as a historical document of the port; new chapters are not written
     into it.
   - `docs/user-feedback.md`: "hurt by X → demanded Y → rule Z" → `design.md` of the corresponding
@@ -58,7 +58,7 @@ None.
 
 - Only documentation and OpenSpec configuration: `openspec/specs/**`, `openspec/config.yaml`,
   `docs/features/**` (truncation of sections), `docs/features/README.md` and
-  `src/scripts/features-index.py` (the rule "How it fits"), `docs/porting-notes.md`
+  `src/scripts/features-index.py` (the rule "How it fits"), the porting log
   (freezing, header), the root `CLAUDE.md` (test table), `docs/architecture.md`.
 - Code and tests are not touched. `cargo test` and `features-index.py --check` must remain green.
 - Environment: the `openspec` CLI requires Node ≥ 20 (`import … with` in cli-spinners); the system

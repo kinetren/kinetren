@@ -1,5 +1,5 @@
 //! Timeline: drawing and interactions. Parity with the old Qt timeline
-//! (see docs/porting-notes.md and the UI parity plan): markers, region,
+//! (see the UI parity plan): markers, region,
 //! volume rail, stereo waveforms, clip color from the path hash, offline tint,
 //! edge-autoscroll, context menu, snapping to markers/region/clips.
 

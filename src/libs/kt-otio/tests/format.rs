@@ -1,4 +1,4 @@
-//! Tests 144-147 (items 144-147 of porting-notes, R.24): the format layer of kt-otio.
+//! Tests 144-147 (items 144-147, R.24): the format layer of kt-otio.
 //!
 //! 144 — typed round-trip and IDEMPOTENCY of writing;
 //! 145 — passthrough of foreign data (fields, schemas, metadata namespaces);

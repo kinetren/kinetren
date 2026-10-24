@@ -1,4 +1,4 @@
-//! Test 24 (docs/porting-notes.md, item 16): reversal of events.
+//! Test 24 (item 16): reversal of events.
 //! Audio: the output == a mirrored slice of the source (exact, Ramp pattern).
 //! Video: the frame at moment t == the frame of the mirrored pts (the synthetics encode pts
 //! in the color). FX+reverse: deterministic and not silence.

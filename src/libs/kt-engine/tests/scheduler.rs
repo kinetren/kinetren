@@ -1,4 +1,4 @@
-//! Test 9 (docs/porting-notes.md): the MediaWorker scheduler.
+//! Test 9: the MediaWorker scheduler.
 //! - playback preempts prefetch;
 //! - generation cancel drops stale requests;
 //! - no key is decoded twice;

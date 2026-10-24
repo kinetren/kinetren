@@ -199,7 +199,7 @@ isolated loss of curves into a systematic one.
 - Not checked live in the editors: Premiere/FCP/AE/Resolve — from the official help and forum
   threads, Vegas — from the help and Creative COW.
 
-**Implemented in R.48** — docs/porting-notes.md items 342-346 (t342-t347); the further life of the
+**Implemented in R.48** — items 342-346 (t342-t347); the further life of the
 feature is recorded there. The carry-over modes other than "in point to in point" (Scale,
 Anchor-Out) remain with F-AUT-002 — the round did only the one that was already the canonical
 mechanic of copy-paste.

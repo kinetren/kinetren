@@ -135,7 +135,7 @@ ADDRESS: src/apps/kt-app/src/timeline.rs — the class "placed it and did not no
 
 We take it in the part of display and the switch, and do not take it in the part "a transition on top of an overlap" without a separate decision: there the price is not in the code but in the fact that the transition window acquires a second owner, and exactly at this point Kdenlive got three years of defects.
 
-**Ed. R.51 (2026-09-16): a separate decision was ADOPTED by the owner** — a transition must work on an overlap too ("symbiosis of two events", a direct answer to AskUserQuestion). The question "who owns the window" is resolved so: the window of an overlapped transition is the overlap zone ITSELF `[b.start, a.end)`, the mode is not stored and is derived from the geometry of the pair, `in/out_offset` are not used in this mode; a transition is legal only on a clean pair in a "staircase" (a third clip in the window is a validation error, 1/N zones remain without transitions). The Kdenlive lesson is taken into account by the choice "the window has no handles of its own": it follows the trim of the clips, and no twin subsystem with its undo crashes appears. Implementation and tests — the round R.51 in `docs/porting-notes.md`.
+**Ed. R.51 (2026-09-16): a separate decision was ADOPTED by the owner** — a transition must work on an overlap too ("symbiosis of two events", a direct answer to AskUserQuestion). The question "who owns the window" is resolved so: the window of an overlapped transition is the overlap zone ITSELF `[b.start, a.end)`, the mode is not stored and is derived from the geometry of the pair, `in/out_offset` are not used in this mode; a transition is legal only on a clean pair in a "staircase" (a third clip in the window is a validation error, 1/N zones remain without transitions). The Kdenlive lesson is taken into account by the choice "the window has no handles of its own": it follows the trim of the clips, and no twin subsystem with its undo crashes appears. Implementation and tests — round R.51, see `openspec/specs/transitions/`.
 
 ALREADY-HAVE: src/libs/kt-model/src/project.rs (`overlap_layers`, `TransitionEvent`) — the reconnaissance refined the wording: **we do not "support transitions on one track", we allowed OVERLAPS, and our transitions are a separate object at the JOINT, and these two things have not met so far.** The promises are different and their prices are different. "We support transitions on one track" is the promise of Kdenlive, and it cost it 17 tasks in bugzilla and 6 in invent over four years. Our promise is "an overlap is legal and cuts nothing", and its price is different: the overlap is invisible on the strip, sounds where the picture clicks, and cannot do any of the 16 kinds. A second refinement of the same order: we did not cancel the two-track workaround, we moved it into the file (`KtLayers`), because in OTIO two simultaneous clips in one Track are physically inexpressible — so "one track" is true about the screen and false about the disk.
 
@@ -183,7 +183,7 @@ Ours:
   `src/libs/kt-otio/src/convert.rs` and `meta.rs` (`KtLayers`),
   `src/apps/kt-app/src/timeline.rs` (`plan_move`, `plan_move_block`,
   `draw_order`, `corner_fade_len`), `src/scripts/live/overlap.py`.
-- `docs/porting-notes.md` items 161–164, 177; `docs/user-feedback.md` R.24
+- items 161–164, 177; `docs/user-feedback.md` R.24
   item 6, R.26 in full, R.28 items 5/6/9 and decisions 1–3.
 
 Note on method: no foreign editor was run live. `helpx.adobe.com`, `discussions.apple.com` and `forum.blackmagicdesign.com`

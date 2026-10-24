@@ -1,4 +1,4 @@
-//! Tests 4–6 (docs/porting-notes.md) — regressions for slowed&reverb artifacts.
+//! Tests 4–6 — regressions for slowed&reverb artifacts.
 //!
 //! 4 — spectral purity of the warp: 440 Hz at rate 0.5 → peak at 220 Hz,
 //!     spurious components < −60 dB (catches both the “46.9 Hz crackle” (defect c)

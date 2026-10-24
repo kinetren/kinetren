@@ -305,5 +305,5 @@ because it is the price of the decision taken on the first day.
   `src/libs/kt-media/src/index.rs`, `src/apps/kt-cli/src/main.rs`,
   `src/libs/kt-engine/tests/scheduler.rs`.
 
-**Implemented in R.49** — docs/porting-notes.md item 367
+**Implemented in R.49** — item 367
 (tests t398, t408, t409, t410); the feature's later history is there.

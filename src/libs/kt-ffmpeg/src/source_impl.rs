@@ -1,7 +1,7 @@
 // Decoder implementation. INCLUDED (include!) into each version module,
 // therefore `ffi` and `Api` here are the types of the specific major version of FFmpeg.
 //
-// The logic is a port of the former rsmpeg variant (docs/porting-notes.md):
+// The logic is a port of the former rsmpeg variant:
 // two independent demuxers per file, a packet index on open,
 // sample-accurate audio seek, threads=1 for VP9/AV1, recreation of the
 // video decoder on backward seek, swscale into RGBA.

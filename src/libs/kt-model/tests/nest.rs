@@ -1,4 +1,4 @@
-//! Tests 423-426 (docs/porting-notes.md): nested sequences — the model and its guards.
+//! Tests 423-426: nested sequences — the model and its guards.
 //!
 //! Nesting is a piece of the edit collapsed into ONE event. The reference lives inside
 //! the project (owner’s decision R.50), so the document stops being a flat

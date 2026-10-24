@@ -178,5 +178,5 @@ or impossible (`Mirror`, `Corner Pin`), the axis works the same as for the other
 - Premiere and After Effects — secondary: `helpx.adobe.com` does not open from this environment
   (the same unavailability recorded in F-HLP-031). None of the five editors was checked live.
 
-**Implemented in R.54** — `docs/porting-notes.md` items 427-433 (t543-t551), the live scenario
-`src/scripts/live/fxpicker.py`; the further life of the feature is recorded there.
+**Implemented in R.54** — items 427-433 (t543-t551), the live scenario
+`src/scripts/live/fxpicker.py`.

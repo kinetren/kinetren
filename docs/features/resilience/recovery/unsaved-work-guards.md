@@ -226,7 +226,7 @@ and adding one for a single checkbox violates rule 13.
 - Our code: `src/apps/kt-app/src/app.rs`, `src/apps/kt-app/src/toolbar.rs`,
   `src/apps/kt-app/src/bin_panel.rs`, `src/apps/kt-app/src/timeline.rs`,
   `src/libs/kt-model/src/model.rs`, `src/libs/kt-model/src/project.rs`;
-  items 96, 197, 200, 235, 262 of `docs/porting-notes.md`; the section "Content edits ≠ convenience edits" in `src/apps/kt-app/CLAUDE.md`.
+  items 96, 197, 200, 235, 262; the section "Content edits ≠ convenience edits" in `src/apps/kt-app/CLAUDE.md`.
 
-**Implemented in R.49** — docs/porting-notes.md item 354
+**Implemented in R.49** — item 354
 (tests t369, t370, t371, t372); the feature's later history is there.

@@ -161,7 +161,7 @@ ADDRESS: src/scripts/release-build.sh — the class "the package requires libavf
 - `src/libs/kt-media/src/placeholder.rs` — an unavailable source does not prevent
   opening, playing and rendering the project (t208–t210).
 - The build version `kt-version` (`vYY.MM.DD-hash`) and `scripts/finish.sh`, which
-  prints it (item 103 of `docs/porting-notes.md`).
+  prints it (item 103).
 
 ### What is missing
 

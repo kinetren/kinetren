@@ -46,7 +46,7 @@ The column was added LAST deliberately: `read_registry()` in `tracker-fetch.py` 
 | CapCut, Descript, Runway | closed, there is no tracker |
 | VLC, mpv, OBS, HandBrake | not editors; the HandBrake sample duplicates FFmpeg trac |
 | Audacity, Ardour | sound only, and our audio path is our own (invariants 1, 2, 6); Ardour moreover uses Mantis without an API |
-| egui, wgpu and our other dependencies | this is OUR pain from dependencies, not the editor's pain; its home is `docs/porting-notes.md` |
+| egui, wgpu and our other dependencies | this is OUR pain from dependencies, not the editor's pain; its home is the crate’s CLAUDE.md and the capability’s design.md |
 
 ## How to read these numbers
 

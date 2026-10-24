@@ -1,4 +1,4 @@
-//! Tests 671-673 and 690 (docs/porting-notes.md): public parameters
+//! Tests 671-673 and 690: public parameters
 //! of a composition and per-instance overrides (R.59, stage 3).
 //!
 //! The owner: “someone made a template project for a news broadcast… obviously

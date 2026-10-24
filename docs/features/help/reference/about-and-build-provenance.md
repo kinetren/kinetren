@@ -108,7 +108,7 @@ The industry argument ("that is how it is done") is the second one here. The fir
 > `target/debug/kt-app` — the one the user runs: twice because of this he got
 > an outdated program and considered the defects unfixed."
 
-The same is in item 103 of `docs/porting-notes.md` ("the user twice launched `target/debug/kt-app` a month old and considered the fixed defects alive"), and there too — why the version format is exactly this. The owner's words about the format, R.12 item 3 of `docs/user-feedback.md`:
+The same is in item 103 ("the user twice launched `target/debug/kt-app` a month old and considered the fixed defects alive"), and there too — why the version format is exactly this. The owner's words about the format, R.12 item 3 of `docs/user-feedback.md`:
 
 > "Isn't it obvious what is meant: ktYY.MM.DD-commit_hash?? USER CONVENIENCE AND ERGONOMICS"
 
@@ -126,7 +126,7 @@ and there, in the middle of a round: "I took the build from debug" → the `fini
 
 ### What is missing
 
-- **The main thing: that very runtime knowledge is computed and thrown away.** `kt_ffmpeg::backend_info()` (`src/libs/kt-ffmpeg/src/lib.rs:171`) returns `major` and the full triple of `avcodec_version`, and the comment on the structure says literally "What was managed to be loaded (for the performance panel and diagnostics)" (`lib.rs:45`); `kt_media::ffmpeg::backend_info()` (`src/libs/kt-media/src/ffmpeg.rs:92`) re-exports it. **There is not a single call** — neither in kt-app, nor in kt-cli, nor in the tests; the same for the neighboring `backend_error()`. This is exactly the failure mechanism described in item 122 of `docs/porting-notes.md` (`lane_names_insert/remove/swap` existed, were covered by t90, and were never called from the application): a unit test stays green while the UI has not reached the function. The word "FFmpeg" appears in the catalogs of translation EXACTLY ONCE — as the title of the graph `perf.graph_decode`.
+- **The main thing: that very runtime knowledge is computed and thrown away.** `kt_ffmpeg::backend_info()` (`src/libs/kt-ffmpeg/src/lib.rs:171`) returns `major` and the full triple of `avcodec_version`, and the comment on the structure says literally "What was managed to be loaded (for the performance panel and diagnostics)" (`lib.rs:45`); `kt_media::ffmpeg::backend_info()` (`src/libs/kt-media/src/ffmpeg.rs:92`) re-exports it. **There is not a single call** — neither in kt-app, nor in kt-cli, nor in the tests; the same for the neighboring `backend_error()`. This is exactly the failure mechanism described in item 122 (`lane_names_insert/remove/swap` existed, were covered by t90, and were never called from the application): a unit test stays green while the UI has not reached the function. The word "FFmpeg" appears in the catalogs of translation EXACTLY ONCE — as the title of the graph `perf.graph_decode`.
 - Not a single key with the word version or about in `src/apps/kt-app/i18n/*.toml` (521 keys in `en.toml`). There is no Help menu — only `[menu.file]`, `[menu.edit]`, `[menu.view]`; `Key::F1` does not occur in `src/apps/kt-app/src/`.
 - The dump of the "black box" has no header: `flight.dump()` writes only transport events. The file that the user will be asked to send carries neither the version, nor FFmpeg, nor the GPU — it cannot be tied to a build.
 - There is no OS, kernel, glibc, interface language, or project format version (`kt_otio::KT_META_VERSION`) in one place, and there is no "copy" button.

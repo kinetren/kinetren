@@ -1,4 +1,4 @@
-//! Test 135 (item 135 porting-notes, R.24): transitions in the model.
+//! Test 135 (item 135, R.24): transitions in the model.
 //!
 //! A crossfade is an explicit TransitionEvent at the joint of two neighbouring clips (OTIO),
 //! not an overlap. Here: commands/undo, validation invariants, the fate

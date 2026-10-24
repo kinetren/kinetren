@@ -190,6 +190,6 @@ The debt, however, is single and named directly: **there is no "put inside the p
   `src/libs/kt-model/src/project.rs` (`MediaRef::path`, `UiState`),
   `src/libs/kt-otio/src/meta.rs` (`KT_META_VERSION`),
   `docs/features/README.md` (conclusion 2 of the first wave),
-  `docs/porting-notes.md` items 343–347
+  items 343–347
 
 No foreign editor was run live. The forum quotes were read verbatim on `creativecow.net` and `community.adobe.com`; the Resolve, FCP and AE lines rely on the manuals and on the related notes of the base, and the VEGAS line relies on forum threads and search snippets of a domain that changed hands.

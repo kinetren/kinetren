@@ -138,5 +138,5 @@ The copy alongside (`.bak`) is not brought into this note: it is cheaper and cov
 - The autosave and backup mechanisms of the five core editors were not reopened: the facts and their primary sources are in F-PRJ-002 (`docs/features/project/history/versions-and-snapshots.md`)
 - None of the five editors was checked live in this note: the question "will the write survive a power failure" cannot be settled by observation in principle (see "The trick behind it", item 2)
 
-**Implemented in R.49** — docs/porting-notes.md item 349
-(tests t351, t352, t353); the further life of the feature is there.
+**Implemented in R.49** — item 349
+(tests t351, t352, t353).

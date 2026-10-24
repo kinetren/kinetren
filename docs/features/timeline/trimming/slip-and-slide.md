@@ -380,4 +380,4 @@ changes what the user did not drag, and that is a direct clash with rule No. 20.
 - Kinotrain code: `src/libs/kt-model/src/{model.rs,ops.rs,project.rs}`,
   `src/libs/kt-otio/src/convert.rs`, `src/apps/kt-app/src/{timeline.rs,
   toolbar.rs,thumbs.rs,automation.rs}`, `docs/user-feedback.md` (R.26, R.28
-  item 12), `docs/porting-notes.md` (item 246)
+  item 12), item 246

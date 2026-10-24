@@ -8,8 +8,7 @@ before the rename to Kinetren on 2026-10-21 — is rejected by "Open", and is re
 
 The exchange format is OTIO (JSON, the reference is the OpenTimelineIO library 0.18.x).
 The implementation is the crate `src/libs/kt-otio` (pure Rust, see its CLAUDE.md).
-The decisions of round R.24 — docs/user-feedback.md; the catalogue of subtleties — items 135–153
-in docs/porting-notes.md.
+The decisions of round R.24 — docs/user-feedback.md; the catalogue of subtleties — items 135–153.
 
 The old `.ktproj` is ONLY for import ("File / Import older Kinetren project…"
 or `kt-cli import`): overlaps are converted into transitions/split (item 143),

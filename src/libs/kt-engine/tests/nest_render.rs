@@ -1,4 +1,4 @@
-//! Tests 434-436 (docs/porting-notes.md): LAW E — a nest with an empty
+//! Tests 434-436: LAW E — a nest with an empty
 //! chain equals its expanded content.
 //!
 //! Precedent — test 36 (“render with a morpher is sample-exact equal to render after

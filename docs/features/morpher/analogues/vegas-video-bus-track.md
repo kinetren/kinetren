@@ -172,7 +172,7 @@ zero matches. There is no track, bus, or master level for
 video; for audio there are no track FX and no submixes. The main thing, however, is that we have NOT ONE
 level whose input is a mixed picture. The morpher looks like an adjustment layer, but by construction it is closer to Resolve's Timeline grade
 (edited once, acts on each clip separately), not to the Video Bus
-Track and not to VEGAS's adjustment event. From this also follows the absence of a strength slider on the morpher (item 245 of `docs/porting-notes.md`, R.36
+Track and not to VEGAS's adjustment event. From this also follows the absence of a strength slider on the morpher (item 245, R.36
 of `docs/user-feedback.md`): there is nothing to "partially blend in" until there is a separate
 result of the composite.
 

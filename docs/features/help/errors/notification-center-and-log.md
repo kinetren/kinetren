@@ -54,7 +54,7 @@ written in the words of the owner himself — in the log he does not see.
 
 - `kt_engine::flight::FlightRecorder` (`src/libs/kt-engine/src/flight.rs`,
   ring of 512): an entry is a structure `Rec { at_ms, kind, a, b, snap, n }`,
-  a repeat increments the **counter `n`**. The rule is written in the module header as a quote of the owner's request (item 175 of `docs/porting-notes.md`) and is written out to disk.
+  a repeat increments the **counter `n`**. The rule is written in the module header as a quote of the owner's request (item 175) and is written out to disk.
 - `PerfState::note` (`src/apps/kt-app/src/app.rs:4884`, ring of 800): a repeat **rewrites the last line** as `… ×N`; a comment explains why — "in v1 a spike flooded the whole log within seconds".
 - `KtApp::push_notice` (`app.rs:1962`, ring of 200) — the only one of the three that the user sees: a repeat is **silently discarded**, there is no counter.
 
@@ -199,5 +199,5 @@ ONE LINE: overlap — not touched | delay — not touched | capacity — not a s
 - Blender 5.2 LTS Manual, "Info Editor", https://docs.blender.org/manual/en/latest/editors/info_editor.html (2026-09-07)
 - Apple, Final Cut Pro for Mac, "View background tasks", https://support.apple.com/guide/final-cut-pro/view-background-tasks-ver64e71609/mac (through `r.jina.ai`, 2026-09-07)
 - The rows for VEGAS, Resolve and After Effects are marked `[NOT VERIFIED]`: the session's `WebSearch` budget ran out, and `forum.blackmagicdesign.com`, `support.apple.com` and the Blackmagic manuals in PDF did not open from this environment during this pass. Live checks of the programs outside the core were not done — decided in `docs/features/_editors.md`.
-- Our code is the primary source for all statements about "us": `src/apps/kt-app/src/app.rs`, `src/libs/kt-engine/src/flight.rs`, `src/apps/kt-app/src/i18n/mod.rs`, `src/libs/kt-otio/src/lib.rs`, items 129 and 175 of `docs/porting-notes.md`.
+- Our code is the primary source for all statements about "us": `src/apps/kt-app/src/app.rs`, `src/libs/kt-engine/src/flight.rs`, `src/apps/kt-app/src/i18n/mod.rs`, `src/libs/kt-otio/src/lib.rs`, items 129 and 175.
 - Programs outside the core were not checked live (the decision of `_editors.md`): the VS Code, IntelliJ and Blender lines are taken from official documentation.

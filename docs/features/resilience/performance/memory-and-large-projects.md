@@ -76,7 +76,7 @@ the window is half of that). This is literally the "in memory
 range from the cursor" requested in kde-invent #1012, only not set by hand but computed.
 
 **Third: the cost of a small cache for us shows up not as slowness but as a WRONG RESULT, and this has already happened twice.**
-Items 116 and 195 of `docs/porting-notes.md`: a batch of export frames did not fit into the budget, LRU
+Items 116 and 195: a batch of export frames did not fit into the budget, LRU
 evicted frames BEFORE composition — and the finished file came out black with a few
 surviving frames (a measurement at 720p: 102 missing layers out of 120). The user notices slowness;
 a black frame in a rendered file — does not. Therefore for us the cache limit is not a "performance setting" but part of
@@ -268,7 +268,7 @@ ADDRESS: `src/libs/kt-cache/src/lib.rs` — the class "what was read is not rele
 - The sizes of all "batches" are subordinated to the budget, not the other way round: `span_key_budget`
   (`worker.rs:327`), `video_lookahead_ticks` (`player.rs:959`),
   `export_chunk_frames` (`export.rs:66`) — everywhere "not more than half
-  the budget". The reason is recorded in item 19c of porting-notes: a span must not be able
+  the budget". The reason is recorded in item 19c: a span must not be able
   to evict itself.
 - Prefetch does not warm what will not sound: `lookahead_windows` folds the look-ahead window into the loop region (item 167, tests 167/167b) — a direct answer to
   prefetch-thrash.
@@ -412,4 +412,4 @@ is not cancelled, it has been pushed to a resolution that we do not check.
   `src/apps/kt-app/src/{app,thumbs}.rs`,
   `src/libs/kt-model/src/model.rs`, `src/libs/kt-media/src/{lib,ffmpeg}.rs`,
   `src/libs/kt-engine/tests/frame_order.rs`; items 19, 37, 113, 116, 167,
-  195 of `docs/porting-notes.md`.
+  195.

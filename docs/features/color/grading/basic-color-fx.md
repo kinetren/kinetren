@@ -79,4 +79,4 @@ Take into R.47: ColorGrade (brightness/contrast/saturation/hue, with the order "
 - https://helpx.adobe.com/after-effects/using/color-correction-effects.html (accessed 2026-09-14)
 - https://www.blackmagicdesign.com/products/davinciresolve (accessed 2026-09-14)
 
-**Implemented in R.47** — docs/porting-notes.md item 332 (t330); the further life of the feature is recorded there.
+**Implemented in R.47** — item 332 (t330).

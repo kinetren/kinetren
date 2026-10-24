@@ -1,4 +1,4 @@
-//! Test 595 (docs/porting-notes.md, item 450, R.56):
+//! Test 595 (item 450, R.56):
 //! track coordinates at the paste block.
 //!
 //! The owner’s claim, verbatim: “I copy ZEF last in a long

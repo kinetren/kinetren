@@ -1,4 +1,4 @@
-//! Test 143 (item 143 porting-notes, R.24): import of legacy overlaps.
+//! Test 143 (item 143, R.24): import of legacy overlaps.
 //!
 //! An audio pair without FX → a trim to the middle of the overlap plus a transition in the same
 //! window (byte-equivalence of the sound is pinned by t136 on the same formula);
@@ -148,7 +148,7 @@ fn t143_video_overlap_demotes_later_clip_below() {
     assert!(p.lanes(LaneKind::Video) >= 3);
 }
 
-/// Test 164 (item 164 porting-notes, R.28): importing an old project changes NOTHING —
+/// Test 164 (item 164, R.28): importing an old project changes NOTHING —
 /// “as it was, with overlaps”. The owner’s decision after his real project (1952 clips,
 /// 76 overlaps) was unfolded
 /// into roughly 40 video tracks.

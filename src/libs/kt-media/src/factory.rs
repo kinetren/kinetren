@@ -3,7 +3,7 @@
 //! Before this, the `synth:` parsing was written TWICE (kt-app and kt-cli) and had already
 //! diverged: kt-app understood `synth:Ramp`, kt-cli only `synth:ramp`,
 //! and a real source was silently treated as a missing file (footnote
-//! item 211 in docs/porting-notes.md). A third kind of pseudo-path (`gen:`) without a
+//! item 211). A third kind of pseudo-path (`gen:`) without a
 //! single factory would reproduce the defect more quietly: instead of a colour frame, a
 //! placeholder. Therefore:
 //! - the parsing is case-insensitive and lives only here;

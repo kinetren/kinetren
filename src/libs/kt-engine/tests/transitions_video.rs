@@ -1,4 +1,4 @@
-//! Test 137 (item 137 of porting-notes, R.24): video dissolve by transitions.
+//! Test 137 (item 137, R.24): video dissolve by transitions.
 //!
 //! A pair of clips in the transition window is blended linearly (integer k/4096) into
 //! one layer; the missing half — the full weight of the present one +

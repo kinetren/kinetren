@@ -1,4 +1,4 @@
-//! Test 18 (docs/porting-notes.md): adding media does NOT reset the cache
+//! Test 18: adding media does NOT reset the cache
 //! (regression of item 27: rebuild_player re-created the Player whole — the warmed
 //! cache, transport and ring were thrown away on every file drop).
 

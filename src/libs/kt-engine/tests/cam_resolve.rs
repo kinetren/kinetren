@@ -1,4 +1,4 @@
-//! Test 545 (docs/porting-notes.md, item 429, R.54): the rule for resolving the
+//! Test 545 (item 429, R.54): the rule for resolving the
 //! 3D camera — ONE for the whole program.
 //!
 //! Before R.54 it lived inline in the private `layer_src`, and the second consumer

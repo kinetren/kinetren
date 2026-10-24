@@ -21,7 +21,7 @@ checked: 2026-09-07
 
 ## Essence
 
-The editor put a grade, a blur and grain on the morpher layer, looked at it and says: "a bit too much." He needs a handle "the same thing, but at 40%" — one for the whole layer, not a walk through ten parameters of ten effects. Today the morpher has exactly two gradations: `enabled` on/off and the bitwise switches of the slots. This is the only divergence from Vegas that the user named himself, and with which the whole reconnaissance began (item 245 of `docs/porting-notes.md`).
+The editor put a grade, a blur and grain on the morpher layer, looked at it and says: "a bit too much." He needs a handle "the same thing, but at 40%" — one for the whole layer, not a walk through ten parameters of ten effects. Today the morpher has exactly two gradations: `enabled` on/off and the bitwise switches of the slots. This is the only divergence from Vegas that the user named himself, and with which the whole reconnaissance began (item 245).
 
 The note is not about another editor but about OUR gap, so "Who has it and how" shows not "has/hasn't" but BY WHAT METHOD each one provides this handle: there are three methods, their cost differs, and the picture differs too.
 
@@ -167,7 +167,7 @@ The composite wet/dry (a mix with the FINISHED frame) remains a hole and lives i
 - https://community.adobe.com/t5/premiere-pro-discussions/can-t-make-any-opacity-in-adjustment-layer/td-p/9798312 — the mechanism of composite layer transparency in users' own words (2026-09-07)
 - https://lutify.me/docs/how-can-i-change-the-strength-opacity-of-the-3d-luts-in-adobe-premiere-pro/ — Premiere: the strength of a LUT = the Opacity of the adjustment layer or the Intensity of the effect itself (2026-09-07)
 - `docs/user-feedback.md`, R.36 (the project owner's primary feedback) and
-  item 245 of `docs/porting-notes.md`
+  item 245
 - Code (read, not retold by analogy):
   `src/libs/kt-model/src/project.rs`, `src/libs/kt-fx/src/video.rs`,
   `src/libs/kt-fx/src/lib.rs`, `src/libs/kt-engine/src/video.rs`,

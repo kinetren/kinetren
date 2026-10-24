@@ -72,7 +72,7 @@ At least one quote with a link; "people complain" is not feedback. Most valuable
 
 ### What already exists
 
-With paths and names: `Project::effective_clips()` in `src/libs/kt-model/src/project.rs`, item 241 of `docs/porting-notes.md`. At least one path of the form `src/…` is mandatory — a section written blindly is useless.
+With paths and names: `Project::effective_clips()` in `src/libs/kt-model/src/project.rs`, item 241. At least one path of the form `src/…` is mandatory — a section written blindly is useless.
 
 ### What is missing
 

@@ -1,4 +1,4 @@
-//! Test 19 (docs/porting-notes.md, item 22 of the user): copying a PIECE of an
+//! Test 19 (item 22 of the user): copying a PIECE of an
 //! event with a region + pasting it elsewhere — the render of the pasted block is
 //! sample-exact equal to the render of the source range (a seamless join).
 

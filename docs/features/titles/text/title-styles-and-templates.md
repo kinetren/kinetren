@@ -140,7 +140,7 @@ An honest comparison along three axes:
 **Foreign nesting is already encountered by us and is already marked as non-portable.**
 `ForeignEvent` (`src/libs/kt-model/src/project.rs:441`) explicitly names a nested Stack among the constructs we do not render; they are put there by
 `src/libs/kt-otio/src/convert.rs:914`, and the raw material travels in `Retained` untouched.
-In `docs/porting-notes.md` item 158 this cost a cross-render test: `melt`
+In item 158 this cost a cross-render test: `melt`
 expands nested compositions and draws their content, "and with us there is emptiness by decision
 R.24 item 5 — there is nothing to compare until nested compositions are supported", so `nested_example.otio` remained in the smoke tier
 (`src/apps/kt-cli/tests/cross_render.rs:40`).
@@ -160,7 +160,7 @@ So the problem "the consumer has no font" for us would be not better but WORSE t
   `registry()` (`src/apps/kt-app/src/fx_registry.rs:47`) is `&'static [FxEntry]`
   behind a `OnceLock`. A user-defined entry with its own set of handles cannot physically be put there.
 - Stretching of the container's time and of protected zones. We do have a time warp
-  (`Slowed+Reverb`, `rate`, items 247–250 of `docs/porting-notes.md`), but it is an EFFECT
+  (`Slowed+Reverb`, `rate`, items 247–250), but it is an EFFECT
   ON A CLIP, not a property of a container, and a "protected zone" has nothing to be correlated with in it: the clip already maps the material linearly.
 - A library living between projects. The same question as in F-AUT-004:
   a project is ONE `.otio` file (`src/libs/kt-otio/`), and at the application level there is only `$XDG_DATA_HOME/kinotrain/` with autosave.

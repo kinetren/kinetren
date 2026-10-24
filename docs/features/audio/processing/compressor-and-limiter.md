@@ -279,4 +279,4 @@ of the official help, and were not checked live.
 
 **Implemented in R.47–R.48** — the compressor and the gate in R.47 (item 329), the look-ahead limiter and auto-ducking
 in R.48 (items 337–338, 341). The live sidechain and the master limiter remain outside what is done — the reasons are
-in the section "What gets in the way" above; the further life of the feature is in docs/porting-notes.md.
+in the section "What gets in the way" above; the further life of the feature is in its OpenSpec capability.

@@ -221,7 +221,7 @@ Ours:
   `fx_chain_hash`, `TransAnim`), `src/libs/kt-fx/src/lib.rs`
   (`AutoProfiles::from_curves`), `src/apps/kt-app/src/automation.rs` and
   `fx_editor.rs`, `src/libs/kt-media/src/placeholder.rs`.
-- `docs/porting-notes.md` items 212–215; `docs/user-feedback.md` R.33
+- items 212–215; `docs/user-feedback.md` R.33
   (the decision on the domain) and R.37 (the axis stopped depending on speed, the list of known domain defects); `src/libs/kt-model/CLAUDE.md` section
   "Parameter automation of FX"; `src/apps/kt-app/CLAUDE.md` section
   "Automation in the UI".

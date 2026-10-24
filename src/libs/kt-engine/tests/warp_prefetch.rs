@@ -1,4 +1,4 @@
-//! Test 17 (docs/porting-notes.md): consistency of the prefetch window with the ACTUAL
+//! Test 17: consistency of the prefetch window with the ACTUAL
 //! consumption of the source by the warp (regression of item 13 — “after random jumps
 //! slowed&reverb plays silence”: the linear mapping of wanted warmed the wrong bursts).
 

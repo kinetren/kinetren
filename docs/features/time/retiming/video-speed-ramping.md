@@ -285,7 +285,7 @@ the sound.
 - https://helpwiki.evergreen.edu/wiki/index.php/Speed_and_Duration_-_Premiere_Pro — the wording of Maintain Audio Pitch, Ripple Edit Shifting Trailing Clips, the gang button (2026-09-07)
 - https://community.adobe.com/questions-529/time-stretch-but-keep-audio-pitch-33246 — AE has no pitch preservation; the answer "stretch in Audition" (2026-09-07)
 - https://creativecow.net/forums/thread/60fps-slow-motion-not-workingae/ and https://creativecow.net/forums/thread/frame-blending-issue-when-changing-speed-in-premie/ — jerks from repeated frames, the behaviour of frame blending (2026-09-07)
-- Our side: `docs/porting-notes.md` items 246–251, `docs/user-feedback.md`
+- Our side: items 246–251, `docs/user-feedback.md`
   round R.37.
 
 Caveats on reliability. None of the five editors was run live.

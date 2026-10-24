@@ -1,5 +1,5 @@
 //! Tests U1 (UI parity): markers/region/tracks, apply_batch/apply_coalesced,
-//! clipboard and region operations (docs/porting-notes.md, the UI-parity plan).
+//! clipboard and region operations (the UI-parity plan).
 
 use kt_model::ops::*;
 use kt_model::*;
@@ -539,7 +539,7 @@ fn t90_lane_names() {
     assert!(!serde_json::to_string(&empty).unwrap().contains("lane_names"));
 }
 
-/// Test 141 (item 141 porting-notes, R.24): range markers (marked_range).
+/// Test 141 (item 141, R.24): range markers (marked_range).
 #[test]
 fn t141_range_markers() {
     let mut m = TimelineModel::new(base());

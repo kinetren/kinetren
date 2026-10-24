@@ -146,5 +146,5 @@ window across the band boundary.
 
 - `docs/features/timeline/structure/nested-sequences.md` (F-TL-004) — the reconnaissance
   of nested sequences on which this note stands.
-- `docs/porting-notes.md`, items 378-395 (R.50) and items 434-443 (R.55).
+- items 378-395 (R.50) and items 434-443 (R.55).
 - `docs/user-feedback.md`, section R.55 — complaint 9 verbatim and the owner's decisions.

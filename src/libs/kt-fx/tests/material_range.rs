@@ -1,4 +1,4 @@
-//! Test 138 (porting-notes item 138, R.24): the transition “handles” of an FX clip.
+//! Test 138 (item 138, R.24): the transition “handles” of an FX clip.
 //!
 //! ClipProcessor receives the material domain [−head_ext, clip_len + tail_ext):
 //! the dry gate cuts past the end of the MATERIAL (not the body), a negative local is the left

@@ -1,4 +1,4 @@
-//! Test 26 (docs/porting-notes.md, item 25): golden tests of the 10 video FX.
+//! Test 26 (item 25): golden tests of the 10 video FX.
 //! The synthetic frame is deterministic; the hash fixes the behaviour, the properties
 //! catch semantic breakage (agents must run them on any kt-fx edit).
 

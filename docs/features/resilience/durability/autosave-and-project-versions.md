@@ -157,8 +157,7 @@ Named versions and the history panel are not included here and remain with F-PRJ
   `autosave_path`, `:4924` `write_project_guarded`, `:4939`
   `write_project_atomic`, `:5188` `on_exit`, `:5276` restoration),
   `src/libs/kt-model/src/model.rs:11` (`MAX_UNDO`),
-  `src/libs/kt-otio/src/meta.rs:17` (`KT_META_VERSION`), items 96, 197, 200 of
-  `docs/porting-notes.md`, tests t194/t199/t200 in `layout_tests.rs`.
+  `src/libs/kt-otio/src/meta.rs:17` (`KT_META_VERSION`), items 96, 197, 200, tests t194/t199/t200 in `layout_tests.rs`.
 
-**Implemented in R.49** — docs/porting-notes.md item 351
-(tests t357, t358, t359, t360, t361); the further life of the feature is there.
+**Implemented in R.49** — item 351
+(tests t357, t358, t359, t360, t361).

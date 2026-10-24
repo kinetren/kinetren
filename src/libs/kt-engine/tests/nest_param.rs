@@ -1,4 +1,4 @@
-//! Tests 674-679, 686 and 688 (docs/porting-notes.md): overrides of the
+//! Tests 674-679, 686 and 688: overrides of the
 //! public parameters reach the PICTURE and the SOUND (R.59, stage 3).
 //!
 //! The engine knows nothing about publication: it is handed ready clips from

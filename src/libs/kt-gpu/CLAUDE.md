@@ -86,7 +86,7 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
   scale<1, determinism).
 - Without an adapter the tests are SKIPPED with a printed message; `KT_REQUIRE_GPU=1` turns the skip into a failure (CI with mesa/lavapipe, finish.sh on the user's machine).
 - Tolerances — only `FrameTol`/`assert_frames_close`; ad-hoc epsilons
-  are forbidden (invariant 11). Thresholds are set at ×2 from the measurement; a failure "at the edge" — an investigation and a record in porting-notes, not a tweak.
+  are forbidden (invariant 11). Thresholds are set at ×2 from the measurement; a failure "at the edge" — an investigation and a record in the capability’s design.md, not a tweak.
 
 ## R.47 (items 332-335): 19 passes, Warp, barriers
 

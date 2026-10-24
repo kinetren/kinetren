@@ -244,7 +244,7 @@ Ours (checked by grep across the tree, not from memory):
   (`EnvelopeBlock`, `rebase`, `copy_envelope`, `paste_envelope`),
   `src/apps/kt-app/src/layout_tests.rs` (t221).
 - `docs/user-feedback.md` R.33 items 5–6 (the single widget; "select and ctrl+c
-  ctrl+v"), R.38 items 14/17/18; `docs/porting-notes.md` item 221;
+  ctrl+v"), R.38 items 14/17/18; item 221;
   `src/apps/kt-app/CLAUDE.md` sections "Automation in the UI" and the checklist
   (rules 1, 14, 17, 20).
 

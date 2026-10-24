@@ -124,7 +124,7 @@ ADDRESS: src/apps/kt-app/src/timeline.rs — for us this class is possible, and 
   (`zoom_delta`) with the anchor under the cursor, the bare wheel (any axis) — pan,
   Shift+wheel — vertical scroll, Shift+Ctrl+wheel — row height 16..120 with
   the anchor on the row under the cursor. The limits are uniform and stand at the direct request of the
-  owner: `TPP_MIN = 30`, `TPP_MAX = 2_000_000` (≈22 s/px, "the 30-minute project whole in the window", item 17 of R.6, item 60 of `docs/porting-notes.md`).
+  owner: `TPP_MIN = 30`, `TPP_MAX = 2_000_000` (≈22 s/px, "the 30-minute project whole in the window", item 17 of R.6, item 60).
 - **Ruler** — `RULER_H = STRIPES_H(11) + TIME_H(22)` = 33 px. The upper 11 px are the cache
   warmth strips (invariant 4), the amber "head" of the loop region and the band of the range mark; the lower 22 px — ticks, labels and the mark name ON TOP of the digits, on the same
   row (rule 13, item 3 of R.12 — a separate strip under the marks was introduced and removed).
@@ -134,7 +134,7 @@ ADDRESS: src/apps/kt-app/src/timeline.rs — for us this class is possible, and 
   `t60_zoom_out_support` (kt-app unit) — previously the loop ran through seconds and at zoom-out gave thousands of shapes per frame.
 - **Scrubbing on the ruler** with jump heat-zones at the edges and the zone hint
   `k::tl::hint::RULER` (`timeline.rs:2190`), the follow mode and its automatic return
-  (`follow_view` / `follow_rearm`, items 59 and 72 of `docs/porting-notes.md`): manual
+  (`follow_view` / `follow_rearm`, items 59 and 72): manual
   zoom/pan suspends following, and after 1.5 s of silence it returns.
 - **Timecode with frames is already written** — `src/apps/kt-app/src/util.rs:217`
   `format_timecode()` gives `00:00:00.000 F00`, and there is also the reverse parse
@@ -170,7 +170,7 @@ ADDRESS: src/apps/kt-app/src/timeline.rs — for us this class is possible, and 
   `pos.y > rect.top() + RULER_H`), the clip of the track area and
   `vertical_layout(avail_h - RULER_H - 6.0)`. Any growth of the ruler shrinks the tracks, and the layout limits are held by `t76`/`t127`, and they stand at direct requests.
 - **The frame grid changes the signature.** `ruler_steps(tpp)` is a pure function of one argument, and t60 checks it with numbers; a step that is a multiple of `90_000/fps` requires passing the project's fps and rewriting the test.
-- **Invariant 8 is the main danger and at the same time our advantage.** In others' editors zooming the timeline drags decode along with it, and in the trackers this reads as "hangs on zoom"; for us this class is closed (waveforms from the peak pyramid, thumbnails from `<project>.ktindex.db`, tests 13/15 `src/libs/kt-engine/tests/viewport.rs`), and in v1 it existed — item 61 of the table in `docs/porting-notes.md` verbatim: "timeline scroll/zoom → a storm of thumbnail/waveform decodes… astronomical numbers of calls to avcpp". The overview bar draws the WHOLE project at once, so this is the first widget that by construction asks for data about all the material. It must be built from the model and `BurstCache::coverage()`, and not one of its pixels has the right to request a frame — otherwise we ourselves will bring back exactly the defect for which everyone else pays.
+- **Invariant 8 is the main danger and at the same time our advantage.** In others' editors zooming the timeline drags decode along with it, and in the trackers this reads as "hangs on zoom"; for us this class is closed (waveforms from the peak pyramid, thumbnails from `<project>.ktindex.db`, tests 13/15 `src/libs/kt-engine/tests/viewport.rs`), and in v1 it existed — item 61 of the porting table verbatim: "timeline scroll/zoom → a storm of thumbnail/waveform decodes… astronomical numbers of calls to avcpp". The overview bar draws the WHOLE project at once, so this is the first widget that by construction asks for data about all the material. It must be built from the model and `BurstCache::coverage()`, and not one of its pixels has the right to request a frame — otherwise we ourselves will bring back exactly the defect for which everyone else pays.
 
 ### Which invariants it touches
 

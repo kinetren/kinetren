@@ -110,7 +110,7 @@ there the boundary is drawn inside the effect, with us — outside it.
   the comparison that is already fixed for us by invariant 7 and tests
   t11/t67 (CPU) and t184 (GPU), only now it can be shown to the user with their own eyes, not only in CI.
 - The placeholder of a missing file and a generator are one mechanism. What was
-  debugged in an accident (items 207–209 of `docs/porting-notes.md`) starts working on
+  debugged in an accident (items 207–209) starts working on
   the user's deliberate choice: one branch of code instead of two.
 
 ## Cons
@@ -217,7 +217,7 @@ This must be done TOGETHER with F-TXT-001: that note arrived at the same conclus
 independently ("a title as a source, not as a new layer of the plan"). The mechanism
 is one — a registry of schemes in the media path and a `MediaSource` factory by scheme; if
 we create it twice, the parsing of the pseudo-path will diverge for a third time (the first
-two are `kt-app` and `kt-cli`, footnote item 211 of `docs/porting-notes.md`).
+two are `kt-app` and `kt-cli`, footnote item 211).
 
 **The remainder of the note was closed in R.53 (items 419-422).** In R.52 the colour,
 gradient, angles, checkerboard, noise, SMPTE and timecode arrived; shapes, the transparent

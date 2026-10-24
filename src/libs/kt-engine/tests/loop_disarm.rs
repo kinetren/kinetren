@@ -1,4 +1,4 @@
-//! Tests 132-133 (porting-notes items 132-133, R.23): the “armed” state of the loop wrap.
+//! Tests 132-133 (items 132-133, R.23): the “armed” state of the loop wrap.
 //!
 //! The semantics are transport-level (advance_frames_wrapped): a wrap is possible only
 //! from a position INSIDE the region. A seek to the right of the end (on reverse — to the left of the start)

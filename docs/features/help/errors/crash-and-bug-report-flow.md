@@ -214,8 +214,7 @@ The strong half of ours is really strong, and this must be said directly.
   `app.rs:4924`). The final write is `on_exit` (`app.rs:5188`), waiting for the
   background one for up to 5 seconds. A successful "Save" deletes the recovery file
   (`app.rs:2794`). Tests 194 (`layout_tests.rs:3549`) and 199
-  (`layout_tests.rs:4373`, `:4395`); items 96, 150, 197, 199, 200 of
-  `docs/porting-notes.md`.
+  (`layout_tests.rs:4373`, `:4395`); items 96, 150, 197, 199, 200.
 - **Restoring.** `run()` (`app.rs:5274`): a command-line argument → `last_project` from the eframe storage → and only if neither
   exists — the autosave of the unnamed project. The restored one stays unnamed (`a.project_path = None`) and says `msg.autosave_restored`
   (`app.rs:5283`).
@@ -359,5 +358,4 @@ ONE LINE: overlap — untouched | delay — untouched | capacity — only the ti
 - Our code is the primary source for all statements about "us": `src/apps/kt-app/src/app.rs`, `src/apps/kt-app/src/main.rs`,
   `src/apps/kt-app/src/toolbar.rs`, `src/apps/kt-app/i18n/*.toml`,
   `src/libs/kt-engine/src/flight.rs`, `src/libs/kt-engine/src/player.rs`,
-  `src/Cargo.toml`, `src/Cargo.lock`, items 96, 150, 175, 197, 199, 200 of
-  `docs/porting-notes.md`.
+  `src/Cargo.toml`, `src/Cargo.lock`, items 96, 150, 175, 197, 199, 200.

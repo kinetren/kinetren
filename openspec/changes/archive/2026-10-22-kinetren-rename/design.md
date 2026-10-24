@@ -25,7 +25,7 @@ through one documented door.
 - Renaming crates and binaries (`kt-*`, `kt-app`, `kt-cli`): `kt` already reads as
   Kinetren.
 - Renaming the repository directory.
-- Rewriting history chronicles: `docs/porting-notes.md` (frozen), owner quotes, archived
+- Rewriting history chronicles: the porting log (frozen), owner quotes, archived
   changes.
 - The OTIO metadata namespace `kt`, which stays as it is.
 

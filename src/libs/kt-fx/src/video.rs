@@ -926,7 +926,7 @@ fn greenscreen(mut f: Frame, key: [u8; 3], tolerance: u32, softness: u32, spill:
     // Greenscreen is deliberately left as SCALAR (R.32): measurement showed
     // only ×1.29 at a threshold of 1.3 — LLVM already vectorizes this loop
     // well by itself, and 60 lines of intrinsics in a place where byte-exact accuracy
-    // matters are not worth it. The figures are in porting-notes item 198.
+    // matters are not worth it. The figures are in item 198.
     for px in f.rgba.chunks_exact_mut(4) {
         let d = ((px[0] as f64 - key[0] as f64).powi(2)
             + (px[1] as f64 - key[1] as f64).powi(2)

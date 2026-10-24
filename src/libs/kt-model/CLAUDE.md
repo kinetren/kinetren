@@ -340,7 +340,7 @@ of the velocity envelope of Vegas). It follows that there are TWO AXES, and they
   (one undo step); an envelope is inserted only into its own kind of effect.
 
 ## Tests
-- Test 12 (see docs/porting-notes.md): round-trip of commands, undo, save→load→save is byte-stable.
+- Test 12: round-trip of commands, undo, save→load→save is byte-stable.
 - Test 35: morpher (flatten, bake==flatten+undo, order by id, synchronization of targets, tracks, round-trip).
 
 ## Transitions of R.51 (items 397-401)

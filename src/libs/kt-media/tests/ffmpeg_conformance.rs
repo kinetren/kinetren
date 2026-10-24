@@ -1,4 +1,4 @@
-//! Test 10 (docs/porting-notes.md): conformance of FfmpegSource on real
+//! Test 10: conformance of FfmpegSource on real
 //! fixtures (src/fixtures/gen.sh, generated on the first run).
 #![cfg(feature = "ffmpeg")]
 
@@ -225,7 +225,7 @@ fn t21_ffmpeg_span_equals_per_frame_and_no_reopen() {
 
 // ---- Packet index in the sidecar DB -------------------------------------------
 
-/// Test 34 (docs/porting-notes.md): persistence of the packet index.
+/// Test 34: persistence of the packet index.
 /// A second opening of the same file does NOT scan it again (the index comes
 /// from the DB), the index is byte-for-byte equal to a fresh scan and functionally working
 /// (keyframe_before, sample-accurate audio). A change of the file invalidates the

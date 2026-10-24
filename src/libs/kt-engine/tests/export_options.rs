@@ -1,4 +1,4 @@
-//! Test 25 (docs/porting-notes.md, item 5): encoder choice and mp4 roundtrip.
+//! Test 25 (item 5): encoder choice and mp4 roundtrip.
 //! Requires the system FFmpeg (the kt-ffmpeg muxer) — like conformance test 10.
 
 use kt_engine::export::{ExportOptions, export_mp4_with};

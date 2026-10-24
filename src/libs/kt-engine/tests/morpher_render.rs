@@ -1,4 +1,4 @@
-//! Test 36 (docs/porting-notes.md): morpher in the render.
+//! Test 36: morpher in the render.
 //! The engine sees only effective_clips: a render with a morpher is sample-exact
 //! equal to (a) a render after BakeMorpher and (b) a render of an equivalent project
 //! without a morpher. The FX batch acts live (fix of defect D1 of v1).

@@ -1,4 +1,4 @@
-//! Tests 166–168 (docs/porting-notes.md) — regression of R.28 playback,
+//! Tests 166–168 — regression of R.28 playback,
 //! complaints 8.1–8.4 (“the computer is noisy”, underruns grow, “the picture freezes”).
 //!
 //! Root cause: the wrap of the loop region tore the clip-local position of the FX clip, and

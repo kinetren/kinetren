@@ -93,4 +93,4 @@ in the way in practice).
 - https://support.apple.com/guide/logicpro/welcome/mac (accessed 2026-09-14)
 - https://www.ableton.com/en/live-manual/ (accessed 2026-09-14)
 
-**Implemented in R.47** — docs/porting-notes.md item 327 (t323/t324); the further life of the feature is there.
+**Implemented in R.47** — item 327 (t323/t324).

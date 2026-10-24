@@ -1,4 +1,4 @@
-//! Test 42 (docs/porting-notes.md, J4 v1.4): reverse transport.
+//! Test 42 (J4 v1.4): reverse transport.
 //! With dir<0 the ring is filled with blocks [head−N, head) with a per-frame
 //! reversal — the concatenation of the reversed blocks must be an EXACT
 //! per-frame mirror of the forward run of the same range (determinism, invariant 11).

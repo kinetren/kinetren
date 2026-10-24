@@ -1,7 +1,7 @@
 # History of the user's requirements
 
 The primary source on WHAT the project owner asked for and HOW he phrased it.
-`docs/porting-notes.md` answers the question "which defect and which test closed it",
+`openspec/specs/<cap>/` answers the question "which defect and which test closed it",
 the crates' `CLAUDE.md` — "how to write code now"; this file answers the question
 **"what the user wanted and why the decision is exactly this"**.
 
@@ -10,7 +10,7 @@ the crates' `CLAUDE.md` — "how to write code now"; this file answers the quest
 1. **Read BEFORE working.** Before changing UI/behaviour, check whether this place was discussed earlier. If a limit, mode or view was set by a direct request — it must not be changed without a new request.
 2. **Write IMMEDIATELY.** A new round of remarks → first record the list here (in the user's own words, not a retelling), then fix. Answers to clarifying questions are recorded here too — they are the decisions.
 3. **Mark repeats.** If an item repeats — put ⚠ and the number of repeats: a repeat means the rule was not written down or was written weakly.
-4. **Reference the closure**: the test number and/or the porting-notes item.
+4. **Reference the closure**: the test number and/or the spec scenario.
 
 ## Cross-cutting requirements (must not be violated)
 
@@ -18,7 +18,7 @@ the crates' `CLAUDE.md` — "how to write code now"; this file answers the quest
 |---|---|---|
 | System FFmpeg | "no own build of FFmpeg and no plugins" — only runtime dlopen of the system one | invariant No. 10 of the root CLAUDE.md |
 | In-process export | without an external `ffmpeg` binary, without temporary files | invariant No. 9 |
-| Tests are mandatory | every engine change — with a regression autotest; do not weaken tests 1–111 | root CLAUDE.md, porting-notes |
+| Tests are mandatory | every engine change — with a regression autotest; do not weaken tests 1–111 | root CLAUDE.md, openspec specs |
 | UI no worse than C++ v1 | "the UI must be professional" | apps/kt-app/CLAUDE.md |
 | UI is made FOR THE USER | "UI/UX is made FOR THE USER, and you are making it for who-knows-whom, and I have to label everything" (R.8 item 17) | checklist in apps/kt-app/CLAUDE.md |
 | A remark = a CLASS of problems | "I often write 1–2 examples, and in the program there are many similar places" (R.8 item 17) | checklist, section "How to read remarks" |
@@ -51,7 +51,7 @@ Separately: **do not make obvious labels** (items 17, 21, 25) — "zoom:", "FPS:
 
 ### R.7.1 — 7 items
 ⚠ "where did the video and sound preview go from the ui" — a regression after R.7 (the panel was swelling with content). Decisions: the project name "move to the header of the left column, and do not forget that if the text turns out long, nothing prevents writing it over the preview"; "Everything at once in one list"; store the viewport in "In the project .ktproj".
-→ item 75 of porting-notes, the rule "do not swell panels with content".
+→ item 75, the rule "do not swell panels with content".
 
 ### R.8 — 17 items
 ⚠ "I CAN'T CHANGE THE WIDTH OF THE PREVIEW WIDGET AGAIN… IT'S FUCKING ANNOYING, **introduce a testing rule already**" → a harness appeared (egui_kittest) and the rule: any layout change — with a test (t76+).
@@ -81,7 +81,7 @@ item 5 the cursor gradient spills over the cache strips and should glow from the
 ⚠ item 6 "for the second time I'm already writing about the problem with resizes" — the collapse button is not pressable halfway.
 Answers to clarifications: the width of the meters — "90 px"; the version date — "the commit date".
 Separately, in the middle of the round: "I took the build from debug" → the `finish.sh` rule.
-→ tests 101–105, items 101–105 of porting-notes.
+→ tests 101–105, items 101–105.
 
 ### R.13 — 6 items
 item 1 "the audio monitor… you can see it's fake… the LEDs look too bold or what" → analysis showed that in R.11 I rearranged the layers and killed the glow; I restored the v1 order.
@@ -90,7 +90,7 @@ item 2 clarification: "I didn't say that you can't go over clips — I said don'
 item 6 clarification: "I don't understand what the problem is — make the separation zone more active to the left and that's it" → a dedicated drag strip to the left of the meters panel.
 item 11 window drag: "at the very top above the preview there is a one-pixel strip on which it's useless to try to drag, and if you go a little lower — it works".
 Media groups: the name was not saved on Enter, the frame was drawn over the cards, the cards became too big.
-→ tests 106–111 of porting-notes, t85/t99/t101/t102.
+→ tests 106–111, t85/t99/t101/t102.
 
 ### R.14 — frame stutter (2 items)
 "if you set the playback speed to something small, well 0.25x, then you can see that the frames during playback kind of stutter — they jump back a couple of frames. such stutter (without slowing down) is also always present in the rendered videos. Both problems must be covered by autotests, without fail." → tests 112–115.
@@ -250,7 +250,7 @@ Decisions of the round:
 1. Overlapping of clips is a project option, ON by default, switchable from the context menu; at the first overlap a banner explains the consequences and says where to revert it; "no" switches the option off for the project.
 2. Format: the layers are written as adjacent Tracks in the .otio + one field in our envelope metadata.kt. To the direct question "IS IT REALLY IMPOSSIBLE TO WRITE OVERLAPS, SIMPLY IGNORING THE STANDARD?" — it is really impossible: in OTIO a clip has no field "start on the timeline", the position is determined by the order of the children of the track, so two simultaneously sounding clips in one track cannot be expressed physically.
 3. Import of .ktproj — "as it was, with overlaps": tracks are not multiplied, nothing is cut, micro-overlaps are preserved.
-4. Order: first the critical (items 9, 1, 8.x, 6, 7, 3), the rest (2, 4, 5, 10, 11, 12) — in the next round. The second half was closed by the same round later: items 169–175 of porting-notes.
+4. Order: first the critical (items 9, 1, 8.x, 6, 7, 3), the rest (2, 4, 5, 10, 11, 12) — in the next round. The second half was closed by the same round later: items 169–175.
 5. The UI/UX rules from items 5, 9, 11 were recorded in apps/kt-app/CLAUDE.md (items 16–20 of the checklist).
 
 ### After R.28 — uniformity of the level
@@ -427,7 +427,7 @@ The occasion is not a defect but a finding. The request verbatim:
 
 The answer to the premise "they are only for fx there": not only — the Adjustment Event has trim, split, copy-paste, mute/lock, like an ordinary event. But we have what they do not have: the substitution of media and the shift of `source_in` (the morpher as a "substituting layer").
 
-The catalogue of the reconnaissance is `docs/features/`, the rules of keeping it are in its `README.md`, the decision "why it exists and why the axis is by features" is item 245 of `docs/porting-notes.md`.
+The catalogue of the reconnaissance is `docs/features/`, the rules of keeping it are in its `README.md`, the decision "why it exists and why the axis is by features" is item 245.
 
 ## Round R.37 (2026-09-07): slowed&reverb — time domain, video, preview
 
@@ -767,7 +767,7 @@ Tessellation is not needed and is ruled out by the environment (llvmpipe/downlev
 * **Mitigating barriers — later.** To the question "can the non-local barriers be bypassed? well, the same edges and vhs?" — exactly nowhere (in Nuke a per-pixel node likewise breaks a series), but the stages are fixed in F-CMP-001: (1) per-point Greenscreen/Noise "per tap" inside the merged pass — they will stop breaking geo series; (2) barriers that account for resolution (edges/vhs/blur/glow at ×2–×4 with the net zoom of the tail; kernel parameters are resolution-invariant). Also there — "decode larger than Quality at net magnification >100 %" (the only case where sharpness is lost BEFORE the chain; it touches cache keys and prefetch).
 * To the question "if we have a GPU, we always compute on it, right?" — yes, with a live GPU all video runs on GPU (llvmpipe counts as one); CPU is the reference and fallback (no adapter / TooLarge / DeviceLost / `KT_VIDEO_GPU=0`), and after the round it becomes FULL. Per frame the CPU only builds the program — a few 3×3 multiplications in f64, O(chain length).
 
-→ implementation: items 306–310 of porting-notes, tests t296–t301 and t66d, feature note F-CMP-001 (`docs/features/compositing/transforms/transform-concatenation.md`).
+→ implementation: items 306–310, tests t296–t301 and t66d, feature note F-CMP-001 (`docs/features/compositing/transforms/transform-concatenation.md`).
 
 ## Round R.45 (2026-09-13): "what to do about the blockers" — softening the barriers
 
@@ -788,7 +788,7 @@ Right after checking R.44: "I checked, it seems to work. Now let's think about h
 * The mechanism "build the geo program in K·out" was REJECTED: it breaks the integer geometry of the grid (10 px / 4 columns at K=2 give a different cell layout). Instead — conjugation: the program always works in 1× semantics, and the scales are supplied by two affines at the edges (at K=1 — identity, R.44 bytes untouched).
 * Goldens are NOT regenerated at all in this round: K=1 paths are byte-for-byte.
 
-→ implementation: items 311–315 of porting-notes, tests t302–t306, stages (1)(2) of the F-CMP-001 verdict.
+→ implementation: items 311–315, tests t302–t306, stages (1)(2) of the F-CMP-001 verdict.
 
 ## Round R.46 (2026-09-14): "let's do it" — decode larger than Quality
 
@@ -811,7 +811,7 @@ Essence: the decoder downscales the frame to Quality right away (`sws_scale`, it
 * Interleaving of sws/seek steps on one file (two clips of the same media with different S) — accepted: spans amortize, the cost is measured in release.
 * Goldens are NOT regenerated: the byte references have no net zoom, and the native of the synthetic material is smaller than Quality — S≡1 on all existing paths.
 
-→ implementation: items 317–323 of porting-notes, tests t308–t318, stage (3) of the F-CMP-001 verdict.
+→ implementation: items 317–323, tests t308–t318, stage (3) of the F-CMP-001 verdict.
 
 ## Round R.47 (2026-09-14): "not enough effects" — +14 audio and +16 video
 
@@ -837,7 +837,7 @@ A direct continuation of R.29 ("effects are categorized into 2d and 3d versions"
 * A video effect must declare its class to the concatenation scheduler (point-wise/barrier/geo) — one forgotten silently becomes a barrier and breaks geo series; in the first video wave compiler locks are put in place.
 * Nonlinear distortions (twirl/ripple/kaleidoscope/cylinder) compute trigonometry: CPU f64 vs GPU f32 — a new tolerance class `FrameTol::WARP` by measurement ×2; lens (polynomial) stays in GEOM.
 
-→ implementation: items 324–336 of porting-notes, tests t319–t333, feature notes F-AUD-009…012, F-FX-001…004, F-CLR-007 (+ statuses of F-AUD-001/002).
+→ implementation: items 324–336, tests t319–t333, feature notes F-AUD-009…012, F-FX-001…004, F-CLR-007 (+ statuses of F-AUD-001/002).
 
 ## Round R.48 (2026-09-14): "let's plan these candidates"
 
@@ -860,7 +860,7 @@ After R.47 the owner asked "what next?", received three candidates and replied: 
 * **Presets are the user's file, not the model**: saving and deleting a preset do not go into the project's undo (undo edits the edit, not the library); deletion warns about this with a hint. The file survives unknown effects from future versions (they are kept as is) and is not overwritten by a newer format version.
 * In passing, the tail of R.38 is closed: inserting an FX chain into a morpher silently lost curves. The reconnaissance verdict explicitly forbade starting a preset library before this.
 
-→ implementation: items 337–348 of porting-notes, tests t322g, t334–t350, feature notes F-AUD-001/002/013 and F-AUT-004 (all closed).
+→ implementation: items 337–348, tests t322g, t334–t350, feature notes F-AUD-001/002/013 and F-AUT-004 (all closed).
 
 ## Round R.49 (2026-09-15): "let's do item 1, item 2, item 3, item 4" — durability, push channel, offline analysis
 
@@ -1005,7 +1005,7 @@ The connection was ours: the generator's parameters live in the media PATH (the 
 * **Title animation** (F-TXT-006) — in this pass, after the defects.
 * **Animation presets set EVERYTHING**, including position and anchor: a "crawling line" not shifted off the edge of the frame is useless. Rule 20 is not violated under two conditions — the whole set goes out in ONE undo step, and manual tweaking honestly shows "matches no preset".
 
-→ implementation: items 409–426 of porting-notes, tests t496–t542, live scenarios `shapes.py`, `title.py`, `generator.py` (items 425–426 — defects that these scenarios found after the stages were handed over).
+→ implementation: items 409–426, tests t496–t542, live scenarios `shapes.py`, `title.py`, `generator.py` (items 425–426 — defects that these scenarios found after the stages were handed over).
 
 ## Round R.54 (2026-09-17): effect picker — "an icon would not hurt, and a prerendered thumbnail"
 
@@ -1042,7 +1042,7 @@ Plus two permissions that removed half of the ceremony: "Backward compatibility 
 
 To the question "what is the main parameter of each kind?" (after the gallery was handed over) the owner answered "let's do it". We did NOT declare a "main parameter" for each kind as FCP does — `VHS` and `Color Grade` have four equal ones, `Mirror` has no numeric ones at all, `Corner Pin` has eight equal coordinates. Instead of a declaration the axis runs between two CURATED points — variants — and the "useful range" does not need to be invented: it is already set by the extreme variants.
 
-→ implementation: items 427–433 of porting-notes, tests t543–t551, feature note F-AUT-006, live scenario `fxpicker.py`.
+→ implementation: items 427–433, tests t543–t551, feature note F-AUT-006, live scenario `fxpicker.py`.
 
 ## Round R.55 (2026-09-17): compositions — "and by default a hybrid convenient mode is needed"
 

@@ -1,4 +1,4 @@
-//! Tests 15–16 (docs/porting-notes.md): peak pyramid and index DB invalidation.
+//! Tests 15–16: peak pyramid and index DB invalidation.
 
 use kt_media::index::{MediaEntryStatus, MediaIndexDb, PeakPyramid};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};

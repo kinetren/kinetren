@@ -552,7 +552,7 @@ fn t327_print_dense_chain_cost() {
 }
 /// Perf print of the lookahead nodes (R.48): how much ONE event costs with the
 /// limiter and with each engine's pitch. There are no asserts — the numbers go
-/// into porting-notes, and speed can be judged only by the RELEASE build (item 301):
+/// into the capability’s design.md, and speed can be judged only by the RELEASE build (item 301):
 /// `cargo test -p kt-engine --test audio_fx_registry --release -- --ignored bench_pitch`
 #[test]
 #[ignore]

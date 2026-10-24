@@ -80,4 +80,4 @@ We take all four in R.47: Vignette — a per-point tap with the stage coordinate
 - https://helpx.adobe.com/premiere/using/effects-reference.html (access date 2026-09-14)
 - https://support.apple.com/guide/final-cut-pro/welcome/mac (access date 2026-09-14)
 
-**Implemented in R.47** — docs/porting-notes.md items 332/334 (t330/t332); the further life of the feature is there.
+**Implemented in R.47** — items 332/334 (t330/t332).

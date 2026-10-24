@@ -151,7 +151,7 @@ effect, otherwise the layer paints everything:
 
 ### What is missing
 
-- ~~Blend strength~~ **done in R.38 item 12** (`docs/porting-notes.md`, item 267):
+- ~~Blend strength~~ **done in R.38 item 12** (item 267):
   `MorpherEvent.strength` + `fade_in`/`fade_out`, and the mechanism is exactly the one
   described above in "The trick behind it": a crossfade of the processed picture with
   the unprocessed one. It is implemented as a CHAIN SLOT (`FxInstance::LayerMix`), therefore
@@ -163,7 +163,7 @@ effect, otherwise the layer paints everything:
 - Masks and tracking: a search over `src/libs/kt-fx/src` and `src/libs/kt-model/src` finds not a single `mask` — neither on a clip nor on an effect.
 - ~~Automation inside the patch~~ **done in R.38 item 13** (item 266):
   `MorphPatch.video_auto`/`audio_auto`, the domain is the time of the BLOCK (the layer has no material), `apply_to` converts the keys to the material of the target.
-- We have no nested compositions (`docs/porting-notes.md`, item 158: "there we have a void … until nested compositions are supported"), so Adobe's workaround "reorder the render by nesting" is unavailable to us — the solution must work without it.
+- We have no nested compositions (item 158: "there we have a void … until nested compositions are supported"), so Adobe's workaround "reorder the render by nesting" is unavailable to us — the solution must work without it.
 
 ### What gets in the way
 

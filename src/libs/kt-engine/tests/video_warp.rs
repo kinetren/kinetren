@@ -1,4 +1,4 @@
-//! Tests 247 (docs/porting-notes.md): the VIDEO slows down (R.37 item 2).
+//! Tests 247: the VIDEO slows down (R.37 item 2).
 //!
 //! The user's request: “slowed&reverb for video (a separate checkbox by default — with some simple frame generation)”.
 //! Stretching time is not expressed by a per-frame filter —

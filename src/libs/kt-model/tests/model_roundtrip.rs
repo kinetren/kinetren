@@ -1,4 +1,4 @@
-//! Test 12 (docs/porting-notes.md): round trip of commands, undo, byte-stable serialization,
+//! Test 12: round trip of commands, undo, byte-stable serialization,
 //! explicit load errors.
 
 use kt_model::*;

@@ -1,4 +1,4 @@
-//! Tests 233, 234, 236 (docs/porting-notes.md): slicing a target with a morpher layer.
+//! Tests 233, 234, 236: slicing a target with a morpher layer.
 //!
 //! Since R.35 the morpher acts BY TIME,
 //! so a target that is partly covered has to be

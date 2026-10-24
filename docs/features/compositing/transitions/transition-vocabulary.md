@@ -103,7 +103,7 @@ they are axis (a), the direction of the geometry, and the common checkbox does n
 
 DONE in R.51 (items 396–401): repair of push/whip and of the kind's reset points, inversion by the plan, 33 kinds (patterns/shift-symbioses/stylized/volumetric
 through `trans_ext`), centres, transitions on overlap. Further life — in
-`docs/porting-notes.md`.
+`openspec/specs/transitions/`.
 
 ## Sources
 
@@ -130,6 +130,6 @@ Ours:
   `src/libs/kt-model/src/project.rs` (`TransitionKind`,
   `TransitionEvent`), `src/apps/kt-app/src/transition_editor.rs`.
 - `docs/user-feedback.md` R.33 (decisions about the 16 kinds and sound), R.51
-  (the claim and the decisions of this round); `docs/porting-notes.md` items 222–227.
+  (the claim and the decisions of this round); items 222–227.
 - Related note: `docs/features/timeline/structure/same-track-transitions.md`
   (F-TL-010) — overlap as a state and a transition on overlap.

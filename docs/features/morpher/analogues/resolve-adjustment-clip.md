@@ -147,8 +147,7 @@ https://forum.blackmagicdesign.com/viewtopic.php?f=21&t=94192
 - A clip has opacity (`ClipEvent::opacity`, `src/libs/kt-model/src/
   project.rs`, goes into the plan as `alpha_k` in `src/libs/kt-engine/src/video.rs`),
   but `MorpherEvent` has neither a strength slider nor a blend mode — only the
-  binary `enabled` and binary slot bypasses. This is exactly the claim of item 245 of
-  `docs/porting-notes.md` ("control the blend transparency with a slider").
+  binary `enabled` and binary slot bypasses. This is exactly the claim of item 245 ("control the blend transparency with a slider").
 - Caches: `BurstKind::PostFxVideo { quality, fx_hash }` in
   `src/libs/kt-cache/src/lib.rs` — the key is PER LAYER; `ReadbackCache` in
   `src/libs/kt-gpu/src/pool.rs` — already by the hash of the whole plan, that is, "by the composite". The split of Node Cache / Sequence Cache in Resolve is about the same
@@ -208,8 +207,7 @@ https://forum.blackmagicdesign.com/viewtopic.php?f=21&t=94192
 
 ## Verdict
 
-We take the morpher's strength slider: this is a direct request from the user (item 245 of
-`docs/porting-notes.md`), Vegas has it, and Resolve's is broken at the clip level — so what must be copied is not Opacity but Key Output Gain, that is, an honest
+We take the morpher's strength slider: this is a direct request from the user (item 245), Vegas has it, and Resolve's is broken at the clip level — so what must be copied is not Opacity but Key Output Gain, that is, an honest
 wet/dry inside the layer.
 
 The post-composite stage ("a morpher that edits the RESULT, not the clips") we do not take in this pass, but we record it as a separate gap: Resolve has two such levels, we have one, and ours is a shared node, not an adjustment clip. The stage touches

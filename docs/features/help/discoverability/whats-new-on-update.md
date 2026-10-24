@@ -65,7 +65,7 @@ The load that one status-bar line cannot hold is here a **LIST THAT HAS A DATE**
 ## Cons
 
 - It grows monotonically and forever. This is the only text of the product with such a property: the help is rewritten, the changelog is only appended to. It is multiplied by five languages (F-HLP-033) — and unlike a hint, which was translated once, here translation is required EVERY release, otherwise the share of the translated falls by itself with complete inaction.
-- A text written from commits is not readable. This is not a hypothesis: we have literally such a text, 268 items of `docs/porting-notes.md`, and it is written for agents — the average item is 903 characters (median 692, maximum 4957), 159 items mention the number of a regression test. None of them can be shown to the user as is, and the matter is not the language but the genre: there it is explained WHY it was done this way.
+- A text written from commits is not readable. This is not a hypothesis: we have literally such a text, 268 items of the porting log, and it is written for agents — the average item is 903 characters (median 692, maximum 4957), 159 items mention the number of a regression test. None of them can be shown to the user as is, and the matter is not the language but the genre: there it is explained WHY it was done this way.
 - It requires discipline at the moment of the edit, not at the moment of release. A changelog written after the fact is work over the whole catalog at once, and it is done once and never again (precisely why the history of Vegas releases was assembled not by the vendor but by a forum moderator).
 - A thing shown by itself irritates instantly, and the complaint is formulated precisely: "Since we open release notes (by default) on each release, there should be a visible way to opt-out". Everything that is shown without a request must carry a visible switch (rule 19), otherwise it pays in trust.
 - An honest list of fixes also publishes what was broken. For a project with one user this is cheaper than it seems (he himself wrote about these defects), but the rule is universal: the section "fixed" cannot be kept selectively — as soon as the inconvenient falls out of it, people stop reading it too.
@@ -107,7 +107,7 @@ What people look for in a list of fixes:
 ## How it fits Kinotrain
 
 The main point here is not "we need a changelog" (that is known without any reconnaissance), but that
-**the source for it is already written, and not in the right genre.** A verbatim example, item 259 of `docs/porting-notes.md`:
+**the source for it is already written, and not in the right genre.** A verbatim example, item 259:
 
 > "**The morph block length is editable (R.38 item 9).** "I don't understand how to change the length of a morpher event": `morpher_at` checked only the body, there were no edges, `Drag::Morph` could do only one move, and the morpher window had no length at all. Now the block has edges (`Drag::MorphEdge`): the right edge changes the duration, the left edge moves the start while the end STAYS — as with a range marker (rule 20: nothing grows on its own). Test 259."
 
@@ -160,7 +160,7 @@ For the user, one phrase is addressed out of these 470 characters: "The morpher 
 - The version in the only user-facing place is typed by hand and is already out of date:
   `site/content/structure.toml:175` — `tar xf kinotrain-26.08-linux-x86_64.tar.gz`, while
   the current build is `kt26.09.07`. The site does not know that something newer has come out.
-- Not one item of `porting-notes.md` has a user-facing wording: the genre is not provided
+- Not one item of the porting log has a user-facing wording: the genre is not provided
   for by the format, so it is not written.
 
 ### What gets in the way
@@ -169,7 +169,7 @@ For the user, one phrase is addressed out of these 470 characters: "The morpher 
   Hence the choice of place: a growing text has no place in the application's catalogs —
   522 keys × 5 languages, a limit of 160 characters per value (`src/apps/kt-app/build.rs`,
   `MAX_VALUE_CHARS`; a longer value BREAKS THE BUILD), t125 does not tolerate extra keys,
-  t100 requires a glyph for every non-ASCII character. The average item in porting-notes
+  t100 requires a glyph for every non-ASCII character. The average item in the porting log
   is 5–6 times longer than our own per-line limit.
 - **The reconnaissance corrected the shared place of the wave about translations.** The
   claim "effect descriptions are already translated into five languages" is wrong: in
@@ -211,9 +211,9 @@ For the user, one phrase is addressed out of these 470 characters: "The morpher 
 | What | Answer |
 |---|---|
 | Size | M — 2 stages of the round: (1) the unit "release" + a user-facing line in the change; (2) a page on the site and one entry in the program |
-| Where the main work is | `docs/porting-notes.md` (writing discipline, not code), `site/` (the release page via the existing `build.py`), kt-app: comparison of the version with the mark in `$XDG_DATA_HOME/kinotrain/`, one entry in `notices`, one menu item |
+| Where the main work is | the chronicles (writing discipline, not code), `site/` (the release page via the existing `build.py`), kt-app: comparison of the version with the mark in `$XDG_DATA_HOME/kinotrain/`, one entry in `notices`, one menu item |
 | Project format | does not touch it |
-| Tests that will have to be written | a `--check` clause for a porting-notes item without a user-facing line; `site/build.py --check` for the release page (the version in the body = the version in `LATEST`); `i18n_tests` for the new menu keys; `reach_tests` for "what is shown opens on demand too" |
+| Tests that will have to be written | a `--check` clause for a item without a user-facing line; `site/build.py --check` for the release page (the version in the body = the version in `LATEST`); `i18n_tests` for the new menu keys; `reach_tests` for "what is shown opens on demand too" |
 | Depends on | F-HLP-026 (the version must be visible in the program), F-HLP-032 (the page pipeline), F-HLP-033 (the cost of five languages), F-HLP-013 (the bell as an address), F-HLP-023 (where items can link) |
 | Breaks compatibility | no |
 
@@ -229,7 +229,7 @@ once; writing one phrase at the moment of the edit costs nothing. The second obs
 structural: there is nothing to hang "what's new" on while every build is a new version, and
 there is no list of releases in the repository at all.
 
-CHECK: docs/porting-notes.md — a clause "every new item carries a line `User:` — one phrase without function names, rule numbers and test numbers, or the word 'not visible' if the change is not shown to the user; an item without such a line is an error of `--check`, not an author's oversight".
+CHECK: docs/user-feedback.md — a clause "every new item carries a line `User:` — one phrase without function names, rule numbers and test numbers, or the word 'not visible' if the change is not shown to the user; an item without such a line is an error of `--check`, not an author's oversight".
 
 DEFERRED: until F-HLP-023 the form "item → link to a guide chapter" (the Apple model) is unreachable, since there are no guide pages; until then an item ends on itself, and this has to be acknowledged rather than imitated with links to nowhere.
 
@@ -287,6 +287,6 @@ design.
   docs.blender.org, support.apple.com, jetbrains.com, blackmagicdesign.com and
   community.adobe.com; search went through `search.yahoo.com` via the same proxy
   (`html.duckduckgo.com` through the proxy returned no results in this session).
-- Data about our state (268 porting-notes items and their lengths, 396/207 commits, the
+- Data about our state (268 items and their lengths, 396/207 commits, the
   coverage of the site and application translations, `LATEST`, the tags) was obtained by
   counting over the repository on 2026-09-07, not from documentation.

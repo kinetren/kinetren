@@ -189,15 +189,14 @@ video retiming in five stages. Verified by grep, not from the brief.
   The speed lives in `FxInstance::SlowedReverb.rate`
   (`src/libs/kt-model/src/project.rs:1911`), shared by the A/V pair
   (`sync_warp_to_link_group`, item 248). The linear path remains exactly where
-  there is no warp (`video.rs:184`) - `GOLDEN_VIDEO` stands on this. Items 246–251
-  of `docs/porting-notes.md`.
+  there is no warp (`video.rs:184`) - `GOLDEN_VIDEO` stands on this. Items 246–251.
 - **Step 1 is free by construction**: choosing the source frame is one line
   `grid.align_floor(clip_material_pos(c, t, grid))` in
   `clip_source_pts` (`src/libs/kt-engine/src/video.rs:175`). A subtlety worth
   knowing in advance: this is FLOOR, not rounding to the nearest - at 0.5× it gives
   a systematic shift of half a frame backwards, against the literal "nearest" of
   other editors.
-- **Step 2 is done in full** (R.37 C5, item 250 of `docs/porting-notes.md`):
+- **Step 2 is done in full** (R.37 C5, item 250):
   `FrameMode { Nearest, Blend }` (`src/libs/kt-model/src/project.rs:2469`),
   the pair of neighbours is resolved by ONE function `clip_frame_keys`
   (`src/libs/kt-engine/src/video.rs:233`, weight `k` in 4096ths), the mix
@@ -313,7 +312,7 @@ can end up on opposite sides of a cut, if the cut sits inside the source file it
 | Where the main work is | the solver itself (a candidate for a separate crate such as `kt-flow`, so that kt-engine does not get thicker), `clip_frame_keys`/`layer_src` in `src/libs/kt-engine/src/video.rs`, a new burst kind in kt-cache, the third variant of `FrameMode` in kt-model, a row in the picker of kt-app |
 | Project format | DOES NOT TOUCH: `frames` travels through serde-derive of `FxInstance`, the default `Nearest` is not serialized (`is_default_frame_mode`, `project.rs:1554`), the version `KT_META_VERSION = 4` stays. The precedent is `FrameMode` itself in R.37 |
 | Tests | determinism of the synthesized frame between runs and against the reference; "prefetch == what was read" on a window wider than the pair (after the pattern of t247d/t250b); behaviour at the boundary of the event window and on reverse; an explicit refusal when the mode is unavailable on the current backend; in kt-gpu - NOT conformance by tolerances, but a check that both executors received ONE AND THE SAME frame |
-| Depends on | F-SPD-001 (video retiming - already done, item 247 of `docs/porting-notes.md`). Relatives by class of task, not by code: F-MSK-005 (tracking), F-MSK-006 (stabilization) - all three have a "analysed" phase |
+| Depends on | F-SPD-001 (video retiming - already done, item 247). Relatives by class of task, not by code: F-MSK-005 (tracking), F-MSK-006 (stabilization) - all three have a "analysed" phase |
 | Breaks compatibility | no |
 
 ## Verdict

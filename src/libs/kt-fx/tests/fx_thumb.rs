@@ -1,4 +1,4 @@
-//! Test 544 (docs/porting-notes.md, item 428, R.54): the effect thumbnail.
+//! Test 544 (item 428, R.54): the effect thumbnail.
 //!
 //! The thumbnail is what a person CHOOSES an effect by, so it has two duties,
 //! and both are checked here: to be deterministic (the icon has no right to flicker

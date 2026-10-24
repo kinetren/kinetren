@@ -1,4 +1,4 @@
-//! Tests 237-238 (docs/porting-notes.md): cutting the target by a morpher layer in the RENDER.
+//! Tests 237-238: cutting the target by a morpher layer in the RENDER.
 //!
 //! A morpher layer cuts the target along the boundaries of its own window (R.35). Two things
 //! that must remain untouched in doing so:

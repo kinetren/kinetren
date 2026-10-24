@@ -113,7 +113,7 @@ A reel is a reference inside the project, one address space; the laws E (inline 
 
 ## Verdict
 
-We take it, and we take it early — but not as "a grouping convenience" — as a revision of the composition plan. This is the most structural position of the base: F-MPH-007 (effect on the composite), F-AUD-004 (one chain per group of lines) and F-TXT-002 (templates) rest on it — and it also closes a known compatibility gap recorded in item 158 (`docs/porting-notes.md`): today we honestly read foreign nested compositions and honestly draw an empty space in their place.
+We take it, and we take it early — but not as "a grouping convenience" — as a revision of the composition plan. This is the most structural position of the base: F-MPH-007 (effect on the composite), F-AUD-004 (one chain per group of lines) and F-TXT-002 (templates) rest on it — and it also closes a known compatibility gap recorded in item 158: today we honestly read foreign nested compositions and honestly draw an empty space in their place.
 
 The A priority is taken deliberately: all five have nesting, and there is no workaround that does not break non-destructiveness — the workaround is "render it and drop it in as a file", exactly as in the quote above. Before the round, TWO decisions of the owner are needed, and they determine half of the code: does a nest inherit the parent's settings (we are against it in all five, but then there is no softness and no judder), and is it a reference or a copy (and if a reference — to an object inside the project, as in Premiere and FCP, or to a file on disk, as in VEGAS).
 
@@ -150,7 +150,7 @@ Left outside the scope of the round (beyond the plan's volume): a disableable bo
 - Project code and documentation: `src/libs/kt-model/src/project.rs`,
   `src/libs/kt-engine/src/{video.rs,video_plan.rs,worker.rs,fxstore.rs}`,
   `src/libs/kt-otio/src/{schema.rs,convert.rs}`,
-  `src/libs/kt-media/src/lib.rs`, `docs/porting-notes.md` items 153, 158,
+  `src/libs/kt-media/src/lib.rs`, items 153, 158,
   `docs/file-format.md`, `docs/user-feedback.md` (R.24 item 5, R.25 item 4).
 
 What could NOT be verified, and why. The Resolve line relies on forum headings and a third-party analysis: `forum.blackmagicdesign.com` returns 403 from this environment for any `viewtopic.php`, mirrors of the manual (manualzz) give "proxy refused", and Resolve has no official HTML manual. The claims about Fusion Clip and about the flag "refer to the source resolution" are marked `[NOT VERIFIED]` directly in the table. Adobe's help (`helpx.adobe.com`) and reddit are unavailable — the Premiere and AE lines are assembled from the official Adobe community and Creative COW; the text of the Pre-compose dialog ("leaves the properties and keyframes … in the original composition") is visible only in search results with a link to helpx, so in the table it is paraphrased, not quoted. The old VEGAS forum (`vegascreativesoftware.info`) redirects after the change of publisher to `forum.borisfx.com`, and the direct links to threads about nested projects are dead — so there are no live quotes from there in this note.

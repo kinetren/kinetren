@@ -122,13 +122,13 @@ the thin row `THIN_ROW_DIV` in `src/apps/kt-app/src/timeline.rs`
   A track is a number; there is physically nothing to hang an envelope on.
 - **A "track" stage of the mix** between the event and the output: the sum is computed per event; there is no bus or master in the model.
 - **Track FX — none at all, neither video nor audio.** So "the envelope of a track effect's parameter" makes no sense in principle, and the order of work is strict: first the track as an object, then track FX, only then curves for their parameters. The reverse order yields a curve with nothing to attach to.
-- **A fourth time domain.** Right now there are three domains: the MATERIAL tick of a clip (item 212 of `docs/porting-notes.md`, the single function `kt_model::clip_material_at`), the tick FROM THE START of the event for a camera (`CameraEvent.auto`), and the 0..1 progress of the legacy `CamMotion`. A track envelope by its nature lives in the PROJECT tick — a domain we do not have (see F-AUT-002). It is precisely from this difference that all the ripple pain of other editors grows: for us it will appear together with the domain.
+- **A fourth time domain.** Right now there are three domains: the MATERIAL tick of a clip (item 212, the single function `kt_model::clip_material_at`), the tick FROM THE START of the event for a camera (`CameraEvent.auto`), and the 0..1 progress of the legacy `CamMotion`. A track envelope by its nature lives in the PROJECT tick — a domain we do not have (see F-AUT-002). It is precisely from this difference that all the ripple pain of other editors grows: for us it will appear together with the domain.
 - **What to record with.** There is no permanently living fader on a track, the monitor master is not written into the project, and we do not support MIDI/Mackie surfaces. Without these, the touch/latch/write modes have nothing to even start with.
 
 ### What gets in the way
 
 It is not the volume of code, but the occupied place and a direct decision of the user. Round R.28 item 176
-(`docs/porting-notes.md`, line 377) removed the vertical volume rail of v1
+removed the vertical volume rail of v1
 precisely because it stood at the left edge of the clip, that is, exactly in the
 fade zone. In `docs/user-feedback.md` (section "After R.28 — level uniformity",
 lines 508–515) this is recorded as follows:

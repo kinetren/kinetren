@@ -85,4 +85,4 @@ Take all six in R.47 in one wave: Chorus (voices 1–3, stereo 90°), Flanger (f
 - https://helpx.adobe.com/premiere/using/audio-effects-transitions.html (accessed 2026-09-14)
 - https://www.ableton.com/en/live-manual/ (accessed 2026-09-14)
 
-**Implemented in R.47** — docs/porting-notes.md items 328 (t325); further life of the feature is there.
+**Implemented in R.47** — items 328 (t325).

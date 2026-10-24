@@ -1,4 +1,4 @@
-//! Test 550 (docs/porting-notes.md, item 433, R.54): blending two states of one kind —
+//! Test 550 (item 433, R.54): blending two states of one kind —
 //! an operation under the FORCE AXIS in the picker.
 //!
 //! Its main property, the reason it exists at all: the ends are returned BYTE-FOR-BYTE.

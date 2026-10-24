@@ -5,7 +5,7 @@
 //! consumes these types directly, without intermediate retellings
 //! (in the old C++ a clip was re-described by 4 structures on the way into the engine).
 //!
-//! The implementation — stage M1 (see docs/porting-notes.md).
+//! The implementation — stage M1.
 
 pub mod autoplan;
 pub mod formula;

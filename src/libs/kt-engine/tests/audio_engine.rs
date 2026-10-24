@@ -1,4 +1,4 @@
-//! Regression tests of the engine (docs/porting-notes.md):
+//! Regression tests of the engine:
 //! 1 — audio-event concatenation sample-exact;
 //! 2 — equal-power crossfade / 1-N;
 //! 3 — gain and summing of tracks;

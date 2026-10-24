@@ -79,4 +79,4 @@ We take both in R.47: CornerPin — through the existing Proj (without WGSL chan
 - https://borisfx.com/products/mocha-pro/ (access date 2026-09-14)
 - https://www.blackmagicdesign.com/products/davinciresolve (access date 2026-09-14)
 
-**Implemented in R.47** — docs/porting-notes.md items 333/335 (t331/t333); the further life of the feature is there.
+**Implemented in R.47** — items 333/335 (t331/t333).

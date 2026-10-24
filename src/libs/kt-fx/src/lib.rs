@@ -1,7 +1,7 @@
 //! Audio FX: slowed (rubato-varispeed) + reverb (freeverb) + gain.
 //!
 //! Architectural decisions that close the crackles of the old engine
-//! (defects a–f, docs/porting-notes.md):
+//! (defects a–f):
 //! - all sound is f32 48kHz/2ch; FX do not see the source sample rate (a);
 //! - the state lives in one object per clip, owned by the audio-render thread
 //!   via FxStateStore in kt-engine, not shared with prefetch (b);

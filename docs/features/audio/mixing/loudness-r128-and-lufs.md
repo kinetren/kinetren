@@ -213,5 +213,5 @@ Editors:
   only about 11 topics, and the historical archive of threads is unavailable. Live quotes about loudness could
   not be obtained from there; the part of `_editors.md` about "where to look" is outdated on this point
 
-**Implemented in R.49** — docs/porting-notes.md item 370
-(tests t403, t404, t405, t406, t407, t411, t412); the further life of the feature is there.
+**Implemented in R.49** — item 370
+(tests t403, t404, t405, t406, t407, t411, t412).

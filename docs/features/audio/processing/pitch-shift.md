@@ -94,5 +94,5 @@ Take both engines at once: they cover different material, and the choice between
 - https://support.apple.com/guide/final-cut-pro/ (accessed 2026-09-14)
 - https://www.ableton.com/en/live-manual/ (accessed 2026-09-14)
 
-**Implemented in R.48** — docs/porting-notes.md items 337, 339–340
-(t337–t340); further life of the feature is there. Formant correction and a mode per event (instead of a project setting) were not done.
+**Implemented in R.48** — items 337, 339–340
+(t337–t340). Formant correction and a mode per event (instead of a project setting) were not done.
