@@ -1996,6 +1996,7 @@ dependencies = [
  "image",
  "kt-cache",
  "kt-engine",
+ "kt-ffmpeg",
  "kt-fx",
  "kt-gpu",
  "kt-media",
@@ -2028,6 +2029,7 @@ version = "0.1.0"
 dependencies = [
  "kt-cache",
  "kt-engine",
+ "kt-ffmpeg",
  "kt-fx",
  "kt-gpu",
  "kt-media",
@@ -2063,6 +2065,7 @@ dependencies = [
  "kt-time",
  "libloading",
  "thiserror 2.0.20",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

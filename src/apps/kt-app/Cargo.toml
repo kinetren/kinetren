@@ -20,6 +20,7 @@ kt-model = { workspace = true }
 kt-text = { workspace = true }
 kt-otio = { workspace = true }
 kt-media = { workspace = true }
+kt-ffmpeg = { workspace = true }
 kt-cache = { workspace = true }
 kt-engine = { workspace = true }
 # the frequency response graph is computed by kt_fx::eq_mag_db — with the same coefficients that sound

@@ -850,3 +850,41 @@ fn t831_cli_and_app_agree_on_the_lock_directory() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// t849 (windows-build, media-index): `kt-cli ffmpeg` prints the search report — the empty
+/// folder of `KINETREN_FFMPEG_DIR` rejected with its reason and the FFmpeg that loaded; with
+/// the system fallback off there is nothing to load, the report keeps the reason, gives the
+/// hint of the OS and exits non-zero.
+#[test]
+fn t849_cli_prints_the_ffmpeg_search_report() {
+    let dir = std::env::temp_dir().join(format!("kt-cli-t849-{}", std::process::id()));
+    let empty = dir.join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let run = |system: &str| {
+        cli()
+            .arg("ffmpeg")
+            .env("KINETREN_FFMPEG_DIR", &empty)
+            .env("KINETREN_FFMPEG_SYSTEM", system)
+            .env("XDG_DATA_HOME", dir.join("xdg"))
+            .output()
+            .unwrap()
+    };
+    let empty_s = empty.to_string_lossy().to_string();
+
+    let out = run("1");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains(&format!("{empty_s}: no avcodec")), "the empty folder is rejected: {text}");
+    if kt_media::ffmpeg::backend_info().is_some() {
+        assert!(out.status.success(), "{text}");
+        assert!(text.starts_with("loaded: FFmpeg "), "the loaded candidate and version: {text}");
+    }
+
+    let out = run("0");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(!out.status.success(), "nothing loaded → non-zero: {text}");
+    assert!(text.contains("FFmpeg not loaded"), "{text}");
+    assert!(text.contains(&format!("{empty_s}: no avcodec")), "{text}");
+    let hint = if cfg!(windows) { "Download" } else { "from your distribution" };
+    assert!(text.contains(hint), "the hint of the OS: {text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -12,6 +12,10 @@
 //! order and, on a separate line, the foreign media in it. It is computed purely
 //! by the model — no decode, no FFmpeg, no audio hardware. For a complaint “here
 //! the sound comes from another event” it is run FIRST: that is how item 298 was found.
+//!
+//! `ffmpeg` (windows-build) prints the FFmpeg search report — the folder (or SONAME) and
+//! version that loaded, and every rejected candidate with its reason — and exits non-zero
+//! when nothing loaded.
 
 mod showcase;
 mod wav;
@@ -766,7 +770,16 @@ fn project_text(p: &Project, retained: &Retained) -> String {
 fn run(args: &[String]) -> i32 {
     // permission to overwrite an existing file — one for all subcommands
     let force = args.iter().any(|a| a == "--force");
+    // the FFmpeg folder the person chose in the app (View → FFmpeg… → Locate folder…)
+    // is the first step of the search here too (windows-build)
+    kt_ffmpeg::set_search_dirs(ffmpeg_user_choice(), None);
     match args.first().map(String::as_str) {
+        Some("ffmpeg") => {
+            // the search report (media-index): what was loaded, what was rejected and why
+            let ok = kt_ffmpeg::rescan().is_ok();
+            print!("{}", kt_ffmpeg::search_report());
+            if ok { 0 } else { 1 }
+        }
         Some("version") | None => {
             println!("kt-cli {} (tick rate {} Hz)", kt_version::FULL, kt_time::TICK_HZ);
             0
@@ -1118,6 +1131,21 @@ fn warn_if_locked(path: &str) {
     if let Some(pid) = lock {
         eprintln!("note: {path} is open in Kinetren (process {pid}) — it may overwrite changes");
     }
+}
+
+/// The per-user data directory of the app (`kinetren`), as kt-app resolves it.
+fn app_data_dir() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from).or_else(|| {
+        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
+    })?;
+    Some(base.join("kinetren"))
+}
+
+/// The FFmpeg folder chosen in the app: one line in `<data_dir>/ffmpeg-dir`.
+fn ffmpeg_user_choice() -> Option<String> {
+    let text = std::fs::read_to_string(app_data_dir()?.join("ffmpeg-dir")).ok()?;
+    let line = text.lines().next()?.trim();
+    (!line.is_empty()).then(|| line.to_string())
 }
 
 /// The process number of the lock holder for the project, if there is one. The format of the

@@ -10,6 +10,7 @@
 
 pub mod api;
 pub mod loader;
+pub mod search;
 
 /// Cumulative activity counters of the FFmpeg layer (performance panel; port of the
 /// avcpp metrics of v1: gAvcppOpenCalls/gAvcppPacketReads). Global per process, monotonic;
@@ -30,9 +31,8 @@ use kt_time::Tick;
 
 #[derive(Debug, thiserror::Error)]
 pub enum FfError {
-    #[error(
-        "FFmpeg not found on this system. Install libavcodec/libavformat (FFmpeg 6, 7 or 8).\n{0}"
-    )]
+    /// The text is the search report plus the hint of the OS (`search::not_found_hint`).
+    #[error("FFmpeg not found.\n{0}")]
     NotFound(String),
     #[error("loading FFmpeg: {0}")]
     Load(String),
@@ -150,45 +150,140 @@ pub enum Backend {
     V8(&'static v8::Api),
 }
 
-static BACKEND: std::sync::OnceLock<Result<(Backend, BackendInfo), String>> =
-    std::sync::OnceLock::new();
+/// A SUCCESSFUL load lives for the whole process (the function pointers point into these
+/// libraries); a failure does not (windows-build): after the person installs, downloads or
+/// locates FFmpeg, `rescan()` searches again without a restart.
+static LOADED: std::sync::OnceLock<(Backend, BackendInfo)> = std::sync::OnceLock::new();
+static MODULES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
 
-fn init() -> &'static Result<(Backend, BackendInfo), String> {
-    BACKEND.get_or_init(|| {
-        let libs = loader::load().map_err(|e| e.to_string())?;
+#[derive(Default)]
+struct SearchState {
+    attempted: bool,
+    /// The text of the last failure (what `backend_error` and opening media report).
+    failure: Option<String>,
+    report: Option<search::Report>,
+    user_choice: Option<String>,
+    download_dir: Option<String>,
+}
+
+static STATE: std::sync::Mutex<SearchState> = std::sync::Mutex::new(SearchState {
+    attempted: false,
+    failure: None,
+    report: None,
+    user_choice: None,
+    download_dir: None,
+});
+
+fn state() -> std::sync::MutexGuard<'static, SearchState> {
+    STATE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The loaded backend, or the stored failure. Only the FIRST call searches the disk; later
+/// calls after a failure return it without touching the disk (opening media must never walk
+/// PATH) — `rescan()` searches again.
+fn init() -> Result<&'static (Backend, BackendInfo), String> {
+    if let Some(l) = LOADED.get() {
+        return Ok(l);
+    }
+    {
+        let st = state();
+        if st.attempted {
+            return Err(st.failure.clone().unwrap_or_else(|| "FFmpeg not loaded".into()));
+        }
+    }
+    rescan().map(|_| LOADED.get().expect("loaded"))
+}
+
+/// The folders only the program knows: the person's choice (Locate…) and Kinetren's download
+/// folder. kt-app and kt-cli set them before the first media open; they are the first and the
+/// fourth step of the Windows plan.
+pub fn set_search_dirs(user_choice: Option<String>, download_dir: Option<String>) {
+    let mut st = state();
+    st.user_choice = user_choice;
+    st.download_dir = download_dir;
+}
+
+/// Search again (startup, Locate…, a finished download, the Rescan button). A remembered
+/// success is returned as is.
+pub fn rescan() -> Result<BackendInfo, String> {
+    let env = {
+        let st = state();
+        loader::SystemEnv { user_choice: st.user_choice.clone(), download_dir: st.download_dir.clone() }
+    };
+    rescan_with(&env)
+}
+
+/// `rescan` over a given view of the machine (tests).
+pub fn rescan_with(env: &dyn search::Env) -> Result<BackendInfo, String> {
+    // one search at a time: two threads must not both load and leak a set
+    static SEARCH: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one = SEARCH.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, info)) = LOADED.get() {
+        return Ok(info.clone());
+    }
+    let (libs, report) = loader::load(env);
+    let result = libs.map_err(|e| e.to_string()).and_then(|libs| {
         let info = BackendInfo { major: libs.major, avcodec_version: libs.avcodec_version };
         // Libraries live until the end of the process — the leak is intentional (otherwise
         // the function pointers would dangle).
         let libs: &'static loader::Libs = Box::leak(Box::new(libs));
+        let _ = MODULES.set(libs.module_paths());
         let backend = unsafe {
             match libs.major {
-                8 => Backend::V8(Box::leak(Box::new(
-                    v8::Api::load(libs).map_err(|e| e.to_string())?,
-                ))),
-                7 => Backend::V7(Box::leak(Box::new(
-                    v7::Api::load(libs).map_err(|e| e.to_string())?,
-                ))),
-                _ => Backend::V6(Box::leak(Box::new(
-                    v6::Api::load(libs).map_err(|e| e.to_string())?,
-                ))),
+                8 => Backend::V8(Box::leak(Box::new(v8::Api::load(libs).map_err(|e| e.to_string())?))),
+                7 => Backend::V7(Box::leak(Box::new(v7::Api::load(libs).map_err(|e| e.to_string())?))),
+                _ => Backend::V6(Box::leak(Box::new(v6::Api::load(libs).map_err(|e| e.to_string())?))),
             }
         };
-        Ok((backend, info))
-    })
+        let _ = LOADED.set((backend, info.clone()));
+        Ok(info)
+    });
+    let mut st = state();
+    st.attempted = true;
+    st.report = Some(report);
+    st.failure = result.as_ref().err().cloned();
+    result
+}
+
+/// The last search, for people (View → FFmpeg…, `kt-cli ffmpeg`).
+pub fn search_report() -> String {
+    let _ = init();
+    let st = state();
+    match &st.report {
+        Some(r) if LOADED.get().is_some() => r.to_string(),
+        Some(r) => format!("{r}{}", search::not_found_hint(search::Os::NATIVE)),
+        None => "FFmpeg search has not run".into(),
+    }
+}
+
+/// The last search as data (the FFmpeg window draws it).
+pub fn search_report_data() -> Option<search::Report> {
+    let _ = init();
+    state().report.clone()
+}
+
+/// Where each loaded module came from, in load order (t846: all from the chosen folder).
+pub fn loaded_modules() -> Vec<String> {
+    MODULES.get().cloned().unwrap_or_default()
+}
+
+/// Libraries opened by this process so far (t847: a remembered success opens nothing again).
+pub fn library_opens() -> u64 {
+    loader::LIB_OPENS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Version of the loaded FFmpeg (None if not found).
 pub fn backend_info() -> Option<BackendInfo> {
-    init().as_ref().ok().map(|(_, i)| i.clone())
+    LOADED.get().map(|(_, i)| i.clone()).or_else(|| init().ok().map(|(_, i)| i.clone()))
 }
 
 pub fn backend_error() -> Option<String> {
-    init().as_ref().err().cloned()
+    init().err()
 }
 
 /// List of video encoders available in the system (for the UI).
 pub fn available_encoders() -> Vec<String> {
-    match init().as_ref() {
+    match init() {
         Ok((Backend::V6(api), _)) => v6::available_encoders(api),
         Ok((Backend::V7(api), _)) => v7::available_encoders(api),
         Ok((Backend::V8(api), _)) => v8::available_encoders(api),
@@ -205,7 +300,7 @@ pub enum Muxer {
 
 impl Muxer {
     pub fn open(cfg: &MuxConfig) -> Result<Muxer, FfError> {
-        let (backend, _) = init().as_ref().map_err(|e| FfError::NotFound(e.clone()))?;
+        let (backend, _) = init().map_err(FfError::NotFound)?;
         match backend {
             Backend::V6(api) => v6::Muxer::open(api, cfg).map(Muxer::V6),
             Backend::V7(api) => v7::Muxer::open(api, cfg).map(Muxer::V7),
@@ -265,7 +360,7 @@ impl Source {
     /// large files. The index must match the current contents of the
     /// file (identity is checked by the caller).
     pub fn open_with_index(path: &str, prebuilt: Option<PrebuiltIndex>) -> Result<Source, FfError> {
-        let (backend, _) = init().as_ref().map_err(|e| FfError::NotFound(e.clone()))?;
+        let (backend, _) = init().map_err(FfError::NotFound)?;
         match backend {
             Backend::V6(api) => v6::Source::open_with_index(api, path, prebuilt).map(Source::V6),
             Backend::V7(api) => v7::Source::open_with_index(api, path, prebuilt).map(Source::V7),

@@ -20,11 +20,11 @@ change.
 
 ## 2. FFmpeg loader for Windows
 
-- [ ] 2.1 Split `loader.rs` into pure `plan(env)`, per-OS `open`, and `report` (design D2): Windows DLL table for 6/7/8, directory order, static-build and unsupported-major reasons, winget `Links` dereference, known locations, `KINETREN_FFMPEG_DIR` on both OSes; verify t844 and t845 (`src/libs/kt-ffmpeg/tests/loader_plan.rs`) on Linux
-- [ ] 2.2 Windows `open`: `load_with_flags(full path, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS)` in dependency order, `GetModuleFileNameW` check that all five lie in the chosen directory; verify t846 (`src/libs/kt-ffmpeg/tests/loader_windows.rs`) under wine with the pinned build fetched into the container cache (`src/target/ffmpeg-win/8.1.2`, SHA-256 checked)
-- [ ] 2.3 Retryable backend: `OnceLock<Loaded>` plus the stored failure report, `rescan()`, `backend()` never touches the disk after a failure; the error text hints per OS; verify t847, and t10/t21/t37 stay green on Linux
-- [ ] 2.4 The user's choice in `<data_dir>/ffmpeg-dir` (read by the plan as step 1); `kt-cli ffmpeg` prints the report and exits non-zero when nothing loads; verify t849 (`src/apps/kt-cli/tests/cli.rs`)
-- [ ] 2.5 Commit stage 2
+- [x] 2.1 Split `loader.rs` into pure `plan(env)`, per-OS `open`, and `report` (design D2): Windows DLL table for 6/7/8, directory order, static-build and unsupported-major reasons, winget `Links` dereference, known locations, `KINETREN_FFMPEG_DIR` on both OSes; verify t844 and t845 (`src/libs/kt-ffmpeg/tests/loader_plan.rs`) on Linux
+- [x] 2.2 Windows `open`: `load_with_flags(full path, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS)` in dependency order, `GetModuleFileNameW` check that all five lie in the chosen directory; verify t846 (`src/libs/kt-ffmpeg/tests/loader_windows.rs`) under wine with the pinned build fetched into the container cache (`src/target/ffmpeg-win/8.1.2`, SHA-256 checked)
+- [x] 2.3 Retryable backend: `OnceLock<Loaded>` plus the stored failure report, `rescan()`, `backend()` never touches the disk after a failure; the error text hints per OS; verify t847, and t10/t21/t37 stay green on Linux
+- [x] 2.4 The user's choice in `<data_dir>/ffmpeg-dir` (read by the plan as step 1); `kt-cli ffmpeg` prints the report and exits non-zero when nothing loads; verify t849 (`src/apps/kt-cli/tests/cli.rs`)
+- [x] 2.5 Commit stage 2
 
 ## 3. Per-user directories, lock, atomic replace
 

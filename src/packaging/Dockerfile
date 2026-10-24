@@ -35,7 +35,7 @@ FROM base AS windows
 # and nextest, so wine comes from WineHQ's repository for jammy.
 RUN dpkg --add-architecture i386 && apt-get update \
     && apt-get install -y --no-install-recommends \
-       gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 zip unzip gnupg \
+       gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 zip unzip p7zip-full gnupg \
     && mkdir -pm755 /etc/apt/keyrings \
     && curl -fsSL https://dl.winehq.org/wine-builds/winehq.key \
        | gpg --dearmor -o /etc/apt/keyrings/winehq-archive.key \

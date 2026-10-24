@@ -9038,6 +9038,8 @@ pub fn run() -> eframe::Result {
     // the former data directory (Kinotrain) moves into place BEFORE eframe
     // reads its storage: that storage lives in the same directory
     let _ = crate::journal::data_dir();
+    // the FFmpeg folder chosen with Locate… is the first step of the search (windows-build)
+    crate::ffmpeg_setup::install_search_dirs();
     // GPU: the egui-wgpu default is HighPerformance, i.e. the discrete card; on
     // hybrid graphics this is PRIME copying of every frame and a stutter of the WHOLE
     // system (item 1, v1.4). The UI load is modest — we take the power-efficient

@@ -12,3 +12,7 @@ thiserror = { workspace = true }
 
 [build-dependencies]
 bindgen = "0.72"
+
+# windows-build (design D2): GetModuleFileNameW proves every DLL came from the chosen folder
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }

@@ -14,6 +14,7 @@ mod camera_editor;
 mod ctx_menu;
 mod envclip;
 mod eq_graph;
+mod ffmpeg_setup;
 #[cfg(test)]
 mod font_tests;
 mod fx_editor;
