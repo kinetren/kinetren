@@ -48,7 +48,11 @@ pub(crate) fn generator_alias(kind: &str) -> Option<&'static str> {
     }
 }
 
-pub use url::{decode_file_url, encode_file_url, media_target_url, relativize, resolve_media_path};
+pub use url::{
+    PathFlavor, decode_file_url, decode_file_url_in, encode_file_url, encode_file_url_in,
+    is_absolute_anywhere, is_absolute_in, media_target_url, media_target_url_in, relativize,
+    relativize_in, resolve_media_path, resolve_media_path_in,
+};
 
 /// The key of the single media reference of our clips (the reference convention).
 pub const DEFAULT_MEDIA_KEY: &str = "DEFAULT_MEDIA";
@@ -186,12 +190,14 @@ pub fn import_interchange(
 }
 
 /// Relative media paths → absolute, from the file's directory. Pseudo-paths
-/// (`synth:`, `gen:`) and absolute ones are left untouched. Called when the project
-/// file is READ: the model in memory holds absolute paths, as after `load_project`.
+/// (`synth:`, `gen:`) and absolute ones are left untouched — absolute on EITHER OS: a
+/// `/home/u/a.mp4` read on Windows is not joined to the project directory (windows-build,
+/// t856). Called when the project file is READ: the model in memory holds absolute paths,
+/// as after `load_project`.
 pub fn resolve_project_media(p: &mut kt_model::Project, base_dir: Option<&std::path::Path>) {
     let Some(base) = base_dir else { return };
     for m in &mut p.media {
-        if kt_model::is_pseudo_path(&m.path) || std::path::Path::new(&m.path).is_absolute() {
+        if kt_model::is_pseudo_path(&m.path) || url::is_absolute_anywhere(&m.path) {
             continue;
         }
         m.path = resolve_media_path(base, &m.path).to_string_lossy().into_owned();
@@ -204,7 +210,8 @@ pub fn resolve_project_media(p: &mut kt_model::Project, base_dir: Option<&std::p
 pub fn relativize_project_media(p: &mut kt_model::Project, base_dir: Option<&std::path::Path>) {
     let Some(base) = base_dir else { return };
     for m in &mut p.media {
-        if kt_model::is_pseudo_path(&m.path) || !std::path::Path::new(&m.path).is_absolute() {
+        // a relative path, or an absolute path of the OTHER OS, is written as it is
+        if kt_model::is_pseudo_path(&m.path) || !url::is_absolute_in(&m.path, url::PathFlavor::NATIVE) {
             continue;
         }
         if let Some(rel) = relativize(base, std::path::Path::new(&m.path)) {

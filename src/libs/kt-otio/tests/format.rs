@@ -329,47 +329,130 @@ fn t146_schema_versions() {
 /// Test 147: paths and file://-URLs.
 #[test]
 fn t147_media_urls() {
+    // The Posix rules, explicitly: the same answers on any host (windows-build — on
+    // Windows `/home/...` is not absolute by the native rules, see t854-t856).
+    use kt_otio::PathFlavor::Posix as P;
     use kt_otio::{
-        decode_file_url, encode_file_url, media_target_url, relativize, resolve_media_path,
+        decode_file_url_in, encode_file_url_in, media_target_url_in, relativize_in,
+        resolve_media_path_in,
     };
-    let base = Path::new("/home/user/projects/film");
+    let base = "/home/user/projects/film";
 
     // relativize: nearby, deeper, higher
-    assert_eq!(
-        relativize(base, Path::new("/home/user/projects/film/media/a.mp4")).unwrap(),
-        "media/a.mp4"
-    );
-    assert_eq!(
-        relativize(base, Path::new("/home/user/projects/other/b.mp4")).unwrap(),
-        "../other/b.mp4"
-    );
-    assert_eq!(relativize(base, Path::new("/home/user/projects/film")).unwrap(), ".");
+    assert_eq!(relativize_in(base, "/home/user/projects/film/media/a.mp4", P).unwrap(), "media/a.mp4");
+    assert_eq!(relativize_in(base, "/home/user/projects/other/b.mp4", P).unwrap(), "../other/b.mp4");
+    assert_eq!(relativize_in(base, "/home/user/projects/film", P).unwrap(), ".");
     // only the root in common — not relativized (fallback to file://)
-    assert_eq!(relativize(base, Path::new("/mnt/disk/c.mp4")), None);
+    assert_eq!(relativize_in(base, "/mnt/disk/c.mp4", P), None);
 
     // file:// with spaces/percent-signs/UTF-8
-    let tricky = Path::new("/mnt/видео архив/100% cut.mp4");
-    let url = encode_file_url(tricky);
+    let tricky = "/mnt/видео архив/100% cut.mp4";
+    let url = encode_file_url_in(tricky, P);
     assert!(url.starts_with("file:///mnt/"));
     assert!(!url.contains(' ') && !url.contains("video"), "non-ASCII and spaces are escaped");
-    assert_eq!(decode_file_url(&url).unwrap(), tricky);
-    assert_eq!(decode_file_url("file://localhost/a%20b").unwrap(), Path::new("/a b"));
-    assert_eq!(decode_file_url("relative/path"), None);
+    assert_eq!(decode_file_url_in(&url, P).unwrap(), tricky);
+    assert_eq!(decode_file_url_in("file://localhost/a%20b", P).unwrap(), "/a b");
+    assert_eq!(decode_file_url_in("relative/path", P), None);
 
     // media_target_url: relative / fallback / synth
-    assert_eq!(media_target_url(base, "/home/user/projects/film/media/a.mp4"), "media/a.mp4");
-    assert_eq!(
-        media_target_url(base, "/mnt/disk/c.mp4"),
-        encode_file_url(Path::new("/mnt/disk/c.mp4"))
-    );
-    assert_eq!(media_target_url(base, "synth:Ramp"), "synth:Ramp");
-    assert_eq!(media_target_url(base, "already/relative.mp4"), "already/relative.mp4");
+    assert_eq!(media_target_url_in(base, "/home/user/projects/film/media/a.mp4", P), "media/a.mp4");
+    assert_eq!(media_target_url_in(base, "/mnt/disk/c.mp4", P), encode_file_url_in("/mnt/disk/c.mp4", P));
+    assert_eq!(media_target_url_in(base, "synth:Ramp", P), "synth:Ramp");
+    assert_eq!(media_target_url_in(base, "already/relative.mp4", P), "already/relative.mp4");
 
     // resolve: all three kinds on input
-    assert_eq!(resolve_media_path(base, "media/a.mp4"), base.join("media/a.mp4"));
-    assert_eq!(resolve_media_path(base, "/abs/x.mp4"), Path::new("/abs/x.mp4"));
-    assert_eq!(resolve_media_path(base, &url), tricky);
-    assert_eq!(resolve_media_path(base, "synth:Ramp"), Path::new("synth:Ramp"));
+    assert_eq!(resolve_media_path_in(base, "media/a.mp4", P), "/home/user/projects/film/media/a.mp4");
+    assert_eq!(resolve_media_path_in(base, "/abs/x.mp4", P), "/abs/x.mp4");
+    assert_eq!(resolve_media_path_in(base, &url, P), tricky);
+    assert_eq!(resolve_media_path_in(base, "synth:Ramp", P), "synth:Ramp");
+
+    // the native wrappers agree with the native rules
+    if cfg!(unix) {
+        use kt_otio::{encode_file_url, relativize};
+        assert_eq!(encode_file_url(Path::new(tricky)), url);
+        assert_eq!(relativize(Path::new(base), Path::new("/mnt/disk/c.mp4")), None);
+    }
+}
+
+/// t854 (windows-build, project-format): Windows file URLs with a drive letter and UNC,
+/// both ways; a Linux URL read by the Windows rules stays a Linux path.
+#[test]
+fn t854_windows_file_urls_both_ways() {
+    use kt_otio::PathFlavor::Windows as W;
+    use kt_otio::{decode_file_url_in, encode_file_url_in};
+    let cases = [
+        (r"C:\a b\x.mp4", "file:///C:/a%20b/x.mp4"),
+        (r"D:\Média\frame 1%.mov", "file:///D:/M%C3%A9dia/frame%201%25.mov"),
+        (r"\\server\share\x.mp4", "file://server/share/x.mp4"),
+    ];
+    for (path, url) in cases {
+        assert_eq!(encode_file_url_in(path, W), url, "{path}");
+        assert_eq!(decode_file_url_in(url, W).as_deref(), Some(path), "{url}");
+    }
+    assert_eq!(decode_file_url_in("file://localhost/C:/x.mp4", W).as_deref(), Some(r"C:\x.mp4"));
+    assert_eq!(decode_file_url_in("file:///home/u/a.mp4", W).as_deref(), Some("/home/u/a.mp4"));
+    // the verbatim prefix never reaches the file
+    assert_eq!(encode_file_url_in(r"\\?\C:\a.mp4", W), "file:///C:/a.mp4");
+}
+
+/// t855 (windows-build, project-format): relativising by the Windows rules — case does not
+/// matter, the verbatim prefix is removed, only-the-drive or another drive/share falls back
+/// to an absolute URL.
+#[test]
+fn t855_relativising_on_windows() {
+    use kt_otio::PathFlavor::Windows as W;
+    use kt_otio::media_target_url_in;
+    let base = r"C:\Users\x\proj";
+    let cases = [
+        (r"C:\Users\x\proj\m\a.mp4", "m/a.mp4"),
+        (r"c:\users\X\PROJ\b.mp4", "b.mp4"),
+        (r"\\?\C:\Users\x\proj\c.mp4", "c.mp4"),
+        (r"C:\Media\d.mp4", "file:///C:/Media/d.mp4"),
+        (r"D:\e.mp4", "file:///D:/e.mp4"),
+        (r"\\nas\v\f.mp4", "file://nas/v/f.mp4"),
+    ];
+    for (path, want) in cases {
+        assert_eq!(media_target_url_in(base, path, W), want, "{path}");
+    }
+}
+
+/// t856 (windows-build, project-format): a path that is absolute on the OTHER OS resolves
+/// to itself (not joined to the project directory) and is written back unchanged; a
+/// relative path gets the reader's separators.
+#[test]
+fn t856_a_path_from_the_other_os_stays_as_written() {
+    use kt_otio::PathFlavor::{Posix, Windows};
+    use kt_otio::{media_target_url_in, resolve_media_path_in};
+    // a Linux project read on Windows
+    let wbase = r"C:\proj";
+    assert_eq!(resolve_media_path_in(wbase, "/home/u/a.mp4", Windows), "/home/u/a.mp4");
+    assert_eq!(media_target_url_in(wbase, "/home/u/a.mp4", Windows), "/home/u/a.mp4");
+    assert_eq!(resolve_media_path_in(wbase, "m/a.mp4", Windows), r"C:\proj\m\a.mp4");
+    // a Windows project read on Linux
+    let lbase = "/home/u/proj";
+    for p in [r"D:\x.mp4", "D:/y.mp4", r"\\nas\v\z.mp4"] {
+        assert_eq!(resolve_media_path_in(lbase, p, Posix), p, "{p} is not joined to the project");
+        assert_eq!(media_target_url_in(lbase, p, Posix), p, "{p} is written back as it was");
+    }
+
+    // the same through the project: read → resolve → relativize → the strings are unchanged
+    let foreign = if cfg!(windows) { "/home/u/a.mp4" } else { r"D:\x.mp4" };
+    let mut proj = kt_model::Project::new(kt_model::ProjectSettings {
+        fps: 30,
+        width: 1280,
+        height: 720,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    });
+    proj.media.push(kt_model::MediaRef::new(kt_model::MediaId(1), foreign));
+    let base = std::env::temp_dir();
+    kt_otio::resolve_project_media(&mut proj, Some(&base));
+    assert_eq!(proj.media[0].path, foreign, "resolution does not join a foreign absolute path");
+    kt_otio::relativize_project_media(&mut proj, Some(&base));
+    assert_eq!(proj.media[0].path, foreign, "writing keeps it verbatim");
 }
 
 /// Test 797b (R.67): the writer computes relativity FROM THE PROJECT FILE, and

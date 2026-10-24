@@ -36,9 +36,9 @@ change.
 
 ## 4. Media paths across operating systems
 
-- [ ] 4.1 `url.rs` with `PathFlavor` (design D7): Windows file URLs (drive, UNC, `localhost`), relativising with "only drive/share shared → absolute URL", case-insensitive comparison, verbatim prefix removal; verify t854 and t855 (`src/libs/kt-otio/tests/format.rs`)
-- [ ] 4.2 Absolute-anywhere rule on reading (`url.rs`, `kt-otio/src/lib.rs` resolution, `kt-app/src/util.rs`): foreign absolute paths stay verbatim and become placeholders labelled with the path; relative paths get native separators before the join; verify t856 and that t147/t797/t797b stay green (t147's absolute fixtures made flavor-aware)
-- [ ] 4.3 Commit stage 4
+- [x] 4.1 `url.rs` with `PathFlavor` (design D7): Windows file URLs (drive, UNC, `localhost`), relativising with "only drive/share shared → absolute URL", case-insensitive comparison, verbatim prefix removal; verify t854 and t855 (`src/libs/kt-otio/tests/format.rs`)
+- [x] 4.2 Absolute-anywhere rule on reading (`url.rs`, `kt-otio/src/lib.rs` resolution, `kt-app/src/util.rs`): foreign absolute paths stay verbatim and become placeholders labelled with the path; relative paths get native separators before the join; verify t856 and that t147/t797/t797b stay green (t147's absolute fixtures made flavor-aware)
+- [x] 4.3 Commit stage 4
 
 ## 5. In-program FFmpeg setup (Windows)
 

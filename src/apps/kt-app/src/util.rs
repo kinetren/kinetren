@@ -63,12 +63,15 @@ pub fn media_label(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
+/// A media path of the model → the path to open. Absolute on EITHER OS stays as it is (a
+/// path of the other OS becomes a placeholder showing it, windows-build); a relative one is
+/// joined to the project directory with the native separators.
 pub fn resolve_media_path(base: Option<&Path>, path: &str) -> String {
-    if kt_model::is_pseudo_path(path) || Path::new(path).is_absolute() {
+    if kt_model::is_pseudo_path(path) || kt_otio::is_absolute_anywhere(path) {
         return path.to_string();
     }
     match base {
-        Some(b) => b.join(path).to_string_lossy().to_string(),
+        Some(b) => kt_otio::resolve_media_path(b, path).to_string_lossy().to_string(),
         None => path.to_string(),
     }
 }
