@@ -4,9 +4,10 @@
 //! version via NEEDED, so mixing 6 and 7 is impossible).
 
 use crate::FfError;
-use libloading::os::unix::{Library, RTLD_LAZY, RTLD_LOCAL, Symbol};
+use libloading::{Library, Symbol};
 
 /// SONAME set of one FFmpeg release.
+#[cfg(unix)]
 struct Soname {
     major: u32,
     avutil: &'static str,
@@ -17,6 +18,7 @@ struct Soname {
 }
 
 /// Candidates — from newer to older (order = priority).
+#[cfg(unix)]
 const CANDIDATES: &[Soname] = &[
     Soname {
         major: 8,
@@ -47,11 +49,13 @@ const CANDIDATES: &[Soname] = &[
 pub struct Lib(Library);
 
 impl Lib {
+    #[cfg(unix)]
     fn open(name: &str) -> Result<Lib, FfError> {
+        use libloading::os::unix::{Library as UnixLibrary, RTLD_LAZY, RTLD_LOCAL};
         // RTLD_LOCAL: we do not pollute the global namespace — symbols are taken
         // by address from our own handles.
-        unsafe { Library::open(Some(name), RTLD_LAZY | RTLD_LOCAL) }
-            .map(Lib)
+        unsafe { UnixLibrary::open(Some(name), RTLD_LAZY | RTLD_LOCAL) }
+            .map(|l| Lib(l.into()))
             .map_err(|e| FfError::Load(format!("{name}: {e}")))
     }
 
@@ -77,6 +81,15 @@ pub struct Libs {
 }
 
 /// Find and load the FFmpeg installed in the system.
+#[cfg(windows)]
+pub fn load() -> Result<Libs, FfError> {
+    // The Windows search (directories, one-folder load) comes with stage 2 of
+    // windows-build; until then the build links and reports FFmpeg as absent.
+    Err(FfError::NotFound("the Windows FFmpeg search is not implemented yet".into()))
+}
+
+/// Find and load the FFmpeg installed in the system.
+#[cfg(unix)]
 pub fn load() -> Result<Libs, FfError> {
     let mut tried = Vec::new();
     for cand in CANDIDATES {
@@ -88,6 +101,7 @@ pub fn load() -> Result<Libs, FfError> {
     Err(FfError::NotFound(tried.join("\n")))
 }
 
+#[cfg(unix)]
 fn try_candidate(c: &Soname) -> Result<Libs, FfError> {
     let avcodec = Lib::open(c.avcodec)?;
     // we check that the library’s major matches the expected set of types

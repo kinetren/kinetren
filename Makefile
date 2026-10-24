@@ -11,7 +11,7 @@ DIST     := $(RUST)/target/dist-out
 # release-build.sh clears dist-out before packing)
 STAGEDIR  = $(firstword $(patsubst %/kinetren,%,$(wildcard $(DIST)/kinetren-*-linux-*/kinetren)))
 
-.PHONY: all build install run test clean help docker-check
+.PHONY: all build install run test clean help docker-check windows windows-test
 
 all: build ## the default: same as `make build`
 
@@ -21,6 +21,9 @@ help: ## list the targets
 
 build: docker-check ## build the release tarball in Docker (src/target/dist-out)
 	$(RUST)/scripts/release-build.sh
+
+windows: docker-check ## cross-build the Windows zip in Docker (src/target/dist-out)
+	$(RUST)/scripts/release-build.sh --target windows
 
 docker-check:
 	@command -v docker > /dev/null || { \

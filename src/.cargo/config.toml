@@ -14,3 +14,9 @@
 # the release/dist profiles and invariant #10 (“ldd without libav*”) do not change.
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+# Windows cross-build (change windows-build): the container sets the same linker
+# through CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER; this line serves a developer
+# who has mingw-w64 installed on the host. Nothing here applies to the Linux target.
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"

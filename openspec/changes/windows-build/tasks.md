@@ -13,10 +13,10 @@ change.
 
 ## 1. The tree compiles for Windows
 
-- [ ] 1.1 Add the `windows` stage to `src/packaging/Dockerfile` (mingw-w64, clang, target `x86_64-pc-windows-gnu` for the pinned toolchain, WineHQ wine for jammy) and the `[target.x86_64-pc-windows-gnu] linker` line to `src/.cargo/config.toml`; verify `docker build --target windows` succeeds and t834 stays green
-- [ ] 1.2 `kt-ffmpeg/build.rs` decides from `CARGO_CFG_TARGET_OS`/`TARGET` only; minimal `cfg` split of `loader.rs` (unix keeps `libloading::os::unix`, windows gets a stub returning `NotFound`); verify `cargo check --workspace --target x86_64-pc-windows-gnu` in the container passes, and fix any enum signedness or `c_long` casts it reveals without touching vendored headers
-- [ ] 1.3 `src/scripts/release-build.sh --target windows` + `make windows`: build kt-app/kt-cli for the target in the dist profile, zip `kinetren.exe`, `kt-cli.exe`, `README-windows.txt` (a first draft) and licences, write `.sha256`; PE import check (design D10) inside the container, so a failure leaves no zip; verify `make windows` produces the zip and the check prints the import list with no forbidden names
-- [ ] 1.4 Commit stage 1 (`cargo test` on Linux green; the Linux tarball build unchanged)
+- [x] 1.1 Add the `windows` stage to `src/packaging/Dockerfile` (mingw-w64, clang, target `x86_64-pc-windows-gnu` for the pinned toolchain, WineHQ wine for jammy) and the `[target.x86_64-pc-windows-gnu] linker` line to `src/.cargo/config.toml`; verify `docker build --target windows` succeeds and t834 stays green
+- [x] 1.2 `kt-ffmpeg/build.rs` decides from `CARGO_CFG_TARGET_OS`/`TARGET` only; minimal `cfg` split of `loader.rs` (unix keeps `libloading::os::unix`, windows gets a stub returning `NotFound`); verify `cargo check --workspace --target x86_64-pc-windows-gnu` in the container passes, and fix any enum signedness or `c_long` casts it reveals without touching vendored headers
+- [x] 1.3 `src/scripts/release-build.sh --target windows` + `make windows`: build kt-app/kt-cli for the target in the dist profile, zip `kinetren.exe`, `kt-cli.exe`, `README-windows.txt` (a first draft) and licences, write `.sha256`; PE import check (design D10) inside the container, so a failure leaves no zip; verify `make windows` produces the zip and the check prints the import list with no forbidden names
+- [x] 1.4 Commit stage 1 (`cargo test` on Linux green; the Linux tarball build unchanged)
 
 ## 2. FFmpeg loader for Windows
 

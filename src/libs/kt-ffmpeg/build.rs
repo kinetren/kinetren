@@ -23,12 +23,17 @@ const HEADERS: [&str; 8] = [
 fn main() {
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    // The layouts are the TARGET's, never the host's (windows-build): on Windows `long` is
+    // 32-bit and a cross-build runs this script on Linux. Decisions here read cargo's
+    // TARGET, not `cfg!(...)`, which describes the machine running the build script.
+    let target = std::env::var("TARGET").unwrap();
 
     for major in MAJORS {
         let inc = root.join(format!("vendor/ffmpeg-{major}/include"));
         println!("cargo:rerun-if-changed={}", inc.display());
 
         let mut builder = bindgen::Builder::default()
+            .clang_arg(format!("--target={target}"))
             .clang_arg(format!("-I{}", inc.display()))
             // types and constants: everything from libav*/libsw*, without system clutter
             .allowlist_type("AV.*")
