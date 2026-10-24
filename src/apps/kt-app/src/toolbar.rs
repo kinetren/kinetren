@@ -516,6 +516,12 @@ impl KtApp {
                 self.notices_open = true;
                 ui.close();
             }
+            // where FFmpeg was found and how to get it (windows-build): a per-machine
+            // matter, next to the other per-machine items of this menu
+            if ui.button(tr(k::menu::view::FFMPEG)).clicked() {
+                self.ffmpeg_ui.open = true;
+                ui.close();
+            }
         });
         last.response.rect.right()
     }

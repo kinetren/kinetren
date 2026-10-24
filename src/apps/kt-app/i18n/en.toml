@@ -61,6 +61,7 @@ language = "Language"
 lang_auto = "Auto (system)"
 diagnostics = "Diagnostics…"
 notices = "Notices"
+ffmpeg = "FFmpeg…"
 
 # Toolbar: button hints. The accelerator in parentheses is part of the hint.
 [tb]
@@ -1291,3 +1292,32 @@ not_sent = "NOT sent: projects, file names and paths, media, frames or sound, yo
 how_off = "Turn it off: View / Send anonymous usage statistics, or start with KINETREN_TELEMETRY=0."
 no_key = "This build does not send statistics."
 env_off = "Switched off by KINETREN_TELEMETRY or DO_NOT_TRACK."
+
+# FFmpeg window (change windows-build): where the codec library was found, why other
+# folders were not used, and how to get it (Download on Windows, Locate, Rescan).
+[ffmpeg]
+title = "FFmpeg"
+loaded = "FFmpeg {0} (avcodec {1}) — {2}"
+not_found = "FFmpeg not found — media shows placeholders. View / FFmpeg… shows why and how to get it."
+rejected = "Not used:"
+r_unreadable = "the folder does not exist or cannot be read"
+r_no_avcodec = "no avcodec-*.dll"
+r_static = "static build — ffmpeg.exe without DLLs"
+r_unsupported = "FFmpeg {0} is not supported yet"
+r_missing = "FFmpeg {0}: {1} is missing"
+r_load = "could not be loaded: {0}"
+hint_linux = "Install FFmpeg 6, 7 or 8 from your distribution (libavcodec, libavformat, libswscale, libswresample), then press Rescan."
+hint_windows = "Download the build below, or point Locate folder… at the bin folder of a SHARED build of FFmpeg 6, 7 or 8."
+download = "Download FFmpeg {0}"
+download_note = "Shared build by gyan.dev, GPLv3, {0} MB, from www.gyan.dev; checked against a checksum built into Kinetren."
+cancel = "Cancel"
+locate = "Locate folder…"
+rescan = "Rescan"
+connecting = "Connecting…"
+progress = "{0} of {1} MB"
+verifying = "Checking the archive…"
+extracting = "Unpacking…"
+refused = "{0} cannot be used: {1}"
+installed = "FFmpeg {0} loaded from {1}"
+restart = "The folder is saved and will be used after a restart: FFmpeg is already loaded."
+failed = "FFmpeg was not installed: {0}"

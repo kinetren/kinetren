@@ -583,6 +583,8 @@ pub struct KtApp {
     pub notices: std::collections::VecDeque<Notice>,
     pub notices_unread: usize,
     pub notices_open: bool,
+    /// View → FFmpeg… (windows-build): where FFmpeg was found, Download/Locate/Rescan.
+    pub ffmpeg_ui: crate::ffmpeg_setup::FfmpegUi,
     /// Soft renderer (llvmpipe/Cpu) — detected once (items 17, 19).
     pub sw_render: Option<bool>,
     pub perf: PerfState,
@@ -929,6 +931,7 @@ impl KtApp {
             notices: std::collections::VecDeque::new(),
             notices_unread: 0,
             notices_open: false,
+            ffmpeg_ui: Default::default(),
             sw_render: None,
             perf: PerfState::new(),
             preview_key: None,
@@ -1195,6 +1198,7 @@ impl KtApp {
             notices: std::collections::VecDeque::new(),
             notices_unread: 0,
             notices_open: false,
+            ffmpeg_ui: Default::default(),
             sw_render: None,
             perf: PerfState::new(),
             preview_key: None,
@@ -2049,6 +2053,9 @@ impl KtApp {
             }
         }
 
+        // FFmpeg window (windows-build): found or not, why, Download / Locate / Rescan
+        self.draw_ffmpeg_window(ui.ctx());
+
         // notifications window (item 18)
         if self.notices_open {
             let mut open = self.notices_open;
@@ -2734,6 +2741,10 @@ impl KtApp {
         }
         if self.notices_open {
             self.notices_open = false;
+            return;
+        }
+        if self.ffmpeg_ui.open {
+            self.ffmpeg_ui.open = false;
             return;
         }
         if self.perf.diag_open {
@@ -9112,6 +9123,8 @@ pub fn run() -> eframe::Result {
             if let Some(p) = crate::journal::take_crash_report() {
                 app.warn(crate::tf!(k::msg::PREV_SESSION_CRASHED, p.display()));
             }
+            // without FFmpeg the FFmpeg window opens once, with one notice (windows-build)
+            app.ffmpeg_startup_check();
             // no per-user directory: the data lives in temp and may vanish (windows-build)
             if kt_dirs::is_fallback() {
                 app.warn(crate::tf!(k::msg::DATA_DIR_TEMP, crate::journal::data_dir().display()));

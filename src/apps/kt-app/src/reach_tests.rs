@@ -2662,6 +2662,7 @@ const WINDOWS: &[(&str, &str)] = &[
     ("published_win", "author’s list of public parameters of the reel"),
     ("kt_recovery", "recovery of unsaved work at startup"),
     ("kt_ask", "question on close — that very “obviously meaningful” window from the owner’s words"),
+    ("kt_ffmpeg", "where FFmpeg was found and how to get it: per machine, outside any project, and reachable when nothing plays (windows-build)"),
 ];
 
 /// Test 757 (R.63 item 12): EVERY window of the program is in the registry, and vice versa.
@@ -2939,6 +2940,7 @@ fn action_labels() -> Vec<String> {
         tr(k::settings::CANCEL).to_string(),
         tr(k::ask::RECOVERY_RESTORE).to_string(),
         tr(k::ask::RECOVERY_LATER).to_string(),
+        tr(k::ffmpeg::RESCAN).to_string(),
     ]
 }
 
@@ -2969,6 +2971,7 @@ fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
         ("kt_search", OpenWin::By(|h| h.state_mut().search_open = true), Closes::Titlebar { title: || crate::i18n::tr(crate::i18n::k::win::SEARCH_TITLE).to_string(), why: "search is closed by the title cross: the list of finds lives as long as one walks through it" }),
         ("kt_diag", OpenWin::By(|h| h.state_mut().perf.diag_open = true), Closes::Titlebar { title: || crate::i18n::tr(crate::i18n::k::win::DIAG_TITLE).to_string(), why: "diagnostics is closed by the title cross: it is a developer window with no actions" }),
         ("kt_recovery", OpenWin::By(|h| h.state_mut().recovery_open = true), Closes::Action),
+        ("kt_ffmpeg", OpenWin::By(|h| h.state_mut().ffmpeg_ui.open = true), Closes::Action),
         ("kt_ask", OpenWin::By(|h| {
             h.state_mut().ask = Some(crate::app::Ask::DropProject);
         }), Closes::ActionShort {
@@ -4697,3 +4700,134 @@ fn t840_telemetry_notice_once_and_switch_in_view() {
     assert!(ctors >= 2);
     assert_eq!(src.matches("            telemetry: crate::telemetry::global(),\n").count(), ctors);
 }
+
+/// t850 (windows-build, ui-reach): from the “FFmpeg not found” window to playing media,
+/// with the real loader. The search is limited to an empty folder (and, on Linux, the
+/// system fallback is off), so the clip opens as a placeholder; Locate… refuses a folder
+/// without DLLs and accepts a complete one — on Linux the system FFmpeg under its SONAMEs,
+/// on Windows the pinned gyan.dev build — and the clip shows frames without a restart.
+///
+/// Needs a process of its own (nextest): in a shared `cargo test` process another test has
+/// already loaded FFmpeg for good, and the test says so and stops.
+#[test]
+fn t850_ffmpeg_window_from_not_found_to_playing() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    if kt_ffmpeg::is_loaded() {
+        eprintln!("t850 skipped: FFmpeg is already loaded in this process (run it under nextest)");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("kt-t850-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let empty = dir.join("empty");
+    let nodll = dir.join("nodll");
+    let full = dir.join("full");
+    for d in [&empty, &nodll, &full] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    // a complete folder of this OS
+    let full = if cfg!(windows) {
+        let pinned = std::env::var_os("KT_FFMPEG_WIN_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/ffmpeg-win/8.1.2")
+        });
+        if !pinned.join("avcodec-62.dll").exists() {
+            eprintln!("t850 skipped: no pinned FFmpeg build in {}", pinned.display());
+            return;
+        }
+        std::path::absolute(pinned).unwrap()
+    } else {
+        let sys = std::path::Path::new("/usr/lib/x86_64-linux-gnu");
+        let Some(ffmpeg) = kt_ffmpeg::search::MAJORS.iter().map(|(f, _)| *f).find(|f| {
+            kt_ffmpeg::search::LOAD_ORDER
+                .iter()
+                .all(|l| sys.join(kt_ffmpeg::search::file_name(kt_ffmpeg::search::Os::Linux, *l, *f)).exists())
+        }) else {
+            eprintln!("t850 skipped: no system FFmpeg 6/7/8 in {}", sys.display());
+            return;
+        };
+        #[cfg(unix)]
+        for l in kt_ffmpeg::search::LOAD_ORDER {
+            let n = kt_ffmpeg::search::file_name(kt_ffmpeg::search::Os::Linux, l, ffmpeg);
+            std::os::unix::fs::symlink(sys.join(&n), full.join(&n)).unwrap();
+        }
+        full
+    };
+    unsafe {
+        std::env::set_var("KINETREN_FFMPEG_DIR", &empty);
+        std::env::set_var("KINETREN_FFMPEG_SYSTEM", "0");
+    }
+
+    // a project with one video clip on a real fixture file
+    let video = crate::util::tests::fixture("testsrc_h264.mp4");
+    let path = dir.join("p.kt");
+    let mut p = kt_model::Project::new(kt_model::ProjectSettings {
+        fps: 25,
+        width: 320,
+        height: 240,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    });
+    p.media.push(kt_model::MediaRef::new(kt_model::MediaId(1), &video));
+    p.clips.push(crate::layout_tests::sample_clip(kt_model::ClipId(1)));
+    p.validate().unwrap();
+    std::fs::write(&path, crate::app::project_text_of(&p, &Default::default(), None)).unwrap();
+
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+    let mut app = crate::app::KtApp::open(&path).expect("the project opens");
+    app.recovery_on_drop = false;
+    app.ffmpeg_ui.choice_file = dir.join("ffmpeg-dir");
+    app.ffmpeg_ui.download_root = dir.join("downloads");
+    app.ffmpeg_startup_check();
+    assert_eq!(app.placeholder_media.len(), 1, "without FFmpeg the clip is a placeholder");
+    assert!(app.ffmpeg_ui.open, "the FFmpeg window opens at startup without FFmpeg");
+    let notices = app.notices.iter().filter(|n| n.text == tr(k::ffmpeg::NOT_FOUND)).count();
+    assert_eq!(notices, 1, "one notice");
+
+    let mut h = egui_kittest::Harness::builder()
+        .with_size(eframe::egui::vec2(1440.0, 860.0))
+        .build_ui_state(|ui, app: &mut crate::app::KtApp| app.draw_all(ui), app);
+    crate::icons::install_fonts(&h.ctx);
+    h.step();
+    h.step();
+    let empty_s = empty.to_string_lossy().to_string();
+    assert!(
+        h.query_all_by_label_contains(&empty_s).next().is_some(),
+        "the window lists the empty folder as rejected"
+    );
+
+    // Locate… with a folder without DLLs: refused, the choice unchanged
+    h.state_mut().ffmpeg_ui.test_pick = Some(nodll.clone());
+    h.get_by_label(tr(k::ffmpeg::LOCATE)).click();
+    h.step();
+    h.step();
+    let msg = h.state().ffmpeg_ui.message.clone().expect("a message");
+    assert!(msg.0 && msg.1.contains(tr(k::ffmpeg::R_NO_AVCODEC)), "refused with the reason: {msg:?}");
+    assert!(!dir.join("ffmpeg-dir").exists(), "a refused folder is not saved");
+
+    // Locate… with a complete folder: saved, loaded, the clip recovers without a restart
+    h.state_mut().ffmpeg_ui.test_pick = Some(full.clone());
+    h.get_by_label(tr(k::ffmpeg::LOCATE)).click();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !h.state().placeholder_media.is_empty() && std::time::Instant::now() < deadline {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(kt_ffmpeg::backend_info().is_some(), "FFmpeg loaded: {}", kt_ffmpeg::search_report());
+    assert!(h.state().placeholder_media.is_empty(), "the clip recovered without a restart");
+    let saved = std::fs::read_to_string(dir.join("ffmpeg-dir")).unwrap();
+    assert_eq!(saved.trim(), full.to_string_lossy(), "the choice is saved");
+    let place = kt_ffmpeg::loaded_place().unwrap();
+    assert!(
+        h.query_all_by_label_contains(&place).next().is_some(),
+        "the window shows the loaded folder {place}"
+    );
+    unsafe {
+        std::env::remove_var("KINETREN_FFMPEG_DIR");
+        std::env::remove_var("KINETREN_FFMPEG_SYSTEM");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+

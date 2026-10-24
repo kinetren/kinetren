@@ -427,11 +427,16 @@ pub fn mask_text(input: &str) -> (String, String) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn fixture(name: &str) -> String {
+    pub(crate) fn fixture(name: &str) -> String {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+        // already generated (on Windows the fixtures come generated with the test archive:
+        // there is no bash there to run gen.sh)
+        if dir.join("out").join(name).exists() {
+            return dir.join("out").join(name).to_string_lossy().to_string();
+        }
         static GEN: std::sync::OnceLock<()> = std::sync::OnceLock::new();
         GEN.get_or_init(|| {
             let st = std::process::Command::new("bash")

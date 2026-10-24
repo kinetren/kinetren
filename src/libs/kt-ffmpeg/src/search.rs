@@ -269,8 +269,8 @@ pub fn plan(os: Os, env: &dyn Env) -> Vec<Candidate> {
     out
 }
 
-/// Judge one folder's file list.
-fn judge(os: Os, files: Option<&[String]>) -> Result<u32, Reject> {
+/// Judge one folder's file list: the FFmpeg release it can load, or why not.
+pub fn judge(os: Os, files: Option<&[String]>) -> Result<u32, Reject> {
     let Some(files) = files else { return Err(Reject::Unreadable) };
     let has = |name: &str| match os {
         Os::Windows => files.iter().any(|f| f.eq_ignore_ascii_case(name)),

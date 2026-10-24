@@ -43,6 +43,8 @@ unicode-bidi = "0.3"
 # blocking HTTP client; rustls with bundled roots — no OpenSSL, nothing new in `ldd`
 ureq = { version = "3.5", default-features = false, features = ["rustls"] }
 getrandom = "0.3"
+sevenz-rust2 = { version = "0.24", default-features = false }
+sha2 = "0.10"
 
 # translation catalogs are compiled into static tables (apps/kt-app/build.rs)
 [build-dependencies]
@@ -51,6 +53,8 @@ unicode-bidi = "0.3"
 # layout and interaction harness tests (rule item 9 round 8): without wgpu/snapshot —
 # pure CPU, without window and GPU
 [dev-dependencies]
+# the tests build their 7z archive at run time (t848); the shipped binary has no compressor
+sevenz-rust2 = { version = "0.24", default-features = false, features = ["compress"] }
 egui_kittest = { version = "0.36.1", default-features = false }
 # glyph coverage check (Test 100, item 12 round 11); version already in the egui graph
 ab_glyph = "0.2"

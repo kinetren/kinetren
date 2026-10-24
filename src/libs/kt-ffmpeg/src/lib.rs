@@ -267,9 +267,26 @@ pub fn loaded_modules() -> Vec<String> {
     MODULES.get().cloned().unwrap_or_default()
 }
 
+/// Can this folder be used (Locate…)? The same judgement as the search applies to it.
+pub fn check_folder(dir: &str) -> Result<u32, search::Reject> {
+    let env = loader::SystemEnv { user_choice: None, download_dir: None };
+    search::judge(search::Os::NATIVE, search::Env::list(&env, dir).as_deref())
+}
+
+/// Where the loaded FFmpeg came from (a folder, or the system SONAME), if it is loaded.
+pub fn loaded_place() -> Option<String> {
+    LOADED.get()?;
+    state().report.as_ref()?.loaded.as_ref().map(|(place, _, _)| place.clone())
+}
+
 /// Libraries opened by this process so far (t847: a remembered success opens nothing again).
 pub fn library_opens() -> u64 {
     loader::LIB_OPENS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Is FFmpeg already loaded? Unlike `backend_info`, never starts a search.
+pub fn is_loaded() -> bool {
+    LOADED.get().is_some()
 }
 
 /// Version of the loaded FFmpeg (None if not found).
