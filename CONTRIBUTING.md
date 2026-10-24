@@ -31,6 +31,15 @@ the repository root, or `src/scripts/release-build.sh`, which `make` calls. The 
 the container the build checks that neither binary links libav* and that neither needs a
 glibc newer than 2.35.
 
+The Windows zip is cross-built in the `windows` stage of the same Dockerfile (mingw-w64,
+target `x86_64-pc-windows-gnu`): `make windows`, or `src/scripts/release-build.sh --target
+windows`. The result is `src/target/dist-out/kinetren-<version>-windows-x86_64.zip` plus
+its `.sha256`; inside the container the PE imports of both exes are checked (only Windows
+system DLLs: no FFmpeg, no mingw runtime). The zip never carries FFmpeg: the program finds
+the user's shared build or downloads the pinned gyan.dev build on a click
+(`src/apps/kt-app/src/ffmpeg_setup.rs`, the search plan in
+`src/libs/kt-ffmpeg/src/search.rs`).
+
 The dev profile is built with `opt-level = 1` (dependencies with 2), because audio
 rendering of a dense edit does not keep up with real time unoptimised. Judge speed only
 on a release build: `cargo build --release -p kt-app` and `kt-cli probe … --time`.
@@ -56,6 +65,10 @@ cargo clippy --all-targets
   the model changed — not an internal field. Harness tests (`egui_kittest`) prove
   layout; only a live scenario (`src/scripts/live/*.py`) proves a gesture works in the
   real window.
+- `make windows-test` runs the workspace tests for the Windows target under wine in the
+  build container, with the pinned FFmpeg build (`src/scripts/fetch-ffmpeg-win.sh`). wine
+  is the fast loop; the `windows-latest` CI job is the verdict. Tests that need python3,
+  bash, Xvfb or a GPU skip themselves there with the reason printed.
 - `cargo test` builds a separate test binary and does **not** rebuild
   `target/debug/kinetren` (the binary of the `kt-app` package). Finish every piece of work with `./scripts/finish.sh` and quote
   the version it prints.
@@ -66,8 +79,10 @@ GitHub Actions runs `.github/workflows/ci.yml` on every push and pull request: c
 the workspace tests through nextest (with the system FFmpeg of Ubuntu 24.04), and the
 repository guards (`readme-check.py`, `dist-check.py`, `specs-user-path.py`). The runner
 has no GPU, so GPU conformance skips itself; the live Xvfb scenarios and the SIMD
-conformance run only in `finish.sh`, on a real machine. CI uploads nothing except the test
-log of a failed run, kept for three days.
+conformance run only in `finish.sh`, on a real machine. A second pair of jobs cross-builds
+the Windows test archive in the container and runs it on `windows-latest` without
+compiling there. CI uploads nothing that lingers: the Windows archive and fixtures expire
+after a day, the test log of a failed run after three days.
 
 A release is cut by pushing a tag on the default branch:
 
@@ -77,7 +92,8 @@ git push origin v26.10.22
 ```
 
 `.github/workflows/release.yml` builds the archive with the same container as `make` and
-creates a GitHub Release with the archive and its `.sha256`. A tag with a suffix
+creates a GitHub Release with the Linux archive, the Windows zip and their `.sha256`
+files. A tag with a suffix
 (`v26.11.01-rc1`) becomes a pre-release. The Rust version is pinned in
 `src/packaging/Dockerfile` and in `ci.yml`; `src/scripts/dist-check.py` keeps them
 equal, so bump both together.

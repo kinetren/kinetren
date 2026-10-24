@@ -34,6 +34,12 @@ python3 scripts/subset-fonts.py  # CJK/Arabic font subsets from the translation 
 ./scripts/release-build.sh # release tarball: dist profile (strip+LTO) in an
                            # Ubuntu 22.04 container → runs on glibc >= 2.35; inside
                            # "ldd without libav*" and the GLIBC_ ceiling are checked
+./scripts/release-build.sh --target windows  # (make windows) the portable Windows zip,
+                           # cross-built with mingw in the `windows` stage of the same
+                           # Dockerfile; inside, the PE imports are checked (no av*/sw*,
+                           # no mingw runtime DLL); no FFmpeg DLL is ever packed
+./scripts/windows-test.sh  # (make windows-test) the workspace tests for Windows under
+                           # wine; the windows-latest CI job runs the same archive
 ```
 
 System requirements for the full build (kt-media/kt-app): FFmpeg dev packages (libavcodec/format/util/swscale/swresample), `clang` (bindgen), `libasound2-dev` (cpal/ALSA), the `ffmpeg` binary in PATH (export and fixture generation). The crates kt-time/kt-model/kt-fx/kt-cache and the kt-engine core build and test **without** any of this.
@@ -80,7 +86,7 @@ reasons and history are in the `design.md` next to it. Here — one line each, t
 7. **There is one composition code path.** `frame_plan` is shared by preview and export; the CPU is the byte reference and the full fallback, the GPU is the default and is held to the `FrameTol` tolerances; geometry series are fused in one pass, the chain plan is built by `plan_chain`; an export in progress does not switch backends — `video-plan`, `video-fx`.
 8. **Timeline scroll/zoom produces no decode requests.** Waveforms come from the peak pyramid, thumbnails from the sidecar, reel previews from the cache keyed by `content_hash` with a disk tier — `media-index`, `compositions`.
 9. **Export is fully in-process.** libavformat/libavcodec of the system FFmpeg, an encoder cascade with a real open check; no temporary files, no external binary — `export`.
-10. **The binary does not link against libav*.** FFmpeg via dlopen, the major version from `avcodec_version()`, one binary for FFmpeg 6/7/8; `ldd … | grep -c libav` == 0 — `media-index`.
+10. **The binary does not link against libav*.** FFmpeg loaded at run time, the major version from `avcodec_version()`, one binary for FFmpeg 6/7/8: Linux by SONAME (`ldd … | grep -c libav` == 0), Windows from ONE folder found by the search plan or downloaded on a click (the PE imports name no av*/sw* DLL and no mingw runtime) — `media-index`.
 11. **Determinism.** Audio — byte for byte, always; video on the CPU — against the committed reference; on the GPU — byte for byte between runs on one device, across machines — within tolerances of the CPU; no wall clock in offline paths — `video-plan`, `export`.
 12. **Video display is not quantized by the audio callback, the UI does not heat the system.** The display position is interpolated (`video_playhead()`), repaint only while something moves, no allocations in draw paths — `transport`, `ui-timeline`.
 

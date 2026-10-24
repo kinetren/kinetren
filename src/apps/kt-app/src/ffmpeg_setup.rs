@@ -40,6 +40,8 @@ pub fn download_dir_for_search() -> Option<String> {
 
 /// The FFmpeg release the Download button installs.
 pub const PINNED_VERSION: &str = kt_dirs::FFMPEG_DOWNLOAD_VERSION;
+/// The archive's name as published — the cached copy the extraction test compares against.
+#[cfg_attr(not(test), allow(dead_code))]
 pub const PINNED_ARCHIVE: &str = "ffmpeg-8.1.2-full_build-shared.7z";
 pub const PINNED_SHA256: &str = "cba748035c21ce1431d0823c7a3a711f38616f89f87a265dceddf9b7f6749d2d";
 pub const PINNED_URLS: [&str; 2] = [
@@ -56,11 +58,6 @@ const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(10 * 60)
 /// Where downloads live: `<local>/ffmpeg` (Windows: `%LOCALAPPDATA%\kinetren\ffmpeg`).
 pub fn download_root() -> PathBuf {
     kt_dirs::local_dir().join("ffmpeg")
-}
-
-/// The folder of the installed pinned build — the fourth step of the Windows search.
-pub fn installed_dir() -> PathBuf {
-    kt_dirs::ffmpeg_download_dir()
 }
 
 /// What to download: the pinned archive, or (debug builds only) a test server's —

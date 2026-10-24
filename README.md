@@ -156,6 +156,16 @@ make install
 the other commands. Building with your own Rust toolchain is described in
 [CONTRIBUTING.md](CONTRIBUTING.md#build).
 
+**Windows (x86-64, Windows 10 or 11):** download `kinetren-<version>-windows-x86_64.zip`
+from [Releases](https://github.com/kinetren/kinetren/releases), unpack it anywhere and
+start `kinetren.exe`; nothing is installed. FFmpeg is not in the zip. On the first start
+the program offers **Download** (the FFmpeg 8.1.2 shared build by gyan.dev, GPLv3, about
+57 MB, checked against a checksum built into Kinetren) or **Locate folder…** for a shared
+FFmpeg 6, 7 or 8 you already have, for example
+`winget install Gyan.FFmpeg.Shared --version 8.1.2`. *View → FFmpeg…* shows which folder
+is used and why others were not. The executables are not code-signed yet, so SmartScreen
+may warn: *More info → Run anyway*. `make windows` builds the same zip from source.
+
 ## First steps
 
 Drop video files on the window and they land on the timeline. **Space** plays, **S**
