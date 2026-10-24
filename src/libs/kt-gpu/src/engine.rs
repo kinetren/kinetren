@@ -814,6 +814,19 @@ impl GpuFxEngine {
                 || name_l.contains("microsoft basic render"),
         };
 
+        // WARP ("Microsoft Basic Render Driver", Windows' software D3D12 rasterizer) is
+        // refused: on the GPU-less Windows CI runner the engine's passes ran for minutes and
+        // then died inside it (access violations, heap corruption — windows-build). The CPU
+        // path is the full fallback and the byte reference (invariant 7), so a machine with
+        // only WARP renders effects on the CPU instead of risking a crash.
+        // KT_GPU_ALLOW_WARP=1 lets it through for experiments.
+        if name_l.contains("microsoft basic render")
+            && std::env::var("KT_GPU_ALLOW_WARP").as_deref() != Ok("1")
+        {
+            return Err(GpuInitError::Unsupported(format!(
+                "{} (software D3D12): effects render on the CPU", ai.name
+            )));
+        }
         // Two scopes: a shader the backend's compiler rejects (FXC on D3D12: "not natively
         // addressable", windows-build) is an INTERNAL error, not a validation one. With only
         // the validation scope it escaped to the default handler, which panics — a crash on

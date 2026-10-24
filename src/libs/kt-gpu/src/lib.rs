@@ -119,6 +119,11 @@ pub fn test_engine() -> Option<std::sync::Arc<GpuFxEngine>> {
     let name = ctx.adapter_info.name.clone();
     match GpuFxEngine::new(ctx) {
         Ok(e) => Some(e),
+        // the engine refuses this adapter on purpose (WARP): no GPU to test, as without one
+        Err(err @ GpuInitError::Unsupported(_)) if std::env::var("KT_REQUIRE_GPU").as_deref() != Ok("1") => {
+            eprintln!("skipped: {err}");
+            None
+        }
         Err(err) => {
             panic!("adapter '{name}' is present, but the GPU engine failed to build: {err}")
         }

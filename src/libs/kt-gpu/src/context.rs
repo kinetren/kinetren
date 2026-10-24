@@ -13,12 +13,15 @@ pub enum GpuInitError {
     NoAdapter(String),
     Device(String),
     Pipeline(String),
+    /// An adapter the engine does not run on (Windows' WARP software rasterizer).
+    Unsupported(String),
 }
 
 impl std::fmt::Display for GpuInitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             GpuInitError::NoAdapter(e) => write!(f, "no wgpu adapter: {e}"),
+            GpuInitError::Unsupported(e) => write!(f, "unsupported adapter: {e}"),
             GpuInitError::Device(e) => write!(f, "wgpu device: {e}"),
             GpuInitError::Pipeline(e) => write!(f, "pipeline: {e}"),
         }

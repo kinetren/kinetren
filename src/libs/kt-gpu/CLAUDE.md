@@ -126,3 +126,14 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
   CPU — both backends read the same bits). `ext` is not and MUST NOT be part of `put_mix`/`plan_key` — it is a deterministic function of what is already hashed.
 - t224: 32 modes; the volumetric ones (flip/cube/door/peel/roll) — a separate loop
   with `FrameTol::GEOM` (the panel edges and the perspective division). The MODE_* numbers are a contract only between transitions.rs ↔ composite.wgsl, they do not get into the project files (the tag travels).
+
+## Windows / D3D12 (windows-build)
+- FXC (the D3D12 shader compiler wgpu uses) rejects a write through a dynamic VECTOR index
+  (`v[i] = …`) when it cannot unroll the loop: write vectors with `select` or whole-vector
+  arithmetic. Arrays (`var a: array<…>`) with dynamic indices are fine. A shader the backend
+  rejects is an INTERNAL wgpu error: `GpuFxEngine::new` pushes an internal scope next to the
+  validation one, so the engine falls back to the CPU instead of panicking.
+- WARP ("Microsoft Basic Render Driver") is refused with `GpuInitError::Unsupported`: on the
+  GPU-less Windows CI runner the passes ran for minutes and died inside it. The CPU path is the
+  full fallback; `KT_GPU_ALLOW_WARP=1` lets it through for experiments, and the GPU tests skip
+  on it as they do without an adapter.

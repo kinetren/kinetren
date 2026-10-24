@@ -52,12 +52,13 @@ jobs:
         # xvfb/openbox/python3-xlib: the guards of the live framework (t801,
         # t802) run its dummy scenarios; they skip without Xvfb, so install it
         # explicitly instead of depending on what the runner image carries;
-        # x11-utils: xdpyinfo, which t809 calls to read the screen it compares against
+        # x11-utils, x11-apps, imagemagick: xdpyinfo, xwd and convert, which t809 calls
+        # to read the screen it compares against
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang libclang-dev pkg-config libasound2-dev ffmpeg \
-            xvfb openbox python3-xlib x11-utils
+            xvfb openbox python3-xlib x11-utils x11-apps imagemagick
 
       - uses: dtolnay/rust-toolchain@master
         with:
