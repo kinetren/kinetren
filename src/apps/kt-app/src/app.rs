@@ -9063,6 +9063,10 @@ pub fn run() -> eframe::Result {
             .with_decorations(decorations)
             .with_title("Kinetren"),
         wgpu_options,
+        // eframe's settings (`app.ron`) in OUR data directory: the same file eframe would
+        // pick on Linux and on Windows, named explicitly so the two cannot drift apart
+        // (windows-build, design D4)
+        persistence_path: Some(crate::journal::data_dir().join(kt_dirs::EFRAME_SETTINGS_FILE)),
         ..Default::default()
     };
     eframe::run_native(
@@ -9107,6 +9111,10 @@ pub fn run() -> eframe::Result {
             // the previous session crashed — the report lies there and waits (item 355)
             if let Some(p) = crate::journal::take_crash_report() {
                 app.warn(crate::tf!(k::msg::PREV_SESSION_CRASHED, p.display()));
+            }
+            // no per-user directory: the data lives in temp and may vanish (windows-build)
+            if kt_dirs::is_fallback() {
+                app.warn(crate::tf!(k::msg::DATA_DIR_TEMP, crate::journal::data_dir().display()));
             }
             app.offer_recovery(true);
             Ok(Box::new(app))

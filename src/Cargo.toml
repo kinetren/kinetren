@@ -6,6 +6,7 @@ members = [
     "libs/kt-text",
     "libs/kt-time",
     "libs/kt-version",
+    "libs/kt-dirs",
     "libs/kt-model",
     "libs/kt-otio",
     "libs/kt-ffmpeg",
@@ -25,6 +26,7 @@ publish = false
 [workspace.dependencies]
 kt-time = { path = "libs/kt-time" }
 kt-version = { path = "libs/kt-version" }
+kt-dirs = { path = "libs/kt-dirs" }
 kt-model = { path = "libs/kt-model" }
 kt-text = { path = "libs/kt-text" }
 kt-otio = { path = "libs/kt-otio" }

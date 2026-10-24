@@ -21,6 +21,7 @@ kt-text = { workspace = true }
 kt-otio = { workspace = true }
 kt-media = { workspace = true }
 kt-ffmpeg = { workspace = true }
+kt-dirs = { workspace = true }
 kt-cache = { workspace = true }
 kt-engine = { workspace = true }
 # the frequency response graph is computed by kt_fx::eq_mag_db — with the same coefficients that sound
@@ -58,8 +59,3 @@ ab_glyph = "0.2"
 # XdndPosition (item 2 v1.4) — we read the pointer directly
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = "0.13"
-
-# flock for the per-project lock (item 352): the kernel releases it on any process death
-# — a property no lock made “by hand” has
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"

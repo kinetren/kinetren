@@ -29,16 +29,22 @@ pub const DATA_DIR_NAME: &str = "kinetren";
 /// moved into place once (`data_dir_in`); nothing reads it afterwards.
 pub const FORMER_DATA_DIR_NAME: &str = "kinotrain";
 
-/// The program's data directory (`$XDG_DATA_HOME/kinetren`). Shared with the
-/// autosave — there is no need for a separate home for the journal. The single resolver:
-/// recovery, journal, locks, presets, workspace and eframe's own storage
-/// (its app id is the same name) all live here.
+/// The program's data directory (`$XDG_DATA_HOME/kinetren`, `%APPDATA%\kinetren\data`).
+/// Shared with the autosave — there is no need for a separate home for the journal.
+/// Recovery, journal, locks, presets, workspace and eframe's own storage (`app.ron`,
+/// `NativeOptions::persistence_path`) all live here. The resolver is `kt-dirs`, shared with
+/// kt-cli; it never answers with the working directory (windows-build).
 pub fn data_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-        .unwrap_or_else(|| PathBuf::from("."));
-    data_dir_in(&base)
+    let dir = kt_dirs::data_dir();
+    // The former name existed only on Linux, and only a REAL per-user root may hold it:
+    // migrating inside a fallback (temp) directory would move someone else's folder.
+    #[cfg(target_os = "linux")]
+    if !kt_dirs::is_fallback()
+        && let Some(base) = dir.parent()
+    {
+        return data_dir_in(base);
+    }
+    dir
 }
 
 /// `base/kinetren`, after moving the former `base/kinotrain` into place if
@@ -159,7 +165,7 @@ pub fn take_crash_report() -> Option<PathBuf> {
         return None;
     }
     let seen = crash_seen_path();
-    match std::fs::rename(&p, &seen) {
+    match kt_otio::replace_file(&p, &seen) {
         Ok(()) => Some(seen),
         // renaming did not work — still must say so, the report is in place
         Err(_) => Some(p),
@@ -189,7 +195,8 @@ pub(crate) fn write_to(path: &Path, level: &str, text: &str) {
 fn rotate(path: &Path) {
     let big = std::fs::metadata(path).map(|m| m.len() >= ROTATE_BYTES).unwrap_or(false);
     if big {
-        let _ = std::fs::rename(path, path.with_extension("log.1"));
+        // the previous `.log.1` is replaced — on Windows a held one is retried (kt-otio)
+        let _ = kt_otio::replace_file(path, &path.with_extension("log.1"));
     }
 }
 
@@ -345,5 +352,14 @@ mod tests {
         assert_eq!(std::fs::read_to_string(dir.join("fx-presets.json")).unwrap(), "[1]");
         assert_eq!(std::fs::read_to_string(former.join("fx-presets.json")).unwrap(), "[2]");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// windows-build task 3.2: the settings file passed to eframe explicitly
+    /// (`persistence_path`) is the one eframe picks by itself, so no settings move.
+    #[test]
+    fn eframe_settings_file_is_where_eframe_puts_it() {
+        let ours = data_dir().join(kt_dirs::EFRAME_SETTINGS_FILE);
+        let eframe = eframe::storage_dir("kinetren").map(|d| d.join(kt_dirs::EFRAME_SETTINGS_FILE));
+        assert_eq!(Some(ours), eframe);
     }
 }

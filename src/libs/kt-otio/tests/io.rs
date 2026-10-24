@@ -101,3 +101,64 @@ fn t353_dir_sync_failure_is_not_a_write_failure() {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "payload", "file is in place and intact");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The Windows replace (windows-build): the target is briefly held by someone else for
+/// `busy` attempts; the rename is durable (write-through).
+struct BusyTarget {
+    busy: std::cell::Cell<u32>,
+    attempts: std::cell::Cell<u32>,
+    pauses: RefCell<Vec<u64>>,
+}
+
+impl AtomicFs for BusyTarget {
+    fn write_and_sync(&self, tmp: &Path, bytes: &[u8]) -> io::Result<()> {
+        std::fs::write(tmp, bytes)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        self.attempts.set(self.attempts.get() + 1);
+        if self.busy.get() > 0 {
+            self.busy.set(self.busy.get() - 1);
+            return Err(io::Error::other("sharing violation: the file is used by another process"));
+        }
+        std::fs::rename(from, to)
+    }
+    fn sync_dir(&self, _dir: &Path) -> io::Result<()> {
+        panic!("a durable rename needs no directory sync")
+    }
+    fn rename_is_durable(&self) -> bool {
+        true
+    }
+    fn is_transient(&self, e: &io::Error) -> bool {
+        e.to_string().starts_with("sharing violation")
+    }
+    fn pause(&self, d: std::time::Duration) {
+        self.pauses.borrow_mut().push(d.as_millis() as u64);
+    }
+}
+
+/// t853 (windows-build, durability): a briefly held target is retried within the budget and
+/// the write-through rename counts as the directory sync; past the budget the write fails
+/// with the reason, the project is unchanged and no temporary file remains.
+#[test]
+fn t853_replace_retries_a_briefly_held_target_then_fails_honestly() {
+    let dir = tmp_dir("t853");
+    let p = dir.join("film.kt");
+    std::fs::write(&p, "old").unwrap();
+
+    let fs = BusyTarget { busy: 2.into(), attempts: 0.into(), pauses: RefCell::new(vec![]) };
+    let w = write_atomic_with(&fs, &p, "new").unwrap();
+    assert!(w.dir_synced, "write-through counts as the directory sync");
+    assert_eq!(fs.attempts.get(), 3, "two refusals, then the replace");
+    assert_eq!(*fs.pauses.borrow(), vec![10, 20]);
+    assert_eq!(std::fs::read_to_string(&p).unwrap(), "new");
+
+    let fs = BusyTarget { busy: 100.into(), attempts: 0.into(), pauses: RefCell::new(vec![]) };
+    let err = write_atomic_with(&fs, &p, "newer").expect_err("past the budget the write fails");
+    assert!(err.to_string().contains("sharing violation"), "{err}");
+    assert_eq!(fs.attempts.get(), 1 + kt_otio::REPLACE_PAUSES_MS.len() as u32);
+    assert_eq!(*fs.pauses.borrow(), kt_otio::REPLACE_PAUSES_MS.to_vec());
+    assert_eq!(std::fs::read_to_string(&p).unwrap(), "new", "the project is unchanged");
+    let left: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| name(&e.unwrap().path())).collect();
+    assert_eq!(left, vec!["film.kt".to_string()], "no temporary file remains");
+    let _ = std::fs::remove_dir_all(&dir);
+}

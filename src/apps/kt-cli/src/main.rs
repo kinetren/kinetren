@@ -1133,12 +1133,9 @@ fn warn_if_locked(path: &str) {
     }
 }
 
-/// The per-user data directory of the app (`kinetren`), as kt-app resolves it.
+/// The per-user data directory of the app — the same resolver as kt-app (`kt-dirs`).
 fn app_data_dir() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from).or_else(|| {
-        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
-    })?;
-    Some(base.join("kinetren"))
+    Some(kt_dirs::data_dir())
 }
 
 /// The FFmpeg folder chosen in the app: one line in `<data_dir>/ffmpeg-dir`.
@@ -1151,22 +1148,18 @@ fn ffmpeg_user_choice() -> Option<String> {
 /// The process number of the lock holder for the project, if there is one. The format of the
 /// lock file is the same as kt-app writes (`project_lock.rs`): the first line is the pid.
 fn kt_lock_holder(project: &str) -> Option<u32> {
-    let base = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from).or_else(|| {
-        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
-    })?;
-    let abs = std::path::absolute(project).ok()?;
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in abs.to_string_lossy().as_bytes() {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x100_0000_01b3);
+    let data = app_data_dir()?;
+    let lock = kt_dirs::locks::lock_file(&data, std::path::Path::new(project));
+    if let Some(pid) = kt_dirs::locks::read_holder(&lock) {
+        return Some(pid);
     }
-    // the app's data directory (`kinetren`); an app of the former name
-    // (the former name, Kinotrain) that has not migrated yet keeps its locks in `kinotrain`
-    ["kinetren", "kinotrain"].iter().find_map(|dir| {
-        let f = base.join(dir).join("locks").join(format!("{h:016x}.lock"));
-        let text = std::fs::read_to_string(f).ok()?;
-        text.lines().next()?.trim().parse().ok()
-    })
+    // an app of the former name (Linux only) that has not migrated yet keeps its locks
+    // in the former directory next to `kinetren`
+    if cfg!(target_os = "linux") && !kt_dirs::is_fallback() {
+        let former = data.parent()?.join("kinotrain").join("locks").join(lock.file_name()?);
+        return kt_dirs::locks::read_holder(&former);
+    }
+    None
 }
 
 fn demo_project(synth: bool) -> Project {

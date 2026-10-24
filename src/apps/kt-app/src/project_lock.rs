@@ -8,7 +8,8 @@
 //! in parallel) and the legitimate scenario “opened a second time to look at
 //! another piece of the edit”. The lock is named: it applies to a specific project.
 //!
-//! **Why `flock` and not a file with a pid and `O_EXCL`.** The kernel releases `flock` on
+//! **Why a kernel lock (`flock` on Linux, `LockFileEx` on Windows — both through
+//! `std::fs::File::try_lock`) and not a file with a pid and `O_EXCL`.** The kernel releases it on
 //! ANY process death — a crash, SIGKILL, `terminate()` from a live
 //! shell. A lock the kernel does not release by itself leaves a permanent
 //! block after the first forced kill: a class that already cost
@@ -24,8 +25,10 @@
 //! The user’s directory is not cluttered, the lock is taken even on a project in a
 //! read-only directory (on a network share, on a mounted image), and
 //! abandoned empty files stay in our directory, where they bother no one.
-//! The name is a hash of the absolute path; the path itself and the pid are written INSIDE the file, so that
-//! the message can name the other process.
+//! The name is a hash of the absolute path (`kt_dirs::locks`, shared with kt-cli; on
+//! Windows of its normalized spelling, t852); the pid and the path are written into the
+//! file AND into `<name>.pid` next to it: a Windows lock is mandatory, the second copy
+//! cannot read the locked file, and the message must still name the other process.
 
 use std::path::{Path, PathBuf};
 
@@ -54,26 +57,11 @@ impl Drop for ProjectLock {
     }
 }
 
-/// Directory for the lock files.
-fn locks_dir() -> PathBuf {
-    crate::journal::data_dir().join("locks")
-}
-
 /// Lock file name: a hash of the absolute project path. Absolute, not canonical:
 /// `canonicalize` requires an existing file, and the lock is needed also for “Save as…”
 /// to a file not yet created.
 pub fn lock_file_for(project: &Path) -> PathBuf {
-    let abs = std::path::absolute(project).unwrap_or_else(|_| project.to_path_buf());
-    locks_dir().join(format!("{:016x}.lock", fnv1a(abs.to_string_lossy().as_bytes())))
-}
-
-fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in bytes {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x100_0000_01b3);
-    }
-    h
+    kt_dirs::locks::lock_file(&crate::journal::data_dir(), project)
 }
 
 /// Try to take the project. Does not block for even a millisecond:
@@ -98,34 +86,22 @@ pub fn acquire(project: &Path) -> LockState {
         Ok(f) => f,
         Err(_) => return LockState::Unavailable,
     };
-    if try_lock(&file) {
-        // The content — for the message to the neighbor and for manual inspection. We write
-        // AFTER taking the lock: otherwise we would overwrite another’s record.
-        let _ = std::io::Write::write_all(
-            &mut (&file),
-            format!("{}\n{}\n", std::process::id(), project.display()).as_bytes(),
-        );
-        LockState::Owned(ProjectLock { _file: file })
-    } else {
-        let pid = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| s.lines().next().and_then(|l| l.trim().parse().ok()));
-        LockState::Busy { pid }
+    match file.try_lock() {
+        Ok(()) => {
+            // The content — for the message to the neighbor and for manual inspection. We
+            // write AFTER taking the lock: otherwise we would overwrite another’s record.
+            let record = format!("{}\n{}\n", std::process::id(), project.display());
+            let _ = std::io::Write::write_all(&mut (&file), record.as_bytes());
+            let _ = std::fs::write(kt_dirs::locks::pid_file(&path), &record);
+            LockState::Owned(ProjectLock { _file: file })
+        }
+        Err(std::fs::TryLockError::WouldBlock) => {
+            LockState::Busy { pid: kt_dirs::locks::read_holder(&path) }
+        }
+        // the file system cannot lock (some network shares): work as the owner, without
+        // a guarantee — the same as having no data directory
+        Err(std::fs::TryLockError::Error(_)) => LockState::Unavailable,
     }
-}
-
-#[cfg(unix)]
-fn try_lock(file: &std::fs::File) -> bool {
-    use std::os::fd::AsRawFd;
-    // SAFETY: a live handle to an open file is passed; flock does not touch memory
-    // and returns only an error code.
-    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
-}
-
-#[cfg(not(unix))]
-fn try_lock(_file: &std::fs::File) -> bool {
-    // Without flock it is more honest to consider the project free than to pretend there is protection.
-    true
 }
 
 #[cfg(test)]
@@ -179,5 +155,42 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(a, lock_file_for(Path::new("/w/./film.kt")));
         assert!(a.to_string_lossy().ends_with(".lock"));
+    }
+
+    /// t852 (windows-build): the Windows key of one file written four ways is one key, the
+    /// Linux key keeps case; a busy project names its holder through the pid file (the only
+    /// way on Windows, where the locked file cannot be read).
+    #[test]
+    fn t852_lock_key_normalized_and_pid_read_while_locked() {
+        use kt_dirs::Os;
+        use kt_dirs::locks::{key, stem};
+        let forms = [r"C:\Proj\a.kt", r"c:\proj\A.kt", r"\\?\C:\Proj\a.kt", "C:/Proj/a.kt"];
+        let keys: Vec<String> = forms.iter().map(|f| key(f, Os::Windows)).collect();
+        assert!(keys.iter().all(|k| k == r"c:\proj\a.kt"), "{keys:?}");
+        assert_eq!(key(r"\\?\UNC\nas\v\a.kt", Os::Windows), r"\\nas\v\a.kt");
+        assert_ne!(stem("/p/a.kt", Os::Linux), stem("/p/A.kt", Os::Linux));
+        // the Linux name of an existing lock did not change (FNV-1a of the path as is)
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in "/w/film.kt".as_bytes() {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x100_0000_01b3);
+        }
+        assert_eq!(stem("/w/film.kt", Os::Linux), format!("{h:016x}"));
+
+        let dir = std::env::temp_dir().join(format!("kt-t852-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("p.kt");
+        let _held = match acquire(&p) {
+            LockState::Owned(l) => l,
+            _ => panic!("a free project must be claimed"),
+        };
+        let lock = lock_file_for(&p);
+        assert!(kt_dirs::locks::pid_file(&lock).exists(), "the pid file is written next to the lock");
+        match acquire(&p) {
+            LockState::Busy { pid } => assert_eq!(pid, Some(std::process::id())),
+            _ => panic!("the busy project was handed to a second copy"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

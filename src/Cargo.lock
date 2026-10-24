@@ -1995,6 +1995,7 @@ dependencies = [
  "getrandom 0.3.4",
  "image",
  "kt-cache",
+ "kt-dirs",
  "kt-engine",
  "kt-ffmpeg",
  "kt-fx",
@@ -2005,7 +2006,6 @@ dependencies = [
  "kt-text",
  "kt-time",
  "kt-version",
- "libc",
  "rfd",
  "rtrb",
  "serde_json",
@@ -2028,6 +2028,7 @@ name = "kt-cli"
 version = "0.1.0"
 dependencies = [
  "kt-cache",
+ "kt-dirs",
  "kt-engine",
  "kt-ffmpeg",
  "kt-fx",
@@ -2038,6 +2039,13 @@ dependencies = [
  "kt-time",
  "kt-version",
  "serde_json",
+]
+
+[[package]]
+name = "kt-dirs"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2128,6 +2136,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

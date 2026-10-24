@@ -15,5 +15,6 @@ kt-cache = { workspace = true }
 kt-gpu = { workspace = true }
 kt-media = { workspace = true }
 kt-ffmpeg = { workspace = true }
+kt-dirs = { workspace = true }
 serde_json = { workspace = true }
 kt-otio = { workspace = true }

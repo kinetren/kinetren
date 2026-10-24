@@ -208,7 +208,7 @@ impl FxPresetStore {
         }
         if self.broken && path.exists() {
             // a broken file is not thrown away silently — it is moved aside next to it
-            let _ = std::fs::rename(&path, path.with_extension("json.broken"));
+            let _ = kt_otio::replace_file(&path, &path.with_extension("json.broken"));
             self.broken = false;
         }
         let doc = serde_json::json!({ "version": PRESETS_VERSION, "presets": self.raw });

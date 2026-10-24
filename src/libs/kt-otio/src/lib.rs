@@ -23,7 +23,8 @@ pub use convert::{
     timeline_to_project,
 };
 pub use io::{
-    AtomicFs, RealFs, Written, atomic_tmp_path, parse_document, write_atomic, write_atomic_with,
+    AtomicFs, REPLACE_PAUSES_MS, RealFs, Written, atomic_tmp_path, parse_document, replace_file,
+    write_atomic, write_atomic_with,
     write_document,
 };
 pub use legacy::import_legacy;

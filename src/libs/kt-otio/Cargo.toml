@@ -14,3 +14,7 @@ serde = { workspace = true }
 serde_json = { workspace = true, features = ["preserve_order"] }
 indexmap = { workspace = true }
 thiserror = { workspace = true }
+
+# windows-build (design D6): MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH) for the atomic replace
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

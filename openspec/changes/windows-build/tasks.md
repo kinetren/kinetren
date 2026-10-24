@@ -28,11 +28,11 @@ change.
 
 ## 3. Per-user directories, lock, atomic replace
 
-- [ ] 3.1 New crate `src/libs/kt-dirs` (`data_dir`, `local_dir`, injected `Env`, `SHGetKnownFolderPath` under `cfg(windows)`), with no `"."` fallback; kt-app `journal.rs` and kt-cli `kt_lock_holder` use it; the kinotrain migration is compiled only on Linux and runs only on a resolved root; verify t851 (`src/libs/kt-dirs/tests/dirs.rs`) and that t830/t831 stay green
-- [ ] 3.2 Pass `NativeOptions::persistence_path` from `kt-dirs`; verify on Linux that the eframe storage file path is byte-identical to before (print both in a test or a one-off check recorded here), so no settings move
-- [ ] 3.3 `project_lock.rs`: `std::fs::File::try_lock` on both OSes, pid in `<key>.pid`, pure `lock_key(path, flavor)`; remove the `libc` flock code and the `cfg(not(unix))` stub; verify t362/t362b/t363/t364 green and t852 (`src/apps/kt-app/src/project_lock.rs`) on Linux, and t852's Busy-with-pid part under wine
-- [ ] 3.4 `kt-otio io.rs`: `replace` in the file-system trait, `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)` on Windows, the pure retry policy (design D6), `dir_synced = true` after write-through; journal rotation and `user_store` use it; verify t853 (`src/libs/kt-otio/tests/io.rs`) and that t351/t353 stay green
-- [ ] 3.5 Commit stage 3
+- [x] 3.1 New crate `src/libs/kt-dirs` (`data_dir`, `local_dir`, injected `Env`, `SHGetKnownFolderPath` under `cfg(windows)`), with no `"."` fallback; kt-app `journal.rs` and kt-cli `kt_lock_holder` use it; the kinotrain migration is compiled only on Linux and runs only on a resolved root; verify t851 (`src/libs/kt-dirs/tests/dirs.rs`) and that t830/t831 stay green
+- [x] 3.2 Pass `NativeOptions::persistence_path` from `kt-dirs`; verify on Linux that the eframe storage file path is byte-identical to before (print both in a test or a one-off check recorded here), so no settings move
+- [x] 3.3 `project_lock.rs`: `std::fs::File::try_lock` on both OSes, pid in `<key>.pid`, pure `lock_key(path, flavor)`; remove the `libc` flock code and the `cfg(not(unix))` stub; verify t362/t362b/t363/t364 green and t852 (`src/apps/kt-app/src/project_lock.rs`) on Linux, and t852's Busy-with-pid part under wine
+- [x] 3.4 `kt-otio io.rs`: `replace` in the file-system trait, `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)` on Windows, the pure retry policy (design D6), `dir_synced = true` after write-through; journal rotation and `user_store` use it; verify t853 (`src/libs/kt-otio/tests/io.rs`) and that t351/t353 stay green
+- [x] 3.5 Commit stage 3
 
 ## 4. Media paths across operating systems
 
