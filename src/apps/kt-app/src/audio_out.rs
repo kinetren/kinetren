@@ -167,14 +167,22 @@ impl OutputEdge {
                 2,
             )
             .map_err(|e| format!("output resampler {AUDIO_SAMPLE_RATE} to {device_rate} Hz: {e}"))?;
+            let mut fft = fft;
             let n_in = fft.input_frames_max();
             let n_out = fft.output_frames_max();
             let delay_engine =
                 (fft.output_delay() as i64 * AUDIO_SAMPLE_RATE as i64) / device_rate as i64;
+            let input = [vec![0.0; n_in], vec![0.0; n_in]];
+            let mut output = [vec![0.0; n_out], vec![0.0; n_out]];
+            // One pass on silence HERE, then a reset: the FFT allocates its scratch lazily on
+            // the first process, and on some CPUs (another SIMD path of rustfft — the CI runner,
+            // not this workshop) that happened in the first callbacks: 4 allocations, invariant 6.
+            let _ = fft.process_into_buffer(&input, &mut output, None);
+            fft.reset();
             Some(Resample {
                 fft,
-                input: [vec![0.0; n_in], vec![0.0; n_in]],
-                output: [vec![0.0; n_out], vec![0.0; n_out]],
+                input,
+                output,
                 fifo_l: vec![0.0; n_out],
                 fifo_r: vec![0.0; n_out],
                 head: 0,
@@ -289,13 +297,20 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicU64;
 
-    /// Allocations of the whole test process (asserted only under nextest, where the test
-    /// has its process to itself).
+    /// Allocations made on the thread that runs the fills — only while it is measuring
+    /// (another thread of the harness allocating at the same time must not count: on the CI
+    /// runner the process-wide count saw 4 that the fills did not make). The flag is a
+    /// const-initialised thread-local: reading it does not allocate.
     struct Counting;
     static ALLOCS: AtomicU64 = AtomicU64::new(0);
+    thread_local! {
+        static MEASURING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
     unsafe impl std::alloc::GlobalAlloc for Counting {
         unsafe fn alloc(&self, l: std::alloc::Layout) -> *mut u8 {
-            ALLOCS.fetch_add(1, Ordering::Relaxed);
+            if MEASURING.with(|m| m.get()) {
+                ALLOCS.fetch_add(1, Ordering::Relaxed);
+            }
             unsafe { std::alloc::System.alloc(l) }
         }
         unsafe fn dealloc(&self, p: *mut u8, l: std::alloc::Layout) {
@@ -320,14 +335,19 @@ mod tests {
         let mut done = 0;
         let mut i = 0;
         let before = ALLOCS.load(Ordering::Relaxed);
+        let mut allocs = 0;
         while done < frames {
             let k = sizes[i % sizes.len()].min(frames - done);
             i += 1;
+            // only the fill is measured: the copy into `out` is the test's own bookkeeping
+            MEASURING.with(|m| m.set(true));
             consumed += edge.fill(&mut buf[..k * ch], 1.0, &mut next);
+            MEASURING.with(|m| m.set(false));
             out[done * ch..(done + k) * ch].copy_from_slice(&buf[..k * ch]);
             done += k;
         }
-        (out, consumed, ALLOCS.load(Ordering::Relaxed) - before)
+        allocs += ALLOCS.load(Ordering::Relaxed) - before;
+        (out, consumed, allocs)
     }
 
     /// t857 (windows-build, transport): 44.1 kHz and 6-channel devices are converted at the
@@ -336,7 +356,8 @@ mod tests {
     #[test]
     fn t857_output_edge_converts_rate_and_channels() {
         let sizes = [441, 512, 1024];
-        let strict_allocs = std::env::var_os("NEXTEST").is_some();
+        // per-thread counting: valid under cargo test's shared process as well
+        let strict_allocs = true;
 
         // 44.1 kHz stereo: one second of device time
         let mut e = OutputEdge::new(44_100, 2, MAX_CALLBACK_FRAMES).unwrap();

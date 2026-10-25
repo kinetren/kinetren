@@ -118,13 +118,25 @@ fn t485_title_export_is_deterministic() {
     assert!(bg > 1000, "the solid background under the title disappeared: {bg}");
 }
 
-/// The reference is fixed on linux x86_64 (like GOLDEN_VIDEO). A deliberate
-/// change of font/pins = regeneration with a record in FONT-MANIFEST.txt.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+/// The references per platform (windows-build; like GOLDEN in golden_export.rs, which t859
+/// checks for every delivered platform). A deliberate change of font/pins = regeneration with
+/// a record in FONT-MANIFEST.txt.
+const GOLDEN: &[(&str, &str, u64, &str)] = &[
+    ("linux", "x86_64", GOLDEN_TITLE_VIDEO, "linux/x86_64 workshop (R.52 C3)"),
+    ("windows", "x86_64", GOLDEN_TITLE_VIDEO,
+        "assumed equal to linux (t662, ungated, matched on windows-latest); confirmed or \
+         corrected by the windows-latest CI run (windows-build 7.4)"),
+];
+
 #[test]
 fn t485_title_matches_committed_golden() {
     let (v, _) = run_hash();
-    assert_eq!(v, GOLDEN_TITLE_VIDEO, "the title stream diverged from the reference: 0x{v:016x}");
+    let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+    let Some(&(_, _, g, prov)) = GOLDEN.iter().find(|r| r.0 == os && r.1 == arch) else {
+        eprintln!("skipped: no committed title reference for {os}/{arch}; measured 0x{v:016x}");
+        return;
+    };
+    assert_eq!(v, g, "the title stream diverged from the {os}/{arch} reference ({prov}): 0x{v:016x}");
 }
 
 // REGENERATED in C3 of the same round: the fill went through a single

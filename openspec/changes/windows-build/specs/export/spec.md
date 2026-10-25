@@ -74,6 +74,6 @@ for all OSes would keep Windows red forever, and its absence would be unguarded.
 - **TEST** t485_title_export_is_deterministic, t485_title_matches_committed_golden, t662 (`src/libs/kt-engine/tests/title_golden.rs`)
 
 #### Scenario: Each shipped platform has its own constants
-- **WHEN** the reference tables (export, title, video FX, FX thumbnails, merging of geometry series) are read by the guard
+- **WHEN** the export and title reference tables are read by the guard (the video-FX, FX-thumbnail and geometry-merging hashes are not tied to a platform and matched on windows-latest, so they keep one constant for all platforms)
 - **THEN** each platform from the shipped list (linux/x86_64, windows/x86_64) has an entry in each table, and each entry has a provenance line (machine, run); on a platform without an entry the comparison test is skipped with a named reason, rather than passing silently
 - **TEST** t859 (`src/libs/kt-engine/tests/golden_export.rs`)

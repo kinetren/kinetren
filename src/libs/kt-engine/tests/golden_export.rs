@@ -1,8 +1,8 @@
 //! Test 11: golden export.
 //! - raw streams (RGBA + f32) are deterministic from run to run;
-//! - the hashes match the committed references (platform binding:
-//!   linux x86_64 — on another platform libm/sinc coefficients may give
-//!   other bits, then the reference is revised consciously);
+//! - the hashes match the committed references of THIS platform (a table per os/arch,
+//!   windows-build: libm/sinc coefficients may give other bits on another platform, then
+//!   its row is revised consciously; t859 keeps a row for every delivered platform);
 //! - “preview == export”: a frame from the export stream is byte for byte equal to the
 //!   frame of the preview composite at the same Quality (a single path — invariant No. 7).
 
@@ -300,14 +300,53 @@ fn t11_streams_are_deterministic_across_runs() {
     assert_eq!(a.3, 75);
 }
 
+/// The platforms people get a build for (capability `distribution`).
+pub const DELIVERED: [(&str, &str); 2] = [("linux", "x86_64"), ("windows", "x86_64")];
+
+/// The committed references PER PLATFORM (windows-build, export spec): (os, arch, audio,
+/// video, where they were taken). libm differs between platforms and may move the last bit;
+/// a platform's row changes only by a deliberate decision, like the values themselves.
+const GOLDEN: &[(&str, &str, u64, u64, &str)] = &[
+    ("linux", "x86_64", GOLDEN_AUDIO, GOLDEN_VIDEO, "linux/x86_64 workshop, 2026-09-07 (R.37)"),
+    (
+        "windows",
+        "x86_64",
+        GOLDEN_AUDIO,
+        GOLDEN_VIDEO,
+        "assumed equal to linux (the ungated FX/geometry hashes matched on windows-latest); \
+         confirmed or corrected by the windows-latest CI run (windows-build 7.4)",
+    ),
+];
+
 #[test]
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn t11_streams_match_committed_golden() {
     let (audio, video, _, _) = run_export_hashes();
-    // The references are fixed on linux x86_64. A deliberate change of the render
-    // algorithms = a deliberate update of the references (with listening!).
-    assert_eq!(audio, GOLDEN_AUDIO, "audio stream diverged from the reference: 0x{audio:016x}");
-    assert_eq!(video, GOLDEN_VIDEO, "video stream diverged from the reference: 0x{video:016x}");
+    let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+    let Some(&(_, _, ga, gv, prov)) = GOLDEN.iter().find(|g| g.0 == os && g.1 == arch) else {
+        eprintln!("skipped: no committed reference for {os}/{arch}; measured audio 0x{audio:016x}, video 0x{video:016x}");
+        return;
+    };
+    // A deliberate change of the render algorithms = a deliberate update of the references
+    // (with listening!).
+    assert_eq!(audio, ga, "audio stream diverged from the {os}/{arch} reference ({prov}): 0x{audio:016x}");
+    assert_eq!(video, gv, "video stream diverged from the {os}/{arch} reference ({prov}): 0x{video:016x}");
+}
+
+/// t859 (windows-build, export): every delivered platform has its row in the reference
+/// tables (export here, the title in title_golden.rs), each with where it was taken; a
+/// platform without one would be compared against nothing and pass silently.
+#[test]
+fn t859_every_delivered_platform_has_references() {
+    // whitespace-insensitive: rustfmt may lay the rows out over lines
+    let title: String = include_str!("title_golden.rs").chars().filter(|c| !c.is_whitespace()).collect();
+    for (os, arch) in DELIVERED {
+        let row = GOLDEN.iter().find(|g| g.0 == os && g.1 == arch);
+        assert!(row.is_some_and(|r| !r.4.is_empty()), "no export reference row for {os}/{arch}");
+        assert!(
+            title.contains(&format!("(\"{os}\",\"{arch}\",GOLDEN_TITLE_VIDEO")),
+            "no title reference row for {os}/{arch} in title_golden.rs"
+        );
+    }
 }
 
 // REGENERATED 2026-09-07 (the second and last time): the automation axis was
