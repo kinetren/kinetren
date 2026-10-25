@@ -1,4 +1,4 @@
-# <img src="src/packaging/kinetren.svg" width="40" height="40" align="center" alt=""> kinetren
+# <img src="src/packaging/kinetren.svg" width="40" height="40" align="top" alt=""> kinetren
 
 **A free, source-available video editor for Linux.**
 [kinetren.com](https://kinetren.com) · [Discord](https://discord.gg/w8enAWJSc) · [Download](https://github.com/kinetren/kinetren/releases)
