@@ -124,8 +124,7 @@ fn t485_title_export_is_deterministic() {
 const GOLDEN: &[(&str, &str, u64, &str)] = &[
     ("linux", "x86_64", GOLDEN_TITLE_VIDEO, "linux/x86_64 workshop (R.52 C3)"),
     ("windows", "x86_64", GOLDEN_TITLE_VIDEO,
-        "assumed equal to linux (t662, ungated, matched on windows-latest); confirmed or \
-         corrected by the windows-latest CI run (windows-build 7.4)"),
+        "equal to linux, confirmed on windows-latest (CI logs 108933450618, 2026-10-25)"),
 ];
 
 #[test]

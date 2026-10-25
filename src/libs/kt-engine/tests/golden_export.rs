@@ -311,10 +311,12 @@ const GOLDEN: &[(&str, &str, u64, u64, &str)] = &[
     (
         "windows",
         "x86_64",
-        GOLDEN_AUDIO,
+        // the audio mix differs in the last bits: the C runtime's transcendentals (sin/exp
+        // from msvcrt) are not glibc's
+        0x0a9c_8e22_f9f1_e8c2,
         GOLDEN_VIDEO,
-        "assumed equal to linux (the ungated FX/geometry hashes matched on windows-latest); \
-         confirmed or corrected by the windows-latest CI run (windows-build 7.4)",
+        "audio measured on windows-latest (CI logs 108933450618, 2026-10-25); video assumed \
+         equal to linux until the next windows-latest run confirms it",
     ),
 ];
 
@@ -327,9 +329,14 @@ fn t11_streams_match_committed_golden() {
         return;
     };
     // A deliberate change of the render algorithms = a deliberate update of the references
-    // (with listening!).
-    assert_eq!(audio, ga, "audio stream diverged from the {os}/{arch} reference ({prov}): 0x{audio:016x}");
-    assert_eq!(video, gv, "video stream diverged from the {os}/{arch} reference ({prov}): 0x{video:016x}");
+    // (with listening!). Both streams in one assertion: a new platform's row is corrected
+    // from ONE run's log.
+    assert_eq!(
+        (audio, video),
+        (ga, gv),
+        "the streams diverged from the {os}/{arch} reference ({prov}): measured audio \
+         0x{audio:016x}, video 0x{video:016x}"
+    );
 }
 
 /// t859 (windows-build, export): every delivered platform has its row in the reference

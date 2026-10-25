@@ -3899,10 +3899,29 @@ fn t804_live_coverage_names_untouched_places() {
 
     // 5) a scenario declared moved has returned to disk — red:
     //    otherwise the registry would diverge from the tree and stop meaning anything
-    let back = root.join("scripts/live/nestzero.py");
-    std::fs::write(&back, "if __name__ == \"__main__\":\n    pass\n").unwrap();
-    let (ok_back, said_back) = run(&["--check"]);
-    std::fs::remove_file(&back).ok();
+    //    The scenario is added to a COPY of the folder (KT_LIVE_DIR): writing into the real
+    //    one raced with t808, which globs it in parallel (seen on the CI runner).
+    let live_copy = std::env::temp_dir().join(format!("kt-t804-live-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&live_copy);
+    std::fs::create_dir_all(&live_copy).unwrap();
+    for e in std::fs::read_dir(root.join("scripts/live")).unwrap() {
+        let p = e.unwrap().path();
+        if p.extension().is_some_and(|x| x == "py") {
+            std::fs::copy(&p, live_copy.join(p.file_name().unwrap())).unwrap();
+        }
+    }
+    std::fs::write(live_copy.join("nestzero.py"), "if __name__ == \"__main__\":\n    pass\n").unwrap();
+    let out = std::process::Command::new("python3")
+        .arg(&guard)
+        .arg("--check")
+        .env("KT_LIVE_DIR", &live_copy)
+        .output()
+        .expect("python3 for the coverage report");
+    let (ok_back, said_back) = (
+        out.status.success(),
+        format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+    );
+    let _ = std::fs::remove_dir_all(&live_copy);
     assert!(!ok_back, "the guard did not notice a returned scenario that had moved");
     assert!(
         said_back.contains("nestzero.py"),

@@ -43,13 +43,16 @@ not about completeness, plus the DECLARED LIMIT of gaps:
     python3 scripts/live-coverage.py            # report
     python3 scripts/live-coverage.py --check    # report and verdict
 """
+import os
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "apps" / "kt-app" / "src"
-LIVE = ROOT / "src" / "scripts" / "live"
+# KT_LIVE_DIR: a COPY of the scenario folder for the guard's own test (t804 adds a "returned"
+# scenario there) — the real folder is shared with tests running in parallel (t808 globs it)
+LIVE = Path(os.environ["KT_LIVE_DIR"]) if os.environ.get("KT_LIVE_DIR") else ROOT / "src" / "scripts" / "live"
 SPECS = ROOT / "openspec"
 
 NOTE = re.compile(r'field_probe::note\(\s*&?(?:format!\()?\s*"([^"]+)"')
