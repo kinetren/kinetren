@@ -3854,6 +3854,33 @@ fn t804_live_coverage_names_untouched_places() {
         (out.status.success(), said)
     };
 
+    // The guard on a COPY of the scenario folder (KT_LIVE_DIR), changed by `edit`: the real
+    // folder is shared with tests running in parallel (t807/t808 glob it), and a crash between
+    // "remove" and "put back" would have lost a scenario from the tree (seen on the CI runner).
+    let run_on_copy = |tag: &str, edit: &dyn Fn(&std::path::Path)| -> (bool, String) {
+        let copy = std::env::temp_dir().join(format!("kt-t804-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&copy);
+        std::fs::create_dir_all(&copy).unwrap();
+        for e in std::fs::read_dir(root.join("scripts/live")).unwrap() {
+            let p = e.unwrap().path();
+            if p.extension().is_some_and(|x| x == "py") {
+                std::fs::copy(&p, copy.join(p.file_name().unwrap())).unwrap();
+            }
+        }
+        edit(&copy);
+        let out = std::process::Command::new("python3")
+            .arg(&guard)
+            .arg("--check")
+            .current_dir(&root)
+            .env("KT_LIVE_DIR", &copy)
+            .output()
+            .expect("python3 for the coverage report");
+        let _ = std::fs::remove_dir_all(&copy);
+        let mut said = String::from_utf8_lossy(&out.stdout).into_owned();
+        said.push_str(&String::from_utf8_lossy(&out.stderr));
+        (out.status.success(), said)
+    };
+
     // 1) today’s tree: the report names the number of untouched places
     let (ok, said) = run(&["--check"]);
     assert!(ok, "the coverage guard is red on the current tree: {said}");
@@ -3863,14 +3890,13 @@ fn t804_live_coverage_names_untouched_places() {
     );
 
     // 2) a scenario aims at a place the program does not publish
-    let probe = root.join("scripts/live/_t804_probe.py");
-    std::fs::write(
-        &probe,
-        "def main(out):\n    app.click_probe(\"nonexistentprobe.at_all\", \"place\")\n",
-    )
-    .unwrap();
-    let (ok_phantom, said_phantom) = run(&["--check"]);
-    std::fs::remove_file(&probe).ok();
+    let (ok_phantom, said_phantom) = run_on_copy("phantom", &|d| {
+        std::fs::write(
+            d.join("_t804_probe.py"),
+            "def main(out):\n    app.click_probe(\"nonexistentprobe.at_all\", \"place\")\n",
+        )
+        .unwrap()
+    });
     assert!(!ok_phantom, "the guard did not notice aiming at a nonexistent place");
     assert!(
         said_phantom.contains("nonexistentprobe"),
@@ -3879,11 +3905,9 @@ fn t804_live_coverage_names_untouched_places() {
 
     // 3) a live scenario named by the spec has disappeared from disk — red:
     //    the check’s move MUST change the address, not drop the scenario
-    let victim = root.join("scripts/live/deadend.py");
-    let saved = std::fs::read_to_string(&victim).expect("live scenario deadend.py");
-    std::fs::remove_file(&victim).unwrap();
-    let (ok_gone, said_gone) = run(&["--check"]);
-    std::fs::write(&victim, saved).unwrap();
+    assert!(root.join("scripts/live/deadend.py").exists(), "live scenario deadend.py");
+    let (ok_gone, said_gone) =
+        run_on_copy("gone", &|d| std::fs::remove_file(d.join("deadend.py")).unwrap());
     assert!(!ok_gone, "the guard did not notice a vanished scenario of the spec");
     assert!(
         said_gone.contains("deadend.py"),
@@ -3899,29 +3923,9 @@ fn t804_live_coverage_names_untouched_places() {
 
     // 5) a scenario declared moved has returned to disk — red:
     //    otherwise the registry would diverge from the tree and stop meaning anything
-    //    The scenario is added to a COPY of the folder (KT_LIVE_DIR): writing into the real
-    //    one raced with t808, which globs it in parallel (seen on the CI runner).
-    let live_copy = std::env::temp_dir().join(format!("kt-t804-live-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&live_copy);
-    std::fs::create_dir_all(&live_copy).unwrap();
-    for e in std::fs::read_dir(root.join("scripts/live")).unwrap() {
-        let p = e.unwrap().path();
-        if p.extension().is_some_and(|x| x == "py") {
-            std::fs::copy(&p, live_copy.join(p.file_name().unwrap())).unwrap();
-        }
-    }
-    std::fs::write(live_copy.join("nestzero.py"), "if __name__ == \"__main__\":\n    pass\n").unwrap();
-    let out = std::process::Command::new("python3")
-        .arg(&guard)
-        .arg("--check")
-        .env("KT_LIVE_DIR", &live_copy)
-        .output()
-        .expect("python3 for the coverage report");
-    let (ok_back, said_back) = (
-        out.status.success(),
-        format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
-    );
-    let _ = std::fs::remove_dir_all(&live_copy);
+    let (ok_back, said_back) = run_on_copy("back", &|d| {
+        std::fs::write(d.join("nestzero.py"), "if __name__ == \"__main__\":\n    pass\n").unwrap()
+    });
     assert!(!ok_back, "the guard did not notice a returned scenario that had moved");
     assert!(
         said_back.contains("nestzero.py"),

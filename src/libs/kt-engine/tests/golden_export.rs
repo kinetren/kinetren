@@ -315,8 +315,8 @@ const GOLDEN: &[(&str, &str, u64, u64, &str)] = &[
         // from msvcrt) are not glibc's
         0x0a9c_8e22_f9f1_e8c2,
         GOLDEN_VIDEO,
-        "audio measured on windows-latest (CI logs 108933450618, 2026-10-25); video assumed \
-         equal to linux until the next windows-latest run confirms it",
+        "audio measured on windows-latest (CI logs 108933450618, 2026-10-25); video equal to \
+         linux, confirmed on windows-latest (CI logs 108938035781, 2026-10-25)",
     ),
 ];
 
