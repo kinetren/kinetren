@@ -14,4 +14,4 @@ Why: `i18n/README.md` rule 3; five `[tl.menu]` labels carried "(Ctrl+C)", "(Ctrl
 - **WHEN** every `[tl.menu]` and `[menu.*]` value (except the `*_accel` chord texts) is read in each of the five languages; the event menu and the empty-space menu with a region are opened by a right click; the morpher Delete chord is asked for with that morpher alone in the selection and with a second morpher selected
 - **THEN** no label contains `Ctrl+`, `Del`, `Supr`, `Shift+` or a key in parentheses; Copy shows `Ctrl+C`, Region over this event shows the translated "Shift+2×click", Delete clips in the region shows `Del`, both Paste items show no chord; Delete morpher shows `Del` only when it is alone in the selection
 - **PATH** right-click a clip → the menu: "Copy" with Ctrl+C on the right, "Paste" with nothing on the right, "Region over this event" with Shift+2×click on the right → Esc → draw a region, right-click empty track space → "Delete clips in the region" with Del on the right
-- **TEST** t871 (`src/apps/kt-app/src/layout_tests.rs`)
+- **TEST** t871 (`src/apps/kt-app/src/reach_tests.rs`)

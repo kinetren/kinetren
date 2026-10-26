@@ -1825,6 +1825,20 @@ system frame (nothing written); real Windows stays borderless. Change
 `openspec/changes/wine-frame-and-dark-theme`, done in the branch `wine-frame-and-dark-theme`
 (the owner asked for a separate branch).
 
+## Menu labels without keys (2026-10-26)
+
+The follow-up proposed at the end of `split-menu-label`: five `[tl.menu]` labels carry their key
+in the translated text ("Copy (Ctrl+C)", "Paste (Ctrl+V)", "Delete morpher (Del)", "Delete clips
+in the region (Del)", "Region over this event (Shift+double click)").
+
+> Do this task here: "Menu labels: move keys out of the text"
+
+**Answer (AskUserQuestion, 2026-10-26):** the gesture of "Region over this event" goes to the
+*chord column, translated* — like the reel items' "Enter, 2×click". Found while checking the
+handlers: the context-menu Paste pastes at the click, not at the playhead, so it gets no
+`Ctrl+V`; Delete morpher deletes one block while `Del` deletes the whole selection, so `Del` is
+shown only when that morpher is alone. Change `openspec/changes/menu-chords-out-of-text`.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

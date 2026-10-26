@@ -50,6 +50,6 @@ the chord column, translated like "Enter, 2×click", for the gesture.
   `morpher_del_accel`.
 - `src/apps/kt-app/i18n/{en,ru,es,zh-Hans,ar}.toml`: five labels shortened; one new key. No
   new characters: "2×", "клик", "clic", "双击" and "نقرة مزدوجة" are already in the catalogs.
-- Tests: t871 in `src/apps/kt-app/src/layout_tests.rs`; the UI-text guards (`i18n_tests.rs`,
+- Tests: t871 in `src/apps/kt-app/src/reach_tests.rs`; the UI-text guards (`i18n_tests.rs`,
   `font_tests.rs`, `reach_tests.rs`, which matches the Delete-morpher item by "contains" so the
   chord does not break it, and `layout_tests.rs`).

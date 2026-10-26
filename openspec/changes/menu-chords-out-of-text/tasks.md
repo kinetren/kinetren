@@ -11,7 +11,7 @@ this change's files.
 
 ## 1. Test first
 
-- [ ] 1.1 Write t871 in `src/apps/kt-app/src/layout_tests.rs` as in design D3 (catalog scan, the two menus in the harness, `morpher_del_accel`). The function does not exist yet, so add a stub that returns `None` for step 3. Verify t871 is RED on the current catalogs, and record the message here
+- [ ] 1.1 Write t871 in `src/apps/kt-app/src/reach_tests.rs` (not `layout_tests.rs`: another session has uncommitted edits there, and this checkout cannot stage single hunks) as in design D3 (catalog scan, the two menus in the harness, `morpher_del_accel`). The function does not exist yet, so add a stub that returns `None` for step 3. Verify t871 is RED on the current catalogs, and record the message here
 
 ## 2. Labels and chords
 
