@@ -6,7 +6,7 @@ message, first line = stage and what was done, no `Co-Authored-By` or other agen
 ## 0. Records before code
 
 - [x] 0.1 Append the owner's request and decisions of 2026-10-26 to `docs/user-feedback.md` (Windows Download → 9.0.2, "CI tests 9 only"; Linux proof = 9.0.2 built from source in Docker); verify the entry names `ffmpeg-9`
-- [ ] 0.2 Commit stage 0 together with the change's artifacts (`openspec validate ffmpeg-9 --strict` green)
+- [x] 0.2 Commit stage 0 together with the change's artifacts (`openspec validate ffmpeg-9 --strict` green)
 
 ## 1. FFmpeg 9 headers, the table and the v9 module
 
