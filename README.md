@@ -5,7 +5,7 @@
 
 [![License: kinetren Non-Commercial 1.0](https://img.shields.io/badge/license-kinetren%20Non--Commercial%201.0-blue)](LICENSE)
 ![Platform: Linux x86-64](https://img.shields.io/badge/platform-Linux%20x86--64-informational)
-![FFmpeg 6, 7, 8](https://img.shields.io/badge/FFmpeg-6%20%7C%207%20%7C%208-green?logo=ffmpeg)
+![FFmpeg 6, 7, 8, 9](https://img.shields.io/badge/FFmpeg-6%20%7C%207%20%7C%208%20%7C%209-green?logo=ffmpeg)
 [![Latest release](https://img.shields.io/github/v/release/kinetren/kinetren?include_prereleases&label=release)](https://github.com/kinetren/kinetren/releases)
 [![Last commit](https://img.shields.io/github/last-commit/kinetren/kinetren)](https://github.com/kinetren/kinetren/commits)
 [![GitHub stars](https://img.shields.io/github/stars/kinetren/kinetren?style=flat)](https://github.com/kinetren/kinetren/stargazers)
@@ -117,7 +117,7 @@ kinetren speaks English, Spanish, Simplified Chinese, Russian and Arabic.
 ## Install
 
 kinetren runs on Linux x86-64 with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora
-36 and later). It uses the FFmpeg 6, 7 or 8 already installed on your system, ALSA for
+36 and later). It uses the FFmpeg 6, 7, 8 or 9 already installed on your system, ALSA for
 sound, and any GPU driver with Vulkan or OpenGL. Without a GPU it falls back to the CPU.
 
 **From a release:** download the archive from
@@ -146,10 +146,10 @@ the other commands. Building with your own Rust toolchain is described in
 **Windows (x86-64, Windows 10 or 11):** download `kinetren-<version>-windows-x86_64.zip`
 from [Releases](https://github.com/kinetren/kinetren/releases), unpack it anywhere and
 start `kinetren.exe`; nothing is installed. FFmpeg is not in the zip. On the first start
-the program offers **Download** (the FFmpeg 8.1.2 shared build by gyan.dev, GPLv3, about
+the program offers **Download** (the FFmpeg 9.0.2 shared build by gyan.dev, GPLv3, about
 57 MB, checked against a checksum built into kinetren) or **Locate folder…** for a shared
-FFmpeg 6, 7 or 8 you already have, for example
-`winget install Gyan.FFmpeg.Shared --version 8.1.2`. *View → FFmpeg…* shows which folder
+FFmpeg 6, 7, 8 or 9 you already have, for example
+`winget install Gyan.FFmpeg.Shared --version 9.0.2`. *View → FFmpeg…* shows which folder
 is used and why others were not. The executables are not code-signed yet, so SmartScreen
 may warn: *More info → Run anyway*. `make windows` builds the same zip from source.
 

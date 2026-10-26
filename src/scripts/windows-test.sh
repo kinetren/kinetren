@@ -36,8 +36,8 @@ docker run --rm --network=host -u "$UID_GID" -v "$PWD/..:/kt" -w /kt/src \
     -v "$REGISTRY:/usr/local/cargo/registry" \
     -e CARGO_TARGET_DIR=/kt/src/target/win-container -e RUSTFLAGS= \
     -e WINEPREFIX=/kt/src/target/wineprefix -e HOME=/tmp \
-    -e KT_FFMPEG_WIN_DIR=/kt/src/target/ffmpeg-win/8.1.2 \
-    -e 'KINETREN_FFMPEG_DIR=Z:\kt\src\target\ffmpeg-win\8.1.2' \
+    -e KT_FFMPEG_WIN_DIR=/kt/src/target/ffmpeg-win/9.0.2 \
+    -e 'KINETREN_FFMPEG_DIR=Z:\kt\src\target\ffmpeg-win\9.0.2' \
     "$IMAGE" bash -c "set -euo pipefail
 scripts/fetch-ffmpeg-win.sh
 cargo nextest run --target x86_64-pc-windows-gnu --workspace --no-fail-fast $*"

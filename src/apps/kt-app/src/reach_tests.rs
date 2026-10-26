@@ -4780,9 +4780,9 @@ fn t850_ffmpeg_window_from_not_found_to_playing() {
     // a complete folder of this OS
     let full = if cfg!(windows) {
         let pinned = std::env::var_os("KT_FFMPEG_WIN_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| {
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/ffmpeg-win/8.1.2")
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/ffmpeg-win/9.0.2")
         });
-        if !pinned.join("avcodec-62.dll").exists() {
+        if !pinned.join("avcodec-63.dll").exists() {
             eprintln!("t850 skipped: no pinned FFmpeg build in {}", pinned.display());
             return;
         }

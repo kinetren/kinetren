@@ -41,6 +41,9 @@ APP_MANIFEST = "src/apps/kt-app/Cargo.toml"
 DESKTOP = "src/packaging/kinetren.desktop"
 INSTALL = "src/packaging/install.sh"
 VENDOR_HEADERS = "src/scripts/vendor-ffmpeg-headers.sh"
+FETCH_WIN = "src/scripts/fetch-ffmpeg-win.sh"
+FFMPEG_SETUP = "src/apps/kt-app/src/ffmpeg_setup.rs"
+KT_DIRS = "src/libs/kt-dirs/src/lib.rs"
 MAKE_TARGETS = ["all", "build", "install", "run", "test", "clean", "help"]
 SKIP_DIRS = {".git", "target", "node_modules", "vendor"}
 
@@ -205,6 +208,38 @@ def check_windows(r):
                 r.err(CI, "nothing is compiled on the Windows runner (one toolchain: the cross-build)")
             if "sha256sum -c" not in body:
                 r.err(CI, "the Windows job checks the pinned FFmpeg's SHA-256")
+            check_windows_pin(r, body)
+
+
+def check_windows_pin(r, ci_job):
+    """One Windows FFmpeg pin (ffmpeg-9, t860): the version and SHA-256 of the program's
+    Download button (`ffmpeg_setup.rs`, the folder name in kt-dirs), of the tests' fetch script
+    and of the windows-latest job are one — the tests must load the build people download."""
+    pins = {}
+    v = re.search(r"ffmpeg-(\d+\.\d+(?:\.\d+)?)-full_build-shared\.7z", ci_job)
+    h = re.search(r'echo "([0-9a-f]{64})  ffmpeg\.7z"', ci_job)
+    pins[CI] = (v.group(1) if v else None, h.group(1) if h else None)
+    fetch = r.read(FETCH_WIN)
+    if fetch is not None:
+        v = re.search(r"^VERSION=(\S+)\s*$", fetch, re.M)
+        h = re.search(r"^SHA256=([0-9a-f]{64})\s*$", fetch, re.M)
+        pins[FETCH_WIN] = (v.group(1) if v else None, h.group(1) if h else None)
+    setup = r.read(FFMPEG_SETUP)
+    if setup is not None:
+        v = re.search(r'PINNED_ARCHIVE: &str = "ffmpeg-([^"]+)-full_build-shared\.7z"', setup)
+        h = re.search(r'PINNED_SHA256: &str = "([0-9a-f]{64})"', setup)
+        pins[FFMPEG_SETUP] = (v.group(1) if v else None, h.group(1) if h else None)
+    dirs = r.read(KT_DIRS)
+    if dirs is not None:
+        v = re.search(r'FFMPEG_DOWNLOAD_VERSION: &str = "([^"]+)"', dirs)
+        pins[KT_DIRS] = (v.group(1) if v else None, None)
+    want = pins.get(FFMPEG_SETUP)
+    if not want or None in want:
+        r.err(FFMPEG_SETUP, "no `PINNED_ARCHIVE`/`PINNED_SHA256` of the Download button")
+        return
+    for rel, (ver, sha) in pins.items():
+        if ver != want[0] or (sha is not None and sha != want[1]) or (rel != KT_DIRS and sha is None):
+            r.err(rel, f"the Windows FFmpeg pin must be {want[0]} / {want[1][:12]}… (the Download button's), found {ver} / {(sha or '-')[:12]}")
 
 
 def check_ffmpeg_test(r):

@@ -12,17 +12,17 @@ fn t846_windows_set_loads_from_one_folder() {
 
     let dir: PathBuf = match std::env::var_os("KT_FFMPEG_WIN_DIR") {
         Some(d) => d.into(),
-        None => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/ffmpeg-win/8.1.2"),
+        None => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/ffmpeg-win/9.0.2"),
     };
-    if !dir.join("avcodec-62.dll").exists() {
+    if !dir.join("avcodec-63.dll").exists() {
         eprintln!("t846 skipped: no pinned FFmpeg build in {} (scripts/fetch-ffmpeg-win.sh)", dir.display());
         return;
     }
     let dir = std::path::absolute(&dir).unwrap();
-    // a namesake earlier on PATH: a copy of avutil-60.dll in another folder
+    // a namesake earlier on PATH: a copy of avutil-61.dll in another folder
     let decoy = std::env::temp_dir().join(format!("kt-t846-decoy-{}", std::process::id()));
     std::fs::create_dir_all(&decoy).unwrap();
-    std::fs::copy(dir.join("avutil-60.dll"), decoy.join("avutil-60.dll")).unwrap();
+    std::fs::copy(dir.join("avutil-61.dll"), decoy.join("avutil-61.dll")).unwrap();
     let path = format!("{};{}", decoy.display(), std::env::var("PATH").unwrap_or_default());
     unsafe {
         std::env::set_var("PATH", &path);
@@ -30,8 +30,8 @@ fn t846_windows_set_loads_from_one_folder() {
     }
 
     let info = kt_ffmpeg::rescan().unwrap_or_else(|e| panic!("the pinned build loads:\n{e}"));
-    assert_eq!(info.major, 8);
-    assert_eq!(info.avcodec_version.0, 62, "avcodec_version() major");
+    assert_eq!(info.major, 9);
+    assert_eq!(info.avcodec_version.0, 63, "avcodec_version() major");
     let modules = kt_ffmpeg::loaded_modules();
     assert_eq!(modules.len(), 5);
     let want = dir.to_string_lossy().to_lowercase().replace('/', "\\");

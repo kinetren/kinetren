@@ -4,22 +4,22 @@
 #
 # The same archive, URL and SHA-256 as the program's Download button
 # (src/apps/kt-app/src/ffmpeg_setup.rs) — keep the two equal. The GitHub mirror serves a
-# byte-identical file (checked 2026-10-24), so one hash covers both URLs.
+# byte-identical file (9.0.2 checked 2026-10-27), so one hash covers both URLs.
 #
-# Usage:  scripts/fetch-ffmpeg-win.sh [dest]      (default: target/ffmpeg-win/8.1.2)
+# Usage:  scripts/fetch-ffmpeg-win.sh [dest]      (default: target/ffmpeg-win/9.0.2)
 # Needs:  curl, sha256sum, 7z (all in the `windows` stage of packaging/Dockerfile)
 set -euo pipefail
 cd "$(dirname "$0")/.." # src/
 
-VERSION=8.1.2
+VERSION=9.0.2
 NAME="ffmpeg-$VERSION-full_build-shared.7z"
-SHA256=cba748035c21ce1431d0823c7a3a711f38616f89f87a265dceddf9b7f6749d2d
+SHA256=4d2060a8b34a940aa47d785142055bb92a63053781e55f2ace4546edd519a8f5
 URLS="https://www.gyan.dev/ffmpeg/builds/packages/$NAME
 https://github.com/GyanD/codexffmpeg/releases/download/$VERSION/$NAME"
 DEST="${1:-target/ffmpeg-win/$VERSION}"
 CACHE="target/ffmpeg-win/$NAME"
 
-if [ -f "$DEST/avcodec-62.dll" ]; then
+if [ -f "$DEST/avcodec-63.dll" ]; then
     echo "fetch-ffmpeg-win: $DEST is ready"
     exit 0
 fi

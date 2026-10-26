@@ -160,7 +160,7 @@ pub fn local_dir() -> PathBuf {
 
 /// The FFmpeg release the program's Download button installs (Windows). kt-app downloads it
 /// (`ffmpeg_setup.rs`, with the pinned hash); kt-app and kt-cli both search its folder.
-pub const FFMPEG_DOWNLOAD_VERSION: &str = "8.1.2";
+pub const FFMPEG_DOWNLOAD_VERSION: &str = "9.0.2";
 
 /// Where the downloaded FFmpeg lives: `<local>/ffmpeg/<version>`.
 pub fn ffmpeg_download_dir() -> PathBuf {

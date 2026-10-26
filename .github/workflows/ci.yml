@@ -220,13 +220,15 @@ jobs:
           name: windows-tests
           path: src
 
-      - name: The pinned FFmpeg build (gyan.dev 8.1.2, hash checked)
+      - name: The pinned FFmpeg build (gyan.dev 9.0.2, hash checked)
         # the same pin as the program's Download button and scripts/fetch-ffmpeg-win.sh
+        # (dist-check.py, t860, keeps the three equal); FFmpeg 6/7/8 on Windows are covered
+        # by the pure search-plan tests (owner, ffmpeg-9: "CI tests 9 only")
         run: |
-          curl -fsSL --retry 3 -o ffmpeg.7z https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.1.2-full_build-shared.7z
-          echo "cba748035c21ce1431d0823c7a3a711f38616f89f87a265dceddf9b7f6749d2d  ffmpeg.7z" | sha256sum -c
-          7z e -y -bd -osrc/target/ffmpeg-win/8.1.2 ffmpeg.7z '*/bin/*.dll' '*/LICENSE' > /dev/null
-          ls src/target/ffmpeg-win/8.1.2
+          curl -fsSL --retry 3 -o ffmpeg.7z https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.2-full_build-shared.7z
+          echo "4d2060a8b34a940aa47d785142055bb92a63053781e55f2ace4546edd519a8f5  ffmpeg.7z" | sha256sum -c
+          7z e -y -bd -osrc/target/ffmpeg-win/9.0.2 ffmpeg.7z '*/bin/*.dll' '*/LICENSE' > /dev/null
+          ls src/target/ffmpeg-win/9.0.2
 
       - name: The checkout where the tests' compile-time paths point
         # /kt/src/… was baked in by the cross-build; on Windows a rooted path means the
@@ -237,8 +239,8 @@ jobs:
       - name: Tests (the cross-built archive, no compilation)
         working-directory: src
         env:
-          KT_FFMPEG_WIN_DIR: ${{ github.workspace }}\src\target\ffmpeg-win\8.1.2
-          KINETREN_FFMPEG_DIR: ${{ github.workspace }}\src\target\ffmpeg-win\8.1.2
+          KT_FFMPEG_WIN_DIR: ${{ github.workspace }}\src\target\ffmpeg-win\9.0.2
+          KINETREN_FFMPEG_DIR: ${{ github.workspace }}\src\target\ffmpeg-win\9.0.2
         run: |
           set -o pipefail
           cargo nextest run --archive-file target/windows-tests.tar.zst --workspace-remap /d/kt/src \

@@ -34,23 +34,25 @@ pub fn download_root_for_search(root: &std::path::Path) -> Option<String> {
 // ---- the download of the pinned build (Windows; media-index) ------------------------------
 //
 // One PINNED archive, checked against a hash committed HERE (not the `.sha256` next to it on
-// the same server — that would prove nothing). The "latest release" link is not used: on
-// 2026-10-22 it already served FFmpeg 9, which the loader does not support. The GitHub
-// mirror serves a byte-identical file (checked 2026-10-24), so one hash covers both URLs.
-// `src/scripts/fetch-ffmpeg-win.sh` (the Windows tests) uses the same pin — keep them equal.
+// the same server — that would prove nothing). The "latest release" link is not used: it
+// moves to the next major on its own, and a button that downloads an unsupported FFmpeg is
+// worse than none (on 2026-10-22 it was already FFmpeg 9 while the loader knew 6/7/8). The
+// GitHub mirror serves a byte-identical file (9.0.2 checked 2026-10-27), so one hash covers
+// both URLs. `src/scripts/fetch-ffmpeg-win.sh` and the windows-latest CI job use the same pin
+// — dist-check.py (t860) keeps the three equal.
 
 /// The FFmpeg release the Download button installs.
 pub const PINNED_VERSION: &str = kt_dirs::FFMPEG_DOWNLOAD_VERSION;
 /// The archive's name as published — the cached copy the extraction test compares against.
 #[cfg_attr(not(test), allow(dead_code))]
-pub const PINNED_ARCHIVE: &str = "ffmpeg-8.1.2-full_build-shared.7z";
-pub const PINNED_SHA256: &str = "cba748035c21ce1431d0823c7a3a711f38616f89f87a265dceddf9b7f6749d2d";
+pub const PINNED_ARCHIVE: &str = "ffmpeg-9.0.2-full_build-shared.7z";
+pub const PINNED_SHA256: &str = "4d2060a8b34a940aa47d785142055bb92a63053781e55f2ace4546edd519a8f5";
 pub const PINNED_URLS: [&str; 2] = [
-    "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.1.2-full_build-shared.7z",
-    "https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-full_build-shared.7z",
+    "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.2-full_build-shared.7z",
+    "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-full_build-shared.7z",
 ];
 /// Size shown before the download (bytes of the pinned archive).
-pub const PINNED_SIZE: u64 = 59_459_100;
+pub const PINNED_SIZE: u64 = 59_758_994;
 /// A guard against a server that never stops sending.
 const MAX_ARCHIVE_BYTES: u64 = 200 * 1024 * 1024;
 /// A temporary entry of another process untouched this long is a leftover of a killed one.
@@ -660,12 +662,12 @@ mod tests {
     fn make_archive(path: &std::path::Path) -> Vec<u8> {
         let mut w = sevenz_rust2::ArchiveWriter::create(path).unwrap();
         let files: [(&str, &[u8]); 6] = [
-            ("ffmpeg-8.1.2-full_build-shared/bin/avcodec-62.dll", b"codec"),
-            ("ffmpeg-8.1.2-full_build-shared/bin/avutil-60.dll", b"util"),
-            ("ffmpeg-8.1.2-full_build-shared/bin/ffmpeg.exe", b"exe"),
-            ("ffmpeg-8.1.2-full_build-shared/include/libavcodec/avcodec.h", b"header"),
-            ("ffmpeg-8.1.2-full_build-shared/LICENSE", b"GPLv3"),
-            ("ffmpeg-8.1.2-full_build-shared/README.txt", b"readme"),
+            ("ffmpeg-9.0.2-full_build-shared/bin/avcodec-63.dll", b"codec"),
+            ("ffmpeg-9.0.2-full_build-shared/bin/avutil-61.dll", b"util"),
+            ("ffmpeg-9.0.2-full_build-shared/bin/ffmpeg.exe", b"exe"),
+            ("ffmpeg-9.0.2-full_build-shared/include/libavcodec/avcodec.h", b"header"),
+            ("ffmpeg-9.0.2-full_build-shared/LICENSE", b"GPLv3"),
+            ("ffmpeg-9.0.2-full_build-shared/README.txt", b"readme"),
         ];
         for (name, data) in files {
             w.push_archive_entry(sevenz_rust2::ArchiveEntry::new_file(name), Some(data)).unwrap();
@@ -722,7 +724,7 @@ mod tests {
         let root = dir.join("ffmpeg");
         let never = || false;
         let quiet = |_: DownloadStep| {};
-        let src = |url: String, sha256: String| DownloadSource { urls: vec![url], sha256, version: "8.1.2".into() };
+        let src = |url: String, sha256: String| DownloadSource { urls: vec![url], sha256, version: "9.0.2".into() };
 
         // wrong hash: named, nothing left
         let wrong = "0".repeat(64);
@@ -737,10 +739,10 @@ mod tests {
             steps.lock().unwrap().push(s)
         })
         .expect("the right hash installs");
-        assert_eq!(dest, root.join("8.1.2"));
-        assert_eq!(entries(&root), vec!["8.1.2".to_string()], "no temporary entries");
-        assert_eq!(entries(&dest), vec!["LICENSE", "avcodec-62.dll", "avutil-60.dll"]);
-        assert_eq!(std::fs::read(dest.join("avcodec-62.dll")).unwrap(), b"codec");
+        assert_eq!(dest, root.join("9.0.2"));
+        assert_eq!(entries(&root), vec!["9.0.2".to_string()], "no temporary entries");
+        assert_eq!(entries(&dest), vec!["LICENSE", "avcodec-63.dll", "avutil-61.dll"]);
+        assert_eq!(std::fs::read(dest.join("avcodec-63.dll")).unwrap(), b"codec");
         let steps = steps.into_inner().unwrap();
         assert!(steps.contains(&DownloadStep::Verifying) && steps.contains(&DownloadStep::Extracting));
         assert!(steps.iter().any(|s| matches!(s, DownloadStep::Bytes { total: Some(n), .. } if *n == bytes.len() as u64)));
@@ -755,12 +757,12 @@ mod tests {
         })
         .expect_err("cancelled");
         assert_eq!(err, "cancelled");
-        assert_eq!(entries(&root), vec!["8.1.2".to_string()]);
+        assert_eq!(entries(&root), vec!["9.0.2".to_string()]);
 
         let err = download_and_install(&src(serve(bytes.clone(), bytes.len() / 2, false), sha(&bytes)), &root, &never, &quiet)
             .expect_err("a broken connection fails");
         assert!(!err.is_empty());
-        assert_eq!(entries(&root), vec!["8.1.2".to_string()]);
+        assert_eq!(entries(&root), vec!["9.0.2".to_string()]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -771,7 +773,7 @@ mod tests {
         let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/ffmpeg-win");
         let archive = base.join(PINNED_ARCHIVE);
         let by_7z = base.join(PINNED_VERSION);
-        if !archive.exists() || !by_7z.join("avcodec-62.dll").exists() {
+        if !archive.exists() || !by_7z.join("avcodec-63.dll").exists() {
             eprintln!("skipped: no cached pinned archive (scripts/fetch-ffmpeg-win.sh)");
             return;
         }

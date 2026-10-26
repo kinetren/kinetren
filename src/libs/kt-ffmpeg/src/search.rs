@@ -450,8 +450,8 @@ pub fn not_found_hint(os: Os) -> &'static str {
              libswscale, libswresample)."
         }
         Os::Windows => {
-            "Use View → FFmpeg… → Download, or install a SHARED build of FFmpeg 6, 7 or 8 \
-             (winget install Gyan.FFmpeg.Shared --version 8.1.2) and point Locate folder… at \
+            "Use View → FFmpeg… → Download, or install a SHARED build of FFmpeg 6, 7, 8 or 9 \
+             (winget install Gyan.FFmpeg.Shared --version 9.0.2) and point Locate folder… at \
              its bin folder."
         }
     }

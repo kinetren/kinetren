@@ -47,6 +47,9 @@ const FILES: &[&str] = &[
     "src/packaging/kinetren.desktop",
     "src/packaging/install.sh",
     "src/scripts/vendor-ffmpeg-headers.sh",
+    "src/scripts/fetch-ffmpeg-win.sh",
+    "src/apps/kt-app/src/ffmpeg_setup.rs",
+    "src/libs/kt-dirs/src/lib.rs",
 ];
 
 fn copy_tree(tag: &str) -> PathBuf {
@@ -150,7 +153,7 @@ fn t860_guard_catches_windows_drift() {
     let _ = std::fs::remove_dir_all(&dir);
 
     type Break = fn(&Path);
-    let cases: [(&str, Break, &str); 8] = [
+    let cases: [(&str, Break, &str); 11] = [
         (
             "stage",
             |d| edit(d, "src/packaging/Dockerfile", "FROM base AS windows", "FROM base AS win"),
@@ -190,6 +193,22 @@ fn t860_guard_catches_windows_drift() {
             "dll-in-zip",
             |d| edit(d, "src/scripts/release-build.sh", "    cp packaging/README-windows.txt \"$STAGE/\"\n", "    cp packaging/README-windows.txt \"$STAGE/\"\n    cp target/ffmpeg-win/8.1.2/avcodec-62.dll \"$STAGE/\"\n"),
             "src/scripts/release-build.sh: the zip must carry no DLL",
+        ),
+        // ffmpeg-9: the tests load the build people download — one pin in four places
+        (
+            "pin-fetch-hash",
+            |d| edit(d, "src/scripts/fetch-ffmpeg-win.sh", "SHA256=4d", "SHA256=5d"),
+            "src/scripts/fetch-ffmpeg-win.sh: the Windows FFmpeg pin must be",
+        ),
+        (
+            "pin-ci-version",
+            |d| edit(d, ".github/workflows/ci.yml", "packages/ffmpeg-9.0.2-full_build", "packages/ffmpeg-9.0.1-full_build"),
+            ".github/workflows/ci.yml: the Windows FFmpeg pin must be",
+        ),
+        (
+            "pin-dirs-version",
+            |d| edit(d, "src/libs/kt-dirs/src/lib.rs", "FFMPEG_DOWNLOAD_VERSION: &str = \"9.0.2\"", "FFMPEG_DOWNLOAD_VERSION: &str = \"8.1.2\""),
+            "src/libs/kt-dirs/src/lib.rs: the Windows FFmpeg pin must be",
         ),
     ];
     for (tag, brk, want) in cases {
