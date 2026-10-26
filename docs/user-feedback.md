@@ -1753,6 +1753,21 @@ INTERNAL one — the program would have crashed instead of falling back to the C
 reference used. The rest were test paths baked in at compile time (kt-cli's binary) and
 Linux-only test paths.
 
+## FFmpeg 9 (2026-10-26)
+
+> ffmpeg 9 (windows / linux)
+
+The change deferred by windows-build: FFmpeg 9.0 "Lei" (avutil 61, swresample 7, swscale 10,
+avcodec 63, avformat 63; the current point release is 9.0.2) is refused on both OSes as "not
+supported yet", and gyan.dev's "latest" already serves it.
+
+**Answers (AskUserQuestion, 2026-10-26):** the Windows Download button — *9.0.2, CI tests 9
+only* (the pin moves from 8.1.2 to 9.0.2, the windows-latest job runs the test archive against
+9.0.2; 8.x on Windows stays covered by the pure search-plan tests); the Linux proof — *build
+9.0.2 in Docker*: a test-only stage of the build container builds shared FFmpeg 9.0.2 from the
+official source tarball (SHA-256 pinned), and the FFmpeg tests run against it — never shipped.
+Change `openspec/changes/ffmpeg-9`.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
