@@ -228,6 +228,13 @@ rebuild.
 - **Detaching the preview** — `show_viewport_immediate`, one `egui::Context`;
   `ctx.input()` inside a viewport is that viewport's input, the shortcuts are duplicated
   (`src/apps/kt-app/src/app.rs`, `t51_preview_detach_state`).
+- **A bare letter yields to its Alt and Ctrl chords** (t868, change
+  `guide-shortcuts-reference`). `cut` read `S && !ctrl` while every other letter
+  also excluded Alt, so `Alt+S` soloed AND split the event under the playhead in one
+  frame. t742 pressed `Alt+S` and asserted only the solo: a test of a chord must also
+  assert that the bare letter's consequence did NOT happen, with the playhead placed
+  where that consequence would be visible (inside the event). Shift stays allowed:
+  `Shift+A/D` is the same jump with the region edge dragged along.
 
 ## R.67: the graph draws what sounds; the curve block is one
 

@@ -43,6 +43,22 @@ four rounds of review (2026-10-21/22) the owner asked for:
   allowed outside `docs/images/`.
 - **Footage credits** live in `docs/images/CREDITS.md` and in `CREDITS.txt` next to the
   download. The README carries none: that is the owner's rule.
+- **`shortcuts.md` is the one key reference, built from the code** (change
+  `guide-shortcuts-reference`, 2026-10-26). The site dropped the landing's "Keyboard"
+  section ("a reference does not belong there"), so the page has to be complete. It is
+  written from an inventory of the handlers (key → `file:line` → condition), not from hints
+  or the old landing. Several landing rows were out of date: "S cuts out the region",
+  "release Space slows down", "the volume rail". Rejected: a guard that diffs the page
+  against `handle_keys`. The key map is control flow in one function, so parsing it from
+  Python would be a second, fragile reading of Rust. The kt-app `CLAUDE.md` instead asks
+  for the row to be updated with the binding.
+- **The `markup` class mirrors the site's renderer** (t869). The site fails its whole build
+  on any `<`+letter outside code except balanced `<kbd>` pairs, so this repository checks
+  the same subset where the text is written. A balanced `<kbd>…</kbd>` with no `<`,
+  backtick or `*` inside is cut out first, which is the site's own rule. Known false
+  positive: a bold one-letter button label ("**M**") reads as a key; write it as plain
+  text. Rejected: bold keys on GitHub with caps only on the site, because the same text
+  would look different in two places.
 
 ## Known limits
 
