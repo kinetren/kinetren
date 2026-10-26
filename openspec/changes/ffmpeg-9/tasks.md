@@ -40,9 +40,9 @@ message, first line = stage and what was done, no `Co-Authored-By` or other agen
 
 ## 5. Wording, notes and specs
 
-- [ ] 5.1 Change "6/7/8" to "6/7/8/9" in the root `CLAUDE.md` (invariant 10), `openspec/config.yaml`, `docs/architecture.md`, `CONTRIBUTING.md`, the README badge and text (Download = 9.0.2, the winget line), `src/libs/kt-ffmpeg/CLAUDE.md` (replace the "FFmpeg 9 is not supported yet" bullet with the add-a-major checklist: vendor script → `MAJORS` in build.rs → module + arms → table row → t862), `src/libs/kt-media` notes, and the Dockerfile, release-build.sh and Makefile comments. Verify `python3 src/scripts/readme-check.py --check` and `dist-check.py --check` green
-- [ ] 5.2 Verify `openspec validate ffmpeg-9 --strict`, `python3 src/scripts/specs-user-path.py --check` (t799, the t850 PATH) and `python3 src/scripts/features-index.py --check` are green
-- [ ] 5.3 Commit stage 5
+- [x] 5.1 Change "6/7/8" to "6/7/8/9" in the root `CLAUDE.md` (invariant 10), `openspec/config.yaml`, `docs/architecture.md`, `CONTRIBUTING.md`, the README badge and text (Download = 9.0.2, the winget line), `src/libs/kt-ffmpeg/CLAUDE.md` (replace the "FFmpeg 9 is not supported yet" bullet with the add-a-major checklist: vendor script → `MAJORS` in build.rs → module + arms → table row → t862), `src/libs/kt-media` notes, and the Dockerfile, release-build.sh and Makefile comments. Verify `python3 src/scripts/readme-check.py --check` and `dist-check.py --check` green
+- [x] 5.2 Verify `openspec validate ffmpeg-9 --strict`, `python3 src/scripts/specs-user-path.py --check` (t799, the t850 PATH) and `python3 src/scripts/features-index.py --check` are green. **2026-10-27:** all green; also readme-check and dist-check. The kt-ffmpeg CLAUDE.md got the add-a-major checklist, the export-duration lesson and the download root
+- [x] 5.3 Commit stage 5
 
 ## 6. Finish
 

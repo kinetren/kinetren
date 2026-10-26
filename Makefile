@@ -3,7 +3,7 @@
 # The build itself lives in src/scripts/release-build.sh and the container
 # recipe in src/packaging/Dockerfile; these targets only call them, so
 # `make`, `finish.sh --release` and the release workflow cannot drift apart.
-# Building needs Docker, make and git; running needs the system FFmpeg 6/7/8.
+# Building needs Docker, make and git; running needs the system FFmpeg 6/7/8/9.
 
 RUST     := src
 DIST     := $(RUST)/target/dist-out

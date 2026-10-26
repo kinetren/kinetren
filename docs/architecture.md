@@ -86,4 +86,4 @@ file` on a system with FFmpeg 7).
 - `src/api.rs` — a vtable: ~45 functions are resolved through `dlsym`.
 - `src/source_impl.rs` — the decoder implementation, included (`include!`) into each version module, so the struct layout always matches the loaded library. Dispatcher `Source::V6/V7/V8`.
 
-Consequences: one binary works with the system FFmpeg 6/7/8 (with all its hardware acceleration); no plugins and no own build of FFmpeg; building the project does not require libav* dev packages (only libclang for bindgen). Limitation: this does not remove the glibc difference — if needed, the release is built in a container with an old glibc.
+Consequences: one binary works with the system FFmpeg 6/7/8/9 (with all its hardware acceleration); no plugins and no own build of FFmpeg; building the project does not require libav* dev packages (only libclang for bindgen). Limitation: this does not remove the glibc difference — if needed, the release is built in a container with an old glibc.

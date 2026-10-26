@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Release build of Kinetren in an Ubuntu 22.04 container (glibc 2.35):
-# the binary runs on any system with glibc >= 2.35 and a system FFmpeg 6/7/8
+# the binary runs on any system with glibc >= 2.35 and a system FFmpeg 6/7/8/9
 # (loaded at runtime, invariant No. 10 — there is no linking with libav*).
 #
 # The container recipe is src/packaging/Dockerfile (github-ci-docker-build):

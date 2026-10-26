@@ -1,7 +1,7 @@
 # The one build container of Kinetren (change github-ci-docker-build).
 #
 # Ubuntu 22.04 = glibc 2.35: a binary built here runs on any system with glibc
-# >= 2.35 and the system FFmpeg 6/7/8 (loaded at run time, invariant 10 — no
+# >= 2.35 and the system FFmpeg 6/7/8/9 (loaded at run time, invariant 10 — no
 # libav* linking, so no FFmpeg packages are needed to build).
 #
 # Used by src/scripts/release-build.sh, the root Makefile and the release

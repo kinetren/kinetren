@@ -7,7 +7,7 @@ are written in English.
 ## Build
 
 Requirements: a stable Rust toolchain (edition 2024), `clang`/`libclang` (bindgen),
-`pkg-config`, `libasound2-dev`, and the FFmpeg 6/7/8 shared libraries at runtime. The
+`pkg-config`, `libasound2-dev`, and the FFmpeg 6/7/8/9 shared libraries at runtime. The
 `ffmpeg` binary is needed only to generate test fixtures (`src/fixtures/gen.sh`). On
 Debian or Ubuntu:
 
@@ -130,7 +130,7 @@ Breaking any of them is a regression, and each has a test; the full text is in
 7. Preview and export share one composition code; the CPU path is the byte reference.
 8. Scrolling and zooming the timeline never trigger decoding.
 9. Export is fully in-process.
-10. The binary never links libav*: FFmpeg 6/7/8 is loaded at runtime.
+10. The binary never links libav*: FFmpeg 6/7/8/9 is loaded at runtime.
 11. Renders are deterministic.
 12. The video display is not quantised by the audio callback, and an idle UI does not repaint.
 

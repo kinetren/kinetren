@@ -1,7 +1,7 @@
 //! A bridge to the system FFmpeg through kt-ffmpeg (runtime loading, dlopen).
 //!
 //! Only the adaptation to the `MediaSource` trait is here; all the work with libav*
-//! (including the choice of the major version 6/7/8) is in the kt-ffmpeg crate.
+//! (including the choice of the major version 6/7/8/9) is in the kt-ffmpeg crate.
 //! INVARIANT: the binary is not linked against libav*, so the same executable
 //! works on systems with different FFmpeg versions.
 

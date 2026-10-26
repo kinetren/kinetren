@@ -29,7 +29,7 @@ context: |
       to `FrameTol` tolerances; geometry series in one pass — video-plan, video-fx.
    8. Timeline scroll/zoom produces no decode requests — media-index, ui-timeline.
    9. Export is fully in-process (libav* of the system FFmpeg) — export.
-  10. The binary does not link against libav*: FFmpeg via dlopen 6/7/8 — media-index.
+  10. The binary does not link against libav*: FFmpeg via dlopen 6/7/8/9 — media-index.
   11. Determinism: audio byte for byte always; video on the CPU against the reference; on the GPU
       between runs on one device — video-plan, export.
   12. Video display is not quantized by the audio callback, the UI does not heat the system

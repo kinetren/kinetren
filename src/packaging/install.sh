@@ -42,4 +42,4 @@ command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q "$HOME/.local/share/icons/hicolor" || true
 
 echo "Installed: $BIN/kinetren, $BIN/kt-cli"
-echo "Kinetren needs the system FFmpeg 6, 7 or 8 (libavcodec and friends); it is loaded at run time."
+echo "Kinetren needs the system FFmpeg 6, 7, 8 or 9 (libavcodec and friends); it is loaded at run time."
