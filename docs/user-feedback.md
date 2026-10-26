@@ -1839,6 +1839,19 @@ handlers: the context-menu Paste pastes at the click, not at the playhead, so it
 `Ctrl+V`; Delete morpher deletes one block while `Del` deletes the whole selection, so `Del` is
 shown only when that morpher is alone. Change `openspec/changes/menu-chords-out-of-text`.
 
+## Version check (2026-10-27)
+
+> We need to bolt a version check onto the program: say a person started the program and today
+> we have not checked the version yet — then remind him in the bell notice that the version is
+> old (but do not bother him with pop-up windows at startup), and also write at the top in the
+> title bar, somehow briefly, that the version is outdated.
+
+**Answers (AskUserQuestion, 2026-10-27):** an off switch — *a View checkbox* next to the
+telemetry one (on by default; `KINETREN_UPDATE_CHECK=0` too); the title says *"kt26.10
+(outdated)"* — our version and a translated word, without the new number; only *normal
+releases* count, pre-releases (`-rc` tags) are ignored. Notice only — no download, no
+self-update. Change `openspec/changes/update-check`.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
