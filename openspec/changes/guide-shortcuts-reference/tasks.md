@@ -12,9 +12,9 @@ stage only this change's hunk (`git add -p`), never the other one.
 
 ## 1. Alt+S does not split (ui-timeline)
 
-- [ ] 1.1 Write t868 in `src/apps/kt-app/src/layout_tests.rs`, modelled on the t742 hotkey block. Select an event, put the playhead inside it, press `Alt+S`, then `Alt+M`. Assert solo, then mute, an unchanged event count and range, and that a bare `S` afterwards still splits. Verify t868 is RED on the current code, and record the failure message here
-- [ ] 1.2 In `KtApp::handle_keys` (`src/apps/kt-app/src/app.rs:7136`), add `&& !i.modifiers.alt` to `cut`. Verify t868 and t742 are green, plus the kt-app `layout_tests.rs` and `reach_tests.rs` suites (mandatory for any UI change)
-- [ ] 1.3 Commit stage 1 (`cargo test --workspace`, `cargo clippy --all-targets` green)
+- [x] 1.1 Write t868 in `src/apps/kt-app/src/layout_tests.rs`, modelled on the t742 hotkey block. Select an event, put the playhead inside it, press `Alt+S`, then `Alt+M`. Assert solo, then mute, an unchanged event count and range, and that a bare `S` afterwards still splits. Verify t868 is RED on the current code, and record the failure message here. Recorded: `Alt+S also split the event` — left 4, right 3 (layout_tests.rs, before the fix)
+- [x] 1.2 In `KtApp::handle_keys` (`src/apps/kt-app/src/app.rs:7136`), add `&& !i.modifiers.alt` to `cut`. Verify t868 and t742 are green, plus the kt-app `layout_tests.rs` and `reach_tests.rs` suites (mandatory for any UI change)
+- [x] 1.3 Commit stage 1 (`cargo test --workspace`, `cargo clippy --all-targets` green). kt-app: 373/374, the one red is t799 on `openspec/changes/ffmpeg-9/specs/ui-reach/spec.md` (a scenario of that change without a PATH line), not this change; clippy: only the five warnings that were there before
 
 ## 2. The markup guard (showcase)
 

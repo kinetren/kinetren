@@ -13,4 +13,5 @@ the split went unnoticed. Found while building the full shortcuts reference (202
 #### Scenario: Alt+S only solos
 - **WHEN** an event is selected and the playhead is inside it; `Alt+S` is pressed; then `Alt+M`
 - **THEN** the event's track is soloed, then muted; the number of events and the selected event's range are unchanged; a bare `S` afterwards still splits it
+- **PATH** a clip is selected, the playhead stands inside it → Alt+S → the S badge in the track header lights up, the clip stays whole (no cut line at the playhead) → Alt+M → the M badge lights up, the clip is still whole → S → the clip is cut in two at the playhead
 - **TEST** t868 (`src/apps/kt-app/src/layout_tests.rs`)

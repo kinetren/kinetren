@@ -7133,7 +7133,9 @@ impl KtApp {
             self.on_space_released();
         }
         let k = ctx.input(|i| Keys {
-            cut: i.key_pressed(egui::Key::S) && !i.modifiers.ctrl,
+            // not on Alt either: Alt+S is solo, and it used to split the event
+            // under the playhead in the same frame (t868)
+            cut: i.key_pressed(egui::Key::S) && !i.modifiers.ctrl && !i.modifiers.alt,
             del: i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace),
             undo: i.modifiers.ctrl && !i.modifiers.shift && i.key_pressed(egui::Key::Z),
             redo: i.modifiers.ctrl

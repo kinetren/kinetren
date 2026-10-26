@@ -14048,6 +14048,58 @@ fn t742_track_badges_take_a_human_click_and_never_move() {
     assert!(!m.mute, "the service row has no right to be muted");
 }
 
+/// Test 868 (guide-shortcuts-reference): a chord with Alt does not ALSO fire its
+/// bare letter. The split read `S && !ctrl`, so Alt+S soloed the track AND cut the
+/// event under the playhead in the same frame; t742 asserted only the solo. The
+/// playhead stands INSIDE the selected event — on an empty spot the split does
+/// nothing and the test would be green on the broken code.
+#[test]
+fn t868_alt_chords_do_not_fire_the_bare_letter() {
+    use kt_model::LaneKind::Video;
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips_dt(None);
+    {
+        let app = h.state_mut();
+        app.selected.clear();
+        app.selected.insert(kt_model::ClipId(1));
+        app.player.seek(Tick(30_000));
+    }
+    h.step();
+    let range = |h: &Harness<'_, KtApp>| {
+        let c = h.state().model.clip(kt_model::ClipId(1)).expect("event 1 is there");
+        (c.start, c.duration)
+    };
+    let clips = h.state().model.project().clips.len();
+    let before = range(&h);
+    assert!(
+        before.0.0 < 30_000 && 30_000 < before.0.0 + before.1.0,
+        "scene guard: the playhead must stand inside the selected event"
+    );
+
+    h.key_press_modifiers(egui::Modifiers::ALT, egui::Key::S);
+    h.step();
+    let track = |h: &Harness<'_, KtApp>| {
+        h.state().model.project().track_at(Video, 0).cloned().expect("track is there")
+    };
+    assert!(track(&h).solo, "Alt+S did not enable solo");
+    assert_eq!(h.state().model.project().clips.len(), clips, "Alt+S also split the event");
+    assert_eq!(range(&h), before, "Alt+S changed the selected event");
+
+    h.key_press_modifiers(egui::Modifiers::ALT, egui::Key::M);
+    h.step();
+    assert!(track(&h).mute, "Alt+M did not mute the track");
+    assert_eq!(h.state().model.project().clips.len(), clips, "Alt+M changed the events");
+
+    // the bare letter keeps its owner's binding
+    h.key_press(egui::Key::S);
+    h.step();
+    assert_eq!(
+        h.state().model.project().clips.len(),
+        clips + 1,
+        "bare S stopped splitting the event under the playhead"
+    );
+}
+
 /// Test 743 (R.62, change B, 4.2): the “Track properties” window. What is checked is
 /// what a person does: opens it, fixes the name, level and mode, closes —
 /// and the WHOLE session is rolled back by ONE Ctrl+Z (as with the FX window). “Cancel”
