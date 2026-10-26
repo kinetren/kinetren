@@ -22,4 +22,4 @@ this change's files.
 
 ## 3. Finish
 
-- [ ] 3.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version here
+- [x] 3.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version here. Recorded: version kt26.10.26-f6e1057c (debug). Workspace 1133/1135: the two red are t799 and t834, neither from this change (see 2.3). Live: 46 of 47 green. `trans` was red twice, at the ruler click "cursor placed in the middle of the transition: 0", with a load average of 40 (the live run took 1135 s instead of the usual ~560 s). Re-run alone right after (`./scripts/live-check.sh trans`, the same binary) it was green at every step, and it touches no menu. "Uncommitted changes" = the wine session's `layout_tests.rs`/`theme.rs`/tasks, the fixture DB and `src/kinetren/`, none from this change.
