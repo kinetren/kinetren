@@ -25,6 +25,10 @@ menu item says WHAT and WHERE"). Found by the full shortcuts check (`guide-short
   place, even with a region drawn, and the region's interior stays. The item's visible
   label is the event menu's label, with `S` as its chord. No catalog keeps a chord inside the
   split label.
+- The toolbar scissors button (`toolbar.rs:746`, the same `cut_action`) has the hint
+  `tb.cut` "Split / cut region (S)" in all five catalogs. It becomes the split label plus its
+  key: "Split at playhead (S)". A hint carries its key in the text, which is allowed
+  (`i18n/README.md` rule 3). Owner's second answer, 2026-10-26: same fix.
 - Behaviour does not change: `S`, `cut_action` and the punch-out item stay as they are.
 
 ## Capabilities
@@ -35,14 +39,15 @@ menu item says WHAT and WHERE"). Found by the full shortcuts check (`guide-short
 ### Modified Capabilities
 - `ui-timeline`: the requirement "An impossible action is an error; paired ways are
   identical; names say what and where" gains a scenario. The split item in the Edit menu,
-  the one in the event menu and the `S` key share one name and one body.
+  the one in the event menu, the toolbar button's hint and the `S` key share one name and one
+  body.
 
 ## Impact
 
 - `src/apps/kt-app/src/toolbar.rs` (the Edit item), `src/apps/kt-app/src/timeline.rs:5891`
   (the event item through `widgets::menu_item`).
 - `src/apps/kt-app/i18n/{en,ru,es,zh-Hans,ar}.toml`: `menu.edit.cut_region` removed,
-  `tl.menu.split` without "(S)". No new characters, so the font subsets do not change.
+  `tl.menu.split` without "(S)", `tb.cut` = the split label + "(S)". No new characters, so the font subsets do not change.
 - Tests: new t870 in `src/apps/kt-app/src/layout_tests.rs`; the mandatory kt-app guards for
   UI text (`i18n_tests.rs` t125/t128, `font_tests.rs` t100, `reach_tests.rs`, `layout_tests.rs`).
 - Docs: `docs/guide/shortcuts.md` already says what `S` does. Nothing there names the

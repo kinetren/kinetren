@@ -449,7 +449,7 @@ impl KtApp {
                 self.apply(kt_model::Command::SetTrimStretchesAuto { on: stretch });
             }
             ui.separator();
-            if Self::menu_btn(ui, tr(k::menu::edit::CUT_REGION), "S") {
+            if Self::menu_btn(ui, tr(k::tl::menu::SPLIT), "S") {
                 self.cut_action();
                 ui.close();
             }

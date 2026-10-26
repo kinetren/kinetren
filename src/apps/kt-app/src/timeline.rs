@@ -5888,7 +5888,7 @@ impl KtApp {
                         ui.close();
                     }
                 }
-                if ui.button(tr(k::tl::menu::SPLIT)).clicked() {
+                if crate::widgets::menu_item(ui, tr(k::tl::menu::SPLIT), Some("S")) {
                     if !self.is_selected(id) {
                         self.select_only(id);
                     }

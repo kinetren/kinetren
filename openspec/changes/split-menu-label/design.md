@@ -13,6 +13,9 @@
   with the chord inside the translated text in all five catalogs. That breaks `i18n/README.md`
   rule 3 ("there are no hotkeys in the menu… glued together in Rust") and the `widgets.rs:725`
   comment ("the chord is an argument, not part of the translatable phrase").
+- **A third path:** the toolbar scissors button (`toolbar.rs:746`) also calls `cut_action`.
+  Its hint `tb.cut` is "Split / cut region (S)" in all five catalogs (found in task 1.2). In a
+  hint the key in parentheses is allowed (`i18n/README.md` rule 3); only the wording lies.
 - **The real cut-out** is `punch_out_action` behind **Cut out the region interior**
   (`tl.menu.punch_out`, `timeline.rs:1732`, the empty-space menu). It is untouched.
 - **Owner's decision (2026-10-26):** rename the Edit item to "Split at playhead". `S` and the
@@ -47,6 +50,13 @@ the Delete item next to it uses. The chord is promised truthfully: after the ite
 clicked event, `S` would split exactly that selection. No new characters enter any catalog, so
 `scripts/subset-fonts.py` and t100 are unaffected.
 
+### D2b. The toolbar hint is the split label plus its key
+`tb.cut` becomes `tl.menu.split` + " (S)" ("（S）" in zh-Hans, as the catalog already writes
+its parentheses) in every catalog. It stays a separate key because a hint and a menu label have
+different jobs. t870 asserts, per language, that the hint CONTAINS the split label, so the two cannot drift
+apart. It checks containment, not the start of the string, because the Arabic table holds the display order,
+where "(S)" comes first.
+
 ### D3. t870 asserts the consequence from where the person acts
 In `layout_tests.rs`, on `harness_three_clips_dt`, the test draws a region over part of event 1,
 puts the playhead inside event 1 and clears the selection. It then:
@@ -59,7 +69,8 @@ puts the playhead inside event 1 and clears the selection. It then:
    way t171 reads the catalogs) and asserts it contains no chord: no `(S)`, `（S）` or
    standalone `S`. That `menu.edit.cut_region` is gone needs no assertion: the constant
    disappears, so any remaining use fails to compile, and a key left in only some catalogs
-   fails the catalog build.
+   fails the catalog build. In the same loop it asserts that `tb.cut` contains the split
+   label and names `S`.
 The test is written first and must fail on the current code: the Edit item is labelled
 "Split / cut region", so step 1 finds no such button.
 

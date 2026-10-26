@@ -1804,7 +1804,9 @@ cut-out is "Cut out the region interior" in the track's empty-space menu.
 > label lies
 
 **Answer (AskUserQuestion, 2026-10-26):** *Rename to "Split at playhead"* — `S` and the action
-stay as they are. Change `openspec/changes/split-menu-label`.
+stay as they are. Change `openspec/changes/split-menu-label`. A second answer the same day:
+the toolbar scissors button's hint says the same "Split / cut region (S)" over the same
+action — *yes, same fix* ("Split at playhead (S)"; a hint may carry its key, a menu may not).
 
 ## What the user repeated more than once
 

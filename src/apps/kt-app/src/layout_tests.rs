@@ -14100,6 +14100,84 @@ fn t868_alt_chords_do_not_fire_the_bare_letter() {
     );
 }
 
+/// Test 870 (split-menu-label): the Edit menu’s split IS the event menu’s split and
+/// the S key — one name, one body. The item was called “Split / cut region” and
+/// promised a cut-out that neither it nor S ever did (S always splits, item 5; the
+/// cut-out is “Cut out the region interior” in the empty-space menu). The region is
+/// drawn on purpose: with it a cut-out would be visible as a shorter total.
+#[test]
+fn t870_edit_split_item_is_the_s_key_and_says_so() {
+    use crate::i18n::{Lang, k, tables, tr};
+    use egui_kittest::kittest::Queryable;
+    use kt_model::Region;
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips_dt(None);
+    {
+        let app = h.state_mut();
+        app.selected.clear();
+        app.model.set_region(Region::normalized(Tick(20_000), Tick(40_000)));
+        app.player.seek(Tick(30_000));
+    }
+    h.step();
+    let ranges = |h: &Harness<'_, KtApp>| {
+        let mut v: Vec<(i64, i64)> =
+            h.state().model.project().clips.iter().map(|c| (c.start.0, c.duration.0)).collect();
+        v.sort_unstable();
+        v
+    };
+    let before = ranges(&h);
+    let region = h.state().model.project().region;
+    let total = |v: &[(i64, i64)]| v.iter().map(|r| r.1).sum::<i64>();
+
+    // from where the person acts: the Edit title, then the item with S in the chord column
+    h.get_by_label(tr(k::menu::edit::TITLE)).click();
+    h.step();
+    h.step();
+    let item = format!("{}\t{}", tr(k::tl::menu::SPLIT), "S");
+    let labels = menu_labels(&mut h);
+    assert!(
+        h.query_by_label(&item).is_some(),
+        "the Edit menu has no “{item}” item (the event menu’s name with S as its chord); visible: {labels:?}"
+    );
+    h.get_by_label(&item).click();
+    h.step();
+    h.step();
+    let by_menu = ranges(&h);
+    assert_eq!(by_menu.len(), before.len() + 1, "the Edit item did not split: {by_menu:?}");
+    assert!(
+        by_menu.iter().any(|r| r.0 + r.1 == 30_000) && by_menu.iter().any(|r| r.0 == 30_000),
+        "the halves do not meet at the playhead: {by_menu:?}"
+    );
+    assert_eq!(total(&by_menu), total(&before), "the region’s interior was cut out");
+    assert_eq!(h.state().model.project().region, region, "the item changed the region");
+
+    // the same through the key
+    h.state_mut().undo();
+    h.step();
+    assert_eq!(ranges(&h), before, "undo did not restore the event");
+    h.key_press(egui::Key::S);
+    h.step();
+    assert_eq!(ranges(&h), by_menu, "S and the Edit item split differently");
+
+    // the chord lives in the chord column, never in the translated text (i18n rule 3)
+    for lang in Lang::ALL {
+        let label = tables::TABLES[lang as usize][k::tl::menu::SPLIT.0 as usize];
+        let has_chord = label.contains("(S)")
+            || label.contains("（S）")
+            || label.split(|c: char| !c.is_alphanumeric()).any(|w| w == "S");
+        assert!(!has_chord, "{}: the split label carries its chord: “{label}”", lang.code());
+        // the toolbar scissors (the same cut_action) say the same, plus the key;
+        // `contains`, not `starts_with`: the Arabic table holds the DISPLAY order,
+        // where “(S)” stands before the words
+        let hint = tables::TABLES[lang as usize][k::tb::CUT.0 as usize];
+        assert!(
+            hint.contains(label) && hint.contains('S'),
+            "{}: the scissors hint “{hint}” is not the split label “{label}” with its key",
+            lang.code()
+        );
+    }
+}
+
 /// Test 743 (R.62, change B, 4.2): the “Track properties” window. What is checked is
 /// what a person does: opens it, fixes the name, level and mode, closes —
 /// and the WHOLE session is rolled back by ONE Ctrl+Z (as with the FX window). “Cancel”

@@ -36,6 +36,6 @@ ever did (owner's decision 2026-10-26, change `split-menu-label`: rename, keep t
 
 #### Scenario: The Edit menu's split is the event menu's split and the S key
 - **WHEN** a region is drawn and the playhead stands inside an event with nothing selected; Edit → "Split at playhead" is clicked; the edit is undone and `S` is pressed instead; the label and chord of the Edit item and of the event menu's split item are read in each of the five catalogs
-- **THEN** both paths split the same events at the same tick and leave the region's interior in place; the Edit item shows the event menu's label with `S` in the chord column; no catalog's split label contains a chord
+- **THEN** both paths split the same events at the same tick and leave the region's interior in place; the Edit item shows the event menu's label with `S` in the chord column; no catalog's split label contains a chord; the toolbar scissors button's hint is the split label followed by its key
 - **PATH** a region over part of an event, the playhead inside the event → Edit menu → the item reads "Split at playhead" with S on the right → click → the event is cut in two at the playhead, the region still covers both halves → Ctrl+Z → the event is whole again → S → the same cut at the same place
 - **TEST** t870 (`src/apps/kt-app/src/layout_tests.rs`)
