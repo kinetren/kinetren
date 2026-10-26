@@ -36,4 +36,4 @@ stage only this change's hunk (`git add -p`), never the other one.
 
 ## 5. Finish
 
-- [ ] 5.1 Run `src/scripts/finish.sh`. Verify it is green and record the version `vYY.MM.DD-hash`. The report lists the landing-row differences from `inventory.md`, the `Alt+S` fix, the hint/code mismatches found in 3.1 (as proposals, not edits), the open question from design (convert other guide pages to `<kbd>`?), and ends with the line «на сайте: скажи "обнови" в kt.9.site»
+- [x] 5.1 Run `src/scripts/finish.sh`. Verify it is green and record the version `vYY.MM.DD-hash`. Recorded: version kt26.10.26-15e95efa (debug); workspace 1131/1132, the one red is t799 on the ffmpeg-9 change's spec (not this change); live scenarios 47, green (`recover` on its second try, load average 18 from parallel sessions); "uncommitted changes" = the fixture index DB and `src/kinetren/`, both untouched by this change. The report lists the landing-row differences from `inventory.md`, the `Alt+S` fix, the hint/code mismatches found in 3.1 (as proposals, not edits), the open question from design (convert other guide pages to `<kbd>`?), and ends with the line «на сайте: скажи "обнови" в kt.9.site»
