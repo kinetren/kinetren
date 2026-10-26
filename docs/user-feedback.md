@@ -1808,6 +1808,23 @@ stay as they are. Change `openspec/changes/split-menu-label`. A second answer th
 the toolbar scissors button's hint says the same "Split / cut region (S)" over the same
 action — *yes, same fix* ("Split at playhead (S)"; a hint may carry its key, a menu may not).
 
+**Wine (2026-10-26):**
+
+> I run the windows version through wine and there the whole interface is dark, while some parts are white, and also — the top titlebar disappeared and was replaced by the system bar, i.e. the context menus are gone, in effect..
+
+Asked what wine should get (our row through a write into wine's registry / the system frame /
+documentation only):
+
+> the main thing for me: 1. that undecorated works correctly in real windows, that there is no windows bar there, and that in wine it at least somehow works.
+
+Reproduced in the windows image (wine 11 + Xvfb + openbox): by default a system frame covers our
+22 px title row and cuts the status bar, egui's light style paints the standard parts white;
+with `KT_DECORATIONS=1` the menus are visible below the system bar; with wine's `Decorated=N`
+the look is exactly Linux's. Decisions: the theme fixed to dark on every OS; under wine the
+system frame (nothing written); real Windows stays borderless. Change
+`openspec/changes/wine-frame-and-dark-theme`, done in the branch `wine-frame-and-dark-theme`
+(the owner asked for a separate branch).
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
