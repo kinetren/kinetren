@@ -161,7 +161,7 @@ ADDRESS: src/apps/kt-app/src/app.rs:2154-2183 — the class is possible, and not
 ### What is missing
 
 1. **Distinguish "no file" from "no library".** Today both paths converge in
-   `open_source_or_placeholder`, and on a machine without FFmpeg 6/7/8 the user
+   `open_source_or_placeholder`, and on a machine without FFmpeg 6/7/8/9 the user
    gets a line for EVERY clip — "`clip-01.mp4`: source unavailable,
    placeholder shown (FFmpeg not found on this system…)" — plus the total
    "unavailable sources: 40" (`app.rs:684-689`). The cause is one and systemic,

@@ -232,4 +232,31 @@ composition, and the preview hung in "Loading" forever.
   load their DLLs); the "latest" link; shelling out to curl/7-Zip.
 - **Invariant 10 on Windows** is the PE import table: only Windows system DLLs, no `av*`/`sw*`,
   no mingw runtime (the guard in `release-build.sh`).
-- Deferred: FFmpeg 9 (avcodec 63) — a separate change, Linux needs it too.
+
+## FFmpeg 9 (ffmpeg-9, 2026-10-27)
+
+- **What hurt.** FFmpeg 9.0 "Lei" (2026-08; 9.0.2 on 2026-09-18) bumped every library major
+  (avutil 61, swresample 7, swscale 10, avcodec 63, avformat 63). A Linux system that moved to it
+  opened no media; on Windows the folder winget and gyan.dev's "latest" give was refused.
+- **Headers from the signed tarball, by a script** (`src/scripts/vendor-ffmpeg-headers.sh`,
+  `vendor/ffmpeg-9/SOURCE`): the same tarball and hash the `ffmpeg-test` stage builds (distribution),
+  so the types that compile `v9` and the libraries that test it are one file. 6–8 were copied by
+  hand and have no record; not re-vendored (working modules).
+- **One row, one module, an exhaustive dispatch.** `rescan_with` matched `_ => V6`: a major in the
+  table without a module would have bound FFmpeg-6 layouts to another major's libraries — memory
+  corruption, not an error. Now every major is named and anything else is an error; t862 compares
+  each row of `search::MAJORS` with its module's `LIB*_VERSION_MAJOR`. The shared source compiled
+  against 9 unchanged; a removed field would be handled in the version module, never by a runtime
+  branch on the major.
+- **The download is a ROOT** (`kt_dirs::ffmpeg_download_root`): every version folder in it is a
+  candidate, newest first by numeric order (t864) — moving the pin to 9.0.2 must not take away the
+  8.1.2 a person already downloaded; `.partial-<pid>` entries are never candidates, nothing is
+  deleted. The FFmpeg window offers Download while the pin's folder is absent, whatever is loaded
+  (t867), and a download over a loaded FFmpeg says "after a restart".
+- **The pin moved to gyan.dev 9.0.2** (owner, 2026-10-26: "9.0.2, CI tests 9 only"): both URLs
+  byte-identical, SHA-256 `4d2060a8…`; dist-check keeps the version and hash equal in
+  `ffmpeg_setup.rs`, `kt-dirs`, `fetch-ffmpeg-win.sh` and `ci.yml` (t860).
+- **Rejected:** migrating (renaming) an old download folder — a lie about its content; deleting
+  it after a new download — its DLLs may be loaded, and nobody asked; a `dispatch!` macro over the
+  enums — four majors are still readable as arms, and it would touch every call site; a generic
+  "newest types for any major ≥ 6" — layouts differ between majors, that is why the modules exist.

@@ -73,3 +73,19 @@ A separate subcommand, not a `demo` flag: `demo` is synthetic by contract (t388)
 - **mingw's `round`** returned 1 for `round(0.49999999999999994)` — on real Windows, not only
   wine — and every `.round()` of the CPU reference went through it. `src/libs/kt-time/src/
   libm_fix.rs` defines correct `round`/`roundf` for `x86_64-pc-windows-gnu` (t198).
+
+## Every exported frame has a duration (ffmpeg-9, 2026-10-27)
+
+- **What hurt — on every major, unseen until FFmpeg 9.** The muxer sent frames to the encoders
+  without a duration, and packets came back without one. The last video sample of every MP4 had
+  zero duration (`stts` …, 1×0; a 3150-frame export at 30 fps lasted 104.967 s, not 105.000 s).
+  FFmpeg 6–8 kept the frame only because the movie timescale was 1000 and the edit list was
+  rounded UP to the next millisecond; FFmpeg 9 dropped the muxer's filling of missing packet fields
+  (`FF_API_COMPUTE_PKT_FIELDS2`) and writes the edit list at the track's exact timescale, so it ended
+  at the last frame's START and the demuxer marked that frame discarded — t33 decoded 59 of 60.
+- **The fix** is in the shared `src/libs/kt-ffmpeg/src/muxer_impl.rs`, not a version branch:
+  every frame carries its duration (one tick of 1/fps, `frame_size` samples), and a packet that
+  still comes back without one gets it before the time-base rescale. On FFmpeg 6 every packet's
+  pts/dts/size/flags stayed the same (compared packet by packet); only the track length is now
+  exact. A behaviour removed without an API change is caught only by running the major (t33 in
+  `make ffmpeg-test`).

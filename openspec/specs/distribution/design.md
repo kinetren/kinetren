@@ -95,3 +95,26 @@ a Rust toolchain, clang and dev packages before they could try the editor (owner
   `round` agreed with mingw's bug, but its msvcrt differs from Microsoft's elsewhere).
 - Rejected: native MSVC builds on a Windows runner (a second toolchain), an installer and code
   signing for the first delivery (later decisions).
+
+## FFmpeg 9 proven on Linux (ffmpeg-9, 2026-10-27)
+
+- **Why a source build.** The runner and the owner's machine have FFmpeg 6.1 only; nothing ever
+  loaded 7, 8 or 9 on Linux. The owner chose a build from the official source in Docker
+  (2026-10-26). The `ffmpeg-test` stage builds shared 9.0.2 from the tarball whose SHA-256 is
+  committed next to the recipe (the same pin as the vendored headers — dist-check, t866), with
+  libx264 (the cascade's usual encoder) and zlib (PNG — configure drops the decoder silently without
+  it; t796 failed "no video decoder"). It is never the last stage, and release-build.sh never names
+  it: nothing built there is shipped.
+- **Found by SONAME, not by a folder.** *Revision (apply):* the plan loaded it through
+  `KINETREN_FFMPEG_DIR` with the system search off — a path no user takes, and t849 overrides that
+  variable on purpose. The libraries are registered with ldconfig, so the run finds FFmpeg 9 as a
+  distribution's FFmpeg 9 is found. The folder path stays covered by the pure plan tests.
+- **A run proves its major** (t865): `KT_EXPECT_FFMPEG_MAJOR=9` fails the run unless 9 loaded, so a
+  fallback to another FFmpeg — or to none, with the FFmpeg tests skipping — is not a green run.
+- **Tests run inside the container**: the libraries link the container's `libx264.so.163`, the
+  runner has `.164`. The CI job caches the image (`docker save`) keyed by the Dockerfile's hash.
+- **Windows tests only 9.0.2** (owner): the windows-latest job and `make windows-test` use the new
+  pin; 6/7/8 on Windows stay covered by the pure plan tests.
+- **Rejected:** BtbN prebuilt shared builds (git snapshots `n9.0.2-36-g…`, dated releases pruned —
+  no stable hash); a distribution image with FFmpeg 9 (the version moves under the hash); copying
+  the built libraries to the host runner (libx264 SONAME mismatch).
