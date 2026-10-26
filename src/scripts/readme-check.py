@@ -15,7 +15,14 @@ Checks README.md, CONTRIBUTING.md and docs/guide/**/*.md:
   * size       — each image ≤ 900 KB, docs/images/ in total ≤ 8 MB;
   * shots      — the referenced images are exactly the set declared in
                  `SHOTS` of src/scripts/live/readme_shots.py: an image added
-                 by hand, or a declared shot the docs do not show, is red.
+                 by hand, or a declared shot the docs do not show, is red;
+  * markup     — docs/guide/ only: the Markdown the site (kinetren.github.io)
+                 renders, anything else fails its build. No HTML but
+                 `<kbd>…</kbd>`, no `>` quotes, no setext underlines or rules,
+                 no reference links or footnotes, no `_italic_`, no backslash
+                 except before a pipe in a table cell, lists nested at most
+                 one level. shortcuts.md also has only `| Keys | Action |`
+                 tables and no key chord in bold.
 
 Code blocks are skipped. Every violation prints `file:line: class: detail`;
 any violation makes `--check` exit 1.
@@ -38,6 +45,23 @@ MD_LINK = re.compile(r"!?\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
 HTML_SRC = re.compile(r"<(?:img|a)\b[^>]*?\b(?:src|href)\s*=\s*\"([^\"]+)\"", re.I)
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 FENCE = re.compile(r"^\s*(```|~~~)")
+
+# markup (guide-shortcuts-reference, t869): the site's renderer cuts out balanced
+# <kbd> pairs whose text has no `<`, backtick or `*`, and fails on any other `<`+letter
+KBD_PAIR = re.compile(r"<kbd>[^<`*]*</kbd>")
+HTML_TAG = re.compile(r"<[A-Za-z/!]")
+QUOTE = re.compile(r"^\s*>")
+UNDERLINE = re.compile(r"^ *(=+|-{2,}) *$")
+REF_LINK = re.compile(r"\]\[|^\s*\[[^\]]+\]:\s")
+FOOTNOTE = re.compile(r"\[\^")
+UNDERSCORE_ITALIC = re.compile(r"(?<![\w*])_(?=\S)[^_]*?(?<=\S)_(?!\w)")
+STRAY_BACKSLASH = re.compile(r"\\(?!\|)")
+LIST_ITEM = re.compile(r"^( *)(?:[-*+]|\d+[.)])\s")
+TABLE_SEP = re.compile(r"^\s*\|?\s*:?-{3,}")
+BOLD = re.compile(r"\*\*([^*]+)\*\*")
+KEY_NAMES = {"Space", "Esc", "Escape", "Enter", "Return", "Tab", "Home", "End", "Del",
+             "Delete", "Backspace", "Insert", "PageUp", "PageDown", "↑", "↓", "←", "→"}
+SHORTCUTS = "shortcuts.md"
 
 
 def docs(root):
@@ -108,6 +132,62 @@ def declared_shots(root):
     return None
 
 
+def is_key_chord(text):
+    """A bold span that is a key or a chord: written as <kbd> caps instead."""
+    t = text.strip()
+    if re.search(r"\b(Ctrl|Shift|Alt|Cmd)\b", t):
+        return True
+    parts = [x for x in re.split(r"\s*[+/]\s*", t) if x]
+    return bool(parts) and all(x in KEY_NAMES or re.fullmatch(r"[A-Z0-9]|F\d{1,2}", x)
+                               for x in parts)
+
+
+def markup(doc, text, bad):
+    """The site's Markdown subset for one guide page (class `markup`)."""
+    shortcuts = doc.name == SHORTCUTS
+    lines = list(lines_outside_code(text))
+    stack = []  # indents of the open list levels
+    for i, (n, line) in enumerate(lines):
+        # a link target is a path, not prose: `a_b.md` is not italic
+        prose = re.sub(r"\]\([^)]*\)", "]()", line)
+        rest = KBD_PAIR.sub("", prose)
+        if HTML_TAG.search(rest):
+            bad(doc, n, "markup", "HTML other than a <kbd>…</kbd> pair (the site renders only <kbd>)")
+        if QUOTE.match(line):
+            bad(doc, n, "markup", "a `>` quote (the site has no quotes)")
+        if UNDERLINE.match(line):
+            bad(doc, n, "markup", "a setext underline or a rule (use `#` headings)")
+        if REF_LINK.search(prose):
+            bad(doc, n, "markup", "a reference link (write [text](path))")
+        if FOOTNOTE.search(prose):
+            bad(doc, n, "markup", "a footnote")
+        if UNDERSCORE_ITALIC.search(prose):
+            bad(doc, n, "markup", "`_italic_` (write *italic*)")
+        if STRAY_BACKSLASH.search(prose):
+            bad(doc, n, "markup", "a backslash other than \\| in a table cell")
+        m = LIST_ITEM.match(line.replace("\t", "    "))
+        if m:
+            ind = len(m.group(1))
+            while stack and stack[-1] > ind:
+                stack.pop()
+            if not stack or stack[-1] < ind:
+                stack.append(ind)
+            if len(stack) > 2:
+                bad(doc, n, "markup", "a list nested two levels deep (the site renders one)")
+        elif line.strip() and not line.startswith((" ", "\t")):
+            stack = []
+        if not shortcuts:
+            continue
+        nxt = lines[i + 1] if i + 1 < len(lines) else None
+        if line.lstrip().startswith("|") and nxt and nxt[0] == n + 1 and TABLE_SEP.match(nxt[1]):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if cells != ["Keys", "Action"]:
+                bad(doc, n, "markup", f"table header {cells} (shortcuts.md tables are | Keys | Action |)")
+        for b in BOLD.findall(prose):
+            if is_key_chord(b):
+                bad(doc, n, "markup", f"“**{b}**”: keys are <kbd> caps, not bold")
+
+
 def check(root):
     root = Path(root).resolve()
     images_dir = root / "docs" / "images"
@@ -145,6 +225,9 @@ def check(root):
                     referenced.add(rel.as_posix())
                 if anchor and dest.suffix == ".md" and anchor not in anchors(dest):
                     bad(doc, n, "link", f"{target}: no heading “#{anchor}” in {dest.name}")
+        if doc.parent.resolve() == (root / "docs" / "guide").resolve() or \
+                (root / "docs" / "guide").resolve() in doc.resolve().parents:
+            markup(doc, text, bad)
 
     total = 0
     on_disk = set()

@@ -53,7 +53,8 @@ band. The region is set by dragging on the ruler, by **I**/**O**, or with
 
 The wheel scrolls along time, **Ctrl+wheel** zooms around the mouse. **Ctrl+L** (or a
 double-click on the timecode) jumps to a typed timecode. **Ctrl+F** searches events,
-markers and media by name. The speed control next to the timecode plays at any rate
-between −2× and 2×, including a freeze frame at zero; right-click it to type a value.
+markers and media by name. The speed control next to the timecode drags between −2× and
+2×, including a freeze frame at zero; right-click it to type any speed up to 8×. All keys
+and gestures: [Keyboard and mouse](shortcuts.md).
 
 Next: [Effects and automation](effects-and-automation.md).

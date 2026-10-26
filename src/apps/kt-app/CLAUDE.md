@@ -109,6 +109,7 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 - Do NOT make obvious labels. A value with a unit explains itself: "100 px/s", "1280×720", "30" in the FPS combo — without the prefixes "zoom:", "Resolution:", "FPS:". A state visible through the button highlight (Loop) or through the value itself must not be duplicated in text ("(loop)", "(stop)", "≠1×").
 - All hints go through `KtApp::hint()` (a popup + the bottom right of the status bar), not a bare `on_hover_text`.
 - The hint text itself is taken from the catalog (see the section "Localization").
+- **`docs/guide/shortcuts.md` is THE key reference** (the site shows it as `/docs/shortcuts/`, change `guide-shortcuts-reference`). A new or changed binding or gesture updates its row in the same commit, and the row says only what the handler does (checked against the code, not against a hint or the old landing). Keys are `<kbd>` caps in `| Keys | Action |` tables; `readme-check.py` (class `markup`, t869) refuses anything the site cannot render.
 
 ## X11 StartDrag/BeginResize (item 28 of R.7)
 
