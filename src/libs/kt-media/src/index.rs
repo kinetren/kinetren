@@ -63,16 +63,51 @@ fn hash_file(path: &Path) -> std::io::Result<[u8; 16]> {
     Ok(hasher.digest128().to_le_bytes())
 }
 
+/// Is the file not our DB at all — garbage, a damaged file, a foreign schema (`SQLITE_ERROR`
+/// from our own statements)? Busy/locked, I/O, "cannot open" and the like are TRANSIENT: the
+/// file is fine, someone else is using it right now.
+fn is_broken_db(e: &IndexError) -> bool {
+    use rusqlite::ErrorCode;
+    match e {
+        IndexError::Sqlite(rusqlite::Error::SqliteFailure(f, _)) => {
+            matches!(f.code, ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt | ErrorCode::Unknown)
+        }
+        _ => false,
+    }
+}
+
+/// Remove a DB that is being recreated WITH its `-wal` and `-shm`. A stale `-wal` would be
+/// replayed into the new file, and a stale `-shm` is the file SQLite truncates when it believes
+/// it is the first user — under a mapping another connection may still hold (t872).
+fn remove_db_files(path: &Path) {
+    let _ = std::fs::remove_file(path);
+    for suffix in ["-wal", "-shm"] {
+        let mut side = path.as_os_str().to_owned();
+        side.push(suffix);
+        let _ = std::fs::remove_file(side);
+    }
+}
+
 impl MediaIndexDb {
     /// Open/create. A broken or foreign DB is silently recreated (rule 3 of
     /// docs/media-index.md) — this is a cache, it must not fail because of it.
+    ///
+    /// Only a BROKEN one (t872): the sidecar is open in several threads of one process at once
+    /// (index worker, thumbnails, the reopen of a returned file, reel previews), and under load
+    /// an opening gets `database is locked` after its busy timeout. Taking that for "broken"
+    /// deleted the live file under the other connections; the next opening made a new main
+    /// file next to the OLD `-shm`, SQLite found no other user of it (POSIX locks of one process
+    /// do not conflict) and truncated it, and a connection that still had it mapped died with
+    /// SIGBUS in `walIndexRecover` (t640 under load). A transient error is returned to the
+    /// caller — a cache miss, which every caller already tolerates.
     pub fn open(path: &Path) -> Result<MediaIndexDb, IndexError> {
         match Self::try_open(path) {
             Ok(db) => Ok(db),
-            Err(_) => {
-                let _ = std::fs::remove_file(path);
+            Err(e) if is_broken_db(&e) => {
+                remove_db_files(path);
                 Self::try_open(path)
             }
+            Err(e) => Err(e),
         }
     }
 
@@ -91,7 +126,7 @@ impl MediaIndexDb {
             Some(_) => {
                 // schema bump → full rebuild (rule 2)
                 drop(conn);
-                std::fs::remove_file(path)?;
+                remove_db_files(path);
                 return Self::try_open(path);
             }
             None => {

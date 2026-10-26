@@ -352,6 +352,11 @@ where the replaced file is the second one.
 - **THEN** only the sections of this media are rebuilt (the neighbours are intact); the hash matched — reuse; the corrupt DB is recreated without a panic
 - **TEST** t16 (`src/libs/kt-media/tests/index_db.rs`)
 
+#### Scenario: A locked sidecar is a cache miss, not a broken DB
+- **WHEN** another connection of the same process holds the sidecar exclusively past the busy timeout while it is opened; then a garbage DB with stale `-wal`/`-shm` files is opened
+- **THEN** the first opening returns an error and leaves the file and its records intact (they are reused once the lock is gone); only a DB that is not a database, is corrupt or has a foreign schema is recreated, and its `-wal`/`-shm` go with it
+- **TEST** t872 (`src/libs/kt-media/tests/index_db.rs`); the SIGBUS it removes was seen in t640 (`src/apps/kt-app/src/layout_tests.rs`) under load
+
 #### Scenario: The batch index survives opening
 - **WHEN** the file is opened a second time with the same DB; the file has changed
 - **THEN** the second opening does not scan, the index is byte-for-byte equal to a fresh one and functionally equivalent (keyframe_before, sample-accurate audio); the changed file is rescanned

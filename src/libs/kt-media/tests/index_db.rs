@@ -152,6 +152,51 @@ fn t16_corrupted_db_is_recreated_without_panic() {
     assert_eq!(status, MediaEntryStatus::Rebuilt);
 }
 
+/// t872: a LOCKED sidecar is not a broken one. Another connection of the same process holds
+/// the DB (under load an opening outwaits its busy timeout): `open` returns the error and
+/// leaves the file alone — before, it deleted the live DB, the next opening truncated the old
+/// `-shm` under a mapping another connection still held, and that thread died with SIGBUS
+/// (t640 under load). A really broken DB is still recreated, its stale `-wal`/`-shm` with it.
+#[test]
+fn t872_locked_sidecar_is_not_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("p.ktindex.db");
+    let file = dir.path().join("a.bin");
+    std::fs::write(&file, b"media").unwrap();
+    let id = {
+        let mut db = MediaIndexDb::open(&db_path).unwrap();
+        db.ensure_media(&file).unwrap().0
+    };
+
+    // someone else holds the DB exclusively for longer than the busy timeout
+    let holder = rusqlite::Connection::open(&db_path).unwrap();
+    holder.pragma_update(None, "locking_mode", "EXCLUSIVE").unwrap();
+    holder.execute_batch("BEGIN EXCLUSIVE; INSERT OR REPLACE INTO meta(key, value) VALUES('t872', 'x');").unwrap();
+    let opened = MediaIndexDb::open(&db_path);
+    assert!(opened.is_err(), "a locked sidecar must come back as an error (a cache miss), not as a fresh empty DB");
+    drop(opened);
+    holder.execute_batch("ROLLBACK;").unwrap();
+    drop(holder);
+
+    let mut db = MediaIndexDb::open(&db_path).expect("the sidecar opens once it is free");
+    let (id2, status) = db.ensure_media(&file).unwrap();
+    assert_eq!((id2, status), (id, MediaEntryStatus::Reused), "the records survived — the DB was not deleted");
+    drop(db);
+
+    // a broken DB with stale side files: recreated, the side files do not survive into it
+    let broken = dir.path().join("b.ktindex.db");
+    std::fs::write(&broken, b"this is definitely not sqlite").unwrap();
+    let side = |s: &str| dir.path().join(format!("b.ktindex.db{s}"));
+    std::fs::write(side("-wal"), b"stale wal of the old file").unwrap();
+    std::fs::write(side("-shm"), b"stale shm of the old file").unwrap();
+    let mut db = MediaIndexDb::open(&broken).expect("a broken DB is recreated");
+    assert_eq!(db.ensure_media(&file).unwrap().1, MediaEntryStatus::Rebuilt);
+    for s in ["-wal", "-shm"] {
+        let bytes = std::fs::read(side(s)).unwrap_or_default();
+        assert!(!bytes.starts_with(b"stale"), "{s} of the broken DB survived the recreation");
+    }
+}
+
 // ---- Test 70 (item 14, round 7): nearest thumbnail within tolerance -----------------------
 
 #[test]

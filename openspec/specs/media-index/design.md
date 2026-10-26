@@ -260,3 +260,25 @@ composition, and the preview hung in "Loading" forever.
   it after a new download — its DLLs may be loaded, and nobody asked; a `dispatch!` macro over the
   enums — four majors are still readable as arms, and it would touch every call site; a generic
   "newest types for any major ≥ 6" — layouts differ between majors, that is why the modules exist.
+
+## A locked sidecar is not a broken one (t872, 2026-10-27)
+
+- **What hurt.** t640 died now and then with SIGBUS (signal 7) inside SQLite —
+  `walIndexRecover` on the `reopen-media` thread, in `MediaIndexDb::open` — under load and on
+  base code alike. The sidecar is open in several threads of one process at once (index worker,
+  thumbnails, the reopen of a returned file, reel previews). Under load an opening outwaited its
+  5 s busy timeout and got `database is locked`; `open` took ANY error for "broken" and deleted
+  the main file under the live connections. The next opening created a new main file next to
+  the OLD `-shm`; POSIX locks of one process do not conflict, so SQLite believed it was the
+  first user and truncated that `-shm` — and a connection that still had it mapped read past its
+  end. With the busy timeout cut to 1 ms the same chain showed as "disk I/O error" and lost
+  records.
+- **The rule.** Only a file that is not a database, is corrupt or has a foreign schema
+  (`SQLITE_NOTADB`, `SQLITE_CORRUPT`, `SQLITE_ERROR` from our own statements) is recreated, and
+  then with its `-wal` and `-shm` (a stale `-wal` would be replayed into the new file, a stale
+  `-shm` is what gets truncated). Busy/locked, I/O and "cannot open" are returned to the caller
+  as a cache miss — every caller already treats a DB error that way (rule "DB errors are cache
+  errors"); the index worker tries to open again on its next task.
+- **Rejected:** a longer busy timeout (only moves the threshold, and the delete-on-error path
+  stays a loaded gun); one shared connection for the process (the threads are independent by
+  design — a decoder per thread, invariant 5 — and a shared connection would serialise them).

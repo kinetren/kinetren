@@ -55,6 +55,11 @@ Media sources: the trait `MediaSource`, `SyntheticSource` (tests), `FfmpegSource
   one version per reel (`put_reel_preview` displaces the previous one entirely);
   the cleanup — `prune_reels(keep)`. The format of the peak blob is the same as that of
   `audio_peaks` (`peaks_blob`/`peaks_from_blob` are one pair for both tables). Test 639.
+- **The sidecar is deleted ONLY when it is broken** (`MediaIndexDb::open`, t872): not a
+  database / corrupt / a foreign schema — then together with its `-wal` and `-shm`. A busy,
+  locked or I/O error is a cache miss returned to the caller: several threads of one process
+  hold the sidecar at once, and deleting it under them made SQLite truncate a `-shm` another
+  connection still had mapped — SIGBUS (t640 under load; media-index design).
 - The pixel font 3×5 and `Canvas` — the common module `pixfont` (a placeholder + a future timecode generator). This is NOT the rasterization of the user's title text: that lives in kt-text with its own determinism discipline.
 
 ## FfmpegSource (src/ffmpeg.rs) — how it is built
