@@ -282,3 +282,10 @@ composition, and the preview hung in "Loading" forever.
 - **Rejected:** a longer busy timeout (only moves the threshold, and the delete-on-error path
   stays a loaded gun); one shared connection for the process (the threads are independent by
   design — a decoder per thread, invariant 5 — and a shared connection would serialise them).
+- **Open end.** After the fix, one `finish.sh` run (whole workspace plus live scenarios on 32
+  cores) still saw t640 and t795 re-render the reel on the second opening — a plain assertion,
+  no SIGBUS; two further whole-workspace runs and three kt-app runs did not repeat it. The
+  reel-preview job opened the sidecar with `.ok()` and lost its disk tier SILENTLY; it now logs
+  the opening error (`reel preview: sidecar open failed: …`), so the next occurrence names its
+  cause. The busy timeout is also set before the `journal_mode` pragma (hygiene: no statement
+  runs without a busy handler — not shown to be the cause).

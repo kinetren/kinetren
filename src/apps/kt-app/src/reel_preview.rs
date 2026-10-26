@@ -456,7 +456,16 @@ pub fn render_reel_preview(
 ) -> ReelDone {
     let seq_row = key.seq.0 as i64;
     let fp = media_fingerprint(p, base);
-    let mut db = index_db.and_then(|d| kt_media::index::MediaIndexDb::open(d).ok());
+    // an opening that fails is a cache miss (the reel renders anew) — but not a SILENT one:
+    // a lost disk tier must be visible in the log (t640/t795 under load showed a re-render
+    // with no word on why)
+    let mut db = index_db.and_then(|d| match kt_media::index::MediaIndexDb::open(d) {
+        Ok(db) => Some(db),
+        Err(e) => {
+            warn_db_once("open", &e);
+            None
+        }
+    });
     // frames have already come from disk — we skip this stage, computing only the peaks
     let mut disk_frames = false;
     if let Some(db) = &db {

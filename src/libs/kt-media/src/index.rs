@@ -113,10 +113,11 @@ impl MediaIndexDb {
 
     fn try_open(path: &Path) -> Result<MediaIndexDb, IndexError> {
         let conn = Connection::open(path)?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
         // The DB is opened by several threads (index-worker, thumbs, opening of
-        // sources) — short writes must not fail with SQLITE_BUSY.
+        // sources) — short writes must not fail with SQLITE_BUSY. Set before any statement,
+        // so every one of them waits rather than fails at once.
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
         let version: Option<i64> = conn
             .query_row("SELECT value FROM meta WHERE key='schema_version'", [], |r| r.get(0))
             .optional()
