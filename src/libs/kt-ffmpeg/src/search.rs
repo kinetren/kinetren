@@ -51,9 +51,11 @@ impl Lib {
     }
 }
 
-/// Library majors of one FFmpeg release, newest first (order = priority inside a folder).
-/// FFmpeg 9 (avcodec 63) is not here yet: its headers are not vendored.
-pub const MAJORS: [(u32, Majors); 3] = [
+/// Library majors of one FFmpeg release, newest first (order = priority inside a folder and
+/// on Linux). Every row has a version module in `lib.rs` built from the vendored headers of
+/// that release; t862 checks each row against the headers' `LIB*_VERSION_MAJOR`.
+pub const MAJORS: [(u32, Majors); 4] = [
+    (9, Majors { avutil: 61, swresample: 7, swscale: 10, avcodec: 63, avformat: 63 }),
     (8, Majors { avutil: 60, swresample: 6, swscale: 9, avcodec: 62, avformat: 62 }),
     (7, Majors { avutil: 59, swresample: 5, swscale: 8, avcodec: 61, avformat: 61 }),
     (6, Majors { avutil: 58, swresample: 4, swscale: 7, avcodec: 60, avformat: 60 }),
@@ -152,7 +154,7 @@ pub enum Reject {
     NoAvcodec,
     /// `ffmpeg.exe` without DLLs — a static build.
     StaticBuild,
-    /// Only an avcodec of a major the loader does not know (FFmpeg 9 = avcodec 63).
+    /// Only an avcodec of a major the loader does not know (FFmpeg 10 = avcodec 64).
     Unsupported { avcodec: u32 },
     /// avcodec of a supported release is there, a sibling library is not.
     Missing { ffmpeg: u32, file: String },
@@ -177,7 +179,7 @@ impl fmt::Display for Reject {
 }
 
 /// FFmpeg release of an avcodec major, including releases newer than the table
-/// (avcodec 63 = FFmpeg 9, 64 = 10): the report names what the person installed.
+/// (avcodec 64 = FFmpeg 10, 65 = 11): the report names what the person installed.
 fn ffmpeg_of_avcodec(avcodec: u32) -> Option<u32> {
     if let Some((f, _)) = MAJORS.iter().find(|(_, l)| l.avcodec == avcodec) {
         return Some(*f);
@@ -421,7 +423,7 @@ impl fmt::Display for Report {
 pub fn not_found_hint(os: Os) -> &'static str {
     match os {
         Os::Linux => {
-            "Install FFmpeg 6, 7 or 8 from your distribution (libavcodec, libavformat, \
+            "Install FFmpeg 6, 7, 8 or 9 from your distribution (libavcodec, libavformat, \
              libswscale, libswresample)."
         }
         Os::Windows => {

@@ -1,4 +1,4 @@
-//! Generates ONLY the types and constants of FFmpeg for majors 6/7/8 from the
+//! Generates ONLY the types and constants of FFmpeg for majors 6/7/8/9 from the
 //! vendored headers (vendor/ffmpeg-N/include).
 //!
 //! Functions are NOT generated: their addresses are resolved at runtime via dlsym
@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-const MAJORS: [&str; 3] = ["6", "7", "8"];
+const MAJORS: [&str; 4] = ["6", "7", "8", "9"];
 
 const HEADERS: [&str; 8] = [
     "libavutil/avutil.h",

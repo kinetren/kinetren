@@ -1,4 +1,4 @@
-//! kt-ffmpeg: runtime layer over the system FFmpeg (majors 6/7/8).
+//! kt-ffmpeg: runtime layer over the system FFmpeg (majors 6/7/8/9).
 //!
 //! INVARIANT: the binary does NOT link to libav* (`ldd kt-app | grep libav` is empty).
 //! Libraries are loaded via dlopen on first use, the version is determined by
@@ -142,6 +142,11 @@ macro_rules! version_module {
 version_module!(v6, "types_v6.rs", 6);
 version_module!(v7, "types_v7.rs", 7);
 version_module!(v8, "types_v8.rs", 8);
+version_module!(v9, "types_v9.rs", 9);
+
+/// The majors that have a version module above — t862 checks that this equals the rows of
+/// `search::MAJORS` and that each row equals its module's `LIB*_VERSION_MAJOR` constants.
+pub const VERSION_MODULES: [u32; 4] = [6, 7, 8, 9];
 
 /// Single entry point: loads the system FFmpeg (once per process)
 /// and opens the file with the implementation of the matching version.
@@ -149,6 +154,7 @@ pub enum Backend {
     V6(&'static v6::Api),
     V7(&'static v7::Api),
     V8(&'static v8::Api),
+    V9(&'static v9::Api),
 }
 
 /// A SUCCESSFUL load lives for the whole process (the function pointers point into these
@@ -231,9 +237,13 @@ pub fn rescan_with(env: &dyn search::Env) -> Result<BackendInfo, String> {
         let _ = MODULES.set(libs.module_paths());
         let backend = unsafe {
             match libs.major {
+                9 => Backend::V9(Box::leak(Box::new(v9::Api::load(libs).map_err(|e| e.to_string())?))),
                 8 => Backend::V8(Box::leak(Box::new(v8::Api::load(libs).map_err(|e| e.to_string())?))),
                 7 => Backend::V7(Box::leak(Box::new(v7::Api::load(libs).map_err(|e| e.to_string())?))),
-                _ => Backend::V6(Box::leak(Box::new(v6::Api::load(libs).map_err(|e| e.to_string())?))),
+                6 => Backend::V6(Box::leak(Box::new(v6::Api::load(libs).map_err(|e| e.to_string())?))),
+                // ffmpeg-9 (design D2): never bind one major's struct layouts to another
+                // major's libraries — a table row without a module is an error, not a guess
+                m => return Err(format!("FFmpeg {m}: no version module for this major")),
             }
         };
         let _ = LOADED.set((backend, info.clone()));
@@ -305,6 +315,7 @@ pub fn available_encoders() -> Vec<String> {
         Ok((Backend::V6(api), _)) => v6::available_encoders(api),
         Ok((Backend::V7(api), _)) => v7::available_encoders(api),
         Ok((Backend::V8(api), _)) => v8::available_encoders(api),
+        Ok((Backend::V9(api), _)) => v9::available_encoders(api),
         Err(_) => Vec::new(),
     }
 }
@@ -314,6 +325,7 @@ pub enum Muxer {
     V6(v6::Muxer),
     V7(v7::Muxer),
     V8(v8::Muxer),
+    V9(v9::Muxer),
 }
 
 impl Muxer {
@@ -323,6 +335,7 @@ impl Muxer {
             Backend::V6(api) => v6::Muxer::open(api, cfg).map(Muxer::V6),
             Backend::V7(api) => v7::Muxer::open(api, cfg).map(Muxer::V7),
             Backend::V8(api) => v8::Muxer::open(api, cfg).map(Muxer::V8),
+            Backend::V9(api) => v9::Muxer::open(api, cfg).map(Muxer::V9),
         }
     }
 
@@ -331,6 +344,7 @@ impl Muxer {
             Muxer::V6(m) => m.encoder_name(),
             Muxer::V7(m) => m.encoder_name(),
             Muxer::V8(m) => m.encoder_name(),
+            Muxer::V9(m) => m.encoder_name(),
         }
     }
 
@@ -340,6 +354,7 @@ impl Muxer {
             Muxer::V6(m) => m.write_video(rgba),
             Muxer::V7(m) => m.write_video(rgba),
             Muxer::V8(m) => m.write_video(rgba),
+            Muxer::V9(m) => m.write_video(rgba),
         }
     }
 
@@ -349,6 +364,7 @@ impl Muxer {
             Muxer::V6(m) => m.write_audio(samples),
             Muxer::V7(m) => m.write_audio(samples),
             Muxer::V8(m) => m.write_audio(samples),
+            Muxer::V9(m) => m.write_audio(samples),
         }
     }
 
@@ -357,6 +373,7 @@ impl Muxer {
             Muxer::V6(m) => m.finish(),
             Muxer::V7(m) => m.finish(),
             Muxer::V8(m) => m.finish(),
+            Muxer::V9(m) => m.finish(),
         }
     }
 }
@@ -366,6 +383,7 @@ pub enum Source {
     V6(v6::Source),
     V7(v7::Source),
     V8(v8::Source),
+    V9(v9::Source),
 }
 
 impl Source {
@@ -383,6 +401,7 @@ impl Source {
             Backend::V6(api) => v6::Source::open_with_index(api, path, prebuilt).map(Source::V6),
             Backend::V7(api) => v7::Source::open_with_index(api, path, prebuilt).map(Source::V7),
             Backend::V8(api) => v8::Source::open_with_index(api, path, prebuilt).map(Source::V8),
+            Backend::V9(api) => v9::Source::open_with_index(api, path, prebuilt).map(Source::V9),
         }
     }
 
@@ -392,6 +411,7 @@ impl Source {
             Source::V6(s) => s.packet_index(),
             Source::V7(s) => s.packet_index(),
             Source::V8(s) => s.packet_index(),
+            Source::V9(s) => s.packet_index(),
         }
     }
 
@@ -401,6 +421,7 @@ impl Source {
             Source::V6(s) => s.index_was_prebuilt(),
             Source::V7(s) => s.index_was_prebuilt(),
             Source::V8(s) => s.index_was_prebuilt(),
+            Source::V9(s) => s.index_was_prebuilt(),
         }
     }
 
@@ -409,6 +430,7 @@ impl Source {
             Source::V6(s) => s.probe(),
             Source::V7(s) => s.probe(),
             Source::V8(s) => s.probe(),
+            Source::V9(s) => s.probe(),
         }
     }
 
@@ -418,6 +440,7 @@ impl Source {
             Source::V6(s) => s.read_audio_burst(idx, out),
             Source::V7(s) => s.read_audio_burst(idx, out),
             Source::V8(s) => s.read_audio_burst(idx, out),
+            Source::V9(s) => s.read_audio_burst(idx, out),
         }
     }
 
@@ -431,6 +454,7 @@ impl Source {
             Source::V6(s) => s.read_video_frame(pts, width, height),
             Source::V7(s) => s.read_video_frame(pts, width, height),
             Source::V8(s) => s.read_video_frame(pts, width, height),
+            Source::V9(s) => s.read_video_frame(pts, width, height),
         }
     }
 
@@ -446,6 +470,7 @@ impl Source {
             Source::V6(s) => s.read_video_span(keys, width, height, emit),
             Source::V7(s) => s.read_video_span(keys, width, height, emit),
             Source::V8(s) => s.read_video_span(keys, width, height, emit),
+            Source::V9(s) => s.read_video_span(keys, width, height, emit),
         }
     }
 
@@ -455,6 +480,7 @@ impl Source {
             Source::V6(s) => s.video_debug_stats(),
             Source::V7(s) => s.video_debug_stats(),
             Source::V8(s) => s.video_debug_stats(),
+            Source::V9(s) => s.video_debug_stats(),
         }
     }
 
@@ -463,6 +489,7 @@ impl Source {
             Source::V6(s) => s.keyframe_before(pts),
             Source::V7(s) => s.keyframe_before(pts),
             Source::V8(s) => s.keyframe_before(pts),
+            Source::V9(s) => s.keyframe_before(pts),
         }
     }
 }

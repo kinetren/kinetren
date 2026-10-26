@@ -1,7 +1,7 @@
 //! FFmpeg function table, resolved at runtime via dlsym.
 //!
 //! Key architectural point: the binary does NOT link to libav* (no NEEDED entries),
-//! so the same kt-app works on a system with FFmpeg 6, 7 or 8 —
+//! so the same kt-app works on a system with FFmpeg 6, 7, 8 or 9 —
 //! whatever is installed is used, with all its hardware acceleration.
 //!
 //! The macro is instantiated separately in each version module (src/v6.rs etc.),
@@ -32,7 +32,7 @@ macro_rules! declare_api {
     };
 }
 
-/// The function list, shared by all versions (signatures match in 6/7/8;
+/// The function list, shared by all versions (signatures match in 6/7/8/9;
 /// the differing types come from the version module).
 #[macro_export]
 macro_rules! ffmpeg_api {
