@@ -95,6 +95,19 @@ pub const CLIP_NAME_ROW_H: f32 = 19.0;
 /// Y of the track label: a row below the clip name, but not below the track's bottom.
 /// A pure function for the sake of test 102 — “below the clip name” is checked by a number,
 /// not by eye.
+/// The chord of the morpher menu's “Delete morpher” (menu-chords-out-of-text, t871).
+/// The item deletes THIS morpher; Del deletes every selected morpher and camera, and a
+/// right click on a member of a multi-selection keeps the selection. So the chord is
+/// promised only when the morpher is the whole selection — the same rule as the event
+/// menu's Delete (`del_accel`: a chord only where the key really does this).
+pub fn morpher_del_accel(
+    sel_morph: &std::collections::BTreeSet<MorphId>,
+    sel_camera: &std::collections::BTreeSet<CameraId>,
+    mid: MorphId,
+) -> Option<&'static str> {
+    (sel_camera.is_empty() && sel_morph.len() == 1 && sel_morph.contains(&mid)).then_some("Del")
+}
+
 pub fn lane_label_y(row_top: f32, lane_h: f32, galley_h: f32) -> f32 {
     let row_bottom = row_top + lane_h - 2.0;
     (row_top + CLIP_NAME_ROW_H).min(row_bottom - galley_h).max(row_top)
@@ -1725,7 +1738,8 @@ impl KtApp {
             ui.close();
         }
         if self.model.project().region.is_some() {
-            if ui.button(tr(k::tl::menu::DELETE_IN_REGION)).clicked() {
+            // the same `delete_action` as Del, and this item exists only with a region
+            if crate::widgets::menu_item(ui, tr(k::tl::menu::DELETE_IN_REGION), Some("Del")) {
                 self.delete_action();
                 ui.close();
             }
@@ -5745,7 +5759,9 @@ impl KtApp {
                     }
                     ui.separator();
                 }
-                if ui.button(tr(k::tl::menu::COPY)).clicked() {
+                // after the item's own selection — the same `copy_selection` as Ctrl+C.
+                // Paste below shows NO chord: it pastes at the click, Ctrl+V at the playhead
+                if crate::widgets::menu_item(ui, tr(k::tl::menu::COPY), Some("Ctrl+C")) {
                     if !self.is_selected(id) {
                         self.select_only(id);
                     }
@@ -5903,7 +5919,11 @@ impl KtApp {
                         ui.close();
                     }
                 }
-                if ui.button(tr(k::tl::menu::REGION_FROM_EVENT)).clicked() {
+                if crate::widgets::menu_item(
+                    ui,
+                    tr(k::tl::menu::REGION_FROM_EVENT),
+                    Some(tr(k::tl::menu::REGION_FROM_EVENT_ACCEL)),
+                ) {
                     self.region_from_event(id);
                     ui.close();
                 }
@@ -6298,7 +6318,9 @@ impl KtApp {
                     }
                     ui.close();
                 }
-                if ui.button(tr(k::tl::menu::REMOVE_MORPHER)).clicked() {
+                let del =
+                    morpher_del_accel(&self.selected_morph, &self.selected_camera, mid);
+                if crate::widgets::menu_item(ui, tr(k::tl::menu::REMOVE_MORPHER), del) {
                     if self.apply(Command::RemoveMorpher { id: mid }) {
                         self.selected_morph.clear();
                     }

@@ -4883,3 +4883,89 @@ fn t850_ffmpeg_window_from_not_found_to_playing() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+
+/// Test 871 (menu-chords-out-of-text): a menu label never carries its key, and a chord
+/// is shown only where the key does exactly what the item does. Five `[tl.menu]`
+/// labels carried “(Ctrl+C)”, “(Ctrl+V)”, “(Del)” and “(Shift+double click)” in the
+/// translated text (`i18n/README.md` rule 3). Two of those promises were false where
+/// they stood: the context-menu Paste pastes at the CLICK, Ctrl+V at the playhead;
+/// Delete morpher deletes one block, Del the whole selection.
+#[test]
+fn t871_menu_labels_carry_no_keys_and_chords_hold() {
+    use crate::i18n::{Lang, k, tables, tr};
+    use kt_model::{CameraId, ClipKind, MorphId, Region};
+    use kt_time::Tick;
+    use std::collections::BTreeSet;
+
+    // 1. no label of a menu carries a key, in any language (the `*_accel`
+    //    values ARE chord texts, so they are skipped)
+    let mut bad = Vec::new();
+    for lang in Lang::ALL {
+        for (i, name) in tables::KEY_NAMES.iter().enumerate() {
+            if !(name.starts_with("tl.menu.") || name.starts_with("menu.")) || name.ends_with("_accel") {
+                continue;
+            }
+            let v = tables::TABLES[lang as usize][i];
+            let keyish = ["Ctrl+", "Shift+", "Alt+", "(Del)", "（Del）", "(Supr)", "（Supr）", "(S)", "（S）"]
+                .iter()
+                .any(|p| v.contains(p));
+            if keyish {
+                bad.push(format!("{} {name} = “{v}”", lang.code()));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "menu labels carry their key in the text:\n{}", bad.join("\n"));
+
+    // 2. the chords shown in the menus, from where the person acts
+    let item_with = |label: &str, chord: &str| format!("{label}\t{chord}");
+    let (mut h, g) = crate::layout_tests::harness_three_clips_dt(None);
+    let clip2 = egui::pos2(g.tick_to_x(125_000), g.lane_y(ClipKind::Video, 0, 0.6));
+    right_click(&mut h, clip2);
+    let labels = crate::layout_tests::menu_labels(&mut h);
+    let copy = item_with(tr(k::tl::menu::COPY), "Ctrl+C");
+    assert!(labels.contains(&copy), "event menu: no “{copy}”; visible: {labels:?}");
+    let region =
+        item_with(tr(k::tl::menu::REGION_FROM_EVENT), tr(k::tl::menu::REGION_FROM_EVENT_ACCEL));
+    assert!(labels.contains(&region), "event menu: no “{region}”; visible: {labels:?}");
+    let paste = tr(k::tl::menu::PASTE).to_string();
+    assert!(
+        labels.contains(&paste),
+        "event menu: no plain “{paste}” (it pastes at the click, Ctrl+V does not); visible: {labels:?}"
+    );
+    assert!(
+        !labels.iter().any(|l| l.starts_with(&format!("{paste}\t"))),
+        "event menu: Paste promises a chord it does not do; visible: {labels:?}"
+    );
+    h.key_press(egui::Key::Escape);
+    h.step();
+    h.step();
+
+    // the empty-space menu with a region (between events 1 and 2, away from its edges)
+    h.state_mut().model.set_region(Region::normalized(Tick(55_000), Tick(95_000)));
+    h.step();
+    let g = h.state().tl_geom.clone().expect("timeline geometry");
+    let empty = egui::pos2(g.tick_to_x(75_000), g.lane_y(ClipKind::Video, 0, 0.6));
+    right_click(&mut h, empty);
+    let labels = crate::layout_tests::menu_labels(&mut h);
+    let del = item_with(tr(k::tl::menu::DELETE_IN_REGION), "Del");
+    assert!(labels.contains(&del), "empty-space menu: no “{del}”; visible: {labels:?}");
+
+    // 3. Delete morpher promises Del only when the morpher is the whole selection
+    let (m1, m2) = (MorphId(1), MorphId(2));
+    let none_cam = BTreeSet::<CameraId>::new();
+    assert_eq!(
+        crate::timeline::morpher_del_accel(&BTreeSet::from([m1]), &none_cam, m1),
+        Some("Del"),
+        "the morpher alone in the selection: Del deletes exactly it"
+    );
+    assert_eq!(
+        crate::timeline::morpher_del_accel(&BTreeSet::from([m1, m2]), &none_cam, m1),
+        None,
+        "two morphers selected: Del would delete both, the item only one"
+    );
+    assert_eq!(
+        crate::timeline::morpher_del_accel(&BTreeSet::from([m1]), &BTreeSet::from([CameraId(1)]), m1),
+        None,
+        "a camera selected too: Del would delete it as well"
+    );
+}

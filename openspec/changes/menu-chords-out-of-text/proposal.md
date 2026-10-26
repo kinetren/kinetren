@@ -18,7 +18,9 @@ the chord column, translated like "Enter, 2×click", for the gesture.
 ## What Changes
 
 - Record the owner's decisions in `docs/user-feedback.md` before any other edit.
-- All five labels lose their key in all five catalogs.
+- All five labels lose their key in all five catalogs. t871 also found a sixth, in Chinese only:
+  `tl.menu.delete` "删除（Del）" (en "Delete"), which showed Del twice in the event menu. It
+  becomes "删除".
 - A chord is shown only where the key does exactly what the item does:
   - Copy (event menu): `Ctrl+C`. The item selects the clicked event and then runs the same
     `copy_selection` the key runs.
