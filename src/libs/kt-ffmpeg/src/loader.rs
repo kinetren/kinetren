@@ -193,7 +193,8 @@ fn place_of(c: &Candidate) -> String {
 /// The machine as the plan sees it.
 pub struct SystemEnv {
     pub user_choice: Option<String>,
-    pub download_dir: Option<String>,
+    /// The root of Kinetren's downloads (one folder per version).
+    pub download_root: Option<String>,
 }
 
 impl Env for SystemEnv {
@@ -207,8 +208,8 @@ impl Env for SystemEnv {
     fn user_choice(&self) -> Option<String> {
         self.user_choice.clone()
     }
-    fn download_dir(&self) -> Option<String> {
-        self.download_dir.clone()
+    fn download_root(&self) -> Option<String> {
+        self.download_root.clone()
     }
     fn list(&self, dir: &str) -> Option<Vec<String>> {
         let rd = std::fs::read_dir(dir).ok()?;

@@ -772,7 +772,8 @@ fn run(args: &[String]) -> i32 {
     let force = args.iter().any(|a| a == "--force");
     // the FFmpeg folder the person chose in the app (View → FFmpeg… → Locate folder…)
     // is the first step of the search here too (windows-build)
-    let download = cfg!(windows).then(|| kt_dirs::ffmpeg_download_dir().to_string_lossy().into_owned());
+    // the download ROOT: every version folder in it is searched, newest first (ffmpeg-9)
+    let download = cfg!(windows).then(|| kt_dirs::ffmpeg_download_root().to_string_lossy().into_owned());
     kt_ffmpeg::set_search_dirs(ffmpeg_user_choice(), download);
     match args.first().map(String::as_str) {
         Some("ffmpeg") => {

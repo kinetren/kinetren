@@ -103,8 +103,9 @@ pub trait Env {
     fn exe_dir(&self) -> Option<String>;
     /// The folder the person chose (Locate…), if any.
     fn user_choice(&self) -> Option<String>;
-    /// Kinetren's own download folder (Windows), if any.
-    fn download_dir(&self) -> Option<String>;
+    /// The ROOT of Kinetren's own downloads (Windows), if any: one folder per downloaded
+    /// version (`9.0.2`, `8.1.2`, …) — see [`download_dirs`].
+    fn download_root(&self) -> Option<String>;
     /// File names in a folder; `None` if it does not exist or cannot be read.
     fn list(&self, dir: &str) -> Option<Vec<String>>;
     /// Target of a symbolic link, `None` if `path` is not a link.
@@ -232,8 +233,10 @@ pub fn plan(os: Os, env: &dyn Env) -> Vec<Candidate> {
                 push_dir(&mut out, Source::NextToExe, join(os, &exe, "ffmpeg"));
                 push_dir(&mut out, Source::NextToExe, join(os, &join(os, &exe, "ffmpeg"), "bin"));
             }
-            if let Some(d) = env.download_dir() {
-                push_dir(&mut out, Source::Download, d);
+            if let Some(root) = env.download_root() {
+                for d in download_dirs(os, env, &root) {
+                    push_dir(&mut out, Source::Download, d);
+                }
             }
             // PATH: only folders that look like FFmpeg — PATH has dozens of unrelated ones,
             // and listing them all as "no avcodec" would bury the one that matters.
@@ -311,6 +314,26 @@ fn avcodec_file_major(os: Os, f: &str) -> Option<u32> {
         }
         Os::Linux => f.strip_prefix("libavcodec.so.")?.parse().ok(),
     }
+}
+
+/// The version folders under the download root, newest version first (ffmpeg-9, design D3).
+/// The current pin is the newest, so it comes first; a folder an EARLIER pin left (`8.1.2`)
+/// follows it — an update of Kinetren does not take away the FFmpeg the person downloaded.
+/// Only names that are a dotted version count: the downloader's temporary `.partial-<pid>`
+/// entries and anything else are neither candidates nor reported.
+pub fn download_dirs(os: Os, env: &dyn Env, root: &str) -> Vec<String> {
+    let version = |name: &str| -> Option<Vec<u32>> {
+        let parts: Option<Vec<u32>> = name.split('.').map(|p| p.parse().ok()).collect();
+        parts.filter(|p| p.len() >= 2)
+    };
+    let mut found: Vec<(Vec<u32>, String)> = env
+        .list(root)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|name| version(&name).map(|v| (v, name)))
+        .collect();
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.into_iter().map(|(_, name)| join(os, root, &name)).collect()
 }
 
 /// Known install locations (Windows): scoop, winget packages, the folders tutorials use.

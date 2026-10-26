@@ -22,12 +22,13 @@ pub fn read_user_choice() -> Option<String> {
 /// Give the search the program's folders. Called at startup, before any source opens,
 /// and again after Locate… or a download.
 pub fn install_search_dirs() {
-    kt_ffmpeg::set_search_dirs(read_user_choice(), download_dir_for_search());
+    kt_ffmpeg::set_search_dirs(read_user_choice(), download_root_for_search(&download_root()));
 }
 
-/// The download folder is a step of the Windows search only (Linux has system packages).
-pub fn download_dir_for_search() -> Option<String> {
-    cfg!(windows).then(|| kt_dirs::ffmpeg_download_dir().to_string_lossy().into_owned())
+/// The download root is a step of the Windows search only (Linux has system packages).
+/// The ROOT, not the pin's folder (ffmpeg-9): a folder an earlier pin left keeps working.
+pub fn download_root_for_search(root: &std::path::Path) -> Option<String> {
+    cfg!(windows).then(|| root.to_string_lossy().into_owned())
 }
 
 // ---- the download of the pinned build (Windows; media-index) ------------------------------
@@ -57,7 +58,7 @@ const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(10 * 60)
 
 /// Where downloads live: `<local>/ffmpeg` (Windows: `%LOCALAPPDATA%\kinetren\ffmpeg`).
 pub fn download_root() -> PathBuf {
-    kt_dirs::local_dir().join("ffmpeg")
+    kt_dirs::ffmpeg_download_root()
 }
 
 /// What to download: the pinned archive, or (debug builds only) a test server's —
@@ -294,6 +295,10 @@ pub struct FfmpegUi {
     pub message: Option<(bool, String)>,
     /// A test's answer of the folder picker (the native dialog cannot be driven).
     pub test_pick: Option<PathBuf>,
+    /// Does the pin's folder (`<download_root>/<PINNED_VERSION>`) exist? Asked of the disk
+    /// once and after every search or download, not per frame (invariant 12); `None` = not
+    /// asked yet.
+    pin_present: Option<bool>,
 }
 
 impl Default for FfmpegUi {
@@ -305,11 +310,24 @@ impl Default for FfmpegUi {
             job: None,
             message: None,
             test_pick: None,
+            pin_present: None,
         }
     }
 }
 
+/// Is **Download FFmpeg <pin>** offered (ffmpeg-9, ui-reach, t867)? On Windows while the pin's
+/// folder is absent — whatever is loaded: nothing, an EARLIER download (`8.1.2`) or a folder
+/// the person chose. Linux has the distribution's packages and no button. Pure, any OS.
+pub fn download_offered(os: kt_ffmpeg::search::Os, pin_present: bool) -> bool {
+    os == kt_ffmpeg::search::Os::Windows && !pin_present
+}
+
 impl FfmpegUi {
+    /// Does the pin's folder exist? (cached, see `pin_present`)
+    pub fn pin_present(&mut self) -> bool {
+        *self.pin_present.get_or_insert_with(|| self.download_root.join(PINNED_VERSION).is_dir())
+    }
+
     fn read_choice(&self) -> Option<String> {
         let text = std::fs::read_to_string(&self.choice_file).ok()?;
         let line = text.lines().next()?.trim();
@@ -318,9 +336,8 @@ impl FfmpegUi {
 
     /// Search again with the current folders; the message says what happened.
     pub fn rescan(&mut self) {
-        let download = cfg!(windows)
-            .then(|| self.download_root.join(PINNED_VERSION).to_string_lossy().into_owned());
-        kt_ffmpeg::set_search_dirs(self.read_choice(), download);
+        self.pin_present = None;
+        kt_ffmpeg::set_search_dirs(self.read_choice(), download_root_for_search(&self.download_root));
         self.message = match kt_ffmpeg::rescan() {
             Ok(info) => Some((
                 false,
@@ -369,6 +386,13 @@ impl FfmpegUi {
         if let Some(done) = job.done.take() {
             self.job = None;
             match done {
+                // a download over an already loaded FFmpeg (an earlier download, a chosen
+                // folder): the loaded set stays for the process, so the new one is used after
+                // a restart — "installed FFmpeg 8" would be a lie (ffmpeg-9)
+                Ok(_) if kt_ffmpeg::is_loaded() => {
+                    self.pin_present = None;
+                    self.message = Some((false, tr(k::ffmpeg::RESTART).to_string()));
+                }
                 Ok(_) => self.rescan(),
                 Err(e) if e == "cancelled" => self.message = None,
                 Err(e) => self.message = Some((true, crate::tf!(k::ffmpeg::FAILED, e))),
@@ -419,6 +443,7 @@ impl crate::app::KtApp {
         let mut act: Option<&'static str> = None;
         let info = kt_ffmpeg::backend_info();
         let report = kt_ffmpeg::search_report_data();
+        let offer = download_offered(kt_ffmpeg::search::Os::NATIVE, self.ffmpeg_ui.pin_present());
         egui::Window::new(tr(k::ffmpeg::TITLE))
             .id(egui::Id::new("kt_ffmpeg"))
             .open(&mut open)
@@ -465,7 +490,7 @@ impl crate::app::KtApp {
                             ui.label(text);
                         }
                     }
-                    if cfg!(windows) && info.is_none() {
+                    if offer {
                         ui.add_space(4.0);
                         ui.weak(crate::tf!(k::ffmpeg::DOWNLOAD_NOTE, PINNED_SIZE / (1024 * 1024)));
                     }
@@ -488,8 +513,7 @@ impl crate::app::KtApp {
                             if ui.button(tr(k::ffmpeg::CANCEL)).clicked() {
                                 act = Some("cancel");
                             }
-                        } else if cfg!(windows)
-                            && info.is_none()
+                        } else if offer
                             && ui.button(crate::tf!(k::ffmpeg::DOWNLOAD, PINNED_VERSION)).clicked()
                         {
                             act = Some("download");
@@ -537,6 +561,99 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// t867 (ffmpeg-9, ui-reach): **Download FFmpeg <pin>** stays offered over an earlier
+    /// download and over a chosen folder, and goes away only when the pin's folder exists; the
+    /// window's first line names the folder that was loaded. The search plan decides what loads
+    /// (Windows rules, on any OS), and the offer is a pure function of the pin's folder.
+    #[test]
+    fn t867_download_stays_offered_over_an_earlier_download() {
+        use kt_ffmpeg::search::{self, Env, LOAD_ORDER, Os};
+        use std::collections::HashMap;
+
+        struct Machine {
+            dirs: HashMap<String, Vec<String>>,
+            choice: Option<String>,
+        }
+        impl Env for Machine {
+            fn var(&self, _: &str) -> Option<String> {
+                None
+            }
+            fn exe_dir(&self) -> Option<String> {
+                None
+            }
+            fn user_choice(&self) -> Option<String> {
+                self.choice.clone()
+            }
+            fn download_root(&self) -> Option<String> {
+                Some(ROOT.into())
+            }
+            fn list(&self, dir: &str) -> Option<Vec<String>> {
+                self.dirs.get(dir).cloned()
+            }
+            fn read_link(&self, _: &str) -> Option<String> {
+                None
+            }
+        }
+        const ROOT: &str = r"C:\Users\u\AppData\Local\kinetren\ffmpeg";
+        let set = |ffmpeg: u32| -> Vec<String> {
+            LOAD_ORDER.iter().map(|l| search::file_name(Os::Windows, *l, ffmpeg)).collect()
+        };
+        let at = |v: &str| format!(r"{ROOT}\{v}");
+        // what the window shows for a machine: (Download offered, the first line)
+        let window = |m: &Machine| -> (bool, Option<String>) {
+            let pin_present = m.list(ROOT).unwrap_or_default().iter().any(|e| e == PINNED_VERSION);
+            let plan = search::plan(Os::Windows, m);
+            let line = plan.iter().find(|c| c.verdict.is_ok()).map(|c| {
+                let major = *c.verdict.as_ref().unwrap();
+                // the avcodec version is not part of this scene (and a dotted literal here
+                // would read as a probe name to scripts/live-coverage.py)
+                crate::tf!(k::ffmpeg::LOADED, major, "-", c.dir.clone().unwrap())
+            });
+            (download_offered(Os::Windows, pin_present), line)
+        };
+        // an earlier pin's folder: older than any pin, so the scene does not depend on the pin
+        const EARLIER: &str = "8.0.1";
+
+        // 1. nothing downloaded, nothing found
+        let none = Machine { dirs: HashMap::new(), choice: None };
+        assert_eq!(window(&none), (true, None));
+
+        // 2. a download from an earlier Kinetren, the current pin not yet
+        let earlier = Machine {
+            dirs: HashMap::from([(ROOT.into(), vec![EARLIER.into()]), (at(EARLIER), set(8))]),
+            choice: None,
+        };
+        let (offered, line) = window(&earlier);
+        assert!(offered, "Download is offered over an earlier download");
+        let line = line.expect("FFmpeg 8 is loaded from the earlier download");
+        assert!(line.contains(&at(EARLIER)) && line.starts_with("FFmpeg 8"), "{line}");
+
+        // 3. the pin is downloaded: it loads first, and Download goes away
+        let current = Machine {
+            dirs: HashMap::from([
+                (ROOT.into(), vec![EARLIER.into(), PINNED_VERSION.into()]),
+                (at(EARLIER), set(8)),
+                (at(PINNED_VERSION), set(9)),
+            ]),
+            choice: None,
+        };
+        let (offered, line) = window(&current);
+        assert!(!offered, "the pin's folder exists — nothing to offer");
+        assert!(line.unwrap().contains(&at(PINNED_VERSION)));
+
+        // 4. FFmpeg 9 from a folder the person chose, nothing downloaded
+        let chosen = Machine {
+            dirs: HashMap::from([(r"D:\ff9\bin".into(), set(9))]),
+            choice: Some(r"D:\ff9\bin".into()),
+        };
+        let (offered, line) = window(&chosen);
+        assert!(offered, "a chosen folder does not hide the Download button");
+        assert!(line.unwrap().contains(r"D:\ff9\bin"));
+
+        // Linux: the distribution's packages, never a button
+        assert!(!download_offered(Os::Linux, false) && !download_offered(Os::Linux, true));
+    }
 
     /// A tiny archive with the structure of gyan.dev's: `<root>/bin/*.dll` (avcodec among
     /// them), `<root>/bin/ffmpeg.exe`, `<root>/include/…`, `<root>/LICENSE`.

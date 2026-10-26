@@ -12,7 +12,7 @@ struct FakeEnv {
     vars: HashMap<String, String>,
     exe_dir: Option<String>,
     user_choice: Option<String>,
-    download_dir: Option<String>,
+    download_root: Option<String>,
     dirs: HashMap<String, Vec<String>>,
     links: HashMap<String, String>,
 }
@@ -43,8 +43,8 @@ impl Env for FakeEnv {
     fn user_choice(&self) -> Option<String> {
         self.user_choice.clone()
     }
-    fn download_dir(&self) -> Option<String> {
-        self.download_dir.clone()
+    fn download_root(&self) -> Option<String> {
+        self.download_root.clone()
     }
     fn list(&self, dir: &str) -> Option<Vec<String>> {
         self.dirs.get(dir).cloned()
@@ -87,11 +87,12 @@ fn t844_windows_order_and_dll_names() {
         .dir(r"C:\p2", &[])
         .dir(r"C:\p3", &[])
         .dir(r"C:\Kinetren\ffmpeg", &[])
-        .dir(r"C:\dl", &[])
+        .dir(r"C:\dl", &["9.0.2"])
+        .dir(r"C:\dl\9.0.2", &[])
         .set(r"C:\Program Files\ffmpeg\bin", Os::Windows, 9)
         .set(r"E:\mine", Os::Windows, 7);
     env.exe_dir = Some(r"C:\Kinetren".into());
-    env.download_dir = Some(r"C:\dl".into());
+    env.download_root = Some(r"C:\dl".into());
     env.user_choice = Some(r"E:\mine".into());
 
     let plan = search::plan(Os::Windows, &env);
@@ -108,7 +109,7 @@ fn t844_windows_order_and_dll_names() {
             (Source::EnvVar, r"D:\env"),
             (Source::NextToExe, r"C:\Kinetren\ffmpeg"),
             (Source::NextToExe, r"C:\Kinetren\ffmpeg\bin"),
-            (Source::Download, r"C:\dl"),
+            (Source::Download, r"C:\dl\9.0.2"),
             (Source::Known, r"C:\Program Files\ffmpeg\bin"),
         ],
         "PATH folders without FFmpeg are not listed; missing known folders are skipped"
@@ -240,6 +241,51 @@ fn t863_linux_plan_knows_ffmpeg_9() {
     assert_eq!(&plan[1..], &[system(9), system(8), system(7), system(6)], "the system follows it");
 }
 
+/// t864 (ffmpeg-9): an earlier download keeps working after the pin moves — every version
+/// folder under the download root is a candidate, newest first; the downloader's temporary
+/// entries are not.
+#[test]
+fn t864_earlier_download_keeps_working() {
+    let root = r"C:\Users\u\AppData\Local\kinetren\ffmpeg";
+    let downloads = |plan: &[Candidate]| -> Vec<(String, Result<u32, Reject>)> {
+        plan.iter()
+            .filter(|c| c.source == Source::Download)
+            .map(|c| (c.dir.clone().unwrap(), c.verdict.clone()))
+            .collect()
+    };
+    let at = |v: &str| format!(r"{root}\{v}");
+
+    // only the folder of the earlier pin (8.1.2), no 9.0.2 yet
+    let mut env = FakeEnv::default().dir(root, &["8.1.2"]).set(&at("8.1.2"), Os::Windows, 8);
+    env.download_root = Some(root.into());
+    let plan = search::plan(Os::Windows, &env);
+    assert_eq!(downloads(&plan), vec![(at("8.1.2"), Ok(8))]);
+    let c = chosen(&plan).expect("the earlier download is used");
+    assert_eq!((c.source, c.dir.clone(), c.verdict.clone()), (Source::Download, Some(at("8.1.2")), Ok(8)));
+
+    // both: the current pin comes first and wins; the earlier one stays a candidate
+    let mut env = FakeEnv::default()
+        .dir(root, &["8.1.2", "9.0.2"])
+        .set(&at("8.1.2"), Os::Windows, 8)
+        .set(&at("9.0.2"), Os::Windows, 9);
+    env.download_root = Some(root.into());
+    let plan = search::plan(Os::Windows, &env);
+    assert_eq!(downloads(&plan), vec![(at("9.0.2"), Ok(9)), (at("8.1.2"), Ok(8))]);
+    assert_eq!(chosen(&plan).unwrap().dir.as_deref(), Some(at("9.0.2").as_str()));
+
+    // versions compare as numbers, not text; temporary and foreign entries are not candidates
+    let mut env = FakeEnv::default()
+        .dir(root, &[".partial-123", "9.0.2", "10.0", "notes.txt", "8.1.10", "8.1.2"])
+        .set(&at("9.0.2"), Os::Windows, 9);
+    env.download_root = Some(root.into());
+    let dirs: Vec<String> = downloads(&search::plan(Os::Windows, &env)).into_iter().map(|(d, _)| d).collect();
+    assert_eq!(dirs, vec![at("10.0"), at("9.0.2"), at("8.1.10"), at("8.1.2")]);
+
+    // the root does not exist yet (nothing downloaded): no download candidate, nothing reported
+    let env = FakeEnv { download_root: Some(root.into()), ..Default::default() };
+    assert!(downloads(&search::plan(Os::Windows, &env)).is_empty());
+}
+
 /// t865 (ffmpeg-9): a run meant for one FFmpeg major proves that major loaded. With
 /// `KT_EXPECT_FFMPEG_MAJOR=N` (`make ffmpeg-test`, the `ffmpeg9` CI job) the normal search must
 /// load FFmpeg N — a broken folder silently falling back to another FFmpeg, or to none, fails
@@ -295,7 +341,7 @@ fn t847_failure_not_cached_success_is() {
         fn user_choice(&self) -> Option<String> {
             None
         }
-        fn download_dir(&self) -> Option<String> {
+        fn download_root(&self) -> Option<String> {
             None
         }
         fn list(&self, dir: &str) -> Option<Vec<String>> {

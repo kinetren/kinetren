@@ -164,7 +164,13 @@ pub const FFMPEG_DOWNLOAD_VERSION: &str = "8.1.2";
 
 /// Where the downloaded FFmpeg lives: `<local>/ffmpeg/<version>`.
 pub fn ffmpeg_download_dir() -> PathBuf {
-    local_dir().join("ffmpeg").join(FFMPEG_DOWNLOAD_VERSION)
+    ffmpeg_download_root().join(FFMPEG_DOWNLOAD_VERSION)
+}
+
+/// The root of all downloads, `<local>/ffmpeg`: the search looks at every version folder in
+/// it, newest first, so a folder an earlier pin left keeps working (ffmpeg-9).
+pub fn ffmpeg_download_root() -> PathBuf {
+    local_dir().join("ffmpeg")
 }
 
 /// No per-user root was found; the program should say so once.

@@ -170,7 +170,7 @@ struct SearchState {
     failure: Option<String>,
     report: Option<search::Report>,
     user_choice: Option<String>,
-    download_dir: Option<String>,
+    download_root: Option<String>,
 }
 
 static STATE: std::sync::Mutex<SearchState> = std::sync::Mutex::new(SearchState {
@@ -178,7 +178,7 @@ static STATE: std::sync::Mutex<SearchState> = std::sync::Mutex::new(SearchState 
     failure: None,
     report: None,
     user_choice: None,
-    download_dir: None,
+    download_root: None,
 });
 
 fn state() -> std::sync::MutexGuard<'static, SearchState> {
@@ -201,13 +201,14 @@ fn init() -> Result<&'static (Backend, BackendInfo), String> {
     rescan().map(|_| LOADED.get().expect("loaded"))
 }
 
-/// The folders only the program knows: the person's choice (Locate…) and Kinetren's download
-/// folder. kt-app and kt-cli set them before the first media open; they are the first and the
-/// fourth step of the Windows plan.
-pub fn set_search_dirs(user_choice: Option<String>, download_dir: Option<String>) {
+/// The folders only the program knows: the person's choice (Locate…) and the ROOT of
+/// Kinetren's downloads (every version folder in it is searched, newest first — ffmpeg-9).
+/// kt-app and kt-cli set them before the first media open; they are the first and the fourth
+/// step of the Windows plan.
+pub fn set_search_dirs(user_choice: Option<String>, download_root: Option<String>) {
     let mut st = state();
     st.user_choice = user_choice;
-    st.download_dir = download_dir;
+    st.download_root = download_root;
 }
 
 /// Search again (startup, Locate…, a finished download, the Rescan button). A remembered
@@ -215,7 +216,7 @@ pub fn set_search_dirs(user_choice: Option<String>, download_dir: Option<String>
 pub fn rescan() -> Result<BackendInfo, String> {
     let env = {
         let st = state();
-        loader::SystemEnv { user_choice: st.user_choice.clone(), download_dir: st.download_dir.clone() }
+        loader::SystemEnv { user_choice: st.user_choice.clone(), download_root: st.download_root.clone() }
     };
     rescan_with(&env)
 }
@@ -280,7 +281,7 @@ pub fn loaded_modules() -> Vec<String> {
 
 /// Can this folder be used (Locate…)? The same judgement as the search applies to it.
 pub fn check_folder(dir: &str) -> Result<u32, search::Reject> {
-    let env = loader::SystemEnv { user_choice: None, download_dir: None };
+    let env = loader::SystemEnv { user_choice: None, download_root: None };
     search::judge(search::Os::NATIVE, search::Env::list(&env, dir).as_deref())
 }
 
