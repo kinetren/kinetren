@@ -1794,6 +1794,18 @@ the program's name in lower case — kinetren; English documentation; contradict
 Markdown subset is *guarded* by a `markup` class of `readme-check.py`. Change
 `openspec/changes/guide-shortcuts-reference`.
 
+## Split menu label (2026-10-26)
+
+Found by `guide-shortcuts-reference` while checking every key against the code: Edit →
+"Split / cut region" (chord `S`) promises a cut-out of the region that neither the item nor `S`
+ever does — both only split at the playhead (item 5: "S: always a cut at the cursor"); the
+cut-out is "Cut out the region interior" in the track's empty-space menu.
+
+> label lies
+
+**Answer (AskUserQuestion, 2026-10-26):** *Rename to "Split at playhead"* — `S` and the action
+stay as they are. Change `openspec/changes/split-menu-label`.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
