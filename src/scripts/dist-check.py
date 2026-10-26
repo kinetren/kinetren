@@ -11,7 +11,10 @@ binary is `kinetren` wherever a person meets it. The Windows delivery (change
 windows-build): the `windows` stage of the same Dockerfile (and a final `linux`
 stage, so a plain build stays Linux), `make windows` / `make windows-test`, the PE
 import check and no DLL in the zip, the release attaching the zip, and the CI job
-that runs the cross-built archive on windows-latest without compiling there.
+that runs the cross-built archive on windows-latest without compiling there. FFmpeg 9
+on Linux (change ffmpeg-9): the test-only `ffmpeg-test` stage with its pinned source
+tarball (the same pin as the vendored headers), `make ffmpeg-test` and the `ffmpeg9`
+CI job with the expected major, and no release taking from that stage.
 
 The workflows are checked by line patterns, not parsed: the standard library
 has no YAML parser, and these are shape guarantees, not a YAML validator.
@@ -37,6 +40,7 @@ README = "README.md"
 APP_MANIFEST = "src/apps/kt-app/Cargo.toml"
 DESKTOP = "src/packaging/kinetren.desktop"
 INSTALL = "src/packaging/install.sh"
+VENDOR_HEADERS = "src/scripts/vendor-ffmpeg-headers.sh"
 MAKE_TARGETS = ["all", "build", "install", "run", "test", "clean", "help"]
 SKIP_DIRS = {".git", "target", "node_modules", "vendor"}
 
@@ -203,6 +207,51 @@ def check_windows(r):
                 r.err(CI, "the Windows job checks the pinned FFmpeg's SHA-256")
 
 
+def check_ffmpeg_test(r):
+    """FFmpeg 9 on Linux (change ffmpeg-9, t866): the test-only `ffmpeg-test` stage builds the
+    pinned source tarball, the vendored headers come from the same pin, `make ffmpeg-test` and
+    the `ffmpeg9` CI job run it with the expected major, and no release takes from it."""
+    df = r.read(DOCKERFILE)
+    pin = None
+    if df is not None:
+        m = re.search(r"^FROM base AS ffmpeg-test\s*\n(.*?)(?=^FROM\s)", df, re.M | re.S)
+        if not m:
+            r.err(DOCKERFILE, "no `FROM base AS ffmpeg-test` stage (FFmpeg 9 for the Linux tests)")
+        else:
+            stage = m.group(1)
+            v = re.search(r"^ARG FFMPEG_VERSION=(\S+)\s*$", stage, re.M)
+            h = re.search(r"^ARG FFMPEG_SHA256=([0-9a-f]{64})\s*$", stage, re.M)
+            if not v or not h:
+                r.err(DOCKERFILE, "the ffmpeg-test stage pins `ARG FFMPEG_VERSION` and `ARG FFMPEG_SHA256`")
+            else:
+                pin = (v.group(1), h.group(1))
+            if "sha256sum -c" not in stage:
+                r.err(DOCKERFILE, "the ffmpeg-test stage checks the tarball's SHA-256")
+    vendor = r.read(VENDOR_HEADERS)
+    if vendor is not None and pin is not None:
+        v = re.search(r'^VERSION="\$\{1:-([^}]+)\}"', vendor, re.M)
+        h = re.search(r'^SHA256="\$\{2:-([0-9a-f]{64})\}"', vendor, re.M)
+        if not v or not h or (v.group(1), h.group(1)) != pin:
+            r.err(VENDOR_HEADERS, f"the headers' pin must equal the ffmpeg-test stage's {pin}")
+    mk = r.read(MAKEFILE)
+    if mk is not None and not re.search(r"^ffmpeg-test:.*\n\t.*scripts/ffmpeg-test\.sh", mk, re.M):
+        r.err(MAKEFILE, "target `ffmpeg-test` calling src/scripts/ffmpeg-test.sh is missing")
+    ci = r.read(CI)
+    if ci is not None:
+        job = re.search(r"^  ffmpeg9:\s*\n((?:    .*\n|\s*\n)*)", ci, re.M)
+        if not job:
+            r.err(CI, "no `ffmpeg9` job (the FFmpeg tests against FFmpeg 9)")
+        else:
+            body = job.group(1)
+            if not re.search(r"KT_EXPECT_FFMPEG_MAJOR:\s*\"?9\"?", body):
+                r.err(CI, "the ffmpeg9 job sets `KT_EXPECT_FFMPEG_MAJOR: \"9\"` (t865)")
+            if "src/scripts/ffmpeg-test.sh" not in body:
+                r.err(CI, "the ffmpeg9 job runs src/scripts/ffmpeg-test.sh")
+    rb = r.read(RELEASE_BUILD)
+    if rb is not None and "ffmpeg-test" in rb:
+        r.err(RELEASE_BUILD, "takes from the ffmpeg-test stage: its FFmpeg is for tests, never shipped")
+
+
 def check_readme(r):
     md = r.read(README)
     if md is None:
@@ -250,6 +299,7 @@ def main():
     check_ci(r, pinned)
     check_release(r)
     check_windows(r)
+    check_ffmpeg_test(r)
     check_readme(r)
     check_binary_name(r)
     if r.errors:

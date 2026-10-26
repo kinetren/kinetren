@@ -46,6 +46,7 @@ const FILES: &[&str] = &[
     "src/apps/kt-app/Cargo.toml",
     "src/packaging/kinetren.desktop",
     "src/packaging/install.sh",
+    "src/scripts/vendor-ffmpeg-headers.sh",
 ];
 
 fn copy_tree(tag: &str) -> PathBuf {
@@ -193,6 +194,69 @@ fn t860_guard_catches_windows_drift() {
     ];
     for (tag, brk, want) in cases {
         let dir = copy_tree(&format!("win-{tag}"));
+        brk(&dir);
+        let (ok, text) = guard(&dir);
+        assert!(!ok, "{tag}: the guard must fail:\n{text}");
+        assert!(text.contains(want), "{tag}: expected {want:?} in:\n{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// t866 (ffmpeg-9, distribution): the FFmpeg 9 parts of the tree are consistent — the
+/// test-only `ffmpeg-test` stage and its hash check, the vendored headers' pin equal to the
+/// stage's, `make ffmpeg-test`, the `ffmpeg9` CI job with the expected major — and no release
+/// takes from that stage.
+#[test]
+fn t866_guard_catches_ffmpeg9_drift() {
+    if cfg!(windows) {
+        eprintln!("t866 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    let dir = copy_tree("ff9-clean");
+    let (ok, text) = guard(&dir);
+    assert!(ok, "an unchanged copy must pass:\n{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    type Break = fn(&Path);
+    let cases: [(&str, Break, &str); 7] = [
+        (
+            "stage",
+            |d| edit(d, "src/packaging/Dockerfile", "FROM base AS ffmpeg-test", "FROM base AS ff-test"),
+            "src/packaging/Dockerfile: no `FROM base AS ffmpeg-test` stage",
+        ),
+        (
+            "hash-check",
+            |d| edit(d, "src/packaging/Dockerfile", "/tmp/ffmpeg.tar.xz\" | sha256sum -c", "/tmp/ffmpeg.tar.xz\""),
+            "src/packaging/Dockerfile: the ffmpeg-test stage checks the tarball's SHA-256",
+        ),
+        (
+            "headers-pin",
+            |d| edit(d, "src/scripts/vendor-ffmpeg-headers.sh", "VERSION=\"${1:-9.0.2}\"", "VERSION=\"${1:-9.0.1}\""),
+            "src/scripts/vendor-ffmpeg-headers.sh: the headers' pin must equal",
+        ),
+        (
+            "make-target",
+            |d| edit(d, "Makefile", "\nffmpeg-test:", "\nff-test:"),
+            "Makefile: target `ffmpeg-test`",
+        ),
+        (
+            "ci-job",
+            |d| edit(d, ".github/workflows/ci.yml", "\n  ffmpeg9:\n", "\n  ff9:\n"),
+            ".github/workflows/ci.yml: no `ffmpeg9` job",
+        ),
+        (
+            "expected-major",
+            |d| edit(d, ".github/workflows/ci.yml", "      KT_EXPECT_FFMPEG_MAJOR: \"9\"\n", ""),
+            ".github/workflows/ci.yml: the ffmpeg9 job sets `KT_EXPECT_FFMPEG_MAJOR",
+        ),
+        (
+            "shipped",
+            |d| edit(d, "src/scripts/release-build.sh", "set -euo pipefail\n", "set -euo pipefail\n# docker build --target ffmpeg-test\n"),
+            "src/scripts/release-build.sh: takes from the ffmpeg-test stage",
+        ),
+    ];
+    for (tag, brk, want) in cases {
+        let dir = copy_tree(&format!("ff9-{tag}"));
         brk(&dir);
         let (ok, text) = guard(&dir);
         assert!(!ok, "{tag}: the guard must fail:\n{text}");

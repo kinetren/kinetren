@@ -11,7 +11,7 @@ DIST     := $(RUST)/target/dist-out
 # release-build.sh clears dist-out before packing)
 STAGEDIR  = $(firstword $(patsubst %/kinetren,%,$(wildcard $(DIST)/kinetren-*-linux-*/kinetren)))
 
-.PHONY: all build install run test clean help docker-check windows windows-test
+.PHONY: all build install run test clean help docker-check windows windows-test ffmpeg-test
 
 all: build ## the default: same as `make build`
 
@@ -27,6 +27,9 @@ windows: docker-check ## cross-build the Windows zip in Docker (src/target/dist-
 
 windows-test: docker-check ## developers: the workspace tests for Windows under wine, in Docker
 	$(RUST)/scripts/windows-test.sh
+
+ffmpeg-test: docker-check ## developers: the FFmpeg tests against FFmpeg 9 built from source, in Docker
+	$(RUST)/scripts/ffmpeg-test.sh
 
 docker-check:
 	@command -v docker > /dev/null || { \

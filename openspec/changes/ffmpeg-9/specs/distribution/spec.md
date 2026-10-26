@@ -32,11 +32,13 @@ only that build ("9.0.2, CI tests 9 only", 2026-10-26).
 The build container SHALL have an `ffmpeg-test` stage. It builds the SHARED libraries of FFmpeg
 9.0.2 from the official source tarball `ffmpeg-9.0.2.tar.xz`, whose SHA-256 is committed next
 to the recipe. The configuration is GPL with libx264, so the export cascade has its usual
-software encoder, and no programs or docs are built. The stage also carries nextest.
-`make ffmpeg-test` (`src/scripts/ffmpeg-test.sh`) SHALL run the tests that load FFmpeg (the
-packages `kt-ffmpeg`, `kt-media`, `kt-engine`, `kt-cli`) in that stage, with
-`KINETREN_FFMPEG_DIR` pointing at the built libraries, the system search switched off, and
-`KT_EXPECT_FFMPEG_MAJOR=9`. The fixtures are generated on the host, as for the Windows tests.
+software encoder, with zlib (the PNG decoder every distribution build has), and no programs or
+docs are built. The libraries SHALL be registered with the container's dynamic linker, so the
+program finds them by SONAME exactly as it finds a distribution's FFmpeg 9; the container holds
+no other FFmpeg. The stage also carries nextest. `make ffmpeg-test`
+(`src/scripts/ffmpeg-test.sh`) SHALL run the tests that load FFmpeg (the packages `kt-ffmpeg`,
+`kt-media`, `kt-engine`, `kt-cli`) in that stage with `KT_EXPECT_FFMPEG_MAJOR=9`. The fixtures
+are generated on the host, as for the Windows tests.
 The CI workflow SHALL have a Linux job that does the same on every push and pull request,
 under the CI rules: read-only permissions, no lasting uploads, and only a failure log with
 `retention-days` of 3 or fewer. When `KT_EXPECT_FFMPEG_MAJOR` is set, a test MUST fail unless
@@ -50,8 +52,8 @@ FFmpeg (or skip the FFmpeg tests) and still pass as an FFmpeg 9 proof. Building 
 for tests does not break "no FFmpeg build of our own": nothing built here reaches a user.
 
 #### Scenario: The FFmpeg 9 run proves its major
-- **WHEN** the tests run with `KT_EXPECT_FFMPEG_MAJOR=9` and `KINETREN_FFMPEG_DIR` at the built 9.0.2 libraries; then with the variable set to 9 and the directory pointing at an empty folder; then with the variable unset
-- **THEN** the first run loads FFmpeg 9 (avcodec 63.x) from that folder and the FFmpeg tests pass on it (t10, t21, t37, t112, t33, t849); the second fails, naming the expected major and the search report; the third skips the check with a printed reason
+- **WHEN** the tests run in the `ffmpeg-test` stage with `KT_EXPECT_FFMPEG_MAJOR=9`; then with the variable set to 9 and FFmpeg unreachable (`KINETREN_FFMPEG_SYSTEM=0`, no folder); then with the variable unset
+- **THEN** the first run loads FFmpeg 9 (avcodec 63.x) by SONAME and the FFmpeg tests pass on it (t10, t21, t37, t112, t33, t796, t849); the second fails, naming the expected major and the search report; the third skips the check with a printed reason
 - **TEST** t865 (`src/libs/kt-ffmpeg/tests/loader_plan.rs`); the run itself is `make ffmpeg-test` and the CI job
 
 #### Scenario: The FFmpeg 9 parts of the tree are consistent

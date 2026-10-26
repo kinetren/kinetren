@@ -57,4 +57,35 @@ ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
     CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER=wine \
     WINEDEBUG=-all
 
+FROM base AS ffmpeg-test
+# FFmpeg 9 on Linux, for TESTS only (change ffmpeg-9, design D5): shared FFmpeg 9.0.2 built
+# from the official source tarball and registered with ldconfig, so `make ffmpeg-test`
+# (scripts/ffmpeg-test.sh) and the `ffmpeg9` CI job find it the way a distribution's FFmpeg 9
+# is found — by SONAME (libavcodec.so.63). The container has no other FFmpeg, and t865 fails
+# unless 9 is what loaded. Nothing built here is shipped: release-build.sh never names this
+# stage. The headers of vendor/ffmpeg-9 come from the same tarball — FFMPEG_VERSION/
+# FFMPEG_SHA256 must equal the pin of scripts/vendor-ffmpeg-headers.sh (dist-check.py, t866).
+# GPL + libx264: the export cascade's usual software encoder; zlib: the PNG decoder (every
+# distribution build has it — the still fixtures need it); every other fixture decodes with
+# native decoders. python3: kt-cli's repository guards run in the same nextest selection.
+ARG FFMPEG_VERSION=9.0.2
+ARG FFMPEG_SHA256=8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
+RUN apt-get update && apt-get install -y --no-install-recommends nasm libx264-dev zlib1g-dev xz-utils python3 \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL --retry 5 -o /tmp/ffmpeg.tar.xz \
+       "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz" \
+    && echo "$FFMPEG_SHA256  /tmp/ffmpeg.tar.xz" | sha256sum -c \
+    && mkdir /tmp/ffmpeg && tar xf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg --strip-components=1 \
+    && cd /tmp/ffmpeg \
+    && ./configure --prefix=/opt/ffmpeg --enable-shared --disable-static \
+       --disable-programs --disable-doc --enable-gpl --enable-libx264 \
+    && make -j"$(nproc)" && make install \
+    && cd / && rm -rf /tmp/ffmpeg /tmp/ffmpeg.tar.xz \
+    && echo /opt/ffmpeg/lib > /etc/ld.so.conf.d/ffmpeg9.conf && ldconfig \
+    && ldconfig -p | grep -q 'libavcodec.so.63 ' \
+    && ls /opt/ffmpeg/lib/libavcodec.so.63
+# the same nextest as the `windows` stage and the host's finish.sh
+RUN curl -fsSL https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.146/cargo-nextest-0.9.146-x86_64-unknown-linux-gnu.tar.gz \
+    | tar xzf - -C /usr/local/cargo/bin && cargo nextest --version
+
 FROM base AS linux

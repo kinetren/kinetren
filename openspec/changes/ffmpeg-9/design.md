@@ -132,21 +132,26 @@ The hints change too: `winget install Gyan.FFmpeg.Shared --version 9.0.2`, and t
 
 - **Stage** `FROM base AS ffmpeg-test` in `src/packaging/Dockerfile`, with
   `ARG FFMPEG_VERSION=9.0.2` and `ARG FFMPEG_SHA256=…`. It runs
-  `apt-get install nasm libx264-dev` (jammy: nasm 2.15, x264 0.163), downloads and checks the
-  tarball, and runs `./configure --prefix=/opt/ffmpeg --enable-shared --disable-static
-  --disable-programs --disable-doc --enable-gpl --enable-libx264`. No other external library is
-  needed: the fixtures are FLAC/AAC/H.264/VP9/PNG, all native decoders, and the encoders are
-  libx264 → mpeg4 + native AAC. Then `make -j"$(nproc)" install` and nextest (the same version as
-  the `windows` stage). The libraries land in `/opt/ffmpeg/lib`. The stage is never the last one,
-  so `docker build` without `--target` still produces `linux`. `release-build.sh` never names it.
+  `apt-get install nasm libx264-dev zlib1g-dev` (jammy: nasm 2.15, x264 0.163), downloads and
+  checks the tarball, and runs `./configure --prefix=/opt/ffmpeg --enable-shared
+  --disable-static --disable-programs --disable-doc --enable-gpl --enable-libx264`. zlib is
+  required for the PNG decoder (configure drops it silently without zlib; the first run failed
+  t796/t796b with "no video decoder"). Everything else is native: the fixtures are
+  FLAC/AAC/H.264/VP9, and the encoders are libx264 → mpeg4 + native AAC. Then
+  `make -j"$(nproc)" install`, **registration with `ldconfig`** (`/etc/ld.so.conf.d/`), and
+  nextest (the same version as the `windows` stage). The stage is never the last one, so
+  `docker build` without `--target` still produces `linux`. `release-build.sh` never names it.
 - **Script** `src/scripts/ffmpeg-test.sh` (`make ffmpeg-test`) mirrors `windows-test.sh`. It
   builds the stage, generates the fixtures on the host if they are missing, and mounts the
   repository at `/kt` with a separate `CARGO_TARGET_DIR=/kt/src/target/ffmpeg-test-container`.
   It runs `cargo nextest run -p kt-ffmpeg -p kt-media -p kt-engine -p kt-cli` with
-  `KINETREN_FFMPEG_DIR=/opt/ffmpeg/lib`, `KINETREN_FFMPEG_SYSTEM=0` and
-  `KT_EXPECT_FFMPEG_MAJOR=9`. The tests run inside the container, not on the host, because the
-  libraries link the container's `libx264.so.163`. Ubuntu 24.04 has `.164`, so copying them out
-  would fail to load.
+  `KT_EXPECT_FFMPEG_MAJOR=9`, and the program finds FFmpeg 9 **by SONAME**, the way a
+  distribution's FFmpeg 9 is found. *Revision (apply, 2026-10-26):* the plan first loaded it
+  through `KINETREN_FFMPEG_DIR` with the system search off; the first run showed this tests a
+  path no user takes and breaks t849, which overrides that variable on purpose and expects
+  FFmpeg "by the usual path". The folder path stays covered by t863 (pure plan) and t847. The
+  tests run inside the container, not on the host, because the libraries link the container's
+  `libx264.so.163`. Ubuntu 24.04 has `.164`, so copying them out would fail to load.
 - **CI job** `ffmpeg9` on `ubuntu-24.04`: checkout, fixtures, then the same script. The job
   gets the docker layer cache through `actions/cache` on a `docker save` keyed by the
   Dockerfile's hash, so the FFmpeg compile (about 5–8 minutes on the runner) happens only when
@@ -154,7 +159,7 @@ The hints change too: `winget install Gyan.FFmpeg.Shared --version 9.0.2`, and t
 - **t865**: with `KT_EXPECT_FFMPEG_MAJOR=N` set, the test loads through the normal plan and
   asserts `BackendInfo.major == N`. On mismatch or failure it prints the full search report.
   Unset, it skips with a printed reason, like t846/t847. Because it sits in `kt-ffmpeg`, which
-  the script always selects, a run where the folder silently did not load fails instead of
+  the script always selects, a run where FFmpeg 9 silently did not load fails instead of
   passing on skips.
 - **t866** (dist-check) guards the shape: the stage exists and checks the hash, the vendoring
   script's pin equals the Dockerfile ARGs, the `make` target exists, the job exists and sets the
@@ -180,8 +185,19 @@ verdict of `resilience/environment/system-libraries-and-drivers.md` is updated a
 - [FFmpeg 9 changed a field or constant we use] → the `v9` module does not compile. That is the
   intended early signal. The fix stays in the version module (D2). If a behaviour changed
   without an API change (for example `FF_API_COMPUTE_PKT_FIELDS2`: muxers no longer fill missing
-  packet fields), t33 and the export tests in the FFmpeg 9 run catch it. Our muxer already sets
-  pts/dts/duration from the encoder.
+  packet fields), t33 and the export tests in the FFmpeg 9 run catch it. **It happened
+  (apply, 2026-10-26), and it was older than FFmpeg 9:** our muxer never set a frame or packet
+  duration, so on EVERY major the last video sample was written with zero duration (`stts`
+  3149×512 then 1×0; the track lasted 104.967 s instead of 105.000 s for 3150 frames at 30 fps).
+  FFmpeg 6–8 kept the frame only because the movie timescale was 1000 and the edit list was
+  rounded UP to the next millisecond. FFmpeg 9 writes the movie at the track's exact timescale
+  (48000), the edit list ends exactly at the last frame's start, and the demuxer marks that
+  frame `D` (discard) — t33 decoded 59 of 60. Fix in the shared `muxer_impl.rs` (not a version
+  branch): every frame sent to an encoder carries its duration (one tick of 1/fps, or
+  `frame_size` samples), and a packet that still comes back without one gets it before the
+  time-base rescale. On FFmpeg 6 the same demo now writes `stts` 3150×512 and a 105.000 s
+  track; every packet's pts/dts/size/flags is unchanged (compared packet by packet), and the
+  FFmpeg-dependent packages stay green (363/363).
 - [Decoded pixels differ between majors (swscale 10, decoder fixes)] → the conformance tests
   compare decodes with each other (seek against linear, span against per-frame), not against
   hashes of a major, and the golden export is synthetic. If any test turns out to hash

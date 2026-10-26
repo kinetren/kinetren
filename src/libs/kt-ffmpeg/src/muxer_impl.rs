@@ -314,6 +314,12 @@ impl Muxer {
         } else {
             (self.aenc, self.aframe, self.astream_idx, tb(1, AUDIO_SAMPLE_RATE as c_int))
         };
+        // ffmpeg-9: the frame says how long it lasts — one tick of its encoder time base for
+        // video, `frame_size` samples for audio. Without it the LAST video sample was written
+        // with zero duration on every major (the track ended at that frame's start); FFmpeg 6–8
+        // kept the frame only because the edit list was rounded up to milliseconds, FFmpeg 9
+        // writes an exact one and the frame was cut off (t33: 59 of 60).
+        unsafe { (*frame).duration = if video { 1 } else { self.frame_size as i64 } };
         // EAGAIN = “encoder is full, frame NOT accepted” — a retry is required
         // after draining the queue. Previously the frame was silently LOST while the PTS grid
         // continued: a video of the same length with “jumps” (item 9 — frame drops
@@ -356,6 +362,12 @@ impl Muxer {
                 return Err(averr(api, "encoder receive", r));
             }
             unsafe {
+                // an encoder that does not carry the frame's duration over (delayed ones may
+                // not) still writes a packet that lasts one frame — see `encode`
+                if (*self.pkt).duration == 0 {
+                    let video = stream_idx == self.vstream_idx;
+                    (*self.pkt).duration = if video { 1 } else { self.frame_size as i64 };
+                }
                 let st = &**(*self.fmt).streams.add(stream_idx as usize);
                 (api.av_packet_rescale_ts)(self.pkt, tb_src, st.time_base);
                 (*self.pkt).stream_index = stream_idx;

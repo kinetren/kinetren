@@ -39,8 +39,9 @@ only and is never shipped.
   FFmpeg window label, README and `README-windows.txt` name 9.0.2 and "FFmpeg 6, 7, 8 or 9".
 - **Linux FFmpeg 9 proof in Docker.** A new `ffmpeg-test` stage of `src/packaging/Dockerfile`
   builds shared FFmpeg 9.0.2 from `ffmpeg-9.0.2.tar.xz` (SHA-256 pinned; GPL with libx264, so the
-  export cascade has its usual encoder). `make ffmpeg-test` (`src/scripts/ffmpeg-test.sh`) runs
-  the FFmpeg-dependent tests in that stage with `KINETREN_FFMPEG_DIR` pointing at it. A new CI job
+  export cascade has its usual encoder) and registers it with the dynamic linker, so it is found
+  by SONAME like a distribution's FFmpeg 9. `make ffmpeg-test` (`src/scripts/ffmpeg-test.sh`) runs
+  the FFmpeg-dependent tests in that stage. A new CI job
   does the same on every push. Each run asserts that the major it was meant to test is the one
   that loaded (`KT_EXPECT_FFMPEG_MAJOR=9`), so a silent fallback to another FFmpeg cannot pass as
   a green FFmpeg 9 run. The existing Linux job keeps testing the runner's FFmpeg 6.

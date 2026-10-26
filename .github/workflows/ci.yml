@@ -1,7 +1,8 @@
 # Every push and pull request: build, clippy, workspace tests, repository
 # guards (capability `distribution`, change github-ci-docker-build); and the
 # Windows tests (change windows-build): the cross-built nextest archive runs on a
-# real windows-latest runner — nothing is compiled there.
+# real windows-latest runner — nothing is compiled there; and the FFmpeg tests
+# against FFmpeg 9 built from source in Docker (change ffmpeg-9).
 #
 # Not here, on purpose: GPU conformance (no adapter on the runner — those tests
 # skip themselves) and the live Xvfb scenarios; both stay in finish.sh on a
@@ -109,6 +110,56 @@ jobs:
         with:
           name: nextest-log
           path: nextest.log
+          retention-days: 3
+
+  ffmpeg9:
+    # FFmpeg 9 on Linux (change ffmpeg-9): the FFmpeg tests against shared FFmpeg 9.0.2,
+    # built from the official source in the `ffmpeg-test` stage of the build container (for
+    # tests only, never shipped). KT_EXPECT_FFMPEG_MAJOR fails the run unless FFmpeg 9 is what
+    # loaded (t865). The image is cached by the Dockerfile's hash, so FFmpeg is compiled only
+    # when the recipe changes.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      KT_EXPECT_FFMPEG_MAJOR: "9"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fixtures
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          bash src/fixtures/gen.sh
+
+      - name: The ffmpeg-test image from the cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/ffmpeg-test-image.tar.gz
+          key: ffmpeg-test-image-${{ hashFiles('src/packaging/Dockerfile') }}
+
+      - name: Load or build the ffmpeg-test image
+        working-directory: src
+        run: |
+          if [ -f /tmp/ffmpeg-test-image.tar.gz ]; then
+            docker load < /tmp/ffmpeg-test-image.tar.gz
+          else
+            docker build --network=host --target ffmpeg-test -t kinetren-build:ffmpeg-test -f packaging/Dockerfile packaging
+            docker save kinetren-build:ffmpeg-test | gzip -1 > /tmp/ffmpeg-test-image.tar.gz
+          fi
+
+      - name: FFmpeg tests against FFmpeg 9
+        env:
+          KT_FFMPEG_TEST_IMAGE_READY: "1"
+        run: |
+          set -o pipefail
+          src/scripts/ffmpeg-test.sh 2>&1 | tee nextest-ffmpeg9.log
+
+      - name: Upload the test log of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-ffmpeg9-log
+          path: nextest-ffmpeg9.log
           retention-days: 3
 
   windows-build:
