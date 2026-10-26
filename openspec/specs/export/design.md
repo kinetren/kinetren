@@ -58,3 +58,18 @@ The old engine kept two composition codes: one for the preview and another for e
 ## `kt-cli showcase` (readme-showcase, 2026-10-21)
 
 A separate subcommand, not a `demo` flag: `demo` is synthetic by contract (t388). `showcase` cuts the README project from real footage, with media referenced by absolute path and never copied, byte-identical for the same folder (t824). Refusals (t825): a missing folder, no video, or no audio anywhere — the music bed needs audio. Text files next to the footage are skipped, because FFmpeg's text demuxer would read `CREDITS.txt` as a video. Background and the screenshot pipeline: `openspec/specs/showcase/design.md`.
+
+## Windows (windows-build, 2026-10-26)
+
+- **Encoder cascade per OS** (`src/libs/kt-ffmpeg/src/encoders.rs`, t858): Windows tries
+  nvenc, amf, qsv, libx264, mf, mpeg4 — without `h264_amf`/`h264_mf` an LGPL FFmpeg fell back to
+  `mpeg4` on AMD/Intel; `h264_mf` comes after libx264 (worse quality). QSV is fed NV12 (it did not
+  open with YUV420P); vaapi only on Linux.
+- **Revision of "references on linux/x86_64":** there were references for one platform because
+  there was one delivery. Now the gated tests (t11, t485) compare against a table per (os, arch)
+  with provenance, and t859 keeps a row for every delivered platform. Measured on windows-latest:
+  the export AUDIO differs in the last bits (msvcrt's transcendentals), video and the title equal
+  Linux's; the ungated FX/geometry hashes matched as they are.
+- **mingw's `round`** returned 1 for `round(0.49999999999999994)` — on real Windows, not only
+  wine — and every `.round()` of the CPU reference went through it. `src/libs/kt-time/src/
+  libm_fix.rs` defines correct `round`/`roundf` for `x86_64-pc-windows-gnu` (t198).

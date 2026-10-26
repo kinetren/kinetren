@@ -77,3 +77,21 @@ a Rust toolchain, clang and dev packages before they could try the editor (owner
   wrote and removed files in `src/scripts/live` while t807/t808 globbed it). A test that
   needs to break the tree works on a copy (`KT_LIVE_DIR`); a test's external tools belong in
   the CI package list.
+
+## Windows delivery (windows-build, 2026-10-26)
+
+- **Cross-built in the same Dockerfile** (owner's choice): a `windows` stage (mingw-w64, the
+  `x86_64-pc-windows-gnu` target, WineHQ wine, nextest) between the base and a final `linux`
+  stage, so a plain build stays Linux. `make windows` packs a portable zip with no FFmpeg DLL;
+  the PE import check runs inside the container. Each target cleans only its own packages in
+  `dist-out`, so one release run carries both.
+- **Tests run on real Windows without compiling there**: the Linux job cross-builds a nextest
+  archive (the repository mounted at `/kt`, the build in `/kt/src`) and uploads it with the
+  fixtures for a day; the windows-latest job links `D:\kt` to the checkout — the tests'
+  compile-time paths (`env!("CARGO_MANIFEST_DIR")`) are `/kt/src/…`, which on Windows means the
+  current drive — fetches the pinned FFmpeg (hash checked) and runs the archive. Binaries a test
+  starts come from nextest's run-time path (`NEXTEST_BIN_EXE_*`), not the compile-time one.
+- `make windows-test` runs the same tests under wine: the fast loop, not the verdict (wine's
+  `round` agreed with mingw's bug, but its msvcrt differs from Microsoft's elsewhere).
+- Rejected: native MSVC builds on a Windows runner (a second toolchain), an installer and code
+  signing for the first delivery (later decisions).

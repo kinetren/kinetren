@@ -297,3 +297,15 @@ file with the former `kinotrain` key is refused by Open, with the former name an
 door named, and it opens through the import like the other old forms (t832). The one
 catalog string that names Kinotrain is `former_name_import_only`. The guard t833 keeps
 the former name out of everything that does not handle the rename.
+
+## View → FFmpeg… (windows-build, 2026-10-26)
+
+The FFmpeg window (`kt_ffmpeg` in the WINDOWS registry: per machine, outside any project,
+reachable when nothing plays) shows where FFmpeg was found and why each other candidate was not,
+and offers Download (Windows; the source, size and GPLv3 are shown next to the button before the
+click), Locate folder… and Rescan; at startup without FFmpeg it opens once with one notice — a
+notice without buttons would be a dead end (rounds 33–40). It sits under View because the program
+has no Help menu, next to the other per-machine items (Language, telemetry). A late load brings
+placeholders back through `poll_returned_sources`, without a restart (t850, real loader, on Linux
+and under wine). The UI language on Windows comes from `GetUserDefaultLocaleName` when no
+`LC_*`/`LANG` is set (t861).

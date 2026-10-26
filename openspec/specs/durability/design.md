@@ -94,3 +94,22 @@ Autosave wrote 115 MB every half minute not because it was badly built, but beca
 ## The data directory moved from `kinotrain` to `kinetren` (2026-10-21)
 
 `journal::data_dir()` is the single resolver, and it moves the former directory once: a rename, or a copy through a staging directory that leaves the former one in place. When both directories exist, the new one wins and nothing is merged, because a merge could resurrect deleted presets or stale locks (t830). The move runs before eframe starts, because eframe's storage (app id `kinetren`) lives in the same directory. A stale binary still named `kinotrain` re-created the old folder during the live check — that is the "rebuild what you run" trap. `kt-cli` also looks at `kinotrain/locks` for an older app that has not migrated yet (t831).
+
+## Windows: data directory, lock and atomic replace (windows-build, 2026-10-26)
+
+- **Data directory** (`src/libs/kt-dirs`, one resolver for kt-app and kt-cli): the former
+  fallback `"."` put the data into the working directory on Windows (no `HOME`) — `System32`
+  from Explorer — and the migration of the former name would have renamed any such folder found
+  there. Now `%APPDATA%\kinetren\data` (eframe's own directory, passed as `persistence_path`),
+  `%LOCALAPPDATA%\kinetren` for downloads, the temp directory with a notice when nothing
+  resolves, the migration only on Linux (t851). `KINETREN_DATA_DIR` redirects it on every OS
+  (tests and live runs).
+- **Revision of "flock on an adjacent file":** the decision stands — a kernel lock on a named
+  file in the data directory — only the mechanism is per OS: `std::fs::File::try_lock`
+  (flock / `LockFileEx`). On Windows the lock had been a stub that said "free". A Windows lock is
+  mandatory, so the pid also goes into `<name>.pid` (only information; the kernel lock holds),
+  and the key folds case and the `\\?\` prefix (t852).
+- **Atomic replace on Windows**: `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)` retried on a
+  sharing/access/lock violation within ~1 s (antivirus, sync clients, editors); write-through
+  counts as the directory sync (t853). Rejected: `ReplaceFileW` (fails when the target does not
+  exist yet), an unbounded retry (a stuck editor would hang the exit save).

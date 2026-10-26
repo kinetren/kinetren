@@ -1,12 +1,12 @@
 ---
 id: F-MED-007
 title: The codec library is the user's — find it, or download it on a click
-status: accepted
+status: done
 priority: A
 cost: M
 category: media/sources
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, kdenlive-26.08, audacity-4.0]
-we_have: no
+we_have: yes
 crates: [kt-ffmpeg, kt-media, kt-app, kt-cli]
 invariants: [9, 10]
 ui_rules: []

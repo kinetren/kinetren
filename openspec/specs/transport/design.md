@@ -160,3 +160,16 @@
   anti-aliasing cut is coarser. Left deliberately — the combination "below 0.01 and above 2× in one curve" is rare,
   and memory costs more (`src/libs/kt-fx/src/audio/warp.rs`).
 - The known phase shift of a live edit when editing the region boundaries without a Some↔None flip is kept as it was.
+
+## The audio output edge (windows-build, 2026-10-26)
+
+WASAPI shared mode reports only the device's mix format, so 44.1 kHz and 5.1/7.1 devices are
+common on Windows. Before, the varispeed kernel's linear interpolation served 44.1 kHz (audible
+aliasing) and a 5.1 device got the right channel in centre, LFE and every surround. Now an
+`OutputEdge` (`src/apps/kt-app/src/audio_out.rs`) is built before the stream: at 48 kHz the
+kernel writes the device as before (stereo bit for bit), other rates get a fixed-ratio
+band-limited resampler (rubato `FftFixedInOut`) after the kernel, L/R go to front left/right
+and silence elsewhere; the playhead still counts engine frames (invariant 6), the resampler's
+delay joins the latency compensation (t857). The resampler does one pass on silence while being
+built: an FFT that allocates its scratch lazily must not do it in the callback. Rejected:
+`AUTOCONVERTPCM` (cpal does not expose it; it hands quality to the system), exclusive mode.

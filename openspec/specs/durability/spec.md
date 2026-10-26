@@ -138,23 +138,41 @@ Why: the right not to ask was legitimate while autosave wrote over the user's fi
 - **TEST** t372 (`src/apps/kt-app/src/layout_tests.rs`)
 
 ### Requirement: Project lock — flock on an adjacent file, a second copy degrades honestly
-An open project SHALL take an `flock` on a file in the data directory (the key is a hash of the absolute path; the path and the pid are inside), and not on the project itself nor globally on the program. A second copy MUST NOT be forbidden: it gets a warning with the number of the other process, ITS OWN recovery file, ITS OWN temporary file, and one question at the first Ctrl+S per session. kt-cli warns about the occupation before writing, but does not refuse.
-Why: a global lock would have killed live scenarios and the "opened a second time to look at another piece"; a lock on the project's inode would fall off after the first atomic `rename`; a pid file without `flock` would leave a permanent lock after `SIGKILL`; a shared tmp of two copies would substitute the project with half-written content from the other.
+An open project SHALL take the core lock on a file in the data directory: `flock` on Linux,
+`LockFileEx` on Windows (the key — a hash of the absolute path; the path inside). The key on Windows MUST
+be computed from a normalized path: without the `\\?\` prefix, with one kind of separator and without
+regard to case, because `C:\Proj\a.kt` and `c:\proj\A.kt` are one file. The process number of the holder
+SHALL lie in a separate file next to the lock: the Windows lock is mandatory, and
+a locked file cannot be read by a second copy. The lock is placed not on the project itself and
+not globally on the program. A second copy MUST NOT be forbidden: it gets a warning with
+the number of the other process (or without a number, if its file could not be read), ITS OWN
+recovery file, ITS OWN temporary file, and one question at the first Ctrl+S of the session. kt-cli warns
+about the busy state before writing, but does not refuse.
+Why: a global lock would have killed live scenarios and "opened a second time to look"; a lock
+on the project's inode would fall off after the first atomic `rename`; a file with a pid without a
+kernel lock would leave a permanent block after `SIGKILL` (the pid file here is only a reference, the kernel holds
+the lock); a shared tmp of two copies would replace the project with the half-written contents of
+the other. On Windows the lock was a stub "always free", and two copies wrote one project.
 
 #### Scenario: The lock is named and survives an atomic save
-- **WHEN** the project is occupied, then atomically rewritten
-- **THEN** the second descriptor gets `Busy` with the pid, a neighbouring project is taken freely; after the rewrite the lock holds; after drop it is released
+- **WHEN** the project is busy, then atomically overwritten
+- **THEN** the second handle gets `Busy` with the pid, a neighbouring project is taken freely, after the overwrite the lock is held, after drop it is released
 - **TEST** t362 (`src/apps/kt-app/src/project_lock.rs`), t362b (`src/apps/kt-app/src/project_lock.rs`)
 
 #### Scenario: The second copy has its own tmp and recovery
-- **WHEN** the temporary name and the recovery target are computed for an occupied project
-- **THEN** the tmp contains the pid and the full project name; the second copy's recovery differs from the owner's and remains `.otio`
+- **WHEN** the temporary name and the recovery target are computed while the project is busy
+- **THEN** the tmp contains the pid and the full project name; the recovery of the second copy differs from the owner's and remains `.otio`
 - **TEST** t363 (`src/apps/kt-app/src/layout_tests.rs`)
 
 #### Scenario: The first Ctrl+S on an occupied project asks once
-- **WHEN** the project is occupied by a neighbour and the user saves
-- **THEN** a notification with the pid and a question; "do not save" leaves the file and the asterisk; "anyway" writes and does not ask again
+- **WHEN** the project is busy with a neighbour and the user saves
+- **THEN** a notice with the pid, a question; "don't save" leaves the file and the asterisk; "save anyway" writes and no longer asks again
 - **TEST** t364 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: The lock key is normalized, the pid is read while the lock is busy
+- **WHEN** the lock key is computed for `C:\Proj\a.kt`, `c:\proj\A.kt`, `\\?\C:\Proj\a.kt` and `C:/Proj/a.kt` by the Windows rule (a pure function, checked on any OS); on Windows the project is held by one handle and taken by a second
+- **THEN** all four keys are equal, and by the Linux rule `/p/a.kt` and `/p/A.kt` differ; the second handle gets `Busy` with the holder's pid, read from the pid file
+- **TEST** t852 (`src/apps/kt-app/src/project_lock.rs`)
 
 ### Requirement: The log and crash report — a channel for when there is no one to show it to
 The program SHALL keep a journal `kt-app.log` in the data directory: append, do not overwrite, rotate at 1 MiB in one step, and a failure to write the journal MUST NOT bring down the program. The panic hook SHALL leave a report with the version, thread, message, backtrace with names, and a dump of the "black box", without touching the model; the next start reports the crash exactly once. The "black box" MUST be readable even under a poisoned mutex.
@@ -274,19 +292,29 @@ Why: `cargo test` builds a separate binary and does not rebuild `target/debug/kt
 - **WHEN** the run goes with several workers
 - **THEN** each scenario has its own screen number and its own user-store directory; no scenario received a neighbour's store; and the number of simultaneously live kt-app instances did not exceed the declared worker limit
 - **TEST** t802 (`src/apps/kt-app/src/reach_tests.rs`, a substitute scenario prints `DISPLAY`/`XDG_DATA_HOME`; without Xvfb it skips with the named reason)
+
 ### Requirement: Per-user data lives in `kinetren`; the former directory is moved once
 The application's per-user data directory SHALL be `$XDG_DATA_HOME/kinetren` (falling
-back to `~/.local/share/kinetren`). This covers recovery files, the journal and crash
-report, project locks, presets, the workspace and UI state. If the directory does not
-exist and the former `kinotrain` directory does, the first start SHALL move the former
-one into place before anything is read or written. This happens once, and nothing is
-lost or duplicated. If the move fails (for example, across filesystems), the content
-SHALL be copied and the former directory left in place. If both directories exist, the
-new one wins and the former one is not touched. `kt-cli` SHALL look for project locks in
-the same directory as the app.
+back to `~/.local/share/kinetren`) on Linux and `%APPDATA%\kinetren\data` on Windows (the
+Roaming known folder, the same directory eframe uses for its own storage). It covers
+recovery files, the journal and crash report, project locks, presets, the workspace and UI
+state. Large regenerable downloads (the FFmpeg build) SHALL go to the Local known folder on
+Windows (`%LOCALAPPDATA%\kinetren\`), not to Roaming. The resolver MUST NOT fall back to the
+working directory: if no per-user directory can be resolved, the program SHALL say so once
+and use the system temporary directory. On Linux, if the directory does not exist and the
+former `kinotrain` directory does, the first start SHALL move the former one into place
+before anything is read or written. This happens once, and nothing is lost or duplicated.
+If the move fails (for example, across filesystems), the content SHALL be copied and the
+former directory left in place. If both directories exist, the new one wins and the former
+one is not touched. The move MUST NOT run on Windows, where no former install exists.
+`kt-cli` SHALL resolve the directory with the same code as the app and look for project
+locks there.
 
 Why: the full rename must not lose the user's presets, workspace, recovery copies or
-locks.
+locks. On Windows `HOME` is usually unset, and the former fallback `"."` put the data
+directory into the working directory. Started from Explorer, that can be `System32`, where
+every write fails silently. Started from a source tree, the migration would have renamed
+any `kinotrain` folder found there.
 
 #### Scenario: First start moves the former directory; later starts do not touch it
 - **WHEN** the data directory is resolved with only `kinotrain/` present (holding a preset file and a lock); then again; then with both present
@@ -297,3 +325,26 @@ locks.
 - **WHEN** the app takes the lock of a project, and `kt-cli` checks the same project
 - **THEN** `kt-cli` reports the holder's process, i.e. both use `kinetren/locks`
 - **TEST** t831 (`src/apps/kt-cli/tests/cli.rs`)
+
+#### Scenario: Directory per OS, never the working directory
+- **WHEN** the resolver runs with injected environments: Linux with `XDG_DATA_HOME`; Linux with only `HOME`; Linux with neither; Windows with Roaming and Local known folders and no `HOME`; Windows with known folders unavailable; each time with a `kinotrain/` folder in the working directory
+- **THEN** the results are `$XDG_DATA_HOME/kinetren`, `~/.local/share/kinetren`, the temp directory (with a warning), `%APPDATA%\kinetren\data` with downloads under `%LOCALAPPDATA%\kinetren`, and the temp directory (with a warning); the `kinotrain/` folder in the working directory is untouched in every case
+- **TEST** t851 (`src/libs/kt-dirs/tests/dirs.rs`)
+
+### Requirement: Atomic replace on Windows survives a briefly held target
+On Windows the rename step of `kt_otio::write_atomic` SHALL replace the project with
+`MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)` and SHALL retry on a
+sharing violation or access denied within a budget of about one second, with growing
+pauses. Write-through SHALL count as the directory sync (`dir_synced == true`), so the
+"not synced" notice does not appear on every Windows save. When the budget runs out, the
+write MUST fail with the reason, and the temporary file is removed. The same replace is used
+for the journal rotation and the user store.
+Why: on Windows, replacing a file fails while another process holds it open without
+delete sharing: an antivirus scanning the just-written file, a sync client, an editor.
+Without a retry, Ctrl+S, autosave and the exit save fail at random. A directory cannot be
+opened for `fsync` there; write-through is the platform's way to make the rename durable.
+
+#### Scenario: Retry within the budget, then an honest failure
+- **WHEN** the replace runs through an injected file system that answers "sharing violation" twice and then succeeds; then one that answers it for longer than the budget
+- **THEN** the first write succeeds with `dir_synced == true` after exactly three attempts; the second returns an error that names the sharing violation, the project is unchanged and no temporary file remains
+- **TEST** t853 (`src/libs/kt-otio/tests/io.rs`)

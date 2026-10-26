@@ -203,3 +203,33 @@ composition, and the preview hung in "Loading" forever.
 - Found along the way and not fixed: `warp_prefetch.rs` (t17) fills the legacy field
   `automation` when `fx_auto` is empty, and the migration is not called in the tests — it has no curve
   at all, and it under-tests after the move of automation.
+
+## Windows: the user's FFmpeg is found, or downloaded on a click (windows-build, 2026-10-26)
+
+- **What hurt.** The loader knew only Linux SONAMEs and the unix `dlopen`; Windows has no
+  "system FFmpeg" that `LoadLibrary` would find. The owner kept the rule "no FFmpeg build of
+  our own" and asked for a download of gyan.dev's shared build (2026-10-22).
+- **A pure search plan** (`src/libs/kt-ffmpeg/src/search.rs`) over an injected `Env`, with the
+  planned OS's string rules, so the Windows plan is tested on Linux (t844, t845). On Windows
+  FOLDERS are searched in a fixed order (chosen folder, `KINETREN_FFMPEG_DIR`, next to the exe,
+  the download folder, `PATH` with winget's `Links` followed, scoop/winget/`C:\ffmpeg`); the
+  order of folders beats the order of majors — the person's choice wins over a newer FFmpeg
+  someone else put on `PATH`. Every rejected folder keeps its reason: a static build
+  (`winget install Gyan.FFmpeg` is one), FFmpeg 9, a missing sibling DLL.
+- **One folder, dependency order** (avutil → swresample → swscale → avcodec → avformat), by
+  full path with `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS`, and
+  `GetModuleFileNameW` must place every module in that folder: Windows binds an import by base
+  name to whatever namesake is already loaded (t846, the real 8.1.2 build under wine with a
+  decoy on PATH).
+- **A failure is not cached, a success is** (t847): a person who just installed or located
+  FFmpeg must not have to restart; opening media never re-walks PATH (only `rescan()` does).
+- **The download is pinned** to `ffmpeg-8.1.2-full_build-shared.7z` with a SHA-256 in our
+  source (t848): gyan.dev's "latest" was already FFmpeg 9, and the `.sha256` next to the
+  archive on the same server proves nothing. The GitHub mirror is byte-identical. Only the DLLs
+  and the licence are extracted, the folder appears whole (`.partial-<pid>` → rename).
+- **Rejected:** shipping FFmpeg DLLs in the zip (the owner's rule; GPL duties);
+  `SetDllDirectoryW` or editing the process `PATH` (process-global, changes how wgpu and cpal
+  load their DLLs); the "latest" link; shelling out to curl/7-Zip.
+- **Invariant 10 on Windows** is the PE import table: only Windows system DLLs, no `av*`/`sw*`,
+  no mingw runtime (the guard in `release-build.sh`).
+- Deferred: FFmpeg 9 (avcodec 63) — a separate change, Linux needs it too.

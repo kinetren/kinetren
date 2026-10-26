@@ -69,7 +69,7 @@ Then it hurt as it grew: a real film (Netflix "Sol Levante", 23.976, an hour-lon
 ## Deferred
 
 - **Path mapping after the Resolve pattern (F-PRJ-003 project-portability, stage 3)** — deferred until a second participant: today it is one user on one machine, and a relative path covers the scenario "everything moved together". A caveat: as soon as a user storage outside the project appears, a switch "put inside the project" is needed on the same day.
-- Cross-platform paths in `target_url` (the separator and the "absolute" flag depend on the reader's OS) — found by reconnaissance of the same note, stages 1–2 not yet done (`src/libs/kt-otio/src/url.rs`).
+- ~~Cross-platform paths in `target_url`~~ — done in windows-build (2026-10-26), see the section below.
 - Moving foreign attachments into the strict tier of the cross-render (t158) — after the placeholder stops differing from the composite of the foreign editor.
 
 ## R.70: the project leaves the interchange format
@@ -100,3 +100,14 @@ rest unchanged, so the result equals the same project written today (t828/t829/t
 Rejected: accepting both keys in the reader. It is friendlier for one release, but it
 teaches the reader an old form forever, and dropping the alias later would break files
 silently.
+
+## Windows and cross-OS paths (windows-build, 2026-10-26)
+
+The deferred item "cross-platform paths in `target_url`" is done (`src/libs/kt-otio/src/url.rs`):
+string rules with an explicit `PathFlavor`, so the Windows rules are tested on Linux and the
+other way round (t854–t856). Valid `file:///C:/…` and UNC `file://host/share/…` URLs; only the
+drive (or share) in common falls back to an absolute URL, as only the root does on Linux; case
+and the verbatim prefix are ignored on Windows. "Absolute" on reading is the union of both OSes:
+`/home/u/a.mp4` read on Windows (or `D:\x.mp4` on Linux) is never joined to the project folder —
+it becomes a placeholder showing that path and is written back unchanged. Resolve-style path
+mapping (F-PRJ-003) stays deferred: this only stops paths from turning into wrong ones.

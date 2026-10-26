@@ -185,3 +185,17 @@
   — the only value of the graph that can be taken without a DAG.
 - The "flapping" of K on the frame where the 1 + 1/64 threshold is crossed during zoom automation
   — the size of the jump is limited by the tolerance t303, there is no separate decision.
+
+## D3D12 and WARP (windows-build, 2026-10-26)
+
+- **FXC** (wgpu's D3D12 shader compiler on Windows) rejects a write through a dynamic vector
+  index (`v[i] = …`, "not natively addressable") when it cannot unroll the loop; greenscreen,
+  noise, composite (`blend_over`) and sharpen_add were rewritten with `select`/vector arithmetic,
+  same per-channel math (parity stays byte-exact). Arrays with dynamic indices are fine.
+- **That failure is an INTERNAL wgpu error**: with only a validation scope it reached the default
+  handler and panicked — a crash instead of the CPU fallback (invariant 7). `GpuFxEngine::new`
+  pushes an internal scope too.
+- **WARP is not a GPU for the engine** (`GpuInitError::Unsupported`): on the GPU-less
+  windows-latest runner the passes ran for minutes and died inside it; a machine with only WARP
+  renders effects on the CPU. `KT_GPU_ALLOW_WARP=1` lets it through for experiments.
+- The GPU path on real Windows hardware is still a manual check (no GPU on the CI runner).
