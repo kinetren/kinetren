@@ -1,0 +1,39 @@
+# Tasks
+
+Test numbers t868–t869 are reserved by this change. Every stage ends with a commit (English
+message, first line = the stage and what was done, no `Co-Authored-By` or other agent lines).
+`docs/user-feedback.md` already carries another change's uncommitted entry ("FFmpeg 9"):
+stage only this change's hunk (`git add -p`), never the other one.
+
+## 0. Records before code
+
+- [x] 0.1 Append to `docs/user-feedback.md`, before "What the user repeated more than once", the section "Shortcuts reference (2026-10-26)": the owner's words translated into English. The site's landing "Keyboard" section is gone, a reference does not belong there, and `shortcuts.md` is now the only one, poorer and less tidy than the landing. Keys as keys, verified against the code, groups by meaning, the site's Markdown subset, "kinetren" in lower case. Add the two answers of 2026-10-26: fix `Alt+S` here, and add the markup guard. Verify the entry names `guide-shortcuts-reference` and has no Cyrillic
+- [x] 0.2 Commit stage 0 with the change's artifacts (`openspec validate guide-shortcuts-reference --strict` green)
+
+## 1. Alt+S does not split (ui-timeline)
+
+- [ ] 1.1 Write t868 in `src/apps/kt-app/src/layout_tests.rs`, modelled on the t742 hotkey block. Select an event, put the playhead inside it, press `Alt+S`, then `Alt+M`. Assert solo, then mute, an unchanged event count and range, and that a bare `S` afterwards still splits. Verify t868 is RED on the current code, and record the failure message here
+- [ ] 1.2 In `KtApp::handle_keys` (`src/apps/kt-app/src/app.rs:7136`), add `&& !i.modifiers.alt` to `cut`. Verify t868 and t742 are green, plus the kt-app `layout_tests.rs` and `reach_tests.rs` suites (mandatory for any UI change)
+- [ ] 1.3 Commit stage 1 (`cargo test --workspace`, `cargo clippy --all-targets` green)
+
+## 2. The markup guard (showcase)
+
+- [ ] 2.1 Add the `markup` class to `src/scripts/readme-check.py` as in design D4, over `lines_outside_code`: the HTML (with balanced `<kbd>` pairs cut out first), quote, setext/rule, reference-link, footnote, `_italic_`, backslash and two-level-nesting checks for every `docs/guide/**` file, plus the `| Keys | Action |` header and bold-chord checks for `shortcuts.md`. Update the module docstring's class list. Verify `python3 src/scripts/readme-check.py --check` on the CURRENT guide reports exactly the expected `shortcuts.md` defects (headers `| Key |`/`| Gesture |`, bold chords) and nothing in the other pages. Record the count here
+- [ ] 2.2 Write t869 in `src/apps/kt-cli/tests/readme_guard.rs`, next to t827 and using its temporary-tree helper. Each defect of the spec scenario goes in one at a time and must exit non-zero, naming file, line and `markup`. Accepted: `<kbd>`, `\|` in a cell, the same constructs inside a fence and a code span, `snake_case` in prose. The clean tree exits 0. Verify t869 green, and red for any one case when the matching check is commented out (spot-check two)
+
+## 3. The inventory
+
+- [ ] 3.1 Build the inventory in `openspec/changes/guide-shortcuts-reference/inventory.md`. Columns: keys/gesture → handler `file:line` → condition (modifiers, focus, playing/paused, region/selection) → what it does. Sources: `handle_keys` and the Space path (`on_space_released`, `transport_toggle`, the boost constants), `escape_action` (the full cascade in order), `enter_pressed_on_nest`, `nav_jump`, `cut_action`/`delete_action`/`copy_selection`/`paste_at_cursor` (what each does with and without a region or selection, the paste-names window), search (`app.rs:2346`), the timecode mask (`toolbar.rs:656`, `app.rs:6661`), every `Key::`/`key_pressed`/`modifiers.` and `double_clicked`/`secondary_clicked` site in `src/apps/kt-app/src/` (non-test), the menu chords, and every key or gesture named in `i18n/en.toml` hints. Each hint claim is either matched to a handler or listed as a hint/code mismatch. Verify by re-running `grep -rn "Key::\|key_pressed\|modifiers\.\(ctrl\|shift\|alt\|command\)\|double_clicked" src/apps/kt-app/src --include=*.rs` (minus `*_tests.rs`): every hit is either a row or listed as "not a binding" with a reason
+- [ ] 3.2 Check every landing row of the brief (`/media/e/developer/kt.9/kt.9.site/openspec/changes/remove-landing-keys/editor-prompt.md`) against the inventory, and record the result per row (matches / differs: how) in `inventory.md`. Start from the differences listed in design D1 and confirm or correct each one from the handler. Verify every landing row has a verdict
+
+## 4. The page
+
+- [ ] 4.1 Rewrite `docs/guide/shortcuts.md` from the inventory (design D2): groups Transport · Editing · Region and markers · Reels · View and zoom · Mouse on the timeline · Windows and panels (merge any group with fewer than two rows), `| Keys | Action |` tables, `<kbd>` caps, alternatives with ` / `, words for hold/double/wheel/click. Actions start lower-case with no full stop. Every row's key is described only where it acts. Keep `Alt+M`/`Alt+S`, Enter on a reel, `Ctrl+Y` and every existing mouse gesture. Keep the closing line about the status-bar hint. Verify every inventory row is on the page (tick them off in `inventory.md`) and `readme-check.py --check` is clean
+- [ ] 4.2 Read `docs/guide/timeline.md` and `getting-started.md` (and the other guide pages for key mentions) against the new tables. Fix only contradictions, keep links as `page.md#anchor`, and make sure every link to a `shortcuts.md` heading still resolves. Verify t826 green and list each fixed contradiction here
+- [ ] 4.3 Check the page as it renders on GitHub: `gh api markdown -f mode=gfm -f text=@docs/guide/shortcuts.md` (or an offline GFM render). Confirm `<kbd>` comes out as `<kbd>` inside the table cells and every table has two columns. Verify by inspecting the HTML for `<table>` count == number of groups and no literal `&lt;kbd&gt;`
+- [ ] 4.4 Add one line to `src/apps/kt-app/CLAUDE.md` (Localization or UI texts section): `docs/guide/shortcuts.md` is the key reference, a new or changed binding updates its row in the same commit, and the rows say only what the handler does. Verify the line is there
+- [ ] 4.5 Commit stages 2–4 (`cargo test --workspace` green; t826, t827, t869 green)
+
+## 5. Finish
+
+- [ ] 5.1 Run `src/scripts/finish.sh`. Verify it is green and record the version `vYY.MM.DD-hash`. The report lists the landing-row differences from `inventory.md`, the `Alt+S` fix, the hint/code mismatches found in 3.1 (as proposals, not edits), the open question from design (convert other guide pages to `<kbd>`?), and ends with the line «на сайте: скажи "обнови" в kt.9.site»

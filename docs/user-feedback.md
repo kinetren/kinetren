@@ -1768,6 +1768,32 @@ only* (the pin moves from 8.1.2 to 9.0.2, the windows-latest job runs the test a
 official source tarball (SHA-256 pinned), and the FFmpeg tests run against it — never shipped.
 Change `openspec/changes/ffmpeg-9`.
 
+## Shortcuts reference (2026-10-26)
+
+A brief written in the site repository (kt.9.site, change `remove-landing-keys`), in the
+owner's words, translated:
+
+> Rewrite `docs/guide/shortcuts.md` so that it is a complete and tidy reference of keyboard
+> shortcuts and mouse gestures. The site shows `docs/guide/*.md` as the `/docs/` pages. I
+> removed the "Keyboard" section from the landing page: a reference does not belong there.
+> Now `shortcuts.md` is the only key reference. Right now it is poorer and uglier than the
+> landing was: the keys are written in bold text, there are no groups for the region and the
+> view, and some shortcuts are not mentioned at all.
+
+What he asked for: the list comes from the CODE, not from the landing; every landing row is
+checked against the code, and where the program behaves differently the documentation says
+what the program does, every difference listed in the report; tables grouped by what a person
+looks up together, `| Keys | Action |`; keys as keys (`<kbd>`), alternatives with ` / `, holds,
+double presses, wheel and clicks in words; a key is described only where it really does that
+(the `compositions` rule); the site's Markdown subset (anything else breaks the site's build);
+the program's name in lower case — kinetren; English documentation; contradictions in
+`timeline.md` / `getting-started.md` fixed; the file name stays.
+
+**Answers (AskUserQuestion, 2026-10-26):** a defect found while mapping the keys — `Alt+S`
+(solo) also splits the event under the playhead — is *fixed here*, test first; the site's
+Markdown subset is *guarded* by a `markup` class of `readme-check.py`. Change
+`openspec/changes/guide-shortcuts-reference`.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
