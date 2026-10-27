@@ -75,4 +75,4 @@ x11rb = "0.13"
 # Windows (windows-build): the UI language from the user's locale, the pointer during an
 # OLE drag (winit does not report it)
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader"] }

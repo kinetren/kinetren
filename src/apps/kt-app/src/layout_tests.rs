@@ -17505,3 +17505,71 @@ fn t843_geometry_dump_survives_a_multi_line_notice() {
     let first = v["notices"][0].as_str().unwrap_or_default();
     assert!(first.contains("first line | second") && first.ends_with("end"), "{first}");
 }
+
+/// t862 (wine-frame-and-dark-theme, ui-timeline): a light system theme does not reach the
+/// interface. `set_visuals` styles only the current theme; with "follow the system" a light
+/// system theme (wine reports one) switched egui to its default light style and painted the
+/// standard parts white over our dark panels.
+#[test]
+fn t862_a_light_system_theme_does_not_reach_the_interface() {
+    let mut h = harness();
+    // the harness pins a theme of its own; the real program starts with egui's default,
+    // "follow the system" — that is the state the defect lived in
+    h.ctx.set_theme(egui::ThemePreference::System);
+    crate::theme::apply(&h.ctx);
+    let ours = |h: &Harness<'_, KtApp>| {
+        h.ctx.global_style().visuals.panel_fill == crate::theme::PANEL
+            && h.ctx.global_style().visuals.window_fill == crate::theme::WINDOW
+            && h.ctx.global_style().visuals.widgets.inactive.bg_fill == egui::Color32::from_rgb(21, 23, 27)
+    };
+    h.step();
+    assert!(ours(&h), "our dark visuals with no system theme reported");
+    for theme in [egui::Theme::Light, egui::Theme::Light, egui::Theme::Light, egui::Theme::Dark] {
+        h.input_mut().system_theme = Some(theme);
+        h.step();
+        assert_eq!(h.ctx.theme(), egui::Theme::Dark, "the system said {theme:?}, the theme moved");
+        assert!(ours(&h), "the system said {theme:?}: the visuals are no longer ours");
+    }
+}
+
+/// t863, the harness part (wine-frame-and-dark-theme, ui-timeline): with the system frame our
+/// window buttons are not drawn and our edges do not resize — the system's do both; borderless
+/// keeps them. Probed by the CONSEQUENCE of a press, as t101 does.
+#[test]
+fn t863_the_system_frame_hides_our_window_buttons_and_edges() {
+    use crate::window_frame::Frame;
+    use egui::ViewportCommand as V;
+    fn press(frame: Frame, pos: egui::Pos2) -> Vec<V> {
+        let mut h = harness();
+        h.state_mut().window_frame = frame;
+        h.step();
+        let grab = |h: &Harness<'_, KtApp>| -> Vec<V> {
+            h.output().viewport_output.values().flat_map(|v| v.commands.iter().cloned()).collect()
+        };
+        let button = |pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        h.hover_at(pos);
+        h.step();
+        h.event(button(true));
+        h.step();
+        let mut sent = grab(&h);
+        h.event(button(false));
+        h.step();
+        sent.extend(grab(&h));
+        sent
+    }
+    let close = egui::pos2(W - 11.0, 11.0);
+    let edge = egui::pos2(W - 1.0, H / 2.0);
+    let closes = |c: &[V]| c.iter().any(|v| matches!(v, V::Close));
+    let resizes = |c: &[V]| c.iter().any(|v| matches!(v, V::BeginResize(_)));
+    assert!(closes(&press(Frame::Borderless, close)), "borderless: our Close button");
+    assert!(resizes(&press(Frame::Borderless, edge)), "borderless: our right edge");
+    let c = press(Frame::System, close);
+    assert!(!closes(&c), "system frame: our Close button is drawn: {c:?}");
+    let c = press(Frame::System, edge);
+    assert!(!resizes(&c), "system frame: our edge still resizes: {c:?}");
+}

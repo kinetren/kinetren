@@ -1,0 +1,25 @@
+# Tasks
+
+Test number t871 is reserved by this change. Every stage ends with a commit (English message,
+first line = the stage and what was done, no `Co-Authored-By` or other agent lines). Stage only
+this change's files.
+
+## 0. Records before code
+
+- [x] 0.1 Append to `docs/user-feedback.md`, before "What the user repeated more than once", the section "Menu labels without keys (2026-10-26)". Record the request ("do this task here") and the answer (AskUserQuestion, 2026-10-26): the gesture goes to the chord column, translated like "Enter, 2×click". Verify the entry names `menu-chords-out-of-text` and has no Cyrillic
+- [x] 0.2 Commit stage 0 with the change's artifacts (`openspec validate menu-chords-out-of-text --strict` green)
+
+## 1. Test first
+
+- [x] 1.1 Write t871 in `src/apps/kt-app/src/reach_tests.rs` (not `layout_tests.rs`: another session has uncommitted edits there, and this checkout cannot stage single hunks) as in design D3 (catalog scan, the two menus in the harness, `morpher_del_accel`). The function does not exist yet, so add a stub that returns `None` for step 3. Verify t871 is RED on the current catalogs, and record the message here. Recorded: `menu labels carry their key in the text:` with `en tl.menu.region_from_event`, `en tl.menu.copy`, `en tl.menu.paste`… (all five keys in every language)
+
+## 2. Labels and chords
+
+- [x] 2.1 Remove the key from `tl.menu.copy`, `paste`, `remove_morpher`, `delete_in_region` and `region_from_event` in all five catalogs. Add `tl.menu.region_from_event_accel` (en "Shift+2×click", ru "Shift+2×клик", es "Shift+2×clic", zh-Hans "Shift+双击", ar "Shift+نقرة مزدوجة"). Verify `cargo build -p kt-app` succeeds. Found by t871 after the five: zh-Hans `tl.menu.delete` = "删除（Del）" (en "Delete"), so the Chinese event menu showed Del twice. Fixed to "删除"; the toolbar hint `tb.delete` "删除（Del）" stays, because hints may carry keys
+- [x] 2.2 In `timeline.rs`, draw the five items through `crate::widgets::menu_item` with the chords of design D1, and implement `morpher_del_accel`. Verify t871 is green
+- [x] 2.3 Run the UI-text guards: `i18n_tests.rs` (t125, t128, t171), `font_tests.rs` (t100), `reach_tests.rs` (t253 Delete morpher reach, t799 for t871's PATH line), `layout_tests.rs`. Verify all green, except failures that belong to other open changes; name any such failure here. Recorded: green except two that are not this change's: t799 (the ffmpeg-9 change's spec scenario without a PATH line) and t834 (the ffmpeg-9 session's worktree at `.claude/worktrees/ffmpeg-9` puts a second Dockerfile in the tree); t253 Delete-morpher reach and t799's check of t871's PATH line pass
+- [x] 2.4 Commit stages 1–2 (`cargo test --workspace --no-fail-fast`; `cargo clippy -p kt-app --all-targets` with no new warnings). Recorded: 1133 passed, 2 failed (t799, t834, both above); clippy 27 before and after (two first-draft warnings in t871 fixed)
+
+## 3. Finish
+
+- [x] 3.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version here. Recorded: version kt26.10.26-f6e1057c (debug). Workspace 1133/1135: the two red are t799 and t834, neither from this change (see 2.3). Live: 46 of 47 green. `trans` was red twice, at the ruler click "cursor placed in the middle of the transition: 0", with a load average of 40 (the live run took 1135 s instead of the usual ~560 s). Re-run alone right after (`./scripts/live-check.sh trans`, the same binary) it was green at every step, and it touches no menu. "Uncommitted changes" = the wine session's `layout_tests.rs`/`theme.rs`/tasks, the fixture DB and `src/kinetren/`, none from this change.

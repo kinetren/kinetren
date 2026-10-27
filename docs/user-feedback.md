@@ -1808,6 +1808,50 @@ stay as they are. Change `openspec/changes/split-menu-label`. A second answer th
 the toolbar scissors button's hint says the same "Split / cut region (S)" over the same
 action — *yes, same fix* ("Split at playhead (S)"; a hint may carry its key, a menu may not).
 
+**Wine (2026-10-26):**
+
+> I run the windows version through wine and there the whole interface is dark, while some parts are white, and also — the top titlebar disappeared and was replaced by the system bar, i.e. the context menus are gone, in effect..
+
+Asked what wine should get (our row through a write into wine's registry / the system frame /
+documentation only):
+
+> the main thing for me: 1. that undecorated works correctly in real windows, that there is no windows bar there, and that in wine it at least somehow works.
+
+Reproduced in the windows image (wine 11 + Xvfb + openbox): by default a system frame covers our
+22 px title row and cuts the status bar, egui's light style paints the standard parts white;
+with `KT_DECORATIONS=1` the menus are visible below the system bar; with wine's `Decorated=N`
+the look is exactly Linux's. Decisions: the theme fixed to dark on every OS; under wine the
+system frame (nothing written); real Windows stays borderless. Change
+`openspec/changes/wine-frame-and-dark-theme`, done in the branch `wine-frame-and-dark-theme`
+(the owner asked for a separate branch).
+
+## Menu labels without keys (2026-10-26)
+
+The follow-up proposed at the end of `split-menu-label`: five `[tl.menu]` labels carry their key
+in the translated text ("Copy (Ctrl+C)", "Paste (Ctrl+V)", "Delete morpher (Del)", "Delete clips
+in the region (Del)", "Region over this event (Shift+double click)").
+
+> Do this task here: "Menu labels: move keys out of the text"
+
+**Answer (AskUserQuestion, 2026-10-26):** the gesture of "Region over this event" goes to the
+*chord column, translated* — like the reel items' "Enter, 2×click". Found while checking the
+handlers: the context-menu Paste pastes at the click, not at the playhead, so it gets no
+`Ctrl+V`; Delete morpher deletes one block while `Del` deletes the whole selection, so `Del` is
+shown only when that morpher is alone. Change `openspec/changes/menu-chords-out-of-text`.
+
+## Version check (2026-10-27)
+
+> We need to bolt a version check onto the program: say a person started the program and today
+> we have not checked the version yet — then remind him in the bell notice that the version is
+> old (but do not bother him with pop-up windows at startup), and also write at the top in the
+> title bar, somehow briefly, that the version is outdated.
+
+**Answers (AskUserQuestion, 2026-10-27):** an off switch — *a View checkbox* next to the
+telemetry one (on by default; `KINETREN_UPDATE_CHECK=0` too); the title says *"kt26.10
+(outdated)"* — our version and a translated word, without the new number; only *normal
+releases* count, pre-releases (`-rc` tags) are ignored. Notice only — no download, no
+self-update. Change `openspec/changes/update-check`.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

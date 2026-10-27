@@ -329,6 +329,10 @@ pub struct KtApp {
     /// bypasses egui’s hit test, taking the press for itself, so buttons 16 px
     /// from the edge were practically unclickable. The buffer is reused.
     pub no_resize_rects: Vec<egui::Rect>,
+    /// The window frame — ONE decision for the process (`window_frame::current`); the window
+    /// builder, the window buttons, the drag strip and the resize edges read it. A harness
+    /// test sets it to probe the other frame.
+    pub window_frame: crate::window_frame::Frame,
     /// Rectangles of the cards of this frame (free mode): needed by the
     /// selection frame and group frames, and also give the harness test a place to aim
     /// the mouse at. The buffer is reused, not allocated per frame.
@@ -829,6 +833,7 @@ impl KtApp {
             bin_group_edit: None,
             bin_group_focus: false,
             no_resize_rects: Vec::new(),
+            window_frame: crate::window_frame::current(),
             bin_card_rects: Vec::new(),
             fader_grab: None,
             last_title: String::new(),
@@ -1096,6 +1101,7 @@ impl KtApp {
             bin_group_edit: None,
             bin_group_focus: false,
             no_resize_rects: Vec::new(),
+            window_frame: crate::window_frame::current(),
             bin_card_rects: Vec::new(),
             fader_grab: None,
             last_title: String::new(),
@@ -1689,7 +1695,7 @@ impl KtApp {
                     // The strip is invisible and lies between the resize edge (WIN_EDGE)
                     // and the bottom of the column headers, so it takes no space and
                     // joins the header on the left and the window buttons on the right.
-                    if std::env::var_os("KT_DECORATIONS").is_none() {
+                    if self.window_frame == crate::window_frame::Frame::Borderless {
                         let full = ui.available_rect_before_wrap();
                         // In the maximized window there is NO resize (the block below is disabled
                         // by the maximized guard), so the top WIN_EDGE pixels
@@ -2096,7 +2102,7 @@ impl KtApp {
         // the cursor is set last
         // (it wins), and the command is sent on the press itself.
         if !ctx.input(|i| i.viewport().maximized.unwrap_or(false))
-            && std::env::var_os("KT_DECORATIONS").is_none()
+            && self.window_frame == crate::window_frame::Frame::Borderless
         {
             let win = ctx.content_rect();
             // buttons at the edges (window, menu, bell) take the press for
@@ -9081,9 +9087,9 @@ pub fn run() -> eframe::Result {
         setup.power_preference = eframe::wgpu::PowerPreference::from_env()
             .unwrap_or(eframe::wgpu::PowerPreference::LowPower);
     }
-    // borderless (item 22, round 6): our own title bar in the toolbar row; KT_DECORATIONS=1
-    // returns the system frame (insurance against WM quirks)
-    let decorations = std::env::var_os("KT_DECORATIONS").is_some();
+    // borderless (item 22, round 6): our own title bar in the toolbar row; the system frame
+    // under wine or with KT_DECORATIONS=1 (wine-frame-and-dark-theme, `window_frame`)
+    let decorations = crate::window_frame::current() == crate::window_frame::Frame::System;
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1440.0, 860.0])

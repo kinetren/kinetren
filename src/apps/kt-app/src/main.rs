@@ -53,6 +53,7 @@ mod transition_editor;
 mod user_store;
 mod util;
 mod widgets;
+mod window_frame;
 
 fn main() -> eframe::Result {
     app::run()

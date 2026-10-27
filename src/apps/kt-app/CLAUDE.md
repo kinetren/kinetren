@@ -80,7 +80,7 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 - `KT_GEOM_DUMP=<file>` — write the timeline geometry for live scenarios (R.27): the zone of tracks, zoom, row centers in window coordinates.
 - `KT_FILE_PICK=<path>` — the answer of the system file-picker dialog (R.67): on Linux rfd goes through xdg-portal, which is absent in Xvfb, and silently returns "nothing"; the menu item in a live scenario is pressed for real, only the choice itself is substituted.
 - `KT_METER_DEMO=1` — feed fictitious levels into the meters: the look of the meter (glow, zones, peak strip) cannot be checked without audio hardware, and "by eye from the code" it has already broken twice.
-- `KT_DECORATIONS=1` — restore the window's WM decorations (a fallback for capricious WMs; by default the window is borderless, the toolbar = the titlebar, resizing — the `resize_zone` zones along the perimeter).
+- `KT_DECORATIONS=1` — restore the window's WM decorations (a fallback for capricious WMs; by default the window is borderless, the toolbar = the titlebar, resizing — the `resize_zone` zones along the perimeter). Under wine the system frame is the default (the WM decorates a borderless window anyway and covered our row); `KT_DECORATIONS=0` forces borderless there. ONE decision — `window_frame::current()` → `KtApp::window_frame`; nothing else reads the variable.
 - **Shift+wheel in egui arrives as scroll.x** (smooth_scroll_delta) — the vertical gestures of the timeline read the raw `Event::MouseWheel` with modifiers (item 12 of R.6); the pan branch is gated by "without Shift".
 
 ## egui traps that cost rounds (R.16)
