@@ -25,6 +25,19 @@ DLLs) and cannot be used. FFmpeg 9 is not supported yet.
 
 View → FFmpeg… shows which folder was used and why other folders were not.
 
+Running under wine
+------------------
+Under wine the window gets the system title bar of your window manager, with
+Kinetren's own row (logo, File / Edit / View) below it: wine decorates every
+window, and a borderless one would lose its top row under the frame. For the
+same look as on Windows and Linux, turn wine's decorations off and ask for the
+borderless window:
+
+  wine reg add "HKCU\Software\Wine\X11 Driver" /v Decorated /t REG_SZ /d N
+  KT_DECORATIONS=0 wine kinetren.exe
+
+KT_DECORATIONS=1 asks for the system title bar on any system.
+
 Windows SmartScreen
 -------------------
 The executables are not code-signed yet, so SmartScreen may warn on the first

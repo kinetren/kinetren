@@ -17532,3 +17532,44 @@ fn t862_a_light_system_theme_does_not_reach_the_interface() {
     }
 }
 
+/// t863, the harness part (wine-frame-and-dark-theme, ui-timeline): with the system frame our
+/// window buttons are not drawn and our edges do not resize — the system's do both; borderless
+/// keeps them. Probed by the CONSEQUENCE of a press, as t101 does.
+#[test]
+fn t863_the_system_frame_hides_our_window_buttons_and_edges() {
+    use crate::window_frame::Frame;
+    use egui::ViewportCommand as V;
+    fn press(frame: Frame, pos: egui::Pos2) -> Vec<V> {
+        let mut h = harness();
+        h.state_mut().window_frame = frame;
+        h.step();
+        let grab = |h: &Harness<'_, KtApp>| -> Vec<V> {
+            h.output().viewport_output.values().flat_map(|v| v.commands.iter().cloned()).collect()
+        };
+        let button = |pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        h.hover_at(pos);
+        h.step();
+        h.event(button(true));
+        h.step();
+        let mut sent = grab(&h);
+        h.event(button(false));
+        h.step();
+        sent.extend(grab(&h));
+        sent
+    }
+    let close = egui::pos2(W - 11.0, 11.0);
+    let edge = egui::pos2(W - 1.0, H / 2.0);
+    let closes = |c: &[V]| c.iter().any(|v| matches!(v, V::Close));
+    let resizes = |c: &[V]| c.iter().any(|v| matches!(v, V::BeginResize(_)));
+    assert!(closes(&press(Frame::Borderless, close)), "borderless: our Close button");
+    assert!(resizes(&press(Frame::Borderless, edge)), "borderless: our right edge");
+    let c = press(Frame::System, close);
+    assert!(!closes(&c), "system frame: our Close button is drawn: {c:?}");
+    let c = press(Frame::System, edge);
+    assert!(!resizes(&c), "system frame: our edge still resizes: {c:?}");
+}

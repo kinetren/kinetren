@@ -11,10 +11,10 @@
 
 ## 2. One frame decision
 
-- [ ] 2.1 `src/apps/kt-app/src/window_frame.rs`: pure `decide(KT_DECORATIONS value, under_wine)`, `under_wine()` (`ntdll` `wine_get_version` under `cfg(windows)`, `false` elsewhere; `windows-sys` feature `Win32_System_LibraryLoader`), `current()` computed once; verify t863's pure part (the four cases of the spec)
-- [ ] 2.2 The window builder, `draw_window_buttons`, the menu row's no-resize zone and the resize edges ask `window_frame::current()` instead of `KT_DECORATIONS`; a test hook to set the decision in the harness; verify t863's harness part (system frame → no window-button rectangle, borderless → present), t101/t254-family layout tests and `grep -rn KT_DECORATIONS src/apps/kt-app/src` showing only `window_frame.rs`
-- [ ] 2.3 `src/packaging/README-windows.txt`: the wine note (the system frame under wine; `Decorated=N` + `KT_DECORATIONS=0` for the Linux look); verify `dist-check.py --check`
-- [ ] 2.4 Commit stage 2
+- [x] 2.1 `src/apps/kt-app/src/window_frame.rs`: pure `decide(KT_DECORATIONS value, under_wine)`, `under_wine()` (`ntdll` `wine_get_version` under `cfg(windows)`, `false` elsewhere; `windows-sys` feature `Win32_System_LibraryLoader`), `current()` computed once; verify t863's pure part (the four cases of the spec)
+- [x] 2.2 The window builder, `draw_window_buttons`, the menu row's no-resize zone and the resize edges ask `window_frame::current()` instead of `KT_DECORATIONS`; a test hook to set the decision in the harness; verify t863's harness part (system frame → no window-button rectangle, borderless → present), t101/t254-family layout tests and `grep -rn KT_DECORATIONS src/apps/kt-app/src` showing only `window_frame.rs`
+- [x] 2.3 `src/packaging/README-windows.txt`: the wine note (the system frame under wine; `Decorated=N` + `KT_DECORATIONS=0` for the Linux look); verify `dist-check.py --check`
+- [x] 2.4 Commit stage 2
 
 ## 3. The wine check and finish
 

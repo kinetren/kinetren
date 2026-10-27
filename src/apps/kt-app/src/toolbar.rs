@@ -254,7 +254,8 @@ impl KtApp {
     /// Window buttons — a compact block in the header of the metres panel (item 15 round 8:
     /// no full-width strip, and no overlay over the metres either).
     pub fn draw_window_buttons(&mut self, ui: &mut egui::Ui) {
-        if std::env::var_os("KT_DECORATIONS").is_some() {
+        // the system frame has its own buttons (`window_frame`)
+        if self.window_frame == crate::window_frame::Frame::System {
             return;
         }
         let strip = egui::Rect::from_min_size(
