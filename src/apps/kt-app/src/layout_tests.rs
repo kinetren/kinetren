@@ -17505,3 +17505,30 @@ fn t843_geometry_dump_survives_a_multi_line_notice() {
     let first = v["notices"][0].as_str().unwrap_or_default();
     assert!(first.contains("first line | second") && first.ends_with("end"), "{first}");
 }
+
+/// t862 (wine-frame-and-dark-theme, ui-timeline): a light system theme does not reach the
+/// interface. `set_visuals` styles only the current theme; with "follow the system" a light
+/// system theme (wine reports one) switched egui to its default light style and painted the
+/// standard parts white over our dark panels.
+#[test]
+fn t862_a_light_system_theme_does_not_reach_the_interface() {
+    let mut h = harness();
+    // the harness pins a theme of its own; the real program starts with egui's default,
+    // "follow the system" — that is the state the defect lived in
+    h.ctx.set_theme(egui::ThemePreference::System);
+    crate::theme::apply(&h.ctx);
+    let ours = |h: &Harness<'_, KtApp>| {
+        h.ctx.global_style().visuals.panel_fill == crate::theme::PANEL
+            && h.ctx.global_style().visuals.window_fill == crate::theme::WINDOW
+            && h.ctx.global_style().visuals.widgets.inactive.bg_fill == egui::Color32::from_rgb(21, 23, 27)
+    };
+    h.step();
+    assert!(ours(&h), "our dark visuals with no system theme reported");
+    for theme in [egui::Theme::Light, egui::Theme::Light, egui::Theme::Light, egui::Theme::Dark] {
+        h.input_mut().system_theme = Some(theme);
+        h.step();
+        assert_eq!(h.ctx.theme(), egui::Theme::Dark, "the system said {theme:?}, the theme moved");
+        assert!(ours(&h), "the system said {theme:?}: the visuals are no longer ours");
+    }
+}
+

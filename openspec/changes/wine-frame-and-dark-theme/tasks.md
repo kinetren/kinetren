@@ -2,12 +2,12 @@
 
 ## 0. Records before code
 
-- [ ] 0.1 Append the owner's words of 2026-10-26 (wine: the interface dark with white parts; the title row gone, replaced by the system bar, so the menus are gone) and his priority ("real Windows: borderless with no Windows bar; wine: somehow works") to `docs/user-feedback.md`, with the reproduction (wine 11 + Xvfb + openbox: default / `KT_DECORATIONS=1` / `Decorated=N`); verify the entry names `wine-frame-and-dark-theme`
+- [x] 0.1 Append the owner's words of 2026-10-26 (wine: the interface dark with white parts; the title row gone, replaced by the system bar, so the menus are gone) and his priority ("real Windows: borderless with no Windows bar; wine: somehow works") to `docs/user-feedback.md`, with the reproduction (wine 11 + Xvfb + openbox: default / `KT_DECORATIONS=1` / `Decorated=N`); verify the entry names `wine-frame-and-dark-theme`
 
 ## 1. The dark theme
 
-- [ ] 1.1 `theme::apply`: `ctx.set_theme(egui::ThemePreference::Dark)`, our visuals via `style_mut_of(egui::Theme::Dark, …)`; verify t862 (`layout_tests.rs`: a light `system_theme` in the harness input for several frames, then dark — the theme stays Dark, `panel_fill`/`window_fill` are `theme::PANEL`/`theme::WINDOW`, the inactive widget fill is ours) and that the existing layout/font/reach tests stay green
-- [ ] 1.2 Commit stage 1
+- [x] 1.1 `theme::apply`: `ctx.set_theme(egui::ThemePreference::Dark)`, our visuals via `style_mut_of(egui::Theme::Dark, …)`; verify t862 (`layout_tests.rs`: a light `system_theme` in the harness input for several frames, then dark — the theme stays Dark, `panel_fill`/`window_fill` are `theme::PANEL`/`theme::WINDOW`, the inactive widget fill is ours) and that the existing layout/font/reach tests stay green
+- [x] 1.2 Commit stage 1
 
 ## 2. One frame decision
 

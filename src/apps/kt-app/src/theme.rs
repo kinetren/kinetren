@@ -109,7 +109,13 @@ pub fn apply(ctx: &egui::Context) {
     v.widgets.active.bg_fill = Color32::from_rgb(34, 56, 96);
     v.widgets.active.bg_stroke = egui::Stroke::new(1.0, ACCENT);
     v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, SEAM);
-    ctx.set_visuals(v);
+    // ONE look, whatever theme the system reports (wine-frame-and-dark-theme): `set_visuals`
+    // styles only the CURRENT theme, and with the default "follow the system" a light system
+    // theme (wine reports one, some Linux desktops too) switched egui to its default LIGHT
+    // style — the standard parts turned white over our dark panels. The preference is fixed,
+    // and our visuals are the dark style's.
+    ctx.set_theme(egui::ThemePreference::Dark);
+    ctx.style_mut_of(egui::Theme::Dark, |st| st.visuals = v);
     ctx.all_styles_mut(|st| {
         // item 14 round 8: there are NO tooltips at all — the only place for a hint
         // is the bottom right of the status line. The blocking delay also mutes
