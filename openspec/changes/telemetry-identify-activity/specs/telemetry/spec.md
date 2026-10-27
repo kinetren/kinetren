@@ -204,14 +204,15 @@ show what each did, and `instances_running` says that they overlapped.
 ### Requirement: Activity is counted, not narrated
 The session SHALL count, without names: `active_s` (10-second slots with input or playback),
 `playback_s` and `playback_starts`, `media_imported` by kind (`video`, `audio`, `image`,
-`generator`), `clips_added`, `edits` (model revisions from the apply wrappers), `undos`,
-`redos`, `projects_opened`, `saves`, `exports` by outcome (`ok`, `failed`, `cancelled`) and
-`fx_added` by effect kind (the name from our effect registry, never a user-given name). The
-counters are bumped where the person acts — the `KtApp` apply/undo/redo wrappers, the media
-add paths, the playback state transition seen in `draw_all`, the input events of the frame —
-and cost an atomic add.
+`generator` — the kind is derived inside `telemetry.rs` from the media path, the path itself
+never leaves the module), `clips_added`, `edits`, `undos`, `redos`, `projects_opened`, `saves`,
+`exports` by outcome (`ok`, `failed`, `cancelled`) and `fx_added` by effect kind (the name from
+our effect registry, never a user-given name). The counts SHALL be derived inside
+`telemetry.rs` from the signals of the one door below — above all from the model COMMANDS the
+apply wrappers already hold — not computed at the call sites.
 Why: "what was this session spent on" is what the owner asked for; per-action events would
-multiply the volume tens of times for the same answer.
+multiply the volume tens of times for the same answer. Deriving the counts from the commands
+means one line per apply wrapper instead of a hook in every feature.
 
 #### Scenario: Real UI paths move the counters
 - **WHEN** the harness app with a recording telemetry imports a synthetic video and an audio
@@ -286,3 +287,62 @@ step.
   with the `os-release` file missing `$os_version` is absent, not empty; the probe's output
   keys are a subset of the environment row of the table
 - **TEST** t886 (`src/apps/kt-app/src/telemetry.rs`)
+
+### Requirement: Telemetry enters the application through one door
+Code outside `telemetry.rs` SHALL talk to telemetry only through `telemetry::signal(Signal)` —
+a free function that is a no-op when telemetry is off or not installed — plus the start-up and
+UI plumbing that exists for the switch (`install`, `global`, the notice and hint texts, the View
+checkbox). `Signal` is a small enum of FACTS (`Commands(&[Command])`, `Undo`, `Redo`, `Saved`,
+`ProjectOpened{how}`, `ExportEnded{..}`, `Frame{playing, had_input}`, `CrashReport(&str)`,
+`Exit`); classifying, counting, bucketing, building events and deciding what to send live in
+`telemetry.rs` only. Each call site is ONE line, there are at most 16 of them, and the list is
+kept by a guard test. `signal` MUST NOT block, perform I/O or allocate on the per-frame path
+(`Frame`): it is a branch and atomic adds; other signals may take a short lock on the
+counters' maps, never across I/O.
+Why: the owner asked (2026-10-28) that telemetry not smear across the code — neat insertions,
+handled in one module, without slowing the program. A fixed door plus a counted list of doors
+keeps the next feature from adding its own telemetry code where it lives.
+
+#### Scenario: The doors are counted
+- **WHEN** the guard scans `src/apps/kt-app/src/**/*.rs` except `telemetry.rs` and the test
+  modules for `telemetry::`
+- **THEN** every occurrence is `telemetry::signal(`, `telemetry::Signal::`, `telemetry::install(`,
+  `telemetry::global()`, a text helper (`notice_*`, `hint_text`, `lists_text`) or a type in the
+  checkbox code; the number of `signal(` call sites is at most 16 and equals the number listed in
+  the test, so a new site is a deliberate edit of the guard; no file other than `telemetry.rs`
+  builds JSON for telemetry or names a PostHog key
+- **TEST** t887 (`src/apps/kt-app/src/telemetry.rs`)
+
+### Requirement: A local PostHog stand-in checks the whole path
+The test suite SHALL carry a local stand-in of PostHog's capture endpoint (an in-process HTTP
+server answering `200 {"status":1}` on `POST /i/v0/e/`) that validates each request the way the
+ingestion would reject it: JSON body, non-empty `api_key`, `event`, `distinct_id`; `properties`
+an object; `$session_id` a UUID v7; `$set`/`$set_once`, when present, objects. A debug build
+SHALL send to it when BOTH `KT_TELEMETRY_URL` and `KT_TELEMETRY_KEY` are set (the key variable
+is read only by debug builds; a release build ignores both), so a live scenario can drive the
+real `kinetren` without the real key and without reaching the internet.
+Why: the owner asked for a simple test that the whole thing basically works against a local
+PostHog (2026-10-28). A real self-hosted PostHog (ClickHouse, Kafka, Postgres, Redis) is far too
+heavy for `cargo test` and the live run; a stand-in that checks what the ingestion checks, plus
+the real binary in the live run, covers "it reaches PostHog in the right shape".
+
+#### Scenario: The harness app speaks valid PostHog
+- **WHEN** the harness app with an HTTP sink pointed at the stand-in starts, imports a synthetic
+  video, plays and stops, and exits
+- **THEN** the stand-in accepted, in order, `app_started` (with `$set`), `project_opened` or the
+  counters' first heartbeat as applicable, and `app_closed` with `media_imported.video == 1` and
+  `playback_starts == 1`; it rejected nothing; all events share one `distinct_id` and one
+  `$session_id`
+- **TEST** t888 (`src/apps/kt-app/src/reach_tests.rs`)
+
+#### Scenario: The real program reaches the stand-in
+- **WHEN** the live run starts the real `kinetren` with `KT_TELEMETRY_URL` and `KT_TELEMETRY_KEY`
+  pointing at a stand-in, opens a fixture project, plays two seconds, opens the bell and expands
+  the telemetry entry, and closes the window
+- **THEN** the stand-in holds valid `app_started`, `project_opened` and `app_closed` (counters
+  with `playback_starts >= 1`) under one session id; the scenario's screenshots show the entry
+  collapsed and expanded
+- **PATH** start Kinetren → the bell has one unread entry → click the bell → one calm line with
+  "Details" collapsed → click "Details" → the lists of what is and is NOT sent → close the window
+- **TEST** live scenario `src/scripts/live/telemetry.py`
+

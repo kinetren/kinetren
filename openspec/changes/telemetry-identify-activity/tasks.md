@@ -10,16 +10,17 @@
 - [ ] 1.2 UUID v7 session id, `telemetry-seq`, `instances/<session>.lock` with `File::try_lock` and stale removal (D4); verify t881 and that t836/t841 stay green
 - [ ] 1.3 Commit stage 1 (`cargo test -p kt-app` green, clippy clean on touched files)
 
-## 2. Counters and heartbeat
+## 2. One door, counters and heartbeat
 
-- [ ] 2.1 `Counters` (atomics + small maps), `tel::bump` helpers that are no-ops without telemetry, heartbeat on the sender thread with `recv_timeout` and an injectable clock, "send only if changed", final counters in `app_closed` (D5); verify t879 and t836
-- [ ] 2.2 Bump sites in `src/apps/kt-app/src/app.rs` (apply/undo/redo wrappers, media add paths, save, open/import/recovery, playback transition and input slots in `draw_all`) without allocation in the draw path; verify t884 (real UI paths, with the PATH line) and the existing `layout_tests.rs`/`reach_tests.rs`
-- [ ] 2.3 Commit stage 2
+- [ ] 2.1 `Signal` and `telemetry::signal` (D5): counters derived inside the module (commands classified per batch, playback and input slots from `Frame`), heartbeat on the sender thread with `recv_timeout` and an injectable clock, "send only if changed", final counters in `app_closed`; today's `t.frame(..)`/`t.closed(..)` calls become `Signal::Frame`/`Signal::Exit`; verify t879 and t836
+- [ ] 2.2 The doors in `src/apps/kt-app/src/app.rs` — one line each: `apply`, `apply_batch`, `apply_coalesced`, `undo`, `redo`, save, `KtApp::open`/`new_empty`/recovery, `draw_all`, `on_exit`; nothing else of telemetry outside `telemetry.rs`; verify t884 (real UI paths, PATH line) and the existing `layout_tests.rs`/`reach_tests.rs`
+- [ ] 2.3 Guard t887: the doors outside `telemetry.rs` are only the allowed forms, `signal(` sites ≤ 16 and equal to the number in the test
+- [ ] 2.4 Commit stage 2
 
 ## 3. Milestones, crash, environment
 
-- [ ] 3.1 `project_opened` from the open/import/recovery/new paths and `export_finished` where `render_dialog.rs` clears `render_job`; bucket functions (D7); verify t883
-- [ ] 3.2 Panic hook writes `session:`; `crash_from_report` parses version/thread/location and drops the message; `app_crashed` sent from the start hand-off next to `take_crash_report` (D8); verify t882 and that t374/t375 (`journal.rs`) stay green
+- [ ] 3.1 `project_opened` and `export_finished` built inside the module from `Signal::ProjectOpened`/`Signal::ExportEnded` (the latter one line where `render_dialog.rs` clears `render_job`); bucket functions (D7); verify t883 and t887
+- [ ] 3.2 Panic hook writes `session:`; `crash_from_report` parses version/thread/location and drops the message; `Signal::CrashReport` one line next to `take_crash_report`, `app_crashed` built in the module (D8); verify t882 and that t374/t375 (`journal.rs`) stay green
 - [ ] 3.3 `probe_env` over injected sources + production gatherers (`/etc/os-release`, `RtlGetVersion`, `/proc/meminfo`/`GlobalMemoryStatusEx`, adapter info from `ui()`, scale and monitor size, FFmpeg state from `ffmpeg_setup.rs`) (D9); verify t886 and that the Windows cross-build compiles (`./scripts/release-build.sh --target windows` or `make windows`)
 - [ ] 3.4 Commit stage 3
 
@@ -30,8 +31,9 @@
 - [ ] 4.3 README "Privacy": one friendly paragraph, the lists in `<details>`, still saying what is NOT sent; verify `python3 src/scripts/readme-check.py --check`
 - [ ] 4.4 Commit stage 4
 
-## 5. Verify and finish
+## 5. Local PostHog stand-in, verify and finish
 
-- [ ] 5.1 Live check against a local capture server (debug build with a test key in a separate `CARGO_TARGET_DIR`, `KT_TELEMETRY_URL`): start → import a fixture → play → close; the server holds `app_started` with `$set`, `project_opened`/counters, `app_closed` with counters; screenshots of the bell entry collapsed and expanded
-- [ ] 5.2 Owner check in PostHog (listed in the report, done by the owner): Persons shows one person per install with `$os`, `$app_version`, GPU and FFmpeg properties; a dashboard for active time, instances and crash locations
-- [ ] 5.3 `cargo test --workspace` and `cargo clippy --all-targets` green; `src/scripts/finish.sh`, version in the report
+- [ ] 5.1 `telemetry::testing::FakePostHog` (D11): local capture endpoint that validates like the ingestion (JSON, `api_key`, `event`, `distinct_id`, `properties` object, `$session_id` UUID v7, `$set` objects); t841 reuses it; verify t888 (harness app → real `HttpSink` → stand-in: start, import, play, exit)
+- [ ] 5.2 Debug builds read `KT_TELEMETRY_KEY` next to `KT_TELEMETRY_URL` (both required; release ignores both — extend t842); live scenario `src/scripts/live/telemetry.py` with a Python stand-in (same checks): fixture project, play 2 s, bell entry collapsed and expanded (`kt_live.step` screenshots), close → valid `app_started`/`project_opened`/`app_closed`; verify with `./scripts/live-check.sh telemetry`
+- [ ] 5.3 Owner check in PostHog (listed in the report, done by the owner): Persons shows one person per install with `$os`, `$app_version`, GPU and FFmpeg properties; a dashboard for active time, instances and crash locations
+- [ ] 5.4 `cargo test --workspace` and `cargo clippy --all-targets` green; `src/scripts/finish.sh` (runs the live scenario too), version in the report
