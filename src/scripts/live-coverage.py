@@ -83,7 +83,7 @@ USE_CLICK = re.compile(
     r'|scroll_probe_into_view)\(\s*f?"([^"]+)"'
 )
 SPEC_LIVE = re.compile(r"src/scripts/live/([a-z_0-9]+)\.py")
-FILE_EXT = {"otio", "kt", "png", "json", "db", "rs", "py", "toml", "wav", "mp4", "jpg", "ktproj"}
+FILE_EXT = {"otio", "kt", "png", "json", "db", "rs", "py", "toml", "wav", "mp4", "jpg", "ktproj", "dll"}
 
 # REGISTRY OF THE MOVE (R.68, task 5.2). The criterion is in the spec `ui-reach`: live
 # what remains is a place never touched ONCE, a gesture hit, and a complex path from
