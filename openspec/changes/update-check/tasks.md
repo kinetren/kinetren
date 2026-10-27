@@ -33,7 +33,7 @@ Stage only this change's files: the checkout may hold another session's uncommit
 
 - [x] 4.1 Live scenario `src/scripts/live/update.py`: a local HTTP server answers a release JSON with a newer asset; the program starts with `KT_UPDATE_URL` and the rig's own `XDG_DATA_HOME`; `kt_live.step` screenshots: the start (no window, bell shows 1, title marked), the hover hint on the word, the notices window, View with the checkbox, the title after unchecking. Verify `./scripts/live-check.sh update` is green. Recorded: green, 5 steps (`01-step-start` … `05-step-notices`), ~47 s. The order became start → hover → View → bell: the bell is the last step because closing the notices with a second bell click did not take in the run, and that is not this change. Found on the way: without `OWN_PROCESS = True` the worker keeps its stand running, and the rig aimed at the stand's window (two `kinetren` windows on the screen) — the first hover landed 240 px off
 - [x] 4.2 `src/apps/kt-app/CLAUDE.md` first line names `distribution`; `docs/features/README.md` rule 13 no longer says telemetry is the only network path (name `update_check.rs`). Verify `features-index.py --check` is green. Also: the live-coverage guard (`live-coverage.py --check`) read test literals shaped like `v26.11.01`/`kt26.11.01`/`notes.txt` as untouched probe names (91 against the limit 84); the tests now build those strings, the guard is at 84/84
-- [ ] 4.3 Commit stage 4
+- [x] 4.3 Commit stage 4
 
 ## 5. Finish
 

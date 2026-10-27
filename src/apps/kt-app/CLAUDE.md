@@ -1,6 +1,6 @@
 # kt-app (eframe/egui GUI)
 
-> Crate contracts and mandatory tests — `openspec/specs/{ui-timeline,ui-reach,durability,telemetry}/spec.md`, the reasons for decisions — `design.md` next to them.
+> Crate contracts and mandatory tests — `openspec/specs/{ui-timeline,ui-reach,durability,telemetry,distribution}/spec.md`, the reasons for decisions — `design.md` next to them.
 
 UI invariants earned through the rounds 4–5 (details and test numbers — items 38–94). Violating any of them is a performance or UX regression.
 
