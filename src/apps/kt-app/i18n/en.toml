@@ -1293,6 +1293,18 @@ how_off = "Turn it off: View / Send anonymous usage statistics, or start with KI
 no_key = "This build does not send statistics."
 env_off = "Switched off by KINETREN_TELEMETRY or DO_NOT_TRACK."
 
+# The daily new-version check (change update-check): the View checkbox, its hint, the one
+# notice in the bell and the short word after the version in the title.
+[update]
+checkbox = "Check for new versions daily"
+checkbox_hint = "Once a day asks GitHub which Kinetren release is the latest. Sends nothing but the program version; downloads nothing."
+outdated = "(outdated)"
+notice = "Kinetren {0} is out (you have {1}). Get it at {2}."
+how_off = "Turn the daily check off: View / Check for new versions daily."
+title_hint = "Kinetren {0} is out — {1}"
+dev_build = "This development build does not check for new versions."
+env_off = "Switched off by KINETREN_UPDATE_CHECK."
+
 # FFmpeg window (change windows-build): where the codec library was found, why other
 # folders were not used, and how to get it (Download on Windows, Locate, Rescan).
 [ffmpeg]

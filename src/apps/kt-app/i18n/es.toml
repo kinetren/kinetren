@@ -1291,6 +1291,18 @@ how_off = "Desactivar: Ver / Enviar estadísticas de uso anónimas, o iniciar co
 no_key = "Esta compilación no envía estadísticas."
 env_off = "Desactivado por KINETREN_TELEMETRY o DO_NOT_TRACK."
 
+# The daily new-version check (change update-check): the View checkbox, its hint, the one
+# notice in the bell and the short word after the version in the title.
+[update]
+checkbox = "Buscar versiones nuevas a diario"
+checkbox_hint = "Una vez al día pregunta a GitHub cuál es la última versión de Kinetren. Solo envía la versión del programa; no descarga nada."
+outdated = "(obsoleta)"
+notice = "Ya está disponible Kinetren {0} (tienes {1}). Descárgalo en {2}."
+how_off = "Desactivar la comprobación diaria: Ver / Buscar versiones nuevas a diario."
+title_hint = "Ya está disponible Kinetren {0} — {1}"
+dev_build = "Esta compilación de desarrollo no busca versiones nuevas."
+env_off = "Desactivado por KINETREN_UPDATE_CHECK."
+
 # Ventana de FFmpeg (change windows-build)
 [ffmpeg]
 title = "FFmpeg"

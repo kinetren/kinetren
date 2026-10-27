@@ -172,13 +172,45 @@ impl KtApp {
             egui::Order::Foreground,
             egui::Id::new("project-title"),
         ));
+        // a newer release (update-check): the translated word after the version, in the
+        // bell's warning colour, on the row that is already there (rule 13); hovering it says
+        // which version is out and where — in the status bar, not a window (rule 10)
+        let word = tr(k::update::OUTDATED);
+        let base = self
+            .last_title
+            .strip_suffix(word)
+            .and_then(|t| t.strip_suffix(' '))
+            .filter(|_| self.title_outdated)
+            .unwrap_or(&self.last_title);
         let title_at = fg.text(
             egui::pos2(menu_end + 10.0, strip.center().y),
             egui::Align2::LEFT_CENTER,
-            &self.last_title,
+            base,
             egui::FontId::proportional(11.5),
             egui::Color32::from_gray(125),
         );
+        let mut title_end = title_at.right();
+        if base.len() < self.last_title.len() {
+            let word_at = fg.text(
+                egui::pos2(title_end + 4.0, strip.center().y),
+                egui::Align2::LEFT_CENTER,
+                word,
+                egui::FontId::proportional(11.5),
+                egui::Color32::from_rgb(255, 170, 80),
+            );
+            title_end = word_at.right();
+            // hit-tested by the pointer, not by a widget: the title spills over the preview
+            // (the user's decision above), whose widgets would win the hover there
+            let zone = word_at.expand2(egui::vec2(2.0, 3.0));
+            crate::widgets::field_probe::note("title.outdated", zone);
+            let ctx = ui.ctx();
+            let over = ctx.pointer_hover_pos().is_some_and(|p| {
+                zone.contains(p) && ctx.layer_id_at(p).is_none_or(|l| l.order < egui::Order::Foreground)
+            });
+            if over && let Some(new) = self.update.as_ref().and_then(|u| u.outdated()) {
+                self.hover_hint = Some(crate::update_check::title_hint(&new));
+            }
+        }
         // PATH CRUMBS — on an ALREADY OCCUPIED row, to the right of the project name
         // (checklist rule 13: a separate strip for a label that appears rarely is not
         // made). Each crumb is clickable: this is also the way to reach any
@@ -197,7 +229,7 @@ impl KtApp {
         );
         crate::widgets::field_probe::note("nest.root", root_hit.rect);
         let to_root = self.hint(root_hit, tr(k::msg::NEST_CRUMB_HINT)).clicked();
-        let mut x = title_at.right() + 8.0;
+        let mut x = title_end + 8.0;
         let font = egui::FontId::proportional(11.5);
         let mut back_to: Option<usize> = None;
         for (i, name) in crumbs.iter().enumerate() {
@@ -507,6 +539,24 @@ impl KtApp {
                     t.set_choice(on);
                 }
             }
+            // the daily new-version check (update-check) right under it: the same kind of
+            // per-machine preference, the same disabled-with-a-reason form
+            if let Some(u) = self.update.clone() {
+                let c = u.consent();
+                let mut on = c.on();
+                let r = ui.add_enabled(c.block.is_none(), egui::Checkbox::new(&mut on, tr(k::update::CHECKBOX)));
+                let text = crate::update_check::hint_text(c.block);
+                if c.block.is_some() && r.contains_pointer() {
+                    self.hover_hint = Some(text.clone());
+                }
+                crate::widgets::field_probe::note("view.update_check", r.rect);
+                let r = self.hint(r, &text);
+                if r.changed() {
+                    // off hides the title word in this very frame (the title is rebuilt next)
+                    u.set_choice(on);
+                    self.title_outdated = self.title_outdated && on;
+                }
+            }
             ui.separator();
             if ui.button(tr(k::menu::view::DIAGNOSTICS)).clicked() {
                 self.perf.diag_open = true;
@@ -523,6 +573,7 @@ impl KtApp {
                 ui.close();
             }
         });
+        crate::widgets::field_probe::note("menu.view", last.response.rect);
         last.response.rect.right()
     }
 

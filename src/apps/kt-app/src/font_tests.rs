@@ -308,3 +308,24 @@ fn t100_ui_chars_have_glyphs() {
             .join("; ")
     );
 }
+
+/// Test 876, the glyph half (update-check): the four update texts of every language are
+/// drawn by the program's fonts — the title word rides in the title row on the CJK and Arabic
+/// subsets, which are cut from the catalogs (`scripts/subset-fonts.py`).
+#[test]
+fn t876_update_texts_have_glyphs() {
+    use crate::i18n::{Lang, k, set_lang, tr};
+    let fonts: Vec<(String, ab_glyph::FontVec)> = loaded_fonts()
+        .into_iter()
+        .map(|(n, d)| (n, ab_glyph::FontVec::try_from_vec(d).expect("the font does not parse")))
+        .collect();
+    for lang in Lang::ALL {
+        set_lang(lang);
+        for key in [k::update::CHECKBOX, k::update::CHECKBOX_HINT, k::update::NOTICE, k::update::HOW_OFF, k::update::OUTDATED] {
+            let text = tr(key);
+            let missing: String = text.chars().filter(|c| needs_glyph(*c) && !covered(&fonts, *c)).collect();
+            assert!(missing.is_empty(), "{}: {key:?}: no glyph for {missing:?} — rebuild the subsets", lang.code());
+        }
+    }
+    set_lang(Lang::Ru);
+}

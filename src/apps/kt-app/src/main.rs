@@ -50,6 +50,7 @@ mod thumbs;
 mod timeline;
 mod toolbar;
 mod transition_editor;
+mod update_check;
 mod user_store;
 mod util;
 mod widgets;

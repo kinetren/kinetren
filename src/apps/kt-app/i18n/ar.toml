@@ -1291,6 +1291,18 @@ how_off = "للإيقاف: عرض / إرسال إحصاءات استخدام م�
 no_key = "هذا الإصدار لا يرسل إحصاءات."
 env_off = "أُوقف بواسطة KINETREN_TELEMETRY أو DO_NOT_TRACK."
 
+# The daily new-version check (change update-check): the View checkbox, its hint, the one
+# notice in the bell and the short word after the version in the title.
+[update]
+checkbox = "التحقق من الإصدارات الجديدة يوميًا"
+checkbox_hint = "يسأل GitHub مرة واحدة يوميًا عن أحدث إصدار من Kinetren. لا يرسل سوى إصدار البرنامج، ولا ينزّل أي شيء."
+outdated = "(قديم)"
+notice = "صدر Kinetren {0} (لديك {1}). نزّله من {2}."
+how_off = "لإيقاف التحقق اليومي: عرض / التحقق من الإصدارات الجديدة يوميًا."
+title_hint = "صدر Kinetren {0} — {1}"
+dev_build = "نسخة التطوير هذه لا تتحقق من الإصدارات الجديدة."
+env_off = "أوقفه KINETREN_UPDATE_CHECK."
+
 # نافذة FFmpeg (change windows-build)
 [ffmpeg]
 title = "FFmpeg"

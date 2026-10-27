@@ -4969,3 +4969,185 @@ fn t871_menu_labels_carry_no_keys_and_chords_hold() {
         "a camera selected too: Del would delete it as well"
     );
 }
+
+/// Test 875 (update-check, distribution): a newer release reaches the bell ONCE and the title
+/// keeps a short word after the version — no window, no question. A rebuilt `KtApp` (File →
+/// New/Open) keeps the word without a second notice; a second start the same day reads the
+/// stored answer, sends nothing and says nothing.
+#[test]
+fn t875_newer_release_in_the_bell_and_the_title_never_a_window() {
+    use crate::app::{KtApp, Severity};
+    use crate::i18n::{k, tr};
+    use crate::update_check::testing::{Canned, release_json, temp_dir, wait};
+    use crate::update_check::{API_URL, Checker, Consent, notice_text, utc_day};
+    use std::sync::Arc;
+
+    let own = "kt26.10.20-aaaaaaaa";
+    let new = "kt26.11.01-bbbbbbbb";
+    let on = Consent { choice: true, block: None, url: API_URL.into(), ignore_day: false };
+    let dir = temp_dir("t875");
+    let body = release_json("26.11.01", false, false, &["kinetren-26.11.01-bbbbbbbb-linux-x86_64.tar.gz"]);
+    let fetch = Canned::ok(&body);
+    let u = Arc::new(Checker::new(on.clone(), own, dir.clone(), Box::new(fetch.clone())));
+
+    // the same frames without a checker: what is open there is the baseline of "no window"
+    let mut base = crate::layout_tests::harness();
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().update = Some(u.clone());
+    h.step();
+    wait(&u, |u| u.is_outdated());
+    for _ in 0..3 {
+        h.step();
+    }
+    for _ in 0..4 {
+        base.step();
+    }
+    assert_eq!(fetch.calls(), 1, "one request per start");
+    let notice = notice_text(new, own);
+    let said = |h: &egui_kittest::Harness<'_, KtApp>| {
+        h.state().notices.iter().filter(|n| n.text == notice && n.severity == Severity::Info).count()
+    };
+    assert_eq!(said(&h), 1, "exactly one info notice: {:?}", h.state().notices);
+    let (new_day, own_day) = (crate::update_check::day_form(new), crate::update_check::day_form(own));
+    assert!(notice.contains(new_day) && notice.contains(own_day), "{notice}");
+    assert!(notice.contains(crate::update_check::RELEASES_PAGE), "{notice}");
+    assert!(h.state().notices_unread >= 1, "the bell counts it");
+    let word = tr(k::update::OUTDATED);
+    assert!(h.state().last_title.ends_with(&format!(" {word}")), "title: {}", h.state().last_title);
+    assert!(h.state().ask.is_none() && !h.state().notices_open, "no question, no notices window");
+    let windows = |h: &egui_kittest::Harness<'_, KtApp>| {
+        let mut v: Vec<egui::LayerId> = h.ctx.memory(|m| {
+            m.layer_ids().filter(|l| l.order == egui::Order::Middle || l.order == egui::Order::Foreground).collect()
+        });
+        v.sort_by_key(|l| format!("{l:?}"));
+        v
+    };
+    let extra: Vec<_> = windows(&h).into_iter().filter(|l| !windows(&base).contains(l)).collect();
+    assert!(
+        extra.iter().all(|l| l.order == egui::Order::Foreground),
+        "a window opened for the update: {extra:?}"
+    );
+
+    // the word is painted after the version in the title row, and hovering it says which
+    // release is out and where — in the status line
+    let word_rect = painted_texts(&h)
+        .into_iter()
+        .find(|t| t.src == word)
+        .map(|t| t.rect)
+        .expect("the word is painted in the title row");
+    let version_rect = painted_texts(&h)
+        .into_iter()
+        .find(|t| t.src.ends_with(kt_version::display()))
+        .map(|t| t.rect)
+        .expect("the title with the version is painted");
+    assert!(word_rect.left() >= version_rect.right() && (word_rect.center().y - version_rect.center().y).abs() < 2.0);
+    h.hover_at(word_rect.center());
+    h.step();
+    h.step();
+    let (line, _) = h.state().status_line_shown.clone();
+    assert!(line.contains(new_day) && line.contains(crate::update_check::RELEASES_PAGE), "status: {line}");
+
+    // File → New/Open: every constructor takes the process checker (global), so the word
+    // stays and the notice is not said again
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/app.rs")).unwrap();
+    let ctors = src.matches("            lang_choice: None,\n").count();
+    assert_eq!(src.matches("            update: crate::update_check::global(),\n").count(), ctors);
+    *h.state_mut() = KtApp::new_empty(None);
+    h.state_mut().update = Some(u.clone());
+    for _ in 0..3 {
+        h.step();
+    }
+    assert!(h.state().last_title.ends_with(word), "rebuilt app lost the word: {}", h.state().last_title);
+    assert_eq!(said(&h), 0, "a rebuilt app says nothing again");
+    assert_eq!(fetch.calls(), 1);
+
+    // the second start of the same day: the stored answer, no request, no notice
+    assert_eq!(
+        crate::update_check::due_in(&dir, &utc_day(std::time::SystemTime::now())),
+        crate::update_check::Due::No(Some(new.into()))
+    );
+    let fetch2 = Canned::ok(&body);
+    let u2 = Arc::new(Checker::new(on, own, dir.clone(), Box::new(fetch2.clone())));
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().update = Some(u2.clone());
+    for _ in 0..3 {
+        h.step();
+    }
+    assert_eq!(fetch2.calls(), 0, "checked today already: no request");
+    assert!(h.state().last_title.ends_with(word), "title: {}", h.state().last_title);
+    assert_eq!(said(&h), 0, "the bell is not told again the same day");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 878 (update-check, distribution): the switch sits in View right after the telemetry
+/// one, says what is asked and that nothing is downloaded; unchecking it takes the word out
+/// of the title and is remembered — the next start does not ask.
+#[test]
+fn t878_update_switch_in_view_next_to_telemetry() {
+    use crate::i18n::{k, tr};
+    use crate::telemetry::testing::Recording;
+    use crate::telemetry::{EnvView, Telemetry, new_uuid, resolve_consent};
+    use crate::update_check::testing::{Canned, temp_dir};
+    use crate::update_check::{API_URL, Checker, Consent, record_in, utc_day};
+    use egui_kittest::kittest::Queryable;
+    use std::sync::Arc;
+
+    let own = "kt26.10.20-aaaaaaaa";
+    let dir = temp_dir("t878");
+    let today = utc_day(std::time::SystemTime::now());
+    record_in(&dir, &today, Some("kt26.11.01-bbbbbbbb")).unwrap();
+    let on = Consent { choice: true, block: None, url: API_URL.into(), ignore_day: false };
+    let u = Arc::new(Checker::new(on, own, dir.clone(), Box::new(Canned::ok("{}"))));
+    let t = Arc::new(
+        Telemetry::new(
+            resolve_consent(Some("phc_test"), &EnvView::default(), Some("on")),
+            new_uuid(),
+            Box::new(Recording::default()),
+        )
+        .with_key("phc_test"),
+    );
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().update = Some(u.clone());
+    h.state_mut().telemetry = Some(t);
+    for _ in 0..3 {
+        h.step();
+    }
+    let word = tr(k::update::OUTDATED);
+    assert!(h.state().last_title.ends_with(word), "the stored answer marks the title: {}", h.state().last_title);
+
+    h.get_by_label(tr(k::menu::view::TITLE)).click();
+    h.step();
+    h.step();
+    let labels = crate::layout_tests::menu_labels(&mut h);
+    let at = |s: &str| labels.iter().position(|l| l == s);
+    let (tel, upd) = (at(tr(k::telemetry::CHECKBOX)), at(tr(k::update::CHECKBOX)));
+    assert!(upd.is_some() && tel.is_some(), "both switches in View; seen: {labels:?}");
+    assert_eq!(upd, tel.map(|i| i + 1), "the update switch is right after the telemetry one: {labels:?}");
+    let cb = h.get_by_label(tr(k::update::CHECKBOX)).rect();
+    h.hover_at(cb.center());
+    h.step();
+    h.step();
+    let (line, _) = h.state().status_line_shown.clone();
+    assert!(line.contains("GitHub") && line.contains(tr(k::update::CHECKBOX_HINT)), "hint: {line}");
+
+    h.get_by_label(tr(k::update::CHECKBOX)).click();
+    h.step();
+    h.step();
+    assert!(!u.consent().on(), "unchecking switches it off");
+    assert_eq!(u.stored_value(), Some("off"), "the choice is remembered");
+    assert!(!h.state().last_title.contains(word), "the word left the title: {}", h.state().last_title);
+    assert!(painted_texts(&h).iter().all(|t| t.src != word), "the word is not painted any more");
+
+    // the restart with the stored choice: no thread, no word, even with today's answer on disk
+    let c = crate::update_check::resolve_consent(false, &crate::update_check::EnvView::default(), u.stored_value());
+    let fetch = Canned::ok("{}");
+    let u2 = Arc::new(Checker::new(c, own, dir.clone(), Box::new(fetch.clone())));
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().update = Some(u2.clone());
+    for _ in 0..3 {
+        h.step();
+    }
+    assert!(!u2.thread_spawned() && fetch.calls() == 0);
+    assert!(!h.state().last_title.contains(word), "title: {}", h.state().last_title);
+    let _ = std::fs::remove_dir_all(&dir);
+}

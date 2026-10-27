@@ -259,6 +259,9 @@ pub struct KtApp {
     /// rebuild `KtApp` in place and pick the same value up from `telemetry::global()`, so a
     /// new document never sends a second `app_started`. `None` in the harness.
     pub telemetry: Option<std::sync::Arc<crate::telemetry::Telemetry>>,
+    /// The daily new-version check (change update-check). One per PROCESS for the same reason
+    /// as telemetry: a rebuilt `KtApp` must neither ask nor say it again. `None` in the harness.
+    pub update: Option<std::sync::Arc<crate::update_check::Checker>>,
     /// Moment of the last pause (double Space = stop, item 15 round 6).
     pub paused_at: Option<std::time::Instant>,
     /// Space held down since this moment (item 3 round 16). None = not held.
@@ -338,6 +341,8 @@ pub struct KtApp {
     pub fader_grab: Option<f32>,
     /// Last sent window title (we send Title only on change).
     pub(crate) last_title: String,
+    /// `last_title` ends with the translated "(outdated)" word (the title row paints it apart).
+    pub(crate) title_outdated: bool,
     /// Reusable buffer of the preview composition (no per-frame allocations).
     pub(crate) preview_buf: Vec<u8>,
     /// Throttling of the glow mip: every N new frames (ambient does not flicker).
@@ -797,6 +802,7 @@ impl KtApp {
             ui_economy: false,
             lang_choice: None,
             telemetry: crate::telemetry::global(),
+            update: crate::update_check::global(),
             paused_at: None,
             space_down_at: None,
             space_boost: None,
@@ -832,6 +838,7 @@ impl KtApp {
             bin_card_rects: Vec::new(),
             fader_grab: None,
             last_title: String::new(),
+            title_outdated: false,
             preview_buf: Vec::new(),
             glow_skip: 0,
             gpu_info: None,
@@ -1064,6 +1071,7 @@ impl KtApp {
             ui_economy: false,
             lang_choice: None,
             telemetry: crate::telemetry::global(),
+            update: crate::update_check::global(),
             paused_at: None,
             space_down_at: None,
             space_boost: None,
@@ -1099,6 +1107,7 @@ impl KtApp {
             bin_card_rects: Vec::new(),
             fader_grab: None,
             last_title: String::new(),
+            title_outdated: false,
             preview_buf: Vec::new(),
             glow_skip: 0,
             gpu_info: None,
@@ -1473,6 +1482,19 @@ impl KtApp {
             self.push_notice(Severity::Info, crate::telemetry::notice_text());
             self.status = Some((tr(k::telemetry::HEADLINE).to_string(), std::time::Instant::now()));
         }
+        // The daily new-version check (update-check): started once per process on the first
+        // frame; the answer comes back from its thread with ONE repaint. A newer release is one
+        // notice in the bell — never a window at start (the owner's words) — and the title word.
+        if let Some(u) = self.update.clone() {
+            if !u.has_started() {
+                let ctx = ui.ctx().clone();
+                let today = crate::update_check::utc_day(std::time::SystemTime::now());
+                u.start(&today, Box::new(move || ctx.request_repaint()));
+            }
+            if let Some(new) = u.take_notice() {
+                self.push_notice(Severity::Info, crate::update_check::notice_text(&new, u.own()));
+            }
+        }
         let ctx = ui.ctx().clone();
         // Loss of the video GPU executor in the middle of a session (DeviceLost) —
         // the preview is already on the CPU fallback, notice once (item 2 R.29, test 185)
@@ -1492,15 +1514,19 @@ impl KtApp {
         let ui = &mut root;
         // project name — in the window title (item 19 round 6), not every frame
         // name WITHOUT extension (item 5 round 12: “.ktproj” is clear anyway) and build
-        // version: in debug the full vYY.MM.DD-hash, in release the short ktYY.MM
+        // version: in debug the full vYY.MM.DD-hash, in release the short ktYY.MM; a newer
+        // release adds a short word after the version (update-check, owner 2026-10-27)
+        self.title_outdated = self.update.as_ref().is_some_and(|u| u.is_outdated());
         let title = format!(
-            "{}{} — {}",
+            "{}{} — {}{}{}",
             self.project_path
                 .as_ref()
                 .and_then(|p| p.file_stem().map(|n| n.to_string_lossy().to_string()))
                 .unwrap_or_else(|| tr(k::win::UNTITLED).to_string()),
             if self.dirty_content { " *" } else { "" },
-            kt_version::display()
+            kt_version::display(),
+            if self.title_outdated { " " } else { "" },
+            if self.title_outdated { tr(k::update::OUTDATED) } else { "" }
         );
         if title != self.last_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -7008,6 +7034,7 @@ impl KtApp {
             }))
             .frame(false);
             let bell_resp = ui.add(bell_btn);
+            crate::widgets::field_probe::note("bell", bell_resp.rect);
             self.no_resize_rects.push(bell_resp.rect.expand(2.0));
             if self.hint(bell_resp, tr(k::win::NOTICES_TITLE)).clicked() {
                 self.notices_open = !self.notices_open;
@@ -9002,6 +9029,9 @@ impl eframe::App for KtApp {
         if let Some(v) = self.telemetry.as_ref().and_then(|t| t.stored_value()) {
             storage.set_string(crate::telemetry::STORAGE_KEY, v.to_string());
         }
+        if let Some(v) = self.update.as_ref().and_then(|u| u.stored_value()) {
+            storage.set_string(crate::update_check::STORAGE_KEY, v.to_string());
+        }
     }
 
     fn on_exit(&mut self) {
@@ -9120,6 +9150,9 @@ pub fn run() -> eframe::Result {
             // before the first KtApp: every app of this process takes the same telemetry
             crate::telemetry::install(crate::telemetry::Telemetry::for_process(
                 cc.storage.and_then(|s| s.get_string(crate::telemetry::STORAGE_KEY)).as_deref(),
+            ));
+            crate::update_check::install(crate::update_check::Checker::for_process(
+                cc.storage.and_then(|s| s.get_string(crate::update_check::STORAGE_KEY)).as_deref(),
             ));
             let restored = arg
                 .clone()

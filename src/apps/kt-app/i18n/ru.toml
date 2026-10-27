@@ -1291,6 +1291,18 @@ how_off = "Выключить: Вид / Отправлять анонимную 
 no_key = "Эта сборка статистику не отправляет."
 env_off = "Выключено переменной KINETREN_TELEMETRY или DO_NOT_TRACK."
 
+# The daily new-version check (change update-check): the View checkbox, its hint, the one
+# notice in the bell and the short word after the version in the title.
+[update]
+checkbox = "Ежедневно проверять новые версии"
+checkbox_hint = "Раз в день спрашивает у GitHub, какой выпуск Kinetren последний. Отправляет только версию программы, ничего не скачивает."
+outdated = "(устарела)"
+notice = "Вышел Kinetren {0} (у вас {1}). Скачать: {2}."
+how_off = "Выключить ежедневную проверку: Вид / Ежедневно проверять новые версии."
+title_hint = "Вышел Kinetren {0} — {1}"
+dev_build = "Эта сборка разработчика не проверяет новые версии."
+env_off = "Выключено переменной KINETREN_UPDATE_CHECK."
+
 # Окно FFmpeg (change windows-build)
 [ffmpeg]
 title = "FFmpeg"

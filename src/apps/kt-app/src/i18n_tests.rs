@@ -421,3 +421,54 @@ fn t861_language_from_the_os_locale_when_no_variable() {
     assert_eq!(detect(&none, None), None);
 }
 
+
+/// Test 876 (update-check): every language has the four update texts; the notice keeps its
+/// three arguments and names the switch by the checkbox's own name (rule 19); the title word
+/// is short (it rides after the version in the title row); and the translations are not
+/// English copies. The glyph half is in `font_tests.rs`.
+#[test]
+fn t876_update_texts_in_every_language() {
+    use crate::i18n::k;
+    let en: Vec<String> = {
+        i18n::set_lang(Lang::En);
+        [k::update::CHECKBOX, k::update::CHECKBOX_HINT, k::update::NOTICE, k::update::OUTDATED]
+            .iter()
+            .map(|key| i18n::tr(*key).to_string())
+            .collect()
+    };
+    for lang in Lang::ALL {
+        i18n::set_lang(lang);
+        let (new, own) = ("kt26.11.01-bbbbbbbb", "kt26.10.20-aaaaaaaa");
+        let notice = crate::update_check::notice_text(new, own);
+        let (new_day, own_day) = (crate::update_check::day_form(new), crate::update_check::day_form(own));
+        for part in [new_day, own_day, crate::update_check::RELEASES_PAGE] {
+            assert!(notice.contains(part), "{}: the notice lost an argument {part}: {notice}", lang.code());
+        }
+        assert!(!notice.contains('{'), "{}: a placeholder left unfilled: {notice}", lang.code());
+        let hint = crate::update_check::title_hint(new);
+        assert!(hint.contains(new_day) && hint.contains(crate::update_check::RELEASES_PAGE), "{hint}");
+        // the notice names View and the checkbox (Arabic comes back with its words reordered)
+        let word = |w: &str| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+        let names = |s: &str| {
+            notice.contains(s)
+                || s.split_whitespace().all(|w| notice.split_whitespace().any(|o| word(o) == word(w)))
+        };
+        assert!(
+            names(i18n::tr(k::menu::view::TITLE)) && names(i18n::tr(k::update::CHECKBOX)),
+            "{}: the notice must say where the check is switched off: {notice}",
+            lang.code()
+        );
+        let w = i18n::tr(k::update::OUTDATED);
+        assert!(w.chars().count() <= 12, "{}: the title word is too long: {w}", lang.code());
+        assert!(i18n::tr(k::update::CHECKBOX_HINT).contains("GitHub"), "{}", lang.code());
+        if lang != Lang::En {
+            for (key, en) in [k::update::CHECKBOX, k::update::CHECKBOX_HINT, k::update::NOTICE, k::update::OUTDATED]
+                .iter()
+                .zip(&en)
+            {
+                assert_ne!(i18n::tr(*key), en.as_str(), "{}: {key:?} is an English copy", lang.code());
+            }
+        }
+    }
+    i18n::set_lang(Lang::Ru);
+}

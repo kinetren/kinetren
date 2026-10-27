@@ -1291,6 +1291,18 @@ how_off = "关闭：视图 / 发送匿名使用统计，或以 KINETREN_TELEMETR
 no_key = "此版本不发送统计。"
 env_off = "已由 KINETREN_TELEMETRY 或 DO_NOT_TRACK 关闭。"
 
+# The daily new-version check (change update-check): the View checkbox, its hint, the one
+# notice in the bell and the short word after the version in the title.
+[update]
+checkbox = "每天检查新版本"
+checkbox_hint = "每天向 GitHub 询问一次 Kinetren 的最新版本。只发送程序版本，不下载任何内容。"
+outdated = "（已过时）"
+notice = "Kinetren {0} 已发布（您的版本是 {1}）。下载地址：{2}。"
+how_off = "关闭每日检查：视图 / 每天检查新版本。"
+title_hint = "Kinetren {0} 已发布 — {1}"
+dev_build = "此开发版本不检查新版本。"
+env_off = "已被 KINETREN_UPDATE_CHECK 关闭。"
+
 # FFmpeg 窗口 (change windows-build)
 [ffmpeg]
 title = "FFmpeg"
