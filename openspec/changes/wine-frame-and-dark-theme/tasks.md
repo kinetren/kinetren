@@ -18,6 +18,10 @@
 
 ## 3. The wine check and finish
 
-- [ ] 3.1 `src/scripts/wine-shot.sh` (design D5): `make windows` output or a given exe, Xvfb + openbox + wine in the container, `WINEDLLOVERRIDES="mscoree,mshtml="`, screenshot to `target/wine-out/<name>.png`; run it on the new zip's `kinetren.exe` with the defaults and with `KT_DECORATIONS=0` + `Decorated=N`; verify by looking at the screenshots (the system bar with our row below it, no white strips; the second — the Linux look) and record them here
+- [x] 3.1 `src/scripts/wine-shot.sh` (design D5): `make windows` output or a given exe, Xvfb + openbox + wine in the container, `WINEDLLOVERRIDES="mscoree,mshtml="`, screenshot to `target/wine-out/<name>.png`; run it on the new zip's `kinetren.exe` with the defaults and with `KT_DECORATIONS=0` + `Decorated=N`; verify by looking at the screenshots (the system bar with our row below it, no white strips; the second — the Linux look) and record them here
+  - 2026-10-27, `kinetren-26.10.27-eaf55dc9-windows-x86_64.zip` (`kinetren.exe`), wine 11 + Xvfb + openbox:
+    `target/wine-out/default.png` — openbox's title bar, below it our row with the logo and File / Edit / View, none of our window buttons, the status bar whole; the preview settings strip and "Save the playback journal" dark (the first-start FFmpeg window is open: the container has no FFmpeg);
+    `target/wine-out/undecorated.png` (`--undecorated -- KT_DECORATIONS=0`) — no system bar, our row at the top with our minimise/maximise/close: the Linux look.
+    The script waits for the first DRAWN frame (the screen stops being one colour): a fixed 15 s took a blank screen under wine.
 - [ ] 3.2 `cargo test --workspace` and `cargo clippy --all-targets` green; the Windows cross-check `cargo check --target x86_64-pc-windows-gnu`; `src/scripts/finish.sh`; version in the report
 - [ ] 3.3 Manual check on real Windows (owner): no Windows title bar, our row with the window buttons, resize from the edges, maximize without covering the taskbar; record here (with windows-build's open 6.4)
