@@ -4435,8 +4435,11 @@ fn t819_the_import_door_takes_legacy_old_and_foreign_and_yields_a_project() {
     use egui_kittest::kittest::Queryable;
     let dir = r70_dir("t819");
 
-    // three entrances
-    let legacy = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/demo.ktproj"));
+    // three entrances; the legacy fixture is COPIED: an import opens the sidecar
+    // `<source>.ktindex.db` next to the source, and in place it rewrote the committed
+    // fixtures/demo.ktindex.db* (tests do not write into the tree)
+    let legacy = dir.join("demo.ktproj");
+    std::fs::write(&legacy, include_str!("../../../fixtures/demo.ktproj")).unwrap();
     let old = dir.join("old_v5.otio");
     {
         let text = kt_otio::save_project(&r70_project(), &Default::default(), None);
