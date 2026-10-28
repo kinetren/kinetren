@@ -61,5 +61,11 @@ message, the first line = the stage and what was done).
 
 ## 4. Finish
 
-- [ ] 4.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version `vYY.MM.DD-hash` and the live screenshots of 3.2 here
+- [x] 4.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version `vYY.MM.DD-hash` and the live screenshots of 3.2 here
+  - VERSION kt26.10.28-8ced70e8. Live: `loop` green on the rerun (its old step 2, the click right of the
+    region, read a stale playhead sample once under 4 parallel workers); `trans` red twice in the
+    parallel run ("cursor placed … 0 ≈ 360000": the ruler click not applied under load), green alone;
+    neither path touches the display clock. Screenshots: `target/live-out/loop/05-step-outside-region.png`,
+    `06-step-outside-cursor.png`, `07-step-outside-start.png`, `08-step-outside-mid-lap.png`,
+    `09-step-outside-after-folds.png`.
 - [ ] 4.2 After archiving: append the "why" (release by the display lap, not the head's wrap; the jump clamp; the wine latency numbers of 1.3) to `openspec/specs/transport/design.md`
