@@ -75,6 +75,9 @@ pub fn start(
                     let frames = (d.as_secs_f64() * 48_000.0) as i64 + edge_latency;
                     shared.output_latency_frames.store(frames, Ordering::Relaxed);
                 }
+                shared
+                    .callback_frames
+                    .store((data.len() / device_channels.max(1)) as i64, Ordering::Relaxed);
                 if shared.flush.swap(false, Ordering::AcqRel) {
                     while ring.pop().is_ok() {}
                     edge.reset();

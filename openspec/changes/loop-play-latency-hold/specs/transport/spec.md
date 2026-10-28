@@ -18,7 +18,8 @@ forward (in the direction of play) within one transport generation, so a latency
 the fold releases the ratchet at most once per lap. After a jump to a target `p` the shown frame
 SHALL be `p` until the first audible frame of `p` arrives (until the head has gone `L · |rate|` past
 `p`) and the head minus the scaled latency after that; it MUST NOT fold into the previous lap of the
-region — there was no previous lap. These rules hold for every latency, including one larger than a
+region — there was no previous lap. A change of the loop region alone is not a jump: the display
+re-anchors at the head minus the scaled latency, without the hold, because the queued sound plays on. These rules hold for every latency, including one larger than a
 UI frame and larger than a callback quantum.
 Why: the release was tied to the head's wrap counter; under wine/WASAPI (latency of a whole device
 buffer plus the 44.1→48 kHz edge resampler) Play from outside a looped region showed the region's last
@@ -52,7 +53,7 @@ with zero latency and saw nothing (kkt 2026-10-27 item 1).
 
 #### Scenario: Play from outside a looped region under latency
 - **WHEN** a deterministic clock (no wall clock) plays from outside a region: the cursor stands before the region, Play seeks to its start, callbacks of 480, 1 024 and 2 048 frames advance the head, the UI samples at 60 Hz, the latency is 0, 512, 1 024, 2 048, 4 800, 9 600 or 14 400 frames, four laps are played
-- **THEN** for every pair (quantum, latency) the display key never stands still for longer than one grid cell plus two UI frames while the head moves; after each fold the key is at the region start within one cell; the ratchet fires at most once per lap; with the release by the head's wrap the same run holds the key for most of a lap (the red proof)
+- **THEN** for every pair (quantum, latency) the display key never stands still for longer than one grid cell plus two UI frames once the target's sound is audible (the first `latency` after Play is the pre-roll's hold of the target, previous scenario); after each fold the key is at the region start within one cell; the ratchet fires at most once per lap; with the release by the head's wrap the same run holds the key for most of a lap (the red proof)
 - **TEST** t901 (`src/libs/kt-engine/tests/frame_order.rs`)
 
 #### Scenario: After a jump the shown frame starts at the target

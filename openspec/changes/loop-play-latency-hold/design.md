@@ -98,7 +98,11 @@ outside would still flash the region's last frames before the start.
 ### D3. The display lap counts forward only
 Within one generation the lap never decreases: the EMA latency jitters (t114: ±a quantum), and
 without this rule a head standing near `rs + L` would flip the lap back and forth and release the
-ratchet twice. A region change or a speed-sign change is a jump (D2) and restarts the count.
+ratchet twice. The implementation keeps the shown position itself monotonic (unwrapped since the
+anchor), so the lap follows from it. A speed-sign change is a jump (D2: the render thread flushes
+the ring, the sound restarts) and restarts the count. A region change alone re-anchors WITHOUT the
+hold (found while writing t903): the transport does not jump, the queued sound plays on, and a
+hold of `L` there would freeze the picture for the latency on every edge drag.
 
 ### D4. The tests run without a wall clock
 t900/t902 are pure-function tests; t901/t903 drive `Transport`, the display function and

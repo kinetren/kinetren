@@ -397,11 +397,13 @@ pub struct KtApp {
     /// (R.49, item 351).
     pub recovery_written: Option<PathBuf>,
     pub snap_line: Option<i64>,
-    /// (transport generation, number of loop jumps) on the previous frame of the
+    /// (transport generation, display lap) on the previous frame of the
     /// preview. A change of either is a legitimate reason for the display key to go back:
     /// seek bumps the generation, while loop-wrap deliberately does NOT bump it (audio
     /// and FX tails continue), so it has its own counter — without it, on the second lap of the
-    /// loop the picture froze (item 14 round 14, round 15 item 2).
+    /// loop the picture froze (item 14 round 14, round 15 item 2). The counter is the SHOWN
+    /// frame's lap (`Player::video_playhead_lap`), not `Transport::wraps`: under an output
+    /// latency the head wraps earlier than the picture folds (loop-play-latency-hold).
     pub preview_gen: (u64, u64),
     /// Magnet temporarily off (Ctrl held during dragging, item 2 round 11).
     /// Useful behaviour is the default; the modifier TURNS IT OFF.
@@ -6124,7 +6126,7 @@ impl KtApp {
     // -- snap ---------------------------------------------------------------
 
     fn draw_preview(&mut self, ui: &mut egui::Ui) {
-        let t = self.player.video_playhead();
+        let (t, display_lap) = self.player.video_playhead_lap();
         let q = self.player.preview_quality();
         // The key is a tick, ALIGNED to the fps grid (test 39): previously the key
         // was the raw tick — during playback it changed every UI frame and the texture
@@ -6135,7 +6137,11 @@ impl KtApp {
         // The key does NOT go back AT ALL, except on seek/loop-wrap (item 14 of round 14):
         // the earlier tolerance “rollback up to 2 cells” was blind to speed and at
         // 0.25× let through picture rollbacks by a couple of frames back.
-        let tgen = (self.player.transport.generation(), self.player.transport.wraps());
+        // The wrap is the SHOWN frame's fold (the display lap), not the head's: under an
+        // output latency the head wraps that much earlier, the release landed on a
+        // continuous frame and the real fold was refused — the picture froze until a
+        // click (loop-play-latency-hold, kkt 2026-10-27 item 1).
+        let tgen = (self.player.transport.generation(), display_lap);
         let reanchor = !self.player.transport.is_playing() || tgen != self.preview_gen;
         let (key_tick, skipped, rolled) = kt_engine::player::preview_key_step(
             self.preview_key.map(|k| k.0),
@@ -6869,7 +6875,7 @@ impl KtApp {
             .unwrap_or(1);
         // item 15 of round 7: short metrics in two columns (saving height)
         let s = self.model.project().settings.clone();
-        let rows: [(String, String); 4] = [
+        let rows: [(String, String); 5] = [
             (
                 crate::tf!(
                     k::perf::CACHE_MB,
@@ -6899,6 +6905,15 @@ impl KtApp {
             (
                 crate::tf!(k::perf::CLIPS_N, self.model.project().clips.len()),
                 crate::tf!(k::perf::MEDIA_N, self.model.project().media.len()),
+            ),
+            // the output edge as the display clock sees it (loop-play-latency-hold): under
+            // wine/WASAPI the latency is a whole device buffer, on PipeWire below a quantum
+            (
+                crate::tf!(
+                    k::perf::OUT_LATENCY,
+                    self.player.shared.latency_smooth.load(ord) * 1000 / 48_000
+                ),
+                crate::tf!(k::perf::CALLBACK_FRAMES, self.player.shared.callback_frames.load(ord)),
             ),
             (
                 crate::tf!(k::perf::V_SHOWN, self.perf.video_frames_shown),

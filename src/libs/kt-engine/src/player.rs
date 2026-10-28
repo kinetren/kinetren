@@ -66,6 +66,10 @@ pub struct AudioShared {
     /// jumped across grid cells and back — visible jerks with honest
     /// decode (round 5, item 1). Video reads THIS field.
     pub latency_smooth: AtomicI64,
+    /// Frames the last callback handed to the device (a diagnostic for the perf panel:
+    /// with the latency it tells a WASAPI-sized buffer from a PipeWire quantum,
+    /// loop-play-latency-hold). One relaxed store per callback.
+    pub callback_frames: AtomicI64,
 }
 
 /// Peak levels of what goes into the ring (f32 bits; the UI does dB,
@@ -140,6 +144,9 @@ pub struct Player {
     /// Display clock: interpolation between playhead quanta (see
     /// display_extrapolation). (last head, moment, EMA of the step).
     video_clock: Mutex<(i64, std::time::Instant, i64)>,
+    /// The shown position and its lap (loop-play-latency-hold): the UI releases the
+    /// key's ratchet when the SHOWN frame folds, not when the head wraps.
+    display_lap: Mutex<DisplayLap>,
     workers: Workers,
     natives: Natives,
     project: Arc<Mutex<Project>>,
@@ -206,6 +213,7 @@ impl Player {
             callback_underruns: AtomicU64::new(0),
             playback_rate: AtomicU32::new(1.0f32.to_bits()),
             latency_smooth: AtomicI64::new(0),
+            callback_frames: AtomicI64::new(0),
             output_latency_frames: AtomicI64::new(0),
         });
         let meters = Arc::new(Meters { peak_l: AtomicU32::new(0), peak_r: AtomicU32::new(0) });
@@ -317,6 +325,7 @@ impl Player {
             master_gain,
             loop_region,
             video_clock: Mutex::new((0, std::time::Instant::now(), 0)),
+            display_lap: Mutex::new(DisplayLap::default()),
             workers,
             project,
             model_dirty,
@@ -776,14 +785,23 @@ impl Player {
     /// the playhead minus the output latency. When paused or without output — the playhead
     /// as is; the loop region is accounted for by the wrap (item 30 — A/V desync).
     pub fn video_playhead(&self) -> Tick {
+        self.video_playhead_lap().0
+    }
+
+    /// `video_playhead` plus the display lap (`DisplayLap`): the number changes on the
+    /// UI frame where the shown frame folds back into the loop region, or the display
+    /// re-anchors. The preview's ratchet is released by it (and the generation), not by
+    /// `Transport::wraps`: under an output latency the head wraps `latency` earlier.
+    pub fn video_playhead_lap(&self) -> (Tick, u64) {
         if !self.transport.is_playing() {
-            return self.transport.playhead();
+            let mut dl = self.display_lap.lock().unwrap();
+            dl.pause();
+            return (self.transport.playhead(), dl.lap());
         }
         let latency = self.shared.latency_smooth.load(Ordering::Acquire);
         let head = self.transport.playhead_frames();
         let region = *self.loop_region.lock().unwrap();
         let rate = f32::from_bits(self.shared.playback_rate.load(Ordering::Acquire));
-        let dir: i64 = if rate < 0.0 { -1 } else { 1 };
         // interpolation between audio clock quanta (display_extrapolation)
         let extra = {
             let mut vc = self.video_clock.lock().unwrap();
@@ -802,7 +820,17 @@ impl Player {
                 * rate.abs() as f64) as i64;
             display_extrapolation(elapsed, vc.2)
         };
-        Tick::from_audio_frames(video_display_frame(head + extra * dir, latency, region, dir, rate))
+        let (frame, lap) = self.display_lap.lock().unwrap().step(DisplaySample {
+            head,
+            extra,
+            wraps: self.transport.wraps(),
+            generation: self.transport.generation(),
+            jump_target: self.transport.last_seek_frames(),
+            latency,
+            region,
+            rate,
+        });
+        (Tick::from_audio_frames(frame), lap)
     }
 
     /// UI: compose a preview frame for moment t (aligned to the fps grid).
@@ -1333,6 +1361,131 @@ pub fn video_display_frame(
     }
 }
 
+/// One reading of the display clock (`DisplayLap::step`), all in 48 kHz frames.
+#[derive(Clone, Copy, Debug)]
+pub struct DisplaySample {
+    /// The transport head, as the transport holds it (folded into the region).
+    pub head: i64,
+    /// The interpolation past the head (`display_extrapolation`), unsigned.
+    pub extra: i64,
+    /// `Transport::wraps`.
+    pub wraps: u64,
+    /// `Transport::generation`.
+    pub generation: u64,
+    /// `Transport::last_seek_frames`: where the jump of a new generation landed.
+    pub jump_target: i64,
+    /// The smoothed output latency in WALL-CLOCK frames.
+    pub latency: i64,
+    /// The loop region as the player holds it.
+    pub region: Option<(i64, i64)>,
+    pub rate: f32,
+}
+
+/// The shown position between UI frames (loop-play-latency-hold, D1–D3).
+///
+/// `video_display_frame` folds `head − latency` into the region. That is right in the
+/// steady state, but its only lap marker was the head's wrap, and under a latency `L`
+/// the head wraps `L` BEFORE the shown frame folds: the preview released its ratchet
+/// on a continuous frame and then refused the real fold as a rollback — the picture
+/// froze until a click (kkt 2026-10-27 item 1; wine/WASAPI has a latency of a whole
+/// device buffer). Here the position is kept UNWRAPPED since the last anchor, so the
+/// fold is an event of the shown frame itself:
+/// - D1: `lap` grows on the frame where the shown position crosses the region's end
+///   (in reverse — its start), and on every re-anchor;
+/// - D2: after a jump (a seek, a resume, a change of direction) the shown frame is the
+///   jump target until the head is `L·|rate|` past it — that time is the pre-roll's
+///   silence, not the region's end;
+/// - D3: within an anchor the shown position only moves forward (in the direction of
+///   play), so a jittering latency folds at most once per lap.
+///
+/// A change of the region alone re-anchors WITHOUT the hold: the transport did not
+/// jump and the queued sound plays on.
+/// What a display anchor was taken for: (generation, loop region, direction).
+type DisplayAnchor = (u64, Option<(i64, i64)>, i64);
+
+#[derive(Clone, Debug, Default)]
+pub struct DisplayLap {
+    /// The anchor of the shown position; None — paused or never played.
+    anchor: Option<DisplayAnchor>,
+    /// The generation the last anchor saw: a different one means a seek landed at
+    /// `jump_target`, otherwise the jump is a resume or a turn at the head.
+    seen_gen: Option<u64>,
+    /// `wraps` at the anchor: the head is unwrapped by the laps since then.
+    wraps0: u64,
+    /// The unwrapped shown position.
+    shown: i64,
+    /// How many times `shown` has crossed the region's edge since the anchor.
+    folds: i64,
+    lap: u64,
+}
+
+impl DisplayLap {
+    /// Playback stopped: the next playing reading is a jump (D2).
+    pub fn pause(&mut self) {
+        self.anchor = None;
+    }
+
+    pub fn lap(&self) -> u64 {
+        self.lap
+    }
+
+    /// The frame to show and the display lap.
+    pub fn step(&mut self, s: DisplaySample) -> (i64, u64) {
+        let dir: i64 = if s.rate < 0.0 { -1 } else { 1 };
+        let scaled = (s.latency.max(0) as f64 * s.rate.abs().max(0.0) as f64) as i64;
+        let region = s.region.filter(|&(rs, re)| re > rs);
+        let span = region.map_or(0, |(rs, re)| re - rs);
+        let key = (s.generation, region, dir);
+        if self.anchor != Some(key) {
+            let jump = match self.anchor {
+                None => true,
+                Some((g, _, d)) => g != s.generation || d != dir,
+            };
+            let target =
+                if self.seen_gen != Some(s.generation) { s.jump_target } else { s.head };
+            self.anchor = Some(key);
+            self.seen_gen = Some(s.generation);
+            self.wraps0 = s.wraps;
+            self.shown = if jump { target } else { s.head + (s.extra - scaled) * dir };
+            self.folds = region.map_or(0, |r| display_folds(self.shown, r, dir));
+            self.lap += 1;
+        }
+        let laps = s.wraps.wrapping_sub(self.wraps0) as i64;
+        let raw = s.head + (s.extra + laps * span - scaled) * dir;
+        self.shown = if dir > 0 { self.shown.max(raw) } else { self.shown.min(raw) };
+        // the same two-sided condition as `video_display_frame` and the transport: a
+        // head outside the region plays linearly (item 132)
+        let frame = match region {
+            Some((rs, re)) if s.head >= rs && s.head <= re => {
+                let folds = display_folds(self.shown, (rs, re), dir);
+                if folds > self.folds {
+                    self.lap += (folds - self.folds) as u64;
+                    self.folds = folds;
+                }
+                // not yet in the region (entered from outside) — linear, not its end
+                let before = if dir > 0 { self.shown < rs } else { self.shown >= re };
+                if before { self.shown } else { rs + (self.shown - rs).rem_euclid(span) }
+            }
+            _ => self.shown,
+        };
+        (frame.max(0), self.lap)
+    }
+}
+
+/// How many times an unwrapped position has crossed the region's edge in the
+/// direction of play (`DisplayLap`): forward at `re` (where the fold gives `rs`),
+/// in reverse below `rs`.
+fn display_folds(shown: i64, (rs, re): (i64, i64), dir: i64) -> i64 {
+    let span = re - rs;
+    if dir > 0 {
+        if shown < rs { 0 } else { (shown - rs).div_euclid(span) }
+    } else if shown >= re {
+        0
+    } else {
+        (re - 1 - shown).div_euclid(span)
+    }
+}
+
 /// Whether the loop wrap is armed after a jump (seek / change of direction or
 /// region): true if movement from `head` in the direction `dir` can naturally
 /// cross the region's end from INSIDE — the semantics of advance_frames_wrapped
@@ -1660,6 +1813,141 @@ pub fn reverse_frames(buf: &mut [f32]) {
 pub fn callback_step(device_step: f64, rate: f32) -> Option<f64> {
     let r = (rate as f64).abs();
     if r < 1e-3 { None } else { Some(device_step * r) }
+}
+
+#[cfg(test)]
+mod display_lap_tests {
+    use super::{DisplayLap, DisplaySample, video_display_frame};
+    use crate::transport::Transport;
+
+    const RS: i64 = 48_000;
+    const RE: i64 = 96_000;
+
+    fn sample(t: &Transport, latency: i64, rate: f32) -> DisplaySample {
+        DisplaySample {
+            head: t.playhead_frames(),
+            extra: 0,
+            wraps: t.wraps(),
+            generation: t.generation(),
+            jump_target: t.last_seek_frames(),
+            latency,
+            region: Some((RS, RE)),
+            rate,
+        }
+    }
+
+    /// Test 900 (loop-play-latency-hold, D1/D3): the display lap changes when the SHOWN
+    /// frame folds — at the head position `rs + latency` (in reverse `re − latency`) —
+    /// never at the head's wrap, exactly once per lap, also when the latency jitters
+    /// by ±512 frames around the fold.
+    #[test]
+    fn t900_display_lap_follows_the_shown_fold() {
+        for dir in [1i64, -1] {
+            for lat in [0i64, 512, 4_800, 14_400] {
+                let t = Transport::new();
+                t.seek_frames(if dir > 0 { RS } else { RE });
+                let mut dl = DisplayLap::default();
+                let (_, lap0) = dl.step(sample(&t, lat, dir as f32));
+                let step = 128;
+                let mut changes: Vec<i64> = Vec::new();
+                let mut prev_lap = lap0;
+                let travel = 3 * (RE - RS) + lat + (RE - RS) / 2;
+                let mut n = 0i64;
+                while n * step < travel {
+                    t.advance_frames_wrapped(step * dir, Some((RS, RE)));
+                    n += 1;
+                    let jitter = if lat >= 512 {
+                        if n % 2 == 0 { 512 } else { -512 }
+                    } else {
+                        0
+                    };
+                    let (_, lap) = dl.step(sample(&t, lat + jitter, dir as f32));
+                    assert!(lap >= prev_lap, "dir {dir} lat {lat}: the lap went back");
+                    if lap != prev_lap {
+                        assert_eq!(lap, prev_lap + 1, "dir {dir} lat {lat}: two folds at once");
+                        changes.push(t.playhead_frames());
+                    }
+                    prev_lap = lap;
+                }
+                assert_eq!(changes.len(), 3, "dir {dir} lat {lat}: laps at heads {changes:?}");
+                let tol = if lat >= 512 { 512 + step } else { step };
+                for h in &changes {
+                    let want = if dir > 0 { RS + lat } else { RE - lat };
+                    assert!(
+                        (h - want).abs() <= tol,
+                        "dir {dir} lat {lat}: the lap changed at head {h}, the shown fold is at {want}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Test 902 (D2): after a jump to `p` the shown frame is `p` until the head is
+    /// `latency·|rate|` past it — never a frame from the region's end; then the head minus
+    /// the scaled latency; the first fold of the shown frame comes only after the head
+    /// itself has wrapped once.
+    #[test]
+    fn t902_after_a_jump_the_shown_frame_starts_at_the_target() {
+        let lat = 9_600i64;
+        for rate in [1.0f32, 0.25] {
+            for dir in [1i64, -1] {
+                let signed = rate * dir as f32;
+                let targets = if dir > 0 {
+                    [RS, RS + (RE - RS) / 3, RS - 30_000, RE + 30_000]
+                } else {
+                    [RE, RS + (RE - RS) / 3, RE + 30_000, RS - 30_000]
+                };
+                for p in targets {
+                    let t = Transport::new();
+                    t.seek_frames(10);
+                    let mut dl = DisplayLap::default();
+                    // playing elsewhere first: the jump must not inherit that state
+                    let _ = dl.step(sample(&t, lat, signed));
+                    t.advance_frames_wrapped(5_000, Some((RS, RE)));
+                    let _ = dl.step(sample(&t, lat, signed));
+                    t.seek_frames(p);
+                    let (_, lap_jump) = dl.step(sample(&t, lat, signed));
+                    let scaled = (lat as f64 * rate as f64) as i64;
+                    let step = 96;
+                    let mut travelled = 0i64;
+                    let mut wrapped = false;
+                    let mut folded = false;
+                    while travelled < 2 * (RE - RS) {
+                        t.advance_frames_wrapped(step * dir, Some((RS, RE)));
+                        travelled += step;
+                        wrapped |= t.wraps() > 0;
+                        let (frame, lap) = dl.step(sample(&t, lat, signed));
+                        let ctx = format!("rate {rate} dir {dir} p {p} travelled {travelled}");
+                        if lap != lap_jump {
+                            assert!(wrapped, "{ctx}: the shown frame folded before the head wrapped");
+                            folded = true;
+                        }
+                        if travelled < scaled {
+                            assert_eq!(frame, p, "{ctx}: inside the hold the target must show");
+                        } else if !wrapped {
+                            let want = t.playhead_frames() - scaled * dir;
+                            assert_eq!(frame, want, "{ctx}: after the hold, the head minus the latency");
+                        } else if !folded {
+                            // the shown frame still lies in the lap before the head's wrap:
+                            // the steady-state rule says the same
+                            let want = video_display_frame(
+                                t.playhead_frames(),
+                                lat,
+                                Some((RS, RE)),
+                                dir,
+                                signed,
+                            );
+                            assert_eq!(frame, want, "{ctx}: between the wrap and the fold");
+                        }
+                    }
+                    // a target before the region (forward) or after it (reverse) still
+                    // loops once the head is inside; past the far edge the loop is disarmed
+                    let armed = super::loop_arm_after_jump(p, Some((RS, RE)), dir);
+                    assert_eq!(folded, armed, "rate {rate} dir {dir} p {p}: fold expectation");
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

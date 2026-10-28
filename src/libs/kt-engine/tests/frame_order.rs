@@ -334,3 +334,350 @@ fn t117_loop_wrap_unfreezes_video() {
         "after the jump the video did not move on: {after:?}"
     );
 }
+
+/// The release rule of the preview's ratchet under test (loop-play-latency-hold).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Release {
+    /// Before the change: `(generation, wraps)` with `video_display_frame`.
+    HeadWrap,
+    /// `(generation, display lap)` with `DisplayLap`.
+    DisplayLap,
+}
+
+/// A region edit at a moment of wall time (48 kHz frames since Play).
+struct RegionEdit {
+    at: i64,
+    region: Option<(i64, i64)>,
+}
+
+#[derive(Default, Debug)]
+struct LoopRun {
+    /// The longest run of UI frames with one key while the audible position moves.
+    max_hold: usize,
+    /// Refused rollbacks of the ratchet.
+    rollbacks: u64,
+    /// Keys (48 kHz frames) on the UI frames where the display lap changed (DisplayLap only).
+    fold_keys: Vec<i64>,
+    /// Display laps seen (DisplayLap only).
+    laps: u64,
+    /// Every key (48 kHz frames) after an edit, until the next fold: (edit index, key, head).
+    after_edit: Vec<(usize, i64, i64)>,
+}
+
+const UI_FRAME: i64 = 800; // 60 Hz in 48 kHz frames
+const GRID_CELL: i64 = 1_600; // 30 fps in 48 kHz frames
+
+/// The deterministic clock of design D4: callbacks of `quantum` frames advance the
+/// transport (as the render thread does with the frames the callback consumed), the UI
+/// samples at 60 Hz and interpolates between callbacks exactly as `video_playhead`
+/// does; no wall clock. Play starts from `cursor` with a seek to `play_at` (Play from
+/// outside seeks to the region start, `transport_toggle`).
+fn loop_run(
+    rule: Release,
+    quantum: i64,
+    latency: i64,
+    region: (i64, i64),
+    play_at: i64,
+    wall: i64,
+    edits: &[RegionEdit],
+) -> LoopRun {
+    use kt_engine::player::{
+        DisplayLap, DisplaySample, display_extrapolation, loop_arm_after_jump, preview_key_step,
+        video_display_frame,
+    };
+    use kt_engine::transport::Transport;
+
+    let grid = kt_time::FpsGrid::new(30);
+    let step = grid.frame_step();
+    let tr = Transport::new();
+    tr.seek_frames(0); // the cursor before the region
+    let mut dl = DisplayLap::default();
+    // a paused UI frame before Play, as the app draws it
+    let _ = dl.step(DisplaySample {
+        head: 0,
+        extra: 0,
+        wraps: 0,
+        generation: tr.generation(),
+        jump_target: 0,
+        latency,
+        region: Some(region),
+        rate: 1.0,
+    });
+    dl.pause();
+    tr.seek_frames(play_at);
+    tr.set_playing(true);
+    let mut region = Some(region);
+    let mut armed = loop_arm_after_jump(play_at, region, 1);
+    let mut out = LoopRun::default();
+    let mut prev_key: Option<i64> = None;
+    let mut prev_gen: Option<(u64, u64)> = None;
+    let mut last_cb = 0i64;
+    let mut next_cb = 0i64;
+    let mut next_edit = 0usize;
+    let mut hold = 0usize;
+    let mut since_edit: Option<usize> = None;
+    let mut ui = 0usize;
+    let mut first_lap = None;
+    loop {
+        let t_ui = ui as i64 * UI_FRAME;
+        if t_ui > wall {
+            break;
+        }
+        // callbacks up to and including this moment (a callback at the same instant
+        // runs first: the UI reads what it consumed)
+        while next_cb <= t_ui {
+            if next_cb > 0 {
+                tr.advance_frames_wrapped(quantum, if armed { region } else { None });
+            }
+            last_cb = next_cb;
+            next_cb += quantum;
+        }
+        let mut edited_now = false;
+        while next_edit < edits.len() && edits[next_edit].at <= t_ui {
+            region = edits[next_edit].region;
+            // the render thread re-arms on a region change (`loop_arm_after_jump`)
+            armed = loop_arm_after_jump(tr.playhead_frames(), region, 1);
+            since_edit = Some(next_edit);
+            edited_now = true;
+            next_edit += 1;
+        }
+        let head = tr.playhead_frames();
+        let extra = display_extrapolation(t_ui - last_cb, quantum);
+        let (frame, tgen) = match rule {
+            Release::HeadWrap => (
+                video_display_frame(head + extra, latency, region, 1, 1.0),
+                (tr.generation(), tr.wraps()),
+            ),
+            Release::DisplayLap => {
+                let (f, lap) = dl.step(DisplaySample {
+                    head,
+                    extra,
+                    wraps: tr.wraps(),
+                    generation: tr.generation(),
+                    jump_target: tr.last_seek_frames(),
+                    latency,
+                    region,
+                    rate: 1.0,
+                });
+                (f, (tr.generation(), lap))
+            }
+        };
+        let raw = grid.align_floor(kt_time::Tick::from_audio_frames(frame)).0;
+        let reanchor = prev_gen != Some(tgen);
+        let (key, _, rolled) = preview_key_step(prev_key, raw, step, 1, reanchor);
+        if rolled {
+            out.rollbacks += 1;
+        }
+        if rule == Release::DisplayLap {
+            let lap = tgen.1;
+            match first_lap {
+                None => first_lap = Some(lap),
+                Some(_) if prev_gen.is_some_and(|g| g.1 != lap) => {
+                    out.laps += 1;
+                    // the edit's own re-anchor is not a fold
+                    if !edited_now {
+                        out.fold_keys.push(kt_time::Tick(key).to_audio_frames());
+                        since_edit = None;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(e) = since_edit {
+            out.after_edit.push((e, kt_time::Tick(key).to_audio_frames(), head));
+        }
+        // the first audible frame of the jump arrives `latency` after Play (D2): the
+        // picture legitimately holds the target until then
+        let audible = t_ui >= latency + quantum;
+        if audible && prev_key == Some(key) {
+            hold += 1;
+            out.max_hold = out.max_hold.max(hold + 1);
+        } else {
+            hold = 0;
+        }
+        prev_key = Some(key);
+        prev_gen = Some(tgen);
+        ui += 1;
+    }
+    out
+}
+
+/// One grid cell plus two UI frames, in UI frames (the spec's bound).
+const MAX_HOLD: usize = (GRID_CELL / UI_FRAME) as usize + 2;
+
+/// Test 901 (loop-play-latency-hold): Play from outside a looped region under an output
+/// latency. The cursor stands before the region, Play seeks to its start, callbacks
+/// of 480, 1 024 and 2 048 frames, four laps. With the release by the display lap the
+/// key never stands still longer than one grid cell plus two UI frames while the sound
+/// moves, every fold lands at the region start, the ratchet fires at most once per lap;
+/// with the release by the head's wrap (before the change) the same run holds the key
+/// for most of a lap — the red proof of kkt 2026-10-27 item 1.
+#[test]
+fn t901_play_from_outside_a_loop_under_latency() {
+    let (rs, re) = (48_000i64, 96_000i64);
+    let mut table = Vec::new();
+    for quantum in [480i64, 1_024, 2_048] {
+        for latency in [0i64, 512, 1_024, 2_048, 4_800, 9_600, 14_400] {
+            let wall = latency + 4 * (re - rs) + (re - rs) / 2;
+            let new = loop_run(Release::DisplayLap, quantum, latency, (rs, re), rs, wall, &[]);
+            let old = loop_run(Release::HeadWrap, quantum, latency, (rs, re), rs, wall, &[]);
+            table.push((quantum, latency, old.max_hold, new.max_hold));
+            let ctx = format!("quantum {quantum} latency {latency}");
+            assert!(
+                new.max_hold <= MAX_HOLD,
+                "{ctx}: the key stood still {} UI frames (bound {MAX_HOLD})",
+                new.max_hold
+            );
+            assert_eq!(new.laps, 4, "{ctx}: four folds expected, keys {:?}", new.fold_keys);
+            for k in &new.fold_keys {
+                assert!(
+                    *k >= rs && *k - rs <= GRID_CELL,
+                    "{ctx}: after a fold the key is {k}, not the region start"
+                );
+            }
+            assert!(new.rollbacks <= new.laps, "{ctx}: {} rollbacks", new.rollbacks);
+            if latency > 0 {
+                assert!(
+                    old.max_hold > 5 * MAX_HOLD,
+                    "{ctx}: the release by the head's wrap no longer freezes ({} UI frames) — \
+                     the red leg proves nothing",
+                    old.max_hold
+                );
+            }
+        }
+    }
+    eprintln!("t901 longest hold, UI frames (quantum, latency, by head wrap, by display lap):");
+    for row in &table {
+        eprintln!("  {row:?}");
+    }
+}
+
+/// Test 903: region edits during loop playback under a latency of 4 800 frames. Mid-lap
+/// the region end is pulled left of the head, the region is moved by its body, a new
+/// region is drawn elsewhere: each edit re-anchors the display at the transport's
+/// position, the key never stands still longer than in t901, and after an edit the
+/// picture runs forward until its next fold — it never folds into the region that no
+/// longer exists.
+#[test]
+fn t903_region_edits_during_loop_under_latency() {
+    let (rs, re) = (48_000i64, 96_000i64);
+    let latency = 4_800;
+    let quantum = 1_024;
+    let cases: Vec<(&str, Vec<RegionEdit>)> = vec![
+        // mid second lap the head is near rs + 24 000; the end goes left of it
+        ("end pulled left", vec![RegionEdit { at: 76_000, region: Some((rs, rs + 12_000)) }]),
+        (
+            "moved by its body",
+            vec![RegionEdit { at: 76_000, region: Some((rs + 16_000, re + 16_000)) }],
+        ),
+        ("drawn elsewhere", vec![RegionEdit { at: 76_000, region: Some((200_000, 248_000)) }]),
+    ];
+    for (name, edits) in cases {
+        let wall = 420_000;
+        let run = loop_run(Release::DisplayLap, quantum, latency, (rs, re), rs, wall, &edits);
+        assert!(
+            run.max_hold <= MAX_HOLD,
+            "{name}: the key stood still {} UI frames (bound {MAX_HOLD})",
+            run.max_hold
+        );
+        assert!(!run.after_edit.is_empty(), "{name}: the edit was never seen");
+        // re-anchored at the transport's position: the first key after the edit is the
+        // head minus the latency (within a callback and a cell)
+        let (_, k0, h0) = run.after_edit[0];
+        assert!(
+            (k0 - (h0 - latency)).abs() <= quantum + UI_FRAME + GRID_CELL,
+            "{name}: after the edit the key {k0} is not at head {h0} − latency"
+        );
+        for w in run.after_edit.windows(2) {
+            assert!(
+                w[1].1 >= w[0].1,
+                "{name}: after the edit the key went back {} → {} before any fold \
+                 (a fold into the old region)",
+                w[0].1,
+                w[1].1
+            );
+        }
+    }
+}
+
+/// Test 904 (loop-play-latency-hold): the LIVE player loops under a large output
+/// latency. As t117, but the latency is 9 600 frames (200 ms, a wine/WASAPI-sized
+/// buffer) and Play starts from a cursor before the region: after every fold of the
+/// shown frame the key is again near the region start and moves on, and the ratchet
+/// refuses at most one step per lap. t117 ran at zero latency and could not see this.
+#[test]
+fn t904_live_player_loops_under_a_large_latency() {
+    use kt_engine::Player;
+    use kt_engine::player::preview_key_step;
+    use std::sync::atomic::Ordering;
+
+    let proj = project(30, false);
+    let (player, mut ring) = Player::new(
+        proj,
+        vec![(
+            MediaId(1),
+            Box::new(SyntheticSource::new(DUR, AudioPattern::Ramp).with_video_fps(30)) as _,
+        )],
+    );
+    // the EMA has converged before Play: the render thread keeps it at the raw value
+    let latency = 9_600i64;
+    player.shared.output_latency_frames.store(latency, Ordering::Release);
+    player.shared.latency_smooth.store(latency, Ordering::Release);
+    let r0 = Tick(90_000); // region 1 s … 2 s
+    let r1 = Tick(2 * 90_000);
+    player.set_loop_region(Some(kt_time::TickRange::new(r0, r1)));
+    player.seek(Tick(90_000 / 5)); // the cursor before the region
+    let _ = player.video_playhead_lap(); // a paused UI frame
+    // Play from outside: the toggle seeks to the region start, then plays
+    player.seek(r0);
+    player.play();
+
+    let grid = player.video_grid();
+    let step = grid.frame_step();
+    let mut prev: Option<i64> = None;
+    let mut anchor: Option<(u64, u64)> = None;
+    let mut folds: Vec<usize> = Vec::new();
+    let mut keys: Vec<i64> = Vec::new();
+    let mut rollbacks = 0u64;
+    let start = std::time::Instant::now();
+    // after the third fold play on a little: the last lap must be seen moving too
+    let done = |folds: &Vec<usize>, n: usize| folds.len() >= 3 && n >= folds[2] + 20;
+    while start.elapsed().as_millis() < 6_000 && !done(&folds, keys.len()) {
+        for _ in 0..1024 {
+            if ring.pop().is_err() {
+                break;
+            }
+        }
+        player.shared.consumed_frames.fetch_add(1024, Ordering::AcqRel);
+        let (t, lap) = player.video_playhead_lap();
+        let now = (player.transport.generation(), lap);
+        if anchor.is_some_and(|(g, l)| g == now.0 && l != now.1) {
+            folds.push(keys.len());
+        }
+        let reanchor = anchor != Some(now);
+        anchor = Some(now);
+        let (key, _, rolled) = preview_key_step(prev, grid.align_floor(t).0, step, 1, reanchor);
+        if rolled {
+            rollbacks += 1;
+        }
+        prev = Some(key);
+        keys.push(key);
+        std::thread::sleep(std::time::Duration::from_millis(4));
+    }
+    assert!(folds.len() >= 3, "three folds expected, got {folds:?} over {} samples", keys.len());
+    for &i in &folds {
+        assert!(
+            keys[i] >= r0.0 && keys[i] < r0.0 + 6 * step,
+            "after a fold the key is {} — not at the region start {}",
+            keys[i],
+            r0.0
+        );
+        let lap_end = folds.iter().copied().find(|&j| j > i).unwrap_or(keys.len());
+        let lap = &keys[i..lap_end];
+        assert!(
+            lap.iter().max().unwrap() > lap.first().unwrap(),
+            "after the fold at sample {i} the picture did not move on: {lap:?}"
+        );
+    }
+    assert!(rollbacks <= folds.len() as u64, "{rollbacks} refused rollbacks over {} laps", folds.len());
+}

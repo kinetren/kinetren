@@ -19,6 +19,9 @@ pub struct Transport {
     /// Jumps across the edge of the loop region (R.15 item 2): the video part needs them,
     /// since otherwise it has no way to learn about the transition to the new lap.
     wraps: AtomicU64,
+    /// Where the last seek landed (loop-play-latency-hold, D2): the display holds this
+    /// frame until its sound is audible. Written by the seeker, not by the callback.
+    last_seek: AtomicI64,
 }
 
 impl Transport {
@@ -54,6 +57,11 @@ impl Transport {
     /// kept playing (R.15 item 2).
     pub fn wraps(&self) -> u64 {
         self.wraps.load(Ordering::Acquire)
+    }
+
+    /// The target of the last `seek_frames` (48 kHz frames).
+    pub fn last_seek_frames(&self) -> i64 {
+        self.last_seek.load(Ordering::Acquire)
     }
 
     /// Advance by the consumed audio frames. Only the audio render thread.
@@ -101,6 +109,7 @@ impl Transport {
     /// Jump. Bumps generation.
     pub fn seek_frames(&self, frame: i64) {
         self.playhead_frames.store(frame, Ordering::Release);
+        self.last_seek.store(frame, Ordering::Release);
         self.generation.fetch_add(1, Ordering::AcqRel);
     }
 
