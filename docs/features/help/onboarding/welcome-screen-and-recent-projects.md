@@ -15,7 +15,7 @@ point: null
 tests: []
 depends_on: [F-HLP-009, F-HLP-012, F-HLP-020, F-HLP-033]
 trackers: [kde-invent, kde-bugzilla, pitivi, olive, openshot]
-checked: 2026-09-08
+checked: 2026-10-28
 ---
 
 # F-HLP-027 — Start screen: recent projects, templates, entry to learning
@@ -191,6 +191,21 @@ We take the smaller half: a list of recent items (N instead of one invisible pat
 TEST: reach_tests::first_run_instruction_outlives_the_status_line — fails today, because the only instruction of the first launch (`app.rs:5287`, `msg::OPEN_A_PROJECT`) arrives as `HintKind::Status` and after `STATUS_TTL_MS` = 6000 ms is replaced by `hint::IDLE` about dragging media, and any mouse hover erases it even earlier (`app.rs:4439`).
 
 DEFERRED: until F-EXP-001 — the templates of a new project are the fifth resident of the same "user storage outside the project" as the export presets, FX presets, title templates and key layouts (the conclusion no. 2 of the first wave, `docs/features/README.md`). The list of recent items enters `app.ron` without this subsystem; the templates do not.
+
+
+**Revised by the owner, 2026-10-28 (change `welcome-window-and-tour`).** The owner asked directly for
+what this verdict declined: "at program start … an intro window (as in programming IDEs) offering
+either to create a project from a template or a list of recent projects (with thumbnails)", with a
+"start the tour" tile, a primary tile for the most likely action and What's new with an update hint.
+Revision: **the start window is taken**, and the reasons above are answered rather than dropped — it
+opens only over an EMPTY project (a project on the command line or a recovery offer skips it, the
+FFmpeg window goes first), the primary tile makes the common case one Enter, and "Show at start" off
+restores today's silent open of the last project, named in the window and in the View menu (rule 19).
+It is a registered window inside the main viewport, not a second OS window — the "separate window"
+class of this note's ADDRESS line (tiling WMs, Alt+Tab) is avoided by that choice. The recent list
+(the smaller half taken above) lives inside it, bounded to 12 with "clear", with posters rendered into
+the program's data directory, never into the project tree. The templates no longer wait for F-EXP-001:
+the shared user store exists since F-AUT-004, and the templates are its next record.
 
 ## Sources
 

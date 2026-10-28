@@ -15,7 +15,7 @@ point: null
 tests: []
 depends_on: [F-HLP-032, F-HLP-012, F-HLP-020]
 trackers: [otio, mlt, openshot, pitivi]
-checked: 2026-09-08
+checked: 2026-10-28
 ---
 
 # F-HLP-029 — Demo project and its footage
@@ -176,6 +176,15 @@ TEST: cli::demo_renders_out_of_the_box — fails today, and this is verified by 
 CHECK: src/apps/kt-cli/src/main.rs — the clause "the command list in the message about an unknown command is assembled from the same place as the dispatcher branches: `demo` and `convert` are either named in both or in neither"; today line 354 lists five commands out of seven, and `kt-cli --help` falls into the same branch and exits with code 2.
 
 DEFERRED: until F-HLP-020 — where exactly to offer the demo (the empty state versus the File menu item) is decided there; here only the requirement is fixed that the path from the GUI must open a COPY in the folder the user named, and not the original from the distribution.
+
+
+**Revised by the owner, 2026-10-28 (change `welcome-window-and-tour`).** The tour's lessons run on our
+demo edit, so the "door" half of this note is opened for the lessons: `demo_project` moves out of
+`src/apps/kt-cli/src/main.rs` into a builder both programs call (one body, rule 17), in a form built
+from generators only — the eight nonexistent media files of the original do not apply. A lesson copy
+lives in the program's data directory and is not listed among recent projects; the requirement above
+("a COPY in the folder the user named") stays the rule for a future "Open demo project" as the
+person's own project, which this change does not add.
 
 ## Sources
 

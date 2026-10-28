@@ -1,7 +1,7 @@
 ---
 id: F-HLP-028
 title: Tours, coach marks and interactive lessons
-status: rejected
+status: accepted
 priority: C
 cost: L
 category: help/onboarding
@@ -14,7 +14,7 @@ round: null
 point: null
 tests: []
 depends_on: [F-HLP-016, F-HLP-020, F-HLP-024, F-HLP-033, F-UI-002]
-checked: 2026-09-07
+checked: 2026-10-28
 ---
 
 # F-HLP-028 — Tours, coach marks and interactive lessons
@@ -103,7 +103,8 @@ of context-specific tips instead of a single onboarding flow". The first sentenc
 
 ## How it fits Kinotrain
 CAPABILITY: openspec/specs/ui-reach/ — the contract is in `spec.md`, the "why" and the paths in the code are in `design.md`.
-Rejected: there is no teaching layer over the UI — the t83 rule (no pop-up hints) and "right-click is the help itself"; coach marks contradict both.
+Revised 2026-10-28 (change `welcome-window-and-tour`): lessons in their own docked view, a step closed by a predicate over the project's state, "Show" opening a registry target — taken.
+Still rejected: a teaching layer over the UI — the t83 rule (no pop-up hints) plus the closed list of layers above `Order::Middle` as a guard.
 
 ## Estimate
 
@@ -139,6 +140,27 @@ as we did (a permanent place instead of a pop-up, F-HLP-002). Facing the same li
 the second surface that the whole wave is looking for: it does not overlap, does not delay, opens deliberately. This strengthens both lines of the verdict at once: a layer over the interface was rejected correctly, and the deferred form has a live industrial model. The postponement nevertheless remains: "the step is closed because the command has been executed" still has no one to say it, until there is a "command" object (F-UI-002).
 
 ONE LINE: overlap — does not touch (and proposes to strengthen the prohibition with a test, because t83 catches only `Order::Tooltip`) | delay — does not touch | capacity — in the status bar line it changes not by a single character, and this note sets up NO new surface: the whole payload is distributed among the already accepted ones — the context menu (F-HLP-016), the bodies of empty containers (F-HLP-020), the demo project, the cheat sheet (F-HLP-024), the chapters of the guide (F-HLP-023).
+
+**Revised by the owner, 2026-10-28 (change `welcome-window-and-tour`).** Asked why the tour had
+been rejected, the owner answered with a request: an IDE-style intro window at start with templates,
+recent projects with thumbnails and a "start the tour" tile, the tour being the primary tile on the
+first opening (`docs/user-feedback.md`, round of 2026-10-27/28). The verdict changes in one half and
+stands in the other, by an explicit revision rather than a silent flip:
+
+- **Taken — the form this note DEFERRED**: lessons in their own view (the Ableton Learn View model of
+  the addendum above), whose steps close by themselves. The deferral reason — "there is no 'command'
+  object to say the step is closed" (F-UI-002) — is removed differently than the note expected: a
+  step closes on a predicate over the PROJECT'S STATE (a title event exists, the event at the marker
+  is in two pieces, a chain holds a blur), which the model already exposes, and which counts every door
+  to the same result (a key, a menu item, a context menu) by construction. "Show" names a registry id
+  (a window of the `WINDOWS` registry, a panel, a menu path), not a pixel — the trick 2 of this note
+  (aim at actions, not locations) holds without a command registry.
+- **Still rejected — the layer**: no callout, no dimming, no pulsation over the interface. The guard
+  this note asked for, `reach_tests::no_teaching_layer_over_the_ui`, is written in the same change.
+- **The addressee objection** (the complaints came mid-work, not at first launch) is answered by the
+  Guide window of the same change, which serves the middle of work; the lessons serve the first start.
+
+TEST: t988 (`src/apps/kt-app/src/reach_tests.rs`) — a lesson step closes on the project's state after a title is added through File → Create a generator…, and the layers above `Order::Middle` stay the closed named list with no lesson among them.
 
 ## Sources
 

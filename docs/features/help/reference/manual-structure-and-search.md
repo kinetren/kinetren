@@ -14,7 +14,7 @@ round: null
 point: null
 tests: []
 depends_on: [F-HLP-032, F-HLP-033, F-HLP-019]
-checked: 2026-09-07
+checked: 2026-10-28
 ---
 
 # F-HLP-023 — User manual: how it is built and how one finds things in it
@@ -130,6 +130,17 @@ Grow it from the site, but NOT inside the landing page. A separate tool (Sphinx,
 First what is set up is not the text but the ADDRESS: while a topic has no stable slug, the manual cannot be linked by "see also", opened from the program, placed offline, or told apart from advertising. And up to a few dozen topics the search remains the browser's Ctrl+F — deliberately, because structure matters more than completeness: 4444 pages are read one at a time, not in sequence.
 
 CHECK: site/content/manual/ — a clause of the build "a topic has a stable slug and the address /<language>/manual/<slug>/, a set of all five catalogs and a non-empty list of search words; a vanished slug is a build error, not a 404, because it is already referenced by an installed build".
+
+
+**Revised by the owner, 2026-10-28 (change `welcome-window-and-tour`).** The owner's item "we have no
+guideline inside the program explaining what can be done and where" and his answer "a Guide window"
+open the door from the program that this note left for later. The manual inside the program is grown
+not from `site/` but from `docs/guide/*.md` — the English user guide that already exists, is guarded by
+`src/scripts/readme-check.py` and is shown by the repository — compiled into the binary (one source,
+no copy). The ADDRESS this note demanded first is kept: every "I want to … → where" index entry points
+to a heading anchor of a guide page, and a vanished heading fails the build's guard (t989), not the
+person. Search stays a substring search — the size argument above ("tens of topics, not hundreds")
+still holds. The site manual (`site/content/manual/`) is not touched by this change.
 
 ## Sources
 
