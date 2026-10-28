@@ -129,10 +129,43 @@ release build.
 
 ## 4. The panel
 
-- [ ] 4.1 Performance panel: the "Compose" line (last frame and 1 s average in ms) next to the FX backend line, and the CPU line names the fallback reason. New `[perf]` keys go into all five catalogs, and `python3 scripts/subset-fonts.py` is run for the new glyphs. Write the panel half of t947 in `src/apps/kt-app/src/layout_tests.rs` (harness playback, no repaint after Stop). Verify t947 is green, t289/t100/t125/t128/t171 are green, and `src/scripts/specs-user-path.py --check` (t799) accepts the PATH line
-- [ ] 4.2 Live scenario `src/scripts/live/morphgrid.py`: the owner's case in a real window with the panel open, one `kt_live.step` screenshot per step of the PATH. Verify `./scripts/live-check.sh morphgrid` is green
-- [ ] 4.3 Repeat 1.4 on a release build after stages 2–3, record the before/after table here, and send it to the owner with the short answer
-- [ ] 4.4 Commit stage 4
+- [x] 4.1 Performance panel: the "Compose" line (last frame and 1 s average in ms) next to the FX backend line, and the CPU line names the fallback reason. New `[perf]` keys go into all five catalogs, and `python3 scripts/subset-fonts.py` is run for the new glyphs. Write the panel half of t947 in `src/apps/kt-app/src/layout_tests.rs` (harness playback, no repaint after Stop). Verify t947 is green, t289/t100/t125/t128/t171 are green, and `src/scripts/specs-user-path.py --check` (t799) accepts the PATH line
+  - Panel: "Compose {0} ms, 1 s avg {1} ms" under the FX line (`PerfState::compose_ms_last/avg`,
+    fed after each preview compose from `Player::video_cost`, rolled over by the existing once-a-second
+    sampler; an idle second keeps the last average). The CPU line names the reason when the GPU was
+    lost: "FX: CPU (GPU lost: {0})" (`VideoBackendStatus::Poisoned`). Keys `perf.compose`,
+    `perf.video_fx_cpu_lost` in all five catalogs; `subset-fonts.py` rerun. The probe dump carries
+    `compose { ms, avg, gpu, subsamples }` for the live scenario.
+  - t947's panel half (`layout_tests.rs`, `harness_geom_ctl_file`): the line is drawn with a time,
+    playing composes new frames, after Stop four more frames compose nothing (`video_cost`
+    unchanged) and the line stays. RED with the line hidden: "the panel has no “Сборка кадра” line:
+    []". t764, t289, t100, t125, t128, t171 green; `specs-user-path.py --check` green.
+- [x] 4.2 Live scenario `src/scripts/live/morphgrid.py`: the owner's case in a real window with the panel open, one `kt_live.step` screenshot per step of the PATH. Verify `./scripts/live-check.sh morphgrid` is green
+  - `scripts/live/morphgrid.py`: the owner's case as a `.kt` built by the scenario; paused at 2 s the
+    dump's compose reads 33 216 sub-samples (one cell at the ½ preview, against 8 294 400 for the full
+    pass at the raster); playing measures the 1 s average; after Stop the compose values stay and the
+    window draws at most its idle tick (4 frames in a second — the 250 ms idle redraw, not the panel;
+    the first version asserted ≤ 2 and was wrong about the baseline). Green. Screenshots:
+    `target/live-out/morphgrid/01-step-paused-12x30.png` ("Compose 3.5 ms, 1 s avg 1.8 ms" under
+    "FX: GPU (llvmpipe …)"), `02-step-playing.png`, `03-step-stopped.png`.
+- [x] 4.3 Repeat 1.4 on a release build after stages 2–3, record the before/after table here, and send it to the owner with the short answer
+  - Release, the same projects as 1.4 (the adapter is llvmpipe — a software rasterizer):
+
+    | grid | GPU p50 before → after | CPU p50 before → after |
+    |---|---|---|
+    | 1×1 | 3.2 → 3.5 ms | 14 → 16 ms |
+    | 2×2 | 4.9 → 5.3 ms | 65 → 66 ms |
+    | 12×10 | 12.1 → 4.3 ms | 274 → 3.3 ms |
+    | 12×30 | 12.0 → 3.4 ms | 274 → 2.1 ms |
+    | owner's case p50 / p95 | 11.8 / 13.1 → 6.3 / 11.9 ms | 277 / 286 → 5.8 / 208 ms |
+
+    Sub-samples per frame of the owner's case: 7 257 600 → 866 908 on average. 1×1 and 2×2 are not
+    marked (run-to-run noise). The CPU p95 that remains (208 ms) is the transient frames with EXACTLY
+    3 cells on an axis: 3 taps, refused by the exactness gate, full pass. Making them exact needs
+    a different sub-sample arithmetic, which moves bytes — Open Question 2 territory, for the owner.
+    The table goes to the owner with the short answer (report of 2026-10-29).
+- [x] 4.4 Commit stage 4
+  - kt-app 398 passed; clippy without new warnings.
 
 ## 5. Records and finish
 

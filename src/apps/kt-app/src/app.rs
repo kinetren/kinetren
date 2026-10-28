@@ -6209,6 +6209,10 @@ impl KtApp {
             // went on screen (item 14 of round 14)
             let (cq, c) = self.player.compose_preview_into(Tick(key_tick), &mut rgba);
             complete = c;
+            let cost = self.player.video_cost();
+            self.perf.compose_ms_last = cost.compose_ns as f32 / 1e6;
+            self.perf.compose_sum_ns += cost.compose_ns;
+            self.perf.compose_n += 1;
             // we hold the last FULL frame: an incomplete composite does not overwrite the
             // picture (the flicker “black frame ↔ Loading”, item 14/15)
             if c || self.texture.is_none() {
@@ -6962,10 +6966,21 @@ impl KtApp {
             kt_engine::VideoBackendStatus::Gpu(info) => {
                 ui.weak(crate::tf!(k::perf::VIDEO_FX_GPU, info.name));
             }
-            _ => {
+            // the CPU line names WHY (morpher-event-grid-cost): a lost GPU is not "no GPU"
+            kt_engine::VideoBackendStatus::Poisoned { reason, .. } => {
+                ui.weak(crate::tf!(k::perf::VIDEO_FX_CPU_LOST, reason));
+            }
+            kt_engine::VideoBackendStatus::Cpu => {
                 ui.weak(tr(k::perf::VIDEO_FX_CPU));
             }
         }
+        // what composing the preview costs (morpher-event-grid-cost, D1): the last frame and
+        // the average of the last second — the number behind "the fps drops here"
+        ui.weak(crate::tf!(
+            k::perf::COMPOSE,
+            format!("{:.1}", self.perf.compose_ms_last),
+            format!("{:.1}", self.perf.compose_ms_avg)
+        ));
         let r = ui.checkbox(&mut self.ui_economy, tr(k::perf::ECONOMY));
         self.hint(r, tr(k::hint::ECONOMY));
         // “Black box” of playback (R.28, item 10): the ring of transport events
@@ -8430,6 +8445,12 @@ pub struct PerfState {
     /// one-directional — with slow playback there are no forward skips at all,
     /// and the panel stayed silent exactly in the case people complained about.
     pub video_rollbacks: u64,
+    /// The cost of the preview compose (morpher-event-grid-cost, D1): the last frame and the
+    /// average of the last second, in ms; the sum and count of the running second.
+    pub compose_ms_last: f32,
+    pub compose_ms_avg: f32,
+    compose_sum_ns: u64,
+    compose_n: u32,
     pub diag_open: bool,
     pub log: std::collections::VecDeque<String>,
     /// Dedup of consecutive identical messages: (text, repeat count).
@@ -8484,6 +8505,10 @@ impl PerfState {
             last_underruns: (0, 0),
             frames: 0,
             video_frames_shown: 0,
+            compose_ms_last: 0.0,
+            compose_ms_avg: 0.0,
+            compose_sum_ns: 0,
+            compose_n: 0,
             vfps: 0.0,
             last_video_shown: 0,
             video_cells_skipped: 0,
@@ -8837,6 +8862,13 @@ impl KtApp {
         let v_fps = v_shown.saturating_sub(self.perf.last_video_shown) as f32 / dt;
         self.perf.last_video_shown = v_shown;
         self.perf.vfps = v_fps; // item 23, round 7: the toolbar timecode
+        // the compose average of this second; an idle second (no compose) keeps the last one
+        if self.perf.compose_n > 0 {
+            self.perf.compose_ms_avg =
+                self.perf.compose_sum_ns as f32 / self.perf.compose_n as f32 / 1e6;
+            self.perf.compose_sum_ns = 0;
+            self.perf.compose_n = 0;
+        }
         self.perf.quality.push(&[fps.min(120.0), v_fps.min(120.0), a_hit, v_hit]);
         let (r_open, r_read) =
             (opens.saturating_sub(lo) as f32 / dt, reads.saturating_sub(lr) as f32 / dt);

@@ -15768,6 +15768,48 @@ fn t763_handles_are_hittable_and_the_nearest_wins() {
     );
 }
 
+/// Test 947, the panel half (morpher-event-grid-cost, D1): the performance panel tells the
+/// video compose cost — a "Compose" line with the last frame's time — which follows the frames
+/// while playing and stays put after Stop, composing nothing more (invariant 12).
+#[test]
+fn t947_perf_panel_shows_the_compose_cost() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    let (mut h, _clip) = harness_geom_ctl_file();
+    let label = tr(k::perf::COMPOSE).split("{0}").next().unwrap_or_default().trim().to_string();
+    let shown = |h: &Harness<'_, KtApp>| -> Vec<String> {
+        h.query_all_by_label_contains("")
+            .filter_map(|n| {
+                let a = n.accesskit_node();
+                a.value().map(|v| v.to_string()).or_else(|| a.label().map(|l| l.to_string()))
+            })
+            .filter(|t| t.starts_with(&label))
+            .collect()
+    };
+    // a frame was composed: the line is drawn and its time is not zero
+    h.step();
+    assert!(h.state().player.video_cost().compose_ns > 0, "scene: no preview compose happened");
+    let lines = shown(&h);
+    assert_eq!(lines.len(), 1, "the panel has no “{label}” line: {lines:?}");
+    // while playing the value follows the frames (each new frame composes)
+    h.state_mut().player.play();
+    let before = h.state().player.video_cost();
+    for _ in 0..6 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+    assert_ne!(h.state().player.video_cost(), before, "playing composed nothing new");
+    // after Stop the last values stay and nothing composes again (no cost while idle)
+    h.state_mut().player.pause();
+    h.step();
+    h.step();
+    let stopped = h.state().player.video_cost();
+    for _ in 0..4 {
+        h.step();
+    }
+    assert_eq!(h.state().player.video_cost(), stopped, "the panel kept composing after Stop");
+    assert_eq!(shown(&h).len(), 1, "the compose line left after Stop");
+}
+
 /// Test 764 (R.64): the controls fade during playback and do not heat an idle system.
 ///
 /// The industry hides them always (FCP) or automatically (AE): the control covers

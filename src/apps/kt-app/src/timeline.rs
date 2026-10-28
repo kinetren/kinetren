@@ -1147,6 +1147,7 @@ impl KtApp {
              \"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\
              \"nest\":{},\"clipboard\":{},\"status\":\"{}\",\
              \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"morphers\":{},\
+             \"compose\":{{\"ms\":{:.2},\"avg\":{:.2},\"gpu\":{},\"subsamples\":{}}},\
              \"notices\":[{}],\
              \"window\":{{\"w\":{:.1},\"h\":{:.1}}},\
              \"bin\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
@@ -1174,6 +1175,11 @@ impl KtApp {
             // version (R.67): “there are edits” and “the morphers arrived” are otherwise not visible.
             self.dirty_content,
             self.model.project().morphers.len(),
+            // the preview compose cost (morpher-event-grid-cost): what the panel shows, as numbers
+            self.perf.compose_ms_last,
+            self.perf.compose_ms_avg,
+            self.player.video_cost().gpu,
+            self.player.video_cost().cost.subsamples,
             // the last notification AS SHOWN (the bell): the status line
             // covers it with the hover hint.
             self.notices
