@@ -17,6 +17,20 @@ Each video effect was a separate rasterization into a buffer of output size, wit
 - **The camera — one rule per program**, moved out of a private function for the sake of a second consumer (the picker's thumbnails): a rewritten rule would silently diverge.
 - **"Procedural" (no frame grid) and "shapeless" (no proportions) are two facts** (still-image-frame-rule, ktprompts 26.10.18 item 9). R.62 equated them — every procedural source of that day (generator, title, placeholder) drew its frame at the requested quality. R.67 then gave a single picture `fps: None` for its timing, the picture became "procedural", and the renderer silently dropped its view: every frame rule of a still turned into stretch, a square photo was squashed into 16:9. Three readers held their own copy of the decision — the renderer's lead (`else if procedural { None }`), the on-screen frame (`Player::source_view`) and `kt-cli probe` — and the last two kept the view, so the window drew a fit frame the render did not use. Now `SourceFacts::observe` decides both facts in one place (shapeless = no fps and not a still), and all three read `view_of`/`lead_view`.
 - **"As is" counts the pixels of the composite's raster, not of the canvas being rendered** (same change, found by its live scenario). The preview renders at a fraction of the project, so "1:1 in canvas pixels" drew the picture twice as large at ½ as the file gets it. `LeadCtx.raster` carries the logical size (the project, or a reel's own raster); when the canvas is the raster the factor is not applied, and the goldens keep their bytes.
+- **A strength slot at exactly 0 does not run its layer** (morpher-event-grid-cost, D3). The morpher's
+  fades put the strength at 0 at the block's edges, and the layer was computed in full and mixed away.
+  The executors skip the slice from the snapshot to its strength slot and still run the mix, on
+  (dry, dry): `dissolve_into` at k = 0 takes nothing from the wet side, so the bytes are the full
+  path's. Only where the wet frame could not have another size (the CPU: the dry frame already at
+  the output raster; the GPU: the slice did not change the size) and the slice is whole (no other
+  stop inside). Not a strip of the chain: dropping the slots would let neighbouring geometry runs fuse
+  across the removed stop and move bytes. t945 (CPU), t945b (GPU).
+- **The compose cost is counted by the executor that ran it** (`kt_fx::video::FrameCost`, D1): the CPU
+  through `FxScratch`, the GPU from its op list (`VideoGpuExec::last_cost`), the player adds the
+  backend and the wall-clock compose time (the preview path — invariant 11 forbids it only offline).
+  Sub-samples are a pure function of the program (`GeomProgram::sample_cost`), so a test can hold the
+  cost, and both backends report the same number. Before it, "the fps drops" could not be split
+  between the grid, the strength slot, the readback and a CPU fallback.
 
 ## Rejected and why
 

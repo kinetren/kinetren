@@ -169,5 +169,8 @@ release build.
 
 ## 5. Records and finish
 
-- [ ] 5.1 Append the "why" to `openspec/specs/video-fx/design.md` (the tile rule, its exactness gate, why not a mip) and `openspec/specs/video-plan/design.md` (strength 0, FrameCost). Add the tile rule's pair note to `src/libs/kt-fx/CLAUDE.md`. Verify `openspec validate --specs` is green
+- [x] 5.1 Append the "why" to `openspec/specs/video-fx/design.md` (the tile rule, its exactness gate, why not a mip) and `openspec/specs/video-plan/design.md` (strength 0, FrameCost). Add the tile rule's pair note to `src/libs/kt-fx/CLAUDE.md`. Verify `openspec validate --specs` is green
+  - video-fx design: the tile rule and its exactness gate (Decisions), the mip alternative (Rejected);
+    video-plan design: strength 0 and FrameCost; kt-fx CLAUDE.md: the pair note. `openspec validate
+    --specs --strict` 20/20.
 - [ ] 5.2 Run `./scripts/finish.sh` from `src/`. Verify it is green, and record the version `vYY.MM.DD-hash` and the live screenshots here

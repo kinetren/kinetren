@@ -55,6 +55,21 @@
   the useful range is already set by the extreme variants.
 - **Alpha rule — three classes of step**, Preserves stays silent: otherwise geometry
   erased the neighbours' declarations and the title lay down as an opaque rectangle.
+- **An event grid computes one cell and copies it** (morpher-event-grid-cost, ktprompts 26.10.18
+  item 8: "it is basically a simple pixel shader — so do we have extra computations?"). The grid was
+  one pass, but with 4+ cells per axis every output pixel averages 4×4 sub-samples (item 309), and
+  every cell repeated the same tile: 12×10 cost exactly what 12×30 did, 16× a 1×1 grid. The builder
+  marks a series `GeomProgram::tile` when every cell provably holds the same bytes, and both
+  executors compute the cell at the grid's origin once and copy it (CPU `exec_geom_cpu`; GPU the
+  tile program into a cw×ch target + `grid_tile.wgsl`). The gate is EXACTNESS, not a heuristic: the
+  grid must be the last step of the series (nothing acts on the output after the Fold), the output
+  at 1×, and the taps 1, 2 or 4 per axis — then `ox − 0.5 + (i + 0.5)/n` is dyadic, `x − kx·cw`
+  is the same number in every cell in f64 and in f32, and no edge ring is needed (every sub-sample
+  of a pixel inside the grid lies in its own cell). With 3 taps the offsets are not dyadic and round
+  per cell, so the full pass stays; the owner's automated grid passes through such frames (3 cells
+  on an axis) and they keep their cost. t943 sweeps the exactness on the CPU, t944 holds the GPU tile
+  against the GPU full pass byte for byte. Release, 960×540: 12×30 274 → 2.1 ms on the CPU, 12.0 →
+  3.4 ms on llvmpipe.
 
 ## Rejected and why
 
@@ -84,6 +99,11 @@
   implementation would have to be kept forever; the levels are only Scalar/AVX2.
 - **`Mutex` for the texture cache**: only the UI thread touches the textures; `RefCell`
   in the service, because the FX/morpher windows hold `&self.model` in the ui closure.
+- **A pre-shrunk (mip) source for the grid** (morpher-event-grid-cost, alternative (a)): cheaper
+  still and without the aliasing that 4×4 taps leave at 30× minification — but it changes the bytes
+  of every grid golden and the look of existing projects. Offered to the owner as a separate
+  decision (the change's Open Question 2), not taken here. A "fast grid" switch was rejected by the
+  R.44 "no switches" rule; caching the grid output across frames helps only a still frame.
 
 ## Non-obvious details
 

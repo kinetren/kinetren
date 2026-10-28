@@ -54,6 +54,13 @@ the snapshot points of LayerMix break the series. The merged pass is SCALAR f64
 (AVX2 is separate work under the 1.3× rule); `bilinear_into` + AVX2
 remain behind the barriers (blur/glow/fit_into) and the legacy series.
 
+**One tile, copied (morpher-event-grid-cost)**: `GeomProgram::tile` is decided by `grid_tile` in
+`geom.rs` and ONLY there; `exec_geom_cpu` copies the cell, kt-gpu runs `tile_program()` + its
+`grid_tile.wgsl`. The gate is exactness (the grid last in the series, k_out = 1, 1/2/4 taps per
+axis) — widening it (3 taps, a step after the grid) moves bytes, and t943/t944 catch it. A change to
+how the fused pass computes sub-sample positions or the Fold must be checked against the tile on
+BOTH backends in the same commit (t943 CPU sweep, t944 GPU tile == GPU full pass).
+
 ## Effect thumbnails (R.54, item 428)
 
 - **`render_fx_thumb` is the single entry for thumbnails** (the kind's icon, the variant cell,
