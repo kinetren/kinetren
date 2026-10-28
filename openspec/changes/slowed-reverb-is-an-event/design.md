@@ -155,6 +155,7 @@ event) — that is the fix itself; `kt-cli probe` shows the new effective events
    material where the slowed window stopped (shifting the rest of the event's material), instead of keeping
    its own material (D3)? Recommended: keep D3 — a layer must not change anything outside its window, the
    same rule as for every other patch; a rippling slowdown belongs on the event's own speed curve.
-4. The rewritten regression tests — t696/t696b (speed refuses shapes) and `t238_warped_clip_is_never_sliced`
-   — invert their assertions by this claim; recommended: confirm once, so the rule "named tests are not
+4. DECIDED by the owner (2026-10-28): "yes, invert t696, t696b and t238". The rewritten regression tests —
+   t696/t696b (speed refuses shapes) and `t238_warped_clip_is_never_sliced`
+   — invert their assertions by this claim; was: confirm once, so the rule "named tests are not
    weakened without the owner's decision" is satisfied explicitly.

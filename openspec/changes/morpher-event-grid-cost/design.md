@@ -163,7 +163,9 @@ No data migration. Each stage is byte-identical, so rollback is a revert.
 
 ## Open Questions
 
-1. **Which backend does the owner's machine show when the fps drops?** (the panel line
+1. ANSWERED by the owner (2026-10-28): "most likely it was on the GPU". Stage 1 measures the GPU
+   executor first (up to 64 `textureLoad` per pixel, the strength-0 pass); the CPU numbers stay as the
+   reference. Was: **which backend does the owner's machine show when the fps drops?** (the panel line
    "FX: GPU (…)" / CPU, and the adapter name). Recommended: ask with the stage 1 build. If it
    says CPU, or the adapter is WARP/llvmpipe, then kind 3 is the main cost, and D2 is the cure.
 2. **Should the grid's look improve too (a pre-shrunk source, no aliasing at 30×)?** It is

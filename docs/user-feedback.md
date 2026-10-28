@@ -1941,6 +1941,16 @@ program's own zoom (Ctrl+=) pressed twice — `pixels_per_point` ≈ 1.2, a frac
 the reproduction case of `shared-window-shell` stage 1. The inversion of t696/t696b/t238 waits for
 his decision.
 
+Second answer (2026-10-28), translated:
+
+> 1. yes, invert t696, t696b and t238
+> 5. most likely it was on the GPU
+
+**Taken as:** the owner's explicit decision to invert the three named regression tests in
+`slowed-reverb-is-an-event` (inverted, not deleted). The morpher grid fps drop happened on the GPU
+backend, so `morpher-event-grid-cost` measures the GPU path first: the sub-sample loads per pixel
+and the strength-0 pass are the suspects, not the CPU fallback.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
