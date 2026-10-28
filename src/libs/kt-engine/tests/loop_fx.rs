@@ -461,3 +461,231 @@ fn t280_underruns_are_counted_in_frames_on_both_paths() {
         "the counter in FRAMES: over {span} frames of the body we expect hundreds, not units — {a}/{b}"
     );
 }
+
+// ---- Tests 906–907 (pitch-loop-silence, ktprompts 26.10.18 item 7) ---------------
+
+fn pitch(semitones: f32) -> FxInstance {
+    FxInstance::PitchShift { semitones, cents: 0.0 }
+}
+
+/// A pitched 440 Hz clip of 10 s on a project with the given pitch engine.
+fn pitched(engine: PitchEngine) -> Project {
+    let mut p = base_project();
+    p.settings.pitch_engine = engine;
+    let dur = 10 * AUDIO_SAMPLE_RATE as i64;
+    let mut c = clip(1, 1, 0, 0, dur, 0);
+    c.fx = vec![pitch(7.0)];
+    c.fx_bypass = vec![false];
+    p.clips.push(c);
+    p.validate().unwrap();
+    p
+}
+
+/// `frames` of looped output from the region start, in calls of `step` frames (the player's
+/// bursts or odd pieces), on a warm source.
+fn looped(p: &Project, region: std::ops::Range<i64>, frames: i64, step: i64) -> (Vec<f32>, RenderStats) {
+    let r = AudioRenderer::new(p);
+    let mut f = Probe::new(AudioPattern::Sine { hz: 440.0 }, i64::MIN);
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+    let mut out = vec![0f32; frames as usize * CH];
+    let mut total = RenderStats::default();
+    let mut done = 0i64;
+    let mut pos = region.start;
+    while done < frames {
+        let n = step.min(frames - done);
+        let s = r.render_looped_with(
+            &mut f,
+            &mut store,
+            region.clone(),
+            pos,
+            &mut out[done as usize * CH..(done + n) as usize * CH],
+        );
+        total.underruns += s.underruns;
+        total.warmup_misses += s.warmup_misses;
+        done += n;
+        pos += n;
+    }
+    (out, total)
+}
+
+/// Runs of at least `min` frames below −80 dBFS on both channels, as (start, length).
+fn silent_runs(buf: &[f32], min: usize) -> Vec<(usize, usize)> {
+    let quiet = 1e-4f32;
+    let frames = buf.len() / CH;
+    let mut out = Vec::new();
+    let mut start: Option<usize> = None;
+    for i in 0..=frames {
+        let q = i < frames && buf[i * CH].abs() < quiet && buf[i * CH + 1].abs() < quiet;
+        match (q, start) {
+            (true, None) => start = Some(i),
+            (false, Some(s)) => {
+                if i - s >= min {
+                    out.push((s, i - s));
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn rms(buf: &[f32]) -> f64 {
+    (buf.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>() / buf.len().max(1) as f64).sqrt()
+}
+
+/// Test 906: a loop with pitch has no silent run after a wrap.
+///
+/// The owner: "the pitch audio FX has some strange buffering: on a loop a piece of silence is always
+/// heard". A 1 s region aligned neither to a burst nor to the pitch hop, four laps in bursts of
+/// 1 024 frames, both engines: after the first output frame no run of 64 frames below −80 dBFS,
+/// and (WSOLA) every lap within 1 dB of the first.
+#[test]
+fn t906_loop_with_pitch_has_no_silent_run() {
+    let start = 2 * AUDIO_SAMPLE_RATE as i64 + 137;
+    let span = AUDIO_SAMPLE_RATE as i64 + 61;
+    let region = start..start + span;
+    let mut problems = Vec::new();
+    for engine in [PitchEngine::Wsola, PitchEngine::Vocoder] {
+        let (out, _) = looped(&pitched(engine), region.clone(), 4 * span, BURST);
+        // the first lap's head may carry the cold pre-roll of the look-ahead — skip it
+        let runs: Vec<(usize, usize)> =
+            silent_runs(&out, 64).into_iter().filter(|(s, _)| *s > 0).collect();
+        if !runs.is_empty() {
+            let rel: Vec<String> = runs
+                .iter()
+                .map(|(s, n)| format!("{n} frames at lap {} + {}", *s as i64 / span, *s as i64 % span))
+                .collect();
+            problems.push(format!("{engine:?}: silent runs {}", rel.join(", ")));
+        }
+        // the LEVEL of every lap — WSOLA only. The vocoder's level depends on the phase its
+        // synthesis starts from (no vertical phase coherence between bins): measured on COLD
+        // renders at twelve start positions it is 0.56 or 0.25 RMS (−6.5 dB) by position, with no
+        // loop at all; a seam lands on such a phase too. That is the vocoder's own defect, kept
+        // for its own change (the algorithm is out of this one's scope, design Non-Goals).
+        if engine == PitchEngine::Vocoder {
+            continue;
+        }
+        let lap = |k: i64| rms(&out[(k * span) as usize * CH..((k + 1) * span) as usize * CH]);
+        let first = lap(0);
+        for k in 1..4 {
+            let db = 20.0 * (lap(k) / first.max(1e-12)).log10();
+            if db.abs() > 1.0 {
+                problems.push(format!("{engine:?}: lap {k} is {db:.1} dB from the first"));
+            }
+        }
+    }
+    assert!(problems.is_empty(), "a loop with pitch has silence: {}", problems.join("; "));
+}
+
+/// Test 907: a short loop with pitch still sounds.
+///
+/// The owner: "and on a small loop — total silence". Regions of 700 frames (shorter than a
+/// burst), 3 000 (shorter than the look-ahead) and 6 000 (just longer): every burst carries
+/// signal, no repeated warm-ups, no underruns.
+#[test]
+fn t907_short_loop_with_pitch_still_sounds() {
+    let dry = 0.5f64.sqrt() * 0.5; // the synthetic sine's RMS at half the amplitude bound
+    let mut problems = Vec::new();
+    for engine in [PitchEngine::Wsola, PitchEngine::Vocoder] {
+        for span in [700i64, 3_000, 6_000] {
+            let start = 2 * AUDIO_SAMPLE_RATE as i64 + 137;
+            let (out, stats) = looped(&pitched(engine), start..start + span, 20 * BURST, BURST);
+            let quiet: Vec<usize> = (1..20)
+                .filter(|b| {
+                    let s = &out[(b * BURST as usize) * CH..((b + 1) * BURST as usize) * CH];
+                    rms(s) < 0.5 * dry
+                })
+                .collect();
+            if !quiet.is_empty() {
+                problems.push(format!(
+                    "{engine:?}, region {span}: {} of 19 bursts are (near) silent {:?}",
+                    quiet.len(),
+                    &quiet[..quiet.len().min(6)]
+                ));
+            }
+            if stats.underruns != 0 {
+                problems.push(format!("{engine:?}, region {span}: {} underruns", stats.underruns));
+            }
+        }
+    }
+    assert!(problems.is_empty(), "a short loop with pitch is silent: {}", problems.join("; "));
+}
+
+/// A fetcher that remembers every burst read (for `wanted ⊇ read`).
+struct Recorder {
+    inner: Probe,
+    read: std::collections::BTreeSet<i64>,
+}
+
+impl AudioFetcher for Recorder {
+    fn audio_burst(&mut self, media: MediaId, idx: i64) -> Option<Arc<AudioBurst>> {
+        self.read.insert(idx);
+        self.inner.audio_burst(media, idx)
+    }
+}
+
+/// Test 908: the looped pitch is deterministic, sliced or not, and reads only what was ordered.
+#[test]
+fn t908_looped_pitch_is_deterministic_and_reads_what_was_ordered() {
+    let start = 2 * AUDIO_SAMPLE_RATE as i64 + 137;
+    let span = AUDIO_SAMPLE_RATE as i64 + 61;
+    let region = start..start + span;
+    let la = 4_608i64; // PITCH_LOOKAHEAD_FRAMES
+    for engine in [PitchEngine::Wsola, PitchEngine::Vocoder] {
+        let p = pitched(engine);
+        let (a, _) = looped(&p, region.clone(), 4 * span, BURST);
+        let (b, _) = looped(&p, region.clone(), 4 * span, BURST);
+        assert!(a == b, "{engine:?}: two looped runs differ");
+        let (c, _) = looped(&p, region.clone(), 4 * span, 333);
+        assert!(a == c, "{engine:?}: bursts of 1 024 and pieces of 333 differ");
+
+        // the first lap up to `region end − la` is the plain (non-looped) render
+        let r = AudioRenderer::new(&p);
+        let mut f = Probe::new(AudioPattern::Sine { hz: 440.0 }, i64::MIN);
+        let mut store = FxStateStore::new();
+        r.sync_fx(&mut store);
+        let plain_n = span - la;
+        let mut plain = vec![0f32; plain_n as usize * CH];
+        let mut done = 0i64;
+        while done < plain_n {
+            let n = BURST.min(plain_n - done);
+            r.render_frames_with(
+                &mut f,
+                &mut store,
+                start + done,
+                &mut plain[done as usize * CH..(done + n) as usize * CH],
+            );
+            done += n;
+        }
+        assert!(
+            a[..plain_n as usize * CH] == plain[..],
+            "{engine:?}: the first lap before the input fold is not the plain render"
+        );
+
+        // everything read is in the prefetch request for the looped window
+        let r = AudioRenderer::new(&p);
+        let mut rec = Recorder { inner: Probe::new(AudioPattern::Sine { hz: 440.0 }, i64::MIN), read: Default::default() };
+        let mut store = FxStateStore::new();
+        r.sync_fx(&mut store);
+        let mut out = vec![0f32; BURST as usize * CH];
+        let mut pos = region.start;
+        for _ in 0..(4 * span / BURST) {
+            r.render_looped_with(&mut rec, &mut store, region.clone(), pos, &mut out);
+            pos += BURST;
+        }
+        let wanted = r.wanted_audio_bursts(region.clone());
+        let pre = r.wanted_audio_bursts((region.start - 2 * AUDIO_SAMPLE_RATE as i64)..region.start);
+        let has = |idx: i64| {
+            wanted.iter().chain(pre.iter()).any(|(m, rg)| *m == MediaId(1) && rg.contains(&idx))
+        };
+        let outside: Vec<i64> = rec.read.iter().copied().filter(|i| !has(*i)).collect();
+        assert!(
+            outside.is_empty(),
+            "{engine:?}: the looped render read bursts nobody ordered: {:?}",
+            &outside[..outside.len().min(8)]
+        );
+    }
+}
+

@@ -412,6 +412,11 @@ pub struct ClipProcessor {
     /// Dry-side alignment ring of LayerMix: how many frames were
     /// “eaten” by lookahead nodes between the snapshot and the mix.
     dry_ring: Option<DryRing>,
+    /// The armed loop region in clip-local frames (pitch-loop-silence, D2) — `set_loop_span`.
+    loop_span: Option<(i64, i64)>,
+    /// The chain input position the next chunk is expected at (with a loop span): a folded
+    /// input that differs from it re-seats the source. `Some(i64::MIN)` forces a re-seat.
+    in_next: Option<i64>,
 }
 
 /// Delay of the dry side by a whole number of frames (R.48): between the snapshot of the dry
@@ -486,6 +491,8 @@ impl ClipProcessor {
             ahead: Vec::new(),
             mix_ahead: 0,
             dry_ring: None,
+            loop_span: None,
+            in_next: None,
         };
         p.apply_params(fx, true);
         p
@@ -672,6 +679,52 @@ impl ClipProcessor {
             r.reset();
         }
         self.next_local = i64::MIN;
+        self.in_next = None;
+    }
+
+    /// The armed loop region in CLIP-LOCAL frames, or `None` (pitch-loop-silence, D2). The
+    /// renderer sets it for every call of a looped render on an event that covers the region
+    /// end. With a look-ahead in the chain the INPUT then wraps first: it reads the region head
+    /// `la` frames before the output wraps, so the look-ahead holds what will actually sound —
+    /// before this, the last `la` frames of a lap read material PAST the region end (the limiter
+    /// played it after the wrap) and the pitch node restarted from an empty ring. Without a
+    /// look-ahead it changes nothing.
+    pub fn set_loop_span(&mut self, span: Option<(i64, i64)>) {
+        self.loop_span = span.filter(|(a, b)| b > a);
+    }
+
+    /// The loop fold of a chain position: a position past the span end continues from the span
+    /// start (several times for a span shorter than the look-ahead).
+    fn fold(&self, p: i64) -> i64 {
+        match self.loop_span {
+            Some((a, b)) if self.la > 0 && p >= b => a + (p - a).rem_euclid(b - a),
+            _ => p,
+        }
+    }
+
+    /// Whether the input-side fold is in force.
+    fn folding(&self) -> bool {
+        self.la > 0 && self.loop_span.is_some()
+    }
+
+    /// Re-seat the SOURCE at a chain input position, keeping every node's state.
+    fn reseat_source(&mut self, input: i64) {
+        let src_start = self.src_in + self.source_offset(input);
+        if self.has_warp() {
+            let t = input as f64 / self.clip_len as f64;
+            let r = rate_at(self.rate, self.rate_points(), t).abs();
+            match &mut self.warp {
+                Some(w) => {
+                    w.set_rate(r);
+                    w.seek_source(src_start);
+                }
+                None => self.warp = Some(Warp::new(r, src_start, self.reach)),
+            }
+        } else {
+            self.warp = None;
+        }
+        self.plain_cursor = src_start;
+        self.in_next = Some(input);
     }
 
     /// Material anchor of the event (frames from file zero).
@@ -715,6 +768,9 @@ impl ClipProcessor {
                 // Cold start or seek (`reset`): reset + pre-roll,
                 // so that the reverb and the resampler are warmed up deterministically.
                 self.hard_seek(local, pull);
+            } else if self.folding() && Some(self.fold(local + self.la)) == self.in_next {
+                // The output wraps to the loop start, and the INPUT already did, `la` frames
+                // ago (pitch-loop-silence, D2): the chain is continuous, nothing to re-seat.
             } else {
                 // SEAM: the position jumped, but the OUTPUT is continuous (wrap of a
                 // loop region, a clip shifted by the mouse during playback). The reverb
@@ -749,22 +805,8 @@ impl ClipProcessor {
         // the source stands at the INPUT position: the chain reads ahead by the
         // lookahead (R.48, item 337). The lookahead nodes’ rings live on in this case —
         // the seam rings out, like reverb (invariant 3).
-        let local = local + self.la;
-        let src_start = self.src_in + self.source_offset(local);
-        if self.has_warp() {
-            let t = local as f64 / self.clip_len as f64;
-            let r = rate_at(self.rate, self.rate_points(), t).abs();
-            match &mut self.warp {
-                Some(w) => {
-                    w.set_rate(r);
-                    w.seek_source(src_start);
-                }
-                None => self.warp = Some(Warp::new(r, src_start, self.reach)),
-            }
-        } else {
-            self.warp = None;
-        }
-        self.plain_cursor = src_start;
+        let input = self.fold(local + self.la);
+        self.reseat_source(input);
     }
 
     fn hard_seek(&mut self, local: i64, pull: &mut dyn FnMut(PullKind, i64, &mut [f32]) -> bool) {
@@ -790,6 +832,7 @@ impl ClipProcessor {
             self.warp = None;
         }
         self.plain_cursor = src_start;
+        self.in_next = None;
         if let Some(r) = &mut self.dry_ring {
             r.reset();
         }
@@ -828,13 +871,39 @@ impl ClipProcessor {
         let total = out.len() / CH;
         let mut done = 0usize;
         while done < total {
-            let n = (total - done).min(Self::AUTOMATION_STEP_FRAMES);
+            let mut n = (total - done).min(Self::AUTOMATION_STEP_FRAMES);
             // The OUTPUT position of the chunk (what the listener hears) and the INPUT position
             // (what the chain reads now).
             // They diverge by exactly the chain’s lookahead (R.48, item 337); with la = 0 everything below
             // is arithmetically identical to the pre-PDC version.
             let chunk_local = local + done as i64;
-            let chunk_in = chunk_local + self.la;
+            // THE INPUT WRAPS FIRST (pitch-loop-silence, D2): a chunk does not straddle a point
+            // where the chain input — or a node's content position — crosses the loop end; there
+            // the fold takes over. Without a loop span or a look-ahead nothing is split.
+            if self.folding() {
+                let (a, b) = self.loop_span.unwrap_or((0, 0));
+                let span = b - a;
+                let mut cut = n as i64;
+                for d in std::iter::once(self.la).chain(self.ahead.iter().copied()) {
+                    // the next output position at which `chunk_local + d` reaches a fold point
+                    let p = chunk_local + d;
+                    let next = if p < b { b } else { b + span * ((p - b) / span + 1) };
+                    let at = next - d - chunk_local;
+                    if at > 0 && at < cut {
+                        cut = at;
+                    }
+                }
+                n = cut as usize;
+            }
+            let chunk_in = self.fold(chunk_local + self.la);
+            if self.folding() {
+                // the source follows the folded input: re-seated where it jumps, and kept
+                // silent before the event's material (an event starting inside the region)
+                if self.in_next.is_some_and(|p| p != chunk_in) {
+                    self.reseat_source(chunk_in);
+                }
+                self.in_next = Some(chunk_in + n as i64);
+            }
             // automation: targets at the chunk midpoint; rubato/one-pole smooth
             if !self.auto.is_empty() {
                 // EVENT DOMAIN (R.37): the chunk’s target is by OUTPUT time,
@@ -858,17 +927,21 @@ impl ClipProcessor {
                 // position of the CONTENT that the node now sees: the curve
                 // stays glued to the material, not to the output
                 let ahead = &self.ahead;
+                let fold = |p: i64| match self.loop_span {
+                    Some((a, b)) if self.la > 0 && p >= b => a + (p - a).rem_euclid(b - a),
+                    _ => p,
+                };
                 for (i, (slot, node)) in self.nodes.iter_mut().enumerate() {
-                    let s = (chunk_local + ahead[i]) as f64 + n as f64 * 0.5;
+                    let s = fold(chunk_local + ahead[i]) as f64 + n as f64 * 0.5;
                     node.set_targets(&self.auto, *slot, s / self.clip_len as f64);
                 }
             }
             // layer-strength target at the chunk midpoint — by the same rule as the
             // other parameters (R.38 item 12: the fades are its curve)
             let mix_ahead = self.mix_ahead;
+            let mix_pos = self.fold(chunk_local + mix_ahead);
             let mix_k = self.mix.as_ref().map(|m| {
-                let tau =
-                    ((chunk_local + mix_ahead) as f64 + n as f64 * 0.5) / self.clip_len as f64;
+                let tau = (mix_pos as f64 + n as f64 * 0.5) / self.clip_len as f64;
                 self.auto.value(m.slot, "amount", m.base_amount, tau).clamp(0.0, 1.0) as f32
             });
             let sub = &mut out[done * CH..(done + n) * CH];
@@ -882,7 +955,13 @@ impl ClipProcessor {
             // gets deterministic silence FORWARD, and the rings of the lookahead nodes
             // push the body out exactly to the end of the event.
             let gate_end = self.clip_len + self.tail_ext;
-            if chunk_in >= gate_end {
+            // an input folded to before the event's material (the event starts inside the
+            // region): the chain gets silence there, as on the first lap before its start
+            let before_material = self.folding() && chunk_in + (n as i64) <= -self.head_ext;
+            if before_material {
+                sub.fill(0.0);
+                self.in_next = Some(i64::MIN);
+            } else if chunk_in >= gate_end {
                 // A WHOLE CHUNK IN THE TAIL (R.43, item 304): whatever the warp produces,
                 // the gate below zeroes it COMPLETELY — so there is nothing to compute.
                 // Skipping is byte-identical BY CONSTRUCTION: the result is the same
@@ -926,6 +1005,11 @@ impl ClipProcessor {
             // position, not flags).
             let mut dry: Option<Vec<f32>> = None;
             let ahead = &self.ahead;
+            let span = if self.la > 0 { self.loop_span } else { None };
+            let fold = move |p: i64| match span {
+                Some((a, b)) if p >= b => a + (p - a).rem_euclid(b - a),
+                _ => p,
+            };
             let dry_ring = &mut self.dry_ring;
             for (i, (slot, node)) in self.nodes.iter_mut().enumerate() {
                 if let Some(m) = &self.mix
@@ -951,7 +1035,7 @@ impl ClipProcessor {
                 } else {
                     // an event has no key: the sidechain lives only in the TRACK chain
                     // (the owner’s decision, R.65)
-                    node.process(sub, chunk_local + ahead[i], None);
+                    node.process(sub, fold(chunk_local + ahead[i]), None);
                 }
             }
             done += n;

@@ -213,3 +213,81 @@ fn t734_track_state_survives_insertion_above_and_dies_with_the_track() {
     r.sync_fx(&mut store);
     assert!(store.track_mut(id).is_none(), "a deleted track did not remove its state");
 }
+
+/// Test 911 (pitch-loop-silence): a TRACK chain with look-ahead at a loop wrap.
+///
+/// A pitch shift and a look-ahead limiter on a track of three events; the loop region covers
+/// the joint of two of them and plays three laps. The track's input window runs ahead of its
+/// output by the chain's look-ahead, so under a loop it must fold into the region like an
+/// event's input: no silent run after a wrap, and nothing from past the region end.
+#[test]
+fn t911_track_chain_with_lookahead_at_a_wrap() {
+    // three events of a 440 Hz tone; past the region end the third one is a 1 kHz tone
+    let p = {
+        let mut p = project(vec![
+            clip(1, 0, 0, 20 * D, 1),
+            clip(2, 0, 20 * D, 20 * D, 1),
+            clip(3, 0, 40 * D, 20 * D, 2),
+        ]);
+        p.track_at_mut(A, 0).unwrap().fx = vec![
+            FxInstance::PitchShift { semitones: 7.0, cents: 0.0 },
+            FxInstance::Limiter { threshold_db: -6.0, ceiling_db: -6.0, lookahead_ms: 5.0, release_ms: 80.0 },
+        ];
+        p.validate().unwrap();
+        p
+    };
+    // the region covers the joint at 20·D and ends where the 1 kHz event begins
+    let region = (15 * D + 77)..(40 * D);
+    let span = region.end - region.start;
+    let laps = 3;
+    let render = |third: AudioPattern| -> Vec<f32> {
+        let r = AudioRenderer::new(&p);
+        let mut f = direct(&[(1, AudioPattern::Sine { hz: 440.0 }), (2, third)]);
+        let mut store = FxStateStore::default();
+        r.sync_fx(&mut store);
+        let frames = laps * span;
+        let mut out = vec![0f32; frames as usize * CH];
+        let mut done = 0i64;
+        while done < frames {
+            let n = D.min(frames - done);
+            r.render_looped_with(
+                &mut f,
+                &mut store,
+                region.clone(),
+                region.start + done,
+                &mut out[done as usize * CH..(done + n) as usize * CH],
+            );
+            done += n;
+        }
+        out
+    };
+    let with_tone = render(AudioPattern::Sine { hz: 1000.0 });
+    let with_silence = render(AudioPattern::Silence);
+    let mut problems = Vec::new();
+    // nothing past the region end ever sounds: the third event's content changes nothing
+    if let Some(i) = (0..with_tone.len() / CH).find(|&i| (with_tone[i * CH] - with_silence[i * CH]).abs() > 1e-6) {
+        problems.push(format!(
+            "material from past the region end sounds at lap {} + {}",
+            i as i64 / span,
+            i as i64 % span
+        ));
+    }
+    // no silent run of 64 frames after the first output frame
+    let mut run = 0usize;
+    for i in 0..with_tone.len() / CH {
+        if with_tone[i * CH].abs() < 1e-4 && with_tone[i * CH + 1].abs() < 1e-4 {
+            run += 1;
+            if run == 64 && i >= 64 {
+                problems.push(format!(
+                    "a silent run at lap {} + {}",
+                    (i + 1 - run) as i64 / span,
+                    (i + 1 - run) as i64 % span
+                ));
+                break;
+            }
+        } else {
+            run = 0;
+        }
+    }
+    assert!(problems.is_empty(), "the track chain at a wrap: {}", problems.join("; "));
+}

@@ -221,9 +221,22 @@ Rules of a lookahead node:
   (the same for `ChainOpts`: the pitch engine is a project setting);
 - **the neutral must be byte-for-byte**: zero parameters — an early
   exit without touching the buffer, and `La = 0` (t337);
-- **the grids are absolute**: the grain/hop are computed from the clip position, not from
+- **the grids are absolute**: the grain/hop are computed from the STREAM position, not from
   the call counter, otherwise the slicing of the buffers changes the sound (t338; the
-  OLA accumulator MUST hold the processor chunk of 1024 PLUS the full synthesis window).
+  OLA accumulator MUST hold the processor chunk of 1024 PLUS the full synthesis window);
+- **the rings are stream-keyed and survive every seam** (pitch-loop-silence, D1): the stream
+  position is set from the clip position at a real seek and then only advances; a seam (a loop
+  wrap, a clip moved during playback) keeps the ring, the accumulator and the grid, and the curves
+  are read at the grain's CLIP position through the `(stream, clip − stream)` list. A node that
+  restarts on a seam synthesizes its whole look-ahead from zeros — the pitch node did, and a loop
+  had 96 ms of silence after every wrap and a short loop none at all (t906/t907);
+- **at an armed loop wrap the INPUT wraps first** (D2): `set_loop_span` gives the processor the
+  region in clip frames, `produce` folds the input and every node's content position into it
+  (splitting the chunk at the fold points) and re-seats the source there; `read` then takes the
+  output's jump to the region start as expected, not as a seam. Without it the last `la` frames
+  of a lap read material PAST the region end — the limiter played them after the wrap (t909). The
+  renderer sets the span for an event that covers the region end and folds a track stage's input
+  window the same way (t911). With `la = 0` or no span nothing is split or folded.
 
 ## Video effects of R.47 (items 332-335): classes and checklist
 

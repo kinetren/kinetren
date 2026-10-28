@@ -193,6 +193,10 @@ pub struct AudioRenderer {
     /// change by a single line: an attachment is simply one of the clips in
     /// `active_clips`, and GOLDEN_AUDIO does not move.
     nests: std::collections::HashMap<crate::video::NestKey, AudioRenderer>,
+    /// The armed loop region while `render_looped_with` runs, else `None`
+    /// (pitch-loop-silence, D2): an event covering the region end — and a track stage — wraps its
+    /// chain INPUT first, so a look-ahead reads the region head, not what lies past the end.
+    loop_region: std::cell::Cell<Option<(i64, i64)>>,
 }
 
 /// A fetcher behind which nested reels look like ordinary sources.
@@ -763,6 +767,7 @@ impl AudioRenderer {
             opts: kt_fx::ChainOpts { pitch_engine: project.settings.pitch_engine },
             stages,
             nests,
+            loop_region: std::cell::Cell::new(None),
         }
     }
 
@@ -1076,8 +1081,26 @@ impl AudioRenderer {
         for st in &self.stages {
             let win = (range.start + st.la)..(range.end + st.la);
             scratch.fill(0.0);
-            // track events — with the same code as all the others
-            self.sum_lane(st.lane, fetcher, store, &win, &mut scratch, &mut stats);
+            // track events — with the same code as all the others. Under an armed loop with a
+            // look-ahead the input window is FOLDED into the region (pitch-loop-silence, D2): the
+            // part past the region end is the region head, which is what will sound next lap.
+            match self.loop_region.get().filter(|(rs, re)| {
+                st.la > 0 && range.start >= *rs && range.end <= *re && win.end > *re
+            }) {
+                None => self.sum_lane(st.lane, fetcher, store, &win, &mut scratch, &mut stats),
+                Some((rs, re)) => {
+                    let fold = |p: i64| if p >= re { rs + (p - rs).rem_euclid(re - rs) } else { p };
+                    let mut pos = win.start;
+                    while pos < win.end {
+                        let fp = fold(pos);
+                        let seg = (win.end - pos).min(re - fp);
+                        let off = ((pos - win.start) as usize) * AUDIO_CHANNELS;
+                        let piece = &mut scratch[off..off + seg as usize * AUDIO_CHANNELS];
+                        self.sum_lane(st.lane, fetcher, store, &(fp..fp + seg), piece, &mut stats);
+                        pos += seg;
+                    }
+                }
+            }
             // KEY SIGNALS (R.65) — ON THE TARGET WINDOW: the detector and what it
             // compresses must be time-aligned, otherwise ducking
             // triggers earlier or later than the speech.
@@ -1408,6 +1431,10 @@ impl AudioRenderer {
         let mut warmup_misses = 0u64;
         let Some(proc) = store.get_mut(clip.id) else { return };
         proc.set_material_ext(clip.head_ext, clip.tail_ext);
+        // the loop span in clip-local frames, for an event that covers the region end
+        proc.set_loop_span(self.loop_region.get().and_then(|(rs, re)| {
+            (clip.start < re && clip.end >= re).then_some((rs - clip.start, re - clip.start))
+        }));
         let local = from - clip.start;
         let count = (to - from) as usize;
         let mut buf = vec![0f32; count * AUDIO_CHANNELS];
@@ -1475,6 +1502,7 @@ impl AudioRenderer {
         let total = (out.len() / AUDIO_CHANNELS) as i64;
         let mut stats = RenderStats::default();
         let mut done = 0i64;
+        self.loop_region.set(Some((region.start, region.end)));
         while done < total {
             let tl = region.start + (start_frame - region.start + done).rem_euclid(len);
             let chunk = (region.end - tl).min(total - done);
@@ -1485,6 +1513,7 @@ impl AudioRenderer {
             stats.warmup_misses += s.warmup_misses;
             done += chunk;
         }
+        self.loop_region.set(None);
         stats
     }
 

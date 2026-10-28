@@ -312,3 +312,91 @@ fn t336_prefetch_window_covers_the_lookahead() {
     assert_eq!(stats.underruns, 0, "warm-up by wanted must cover the read of the chain");
     assert_eq!(hot, cold, "the same piece from the warm cache must be byte-for-byte");
 }
+
+/// A source that is a 220 Hz tone up to frame `split` and a 1 kHz tone from it on.
+struct Spliced {
+    low: SyntheticSource,
+    high: SyntheticSource,
+    split: i64,
+}
+
+impl AudioFetcher for Spliced {
+    fn audio_burst(&mut self, _media: MediaId, idx: i64) -> Option<Arc<kt_media::AudioBurst>> {
+        use kt_media::MediaSource;
+        let a = self.low.read_audio_burst(idx).ok()?;
+        let b = self.high.read_audio_burst(idx).ok()?;
+        let mut out = kt_media::AudioBurst::silence(idx);
+        let n = kt_time::AUDIO_BURST_FRAMES as i64;
+        for i in 0..n {
+            let f = idx * n + i;
+            let src = if f < self.split { &a } else { &b };
+            for ch in 0..CH {
+                out.data[i as usize * CH + ch] = src.data[i as usize * CH + ch];
+            }
+        }
+        Some(Arc::new(out))
+    }
+}
+
+/// Test 909 (pitch-loop-silence): a look-ahead limiter at a loop wrap plays the region head,
+/// not what lies past the region end.
+///
+/// The limiter is a FIFO of its window: at a wrap it handed out the 5 ms it had read PAST the
+/// region end — material that never sounds in the loop. Here the source is a 220 Hz tone up to
+/// the region end and a 1 kHz tone after it; three laps in bursts. In a loop nothing past the
+/// region end may ever sound, so the render must be identical to the same loop over a source that
+/// is 220 Hz everywhere; any frame where they differ is foreign material.
+#[test]
+fn t909_limiter_at_a_wrap_plays_the_region_head() {
+    let start = 12_000i64;
+    let span = 30_000i64;
+    let region = start..start + span;
+    let fx = vec![FxInstance::Limiter {
+        threshold_db: -6.0,
+        ceiling_db: -6.0,
+        lookahead_ms: 5.0,
+        release_ms: 80.0,
+    }];
+    let run = |split: i64| -> Vec<f32> {
+        let p = project(fx.clone(), "synth:clicks");
+        let r = AudioRenderer::new(&p);
+        let mut f = Spliced {
+            low: SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Sine { hz: 220.0 }),
+            high: SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Sine { hz: 1000.0 }),
+            split,
+        };
+        let mut store = FxStateStore::new();
+        r.sync_fx(&mut store);
+        let frames = 3 * span;
+        let mut out = vec![0f32; frames as usize * CH];
+        let mut done = 0i64;
+        while done < frames {
+            let n = 1024.min(frames - done);
+            r.render_looped_with(
+                &mut f,
+                &mut store,
+                region.clone(),
+                start + done,
+                &mut out[done as usize * CH..(done + n) as usize * CH],
+            );
+            done += n;
+        }
+        out
+    };
+    let spliced = run(region.end);
+    let pure = run(i64::MAX);
+    let differ: Vec<usize> = (0..spliced.len() / CH)
+        .filter(|&i| (spliced[i * CH] - pure[i * CH]).abs() > 1e-6)
+        .collect();
+    if let (Some(first), Some(last)) = (differ.first(), differ.last()) {
+        panic!(
+            "the limiter played material from past the region end: {} frames differ, first at lap {} + {}, \
+             last at lap {} + {}",
+            differ.len(),
+            *first as i64 / span,
+            *first as i64 % span,
+            *last as i64 / span,
+            *last as i64 % span
+        );
+    }
+}

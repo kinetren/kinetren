@@ -34,7 +34,7 @@ an empty ring — "on a loop a piece of silence is always heard, and on a small 
 
 #### Scenario: A loop with pitch has no silent run
 - **WHEN** a clip of a 440 Hz sine carries a pitch shift of +7 semitones (WSOLA, then the vocoder), a loop region of 1 s that is aligned neither to a burst nor to the pitch hop plays four laps through the looped render in bursts of 1 024 frames
-- **THEN** after the first output frame there is no run of 64 or more frames below −80 dBFS anywhere, in particular none after a wrap; the RMS of every lap is within 1 dB of the first lap; the same render today shows a run of about 4 600 frames after each wrap (the red proof)
+- **THEN** after the first output frame there is no run of 64 or more frames below −80 dBFS anywhere, in particular none after a wrap (both engines); with WSOLA the RMS of every lap is within 1 dB of the first lap (the vocoder's level depends on the phase its synthesis starts from — 0.56 or 0.25 RMS by cold-start position, with no loop at all — its own defect, left for its own change); the same render before this change showed a run of 4 136 (WSOLA) and 2 839 (vocoder) frames after each wrap (the red proof)
 - **TEST** t906 (`src/libs/kt-engine/tests/loop_fx.rs`)
 
 #### Scenario: A short loop with pitch still sounds

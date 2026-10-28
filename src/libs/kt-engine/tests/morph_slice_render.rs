@@ -429,7 +429,8 @@ fn t916_warped_cut_is_neither_heard_nor_seen_outside_the_window() {
     // the layer of `layer()` covers [30 000, 60 000) of the first clip
     let (w0, w1) = (Tick(30_000), Tick(60_000));
     let mut problems: Vec<String> = Vec::new();
-    let cases: [(&str, Box<dyn Fn(&mut Project)>, MorphPatch); 3] = [
+    type Setup = Box<dyn Fn(&mut Project)>;
+    let cases: [(&str, Setup, MorphPatch); 3] = [
         (
             "own slowed 0.8×, source swap",
             Box::new(|p: &mut Project| {

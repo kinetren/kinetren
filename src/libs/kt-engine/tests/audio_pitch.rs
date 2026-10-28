@@ -253,3 +253,108 @@ fn t340_pitch_engine_is_a_project_setting() {
         "undo must restore the previous engine"
     );
 }
+
+/// Test 910 (pitch-loop-silence): a real seek and a moved clip with pitch.
+///
+/// A seek is still a cold start (the stream restarts at the clip position, so seek == cold
+/// render); a clip moved on the timeline during playback is a SEAM, and the pitch node continues
+/// its stream instead of restarting from an empty ring (it used to go silent for 96 ms there too);
+/// a neutral pitch stays byte-for-byte transparent in a loop and asks for no look-ahead.
+#[test]
+fn t910_seek_and_moved_clip_with_pitch() {
+    let seven = || vec![FxInstance::PitchShift { semitones: 7.0, cents: 0.0 }];
+    let burst = 1024i64;
+    let silent = |buf: &[f32]| -> Option<(usize, usize)> {
+        let mut run = 0usize;
+        for i in 0..buf.len() / CH {
+            if buf[i * CH].abs() < 1e-4 && buf[i * CH + 1].abs() < 1e-4 {
+                run += 1;
+                if run >= 64 {
+                    return Some((i + 1 - run, run));
+                }
+            } else {
+                run = 0;
+            }
+        }
+        None
+    };
+    for engine in [PitchEngine::Wsola, PitchEngine::Vocoder] {
+        // --- a seek == the cold render of that position --------------------------------
+        let p = project(seven(), vec![], engine);
+        let r = AudioRenderer::new(&p);
+        let at = 30_000i64;
+        let mut cold = vec![0f32; 8 * burst as usize * CH];
+        {
+            let mut f = source();
+            let mut store = FxStateStore::new();
+            r.sync_fx(&mut store);
+            r.render_frames_with(&mut f, &mut store, at, &mut cold);
+        }
+        let mut sought = vec![0f32; 8 * burst as usize * CH];
+        {
+            let mut f = source();
+            let mut store = FxStateStore::new();
+            r.sync_fx(&mut store);
+            let mut buf = vec![0f32; burst as usize * CH];
+            for k in 0..10 {
+                r.render_frames_with(&mut f, &mut store, k * burst, &mut buf);
+            }
+            store.reset_all(); // the player's seek
+            r.render_frames_with(&mut f, &mut store, at, &mut sought);
+        }
+        assert!(cold == sought, "{engine:?}: a seek is not the cold render of its position");
+
+        // --- the clip moved by 3 000 frames during playback: no silent run ----------------
+        let mut f = source();
+        let mut store = FxStateStore::new();
+        r.sync_fx(&mut store);
+        let mut out = Vec::new();
+        let mut buf = vec![0f32; burst as usize * CH];
+        let mut pos = 0i64;
+        for _ in 0..20 {
+            r.render_frames_with(&mut f, &mut store, pos, &mut buf);
+            out.extend_from_slice(&buf);
+            pos += burst;
+        }
+        let mut moved = p.clone();
+        moved.clips[0].start = Tick::from_audio_frames(3_000);
+        moved.validate().unwrap();
+        let r2 = AudioRenderer::new(&moved);
+        r2.sync_fx(&mut store);
+        let after_from = out.len() / CH;
+        for _ in 0..20 {
+            r2.render_frames_with(&mut f, &mut store, pos, &mut buf);
+            out.extend_from_slice(&buf);
+            pos += burst;
+        }
+        if let Some((s, n)) = silent(&out[after_from * CH..]) {
+            panic!("{engine:?}: the moved clip went silent for {n} frames at +{s} after the move");
+        }
+
+        // --- a neutral pitch in a loop is the dry loop, byte for byte --------------------
+        let neutral = project(vec![FxInstance::PitchShift { semitones: 0.0, cents: 0.0 }], vec![], engine);
+        let dry = project(vec![], vec![], engine);
+        let loop_of = |p: &Project| -> Vec<f32> {
+            let r = AudioRenderer::new(p);
+            let mut f = source();
+            let mut store = FxStateStore::new();
+            r.sync_fx(&mut store);
+            let region = 20_137i64..31_000;
+            let mut out = vec![0f32; 4 * 11_000 * CH];
+            let total = out.len() / CH;
+            let mut done = 0usize;
+            while done < total {
+                let n = (burst as usize).min(total - done);
+                r.render_looped_with(&mut f, &mut store, region.clone(), region.start + done as i64, &mut out[done * CH..(done + n) * CH]);
+                done += n;
+            }
+            out
+        };
+        assert!(loop_of(&neutral) == loop_of(&dry), "{engine:?}: a neutral pitch changed the looped sound");
+        assert_eq!(
+            kt_fx::chain_lookahead(&neutral.clips[0].fx, &kt_fx::AutoProfiles::default()),
+            0,
+            "a neutral pitch asks for a look-ahead"
+        );
+    }
+}

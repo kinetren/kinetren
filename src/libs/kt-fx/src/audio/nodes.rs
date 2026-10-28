@@ -1756,10 +1756,19 @@ impl PvState {
 /// it reads the input with a lookahead of `PITCH_LOOKAHEAD_FRAMES` and gives its output
 /// aligned — there is no delay for the engine (item 337).
 ///
-/// Both engines synthesize on the ABSOLUTE grid of the clip position: grain
+/// Both engines synthesize on the ABSOLUTE grid of the STREAM position: grain
 /// number g always covers the output frames [g·HOP, g·HOP + GRAIN), and the
-/// pitch coefficient is taken by the GRAIN position — therefore the result depends
+/// pitch coefficient is taken by the grain's CLIP position — therefore the result depends
 /// neither on the slicing of the buffers nor on the number of calls (class t325a).
+///
+/// The stream position (pitch-loop-silence, D1) is set from the clip position at a real
+/// seek and then only advances: a SEAM (a loop wrap, a clip moved during playback) keeps the
+/// ring, the accumulator and the grid, exactly as the reverb keeps its tail. Before this, a
+/// seam restarted the node with an empty ring, and the first `PITCH_LOOKAHEAD_FRAMES` (96 ms)
+/// after every loop wrap were synthesized from zeros — "on a loop a piece of silence is always
+/// heard, on a small loop total silence" (ktprompts 26.10.18 item 7). Until the first seam the
+/// stream position IS the clip position, so every render without a seam is the former one bit
+/// for bit (t338).
 pub struct PitchNode {
     engine: kt_model::PitchEngine,
     semitones: f32,
@@ -1773,11 +1782,16 @@ pub struct PitchNode {
     clip_len: i64,
     /// 0 — neutral (the node is transparent).
     la: i64,
-    /// Input ring by absolute clip positions.
+    /// Input ring by absolute STREAM positions.
     ring: Vec<f32>,
-    /// Position of the next recording frame; `i64::MIN` — the stream has not yet existed.
+    /// Stream position of the next recording frame; `i64::MIN` — the stream has not yet existed.
     written: i64,
-    /// The output OLA accumulator (also by absolute positions).
+    /// The clip position the next input frame is expected at: another one is a seam.
+    clip_next: i64,
+    /// `(stream position, clip − stream)` from that stream position on: the clip position of a
+    /// grain, by which its pitch curve is read. One entry per seam inside the look-ahead window.
+    deltas: Vec<(i64, i64)>,
+    /// The output OLA accumulator (also by absolute stream positions).
     acc: Vec<f32>,
     /// Number of the next grain to synthesize.
     next_grain: i64,
@@ -1798,6 +1812,8 @@ impl PitchNode {
             la: 0,
             ring: vec![0.0; PITCH_RING * CH],
             written: i64::MIN,
+            clip_next: i64::MIN,
+            deltas: Vec::new(),
             acc: vec![0.0; PITCH_ACC * CH],
             next_grain: 0,
             pv: None,
@@ -1836,8 +1852,10 @@ impl PitchNode {
         }
     }
 
-    /// Pitch coefficient at position `p` (clip-local frame).
-    fn ratio_at(&self, p: i64) -> f64 {
+    /// Pitch coefficient at STREAM position `s`: the curves are read at its clip position.
+    fn ratio_at(&self, s: i64) -> f64 {
+        let delta = self.deltas.iter().rev().find(|(from, _)| *from <= s).map_or(0, |(_, d)| *d);
+        let p = s + delta;
         let tau = p as f64 / self.clip_len as f64;
         let st = kt_model::param_at(self.semitones as f64, &self.st_points, tau, &self.st_shapes);
         let ct = kt_model::param_at(self.cents as f64, &self.ct_points, tau, &self.ct_shapes);
@@ -1866,12 +1884,15 @@ impl PitchNode {
         &mut self.acc[i * CH + ch]
     }
 
-    /// Stream break (seam, seek): the rings and the grid are re-initialized from the
-    /// new position — the node survives the seam like reverb, just without a tail.
+    /// Start of a stream (a cold start or a real seek, after `reset`): the rings and the grid
+    /// begin at the clip position, which the stream position equals from here on.
     fn restart(&mut self, in_pos: i64) {
         self.ring.fill(0.0);
         self.acc.fill(0.0);
         self.written = in_pos;
+        self.clip_next = in_pos;
+        self.deltas.clear();
+        self.deltas.push((i64::MIN, 0));
         self.next_grain = (in_pos - self.la).div_euclid(PITCH_HOP);
         if let Some(pv) = &mut self.pv {
             pv.reset();
@@ -1883,9 +1904,20 @@ impl PitchNode {
             return; // neutral: do not touch the buffer at all
         }
         let n = (buf.len() / CH) as i64;
-        if self.written != in_pos {
+        if self.written == i64::MIN {
             self.restart(in_pos);
+        } else if self.clip_next != in_pos {
+            // a SEAM: the stream continues, only the clip position under it jumps
+            self.deltas.push((self.written, in_pos - self.written));
+            // the curve lookup needs the entries back to the oldest grain still to be
+            // synthesized (the output side, `la` + a vocoder frame behind the input)
+            let keep_from = self.written - self.la - PV_N as i64;
+            while self.deltas.len() > 1 && self.deltas[1].0 <= keep_from {
+                self.deltas.remove(0);
+            }
         }
+        self.clip_next = in_pos + n;
+        let in_pos = self.written;
         // 1) input into the ring
         for (i, fr) in buf.chunks_exact(CH).enumerate() {
             let idx = (in_pos + i as i64).rem_euclid(PITCH_RING as i64) as usize;
@@ -2046,6 +2078,8 @@ impl PitchNode {
         self.ring.fill(0.0);
         self.acc.fill(0.0);
         self.written = i64::MIN;
+        self.clip_next = i64::MIN;
+        self.deltas.clear();
         self.next_grain = 0;
         if let Some(pv) = &mut self.pv {
             pv.reset();
