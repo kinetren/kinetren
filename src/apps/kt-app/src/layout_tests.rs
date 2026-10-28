@@ -17573,3 +17573,148 @@ fn t863_the_system_frame_hides_our_window_buttons_and_edges() {
     let c = press(Frame::System, edge);
     assert!(!resizes(&c), "system frame: our edge still resizes: {c:?}");
 }
+
+/// Test 905 (loop-play-latency-hold, kkt 2026-10-27 item 1): the preview follows the
+/// loop when Play starts OUTSIDE the region under a large output latency. The region
+/// is dragged on the ruler, the cursor is clicked before it, Space plays; the audio
+/// output is replaced by the test's own clock (the callback's consumed frames and a
+/// 200 ms latency, a wine/WASAPI-sized buffer), so the run does not depend on a sound
+/// card. Before the change the picture froze on the region's last frames until a click.
+#[test]
+fn t905_preview_follows_the_loop_when_play_starts_outside() {
+    use kt_model::*;
+    use kt_time::Tick;
+    use std::sync::atomic::Ordering;
+    let mut h = harness_lang_dt(crate::i18n::Lang::En, Some(1.0 / 60.0));
+    {
+        let app = h.state_mut();
+        // the test is the callback: a real device would overwrite the latency
+        app.audio = None;
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
+        p.media.push(MediaRef::new(MediaId(2), "synth:2"));
+        for (i, start) in [0i64, 270_000].into_iter().enumerate() {
+            p.clips.push(ClipEvent {
+                r#gen: None,
+                gen_auto: Vec::new(),
+                overrides: Vec::new(),
+                geometry: Default::default(),
+                geometry_pos: 0,
+                geometry_auto: Vec::new(),
+                id: ClipId(i as u64 + 1),
+                link_group: None,
+                kind: ClipKind::Video,
+                lane: 0,
+                start: Tick(start),
+                duration: Tick(270_000),
+                source_in: Tick(0),
+                media: MediaId(i as u64 + 1),
+                gain_db: 0.0,
+                reversed: false,
+                fx: vec![],
+                fx_bypass: vec![],
+                fx_auto: vec![],
+                opacity: 1.0,
+                fx_off: false,
+            });
+        }
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.push_project_to_player();
+        app.ticks_per_px = 1_000.0;
+        app.view_start = 0.0;
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().expect("geometry");
+    let ruler_y = g.rect.top() + crate::timeline::TIME_TOP + 11.0;
+    let (rs, re) = (Tick(180_000), Tick(360_000)); // 2 s … 4 s
+    // drag on the ruler from 2 s to 4 s: the region (in three steps, as a person drags)
+    let (x0, x1) = (g.tick_to_x(rs.0), g.tick_to_x(re.0));
+    h.drag_at(egui::pos2(x0, ruler_y));
+    h.step();
+    h.hover_at(egui::pos2(x0 + 8.0, ruler_y));
+    h.step();
+    h.hover_at(egui::pos2(x1, ruler_y));
+    h.step();
+    h.drop_at(egui::pos2(x1, ruler_y));
+    h.step();
+    let region = h.state().model.project().region.expect("the ruler drag made no region");
+    assert!(
+        (region.start.0 - rs.0).abs() <= 2_000 && (region.end.0 - re.0).abs() <= 2_000,
+        "scene: the region is {region:?}, not 2 s … 4 s"
+    );
+    if !h.state().model.project().loop_enabled {
+        h.state_mut().toggle_loop();
+        h.step();
+    }
+    // a click on the ruler at 1 s: the cursor before the region
+    let pos = egui::pos2(g.tick_to_x(90_000), ruler_y);
+    h.hover_at(pos);
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+    let cursor = h.state().player.transport.playhead();
+    assert!(cursor < region.start, "scene: the cursor {cursor:?} is not before the region");
+
+    let latency = 9_600i64;
+    let shared = h.state().player.shared.clone();
+    shared.output_latency_frames.store(latency, Ordering::Release);
+    shared.latency_smooth.store(latency, Ordering::Release);
+    h.key_press(egui::Key::Space);
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "Space did not play");
+
+    let rs_f = region.start.to_audio_frames();
+    let re_f = region.end.to_audio_frames();
+    let rollbacks0 = h.state().perf.video_rollbacks;
+    let mut keys: Vec<i64> = Vec::new();
+    let step = h.state().player.video_grid().frame_step();
+    // three laps of 2 s plus the latency, at 60 UI frames per second
+    let frames = (3 * (re_f - rs_f) + 2 * latency) / 800 + 30;
+    for _ in 0..frames {
+        let before = h.state().player.transport.playhead_frames();
+        shared.consumed_frames.fetch_add(800, Ordering::AcqRel);
+        // the render thread advances the head: wait for it, not for a fixed time
+        let t0 = std::time::Instant::now();
+        while h.state().player.transport.playhead_frames() == before
+            && t0.elapsed() < std::time::Duration::from_secs(2)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        h.step();
+        let head = h.state().player.transport.playhead_frames();
+        assert!(
+            head >= rs_f && head <= re_f,
+            "the transport left the region: head {head}, region {rs_f}…{re_f}"
+        );
+        if let Some(k) = h.state().preview_key {
+            keys.push(k.0);
+        }
+    }
+    let folds: Vec<usize> =
+        keys.windows(2).enumerate().filter(|(_, w)| w[1] < w[0]).map(|(i, _)| i + 1).collect();
+    assert!(
+        folds.len() >= 3,
+        "the preview folded {} times in three laps — the picture froze: {:?}",
+        folds.len(),
+        &keys[keys.len().saturating_sub(40)..]
+    );
+    for &i in &folds {
+        assert!(
+            keys[i] < region.start.0 + 6 * step,
+            "after a fold the preview key is {} — not at the region start {}",
+            keys[i],
+            region.start.0
+        );
+    }
+    let rollbacks = h.state().perf.video_rollbacks - rollbacks0;
+    assert!(rollbacks <= folds.len() as u64, "{rollbacks} refused rollbacks over {} laps", folds.len());
+}

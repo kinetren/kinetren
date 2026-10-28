@@ -20,7 +20,8 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 ## The clock of video display (items 55–56 — the main lesson of round 5)
 
 - **The playhead moves in QUANTA of the audio callback** (PipeWire often has 2048 samples = 42.7 ms). Any consumer of the position for DISPLAY must go through `Player::video_playhead()` (the interpolation `display_extrapolation` + the smoothed latency), rather than read `transport.playhead()` during playback. Without this the video physically cannot show more than 1000/quantum frames per second — exactly 24 were observed, regardless of quality/backend/economy mode (t56).
-- **The raw `output_latency` jitters between callbacks by ±a frame** — read `latency_smooth` (an EMA in the render thread), plus a monotonic clamp of the key during playback (a rollback ≤2 cells is ignored; loop-wrap/seek pass through).
+- **The raw `output_latency` jitters between callbacks by ±a frame** — read `latency_smooth` (an EMA in the render thread), plus a monotonic clamp of the key during playback: ANY rollback is refused (no size tolerance since R.14 item 14), only a seek (generation) or the DISPLAY LAP passes.
+- **The ratchet is released by the display lap, not by `Transport::wraps`** (loop-play-latency-hold, kkt 2026-10-27 item 1). Under an output latency the head wraps `latency` BEFORE the shown frame folds; released on the head's wrap, the ratchet then refused the real fold and the picture froze until a click (wine/WASAPI: a latency of a whole device buffer). `Player::video_playhead_lap` returns the frame and the lap of THE SAME reading (`DisplayLap`); `draw_preview` puts `(generation, lap)` into `preview_gen`. After a jump the shown frame holds the target for the latency (the pre-roll is silent). The perf panel's "Latency … ms" / "Callback …" rows are the diagnostic to ask for on such a complaint.
 
 ## GPU/platform (items 39, 53; video FX — items 181-187)
 

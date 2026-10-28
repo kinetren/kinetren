@@ -40,10 +40,23 @@ message, the first line = the stage and what was done).
 
 ## 3. The program
 
-- [ ] 3.1 Write t905 in `src/apps/kt-app/src/layout_tests.rs` with the spec's PATH (harness: inject the latency, region by a ruler drag, cursor before it, Space, three laps). Verify green, and RED with stage 2.3 reverted
-- [ ] 3.2 Extend the live scenario `src/scripts/live/loop.py` with "Play from outside the region": cursor before the region, Space, `kt_live.step` screenshots at the start, mid-lap and after two folds; the preview colour must change with the region's clips. Verify `./scripts/live-check.sh loop` is green (on a machine with an audio device; the scenario reports "no playback" otherwise)
-- [ ] 3.3 Correct `src/apps/kt-app/CLAUDE.md` line 23 ("a rollback ≤2 cells is ignored" — the ratchet has had no size tolerance since R.14 item 14) and name the display lap there. Verify `features-index.py --check` and `specs-user-path.py --check` are green
-- [ ] 3.4 Run the UI guards of the ui-reach and ui-timeline specs (`reach_tests.rs`, `layout_tests.rs`) and `cargo test --workspace --no-fail-fast`. Verify green; commit stage 3
+- [x] 3.1 Write t905 in `src/apps/kt-app/src/layout_tests.rs` with the spec's PATH (harness: inject the latency, region by a ruler drag, cursor before it, Space, three laps). Verify green, and RED with stage 2.3 reverted
+  - Red with 2.3 reverted: "the preview folded 2 times in three laps — the picture froze", the key
+    stuck at 357 000 (the region's end). The harness drops the audio output and is the callback
+    itself, so the latency is the test's, not a sound card's.
+- [x] 3.2 Extend the live scenario `src/scripts/live/loop.py` with "Play from outside the region": cursor before the region, Space, `kt_live.step` screenshots at the start, mid-lap and after two folds; the preview colour must change with the region's clips. Verify `./scripts/live-check.sh loop` is green (on a machine with an audio device; the scenario reports "no playback" otherwise)
+  - Green under Xvfb here (a virtual output plays): steps 05–09 in `target/live-out/loop/`. The
+    first run caught the scenario itself: a drag from 6 s grabbed the old region's end and left the
+    cursor INSIDE; the region now starts at 6.5 s and the step asserts that Play jumped. The
+    virtual output's latency is 0 ms, so this run proves the path, not the latency — t905 and the
+    owner's wine run (1.3/3.5) do.
+- [x] 3.3 Correct `src/apps/kt-app/CLAUDE.md` line 23 ("a rollback ≤2 cells is ignored" — the ratchet has had no size tolerance since R.14 item 14) and name the display lap there. Verify `features-index.py --check` and `specs-user-path.py --check` are green
+- [x] 3.4 Run the UI guards of the ui-reach and ui-timeline specs (`reach_tests.rs`, `layout_tests.rs`) and `cargo test --workspace --no-fail-fast`. Verify green; commit stage 3
+  - `cargo test --workspace --no-fail-fast`: 1146 passed, 4 red. t476, t411, t640 are load flakes of the
+    full parallel run (each green alone; t640 is the sqlite "database is locked" the `t640-sigbus` branch
+    works on). t804 was red from this round's stage-0 proposals: `render-window-v1-parity` and
+    `shared-window-shell` named live scenarios not yet on disk; they now name them by task, and t804 is
+    green.
 - [ ] 3.5 Ask the owner to repeat item 1 on wine with the new build (Play from outside, a second region); record his answer in `docs/user-feedback.md`
 
 ## 4. Finish

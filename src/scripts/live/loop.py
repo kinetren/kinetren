@@ -82,6 +82,48 @@ def main(out):
         app.expect(r > b + 40, f"a red clip plays to the left of the region: RGB {r},{g},{b}")
         app.key("space")
         app.shot("after-click-left")
+
+        # 4. Play from OUTSIDE the region (loop-play-latency-hold, kkt 2026-10-27 item 1).
+        # Under an output latency the head wraps before the picture folds; the ratchet was
+        # released on the head's wrap and the real fold was refused — the picture froze on
+        # the region's last frames until a click. A new region over the red→blue seam, the
+        # cursor before it, Space: the picture must follow the sound round the loop. The new
+        # region starts clear of the old one's end (6 s): a press within the edge's grab
+        # zone would drag that edge instead and leave the cursor inside.
+        app.key("Home")
+        x0, x1 = app.x_at(int(6.5 * SEC)), app.x_at(int(10.5 * SEC))
+        app.expect(
+            0 < x0 < x1,
+            f"the new region is on screen: x {x0}…{x1}, view_start={app.geom()['view_start']}",
+        )
+        app.drag(x0, app.ruler_y(), x1, app.ruler_y())
+        app.step("outside-region", "drag on the ruler 6.5 s → 10.5 s: the region over the seam")
+        app.click(app.x_at(5 * SEC), app.ruler_y())
+        app.wait_playhead(lambda t: abs(t - 5 * SEC) < SEC // 2, "cursor before the new region")
+        app.step("outside-cursor", "click at 5 s: the cursor stands left of the region")
+        app.key("space")
+        jumped = app.wait_playhead(lambda t: t >= 6.4 * SEC, "Play jumped to the region start")
+        app.expect(
+            jumped[0] >= 6.4 * SEC,
+            f"Play from outside seeks to the region start, not plays on from 5 s: {jumped[:4]}",
+        )
+        app.step("outside-start", "Space: the region start shows, the sound starts")
+        app.wait_playhead(lambda t: t > 8.6 * SEC, "the sound reached the blue half", timeout=10)
+        blue_now = app.pixel_settled(app.preview_center())
+        r, g, b = blue_now
+        app.expect(b > r + 40, f"mid-lap the blue clip shows: RGB {r},{g},{b}")
+        app.step("outside-mid-lap", "mid-lap: the picture moved with the sound into blue")
+        for lap in (1, 2):
+            app.wait_playhead(lambda t: t < 7.5 * SEC, f"fold {lap}: the cursor back at the start")
+            if lap == 1:
+                app.wait_playhead(lambda t: t > 8.6 * SEC, "the second lap reached blue", timeout=10)
+        r, g, b = app.pixel_settled(app.preview_center(), differs_from=blue_now)
+        app.expect(
+            r > b + 40,
+            f"after two folds the picture is red again — it followed the loop: RGB {r},{g},{b}",
+        )
+        app.step("outside-after-folds", "after two folds: red again, nothing froze, no click")
+        app.key("space")
         return app.done()
 
 
