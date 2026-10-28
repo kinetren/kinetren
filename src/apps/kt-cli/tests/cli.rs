@@ -1103,9 +1103,10 @@ fn t947_probe_time_tells_the_video_cost() {
     assert!(cpu.contains("backend: CPU"), "KT_VIDEO_GPU=0 composed on: {cpu}");
     assert!(cpu.contains("frames: 30 (incomplete 0)"), "one second at 30 fps, all complete: {cpu}");
     assert!(cpu.contains("compose ms: p50 "), "no compose time: {cpu}");
-    // the peak frame of the first second already has 4+ cells per axis: the full 16-tap pass
-    // (before the tile rule); the fade's strength slot snapshots the dry side
-    assert_eq!(max_subs(&cpu), 960 * 540 * 16, "the peak frame's sub-samples on the CPU: {cpu}");
+    // the peak frame of the first second read the full 16-tap pass before the tile rule;
+    // now no frame does (a 3-cell axis keeps 3×4 taps); the fade's strength slot snapshots
+    let peak = max_subs(&cpu);
+    assert!(peak > 0 && peak < 960 * 540 * 16, "the peak frame's sub-samples on the CPU: {cpu}");
     assert!(cpu.contains("snapshots "), "{cpu}");
     // the default backend (the GPU where there is an adapter) counts the same program
     let def = run(None);

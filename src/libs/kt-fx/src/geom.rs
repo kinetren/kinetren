@@ -622,6 +622,33 @@ pub struct GeomProgram {
     /// magnifier for K× barriers, item 314): for affine programs — exact
     /// (the same as the ss taps); for Proj — estimated by probes (center + corners).
     pub lens: (f64, f64),
+    /// ONE TILE, COPIED (morpher-event-grid-cost, D2): set when every cell of an event grid
+    /// provably holds the same bytes — see `grid_tile`. Both executors then compute the cell
+    /// at the grid's origin once and copy it; the pixels outside the grid take the full path.
+    pub tile: Option<TileSpec>,
+}
+
+/// The grid of a series that may be executed as one tile (morpher-event-grid-cost, D2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TileSpec {
+    /// The grid's top-left on the output and its cell size, in output pixels.
+    pub offx: u32,
+    pub offy: u32,
+    pub cw: u32,
+    pub ch: u32,
+    pub cols: u32,
+    pub rows: u32,
+}
+
+impl TileSpec {
+    /// The output pixel lies inside the grid (every such pixel is a copy of the tile).
+    #[inline]
+    pub fn covers(&self, ox: u32, oy: u32) -> bool {
+        ox >= self.offx
+            && oy >= self.offy
+            && ox - self.offx < self.cw * self.cols
+            && oy - self.offy < self.ch * self.rows
+    }
 }
 
 impl GeomProgram {
@@ -631,10 +658,39 @@ impl GeomProgram {
     pub fn sample_cost(&self) -> Option<u64> {
         match self.ss {
             SsSpec::Const { nx, ny } => {
-                Some(self.out_w as u64 * self.out_h as u64 * nx as u64 * ny as u64)
+                let px = self.out_w as u64 * self.out_h as u64;
+                // with the tile rule: one cell plus the pixels outside the grid
+                let px = match self.tile {
+                    Some(t) => {
+                        // a grid larger than the frame (t299) runs past it: clip
+                        let gw = (t.cw * t.cols).min(self.out_w.saturating_sub(t.offx)) as u64;
+                        let gh = (t.ch * t.rows).min(self.out_h.saturating_sub(t.offy)) as u64;
+                        px - gw * gh + t.cw as u64 * t.ch as u64
+                    }
+                    None => px,
+                };
+                Some(px * nx as u64 * ny as u64)
             }
             SsSpec::PerPixel => None,
         }
+    }
+
+    /// The program that computes ONLY the tile of a marked grid (morpher-event-grid-cost, D2):
+    /// the same prims with the grid's translation moved to the cell at its origin, output
+    /// cw×ch. Pixel (lx, ly) of it is pixel (offx + lx, offy + ly) of the full program,
+    /// bit for bit: `sx + (0.5 − offx)` at `sx = offx + lx − 0.5 + f` and `sx' + 0.5` at
+    /// `sx' = lx − 0.5 + f` are the same dyadic number in f64 and in f32. `None` — not marked.
+    pub fn tile_program(&self) -> Option<GeomProgram> {
+        let t = self.tile?;
+        let mut prims = self.prims.clone();
+        match prims.first_mut() {
+            Some(GeomPrim::Affine(a)) if a.ax == 1.0 && a.ay == 1.0 => {
+                a.bx += t.offx as f64;
+                a.by += t.offy as f64;
+            }
+            _ => return None,
+        }
+        Some(GeomProgram { prims, out_w: t.cw, out_h: t.ch, tile: None, ..self.clone() })
     }
 
     /// vec4 prim slots in the GPU uniform (limit MAX_PRIM_SLOTS; the scheduler checks
@@ -1250,6 +1306,7 @@ fn build_program(
             }
             (SsSpec::Const { nx: ss_taps(lx), ny: ss_taps(ly) }, (lx, ly))
         };
+    let tile = grid_tile(&fw, k_out, ss, &tap_ops);
     GeomProgram {
         prims,
         in_w,
@@ -1261,7 +1318,36 @@ fn build_program(
         ss,
         tap_ops,
         lens,
+        tile,
     }
+}
+
+/// THE TILE RULE (morpher-event-grid-cost, D2): when may every cell of the grid be one copy?
+///
+/// The backward pass of an output pixel `ox` inside the grid starts with the grid's own
+/// translation (`x = sx + 0.5 − offx`, ax = 1 exactly) and the Fold: `x − floor(x/cw)·cw`.
+/// With the grid the LAST step of the series (nothing acts on the output after it, no point-wise
+/// op at the output side) every sub-sample of a pixel `ox = offx + kx·cw + lx` lands at the same
+/// cell-local coordinate `lx + f`, f ∈ (0, 1), whatever `kx` — so every cell holds the bytes of
+/// cell 0, with no ring at the edges. That holds EXACTLY only while `ox − 0.5 + f` is a dyadic
+/// number (the sub-sample offsets `(i + 0.5)/n`): 1, 2 or 4 taps per axis; 3 taps make
+/// `x − kx·cw` round differently per cell, so the full pass stays there (t943 sweeps it). An
+/// output at K× (k_out > 1) scales before the Fold and is refused too. 1×1 and 2×2 gain
+/// nothing worth a second GPU pass and are not marked.
+fn grid_tile(fw: &[Step], k_out: u32, ss: SsSpec, taps: &[TapOp]) -> Option<TileSpec> {
+    let Some(Step::Grid { offx, offy, gw, gh, cw, ch, .. }) = fw.last() else { return None };
+    let SsSpec::Const { nx, ny } = ss else { return None };
+    let dyadic = |n: u32| matches!(n, 1 | 2 | 4);
+    let (cols, rows) = (gw / cw, gh / ch);
+    if k_out != 1 || !dyadic(nx) || !dyadic(ny) || cols * rows <= 4 {
+        return None;
+    }
+    // a point-wise op on the OUTPUT side of the Fold (after the grid in the chain) sees the
+    // absolute coordinate: it is per cell
+    if taps.iter().any(|t| t.after_prim <= 1) {
+        return None;
+    }
+    Some(TileSpec { offx: *offx, offy: *offy, cw: *cw, ch: *ch, cols, rows })
 }
 
 /// Magnifier estimate of a Proj program for the K× scheduler (item 314): lengths of the images
@@ -1933,37 +2019,62 @@ fn probe_taps(p: &GeomProgram, ox: f64, oy: f64) -> (u32, u32) {
 pub fn exec_geom_cpu(p: &GeomProgram, src: &Frame, scratch: &mut FxScratch) -> Frame {
     let (ow, oh) = (p.out_w, p.out_h);
     let mut out = scratch.take((ow * oh * 4) as usize);
+    // ONE TILE, COPIED (D2): the cell at the grid's origin is computed once — by the same
+    // per-pixel code at the same output coordinates — and every other cell copies its bytes
+    let tile = p.tile.map(|t| {
+        let mut buf = vec![0u8; (t.cw * t.ch * 4) as usize];
+        for ly in 0..t.ch {
+            for lx in 0..t.cw {
+                let px = geom_pixel(p, src, t.offx + lx, t.offy + ly);
+                buf[((ly * t.cw + lx) * 4) as usize..][..4].copy_from_slice(&px);
+            }
+        }
+        (t, buf)
+    });
     for oy in 0..oh {
         for ox in 0..ow {
-            let (nx, ny) = match p.ss {
-                SsSpec::Const { nx, ny } => (nx, ny),
-                SsSpec::PerPixel => probe_taps(p, ox as f64, oy as f64),
-            };
-            let px = if nx == 1 && ny == 1 {
-                sample_at(p, src, ox as f64, oy as f64)
-            } else {
-                let mut acc = [0f64; 4];
-                for j in 0..ny {
-                    let sy = oy as f64 - 0.5 + (j as f64 + 0.5) / ny as f64;
-                    for i in 0..nx {
-                        let sx = ox as f64 - 0.5 + (i as f64 + 0.5) / nx as f64;
-                        let s = sample_at(p, src, sx, sy);
-                        for (c, a) in acc.iter_mut().enumerate() {
-                            *a += s[c];
-                        }
-                    }
+            let px = match &tile {
+                Some((t, buf)) if t.covers(ox, oy) => {
+                    let (lx, ly) = ((ox - t.offx) % t.cw, (oy - t.offy) % t.ch);
+                    let i = ((ly * t.cw + lx) * 4) as usize;
+                    [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]
                 }
-                let n = (nx * ny) as f64;
-                [acc[0] / n, acc[1] / n, acc[2] / n, acc[3] / n]
+                _ => geom_pixel(p, src, ox, oy),
             };
             let oi = ((oy * ow + ox) * 4) as usize;
-            for c in 0..4 {
-                out[oi + c] = px[c].round().clamp(0.0, 255.0) as u8;
-            }
+            out[oi..oi + 4].copy_from_slice(&px);
         }
     }
     let has_alpha = if p.has_alpha_known { p.has_alpha } else { src.has_alpha };
     Frame { w: ow, h: oh, rgba: out, has_alpha }
+}
+
+/// One output pixel of the fused program: the taps of `p.ss`, the box average of the subtaps
+/// without intermediate roundings, rounded once (item 309). One tap — the former bytes.
+#[inline]
+fn geom_pixel(p: &GeomProgram, src: &Frame, ox: u32, oy: u32) -> [u8; 4] {
+    let (nx, ny) = match p.ss {
+        SsSpec::Const { nx, ny } => (nx, ny),
+        SsSpec::PerPixel => probe_taps(p, ox as f64, oy as f64),
+    };
+    let px = if nx == 1 && ny == 1 {
+        sample_at(p, src, ox as f64, oy as f64)
+    } else {
+        let mut acc = [0f64; 4];
+        for j in 0..ny {
+            let sy = oy as f64 - 0.5 + (j as f64 + 0.5) / ny as f64;
+            for i in 0..nx {
+                let sx = ox as f64 - 0.5 + (i as f64 + 0.5) / nx as f64;
+                let s = sample_at(p, src, sx, sy);
+                for (c, a) in acc.iter_mut().enumerate() {
+                    *a += s[c];
+                }
+            }
+        }
+        let n = (nx * ny) as f64;
+        [acc[0] / n, acc[1] / n, acc[2] / n, acc[3] / n]
+    };
+    px.map(|v| v.round().clamp(0.0, 255.0) as u8)
 }
 
 // Execution of the geo run lives in the plan executors (video.rs / kt-gpu):

@@ -214,9 +214,11 @@ enum Pipe {
     Unpremul,
     /// Premultiplication before the mip (R.53, item 418).
     Premul,
+    /// One tile, copied (morpher-event-grid-cost, D2): the replicate half.
+    GridTile,
 }
 
-const PIPE_COUNT: usize = 21;
+const PIPE_COUNT: usize = 22;
 
 /// One chain step precomputed on the CPU (common maths: kt-fx:
 /// pan_frame/cam_at/noise_seed). The number of passes and the sizes are known in advance.
@@ -332,6 +334,13 @@ enum FxOp {
     GeomFused {
         prog: kt_fx::geom::GeomProgram,
     },
+    /// A fused series whose grid is ONE TILE, COPIED (morpher-event-grid-cost, D2): the tile
+    /// program into a cw×ch target, then the replicate pass `grid_tile.wgsl`. `prog` is the
+    /// full program (its sizes and its cost), `tile` the one that computes the cell.
+    GeomTile {
+        prog: kt_fx::geom::GeomProgram,
+        tile: kt_fx::geom::GeomProgram,
+    },
     /// Snapshot of the state BEFORE a layer’s contribution (R.38 item 12): the dry side
     /// of the future mix. A marker only; it spawns no passes.
     Snapshot,
@@ -352,6 +361,7 @@ impl FxOp {
             // by resampling the dry side
             FxOp::Snapshot => 0,
             FxOp::Mix { .. } => 2,
+            FxOp::GeomTile { .. } => 2,
             _ => 1,
         }
     }
@@ -362,6 +372,8 @@ impl FxOp {
     fn slot_units(&self) -> u32 {
         match self {
             FxOp::GeomFused { .. } => GEOM_SLOT_UNITS,
+            // the tile pass (a geometry uniform) and the replicate pass (one slot)
+            FxOp::GeomTile { .. } => GEOM_SLOT_UNITS + 1,
             _ => self.passes(),
         }
     }
@@ -503,7 +515,10 @@ fn chain_ops(
                         has_alpha_known = true;
                         has_alpha = prog.has_alpha;
                     }
-                    ops.push(FxOp::GeomFused { prog });
+                    match prog.tile_program() {
+                        Some(tile) => ops.push(FxOp::GeomTile { prog, tile }),
+                        None => ops.push(FxOp::GeomFused { prog }),
+                    }
                 }
             },
             kt_fx::plan::PlanOp::Barrier { idx, res_scale } => match &fx[idx] {
@@ -761,6 +776,10 @@ impl ChainSpec {
         for op in &self.ops {
             match op {
                 FxOp::GeomFused { prog } => c.add(kt_fx::video::FrameCost::geom(prog)),
+                FxOp::GeomTile { prog, .. } => {
+                    c.add(kt_fx::video::FrameCost::geom(prog));
+                    c.passes += 1;
+                }
                 FxOp::Snapshot => c.snapshots += 1,
                 FxOp::Mix { .. } => {
                     c.mixes += 1;
@@ -847,6 +866,7 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("halftone", include_str!("shaders/halftone.wgsl")),
     ("unpremul", include_str!("shaders/unpremul.wgsl")),
     ("premul", include_str!("shaders/premul.wgsl")),
+    ("grid_tile", include_str!("shaders/grid_tile.wgsl")),
 ];
 
 const COMMON: &str = include_str!("shaders/common.wgsl");
@@ -1879,6 +1899,27 @@ impl Inner {
                     let dst = self.pool.acquire(&self.device, prog.out_w, prog.out_h);
                     let u = encode_geom(prog);
                     self.pass_geom(enc, &dst.view, &view, &u);
+                    if let Some(t) = owned.take() {
+                        self.pool.release(t);
+                    }
+                    view = dst.view.clone();
+                    w = prog.out_w;
+                    h = prog.out_h;
+                    owned = Some(dst);
+                }
+                FxOp::GeomTile { prog, tile } => {
+                    debug_assert_eq!((prog.in_w, prog.in_h), (w, h), "geom run input dims");
+                    let spec = prog.tile.expect("a tile op carries a marked program");
+                    let cell = self.pool.acquire(&self.device, tile.out_w, tile.out_h);
+                    let u = encode_geom(tile);
+                    self.pass_geom(enc, &cell.view, &view, &u);
+                    let dst = self.pool.acquire(&self.device, prog.out_w, prog.out_h);
+                    let u = UniformData {
+                        u: [spec.offx, spec.offy, spec.cw, spec.ch, spec.cols, spec.rows, 0, 0],
+                        ..Default::default()
+                    };
+                    self.pass(enc, Pipe::GridTile, &dst.view, &cell.view, &dummy, &dummy, u);
+                    self.pool.release(cell);
                     if let Some(t) = owned.take() {
                         self.pool.release(t);
                     }

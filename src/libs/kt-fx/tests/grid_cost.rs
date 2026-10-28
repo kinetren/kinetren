@@ -26,14 +26,16 @@ fn program_cost(f: &FxInstance) -> u64 {
 /// Test 942 (morpher-event-grid-cost, D1): the sub-samples of the grid's pass, as the program
 /// states them and as the CPU executor counts them.
 ///
-/// Before the tile rule every output pixel of a grid with 4 or more cells per axis reads
+/// Before the tile rule every output pixel of a grid with 4 or more cells per axis read
 /// 4×4 = 16 sub-samples, so 12×10 and 12×30 cost the same 8.3 M at 960×540 — the 16× of the
-/// short answer, and at 12×30 359 of every 360 tiles are repeats.
+/// short answer, and at 12×30 359 of every 360 tiles were repeats (1×1, 2×2, 12×10, 12×30:
+/// 518 400 / 2 073 600 / 8 294 400 / 8 294 400). With one tile, copied, a grid costs one cell:
+/// 12×10 is 80×54×16, 12×30 is 80×18×16; 1×1 and 2×2 are not marked and cost as before.
 #[test]
 fn t942_grid_cost_is_counted() {
     let px = W as u64 * H as u64;
     for (cols, rows, want) in
-        [(1, 1, px), (2, 2, px * 4), (12, 10, px * 16), (12, 30, px * 16)]
+        [(1, 1, px), (2, 2, px * 4), (12, 10, 80 * 54 * 16), (12, 30, 80 * 18 * 16)]
     {
         let f = grid(cols, rows);
         let got = program_cost(&f);
@@ -58,4 +60,118 @@ fn t942_grid_cost_is_counted() {
             "{cols}×{rows}: the CPU executor's count"
         );
     }
+}
+
+/// A source with detail at every scale: gradients, a 3-px checker, an asymmetric corner.
+fn source(w: u32, h: u32) -> kt_fx::video::Frame {
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            rgba[i] = (x * 255 / w.max(1)) as u8;
+            rgba[i + 1] = (y * 255 / h.max(1)) as u8;
+            rgba[i + 2] = if (x / 3 + y / 3) % 2 == 0 { 230 } else { 20 };
+            rgba[i + 3] = if x < w / 5 && y < h / 4 { 140 } else { 255 };
+        }
+    }
+    kt_fx::video::Frame { w, h, rgba, has_alpha: true }
+}
+
+/// The fused program of a chain as the scheduler builds it (geometry and absorbed taps).
+fn fused(fx: &[FxInstance], in_w: u32, in_h: u32, out_w: u32, out_h: u32) -> kt_fx::geom::GeomProgram {
+    let plan = kt_fx::plan::plan_chain(fx, in_w, in_h, 1, out_w, out_h, 0.5, None, 77, &[]);
+    let runs: Vec<_> = plan
+        .ops
+        .into_iter()
+        .filter_map(|op| match op {
+            kt_fx::plan::PlanOp::Run { exec: GeomExec::Fused(p), .. } => Some(p),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(runs.len(), 1, "the chain is one fused run");
+    runs.into_iter().next().unwrap()
+}
+
+/// Test 943 (morpher-event-grid-cost, D2): one tile, copied, is EXACT — and refused where it
+/// would not be.
+///
+/// Every marked program is executed twice on the CPU reference — as marked, and with the mark
+/// removed (the full pass) — and the bytes must be the same, for grids that give 1, 2 and 4
+/// taps per axis, centred or not, on even and odd frames, with a downscaled input, with
+/// geometry and a point-wise op BEFORE the grid. Refused: 3 taps (non-dyadic sub-sample offsets
+/// round per cell), a geometry step or a point-wise op AFTER the grid, 2×2 and below.
+#[test]
+fn t943_one_tile_is_exact_and_refused_where_it_would_not_be() {
+    let grid = |cols, rows, center| FxInstance::EventGrid { cols, rows, center };
+    let mirror = FxInstance::Mirror { horizontal: true, vertical: false };
+    let noise = FxInstance::noise(0.3);
+    let mut checked = 0;
+    for (ow, oh) in [(320u32, 180u32), (321, 181), (333, 177)] {
+        for (iw, ih) in [(ow, oh), (ow * 2, oh * 2)] {
+            for center in [false, true] {
+                for (cols, rows) in [(12, 30), (12, 10), (5, 7), (16, 2), (40, 40), (12, 1), (400, 200)] {
+                    for chain in [
+                        vec![grid(cols, rows, center)],
+                        vec![mirror.clone(), grid(cols, rows, center)],
+                        vec![noise.clone(), grid(cols, rows, center)],
+                        vec![grid(3, 2, false), grid(cols, rows, center)],
+                    ] {
+                        let p = fused(&chain, iw, ih, ow, oh);
+                        let Some(t) = p.tile else { continue };
+                        let src = source(iw, ih);
+                        let mut s = FxScratch::default();
+                        let tiled = kt_fx::geom::exec_geom_cpu(&p, &src, &mut s);
+                        let full = kt_fx::geom::GeomProgram { tile: None, ..p.clone() };
+                        let want = kt_fx::geom::exec_geom_cpu(&full, &src, &mut s);
+                        assert!(
+                            tiled.rgba == want.rgba,
+                            "{chain:?} {iw}x{ih}→{ow}x{oh}: the tile {t:?} differs from the full pass"
+                        );
+                        // and it costs what it says: one cell plus the field outside the grid
+                        assert!(p.sample_cost() < full.sample_cost(), "{chain:?}: no saving");
+                        checked += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert!(checked >= 100, "the sweep hardly ran: {checked} marked programs");
+    // the refusals
+    let refused = |fx: &[FxInstance], why: &str| {
+        assert!(fused(fx, 320, 180, 320, 180).tile.is_none(), "{why}: {fx:?} was marked");
+    };
+    // exactly 3 taps: a 300×170 input into 320×180 (300/106 ≈ 2.83, 170/60 ≈ 2.83)
+    let three = fused(&[grid(3, 3 * 4, false)], 300, 170, 320, 180);
+    assert!(
+        matches!(three.ss, kt_fx::geom::SsSpec::Const { nx: 3, .. }),
+        "the 3-tap scene is not 3 taps: {:?}",
+        three.ss
+    );
+    assert!(three.tile.is_none(), "3 taps across were marked");
+    let three = fused(&[grid(12, 3, false)], 300, 170, 320, 180);
+    assert!(matches!(three.ss, kt_fx::geom::SsSpec::Const { ny: 3, .. }), "{:?}", three.ss);
+    assert!(three.tile.is_none(), "3 taps down were marked");
+    refused(&[grid(12, 30, false), mirror.clone()], "a geometry step after the grid");
+    // a point-wise op after the grid joins the run only with a geometry step after it (alone it
+    // is its own barrier pass over the whole, already copied frame — exact by construction)
+    refused(&[grid(12, 30, false), noise.clone(), mirror.clone()], "a point-wise op after the grid");
+    let trailing = kt_fx::plan::plan_chain(
+        &[grid(12, 30, false), noise.clone()],
+        320,
+        180,
+        1,
+        320,
+        180,
+        0.5,
+        None,
+        77,
+        &[],
+    );
+    assert!(
+        matches!(trailing.ops.last(), Some(kt_fx::plan::PlanOp::Barrier { .. })),
+        "a trailing noise is its own pass: {:?}",
+        trailing.ops.len()
+    );
+    refused(&[grid(2, 2, false)], "2×2 gains nothing");
+    refused(&[grid(1, 1, false)], "1×1 is not a grid");
 }

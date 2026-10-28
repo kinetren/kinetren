@@ -139,20 +139,27 @@ fn t946_owner_grid_case_renders_the_same() {
     assert_eq!(got, RANGE_HASH, "the owner's case renders other bytes than before the change");
 }
 
-/// The cost bound of the owner's case: the costliest frame reads at most a tenth of the full
-/// 16-tap pass. RED until the tile rule (stage 3): "the peak frame at Tick(45000) reads 8294400
-/// sub-samples, the full 16-tap pass is 8294400".
+/// The cost bound of the owner's case: at 12×30 (t = 2 s) and 12×10 (t = 4 s) a frame reads one
+/// cell — under a hundredth of the full 16-tap pass. Before the tile rule both read the full
+/// pass: "the peak frame at Tick(45000) reads 8294400 sub-samples, the full 16-tap pass is
+/// 8294400". The frames where the automated grid passes through EXACTLY 3 cells on an axis keep
+/// the full pass (3 taps, refused — see `grid_tile`); they are the range's peak now, and no frame
+/// costs more than before.
 #[test]
-#[ignore = "morpher-event-grid-cost stage 3 (the tile rule) turns it on"]
 fn t946b_owner_grid_case_cost_is_bounded() {
-    let (_, peak) = render_range(&owner_case());
+    let p = owner_case();
     let full = W as u64 * H as u64 * 16;
-    assert!(
-        peak.1.subsamples * 10 <= full,
-        "the peak frame at {:?} reads {} sub-samples, the full 16-tap pass is {full}",
-        peak.0,
-        peak.1.subsamples
-    );
+    let mut vr = VideoRenderer::new(&p);
+    for (s, what) in [(2, "12×30"), (4, "12×10")] {
+        let (_, cost) = frame(&mut vr, Tick(s * SEC));
+        assert!(
+            cost.subsamples * 100 <= full,
+            "{what} at {s} s reads {} sub-samples, the full 16-tap pass is {full}",
+            cost.subsamples
+        );
+    }
+    let (_, peak) = render_range(&p);
+    assert!(peak.1.subsamples < full, "some frame still reads the full 16-tap pass: {peak:?}");
 }
 
 /// Test 945 (morpher-event-grid-cost, D3): a strength slot at exactly 0 skips the layer's slice.

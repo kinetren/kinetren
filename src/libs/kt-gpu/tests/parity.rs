@@ -1145,3 +1145,57 @@ fn t737_blend_modes_gpu_matches_cpu() {
         }
     }
 }
+
+/// Test 944 (morpher-event-grid-cost, D2): one tile, copied, on the GPU.
+///
+/// The tile pass (`GeomProgram::tile_program` through the fused shader) plus the replicate
+/// pass (`grid_tile.wgsl`) must give the bytes of the full fused pass ON THE SAME DEVICE. The full
+/// pass is reached without any switch: two horizontal mirrors after the grid compose to an exact
+/// identity affine — the same prims — but the grid is then no longer the last step, so the
+/// program is not marked. Against the CPU the class of the grid (`BILINEAR`, t181) holds, and
+/// the op list is the two passes of the tile path.
+#[test]
+fn t944_one_tile_on_the_gpu_is_the_full_pass() {
+    let Some(engine) = test_engine() else { return };
+    let (w, h) = (320u32, 180u32);
+    let grid = |cols, rows, center| FxInstance::EventGrid { cols, rows, center };
+    let flip = FxInstance::Mirror { horizontal: true, vertical: false };
+    let cases: Vec<(&str, Vec<FxInstance>, bool)> = vec![
+        ("12x30", vec![grid(12, 30, false)], false),
+        ("12x10-centred", vec![grid(12, 10, true)], false),
+        ("5x7-alpha", vec![grid(5, 7, true)], true),
+        ("mirror-16x2", vec![flip.clone(), grid(16, 2, false)], false),
+        ("grid-in-grid", vec![grid(3, 2, false), grid(12, 30, true)], true),
+    ];
+    for (i, (name, fx, alpha)) in cases.into_iter().enumerate() {
+        let marked = kt_fx::plan::plan_chain(&fx, w, h, 1, w, h, 0.5, None, 90_000, &[])
+            .ops
+            .into_iter()
+            .any(|op| {
+                matches!(op, kt_fx::plan::PlanOp::Run { exec: kt_fx::geom::GeomExec::Fused(p), .. }
+                    if p.tile.is_some())
+            });
+        assert!(marked, "{name}: the scene is not a marked grid");
+        let src_frame = Some(frame(w, h, alpha, 0));
+        let mut full_fx = fx.clone();
+        full_fx.extend([flip.clone(), flip.clone()]);
+        let tiled = Src::new(4400 + i as u64, src_frame.clone(), fx);
+        let full = Src::new(4500 + i as u64, src_frame, full_fx);
+        fn at(s: &Src, w: u32, h: u32) -> FramePlan<'_> {
+            FramePlan {
+                t: Tick(90_000),
+                out_w: w,
+                out_h: h,
+                layers: vec![one(s, 4096, false)],
+                memoize_postfx: true,
+            }
+        }
+        let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &at(&tiled, w, h));
+        assert!(cc && cg, "{name}: incomplete");
+        assert_eq!(engine.last_cost().passes, 2, "{name}: the tile path is two passes");
+        let (_, gpu_full, _, _) = run_both(engine.as_ref(), &at(&full, w, h));
+        assert_eq!(engine.last_cost().passes, 1, "{name}: the double mirror is one full pass");
+        assert!(gpu == gpu_full, "{name}: the GPU tile differs from the GPU full pass");
+        assert_frames_close(&cpu, &gpu, w, h, FrameTol::BILINEAR, name);
+    }
+}

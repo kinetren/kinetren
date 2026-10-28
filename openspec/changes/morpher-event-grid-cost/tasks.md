@@ -86,10 +86,46 @@ release build.
 
 ## 3. One tile, copied
 
-- [ ] 3.1 The builder's `TileSpec` mark and the CPU tile path in `src/libs/kt-fx/src/geom.rs` (design D2). Write t943 (the sweep, including 3 taps per axis and the "step after the grid" refusals). Verify it is green. If any combination differs, unmark it, record the combination here, and re-run until green
-- [ ] 3.2 The GPU tile pass and replicate pass in `src/libs/kt-gpu/src/shaders/geom_fused.wgsl` + `src/libs/kt-gpu/src/engine.rs`, edited in the same commit as 3.1's `geom.rs`. Write t944 in `src/libs/kt-gpu/tests/parity.rs`. Verify t944 is green, and t296, t298, t331, t333, t181 and the parity suite are green
-- [ ] 3.3 Verify the "after" halves of t942 and t946 are green, and the goldens (t26 group, t715, `GOLDEN_VIDEO`, t11, t67, t184) are green with no regeneration
-- [ ] 3.4 Commit stage 3 (`cargo test --workspace --no-fail-fast`, `cargo clippy --all-targets` with no new warnings)
+- [x] 3.1 The builder's `TileSpec` mark and the CPU tile path in `src/libs/kt-fx/src/geom.rs` (design D2). Write t943 (the sweep, including 3 taps per axis and the "step after the grid" refusals). Verify it is green. If any combination differs, unmark it, record the combination here, and re-run until green
+  - `GeomProgram::tile: Option<TileSpec>` set by `grid_tile`: the grid is the LAST step of the series,
+    k_out = 1, constant taps of 1, 2 or 4 per axis, more than 4 cells, no point-wise op on the output
+    side. `exec_geom_cpu` computes the cell at the grid's origin with the same per-pixel code
+    (`geom_pixel`) and copies it; pixels outside the grid take the full path. NO RING is needed: a
+    pixel inside the grid has every sub-sample inside its own cell (x ∈ (ox−offx, ox−offx+1)).
+    `sample_cost` = one cell + the field outside the grid (clipped to the frame: a grid larger than
+    the frame, t299, underflowed the first version).
+  - t943 (`grid_cost.rs`): 504 combinations (3 frame sizes incl. odd, 1× and 2× input, centred or
+    not, 7 grids incl. one larger than the frame, alone / after a mirror / after a noise / inside
+    a grid) are executed marked and unmarked — bytes equal in every one; refusals: exactly 3 taps
+    (a 300×170 input into 320×180, asserted to BE 3 taps), a geometry step after the grid (with a
+    point-wise op before it), 2×2, 1×1; a trailing noise is its own barrier pass. RED with an
+    off-by-one in the copy: "the tile TileSpec { … cw: 26, ch: 6, cols: 12, rows: 30 } differs
+    from the full pass". No combination had to be unmarked.
+- [x] 3.2 The GPU tile pass and replicate pass in `src/libs/kt-gpu/src/shaders/geom_fused.wgsl` + `src/libs/kt-gpu/src/engine.rs`, edited in the same commit as 3.1's `geom.rs`. Write t944 in `src/libs/kt-gpu/tests/parity.rs`. Verify t944 is green, and t296, t298, t331, t333, t181 and the parity suite are green
+  - `GeomProgram::tile_program()` (kt-fx): the same prims with the grid's translation moved to the
+    cell at its origin, output cw×ch — bit for bit the full program's pixels there, in f64 and f32
+    (dyadic sub-sample offsets). kt-gpu: `FxOp::GeomTile { prog, tile }` = the fused shader into a
+    pooled cw×ch target + the replicate pass `shaders/grid_tile.wgsl` (integer `textureLoad`,
+    opaque black outside the grid — the Fold's `Mapped::Black`); `passes() = 2`,
+    `slot_units() = GEOM_SLOT_UNITS + 1`, `PIPE_COUNT` 22. `geom_fused.wgsl` itself is unchanged.
+  - t944 (`parity.rs`, on the adapter): the GPU tile equals the GPU FULL pass byte for byte on the
+    same device — reached with no switch: two horizontal mirrors after the grid compose to an exact
+    identity (the same prims) but unmark the program; CPU vs GPU within BILINEAR (t181's class for
+    the grid); the op list is 2 passes vs 1. RED with the replicate shifted one texel: "12x30: the
+    GPU tile differs from the GPU full pass". The kt-gpu suite (t181, t182, t183, t184, t296/t298
+    geo cases, t309, t329) green with `KT_REQUIRE_GPU=1`.
+- [x] 3.3 Verify the "after" halves of t942 and t946 are green, and the goldens (t26 group, t715, `GOLDEN_VIDEO`, t11, t67, t184) are green with no regeneration
+  - t942's after half: 12×10 = 80×54×16 = 69 120, 12×30 = 80×18×16 = 23 040 sub-samples (was
+    8 294 400 both); 1×1 and 2×2 unchanged. t946's range hash UNCHANGED (0xc73e46f0e915bf00) and the
+    owner's-case suite runs in 0.43 s instead of 5 s. t946b (no longer ignored) is narrowed to what
+    holds: at 12×30 and 12×10 a frame reads under 1/100 of the full pass, and no frame reads the full
+    pass. The design's "peak ≤ 1/10" did not hold: when the automated grid passes through EXACTLY
+    3 cells on an axis that axis has 3 taps, the tile is refused, and those transient frames keep the
+    full pass (6 220 800 sub-samples at 5.5 s, 3×4 taps) — the range's new peak. t947 follows (peak
+    below the full pass, equal on both backends). Goldens (t26 group, t715, GOLDEN_VIDEO, t11, t67,
+    t184) green with no regeneration.
+- [x] 3.4 Commit stage 3 (`cargo test --workspace --no-fail-fast`, `cargo clippy --all-targets` with no new warnings)
+  - Workspace green except t476 (load flake, green alone); clippy without new warnings.
 
 ## 4. The panel
 
