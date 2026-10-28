@@ -1852,6 +1852,79 @@ telemetry one (on by default; `KINETREN_UPDATE_CHECK=0` too); the title says *"k
 releases* count, pre-releases (`-rc` tags) are ignored. Notice only — no download, no
 self-update. Change `openspec/changes/update-check`.
 
+## The owner's list of 2026-10-27 and ktprompts v26.10.18 (2026-10-27/28)
+
+The owner's list (`kkt.txt`, 2026-10-27), translated:
+
+> 1. On Windows (at least under wine) a playback bug: select a loop region and press Play — the
+>    video plays but freezes until you click somewhere inside the region (an already loaded part);
+>    from then on this playback is fine. Select another region — the same again.
+> 2. On my other system the morpher window endlessly tries to grow in width; other windows don't
+>    do this. Move the mouse anywhere in the main window or the morpher window — it widens fast;
+>    don't move it — slowly.
+> 3. `kinetren-mime.xml` is not fully translated.
+> 3. The FFmpeg download window is not informative — what speed, where it installs, etc.
+> 4. A very sparse render window — the C++ version used to have a fuller one; at the least bring
+>    everything up to its level of information.
+> 5. Let's think how to release into a flatpak repo, and video acceleration must work in render,
+>    or at least give recommendations how to grant the application access in flatpak.
+> 6. We are slipping badly on effects and transitions, far behind CapCut and the like. We need to
+>    catch up.
+> 7. Something tells me we must first make the plugin system: even now the build takes very long,
+>    I would not like to lose speed, and I want to unify the program and the interfaces at last.
+>    So they come before the effects.
+> 8. We have no guideline inside the program explaining what can be done and where.
+>
+> The listed points may already be in docs/spec (there was a spec for ktprompts 26.10 there). Dig
+> there, maybe neighbouring problems turn up too, and draft specs via opsx:propose.
+
+There is no `docs/spec`: the claims files live next to the repository — `ktprompts_v26.10`
+(indexed by the change `r71-ktprompts-index`, not yet applied) and **`ktprompts_v26.10.18`, which
+nothing indexed**. Its ten claims, translated:
+
+> 1. The morpher does not let me put audio effects on. 2. Slowed does not let me put generated
+> curves on — childish excuses. 3. Slowed does not let me copy-paste the event and cut it —
+> childish excuses. 4. If I selected one event, copy-paste must take it, not the region I
+> selected. 5. A triple click on an event selects a region over its bounds. 6. The camera window
+> does not close on Esc → we have lots of duplicated code, though I asked that all widgets and
+> windows reuse code and have the widest, coolest behaviour. 7. The pitch audio FX has some
+> strange buffering: on a loop a piece of silence is always heard, and on a small loop — total
+> silence. 8. An event grid with automation 0 → 12×30 → 12×10 → 0 in the morpher manages to drop
+> fps; it is basically a simple pixel shader — so do we have extra computations? Answer briefly
+> and to the point why. 9. I put a square still on a 16:9 timeline — it gets squashed; I go to its
+> Geometry — not one frame-rule option works. Duplicated code again? Why does it work for video
+> and not for stills? 10. In a composition's fx-chain there is a published element with
+> parameters, and in the English version it literally says "Лента".
+
+**Answers (AskUserQuestion, 2026-10-27):** plugins first — *an internal API + crates* (the
+built-ins move into their own crates behind one interface; wasm and dlopen are later stages);
+the guide — *a Guide window* and *a welcome screen*, "highlight the guide on the welcome screen",
+and a question: why was the guided tour rejected (answered from F-HLP-028: the industry is
+leaving overlay tours, the addressee is wrong, a teaching layer over the UI is forbidden by a
+test; the lesson form that checks done steps was only deferred); Flatpak — *Flathub + a VAAPI
+context* (h264_vaapi/qsv never open today); neighbours — *proposals for 26.10.18 too, and R.71
+extended to both files and kkt.txt*.
+
+After the answer about the tour (2026-10-28):
+
+> As for the rejected tour-guide — I would not mind if at program start we had an intro window
+> (as in programming IDEs) offering either to create a project from a template or a list of
+> recent projects (with thumbnails), and right there a tile "start the tour", i.e. it should be a
+> neat window; and there should probably be a main tile where the most likely action lands: for
+> the first opening it is the tour, for later openings the tile of the previous project. And in
+> the same window we can show what's new (and hint there that an update is needed).
+
+**Taken as:** this **revises the F-HLP-028 verdict** for the tour (dated revision in the note, not
+a silent flip); the tour is lessons in their own view whose steps close on the project's state,
+reached from an IDE-style welcome window. The plugin system goes before the effects catch-up.
+The site items of `kkt.txt` belong to the site repository. Test numbers for the new changes start
+at t900: `ffmpeg-9` and `wine-frame-and-dark-theme` both planned t862, and the parallel branches
+already reach t888. Changes (stage 0 each): `loop-play-latency-hold`, `shared-window-shell`,
+`slowed-reverb-is-an-event`, `pitch-loop-silence`, `selection-copy-target`,
+`still-image-frame-rule`, `morpher-event-grid-cost`, `i18n-gaps`, `ffmpeg-download-window-info`,
+`render-window-v1-parity`, `hw-encode-context`, `flatpak-flathub`, `plugin-api-stage1`,
+`effects-transitions-catchup`, `welcome-window-and-tour`; `r71-ktprompts-index` is updated.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
