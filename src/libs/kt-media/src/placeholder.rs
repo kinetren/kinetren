@@ -50,7 +50,10 @@ impl PlaceholderSource {
                 width: DEFAULT_W,
                 height: DEFAULT_H,
                 sar: (1, 1),
-                still: true,
+                // NOT a picture: the frame is drawn at the requested quality, so 640×360 is no
+                // shape — `still` means "a single picture with proportions of its own", and the
+                // engine conforms such a source by the frame rule (still-image-frame-rule, D1)
+                still: false,
             },
             label: label.into(),
             cache: None,

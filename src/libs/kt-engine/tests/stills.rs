@@ -185,3 +185,106 @@ fn t796b_a_still_is_planned_composed_and_exported() {
     assert!(size > 1000, "the export file is suspiciously small: {size} bytes");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The composite of moment `t` with the facts of the opened sources (the product's path:
+/// `VideoRenderer::new_with_facts`), on the CPU reference.
+fn compose_facts(p: &Project, t: Tick, q: Quality) -> (Vec<u8>, bool) {
+    let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
+        std::collections::HashMap::new();
+    let mut facts = kt_engine::SourceFacts::default();
+    for m in &p.media {
+        let s: Box<dyn MediaSource> = if m.path.starts_with("gone:") {
+            Box::new(kt_media::placeholder::PlaceholderSource::new(m.path.clone()))
+        } else {
+            Box::new(kt_media::ffmpeg::FfmpegSource::open(&m.path).unwrap_or_else(|e| panic!("{}: {e}", m.path)))
+        };
+        facts.observe(m.id, s.info());
+        srcs.insert(m.id, s);
+    }
+    let mut video = kt_engine::VideoRenderer::new_with_facts(p, &facts);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    for (addr, pts, dq) in video.layers_at(t, q) {
+        let f = srcs.get_mut(&addr).expect("source").read_video_frame(pts, Some(dq)).expect("frame");
+        cache.insert_video(kt_engine::source_id(addr), Some(dq), kt_engine::video::video_cache_idx(pts), f.into());
+    }
+    video.compose_from_cache(&cache, t, q)
+}
+
+/// The columns of the frame where the picture lies — by ALPHA: the margins of fit are
+/// transparent, the picture is opaque (colour would read a codec-darkened edge of the video as a
+/// margin).
+fn picture_columns(bytes: &[u8], q: Quality) -> (usize, usize) {
+    let (w, h) = (q.width as usize, q.height as usize);
+    let lit = |x: usize| (0..h).any(|y| bytes[(y * w + x) * 4 + 3] > 0);
+    let first = (0..w).find(|&x| lit(x)).unwrap_or(w);
+    let last = (0..w).rev().find(|&x| lit(x)).map_or(0, |x| x + 1);
+    (first, last)
+}
+
+/// Test 937 (still-image-frame-rule, ktprompts 26.10.18 item 9: "a square still on a 16:9
+/// timeline is squashed, and not one frame-rule option works — why does it work for video and
+/// not for stills?"): under every rule a square still is placed exactly like a square video.
+#[test]
+fn t937_four_rules_a_square_still_equals_a_square_video() {
+    let one = |path: String, rule: Conform, project_rule: ConformRule| -> Vec<u8> {
+        let mut s = settings();
+        s.conform = project_rule;
+        let mut p = Project::new(s);
+        p.media.push(MediaRef::new(MediaId(1), path));
+        let mut c = clip(1, 1, 0, 0.5);
+        c.geometry.rule = rule;
+        p.clips.push(c);
+        p.ensure_tracks(LaneKind::Video, 1);
+        p.validate().unwrap();
+        let (bytes, complete) = compose_facts(&p, Tick(0), Q);
+        assert!(complete, "the composite is not complete");
+        bytes
+    };
+    // the analytical columns of the picture on a 320×180 canvas
+    let cases = [
+        ("fit", Conform::Fit, ConformRule::Fit, (70, 250)),
+        ("fill", Conform::Fill, ConformRule::Fit, (0, 320)),
+        ("stretch", Conform::Stretch, ConformRule::Fit, (0, 320)),
+        ("as is", Conform::AsIs, ConformRule::Fit, (72, 248)),
+        ("project (fill)", Conform::Project, ConformRule::Fill, (0, 320)),
+    ];
+    let mut problems = Vec::new();
+    let mut frames = std::collections::HashMap::new();
+    for (name, rule, project_rule, want) in cases {
+        let still = one(fixture("still_square.png"), rule, project_rule);
+        let video = one(fixture("square.mp4"), rule, project_rule);
+        let (s, v) = (picture_columns(&still, Q), picture_columns(&video, Q));
+        if s.0.abs_diff(want.0) > 1 || s.1.abs_diff(want.1) > 1 {
+            problems.push(format!("{name}: the still's picture spans columns {s:?}, expected {want:?}"));
+        }
+        if s.0.abs_diff(v.0) > 1 || s.1.abs_diff(v.1) > 1 {
+            problems.push(format!("{name}: the still {s:?} and the video {v:?} are placed differently"));
+        }
+        frames.insert(name, still);
+    }
+    // fill crops, stretch squeezes: the two full-width pictures differ
+    if frames["fill"] == frames["stretch"] {
+        problems.push("fill and stretch gave the same still frame — the rule does nothing".into());
+    }
+    assert!(problems.is_empty(), "the still does not follow the frame rule: {}", problems.join("; "));
+}
+
+/// Test 941 (still-image-frame-rule): the sources drawn at the requested quality keep "frame =
+/// canvas" — the missing-file placeholder fills a 4:3 canvas with no margins under fit.
+#[test]
+fn t941_the_placeholder_still_fills_the_canvas() {
+    let mut s = settings();
+    s.width = 240;
+    s.height = 180;
+    let mut p = Project::new(s);
+    p.media.push(MediaRef::new(MediaId(1), "gone:missing.png"));
+    p.clips.push(clip(1, 1, 0, 0.5));
+    p.ensure_tracks(LaneKind::Video, 1);
+    p.validate().unwrap();
+    let q = Quality { width: 240, height: 180 };
+    let (bytes, complete) = compose_facts(&p, Tick(0), q);
+    assert!(complete);
+    let (first, last) = picture_columns(&bytes, q);
+    assert_eq!((first, last), (0, 240), "the placeholder left margins on a 4:3 canvas");
+}
+

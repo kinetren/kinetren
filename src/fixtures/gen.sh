@@ -42,6 +42,15 @@ gen still.jpg -f lavfi -i "testsrc=size=320x180:rate=1:duration=1" -frames:v 1 -
 gen still_alpha.png -f lavfi -i "color=c=red@0.5:size=320x180:rate=1:duration=1,format=rgba" \
     -frames:v 1 -f image2
 
+# still-image-frame-rule (t936/t937): a SQUARE still and a square one-second video of the SAME
+# lavfi pattern on a 320×180 canvas — under fit a still and a video must place alike; with the
+# 320×180 stills above fit equals stretch, and the defect (a still stretched under every rule)
+# could not show. 176, not 180: a video decoded at a width that is not a multiple of 8 comes
+# with its last columns unwritten (a decoder defect of its own, outside this change).
+gen still_square.png -f lavfi -i "testsrc=size=176x176:rate=1:duration=1" -frames:v 1 -f image2
+gen square.mp4 -f lavfi -i "testsrc=size=176x176:rate=30:duration=1" \
+    -c:v libx264 -preset veryfast -g 15 -pix_fmt yuv420p -f mp4
+
 # R.62 (t711): the SAME pixels 640×480, a DIFFERENT SAR (1:1 and 2:1) — a 4:3 view
 # against 8:3; decoded frames at equal Quality must match byte for byte,
 # the difference lives only in MediaInfo.sar. One encoder pass for both

@@ -85,3 +85,102 @@ fn t718_project_rule_rewrites_followers_and_spares_explicit() {
     assert_eq!(decodes(&p), vec![(1, (1920, 1080))]);
     assert_eq!(p.settings.conform, ConformRule::Fit);
 }
+
+static GEN_FIX: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+/// A fixture of `fixtures/gen.sh` (runs it once; needs the `ffmpeg` binary, as t796b).
+fn fixture(name: &str) -> String {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let pregenerated = cfg!(windows) && dir.join("out").is_dir();
+    GEN_FIX.get_or_init(|| {
+        if pregenerated {
+            return;
+        }
+        let st = std::process::Command::new("bash")
+            .arg(dir.join("gen.sh"))
+            .status()
+            .expect("run fixtures/gen.sh (needs ffmpeg in PATH)");
+        assert!(st.success(), "gen.sh failed");
+    });
+    dir.join("out").join(name).to_string_lossy().to_string()
+}
+
+/// Test 936 (still-image-frame-rule, ktprompts 26.10.18 item 9): ONE decision — a still has a
+/// view, generators and the placeholder do not.
+///
+/// The facts come from the REAL `SourceFacts::observe` over the real sources' info (t718 built
+/// them by hand, with `procedural` empty — that is why it never saw the defect): R.67 gave a
+/// still `fps: None`, the renderer's "procedural ⇒ no view" branch took its proportions away,
+/// and a square still was stretched over a 16:9 canvas under every rule.
+#[test]
+fn t936_a_still_has_a_view_generators_and_the_placeholder_do_not() {
+    use kt_media::MediaSource;
+    let square = kt_media::ffmpeg::FfmpegSource::open(&fixture("still_square.png")).expect("square still");
+    let video = kt_media::ffmpeg::FfmpegSource::open(&fixture("square.mp4")).expect("square video");
+    let mut wide = square.info().clone();
+    wide.sar = (2, 1);
+    let generator = kt_media::generator::GeneratorSource::new(GeneratorKind::Solid { color_r: 9, color_g: 9, color_b: 9 });
+    let title = kt_media::generator::GeneratorSource::new(GeneratorKind::default_text());
+    let placeholder = kt_media::placeholder::PlaceholderSource::new("gone.png");
+    // (what, its facts, procedural, the view the renderer must see)
+    type Case<'a> = (&'a str, kt_media::MediaInfo, bool, Option<(f64, f64)>);
+    let cases: [Case; 6] = [
+        ("square still", square.info().clone(), true, Some((176.0, 176.0))),
+        ("still with SAR 2:1", wide, true, Some((352.0, 176.0))),
+        ("video", video.info().clone(), false, Some((176.0, 176.0))),
+        ("generator", generator.info().clone(), true, None),
+        ("title", title.info().clone(), true, None),
+        ("placeholder", placeholder.info().clone(), true, None),
+    ];
+    let mut facts = SourceFacts::default();
+    let mut problems = Vec::new();
+    let p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 320,
+        height: 180,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    });
+    for (i, (name, info, procedural, view)) in cases.into_iter().enumerate() {
+        let m = MediaId(i as u64 + 1);
+        facts.observe(m, &info);
+        if facts.procedural.contains(&m) != procedural {
+            problems.push(format!("{name}: procedural = {}", !procedural));
+        }
+        if facts.view_of(m) != view {
+            problems.push(format!("{name}: view {:?}, expected {view:?}", facts.view_of(m)));
+        }
+        // the renderer's lead and the probe read the same value through `lead_view`
+        let mut c = ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
+            overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
+            id: ClipId(1),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: Tick::ZERO,
+            duration: Tick(90_000),
+            source_in: Tick::ZERO,
+            media: m,
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![],
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            opacity: 1.0,
+            fx_off: false,
+        };
+        c.media = m;
+        if kt_engine::video::lead_view(&p, &facts, &c, m) != facts.view_of(m) {
+            problems.push(format!("{name}: the lead's view differs from the source's"));
+        }
+    }
+    assert!(problems.is_empty(), "the source's proportions are not one fact: {}", problems.join("; "));
+}

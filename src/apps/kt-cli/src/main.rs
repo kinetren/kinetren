@@ -412,7 +412,8 @@ fn probe_range(
             continue;
         }
         let rule = c.geometry.rule.resolve(project.settings.conform);
-        let view = facts.views.get(&c.media).copied();
+        // the same function the renderer's lead calls (still-image-frame-rule, D2)
+        let view = kt_engine::video::lead_view(project, &facts, c, c.media);
         let canvas = (q.width as f64, q.height as f64);
         let frame = kt_fx::conform::conform_dest(view, canvas, rule);
         let g = kt_fx::conform::conform_geometry(

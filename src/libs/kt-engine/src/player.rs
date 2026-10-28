@@ -416,7 +416,7 @@ impl Player {
     /// decoder: the instance is owned by the worker (invariant 5), and the player already holds the
     /// source facts itself.
     pub fn source_view(&self, media: MediaId) -> Option<(f64, f64)> {
-        self.natives.read().ok()?.views.get(&media).copied()
+        self.natives.read().ok()?.view_of(media)
     }
 
     pub fn play(&self) {

@@ -15971,16 +15971,54 @@ fn t761b_anchor_gesture_keeps_the_picture_in_place() {
     }
 }
 
-/// Test 762 (R.64): crop with its own knobs in its own set.
+/// The geometry controls over an event on a source WITH PROPORTIONS (a synthetic source, which
+/// has a frame size and fps): the crop narrows the frame only where the source has a view. A
+/// generator has none — its frame is the canvas by the generators spec, and since
+/// still-image-frame-rule the on-screen frame says so too (it used to borrow the generator's
+/// 4096×4096 reserve as a "view" that the render never used).
+pub(crate) fn harness_geom_ctl_file() -> (Harness<'static, KtApp>, kt_model::ClipId) {
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    let clip = kt_model::ClipId(1);
+    {
+        // `synth:1` of the three-clip scene is not a pattern (a placeholder, no view): a ramp is.
+        // The first sync only records the paths (the sources are raised by `build_player`), the
+        // second sees the change and replaces the source on the player.
+        let app = h.state_mut();
+        app.model_rev += 1;
+        app.sync_media_sources();
+        let mut p = app.model.project().clone();
+        p.media[0].path = "synth:ramp".into();
+        app.model = kt_model::TimelineModel::new(p);
+        app.model_rev += 1;
+        app.sync_media_sources();
+    }
+    h.step();
+    {
+        let app = h.state_mut();
+        app.selected.clear();
+        app.selected.insert(clip);
+        app.player.seek(kt_time::Tick(25_000));
+        app.geom_ctl = crate::geomctl::GeomMode::Transform;
+    }
+    h.step();
+    h.step();
+    (h, clip)
+}
+
+/// Test 762 (R.64): crop with its own knobs in its own set. On a source with a view (the spec:
+/// "the frame follows the cropped view by the conform rule"); it ran on a generator until
+/// still-image-frame-rule, whose frame the overlay then sized by a view the render did not have.
 #[test]
 fn t762_crop_handles_cut_their_own_side() {
     use kt_fx::geom::Handle;
-    let (mut h, clip) = harness_geom_ctl();
+    let (mut h, clip) = harness_geom_ctl_file();
     h.state_mut().geom_ctl = crate::geomctl::GeomMode::Crop;
     h.step();
 
     let q = h.state().player.preview_quality();
     let canvas = (q.width as f64, q.height as f64);
+    let media = h.state().model.clip(clip).unwrap().media;
+    assert!(h.state().player.source_view(media).is_some(), "the scene's source has no view");
     let w0 = h.state().geom_placement(clip, canvas).unwrap().dw;
     let from = handle_pos(&h, clip, Handle::CropLeft);
     let to = from + egui::vec2(h.state().preview_rect.width() * 0.15, 0.0);
@@ -17211,18 +17249,25 @@ fn t795_reel_frames_reach_the_disk_and_cancel_is_not_a_failure() {
 /// A scene with a STILL: one video event on a picture (existing or
 /// missing) and an open project on disk — so that the media goes the ordinary way.
 fn harness_still(exists: bool) -> (Harness<'static, KtApp>, std::path::PathBuf) {
+    harness_still_of(exists.then_some("still.jpg"), if exists { "ok" } else { "gone" }, "logo.jpg")
+}
+
+/// The same scene on a GIVEN fixture picture (`None` — the file is missing), in its own
+/// directory `tag` under the name `name`.
+fn harness_still_of(
+    fixture: Option<&str>,
+    tag: &str,
+    name: &str,
+) -> (Harness<'static, KtApp>, std::path::PathBuf) {
     use kt_model::*;
-    let dir = std::env::temp_dir().join(format!(
-        "kt-still-{}-{}",
-        std::process::id(),
-        if exists { "ok" } else { "gone" }
-    ));
+    let dir = std::env::temp_dir().join(format!("kt-still-{}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let img = dir.join("logo.jpg");
-    if exists {
+    let img = dir.join(name);
+    if let Some(fixture) = fixture {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/out/still.jpg");
+            .join("../../fixtures/out")
+            .join(fixture);
         // on Windows the fixtures come generated with the test archive (no bash there)
         if !(cfg!(windows) && src.exists()) {
             let st = std::process::Command::new("bash")
@@ -17299,6 +17344,101 @@ fn t796c_a_still_shows_on_the_whole_event_without_loading() {
             "at {at} with the incompleteness scrim raised"
         );
     }
+    drop(h);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 939 (still-image-frame-rule): the frame rule of a still is seen in the preview.
+///
+/// The owner (ktprompts 26.10.18 item 9): a square picture on a 16:9 timeline is squashed,
+/// and Geometry → frame rule does nothing. A square still (176×176) on a 320×180 canvas; the
+/// rule is switched with the row of words in the FX window, as a person does it. After every
+/// switch the rectangle the on-screen frame draws (`geom_placement`) must be where the composite
+/// put the picture — read from the preview frame's ALPHA (the margins of fit are transparent) —
+/// and every rule must give its own picture.
+#[test]
+fn t939_a_still_follows_the_frame_rule_in_the_preview() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let (mut h, dir) = harness_still_of(Some("still_square.png"), "square", "square.png");
+    let clip = ClipId(1);
+    assert!(wait_complete(&mut h, 1.0), "the still did not reach the preview");
+    h.state_mut().selected.insert(clip);
+    h.state_mut().open_fx_editor(clip);
+    h.step();
+    h.step();
+    let lead = crate::fx_editor::fx_display_name(&EventGeometry::default().node());
+    h.get_by_label(lead).click();
+    h.step();
+    h.step();
+
+    // the box of the opaque pixels of the shown frame
+    let shown_box = |h: &Harness<'_, KtApp>| -> (u32, u32, u32, u32) {
+        let (_, (w, hh), _) = h.state().preview_key.expect("a preview frame");
+        let b = &h.state().preview_buf;
+        let (mut x0, mut y0, mut x1, mut y1) = (w, hh, 0, 0);
+        for y in 0..hh {
+            for x in 0..w {
+                if b[((y * w + x) * 4 + 3) as usize] > 127 {
+                    (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
+                }
+            }
+        }
+        (x0, y0, x1, y1)
+    };
+    let mut seen = Vec::new();
+    for (rule, word) in [
+        (Conform::Fit, k::fx::CONFORM_FIT),
+        (Conform::Fill, k::fx::CONFORM_FILL),
+        (Conform::Stretch, k::fx::CONFORM_STRETCH),
+        (Conform::AsIs, k::fx::CONFORM_AS_IS),
+    ] {
+        h.get_by_label(tr(word)).click();
+        h.step();
+        assert_eq!(h.state().model.clip(clip).unwrap().geometry.rule, rule, "the row did not set {rule:?}");
+        // the preview recomposites by the project version: wait for the complete frame of THIS edit
+        let want = h.state().player.project_version();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !(h.state().preview_project == want && h.state().preview_key.is_some_and(|k| k.2)) {
+            assert!(std::time::Instant::now() < deadline, "{rule:?}: no complete frame after the switch");
+            h.step();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let (_, (w, hh), _) = h.state().preview_key.unwrap();
+        let pl = h.state().geom_placement(clip, (w as f64, hh as f64)).expect("placement");
+        // the on-screen frame, clamped to the canvas (fill's frame runs past it)
+        let frame = (
+            pl.ox.max(0.0),
+            pl.oy.max(0.0),
+            (pl.ox + pl.dw).min(w as f64),
+            (pl.oy + pl.dh).min(hh as f64),
+        );
+        let shown = shown_box(&h);
+        let near = |a: u32, b: f64| (a as f64 - b).abs() <= 2.0;
+        assert!(
+            near(shown.0, frame.0) && near(shown.1, frame.1) && near(shown.2, frame.2) && near(shown.3, frame.3),
+            "{rule:?}: the picture lies at {shown:?}, the on-screen frame at {frame:?}"
+        );
+        seen.push((rule, shown, (pl.dw, pl.dh)));
+    }
+    let (_, (w, hh), _) = h.state().preview_key.unwrap();
+    let of = |r: Conform| *seen.iter().find(|s| s.0 == r).unwrap();
+    let (_, fit, _) = of(Conform::Fit);
+    assert!(
+        fit.0 > 0 && fit.2 < w && (fit.0, fit.1, fit.3) == (w - fit.2, 0, hh),
+        "fit: not a picture with side margins {fit:?}"
+    );
+    let (_, fill, fill_size) = of(Conform::Fill);
+    assert_eq!(fill, (0, 0, w, hh), "fill: the picture does not cover the canvas");
+    assert!(fill_size.1 > hh as f64 + 1.0, "fill: the frame is not cut top and bottom {fill_size:?}");
+    let (_, stretch, stretch_size) = of(Conform::Stretch);
+    assert_eq!(stretch, (0, 0, w, hh), "stretch: the picture does not cover the canvas");
+    assert_eq!(stretch_size, (w as f64, hh as f64), "stretch: the frame is not the canvas");
+    let (_, as_is, _) = of(Conform::AsIs);
+    assert!(
+        as_is.2 - as_is.0 == as_is.3 - as_is.1 && as_is.0 > fit.0 && as_is.0 + as_is.2 == w,
+        "as is: not a centred 1:1 square smaller than fit {as_is:?}"
+    );
     drop(h);
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -907,3 +907,91 @@ fn t849_cli_prints_the_ffmpeg_search_report() {
     assert!(text.contains(hint), "the hint of the OS: {text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Test 940 (still-image-frame-rule): `kt-cli probe` tells the same truth as the render.
+///
+/// Before the change the probe read the source's view directly and printed a fit frame for a
+/// square still, while the renderer dropped the view of every "procedural" source and stretched
+/// the still over the canvas. Now both call `lead_view`: the still prints its view and the fit
+/// frame, a missing picture (the placeholder) prints `unknown/stretch` and the whole canvas.
+#[test]
+fn t940_probe_conform_line_is_the_render_s() {
+    use kt_model::*;
+    let dir = showcase_sources("t940"); // runs fixtures/gen.sh
+    let still = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/out/still_square.png")
+        .canonicalize()
+        .expect("the square still fixture");
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 320,
+        height: 180,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: ConformRule::Fit,
+        settings_explicit: false,
+    });
+    p.media.push(MediaRef::new(MediaId(1), still.to_string_lossy().to_string()));
+    p.media.push(MediaRef::new(MediaId(2), dir.join("gone.png").to_string_lossy().to_string()));
+    for (id, media, lane) in [(1u64, 1u64, 0u32), (2, 2, 1)] {
+        p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
+            overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
+            id: ClipId(id),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane,
+            start: kt_time::Tick(0),
+            duration: kt_time::Tick(90_000),
+            source_in: kt_time::Tick(0),
+            media: MediaId(media),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![],
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            opacity: 1.0,
+            fx_off: false,
+        });
+    }
+    p.ensure_tracks(LaneKind::Video, 2);
+    p.validate().unwrap();
+    let path = dir.join("t940.kt");
+    std::fs::write(&path, kt_model::project_file::to_text(&p, None)).unwrap();
+    let out = cli().args(["probe", path.to_str().unwrap(), "0", "1"]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = |id: u64| {
+        text.lines()
+            .find(|l| l.contains(&format!("conform clip {id}:")))
+            .unwrap_or_else(|| panic!("no conform line for clip {id}:\n{text}"))
+            .to_string()
+    };
+    let s = line(1);
+    assert!(
+        s.contains("view=176x176") && s.contains("frame=180x180"),
+        "the still's conform line is not the fit the render uses: {s}"
+    );
+    // ...and it is what the RENDERER orders: the decode size of the conform line equals the size
+    // in the video decode order (before the change: 180×180 printed, 320×180 ordered)
+    let decode = s.split("decode=").nth(1).and_then(|r| r.split_whitespace().next()).unwrap_or("?");
+    let ordered = text
+        .lines()
+        .find(|l| l.trim_start().starts_with("media 1 ("))
+        .unwrap_or_else(|| panic!("no decode order for the still:\n{text}"));
+    assert!(
+        ordered.ends_with(&format!("frames at {decode}")),
+        "the probe's conform decode {decode} is not what the renderer orders: {ordered}"
+    );
+    let g = line(2);
+    assert!(
+        g.contains("view=unknown/stretch") && g.contains("frame=320x180"),
+        "the missing picture's conform line: {g}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

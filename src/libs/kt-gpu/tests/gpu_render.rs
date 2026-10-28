@@ -764,3 +764,79 @@ fn t724b_reel_fps_holds_frames_on_gpu() {
     assert_ne!(gpu_e, gpu_n, "the next reel frame is different");
     assert!(gpu_e.iter().any(|&x| x != 0), "the frame is black — nothing to compare");
 }
+
+/// Test 938 (still-image-frame-rule): both backends place a still by the frame rule.
+///
+/// A square single picture (the facts of a still: `still`, no fps, 176×176) over a lower layer,
+/// on a 128×72 canvas, through the real renderer's plan (`new_with_facts`). Under fit the lead
+/// node — `kt-fx/geom.rs` on the CPU and `geom_fused.wgsl` on the GPU — leaves side margins
+/// where the lower layer shows through, alike on both; under stretch the CPU frame is
+/// byte-for-byte the frame a still gave before this change (no view: frame = canvas).
+#[test]
+fn t938_both_backends_place_a_still_by_the_rule() {
+    let Some(e) = test_engine() else { return };
+    let q = Quality { width: 128, height: 72 };
+    let t = Tick(0);
+    let still_info = kt_media::MediaInfo {
+        duration: Tick(90_000 * 3600),
+        has_video: true,
+        has_audio: false,
+        fps: None,
+        width: 176,
+        height: 176,
+        sar: (1, 1),
+        still: true,
+    };
+    let scene = |rule: Conform| -> Project {
+        let mut p = project();
+        p.settings.width = q.width;
+        p.settings.height = q.height;
+        p.clips.retain(|c| c.kind == ClipKind::Video);
+        p.clips.truncate(2);
+        p.clips[0].lane = 0;
+        p.clips[0].geometry.rule = rule;
+        p.clips[0].start = Tick(0);
+        p.clips[1].lane = 1;
+        p.clips[1].start = Tick(0);
+        p.clips[1].opacity = 1.0;
+        for c in &mut p.clips {
+            c.fx.clear();
+            c.fx_bypass.clear();
+        }
+        // the lower layer reads another moment of the synthetic source: another colour
+        p.clips[1].source_in = Tick(45_000);
+        p.ensure_tracks(LaneKind::Video, 2);
+        p.validate().unwrap();
+        p
+    };
+    let facts_for = |p: &Project, view: bool| -> kt_engine::SourceFacts {
+        let mut f = kt_engine::SourceFacts::default();
+        f.observe(p.clips[0].media, &still_info);
+        if !view {
+            f.views.remove(&p.clips[0].media);
+        }
+        f
+    };
+    let run = |p: &Project, facts: &kt_engine::SourceFacts| -> (Vec<u8>, Vec<u8>) {
+        let mut video = VideoRenderer::new_with_facts(p, facts);
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+        cpu_and_gpu(&e, &mut video, &cache, q, t)
+    };
+    // fit: margins on both backends, the same
+    let p = scene(Conform::Fit);
+    let (cpu, gpu) = run(&p, &facts_for(&p, true));
+    assert_frames_close(&cpu, &gpu, q.width, q.height, FrameTol::BILINEAR, "still under fit");
+    let px = |b: &[u8], x: u32, y: u32| -> [u8; 4] {
+        let i = ((y * q.width + x) * 4) as usize;
+        [b[i], b[i + 1], b[i + 2], b[i + 3]]
+    };
+    // the picture is 72×72 in the middle: x = 2 is a margin, x = 64 the still
+    let (margin, middle) = (px(&cpu, 2, 36), px(&cpu, 64, 36));
+    assert_eq!(margin, px(&gpu, 2, 36), "the margin differs between the backends");
+    assert_ne!(margin, middle, "under fit the still covered the margin — no lower layer shows");
+    // stretch: the frame a still gave before this change (no view), byte for byte on the CPU
+    let p = scene(Conform::Stretch);
+    let (now, _) = run(&p, &facts_for(&p, true));
+    let (before, _) = run(&p, &facts_for(&p, false));
+    assert!(now == before, "a still under stretch moved from its former frame");
+}

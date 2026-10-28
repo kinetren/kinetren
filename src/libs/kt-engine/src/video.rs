@@ -769,11 +769,21 @@ impl SourceFacts {
         } else {
             self.lengths.remove(&media);
         }
+        // TWO facts, decided here and nowhere else (still-image-frame-rule, D1): "no grid of
+        // its own" (procedural, below — the timing) and "no proportions of its own" (shapeless —
+        // the frame rule). A generator, a title and the placeholder draw their frame at the
+        // requested quality: shapeless. A single PICTURE has no grid but has proportions — R.67
+        // gave it `fps: None`, and the renderer's "procedural ⇒ no view" branch silently stretched
+        // a square still over a 16:9 canvas under every rule (ktprompts 26.10.18 item 9).
+        let shapeless = info.has_video && info.fps.is_none() && !info.still;
         if info.has_video {
             self.natives.insert(media, (info.width, info.height));
-            self.views.insert(media, info.view_size());
         } else {
             self.natives.remove(&media);
+        }
+        if info.has_video && !shapeless {
+            self.views.insert(media, info.view_size());
+        } else {
             self.views.remove(&media);
         }
         // “No grid of its own” is exactly the definition of a procedural
@@ -790,6 +800,30 @@ impl SourceFacts {
     pub fn forget(&mut self, media: MediaId) {
         self.natives.remove(&media);
         self.procedural.remove(&media);
+        self.views.remove(&media);
+    }
+
+    /// The kind of the source frame for the frame rule, or `None` — a source drawn at the
+    /// requested quality, or one not seen. The ONE reader: the renderer's lead, the on-screen
+    /// geometry frame (`Player::source_view`) and `kt-cli probe` all ask here.
+    pub fn view_of(&self, media: MediaId) -> Option<(f64, f64)> {
+        self.views.get(&media).copied()
+    }
+}
+
+/// The kind of the frame the frame rule places for event `c` whose source address is `addr`: a
+/// reel instance has its reel's own raster (law E: without one the frame equals the canvas);
+/// any other event — the source's view (`SourceFacts::view_of`). One function for the renderer
+/// and `kt-cli probe`, so the probe prints the frame the render uses (still-image-frame-rule, D2).
+pub fn lead_view(
+    project: &Project,
+    facts: &SourceFacts,
+    c: &kt_model::ClipEvent,
+    addr: MediaId,
+) -> Option<(f64, f64)> {
+    match project.sequence(c.media) {
+        Some(s) => s.raster.map(|(w, h)| (w as f64, h as f64)),
+        None => facts.view_of(addr),
     }
 }
 
@@ -927,26 +961,13 @@ impl VideoRenderer {
                 // move because of a change in the addressing method.
                 let auto_plan = kt_model::AutoPlan::compile(&fx, &auto);
                 let addr = clip_source_addr_in(c, salt);
-                // conform context: the source kind (for a reel — unknown, frame = canvas)
-                // and the event rule allowed by the project
-                // a PROCEDURAL source (generator, title, placeholder) — a function of the
-                // requested quality; it has no proportions: kind None →
-                // frame = canvas, the node is identity (spec generators, R.62)
+                // conform context: the source kind and the event rule allowed by the project.
+                // The kind is ONE fact (`lead_view`): a reel's own raster (law E — without one
+                // the frame equals the canvas), a source drawn at the requested quality
+                // (generator, title, placeholder) has none (frame = canvas, the node is identity,
+                // spec generators, R.62), a single picture and a file have their view.
                 let procedural = facts.procedural.contains(&addr);
-                // A reel WITH its own raster (R.62) — the kind is its raster, the instance
-                // is conformed as a file; without its own raster the kind is unknown and
-                // the frame equals the canvas (law E)
-                let reel_raster = nest
-                    .and_then(|_| project.sequence(c.media))
-                    .and_then(|s| s.raster)
-                    .map(|(w, h)| (w as f64, h as f64));
-                let view = if nest.is_some() {
-                    reel_raster
-                } else if procedural {
-                    None
-                } else {
-                    facts.views.get(&addr).copied()
-                };
+                let view = lead_view(project, facts, c, addr);
                 let lead = Some(kt_fx::conform::LeadCtx::new(
                     view,
                     c.geometry.rule.resolve(project.settings.conform),
