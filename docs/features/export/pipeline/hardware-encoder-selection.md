@@ -216,6 +216,13 @@ which for three of the five candidates does not control CRF.
 It cannot be solved "for company" with the honesty of the list: these are hw contexts, a second
 pixel format and a second branch of frame upload, that is, L, not S.
 
+**Revision (2026-10-28): the L part is taken** — change `hw-encode-context`, at the owner's
+choice of a Flathub release "with a VAAPI context" (`docs/user-feedback.md`, 2026-10-27) and
+ktprompts v26.10 T16 ("h264_vaapi — crash"). The mechanism above is not touched: a hardware
+candidate is still judged by a real open in the exporting process, the open now being "device +
+frames context + `avcodec_open2`", and a missing device skips the candidate before the encoder is
+opened. The list in the window is narrowed to what has a device (the narrow part of this verdict).
+
 ## Sources
 
 - Tracker dumps of 08.09.2026, `~/.cache/kinotrain/trackers/`: shotcut (1368),
