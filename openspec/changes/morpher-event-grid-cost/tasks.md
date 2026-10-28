@@ -173,4 +173,8 @@ release build.
   - video-fx design: the tile rule and its exactness gate (Decisions), the mip alternative (Rejected);
     video-plan design: strength 0 and FrameCost; kt-fx CLAUDE.md: the pair note. `openspec validate
     --specs --strict` 20/20.
-- [ ] 5.2 Run `./scripts/finish.sh` from `src/`. Verify it is green, and record the version `vYY.MM.DD-hash` and the live screenshots here
+- [x] 5.2 Run `./scripts/finish.sh` from `src/`. Verify it is green, and record the version `vYY.MM.DD-hash` and the live screenshots here
+  - finish.sh → **kt26.10.29-5faf8bb1** (on 5faf8bb), green. Live: 50 scenarios; `trans` red once in the
+    4-worker run ("cursor placed in the middle of the transition: 0 ≈ 360000" — the cursor read before
+    the click landed) and green alone, as the run itself reports. Screenshots:
+    `target/live-out/morphgrid/01-step-paused-12x30.png`, `02-step-playing.png`, `03-step-stopped.png`.
