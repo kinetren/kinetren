@@ -95,3 +95,68 @@ a Rust toolchain, clang and dev packages before they could try the editor (owner
   `round` agreed with mingw's bug, but its msvcrt differs from Microsoft's elsewhere).
 - Rejected: native MSVC builds on a Windows runner (a second toolchain), an installer and code
   signing for the first delivery (later decisions).
+
+## The daily new-version check (update-check, 2026-10-28)
+
+The program's side of the release channel: once per UTC day a release build asks
+`api.github.com/repos/kinetren/kinetren/releases/latest` on a background thread, and a newer
+release is one bell notice plus a short word after the version in the title. Owner,
+2026-10-27 (`docs/user-feedback.md`, "Version check"): "remind him in the bell notice that the
+version is old (but do not bother him with pop-up windows at startup), and also write at the
+top in the title bar, somehow briefly, that the version is outdated". Research of other
+editors: `docs/features/resilience/environment/update-available-notice.md` (F-RES-013).
+
+**Owner decisions (do not change without a new request):** an off switch in View next to the
+telemetry checkbox (on by default, `KINETREN_UPDATE_CHECK=0` too); the title says
+"kt26.10 (outdated)" — our version and a translated word, not the new number; only normal
+releases count (a `-` tag is a pre-release and is ignored); a notice only — nothing is
+downloaded or installed.
+
+Where it lives: `src/apps/kt-app/src/update_check.rs` (decision, day file, consent, fetch
+thread, `install`/`global`); `app.rs` (first-frame start, the notice, the title word,
+`save`, `run`); `toolbar.rs` (the painted word with its hover, the View checkbox);
+`[update]` in the five catalogs; the live scenario `src/scripts/live/update.py`.
+
+- **"Newer" comes from the asset name, not the tag.** The asset carries the binary's own
+  commit-date version (`kinetren-<YY.MM.DD>-<hash8>-…`, from `release-build.sh`), while the tag
+  is only the release's name and may be dated after its commit — compared with the tag, the
+  very release a person just downloaded would call itself outdated. Newer = a strictly later
+  date AND another hash; a same-day release is "not newer": silence costs one day, a false
+  mark teaches people to ignore it. t872 also reads `release-build.sh` so that a rename of the
+  asset form cannot silently make every release "not newer".
+- **The day's answer is a file the thread writes, the choice is in eframe storage.**
+  `<data_dir>/update-check` (`day=`, `latest=`; tmp + rename) is written by the thread as soon
+  as the answer is in: eframe storage is saved every 30 s and on exit, and a crash in between
+  would cost a second request. A failed request writes nothing, so the next start asks again.
+  The on/off choice is a per-machine preference and sits where `lang` and `telemetry` do.
+- **The day is the UTC day**: a local day needs a time-zone database; the boundary only moves
+  WHEN the daily request goes out.
+- **Nothing waits for it.** The UI spawns the thread once and reads an atomic per frame; the
+  thread calls one `request_repaint` when its answer is in (invariant 12). Unlike telemetry's
+  `app_closed`, `on_exit` does not wait: an unanswered check is simply asked again.
+- **One checker per process** (`install`/`global`), for the same reason as telemetry: File →
+  New/Open rebuild `KtApp` in place, and a per-app checker would ask and say it again.
+- **Dev builds never ask.** A debug build checks only through `KT_UPDATE_URL` (the live
+  scenario's local server, the day ignored); a release build ignores the variable, so a
+  shipped binary cannot be pointed elsewhere. The request carries only
+  `User-Agent: kinetren/<FULL>` (GitHub refuses one without it).
+
+Non-obvious details:
+
+- **The word is hit-tested by the pointer, not a widget.** The title text spills over the
+  preview (the user's earlier decision for long names), and the preview's widgets, interacted
+  later in the frame, won the hover of a widget placed on the word — found by t875.
+- **The live scenario needs `OWN_PROCESS = True`.** The check runs on the first frame of a
+  fresh start with `KT_UPDATE_URL` read at process start; without the flag the worker kept its
+  stand running, two `kinetren` windows were on the screen, and the rig aimed at the stand's.
+- **Literals shaped like probe names** (`v26.11.01`, `kt26.11.01`, `notes.txt`) in test code
+  are counted by `live-coverage.py` as untouched places; the tests build those strings instead.
+- **Checked against the real GitHub** (2026-10-28, release build `kt26.10.28-767c113a`, latest
+  release `v26.10.25`): one request with the check on, the day recorded, no word (the build is
+  newer); none with the stored choice off.
+
+Rejected: the `releases.atom` feed (XML, no pre-release flag), listing tags (no flag,
+paging), comparing with the tag or a build date (see above), a local-time day (a new
+dependency), a "Check now" item and a check that re-runs past midnight (not asked for),
+downloading or installing a release (F-RES-008: a self-updating binary is a separate class of
+defects).
