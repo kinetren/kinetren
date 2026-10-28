@@ -252,4 +252,9 @@ pub trait VideoGpuExec: Send + Sync {
     /// so a layer without a pre-FX frame is always starvation for it.
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError>;
     fn info(&self) -> &GpuBackendInfo;
+    /// What the last `execute_into` ran (morpher-event-grid-cost, D1): passes, sub-samples,
+    /// snapshots and mixes of its op list; zero for a frame served from its readback memo.
+    fn last_cost(&self) -> kt_fx::video::FrameCost {
+        kt_fx::video::FrameCost::default()
+    }
 }

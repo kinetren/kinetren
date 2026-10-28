@@ -735,7 +735,42 @@ enum Job {
     },
 }
 
+impl ChainSpec {
+    /// What the chain runs (morpher-event-grid-cost, D1), nested reels included.
+    fn cost(&self) -> kt_fx::video::FrameCost {
+        let mut c = kt_fx::video::FrameCost::default();
+        for op in &self.ops {
+            match op {
+                FxOp::GeomFused { prog } => c.add(kt_fx::video::FrameCost::geom(prog)),
+                FxOp::Snapshot => c.snapshots += 1,
+                FxOp::Mix { .. } => {
+                    c.mixes += 1;
+                    c.passes += op.passes();
+                }
+                _ => c.passes += op.passes(),
+            }
+        }
+        if let ChainSrc::Nest(jobs) = &self.src {
+            for j in jobs {
+                c.add(j.cost());
+            }
+        }
+        c
+    }
+}
+
 impl Job {
+    fn cost(&self) -> kt_fx::video::FrameCost {
+        match self {
+            Job::Single { chain, .. } => chain.cost(),
+            Job::Dissolve { a, b, .. } => {
+                let mut c = a.cost();
+                c.add(b.cost());
+                c
+            }
+        }
+    }
+
     /// Uniform arena slots per job: the composite pass plus the layer chains.
     fn slot_units(&self) -> u32 {
         1 + match self {
@@ -759,6 +794,8 @@ struct Inner {
     pool: TexturePool,
     upload: UploadCache,
     readback: ReadbackCache,
+    /// What the last `execute` ran (morpher-event-grid-cost, D1).
+    last_cost: kt_fx::video::FrameCost,
     staging: Option<(wgpu::Buffer, u32, u32, u32)>, // (buf, padded_bpr, w, h)
     dummy: Tex,
     max_dim: u32,
@@ -824,7 +861,8 @@ impl GpuFxEngine {
             && std::env::var("KT_GPU_ALLOW_WARP").as_deref() != Ok("1")
         {
             return Err(GpuInitError::Unsupported(format!(
-                "{} (software D3D12): effects render on the CPU", ai.name
+                "{} (software D3D12): effects render on the CPU",
+                ai.name
             )));
         }
         // Two scopes: a shader the backend's compiler rejects (FXC on D3D12: "not natively
@@ -977,6 +1015,7 @@ impl GpuFxEngine {
                 pool: TexturePool::new(TRANSIENT_BUDGET),
                 upload: UploadCache::new(UPLOAD_BUDGET),
                 readback: ReadbackCache::new(READBACK_BUDGET),
+                last_cost: Default::default(),
                 staging: None,
                 dummy,
                 max_dim,
@@ -1006,6 +1045,10 @@ impl VideoGpuExec for GpuFxEngine {
     fn info(&self) -> &GpuBackendInfo {
         &self.info
     }
+
+    fn last_cost(&self) -> kt_fx::video::FrameCost {
+        self.inner.lock().unwrap().last_cost
+    }
 }
 
 impl Inner {
@@ -1015,6 +1058,7 @@ impl Inner {
             return Err(GpuExecError::TooLarge { w: ow, h: oh });
         }
         let key = plan_key(plan);
+        self.last_cost = Default::default();
         if let Some((data, complete)) = self.readback.get(key) {
             out.clear();
             out.extend_from_slice(data);
@@ -1023,6 +1067,9 @@ impl Inner {
 
         // --- resolve: presence/size by the rules of the CPU executor ---
         let (jobs, complete) = self.resolve_plan(plan)?;
+        for j in &jobs {
+            self.last_cost.add(j.cost());
+        }
 
         let n = (ow as usize) * (oh as usize) * 4;
         if jobs.is_empty() {

@@ -625,6 +625,18 @@ pub struct GeomProgram {
 }
 
 impl GeomProgram {
+    /// Sub-samples the pass reads per frame (morpher-event-grid-cost, D1): a pure function of
+    /// the program, so a test can hold it and the counters of both backends agree. `None` for
+    /// a perspective program, whose tap count is measured per pixel.
+    pub fn sample_cost(&self) -> Option<u64> {
+        match self.ss {
+            SsSpec::Const { nx, ny } => {
+                Some(self.out_w as u64 * self.out_h as u64 * nx as u64 * ny as u64)
+            }
+            SsSpec::PerPixel => None,
+        }
+    }
+
     /// vec4 prim slots in the GPU uniform (limit MAX_PRIM_SLOTS; the scheduler checks
     /// the budget — when exceeded, the run is cut at a geo boundary).
     pub fn prim_slots(&self) -> usize {

@@ -157,6 +157,8 @@ pub struct Player {
     /// on model edits does not lose it. DeviceLost “poisons” it until the end of the
     /// session → CPU fallback + notice.
     video_gpu: Mutex<VideoGpuState>,
+    /// The cost of the last preview compose (morpher-event-grid-cost, D1).
+    video_cost: Mutex<VideoCost>,
     preview_quality: Arc<Mutex<Quality>>,
     stop: Arc<AtomicBool>,
     render_thread: Option<std::thread::JoinHandle<()>>,
@@ -331,6 +333,7 @@ impl Player {
             model_dirty,
             video,
             video_gpu,
+            video_cost: Mutex::new(VideoCost::default()),
             preview_quality,
             stop,
             render_thread: Some(render_thread),
@@ -873,6 +876,25 @@ impl Player {
     /// two allocations of a full RGBA frame per frame — a noticeable part of
     /// the UI frame cost, item 1 of round 5).
     pub fn compose_preview_into(&self, t: Tick, out: &mut Vec<u8>) -> (Quality, bool) {
+        // the wall clock is legal here: the preview, not an offline path (invariant 11)
+        let t0 = std::time::Instant::now();
+        let (q, complete, gpu, cost) = self.compose_preview_measured(t, out);
+        *self.video_cost.lock().unwrap() =
+            VideoCost { gpu, cost, compose_ns: t0.elapsed().as_nanos() as u64 };
+        (q, complete)
+    }
+
+    /// The cost of the last preview compose: the backend that ACTUALLY composed it, what it
+    /// ran and how long it took (morpher-event-grid-cost, D1; the performance panel).
+    pub fn video_cost(&self) -> VideoCost {
+        *self.video_cost.lock().unwrap()
+    }
+
+    fn compose_preview_measured(
+        &self,
+        t: Tick,
+        out: &mut Vec<u8>,
+    ) -> (Quality, bool, bool, kt_fx::video::FrameCost) {
         let q = self.preview_quality();
         let mut video = self.video.lock().unwrap();
         let aligned = video.grid.align_floor(t);
@@ -902,7 +924,7 @@ impl Player {
             let gone = {
                 let plan = video.frame_plan(&self.cache, aligned, q);
                 match exec.execute_into(&plan, out) {
-                    Ok(complete) => return (q, complete),
+                    Ok(complete) => return (q, complete, true, exec.last_cost()),
                     Err(GpuExecError::TooLarge { .. }) => None,
                     Err(e) => Some(format!("{e:?}")),
                 }
@@ -912,7 +934,7 @@ impl Player {
             }
         }
         let complete = video.compose_from_cache_into(&self.cache, aligned, q, out);
-        (q, complete)
+        (q, complete, false, video.last_cost())
     }
 
     pub fn compose_preview(&self, t: Tick) -> (Vec<u8>, Quality, bool) {
@@ -920,6 +942,15 @@ impl Player {
         let (q, complete) = self.compose_preview_into(t, &mut out);
         (out, q, complete)
     }
+}
+
+/// The cost of one preview compose (morpher-event-grid-cost, D1).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct VideoCost {
+    /// The GPU executor composed it (false: the CPU, by fallback or by choice).
+    pub gpu: bool,
+    pub cost: kt_fx::video::FrameCost,
+    pub compose_ns: u64,
 }
 
 impl Drop for Player {
@@ -1448,8 +1479,7 @@ impl DisplayLap {
                 None => true,
                 Some((g, _, d)) => g != s.generation || d != dir,
             };
-            let target =
-                if self.seen_gen != Some(s.generation) { s.jump_target } else { s.head };
+            let target = if self.seen_gen != Some(s.generation) { s.jump_target } else { s.head };
             self.anchor = Some(key);
             self.seen_gen = Some(s.generation);
             self.wraps0 = s.wraps;
@@ -1671,11 +1701,7 @@ mod sync_tests {
         assert_eq!(video_display_frame(48_000, 4_800, None, 1, 1.0), 43_200);
         // in the loop region the wrap goes both ways
         assert_eq!(video_display_frame(59_500, 1_000, Some((50_000, 60_000)), -1, 1.0), 50_500);
-        assert_eq!(
-            video_display_frame(1000, 0, None, -1, 1.0),
-            1000,
-            "zero delay is neutral"
-        );
+        assert_eq!(video_display_frame(1000, 0, None, -1, 1.0), 1000, "zero delay is neutral");
     }
 
     /// Test 134 (item 132, R.23): the conditions for belonging to a loop are consistent with
@@ -1863,11 +1889,7 @@ mod display_lap_tests {
                 while n * step < travel {
                     t.advance_frames_wrapped(step * dir, Some((RS, RE)));
                     n += 1;
-                    let jitter = if lat >= 512 {
-                        if n % 2 == 0 { 512 } else { -512 }
-                    } else {
-                        0
-                    };
+                    let jitter = if lat >= 512 { if n % 2 == 0 { 512 } else { -512 } } else { 0 };
                     let (_, lap) = dl.step(sample(&t, lat + jitter, dir as f32));
                     assert!(lap >= prev_lap, "dir {dir} lat {lat}: the lap went back");
                     if lap != prev_lap {
@@ -1926,14 +1948,20 @@ mod display_lap_tests {
                         let (frame, lap) = dl.step(sample(&t, lat, signed));
                         let ctx = format!("rate {rate} dir {dir} p {p} travelled {travelled}");
                         if lap != lap_jump {
-                            assert!(wrapped, "{ctx}: the shown frame folded before the head wrapped");
+                            assert!(
+                                wrapped,
+                                "{ctx}: the shown frame folded before the head wrapped"
+                            );
                             folded = true;
                         }
                         if travelled < scaled {
                             assert_eq!(frame, p, "{ctx}: inside the hold the target must show");
                         } else if !wrapped {
                             let want = t.playhead_frames() - scaled * dir;
-                            assert_eq!(frame, want, "{ctx}: after the hold, the head minus the latency");
+                            assert_eq!(
+                                frame, want,
+                                "{ctx}: after the hold, the head minus the latency"
+                            );
                         } else if !folded {
                             // the shown frame still lies in the lap before the head's wrap:
                             // the steady-state rule says the same

@@ -560,8 +560,112 @@ fn probe_range(
         if ms > span_ms || ms_l > span_l {
             println!("  OVER BUDGET: audio alone cannot keep up here");
         }
+        if let Err(e) = probe_video_cost(project, path, t0, t1) {
+            eprintln!("{e}");
+            return 1;
+        }
     }
     0
+}
+
+/// `probe --time`, the VIDEO half (morpher-event-grid-cost, D1): what composing each frame of
+/// the range costs on the backend `render` would use (the GPU by default, `KT_VIDEO_GPU=0` —
+/// the CPU), at the project raster. The frames are decoded into a cache FIRST, so the times
+/// are the compose alone; the counts (passes, sub-samples) come from the executor that ran
+/// (`FrameCost`), the time from the wall clock — a diagnostic, it writes no bytes.
+fn probe_video_cost(project: &Project, path: &str, t0: Tick, t1: Tick) -> Result<(), String> {
+    let mut fetcher = open_sources(project, path, false, None)?;
+    let addrs: Vec<kt_model::MediaId> = project
+        .media
+        .iter()
+        .map(|m| m.id)
+        .chain(kt_engine::gen_sources(project).into_iter().map(|(a, _)| a))
+        .collect();
+    let mut facts = kt_engine::SourceFacts::default();
+    for a in &addrs {
+        if let Some(s) = fetcher.source_mut(*a) {
+            facts.observe(*a, s.info());
+        }
+    }
+    let mut video = kt_engine::VideoRenderer::new_with_facts(project, &facts);
+    let q = kt_media::Quality { width: project.settings.width, height: project.settings.height };
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig {
+        max_audio_bytes: 1,
+        max_video_bytes: 2 << 30,
+    });
+    let start = video.grid.align_floor(t0);
+    let mut per: std::collections::BTreeMap<(kt_model::MediaId, kt_media::Quality), Vec<Tick>> =
+        Default::default();
+    for (m, pts, dq) in video.wanted_frames(kt_time::TickRange::new(start, t1), q) {
+        per.entry((m, dq)).or_default().push(pts);
+    }
+    for ((m, dq), keys) in per {
+        if let Some(s) = fetcher.source_mut(m) {
+            let sid = kt_engine::source_id(m);
+            let _ = s.read_video_span(&keys, Some(dq), &mut |k, f| {
+                cache.insert_video(sid, Some(dq), kt_engine::video_cache_idx(k), f.into());
+            });
+        }
+    }
+    let gpu = if std::env::var("KT_VIDEO_GPU").as_deref() == Ok("0") {
+        None
+    } else {
+        kt_gpu::GpuContext::new_headless().and_then(kt_gpu::GpuFxEngine::new).ok()
+    };
+    let backend = match &gpu {
+        Some(e) => {
+            use kt_engine::VideoGpuExec as _;
+            format!("GPU ({})", e.info().name)
+        }
+        None => "CPU".to_string(),
+    };
+    let step = video.grid.frame_step();
+    let mut ms = Vec::new();
+    let (mut passes, mut subs, mut snaps, mut mixes, mut max_subs) = (0u64, 0u64, 0u64, 0u64, 0u64);
+    let mut unknown = false;
+    let mut incomplete = 0u64;
+    let mut buf = Vec::new();
+    let mut t = start;
+    while t < t1 {
+        let clock = std::time::Instant::now();
+        let (complete, cost) = match &gpu {
+            Some(e) => {
+                use kt_engine::VideoGpuExec as _;
+                let plan = video.frame_plan(&cache, t, q);
+                let c = e.execute_into(&plan, &mut buf).map_err(|e| format!("gpu: {e:?}"))?;
+                (c, e.last_cost())
+            }
+            None => (video.compose_export_into(&cache, t, q, &mut buf), video.last_cost()),
+        };
+        ms.push(clock.elapsed().as_secs_f64() * 1e3);
+        incomplete += u64::from(!complete);
+        passes += cost.passes as u64;
+        subs += cost.subsamples;
+        max_subs = max_subs.max(cost.subsamples);
+        snaps += cost.snapshots as u64;
+        mixes += cost.mixes as u64;
+        unknown |= cost.subsamples_unknown;
+        t = Tick(t.0 + step);
+    }
+    let n = ms.len().max(1) as u64;
+    let mut sorted = ms.clone();
+    sorted.sort_by(f64::total_cmp);
+    let pick = |f: f64| sorted.get(((sorted.len() as f64 - 1.0) * f).round() as usize).copied();
+    println!("\n-- video compose cost (decoded cache, {}x{}, no UI) --", q.width, q.height);
+    println!("  backend: {backend}");
+    println!("  frames: {} (incomplete {incomplete})", ms.len());
+    if let (Some(p50), Some(p95), Some(max)) = (pick(0.5), pick(0.95), pick(1.0)) {
+        println!("  compose ms: p50 {p50:.2}, p95 {p95:.2}, max {max:.2}");
+    }
+    println!(
+        "  per frame: passes {:.1}, sub-samples {} (max {max_subs}){}, snapshots {:.1}, mixes {:.1}",
+        passes as f64 / n as f64,
+        subs / n,
+        if unknown { " + per-pixel programs not counted" } else { "" },
+        snaps as f64 / n as f64,
+        mixes as f64 / n as f64
+    );
+    Ok(())
 }
 
 /// Facts about the project’s sources: native (R.46, item 322) and proceduralness

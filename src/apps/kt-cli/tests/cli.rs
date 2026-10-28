@@ -995,3 +995,120 @@ fn t940_probe_conform_line_is_the_render_s() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The owner's case of morpher-event-grid-cost (ktprompts 26.10.18 item 8), the same scene as
+/// t946 in kt-engine: a synthetic 960×540 source, a morpher block with an event grid automated
+/// 1×1 → 12×30 → 12×10 → 1×1 and fades at both ends.
+fn owner_grid_case() -> kt_model::Project {
+    use kt_model::*;
+    use kt_time::Tick;
+    const SEC: i64 = 90_000;
+    let curve = |param: &str, vals: [f64; 4]| ParamCurve {
+        param: param.into(),
+        keys: AutoKey::linear(
+            [0, 2, 4, 6].iter().zip(vals).map(|(s, v)| AutoKey::at(Tick(s * SEC), v)).collect(),
+        ),
+        source: Default::default(),
+    };
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 960,
+        height: 540,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(6 * SEC),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.ensure_tracks(LaneKind::Morph, 1);
+    p.morphers.push(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(6 * SEC),
+        targets: MorphTargets::Clips { ids: vec![ClipId(1)] },
+        patch: MorphPatch {
+            video_fx: vec![FxInstance::EventGrid { cols: 1, rows: 1, center: false }],
+            video_auto: vec![vec![
+                curve("cols", [1.0, 12.0, 12.0, 1.0]),
+                curve("rows", [1.0, 30.0, 10.0, 1.0]),
+            ]],
+            ..Default::default()
+        },
+        timed: true,
+        strength: 1.0,
+        fade_in: Tick(SEC / 2),
+        fade_out: Tick(SEC / 2),
+        enabled: true,
+    });
+    p.validate().unwrap();
+    p
+}
+
+/// Test 947, the probe half (morpher-event-grid-cost, D1): `probe --time` tells the VIDEO
+/// compose cost — the backend that composed, frames, compose ms, passes and sub-samples — and
+/// both backends count the same program. Fields and counts are asserted, never times.
+/// `KT_T947_SAVE=<path>` also keeps the project for the release measurement (task 1.4).
+#[test]
+fn t947_probe_time_tells_the_video_cost() {
+    let dir = std::env::temp_dir().join(format!("kt-cli-t947-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let text = kt_model::project_file::to_text(&owner_grid_case(), None);
+    let path = dir.join("t947.kt");
+    std::fs::write(&path, &text).unwrap();
+    if let Some(keep) = std::env::var_os("KT_T947_SAVE") {
+        std::fs::write(keep, &text).unwrap();
+    }
+    let run = |gpu: Option<&str>| -> String {
+        let mut c = cli();
+        c.args(["probe", path.to_str().unwrap(), "0", "1", "--time"]);
+        if let Some(v) = gpu {
+            c.env("KT_VIDEO_GPU", v);
+        }
+        let out = c.output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let s = String::from_utf8_lossy(&out.stdout).to_string();
+        s.split("-- video compose cost").nth(1).unwrap_or_else(|| panic!("no video section:\n{s}")).to_string()
+    };
+    let max_subs = |s: &str| -> u64 {
+        s.split("(max ").nth(1).and_then(|r| r.split(')').next()).and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| panic!("no peak sub-samples in:\n{s}"))
+    };
+    let cpu = run(Some("0"));
+    assert!(cpu.contains("backend: CPU"), "KT_VIDEO_GPU=0 composed on: {cpu}");
+    assert!(cpu.contains("frames: 30 (incomplete 0)"), "one second at 30 fps, all complete: {cpu}");
+    assert!(cpu.contains("compose ms: p50 "), "no compose time: {cpu}");
+    // the peak frame of the first second already has 4+ cells per axis: the full 16-tap pass
+    // (before the tile rule); the fade's strength slot snapshots the dry side
+    assert_eq!(max_subs(&cpu), 960 * 540 * 16, "the peak frame's sub-samples on the CPU: {cpu}");
+    assert!(cpu.contains("snapshots "), "{cpu}");
+    // the default backend (the GPU where there is an adapter) counts the same program
+    let def = run(None);
+    assert_eq!(max_subs(&def), max_subs(&cpu), "the backends count different work:\n{def}\n{cpu}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

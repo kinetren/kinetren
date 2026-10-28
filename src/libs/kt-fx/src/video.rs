@@ -42,6 +42,45 @@ pub struct Frame {
 #[derive(Default)]
 pub struct FxScratch {
     bufs: Vec<Vec<u8>>,
+    /// What the executor RAN since the caller last reset it (morpher-event-grid-cost, D1).
+    /// Plain integers: the frame path neither allocates nor locks for it (invariant 12).
+    pub cost: FrameCost,
+}
+
+/// The work of composing a frame, counted by the plan executor that did it — the same struct on
+/// both backends (morpher-event-grid-cost, D1). A memoized layer costs nothing, honestly.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct FrameCost {
+    /// Passes over the frame: a fused geometry run, a legacy geometry step, a barrier kernel.
+    pub passes: u32,
+    /// Sub-samples of the fused geometry passes (`GeomProgram::sample_cost`); a program whose
+    /// tap count varies per pixel (perspective) adds nothing and sets `subsamples_unknown`.
+    pub subsamples: u64,
+    pub subsamples_unknown: bool,
+    /// Copies of the dry side of a layer strength, and the mixes that use them.
+    pub snapshots: u32,
+    pub mixes: u32,
+}
+
+impl FrameCost {
+    pub fn add(&mut self, o: FrameCost) {
+        self.passes += o.passes;
+        self.subsamples += o.subsamples;
+        self.subsamples_unknown |= o.subsamples_unknown;
+        self.snapshots += o.snapshots;
+        self.mixes += o.mixes;
+    }
+
+    /// The cost of one fused geometry pass.
+    pub fn geom(prog: &crate::geom::GeomProgram) -> FrameCost {
+        let sc = prog.sample_cost();
+        FrameCost {
+            passes: 1,
+            subsamples: sc.unwrap_or(0),
+            subsamples_unknown: sc.is_none(),
+            ..FrameCost::default()
+        }
+    }
 }
 
 impl FxScratch {
@@ -217,15 +256,19 @@ pub fn apply_video_chain_pooled(
                         .iter()
                         .find(|f| crate::geom::is_geo_active(f, ctx.lead, ctx.out_w, ctx.out_h))
                         .expect("legacy run has a geo step");
+                    scratch.cost.passes += 1;
                     apply_legacy_geo(step, frame, ctx, scratch)
                 }
                 crate::geom::GeomExec::Fused(prog) => {
+                    let c = FrameCost::geom(&prog);
+                    scratch.cost.add(c);
                     let nf = crate::geom::exec_geom_cpu(&prog, &frame, scratch);
                     scratch.put(frame.rgba);
                     nf
                 }
             },
             crate::plan::PlanOp::Barrier { idx, res_scale } => {
+                scratch.cost.passes += 1;
                 apply_barrier(&fx[idx], frame, ctx, scratch, res_scale)
             }
             // The layer strength is applied one level up (apply_chain_with_mixes in

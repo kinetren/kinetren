@@ -1415,7 +1415,14 @@ impl VideoRenderer {
             blend_footage: false,
         };
         let plan = build_plan(&self.clips, &ctx, cache, t, quality, true);
+        self.fx_scratch.cost = Default::default();
         execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
+    }
+
+    /// What the last CPU compose of THIS renderer ran (morpher-event-grid-cost, D1). The
+    /// sub-composites of nested reels count in their own renderers.
+    pub fn last_cost(&self) -> kt_fx::video::FrameCost {
+        self.fx_scratch.cost
     }
 
     /// Export variant: without post-FX memoization (R.31 item 4 — see
@@ -1437,6 +1444,7 @@ impl VideoRenderer {
             blend_footage: false,
         };
         let plan = build_plan(&self.clips, &ctx, cache, t, quality, false);
+        self.fx_scratch.cost = Default::default();
         execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
     }
 
@@ -2506,6 +2514,7 @@ fn apply_chain_with_mixes(
     let mut i = 0usize;
     while i < fx.len() {
         if mixes.iter().any(|(_, from, _)| *from == i) {
+            scratch.cost.snapshots += 1;
             snaps.insert(
                 i,
                 kt_fx::video::Frame {
@@ -2519,6 +2528,7 @@ fn apply_chain_with_mixes(
         match mixes.iter().find(|(at, _, _)| *at == i) {
             Some((_, from, k)) if *k < 4096 => {
                 if let Some(dry) = snaps.remove(from) {
+                    scratch.cost.mixes += 1;
                     frame = blend_frames_cpu(dry, frame, *k);
                 }
                 i += 1;
