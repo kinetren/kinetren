@@ -63,5 +63,12 @@ message, first line = the stage and what was done). Stage only this change's fil
 
 ## 5. Finish
 
-- [ ] 5.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version `vYY.MM.DD-hash` and the live screenshots here
+- [x] 5.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version `vYY.MM.DD-hash` and the live screenshots here
+  - finish.sh → **kt26.10.29-c3462989** (2026-10-29, on c346298). Cargo and SIMD green. Live: 49
+    scenarios, `fade` red in the 4-worker run and green alone (a known timing flake), `nestdead` red twice
+    — a race in the scenario, not the program: it read the probe dump right after the right-click,
+    before the menu's frame (red about one run in two on the same binary, green with any extra wait).
+    The scenario now waits for `nest.enter` before listing the items; 3 of 3 green alone.
+    Screenshots: `target/live-out/select/05…08-step-*.png` (copy of the one event, paste, triple-click
+    region).
 - [ ] 5.2 After archiving: set F-TL-013 to `done` with its frozen verdict and `CAPABILITY:`, and append to `openspec/specs/ui-timeline/design.md` the "why" of D1 (link groups counted, the range-marker consequence, Vegas/Premiere rejected) and D3 (no delayed double click)

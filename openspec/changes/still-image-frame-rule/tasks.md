@@ -100,4 +100,11 @@ English and its first line names the stage and what was done.
     three readers that had their own copy (renderer lead, `Player::source_view`, `kt-cli probe`), and
     "as is" in the composite's raster. The `video.rs` comment at `observe` already names both facts
     (written in 2.1). `openspec validate --strict` green.
-- [ ] 4.2 Run `./scripts/finish.sh` from `src/`. Verify it is green, and record the version `vYY.MM.DD-hash` and the screenshots of 3.2 here
+- [x] 4.2 Run `./scripts/finish.sh` from `src/`. Verify it is green, and record the version `vYY.MM.DD-hash` and the screenshots of 3.2 here
+  - finish.sh → **kt26.10.29-c3462989** (2026-10-29, on c346298). Cargo and SIMD green. Live: 49
+    scenarios, `fade` red in the 4-worker run and green alone (a known timing flake), `nestdead` red twice
+    — a race in the scenario, not the program: it read the probe dump right after the right-click,
+    before the menu's frame (red about one run in two on the same binary, green with any extra wait).
+    The scenario now waits for `nest.enter` before listing the items; 3 of 3 green alone.
+    Screenshots of 3.2: `target/live-out/stills/03-step-square-fill.png`, `05-step-square-stretch.png`,
+    `07-step-square-as-is.png`, `09-step-square-fit.png`.

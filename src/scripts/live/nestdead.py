@@ -48,6 +48,9 @@ def main(out):
 
         # --- 1. OWN menu ----------------------------------------------
         app.right_click(mid, y)
+        # the menu is drawn on a frame AFTER the click is read: wait for it, then list its items
+        # (a bare read raced that frame — red about one run in two, finish of 2026-10-29)
+        app.has_probe("nest.enter")
         names = {f["param"] for f in app.geom().get("fields", [])}
         for want in ("nest.enter", "nest.expand", "nest.rename"):
             app.expect(want in names, f"the attachment menu has no “{want}”: {sorted(names)}")
