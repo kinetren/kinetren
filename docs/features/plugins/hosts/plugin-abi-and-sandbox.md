@@ -16,7 +16,7 @@ tests: []
 depends_on: [F-EXT-001, F-EXT-002]
 trackers: []
 services: []
-checked: 2026-09-21
+checked: 2026-10-28
 ---
 
 # F-EXT-003 — Plugin contract: what foreign code must declare
@@ -154,6 +154,29 @@ error — following the pattern of `open_pseudo`
 And the reverse-sign condition, which should be written down right away: **if a plugin declared itself honestly and still violates the contract, the right answer is not to weaken the contract, but to stop loading it.** The cheap path named by
 F-EXT-001 ("take foreign effects INTO THE MATERIAL, not into the chain") remains
 in force and goes nowhere: it is not a competitor to this contract, but its fallback exit.
+
+**Revised by the owner, 2026-10-27/28 (change `plugin-api-stage1`).** The owner put plugins
+BEFORE the effects catch-up ("even now the build takes very long… I want to unify the program and
+the interfaces at last") and chose the first stage: an internal API plus crates, the built-ins
+moved behind one interface; the claims file names Rust→wasm as the likely external route. Two lines
+of this verdict change, by explicit revision rather than silently:
+
+- **The order** becomes built-in → **wasm** → dlopen / OpenFX. Wasm turns three lines of the
+  contract from promises into properties of the runtime: no clocks and no I/O (a module has only the
+  imports the host gives it), a caught trap instead of a segfault ("Cons": "a panic can be caught, a
+  segfault cannot"), one binary for both operating systems. dlopen keeps its value for OpenFX, which
+  is a C ABI by definition, and moves behind wasm.
+- **"State or tail is refused at load"** stays for VIDEO kernels (post-FX memoization is built on
+  frames without history) and is narrowed for AUDIO nodes: audio has no post-FX cache, the host
+  already owns per-clip FX state on the render thread and keeps it across edits by clip id, and a
+  declared tail and look-ahead are exactly what the VST quotes above say a host must be told. What is
+  refused for audio is a look-ahead the seek warm-up cannot fill and a kernel that cannot be called
+  concurrently.
+
+The plugin id is the file tag the kind already has, so moving a kind into a plugin changes no byte
+of a project; the golden references iterate a closed built-in list and never see anything else.
+The design lives in `openspec/changes/plugin-api-stage1/design.md` (D4, D10); the contract will be
+the capability `plugins` after archiving.
 
 ## Sources
 
