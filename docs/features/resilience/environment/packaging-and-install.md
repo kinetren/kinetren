@@ -15,7 +15,7 @@ point: null
 tests: []
 depends_on: []
 trackers: [kde-bugzilla, kde-invent, pitivi]
-checked: 2026-09-08
+checked: 2026-10-28
 ---
 
 # F-RES-008 — Installation and packaging: an application that did not start
@@ -181,6 +181,32 @@ already warms the index, and the display — under rule 16 (an impossibility = a
 hint) and rule 19 (say where to change it: which package to install).
 Second: the message about FFmpeg is text with the names of system packages, and those differ in
 every distribution; naming an exact name wrongly is worse than naming the library.
+
+### Flatpak (addendum 2026-10-28, change `flatpak-flathub`)
+
+The owner asked for a Flathub release with hardware encoding in render (2026-10-27). Reconnaissance
+of the delivery, not of a core editor (none of the five ships on Flathub):
+
+- **The runtime brings the FFmpeg we already accept.** `org.freedesktop.Platform` builds FFmpeg
+  7.0.3 (branch 24.08), 7.1.3 (25.08) and 8.1.3 (26.08) — `elements/include/ffmpeg.yml` of each
+  freedesktop-sdk release branch, read 2026-10-28 — all majors of `src/libs/kt-ffmpeg/src/search.rs`.
+  So the Flatpak needs no FFmpeg of its own: invariant 10 holds inside the sandbox too.
+- **The trap is two FFmpegs with one SONAME.** The base runtime's build is `--disable-encoders`;
+  the encoders (libx264, plus VAAPI and NVENC from the shared configure) live in the `codecs-extra`
+  extension (`/usr/lib/<triplet>/codecs-extra/lib`), which since 25.08 replaced `ffmpeg-full` and
+  installs with the runtime. Which `libavcodec.so.61` a `dlopen` by SONAME gets is a property of the
+  runtime's library path, so the loader can find the right major with no encoder at all — the
+  Kdenlive/Shotcut class "no hardware encoders found in the package" (above) in a new form.
+  `KINETREN_FFMPEG_DIR` (`src/libs/kt-ffmpeg/src/loader.rs`) is the existing lever.
+- **The GPU is reachable only through the sandbox's device and driver set**: Mesa's VA drivers come
+  with the GL extension, Intel's media driver as its own extension (25.08 dropped
+  `intel-vaapi-driver`), NVIDIA's NVENC needs the GL extension of the host driver's exact version and
+  possibly device nodes beyond `--device=dri`; nvidia-vaapi-driver decodes only. The program can name
+  what it found (`kt-cli ffmpeg`), not grant it.
+
+ADDRESS: src/apps/kt-app/src/app.rs:9100 — the window's application id is the plain `kinetren`;
+a Flatpak exports only files named by a reverse-DNS ID, so the desktop file, icons, MIME package and
+this id move to one ID (decision in `openspec/changes/flatpak-flathub/design.md`).
 
 ### Which invariants it touches
 
