@@ -9366,28 +9366,34 @@ mod repaint_tests {
                 );
             }
         }
-        // The “fit” FRAME is the same in FRACTIONS of the canvas at all fractions —
+        // The FRAME of EVERY rule is the same in FRACTIONS of the canvas at all fractions —
         // that is the purpose of similarity: preview and export must compute
         // one frame. (The check lives here, not in kt-fx: there is no preview
-        // fraction there, while kt-app has both halves.)
-        for view in [(1080.0f64, 1920.0f64), (3840.0, 2160.0), (720.0, 720.0)] {
+        // fraction there, while kt-app has both halves.) "As is" joined in
+        // still-image-frame-rule: counted in canvas pixels, a 720×720 picture filled the
+        // whole height of a ½ preview and half of the export.
+        use kt_fx::conform::ConformRule as R;
+        for (view, rule) in [(1080.0f64, 1920.0f64), (3840.0, 2160.0), (720.0, 720.0)]
+            .into_iter()
+            .flat_map(|v| [R::Fit, R::Fill, R::Stretch, R::AsIs].map(|r| (v, r)))
+        {
             let mut ref_frac: Option<(f64, f64)> = None;
             for f in [1.0f32, 0.5, 0.25, 0.125, 0.0625] {
                 let q = preview_quality_for(1920, 1080, f);
                 let canvas = (q.width as f64, q.height as f64);
-                let d = kt_fx::conform::conform_dest(
-                    Some(view),
-                    canvas,
-                    kt_fx::conform::ConformRule::Fit,
-                );
+                let d = kt_fx::conform::LeadCtx::new(Some(view), rule)
+                    .in_raster((1920, 1080))
+                    .dest(Some(view), canvas);
                 let frac = (d.0 / canvas.0, d.1 / canvas.1);
                 match ref_frac {
                     None => ref_frac = Some(frac),
                     Some(r) => {
-                        let tol = 1.0 / q.width.min(q.height) as f64;
+                        // a pixel of the canvas, relative to the frame: fill runs past the canvas, and
+                        // the rounding of a small canvas grows with the overflow
+                        let tol = r.0.max(r.1).max(1.0) / q.width.min(q.height) as f64;
                         assert!(
                             (frac.0 - r.0).abs() <= tol && (frac.1 - r.1).abs() <= tol,
-                            "view {view:?} @{f}: the “fit” frame in canvas fractions diverged — \
+                            "view {view:?} {rule:?} @{f}: the frame in canvas fractions diverged — \
                              {frac:?} against {r:?} (tolerance {tol:.4})"
                         );
                     }

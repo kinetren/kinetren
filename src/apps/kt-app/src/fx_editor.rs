@@ -829,9 +829,15 @@ impl KtApp {
                                             kt_model::Conform::Stretch,
                                             kt_model::Conform::AsIs,
                                         ] {
-                                            params_changed.base |= ui
-                                                .selectable_value(&mut lead_rule, c, label(c))
-                                                .changed();
+                                            let w = ui.selectable_value(&mut lead_rule, c, label(c));
+                                            params_changed.base |= w.changed();
+                                            // each word is a live-scenario target (stills.py)
+                                            if crate::widgets::field_probe::on() {
+                                                crate::widgets::field_probe::note(
+                                                    &format!("geo.conform.{}", c.tag()),
+                                                    w.rect,
+                                                );
+                                            }
                                         }
                                     });
                                     crate::widgets::field_probe::note(

@@ -43,6 +43,12 @@ not use (a second arithmetic, forbidden since R.64).
 - **PATH** drag `still_square.png` onto the timeline → the event appears, the preview shows the square picture with transparent side margins (project rule fit) → open the FX window of the event → the Geometry node is first, its rule row shows five words (project / fit / fill / stretch / as is) → click **fill** → the picture fills the width and its top and bottom are cut → **stretch** → the picture is squashed to 16:9 → **as is** → a 180×180 square in the centre → right-click the preview, turn the on-screen controls on → in every step the frame drawn over the preview matches the picture's edges
 - **TEST** t939 (`src/apps/kt-app/src/layout_tests.rs`), live scenario `src/scripts/live/stills.py`
 
+#### Scenario: "As is" counts the pixels of the composite's raster, not of the preview canvas
+- **WHEN** a 360×360 picture stands under "as is" in a 1280×720 project, and the frame of every rule is computed for the preview at the fractions 1, ½, ¼, ⅛ and 1/16 of the project (the canvas is then 640×360, 320×180, …), with the composite's raster (the project, or a reel's own raster) carried in the lead context
+- **THEN** the frame of every rule, "as is" included, is the same in fractions of the canvas at every fraction — 360/1280 of the width and 360/720 of the height for "as is" — so the preview shows the size the file gets; when the canvas IS the raster (export at the project size) the frame is the view itself, byte for byte as before, and the GPU plan key carries the raster
+- **PATH** a 1280×720 project with a 360×360 red picture, preview at ½ → open the FX window of the event, click the Geometry node → click **as is** → the red square is half the height of the preview frame (not its full height), and the on-screen frame sits on its edges
+- **TEST** t765 (`src/apps/kt-app/src/app.rs`, extended from fit to all four rules), live scenario `src/scripts/live/stills.py`
+
 #### Scenario: The probe tells the same truth
 - **WHEN** `kt-cli probe` is run over a project with the square still under fit and the placeholder of a missing picture
 - **THEN** the conform line of the still prints `view=180x180` and the fit frame the renderer uses; the placeholder prints `unknown/stretch`; both lines come from the same function the renderer calls

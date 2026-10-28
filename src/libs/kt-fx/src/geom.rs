@@ -16,7 +16,7 @@
 //! Multi-step series give NEW bytes (better: no losses) — this is
 //! sanctioned by the owner (docs/user-feedback.md R.44).
 
-use crate::conform::{ConformRule, LeadCtx, conform_dest};
+use crate::conform::{ConformRule, LeadCtx};
 use crate::video::{Frame, FxScratch};
 use kt_model::FxInstance;
 
@@ -82,7 +82,7 @@ pub fn geometry_is_identity_in(
             }
             let Some(l) = lead else { return true };
             let (mow, moh) = (out_w.max(2) as f64, out_h.max(2) as f64);
-            let d = conform_dest(l.view, (mow, moh), l.rule);
+            let d = l.dest(l.view, (mow, moh));
             (d.0 - mow).abs() < 1e-6 && (d.1 - moh).abs() < 1e-6
         }
         _ => false,
@@ -215,8 +215,8 @@ pub fn geometry_placement(
     let (cx0, cy0, cw, ch) = (l * iw, t * ih, kx * iw, ky * ih);
     let (fw_, fh_) = (canvas.0.max(2.0), canvas.1.max(2.0));
     let dest = if *is_lead {
-        let lc = lead.unwrap_or(LeadCtx { view: None, rule: ConformRule::Stretch });
-        conform_dest(lc.view.map(|(vw, vh)| (vw * kx, vh * ky)), (fw_, fh_), lc.rule)
+        let lc = lead.unwrap_or(LeadCtx::new(None, ConformRule::Stretch));
+        lc.dest(lc.view.map(|(vw, vh)| (vw * kx, vh * ky)), (fw_, fh_))
     } else {
         (cw, ch)
     };

@@ -273,7 +273,7 @@ impl KtApp {
         let c = self.model.clip(clip)?;
         let rule = g_of.rule.resolve(self.model.project().settings.conform);
         let view = self.player.source_view(c.media);
-        let lead = LeadCtx::new(view, rule);
+        let lead = LeadCtx::new(view, rule).in_raster(self.player.raster());
         // input of the node — the source view (the leading node stands first in the chain);
         // unknown — the canvas, and the rule degenerates into “stretch”
         let in_size = view.unwrap_or(canvas);

@@ -517,10 +517,16 @@ fn nest_scales(project: &Project) -> std::collections::HashMap<MediaId, u32> {
             let auto = c.active_fx_auto();
             let (fx, auto) = materialize_lead(c, fx, auto);
             let plan = kt_model::AutoPlan::compile(&fx, &auto);
-            let lead = Some(kt_fx::conform::LeadCtx::new(
-                project.sequence(c.media).and_then(|s| s.raster).map(|(w, h)| (w as f64, h as f64)),
-                c.geometry.rule.resolve(project.settings.conform),
-            ));
+            let lead = Some(
+                kt_fx::conform::LeadCtx::new(
+                    project
+                        .sequence(c.media)
+                        .and_then(|s| s.raster)
+                        .map(|(w, h)| (w as f64, h as f64)),
+                    c.geometry.rule.resolve(project.settings.conform),
+                )
+                .in_raster(size),
+            );
             let zoom = clip_head_zoom(
                 &fx,
                 plan.as_ref(),
@@ -596,11 +602,12 @@ fn clip_base_quality(clip: &VideoClip, quality: Quality) -> Quality {
     if clip.nest.is_some() && lead.view.is_none() {
         return quality;
     }
-    let g = kt_fx::conform::conform_geometry(
+    let g = kt_fx::conform::conform_geometry_in(
         lead.view,
         (quality.width, quality.height),
         lead.rule,
         clip.crop,
+        lead.raster,
     );
     Quality { width: g.decode.0, height: g.decode.1 }
 }
@@ -878,6 +885,13 @@ impl VideoRenderer {
         // (`clip_chain_scale`). Different camera sets would pull them apart
         // on their own, on Pan3d inside a reel with its own cameras.
         let cams: &[kt_model::CameraEvent] = &resolved.cameras;
+        // The LOGICAL raster of this composite, in which "as is" counts its pixels: the reel's
+        // own raster, else the project's (still-image-frame-rule). A reel without its own raster
+        // nested in a reel that has one is taken at the project's raster, as `nest_scales` does.
+        let raster = seq
+            .and_then(|id| project.sequence(id))
+            .and_then(|s| s.raster)
+            .unwrap_or((project.settings.width, project.settings.height));
         // SALT of the source address (R.59, stage 3) — one for the whole reel
         // instance. Computed by the SAME code as in `gen_sources`:
         // the order and the read must ask for one address (invariant 4).
@@ -968,10 +982,13 @@ impl VideoRenderer {
                 // spec generators, R.62), a single picture and a file have their view.
                 let procedural = facts.procedural.contains(&addr);
                 let view = lead_view(project, facts, c, addr);
-                let lead = Some(kt_fx::conform::LeadCtx::new(
-                    view,
-                    c.geometry.rule.resolve(project.settings.conform),
-                ));
+                let lead = Some(
+                    kt_fx::conform::LeadCtx::new(
+                        view,
+                        c.geometry.rule.resolve(project.settings.conform),
+                    )
+                    .in_raster(raster),
+                );
                 let nest_fps = nest.and_then(|_| project.sequence(c.media)).and_then(|s| s.fps);
                 let crop =
                     [c.geometry.crop_l, c.geometry.crop_t, c.geometry.crop_r, c.geometry.crop_b];

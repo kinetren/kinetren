@@ -415,7 +415,8 @@ fn probe_range(
         // the same function the renderer's lead calls (still-image-frame-rule, D2)
         let view = kt_engine::video::lead_view(project, &facts, c, c.media);
         let canvas = (q.width as f64, q.height as f64);
-        let frame = kt_fx::conform::conform_dest(view, canvas, rule);
+        let raster = (project.settings.width, project.settings.height);
+        let frame = kt_fx::conform::LeadCtx::new(view, rule).in_raster(raster).dest(view, canvas);
         let g = kt_fx::conform::conform_geometry(
             view,
             (q.width, q.height),

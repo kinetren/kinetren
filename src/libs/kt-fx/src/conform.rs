@@ -24,11 +24,27 @@ pub struct LeadCtx {
     /// unknown: the rule degenerates to “stretch”, deterministically.
     pub view: Option<(f64, f64)>,
     pub rule: ConformRule,
+    /// The LOGICAL raster of the composite the layer stands in (the project, or a reel's own
+    /// raster). "As is" is one source pixel per pixel of THIS raster, not of the canvas being
+    /// rendered: the preview renders at a fraction of the project (½, ¼), and counted in canvas
+    /// pixels the same picture came out twice as large in the preview as in the file
+    /// (still-image-frame-rule, found by the live `stills`). `None` — the canvas is the raster.
+    pub raster: Option<(f64, f64)>,
 }
 
 impl LeadCtx {
     pub fn new(view: Option<(f64, f64)>, rule: ConformRule) -> LeadCtx {
-        LeadCtx { view, rule }
+        LeadCtx { view, rule, raster: None }
+    }
+
+    /// The same context standing in a composite of the logical size `raster`.
+    pub fn in_raster(self, raster: (u32, u32)) -> LeadCtx {
+        LeadCtx { raster: Some((raster.0 as f64, raster.1 as f64)), ..self }
+    }
+
+    /// The rule's frame on `canvas` (zoom 1) — `conform_dest_in` with this context's raster.
+    pub fn dest(&self, view: Option<(f64, f64)>, canvas: (f64, f64)) -> (f64, f64) {
+        conform_dest_in(view, canvas, self.rule, self.raster)
     }
 }
 
@@ -46,13 +62,28 @@ pub struct LayerGeom {
 /// Frame size for the view `view` on the canvas `canvas` by the rule (zoom 1).
 /// A zero/unknown view — “stretch”.
 pub fn conform_dest(view: Option<(f64, f64)>, canvas: (f64, f64), rule: ConformRule) -> (f64, f64) {
+    conform_dest_in(view, canvas, rule, None)
+}
+
+/// The same in a composite of the logical size `raster`: "as is" scales the view by
+/// canvas ÷ raster. When the canvas IS the raster (export at the project size, every golden) the
+/// factor is not applied at all, so those bytes cannot move.
+pub fn conform_dest_in(
+    view: Option<(f64, f64)>,
+    canvas: (f64, f64),
+    rule: ConformRule,
+    raster: Option<(f64, f64)>,
+) -> (f64, f64) {
     let (cw, ch) = (canvas.0.max(2.0), canvas.1.max(2.0));
     let Some((vw, vh)) = view.filter(|(w, h)| *w > 0.0 && *h > 0.0) else {
         return (cw, ch);
     };
     match rule {
         ConformRule::Stretch => (cw, ch),
-        ConformRule::AsIs => (vw, vh),
+        ConformRule::AsIs => match raster.filter(|&(rw, rh)| rw > 0.0 && rh > 0.0) {
+            Some((rw, rh)) if (rw, rh) != (cw, ch) => (vw * cw / rw, vh * ch / rh),
+            _ => (vw, vh),
+        },
         ConformRule::Fit => {
             let k = (cw / vw).min(ch / vh);
             (vw * k, vh * k)
@@ -74,11 +105,22 @@ pub fn conform_geometry(
     rule: ConformRule,
     crop: [f64; 4],
 ) -> LayerGeom {
+    conform_geometry_in(view, canvas, rule, crop, None)
+}
+
+/// The same in a composite of the logical size `raster` (see `conform_dest_in`).
+pub fn conform_geometry_in(
+    view: Option<(f64, f64)>,
+    canvas: (u32, u32),
+    rule: ConformRule,
+    crop: [f64; 4],
+    raster: Option<(f64, f64)>,
+) -> LayerGeom {
     let kx = (1.0 - crop[0].clamp(0.0, 0.95) - crop[2].clamp(0.0, 0.95)).max(0.05);
     let ky = (1.0 - crop[1].clamp(0.0, 0.95) - crop[3].clamp(0.0, 0.95)).max(0.05);
     let cropped = view.map(|(w, h)| (w * kx, h * ky));
     let canvas_f = (canvas.0.max(2) as f64, canvas.1.max(2) as f64);
-    let dest = conform_dest(cropped, canvas_f, rule);
+    let dest = conform_dest_in(cropped, canvas_f, rule, raster);
     let (mut dw, mut dh) = (dest.0 / kx, dest.1 / ky);
     // ceiling of intermediate buffers — a project constant (item 314), proportionally
     let cap = MAX_INTER_DIM as f64;

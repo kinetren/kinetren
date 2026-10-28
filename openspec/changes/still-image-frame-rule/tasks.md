@@ -64,11 +64,40 @@ English and its first line names the stage and what was done.
     as is — a centred square smaller than fit. RED with the still counted shapeless again: "fit: not a
     picture with side margins (0, 0, 640, 360)" — the frame and the pixels agreed, both on the whole
     canvas, which is exactly the owner's "the rule does nothing".
-- [ ] 3.2 Extend the live scenario `src/scripts/live/stills.py` with the square still in a 16:9 project. Take one `kt_live.step` screenshot per rule (fit, fill, stretch, as is), and measure the picture's width on screen as `conform.py` does. Verify `./scripts/live-check.sh stills` is green
-- [ ] 3.3 Run the kt-app UI guards (`reach_tests.rs`, `layout_tests.rs`). Verify they are green
-- [ ] 3.4 Commit stage 3
+- [x] 3.2 Extend the live scenario `src/scripts/live/stills.py` with the square still in a 16:9 project. Take one `kt_live.step` screenshot per rule (fit, fill, stretch, as is), and measure the picture's width on screen as `conform.py` does. Verify `./scripts/live-check.sh stills` is green
+  - `stills.py` part 4–5: a 360×360 red picture in a 1280×720 project; double click → the FX window,
+    `fx.slot.0` (the Geometry node), then each word by its new probe `geo.conform.<rule>` (published by
+    the rule row in `fx_editor.rs`). One screenshot per rule (`square-fill`, `-stretch`, `-as-is`,
+    `-fit`). The width is measured as `conform.py` does (a red run on the centre line), but from the
+    preview centre to the right and in the column there — the FX window covers the left of the
+    preview, and the panel centre is not the picture centre (the meters): the frame's centre and width
+    come from stretch's right edge and height. Green: fill 896 of 896, fit 502 of 896 (9/16), as is
+    250×252 in an 896×504 frame.
+  - **FOUND BY IT — design D5:** the first run had "as is" filling the whole height of the ½ preview,
+    the size of fit. `conform_dest` put "as is" at the view in CANVAS pixels; the preview canvas is
+    640×360 for a 1280×720 project, so the preview drew it twice the size the file gets. `LeadCtx`
+    now carries `raster` (the project, or a reel's own raster; `in_raster`, `dest`), `conform_dest_in`
+    / `conform_geometry_in` scale "as is" by canvas ÷ raster and skip the factor when they are equal
+    (exports and goldens keep their bytes); the renderer (`build_reel`, `nest_scales`), the overlay
+    (`Player::raster`), the probe and the GPU plan key carry it. t765 extended from fit to all four
+    rules in the raster: RED without the factor — "view (1080.0, 1920.0) AsIs @0.5: the frame in canvas
+    fractions diverged — (1.125, 3.556) against (0.5625, 1.778)"; its tolerance became one canvas
+    pixel RELATIVE to the frame (fill runs past the canvas, and at 1/16 its rounding grows with the
+    overflow). A scenario for it in this change's spec.
+- [x] 3.3 Run the kt-app UI guards (`reach_tests.rs`, `layout_tests.rs`). Verify they are green
+  - Workspace after the raster fix: all green except t640 (reel preview from the sidecar, a timeout
+    on its background wait; red once alone at 32 s, then green 5 of 5 alone at 0.23 s — on the known
+    load-dependent list, and it failed in the run before this fix too). reach_tests and layout_tests
+    otherwise green; t938 and the kt-gpu parity suite green on the adapter (`KT_REQUIRE_GPU=1`);
+    `specs-user-path.py --check`, `live-sleeps.py --check`, clippy without new warnings.
+- [x] 3.4 Commit stage 3
+  - Committed with 4.1.
 
 ## 4. Records and finish
 
-- [ ] 4.1 Append to `openspec/specs/video-plan/design.md` the "why": "procedural" (no grid) and "shapeless" (no proportions) are two facts, and R.67 had silently merged them. Name the three readers that had their own copy. Update the comment at `video.rs` ~932 that sends a still to "no proportions". Verify `openspec validate --specs` is green
+- [x] 4.1 Append to `openspec/specs/video-plan/design.md` the "why": "procedural" (no grid) and "shapeless" (no proportions) are two facts, and R.67 had silently merged them. Name the three readers that had their own copy. Update the comment at `video.rs` ~932 that sends a still to "no proportions". Verify `openspec validate --specs` is green
+  - Two bullets in `openspec/specs/video-plan/design.md` "Decisions and why": the two facts and the
+    three readers that had their own copy (renderer lead, `Player::source_view`, `kt-cli probe`), and
+    "as is" in the composite's raster. The `video.rs` comment at `observe` already names both facts
+    (written in 2.1). `openspec validate --strict` green.
 - [ ] 4.2 Run `./scripts/finish.sh` from `src/`. Verify it is green, and record the version `vYY.MM.DD-hash` and the screenshots of 3.2 here

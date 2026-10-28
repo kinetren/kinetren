@@ -419,6 +419,13 @@ impl Player {
         self.natives.read().ok()?.view_of(media)
     }
 
+    /// The LOGICAL raster of what is playing (the project's, or the entered reel's): the frame
+    /// of "as is" is counted in its pixels, not in the preview canvas's (still-image-frame-rule).
+    pub fn raster(&self) -> (u32, u32) {
+        let p = self.project.lock().unwrap();
+        (p.settings.width, p.settings.height)
+    }
+
     pub fn play(&self) {
         self.flight.push(crate::flight::Ev::Play, self.transport.playhead_frames(), 0);
         self.transport.set_playing(true);

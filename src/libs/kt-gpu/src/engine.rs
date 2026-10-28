@@ -1956,12 +1956,15 @@ fn put_lead(h: &mut xxhash_rust::xxh3::Xxh3, lead: &Option<kt_fx::conform::LeadC
         None => h.update(&[0u8]),
         Some(l) => {
             h.update(&[1u8, l.rule as u8]);
-            match l.view {
-                None => h.update(&[0u8]),
-                Some((w, hh)) => {
-                    h.update(&[1u8]);
-                    h.update(&w.to_bits().to_le_bytes());
-                    h.update(&hh.to_bits().to_le_bytes());
+            // the raster moves the "as is" frame (still-image-frame-rule): it is part of the plan
+            for v in [l.view, l.raster] {
+                match v {
+                    None => h.update(&[0u8]),
+                    Some((w, hh)) => {
+                        h.update(&[1u8]);
+                        h.update(&w.to_bits().to_le_bytes());
+                        h.update(&hh.to_bits().to_le_bytes());
+                    }
                 }
             }
         }

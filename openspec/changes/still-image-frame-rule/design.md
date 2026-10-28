@@ -102,6 +102,25 @@ No kernel changes, but t938 runs the lead node of a still on both backends, and 
 change's scenario names `geom.rs` and `geom_fused.wgsl` by the pair rule. The tolerance class
 is the one t713 uses for a vertical video (EXACT at K = 1). There is no new class.
 
+### D5. "As is" is counted in the composite's raster (found while applying)
+The live `stills` scenario showed a 360×360 picture under "as is" filling the WHOLE height of
+a ½ preview of a 1280×720 project — the same size as fit. `conform_dest` put "as is" at the
+view in CANVAS pixels, and the preview canvas is a fraction of the project (640×360), so the
+preview drew the picture twice as large as the file gets it. R.64 forbids exactly this: the
+frame on screen must be the frame that goes to the file.
+- The lead context (`kt_fx::conform::LeadCtx`) carries `raster` — the logical size of the
+  composite the layer stands in: the project, or a reel's own raster (a reel without one is
+  taken at the project's raster, the same approximation `nest_scales` makes). "As is" scales
+  the view by canvas ÷ raster; when the canvas IS the raster the factor is not applied at all,
+  so exports at the project size and every golden keep their bytes.
+- `conform_geometry_in` uses the same raster for the decode size, so the decoder is asked for
+  what the frame shows. The GPU plan key hashes the raster (it moves the frame).
+- The overlay asks `Player::raster()` (what is playing: the project or the entered reel), the
+  probe the project's settings.
+Alternative rejected: scaling the view at every caller. Fit, fill and stretch do not depend on
+the view's scale, so the bug would hide in "as is" alone; one field in the one context keeps
+the rule in one function.
+
 ## Risks / Trade-offs
 
 - [Existing projects with non-matching stills will look different: fit adds margins where the
