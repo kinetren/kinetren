@@ -20,7 +20,7 @@ change its height, right-click the edge to reset it. **Shift+wheel** scrolls tra
 | click / **Ctrl+click** | select / add to the selection |
 | **Ctrl+drag** on empty space | rubber-band selection |
 | double-click | the effects window |
-| **Shift+double-click** | region over this event |
+| triple-click | region over this event and its linked partners (also **Shift+double-click**) |
 | right-click | the event menu: split, reverse, fades, transitions, sync, link/unlink… |
 | drag a top corner | fade in or out at that edge |
 | drag the level line | video opacity or audio gain (double-click resets it) |
@@ -47,7 +47,7 @@ fade.
 **M** toggles a marker at the playhead; drag a marker to move it, right-click to delete
 it. A range marker spans time and can be turned into the region by double-clicking its
 band. The region is set by dragging on the ruler, by **I**/**O**, or with
-**Shift+double-click** on an event. **L** loops it; the render uses it when it exists.
+a triple click (or **Shift+double-click**) on an event. **L** loops it; the render uses it when it exists.
 
 ## Navigation and zoom
 

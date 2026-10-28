@@ -3240,6 +3240,7 @@ impl KtApp {
                     // (before R.33 it was misleading: a click set the region, and FX were hidden
                     // in the RMB menu). The region by event stayed on Shift+double-click
                     // and in the menu.
+                    self.pending_double = None;
                     if shift_held {
                         self.region_from_event(id);
                     } else if zone == ClipZone::Level {
@@ -3259,6 +3260,9 @@ impl KtApp {
                                 }
                             };
                         }
+                        // the line moves to 0 dB under the pointer, and a third click of the
+                        // same gesture would land on the body: it must not set a region
+                        self.pending_double = Some((id, DoubleEffect::LevelReset));
                     } else if self.is_nest(id) {
                         // A NESTED REEL EXPANDS IN PLACE (R.55, C5) — this is
                         // the default mode, at the owner’s direct request:
@@ -3270,9 +3274,34 @@ impl KtApp {
                         // The gesture works REPEATEDLY (rule 14): a second
                         // double-click collapses the expansion.
                         self.expand_in_place(id);
+                        self.pending_double = Some((id, DoubleEffect::ToggledNest));
                     } else {
+                        let was_open = self.fx_editors.iter().any(|e| e.open && e.members.contains(&id));
                         self.open_fx_editor(id);
+                        if !was_open {
+                            self.pending_double = Some((id, DoubleEffect::OpenedFx));
+                        }
                     }
+                }
+                // TRIPLE CLICK — the region over the event (selection-copy-target, ktprompts
+                // 26.10.18 item 5): the same body as Shift+double-click and the menu item. Its
+                // second click already did the double click's job, and that is undone here — not
+                // delayed: every FX window would open 300 ms late to spare the rare triple click.
+                // The level line keeps its own double click (the reset) and ignores the third.
+                let after_level = self.pending_double == Some((id, DoubleEffect::LevelReset));
+                if response.triple_clicked() && !shift_held && zone != ClipZone::Level && !after_level {
+                    self.region_from_event(id);
+                    match self.pending_double.take() {
+                        Some((pid, DoubleEffect::OpenedFx)) if pid == id => {
+                            for e in self.fx_editors.iter_mut().filter(|e| e.members.contains(&id)) {
+                                e.open = false;
+                            }
+                        }
+                        Some((pid, DoubleEffect::ToggledNest)) if pid == id => self.expand_in_place(id),
+                        _ => {}
+                    }
+                } else if response.double_clicked() {
+                    // handled above
                 } else if response.drag_started() {
                     match zone {
                         ClipZone::FadeLeft | ClipZone::FadeRight => {
@@ -6655,4 +6684,16 @@ mod geom_tests {
         assert_eq!(snap_point(104, &[100, 107, 300], th), Some(107));
         assert_eq!(snap_point(104, &[300], th), None);
     }
+}
+
+/// What a double click on an event did to the view, for the triple click of the same gesture
+/// to undo (selection-copy-target, D3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DoubleEffect {
+    /// It opened the event's FX window (one that was not open before).
+    OpenedFx,
+    /// It expanded (or collapsed) a reel instance in place.
+    ToggledNest,
+    /// It reset the level line — the third click of the gesture does nothing.
+    LevelReset,
 }

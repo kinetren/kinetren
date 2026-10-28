@@ -63,6 +63,42 @@ def main(out):
         app.near(c1.duration, 4 * SEC, 3000, "duration c1 intact")
         app.near(c2.duration, 4 * SEC, 3000, "duration c2 intact")
         app.expect(not p.transitions, f"moving the batch does not create transitions: {p.transitions}")
+
+        # 4. ONE selected event wins over the region (ktprompts 26.10.18 item 4): c1 is at
+        # 2–6 s, c2 at 8–12 s; a region over 1–9 s crosses both, one click selects c1, Copy takes
+        # c1 WHOLE (the Edit menu: the virtual screen has no system clipboard, the item calls the
+        # same body as Ctrl+C), Paste at 12.5 s (the view holds ~13 s) puts exactly it
+        ry = app.ruler_y()
+        app.drag(app.x_at(1 * SEC), ry, app.x_at(9 * SEC), ry)
+        app.step("region-over-both", "a region dragged on the ruler over both events")
+        app.click(app.x_at(3 * SEC), y)
+        app.click_probe("menu.edit", "“Edit” menu button")
+        app.click_probe("edit.copy", "“Copy” item")
+        app.expect(app.geom().get("clipboard") == 1, "Copy took the ONE selected event, not the region")
+        app.step("copied-one", "one event clicked and copied — the status line names the selected event")
+        n0 = len(app.live_clips())
+        app.click(app.x_at(int(12.5 * SEC)), ry)
+        app.click_probe("menu.edit", "“Edit” menu button")
+        app.click_probe("edit.paste", "“Paste” item")
+        clips = app.live_clips()
+        app.expect(len(clips) == n0 + 1, f"Paste put one event: {n0} → {len(clips)}")
+        pasted = [c for c in clips if abs(c[0] - int(12.5 * SEC)) < SEC // 2]
+        app.expect(
+            len(pasted) == 1 and abs(pasted[0][1] - 4 * SEC) < 3000,
+            f"the pasted event is WHOLE (4 s), not cropped to the region: {pasted}",
+        )
+        app.step("pasted-whole", "Edit → Paste: the event stands at 12.5 s, whole")
+
+        # 5. a TRIPLE click on c2 sets the region over it (item 5) and leaves no FX window
+        app.triple_click(app.x_at(10 * SEC), y)
+        app.expect(app.wait_gone("win.fx"), "the triple click closed the FX window its second click opened")
+        saved = app.saved_project()
+        region = saved.doc.get("metadata", {}).get("kt", {}).get("transport", {}).get("region")
+        # the earlier region was 1–9 s; the triple click puts it over c2 exactly (8–12 s)
+        # the saved project gives the region as [start, end] in ticks
+        ok = bool(region) and abs(region[0] - 8 * SEC) < 3000 and abs(region[1] - 12 * SEC) < 3000
+        app.expect(ok, f"the triple click set the region over the event (8–12 s): {region}")
+        app.step("triple-region", "triple click on the second event — the region band over it, no FX window")
         return app.done()
 
 

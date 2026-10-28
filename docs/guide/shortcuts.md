@@ -24,7 +24,7 @@ With the loop on, it starts from the region start when the playhead is outside t
 |---|---|
 | <kbd>S</kbd> | split at the playhead: the selected events, or every event under the playhead when nothing is selected |
 | <kbd>Delete</kbd> / <kbd>Backspace</kbd> | delete the selected morphers and cameras; otherwise every event crossing the region; otherwise the selected events |
-| <kbd>Ctrl</kbd>+<kbd>C</kbd> | copy what lies in the region, or the selected events when there is no region |
+| <kbd>Ctrl</kbd>+<kbd>C</kbd> | copy the selected event when exactly one is selected (with its linked partners, whole); otherwise what lies in the region; otherwise the selected events. The status line says which was copied |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | paste at the playhead, on the track under the mouse; the playhead moves to the end of the pasted block, so pasting again chains copies |
 | <kbd>Ctrl</kbd>+<kbd>Z</kbd> | undo |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd> | redo |
@@ -48,7 +48,8 @@ in the menu of a track's empty space.
 | drag a marker | move it |
 | drag a region edge | move it |
 | double-click a range marker on the ruler | region over it, with its events selected |
-| <kbd>Shift</kbd>+double-click an event | region over the event and its linked partners |
+| triple-click an event | region over the event and its linked partners |
+| <kbd>Shift</kbd>+double-click an event | the same region (the menu item **Region over this event** too) |
 
 ## Reels
 

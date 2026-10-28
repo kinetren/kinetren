@@ -768,7 +768,12 @@ class Live:
         probe.button(False, 3, pause=0.0)
         self._after_gesture(mark, "right click")
 
-    def double_click(self, x, y):
+    def triple_click(self, x, y):
+        """Triple click (selection-copy-target): the same gesture as the double click, one click
+        more — the same spacing, so it adds no declared sleep of its own."""
+        return self.double_click(x, y, n=3)
+
+    def double_click(self, x, y, n=2):
         """Double click: in egui this is a TEMPORARY gesture (two clicks closer than 0.3 s),
         so between them one must neither raise the window nor sleep 0.35 s —
         two plain click() calls in a row add up to two single clicks.
@@ -784,7 +789,7 @@ class Live:
         mark = self.seen()
         probe.move(x, y, pause=0.0)
         self._after_gesture(mark, "hover before the double click")
-        for i in range(2):
+        for i in range(n):
             # A GAP between clicks is needed: four events in a row in the
             # software render land in ONE input frame, and egui counts
             # one click instead of two (the gesture worked every other time). 0.04 s is
@@ -797,7 +802,7 @@ class Live:
             pause(0.09, "egui double click is a TEMPORARY gesture: without spacing, all four events land in one input frame and count as one click (R.34 measurement: 0.04 s between clicks — 5 of 5, 0.10 s — 0 of 5)")
         mark = self.seen()
         probe.d.sync()
-        self._after_gesture(mark, "double click")
+        self._after_gesture(mark, "triple click" if n == 3 else "double click")
 
     def drag(self, x0, y0, x1, y1, steps=6, mods=()):
         """Drag LIKE A HUMAN: hover → press → nudge a little → move

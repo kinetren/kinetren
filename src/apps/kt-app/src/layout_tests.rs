@@ -18236,3 +18236,258 @@ fn t914_speed_curve_shape_menu_offers_every_shape() {
     h.step();
     assert_eq!(rate_keys(&h), before, "one Ctrl+Z did not restore the speed curve");
 }
+
+// ---- selection-copy-target: tests 924–928 (ktprompts 26.10.18 items 4–5) ------------------
+
+/// Three video events at 0, 100 000 and 200 000 (50 000 long) and an audio partner of the second
+/// one (link group 1), the harness stepping 0.02 s so that clicks add up to double and triple ones.
+fn copy_scene() -> (Harness<'static, KtApp>, crate::timeline::TlGeom) {
+    use kt_model::*;
+    let (mut h, _) = harness_three_clips_dt(Some(0.02));
+    {
+        let app = h.state_mut();
+        edit_project(app, |p| {
+            p.ensure_tracks(LaneKind::Audio, 1);
+            let mut a = p.clips[1].clone();
+            a.id = ClipId(4);
+            a.kind = ClipKind::Audio;
+            p.clips[1].link_group = Some(GroupId(1));
+            a.link_group = Some(GroupId(1));
+            p.clips.push(a);
+        });
+    }
+    h.step();
+    h.step();
+    let g = h.state().tl_geom.clone().expect("geometry");
+    (h, g)
+}
+
+/// `n` primary clicks at `pos` in one frame batch, then two frames.
+fn clicks(h: &mut Harness<'_, KtApp>, pos: egui::Pos2, n: usize) {
+    h.hover_at(pos);
+    h.step();
+    for _ in 0..n {
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+    }
+    h.step();
+    h.step();
+}
+
+fn set_region(h: &mut Harness<'_, KtApp>, a: i64, b: i64) {
+    h.state_mut().model.set_region(Some(kt_model::Region { start: kt_time::Tick(a), end: kt_time::Tick(b) }));
+    h.step();
+}
+
+fn copy(h: &mut Harness<'_, KtApp>) -> (Vec<kt_model::ClipEvent>, String) {
+    h.event(egui::Event::Copy);
+    h.step();
+    let clips = h.state().clipboard.clips.clone();
+    let note = h.state().status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    (clips, note)
+}
+
+/// Test 924: one selected event wins over the region (ktprompts 26.10.18 item 4: "if I selected
+/// one event, copy-paste must take it, not the region I selected").
+#[test]
+fn t924_one_selected_event_wins_over_the_region() {
+    use kt_model::*;
+    let (mut h, g) = copy_scene();
+    set_region(&mut h, 30_000, 230_000);
+    let region_before = h.state().model.project().region;
+    let loop_before = h.state().model.project().loop_enabled;
+    clicks(&mut h, egui::pos2(g.tick_to_x(125_000), g.lane_y(ClipKind::Video, 0, 0.6)), 1);
+    let (clips, note) = copy(&mut h);
+    let mut ids: Vec<u64> = clips.iter().map(|c| c.id.0).collect();
+    ids.sort();
+    assert_eq!(ids, vec![2, 4], "the clipboard must hold the clicked event and its partner, not the region");
+    assert!(
+        clips.iter().all(|c| c.duration == kt_time::Tick(50_000)),
+        "the event is copied WHOLE, not cropped to the region: {:?}",
+        clips.iter().map(|c| c.duration).collect::<Vec<_>>()
+    );
+    assert_eq!(h.state().model.project().region, region_before, "the region stays");
+    assert_eq!(h.state().model.project().loop_enabled, loop_before, "the loop state is untouched");
+    assert_eq!(note, crate::tf!(k::msg::COPIED_EVENT, 2), "the status line names the selected event");
+    // the paste puts exactly these two, whole
+    let n0 = h.state().model.project().clips.len();
+    h.state_mut().player.seek(kt_time::Tick(600_000));
+    h.event(egui::Event::Paste(String::new()));
+    h.step();
+    let p = h.state().model.project();
+    assert_eq!(p.clips.len(), n0 + 2, "Ctrl+V pasted the event and its partner");
+    assert!(
+        p.clips.iter().filter(|c| c.start == kt_time::Tick(600_000)).all(|c| c.duration == kt_time::Tick(50_000)),
+        "the pasted pair is whole"
+    );
+}
+
+/// Test 925: several selected events, nothing selected, no region — the former rules.
+#[test]
+fn t925_several_or_none_selected_keep_the_region_first() {
+    use kt_model::*;
+    let (mut h, _) = copy_scene();
+    set_region(&mut h, 30_000, 230_000);
+    // two events of different link groups (1 and 3 have none)
+    {
+        let app = h.state_mut();
+        app.selected = [ClipId(1), ClipId(3)].into_iter().collect();
+    }
+    let (clips, note) = copy(&mut h);
+    assert_eq!(clips.len(), 4, "several selected events: the region block, every crossing event");
+    assert_eq!(note, crate::tf!(k::msg::COPIED_REGION, 4));
+    // nothing selected, a region: the region block
+    h.state_mut().selected.clear();
+    let (clips, note) = copy(&mut h);
+    assert_eq!(clips.len(), 4);
+    assert_eq!(note, crate::tf!(k::msg::COPIED_REGION, 4));
+    // no region, two selected: the selected events with their groups
+    h.state_mut().model.set_region(None);
+    h.state_mut().selected = [ClipId(1), ClipId(3)].into_iter().collect();
+    let (clips, note) = copy(&mut h);
+    assert_eq!(clips.len(), 2);
+    assert_eq!(note, crate::tf!(k::msg::COPIED_EVENTS, 2));
+}
+
+/// Test 926: Copy after a double-click on a range marker — three crossing events copy the region
+/// (cropped, as before); one crossing event is the one selected event and is copied whole.
+#[test]
+fn t926_copy_after_a_range_marker_double_click() {
+    use kt_model::*;
+    for (from, len, want_n, whole) in [(30_000i64, 200_000i64, 4usize, false), (110_000, 30_000, 2, true)] {
+        let (mut h, g) = copy_scene();
+        {
+            let app = h.state_mut();
+            edit_project(app, |p| {
+                p.markers = vec![Marker {
+                    t: kt_time::Tick(from),
+                    duration: kt_time::Tick(len),
+                    name: "m".into(),
+                    color: None,
+                }];
+            });
+        }
+        h.step();
+        let band_y = g.rect.top() + crate::timeline::TIME_TOP + 11.0;
+        clicks(&mut h, egui::pos2(g.tick_to_x(from + len / 2), band_y), 2);
+        assert!(h.state().model.project().region.is_some(), "the marker double-click set the region");
+        let (clips, note) = copy(&mut h);
+        assert_eq!(clips.len(), want_n, "marker over {len}: copied {} events", clips.len());
+        if whole {
+            assert!(clips.iter().all(|c| c.duration == kt_time::Tick(50_000)), "one event: copied whole");
+            assert_eq!(note, crate::tf!(k::msg::COPIED_EVENT, 2));
+        } else {
+            assert_eq!(note, crate::tf!(k::msg::COPIED_REGION, want_n));
+        }
+    }
+}
+
+/// Test 927: a triple click on an event sets the region over it (item 5) and undoes the FX
+/// window its second click opened; an FX window of ANOTHER event already open stays open.
+#[test]
+fn t927_triple_click_sets_the_region_over_the_event() {
+    use kt_model::*;
+    for other_open in [false, true] {
+        let (mut h, g) = copy_scene();
+        if other_open {
+            h.state_mut().open_fx_editor(ClipId(1));
+            h.step();
+        }
+        let depth = h.state().model.undo_depth();
+        let pos = egui::pos2(g.tick_to_x(125_000), g.lane_y(ClipKind::Video, 0, 0.6));
+        // two clicks, a frame, the third — as a person clicks
+        clicks(&mut h, pos, 2);
+        assert!(
+            h.state().fx_editors.iter().any(|e| e.open && e.members.contains(&ClipId(2))),
+            "the second click opened the FX window (the double click)"
+        );
+        clicks_no_hover(&mut h, pos, 1);
+        let r = h.state().model.project().region.expect("the triple click set no region");
+        assert_eq!((r.start.0, r.end.0), (100_000, 150_000), "the region is the event and its partner");
+        assert!(h.state().selected.contains(&ClipId(2)), "the event is selected");
+        assert!(
+            !h.state().fx_editors.iter().any(|e| e.open && e.members.contains(&ClipId(2))),
+            "the triple click must close the FX window its second click opened"
+        );
+        if other_open {
+            assert!(
+                h.state().fx_editors.iter().any(|e| e.open && e.members.contains(&ClipId(1))),
+                "an FX window of another event stays open"
+            );
+        }
+        assert_eq!(h.state().model.undo_depth(), depth, "a triple click adds no history step");
+    }
+}
+
+/// Clicks without moving the pointer first (the next clicks of the same gesture).
+fn clicks_no_hover(h: &mut Harness<'_, KtApp>, pos: egui::Pos2, n: usize) {
+    for _ in 0..n {
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+    }
+    h.step();
+    h.step();
+}
+
+/// Test 928: a triple click on a reel instance and on the level line.
+#[test]
+fn t928_triple_click_on_a_reel_and_on_the_level_line() {
+    use kt_model::*;
+    // a reel instance: the second click expands it, the third collapses it and sets the region
+    let (mut h, _g, seq) = harness_with_nest_dt(Some(0.02));
+    let inst = h
+        .state()
+        .model
+        .project()
+        .clips
+        .iter()
+        .find(|c| c.media == seq)
+        .cloned()
+        .expect("the scene has a reel instance");
+    let g = h.state().tl_geom.clone().expect("geometry");
+    let pos = egui::pos2(
+        g.tick_to_x(inst.start.0 + inst.duration.0 / 2),
+        g.lane_y(inst.kind, inst.lane, 0.6),
+    );
+    clicks(&mut h, pos, 2);
+    clicks_no_hover(&mut h, pos, 1);
+    let r = h.state().model.project().region.expect("the triple click on a reel set no region");
+    assert!(r.start <= inst.start && r.end >= inst.start + inst.duration, "the region covers the instance");
+    assert!(h.state().model.bands().is_empty(), "the reel is left expanded after the triple click");
+
+    // the level line of an audio event at −6 dB: 0 dB, one step, the region unchanged
+    let (mut h, _) = copy_scene();
+    {
+        let app = h.state_mut();
+        assert!(app.apply(Command::SetGain { id: ClipId(4), gain_db: -6.0 }));
+    }
+    h.step();
+    set_region(&mut h, 0, 40_000);
+    let region = h.state().model.project().region;
+    let g = h.state().tl_geom.clone().expect("geometry");
+    let line_y = crate::timeline::level_y(
+        crate::timeline::gain_to_level(-6.0),
+        g.lane_top(ClipKind::Audio, 0),
+        g.lane_h_of(ClipKind::Audio, 0),
+    );
+    let pos = egui::pos2(g.tick_to_x(125_000), line_y);
+    let depth = h.state().model.undo_depth();
+    clicks(&mut h, pos, 2);
+    clicks_no_hover(&mut h, pos, 1);
+    let c = h.state().model.project().clips.iter().find(|c| c.id == ClipId(4)).cloned().unwrap();
+    assert_eq!(c.gain_db, 0.0, "the double click reset the level");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "the reset is one step, the third click adds none");
+    assert_eq!(h.state().model.project().region, region, "the third click on the level line sets no region");
+}

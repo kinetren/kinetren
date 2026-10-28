@@ -5605,3 +5605,69 @@ fn t912_morpher_picker_offers_audio_effects() {
     assert!(has_pitch(2), "the audio event under the layer did not get Pitch shift");
     assert!(!has_pitch(1), "the video event got an audio effect");
 }
+
+/// Test 929 (selection-copy-target, ktprompts 26.10.18 item 5): three ways to a region over an
+/// event — the triple click, Shift+double-click and the menu item — are one body, and the event's
+/// hint and the menu item's chord column promise the triple click in every catalog.
+#[test]
+fn t929_three_ways_to_a_region_over_an_event_are_one() {
+    use crate::i18n::{Lang, k, set_lang, tr};
+    use kt_model::*;
+    let scene = || {
+        let (mut h, _) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
+        h.step();
+        let g = h.state().tl_geom.clone().expect("geometry");
+        (h, g)
+    };
+    let press = |h: &mut egui_kittest::Harness<'static, crate::app::KtApp>, pos: egui::Pos2, n: usize, m: egui::Modifiers| {
+        h.event(egui::Event::ModifiersChanged(m));
+        h.hover_at(pos);
+        h.step();
+        for _ in 0..n {
+            for pressed in [true, false] {
+                h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: m });
+            }
+        }
+        h.step();
+        h.step();
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        h.step();
+    };
+    // the triple click (2 clicks, a frame, the third)
+    let (mut h, g) = scene();
+    let pos = egui::pos2(g.tick_to_x(125_000), g.lane_y(ClipKind::Video, 0, 0.6));
+    press(&mut h, pos, 2, egui::Modifiers::NONE);
+    press(&mut h, pos, 1, egui::Modifiers::NONE);
+    let by_triple = h.state().model.project().region.expect("the triple click set no region");
+    // Shift+double-click
+    let (mut h, g) = scene();
+    let pos = egui::pos2(g.tick_to_x(125_000), g.lane_y(ClipKind::Video, 0, 0.6));
+    press(&mut h, pos, 2, egui::Modifiers::SHIFT);
+    let by_shift = h.state().model.project().region.expect("Shift+double-click set no region");
+    // the menu item's body
+    let (mut h, _) = scene();
+    h.state_mut().region_from_event(ClipId(2));
+    let by_menu = h.state().model.project().region.expect("the menu item set no region");
+    assert_eq!(by_triple, by_shift, "the triple click and Shift+double-click give different regions");
+    assert_eq!(by_triple, by_menu, "the triple click and the menu item give different regions");
+
+    // the promise: the event hint names the triple click, the menu chord column shows it
+    let mut problems = Vec::new();
+    for lang in [Lang::En, Lang::Ru, Lang::Es, Lang::Ar, Lang::Zh] {
+        set_lang(lang);
+        let hint = tr(k::tl::hint::CLIP);
+        let accel = tr(k::tl::menu::REGION_FROM_EVENT_ACCEL);
+        if accel.contains("Shift") {
+            problems.push(format!("{}: the chord column still shows Shift+double-click: {accel}", lang.code()));
+        }
+        if !hint.contains(accel) && !hint.to_lowercase().contains(&accel.to_lowercase()) {
+            // the hint names the gesture in words; the chord is "3×click": both must name it
+            let names_triple = ["triple", "тройной", "triple clic", "ثلاثي", "三击"].iter().any(|w| hint.contains(w));
+            if !names_triple {
+                problems.push(format!("{}: the event hint does not name the triple click: {hint}", lang.code()));
+            }
+        }
+    }
+    set_lang(Lang::Ru);
+    assert!(problems.is_empty(), "the triple click is not promised: {}", problems.join("; "));
+}

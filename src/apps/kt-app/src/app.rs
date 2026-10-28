@@ -250,6 +250,10 @@ pub struct KtApp {
     pub(crate) shell_seen: Vec<egui::Id>,
     /// The window `escape_action` picked; armed after `handle_keys`, closed by its `show`.
     pub(crate) shell_esc: Option<egui::Id>,
+    /// What the double click of the CURRENT gesture did to the view (selection-copy-target, D3):
+    /// a triple click sets the region over the event and undoes it — the FX window it opened
+    /// closes, the reel it expanded collapses.
+    pub(crate) pending_double: Option<(ClipId, crate::timeline::DoubleEffect)>,
     /// Display order of tracks (item 6 v1.4); normalized each frame,
     /// stored in the project’s UiState.
     /// The preview is split into its own window (item 7 v1.4, second monitor).
@@ -805,6 +809,7 @@ impl KtApp {
             geom_dumped_at: None,
             shell_seen: Vec::new(),
             shell_esc: None,
+            pending_double: None,
             // KT_DETACH_PREVIEW=1 — start with the preview detached (debugging)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             ui_economy: false,
@@ -1075,6 +1080,7 @@ impl KtApp {
             geom_dumped_at: None,
             shell_seen: Vec::new(),
             shell_esc: None,
+            pending_double: None,
             // KT_DETACH_PREVIEW=1 — start with the preview detached (debugging)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             ui_economy: false,
@@ -4552,10 +4558,33 @@ impl KtApp {
     }
 
     pub fn copy_selection(&mut self) {
-        let mut block = match self.model.project().region {
-            Some(r) => kt_model::ops::copy_region_block(self.model.project(), r),
+        // WHAT COPY TAKES (selection-copy-target, ktprompts 26.10.18 item 4: "if I selected one
+        // event, copy-paste must take it, not the region I selected"). Three rules, in order:
+        // exactly ONE event selected (link partners count as one — a click on a video event
+        // selects an A/V pair) → that event whole, the region is left as it is; otherwise a region
+        // → the region block, as before; otherwise → the selected events. Several selected events
+        // keep the region first: the range marker's double-click selects the events it crosses
+        // AND sets the region, and its copy must stay cropped to the marker.
+        let ids = self.selected_with_groups();
+        let one_event = {
+            let p = self.model.project();
+            let mut units: Vec<(bool, u64)> = ids
+                .iter()
+                .filter_map(|id| p.clips.iter().find(|c| c.id == *id))
+                .map(|c| match c.link_group {
+                    Some(g) => (true, g.0),
+                    None => (false, c.id.0),
+                })
+                .collect();
+            units.sort();
+            units.dedup();
+            units.len() == 1
+        };
+        let (mut block, what) = match self.model.project().region {
+            _ if one_event => (kt_model::ops::copy_clips(self.model.project(), &ids), k::msg::COPIED_EVENT),
+            Some(r) => (kt_model::ops::copy_region_block(self.model.project(), r), k::msg::COPIED_REGION),
             // without a region — everything selected (each with its own link group)
-            None => kt_model::ops::copy_clips(self.model.project(), &self.selected_with_groups()),
+            None => (kt_model::ops::copy_clips(self.model.project(), &ids), k::msg::COPIED_EVENTS),
         };
         // THE CLIPBOARD LIVES IN THE COORDINATES OF THE OWNING REEL (R.56, item 450).
         // We copy FROM the WORKING view, and in it the unfolded band sits with an offset
@@ -4584,7 +4613,9 @@ impl KtApp {
         if block.clips.is_empty() {
             self.note(tr(k::msg::NOTHING_TO_COPY));
         } else {
-            self.note(crate::tf!(k::msg::CLIPS_COPIED, block.clips.len()));
+            // the status line names WHICH rule fired: three branches are told apart only so
+            // (rule 16 of the checklist: an action says what it did)
+            self.note(crate::tf!(what, block.clips.len()));
             self.clipboard = block;
         }
     }
