@@ -64,8 +64,25 @@ release build.
 
 ## 2. Strength 0 skips the layer
 
-- [ ] 2.1 CPU slices and the GPU op list skip the slice when the slot's `k == 0` (design D3). Write t945 in `src/libs/kt-engine/tests/morph_slice_render.rs` on the CPU and the GPU. Verify t945 is green, t267/t267b/t268/t181 are green, and t946's hash is unchanged
-- [ ] 2.2 Commit stage 2
+- [x] 2.1 CPU slices and the GPU op list skip the slice when the slot's `k == 0` (design D3). Write t945 in `src/libs/kt-engine/tests/morph_slice_render.rs` on the CPU and the GPU. Verify t945 is green, t267/t267b/t268/t181 are green, and t946's hash is unchanged
+  - CPU (`apply_chain_with_mixes`): a slice starting at a snapshot whose strength slot is the next
+    stop and has k = 0 (`zero_slice`) is not run when the dry frame is already at the output raster
+    (strength stops are at 1×, so the wet frame could not have another size); the mix still runs on
+    (dry, dry) — `dissolve_into` at k = 0 takes nothing from the wet side, so the bytes are the full
+    path's. GPU (`chain_ops`): at a `Mix` with k = 0 for the one open snapshot whose size the slice
+    did not change, the slice's ops are truncated; the snapshot and the mix stay, the alpha fold keeps
+    what the slice declared. Not a per-chain strip: dropping the slots would let neighbouring geometry
+    runs fuse across the removed stop and move bytes.
+  - t945 (CPU, next to the owner's case in `morph_grid_cost.rs`, which has the helpers; not
+    `morph_slice_render.rs`): at t = 0 (fade-in, strength 0) the frame equals the frame without the
+    layer and the cost is 0 sub-samples, 1 snapshot, 1 mix; one frame in, the grid runs. RED without
+    the skip: "(518400, 1, 1)". t945b (GPU, `gpu_render.rs`, on the adapter): the GPU frame equals
+    the GPU frame without the layer, no sub-samples, CPU vs GPU within GEOM. RED without the
+    truncation: "(147456, 1)". t946's range hash unchanged; t267/t267b/t268 and the kt-gpu suite
+    (t181) green.
+- [x] 2.2 Commit stage 2
+  - Workspace green except t663 (the 60 s timeout under the full-run load, green in the kt-engine
+    run just before).
 
 ## 3. One tile, copied
 

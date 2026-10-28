@@ -2538,6 +2538,16 @@ fn apply_chain_with_mixes(
                 snaps.remove(from);
                 i += 1;
             }
+            // STRENGTH EXACTLY 0 (morpher-event-grid-cost, D3): the slice up to its mix is not run.
+            // The mix still runs, on (dry, dry): at k = 0 `dissolve_into` takes nothing from the
+            // wet side, so the bytes are those of (dry, wet). Only where the wet frame could not
+            // have another size (the dry one is already at the output raster — strength stops are
+            // at 1×) and no other stop lies inside the slice.
+            None if zero_slice(mixes, &stops, i).is_some()
+                && (frame.w, frame.h) == (ctx.out_w, ctx.out_h) =>
+            {
+                i = zero_slice(mixes, &stops, i).unwrap_or(i + 1);
+            }
             None => {
                 let j = stops.iter().copied().find(|s| *s > i).unwrap_or(fx.len());
                 let sctx = kt_fx::video::VideoFxCtx {
@@ -2550,6 +2560,14 @@ fn apply_chain_with_mixes(
         }
     }
     frame
+}
+
+/// The strength slot a slice starting at `i` ends in, when that strength is exactly 0 and the
+/// slice is whole (no other stop inside it): the slice need not run (D3).
+fn zero_slice(mixes: &[(usize, usize, u32)], stops: &[usize], i: usize) -> Option<usize> {
+    let (at, _, _) = mixes.iter().find(|(_, from, k)| *from == i && *k == 0)?;
+    let next = stops.iter().copied().find(|s| *s > i)?;
+    (next == *at).then_some(*at)
 }
 
 /// Blend the “dry” frame with the “wet” one with weight `k` (0..4096).

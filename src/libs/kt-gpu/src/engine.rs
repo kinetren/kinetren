@@ -444,12 +444,31 @@ fn chain_ops(
     let plan = kt_fx::plan::plan_chain_in(
         fx, src_w, src_h, src_scale, out_w, out_h, u, cam3d, t.0, &froms, lead,
     );
+    // open snapshots: (op position, frame size there) — for the strength-0 skip below
+    let mut snaps: Vec<(usize, u32, u32)> = Vec::new();
     for op in plan.ops {
         match op {
-            kt_fx::plan::PlanOp::Snapshot => ops.push(FxOp::Snapshot),
+            kt_fx::plan::PlanOp::Snapshot => {
+                snaps.push((ops.len(), w, h));
+                ops.push(FxOp::Snapshot)
+            }
             kt_fx::plan::PlanOp::Mix { idx } => {
+                let single = snaps.len() == 1;
+                let snap = snaps.pop();
                 if let FxInstance::LayerMix { amount, .. } = &fx[idx] {
                     let k = (amount.clamp(0.0, 1.0) * 4096.0).round() as u32;
+                    // STRENGTH EXACTLY 0 (morpher-event-grid-cost, D3): the slice's ops are
+                    // dropped and the mix runs on (dry, dry) — at k = 0 the wet side contributes
+                    // nothing, so the bytes are those of the full path. Only for a lone open
+                    // snapshot whose frame size the slice did not change (no resample in the mix);
+                    // the alpha fold keeps what the slice would have declared.
+                    if let Some((at, sw, sh)) = snap
+                        && k == 0
+                        && single
+                        && (sw, sh) == (w, h)
+                    {
+                        ops.truncate(at + 1);
+                    }
                     if k < 4096 {
                         ops.push(FxOp::Mix { k });
                     }

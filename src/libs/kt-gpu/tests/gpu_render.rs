@@ -840,3 +840,46 @@ fn t938_both_backends_place_a_still_by_the_rule() {
     let (before, _) = run(&p, &facts_for(&p, false));
     assert!(now == before, "a still under stretch moved from its former frame");
 }
+
+/// Test 945b (morpher-event-grid-cost, D3): the GPU's strength-0 skip.
+///
+/// A morpher block with a 12×30 event grid over the lower event, faded in: at t = 0 the
+/// strength is exactly 0. The GPU frame must be byte-for-byte the GPU frame WITHOUT the layer,
+/// and the op list must not hold the grid (no sub-samples, the mix of the dry side with itself);
+/// the CPU agrees within the class the composite always had.
+#[test]
+fn t945b_strength_zero_skips_the_layer_on_gpu() {
+    use kt_engine::VideoGpuExec;
+    let Some(e) = test_engine() else { return };
+    let q = Quality { width: 128, height: 72 };
+    let bare = project();
+    let mut p = bare.clone();
+    p.ensure_tracks(LaneKind::Morph, 1);
+    p.morphers.push(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000),
+        targets: MorphTargets::Clips { ids: vec![ClipId(1)] },
+        patch: MorphPatch {
+            video_fx: vec![FxInstance::EventGrid { cols: 12, rows: 30, center: false }],
+            ..Default::default()
+        },
+        timed: true,
+        strength: 1.0,
+        fade_in: Tick(45_000),
+        fade_out: Tick::ZERO,
+        enabled: true,
+    });
+    p.validate().unwrap();
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let (_, want) = cpu_and_gpu(&e, &mut VideoRenderer::new(&bare), &cache, q, Tick(0));
+    let (cpu, got) = cpu_and_gpu(&e, &mut VideoRenderer::new(&p), &cache, q, Tick(0));
+    let cost = e.last_cost();
+    assert!(got == want, "strength 0 on the GPU gave other bytes than the frame without the layer");
+    assert_eq!((cost.subsamples, cost.mixes), (0, 1), "the GPU still ran the grid: {cost:?}");
+    assert_frames_close(&cpu, &got, q.width, q.height, FrameTol::GEOM, "strength 0, CPU vs GPU");
+    // one frame in, the grid runs on the GPU
+    let _ = cpu_and_gpu(&e, &mut VideoRenderer::new(&p), &cache, q, Tick(3_000));
+    assert!(e.last_cost().subsamples > 0, "a strength above 0 must run the layer on the GPU");
+}

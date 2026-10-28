@@ -154,3 +154,27 @@ fn t946b_owner_grid_case_cost_is_bounded() {
         peak.1.subsamples
     );
 }
+
+/// Test 945 (morpher-event-grid-cost, D3): a strength slot at exactly 0 skips the layer's slice.
+///
+/// At t = 0 the block's fade-in puts the strength at 0: the frame must be the frame WITHOUT the
+/// layer (what `blend(dry, wet, 0)` always gave), and the grid must not run — no sub-samples,
+/// one mix of the dry side with itself. A strength just above 0 still runs the grid.
+#[test]
+fn t945_strength_zero_skips_the_layer() {
+    let p = owner_case();
+    let mut bare = p.clone();
+    bare.morphers.clear();
+    let (want, _) = frame(&mut VideoRenderer::new(&bare), Tick(0));
+    let mut vr = VideoRenderer::new(&p);
+    let (got, cost) = frame(&mut vr, Tick(0));
+    assert!(got == want, "strength 0 gave other bytes than the frame without the layer");
+    assert_eq!(
+        (cost.subsamples, cost.snapshots, cost.mixes),
+        (0, 1, 1),
+        "strength 0 still computed the grid: {cost:?}"
+    );
+    // one frame in (strength 1/15): the grid runs
+    let (_, cost) = frame(&mut vr, Tick(SEC / 30));
+    assert!(cost.subsamples > 0, "a strength above 0 must run the layer: {cost:?}");
+}
