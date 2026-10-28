@@ -91,12 +91,20 @@ may hold another session's uncommitted edits.
 
 ## 4. Live and records
 
-- [ ] 4.1 Finish the `winshell` live scenario: at zoom 1.2 open the morpher window and move the pointer for 30 s (width unchanged); open FX then camera, press Esc twice (camera closes first, then FX). Verify `./scripts/live-check.sh winshell` is green and `./scripts/live-check.sh` (all) still green; screenshots listed here
+- [x] 4.1 Finish the `winshell` live scenario: at zoom 1.2 open the morpher window and move the pointer for 30 s (width unchanged); open FX then camera, press Esc twice (camera closes first, then FX). Verify `./scripts/live-check.sh winshell` is green and `./scripts/live-check.sh` (all) still green; screenshots listed here
+  - `winshell` green on the shell build: zoom 1.1 → 560.0 560.0 560.0 points over fifteen seconds
+    (it was 608.2 → 698.2 before), zoom 1.2 → 560.0 throughout; FX then camera, Esc closes the
+    camera window first, the second Esc the FX window. Screenshots `target/live-out/winshell/`:
+    01-step-zoom-1.1, 02-step-zoom-1.1-after-15s, 03-step-zoom-1.2, 04-step-zoom-1.2-after-15s,
+    05-step-fx-and-camera, 06-step-esc-camera-gone, 07-step-esc-fx-gone.
+  - The full run: green, with `formula`, `fxwin`, `nestshare`, `readme_shots`, `recover` passing on
+    the alone re-run (red only in the parallel run under load: a click or a double click that did
+    not land — the same pattern as `trans` in the previous change).
 - [x] 4.2 `src/apps/kt-app/CLAUDE.md`: the rule "a window is made only by the shell; its kind decides Esc, cross, scroll and width" next to the R.66 form contract. Verify t921 names this rule in its failure message
   - Added next to "the window title ≠ its id" (the kt-app CLAUDE.md has no R.66 paragraph of its
     own), with a second rule found on the way: a frameless button in a row that sets a window's
     width grows it on hover.
-- [ ] 4.3 Commit stage 4
+- [x] 4.3 Commit stage 4
 
 ## 5. Finish
 
