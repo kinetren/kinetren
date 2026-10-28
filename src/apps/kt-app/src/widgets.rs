@@ -835,18 +835,14 @@ pub fn all_shapes() -> [kt_model::SegShape; 6] {
 }
 
 /// “Shape of all segments of the curve” is a command over the curve, not a machine setting
-/// (R.61): a machine setting would give “one file, two behaviors”.
-///
-/// The warp speed has only the straight shape: on a piecewise-linear profile
-/// a closed stretch map stands. The refusal is LOUD — via the status line,
-/// not a silently disabled control.
+/// (R.61): a machine setting would give “one file, two behaviors”. Speed takes every shape too:
+/// the warp map samples it into its profile (slowed-reverb-is-an-event).
 pub fn shape_all_control(
     ui: &mut egui::Ui,
     curve: &mut kt_model::ParamCurve,
     hover: &mut Option<String>,
 ) -> bool {
     let mut changed = false;
-    let rate = curve.param == "rate";
     let cur = curve.keys.first().map(|k| k.shape).unwrap_or_default();
     ui.label(tr(k::fx::SHAPE_ALL));
     // width — measured by the LONGEST shape name (rule 3): the field
@@ -870,10 +866,6 @@ pub fn shape_all_control(
         .show_ui(ui, |ui| {
             for s in all_shapes() {
                 if ui.selectable_label(s == cur, shape_label(s)).clicked() {
-                    if rate && s != kt_model::SegShape::Linear {
-                        *hover = Some(tr(k::fx::SHAPE_RATE_LINEAR).to_string());
-                        continue;
-                    }
                     for k in &mut curve.keys {
                         k.shape = s;
                     }
@@ -930,7 +922,7 @@ pub fn shape_all_control(
         // text of the segment formula is edited in the segment’s menu (R.67), not here
         kt_model::SegShape::Linear | kt_model::SegShape::Hold | kt_model::SegShape::Formula { .. } => {}
     }
-    if next != cur && !rate {
+    if next != cur {
         for k in &mut curve.keys {
             k.shape = next;
         }
@@ -1450,7 +1442,8 @@ fn slot_text(ui: &egui::Ui, name: &str, color: egui::Color32, off: bool) -> egui
 }
 
 /// The chain strip: master checkbox, slots (on/off checkbox, name, cross),
-/// mouse rearrangement, picker and copy-paste. `audio` — the picker filter.
+/// mouse rearrangement, picker and copy-paste. `kinds` — the picker filter (a bool: audio or
+/// video; the morpher passes `PickKinds::Both`).
 #[allow(clippy::too_many_arguments)]
 /// Who owns the strip and where to report a right click (R.49, item 363).
 /// The strip does not know `KtApp` and must not know it — it is a widget; it accepts
@@ -1465,7 +1458,7 @@ pub fn chain_strip(
     ui: &mut egui::Ui,
     id: impl std::hash::Hash + std::fmt::Debug + Copy,
     mut edit: ChainEdit<'_>,
-    audio: bool,
+    kinds: impl Into<crate::fx_registry::PickKinds>,
     query: &mut String,
     clipboard: &mut Option<kt_model::ops::FxChainBlock>,
     src_in: kt_time::Tick,
@@ -1476,6 +1469,7 @@ pub fn chain_strip(
     // service. The strip knows nothing else about thumbnails — it is a widget.
     preview: Option<&mut crate::fx_thumbs::PickerCtx<'_>>,
 ) -> ChainChanged {
+    let kinds = kinds.into();
     let mut ch = ChainChanged::default();
     edit.bypass.resize(edit.fx.len(), false);
     edit.auto.resize(edit.fx.len(), Vec::new());
@@ -1645,7 +1639,7 @@ pub fn chain_strip(
         match crate::fx_registry::fx_picker_with_head(
             ui,
             (&id, "add"),
-            audio,
+            kinds,
             query,
             head_name.as_deref(),
             edit.presets.rows,

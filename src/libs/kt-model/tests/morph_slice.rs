@@ -1124,7 +1124,10 @@ fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
         );
     }
 
-    // --- 3. but INSIDE the window a warped clip is still patched WHOLE ---------
+    // --- 3. INSIDE the window a warped clip is cut at the window ----------------
+    // Inverted with t238 by the owner's decision (2026-10-28, slowed-reverb-is-an-event): this
+    // part restated the veto "a covered stretched clip is patched whole and is NOT cut (R.37)",
+    // whose reason (a linear entry point) R.39 removed. Parts 1 and 2 — the REACH — are unchanged.
     let mut p = base();
     above(&mut p);
     p.clips[0].fx = vec![warp];
@@ -1135,14 +1138,14 @@ fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
 
     let rows = p.rows();
     let wins = p.morphers[0].windows_on(&p.clips[0], &p, &p, &rows);
-    assert_eq!(
-        wins,
-        vec![TickRange::new(Tick(0), LEN)],
-        "a covered stretched clip is patched whole and is NOT cut (R.37)"
+    assert_eq!(wins.len(), 1, "one window inside the clip");
+    assert!(
+        wins[0].start > Tick(0) && wins[0].end < LEN,
+        "a covered stretched clip is cut at the layer's window, not patched whole: {wins:?}"
     );
     let eff = p.effective_clips();
-    assert_eq!(eff.len(), 1, "a stretched clip must not be cut");
-    assert_eq!(eff[0].media, MediaId(2), "and the patch applies to it");
+    let swapped: Vec<bool> = eff.iter().map(|c| c.media == MediaId(2)).collect();
+    assert_eq!(swapped, vec![false, true, false], "the patch applies to the window's piece only");
 }
 
 /// Test 291 (R.43, item 300): a source swap by a layer does NOT lose the event’s own animation.
@@ -1361,4 +1364,127 @@ fn t556_source_replacing_layer_still_cuts_but_only_inward() {
     assert_eq!(eff[1].media, MediaId(2), "the substitution went to the middle piece");
     assert_eq!(eff[0].media, MediaId(1), "the layer did not cover the fade in");
     assert_eq!(eff[2].media, MediaId(1), "and the fade out too");
+}
+
+/// Test 915 (slowed-reverb-is-an-event, ktprompts 26.10.18 item 3): a warped clip is cut at the
+/// integral of its speed, like any target.
+///
+/// The veto "a warped clip is never cut" (R.35 finding 2, R.37) had one reason: a piece's
+/// `source_in` was computed linearly. R.39 made it the integral (`clip_slice`, t270–t270d) and
+/// the veto outlived its reason: a layer over the middle of a slowed event swapped the source of
+/// the WHOLE event, and a layer carrying slowed slowed the WHOLE event. The owner: "slowed does
+/// not let me ... cut it — childish excuses".
+#[test]
+fn t915_warped_clip_is_cut_at_the_integral() {
+    const LEN4: Tick = Tick(4 * 90_000);
+    let win = TickRange::new(Tick(90_000), Tick(3 * 90_000));
+    let mut problems: Vec<String> = Vec::new();
+    let pieces_of = |p: &Project, orig: ClipId| -> Vec<ClipEvent> {
+        let mut v: Vec<ClipEvent> =
+            p.effective_clips().into_iter().filter(|c| same_clip(c.id, orig)).collect();
+        v.sort_by_key(|c| c.start);
+        v
+    };
+    let rate_curve = |c: &ClipEvent| {
+        vec![vec![ParamCurve {
+            param: "rate".into(),
+            keys: AutoKey::linear(vec![
+                AutoKey::at(c.source_in, 0.5),
+                AutoKey::at(c.source_in + LEN4, 1.5),
+            ]),
+            source: Default::default(),
+        }]]
+    };
+
+    // 1. a linked A/V pair with its OWN slowed, a source swap over the middle
+    for (case, curve, reversed) in [("0.8×", false, false), ("curve 0.5→1.5", true, false), ("reversed 0.8×", false, true)] {
+        let mut p = base();
+        p.clips.clear();
+        for (id, kind) in [(20u64, ClipKind::Audio), (21, ClipKind::Video)] {
+            let mut c = clip(id, kind, 0, Tick(0), LEN4);
+            c.link_group = Some(GroupId(1));
+            c.reversed = reversed;
+            c.fx = vec![FxInstance::slowed_reverb(0.8, 0.0, 85.0)];
+            c.fx_bypass = vec![false];
+            c.fx_auto = if curve { rate_curve(&c) } else { vec![vec![]] };
+            p.clips.push(c);
+        }
+        p.ensure_tracks(LaneKind::Audio, 1);
+        p.morphers.push(MorpherEvent {
+            targets: MorphTargets::Clips { ids: vec![ClipId(20), ClipId(21)] },
+            patch: MorphPatch { media: Some(MediaId(2)), ..Default::default() },
+            ..layer(win.start, win.len())
+        });
+        p.validate().unwrap();
+        for orig in p.clips.clone() {
+            let got = pieces_of(&p, orig.id);
+            if got.len() != 3 {
+                problems.push(format!("{case} {:?}: {} pieces, not three", orig.kind, got.len()));
+                continue;
+            }
+            let windows = [
+                TickRange::new(Tick(0), win.start),
+                win,
+                TickRange::new(win.end, LEN4),
+            ];
+            for (i, (piece, w)) in got.iter().zip(windows).enumerate() {
+                let want = clip_slice(&orig, w, piece.id);
+                if piece.start != w.start || piece.duration != w.len() {
+                    problems.push(format!("{case} {:?} piece {i}: window {:?}", orig.kind, (piece.start, piece.duration)));
+                }
+                if piece.source_in != want.source_in {
+                    problems.push(format!(
+                        "{case} {:?} piece {i}: entry {} is not the integral {}",
+                        orig.kind, piece.source_in.0, want.source_in.0
+                    ));
+                }
+                let swapped = piece.media == MediaId(2);
+                if swapped != (i == 1) {
+                    problems.push(format!("{case} {:?} piece {i}: source swapped = {swapped}", orig.kind));
+                }
+            }
+            // the seams have no material gap and the pieces eat what the parent ate
+            let used = |x: &ClipEvent| clip_warp(x).map(|w| w.used()).unwrap_or(x.duration.0);
+            let total: i64 = got.iter().map(used).sum();
+            if (total - used(&orig)).abs() > 3 {
+                problems.push(format!("{case} {:?}: the pieces eat {total}, the parent {}", orig.kind, used(&orig)));
+            }
+        }
+    }
+
+    // 2. a plain clip under a layer carrying slowed at 0.5×: only the middle is slowed
+    let mut p = base();
+    p.clips.clear();
+    let plain = clip(30, ClipKind::Audio, 0, Tick(0), LEN4);
+    p.clips.push(plain.clone());
+    p.ensure_tracks(LaneKind::Audio, 1);
+    p.morphers.push(MorpherEvent {
+        targets: MorphTargets::Clips { ids: vec![ClipId(30)] },
+        patch: MorphPatch {
+            audio_fx: vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)],
+            audio_bypass: vec![false],
+            ..Default::default()
+        },
+        ..layer(win.start, win.len())
+    });
+    p.validate().unwrap();
+    let got = pieces_of(&p, ClipId(30));
+    if got.len() != 3 {
+        problems.push(format!("a slowed patch: {} pieces of the plain clip, not three", got.len()));
+    } else {
+        for (i, piece) in got.iter().enumerate() {
+            let slowed = piece.fx.iter().any(FxInstance::warps_time);
+            if slowed != (i == 1) {
+                problems.push(format!("a slowed patch: piece {i} slowed = {slowed}"));
+            }
+            if i != 1 {
+                let w = TickRange::new(piece.start, piece.start + piece.duration);
+                let want = clip_slice(&plain, w, piece.id);
+                if *piece != want {
+                    problems.push(format!("a slowed patch: outer piece {i} differs from the unlayered clip"));
+                }
+            }
+        }
+    }
+    assert!(problems.is_empty(), "a warped clip is not cut at the integral: {}", problems.join("; "));
 }

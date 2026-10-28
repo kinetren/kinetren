@@ -586,11 +586,16 @@ pub fn registry() -> &'static [FxEntry] {
 /// Since R.54 a match on the VARIANT name also shows the row (“blueprint” finds Edges).
 /// The match is at the level of the ROW, not the cell: however many variants match, the row stays one,
 /// and the filter counters do not depend on the number of variants (t48).
-pub fn filter_entries<'a>(entries: &'a [FxEntry], audio: bool, query: &str) -> Vec<&'a FxEntry> {
+pub fn filter_entries<'a>(
+    entries: &'a [FxEntry],
+    kinds: impl Into<PickKinds>,
+    query: &str,
+) -> Vec<&'a FxEntry> {
+    let kinds = kinds.into();
     let q = query.trim().to_lowercase();
     entries
         .iter()
-        .filter(|e| if audio { e.audio } else { e.video })
+        .filter(|e| kinds.takes(e))
         .filter(|e| {
             q.is_empty()
                 || e.name.to_lowercase().contains(&q)
@@ -801,6 +806,35 @@ fn preview_cell(
     (resp, pick)
 }
 
+/// Which kinds of effect a picker offers. The event and track windows offer their own kind; the
+/// MORPHER offers both (slowed-reverb-is-an-event, ktprompts 26.10.18 item 1: "the morpher does not
+/// let me put audio effects on"). Its single strip (R.35 S2) passed "video" since the two strips
+/// were merged, and nothing but this filter refused: `split_chains` already routes an audio kind
+/// into the patch's audio chain, and its preset list already showed both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickKinds {
+    Video,
+    Audio,
+    Both,
+}
+
+impl PickKinds {
+    pub fn takes(self, e: &FxEntry) -> bool {
+        match self {
+            PickKinds::Video => e.video,
+            PickKinds::Audio => e.audio,
+            PickKinds::Both => e.video || e.audio,
+        }
+    }
+}
+
+/// `true` — the audio picker, `false` — the video one (the windows of one kind).
+impl From<bool> for PickKinds {
+    fn from(audio: bool) -> PickKinds {
+        if audio { PickKinds::Audio } else { PickKinds::Video }
+    }
+}
+
 /// A picker where the head of the strip stands as the FIRST row. It is deliberately absent from `registry()`:
 /// t48 checks the registry against the effect templates, and a pseudo-slot
 /// has no template — it is not an effect but a part of the morpher.
@@ -814,7 +848,7 @@ fn preview_cell(
 pub fn fx_picker_with_head(
     ui: &mut egui::Ui,
     id_salt: impl std::hash::Hash,
-    audio: bool,
+    kinds: PickKinds,
     query: &mut String,
     head: Option<&str>,
     presets: &[crate::user_store::PresetRow],
@@ -965,7 +999,7 @@ pub fn fx_picker_with_head(
                 );
                 ui.separator();
             }
-            let list = filter_entries(registry(), audio, query);
+            let list = filter_entries(registry(), kinds, query);
             if list.is_empty() && head.is_none() {
                 ui.weak(tr(k::fxreg::NOTHING));
             }
@@ -1021,7 +1055,9 @@ pub fn fx_picker_with_head(
                         // the strip: built-in variants, then the user’s SINGLE-effect presets of the same kind —
                         // they are about the same thing (“here is how
                         // it is tuned”), and their place is there too
-                        if preview.is_some() && !e.variants.is_empty() {
+                        // an audio kind has no picture: in the morpher's picker it stays a
+                        // named row under its own category heading
+                        if preview.is_some() && e.video && !e.variants.is_empty() {
                             let mut hit = None;
                             ui.horizontal_wrapped(|ui| {
                                 for (vi, v) in e.variants.iter().enumerate() {
@@ -1111,7 +1147,7 @@ pub fn fx_picker_with_head(
     crate::widgets::field_probe::note("fxreg.add", btn.rect);
     // the window of a linked pair has two pickers and the last one drawn
     // (audio) wins the shared name; the README shot needs the VIDEO gallery
-    if !audio {
+    if kinds != PickKinds::Audio {
         crate::widgets::field_probe::note("fxreg.add.video", btn.rect);
     }
     // the expanded picker as a whole: it hangs out past the FX window, and the landing-page screenshot

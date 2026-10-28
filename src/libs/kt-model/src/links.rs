@@ -411,6 +411,12 @@ fn resolve_one(
     if !cur.needs_resolve() {
         return false;
     }
+    // SPEED without a link is sampled by `rate_profile_keys` for every reader, the raw event's
+    // included: resolving it here on the frame grid would give the render a profile the
+    // interface does not see (slowed-reverb-is-an-event, D2; t913)
+    if cur.param == "rate" && cur.source.link_path().is_none() {
+        return false;
+    }
     let expr = cur.source.expr().and_then(|e| crate::formula::Formula::parse(e).ok());
     // `k` is the value of the KEYS WITH SHAPES under the layer (R.67); without keys — 0,
     // and the source formula of older files sounds as before

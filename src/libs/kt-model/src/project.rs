@@ -2615,8 +2615,8 @@ impl MorpherEvent {
     /// 2. **does the patch change a clip of THIS kind** — a layer with video FX alone must not
     ///    leave a seam on the audio beneath it;
     /// 3. `timed = false` (files before v4) — the patch covers the whole body, as in v1;
-    /// 4. a clip that must NOT be cut (a source-consumption warp —
-    ///    finding 2 of R.35), is patched entirely;
+    /// 4. a warped clip is cut like any other — the pieces' entry points are the integral of
+    ///    its speed (`clip_slice`); the former veto of R.35 finding 2 is gone;
     /// 5. forbidden zones (transition windows and neighbours' overlaps) push
     ///    the boundary outward: the layer “sticks” to the crossfade edge, but neighbours on
     ///    the track are not layered over by the cut (finding 1 of R.35);
@@ -2636,30 +2636,19 @@ impl MorpherEvent {
         if !self.enabled || !self.covers(c, rows) || !self.patch.affects(c) {
             return Vec::new();
         }
-        // WARP OF TIME — a VETO on CUTTING (R.37): the `source_in` of a piece computed linearly
-        // for a stretched clip points to the wrong place, so
-        // such a clip is patched ENTIRELY. But “entirely” is about the BOUNDARIES, not about
-        // REACH: the veto came FIRST and returned the whole body,
-        // never asking whether the block reaches the clip IN TIME.
-        //
-        // Cost of the error (R.43, item 298): a morph block 0.6 s long at the 5020th
-        // second patched EVERY event of the project that had
-        // slowed&reverb — in the user's real project this swapped
-        // the source of the audio at the 148th second (“sound from another event”),
-        // and a morpher with slowed&reverb in its patch handed the warp to ALL events
-        // below its row (`chain_for` hands the warp out to both kinds).
-        // Therefore we first compute REACH, and only then the veto.
         // Whether the layer CUTS the target (R.55, C2). A patch of effects alone does not cut
         // at all: it lies over the WHOLE BODY, and “by time” is set by the GATES
         // of the strength. Then the boundary is exact to the tick, does not touch
         // neighbours or transitions, and no seam arises on the material at all.
+        //
+        // A WARPED target is cut like any other (slowed-reverb-is-an-event). The former veto
+        // (R.35 finding 2, R.37) patched such a clip ENTIRELY because a piece's `source_in` was
+        // computed linearly; since R.39 it is the integral of the speed (`clip_slice`, t270),
+        // and the veto outlived its reason: a layer over the middle of a slowed event swapped
+        // the source of the whole event, and a layer carrying slowed slowed the whole event
+        // (the owner: "childish excuses", t915/t916). REACH still comes first (R.43, item 298:
+        // a block at the 5020th second must not touch an event at the 148th).
         let cuts = self.cuts_target(c);
-        let warps = |fx: &[FxInstance]| fx.iter().any(|f| f.warps_time());
-        // The warp veto makes sense ONLY where cutting happens: a linearly
-        // computed `source_in` of a piece of a stretched clip points not
-        // there. Gates cut nothing, so the veto does not apply to them —
-        // and “by time” starts working on stretched events too.
-        let no_cut = cuts && (warps(&c.active_fx()) || warps(&self.patch.chain_for(c.kind)));
         // reference modes: the TIME is set by the reference itself, the block does not
         // limit it — otherwise the user would point at a distant range and
         // would not understand why nothing happened. The “by time” checkbox in these
@@ -2668,9 +2657,6 @@ impl MorpherEvent {
             let refs = self.ref_windows(c, p);
             if refs.is_empty() {
                 return Vec::new(); // the references did not reach here
-            }
-            if no_cut {
-                return vec![body];
             }
             if !cuts {
                 return refs; // gates: the reference windows as they are, to the tick
@@ -2683,9 +2669,6 @@ impl MorpherEvent {
         let w = self.window().intersect(&body);
         if w.len() < crate::MIN_CLIP_DURATION {
             return Vec::new(); // the block did not reach here
-        }
-        if no_cut {
-            return vec![body];
         }
         if !cuts {
             return vec![w]; // gates: the block window as it is, to the tick
@@ -4894,12 +4877,12 @@ impl ParamCurve {
     /// By expanding `ease: true` into “smooth”, the R.61 reader
     /// invented a shape that had never existed in the sound — and the owner's file
     /// (14 `rate` curves) stopped opening at all
-    /// (`RateShapeMustBeLinear`, R.63 item 1). The reader knows the parameter name,
-    /// so it knows the one and only correct shape too.
+    /// (then `RateShapeMustBeLinear`, R.63 item 1). The reader knows the parameter name,
+    /// so it knows the one and only shape that was ever heard.
     ///
     /// An EXPLICIT shape on a key (the `shape` field, files with v10) is not touched here:
-    /// our writer does not produce it for speed, and one that comes from outside
-    /// is still rejected loudly by validation.
+    /// since slowed-reverb-is-an-event speed takes every shape (sampled by
+    /// `rate_profile_keys`), so an explicit shape is honoured as written.
     pub fn implied_shape_of(param: &str, ease: bool) -> SegShape {
         if param == "rate" {
             SegShape::Linear
@@ -5091,7 +5074,9 @@ pub fn check_clip_gen(c: &ClipEvent, media_kind_path: Option<&str>) -> Result<()
     for cur in &c.gen_auto {
         check_curve_source(c.id, cur)?;
         let sorted = cur.keys.windows(2).all(|w| w[0].t <= w[1].t);
-        let finite = cur.keys.iter().all(|k| k.t.0 >= 0 && k.v.is_finite());
+        // generator curves travel with the anchor of a warped piece too (`clip_slice`)
+        let warped = keys_may_precede_material(&c.fx);
+        let finite = cur.keys.iter().all(|k| (warped || k.t.0 >= 0) && k.v.is_finite());
         if !sorted || !finite {
             return Err(ProjectError::BadFxAuto(c.id));
         }
@@ -5161,6 +5146,26 @@ fn check_expr(id: ClipId, expr: &str, vars: &[&str], what: &str) -> Result<(), P
 }
 
 pub fn check_fx_auto(id: ClipId, auto: &[Vec<ParamCurve>]) -> Result<(), ProjectError> {
+    check_fx_auto_on(id, auto, false)
+}
+
+/// Can a key of this event lie BEFORE the material start (a negative tick)? Only on an event
+/// with a time warp: `clip_slice` moves the keys of a warped piece by the anchor's delta
+/// (material − linear), and with a speed below 1 that delta is negative — the right half of a
+/// slowed event got its first key at −45 000 and the whole split was refused (ktprompts
+/// 26.10.18 item 3, "slowed does not let me cut it", t917). Such a key is a point of the curve
+/// hidden before the piece, like a key hidden by trimming. On an event without a warp the delta
+/// is exactly zero, so a negative key there is still garbage and still refused (t190).
+pub fn keys_may_precede_material(fx: &[FxInstance]) -> bool {
+    fx.iter().any(FxInstance::warps_time)
+}
+
+/// `check_fx_auto` for an event whose chain is known: `warped` — `keys_may_precede_material`.
+pub fn check_fx_auto_on(
+    id: ClipId,
+    auto: &[Vec<ParamCurve>],
+    warped: bool,
+) -> Result<(), ProjectError> {
     for curves in auto {
         for c in curves {
             // A source that does NOT RESOLVE is a LOUD rejection (R.59,
@@ -5169,19 +5174,14 @@ pub fn check_fx_auto(id: ClipId, auto: &[Vec<ParamCurve>]) -> Result<(), Project
             // discrepancy: the person sees the picture and believes it.
             check_curve_source(id, c)?;
             let sorted = c.keys.windows(2).all(|w| w[0].t <= w[1].t);
-            let ok = c.keys.iter().all(|k| k.t.0 >= 0 && k.v.is_finite());
+            let ok = c.keys.iter().all(|k| (warped || k.t.0 >= 0) && k.v.is_finite());
             if !sorted || !ok {
                 return Err(ProjectError::BadFxAuto(id));
             }
-            // SPEED accepts only a straight line (R.61). The closed form
-            // of the inverse warp map stands on a piecewise-linear profile:
-            // the integral of the third order would be of the fourth degree, and from
-            // a zigzag it is not expressible at all. The rejection is LOUD — a quiet
-            // dropping of the shape would show one thing in the editor and another in the
-            // sound.
-            if c.param == "rate" && c.keys.iter().any(|k| k.shape != SegShape::Linear) {
-                return Err(ProjectError::RateShapeMustBeLinear(id));
-            }
+            // SPEED takes every shape (slowed-reverb-is-an-event, D2): the closed form of the
+            // warp map stands on a piecewise-linear PROFILE, and `rate_profile_keys` samples the
+            // shaped curve into one — the same profile for the render and the interface. The
+            // former refusal `RateShapeMustBeLinear` (R.61) is gone.
         }
     }
     Ok(())
@@ -8105,12 +8105,6 @@ pub enum ProjectError {
     // --- property link (R.61) ---
     #[error("{0}")]
     BadLink(#[from] crate::links::LinkError),
-    // --- segment shape (R.61) ---
-    #[error(
-        "clip {0:?}: the speed curve takes the linear shape only — the closed-form warp map \
-         stands on a piecewise-linear profile"
-    )]
-    RateShapeMustBeLinear(ClipId),
     // --- generator parameters on an event (R.59, stage 2) ---
     #[error("clip {0:?} sits on a generator but carries no generator values")]
     GenMissing(ClipId),
@@ -9463,7 +9457,7 @@ impl Project {
             if !sources.contains(&c.media) {
                 return Err(ProjectError::UnknownMedia(c.id, c.media));
             }
-            check_fx_auto(c.id, &c.fx_auto)?;
+            check_fx_auto_on(c.id, &c.fx_auto, keys_may_precede_material(&c.fx))?;
             check_clip_gen(c, self.gen_media_path(c.media))?;
             self.validate_overrides(c)?;
             // CHAIN, REVERSE AND WARP on a nested item are legal (R.55, stage 4).

@@ -5310,3 +5310,298 @@ fn t922_cross_and_esc_are_one_path() {
     assert!(problems.is_empty(), "the cross and Esc are not one path: {}", problems.join("; "));
 }
 
+
+/// Test 917 (slowed-reverb-is-an-event, ktprompts 26.10.18 item 3): a slowed event is copied,
+/// pasted, cut into pieces and region-copied like any event.
+///
+/// The owner: "slowed does not let me copy-paste the event and cut it into pieces — childish
+/// excuses". The gestures a person makes, on an audio event with slowed reverb at 0.8× and a
+/// speed curve 0.5→1.5 linked to its video partner: Ctrl+C / Ctrl+V; S with the cursor in the
+/// middle; the right half copied, deleted and pasted elsewhere; a region over half the event
+/// copied. Nothing may be refused, and every piece's entry point is the model's one rule
+/// (`clip_slice`, the integral of the speed).
+#[test]
+fn t917_slowed_event_copies_pastes_and_splits() {
+    use crate::app::Severity;
+    use kt_model::*;
+    use kt_time::{Tick, TickRange};
+    let mut h = crate::layout_tests::harness_sized(1600.0, 900.0);
+    let slowed = || {
+        let mut f = FxInstance::slowed_reverb(0.8, 0.3, 120.0);
+        if let FxInstance::SlowedReverb { rate, .. } = &mut f {
+            *rate = 0.8;
+        }
+        f
+    };
+    let curve = || {
+        vec![vec![ParamCurve {
+            param: "rate".into(),
+            keys: vec![
+                AutoKey::shaped(Tick(0), 0.5, SegShape::Linear),
+                AutoKey::shaped(Tick(360_000), 1.5, SegShape::Linear),
+            ],
+            source: CurveSource::Keys,
+        }]]
+    };
+    {
+        let app = h.state_mut();
+        crate::layout_tests::edit_project(app, |p| {
+            p.media.push(MediaRef::new(MediaId(1), "synth:1"));
+            p.ensure_tracks(LaneKind::Audio, 1);
+            for (id, kind) in [(1u64, ClipKind::Video), (2, ClipKind::Audio)] {
+                p.clips.push(ClipEvent {
+                    r#gen: None,
+                    gen_auto: Vec::new(),
+                    overrides: Vec::new(),
+                    geometry: Default::default(),
+                    geometry_pos: 0,
+                    geometry_auto: Vec::new(),
+                    id: ClipId(id),
+                    link_group: Some(GroupId(1)),
+                    kind,
+                    lane: 0,
+                    start: Tick(0),
+                    duration: Tick(360_000),
+                    source_in: Tick(0),
+                    media: MediaId(1),
+                    gain_db: 0.0,
+                    reversed: false,
+                    fx: vec![slowed()],
+                    fx_bypass: vec![false],
+                    fx_auto: curve(),
+                    opacity: 1.0,
+                    fx_off: false,
+                });
+            }
+        });
+    }
+    h.step();
+    let warns = |h: &egui_kittest::Harness<'static, crate::app::KtApp>| {
+        h.state().notices.iter().filter(|n| n.severity == Severity::Warn).count()
+    };
+    let w0 = warns(&h);
+    let original = h.state().model.project().clips.iter().find(|c| c.id == ClipId(2)).cloned().unwrap();
+    let mut problems: Vec<String> = Vec::new();
+
+    // 1. Ctrl+C / Ctrl+V: the copy carries the chain and the curves, with its partner
+    h.state_mut().select_only(ClipId(2));
+    h.event(egui::Event::Copy);
+    h.step();
+    let copied = h.state().clipboard.clips.len();
+    if copied != 2 {
+        problems.push(format!("Ctrl+C copied {copied} events, not the event and its partner"));
+    }
+    h.state_mut().player.seek(Tick(900_000));
+    h.event(egui::Event::Paste(String::new()));
+    h.step();
+    let pasted: Vec<ClipEvent> =
+        h.state().model.project().clips.iter().filter(|c| c.start == Tick(900_000)).cloned().collect();
+    if pasted.len() != 2 {
+        problems.push(format!("Ctrl+V pasted {} events at the cursor, not two", pasted.len()));
+    }
+    if let Some(a) = pasted.iter().find(|c| c.kind == ClipKind::Audio)
+        && (a.fx != original.fx || a.fx_auto != original.fx_auto || a.fx_bypass != original.fx_bypass)
+    {
+        problems.push("the pasted copy lost its slowed chain or its speed curve".into());
+    }
+
+    // 2. S with the cursor in the middle of the original: both partners split at the integral
+    let mid = Tick(180_000);
+    h.state_mut().select_only(ClipId(2));
+    h.state_mut().player.seek(mid);
+    h.key_press(egui::Key::S);
+    h.step();
+    let at0: Vec<ClipEvent> = h
+        .state()
+        .model
+        .project()
+        .clips
+        .iter()
+        .filter(|c| c.start < Tick(900_000))
+        .cloned()
+        .collect();
+    if at0.len() != 4 {
+        problems.push(format!("S made {} events of the slowed pair, not four", at0.len()));
+    }
+    let right = at0.iter().find(|c| c.kind == ClipKind::Audio && c.start == mid).cloned();
+    match &right {
+        Some(r) => {
+            let want = clip_slice(&original, TickRange::new(mid, Tick(360_000)), r.id);
+            if r.source_in != want.source_in || r.duration != want.duration || r.fx_auto != want.fx_auto {
+                problems.push(format!(
+                    "the right half's entry point is not the integral of the speed: {} vs {}",
+                    r.source_in.0, want.source_in.0
+                ));
+            }
+        }
+        None => problems.push("S left no audio piece starting at the cursor".into()),
+    }
+
+    // 3. the right half: copied, deleted, pasted elsewhere — it keeps its material
+    if let Some(r) = &right {
+        h.state_mut().select_only(r.id);
+        h.event(egui::Event::Copy);
+        h.step();
+        h.key_press(egui::Key::Delete);
+        h.step();
+        h.state_mut().player.seek(Tick(1_800_000));
+        h.event(egui::Event::Paste(String::new()));
+        h.step();
+        let back = h
+            .state()
+            .model
+            .project()
+            .clips
+            .iter()
+            .find(|c| c.kind == ClipKind::Audio && c.start == Tick(1_800_000))
+            .cloned();
+        match back {
+            Some(b) if b.source_in == r.source_in && b.fx_auto == r.fx_auto && b.fx == r.fx => {}
+            Some(b) => problems.push(format!(
+                "the pasted right half lost its material: entry {} vs {}",
+                b.source_in.0, r.source_in.0
+            )),
+            None => problems.push("the right half was not pasted back".into()),
+        }
+    }
+
+    // 4. a region over the first half of the left piece: the copy holds the piece by the integral
+    {
+        let app = h.state_mut();
+        app.selected.clear();
+        crate::layout_tests::edit_project(app, |p| {
+            p.region = Some(Region { start: Tick(45_000), end: Tick(135_000) });
+        });
+    }
+    h.step();
+    h.event(egui::Event::Copy);
+    h.step();
+    let piece = h.state().clipboard.clips.iter().find(|c| c.kind == ClipKind::Audio).cloned();
+    match piece {
+        Some(p) => {
+            let want = clip_slice(&original, TickRange::new(Tick(45_000), Tick(135_000)), p.id);
+            if p.source_in != want.source_in || p.duration != want.duration {
+                problems.push(format!(
+                    "the region copy's entry point is not the integral: {} vs {}",
+                    p.source_in.0, want.source_in.0
+                ));
+            }
+        }
+        None => problems.push("the region copy took no audio piece".into()),
+    }
+
+    let w1 = warns(&h);
+    if w1 != w0 {
+        let last: Vec<String> = h.state().notices.iter().rev().take(w1 - w0).map(|n| n.text.clone()).collect();
+        problems.push(format!("a gesture was refused: {}", last.join(" | ")));
+    }
+    assert!(problems.is_empty(), "a slowed event is not edited like any event: {}", problems.join("; "));
+}
+
+/// Test 912 (slowed-reverb-is-an-event, ktprompts 26.10.18 item 1): the morpher picker offers
+/// AUDIO effects.
+///
+/// The owner: "the morpher does not let me put audio effects on". Its single strip (R.35 S2)
+/// passed "video" to the picker since the two strips were merged — no reason was ever written.
+/// Here the person's path: the morpher window over an audio and a video track, "+ effect…",
+/// "pitch" in the search, Pitch shift; the patch carries it in its AUDIO chain, the audio event
+/// under the layer gets it, the video event does not.
+#[test]
+fn t912_morpher_picker_offers_audio_effects() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+    let pitch = crate::fx_registry::registry()
+        .iter()
+        .find(|e| e.template.tag() == FxInstance::pitch_shift().tag())
+        .expect("Pitch shift in the registry");
+    let mut h = crate::layout_tests::harness_sized(1600.0, 900.0);
+    {
+        let app = h.state_mut();
+        crate::layout_tests::edit_project(app, |p| {
+            p.media.push(MediaRef::new(MediaId(1), "synth:1"));
+            p.ensure_tracks(LaneKind::Audio, 1);
+            p.ensure_tracks(LaneKind::Morph, 1);
+            for (id, kind) in [(1u64, ClipKind::Video), (2, ClipKind::Audio)] {
+                p.clips.push(ClipEvent {
+                    r#gen: None,
+                    gen_auto: Vec::new(),
+                    overrides: Vec::new(),
+                    geometry: Default::default(),
+                    geometry_pos: 0,
+                    geometry_auto: Vec::new(),
+                    id: ClipId(id),
+                    link_group: None,
+                    kind,
+                    lane: 0,
+                    start: kt_time::Tick(0),
+                    duration: kt_time::Tick(180_000),
+                    source_in: kt_time::Tick(0),
+                    media: MediaId(1),
+                    gain_db: 0.0,
+                    reversed: false,
+                    fx: vec![],
+                    fx_bypass: vec![],
+                    fx_auto: vec![],
+                    opacity: 1.0,
+                    fx_off: false,
+                });
+            }
+            p.morphers.push(MorpherEvent {
+                id: MorphId(1),
+                lane: 0,
+                start: kt_time::Tick(45_000),
+                duration: kt_time::Tick(90_000),
+                targets: MorphTargets::Clips { ids: vec![ClipId(1), ClipId(2)] },
+                patch: MorphPatch::default(),
+                timed: true,
+                strength: 1.0,
+                fade_in: kt_time::Tick::ZERO,
+                fade_out: kt_time::Tick::ZERO,
+                enabled: true,
+            });
+        });
+        app.open_morph_editor(MorphId(1));
+    }
+    h.step();
+    h.step();
+    h.get_by_label(crate::i18n::tr(crate::i18n::k::fxreg::ADD)).click();
+    h.step();
+    h.step();
+    // the gallery lists the audio kinds next to the video ones
+    for audio in ["reverb", "compressor"] {
+        let e = crate::fx_registry::filter_entries(
+            crate::fx_registry::registry(),
+            crate::fx_registry::PickKinds::Both,
+            audio,
+        );
+        assert!(
+            e.iter().any(|e| e.audio && h.query_by_label(e.name).is_some()),
+            "the morpher gallery does not show the audio kind “{audio}”"
+        );
+    }
+    assert!(h.query_by_label("Blur").is_some(), "and the video kinds are still there");
+    h.event(egui::Event::Text("pitch".into()));
+    h.step();
+    h.step();
+    h.get_by_label(pitch.name).click();
+    h.step();
+    h.step();
+    let m = h.state().model.project().morphers[0].clone();
+    assert!(
+        m.patch.audio_fx.iter().any(|f| f.tag() == pitch.template.tag()),
+        "Pitch shift did not land in the patch's audio chain: {:?} / {:?}",
+        m.patch.audio_fx,
+        m.patch.video_fx
+    );
+    assert!(m.patch.video_fx.is_empty(), "an audio effect landed in the video chain");
+    assert!(h.query_by_label(pitch.name).is_some(), "the strip shows Pitch shift after the morph slot");
+    let eff = h.state().model.project().effective_clips();
+    let has_pitch = |id: u64| {
+        eff.iter()
+            .filter(|c| kt_model::same_clip(c.id, ClipId(id)))
+            .any(|c| c.fx.iter().any(|f| f.tag() == pitch.template.tag()))
+    };
+    assert!(has_pitch(2), "the audio event under the layer did not get Pitch shift");
+    assert!(!has_pitch(1), "the video event got an audio effect");
+}

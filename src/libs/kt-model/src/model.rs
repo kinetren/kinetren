@@ -1503,8 +1503,9 @@ impl TimelineModel {
                 }
             }
             Command::SetFxAuto { id, auto } => {
-                find(*id)?;
-                check_fx_auto(*id, auto).map_err(CommandError::InvalidClip)?;
+                let c = find(*id)?;
+                crate::check_fx_auto_on(*id, auto, crate::keys_may_precede_material(&c.fx))
+                    .map_err(CommandError::InvalidClip)?;
             }
             Command::TrimStart { id, new_start } => {
                 let c = find(*id)?;

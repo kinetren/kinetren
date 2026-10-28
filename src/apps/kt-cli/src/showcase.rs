@@ -196,8 +196,9 @@ fn slowed() -> FxInstance {
 /// so the graph reads as curves, not a polyline.
 fn slowed_curves(si: f64, dur: f64) -> Vec<Vec<ParamCurve>> {
     let at = |u: f64| t(si + u * dur);
-    // `rate` drives the warp map, which only takes straight segments
-    // (validate: RateShapeMustBeLinear); the shaped segments live on `mix`
+    // `rate` stays a polyline here so the README picture of the speed is the classic one;
+    // the shaped segments live on `mix` (speed takes every shape since
+    // slowed-reverb-is-an-event)
     let rate = AutoKey::linear(vec![
         AutoKey::at(at(0.0), 1.0),
         AutoKey::at(at(0.22), 0.86),

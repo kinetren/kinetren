@@ -111,6 +111,24 @@ def main(out):
             "the morpher block was moved by mouse (it hit the thin row)",
         )
         app.shot("moved")
+
+        # --- 4. the picker of the morpher offers AUDIO effects --------------------
+        # ktprompts 26.10.18 item 1 (slowed-reverb-is-an-event): "the morpher does not let me
+        # put audio effects on" — its one strip passed "video" to the picker
+        y = app.lane_y("morph", 0, frac=0.5)
+        app.double_click(app.x_at(int(5.0 * SEC)), y)
+        app.expect(app.has_probe("win.morpher"), "double click on the morph block opened its window")
+        app.step("morph-window", "the morpher window with its one strip")
+        app.click_probe("fxreg.add", "“+ effect…” of the morpher strip")
+        app.type_text("pitch")
+        app.expect(app.has_probe("fxreg.tpl.pitch_shift"), "the morpher gallery lists Pitch shift")
+        app.step("morph-picker-pitch", "the gallery filtered by “pitch” shows the audio Pitch shift")
+        app.click_probe("fxreg.tpl.pitch_shift", "“Pitch shift” line in the picker")
+        saved = app.saved_project()
+        patch = saved.doc["metadata"]["kt"]["morphers"][0].get("patch", {})
+        kinds = [f.get("kind") for f in patch.get("audio_fx", [])]
+        app.expect("pitch_shift" in kinds, f"Pitch shift is in the patch's AUDIO chain: {patch}")
+        app.step("morph-pitch-picked", "the strip shows Pitch shift after the morph slot")
         return app.done()
 
 

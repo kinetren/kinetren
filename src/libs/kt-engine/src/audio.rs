@@ -85,6 +85,12 @@ struct AudioClip {
     /// `None` — an ordinary source. An empty set of overrides gives the same
     /// edit as its neighbours, and the sub-mix stays ONE per reel.
     nest: Option<crate::video::NestKey>,
+    /// The source-window end and the mirror axis of the clip (in source frames), computed on
+    /// the FIRST render and kept: both depend only on the clip (its chain, curves, length and
+    /// handles), and each costs a walk over the whole speed profile. A shaped speed curve is
+    /// sampled into tens of thousands of points (slowed-reverb-is-an-event), and computing
+    /// them per burst made a 10-minute zigzag-speed event cost 20× a straight one.
+    src_ends: std::cell::Cell<Option<(i64, i64)>>,
 }
 
 /// The crossfade weight over the transition windows of the clip. It does not know the
@@ -655,6 +661,7 @@ impl AudioRenderer {
                     nest: project.sequence(c.media).map(|_| {
                         (c.media, crate::instance_content(project, c.media, &c.overrides))
                     }),
+                    src_ends: std::cell::Cell::new(None),
                 }
             })
             .collect();
@@ -1370,15 +1377,25 @@ impl AudioRenderer {
         // The boundary is CONSUMPTION (R.57): the resampler cursor lives on it, and the
         // addresses under the signed curve go both left and right. For a
         // monotonic chain it is the same number as before.
-        let src_window_end = clip.source_in
-            + kt_fx::chain_consumption_window_ext(
-                &clip.fx,
-                &clip.auto,
-                clip_len,
-                material.clone(),
-                material,
-            )
-            .end;
+        let (src_window_end, src_mirror_end) = match clip.src_ends.get() {
+            Some(e) => e,
+            None => {
+                let e = (
+                    clip.source_in
+                        + kt_fx::chain_consumption_window_ext(
+                            &clip.fx,
+                            &clip.auto,
+                            clip_len,
+                            material.clone(),
+                            material,
+                        )
+                        .end,
+                    clip.source_in + kt_fx::chain_source_used(&clip.fx, &clip.auto, clip_len),
+                );
+                clip.src_ends.set(Some(e));
+                e
+            }
+        };
         // MIRROR AXIS ≠ window end (R.43, item 292). The window includes the resampler's margin
         // (`WARP_SOURCE_MARGIN_FRAMES`, 8192 frames = 170.7 ms) —
         // this is the correct boundary “silence beyond”, but an unfit axis: mirroring
@@ -1386,8 +1403,6 @@ impl AudioRenderer {
         // these 170 ms. The axis is the actually consumed `used`, THE SAME value
         // as for video (`ClipWarp::used`). For a chain without warp both coincide,
         // so GOLDEN_AUDIO does not move.
-        let src_mirror_end =
-            clip.source_in + kt_fx::chain_source_used(&clip.fx, &clip.auto, clip_len);
         let media = clip.media;
         let mut pull_underruns = 0u64;
         let mut warmup_misses = 0u64;

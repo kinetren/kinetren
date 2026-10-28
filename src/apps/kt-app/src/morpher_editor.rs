@@ -481,7 +481,9 @@ impl KtApp {
                             color: crate::theme::MORPH_SLOT,
                         }),
                     },
-                    false,
+                    // BOTH kinds: a patch carries a video and an audio chain, and the one strip
+                    // shows them together (`split_chains` sorts the pick into its chain)
+                    crate::fx_registry::PickKinds::Both,
                     &mut ed.picker_query,
                     &mut fx_clip,
                     kt_time::Tick(0),

@@ -46,7 +46,7 @@ on what it reads.
 - **TEST** t695b (`src/libs/kt-model/tests/fx_auto.rs`), t11 and t67 (`src/libs/kt-engine/tests/golden_export.rs`)
 
 #### Scenario: Speed takes every shape and the map follows it
-- **WHEN** each shape of the closed set, a segment formula `a + (b - a) * s * s` and a formula layer `1 + 0.5 * sin(t * 6.283)` are assigned to the `rate` curve of a 10 s event by command; then a curve with linear segments only
+- **WHEN** each shape of the closed set, a segment formula `a + (b - a) * s * s` and a formula layer `1 + 0.5 * sin(t * 6)` are assigned to the `rate` curve of a 10 s event by command; then a curve with linear segments only
 - **THEN** every command is accepted (the former `RateShapeMustBeLinear` refusal is gone — t696 inverted); the consumed material and the inverse map agree with an independent numeric integration of the shaped curve within one audio frame over 10 s; the profile read from the raw event (the interface's path) and from the effective events (the render's path) are bit-for-bit equal; the all-linear curve gives the former profile bit for bit; two runs are byte-for-byte equal
 - **TEST** t913 (`src/libs/kt-model/tests/warp.rs`), t696 (`src/libs/kt-model/tests/warp.rs`)
 

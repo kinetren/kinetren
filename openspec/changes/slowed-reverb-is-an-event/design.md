@@ -96,6 +96,7 @@ layer is evaluated on the same grid by the same evaluator `resolve_one` uses. `f
 for `rate` instead of dropping shapes; `resolve_one` skips `rate` curves without links so the profile is
 built in ONE place. `check_fx_auto` drops the `RateShapeMustBeLinear` branch (the error variant stays for the
 import table only if a legacy fix needs it). The UI's refusal lines and `shape_rate_linear` go.
+2026-10-28, implementation: the grid is 240 frames = 450 ticks (5 ms), not 480 — the 10 ms trapezoid left 4.4 ticks of error over 10 s on `1 + 0.5·sin(6t)`, over the one-audio-frame bound of t913. The sampled profile is long, so nothing per chunk may walk it (binary search in `param_at`, `AudioClip::src_ends`; task 2.4).
 Alternatives: (a) a closed-form integral per shape — the step and the zigzag integrate, but the formula
 cannot, and the inverse map would need a numeric root per shape; (b) sampling on the project frame grid as
 `resolve_one` does — the raw-clip readers (timeline, trim limit) have no fps at hand; a fixed audio grid

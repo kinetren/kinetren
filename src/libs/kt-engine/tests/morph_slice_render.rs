@@ -240,31 +240,39 @@ fn t238_slicing_is_inaudible() {
     );
 }
 
-/// Test 238b: a clip with its OWN time warp (slowed&reverb) is not cut at all —
-/// the linearly computed entry point of the piece would point to the wrong place
-/// (finding 2 of R.35). The patch acts on it as a whole.
+/// Test 238b — INVERTED by the owner's decision (2026-10-28, slowed-reverb-is-an-event: "yes,
+/// invert t696, t696b and t238"). It held "a clip with its own time warp is never cut" (finding 2
+/// of R.35): the linearly computed entry of a piece pointed to the wrong place. Since R.39 the
+/// entry is the integral of the speed, and the veto only spread a patch over the whole body. Now:
+/// a warped clip IS cut, the patch acts in its window only, and the pieces' entries are the
+/// integral (t915 checks the numbers, t916 the render).
 #[test]
 fn t238_warped_clip_is_never_sliced() {
     let mut p = base(ClipKind::Audio);
     p.clips[0].fx = vec![FxInstance::slowed_reverb(0.8, 0.3, 60.0)];
+    p.clips[0].fx_bypass = vec![false];
     p.morphers.push(layer(MorphPatch { media: Some(MediaId(2)), ..Default::default() }));
     p.validate().unwrap();
     let eff = p.effective_clips();
-    assert_eq!(eff.iter().filter(|c| same_clip(c.id, ClipId(10))).count(), 1, "a warp is not cut");
-    assert_eq!(eff[0].media, MediaId(2), "the patch applies to the whole clip");
+    let pieces: Vec<&ClipEvent> = eff.iter().filter(|c| same_clip(c.id, ClipId(10))).collect();
+    assert_eq!(pieces.len(), 3, "a warped clip is cut like any target");
+    let swapped: Vec<bool> = pieces.iter().map(|c| c.media == MediaId(2)).collect();
+    assert_eq!(swapped, vec![false, true, false], "the swap acts in the layer's window only");
 
-    // a warp added by the layer ITSELF — the same case
+    // a warp added by the layer ITSELF — the same: only the window is slowed
     let mut q = base(ClipKind::Audio);
     q.morphers.push(layer(MorphPatch {
         audio_fx: vec![FxInstance::slowed_reverb(0.8, 0.3, 60.0)],
         ..Default::default()
     }));
     q.validate().unwrap();
-    assert_eq!(
-        q.effective_clips().iter().filter(|c| same_clip(c.id, ClipId(10))).count(),
-        1,
-        "a layer that adds a warp does not cut either"
-    );
+    let eff = q.effective_clips();
+    let slowed: Vec<bool> = eff
+        .iter()
+        .filter(|c| same_clip(c.id, ClipId(10)))
+        .map(|c| c.fx.iter().any(FxInstance::warps_time))
+        .collect();
+    assert_eq!(slowed, vec![false, true, false], "a layer that adds a warp slows its window only");
 }
 
 /// Test 267 (R.38 item 12, verbatim: “the morpher has no way to apply
@@ -401,4 +409,140 @@ fn t268_layer_strength_blends_audio_too() {
         half[i],
         want
     );
+}
+
+/// Test 916 (slowed-reverb-is-an-event): the cut of a warped clip is neither heard nor seen
+/// OUTSIDE the layer's window.
+///
+/// The veto (t238 before this change) patched the whole body of a slowed event: a source swap
+/// over its middle swapped the whole event, and a layer carrying slowed slowed the whole event.
+/// Now the event is cut at the integral of its speed, and outside the window the render is the
+/// unlayered one: the frames byte for byte (CPU reference); the sound before the window byte for
+/// byte up to the last processing chunk before the seam; after the window the same material
+/// within a sinc restart. Measured (2026-10-28): at a constant 0.8× the restart differs for 67
+/// frames and then the bytes are equal; on a speed curve the chunk grid of the new piece starts
+/// at its own edge, and the material lags by ~10 audio frames (0.2 ms, inaudible) — the same as
+/// for a plain split (S) of such an event, a property of the per-chunk speed, not of the layer.
+#[test]
+fn t916_warped_cut_is_neither_heard_nor_seen_outside_the_window() {
+    let to_frames = |t: Tick| t.to_audio_frames() as usize * CH;
+    // the layer of `layer()` covers [30 000, 60 000) of the first clip
+    let (w0, w1) = (Tick(30_000), Tick(60_000));
+    let mut problems: Vec<String> = Vec::new();
+    let cases: [(&str, Box<dyn Fn(&mut Project)>, MorphPatch); 3] = [
+        (
+            "own slowed 0.8×, source swap",
+            Box::new(|p: &mut Project| {
+                p.clips[0].fx = vec![FxInstance::slowed_reverb(0.8, 0.0, 85.0)];
+                p.clips[0].fx_bypass = vec![false];
+                p.clips[0].fx_auto = vec![vec![]];
+            }),
+            MorphPatch { media: Some(MediaId(2)), ..Default::default() },
+        ),
+        (
+            "own speed curve 0.5→1.5, source swap",
+            Box::new(|p: &mut Project| {
+                p.clips[0].fx = vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)];
+                p.clips[0].fx_bypass = vec![false];
+                p.clips[0].fx_auto = vec![vec![ParamCurve {
+                    param: "rate".into(),
+                    keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 0.5), AutoKey::at(LEN, 1.5)]),
+                    source: Default::default(),
+                }]];
+            }),
+            MorphPatch { media: Some(MediaId(2)), ..Default::default() },
+        ),
+        (
+            "plain clip, a layer carrying slowed 0.5×",
+            Box::new(|_: &mut Project| {}),
+            MorphPatch {
+                audio_fx: vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)],
+                audio_bypass: vec![false],
+                video_fx: vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)],
+                video_bypass: vec![false],
+                ..Default::default()
+            },
+        ),
+    ];
+    for (name, setup, patch) in cases {
+        for kind in [ClipKind::Audio, ClipKind::Video] {
+            let mut plain = base(kind);
+            setup(&mut plain);
+            plain.validate().unwrap();
+            let mut layered = plain.clone();
+            layered.morphers.push(layer(patch.clone()));
+            layered.validate().unwrap();
+            let pieces =
+                layered.effective_clips().iter().filter(|c| same_clip(c.id, ClipId(10))).count();
+            if pieces != 3 {
+                problems.push(format!("{name} {kind:?}: {pieces} pieces, not three"));
+            }
+            match kind {
+                ClipKind::Audio => {
+                    let a = render_audio(&plain, LEN);
+                    let b = render_audio(&layered, LEN);
+                    let (s0, s1) = (to_frames(w0), to_frames(w1));
+                    // before the window: byte for byte up to the chunk that holds the seam
+                    let chunk = 1024 * CH;
+                    let before = (s0 / chunk) * chunk;
+                    if a[..before] != b[..before] {
+                        problems.push(format!("{name}: the sound BEFORE the window differs"));
+                    }
+                    // after the window: the same material — after a 10 ms restart, the best
+                    // alignment within 16 audio frames leaves a residual under 0.02 (another material would leave
+                    // one of the order of the signal itself)
+                    for at in [s1 / CH + 480, s1 / CH + 2_000, s1 / CH + 6_000, s1 / CH + 12_000] {
+                        let (lag, residual) = best_alignment(&a, &b, at, 16);
+                        if residual > 0.02 {
+                            problems.push(format!(
+                                "{name}: AFTER the window at frame {at} the sound is not the unlayered \
+                                 material (best lag {lag} frames, residual {residual})"
+                            ));
+                        }
+                    }
+                    if a[s0..s1] == b[s0..s1] {
+                        problems.push(format!("{name}: the window sounds as without the layer"));
+                    }
+                }
+                _ => {
+                    for t in [Tick(0), Tick(15_000), Tick(27_000), Tick(63_000), Tick(75_000), Tick(87_000)] {
+                        if render_frame(&plain, t) != render_frame(&layered, t) {
+                            problems.push(format!("{name}: the frame at {} outside the window differs", t.0));
+                        }
+                    }
+                    // the harness frame is a function of the pts, not of the media: a source
+                    // swap is not visible here, a slowdown is
+                    if patch.media.is_none()
+                        && render_frame(&plain, Tick(45_000)) == render_frame(&layered, Tick(45_000))
+                    {
+                        problems.push(format!("{name}: the frame inside the window is the unlayered one"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(problems.is_empty(), "the warped cut shows outside the window: {}", problems.join("; "));
+}
+
+/// The best alignment of `b` against `a` around frame `at` (256 frames, left channel): the lag in
+/// eighths of an audio frame within ±`reach` frames and the worst residual at that lag.
+fn best_alignment(a: &[f32], b: &[f32], at: usize, reach: i32) -> (f64, f32) {
+    let mono = |v: &[f32], f: f64| -> f32 {
+        let i = f.floor() as usize;
+        let fr = (f - i as f64) as f32;
+        v[i * CH] * (1.0 - fr) + v[(i + 1) * CH] * fr
+    };
+    let mut best = (0.0, f32::MAX);
+    for l8 in -reach * 8..=reach * 8 {
+        let lag = l8 as f64 / 8.0;
+        let mut e = 0.0f32;
+        for k in 0..256 {
+            let f = (at + k) as f64;
+            e = e.max((mono(a, f + lag) - b[(at + k) * CH]).abs());
+        }
+        if e < best.1 {
+            best = (lag, e);
+        }
+    }
+    best
 }

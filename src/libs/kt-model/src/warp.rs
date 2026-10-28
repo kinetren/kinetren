@@ -12,7 +12,7 @@
 //! `f64`/`i64` over `[(f64, f64)]`, no media, no DSP. kt-fx and kt-engine
 //! call it from here, the public names kept by re-export.
 
-use crate::{FxInstance, ParamCurve};
+use crate::{AutoKey, FxInstance, ParamCurve};
 use kt_time::Tick;
 
 /// The profile of one parameter in the EVENT DOMAIN: (fraction of output time
@@ -37,16 +37,20 @@ pub fn param_at(base: f64, points: &ParamPoints, tau: f64, shapes: &[crate::SegS
     if s <= points[0].0 {
         return points[0].1;
     }
-    for (i, w) in points.windows(2).enumerate() {
-        if s <= w[1].0 {
-            let span = (w[1].0 - w[0].0).max(1e-12);
-            let a = (s - w[0].0) / span;
-            // the segment's LEFT key carries the shape — both the sound and the graph call
-            // ONE function `SegShape::at` (R.61); a short series of shapes
-            // means “a straight line”, as for `rate`
-            let shape = shapes.get(i).copied().unwrap_or(crate::SegShape::Linear);
-            return shape.at(a, w[0].1, w[1].1);
-        }
+    // the first segment whose right end reaches `s` — by BINARY search: a sampled speed curve
+    // has tens of thousands of points (`rate_profile_keys`, 10 ms over a long event), and this
+    // runs once per audio chunk. The points are sorted, so it is the same segment the former
+    // linear walk found, and the value is the same bit for bit.
+    let i = points[1..].partition_point(|p| p.0 < s);
+    if i + 1 < points.len() {
+        let (w0, w1) = (points[i], points[i + 1]);
+        let span = (w1.0 - w0.0).max(1e-12);
+        let a = (s - w0.0) / span;
+        // the segment's LEFT key carries the shape — both the sound and the graph call
+        // ONE function `SegShape::at` (R.61); a short series of shapes
+        // means “a straight line”, as for `rate`
+        let shape = shapes.get(i).copied().unwrap_or(crate::SegShape::Linear);
+        return shape.at(a, w0.1, w1.1);
     }
     points[points.len() - 1].1
 }
@@ -571,16 +575,23 @@ impl AutoProfiles {
                 .map(|curves| {
                     curves
                         .iter()
-                        .filter(|c| !c.keys.is_empty())
+                        // a formula layer on speed has no keys and still IS the curve
+                        .filter(|c| !c.keys.is_empty() || (c.param == "rate" && c.source.expr().is_some() && c.source.link_path().is_none()))
                         .map(|c| {
-                            // rate must remain piecewise linear: the analytic formulas of the warp map rest on it,
-                            // and any other shape on it is rejected
-                            // already by the command (R.61)
-                            // — here is the safety net
+                            // the PROFILE of rate stays piecewise linear — the closed form of the
+                            // map rests on it — but the CURVE may have any shape: it is sampled into
+                            // straight points by ONE function (slowed-reverb-is-an-event, D2)
+                            let sampled;
+                            let keys: &[AutoKey] = if c.param == "rate" {
+                                sampled = rate_profile_keys(c, src_in_frames, clip_len_frames);
+                                &sampled
+                            } else {
+                                &c.keys
+                            };
                             let shapes: Vec<crate::SegShape> = if c.param == "rate" {
                                 Vec::new()
                             } else {
-                                c.keys.iter().map(|k| k.shape).collect()
+                                keys.iter().map(|k| k.shape).collect()
                             };
                             // the value is clamped HERE: `segments` clamps the ends before interpolation,
                             // and `eff_rate` — after, and on a key outside RATE_CLAMP they diverged.
@@ -590,8 +601,7 @@ impl AutoProfiles {
                             // prefetch misses and silence
                             // (item 13/t17).
                             let clamp = c.param == "rate";
-                            let pts: Vec<(f64, f64)> = c
-                                .keys
+                            let pts: Vec<(f64, f64)> = keys
                                 .iter()
                                 .map(|k| {
                                     let f = k.t.to_audio_frames() - src_in_frames;
@@ -897,6 +907,79 @@ impl ClipWarp {
             consumed
         }
     }
+}
+
+/// The grid on which a shaped speed curve is sampled: 240 audio frames = 450 ticks = 5 ms,
+/// ABSOLUTE in the material (a piece and its parent sample the same ticks), fps-independent
+/// (the raw-event readers of the interface have no project at hand), finer than any frame.
+pub const RATE_GRID_TICKS: i64 = 450;
+
+/// The straight-line points the warp map reads for a SPEED curve (slowed-reverb-is-an-event,
+/// D2). The one place where a speed curve becomes a profile — the render, the prefetch, the video
+/// frame map and the interface's material map all come here through `from_curves_rev`.
+///
+/// * all segments straight, keys only — the keys as they are, bit for bit (the former profile);
+/// * a shaped segment (Smooth, Hold, Ease, Zigzag, a segment formula) — its keys plus the value
+///   of the curve on the absolute grid inside it and one tick before its right key (so a Hold
+///   stays a step of one tick, not a ramp of 10 ms);
+/// * a formula LAYER (no link) — the formula on the grid over the event's material window, with
+///   `k` = the keys under it and `t` = seconds from the material entry, as `resolve_one` reads it.
+///
+/// A speed driven by a LINK is resolved in `effective_clips` (it needs other events) and arrives
+/// here as straight keys.
+pub fn rate_profile_keys(c: &ParamCurve, src_in_frames: i64, clip_len_frames: i64) -> Vec<AutoKey> {
+    use crate::SegShape;
+    let straight = |k: &AutoKey| AutoKey::shaped(k.t, k.v, SegShape::Linear);
+    let grid_up = |t: i64| t.div_euclid(RATE_GRID_TICKS) * RATE_GRID_TICKS + RATE_GRID_TICKS;
+    if let Some(expr) = c.source.expr()
+        && c.source.link_path().is_none()
+        && let Ok(f) = crate::formula::Formula::parse(expr)
+    {
+        // the material window of the event in ticks (frames → ticks exactly on the 8-frame grid)
+        let from = src_in_frames * 15 / 8;
+        let to = from + clip_len_frames.max(1) * 15 / 8;
+        let lo = c.keys.first().map_or(from, |k| k.t.0.min(from));
+        let hi = c.keys.last().map_or(to, |k| k.t.0.max(to));
+        let mut out = Vec::new();
+        let mut t = lo;
+        loop {
+            let k = if c.keys.is_empty() { 0.0 } else { crate::curve_value(&c.keys, Tick(t)) };
+            let mut vars = std::collections::BTreeMap::new();
+            vars.insert("src".to_string(), 0.0);
+            vars.insert("k".to_string(), k);
+            vars.insert("t".to_string(), (t - from) as f64 / 90_000.0);
+            match f.eval(&vars) {
+                Ok(v) if v.is_finite() => out.push(AutoKey::shaped(Tick(t), v, SegShape::Linear)),
+                // not computable here — validation has said so loudly; the keys stay
+                _ => return c.keys.iter().map(straight).collect(),
+            }
+            if t >= hi {
+                break;
+            }
+            t = grid_up(t).min(hi);
+        }
+        return out;
+    }
+    let keys = &c.keys;
+    if keys.len() < 2 || keys[..keys.len() - 1].iter().all(|k| k.shape == SegShape::Linear) {
+        return keys.iter().map(straight).collect();
+    }
+    let mut out = Vec::with_capacity(keys.len());
+    for (i, k) in keys.iter().enumerate() {
+        out.push(straight(k));
+        let Some(next) = keys.get(i + 1) else { break };
+        if k.shape == SegShape::Linear || next.t.0 - k.t.0 < 2 {
+            continue;
+        }
+        let mut t = grid_up(k.t.0);
+        while t < next.t.0 - 1 {
+            out.push(AutoKey::shaped(Tick(t), crate::curve_value(keys, Tick(t)), SegShape::Linear));
+            t += RATE_GRID_TICKS;
+        }
+        let last = next.t.0 - 1;
+        out.push(AutoKey::shaped(Tick(last), crate::curve_value(keys, Tick(last)), SegShape::Linear));
+    }
+    out
 }
 
 /// Map from the CHAIN AND ITS CURVES. `None` — there is no warp, the mapping is linear.

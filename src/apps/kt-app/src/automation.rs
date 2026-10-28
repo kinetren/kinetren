@@ -1005,7 +1005,6 @@ fn graph(
         let menu = resp.clone().context_menu(|ui| {
             let Some((ci, ki)) = menu_hit else {
                 if let Some((ci, ki)) = seg_hit {
-                    let rate = curves.get(ci).is_some_and(|c| c.param == "rate");
                     let cur = curves[ci].keys[ki].shape;
                     // THE PERSON SEES BETWEEN WHAT the shape is being set (R.63 item 5):
                     // the header names both ends of the segment, and the segment itself is
@@ -1021,53 +1020,50 @@ fn graph(
                         ))
                         .strong(),
                     );
-                    if rate {
-                        // impossibility — an ERROR with a reason, not silence
-                        ui.label(egui::RichText::new(tr(k::fx::SHAPE_RATE_LINEAR)).weak().small());
-                    } else {
-                        for (i, sh) in crate::widgets::all_shapes().into_iter().enumerate() {
-                            let on = std::mem::discriminant(&sh) == std::mem::discriminant(&cur);
-                            let r = ui.selectable_label(on, crate::widgets::shape_label(sh));
-                            // menu items — the target of the live scenario: it must
-                            // REACH them with the pointer (R.63 item 5)
-                            if crate::widgets::field_probe::on() {
-                                crate::widgets::field_probe::note(
-                                    &format!("auto.shape.{i}"),
-                                    r.rect,
-                                );
-                            }
-                            if r.clicked() {
-                                set_shape = Some((ci, ki, sh));
+                    // every shape, speed included: the warp map samples a shaped speed curve
+                    // into its profile (slowed-reverb-is-an-event)
+                    for (i, sh) in crate::widgets::all_shapes().into_iter().enumerate() {
+                        let on = std::mem::discriminant(&sh) == std::mem::discriminant(&cur);
+                        let r = ui.selectable_label(on, crate::widgets::shape_label(sh));
+                        // menu items — the target of the live scenario: it must
+                        // REACH them with the pointer (R.63 item 5)
+                        if crate::widgets::field_probe::on() {
+                            crate::widgets::field_probe::note(
+                                &format!("auto.shape.{i}"),
+                                r.rect,
+                            );
+                        }
+                        if r.clicked() {
+                            set_shape = Some((ci, ki, sh));
+                            ui.close();
+                        }
+                    }
+                    // SEGMENT FORMULA (R.67): the shape of the segment with its own
+                    // text; the text is edited in the curve block below the graph
+                    let is_formula = matches!(cur, kt_model::SegShape::Formula { .. });
+                    let r = ui.selectable_label(is_formula, tr(k::fx::SHAPE_FORMULA_ITEM));
+                    if crate::widgets::field_probe::on() {
+                        crate::widgets::field_probe::note("auto.shape.formula", r.rect);
+                    }
+                    if r.clicked() {
+                        set_shape = Some((
+                            ci,
+                            ki,
+                            kt_model::SegShape::Formula {
+                                expr: kt_model::ExprId::intern("a + (b - a) * s"),
+                            },
+                        ));
+                        ui.close();
+                    }
+                    ui.separator();
+                    ui.menu_button(tr(k::fx::SHAPE_ALL), |ui| {
+                        for sh in crate::widgets::all_shapes() {
+                            if ui.button(crate::widgets::shape_label(sh)).clicked() {
+                                shape_all = Some((ci, sh));
                                 ui.close();
                             }
                         }
-                        // SEGMENT FORMULA (R.67): the shape of the segment with its own
-                        // text; the text is edited in the curve block below the graph
-                        let is_formula = matches!(cur, kt_model::SegShape::Formula { .. });
-                        let r = ui.selectable_label(is_formula, tr(k::fx::SHAPE_FORMULA_ITEM));
-                        if crate::widgets::field_probe::on() {
-                            crate::widgets::field_probe::note("auto.shape.formula", r.rect);
-                        }
-                        if r.clicked() {
-                            set_shape = Some((
-                                ci,
-                                ki,
-                                kt_model::SegShape::Formula {
-                                    expr: kt_model::ExprId::intern("a + (b - a) * s"),
-                                },
-                            ));
-                            ui.close();
-                        }
-                        ui.separator();
-                        ui.menu_button(tr(k::fx::SHAPE_ALL), |ui| {
-                            for sh in crate::widgets::all_shapes() {
-                                if ui.button(crate::widgets::shape_label(sh)).clicked() {
-                                    shape_all = Some((ci, sh));
-                                    ui.close();
-                                }
-                            }
-                        });
-                    }
+                    });
                     return;
                 }
                 ui.close();

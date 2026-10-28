@@ -7796,8 +7796,7 @@ fn t265_automation_axis_and_field_bind() {
     bound_apply(&mut c, None, Tick(45_000), 4.0);
     assert_eq!(c.keys.len(), 3, "an edit without a selected key places a key under the cursor");
     // a new key INHERITS the shape of the segment it divides (R.61): otherwise
-    // a click on the graph would silently turn a zigzag into a smoothing, and for
-    // the warp speed a smoothed key would be a validation refusal
+    // a click on the graph would silently turn a zigzag into a smoothing
     assert_eq!(c.keys[1], AutoKey::shaped(Tick(45_000), 4.0, c.keys[0].shape));
     assert_eq!(c.keys[1].shape, kt_model::SegShape::Linear, "the segment shape is not inherited");
     assert!(c.keys.windows(2).all(|w| w[0].t.0 <= w[1].t.0), "key order is not broken");
@@ -13025,8 +13024,10 @@ fn t699_clipboard_is_read_on_press_and_explains_refusals() {
 /// The owner: “in automations I would like to set the shapes of segments… and
 /// it is also possible to configure a separate curve in your own way, with another type.”
 /// Hence two obligations that the test asserts: editing one
-/// segment does NOT touch the neighbouring ones (the shape belongs to the left key of the segment), and
-/// the warp-speed curve has only a straight shape, and the refusal is LOUD.
+/// segment does NOT touch the neighbouring ones (the shape belongs to the left key of the segment).
+/// The second obligation — "the warp-speed curve has only a straight shape, and the refusal is
+/// LOUD" (the spec's t696b) — is INVERTED by the owner's decision (2026-10-28,
+/// slowed-reverb-is-an-event): speed takes every shape, sampled into its profile.
 #[test]
 fn t698_segment_shape_is_edited_per_segment() {
     use kt_model::{AutoKey, ParamCurve, SegShape, ZigProfile, curve_value};
@@ -13087,7 +13088,7 @@ fn t698_segment_shape_is_edited_per_segment() {
         );
     }
 
-    // --- SPEED has only a straight shape, and the refusal is named ---------------
+    // --- SPEED starts straight, and takes any shape it is given (t696b, inverted) ------
     let rate = ParamCurve::constant("rate", Tick(0), Tick(90_000), 1.0, SegShape::DEFAULT);
     assert!(
         rate.keys.iter().all(|k| k.shape == SegShape::Linear),
@@ -13098,14 +13099,11 @@ fn t698_segment_shape_is_edited_per_segment() {
         other.keys.iter().all(|k| k.shape == SegShape::Hold),
         "for an ordinary parameter the starting curve takes the project default"
     );
-    let mut bad = rate.clone();
-    bad.keys[0].shape = SegShape::DEFAULT;
+    let mut smooth = rate.clone();
+    smooth.keys[0].shape = SegShape::DEFAULT;
     assert!(
-        matches!(
-            kt_model::check_fx_auto(kt_model::ClipId(1), &[vec![bad]]),
-            Err(kt_model::ProjectError::RateShapeMustBeLinear(_))
-        ),
-        "smoothed speed passed silently"
+        kt_model::check_fx_auto(kt_model::ClipId(1), &[vec![smooth]]).is_ok(),
+        "a smoothed speed curve was refused"
     );
 }
 
@@ -18040,3 +18038,201 @@ fn t918_no_window_grows_by_itself() {
 
 
 
+
+/// Test 914 (slowed-reverb-is-an-event, ktprompts 26.10.18 item 2): the speed curve's shape menu
+/// offers what every curve offers.
+///
+/// The owner: "slowed does not let me put generated curves on — childish excuses". The segment
+/// menu of the `rate` curve printed a refusal line instead of the shapes, and "shape of all
+/// segments" refused through the status line. Now: a right click on a segment of the speed curve
+/// lists every shape and "Formula"; each choice is one undo step; the material the event eats —
+/// what the timeline's filmstrip and trim limit read from the raw event — is what the render
+/// reads from the effective event.
+#[test]
+fn t914_speed_curve_shape_menu_offers_every_shape() {
+    use crate::automation::MenuTarget;
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+        p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
+            overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
+            id: ClipId(1),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: kt_time::Tick(0),
+            duration: kt_time::Tick(90_000),
+            source_in: kt_time::Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)],
+            fx_bypass: vec![false],
+            fx_auto: vec![vec![ParamCurve {
+                param: "rate".into(),
+                keys: AutoKey::linear(vec![
+                    AutoKey::at(kt_time::Tick(0), 0.5),
+                    AutoKey::at(kt_time::Tick(45_000), 1.0),
+                    AutoKey::at(kt_time::Tick(90_000), 1.5),
+                ]),
+                source: Default::default(),
+            }]],
+            opacity: 1.0,
+            fx_off: false,
+        });
+        p.normalize();
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.open_fx_editor(ClipId(1));
+    }
+    h.step();
+    h.step();
+    let marks = |h: &Harness<'_, KtApp>| -> Vec<(usize, usize, egui::Pos2)> {
+        h.state().fx_editors[0].auto_views[&(ClipId(1), 0)].key_marks.clone()
+    };
+    let target = |h: &Harness<'_, KtApp>| -> Option<MenuTarget> {
+        h.state().fx_editors[0].auto_views[&(ClipId(1), 0)].menu_target
+    };
+    let right_click = |h: &mut Harness<'_, KtApp>, pos: egui::Pos2| {
+        h.hover_at(pos);
+        h.step();
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.step();
+        h.step();
+    };
+    let rate_keys = |h: &Harness<'_, KtApp>| h.state().model.project().clips[0].fx_auto[0][0].keys.clone();
+    // the material the event has eaten by a quarter of its length (inside the first segment: a
+    // symmetric shape eats the same over the whole segment), read the interface's way (the raw
+    // event) and the render's way (the effective event)
+    let maps_agree = |h: &Harness<'_, KtApp>, what: &str| -> i64 {
+        let p = h.state().model.project();
+        let at = |c: &ClipEvent| {
+            let w = kt_model::clip_warp(c).expect("a slowed event warps");
+            (w.material_off(c.duration, c.reversed, 22_500), w.used())
+        };
+        let raw = at(&p.clips[0]);
+        let eff = p.effective_clips();
+        let render = at(&eff[0]);
+        assert_eq!(raw, render, "{what}: the timeline reads {raw:?} of material, the render {render:?}");
+        raw.0
+    };
+    let m = marks(&h);
+    assert_eq!(m.len(), 3, "the speed graph is not drawn ({m:?})");
+    let linear_used = maps_agree(&h, "the straight curve");
+
+    // --- right click on the first segment: every shape and Formula -------------
+    let seg = egui::pos2((m[0].2.x + m[1].2.x) * 0.5, (m[0].2.y + m[1].2.y) * 0.5);
+    right_click(&mut h, seg);
+    assert_eq!(target(&h), Some(MenuTarget::Segment(0, 0)), "the segment menu did not open");
+    let shown: Vec<String> = crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
+    for sh in crate::widgets::all_shapes() {
+        let name = crate::widgets::shape_label(sh).to_string();
+        assert!(shown.contains(&name), "the speed curve's menu does not offer “{name}”: {shown:?}");
+    }
+    let formula = tr(k::fx::SHAPE_FORMULA_ITEM).to_string();
+    assert!(shown.contains(&formula), "the speed curve's menu does not offer Formula");
+
+    // --- Smooth: one undo step, the shape lands, both maps follow ---------------
+    let depth = h.state().model.undo_depth();
+    let smooth = crate::widgets::shape_label(SegShape::DEFAULT).to_string();
+    h.get_by_label(&smooth).click();
+    h.step();
+    h.step();
+    assert!(
+        matches!(rate_keys(&h)[0].shape, SegShape::Smooth { .. }),
+        "Smooth did not land on the speed segment: {:?}",
+        rate_keys(&h)[0].shape
+    );
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "Smooth is not one undo step");
+    let smooth_used = maps_agree(&h, "Smooth");
+    assert_ne!(smooth_used, linear_used, "the shape did not reach the warp map");
+
+    // --- Formula on the same segment ---------------------------------------------
+    let m = marks(&h);
+    let seg = egui::pos2((m[0].2.x + m[1].2.x) * 0.5, (m[0].2.y + m[1].2.y) * 0.5);
+    right_click(&mut h, seg);
+    h.get_by_label(&formula).click();
+    h.step();
+    h.step();
+    assert!(
+        matches!(rate_keys(&h)[0].shape, SegShape::Formula { .. }),
+        "Formula did not land on the speed segment"
+    );
+    maps_agree(&h, "Formula");
+
+    // --- "Shape of all segments" → Zigzag on the speed curve ------------------------
+    // The control itself (`shape_all_control`, the same under the graph and in the menu):
+    // egui's submenu closes on the click that would open it in the harness, so the widget is
+    // driven on its own — the refusal lived exactly here ("Speed takes the linear shape only").
+    let mut curve = h.state().model.project().clips[0].fx_auto[0][0].clone();
+    let mut w = egui_kittest::Harness::new_ui_state(
+        |ui, c: &mut ParamCurve| {
+            ui.horizontal(|ui| {
+                crate::widgets::shape_all_control(ui, c, &mut None);
+            });
+        },
+        curve.clone(),
+    );
+    w.step();
+    // the combo box stands right after its label in the row
+    let label = w.get_by_label(tr(k::fx::SHAPE_ALL)).rect();
+    let at = egui::pos2(label.right() + 24.0, label.center().y);
+    w.hover_at(at);
+    w.step();
+    for pressed in [true, false] {
+        w.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    w.step();
+    w.step();
+    let zig = crate::widgets::shape_label(SegShape::Zigzag {
+        periods: 1.0,
+        amplitude: 0.0,
+        profile: ZigProfile::Triangle,
+    })
+    .to_string();
+    w.get_by_label(&zig).click();
+    w.step();
+    curve = w.state().clone();
+    assert!(
+        curve.keys[..curve.keys.len() - 1].iter().all(|k| matches!(k.shape, SegShape::Zigzag { .. })),
+        "“shape of all segments” refused Zigzag on the speed curve: {:?}",
+        curve.keys.iter().map(|k| k.shape).collect::<Vec<_>>()
+    );
+    // and the model takes the zigzagged speed, the maps agree, and Ctrl+Z restores it in one step
+    let before = rate_keys(&h);
+    let depth = h.state().model.undo_depth();
+    {
+        let app = h.state_mut();
+        let mut auto = app.model.project().clips[0].fx_auto.clone();
+        auto[0][0] = curve;
+        assert!(app.apply(Command::SetFxAuto { id: ClipId(1), auto }), "a zigzag speed was refused");
+    }
+    h.step();
+    assert_eq!(h.state().model.undo_depth(), depth + 1);
+    maps_agree(&h, "Zigzag on all segments");
+    h.state_mut().undo();
+    h.step();
+    assert_eq!(rate_keys(&h), before, "one Ctrl+Z did not restore the speed curve");
+}

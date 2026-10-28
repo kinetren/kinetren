@@ -31,10 +31,26 @@ the WHOLE event and a source swap over part of a slowed event replace its whole 
 
 #### Scenario: The cut of a warped clip is neither heard nor seen outside the window
 - **WHEN** the projects of t915 are rendered (audio and video) and compared with the same projects without the layer
-- **THEN** outside the layer's window the sound is byte-for-byte and the frames are byte-for-byte equal to the unlayered render (CPU reference); inside the window the swap / the slowdown is present; the former whole-body behaviour fails this test (the red proof)
+- **THEN** outside the layer's window the frames are byte-for-byte equal to the unlayered render (CPU reference); the sound before the window is byte-for-byte up to the processing chunk (1024 frames) that holds the seam; after the window it is the same material: after a 10 ms restart of the resampler the best alignment within 16 audio frames leaves a residual under 0.02 (at a constant speed the restart lasts 67 frames and the bytes are then equal; on a speed curve the chunk grid of the new piece starts at its own edge and the material lags ~10 frames, 0.2 ms — the same as a plain split S of such an event); inside the window the swap / the slowdown is present; the former whole-body behaviour fails this test (the red proof)
 - **TEST** t916 (`src/libs/kt-engine/tests/morph_slice_render.rs`)
 
 #### Scenario: One rule for a piece's entry point (container, capability `automation`)
 - **WHEN** a stretched clip (constant speed, speed curve, reverse) is cut
 - **THEN** the piece's entry point is the integral of speed, the seam has no gap, keys travel with the anchor; an unwarped piece is as before
 - **TEST** t270 (`src/libs/kt-model/tests/morph_slice.rs`)
+
+## MODIFIED Requirements
+
+### Requirement: "By time" action and reachability
+The morpher SHALL act within the window of its block (default `timed = true`); files of the old format are read as "outside time" and render as before. The first question to a target is WHETHER the layer REACHES it by time; only then — cut or patch whole. An empty set of references and a window shorter than the minimal length of an event SHALL mean "did not reach".
+Why: the veto "do not cut a warped clip", which stood ahead of the question of reach, handed the warp and the source replacement to the whole two-hour project of the user.
+
+#### Scenario: Format schema and old files
+- **WHEN** a file predating the layer schema is read
+- **THEN** the morpher receives `timed = false`, the layer raises the version, defaults are not serialized, the round trip is idempotent; a block "outside time" patches the body whole regardless of position
+- **TEST** t240 (`src/libs/kt-otio/tests/convert.rs`), t236 (`src/libs/kt-model/tests/morph_slice.rs`)
+
+#### Scenario: The layer does not reach a warped clip outside the window
+- **WHEN** a block with a warp stands 10 seconds away from a stretched clip; a second block covers its middle
+- **THEN** the first does not touch the clip at all; the second cuts it at its window, and only the window's piece gets the patch (the former "patches it whole and does not cut it" is inverted with t238 by the owner's decision of 2026-10-28)
+- **TEST** t288 (`src/libs/kt-model/tests/morph_slice.rs`)

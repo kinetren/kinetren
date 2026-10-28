@@ -182,16 +182,17 @@ heading in the second issue" had physically nowhere to be written.
   Piece No. 0 keeps the id of the original, therefore a clip covered ENTIRELY is not cut
   and keeps its FX state (invariant 3). Everything that addresses a clip by id among the
   effective ones MUST ask `same_clip`, not `==`.
-- **The veto on cutting a warped clip is FIRST in `windows_on` and does not look at the kind** (R.37): the check stood below the reference modes, therefore in
-  `Marks`/`Areas` stretched clips were cut, and there was a caveat
-  `kind == Audio`, which stopped being true as soon as video learned to stretch.
+- **A warped clip is cut like any other** (slowed-reverb-is-an-event, 2026-10-28). The veto
+  "do not cut a stretched clip" (R.35 finding 2, R.37) existed because a piece's `source_in` was
+  linear; since R.39 it is the integral of the speed (`clip_slice`), and the veto only spread a
+  patch over the whole event — a layer over the middle of a slowed event swapped its whole
+  source. It is gone; t915/t916, t238 and t288 part 3 inverted by the owner's decision.
 - **`MorphPatch::chain_for(Video)` also yields the warp from `audio_fx`**: the warp lives
   there (the canonical home, on which `merge_chains`/`split_chains` in the UI stand),
   but it is not a pixel filter, it is a rule of frame selection. Without this the layer
   would slow the sound and would not slow the picture.
 - **`windows_on` does not cut where cutting is not allowed**: a patch that does nothing
-  to a clip of THIS kind (a layer of video FX over audio), a clip with its own or appended
-  time warp (`FxInstance::warps_time` — the linear `source_in` of the piece would point the wrong way), a window shorter than `MIN_CLIP_DURATION`.
+  to a clip of THIS kind (a layer of video FX over audio), a window shorter than `MIN_CLIP_DURATION`.
 - **Forbidden zones** (`forbidden_zones`) — the windows of transitions and the overlaps of neighbours along the track: the boundary of the layer does not stand there, it is pushed outward. Cutting there
   breaks not the target but the SURROUNDINGS (for video the composition order `(Reverse(lane),
   start)` — the piece sticks out above the neighbour; for audio `overlap_weight` computes the ramp
@@ -279,8 +280,8 @@ of the velocity envelope of Vegas). It follows that there are TWO AXES, and they
   an area, the morpher does not forget it: you bring it back under the same name, and everything comes alive
   (rule 20 "nothing is cut off by itself"). The UI draws such a reference in an
   error style.
-- **The VETO "do not cut" ≠ "reached" (R.43, item 298).** `windows_on` first answers whether the layer reaches the clip BY TIME, and only then decides
-  whether to cut it or patch it entirely. The veto of the warp stood FIRST and returned
+- **REACH comes first (R.43, item 298).** `windows_on` first answers whether the layer reaches the clip BY TIME, and only then decides
+  how to cut it (the warp veto itself is gone since slowed-reverb-is-an-event, the order stays). The veto of the warp stood FIRST and returned
   the whole body, never asking about time: a morph block 0.6 s long at the 5020th
   second patched EVERY event of the project that has a slowed&reverb. In the user's project this was 1973 events out of 1973 with 27 real ones — a substituted source for the sound 5000 seconds away from the block, a phantom warp over
   the whole edit and a frozen playhead. The same order is mandatory in
@@ -313,6 +314,28 @@ of the velocity envelope of Vegas). It follows that there are TWO AXES, and they
 - The camera keyframes — by the progress of the event (`params_at`, linear + smoothstep
   under ease, as in CamMotion). Pan3d has NO keyframes of its own, deliberately:
   the automation of any parameter is a common mechanism (see below).
+
+## Speed takes every shape — sampled into its profile (slowed-reverb-is-an-event)
+
+- **The closed form of the warp map needs a piecewise-linear PROFILE, not a straight CURVE.**
+  `rate_profile_keys` (warp.rs) is the ONE place where a speed curve becomes a profile: straight
+  keys pass bit for bit; a shaped segment (Smooth, Hold, Ease, Zigzag, segment formula) is
+  sampled on an ABSOLUTE 450-tick grid (5 ms, fps-free; 10 ms left 4 ticks of error over 10 s on `1 + 0.5·sin(6t)`) plus a point one tick before its right
+  key (a Hold stays a 1-tick step); a formula LAYER without a link is evaluated on the same grid
+  (`t` = seconds from the material entry, as `resolve_one` reads it). `from_curves_rev` calls it,
+  so the render, the prefetch, the video frame map and the interface read one profile, and
+  `resolve_one` no longer resolves a link-free `rate` (it would give the render a profile the raw
+  event does not have — t913 caught exactly that). A LINK on speed still resolves in
+  `effective_clips`. `RateShapeMustBeLinear` is gone.
+- **A sampled curve has tens of thousands of points.** Nothing per chunk may walk it: `param_at`
+  finds the segment by binary search, and kt-engine keeps a clip's source-window end and mirror
+  axis (`AudioClip::src_ends`, computed on the first render). Before that a 10-minute zigzag
+  speed cost 20× a straight one (`kt-cli probe … --time`, release: 1558 ms vs 78 ms per 30 s;
+  after — 83 ms vs 79 ms on the 5 ms grid).
+- **A key may precede the material start on a WARPED event** (`keys_may_precede_material`):
+  `clip_slice` moves a warped piece's keys by the anchor's delta, negative under a speed below 1
+  — the split of such an event was refused as `BadFxAuto` ("slowed does not let me cut it",
+  t917). On an event without a warp the delta is zero and a negative key is still refused (t190).
 
 ## Automation of FX parameters (R.30, the domain rewritten in R.33)
 - `ClipEvent.fx_auto: Vec<Vec<ParamCurve>>` — the curves by slots, parallel to
@@ -371,7 +394,7 @@ A layer has two ways of acting "by time", and the choice between them is made by
   stays intact, the transitions and the neighbours are untouched, the boundary is exact to the tick.
 * **CUT.** Only where the contribution cannot be switched off by a strength slot: a substitution of the source (`replaces_source`) and a time warp in the patch
   (`warps_time_for`) — it changes not the value but how much material is consumed.
-  The material grid, the forbidden zones and the `no_cut` veto remain there too.
+  The material grid and the forbidden zones remain there too.
 
 **Pushing a boundary out of a forbidden zone — ONLY INWARD.** `snap_out_of`
 takes a direction: the start of the window forward, the end backward. The former "to the nearest edge" extended the window outward, and for an event with a fade on the left and
