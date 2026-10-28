@@ -1925,6 +1925,22 @@ already reach t888. Changes (stage 0 each): `loop-play-latency-hold`, `shared-wi
 `render-window-v1-parity`, `hw-encode-context`, `flatpak-flathub`, `plugin-api-stage1`,
 `effects-transitions-catchup`, `welcome-window-and-tour`; `r71-ktprompts-index` is updated.
 
+Answers to the report's questions (2026-10-28), translated:
+
+> 2. flatpak — yes, I confirm; yes, com.kinetren.Kinetren
+> 3. yes, it may draw
+> 4. linux ubuntu, the screen is Full HD, and in the program I increased the zoom a couple of times
+
+He also asked what the three tests to invert are (t696, t696b, t238) and to restate the context of
+the morpher-grid backend question; both are explained, neither is decided yet.
+
+**Taken as:** Flathub — the licence allows Flathub to distribute the program (shown as proprietary),
+the app id is `com.kinetren.Kinetren`. The tour step MAY draw a static accent outline on its target
+(no layer, no pulsation). The morpher width runaway: Ubuntu, 1920×1080, native scale 1.0, the
+program's own zoom (Ctrl+=) pressed twice — `pixels_per_point` ≈ 1.2, a fractional scale, which is
+the reproduction case of `shared-window-shell` stage 1. The inversion of t696/t696b/t238 waits for
+his decision.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

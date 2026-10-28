@@ -196,7 +196,10 @@ the person can make it smaller by the edge. Rollback is a revert of the change.
 
 ## Open Questions
 
-1. What is the owner's "other system" — OS, display scale factor, Wayland or X11, and does the
+1. ANSWERED by the owner (2026-10-28): Ubuntu, a 1920×1080 screen, the program's own zoom
+   (egui Ctrl+=) raised twice — `pixels_per_point` ≈ 1.2 at native scale 1.0. Stage 1 reproduces
+   with `ctx.set_zoom_factor(1.1)` and `1.2` in the harness and under Xvfb, not with
+   `WINIT_X11_SCALE_FACTOR`. Was: what is the owner's "other system" — OS, display scale factor, Wayland or X11, and does the
    growth happen in the FX window too? Recommended answer: assume Linux with a fractional scale
    (1.25/1.5) and reproduce under Xvfb with `WINIT_X11_SCALE_FACTOR`; ask only if stage 1 cannot
    reproduce it.

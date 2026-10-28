@@ -192,12 +192,13 @@ project file changes.
 
 ## Open Questions
 
-1. **May a step draw an accent frame on its target widget?** `reach_tests::no_teaching_layer_over_the_ui`
+1. **May a step draw an accent frame on its target widget?** DECIDED by the owner (2026-10-28):
+   yes, as recommended below — a static outline drawn by the target itself; stage work includes it. `reach_tests::no_teaching_layer_over_the_ui`
    and invariant 12 forbid a layer and a repaint loop, not a static mark. Recommendation: yes, but only
    as a STATIC outline drawn by the target's own drawing code in its own layer — the same mechanism as
    the existing obstacle highlight of a refused gesture (`blocked`, `app.rs:518`) — for as long as the
    step is current, with no pulsation, no dimming and no arrow; the guard keeps the layer list closed.
-   Until the owner answers, "Show" only opens/focuses the target (the spec as written).
+   The spec delta gains the outline scenario when the stage is applied.
 2. **Welcome window inside the main viewport or as its own OS window (JetBrains style)?**
    Recommendation: inside the main viewport (D3), because of the tiling-WM and Alt+Tab defects
    F-HLP-027 found.
