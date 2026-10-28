@@ -11,7 +11,7 @@ may hold another session's uncommitted edits.
 ## 1. Find the growth first (investigation, no fix)
 
 - [ ] 1.1 Write t923 in `src/apps/kt-app/src/layout_tests.rs` with the owner's morpher scene (batch layer, 12-slot strip, two area references, an open curve graph, a source field) at `with_pixels_per_point(1.25)` and `1.5`, 600 frames, the pointer moving over the main window and over the morpher window, logging the width each 50 frames. Verify: record here whether it is RED on today's code and the per-50-frame widths
-- [ ] 1.2 Run the real program under Xvfb with `WINIT_X11_SCALE_FACTOR=1.25` and `1.5` (new live scenario `src/scripts/live/winshell.py`, `kt_live.step` screenshots at 0 s, 10 s and 30 s of pointer motion), measuring the morpher window's width through `scripts/ui-probe.py`. Verify: record the widths here; if neither 1.1 nor 1.2 grows, stop and ask the owner design.md Open Question 1 before stage 4
+- [ ] 1.2 Run the real program under Xvfb at the program's own zoom 1.1 and 1.2 (Ctrl+= pressed once and twice — the owner's case, 2026-10-28: Ubuntu, 1920×1080, native scale 1.0), and with `WINIT_X11_SCALE_FACTOR=1.25` as a second case (new live scenario `winshell` in `src/scripts/live/`, which the specs name once it exists; `kt_live.step` screenshots at 0 s, 10 s and 30 s of pointer motion), measuring the morpher window's width through `scripts/ui-probe.py`. Verify: record the widths here; if neither 1.1 nor 1.2 grows, stop and ask the owner design.md Open Question 1 before stage 4
 - [ ] 1.3 Bisect in t923 (comment the parts out in a scratch copy, not in the commit): the window `vscroll`, then each group of the body (targets, source, chain strip, refs, curve block, thumbnail picker). Verify: the widget or option that feeds the width back is named here with its `file:line`, and design.md D3 gets the chosen variant (a/b/c) as a dated line
 
 ## 2. Tests first
@@ -33,7 +33,7 @@ may hold another session's uncommitted edits.
 
 ## 4. Live and records
 
-- [ ] 4.1 Finish `src/scripts/live/winshell.py`: under scale 1.25 open the morpher window and move the pointer for 30 s (width unchanged); open FX then camera, press Esc twice (camera closes first, then FX). Verify `./scripts/live-check.sh winshell` is green and `./scripts/live-check.sh` (all) still green; screenshots listed here
+- [ ] 4.1 Finish the `winshell` live scenario: at zoom 1.2 open the morpher window and move the pointer for 30 s (width unchanged); open FX then camera, press Esc twice (camera closes first, then FX). Verify `./scripts/live-check.sh winshell` is green and `./scripts/live-check.sh` (all) still green; screenshots listed here
 - [ ] 4.2 `src/apps/kt-app/CLAUDE.md`: the rule "a window is made only by the shell; its kind decides Esc, cross, scroll and width" next to the R.66 form contract. Verify t921 names this rule in its failure message
 - [ ] 4.3 Commit stage 4
 

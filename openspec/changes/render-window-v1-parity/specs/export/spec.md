@@ -72,7 +72,7 @@ Speed and the bitrate are per second of OUTPUT so they are comparable between pr
   mux, "Backend: GPU (…)", the file; on the right "Run" with phase, frames, elapsed, remaining,
   output length, size, bitrate; under them the speed line and the chart moving to the right; the
   bar; Pause and Cancel at the bottom
-- **TEST** t956 (`src/apps/kt-app/src/layout_tests.rs`), live scenario `src/scripts/live/render.py`
+- **TEST** t956 (`src/apps/kt-app/src/layout_tests.rs`), live scenario `render` (created by task 4.1 of this change)
 
 ### Requirement: The finished render is frozen, summarised and opened from the window
 When the job finishes, the window SHALL stop every time-based number at the moment the result
@@ -102,7 +102,7 @@ during the final mux throws away a finished file (F-EXP-005 trick 3).
   "Rendered in 0:42 · 2.1× real time · 1260 frames · h264_nvenc · GPU · 48.3 MB · 9.2 Mbit/s"
   and the loudness line → Open folder → the file manager shows the folder holding the file
   → Open file → the video plays in the system player → Close
-- **TEST** t957 (`src/apps/kt-app/src/layout_tests.rs`), live scenario `src/scripts/live/render.py`
+- **TEST** t957 (`src/apps/kt-app/src/layout_tests.rs`), live scenario `render` (created by task 4.1 of this change)
 
 ### Requirement: Rendering over an existing file is asked first
 When the output path chosen for a render already exists, the program SHALL ask before starting,
@@ -128,7 +128,7 @@ cancelled or failed render then also deletes it (`cleanup_on_err` removes the ou
   is already there → the question "kt-demo-12s.mp4 already exists (48.3 MB, 2026-10-27 14:02).
   Replace it? The name can be chosen again in Render…" with Replace and Choose another name →
   Choose another name → the save dialog again → the same file → Replace → the progress window
-- **TEST** t958 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `src/scripts/live/render.py`
+- **TEST** t958 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `render` (created by task 4.1 of this change)
 
 ### Requirement: The render log is kept in the window and in one file
 The progress window SHALL hold a collapsible log section (collapsed while the run is healthy,

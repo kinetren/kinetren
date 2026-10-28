@@ -34,7 +34,7 @@ message, the first line = the stage and what was done). Stage only this change's
 
 ## 4. Live and records
 
-- [ ] 4.1 Live scenario `src/scripts/live/render.py` on OUR fixture project: `KT_FILE_PICK` at an existing file in the rig's temp folder; `kt_live.step` screenshots: the settings window, the overwrite question, the progress window mid-run (both forms, the chart), the log section opened, the finished window (frozen numbers, Open file/Open folder). Verify `./scripts/live-check.sh render` is green and the screenshots are listed
+- [ ] 4.1 Live scenario `render` (new, in `src/scripts/live/`; once it exists the spec's TEST lines name its path) on OUR fixture project: `KT_FILE_PICK` at an existing file in the rig's temp folder; `kt_live.step` screenshots: the settings window, the overwrite question, the progress window mid-run (both forms, the chart), the log section opened, the finished window (frozen numbers, Open file/Open folder). Verify `./scripts/live-check.sh render` is green and the screenshots are listed
 - [ ] 4.2 `openspec/specs/export/design.md` Deferred: strike "name the encoder in the progress line" and "a line export runs on GPU/CPU" as done by this change (after archive). Verify `openspec validate --specs` is green
 - [ ] 4.3 Commit stage 4
 
