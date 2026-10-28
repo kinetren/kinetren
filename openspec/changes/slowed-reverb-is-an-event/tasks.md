@@ -107,5 +107,12 @@ message, the first line = the stage and what was done). t696, t696b and
 
 ## 5. Finish
 
-- [ ] 5.1 Run `./scripts/finish.sh` from `src/`. Verify it is green; record the version `vYY.MM.DD-hash` and the live screenshots of 4.1 here; ask the owner to repeat items 1–3 on that build and record his answer in `docs/user-feedback.md`
+- [x] 5.1 Run `./scripts/finish.sh` from `src/`. Verify it is green; record the version `vYY.MM.DD-hash` and the live screenshots of 4.1 here; ask the owner to repeat items 1–3 on that build and record his answer in `docs/user-feedback.md`
+  - `./scripts/finish.sh`: **kt26.10.28-fc7a6977**. Live scenarios green (49, `nestparam` on the alone
+    re-run); SIMD and the guards green. The workshop test block red on four load-timed tests —
+    t815 (a 3.7 s write), t802 (one worker on a busy machine shares the display), t476, t411 — all four
+    green alone (`--test-threads=1`) right after; none is on a path this change touches.
+    Live screenshots: `slowedcut/01-step-open, 02-step-pasted, 03-step-cut`, `morph/06…08`.
+    The owner is asked to repeat items 1–3 on this build (in the session report); his answer goes
+    into `docs/user-feedback.md` when it comes.
 - [ ] 5.2 After archiving: append the "why" (R1 oversight of R.35 S2; R2 the profile vs. the curve, D2 sampling; R3 the veto outlived R.39) and the revisions to `openspec/specs/automation/design.md` and `openspec/specs/morpher/design.md`

@@ -108,5 +108,10 @@ may hold another session's uncommitted edits.
 
 ## 5. Finish
 
-- [ ] 5.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version `vYY.MM.DD-hash` and the live screenshots here
+- [x] 5.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version `vYY.MM.DD-hash` and the live screenshots here
+  - `./scripts/finish.sh`: **kt26.10.28-fc7a6977**. Live scenarios green (49, `nestparam` on the alone
+    re-run); SIMD and the guards green. The workshop test block red on four load-timed tests —
+    t815 (a 3.7 s write), t802 (one worker on a busy machine shares the display), t476, t411 — all four
+    green alone (`--test-threads=1`) right after; none is on a path this change touches.
+    Live screenshots: `target/live-out/winshell/01…07` (listed in 4.1).
 - [ ] 5.2 After archiving: append to `openspec/specs/ui-reach/design.md` the "why" (the hand-kept Esc list lost four windows; layer order instead of priority; the kinds table) and to `openspec/specs/ui-timeline/design.md` the growth mechanism found in 1.3
