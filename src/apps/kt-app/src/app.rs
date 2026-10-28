@@ -245,6 +245,11 @@ pub struct KtApp {
     /// KT_GEOM_DUMP — path for the geometry dump to live scenarios (R.27).
     pub(crate) geom_dump_path: Option<String>,
     pub(crate) geom_dumped_at: Option<std::time::Instant>,
+    /// The shell windows of the previous frame that take Esc, bottom to top
+    /// (shared-window-shell): Esc closes the LAST one — the window the person sees on top.
+    pub(crate) shell_seen: Vec<egui::Id>,
+    /// The window `escape_action` picked; armed after `handle_keys`, closed by its `show`.
+    pub(crate) shell_esc: Option<egui::Id>,
     /// Display order of tracks (item 6 v1.4); normalized each frame,
     /// stored in the project’s UiState.
     /// The preview is split into its own window (item 7 v1.4, second monitor).
@@ -798,6 +803,8 @@ impl KtApp {
             tl_geom: None,
             geom_dump_path: std::env::var("KT_GEOM_DUMP").ok(),
             geom_dumped_at: None,
+            shell_seen: Vec::new(),
+            shell_esc: None,
             // KT_DETACH_PREVIEW=1 — start with the preview detached (debugging)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             ui_economy: false,
@@ -1066,6 +1073,8 @@ impl KtApp {
             tl_geom: None,
             geom_dump_path: std::env::var("KT_GEOM_DUMP").ok(),
             geom_dumped_at: None,
+            shell_seen: Vec::new(),
+            shell_esc: None,
             // KT_DETACH_PREVIEW=1 — start with the preview detached (debugging)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             ui_economy: false,
@@ -1527,7 +1536,10 @@ impl KtApp {
         // in each window separately the next agent would forget it
         // (rule 17).
         self.surrender_focus_on_outside_click(&ctx);
+        // the windows of the previous frame, top last: Esc picks from them (shared-window-shell)
+        self.shell_seen = crate::window_shell::begin_frame(&ctx);
         self.handle_keys(&ctx);
+        crate::window_shell::arm_esc(&ctx, self.shell_esc.take());
         // Speed-up by holding Space — EXACTLY once per frame (handle_keys when
         // the preview is detached is called twice, item 3 round 16).
         self.tick_space_boost(&ctx);
@@ -1889,7 +1901,7 @@ impl KtApp {
         // offer to restore unsaved work (item 353)
         if self.recovery_open {
             let mut act: Option<u8> = None;
-            egui::Modal::new(egui::Id::new("kt_recovery")).show(ui.ctx(), |ui| {
+            let win = crate::window_shell::modal(ui.ctx(), egui::Id::new("kt_recovery"), |ui| {
                 ui.set_max_width(560.0);
                 crate::widgets::window_body(ui, |ui| {
                 ui.heading(tr(k::ask::RECOVERY_TITLE));
@@ -1933,6 +1945,10 @@ impl KtApp {
                 });
                 });
             });
+            // Esc gives the safe answer: nothing is lost, the question comes back
+            if win.closed() {
+                act = Some(2);
+            }
             match act {
                 Some(0) => self.restore_recovery(self.recovery_pick),
                 Some(1) => self.forget_recovery(self.recovery_pick),
@@ -1945,7 +1961,7 @@ impl KtApp {
         // until it is answered, saving does not continue.
         if let Some(ask) = self.ask.clone() {
             let mut answer: Option<Answer> = None;
-            egui::Modal::new(egui::Id::new("kt_ask")).show(ui.ctx(), |ui| {
+            let win = crate::window_shell::modal(ui.ctx(), egui::Id::new("kt_ask"), |ui| {
                 ui.set_max_width(440.0);
                 match &ask {
                     Ask::SaveOverLock { pid } => {
@@ -2033,6 +2049,10 @@ impl KtApp {
                     }
                 }
             });
+            // Esc gives the safe answer: nothing is lost, the question comes back
+            if win.closed() {
+                answer = Some(Answer::Cancel);
+            }
             if let Some(a) = answer {
                 self.answer_ask(a);
             }
@@ -2042,10 +2062,13 @@ impl KtApp {
         // would mean a palisade of windows with a queue of a dozen files.
         if self.analysis.open {
             let mut cancel = false;
-            egui::Window::new(tr(k::win::ANALYSIS_TITLE))
-                .id(egui::Id::new("kt_analysis"))
-                .collapsible(false)
-                .resizable(false)
+            crate::window_shell::Shell::new(
+                egui::Id::new("kt_analysis"),
+                tr(k::win::ANALYSIS_TITLE),
+                crate::window_shell::Kind::Progress {
+                    why: "the analysis runs over a queue of files for minutes; an Esc meant for the timeline must not cancel it, and the window has its own Cancel",
+                },
+            )
                 .anchor(egui::Align2::RIGHT_BOTTOM, [-16.0, -16.0])
                 .show(ui.ctx(), |ui| {
                     ui.add(egui::ProgressBar::new(self.analysis.progress()).desired_width(220.0));
@@ -2067,13 +2090,12 @@ impl KtApp {
         // notifications window (item 18)
         if self.notices_open {
             let mut open = self.notices_open;
-            egui::Window::new(tr(k::win::NOTICES_TITLE))
-                .id(egui::Id::new("kt_notices"))
-                .open(&mut open)
-                .default_size([460.0, 340.0])
-                .min_size([320.0, 200.0])
-                .resizable(true)
-                .vscroll(true)
+            let win = crate::window_shell::Shell::new(
+                egui::Id::new("kt_notices"),
+                tr(k::win::NOTICES_TITLE),
+                crate::window_shell::Kind::Tool,
+            )
+                .size([460.0, 340.0], [320.0, 200.0])
                 .show(ui.ctx(), |ui| {
                     if self.notices.is_empty() {
                         ui.weak(tr(k::win::NOTICES_EMPTY));
@@ -2092,6 +2114,9 @@ impl KtApp {
                         });
                     }
                 });
+            if win.closed() {
+                open = false;
+            }
             self.notices_open = open;
         }
 
@@ -2323,8 +2348,8 @@ impl KtApp {
     }
 
     /// Project search palette (item 3 round 10): Ctrl+F, arrows, Enter.
-    /// Esc is handled HERE: while focus is in the field, handle_keys
-    /// is not run at all, and the common Esc cascade is never reached.
+    /// Esc closes it through the window shell, like every window: egui drops the field's focus
+    /// on Esc at the start of the frame, so the common cascade sees the key.
     fn draw_search(&mut self, ctx: &egui::Context) {
         if !self.search_open {
             return;
@@ -2332,11 +2357,11 @@ impl KtApp {
         let hits = search_hits(self.model.project(), &self.bin_groups, &self.search_query);
         let mut open = true;
         let mut go: Option<Hit> = None;
-        let shown = egui::Window::new(tr(k::win::SEARCH_TITLE))
-            .id(egui::Id::new("kt_search"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
+        let shown = crate::window_shell::Shell::new(
+            egui::Id::new("kt_search"),
+            tr(k::win::SEARCH_TITLE),
+            crate::window_shell::Kind::Tool,
+        )
             .anchor(egui::Align2::CENTER_CENTER, [0.0, -80.0])
             .default_width(420.0)
             .show(ctx, |ui| {
@@ -2349,12 +2374,11 @@ impl KtApp {
                     r.request_focus();
                     self.search_focus = false;
                 }
-                let (up, down, enter, esc) = ui.input(|i| {
+                let (up, down, enter) = ui.input(|i| {
                     (
                         i.key_pressed(egui::Key::ArrowUp),
                         i.key_pressed(egui::Key::ArrowDown),
                         i.key_pressed(egui::Key::Enter),
-                        i.key_pressed(egui::Key::Escape),
                     )
                 });
                 if down {
@@ -2362,9 +2386,6 @@ impl KtApp {
                 }
                 if up {
                     self.search_sel = self.search_sel.saturating_sub(1);
-                }
-                if esc {
-                    self.search_open = false;
                 }
                 ui.separator();
                 egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
@@ -2390,9 +2411,12 @@ impl KtApp {
                     go = Some(h.clone());
                 }
             });
+        if shown.closed() {
+            open = false;
+        }
         // the whole window frame — the README screenshots crop by it
-        if let Some(r) = &shown {
-            crate::widgets::field_probe::note("win.search", r.response.rect);
+        if let Some(r) = &shown.response {
+            crate::widgets::field_probe::note("win.search", r.rect);
         }
         if !open {
             self.search_open = false;
@@ -2709,54 +2733,14 @@ impl KtApp {
         if self.speed_entry.take().is_some() {
             return;
         }
-        if self.search_open {
-            self.search_open = false;
-            return;
-        }
-        // 0) insert prefix window (R.35 item 4)
-        if self.preset_save.take().is_some() {
-            return;
-        }
-        if self.paste_names.take().is_some() {
-            return;
-        }
-        // 1) close the top window of ours. The public-parameter windows (R.59,
-        // stage 3) go BEFORE the effect windows: they are opened on top — and
-        // the person expects that Esc removes what they see last.
-        // The handle-name dialog is deliberately NOT in the cascade: it swallows Esc
-        // itself, like the reel name window — while focus is in it, it never
-        // reaches here (`egui_wants_keyboard_input`).
-        if let Some(w) = self.published_win.as_mut().filter(|w| w.open) {
-            w.open = false;
-            return;
-        }
-        if self.render_setup.open {
-            self.render_setup.open = false;
-            return;
-        }
-        // track window (R.62) — the same “our window” as the effect window
-        if let Some(w) = self.track_win.as_mut().filter(|w| w.open) {
-            w.open = false;
-            return;
-        }
-        if let Some(ed) = self.fx_editors.iter_mut().rev().find(|e| e.open) {
-            ed.open = false;
-            return;
-        }
-        if let Some(ed) = self.morph_editors.iter_mut().rev().find(|e| e.open) {
-            ed.open = false;
-            return;
-        }
-        if self.notices_open {
-            self.notices_open = false;
-            return;
-        }
-        if self.ffmpeg_ui.open {
-            self.ffmpeg_ui.open = false;
-            return;
-        }
-        if self.perf.diag_open {
-            self.perf.diag_open = false;
+        // 1) the window ON TOP (shared-window-shell). Not a hand-kept list: the list lost the
+        // camera, transition, project settings and envelope-fit windows, and it closed by a
+        // fixed priority instead of what the person sees on top. Every window is made by the
+        // shell, and the shell knows which ones were drawn and in what layer order; the window
+        // runs the action its kind declares (a tool closes and keeps its edits, a dialog
+        // cancels). A progress window does not take Esc and is not in the list.
+        if let Some(id) = self.shell_seen.pop() {
+            self.shell_esc = Some(id);
             return;
         }
         // 2) cancel the active drag
@@ -3520,11 +3504,11 @@ impl KtApp {
             .filter(|s| s.id != d.seq)
             .map(|s| s.name.clone())
             .collect();
-        egui::Window::new(tr(k::msg::NEST_RENAME_TITLE))
-            .id(egui::Id::new("seq_name"))
-            .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
+        let win = crate::window_shell::Shell::new(
+            egui::Id::new("seq_name"),
+            tr(k::msg::NEST_RENAME_TITLE),
+            crate::window_shell::Kind::Dialog,
+        )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(tr(k::msg::NEST_NAME_LABEL));
@@ -3553,8 +3537,8 @@ impl KtApp {
                     }
                 });
             });
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            cancel = true;
+        if win.closed() {
+            open = false;
         }
         if go && !d.name.trim().is_empty() {
             ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("seq_name")));
@@ -4614,11 +4598,11 @@ impl KtApp {
         let mut go = false;
         let mut cancel = false;
         let mut open = true;
-        egui::Window::new(tr(k::msg::PASTE_PREFIX_TITLE))
-            .id(egui::Id::new("paste_names"))
-            .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
+        let win = crate::window_shell::Shell::new(
+            egui::Id::new("paste_names"),
+            tr(k::msg::PASTE_PREFIX_TITLE),
+            crate::window_shell::Kind::Dialog,
+        )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(tr(k::msg::PASTE_PREFIX_LABEL));
@@ -4682,8 +4666,8 @@ impl KtApp {
                     }
                 });
             });
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            cancel = true;
+        if win.closed() {
+            open = false;
         }
         if go {
             let (at, row, affix, before) = (d.at, d.row, d.affix.trim().to_string(), d.before);
@@ -4707,11 +4691,11 @@ impl KtApp {
         let mut cancel = false;
         let mut open = true;
         let taken = self.presets.taken_names();
-        egui::Window::new(tr(k::msg::PRESET_SAVE_TITLE))
-            .id(egui::Id::new("preset_save"))
-            .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
+        let win = crate::window_shell::Shell::new(
+            egui::Id::new("preset_save"),
+            tr(k::msg::PRESET_SAVE_TITLE),
+            crate::window_shell::Kind::Dialog,
+        )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(tr(k::msg::PRESET_NAME_LABEL));
@@ -4750,8 +4734,8 @@ impl KtApp {
                     }
                 });
             });
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            cancel = true;
+        if win.closed() {
+            open = false;
         }
         if go && !d.name.trim().is_empty() {
             ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("preset_save")));
@@ -8872,13 +8856,12 @@ impl KtApp {
             return;
         }
         let mut open = self.perf.diag_open;
-        let shown = egui::Window::new(tr(k::win::DIAG_TITLE))
-            .id(egui::Id::new("kt_diag"))
-            .open(&mut open)
-            .default_size([560.0, 460.0])
-            .min_size([420.0, 300.0])
-            .resizable(true)
-            .vscroll(true)
+        let shown = crate::window_shell::Shell::new(
+            egui::Id::new("kt_diag"),
+            tr(k::win::DIAG_TITLE),
+            crate::window_shell::Kind::Tool,
+        )
+            .size([560.0, 460.0], [420.0, 300.0])
             .show(ctx, |ui| {
                 // video cache occupancy from the REAL limit (in v1 the limit constant
                 // was duplicated by hand and was off by a factor of 384)
@@ -8936,9 +8919,12 @@ impl KtApp {
                     }
                 });
             });
+        if shown.closed() {
+            open = false;
+        }
         // the whole window frame — the README screenshots crop by it
-        if let Some(r) = &shown {
-            crate::widgets::field_probe::note("win.diag", r.response.rect);
+        if let Some(r) = &shown.response {
+            crate::widgets::field_probe::note("win.diag", r.rect);
         }
         self.perf.diag_open = open;
     }

@@ -168,11 +168,11 @@ impl crate::app::KtApp {
         let mut go = false;
         let mut cancel = false;
         let mut open = d.open;
-        egui::Window::new(tr(k::fx::FIT_TITLE))
-            .id(egui::Id::new(("env_fit", d.target.0.0, d.target.1)))
-            .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
+        let win = crate::window_shell::Shell::new(
+            egui::Id::new(("env_fit", d.target.0.0, d.target.1)),
+            tr(k::fx::FIT_TITLE),
+            crate::window_shell::Kind::Dialog,
+        )
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
                 ui.label(egui::RichText::new(tr(k::fx::FIT_HINT)).weak().small());
@@ -221,6 +221,9 @@ impl crate::app::KtApp {
                     });
             });
             });
+        if win.closed() {
+            open = false;
+        }
         if go {
             let mut remapped = Vec::new();
             let mut skipped = 0usize;

@@ -299,11 +299,11 @@ impl KtApp {
             .addr_value(Some(d.seq), &d.addr)
             .map(|v| value_text(&v, &|m| media_name(&media, m)))
             .unwrap_or_else(|| tr(k::pubp::INST_TARGET_GONE).to_string());
-        egui::Window::new(tr(k::pubp::DIALOG_TITLE))
-            .id(egui::Id::new("pub_name"))
-            .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
+        let win = crate::window_shell::Shell::new(
+            egui::Id::new("pub_name"),
+            tr(k::pubp::DIALOG_TITLE),
+            crate::window_shell::Kind::Dialog,
+        )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(tr(k::pubp::DIALOG_NAME));
@@ -329,8 +329,8 @@ impl KtApp {
                     }
                 });
             });
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            cancel = true;
+        if win.closed() {
+            open = false;
         }
         if go && !d.name.trim().is_empty() {
             ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("pub_name")));
@@ -387,10 +387,12 @@ impl KtApp {
             list.iter().map(|p| doc.addr_spec(Some(w.seq), &p.target)).collect()
         };
         let mut open = w.open;
-        egui::Window::new(title)
-            .id(egui::Id::new(("published_win", w.seq.0)))
-            .open(&mut open)
-            .resizable(true)
+        let win = crate::window_shell::Shell::new(
+            egui::Id::new(("published_win", w.seq.0)),
+            title,
+            crate::window_shell::Kind::Tool,
+        )
+            .resizable()
             .default_width(460.0)
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
@@ -532,6 +534,9 @@ impl KtApp {
                 });
                 });
             });
+        if win.closed() {
+            open = false;
+        }
 
         // --- removal confirmation -----------------------------------------
         if let Some((id, _)) = confirm_now {
@@ -540,10 +545,11 @@ impl KtApp {
         if let Some((id, n)) = w.confirm {
             let name = list.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_default();
             let mut close = false;
-            egui::Window::new(tr(k::pubp::UNPUBLISH_TITLE))
-                .id(egui::Id::new("pub_unpublish"))
-                .resizable(false)
-                .collapsible(false)
+            let win = crate::window_shell::Shell::new(
+                egui::Id::new("pub_unpublish"),
+                tr(k::pubp::UNPUBLISH_TITLE),
+                crate::window_shell::Kind::Dialog,
+            )
                 .show(ctx, |ui| {
                     // THE NUMBER IS NAMED ALOUD: removal kills the overrides
                     // in all places of the tree, and learning about it after the fact
@@ -561,6 +567,9 @@ impl KtApp {
                         }
                     });
                 });
+            if win.closed() {
+                close = true;
+            }
             if close {
                 w.confirm = None;
             }

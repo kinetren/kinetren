@@ -131,11 +131,11 @@ impl KtApp {
             None => tr(k::settings::TITLE).to_string(),
         };
         let is_reel = d.reel.is_some();
-        egui::Window::new(title)
-            .id(egui::Id::new("project_settings"))
-            .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
+        let win = crate::window_shell::Shell::new(
+            egui::Id::new("project_settings"),
+            title,
+            crate::window_shell::Kind::Dialog,
+        )
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
                 // GROUPS modeled on “Transform” (R.66): frame, audio,
@@ -244,7 +244,13 @@ impl KtApp {
                         ] {
                             let same =
                                 std::mem::discriminant(&d.shape) == std::mem::discriminant(&s);
-                            if ui.selectable_label(same, shape_label(&s)).clicked() {
+                            // FRAMED even when not chosen: egui adds the frame's stroke to a
+                            // frameless button's size only while it is hovered, and this row sets
+                            // the window's width — every hover widened the window by two points
+                            // for good (t918, shared-window-shell)
+                            let b = egui::Button::selectable(same, shape_label(&s))
+                                .frame_when_inactive(true);
+                            if ui.add(b).clicked() {
                                 d.shape = s;
                             }
                         }
@@ -280,6 +286,9 @@ impl KtApp {
                 });
                 });
             });
+        if win.closed() {
+            open = false;
+        }
         if apply && let Some(id) = d.reel {
             let raster =
                 if d.inherit_size { Ok(None) } else { parse_size(&d.width, &d.height).map(Some) };

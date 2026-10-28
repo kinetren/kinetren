@@ -17718,3 +17718,325 @@ fn t905_preview_follows_the_loop_when_play_starts_outside() {
     let rollbacks = h.state().perf.video_rollbacks - rollbacks0;
     assert!(rollbacks <= folds.len() as u64, "{rollbacks} refused rollbacks over {} laps", folds.len());
 }
+
+/// A harness at a given DISPLAY SCALE (shared-window-shell): the owner's case is the program's
+/// own zoom (Ctrl+= pressed a couple of times: 1.1, 1.2) on a 1920×1080 screen; 1.25 and 1.5 are
+/// fractional desktop scales. The program's theme is applied, as `main` does.
+pub(crate) fn harness_scaled(w: f32, h: f32, ppp: f32) -> Harness<'static, KtApp> {
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+    let mut app = KtApp::new_empty(None);
+    app.recovery_on_drop = false;
+    app.workspace_file =
+        Some(std::env::temp_dir().join(format!("kt-ws-{}-{:p}.json", std::process::id(), &app)));
+    let mut hh = Harness::builder()
+        .with_size(egui::vec2(w, h))
+        .with_pixels_per_point(ppp)
+        .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
+    crate::icons::install_fonts(&hh.ctx);
+    // the program's OWN style (margins, spacing): the width ratchet depends on the fractional
+    // width in physical pixels, and egui's default margins hid it at the owner's zoom 1.1
+    crate::theme::apply(&hh.ctx);
+    hh.step();
+    hh.step();
+    hh
+}
+
+/// The owner's morpher scene (kkt item 2): a batch layer with a twelve-slot chain, two area
+/// references, the first slot selected with a curve on it (the graph is open).
+pub(crate) fn owner_morpher_scene(h: &mut Harness<'static, KtApp>) {
+    use kt_model::*;
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(900_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    for (i, name) in ["intro", "finale"].iter().enumerate() {
+        p.areas.push(MarkedArea {
+            name: name.to_string(),
+            start: kt_time::Tick(i as i64 * 300_000),
+            duration: kt_time::Tick(200_000),
+            lanes: vec![],
+            color: None,
+        });
+    }
+    let video: Vec<FxInstance> = FxInstance::all()
+        .iter()
+        .filter(|f| !f.is_audio() && !f.warps_time())
+        .take(12)
+        .cloned()
+        .collect();
+    assert_eq!(video.len(), 12, "twelve video effects for the owner's strip");
+    let first = video[0].clone();
+    let param = first
+        .auto_params()
+        .next()
+        .map(|s| s.name.to_string())
+        .expect("the first effect has a curve parameter");
+    let mut video_auto = vec![Vec::new(); 12];
+    video_auto[0].push(ParamCurve::constant(
+        &param,
+        kt_time::Tick(0),
+        kt_time::Tick(400_000),
+        first.get_param(&param).unwrap_or(0.0),
+        SegShape::default(),
+    ));
+    p.ensure_tracks(kt_model::LaneKind::Morph, 1);
+    p.morphers.push(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(450_000),
+        targets: MorphTargets::Areas { names: vec!["intro".into(), "finale".into()] },
+        patch: MorphPatch {
+            video_bypass: vec![false; 12],
+            video_fx: video,
+            video_auto,
+            ..Default::default()
+        },
+        timed: true,
+        strength: 1.0,
+        fade_in: kt_time::Tick::ZERO,
+        fade_out: kt_time::Tick::ZERO,
+        enabled: true,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_morph_editor(MorphId(1));
+    h.step();
+    let app = h.state_mut();
+    if let Some(ed) = app.morph_editors.first_mut() {
+        ed.sel = crate::widgets::ChainSel::Fx(0);
+    }
+    h.step();
+    h.step();
+}
+
+/// The outer rectangle of the open morpher window (its egui area).
+pub(crate) fn morph_window_rect(h: &Harness<'static, KtApp>) -> egui::Rect {
+    egui::AreaState::load(&h.ctx, egui::Id::new(("morph", 1u64)))
+        .expect("the morpher window is drawn")
+        .rect()
+}
+
+/// Test 923 (shared-window-shell, kkt item 2): the owner's morpher scene does not widen over
+/// frames. The owner: "move the mouse anywhere in the main window or the morpher window — it
+/// widens fast; don't move it — slowly"; his system: Ubuntu, 1920×1080, the program's zoom
+/// raised with Ctrl+= a couple of times. Found in stage 1: the window-level scroll
+/// (`.vscroll(true)`) under the program's style ratchets the width by one physical pixel per
+/// frame at zoom 1.1, 1.3, 1.35, 1.85 (not at 1.2) — the live run widened 608 → 698 points in
+/// fifteen seconds at 1.1. Three runs per zoom: the pointer over the main window, over the
+/// morpher window, and still with a frame every step.
+#[test]
+fn t923_owner_morpher_window_does_not_widen() {
+    let mut fails: Vec<String> = Vec::new();
+    for zoom in [1.1f32, 1.2, 1.25, 1.3, 1.5] {
+        for run in ["main", "window", "still"] {
+            let mut h = harness_scaled(1920.0, 1080.0, 1.0);
+            h.ctx.set_zoom_factor(zoom);
+            h.step();
+            owner_morpher_scene(&mut h);
+            let w0 = morph_window_rect(&h);
+            let mut log = Vec::new();
+            for f in 0..600 {
+                let r = morph_window_rect(&h);
+                let pos = match run {
+                    "main" => egui::pos2(
+                        40.0 + (f as f32 * 7.3) % 900.0,
+                        600.0 + (f as f32 * 3.1) % 200.0,
+                    ),
+                    "window" => egui::pos2(
+                        r.left() + 10.0 + (f as f32 * 5.7) % (r.width() - 20.0).max(1.0),
+                        r.top() + 30.0 + (f as f32 * 2.9) % (r.height() - 40.0).max(1.0),
+                    ),
+                    _ => egui::pos2(5.0, 5.0),
+                };
+                if run != "still" || f == 0 {
+                    h.event(egui::Event::PointerMoved(pos));
+                }
+                h.step();
+                if f % 50 == 0 {
+                    log.push(format!("{:.2}", morph_window_rect(&h).width()));
+                }
+            }
+            let w1 = morph_window_rect(&h);
+            let px = 1.0 / zoom + 1e-3;
+            if (w1.width() - w0.width()).abs() > px || (w1.height() - w0.height()).abs() > px {
+                fails.push(format!(
+                    "zoom {zoom}, pointer {run}: {:.2}×{:.2} → {:.2}×{:.2} [{}]",
+                    w0.width(),
+                    w0.height(),
+                    w1.width(),
+                    w1.height(),
+                    log.join(" ")
+                ));
+            }
+        }
+    }
+    assert!(fails.is_empty(), "the morpher window grows by itself: {}", fails.join("; "));
+}
+
+/// A scene with a transition between two butt-joined events, its window open (the scene of
+/// t227 without the double click: the opener is the same call the double click makes).
+pub(crate) fn transition_scene(h: &mut Harness<'static, KtApp>) {
+    use kt_model::*;
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
+    for (i, start) in [0i64, 50_000].iter().enumerate() {
+        p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
+            overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
+            id: ClipId(i as u64 + 1),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: kt_time::Tick(*start),
+            duration: kt_time::Tick(50_000),
+            source_in: kt_time::Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![],
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            opacity: 1.0,
+            fx_off: false,
+        });
+    }
+    p.transitions.push(TransitionEvent {
+        id: TransitionId(1),
+        a: Some(ClipId(1)),
+        b: Some(ClipId(2)),
+        in_offset: kt_time::Tick(9_000),
+        out_offset: kt_time::Tick(9_000),
+        kind: TransitionKind::Crossfade,
+        audio: Default::default(),
+        auto: vec![],
+        invert: false,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_transition_editor(TransitionId(1));
+}
+
+/// A scene with a camera event on a camera track, its window open (the scene of t231).
+pub(crate) fn camera_scene(h: &mut Harness<'static, KtApp>) {
+    use kt_model::*;
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.ensure_tracks(kt_model::LaneKind::Camera, 1);
+    p.cameras.push(CameraEvent {
+        ease: true,
+        id: CameraId(1),
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(120_000),
+        name: String::new(),
+        cam: CameraParams::default(),
+        keyframes: vec![],
+        auto: vec![],
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_camera_editor(CameraId(1));
+}
+
+/// The layers a window opener added: every area that was not drawn before it (a window, or a
+/// modal with its backdrop).
+pub(crate) fn opened_layers(
+    h: &mut Harness<'static, KtApp>,
+    open: fn(&mut Harness<'static, KtApp>),
+) -> Vec<egui::LayerId> {
+    let before: std::collections::HashSet<egui::LayerId> =
+        h.ctx.memory(|m| m.layer_ids().collect());
+    open(h);
+    h.step();
+    h.step();
+    h.ctx.memory(|m| {
+        m.layer_ids()
+            .filter(|l| !before.contains(l) && l.order != egui::Order::Tooltip)
+            .collect()
+    })
+}
+
+/// Test 918 (shared-window-shell): no window of the registry grows by itself. Every window the
+/// harness can open (t779's openers) runs 300 frames at display scales 1.0, 1.1 and 1.2 (the
+/// owner's own zoom), 1.25 and 1.5 with the pointer moving over the main window and over the window
+/// itself; the outer rectangle keeps its size within one physical pixel.
+#[test]
+fn t918_no_window_grows_by_itself() {
+    let mut fails: Vec<String> = Vec::new();
+    let mut checked = 0;
+    for (id, how, _) in crate::reach_tests::window_openers() {
+        let crate::reach_tests::OpenWin::By(open) = how else { continue };
+        for ppp in [1.0f32, 1.1, 1.2, 1.25, 1.5] {
+            let mut h = harness_scaled(1600.0, 900.0, ppp);
+            let layers = opened_layers(&mut h, open);
+            let rect = |h: &Harness<'static, KtApp>| -> Vec<egui::Rect> {
+                layers
+                    .iter()
+                    .filter_map(|l| egui::AreaState::load(&h.ctx, l.id).map(|s| s.rect()))
+                    .collect()
+            };
+            let r0 = rect(&h);
+            assert!(!r0.is_empty(), "window “{id}” at scale {ppp}: the opener drew no area");
+            for f in 0..300 {
+                let r = r0[0];
+                let pos = if f % 2 == 0 {
+                    egui::pos2(40.0 + (f as f32 * 7.3) % 900.0, 600.0 + (f as f32 * 3.1) % 200.0)
+                } else {
+                    egui::pos2(
+                        r.left() + 10.0 + (f as f32 * 5.7) % (r.width() - 20.0).max(1.0),
+                        r.top() + 30.0 + (f as f32 * 2.9) % (r.height() - 40.0).max(1.0),
+                    )
+                };
+                h.event(egui::Event::PointerMoved(pos));
+                h.step();
+            }
+            let r1 = rect(&h);
+            let px = 1.0 / ppp + 1e-3;
+            for (a, b) in r0.iter().zip(r1.iter()) {
+                if (a.width() - b.width()).abs() > px || (a.height() - b.height()).abs() > px {
+                    fails.push(format!(
+                        "“{id}” at scale {ppp}: {:.2}×{:.2} → {:.2}×{:.2}",
+                        a.width(),
+                        a.height(),
+                        b.width(),
+                        b.height()
+                    ));
+                }
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked >= 5 * 12, "only {checked} window×scale runs — the openers were lost");
+    assert!(fails.is_empty(), "a window grows by itself: {}", fails.join("; "));
+}
+
+
+

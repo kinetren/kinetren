@@ -180,12 +180,12 @@ impl KtApp {
             .or(cur.b)
             .and_then(|id| self.model.clip(id).map(|c| c.kind == kt_model::ClipKind::Audio))
             .unwrap_or(false);
-        let shown = egui::Window::new(crate::tf!(k::trn::TITLE, ed.id.0))
-            .id(egui::Id::new(("transition", ed.id)))
-            .open(&mut open)
-            .default_size([420.0, 260.0])
-            .min_size([340.0, 200.0])
-            .resizable(true)
+        let shown = crate::window_shell::Shell::new(
+            egui::Id::new(("transition", ed.id)),
+            crate::tf!(k::trn::TITLE, ed.id.0),
+            crate::window_shell::Kind::Tool,
+        )
+            .size([420.0, 260.0], [340.0, 200.0])
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
                 let mut t = cur.clone();
@@ -441,9 +441,12 @@ impl KtApp {
                 });
                 });
             });
+        if shown.closed() {
+            open = false;
+        }
         // the whole window frame — the README screenshots crop by it
-        if let Some(r) = &shown {
-            crate::widgets::field_probe::note("win.transition", r.response.rect);
+        if let Some(r) = &shown.response {
+            crate::widgets::field_probe::note("win.transition", r.rect);
         }
         ed.open = open;
         if let Some(t) = edited {

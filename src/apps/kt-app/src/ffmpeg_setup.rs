@@ -446,11 +446,11 @@ impl crate::app::KtApp {
         let info = kt_ffmpeg::backend_info();
         let report = kt_ffmpeg::search_report_data();
         let offer = download_offered(kt_ffmpeg::search::Os::NATIVE, self.ffmpeg_ui.pin_present());
-        egui::Window::new(tr(k::ffmpeg::TITLE))
-            .id(egui::Id::new("kt_ffmpeg"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
+        let win = crate::window_shell::Shell::new(
+            egui::Id::new("kt_ffmpeg"),
+            tr(k::ffmpeg::TITLE),
+            crate::window_shell::Kind::Tool,
+        )
             .default_width(560.0)
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
@@ -529,6 +529,9 @@ impl crate::app::KtApp {
                     });
                 });
             });
+        if win.closed() {
+            open = false;
+        }
         if !open {
             self.ffmpeg_ui.open = false;
         }

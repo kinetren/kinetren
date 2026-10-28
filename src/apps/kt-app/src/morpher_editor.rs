@@ -321,13 +321,12 @@ impl KtApp {
             crate::fx_thumbs::REF_W,
             self.model.project().settings.width,
         );
-        let shown = egui::Window::new(title)
-            .id(egui::Id::new(("morph", ed.id.0)))
-            .open(&mut open)
-            .default_size(if is_batch { [560.0, 480.0] } else { [420.0, 260.0] })
-            .min_size([380.0, 200.0])
-            .resizable(true)
-            .vscroll(true)
+        let shown = crate::window_shell::Shell::new(
+            egui::Id::new(("morph", ed.id.0)),
+            title,
+            crate::window_shell::Kind::Tool,
+        )
+            .size(if is_batch { [560.0, 480.0] } else { [420.0, 260.0] }, [380.0, 200.0])
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
                 // --- on whom and when it acts (R.35) ------------------------
@@ -676,9 +675,12 @@ impl KtApp {
                 });
                 });
             });
+        if shown.closed() {
+            open = false;
+        }
         // the window frame as a whole — landing-page screenshots are cropped by it (site/screenshots.py)
-        if let Some(r) = &shown {
-            crate::widgets::field_probe::note("win.morpher", r.response.rect);
+        if let Some(r) = &shown.response {
+            crate::widgets::field_probe::note("win.morpher", r.rect);
         }
         ed.open = open;
 

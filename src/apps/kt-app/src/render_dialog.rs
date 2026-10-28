@@ -273,11 +273,11 @@ impl KtApp {
         let mut launch = false;
         let proj = self.model.project().settings.clone();
         let max_src = self.max_source_resolution_cached();
-        let shown = egui::Window::new(tr(k::render::SETTINGS_TITLE))
-            .id(egui::Id::new("kt_render_settings"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
+        let shown = crate::window_shell::Shell::new(
+            egui::Id::new("kt_render_settings"),
+            tr(k::render::SETTINGS_TITLE),
+            crate::window_shell::Kind::Dialog,
+        )
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
@@ -477,9 +477,12 @@ impl KtApp {
                 });
                 });
             });
+        if shown.closed() {
+            open = false;
+        }
         // the window frame as a whole — the landing screenshots are cropped by it (site/screenshots.py)
-        if let Some(r) = &shown {
-            crate::widgets::field_probe::note("win.render", r.response.rect);
+        if let Some(r) = &shown.response {
+            crate::widgets::field_probe::note("win.render", r.rect);
         }
         if !open {
             self.render_setup.open = false;
@@ -498,10 +501,14 @@ impl KtApp {
             job.progress = p;
         }
         let mut close = false;
-        let shown = egui::Window::new(tr(k::render::PROGRESS_TITLE))
-            .id(egui::Id::new("kt_render_progress"))
-            .collapsible(false)
-            .resizable(true)
+        let shown = crate::window_shell::Shell::new(
+            egui::Id::new("kt_render_progress"),
+            tr(k::render::PROGRESS_TITLE),
+            crate::window_shell::Kind::Progress {
+                why: "an export runs for minutes; an Esc meant for the timeline must not kill it, and the window has its own Cancel",
+            },
+        )
+            .resizable()
             .default_size([560.0, 300.0])
             .default_pos(ctx.content_rect().center() - egui::vec2(280.0, 150.0))
             .show(ctx, |ui| {
@@ -673,8 +680,8 @@ impl KtApp {
                 }
             });
         // the window frame as a whole — the landing screenshots are cropped by it (site/screenshots.py)
-        if let Some(r) = &shown {
-            crate::widgets::field_probe::note("win.render_progress", r.response.rect);
+        if let Some(r) = &shown.response {
+            crate::widgets::field_probe::note("win.render_progress", r.rect);
         }
         if close {
             self.render_job = None;

@@ -75,13 +75,13 @@ impl KtApp {
         } else {
             crate::tf!(k::cam::TITLE_NAMED, cur.name.clone())
         };
-        egui::Window::new(title)
-            .id(egui::Id::new(("camera", ed.id)))
-            .open(&mut open)
-            .default_size([560.0, 480.0])
-            .min_size([420.0, 320.0])
-            .resizable(true)
-            .vscroll(true)
+        let win = crate::window_shell::Shell::new(
+            egui::Id::new(("camera", ed.id)),
+            title,
+            crate::window_shell::Kind::Tool,
+        )
+            .size([560.0, 480.0], [420.0, 320.0])
+            .probe("win.camera")
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
                 let mut c = cur.clone();
@@ -255,6 +255,9 @@ impl KtApp {
                 });
                 });
             });
+        if win.closed() {
+            open = false;
+        }
         ed.open = open;
         if let Some(c) = edited {
             self.apply_coalesced(Command::SetCamera(c), ed.gesture);

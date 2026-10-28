@@ -476,12 +476,12 @@ impl KtApp {
         // would scroll the action buttons too, and “Done” went past the bottom
         // edge (R.67, found by the live scenario `curves`). The window height
         // is the same as before — the body itself leaves room for the buttons.
-        let shown = egui::Window::new(title)
-            .id(egui::Id::new(("fx", ed.clip)))
-            .open(&mut open)
-            .default_size([580.0, 520.0])
-            .min_size([460.0, 320.0])
-            .resizable(true)
+        let shown = crate::window_shell::Shell::new(
+            egui::Id::new(("fx", ed.clip)),
+            title,
+            crate::window_shell::Kind::Tool,
+        )
+            .size([580.0, 520.0], [460.0, 320.0])
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
                 for (n, id) in members.iter().enumerate() {
@@ -1021,9 +1021,12 @@ impl KtApp {
                 });
                 });
             });
+        if shown.closed() {
+            open = false;
+        }
         // the whole window frame — the landing-page screenshots are cropped by it (site/screenshots.py)
-        if let Some(r) = &shown {
-            crate::widgets::field_probe::note("win.fx", r.response.rect);
+        if let Some(r) = &shown.response {
+            crate::widgets::field_probe::note("win.fx", r.rect);
         }
 
         // the strip’s requests about presets (R.48): the strip only puts them — the window writes

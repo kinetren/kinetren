@@ -54,6 +54,7 @@ mod user_store;
 mod util;
 mod widgets;
 mod window_frame;
+mod window_shell;
 
 fn main() -> eframe::Result {
     app::run()

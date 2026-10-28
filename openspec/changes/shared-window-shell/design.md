@@ -157,6 +157,12 @@ frame); (b) the shell pins the body to the window's inner width rounded DOWN to 
 pixel grid (`ui.set_max_width(floor(w·ppp)/ppp)`), so a sub-pixel excess cannot be reported as
 content size; (c) `max_width` of the window at the screen's content width as the last ceiling.
 (a) is the fix, (b) is the shell's guarantee for every window, (c) only bounds the damage.
+2026-10-28, stage 1: variant (a). The feeding option is the window-level scroll itself, not a
+widget of the body: with `.vscroll(true)` the morpher window under the program's style grows one
+physical pixel per frame at zoom 1.1/1.3/1.35/1.85; without it, at none of 1.05…2.0. The shell
+never sets a window scroll, so (a) is the shell's rule; (b) is kept in reserve for a window that
+still grows in t918 after the move. The minimal reproduction above missed it for two reasons: it
+tried 1.25/1.5/1.75/2.0 (not 1.1/1.3), and egui's default margins differ from ours.
 Revision of nothing: R.67's "one scroll per window" (ui-timeline design, "One scroll per window")
 is the same rule, now applied to all windows instead of two.
 

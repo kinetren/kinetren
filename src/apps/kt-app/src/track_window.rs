@@ -125,21 +125,19 @@ impl KtApp {
         // after drawing — in the same window session and the same history step
         let mut key_edit: Option<(TrackId, Vec<kt_model::FxInstance>, Vec<bool>)> = None;
         let title = crate::tf!(k::track::TITLE, track.label(lane));
-        egui::Window::new(title)
-            .id(egui::Id::new(("track_window", w.id.0)))
-            .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
+        let win = crate::window_shell::Shell::new(
+            egui::Id::new(("track_window", w.id.0)),
+            title,
+            crate::window_shell::Kind::Tool,
+        )
             .show(ctx, |ui| {
                 // THE BODY — IN A SCROLL, the buttons BELOW it (rule 1: to hit
                 // with a mouse on the first try). With two ducking compressors the window
                 // outgrew the screen, and “Close” with “Cancel” went past the edge —
-                // caught by t775.
-                let max_h = (ctx.content_rect().height() * 0.62).max(240.0);
-                egui::ScrollArea::vertical()
-                    .max_height(max_h)
-                    .auto_shrink([true, true])
-                    .show(ui, |ui| {
+                // caught by t775. The scroll is the common one (`window_body`): the
+                // window's own copy grew 30 points a frame for six frames after opening
+                // (t918, shared-window-shell).
+                crate::widgets::window_body(ui, |ui| {
                 egui::Grid::new("track_props").num_columns(2).show(ui, |ui| {
                     ui.label(tr(k::track::NAME));
                     let r = ui.add(
@@ -454,6 +452,9 @@ impl KtApp {
                     }
                 });
             });
+        if win.closed() {
+            open = false;
+        }
         // Esc closes the window by CASCADE (`escape_action`), keeping the edits —
         // as with the FX window: they apply on the fly, and “Cancel” can roll them back as a whole.
         // The window needs no handler of its own: with focus in the

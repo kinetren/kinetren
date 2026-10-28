@@ -2684,14 +2684,16 @@ fn t757_every_window_is_in_the_registry() {
     entries.sort();
     for path in entries {
         let name = path.file_name().unwrap().to_string_lossy().to_string();
-        // the window tests themselves do not register windows
-        if name.ends_with("_tests.rs") {
+        // the window tests themselves do not register windows; the shell builds every window,
+        // and its own `egui::Window::new` is the builder, not a window (shared-window-shell)
+        if name.ends_with("_tests.rs") || name == "window_shell.rs" {
             continue;
         }
         let src = strip_comments(&std::fs::read_to_string(&path).expect("file"));
         let lines: Vec<&str> = src.lines().collect();
         for (n, line) in lines.iter().enumerate() {
-            if !line.contains("egui::Window::new") && !line.contains("Modal::new") {
+            // a window is a call of the shell (t921 holds that there is no other way)
+            if !line.contains("window_shell::Shell::new(") && !line.contains("window_shell::modal(") {
                 continue;
             }
             // the id is on this same line (modal) or on the nearest following lines
@@ -2905,7 +2907,7 @@ fn t777_sidechain_is_reachable_and_names_its_refusals() {
 }
 
 /// How to open the registry window in the harness — or why this is impossible (R.66).
-enum OpenWin {
+pub(crate) enum OpenWin {
     /// The function prepares the scene and opens the window.
     By(fn(&mut egui_kittest::Harness<'static, crate::app::KtApp>)),
     /// A window cannot be opened in the harness; the reason is written in words, as in t253.
@@ -2915,7 +2917,7 @@ enum OpenWin {
 /// How the window is closed: by its own action button or by the title cross.
 /// The second is legitimate (log, search, diagnostics), but it is declared EXPLICITLY and with
 /// a reason: otherwise “no buttons were found” would quietly pass as the norm.
-enum Closes {
+pub(crate) enum Closes {
     Action,
     /// A window SHORT BY CONSTRUCTION (the question from the header, the rows and the row of
     /// buttons): there is nothing for scrolling to hide there. The reason is written in words, but
@@ -2946,7 +2948,7 @@ fn action_labels() -> Vec<String> {
 }
 
 /// Window table: the id from `WINDOWS` → how to open it.
-fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
+pub(crate) fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
     use kt_model::*;
     vec![
         ("fx", OpenWin::By(|h| {
@@ -2979,18 +2981,9 @@ fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
             why: "question on close: a heading, one line and a row of buttons — the content has nowhere \
                   to grow, and the scroll has nothing to hide",
         }),
-        ("morph", OpenWin::Cant(
-            "the morpher layer must first be put on a morph track: the window opens by its id, and \
-             its scene is built by a separate layer test",
-        ), Closes::Action),
-        ("transition", OpenWin::Cant(
-            "the transition window opens by the id of an existing transition, and a transition appears only \
-             from the overlap of two events — its own scene, it is in the transition tests",
-        ), Closes::Action),
-        ("camera", OpenWin::Cant(
-            "a camera event lives on a camera track and opens by its own id — the scene with \
-             the camera is built in the camera tests",
-        ), Closes::Action),
+        ("morph", OpenWin::By(crate::layout_tests::owner_morpher_scene), Closes::Action),
+        ("transition", OpenWin::By(crate::layout_tests::transition_scene), Closes::Action),
+        ("camera", OpenWin::By(crate::layout_tests::camera_scene), Closes::Action),
         ("env_fit", OpenWin::Cant(
             "the field matching window appears only on an envelope paste that did not land \
              silently: its scene is the clipboard content, it is in the paste tests",
@@ -3011,14 +3004,31 @@ fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
             "the name of the new reel is asked at the very moment the selection is collapsed — its own scene, \
              it is in the composition tests",
         ), Closes::Action),
-        ("paste_names", OpenWin::Cant(
-            "the prefix for names is asked when pasting a NAMED item from the clipboard — the clipboard scene \
-             is built in the copy-paste tests",
-        ), Closes::Action),
-        ("preset_save", OpenWin::Cant(
-            "the preset name is asked when saving a chain from the strip — the scene is in the \
-             preset library tests",
-        ), Closes::Action),
+        ("paste_names", OpenWin::By(|h| {
+            h.state_mut().paste_names = Some(crate::app::PasteNamesDialog {
+                at: kt_time::Tick(0),
+                row: None,
+                affix: String::new(),
+                before: false,
+                focus: true,
+            });
+        }), Closes::ActionShort {
+            why: "the paste prefix asks one word and a side: a field, a switch and a row of buttons",
+        }),
+        ("preset_save", OpenWin::By(|h| {
+            h.state_mut().preset_save = Some(crate::app::PresetSaveDialog {
+                block: kt_model::ops::FxChainBlock {
+                    slots: vec![],
+                    src_in: kt_time::Tick(0),
+                    fx_off: false,
+                },
+                name: "preset".into(),
+                rename_of: None,
+                focus: true,
+            });
+        }), Closes::ActionShort {
+            why: "the preset name asks one name: a field and a row of buttons, nothing to scroll",
+        }),
         ("pub_name", OpenWin::Cant(
             "the handle name is asked when publishing from inside the reel — the scene is in the \
              public parameters tests",
@@ -4972,3 +4982,331 @@ fn t871_menu_labels_carry_no_keys_and_chords_hold() {
         "a camera selected too: Del would delete it as well"
     );
 }
+
+/// Is any of these layers drawn now (an area that was shown this frame or the last one)?
+fn any_visible(h: &egui_kittest::Harness<'static, crate::app::KtApp>, layers: &[egui::LayerId]) -> bool {
+    h.ctx.memory(|m| layers.iter().any(|l| m.areas().is_visible(l)))
+}
+
+/// One Esc press as the person makes it: the key, then two frames (the window answers on the
+/// frame of the press, and is gone from the next one).
+fn press_esc(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>) {
+    h.key_press(egui::Key::Escape);
+    h.step();
+    h.step();
+}
+
+/// A click at a screen point (press and release in one frame batch).
+fn click_at(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>, pos: egui::Pos2) {
+    h.event(egui::Event::PointerMoved(pos));
+    h.event(egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.event(egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    h.step();
+}
+
+/// Test 919 (shared-window-shell, ktprompts 26.10.18 item 6): Esc closes EVERY window.
+///
+/// The Esc cascade was a hand-kept list, and the camera, transition, project settings and
+/// envelope-fit windows were missing from it — the owner's case was the camera window that
+/// "does not close on Esc". Here every window the harness can open gets one Esc: it is gone,
+/// it left no trace in the history (a tool window keeps the edits made BEFORE Esc, a dialog
+/// cancels), and the keyboard focus is free. Then the owner's own case: the camera window,
+/// one edit, Esc — the edit stays and is one undo step.
+#[test]
+fn t919_esc_closes_every_window() {
+    use crate::layout_tests::{camera_scene, harness_sized, opened_layers};
+    let mut problems: Vec<String> = Vec::new();
+    let mut checked = 0;
+    for (id, how, _) in window_openers() {
+        let OpenWin::By(open) = how else { continue };
+        let mut h = harness_sized(1600.0, 900.0);
+        let layers = opened_layers(&mut h, open);
+        assert!(!layers.is_empty(), "window “{id}”: the opener drew no area");
+        let depth = h.state().model.undo_depth();
+        press_esc(&mut h);
+        checked += 1;
+        if any_visible(&h, &layers) {
+            problems.push(format!("“{id}” is still open after Esc"));
+        }
+        if h.state().model.undo_depth() != depth {
+            problems.push(format!("“{id}”: Esc left a step in the history"));
+        }
+        if h.ctx.memory(|m| m.focused()).is_some() {
+            problems.push(format!("“{id}”: the keyboard focus is still held after Esc"));
+        }
+    }
+    assert!(checked >= 12, "only {checked} windows were opened — the openers were lost");
+
+    // the owner's case: the camera window keeps its edit and closes
+    let mut h = harness_sized(1600.0, 900.0);
+    let layers = opened_layers(&mut h, camera_scene);
+    let before = h.state().model.project().cameras[0].clone();
+    let gesture = h.state().camera_editors[0].gesture;
+    {
+        let app = h.state_mut();
+        let mut c = before.clone();
+        c.cam.fov_deg += 7.0;
+        assert!(app.apply_coalesced(kt_model::Command::SetCamera(c), gesture));
+    }
+    h.step();
+    let depth = h.state().model.undo_depth();
+    press_esc(&mut h);
+    if any_visible(&h, &layers) {
+        problems.push("the camera window is still open after Esc — the owner's case".into());
+    }
+    let after = h.state().model.project().cameras[0].cam.fov_deg;
+    if (after - (before.cam.fov_deg + 7.0)).abs() > 1e-9 {
+        problems.push(format!("the camera lost its edit on Esc: fov {after}"));
+    }
+    if h.state().model.undo_depth() != depth {
+        problems.push("Esc on the camera window changed the history".into());
+    }
+    h.state_mut().undo();
+    h.step();
+    let undone = h.state().model.project().cameras[0].cam.fov_deg;
+    if (undone - before.cam.fov_deg).abs() > 1e-9 {
+        problems.push(format!(
+            "the camera window session is not one undo step: fov {undone} after one Ctrl+Z"
+        ));
+    }
+    assert!(problems.is_empty(), "Esc does not close the windows: {}", problems.join("; "));
+}
+
+/// Test 920 (shared-window-shell): Esc closes the window ON TOP, not the first one of a list.
+///
+/// The cascade closed by a fixed priority — the FX windows before the morpher windows, and the
+/// camera window not at all. The person sees the top window and expects Esc to remove it.
+#[test]
+fn t920_esc_closes_the_top_window_first() {
+    use crate::layout_tests::{harness_sized, owner_morpher_scene};
+    let mut h = harness_sized(1600.0, 900.0);
+    // the owner's morpher scene has the event and the layer; a camera is added to it
+    owner_morpher_scene(&mut h);
+    {
+        let app = h.state_mut();
+        if let Some(ed) = app.morph_editors.first_mut() {
+            ed.open = false;
+        }
+        crate::layout_tests::edit_project(app, |p| {
+            p.ensure_tracks(kt_model::LaneKind::Camera, 1);
+            p.cameras.push(kt_model::CameraEvent {
+                ease: true,
+                id: kt_model::CameraId(1),
+                lane: 0,
+                start: kt_time::Tick(0),
+                duration: kt_time::Tick(120_000),
+                name: String::new(),
+                cam: kt_model::CameraParams::default(),
+                keyframes: vec![],
+                auto: vec![],
+            });
+        });
+    }
+    h.step();
+    let open_fx = |h: &egui_kittest::Harness<'static, crate::app::KtApp>| {
+        h.state().fx_editors.iter().any(|e| e.open)
+    };
+    let open_cam = |h: &egui_kittest::Harness<'static, crate::app::KtApp>| {
+        h.state().camera_editors.iter().any(|e| e.open)
+    };
+    let open_morph = |h: &egui_kittest::Harness<'static, crate::app::KtApp>| {
+        h.state().morph_editors.iter().any(|e| e.open)
+    };
+
+    // 1. the FX window, the camera window over it: Esc closes the camera window
+    h.state_mut().open_fx_editor(kt_model::ClipId(1));
+    h.step();
+    h.step();
+    h.state_mut().open_camera_editor(kt_model::CameraId(1));
+    h.step();
+    h.step();
+    assert!(open_fx(&h) && open_cam(&h), "the scene: the FX window and the camera window are open");
+    press_esc(&mut h);
+    assert!(!open_cam(&h), "the first Esc must close the camera window — it is on top");
+    assert!(open_fx(&h), "the first Esc must leave the FX window under it");
+
+    // 2. the morpher window over the FX window, then a click on the FX window brings it up
+    h.state_mut().open_morph_editor(kt_model::MorphId(1));
+    h.step();
+    h.step();
+    let fx_rect = egui::AreaState::load(&h.ctx, egui::Id::new(("fx", kt_model::ClipId(1))))
+        .expect("the FX window is drawn")
+        .rect();
+    let morph_rect = egui::AreaState::load(&h.ctx, egui::Id::new(("morph", 1u64)))
+        .expect("the morpher window is drawn")
+        .rect();
+    // a point of the FX window's title that the morpher window does not cover
+    let title_y = fx_rect.top() + 8.0;
+    let x = (fx_rect.left()..fx_rect.right())
+        .step_by_f32(4.0)
+        .find(|&x| !morph_rect.contains(egui::pos2(x, title_y)))
+        .expect("a piece of the FX window's title is uncovered");
+    click_at(&mut h, egui::pos2(x, title_y));
+    press_esc(&mut h);
+    assert!(!open_fx(&h), "Esc must close the FX window — it was brought to the top");
+    assert!(open_morph(&h), "Esc must leave the morpher window that is now under it");
+    press_esc(&mut h);
+    assert!(!open_morph(&h), "the next Esc closes the morpher window");
+
+    // 3. no window: Esc clears the region and the selection, the loop stays armed
+    {
+        let app = h.state_mut();
+        crate::layout_tests::edit_project(app, |p| {
+            p.region = Some(kt_model::Region { start: kt_time::Tick(10_000), end: kt_time::Tick(50_000) });
+            p.loop_enabled = true;
+        });
+        app.selected = [kt_model::ClipId(1)].into_iter().collect();
+    }
+    h.step();
+    press_esc(&mut h);
+    let app = h.state();
+    assert!(app.model.project().region.is_none(), "with no window Esc clears the region");
+    assert!(app.selected.is_empty(), "with no window Esc clears the selection");
+    assert!(app.model.project().loop_enabled, "the loop stays armed (item 3 of round 11)");
+}
+
+/// `f32` steps over a range (only for the probe above).
+trait StepF32 {
+    fn step_by_f32(self, step: f32) -> Box<dyn Iterator<Item = f32>>;
+}
+impl StepF32 for std::ops::Range<f32> {
+    fn step_by_f32(self, step: f32) -> Box<dyn Iterator<Item = f32>> {
+        let (a, b) = (self.start, self.end);
+        Box::new((0..).map(move |i| a + i as f32 * step).take_while(move |&x| x < b))
+    }
+}
+
+/// Test 921 (shared-window-shell): no window is built outside the window shell.
+///
+/// Every window built by hand drifted a little: seven kept egui's collapse arrow, four kept a
+/// window-level scroll (the morpher window's width ratchet, kkt item 2), six did not react to
+/// Esc. The rule (kt-app CLAUDE.md, "A window is made only by the shell"): the frame options —
+/// id, title cross, collapsing, resizing, scroll, Esc — are set in `window_shell.rs` and
+/// nowhere else.
+#[test]
+fn t921_no_window_outside_the_shell() {
+    let root = workspace_root();
+    let dir = root.join("apps/kt-app/src");
+    let shell = dir.join("window_shell.rs");
+    assert!(shell.exists(), "the window shell module `window_shell.rs` is missing");
+    let banned =
+        ["egui::Window::new", "Modal::new", ".vscroll(", ".hscroll(", ".collapsible(", "Window::new("];
+    let mut bad: Vec<String> = Vec::new();
+    let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .expect("kt-app sources")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "rs"))
+        .collect();
+    entries.sort();
+    for path in entries {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        if name == "window_shell.rs" || name.ends_with("_tests.rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).expect("file");
+        let code = src.split("\n#[cfg(test)]").next().unwrap_or(&src);
+        let code = strip_comments(code);
+        for (n, line) in code.lines().enumerate() {
+            if let Some(b) = banned.iter().find(|b| line.contains(*b)) {
+                bad.push(format!("{name}:{} ({b})", n + 1));
+            }
+        }
+    }
+    let shell_src = strip_comments(&std::fs::read_to_string(&shell).expect("the shell is readable"));
+    assert!(
+        shell_src.contains("egui::Window::new") && shell_src.contains("Modal::new"),
+        "the shell must be the one place that builds windows and modals"
+    );
+    assert!(
+        bad.is_empty(),
+        "a window built outside the shell (rule “a window is made only by the shell; its kind decides \
+         Esc, cross, scroll and width”, apps/kt-app/CLAUDE.md): {}",
+        bad.join(", ")
+    );
+}
+
+/// Test 922 (shared-window-shell): the title cross and Esc are ONE path.
+///
+/// Every window with a cross is closed twice in the same scene — by the cross and by Esc — and
+/// both leave the same model, the same history depth and the same focus. The cross stands at
+/// the right of the title row, and no window has egui's collapse arrow.
+#[test]
+fn t922_cross_and_esc_are_one_path() {
+    use crate::layout_tests::{harness_sized, opened_layers};
+    let mut problems: Vec<String> = Vec::new();
+    for (id, how, _) in window_openers() {
+        let OpenWin::By(open) = how else { continue };
+        // the modals have no cross: their kind declares it
+        if id == "kt_recovery" || id == "kt_ask" {
+            continue;
+        }
+        let close = |by_cross: bool| -> (String, usize, bool, Vec<String>) {
+            let mut h = harness_sized(1600.0, 900.0);
+            let layers = opened_layers(&mut h, open);
+            let mut notes = Vec::new();
+            let r = layers
+                .iter()
+                .find_map(|l| egui::AreaState::load(&h.ctx, l.id).map(|s| s.rect()))
+                .expect("the window is drawn");
+            // no window collapses: a click where egui puts the collapse arrow (the left end
+            // of the title row) must not fold the window into its title
+            {
+                click_at(&mut h, egui::pos2(r.left() + 14.0, r.top() + 14.0));
+                // the fold is animated: four more frames let it finish
+                for _ in 0..4 {
+                    h.step();
+                }
+                let after = layers
+                    .iter()
+                    .find_map(|l| egui::AreaState::load(&h.ctx, l.id).map(|s| s.rect()))
+                    .expect("the window is still drawn");
+                if after.height() < r.height() * 0.6 {
+                    notes.push(format!(
+                        "a click on the title's left end collapsed it ({:.0} → {:.0})",
+                        r.height(),
+                        after.height()
+                    ));
+                }
+            }
+            if by_cross {
+                // the cross: the button at the right end of the title row
+                let pos = egui::pos2(r.right() - 12.0, r.top() + 12.0);
+                click_at(&mut h, pos);
+            } else {
+                press_esc(&mut h);
+            }
+            if any_visible(&h, &layers) {
+                notes.push(if by_cross { "the cross did not close it" } else { "Esc did not close it" }.into());
+            }
+            let app = h.state();
+            let model = kt_model::project_file::to_text(&app.model.document(), None);
+            let focused = h.ctx.memory(|m| m.focused()).is_some();
+            (model, app.model.undo_depth(), focused, notes)
+        };
+        let (m1, d1, f1, n1) = close(true);
+        let (m2, d2, f2, n2) = close(false);
+        for n in n1.iter().chain(n2.iter()) {
+            problems.push(format!("“{id}”: {n}"));
+        }
+        if m1 != m2 || d1 != d2 || f1 != f2 {
+            problems.push(format!(
+                "“{id}”: the cross and Esc lead to different states (history {d1} vs {d2}, focus {f1} vs {f2}, \
+                 model equal: {})",
+                m1 == m2
+            ));
+        }
+    }
+    assert!(problems.is_empty(), "the cross and Esc are not one path: {}", problems.join("; "));
+}
+
