@@ -43,6 +43,12 @@ would take from the file what is already done or would do the opposite of what w
   registry — the owner's requirement from the CORE section ("any agent adding a feature that
   breaks otio must record this in a separate list").
 
+- **Two more sources (update, round kkt-26.10.27).** The registry also covers
+  `ktprompts_v26.10.18` (ten claims nobody indexed) and the owner's list of 27.10.2026
+  (`kkt-26.10.27`), both copied verbatim into `docs/ktprompts/`. Their items already have
+  changes at stage 0 (design.md §3b, §3c); the guard checks every source in `docs/ktprompts/`,
+  not one file. The site items of the list are rows with the address "other repository".
+
 Not included: implementation of any claim (each — its own change after the answers), reconnaissance of
 other editors for new features (opened as a note in the round that takes the feature;
 the exception — items where a note already exists, they are named in the registry).
@@ -62,7 +68,7 @@ the exception — items where a note already exists, they are named in the regis
 
 ## Impact
 
-- `docs/ktprompts/` (a new directory: the verbatim source and the registry), `docs/user-feedback.md`
+- `docs/ktprompts/` (a new directory: the three verbatim sources and their registries), `docs/user-feedback.md`
   (section R.71 — written at the proposal), `src/scripts/ktprompts-index.py` (the new
   guard), `src/scripts/finish.sh` (the call of the guard), `src/apps/kt-app/src/reach_tests.rs`
   (t823), `CLAUDE.md` (the rule "what export loses"), `openspec/specs/durability`.

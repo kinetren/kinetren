@@ -1,16 +1,17 @@
 # Tasks
 
 The change does not change the program's code: its product is the registry, the guard and the owner's answers. The stages
-are verifiable separately; each ends with a commit in Russian.
+are verifiable separately; each ends with a commit in English (owner, 2026-10-21).
 
 ## 1. Source and registry
 
 - [ ] 1.1 Registry `docs/ktprompts/v26.10-index.md`: the table from `design.md` §3 is carried over as is (all items G/U/T/W/A/L/N/C/P/F/R/O/X/M/Q/K/S/E/MW/TD/FUT), columns: number, claim verbatim (brief), state from the closed set, address, stage; section "what OTIO export loses" (empty for now — the rule of stage 3). Check: each numbered item of `docs/ktprompts/v26.10.txt` has a row (the guard of stage 2).
+- [ ] 1.1b Registries `docs/ktprompts/v26.10.18-index.md` and `docs/ktprompts/kkt-26.10.27-index.md`: the tables of `design.md` §3b and §3c as they are, the address of each row is the change of round kkt-26.10.27 (or "other repository" for the site items W1–W4). The sources are already copied (`v26.10.18.txt`, `kkt-26.10.27.txt`). Check: the guard of stage 2 is green over all three sources.
 - [ ] 1.2 Section R.71 in `docs/user-feedback.md` is appended with questions 1–11 from `design.md` §4 (the owner's own words are already recorded at the proposal). Check: the section exists, the questions are numbered the same way as in the registry.
 
 ## 2. Guard
 
-- [ ] 2.1 `src/scripts/ktprompts-index.py --check`: reads the source (numbered items by sections `== … ==` and blocks), reads the registry, fails on an item without a row, a state outside the set, `done` without `fn tNNN_` in the sources of `src/`, a `question` without text; prints the count by state. Check: t823 (`src/apps/kt-app/src/reach_tests.rs`) — the whole registry is green, three corruptions (a deleted row, a non-existent test, an empty question) are red with the item's address.
+- [ ] 2.1 `src/scripts/ktprompts-index.py --check`: reads EVERY source `docs/ktprompts/*.txt` and its `<name>-index.md` (numbered items by sections `== … ==` and blocks), reads the registry, fails on an item without a row, a state outside the set, `done` without `fn tNNN_` in the sources of `src/`, a `question` without text; prints the count by state. Check: t823 (`src/apps/kt-app/src/reach_tests.rs`) — the whole registry is green, three corruptions (a deleted row, a non-existent test, an empty question) are red with the item's address.
 - [ ] 2.2 The guard in `src/scripts/finish.sh` next to `features-index.py --check` and `specs-user-path.py --check`. Check: `./scripts/finish.sh` prints its line.
 
 ## 3. Rule for agents

@@ -2,7 +2,8 @@
 
 ## Context
 
-Motivation — `proposal.md`. Source — `docs/ktprompts/v26.10.txt` (verbatim). Here —
+Motivation — `proposal.md`. Sources — `docs/ktprompts/v26.10.txt`, `docs/ktprompts/v26.10.18.txt` and
+`docs/ktprompts/kkt-26.10.27.txt` (verbatim). Here —
 a cross-check of each item against the code and specs (12.10.2026), the registry rules, questions for
 the owner and the order of the next rounds. The cross-check is against the sources (`grep` over kt-app/kt-model/kt-fx/kt-engine,
 the feature-note registry `docs/features`, the specs), not from memory: where the code cross-check gives no
@@ -153,6 +154,46 @@ F-FX-002 is done); F2 letters as physical objects with inertia from rate — no 
 | TD1, TD2 | an effect on one word of a crawl; fisheye on acceleration, tied to rate; the ambiguity of play/scrub | partial | the parameter link R.61 solves "tie fisheye to rate"; the rest — F-FX-005. Future |
 | FUT | MIDI keyboard, fruc_vulkan, objectdetection, mcp server, HDR10, links to videos | future | notes — as they come |
 
+### 3b. Cross-check of `v26.10.18` (state as of 27.10.2026)
+
+The second claims file (16 lines, ten items), never indexed before. Source — `docs/ktprompts/v26.10.18.txt`.
+Every item is open; each already has its change (stage 0 written in round kkt-26.10.27).
+
+| # | Claim (brief) | State | Address · stage |
+|---|---|---|---|
+| 1 | the morpher does not take audio effects | no: defect → morpher, audio-fx | `slowed-reverb-is-an-event` |
+| 2 | slowed does not take generated curves | no: defect → audio-fx, automation | `slowed-reverb-is-an-event` |
+| 3 | a slowed event cannot be copied or cut | no: defect → audio-fx, ui-timeline | `slowed-reverb-is-an-event` |
+| 4 | one selected event → copy takes it, not the region | no: defect → ui-timeline | `selection-copy-target` |
+| 5 | a triple click on an event sets a region over its bounds | no: feature → ui-timeline | `selection-copy-target` |
+| 6 | the camera window ignores Esc; windows must reuse one code | no: defect → ui-reach | `shared-window-shell` |
+| 7 | the pitch FX gives silence on a loop, total on a short loop | no: defect → audio-fx, audio-render | `pitch-loop-silence` |
+| 8 | an automated event grid in the morpher drops fps — why | no: defect → morpher, video-plan | `morpher-event-grid-cost` |
+| 9 | a still's Geometry frame rule does nothing; squashed on 16:9 | no: defect → video-plan | `still-image-frame-rule` |
+| 10 | a published composition parameter says "Лента" in English | no: defect → ui-reach | `i18n-gaps` |
+
+### 3c. Cross-check of `kkt-26.10.27` (state as of 28.10.2026)
+
+The owner's list of 27.10.2026. Source — `docs/ktprompts/kkt-26.10.27.txt`. The file numbers two items "3";
+the registry numbers the program items K1–K9 in file order and the site items W1–W4.
+
+| # | Claim (brief) | State | Address · stage |
+|---|---|---|---|
+| K1 | wine: Play on a loop region freezes the picture until a click | no: defect → transport | `loop-play-latency-hold` |
+| K2 | the morpher window grows wider forever on another system | no: defect → ui-reach | `shared-window-shell` |
+| K3 | `kinetren-mime.xml` is not fully translated | no: defect → distribution | `i18n-gaps` |
+| K4 | the FFmpeg download window says nothing (speed, where) | no: feature → media-index | `ffmpeg-download-window-info` |
+| K5 | the render window is poorer than the C++ one | no: feature → export | `render-window-v1-parity` |
+| K6 | a Flatpak release with hardware encoding in render | no: feature → distribution, export | `hw-encode-context` → `flatpak-flathub` |
+| K7 | effects and transitions lag far behind CapCut | no: feature → video-fx, transitions | `effects-transitions-catchup` (after K8) |
+| K8 | the plugin system first: build time, one interface | no: feature → plugins (new) | `plugin-api-stage1` |
+| K9 | no guide inside the program | no: feature → ui-reach | `welcome-window-and-tour` |
+| W1–W4 | the site: download buttons, per-OS links, rotating slogans, a tab under a heading | other repository | `kt.9.site` — not indexed by this guard beyond the row |
+
+The overlaps with `v26.10` are named, not duplicated: K5 takes U1 (ask before overwriting) and T12 (stats
+after finish); K6 takes T16 (the h264_vaapi crash); K7 takes F1/F2; K8 takes P1–P6; K9 sits next to
+the help notes F-HLP-023/027/028/029.
+
 ### 4. Questions for the owner (he asked "don't limit yourself")
 
 1. **Format name.** The file says `ktproj`; R.70 chose `.kt`, because `.ktproj` is a live legacy under the same suffix (a trap for people and scripts). Keep `.kt`?
@@ -174,6 +215,12 @@ where it directly says "split into stages, discuss and decide". The timeline/tra
 there are twenty defects there at cost S each, two of them repeats of earlier themes. Render third —
 the crash on vaapi (T16/T17) and the encoders are already standing in the queue of specs. Windows and automation —
 after: this is UI work at cost M that does not block editing.
+
+**Addendum (round kkt-26.10.27).** The owner's latest list puts the plugin system BEFORE the effects
+catch-up ("so they come before the effects"). The defects of `v26.10.18` and `kkt-26.10.27` are cheap
+and seen daily, so they go before R.72; question 11 is still asked, now with this order in front of
+it: the defects → render/FFmpeg windows → hw encoding → Flatpak → plugins stage 1 → effects waves,
+with the welcome window and the tour in parallel.
 
 ## Risks / Trade-offs
 

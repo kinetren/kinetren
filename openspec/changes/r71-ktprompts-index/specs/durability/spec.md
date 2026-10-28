@@ -29,3 +29,8 @@ decided (the format name, the import door). A rule in prose has already failed h
 - **WHEN** a registry row is in the state `done R.NN, tNNN`
 - **THEN** the function `fn tNNN_` exists in the sources of `src/`, otherwise the guard is red — as with the registry of the migration of live scenarios
 - **TEST** t823 (`src/apps/kt-app/src/reach_tests.rs`)
+
+#### Scenario: Every claims file has its registry
+- **WHEN** the guard runs over `docs/ktprompts/` holding `v26.10.txt`, `v26.10.18.txt` and `kkt-26.10.27.txt`; separately — a fourth source is added without a `-index.md`
+- **THEN** each of the three sources is checked against its own registry and the counts are printed per source; the source without a registry makes the guard red with its file name
+- **TEST** t823 (`src/apps/kt-app/src/reach_tests.rs`)
