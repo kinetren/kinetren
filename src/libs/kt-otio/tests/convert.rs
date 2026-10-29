@@ -105,6 +105,7 @@ fn rich_project() -> Project {
 
 #[test]
 fn t152_mapping_semantics_roundtrip() {
+    kt_plugins_builtin::install();
     let p = rich_project();
     let text = save_project(&p, &Retained::default(), None);
 
@@ -149,6 +150,7 @@ fn t152_mapping_semantics_roundtrip() {
 
 #[test]
 fn t152_foreign_time_warp_and_transition_type_are_retained() {
+    kt_plugins_builtin::install();
     let p = rich_project();
     let text = save_project(&p, &Retained::default(), None);
     // a foreign time warp x2 + a foreign transition type
@@ -173,6 +175,7 @@ fn t152_foreign_time_warp_and_transition_type_are_retained() {
 
 #[test]
 fn t153_foreign_import_is_deterministic() {
+    kt_plugins_builtin::install();
     // a foreign file without kt: a minimal timeline in the reference style
     let text = serde_json::json!({
         "OTIO_SCHEMA": "Timeline.1",
@@ -222,6 +225,7 @@ fn t153_foreign_import_is_deterministic() {
 /// `cargo test -p kt-otio --test convert -- --ignored t148_regen`
 #[test]
 fn t148_legacy_import_matches_committed_golden() {
+    kt_plugins_builtin::install();
     let src = include_str!("../../../fixtures/demo.ktproj");
     let (p, _notices) = import_legacy(src).expect("legacy imports");
     let out = save_project(&p, &Retained::default(), None);
@@ -232,6 +236,7 @@ fn t148_legacy_import_matches_committed_golden() {
 #[test]
 #[ignore = "reference generator: cargo test -p kt-otio --test convert -- --ignored t148_regen"]
 fn t148_regen() {
+    kt_plugins_builtin::install();
     let src = include_str!("../../../fixtures/demo.ktproj");
     let (p, notices) = import_legacy(src).expect("legacy imports");
     let out = save_project(&p, &Retained::default(), None);
@@ -250,6 +255,7 @@ fn t148_regen() {
 /// a clip with `media_reference: null`, `name: null` on references.
 #[test]
 fn t154_upstream_samples_load() {
+    kt_plugins_builtin::install();
     let dir =
         std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/otio-samples"));
     let mut seen = 0;
@@ -278,6 +284,7 @@ fn t154_upstream_samples_load() {
 /// `source_in` is an offset from the first frame of the file (item 180).
 #[test]
 fn t154_clip_without_source_range_uses_available_range() {
+    kt_plugins_builtin::install();
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/otio-samples/simple_cut.otio");
     let text = std::fs::read_to_string(path).unwrap();
     let b = load_project(&text, None).expect("simple_cut reads");
@@ -293,6 +300,7 @@ fn t154_clip_without_source_range_uses_available_range() {
 /// re-saving (we do not invent a reference).
 #[test]
 fn t154_clip_without_media_reference_survives() {
+    kt_plugins_builtin::install();
     let path =
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/otio-samples/transition_test.otio");
     let text = std::fs::read_to_string(path).unwrap();
@@ -328,6 +336,7 @@ fn t154_clip_without_media_reference_survives() {
 /// the order of the track's children, so otherwise the overlap would wreck the edit.
 #[test]
 fn t165_overlapping_lane_survives_layer_roundtrip() {
+    kt_plugins_builtin::install();
     let mut p = Project::new(ProjectSettings {
         fps: 30,
         width: 640,
@@ -395,6 +404,7 @@ fn t165_overlapping_lane_survives_layer_roundtrip() {
 /// A project WITHOUT overlaps is written as before: the layer map does not appear.
 #[test]
 fn t165_plain_project_has_no_layer_map() {
+    kt_plugins_builtin::install();
     let p = rich_project();
     let text = save_project(&p, &Retained::default(), None);
     assert!(!text.contains("\"layers\""), "without overlaps the layer map is not written");
@@ -407,6 +417,7 @@ fn t165_plain_project_has_no_layer_map() {
 /// Now a fractional rate is rounded to the nearest whole number that divides 90000.
 #[test]
 fn t178_ntsc_rates_land_on_the_nearest_grid_fps() {
+    kt_plugins_builtin::install();
     use kt_otio::grid_fps;
     assert_eq!(grid_fps(23.976023976023978), Some(24), "NTSC-24");
     assert_eq!(grid_fps(29.97002997002997), Some(30), "NTSC-30");
@@ -456,6 +467,7 @@ fn t178_ntsc_rates_land_on_the_nearest_grid_fps() {
 /// drifted by an hour in a 162-second file.
 #[test]
 fn t180_media_start_timecode_is_subtracted_and_restored() {
+    kt_plugins_builtin::install();
     let doc = |src_start: f64, avail_start: f64| {
         format!(
             r#"{{"OTIO_SCHEMA":"Timeline.1","name":"tc","tracks":{{"OTIO_SCHEMA":"Stack.1",
@@ -578,6 +590,7 @@ fn project_3d() -> Project {
 /// silently lose the 3D scene on rewrite). Round-trip and idempotency.
 #[test]
 fn t189_cameras_roundtrip_and_conditional_version() {
+    kt_plugins_builtin::install();
     // without cameras — v=1, no camera keys
     let flat = save_project(&rich_project(), &Retained::default(), None);
     let v: serde_json::Value = serde_json::from_str(&flat).unwrap();
@@ -633,6 +646,7 @@ fn t189_cameras_roundtrip_and_conditional_version() {
 /// a hard refusal.
 #[test]
 fn t189b_future_kt_fields_pass_through() {
+    kt_plugins_builtin::install();
     let text = save_project(&project_3d(), &Retained::default(), None);
     let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
     v["metadata"]["kt"]["future_field"] = serde_json::json!({"x": 1});
@@ -645,6 +659,7 @@ fn t189b_future_kt_fields_pass_through() {
 /// Regeneration: `cargo test -p kt-otio --test convert -- --ignored t189_regen`
 #[test]
 fn t189_matches_committed_golden() {
+    kt_plugins_builtin::install();
     let out = save_project(&project_3d(), &Retained::default(), None);
     let golden = include_str!("../../../fixtures/demo-3d.otio");
     assert_eq!(out, golden, "the 3D scheme (cameras/Pan3d) diverged from the golden");
@@ -657,6 +672,7 @@ fn t189_matches_committed_golden() {
 /// would spoil the animation), without it — v1. Round-trip and idempotency.
 #[test]
 fn t192_fx_auto_roundtrip_and_v3() {
+    kt_plugins_builtin::install();
     // a flat project with automation, WITHOUT cameras: v3 is given precisely by it
     let mut p = rich_project();
     p.clips[0].fx = vec![FxInstance::blur(8)];
@@ -698,6 +714,7 @@ fn t192_fx_auto_roundtrip_and_v3() {
 /// of the user's working projects would have drifted (R.33).
 #[test]
 fn t212_pre_v3_curves_migrate_to_material_ticks() {
+    kt_plugins_builtin::install();
     let mut p = rich_project();
     p.clips[0].fx = vec![FxInstance::blur(8)];
     p.clips[0].fx_auto = vec![vec![ParamCurve {
@@ -734,6 +751,7 @@ fn t212_pre_v3_curves_migrate_to_material_ticks() {
 /// is raised to v3, while an ordinary crossfade stays byte-stable and remains v1.
 #[test]
 fn t222_transition_kind_roundtrip_and_version() {
+    kt_plugins_builtin::install();
     // 1. an ordinary crossfade changes nothing in the file
     let plain = rich_project();
     let text = save_project(&plain, &Retained::default(), None);
@@ -868,6 +886,7 @@ fn find_transition_mut(v: &mut serde_json::Value) -> &mut serde_json::Value {
 #[test]
 #[ignore = "reference generator: cargo test -p kt-otio --test convert -- --ignored t189_regen"]
 fn t189_regen() {
+    kt_plugins_builtin::install();
     let out = save_project(&project_3d(), &Retained::default(), None);
     std::fs::write(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/demo-3d.otio"), &out)
         .unwrap();
@@ -880,6 +899,7 @@ fn t189_regen() {
 /// v4, and a project without morphers stays byte-stable.
 #[test]
 fn t240_morpher_schema_v4_and_legacy_read() {
+    kt_plugins_builtin::install();
     // an old file: a bare array of targets and an externally tagged kind
     let base = save_project(&rich_project(), &Retained::default(), None);
     let mut old: serde_json::Value = serde_json::from_str(&base).unwrap();
@@ -932,6 +952,7 @@ fn t240_morpher_schema_v4_and_legacy_read() {
 /// and a project with natural order stays byte-stable.
 #[test]
 fn t241_lane_order_moved_into_model() {
+    kt_plugins_builtin::install();
     let mut p = rich_project();
     p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p.set_lane_order(&[(kt_model::LaneKind::Morph, 0)]);
@@ -985,6 +1006,7 @@ fn t241_lane_order_moved_into_model() {
 /// version to v4; a project without them is byte-stable.
 #[test]
 fn t248_areas_round_trip() {
+    kt_plugins_builtin::install();
     let mut p = rich_project();
     p.areas.push(kt_model::MarkedArea {
         name: "final".into(),
@@ -1011,6 +1033,7 @@ fn t248_areas_round_trip() {
 /// the project opened without settings, tracks, morphers and layout — silently.
 #[test]
 fn t251_broken_kt_meta_is_an_error() {
+    kt_plugins_builtin::install();
     let p = rich_project();
     let text = save_project(&p, &Retained::default(), None);
     let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -1047,6 +1070,7 @@ fn t251_broken_kt_meta_is_an_error() {
 /// A twin of t251 (the same strictness for Timeline).
 #[test]
 fn t383_broken_clip_kt_section_is_an_error() {
+    kt_plugins_builtin::install();
     let doc = |kt: &str| {
         format!(
             r#"{{"OTIO_SCHEMA":"Timeline.1","name":"t","tracks":{{"OTIO_SCHEMA":"Stack.1",
@@ -1083,6 +1107,7 @@ fn t383_broken_clip_kt_section_is_an_error() {
 /// the notice “Kinetren has no per-track mute” is removed in substance.
 #[test]
 fn t384_track_foreign_effects_markers_and_enabled_survive() {
+    kt_plugins_builtin::install();
     let doc = r#"{"OTIO_SCHEMA":"Timeline.1","name":"t","tracks":{"OTIO_SCHEMA":"Stack.1",
     "name":"","children":[{"OTIO_SCHEMA":"Track.1","name":"V","kind":"Video","children":[
     {"OTIO_SCHEMA":"Clip.1","name":"c","source_range":{"OTIO_SCHEMA":"TimeRange.1",
@@ -1119,6 +1144,7 @@ fn t384_track_foreign_effects_markers_and_enabled_survive() {
 /// return from the envelope, or after our save the comments would disappear.
 #[test]
 fn t385_marker_comment_and_metadata_survive_roundtrip() {
+    kt_plugins_builtin::install();
     let doc = r#"{"OTIO_SCHEMA":"Timeline.1","name":"t","tracks":{"OTIO_SCHEMA":"Stack.1",
     "name":"","children":[],"source_range":null,"effects":[],"markers":[
     {"OTIO_SCHEMA":"Marker.2","name":"remark","color":"RED","marked_range":
@@ -1143,6 +1169,7 @@ fn t385_marker_comment_and_metadata_survive_roundtrip() {
 /// to the file as-is. A “class of problems” does not mean “shrink everything in a row”.
 #[test]
 fn t386_disabled_clip_is_already_verbatim() {
+    kt_plugins_builtin::install();
     let doc = r#"{"OTIO_SCHEMA":"Timeline.1","name":"t","tracks":{"OTIO_SCHEMA":"Stack.1",
     "name":"","children":[{"OTIO_SCHEMA":"Track.1","name":"V","kind":"Video","children":[
     {"OTIO_SCHEMA":"Clip.1","name":"disabled","source_range":{"OTIO_SCHEMA":"TimeRange.1",
@@ -1240,6 +1267,7 @@ fn nested_project() -> Project {
 /// The requirement for inlining is not cancelled — it is redirected to EXPORT.
 #[test]
 fn t814_export_is_self_contained_and_open_refuses_it() {
+    kt_plugins_builtin::install();
     let mut p = nested_project();
     // the third instance of the same reel
     let mut third = p.clips.iter().find(|c| c.media == MediaId(100)).cloned().unwrap();
@@ -1290,6 +1318,7 @@ fn t814_export_is_self_contained_and_open_refuses_it() {
 
 #[test]
 fn t431_nested_reel_survives_the_round_trip() {
+    kt_plugins_builtin::install();
     let p = nested_project();
     let text = save_project(&p, &Retained::default(), None);
 
@@ -1351,6 +1380,7 @@ fn t431_nested_reel_survives_the_round_trip() {
 
 #[test]
 fn t432_diverged_bodies_become_two_reels() {
+    kt_plugins_builtin::install();
     let p = nested_project();
     let text = save_project(&p, &Retained::default(), None);
     // a foreign editor edited ONE instance and not the other: we substitute the
@@ -1390,6 +1420,7 @@ fn t432_diverged_bodies_become_two_reels() {
 
 #[test]
 fn t433_the_sidecar_is_advisory_not_authoritative() {
+    kt_plugins_builtin::install();
     let p = nested_project();
     let text = save_project(&p, &Retained::default(), None);
     // the sidecar was lost (a foreign editor rewrote the timeline's metadata):
@@ -1426,6 +1457,7 @@ fn t433_the_sidecar_is_advisory_not_authoritative() {
 /// committed .otio files at once.
 #[test]
 fn t433b_version_cascade_did_not_move_old_files() {
+    kt_plugins_builtin::install();
     // absolute: on Windows a rooted path without a drive letter is not absolute, and the
     // writer would not relativise against it
     let dir = std::path::absolute(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures")).unwrap();
@@ -1467,6 +1499,7 @@ fn t433b_version_cascade_did_not_move_old_files() {
 /// import behaviour.
 #[test]
 fn t437_foreign_nested_stacks_become_real_reels() {
+    kt_plugins_builtin::install();
     let path =
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/otio-samples/nested_example.otio");
     let text = std::fs::read_to_string(path).unwrap();
@@ -1532,6 +1565,7 @@ fn t437_foreign_nested_stacks_become_real_reels() {
 /// record — a notice, not corruption.
 #[test]
 fn t465_overlap_transition_roundtrip() {
+    kt_plugins_builtin::install();
     let mk = || {
         let mut p = rich_project();
         // a video staircase on one track: [0..90k) and [45k..135k)
@@ -1622,6 +1656,7 @@ fn find_schema<'a>(v: &'a serde_json::Value, tag: &str, out: &mut Vec<&'a serde_
 /// visible placeholder, not silent corruption).
 #[test]
 fn t473_generator_reference_roundtrip() {
+    kt_plugins_builtin::install();
     let mut p = rich_project();
     // R.59, stage 2: in the media path — the KIND, values on the event
     let orange = kt_model::GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
@@ -1708,6 +1743,7 @@ fn t473_generator_reference_roundtrip() {
 /// travels through re-saving without losses.
 #[test]
 fn t474_foreign_generator_kind_is_passthrough() {
+    kt_plugins_builtin::install();
     let mut p = rich_project();
     p.media.push(MediaRef::new(MediaId(7), "gen:solid"));
     let mut g = clip(30, ClipKind::Video, 0, 200_000, 45_000, 7);
@@ -1749,6 +1785,7 @@ fn t474_foreign_generator_kind_is_passthrough() {
 /// it stays under t154.)
 #[test]
 fn t494_smpte_alias_import() {
+    kt_plugins_builtin::install();
     let mut p = rich_project();
     p.media.push(MediaRef::new(MediaId(7), "gen:smpte"));
     let mut g = clip(30, ClipKind::Video, 0, 200_000, 45_000, 7);
@@ -1790,6 +1827,7 @@ fn t494_smpte_alias_import() {
 /// move onto the NEIGHBOURING track.
 #[test]
 fn t593_owner_shaped_file_loads_canonically() {
+    kt_plugins_builtin::install();
     let mut p = rich_project();
     p.ensure_tracks(kt_model::LaneKind::Video, 3);
     p.ensure_tracks(kt_model::LaneKind::Morph, 1);
@@ -1887,6 +1925,7 @@ fn t593_owner_shaped_file_loads_canonically() {
 /// silent clamp was exactly the complaint.
 #[test]
 fn t606_signed_rate_survives_the_round_trip() {
+    kt_plugins_builtin::install();
     let mut p = rich_project();
     p.clips[0].fx = vec![FxInstance::slowed_reverb(-0.5, 0.0, 85.0)];
     p.clips[0].fx_auto = vec![vec![ParamCurve {
@@ -1923,6 +1962,7 @@ fn t606_signed_rate_survives_the_round_trip() {
 /// already contain it.
 #[test]
 fn t638_negative_start_inside_a_reel_survives_the_round_trip() {
+    kt_plugins_builtin::install();
     let mut p = Project::new(ProjectSettings {
         fps: 30,
         width: 1280,
@@ -1998,6 +2038,7 @@ fn t638_negative_start_inside_a_reel_survives_the_round_trip() {
 /// (a news-release template, the owner's claim item 1).
 #[test]
 fn t664_generator_values_on_the_event_round_trip() {
+    kt_plugins_builtin::install();
     let mut p = rich_project();
     let title = |text: &str| {
         let mut k = kt_model::GeneratorKind::default_text();
@@ -2055,6 +2096,7 @@ fn t664_generator_values_on_the_event_round_trip() {
 /// result of reading against exactly it.
 #[test]
 fn t665_old_generator_files_migrate_to_the_event() {
+    kt_plugins_builtin::install();
     // “an old file”: a generator with VALUES in parameters and the animation
     // mode as a field — exactly what the R.53 build wrote
     let mut p = rich_project();
@@ -2127,6 +2169,7 @@ fn t665_old_generator_files_migrate_to_the_event() {
 /// heading and not one visible sign.
 #[test]
 fn t681_published_params_and_overrides_round_trip() {
+    kt_plugins_builtin::install();
     let mut p = nested_project();
     // a handle on the reel: the title text inside it
     p.media.push(MediaRef::new(MediaId(7), "gen:text"));
@@ -2230,6 +2273,7 @@ fn t681_published_params_and_overrides_round_trip() {
 /// and not one sign of damage. Hence v10.
 #[test]
 fn t698b_segment_shape_raises_the_version_only_when_it_has_to() {
+    kt_plugins_builtin::install();
     use kt_model::{AutoKey, SegShape, ZigProfile};
 
     let with_curve = |shapes: Vec<SegShape>| -> Project {
@@ -2284,6 +2328,7 @@ fn t698b_segment_shape_raises_the_version_only_when_it_has_to() {
 /// as a uniform shape and yields BIT-IDENTICAL curve values.
 #[test]
 fn t698c_shapes_round_trip_and_the_old_ease_field_migrates() {
+    kt_plugins_builtin::install();
     use kt_model::{AutoKey, SegShape, ZigProfile, curve_value};
 
     let mut p = rich_project();
@@ -2359,6 +2404,7 @@ fn t698c_shapes_round_trip_and_the_old_ease_field_migrates() {
 /// worst kind of divergence: a person sees the picture and believes it.
 #[test]
 fn t698d_a_broken_curve_source_is_an_error_with_an_address() {
+    kt_plugins_builtin::install();
     let with_source = |src: kt_model::CurveSource| {
         let mut p = rich_project();
         let c = p.clips.iter_mut().find(|c| !c.fx.is_empty()).expect("clip with an effect");
@@ -2439,6 +2485,7 @@ fn t698d_a_broken_curve_source_is_an_error_with_an_address() {
 /// “Geometry” node in the same slot with recalculation `pan → pos`.
 #[test]
 fn t728_conform_geometry_and_reel_settings_round_trip_as_v11() {
+    kt_plugins_builtin::install();
     // 1. a flat project with nothing new — the version does not move
     let plain = rich_project();
     let text0 = save_project(&plain, &Retained::default(), None);
@@ -2562,6 +2609,7 @@ fn t728_conform_geometry_and_reel_settings_round_trip_as_v11() {
 /// A project WITHOUT track novelties is byte-stable on the former version (t433b holds the same on fixtures).
 #[test]
 fn t731_track_envelope_round_trip_and_version() {
+    kt_plugins_builtin::install();
     use kt_model::{BlendMode, FxInstance, LaneKind};
     // without novelties — the former version and there is no envelope of tracks
     let plain = rich_project();
@@ -2645,6 +2693,7 @@ fn t731_track_envelope_round_trip_and_version() {
 /// event, in a morpher patch and inside a nested reel.
 #[test]
 fn t747_old_rate_curves_with_ease_open_as_linear() {
+    kt_plugins_builtin::install();
     fn rate_curve(v0: f64, v1: f64) -> ParamCurve {
         ParamCurve {
             param: "rate".into(),
@@ -2795,6 +2844,7 @@ fn t747_old_rate_curves_with_ease_open_as_linear() {
 /// opens, the device works as an ordinary compressor.
 #[test]
 fn t773_sidechain_key_round_trips_as_v12() {
+    kt_plugins_builtin::install();
     use kt_model::LaneKind::Audio as A;
 
     // 1. a compressor WITHOUT a key does not move the version and changes no bytes
@@ -2863,6 +2913,7 @@ fn t773_sidechain_key_round_trips_as_v12() {
 /// The reader does not learn new old forms — the fix table carries the version.
 #[test]
 fn t783b_older_version_import_fixes_null_morph_targets() {
+    kt_plugins_builtin::install();
     let base = save_project(&rich_project(), &Retained::default(), None);
     let mut old: serde_json::Value = serde_json::from_str(&base).unwrap();
     old["metadata"]["kt"]["v"] = serde_json::json!(5);
@@ -2959,6 +3010,7 @@ fn t783b_older_version_import_fixes_null_morph_targets() {
 /// in the file — a loud load refusal.
 #[test]
 fn t787b_segment_formula_and_layer_round_trip_as_v13_by_content() {
+    kt_plugins_builtin::install();
     let mut p = rich_project();
     let clip = p.clips.iter_mut().find(|c| c.kind == kt_model::ClipKind::Video).unwrap();
     clip.fx = vec![kt_model::FxInstance::Mirror { horizontal: true, vertical: false }];
@@ -3028,6 +3080,7 @@ fn t787b_segment_formula_and_layer_round_trip_as_v13_by_content() {
 /// the repair lives in the import, not in the reader).
 #[test]
 fn t828_former_marker_is_refused_by_open_and_repaired_by_import() {
+    kt_plugins_builtin::install();
     use kt_model::project_file::{FileKind, ProjectFileError, from_text, to_text};
     let p = project_3d();
     let text = to_text(&p, None);

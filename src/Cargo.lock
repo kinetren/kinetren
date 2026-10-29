@@ -1490,6 +1490,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fx-audio-dynamics"
+version = "0.1.0"
+dependencies = [
+ "kt-plugin-api",
+]
+
+[[package]]
 name = "fx-audio-tone"
 version = "0.1.0"
 dependencies = [
@@ -2228,6 +2235,7 @@ version = "0.1.0"
 dependencies = [
  "indexmap",
  "kt-model",
+ "kt-plugins-builtin",
  "kt-time",
  "serde",
  "serde_json",
@@ -2247,6 +2255,7 @@ dependencies = [
 name = "kt-plugins-builtin"
 version = "0.1.0"
 dependencies = [
+ "fx-audio-dynamics",
  "fx-audio-tone",
  "fx-video-color",
  "kt-plugin-api",

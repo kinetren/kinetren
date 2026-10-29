@@ -306,6 +306,7 @@ fn t322_audio_registry_contract() {
 /// and the frequency curve speeds up the modulation toward the end of the clip.
 #[test]
 fn t325_lfo_phase_is_a_function_of_position() {
+    kt_plugins_builtin::install();
     let trem = vec![FxInstance::Tremolo { rate_hz: 5.0, depth: 1.0 }];
 
     // (a) in one piece == in pieces: the phase does not depend on buffer slicing
@@ -380,6 +381,7 @@ fn t325_lfo_phase_is_a_function_of_position() {
 /// the compression law, muting by the gate.
 #[test]
 fn t326_delay_and_dynamics_behave() {
+    kt_plugins_builtin::install();
     // --- Delay: repeat exactly at time_ms, the series decays, the tail is honest ----
     let time_ms = 250.0f32;
     let one = render_on(
@@ -451,12 +453,7 @@ fn t326_delay_and_dynamics_behave() {
         let out = render_on(
             vec![
                 FxInstance::gain(amp_db),
-                FxInstance::Gate {
-                    threshold_db: -30.0,
-                    attack_ms: 1.0,
-                    hold_ms: 40.0,
-                    release_ms: 50.0,
-                },
+                kt_model::FxInstance::plugin_with("gate", &[-30.0, 1.0, 40.0, 50.0]).unwrap(),
             ],
             vec![],
             false,
@@ -478,6 +475,7 @@ fn t326_delay_and_dynamics_behave() {
 #[test]
 #[ignore]
 fn t327_print_dense_chain_cost() {
+    kt_plugins_builtin::install();
     let chain = || {
         vec![
             FxInstance::filter(),
@@ -559,6 +557,7 @@ fn t327_print_dense_chain_cost() {
 #[test]
 #[ignore]
 fn bench_pitch_cost() {
+    kt_plugins_builtin::install();
     for (name, fx, engine) in [
         ("dry", vec![], PitchEngine::Wsola),
         ("limiter", vec![FxInstance::limiter()], PitchEngine::Wsola),

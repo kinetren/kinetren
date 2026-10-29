@@ -67,6 +67,7 @@ fn driver(param: &str, a: f64, b: f64, from: i64, to: i64) -> ParamCurve {
 
 #[test]
 fn t702_a_link_reads_inside_the_event_and_across_events() {
+    kt_plugins_builtin::install();
     let mut p = base();
     // the leading event: the radius goes 0 → 30 along its own material
     let mut lead = clip(1, 0, 3 * SEC, 0);
@@ -147,6 +148,7 @@ fn t702_a_link_reads_inside_the_event_and_across_events() {
 
 #[test]
 fn t702b_a_link_never_crosses_the_reel_boundary() {
+    kt_plugins_builtin::install();
     let mut p = base();
     let mut seq = Sequence::new(MediaId(100), "Reel");
     let mut inner = clip(10, 0, 2 * SEC, 0);
@@ -201,6 +203,7 @@ fn t702b_a_link_never_crosses_the_reel_boundary() {
 
 #[test]
 fn t703_cycles_are_refused_with_the_path() {
+    kt_plugins_builtin::install();
     let link = |to: &str| ParamCurve {
         param: "radius".into(),
         keys: Vec::new(),
@@ -266,6 +269,7 @@ fn t703_cycles_are_refused_with_the_path() {
 
 #[test]
 fn t704_non_numeric_targets_follow_thresholds_and_snapshots() {
+    kt_plugins_builtin::install();
     let snap = |at: f64, v: ParamValue| LinkStop { at, value: v };
     let stops = vec![
         snap(0.0, ParamValue::Text("bottom".into())),
@@ -321,6 +325,7 @@ fn t704_non_numeric_targets_follow_thresholds_and_snapshots() {
 /// start; here it is checked by a test, not by a promise.
 #[test]
 fn t705_derived_sources_cost_nothing_when_unused() {
+    kt_plugins_builtin::install();
     // --- NO derived sources — the reel BORROWS -----------------------------------
     let mut plain = Vec::new();
     for i in 1..=8 {
@@ -427,6 +432,7 @@ fn t705_derived_sources_cost_nothing_when_unused() {
 /// only that it has no address, but has a time.
 #[test]
 fn t707_a_formula_is_a_curve_without_keys() {
+    kt_plugins_builtin::install();
     let formula = |expr: &str| ParamCurve {
         param: "radius".into(),
         keys: Vec::new(),

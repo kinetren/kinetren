@@ -84,6 +84,7 @@ fn render(p: &Project) -> Vec<f32> {
 /// to the new source with a shifted source_in; bake changes nothing.
 #[test]
 fn t36_replace_renders_as_new_source_and_bake_is_noop_for_render() {
+    kt_plugins_builtin::install();
     let mut p = project_with_clip(MediaId(1), Tick(9_000), vec![]);
     p.morphers.push(MorpherEvent {
         id: MorphId(1),
@@ -120,6 +121,7 @@ fn t36_replace_renders_as_new_source_and_bake_is_noop_for_render() {
 /// appended directly into the chain (in v1 a batch without a bake did not sound — defect D1).
 #[test]
 fn t36_effect_batch_is_live() {
+    kt_plugins_builtin::install();
     let gain = FxInstance::gain(6.0);
     let mut p = project_with_clip(MediaId(1), Tick(0), vec![]);
     p.morphers.push(MorpherEvent {

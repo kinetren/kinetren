@@ -2081,6 +2081,7 @@ fn t669_generator_thumbs_follow_the_event_address() {
 /// (3) the instance’s menu reaches BOTH windows — the consumer’s and the author’s.
 #[test]
 fn t682_publishing_is_reachable_from_inside_a_reel_only() {
+    crate::plugins::install();
     use crate::i18n::{k, tr};
     use crate::layout_tests::harness_news_template;
     use egui_kittest::kittest::Queryable;
@@ -2185,7 +2186,7 @@ fn t682_publishing_is_reachable_from_inside_a_reel_only() {
         assert!(
             h.state_mut().apply(Command::SetFx {
                 id: root,
-                fx: vec![FxInstance::Gain { db: 0.0, pan: 0.0 }],
+                fx: vec![kt_model::FxInstance::plugin_with("gain", &[0.0, 0.0]).unwrap()],
             })
         );
         h.step();

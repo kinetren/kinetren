@@ -20,6 +20,7 @@ members = [
     # the built-in plugin families (plugin-api-stage1, D6): leaves of the crate graph (t975)
     "plugins/fx-video-color",
     "plugins/fx-audio-tone",
+    "plugins/fx-audio-dynamics",
 ]
 
 [workspace.package]
@@ -45,6 +46,7 @@ kt-gpu = { path = "libs/kt-gpu" }
 kt-plugins-builtin = { path = "libs/kt-plugins-builtin" }
 fx-video-color = { path = "plugins/fx-video-color" }
 fx-audio-tone = { path = "plugins/fx-audio-tone" }
+fx-audio-dynamics = { path = "plugins/fx-audio-dynamics" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

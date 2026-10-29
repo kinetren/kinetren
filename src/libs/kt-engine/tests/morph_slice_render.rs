@@ -146,6 +146,7 @@ fn render_frame(p: &Project, t: Tick) -> Vec<u8> {
 /// piece No. 0, it stuck out as a handle over the whole window, and the frame diverged.
 #[test]
 fn t237_transition_survives_slicing() {
+    kt_plugins_builtin::install();
     let mut sliced = base(ClipKind::Video);
     crossfade(&mut sliced);
     let mut m = layer(MorphPatch { absolute_source_in: Some(Tick(15_000)), ..Default::default() });
@@ -195,6 +196,7 @@ fn t237_transition_survives_slicing() {
 /// found by the same check.
 #[test]
 fn t237_audio_transition_survives_slicing() {
+    kt_plugins_builtin::install();
     let mut plain = base(ClipKind::Audio);
     crossfade(&mut plain);
     plain.validate().unwrap();
@@ -216,6 +218,7 @@ fn t237_audio_transition_survives_slicing() {
 /// gives the same sound, if the patch itself does not change the sound.
 #[test]
 fn t238_slicing_is_inaudible() {
+    kt_plugins_builtin::install();
     // a video patch does not cut the audio at all
     let mut p = base(ClipKind::Audio);
     let mut m = layer(MorphPatch {
@@ -248,6 +251,7 @@ fn t238_slicing_is_inaudible() {
 /// integral (t915 checks the numbers, t916 the render).
 #[test]
 fn t238_warped_clip_is_never_sliced() {
+    kt_plugins_builtin::install();
     let mut p = base(ClipKind::Audio);
     p.clips[0].fx = vec![FxInstance::slowed_reverb(0.8, 0.3, 60.0)];
     p.clips[0].fx_bypass = vec![false];
@@ -288,6 +292,7 @@ fn t238_warped_clip_is_never_sliced() {
 /// 3. an intermediate strength — exactly the linear mix of these two.
 #[test]
 fn t267_layer_strength_blends_only_the_layer() {
+    kt_plugins_builtin::install();
     let t = Tick(45_000); // the middle of the layer's window
     let own = FxInstance::Mirror { horizontal: true, vertical: false };
     let layer_fx = FxInstance::edges(24);
@@ -336,6 +341,7 @@ fn t267_layer_strength_blends_only_the_layer() {
 /// fully.
 #[test]
 fn t267b_layer_fades_are_the_strength_curve() {
+    kt_plugins_builtin::install();
     let scene = || {
         let mut p = base(ClipKind::Video);
         let mut m =
@@ -370,6 +376,7 @@ fn t267b_layer_fades_are_the_strength_curve() {
 /// the event's own effects.
 #[test]
 fn t268_layer_strength_blends_audio_too() {
+    kt_plugins_builtin::install();
     let scene = |strength: f64, layered: bool| {
         let mut p = base(ClipKind::Audio);
         // the event's OWN level: the layer's strength must preserve it
@@ -425,6 +432,7 @@ fn t268_layer_strength_blends_audio_too() {
 /// for a plain split (S) of such an event, a property of the per-chunk speed, not of the layer.
 #[test]
 fn t916_warped_cut_is_neither_heard_nor_seen_outside_the_window() {
+    kt_plugins_builtin::install();
     let to_frames = |t: Tick| t.to_audio_frames() as usize * CH;
     // the layer of `layer()` covers [30 000, 60 000) of the first clip
     let (w0, w1) = (Tick(30_000), Tick(60_000));

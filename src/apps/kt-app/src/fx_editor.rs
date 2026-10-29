@@ -1351,7 +1351,6 @@ pub(crate) fn draw_auto_for(
 }
 pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
     match f {
-        FxInstance::Gain { .. } => "Gain",
         // layer strength is not a user effect: it is absent from the picker, while in the morpher strip
         // it is captioned “Strength” (R.38 item 12)
         FxInstance::LayerMix { .. } => "Layer mix",
@@ -1378,8 +1377,6 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Phaser { .. } => "Phaser",
         FxInstance::Delay { .. } => "Delay",
         FxInstance::Compressor { .. } => "Compressor",
-        FxInstance::Gate { .. } => "Gate",
-        FxInstance::Limiter { .. } => "Limiter",
         FxInstance::PitchShift { .. } => "Pitch Shift",
         FxInstance::ColorGrade { .. } => "Color Grade",
         FxInstance::Duotone { .. } => "Duotone",

@@ -71,6 +71,7 @@ fn seq(id: u64, name: &str, inner: Vec<ClipEvent>) -> Sequence {
 
 #[test]
 fn t423_cycle_is_refused_and_names_the_path() {
+    kt_plugins_builtin::install();
     // a reel placed inside itself
     let mut p = base();
     p.sequences.push(seq(100, "Intro", vec![clip(10, 100, Tick(0), LEN)]));
@@ -119,6 +120,7 @@ fn t423_cycle_is_refused_and_names_the_path() {
 
 #[test]
 fn t424_depth_is_capped_and_the_cap_names_the_sequence() {
+    kt_plugins_builtin::install();
     // a chain of MAX_NEST_DEPTH reels is legitimate
     let chain = |levels: u64| {
         let mut p = base();
@@ -158,6 +160,7 @@ fn t424_depth_is_capped_and_the_cap_names_the_sequence() {
 
 #[test]
 fn t425_document_wide_ids_and_closed_reels() {
+    kt_plugins_builtin::install();
     // a clip LOOKS INTO a reel — this is legitimate and is not an “unknown media”
     let mut p = base();
     p.sequences.push(seq(100, "Piece", vec![clip(10, 1, Tick(0), LEN)]));
@@ -241,6 +244,7 @@ fn t425_document_wide_ids_and_closed_reels() {
 /// exceptions with a reason).
 #[test]
 fn t426_sequence_does_not_lag_behind_the_root() {
+    kt_plugins_builtin::install();
     let p = Project::new(settings());
     let Project {
         // --- reel content: must be in Sequence too ---
@@ -360,6 +364,7 @@ fn joints(p: &Project) -> Vec<(i64, i64, i64)> {
 
 #[test]
 fn t427_collapse_then_expand_is_identity_in_one_undo_step() {
+    kt_plugins_builtin::install();
     let mut p = montage();
     // a crossfade INSIDE the future reel: it must move inside as a whole and
     // return to the same joint — otherwise “collapse, unfold” loses work
@@ -428,6 +433,7 @@ fn t427_collapse_then_expand_is_identity_in_one_undo_step() {
 
 #[test]
 fn t428_expand_drops_the_instance_chain_and_says_so() {
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(montage());
     let mut n = ops::NestCounters::of(m.project());
     let (cmds, rep) =
@@ -438,7 +444,7 @@ fn t428_expand_drops_the_instance_chain_and_says_so() {
 
     // A CHAIN on a nesting is legitimate since wave B: it is applied to the ASSEMBLED
     // picture — this is why the nesting was introduced
-    m.apply(Command::SetFx { id: inst, fx: vec![FxInstance::Gain { db: 3.0, pan: 0.0 }] })
+    m.apply(Command::SetFx { id: inst, fx: vec![kt_model::FxInstance::plugin_with("gain", &[3.0, 0.0]).unwrap()] })
         .expect("a chain on a nested reel is legal");
     m.apply(Command::SetOpacity { id: inst, opacity: 0.5 }).expect("nesting level is legal");
     // ...AND REVERSE WITH STRETCHING TOO (R.55, C4).
@@ -481,6 +487,7 @@ fn t428_expand_drops_the_instance_chain_and_says_so() {
 
 #[test]
 fn t429_a_used_sequence_refuses_to_leave() {
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(montage());
     let mut n = ops::NestCounters::of(m.project());
     let (cmds, rep) =
@@ -528,6 +535,7 @@ fn t429_a_used_sequence_refuses_to_leave() {
 
 #[test]
 fn t430_outer_transition_is_rehung_and_media_is_held_by_the_whole_tree() {
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(montage());
     // a crossfade between OUTSIDE (10) and the one that will move inside (11)
     m.apply(Command::AddTransition(TransitionEvent {
@@ -591,6 +599,7 @@ fn with_reel() -> (TimelineModel, MediaId) {
 
 #[test]
 fn t453_commands_edit_the_reel_you_are_standing_in() {
+    kt_plugins_builtin::install();
     let (mut m, seq) = with_reel();
     let root_before: Vec<i64> = m.document().clips.iter().map(|c| c.start.0).collect();
 
@@ -638,6 +647,7 @@ fn t453_commands_edit_the_reel_you_are_standing_in() {
 
 #[test]
 fn t454_undo_takes_you_back_to_where_the_edit_was() {
+    kt_plugins_builtin::install();
     let (mut m, seq) = with_reel();
     // an edit OUTSIDE
     m.apply(Command::MoveClip { id: ClipId(1), new_start: Tick(LEN.0 * 9), new_lane: 0 }).unwrap();
@@ -673,6 +683,7 @@ fn t454_undo_takes_you_back_to_where_the_edit_was() {
 
 #[test]
 fn t455_editing_context_survives_and_yields() {
+    kt_plugins_builtin::install();
     let (mut m, seq) = with_reel();
     m.set_editing(Some(seq));
 
@@ -715,6 +726,7 @@ fn t455_editing_context_survives_and_yields() {
 /// The test asserts the CONSEQUENCE: the set of covered events, not the presence of a field.
 #[test]
 fn t557_a_layer_inside_covers_what_it_covered_outside() {
+    kt_plugins_builtin::install();
     let mut p = base();
     p.clips.push(clip(11, 1, Tick::ZERO, LEN));
     p.clips.push(clip(12, 1, LEN, LEN));
@@ -786,6 +798,7 @@ fn t557_a_layer_inside_covers_what_it_covered_outside() {
 /// it: `resolve_cam3d` with an empty list returns the default camera.
 #[test]
 fn t558_cameras_travel_into_the_sequence() {
+    kt_plugins_builtin::install();
     let mut p = base();
     p.clips.push(clip(11, 1, Tick::ZERO, LEN));
     p.clips.push(clip(12, 1, LEN, LEN));
@@ -837,6 +850,7 @@ fn t558_cameras_travel_into_the_sequence() {
 /// an English error in the status bar.
 #[test]
 fn t559_collapsing_under_an_area_layer_is_possible() {
+    kt_plugins_builtin::install();
     let mut p = base();
     p.clips.push(clip(11, 1, Tick::ZERO, LEN));
     p.clips.push(clip(12, 1, LEN, LEN));
@@ -956,6 +970,7 @@ fn expandable() -> Project {
 /// Red here means the design is wrong, not that the test is picky.
 #[test]
 fn t566_expanding_and_collapsing_a_band_is_identity() {
+    kt_plugins_builtin::install();
     let before = expandable();
     let b = Band::of(&before, ClipId(20)).expect("band for an instance");
     assert_eq!(b.dt, Tick(LEN.0), "band shift computed wrongly");
@@ -996,6 +1011,7 @@ fn t566_expanding_and_collapsing_a_band_is_identity() {
 /// rather than “corrected afterwards”.
 #[test]
 fn t567_an_event_cannot_change_reels_inside_a_band() {
+    kt_plugins_builtin::install();
     let p0 = expandable();
     let b = Band::of(&p0, ClipId(20)).expect("band");
 
@@ -1054,6 +1070,7 @@ fn t567_an_event_cannot_change_reels_inside_a_band() {
 /// t566 must remain true.
 #[test]
 fn t568_inserting_and_removing_lanes_does_not_break_a_band() {
+    kt_plugins_builtin::install();
     // a root track BELOW the start of the band — the band moves down as a whole
     for (name, cmd) in [
         ("video track at the root", Command::InsertTrack { kind: LaneKind::Video, at: 0 }),
@@ -1096,6 +1113,7 @@ fn t568_inserting_and_removing_lanes_does_not_break_a_band() {
 /// lies in `document()`, not which functions were called.
 #[test]
 fn t569_an_edit_inside_a_band_lands_in_the_reel() {
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(expandable());
     assert!(m.expand_band(ClipId(20)));
     // an event of the BAND is visible in the working view — with the offset
@@ -1179,6 +1197,7 @@ fn foreign() -> Project {
 /// the media that is already ours was RECOGNIZED and not doubled.
 #[test]
 fn t574_a_foreign_project_is_inserted_as_a_composition() {
+    kt_plugins_builtin::install();
     let mut dst = base();
     dst.clips.push(clip(1, 1, Tick::ZERO, LEN));
     dst.validate().expect("an own project is legal");
@@ -1228,6 +1247,7 @@ fn t574_a_foreign_project_is_inserted_as_a_composition() {
 /// item 379).
 #[test]
 fn t575_imported_addresses_never_collide() {
+    kt_plugins_builtin::install();
     let mut dst = base();
     // DELIBERATELY the same numbers as the foreign project’s
     dst.clips.push(clip(1, 1, Tick::ZERO, LEN));
@@ -1276,6 +1296,7 @@ fn t575_imported_addresses_never_collide() {
 /// into the wrong reels, and silently.
 #[test]
 fn t591_the_bench_is_exempt_and_row_commands_are_refused() {
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(expandable());
     assert!(m.expand_band(ClipId(20)), "the strip did not expand");
 
@@ -1318,6 +1339,7 @@ fn t591_the_bench_is_exempt_and_row_commands_are_refused() {
 /// and an event on it silently drifted into the root.
 #[test]
 fn t592_a_lane_at_the_band_tail_belongs_to_the_band() {
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(expandable());
     assert!(m.expand_band(ClipId(20)));
     let base = m.bands()[0].base.video;
@@ -1346,6 +1368,7 @@ fn t592_a_lane_at_the_band_tail_belongs_to_the_band() {
 /// and the reel itself is no longer in the list — otherwise it would refer to itself.
 #[test]
 fn t598_reel_as_root_is_a_valid_document() {
+    kt_plugins_builtin::install();
     let p = expandable();
     let seq = MediaId(100);
     let inner = p.sequence(seq).unwrap().clips.iter().map(|c| c.id).collect::<Vec<_>>();
@@ -1375,6 +1398,7 @@ fn t598_reel_as_root_is_a_valid_document() {
 /// the identity of the working view; the undo snapshot carries both the context and the band.
 #[test]
 fn t635_a_band_inside_an_entered_reel_counts_from_that_reel() {
+    kt_plugins_builtin::install();
     let mut p = base();
     p.ensure_tracks(LaneKind::Video, 1);
     p.ensure_tracks(LaneKind::Audio, 1);
@@ -1453,6 +1477,7 @@ fn t635_a_band_inside_an_entered_reel_counts_from_that_reel() {
 /// undo; the default “as in the project” is not serialized.
 #[test]
 fn t723_reel_settings_command_and_validation() {
+    kt_plugins_builtin::install();
     let mut p = Project::new(settings());
     p.sequences.push(Sequence::new(MediaId(100), "Square"));
     p.validate().unwrap();

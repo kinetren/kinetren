@@ -363,6 +363,7 @@ mod tests {
     /// library (both sides live in the patch).
     #[test]
     fn t347_preset_compatibility_comes_from_the_registry() {
+        crate::plugins::install();
         let mut store = FxPresetStore::default();
         let block = |fx: Vec<kt_model::FxInstance>| kt_model::ops::FxChainBlock {
             slots: fx

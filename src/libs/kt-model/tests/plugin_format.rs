@@ -44,6 +44,14 @@ enum Frozen {
         #[serde(skip_serializing_if = "is_one")]
         mix: f32,
     },
+    /// The dynamics family before stage 3 (`Gain.db` had no serde default: a file always wrote it).
+    Gain {
+        db: f32,
+        #[serde(skip_serializing_if = "is_zero")]
+        pan: f32,
+    },
+    Gate { threshold_db: f32, attack_ms: f32, hold_ms: f32, release_ms: f32 },
+    Limiter { threshold_db: f32, ceiling_db: f32, lookahead_ms: f32, release_ms: f32 },
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -64,6 +72,10 @@ fn empty_reads() -> Vec<(&'static str, String)> {
         (r#"{"kind":"distortion"}"#, frozen(Frozen::Distortion { drive_db: 12.0, tone: 0.5, mix: 1.0 })),
         (r#"{"kind":"bitcrusher"}"#, frozen(Frozen::Bitcrusher { bits: 8.0, rate_hz: 12000.0, mix: 1.0 })),
         (r#"{"kind":"stereo_width"}"#, frozen(Frozen::StereoWidth { width: 1.0 })),
+        (r#"{"kind":"gate"}"#, frozen(Frozen::Gate { threshold_db: -40.0, attack_ms: 1.0, hold_ms: 40.0, release_ms: 100.0 })),
+        (r#"{"kind":"limiter"}"#, frozen(Frozen::Limiter { threshold_db: -6.0, ceiling_db: -0.3, lookahead_ms: 5.0, release_ms: 80.0 })),
+        // a file without `pan` read 0 (`#[serde(default)]`)
+        (r#"{"kind":"gain","db":-3.0}"#, frozen(Frozen::Gain { db: -3.0, pan: 0.0 })),
     ]
 }
 
@@ -98,6 +110,22 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
             frozen(Frozen::Distortion { drive_db: 30.0, tone: 0.25, mix: 0.6 }),
         ),
         (FxInstance::bitcrusher(), frozen(Frozen::Bitcrusher { bits: 8.0, rate_hz: 12000.0, mix: 1.0 })),
+        (FxInstance::gain(0.0), frozen(Frozen::Gain { db: 0.0, pan: 0.0 })),
+        (FxInstance::gain(-7.25), frozen(Frozen::Gain { db: -7.25, pan: 0.0 })),
+        (
+            FxInstance::plugin_with("gain", &[2.0, -0.123456789]).unwrap(),
+            frozen(Frozen::Gain { db: 2.0, pan: -0.123456789 }),
+        ),
+        (FxInstance::gate(), frozen(Frozen::Gate { threshold_db: -40.0, attack_ms: 1.0, hold_ms: 40.0, release_ms: 100.0 })),
+        (
+            FxInstance::plugin_with("gate", &[-30.0, 0.5, 120.0, 250.0]).unwrap(),
+            frozen(Frozen::Gate { threshold_db: -30.0, attack_ms: 0.5, hold_ms: 120.0, release_ms: 250.0 }),
+        ),
+        (FxInstance::limiter(), frozen(Frozen::Limiter { threshold_db: -6.0, ceiling_db: -0.3, lookahead_ms: 5.0, release_ms: 80.0 })),
+        (
+            FxInstance::plugin_with("limiter", &[-12.0, -1.0, 12.5, 200.0]).unwrap(),
+            frozen(Frozen::Limiter { threshold_db: -12.0, ceiling_db: -1.0, lookahead_ms: 12.5, release_ms: 200.0 }),
+        ),
         (
             FxInstance::plugin_with("bitcrusher", &[3.5, 4410.0, 0.5]).unwrap(),
             frozen(Frozen::Bitcrusher { bits: 3.5, rate_hz: 4410.0, mix: 0.5 }),

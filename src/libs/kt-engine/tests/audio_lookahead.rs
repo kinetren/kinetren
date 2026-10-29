@@ -21,7 +21,7 @@ const DUR: i64 = 48_000 * 2;
 /// identically 1.0 on a signal below unity, and only the shift (if any) remains.
 /// This property is exactly why the test exists.
 fn limiter_linear() -> FxInstance {
-    FxInstance::Limiter { threshold_db: 0.0, ceiling_db: 0.0, lookahead_ms: 5.0, release_ms: 80.0 }
+    kt_model::FxInstance::plugin_with("limiter", &[0.0, 0.0, 5.0, 80.0]).unwrap()
 }
 
 fn project(fx: Vec<FxInstance>, pattern: &str) -> Project {
@@ -117,6 +117,7 @@ fn peak(s: &[f32]) -> f32 {
 /// chunk in `produce` — the output drifts by 240 frames, the test turns red.)
 #[test]
 fn t334_lookahead_does_not_shift_the_output() {
+    kt_plugins_builtin::install();
     let dry = render(vec![], AudioPattern::Clicks, 0);
     let lim = render(vec![limiter_linear()], AudioPattern::Clicks, 0);
     assert_eq!(dry.len(), lim.len());
@@ -170,12 +171,8 @@ fn t334_lookahead_does_not_shift_the_output() {
 /// the tail.
 #[test]
 fn t335_limiter_ceiling_and_no_tail_growth() {
-    let lim = FxInstance::Limiter {
-        threshold_db: -12.0,
-        ceiling_db: -6.0,
-        lookahead_ms: 5.0,
-        release_ms: 200.0,
-    };
+    kt_plugins_builtin::install();
+    let lim = kt_model::FxInstance::plugin_with("limiter", &[-12.0, -6.0, 5.0, 200.0]).unwrap();
     let la = (5.0 / 1000.0 * 48_000.0) as usize;
     let out = render(vec![lim.clone()], AudioPattern::Clicks, 0);
     let ceiling = 10f32.powf(-6.0 / 20.0);
@@ -264,6 +261,7 @@ impl AudioFetcher for Recording {
 /// (Red-proof: remove `+ chain_lookahead` from `chain_source_window_ext`.)
 #[test]
 fn t336_prefetch_window_covers_the_lookahead() {
+    kt_plugins_builtin::install();
     let p = project(vec![FxInstance::limiter()], "synth:clicks");
     let r = AudioRenderer::new(&p);
     let mut store = FxStateStore::new();
@@ -348,15 +346,11 @@ impl AudioFetcher for Spliced {
 /// is 220 Hz everywhere; any frame where they differ is foreign material.
 #[test]
 fn t909_limiter_at_a_wrap_plays_the_region_head() {
+    kt_plugins_builtin::install();
     let start = 12_000i64;
     let span = 30_000i64;
     let region = start..start + span;
-    let fx = vec![FxInstance::Limiter {
-        threshold_db: -6.0,
-        ceiling_db: -6.0,
-        lookahead_ms: 5.0,
-        release_ms: 80.0,
-    }];
+    let fx = vec![kt_model::FxInstance::plugin_with("limiter", &[-6.0, -6.0, 5.0, 80.0]).unwrap()];
     let run = |split: i64| -> Vec<f32> {
         let p = project(fx.clone(), "synth:clicks");
         let r = AudioRenderer::new(&p);

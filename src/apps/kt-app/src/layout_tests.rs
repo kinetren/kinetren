@@ -3346,6 +3346,7 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
 /// independent windows, each with its own “Cancel” button.
 #[test]
 fn t219_one_window_for_the_whole_link_group() {
+    crate::plugins::install();
     use kt_model::*;
     let mut h = harness();
     let app = h.state_mut();
@@ -3414,7 +3415,7 @@ fn t219_one_window_for_the_whole_link_group() {
         "the video chain did not roll back"
     );
     assert!(
-        matches!(app.model.clip(ClipId(2)).unwrap().fx.as_slice(), [FxInstance::Gain { .. }]),
+        matches!(app.model.clip(ClipId(2)).unwrap().fx.as_slice(), [g] if g.tag() == "gain"),
         "the audio chain did not roll back — the window drove only the anchor"
     );
     h.step();
@@ -6905,6 +6906,7 @@ fn t242_morph_editor_shows_target_mode_and_timing() {
 /// opens a layer on top.
 #[test]
 fn t244_morpher_has_one_chain_with_pinned_head() {
+    crate::plugins::install();
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let mut h = harness();
@@ -14308,6 +14310,7 @@ fn t743_track_window_is_one_undo_step_and_gives_focus_back() {
 /// but it sounds different” and would look for a defect in the engine.
 #[test]
 fn t744_track_chain_is_the_same_strip_and_refuses_curves_aloud() {
+    crate::plugins::install();
     use egui_kittest::kittest::Queryable;
     use kt_model::{FxInstance, LaneKind::Audio, ParamCurve};
     let (mut h, _) = harness_three_clips_dt(None);
@@ -14352,7 +14355,7 @@ fn t744_track_chain_is_the_same_strip_and_refuses_curves_aloud() {
     let t = h.state().model.project().track(id).unwrap().clone();
     assert_eq!(t.fx.len(), 1, "effect did not reach the track chain");
     assert!(
-        matches!(t.fx[0], FxInstance::Gain { .. }),
+        t.fx[0].tag() == "gain",
         "the wrong effect got into the track chain: {:?}",
         t.fx[0]
     );

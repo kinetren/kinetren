@@ -163,7 +163,6 @@ pub fn chain_lookahead(fx: &[FxInstance], auto: &AutoProfiles) -> i64 {
     fx.iter()
         .enumerate()
         .map(|(slot, f)| match f {
-            FxInstance::Limiter { lookahead_ms, .. } => nodes::limiter_la_frames(*lookahead_ms),
             // for pitch, the neutral depends on the CURVES: a “zero” base is not
             // neutral while a live curve is present
             FxInstance::PitchShift { semitones, cents } => {
@@ -526,9 +525,6 @@ impl ClipProcessor {
         if &self.auto != auto {
             self.auto = auto.clone();
             for (slot, node) in &mut self.nodes {
-                if let AudioNode::Gain(g) = node {
-                    g.bind_curves(&self.auto, *slot);
-                }
                 node.bind_lfo(&self.auto, *slot, self.clip_len);
             }
             // the neutral of a lookahead node may depend on the curves
@@ -635,9 +631,6 @@ impl ClipProcessor {
                 node.set_engine(self.opts.pitch_engine);
             }
             node.apply(&fx[*slot], structural);
-            if let AudioNode::Gain(g) = node {
-                g.bind_curves(&self.auto, *slot);
-            }
             node.bind_lfo(&self.auto, *slot, self.clip_len);
         }
         self.recompute_lookahead();

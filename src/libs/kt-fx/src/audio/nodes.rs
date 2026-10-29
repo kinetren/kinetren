@@ -201,7 +201,6 @@ use kt_model::{AutoProfiles, FxInstance};
 /// - a node must survive `seam` (the state lives on) and ring out on zero input
 ///   in the tail (`tail()` > 0 ⇒ the tail is honest).
 pub enum AudioNode {
-    Gain(GainNode),
     /// Layer-strength marker: the dry-side snapshot and the blend are executed by
     /// `produce()` — the node needs an inter-node buffer, which it does not own.
     LayerMix,
@@ -215,8 +214,6 @@ pub enum AudioNode {
     Phaser(Box<PhaserNode>),
     Delay(Box<DelayNode>),
     Compressor(CompNode),
-    Gate(GateNode),
-    Limiter(Box<LimiterNode>),
     Pitch(Box<PitchNode>),
     /// An audio plugin's state (plugin-api-stage1, D2a): one dynamic call per chunk.
     Plugin(Box<dyn kt_plugin_api::AudioState>),
@@ -279,7 +276,6 @@ impl AudioNode {
             return Some(AudioNode::Plugin(k.build(&host_opts(engine))));
         }
         match fx {
-            FxInstance::Gain { .. } => Some(AudioNode::Gain(GainNode::new())),
             FxInstance::LayerMix { .. } => Some(AudioNode::LayerMix),
             FxInstance::SlowedReverb { .. } => Some(AudioNode::Reverb(ReverbNode::new())),
             FxInstance::Filter { .. } => Some(AudioNode::Filter(Box::new(FilterNode::new()))),
@@ -291,8 +287,6 @@ impl AudioNode {
             FxInstance::Phaser { .. } => Some(AudioNode::Phaser(Box::new(PhaserNode::new()))),
             FxInstance::Delay { .. } => Some(AudioNode::Delay(Box::new(DelayNode::new()))),
             FxInstance::Compressor { .. } => Some(AudioNode::Compressor(CompNode::new())),
-            FxInstance::Gate { .. } => Some(AudioNode::Gate(GateNode::new())),
-            FxInstance::Limiter { .. } => Some(AudioNode::Limiter(Box::new(LimiterNode::new()))),
             FxInstance::PitchShift { .. } => Some(AudioNode::Pitch(Box::new(PitchNode::new()))),
             _ => None,
         }
@@ -309,7 +303,6 @@ impl AudioNode {
     pub(crate) fn apply(&mut self, fx: &FxInstance, structural: bool) {
         match (self, fx) {
             (AudioNode::Plugin(n), FxInstance::Plugin(p)) => n.apply(&p.values, structural),
-            (AudioNode::Gain(n), FxInstance::Gain { db, pan }) => n.apply(*db, *pan),
             (AudioNode::LayerMix, FxInstance::LayerMix { .. }) => {}
             (AudioNode::Reverb(n), FxInstance::SlowedReverb { .. }) => n.apply(fx, structural),
             (AudioNode::Filter(n), FxInstance::Filter { mode, cutoff_hz, resonance }) => {
@@ -341,14 +334,6 @@ impl AudioNode {
                 AudioNode::Compressor(n),
                 FxInstance::Compressor { threshold_db, ratio, attack_ms, release_ms, makeup_db, .. },
             ) => n.apply(*threshold_db, *ratio, *attack_ms, *release_ms, *makeup_db),
-            (
-                AudioNode::Gate(n),
-                FxInstance::Gate { threshold_db, attack_ms, hold_ms, release_ms },
-            ) => n.apply(*threshold_db, *attack_ms, *hold_ms, *release_ms),
-            (
-                AudioNode::Limiter(n),
-                FxInstance::Limiter { threshold_db, ceiling_db, lookahead_ms, release_ms },
-            ) => n.apply(*threshold_db, *ceiling_db, *lookahead_ms, *release_ms, structural),
             // the pitch engine — a PROJECT setting: it does not come from the slot,
             // but from ChainOpts (see ClipProcessor::new_with_opts)
             (AudioNode::Pitch(n), FxInstance::PitchShift { semitones, cents }) => {
@@ -364,13 +349,11 @@ impl AudioNode {
     pub(crate) fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
         match self {
             AudioNode::Plugin(n) => n.set_targets(&SlotView { auto, slot }, s),
-            AudioNode::Gain(n) => n.set_targets(auto, slot, s),
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.set_targets(auto, slot, s),
             AudioNode::Filter(n) => n.set_targets(auto, slot, s),
             AudioNode::Tremolo(n) => n.set_targets(auto, slot, s),
             AudioNode::AutoPan(n) => n.set_targets(auto, slot, s),
-            AudioNode::Limiter(n) => n.set_targets(auto, slot, s),
             // pitch reads curves BY GRAIN POSITION (bind), it does not need targets
             AudioNode::Pitch(_) => {}
             AudioNode::Vibrato(n) => n.set_targets(auto, slot, s),
@@ -379,7 +362,6 @@ impl AudioNode {
             AudioNode::Phaser(n) => n.set_targets(auto, slot, s),
             AudioNode::Delay(n) => n.set_targets(auto, slot, s),
             AudioNode::Compressor(n) => n.set_targets(auto, slot, s),
-            AudioNode::Gate(n) => n.set_targets(auto, slot, s),
         }
     }
 
@@ -411,7 +393,6 @@ impl AudioNode {
     /// within its own window.
     pub(crate) fn process(&mut self, buf: &mut [f32], _pos: i64, key: Option<&[f32]>) {
         match self {
-            AudioNode::Gain(n) => n.process(buf),
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.rv.process(buf),
             AudioNode::Filter(n) => n.process(buf),
@@ -423,8 +404,6 @@ impl AudioNode {
             AudioNode::Phaser(n) => n.process(buf, _pos),
             AudioNode::Delay(n) => n.process(buf),
             AudioNode::Compressor(n) => n.process(buf, key),
-            AudioNode::Gate(n) => n.process(buf),
-            AudioNode::Limiter(n) => n.process(buf),
             AudioNode::Pitch(n) => n.process(buf, _pos),
             AudioNode::Plugin(n) => n.process(buf, _pos, key),
         }
@@ -455,7 +434,6 @@ impl AudioNode {
 
     pub(crate) fn lookahead(&self) -> i64 {
         match self {
-            AudioNode::Limiter(n) => n.la,
             AudioNode::Pitch(n) => n.la,
             AudioNode::Plugin(n) => n.lookahead(),
             _ => 0,
@@ -477,7 +455,6 @@ impl AudioNode {
 
     pub(crate) fn reset(&mut self) {
         match self {
-            AudioNode::Gain(n) => n.reset(),
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.rv.reset(),
             AudioNode::Filter(n) => n.reset(),
@@ -489,112 +466,9 @@ impl AudioNode {
             AudioNode::Phaser(n) => n.reset(),
             AudioNode::Delay(n) => n.reset(),
             AudioNode::Compressor(n) => n.reset(),
-            AudioNode::Gate(n) => n.reset(),
-            AudioNode::Limiter(n) => n.reset(),
             AudioNode::Pitch(n) => n.reset(),
             AudioNode::Plugin(n) => n.reset(),
         }
-    }
-}
-
-/// Slot volume/balance. The constant path — the verbatim multipliers of the old
-/// code (GOLDEN_AUDIO relies on them); with curves — a SmoothedParam with targets at the
-/// chunk midpoint, a tick on every frame (the same loop order: first
-/// volume per frame, then balance per frame).
-pub struct GainNode {
-    static_gain: f32,
-    static_pan_l: f32,
-    static_pan_r: f32,
-    gain_auto: bool,
-    pan_auto: bool,
-    base_db: f64,
-    base_pan: f64,
-    auto_gain: SmoothedParam,
-    auto_pan_l: SmoothedParam,
-    auto_pan_r: SmoothedParam,
-}
-
-impl GainNode {
-    fn new() -> GainNode {
-        GainNode {
-            static_gain: 1.0,
-            static_pan_l: 1.0,
-            static_pan_r: 1.0,
-            gain_auto: false,
-            pan_auto: false,
-            base_db: 0.0,
-            base_pan: 0.0,
-            auto_gain: SmoothedParam::new(1.0),
-            auto_pan_l: SmoothedParam::new(1.0),
-            auto_pan_r: SmoothedParam::new(1.0),
-        }
-    }
-
-    fn apply(&mut self, db: f32, pan: f32) {
-        self.base_db = db as f64;
-        self.base_pan = pan as f64;
-        self.static_gain = 10f32.powf(db / 20.0);
-        // balance: linear law, at zero both multipliers are exactly 1.0 —
-        // the previous path byte-for-byte
-        let p = pan.clamp(-1.0, 1.0);
-        self.static_pan_l = (1.0 - p).min(1.0);
-        self.static_pan_r = (1.0 + p).min(1.0);
-    }
-
-    /// Whether the slot has curves — by the fact of the profiles (as gain_slots/pan_slots
-    /// were previously collected from non-empty points).
-    pub(crate) fn bind_curves(&mut self, auto: &AutoProfiles, slot: usize) {
-        self.gain_auto = !auto.points(slot, "db").is_empty();
-        self.pan_auto = !auto.points(slot, "pan").is_empty();
-    }
-
-    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
-        if self.gain_auto {
-            let db = auto.value(slot, "db", self.base_db, s);
-            self.auto_gain.set_target(10f32.powf(db as f32 / 20.0));
-        }
-        if self.pan_auto {
-            let p = auto.value(slot, "pan", self.base_pan, s).clamp(-1.0, 1.0) as f32;
-            self.auto_pan_l.set_target((1.0 - p).min(1.0));
-            self.auto_pan_r.set_target((1.0 + p).min(1.0));
-        }
-    }
-
-    fn process(&mut self, buf: &mut [f32]) {
-        if self.gain_auto {
-            for f in buf.chunks_exact_mut(CH) {
-                let g = self.auto_gain.tick();
-                for s in f.iter_mut() {
-                    *s *= g;
-                }
-            }
-        } else if self.static_gain != 1.0 {
-            for s in buf.iter_mut() {
-                *s *= self.static_gain;
-            }
-        }
-        if self.pan_auto {
-            for f in buf.chunks_exact_mut(CH) {
-                let (l, r) = (self.auto_pan_l.tick(), self.auto_pan_r.tick());
-                f[0] *= l;
-                if CH > 1 {
-                    f[1] *= r;
-                }
-            }
-        } else if self.static_pan_l != 1.0 || self.static_pan_r != 1.0 {
-            for f in buf.chunks_exact_mut(CH) {
-                f[0] *= self.static_pan_l;
-                if CH > 1 {
-                    f[1] *= self.static_pan_r;
-                }
-            }
-        }
-    }
-
-    fn reset(&mut self) {
-        self.auto_gain.reset_to_target();
-        self.auto_pan_l.reset_to_target();
-        self.auto_pan_r.reset_to_target();
     }
 }
 
@@ -1285,139 +1159,6 @@ impl CompNode {
     }
 }
 
-/// The length of the limiter’s lookahead window in frames (R.48, item 338). ONE home of the
-/// formula: both the node (the ring geometry) and the static
-/// `chain_lookahead` call it — they cannot diverge by construction.
-pub(crate) fn limiter_la_frames(lookahead_ms: f32) -> i64 {
-    (lookahead_ms.clamp(1.0, 20.0) as f64 / 1000.0 * 48_000.0).ceil() as i64
-}
-
-/// Look-ahead limiter (R.48, item 338). The ceiling is guaranteed ALGEBRAICALLY:
-/// the sliding-maximum window covers the material [t, t+La], including the output
-/// frame itself, so the reduction gets ahead of the peak and the attack is instant —
-/// there is no distortion artifact. The output is aligned with the chain input: the ring
-/// delays the signal by exactly La, which the processor subtracted from the position.
-pub struct LimiterNode {
-    threshold_db: SmoothedParam,
-    ceiling_db: SmoothedParam,
-    release_ms: f32,
-    /// Window geometry: changes ONLY on structural — a divergence from the
-    /// chain is caught by FxStateStore, which rebuilds the processor entirely.
-    la: i64,
-    /// Alignment ring (la frames × CH).
-    ring: Vec<f32>,
-    pos: usize,
-    /// Monotone queue of the sliding maximum of |x|: values decrease, at the front
-    /// the window maximum. O(1) per frame, amortized.
-    win: std::collections::VecDeque<(i64, f32)>,
-    /// How many frames have been fed into the window (the age of the elements).
-    fed: i64,
-    gain: f32,
-}
-
-impl LimiterNode {
-    fn new() -> LimiterNode {
-        LimiterNode {
-            threshold_db: SmoothedParam::with_ms(-6.0, 20.0),
-            ceiling_db: SmoothedParam::with_ms(-0.3, 20.0),
-            release_ms: 80.0,
-            la: 0,
-            ring: Vec::new(),
-            pos: 0,
-            win: std::collections::VecDeque::new(),
-            fed: 0,
-            gain: 1.0,
-        }
-    }
-
-    fn apply(&mut self, thr: f32, ceil: f32, lookahead_ms: f32, release: f32, structural: bool) {
-        self.threshold_db.set_target(thr.clamp(-60.0, 0.0));
-        self.ceiling_db.set_target(ceil.clamp(-24.0, 0.0));
-        self.release_ms = release.clamp(5.0, 1000.0);
-        let la = limiter_la_frames(lookahead_ms);
-        if structural || self.ring.is_empty() {
-            self.la = la;
-            self.ring = vec![0.0; la.max(1) as usize * CH];
-            self.pos = 0;
-            self.win.clear();
-            self.fed = 0;
-        }
-    }
-
-    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
-        self.threshold_db.set_target(auto.value(
-            slot,
-            "threshold_db",
-            self.threshold_db.target as f64,
-            s,
-        ) as f32);
-        self.ceiling_db
-            .set_target(auto.value(slot, "ceiling_db", self.ceiling_db.target as f64, s) as f32);
-        self.release_ms =
-            (auto.value(slot, "release_ms", self.release_ms as f64, s) as f32).clamp(5.0, 1000.0);
-    }
-
-    fn process(&mut self, buf: &mut [f32]) {
-        if self.la <= 0 {
-            return;
-        }
-        let rel_coef = 1.0 - (-1.0 / (self.release_ms / 1000.0 * 48_000.0)).exp();
-        for fr in buf.chunks_exact_mut(CH) {
-            let thr = 10f32.powf(self.threshold_db.tick() / 20.0);
-            let ceil = 10f32.powf(self.ceiling_db.tick() / 20.0);
-            // the INCOMING frame goes into the window (position t + La)
-            let peak = fr.iter().fold(0f32, |m, v| m.max(v.abs()));
-            while let Some(&(_, v)) = self.win.back() {
-                if v <= peak {
-                    self.win.pop_back();
-                } else {
-                    break;
-                }
-            }
-            self.win.push_back((self.fed, peak));
-            let cutoff = self.fed - self.la;
-            while let Some(&(age, _)) = self.win.front() {
-                if age < cutoff {
-                    self.win.pop_front();
-                } else {
-                    break;
-                }
-            }
-            self.fed += 1;
-            // the output — the frame delayed by La (position t)
-            for v in fr.iter_mut() {
-                std::mem::swap(&mut self.ring[self.pos], v);
-                self.pos += 1;
-            }
-            if self.pos >= self.ring.len() {
-                self.pos = 0;
-            }
-            // the maximum over [t, t+La] — including the output frame itself, therefore
-            // out = wmax * g ≤ ceiling strictly
-            let wmax = self.win.front().map(|&(_, v)| v).unwrap_or(0.0);
-            let target = (thr / wmax.max(thr)) * (ceil / thr);
-            if target < self.gain {
-                self.gain = target;
-            } else {
-                self.gain += (target - self.gain) * rel_coef;
-            }
-            for v in fr.iter_mut() {
-                *v *= self.gain;
-            }
-        }
-    }
-
-    fn reset(&mut self) {
-        self.ring.fill(0.0);
-        self.pos = 0;
-        self.win.clear();
-        self.fed = 0;
-        self.gain = 1.0;
-        self.threshold_db.reset_to_target();
-        self.ceiling_db.reset_to_target();
-    }
-}
-
 /// Pitch lookahead (R.48, item 339): a grain of a two-octave upshift reads the
 /// input four times faster than the output, and by the end of the grain it needs material
 /// `LG·4` frames ahead plus the WSOLA search window. The constant is ONE for both
@@ -1851,92 +1592,4 @@ fn hann(i: usize, n: usize) -> f32 {
     0.5 - 0.5 * x.cos()
 }
 
-/// Gate: a fast detector (~0.5 ms) + hysteresis −6 dB + hold counter
-/// (frames — survives the seam) + attack/release ramps.
-pub struct GateNode {
-    threshold_db: SmoothedParam,
-    attack_ms: f32,
-    release_ms: f32,
-    hold_frames: i64,
-    env: EnvFollower,
-    open: bool,
-    hold_left: i64,
-    gain: f32,
-}
-
-impl GateNode {
-    fn new() -> GateNode {
-        GateNode {
-            threshold_db: SmoothedParam::with_ms(-40.0, 20.0),
-            attack_ms: 1.0,
-            release_ms: 100.0,
-            hold_frames: (0.040 * 48_000.0) as i64,
-            env: EnvFollower::new(0.5, 0.5),
-            open: false,
-            hold_left: 0,
-            gain: 0.0,
-        }
-    }
-
-    fn apply(&mut self, thr: f32, att: f32, hold: f32, rel: f32) {
-        self.threshold_db.set_target(thr.clamp(-80.0, 0.0));
-        self.attack_ms = att.clamp(0.1, 50.0);
-        self.release_ms = rel.clamp(5.0, 1000.0);
-        self.hold_frames = ((hold.clamp(0.0, 500.0) / 1000.0) * 48_000.0) as i64;
-    }
-
-    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
-        self.threshold_db.set_target(auto.value(
-            slot,
-            "threshold_db",
-            self.threshold_db.target as f64,
-            s,
-        ) as f32);
-        self.attack_ms =
-            (auto.value(slot, "attack_ms", self.attack_ms as f64, s) as f32).clamp(0.1, 50.0);
-        self.release_ms =
-            (auto.value(slot, "release_ms", self.release_ms as f64, s) as f32).clamp(5.0, 1000.0);
-        let hold = auto.value(slot, "hold_ms", (self.hold_frames as f64) / 48.0, s) as f32;
-        self.hold_frames = ((hold.clamp(0.0, 500.0) / 1000.0) * 48_000.0) as i64;
-    }
-
-    fn process(&mut self, buf: &mut [f32]) {
-        let sr = AUDIO_SAMPLE_RATE as f32;
-        let att_step = 1.0 / (self.attack_ms / 1000.0 * sr).max(1.0);
-        let rel_step = 1.0 / (self.release_ms / 1000.0 * sr).max(1.0);
-        for fr in buf.chunks_exact_mut(CH) {
-            let thr_db = self.threshold_db.tick();
-            let open_thr = 10f32.powf(thr_db / 20.0);
-            // hysteresis: closing at 6 dB below opening
-            let close_thr = 10f32.powf((thr_db - 6.0) / 20.0);
-            let peak = fr.iter().fold(0f32, |m, s| m.max(s.abs()));
-            let env = self.env.tick(peak);
-            if env >= open_thr {
-                self.open = true;
-                self.hold_left = self.hold_frames;
-            } else if env < close_thr {
-                if self.hold_left > 0 {
-                    self.hold_left -= 1;
-                } else {
-                    self.open = false;
-                }
-            }
-            self.gain = if self.open {
-                (self.gain + att_step).min(1.0)
-            } else {
-                (self.gain - rel_step).max(0.0)
-            };
-            for s in fr.iter_mut() {
-                *s *= self.gain;
-            }
-        }
-    }
-
-    fn reset(&mut self) {
-        self.env.reset();
-        self.open = false;
-        self.hold_left = 0;
-        self.gain = 0.0;
-        self.threshold_db.reset_to_target();
-    }
-}
+// gain, gate, limiter moved into src/plugins/fx-audio-dynamics (plugin-api-stage1, stage 3)

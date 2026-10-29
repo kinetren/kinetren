@@ -18,3 +18,7 @@ thiserror = { workspace = true }
 # windows-build (design D6): MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH) for the atomic replace
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+# the built-in plugin set for the tests (plugin-api-stage1; dev only — t975)
+kt-plugins-builtin = { workspace = true }

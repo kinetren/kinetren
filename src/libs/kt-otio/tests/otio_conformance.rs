@@ -101,6 +101,7 @@ fn sample() -> Project {
 /// (the reference must keep metadata.kt — this is the contract of passthrough).
 #[test]
 fn t149_our_file_survives_reference_roundtrip() {
+    kt_plugins_builtin::install();
     if !gate() {
         return;
     }
@@ -141,6 +142,7 @@ otio.adapters.write_to_file(t, '{}')
 /// read back by the reference and checks the numbers itself (python asserts).
 #[test]
 fn t149_reference_built_timeline_reads_and_resaves() {
+    kt_plugins_builtin::install();
     if !gate() {
         return;
     }

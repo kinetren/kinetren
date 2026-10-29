@@ -65,6 +65,7 @@ fn mirror_h(f: &Frame) -> Vec<u8> {
 /// in EXACTLY one place (kt-fx), both backends ask it.
 #[test]
 fn t297_routing_single_legacy_multi_fused() {
+    kt_plugins_builtin::install();
     // R.62: Pan is abolished; the old kernel stayed with a single CamMotion, and the
     // “Geometry” node is ALWAYS fused (it has transparent margins)
     let cam = FxInstance::cam_motion();
@@ -102,6 +103,7 @@ fn t297_routing_single_legacy_multi_fused() {
 /// coincides with the step-by-step path where the latter is exact.
 #[test]
 fn t297b_grid_then_mirror_is_exact_permutation() {
+    kt_plugins_builtin::install();
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
     let mir = FxInstance::Mirror { horizontal: true, vertical: false };
     let fused = run(&[grid.clone(), mir]);
@@ -113,9 +115,10 @@ fn t297b_grid_then_mirror_is_exact_permutation() {
 /// (the GPU mirror skips it too — a divergence of segmentation is forbidden).
 #[test]
 fn t297c_audio_fx_inside_run_is_transparent() {
+    kt_plugins_builtin::install();
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
     let mir = FxInstance::Mirror { horizontal: true, vertical: false };
-    let gain = FxInstance::Gain { db: -6.0, pan: 0.0 };
+    let gain = kt_model::FxInstance::plugin_with("gain", &[-6.0, 0.0]).unwrap();
     let with_audio = run(&[grid.clone(), gain, mir.clone()]);
     let without = run(&[grid, mir]);
     assert_eq!(with_audio.rgba, without.rgba);
@@ -125,6 +128,7 @@ fn t297c_audio_fx_inside_run_is_transparent() {
 /// identity, the tap in integer coordinates is exact — the input byte-for-byte.
 #[test]
 fn t297d_double_mirror_fuses_to_identity() {
+    kt_plugins_builtin::install();
     let mir = FxInstance::Mirror { horizontal: true, vertical: false };
     let out = run(&[mir.clone(), mir]);
     assert_eq!(out.rgba, test_frame().rgba, "mirror∘mirror ≠ identity");
@@ -136,6 +140,7 @@ fn t297d_double_mirror_fuses_to_identity() {
 /// skipped by the composite — the semantics are kept).
 #[test]
 fn t297f_mirror_only_run_keeps_dims() {
+    kt_plugins_builtin::install();
     let mir = FxInstance::Mirror { horizontal: true, vertical: false };
     let src = Frame { w: 96, h: 54, rgba: vec![7u8; 96 * 54 * 4], has_alpha: false };
     let out = apply_video_chain(&[mir.clone(), mir], src, &ctx());
@@ -149,6 +154,7 @@ fn t297f_mirror_only_run_keeps_dims() {
 /// transparency without panic or garbage; without a camera — passthrough.
 #[test]
 fn t298_pan3d_cpu_edges() {
+    kt_plugins_builtin::install();
     use kt_fx::geom::Cam3d;
     let p3 = |rot_x: f64, scale: f64| FxInstance::Pan3d {
         pos_x: 0.0,
@@ -196,10 +202,11 @@ fn t298_pan3d_cpu_edges() {
 /// layer strength breaks it (since R.45 segmentation lives in plan_chain — item 311/t306).
 #[test]
 fn t297e_run_end_stops_at_barriers_only() {
+    kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
     let fx = vec![
         FxInstance::EventGrid { cols: 2, rows: 2, center: false },
-        FxInstance::Gain { db: 0.0, pan: 0.0 },
+        kt_model::FxInstance::plugin_with("gain", &[0.0, 0.0]).unwrap(),
         FxInstance::Mirror { horizontal: true, vertical: false },
         FxInstance::blur(8),
         FxInstance::EventGrid { cols: 3, rows: 3, center: false },
@@ -257,6 +264,7 @@ fn contrast(f: &Frame) -> f64 {
 /// old code (checked on commit K2 in a worktree — contrast 0.0).
 #[test]
 fn t296_net_identity_chain_preserves_detail() {
+    kt_plugins_builtin::install();
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
     let zoom2 = FxInstance::geometry_zoom(2.0);
     let out = apply_video_chain(&[grid, zoom2], checkerboard(), &ctx());
@@ -306,6 +314,7 @@ fn t296_net_identity_chain_preserves_detail() {
 /// (2 taps out of 4 columns).
 #[test]
 fn t296b_supersampling_tames_minification_noise() {
+    kt_plugins_builtin::install();
     let mut rgba = vec![0u8; (W * H * 4) as usize];
     for (p, px) in rgba.chunks_exact_mut(4).enumerate() {
         // deterministic “noise” — a multiplicative hash of the position
@@ -343,6 +352,7 @@ fn t296b_supersampling_tames_minification_noise() {
 /// Test 300 (item 309): the tap formula and the supersampling enabling threshold.
 #[test]
 fn t300_ss_taps_and_routing_boundary() {
+    kt_plugins_builtin::install();
     use kt_fx::geom::ss_taps;
     // quantum 1/32: enabled strictly when len > 1 + 1/64
     assert_eq!(ss_taps(1.0), 1);
@@ -379,6 +389,7 @@ fn t300_ss_taps_and_routing_boundary() {
 #[test]
 #[ignore]
 fn bench_geom_1080p() {
+    kt_plugins_builtin::install();
     use kt_fx::geom::Cam3d;
     use std::time::Instant;
     let (bw, bh) = (1920u32, 1080u32);
@@ -462,6 +473,7 @@ fn bench_geom_1080p() {
 #[test]
 #[ignore]
 fn bench_fx_1080p() {
+    kt_plugins_builtin::install();
     use std::time::Instant;
     let (bw, bh) = (1920u32, 1080u32);
     let mut rgba = vec![0u8; (bw * bh * 4) as usize];
@@ -533,10 +545,11 @@ fn bench_fx_1080p() {
 /// stops — the pictures must match).
 #[test]
 fn t306_chain_plan_segmentation() {
+    kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
     let mir = FxInstance::Mirror { horizontal: true, vertical: false };
-    let gain = FxInstance::Gain { db: 0.0, pan: 0.0 };
+    let gain = kt_model::FxInstance::plugin_with("gain", &[0.0, 0.0]).unwrap();
     let blur = FxInstance::blur(8);
 
     // run (grid + transparent audio + mirror), barrier, run
@@ -578,6 +591,7 @@ fn t306_chain_plan_segmentation() {
 /// is deterministic and pinned to the grid of ITS OWN step (it zooms with the picture).
 #[test]
 fn t305_pointwise_inside_run() {
+    kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
     let zoom2 = FxInstance::geometry_zoom(2.0);
@@ -667,6 +681,7 @@ fn t305_pointwise_inside_run() {
 /// decisions on interpolated luma legitimately flip).
 #[test]
 fn t303_barrier_kernels_res_invariant() {
+    kt_plugins_builtin::install();
     use kt_fx::video::{FxScratch, apply_barrier, fit_into};
     // Measurement (K=2 and K=4, frame t26): worst mean 1.04 (vhs), worst p99 24
     // (vhs K=2); thresholds ×2.
@@ -860,6 +875,7 @@ fn t303_barrier_kernels_res_invariant() {
 /// (red-proof run on this same tree before the commit of item 314).
 #[test]
 fn t302_barrier_no_longer_kills_detail() {
+    kt_plugins_builtin::install();
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
     let vhs0 = FxInstance::Vhs { rgb_shift: 0, bleed: 0.0, scan_step: 0, jitter: 0.0 };
     let zoom2 = FxInstance::geometry_zoom(2.0);
@@ -873,6 +889,7 @@ fn t302_barrier_no_longer_kills_detail() {
 /// zoom — K>1; neighbouring barriers share one K; a strength slot breaks it.
 #[test]
 fn t304_k_only_with_squeeze_and_zoom() {
+    kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
     let vhs = FxInstance::vhs(4, 0.4);
@@ -923,6 +940,7 @@ fn t304_k_only_with_squeeze_and_zoom() {
 /// (there was no resample before it) is computed directly at S×.
 #[test]
 fn t308_in_scale_feeds_the_squeeze_budget() {
+    kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
     let vhs = FxInstance::vhs(4, 0.4);
@@ -957,6 +975,7 @@ fn t308_in_scale_feeds_the_squeeze_budget() {
 /// before R.46 (a latent defect of R.45). Rule: Legacy only when k_in==k_out.
 #[test]
 fn t308b_mirror_run_between_k_segments() {
+    kt_plugins_builtin::install();
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
     let vhs = FxInstance::vhs(4, 0.4);
     let mir = FxInstance::Mirror { horizontal: true, vertical: false };
@@ -1077,6 +1096,7 @@ fn t330_new_pointwise_absorb_and_meaning() {
 /// in a series with geo CornerPin stays ONE run.
 #[test]
 fn t331_corner_pin() {
+    kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
     // (1) default: identity byte-for-byte, alpha is not declared
     let out = run(&[FxInstance::corner_pin()]);
@@ -1192,6 +1212,7 @@ fn t331_corner_pin() {
 /// Test 332 (R.47 Kv3): the meaning of six barriers + the alpha contract of the shadow.
 #[test]
 fn t332_barrier_semantics() {
+    kt_plugins_builtin::install();
     use kt_fx::video::{FxScratch, apply_barrier};
     let mut scratch = FxScratch::default();
 
@@ -1311,6 +1332,7 @@ fn t332_barrier_semantics() {
 /// determinism; a series of warps — one run.
 #[test]
 fn t333_warp_prims() {
+    kt_plugins_builtin::install();
     use kt_fx::geom::SsSpec;
     use kt_fx::plan::{PlanOp, plan_chain};
     let src = test_frame();
@@ -1457,6 +1479,7 @@ fn t333_warp_prims() {
 /// OPAQUE rectangle.
 #[test]
 fn t519_alpha_rule_folds_produces_and_destroys() {
+    kt_plugins_builtin::install();
     use kt_fx::geom::build_geom_exec;
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
     let gs = FxInstance::Greenscreen {
@@ -1494,6 +1517,7 @@ fn t519_alpha_rule_folds_produces_and_destroys() {
 /// half passes the grid and stays transparent where it was.
 #[test]
 fn t520_grid_keeps_transparent_pixels_transparent() {
+    kt_plugins_builtin::install();
     let mut f = test_frame();
     f.has_alpha = true;
     for y in 0..H {
@@ -1523,6 +1547,7 @@ fn t520_grid_keeps_transparent_pixels_transparent() {
 /// transparent black area does not darken after blurring.
 #[test]
 fn t522_blur_of_an_alpha_frame_has_no_dark_halo() {
+    kt_plugins_builtin::install();
     // a white opaque stripe in a black TRANSPARENT field
     let mut f = Frame { w: W, h: H, rgba: vec![0u8; (W * H * 4) as usize], has_alpha: true };
     for y in 0..H {
@@ -1560,6 +1585,7 @@ fn t522_blur_of_an_alpha_frame_has_no_dark_halo() {
 /// alpha exists.
 #[test]
 fn t523_opaque_frames_are_byte_identical() {
+    kt_plugins_builtin::install();
     for fx in [
         FxInstance::blur(8),
         FxInstance::blur(24),

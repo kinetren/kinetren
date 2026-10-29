@@ -148,6 +148,7 @@ fn sources() -> DirectFetcher {
 /// check of the internals, not of what is heard.
 #[test]
 fn t769_music_ducks_under_speech_live() {
+    kt_plugins_builtin::install();
     let (p, _, _) = scene(true);
     let out = stream(&p, &mut sources(), 12);
     let (p_plain, _, _) = scene(false);
@@ -178,6 +179,7 @@ fn t769_music_ducks_under_speech_live() {
 /// Test 770 (R.65): the order of stages by key, alignment, determinism.
 #[test]
 fn t770_stage_order_alignment_and_determinism() {
+    kt_plugins_builtin::install();
     // a key BELOW the target by rank (speech — track 1, music — 0): the order
     // must be determined by dependency, not by the row's rank
     let (mut p, _, _speech) = scene(true);
@@ -232,6 +234,7 @@ fn t770_stage_order_alignment_and_determinism() {
 /// Test 771 (R.65): a dead and a muted key.
 #[test]
 fn t771_dead_and_muted_key() {
+    kt_plugins_builtin::install();
     // --- DEAD KEY: there is no track with such an id -------------------------
     let (mut p, _, _) = scene(false);
     p.track_at_mut(A, 0).unwrap().fx = vec![ducker(Some(TrackId(9999)))];
@@ -272,6 +275,7 @@ fn t771_dead_and_muted_key() {
 /// Test 778 (R.65): the cost of the key branch is measured, not declared.
 #[test]
 fn t778_key_branch_cost_is_measured() {
+    kt_plugins_builtin::install();
     let (p_key, _, _) = scene(true);
     let (p_plain, _, _) = scene(false);
     let run = |p: &Project| {

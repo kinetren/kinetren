@@ -127,6 +127,7 @@ fn spectrum_db(samples: &[f32]) -> Vec<f32> {
 
 #[test]
 fn t4_slowed_halves_pitch_without_artifacts() {
+    kt_plugins_builtin::install();
     let dur = 5 * AUDIO_SAMPLE_RATE as i64; // 5 c
     let p = fx_project(vec![FxInstance::slowed_reverb(0.5, 0.0, 140.0)], "synth:sine:440", dur);
     let r = AudioRenderer::new(&p);
@@ -163,6 +164,7 @@ fn t4_slowed_halves_pitch_without_artifacts() {
 
 #[test]
 fn t4_warp_consumes_source_at_rate() {
+    kt_plugins_builtin::install();
     // rate 0.5 on a clip of length D requires D/2 source frames: the ramp at the end of the
     // source window must reach exactly source_in + D*rate (± the resampler chunk).
     let dur = 4 * AUDIO_SAMPLE_RATE as i64;
@@ -190,6 +192,7 @@ fn t4_warp_consumes_source_at_rate() {
 
 #[test]
 fn t5_param_step_does_not_click() {
+    kt_plugins_builtin::install();
     let dur = 4 * AUDIO_SAMPLE_RATE as i64;
     let mk = |mix: f32| {
         fx_project(vec![FxInstance::slowed_reverb(1.0, mix, 140.0)], "synth:sine:220", dur)
@@ -230,6 +233,7 @@ fn t5_param_step_does_not_click() {
 
 #[test]
 fn t6_reverb_tail_rings_past_clip_end_and_decays() {
+    kt_plugins_builtin::install();
     let dur = AUDIO_SAMPLE_RATE as i64; // 1 c
     let p = fx_project(vec![FxInstance::slowed_reverb(1.0, 0.6, 140.0)], "synth:impulse", dur);
     let r = AudioRenderer::new(&p);
@@ -257,6 +261,7 @@ fn t6_reverb_tail_rings_past_clip_end_and_decays() {
 
 #[test]
 fn t6_graph_rebuild_mid_tail_preserves_state() {
+    kt_plugins_builtin::install();
     // Editing ANOTHER clip (rebuilding the AudioRenderer) in the middle of playback
     // must not interrupt or change the reverb (the old rebuildGraph killed the state).
     let dur = AUDIO_SAMPLE_RATE as i64;
@@ -337,6 +342,7 @@ fn window_freq_hz(out: &[f32], from_frame: usize, frames: usize) -> f64 {
 
 #[test]
 fn t4_automation_changes_rate_over_time() {
+    kt_plugins_builtin::install();
     // EVENT DOMAIN (R.37): kf.t is the position in the material, but the AXIS is linear, so
     // at output time τ exactly rate(τ) sounds. The checkpoints are taken
     // straight from the profile — the test no longer needs the map it guards.
@@ -392,6 +398,7 @@ fn automation_probe() -> &'static [(f64, f64)] {
 
 #[test]
 fn t4_automation_consumes_source_by_integral() {
+    kt_plugins_builtin::install();
     // “Dangling end”: at duration = src/avg_rate the source must be read
     // to the end (± the resampler delay), not to the avg fraction of a constant.
     let avg = kt_fx::avg_rate(1.0, automation_probe());
@@ -447,6 +454,7 @@ fn t4_automation_consumes_source_by_integral() {
 /// they diverge at τ=0.90.
 #[test]
 fn t31_keyframes_anchor_to_event_time() {
+    kt_plugins_builtin::install();
     let dur = 20 * AUDIO_SAMPLE_RATE as i64; // L, frames
     let profile_a: Vec<(f64, f64)> = vec![(0.40, 1.0), (0.50, 0.5), (0.70, 0.5), (0.75, 1.0)];
     let mut profile_b: Vec<(f64, f64)> = vec![(0.10, 1.0), (0.18, 2.0), (0.26, 2.0), (0.34, 1.0)];
@@ -538,6 +546,7 @@ fn t31_keyframes_anchor_to_event_time() {
 /// “automation of all parameters of all effects is needed”).
 #[test]
 fn t213_audio_gain_follows_its_curve() {
+    kt_plugins_builtin::install();
     let dur = 4 * AUDIO_SAMPLE_RATE as i64;
     let fx = vec![FxInstance::gain(0.0)];
     // volume curve: silence → 0 dB → silence, keys in material ticks
@@ -599,6 +608,7 @@ fn t213_audio_gain_follows_its_curve() {
 /// must sound the same.
 #[test]
 fn t213_legacy_slowed_automation_migrates_to_curves() {
+    kt_plugins_builtin::install();
     let dur = 20 * AUDIO_SAMPLE_RATE as i64;
     let mut p = fx_project(
         vec![FxInstance::SlowedReverb {
@@ -656,6 +666,7 @@ fn t213_legacy_slowed_automation_migrates_to_curves() {
 /// is really audible and is audible correctly.
 #[test]
 fn t229_new_audio_params() {
+    kt_plugins_builtin::install();
     let dur = 2 * AUDIO_SAMPLE_RATE as i64;
     let render = |fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>| -> Vec<f32> {
         let p = fx_project_auto(fx, auto, "synth:sine:440", dur);
@@ -679,13 +690,13 @@ fn t229_new_audio_params() {
     let flat = render(vec![FxInstance::gain(0.0)], vec![]);
     assert_eq!(
         flat,
-        render(vec![FxInstance::Gain { db: 0.0, pan: 0.0 }], vec![]),
+        render(vec![kt_model::FxInstance::plugin_with("gain", &[0.0, 0.0]).unwrap()], vec![]),
         "balance 0 — the old path is byte-for-byte"
     );
-    let left = render(vec![FxInstance::Gain { db: 0.0, pan: -1.0 }], vec![]);
+    let left = render(vec![kt_model::FxInstance::plugin_with("gain", &[0.0, -1.0]).unwrap()], vec![]);
     assert!(rms(&left, 1) < 1e-9, "full shift to the left mutes the right channel");
     assert!((rms(&left, 0) - rms(&flat, 0)).abs() < 1e-6, "the left channel is untouched");
-    let half = render(vec![FxInstance::Gain { db: 0.0, pan: 0.5 }], vec![]);
+    let half = render(vec![kt_model::FxInstance::plugin_with("gain", &[0.0, 0.5]).unwrap()], vec![]);
     assert!(
         (rms(&half, 0) / rms(&flat, 0) - 0.5).abs() < 0.01,
         "balance +0.5 must halve the left: {}",
@@ -702,7 +713,7 @@ fn t229_new_audio_params() {
         ]),
         source: Default::default(),
     }]];
-    let swept = render(vec![FxInstance::Gain { db: 0.0, pan: 0.0 }], curve);
+    let swept = render(vec![kt_model::FxInstance::plugin_with("gain", &[0.0, 0.0]).unwrap()], curve);
     let half_len = swept.len() / 2;
     let (l1, r1) = (rms(&swept[..half_len], 0), rms(&swept[..half_len], 1));
     let (l2, r2) = (rms(&swept[half_len..], 0), rms(&swept[half_len..], 1));
@@ -753,6 +764,7 @@ fn t229_new_audio_params() {
 /// GOLDEN_AUDIO: before, the reference was the only thing guarding it.
 #[test]
 fn t246_consumption_is_the_integral_over_event_time() {
+    kt_plugins_builtin::install();
     let dur = 10 * AUDIO_SAMPLE_RATE as i64;
     // ramp 1.0 → 2.0 exactly across the event: integral = average speed = 1.5
     let profile: Vec<(f64, f64)> = vec![(0.0, 1.0), (1.0, 2.0)];
@@ -802,6 +814,7 @@ fn t246_consumption_is_the_integral_over_event_time() {
 /// only GOLDEN_AUDIO guarded this half.
 #[test]
 fn t246_gain_curve_peaks_at_event_middle_under_warp() {
+    kt_plugins_builtin::install();
     let dur = 8 * AUDIO_SAMPLE_RATE as i64;
     let t = |frac: f64| Tick::from_audio_frames((dur as f64 * frac) as i64);
     // the clip is slowed by half; the volume is a triangle peaking in the MIDDLE
@@ -856,6 +869,7 @@ fn t246_gain_curve_peaks_at_event_middle_under_warp() {
 /// the RMS of the last quarter is ~0.
 #[test]
 fn t320_slot_order_is_honest_gain_before_reverb_fades_the_input() {
+    kt_plugins_builtin::install();
     let dur = 48_000 * 4;
     let p = fx_project_auto(
         vec![
@@ -914,6 +928,7 @@ fn t320_slot_order_is_honest_gain_before_reverb_fades_the_input() {
 /// the same multiplier; slicing into chunks does not change the float multiplication).
 #[test]
 fn t321_single_gain_is_exact_scalar_multiply() {
+    kt_plugins_builtin::install();
     let dur = 48_000;
     let dry = {
         let p = fx_project(vec![], "synth:ramp", dur);
@@ -949,6 +964,7 @@ fn t321_single_gain_is_exact_scalar_multiply() {
 /// only with curves (t320) — distortion proves it on constants.
 #[test]
 fn t323_slot_order_matters_on_nonlinear_chains() {
+    kt_plugins_builtin::install();
     let dur = 48_000;
     let render = |fx: Vec<FxInstance>| -> Vec<f32> {
         let p = fx_project(fx, "synth:sine:440", dur);

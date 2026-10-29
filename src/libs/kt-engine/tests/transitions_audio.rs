@@ -89,6 +89,7 @@ fn render(p: &Project, medias: &[u64], total: usize) -> (Vec<f32>, u64) {
 /// render-against-render is checked by the immutability of GOLDEN_AUDIO in t11).
 #[test]
 fn t136_converted_overlap_matches_old_crossfade_math() {
+    kt_plugins_builtin::install();
     // old world: A[0,12288) src 0, B[8192,20480) src 0 — overlap [8192,12288);
     // new world: C = 10240, A is trimmed to C, B: source_in += C − b0
     let mut p = project(vec![clip(1, 0, 10_240, 0, 1), clip(2, 10_240, 10_240, 2_048, 2)]);
@@ -129,6 +130,7 @@ fn t136_converted_overlap_matches_old_crossfade_math() {
 /// The weights and the handle material — exact per-frame math.
 #[test]
 fn t136_fade_math_and_handle_material() {
+    kt_plugins_builtin::install();
     // the joint at 10240, window [8192, 12288); the sources are distinguishable by their source_in's
     let mut p = project(vec![clip(1, 0, 10_240, 0, 1), clip(2, 10_240, 10_240, 50_000, 2)]);
     p.transitions.push(TransitionEvent {
@@ -174,6 +176,7 @@ fn t136_fade_math_and_handle_material() {
 /// A handle longer than the material: source_in = 0 for the incoming — silence without an underrun.
 #[test]
 fn t136_missing_left_handle_is_silent_without_underruns() {
+    kt_plugins_builtin::install();
     let mut p = project(vec![clip(1, 0, 10_240, 0, 1), clip(2, 10_240, 10_240, 0, 2)]);
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
@@ -202,6 +205,7 @@ fn t136_missing_left_handle_is_silent_without_underruns() {
 /// the FX path (a chain without warp) must read the handles the same way as the plain path.
 #[test]
 fn t136_fx_path_handles_match_plain() {
+    kt_plugins_builtin::install();
     let mk = |fx: Vec<FxInstance>| {
         let mut c1 = clip(1, 0, 10_240, 0, 1);
         c1.fx = fx;
@@ -231,6 +235,7 @@ fn t136_fx_path_handles_match_plain() {
 /// A reversed neighbor (plain): the handles continue the source's mirrored formula.
 #[test]
 fn t136_reversed_incoming_handle_mirrors_source() {
+    kt_plugins_builtin::install();
     let mut c2 = clip(2, 10_240, 10_240, 4_096, 2);
     c2.reversed = true;
     let mut p = project(vec![clip(1, 0, 10_240, 0, 1), c2]);
@@ -266,6 +271,7 @@ fn t136_reversed_incoming_handle_mirrors_source() {
 /// Prefetch warms the handles: wanted covers the material beyond the body edges.
 #[test]
 fn t136_wanted_covers_handles() {
+    kt_plugins_builtin::install();
     let mut p = project(vec![clip(1, 0, 10_240, 0, 1), clip(2, 10_240, 10_240, 2_048, 2)]);
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
@@ -295,6 +301,7 @@ fn t136_wanted_covers_handles() {
 /// empty space outside the window — the sound rises from silence (and symmetrically fades into it).
 #[test]
 fn t156_audio_fade_ramps_from_silence() {
+    kt_plugins_builtin::install();
     let mut p = project(vec![clip(1, 0, 4800, 0, 1)]);
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
@@ -331,6 +338,7 @@ fn t156_audio_fade_ramps_from_silence() {
 /// Fade-out: toward the end of the clip the sound goes to silence.
 #[test]
 fn t156_audio_fade_out_ends_in_silence() {
+    kt_plugins_builtin::install();
     let mut p = project(vec![clip(1, 0, 4800, 0, 1)]);
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
@@ -358,6 +366,7 @@ fn t156_audio_fade_out_ends_in_silence() {
 /// (GOLDEN_AUDIO), the other three are computed by their own.
 #[test]
 fn t226_audio_crossfade_curve_is_applied() {
+    kt_plugins_builtin::install();
     let (w0, w1) = (8_192i64, 12_288i64);
     let render_with = |curve: AudioCurve| {
         let mut p = project(vec![clip(1, 0, 10_240, 0, 1), clip(2, 10_240, 10_240, 50_000, 2)]);
@@ -426,6 +435,7 @@ fn t226_audio_crossfade_curve_is_applied() {
 /// without a transition the path is byte-for-byte the old one (GOLDEN intact — see golden_export).
 #[test]
 fn t463_overlap_transition_applies_its_curve() {
+    kt_plugins_builtin::install();
     // two clips overlapping in a “staircase”: [0..2s) and [1s..3s), overlap 1s
     let sec = 48_000i64;
     let clips = || vec![clip(1, 0, 2 * sec, 0, 1), clip(2, sec, 2 * sec, 0, 2)];

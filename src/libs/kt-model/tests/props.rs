@@ -183,6 +183,7 @@ fn t643b_nothing_to_do_compiles_to_nothing() {
 
 #[test]
 fn t649_formula_curves_are_refused_loudly() {
+    kt_plugins_builtin::install();
     let mut p = Project::new(ProjectSettings {
         fps: 30,
         width: 64,

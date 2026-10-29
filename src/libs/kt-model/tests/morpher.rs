@@ -95,6 +95,7 @@ fn replace_morpher(id: u64, targets: Vec<ClipId>) -> MorpherEvent {
 /// the project’s own clips are untouched (flatten is a copy).
 #[test]
 fn t35_replace_flatten() {
+    kt_plugins_builtin::install();
     let mut m = base_project();
     m.apply(Command::AddMorpher(replace_morpher(1, vec![ClipId(10)]))).unwrap();
 
@@ -126,6 +127,7 @@ fn t35_replace_flatten() {
 /// (video FX — only to video clips, audio — only to audio clips).
 #[test]
 fn t35_effect_batch_live_and_typed() {
+    kt_plugins_builtin::install();
     let mut m = base_project();
     m.apply(Command::AddMorpher(MorpherEvent {
         id: MorphId(1),
@@ -149,7 +151,7 @@ fn t35_effect_batch_live_and_typed() {
     let eff = m.project().effective_clips();
     let a = eff.iter().find(|c| c.id == ClipId(10)).unwrap();
     assert_eq!(a.fx.len(), 2, "audio clip: original Gain + appended one");
-    assert!(matches!(a.fx[1], FxInstance::Gain { db, .. } if db == 6.0));
+    assert!(a.fx[1].tag() == "gain" && a.fx[1].get_param("db") == Some(6.0));
     let v = eff.iter().find(|c| c.id == ClipId(11)).unwrap();
     assert_eq!(v.fx.len(), 1);
     assert!(matches!(v.fx[0], FxInstance::Mirror { .. }));
@@ -161,6 +163,7 @@ fn t35_effect_batch_live_and_typed() {
 /// coincide; the morpher disappears; undo restores everything (D6).
 #[test]
 fn t35_bake_equals_flatten_and_undo() {
+    kt_plugins_builtin::install();
     let mut m = base_project();
     m.apply(Command::AddMorpher(replace_morpher(1, vec![ClipId(10)]))).unwrap();
     let before = m.project().effective_clips();
@@ -179,6 +182,7 @@ fn t35_bake_equals_flatten_and_undo() {
 /// the later one wins (cumulatively), regardless of the order in the vector.
 #[test]
 fn t35_deterministic_order_by_id() {
+    kt_plugins_builtin::install();
     let mut m = base_project();
     let mut late = replace_morpher(7, vec![ClipId(10)]);
     late.patch.media = None;
@@ -197,6 +201,7 @@ fn t35_deterministic_order_by_id() {
 /// half; events with emptied targets remain (as in v1), but are harmless.
 #[test]
 fn t35_targets_follow_clip_edits() {
+    kt_plugins_builtin::install();
     let mut m = base_project();
     m.apply(Command::AddMorpher(replace_morpher(1, vec![ClipId(10), ClipId(11)]))).unwrap();
 
@@ -223,6 +228,7 @@ fn t35_targets_follow_clip_edits() {
 /// round trip save→load keeps the morphers byte-for-byte.
 #[test]
 fn t35_lanes_and_roundtrip() {
+    kt_plugins_builtin::install();
     let mut m = base_project();
     let mut ev = replace_morpher(1, vec![ClipId(10)]);
     ev.lane = 0;

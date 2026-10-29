@@ -17,6 +17,7 @@ fn lin(t: i64, v: f64) -> AutoKey {
 
 #[test]
 fn t190_curve_value_semantics() {
+    kt_plugins_builtin::install();
     let keys = vec![key(20_000, 10.0), key(80_000, 40.0)];
     // edge clamp: before the first point and after the last — the edge values
     assert_eq!(curve_value(&keys, Tick(0)), 10.0);
@@ -52,6 +53,7 @@ fn t190_curve_value_semantics() {
 /// from start to end.
 #[test]
 fn t212_keys_stick_to_material_through_edits() {
+    kt_plugins_builtin::install();
     let mut p = Project::new(ProjectSettings {
         fps: 30,
         width: 320,
@@ -214,6 +216,7 @@ fn t190_set_get_param_all_specs() {
 
 #[test]
 fn t190_apply_fx_auto() {
+    kt_plugins_builtin::install();
     let mut f = FxInstance::blur(8);
     let curves = vec![
         ParamCurve {
@@ -286,6 +289,7 @@ fn model_with_clip() -> TimelineModel {
 
 #[test]
 fn t190_commands_undo_and_truncation() {
+    kt_plugins_builtin::install();
     let mut m = model_with_clip();
     let auto = vec![
         vec![ParamCurve {
@@ -330,6 +334,7 @@ fn t190_commands_undo_and_truncation() {
 
 #[test]
 fn t190_files_without_auto_are_byte_stable() {
+    kt_plugins_builtin::install();
     let m = model_with_clip();
     let json = serde_json::to_string(m.project()).unwrap();
     assert!(!json.contains("fx_auto"), "empty automation is not serialized: {json}");
@@ -363,6 +368,7 @@ fn t190_files_without_auto_are_byte_stable() {
 /// and is not written to the file while it is on.
 #[test]
 fn t214_master_switch_disables_chain_without_losing_it() {
+    kt_plugins_builtin::install();
     let mut m = model_with_clip();
     let auto = vec![vec![ParamCurve {
         param: "radius".into(),
@@ -430,6 +436,7 @@ fn t214_master_switch_disables_chain_without_losing_it() {
 /// Blocks live in the model: the system clipboard uses their own shape (JSON).
 #[test]
 fn t215_fx_clipboard_slot_chain_and_envelope() {
+    kt_plugins_builtin::install();
     use kt_model::ops;
     let mut m = model_with_clip();
     let auto = vec![
@@ -546,6 +553,7 @@ fn t215_fx_clipboard_slot_chain_and_envelope() {
 /// reader and from kt-cli.
 #[test]
 fn t248_warp_rate_is_shared_by_the_link_group() {
+    kt_plugins_builtin::install();
     use kt_time::Tick;
     let mut p = Project::new(ProjectSettings {
         fps: 30,
@@ -617,7 +625,7 @@ fn t248_warp_rate_is_shared_by_the_link_group() {
     assert_eq!(rate_of(&slot(&m, 2).unwrap()), 0.25, "speed is shared both ways");
 
     // the slot is looked up BY KIND, not by index: for audio it is the second one
-    assert!(matches!(m.clip(ClipId(2)).unwrap().fx[0], FxInstance::Gain { .. }));
+    assert_eq!(m.clip(ClipId(2)).unwrap().fx[0].tag(), "gain");
 
     // the rate curve is also synchronized, but the curves of OTHER parameters are not
     let curve = ParamCurve {
@@ -666,6 +674,7 @@ fn t248_warp_rate_is_shared_by_the_link_group() {
 /// test 11 depends on this (there slowed sits on an audio clip without a link group).
 #[test]
 fn t248_lone_clip_is_untouched_by_the_rule() {
+    kt_plugins_builtin::install();
     let mut m = model_with_clip();
     let id = m.project().clips[0].id;
     assert!(m.project().clips[0].link_group.is_none());
@@ -682,6 +691,7 @@ fn t248_lone_clip_is_untouched_by_the_rule() {
 /// `fx_off`.
 #[test]
 fn t342_append_chain_block_is_one_truth() {
+    kt_plugins_builtin::install();
     use kt_model::ops;
     let curves = vec![ParamCurve {
         param: "radius".into(),
@@ -781,6 +791,7 @@ fn frozen_curve_value(keys: &[AutoKey], ease: bool, at: Tick) -> f64 {
 /// case) would collapse to zero.
 #[test]
 fn t695_segment_shapes_are_closed_form_and_join_at_keys() {
+    kt_plugins_builtin::install();
     let shapes = [
         SegShape::Linear,
         SegShape::DEFAULT,
@@ -848,6 +859,7 @@ fn t695_segment_shapes_are_closed_form_and_join_at_keys() {
 /// audio and video references would shift.
 #[test]
 fn t695b_default_shape_equals_the_frozen_smoothstep() {
+    kt_plugins_builtin::install();
     let cases: Vec<Vec<AutoKey>> = vec![
         vec![key(0, 0.0), key(90_000, 1.0)],
         vec![key(20_000, 10.0), key(80_000, 40.0), key(150_000, -5.0)],
@@ -898,6 +910,7 @@ fn t695b_default_shape_equals_the_frozen_smoothstep() {
 /// in Vegas: one file, two behaviours.
 #[test]
 fn t697_default_shape_lives_in_the_project_and_applies_to_new_keys() {
+    kt_plugins_builtin::install();
     let zig = SegShape::Zigzag { periods: 2.0, amplitude: 0.5, profile: ZigProfile::Square };
 
     // “apply to all segments” — one model function, not UI
@@ -946,6 +959,7 @@ fn t697_default_shape_lives_in_the_project_and_applies_to_new_keys() {
 /// it was FORBIDDEN.
 #[test]
 fn t700_envelope_fits_into_another_effect_kind() {
+    kt_plugins_builtin::install();
     let curve = |p: &str| ParamCurve {
         param: p.into(),
         keys: vec![AutoKey::at(Tick(0), 1.0), AutoKey::at(Tick(90_000), 8.0)],
@@ -1007,6 +1021,7 @@ fn t700_envelope_fits_into_another_effect_kind() {
 /// DIFFERENT, otherwise the test would catch nothing.
 #[test]
 fn t747b_rate_curve_from_old_file_sounds_piecewise_linear() {
+    kt_plugins_builtin::install();
     let wire = r#"{"param":"rate","ease":true,"keys":[{"t":0,"v":1.0},{"t":90000,"v":0.5}]}"#;
     let c: ParamCurve = serde_json::from_str(wire).expect("the previous curve reads");
     assert!(
@@ -1093,6 +1108,7 @@ fn t747b_rate_curve_from_old_file_sounds_piecewise_linear() {
 /// it does not give a silent zero.
 #[test]
 fn t787_segment_formula_is_a_shape_with_its_own_variables() {
+    kt_plugins_builtin::install();
     let f = |expr: &str| SegShape::Formula { expr: ExprId::intern(expr) };
     // keys: 1.0 s (0) → 3.0 s (1) with the formula, neighbours — zigzag and straight
     let keys = vec![
@@ -1150,6 +1166,7 @@ fn t787_segment_formula_is_a_shape_with_its_own_variables() {
 /// files (without keys) sounds as before: `k` = 0.
 #[test]
 fn t787c_layer_formula_over_keys_and_removal() {
+    kt_plugins_builtin::install();
     let keys = vec![
         AutoKey::shaped(Tick(0), 0.0, SegShape::Linear),
         AutoKey::shaped(Tick(90_000), 1.0, SegShape::Zigzag { periods: 3.0, amplitude: 0.2, profile: ZigProfile::Triangle }),

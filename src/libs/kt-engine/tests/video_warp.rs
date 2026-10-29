@@ -73,6 +73,7 @@ fn pts_track(p: &Project) -> Vec<i64> {
 /// integral of the speed, not “by eye”.
 #[test]
 fn t247_video_follows_the_rate() {
+    kt_plugins_builtin::install();
     // 0.5×: over 4 s of the event 2 s of material is consumed
     let slow = pts_track(&project(vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)], vec![], false));
     assert_eq!(slow[0], SEC, "the first frame is the entry point");
@@ -99,6 +100,7 @@ fn t247_video_follows_the_rate() {
 /// 1.0 → 2.0 over an event consumes exactly 1.5 of its length (a parabola, not a line).
 #[test]
 fn t247_video_follows_the_rate_curve() {
+    kt_plugins_builtin::install();
     let dur = 4 * SEC;
     let curve = vec![vec![ParamCurve {
         param: "rate".into(),
@@ -132,6 +134,7 @@ fn t247_video_follows_the_rate_curve() {
 /// backwards and desynchronize A/V.
 #[test]
 fn t247_reverse_and_stretch_compose() {
+    kt_plugins_builtin::install();
     let fx = vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)];
     let fwd = pts_track(&project(fx.clone(), vec![], false));
     let rev = pts_track(&project(fx, vec![], true));
@@ -153,6 +156,7 @@ fn t247_reverse_and_stretch_compose() {
 /// invariant as in audio (kt-fx: “a single source of truth”).
 #[test]
 fn t247_prefetch_matches_what_render_reads() {
+    kt_plugins_builtin::install();
     let p = project(vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)], vec![], false);
     let vr = VideoRenderer::new(&p);
     // PAIRS are compared (frame, decode quality): since R.46 the size is part of
@@ -178,6 +182,7 @@ fn t247_prefetch_matches_what_render_reads() {
 /// and in the reference modes too (the veto stood below them, a defect before R.37).
 #[test]
 fn t247_layer_never_slices_a_stretched_clip() {
+    kt_plugins_builtin::install();
     for kind in [ClipKind::Video, ClipKind::Audio] {
         let mut p = project(vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)], vec![], false);
         p.clips[0].kind = kind;
@@ -223,6 +228,7 @@ fn t247_layer_never_slices_a_stretched_clip() {
 /// so both executors receive the same frame (invariant 7).
 #[test]
 fn t250_blend_mode_mixes_neighbouring_frames() {
+    kt_plugins_builtin::install();
     use kt_media::MediaSource;
     use kt_media::synthetic::{AudioPattern, SyntheticSource};
 
@@ -289,6 +295,7 @@ fn t250_blend_mode_mixes_neighbouring_frames() {
 /// is never requested, and the layer starves forever.
 #[test]
 fn t250_blend_prefetches_both_sides() {
+    kt_plugins_builtin::install();
     let p = project(
         vec![FxInstance::SlowedReverb {
             rate: 0.5,
@@ -332,6 +339,7 @@ fn t250_blend_prefetches_both_sides() {
 /// pts diverged on EVERY frame after the cut.
 #[test]
 fn t272_split_renders_the_same_frames() {
+    kt_plugins_builtin::install();
     for (name, fx, auto, reversed) in [
         ("0.5x", vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)], vec![], false),
         ("2x", vec![FxInstance::slowed_reverb(2.0, 0.0, 85.0)], vec![], false),
@@ -387,6 +395,7 @@ fn t272_split_renders_the_same_frames() {
 /// linear by the decision of R.37 (“WITHOUT accounting for slowing-speeding”).
 #[test]
 fn t272b_video_curves_use_the_linear_axis() {
+    kt_plugins_builtin::install();
     // Blur with a radius curve + half speed. The key is exactly at the middle of the
     // event: the value under it must match the value that the UI will show
     // (the same `clip_material_at`).
@@ -448,6 +457,7 @@ fn t272b_video_curves_use_the_linear_axis() {
 /// (negative rate)”.
 #[test]
 fn t604a_video_follows_a_signed_curve() {
+    kt_plugins_builtin::install();
     let dur = 4 * SEC;
     // 1 → −1: the position rises to the middle of the event and returns
     let curve = vec![vec![ParamCurve {
@@ -483,6 +493,7 @@ fn t604a_video_follows_a_signed_curve() {
 /// Test 604b (R.57): zero speed is a FREEZE FRAME, not “very slow”.
 #[test]
 fn t604b_zero_rate_is_a_freeze() {
+    kt_plugins_builtin::install();
     let track = pts_track(&project(vec![FxInstance::slowed_reverb(0.0, 0.0, 85.0)], vec![], false));
     assert!(track.iter().all(|&t| t == track[0]), "the still frame moved: {:?}", &track[..6]);
     assert_eq!(track[0], SEC, "the hold keeps the frame of the entry point");
@@ -496,6 +507,7 @@ fn t604b_zero_rate_is_a_freeze() {
 /// Test 604c (R.57): at the start of the material the frame HOLDS, rather than going negative.
 #[test]
 fn t604c_edge_holds_at_the_material_start() {
+    kt_plugins_builtin::install();
     // source_in = 1 s, speed −1: in a second we would hit the file’s zero point
     let track =
         pts_track(&project(vec![FxInstance::slowed_reverb(-1.0, 0.0, 85.0)], vec![], false));
@@ -509,6 +521,7 @@ fn t604c_edge_holds_at_the_material_start() {
 /// from the SAME side as for positive speed — the fractional part is measured forward.
 #[test]
 fn t604d_blend_pair_under_negative_rate() {
+    kt_plugins_builtin::install();
     let mut fx = FxInstance::slowed_reverb(-0.5, 0.0, 85.0);
     if let FxInstance::SlowedReverb { frames, .. } = &mut fx {
         *frames = FrameMode::Blend;
@@ -530,6 +543,7 @@ fn t604d_blend_pair_under_negative_rate() {
 /// and comes back, and the maximum lies INSIDE the window, not at its edge.
 #[test]
 fn t604e_prefetch_matches_reads_under_a_sign_change() {
+    kt_plugins_builtin::install();
     let dur = 4 * SEC;
     let curve = vec![vec![ParamCurve {
         param: "rate".into(),
@@ -567,6 +581,7 @@ fn t604e_prefetch_matches_reads_under_a_sign_change() {
 /// FORWARD — the mirror is taken around the span, not around the consumed part.
 #[test]
 fn t604g_reverse_over_negative_rate_goes_forward() {
+    kt_plugins_builtin::install();
     let rev = pts_track(&project(vec![FxInstance::slowed_reverb(-0.5, 0.0, 85.0)], vec![], true));
     // without the mirror −0.5 goes backward; with the mirror — forward, from the lower edge
     // of the span to the upper edge

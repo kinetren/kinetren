@@ -4123,18 +4123,6 @@ fn default_comp_att() -> f32 {
 fn default_comp_rel() -> f32 {
     150.0
 }
-fn default_gate_thr() -> f32 {
-    -40.0
-}
-fn default_gate_att() -> f32 {
-    1.0
-}
-fn default_gate_hold() -> f32 {
-    40.0
-}
-fn default_gate_rel() -> f32 {
-    100.0
-}
 fn default_duo_sr() -> u8 {
     24
 }
@@ -4191,22 +4179,6 @@ fn default_halftone_angle() -> f32 {
 
 fn is_zero_u8(v: &u8) -> bool {
     *v == 0
-}
-
-fn default_limiter_threshold() -> f32 {
-    -6.0
-}
-
-fn default_limiter_ceiling() -> f32 {
-    -0.3
-}
-
-fn default_limiter_lookahead() -> f32 {
-    5.0
-}
-
-fn default_limiter_release() -> f32 {
-    80.0
 }
 
 fn default_lens_k1() -> f32 {
@@ -5221,13 +5193,6 @@ pub fn material_from_progress(u: f64, source_in: Tick, duration: Tick, mirror: b
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FxInstance {
-    Gain {
-        db: f32,
-        /// Channel balance −1…+1 (R.33 C5). 0 — the former path byte-for-byte:
-        /// the multipliers of both channels exactly 1.0.
-        #[serde(default, skip_serializing_if = "is_zero")]
-        pan: f32,
-    },
     /// The blend strength of the LAYER (R.38 item 12): mixing of the chain's input with its
     /// result. Not a user effect — it is absent from the registry and cannot be
     /// picked in the picker; `MorphPatch::apply_to` appends it when the
@@ -5388,17 +5353,6 @@ pub enum FxInstance {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<TrackId>,
     },
-    /// Gate (R.47): a fast detector + −6 dB hysteresis + hold.
-    Gate {
-        #[serde(default = "default_gate_thr")]
-        threshold_db: f32,
-        #[serde(default = "default_gate_att")]
-        attack_ms: f32,
-        #[serde(default = "default_gate_hold")]
-        hold_ms: f32,
-        #[serde(default = "default_gate_rel")]
-        release_ms: f32,
-    },
     // ---- video FX (port of bc_fx.cpp, item 25; parameters and defaults of v1) ----------
     /// Basic colour correction (R.47, F-CLR-007): brightness/contrast/
     /// saturation/hue. Point-wise — absorbed into the merged geometry pass.
@@ -5519,22 +5473,6 @@ pub enum FxInstance {
         size: u32,
         #[serde(default = "default_halftone_angle")]
         angle: f32,
-    },
-    /// Look-ahead limiter (R.48, F-AUD-002): the ceiling is guaranteed by the look-ahead
-    /// window — the peak is seen in advance, so the attack is instant and without
-    /// distortion. For the rest of the engine the delay is ZERO: the chain reads the
-    /// source ahead, the output stays aligned.
-    Limiter {
-        #[serde(default = "default_limiter_threshold")]
-        threshold_db: f32,
-        #[serde(default = "default_limiter_ceiling")]
-        ceiling_db: f32,
-        /// The look-ahead window. A STRUCTURAL parameter: the length of the ring is part of
-        /// the node's device, a change rebuilds the processor (R.48, item 337).
-        #[serde(default = "default_limiter_lookahead")]
-        lookahead_ms: f32,
-        #[serde(default = "default_limiter_release")]
-        release_ms: f32,
     },
     /// Pitch change without changing duration (R.48, F-AUD-013). The engine
     /// (WSOLA or phase vocoder) is a PROJECT SETTING: one choice for the
@@ -5782,7 +5720,6 @@ pub enum FxClass {
 impl FxInstance {
     pub fn class(&self) -> FxClass {
         match self {
-            FxInstance::Gain { .. }
             | FxInstance::SlowedReverb { .. }
             | FxInstance::Filter { .. }
             | FxInstance::Tremolo { .. }
@@ -5793,8 +5730,6 @@ impl FxInstance {
             | FxInstance::Phaser { .. }
             | FxInstance::Delay { .. }
             | FxInstance::Compressor { .. }
-            | FxInstance::Gate { .. }
-            | FxInstance::Limiter { .. }
             | FxInstance::PitchShift { .. } => FxClass::Audio,
             FxInstance::Pan3d { .. } | FxInstance::Cylinder3d { .. } => FxClass::Video3d,
             // a plugin's class is its manifest's media (plugin-api-stage1, D2)
@@ -5835,7 +5770,6 @@ impl FxInstance {
     /// against the set of tags.
     pub fn tag(&self) -> &'static str {
         match self {
-            FxInstance::Gain { .. } => "gain",
             FxInstance::LayerMix { .. } => "layer_mix",
             FxInstance::SlowedReverb { .. } => "slowed_reverb",
             FxInstance::Filter { .. } => "filter",
@@ -5847,8 +5781,6 @@ impl FxInstance {
             FxInstance::Phaser { .. } => "phaser",
             FxInstance::Delay { .. } => "delay",
             FxInstance::Compressor { .. } => "compressor",
-            FxInstance::Gate { .. } => "gate",
-            FxInstance::Limiter { .. } => "limiter",
             FxInstance::PitchShift { .. } => "pitch_shift",
             FxInstance::ColorGrade { .. } => "color_grade",
             FxInstance::Duotone { .. } => "duotone",
@@ -6036,10 +5968,6 @@ pub(crate) use kt_plugin_api::{flags_for, fx_cast, params_for, params_for_struct
 
 params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_get_idx, {
     // ---- audio (R.33: automated by the shared mechanism) ----------------
-    Gain {
-        db: f32, -60.0, 12.0, 0.0, 0.1, Db, Smooth;
-        pan: f32, -1.0, 1.0, 0.0, 0.01, Norm, Smooth;
-    },
     LayerMix {
         amount: f64, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
     },
@@ -6108,12 +6036,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         release_ms: f32, 5.0, 2000.0, 150.0, 1.0, Ms, Smooth;
         makeup_db: f32, 0.0, 24.0, 0.0, 0.1, Db, Smooth;
     },
-    Gate {
-        threshold_db: f32, -80.0, 0.0, -40.0, 0.1, Db, Smooth;
-        attack_ms: f32, 0.1, 50.0, 1.0, 0.1, Ms, Smooth;
-        hold_ms: f32, 0.0, 500.0, 40.0, 1.0, Ms, Smooth;
-        release_ms: f32, 5.0, 1000.0, 100.0, 1.0, Ms, Smooth;
-    },
     // ---- video 2D --------------------------------------------------------
     ColorGrade {
         brightness: f32, -1.0, 1.0, 0.0, 0.01, Norm, Smooth;
@@ -6162,12 +6084,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
     Halftone {
         size: u32, 2.0, 64.0, 8.0, 1.0, Px, Smooth;
         angle: f32, -90.0, 90.0, 45.0, 1.0, Deg, Smooth;
-    },
-    Limiter {
-        threshold_db: f32, -60.0, 0.0, -6.0, 0.1, Db, Smooth;
-        ceiling_db: f32, -24.0, 0.0, -0.3, 0.1, Db, Smooth;
-        lookahead_ms: f32, 1.0, 20.0, 5.0, 0.5, Ms, Structural;
-        release_ms: f32, 5.0, 1000.0, 80.0, 1.0, Ms, Smooth;
     },
     PitchShift {
         semitones: f32, -24.0, 24.0, 0.0, 1.0, St, Smooth;
@@ -6951,17 +6867,14 @@ impl FxInstance {
         }
     }
 
+    /// The gate at its defaults — a plugin slot (plugin-api-stage1, stage 3).
     pub fn gate() -> FxInstance {
-        FxInstance::Gate { threshold_db: -40.0, attack_ms: 1.0, hold_ms: 40.0, release_ms: 100.0 }
+        FxInstance::plugin("gate").expect("gate is not registered: install the built-in plugin set first")
     }
 
+    /// The limiter at its defaults — a plugin slot (plugin-api-stage1, stage 3).
     pub fn limiter() -> FxInstance {
-        FxInstance::Limiter {
-            threshold_db: -6.0,
-            ceiling_db: -0.3,
-            lookahead_ms: 5.0,
-            release_ms: 80.0,
-        }
+        FxInstance::plugin("limiter").expect("limiter is not registered: install the built-in plugin set first")
     }
 
     pub fn pitch_shift() -> FxInstance {
@@ -7175,8 +7088,10 @@ impl FxInstance {
         FxInstance::Edges { threshold, thickness: 1, color_r: 255, color_g: 255, color_b: 255 }
     }
 
+    /// Gain of `db` at the centre — a plugin slot (plugin-api-stage1, stage 3).
     pub fn gain(db: f32) -> FxInstance {
-        FxInstance::Gain { db, pan: 0.0 }
+        FxInstance::plugin_with("gain", &[db as f64, 0.0])
+            .expect("gain is not registered: install the built-in plugin set first")
     }
 
     pub fn vhs(rgb_shift: u32, bleed: f64) -> FxInstance {

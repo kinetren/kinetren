@@ -38,6 +38,7 @@ fn read_span(p: &mut ClipProcessor, from: i64, to: i64) -> Vec<f32> {
 
 #[test]
 fn t138_plain_chain_reads_handles_and_gates_at_material_end() {
+    kt_plugins_builtin::install();
     let fx = [FxInstance::gain(0.0)];
     let (src_in, len, head, tail) = (10_000i64, 4_096i64, 1_024i64, 2_048i64);
     let mut p = ClipProcessor::new(&fx, &Default::default(), src_in, len);
@@ -54,6 +55,7 @@ fn t138_plain_chain_reads_handles_and_gates_at_material_end() {
 
 #[test]
 fn t138_default_material_keeps_old_gate() {
+    kt_plugins_builtin::install();
     // without set_material_ext the behaviour is the former one: the dry gate exactly at clip_len
     let fx = [FxInstance::gain(0.0)];
     let (src_in, len) = (5_000i64, 2_000i64);
@@ -65,6 +67,7 @@ fn t138_default_material_keeps_old_gate() {
 
 #[test]
 fn t138_source_map_extrapolates_left_linearly() {
+    kt_plugins_builtin::install();
     // without automation: S(t) = t·rate and to the left
     assert_eq!(source_progress(0.5, &[], -0.25), -0.125);
     assert_eq!(output_time_for_source(0.5, &[], -0.125), -0.25);
@@ -78,6 +81,7 @@ fn t138_source_map_extrapolates_left_linearly() {
 
 #[test]
 fn t138_warp_reads_left_handle_without_reset_glitches() {
+    kt_plugins_builtin::install();
     // warp 0.5×, mix 0 (the reverb is transparent): reading from a negative local
     // does not panic, gives no underruns and continues seamlessly into the body
     let fx = [FxInstance::slowed_reverb(0.5, 0.0, 85.0)];
@@ -101,6 +105,7 @@ fn t138_warp_reads_left_handle_without_reset_glitches() {
 
 #[test]
 fn t138_source_window_ext_and_compat() {
+    kt_plugins_builtin::install();
     // delegate: material = 0..len is byte-compatible with the old signature
     let warp = [FxInstance::slowed_reverb(0.82, 0.1, 85.0)];
     let plain = [FxInstance::gain(0.0)];

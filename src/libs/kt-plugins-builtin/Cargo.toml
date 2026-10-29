@@ -11,3 +11,4 @@ publish.workspace = true
 kt-plugin-api = { workspace = true }
 fx-video-color = { workspace = true }
 fx-audio-tone = { workspace = true }
+fx-audio-dynamics = { workspace = true }

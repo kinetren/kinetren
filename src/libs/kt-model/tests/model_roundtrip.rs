@@ -70,6 +70,7 @@ fn sample_project() -> Project {
 
 #[test]
 fn load_rejects_explicitly() {
+    kt_plugins_builtin::install();
     // future version
     let mut p = sample_project();
     p.format_version = 999;
@@ -91,6 +92,7 @@ fn load_rejects_explicitly() {
 
 #[test]
 fn unknown_fields_are_tolerated() {
+    kt_plugins_builtin::install();
     // forward-compat: extra fields do not break the load
     let mut v: serde_json::Value = serde_json::to_value(sample_project()).unwrap();
     v["future_field"] = serde_json::json!({"x": 1});
@@ -101,6 +103,7 @@ fn unknown_fields_are_tolerated() {
 
 #[test]
 fn every_command_round_trips_via_undo() {
+    kt_plugins_builtin::install();
     let base = sample_project();
     let commands = vec![
         Command::AddMedia { id: MediaId(2), path: "b.wav".into() },
@@ -133,6 +136,7 @@ fn every_command_round_trips_via_undo() {
 
 #[test]
 fn invalid_command_leaves_no_undo_entry() {
+    kt_plugins_builtin::install();
     // Regression for defect q: pushing undo before validation created no-op records.
     let mut m = TimelineModel::new(sample_project());
     assert!(m.apply(Command::RemoveClip { id: ClipId(404) }).is_err());
@@ -151,6 +155,7 @@ fn invalid_command_leaves_no_undo_entry() {
 
 #[test]
 fn linked_group_moves_together() {
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(sample_project());
     m.apply(Command::MoveClip { id: ClipId(10), new_start: Tick(5000), new_lane: 0 }).unwrap();
     let audio = m.clip(ClipId(11)).unwrap();
@@ -159,6 +164,7 @@ fn linked_group_moves_together() {
 
 #[test]
 fn split_semantics() {
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(sample_project());
     m.apply(Command::TrimStart { id: ClipId(10), new_start: Tick(9000) }).unwrap();
     let before = m.clip(ClipId(10)).unwrap().clone();
@@ -190,6 +196,7 @@ fn split_semantics() {
 
 #[test]
 fn trim_start_keeps_source_alignment() {
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(sample_project());
     m.apply(Command::TrimStart { id: ClipId(10), new_start: Tick(90_000) }).unwrap();
     let c = m.clip(ClipId(10)).unwrap();
@@ -208,6 +215,7 @@ fn trim_start_keeps_source_alignment() {
 
 #[test]
 fn undo_depth_is_capped() {
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(sample_project());
     for i in 0..(MAX_UNDO + 25) {
         m.apply(Command::SetGain { id: ClipId(10), gain_db: i as f32 }).unwrap();

@@ -97,6 +97,7 @@ fn peak(v: &[f32]) -> f32 {
 /// last event, the output is aligned with the input.
 #[test]
 fn t733_track_chain_runs_on_the_sum_and_keeps_its_tail() {
+    kt_plugins_builtin::install();
     // two lines back to back on ONE track; the reverb — on the TRACK
     let clips = vec![clip(1, 0, 0, D, 1), clip(2, 0, D, D, 1)];
     let mut p = project(clips);
@@ -138,17 +139,13 @@ fn t733_track_chain_runs_on_the_sum_and_keeps_its_tail() {
 /// relative to a track without a chain there is no shift.
 #[test]
 fn t733b_track_chain_lookahead_keeps_the_output_aligned() {
+    kt_plugins_builtin::install();
     // the event does NOT start at zero: a shift would be visible as a front offset
     let at = D / 2;
     let mut p = project(vec![clip(1, 0, at, D, 1)]);
     // a neutral limiter: the analysis window exists, but there is no gain
     // threshold 0 dB — no gain, but the analysis window (lookahead) exists
-    p.track_at_mut(A, 0).unwrap().fx = vec![FxInstance::Limiter {
-        threshold_db: 0.0,
-        ceiling_db: 0.0,
-        lookahead_ms: 5.0,
-        release_ms: 80.0,
-    }];
+    p.track_at_mut(A, 0).unwrap().fx = vec![kt_model::FxInstance::plugin_with("limiter", &[0.0, 0.0, 5.0, 80.0]).unwrap()];
     p.validate().unwrap();
     let mut f = direct(&[(1, AudioPattern::Dc { value: 0.25 })]);
     let with = stream(&p, &mut f, 4);
@@ -171,6 +168,7 @@ fn t733b_track_chain_lookahead_keeps_the_output_aligned() {
 /// (invariant 3); deleting a track takes its state away.
 #[test]
 fn t734_track_state_survives_insertion_above_and_dies_with_the_track() {
+    kt_plugins_builtin::install();
     let mut p = project(vec![clip(1, 0, 0, 4 * D, 1)]);
     p.track_at_mut(A, 0).unwrap().fx = vec![FxInstance::slowed_reverb(1.0, 0.9, 120.0)];
     p.validate().unwrap();
@@ -222,6 +220,7 @@ fn t734_track_state_survives_insertion_above_and_dies_with_the_track() {
 /// event's input: no silent run after a wrap, and nothing from past the region end.
 #[test]
 fn t911_track_chain_with_lookahead_at_a_wrap() {
+    kt_plugins_builtin::install();
     // three events of a 440 Hz tone; past the region end the third one is a 1 kHz tone
     let p = {
         let mut p = project(vec![
@@ -231,7 +230,7 @@ fn t911_track_chain_with_lookahead_at_a_wrap() {
         ]);
         p.track_at_mut(A, 0).unwrap().fx = vec![
             FxInstance::PitchShift { semitones: 7.0, cents: 0.0 },
-            FxInstance::Limiter { threshold_db: -6.0, ceiling_db: -6.0, lookahead_ms: 5.0, release_ms: 80.0 },
+            kt_model::FxInstance::plugin_with("limiter", &[-6.0, -6.0, 5.0, 80.0]).unwrap(),
         ];
         p.validate().unwrap();
         p
