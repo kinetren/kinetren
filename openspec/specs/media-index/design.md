@@ -289,3 +289,18 @@ composition, and the preview hung in "Loading" forever.
   the opening error (`reel preview: sidecar open failed: …`), so the next occurrence names its
   cause. The busy timeout is also set before the `journal_mode` pragma (hygiene: no statement
   runs without a busy handler — not shown to be the cause).
+
+## The download tells everything (ffmpeg-download-window-info, 2026-10-29)
+
+The owner (kkt 2026-10-27): the download window showed too little — where from, how fast, how
+long, where to. Two decisions on the downloader's side:
+
+- **A step is a SNAPSHOT, not an event.** The background job keeps only its latest progress value
+  (`BgJob` drops the rest by design, and it is shared with export and analysis), so each
+  `DownloadProgress` carries everything: the mirror in use and its number, the bytes, the announced
+  and the expected size, the unpacking count and the mirrors that already failed with their
+  reasons. An event-style step would have needed an accumulating job for every background task.
+- **A wrong announced size skips the mirror BEFORE its body.** A file of another length cannot have
+  the pinned hash; the size is pinned next to the hash (`PINNED_SIZE`), so a mirror announcing
+  another Content-Length fails at once with "announced A bytes, expected B" instead of after up to
+  57 MB. Without Content-Length the hash stays the only test. t949.

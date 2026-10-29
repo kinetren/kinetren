@@ -309,3 +309,17 @@ has no Help menu, next to the other per-machine items (Language, telemetry). A l
 placeholders back through `poll_returned_sources`, without a restart (t850, real loader, on Linux
 and under wine). The UI language on Windows comes from `GetUserDefaultLocaleName` when no
 `LC_*`/`LANG` is set (t861).
+
+## The FFmpeg window's three states (ffmpeg-download-window-info, 2026-10-29)
+
+**Before** the click the window says what Download will do: the archive, its size, the host and
+the mirror, the start of the checksum (the full value in the hover — the body must not widen the
+560 px window), the folder it goes into and that deleting the folder removes it. **While** it runs:
+the host and mirror in use, the bytes with the speed and the time left — computed by the window from
+its own samples over the last 5 s, a dash when the bytes stop for 2 s (an average from the job's
+start would read low exactly after a mirror switch), and the mirrors already tried with their
+reasons. **After**: where it was installed and that the SHA-256 matched, or every mirror's reason.
+**Open folder** is one helper (explorer / xdg-open, detached, never waited on) with a test seam; it
+shows the installed folder, else a loaded FFmpeg's folder, else the download root — and is hidden for
+a system SONAME, which has no folder. t948–t953, live `ffmpeg_download` (its success state is t952's:
+the scenario cannot build a 7z).

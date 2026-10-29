@@ -87,5 +87,7 @@ English and its first line names the stage and what was done. Depends on the arc
 
 ## 4. Records and finish
 
-- [ ] 4.1 Append the "why" to `openspec/specs/media-index/design.md` (snapshot step, size check before the body) and `openspec/specs/ui-reach/design.md` (the window's three states, Open folder). Verify `openspec validate --specs` is green
+- [x] 4.1 Append the "why" to `openspec/specs/media-index/design.md` (snapshot step, size check before the body) and `openspec/specs/ui-reach/design.md` (the window's three states, Open folder). Verify `openspec validate --specs` is green
+  - media-index design: the snapshot step and the size check before the body; ui-reach design: the
+    window's three states and Open folder. `openspec validate --specs --strict` 20/20.
 - [ ] 4.2 Run `./scripts/finish.sh` from `src/`. Verify it is green, and record the version `vYY.MM.DD-hash` and the live screenshots here
