@@ -43,6 +43,11 @@ line = the stage and what was done). Stage only this change's files.
     old ones; the installed entry reads `Exec=kinetren %f`, `Icon=com.kinetren.Kinetren`,
     `StartupWMClass=com.kinetren.Kinetren`. The Wayland `app_id` is not measured (no compositor).
 - [x] 1.3 Commit stage 1
+  - finish.sh after stage 3 was RED in every live scenario: the rig (`scripts/ui-probe.py`) found the
+    window by `WM_CLASS = "kinetren"` — a sixth copy of the ID the stage-1 search missed. Fixed, and
+    `check_app_id` now guards it (t966 case `ui-probe`). The same run showed t958 aborting the test
+    process under nextest ("pure virtual method called", SIGABRT): its real renders were dropped
+    still encoding; the test now cancels and waits for them (`stop_render`).
   - Committed.
 
 ## 2. The manifest (D2–D6)

@@ -26,7 +26,8 @@ import time
 from Xlib import X, XK, display, protocol
 from Xlib.ext import xtest
 
-WM_CLASS = "kinetren"
+# the window's X11 class is the application ID (kt-app APP_ID, flatpak-flathub D1; dist-check t966)
+WM_CLASS = "com.kinetren.Kinetren"
 d = display.Display()
 root = d.screen().root
 

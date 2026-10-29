@@ -53,6 +53,7 @@ MIME_TYPES = [
     "application/x-kinotrain-legacy-project",
 ]
 INSTALL = "src/packaging/install.sh"
+UI_PROBE = "src/scripts/ui-probe.py"
 RUNTIME_FFMPEG = "src/packaging/flatpak/runtime-ffmpeg.txt"
 LICENSE = "LICENSE"
 FLATPAK_GUIDE = "docs/flatpak.md"
@@ -402,6 +403,14 @@ def check_app_id(r, app_id):
         for name in [f"packaging/{app_id}.desktop", f"packaging/{app_id}.svg", f"packaging/{app_id}.xml"]:
             if name not in rb:
                 r.err(RELEASE_BUILD, f"the tarball must carry `{name}` (named by APP_ID `{app_id}`)")
+    # the live rig finds the window by its X11 class, which is the ID (a stale copy made every
+    # live scenario report "the kt-app window did not appear")
+    probe = r.read(UI_PROBE)
+    if probe is not None:
+        m = re.search(r'^WM_CLASS = "([^"]*)"', probe, re.M)
+        got = m.group(1) if m else "(none)"
+        if got != app_id:
+            r.err(UI_PROBE, f"`WM_CLASS = \"{got}\"` differs from APP_ID `{app_id}`")
     manifest = f"src/packaging/flatpak/{app_id}.yml"
     flatpak_dir = os.path.join(r.root, "src/packaging/flatpak")
     if os.path.isdir(flatpak_dir):

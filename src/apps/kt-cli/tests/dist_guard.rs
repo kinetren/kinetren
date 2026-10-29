@@ -73,6 +73,7 @@ const FILES: &[&str] = &[
     "LICENSE",
     "docs/flatpak.md",
     "src/scripts/flatpak-build.sh",
+    "src/scripts/ui-probe.py",
 ];
 
 fn copy_tree(tag: &str) -> PathBuf {
@@ -455,7 +456,12 @@ fn t966_every_copy_of_the_app_id_is_the_same_string() {
     let _ = std::fs::remove_dir_all(&dir);
 
     type Break = fn(&Path);
-    let cases: [(&str, Break, &str); 4] = [
+    let cases: [(&str, Break, &str); 5] = [
+        (
+            "ui-probe",
+            |d| edit(d, "src/scripts/ui-probe.py", "WM_CLASS = \"com.kinetren.Kinetren\"", "WM_CLASS = \"kinetren\""),
+            "src/scripts/ui-probe.py: `WM_CLASS = \"kinetren\"` differs from APP_ID",
+        ),
         (
             "metainfo-id",
             |d| {

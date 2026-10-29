@@ -5987,7 +5987,7 @@ fn t958_render_over_an_existing_file_is_asked_first() {
     assert!(h.state().render_job.is_some(), "Replace did not start the render");
     let extra = unregistered_windows(&h, &bare);
     assert!(extra.is_empty(), "windows outside WINDOWS: {extra:?}");
-    h.state_mut().render_job = None;
+    stop_render(&mut h);
 
     // a path that does not exist: no question
     let fresh = dir.join("new.mp4");
@@ -6000,6 +6000,20 @@ fn t958_render_over_an_existing_file_is_asked_first() {
     press(&mut h, tr(k::render::START));
     assert!(h.state().ask.is_none(), "a new path was asked about");
     assert!(h.state().render_job.is_some(), "a new path did not start the render");
-    h.state_mut().render_job = None;
+    stop_render(&mut h);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Cancel the harness's render and wait for its thread to finish: a job still encoding when the
+/// test process exits is torn down inside libav ("pure virtual method called" — SIGABRT).
+fn stop_render(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>) {
+    let Some(job) = h.state_mut().render_job.as_mut() else { return };
+    job.job.cancel();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while job.result.is_none() && std::time::Instant::now() < deadline {
+        job.poll();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(job.result.is_some(), "the cancelled render did not finish");
+    h.state_mut().render_job = None;
 }
