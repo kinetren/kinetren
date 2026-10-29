@@ -10,3 +10,4 @@ publish.workspace = true
 [dependencies]
 kt-plugin-api = { workspace = true }
 fx-video-color = { workspace = true }
+fx-audio-tone = { workspace = true }

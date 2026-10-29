@@ -210,7 +210,6 @@ pub enum AudioNode {
     Eq(Box<EqNode>),
     Distortion(DistNode),
     Bitcrusher(CrushNode),
-    StereoWidth(WidthNode),
     Tremolo(TremoloNode),
     AutoPan(AutoPanNode),
     Vibrato(Box<VibratoNode>),
@@ -222,12 +221,66 @@ pub enum AudioNode {
     Gate(GateNode),
     Limiter(Box<LimiterNode>),
     Pitch(Box<PitchNode>),
+    /// An audio plugin's state (plugin-api-stage1, D2a): one dynamic call per chunk.
+    Plugin(Box<dyn kt_plugin_api::AudioState>),
+}
+
+/// The curves of one slot as a plugin state sees them (D2a): kt-model's profiles, shapes included.
+pub(crate) struct SlotView<'a> {
+    pub auto: &'a AutoProfiles,
+    pub slot: usize,
+}
+
+impl kt_plugin_api::SlotCurves for SlotView<'_> {
+    fn value(&self, param: &str, base: f64, s: f64) -> f64 {
+        self.auto.value(self.slot, param, base, s)
+    }
+    fn points(&self, param: &str) -> &kt_model::ParamPoints {
+        self.auto.points(self.slot, param)
+    }
+    fn owned(&self, param: &str) -> Box<dyn kt_plugin_api::CurveRead> {
+        Box::new(OwnedCurve {
+            points: self.auto.points(self.slot, param).to_vec(),
+            shapes: self.auto.shapes_of(self.slot, param).to_vec(),
+        })
+    }
+}
+
+/// A copy of one curve a plugin state keeps for reads by position.
+struct OwnedCurve {
+    points: Vec<(f64, f64)>,
+    shapes: Vec<kt_model::SegShape>,
+}
+
+impl kt_plugin_api::CurveRead for OwnedCurve {
+    fn value(&self, base: f64, s: f64) -> f64 {
+        kt_model::param_at(base, &self.points, s, &self.shapes)
+    }
+}
+
+/// The project settings a plugin kernel reads (D2a): today the pitch engine.
+pub(crate) fn host_opts(engine: kt_model::PitchEngine) -> kt_plugin_api::HostOpts {
+    let e = match engine {
+        kt_model::PitchEngine::Wsola => 0.0,
+        kt_model::PitchEngine::Vocoder => 1.0,
+    };
+    kt_plugin_api::HostOpts { opts: vec![("pitch_engine", e)] }
+}
+
+/// The installed audio kernel of a plugin slot, if any.
+pub(crate) fn plugin_audio(fx: &FxInstance) -> Option<(&'static kt_plugin_api::Manifest, &'static dyn kt_plugin_api::AudioKernel)> {
+    let FxInstance::Plugin(slot) = fx else { return None };
+    let p = kt_model::plugin_slot::registry().get(&slot.id)?;
+    Some((p.manifest(), p.audio()?))
 }
 
 impl AudioNode {
     /// Build the node for a slot. Non-audio node kinds do not get one (the chain
     /// does not see them — they are transparent).
-    pub(crate) fn build(fx: &FxInstance) -> Option<AudioNode> {
+    pub(crate) fn build(fx: &FxInstance, engine: kt_model::PitchEngine) -> Option<AudioNode> {
+        if let Some((_, k)) = plugin_audio(fx) {
+            return Some(AudioNode::Plugin(k.build(&host_opts(engine))));
+        }
         match fx {
             FxInstance::Gain { .. } => Some(AudioNode::Gain(GainNode::new())),
             FxInstance::LayerMix { .. } => Some(AudioNode::LayerMix),
@@ -236,7 +289,6 @@ impl AudioNode {
             FxInstance::Eq { .. } => Some(AudioNode::Eq(Box::new(EqNode::new()))),
             FxInstance::Distortion { .. } => Some(AudioNode::Distortion(DistNode::new())),
             FxInstance::Bitcrusher { .. } => Some(AudioNode::Bitcrusher(CrushNode::new())),
-            FxInstance::StereoWidth { .. } => Some(AudioNode::StereoWidth(WidthNode::new())),
             FxInstance::Tremolo { .. } => Some(AudioNode::Tremolo(TremoloNode::new())),
             FxInstance::AutoPan { .. } => Some(AudioNode::AutoPan(AutoPanNode::new())),
             FxInstance::Vibrato { .. } => Some(AudioNode::Vibrato(Box::new(VibratoNode::new()))),
@@ -252,8 +304,17 @@ impl AudioNode {
         }
     }
 
+    /// Whether `build` gives the slot a node (without building one).
+    pub(crate) fn has_node(fx: &FxInstance) -> bool {
+        match fx {
+            FxInstance::Plugin(_) => plugin_audio(fx).is_some(),
+            _ => AudioNode::build(fx, kt_model::PitchEngine::Wsola).is_some(),
+        }
+    }
+
     pub(crate) fn apply(&mut self, fx: &FxInstance, structural: bool) {
         match (self, fx) {
+            (AudioNode::Plugin(n), FxInstance::Plugin(p)) => n.apply(&p.values, structural),
             (AudioNode::Gain(n), FxInstance::Gain { db, pan }) => n.apply(*db, *pan),
             (AudioNode::LayerMix, FxInstance::LayerMix { .. }) => {}
             (AudioNode::Reverb(n), FxInstance::SlowedReverb { .. }) => n.apply(fx, structural),
@@ -286,7 +347,6 @@ impl AudioNode {
             (AudioNode::Bitcrusher(n), FxInstance::Bitcrusher { bits, rate_hz, mix }) => {
                 n.apply(*bits, *rate_hz, *mix)
             }
-            (AudioNode::StereoWidth(n), FxInstance::StereoWidth { width }) => n.apply(*width),
             (AudioNode::Tremolo(n), FxInstance::Tremolo { rate_hz, depth }) => {
                 n.apply(*rate_hz, *depth)
             }
@@ -335,6 +395,7 @@ impl AudioNode {
 
     pub(crate) fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
         match self {
+            AudioNode::Plugin(n) => n.set_targets(&SlotView { auto, slot }, s),
             AudioNode::Gain(n) => n.set_targets(auto, slot, s),
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.set_targets(auto, slot, s),
@@ -342,7 +403,6 @@ impl AudioNode {
             AudioNode::Eq(n) => n.set_targets(auto, slot, s),
             AudioNode::Distortion(n) => n.set_targets(auto, slot, s),
             AudioNode::Bitcrusher(n) => n.set_targets(auto, slot, s),
-            AudioNode::StereoWidth(n) => n.set_targets(auto, slot, s),
             AudioNode::Tremolo(n) => n.set_targets(auto, slot, s),
             AudioNode::AutoPan(n) => n.set_targets(auto, slot, s),
             AudioNode::Limiter(n) => n.set_targets(auto, slot, s),
@@ -363,6 +423,7 @@ impl AudioNode {
     /// set_clip_len of the processor.
     pub(crate) fn bind_lfo(&mut self, auto: &AutoProfiles, slot: usize, clip_len: i64) {
         match self {
+            AudioNode::Plugin(n) => n.bind(&SlotView { auto, slot }, clip_len),
             AudioNode::Tremolo(n) => n.lfo.bind(auto, slot, clip_len),
             AudioNode::AutoPan(n) => n.lfo.bind(auto, slot, clip_len),
             AudioNode::Vibrato(n) => n.lfo.bind(auto, slot, clip_len),
@@ -392,7 +453,6 @@ impl AudioNode {
             AudioNode::Eq(n) => n.process(buf),
             AudioNode::Distortion(n) => n.process(buf),
             AudioNode::Bitcrusher(n) => n.process(buf, _pos),
-            AudioNode::StereoWidth(n) => n.process(buf),
             AudioNode::Tremolo(n) => n.process(buf, _pos),
             AudioNode::AutoPan(n) => n.process(buf, _pos),
             AudioNode::Vibrato(n) => n.process(buf, _pos),
@@ -404,6 +464,7 @@ impl AudioNode {
             AudioNode::Gate(n) => n.process(buf),
             AudioNode::Limiter(n) => n.process(buf),
             AudioNode::Pitch(n) => n.process(buf, _pos),
+            AudioNode::Plugin(n) => n.process(buf, _pos, key),
         }
     }
 
@@ -434,6 +495,7 @@ impl AudioNode {
         match self {
             AudioNode::Limiter(n) => n.la,
             AudioNode::Pitch(n) => n.la,
+            AudioNode::Plugin(n) => n.lookahead(),
             _ => 0,
         }
     }
@@ -446,6 +508,7 @@ impl AudioNode {
             AudioNode::Chorus(n) => n.tail(),
             AudioNode::Flanger(n) => n.tail(),
             AudioNode::Delay(n) => n.tail(true),
+            AudioNode::Plugin(n) => n.tail(),
             _ => kt_time::Tick::ZERO,
         }
     }
@@ -459,7 +522,6 @@ impl AudioNode {
             AudioNode::Eq(n) => n.reset(),
             AudioNode::Distortion(n) => n.reset(),
             AudioNode::Bitcrusher(n) => n.reset(),
-            AudioNode::StereoWidth(n) => n.reset(),
             AudioNode::Tremolo(n) => n.reset(),
             AudioNode::AutoPan(n) => n.reset(),
             AudioNode::Vibrato(n) => n.reset(),
@@ -471,6 +533,7 @@ impl AudioNode {
             AudioNode::Gate(n) => n.reset(),
             AudioNode::Limiter(n) => n.reset(),
             AudioNode::Pitch(n) => n.reset(),
+            AudioNode::Plugin(n) => n.reset(),
         }
     }
 }
@@ -637,7 +700,7 @@ impl ReverbNode {
 // Ka2 nodes (R.47, item 327): filters, EQ, distortion, bitcrusher, width
 // ---------------------------------------------------------------------------
 
-use super::primitives::{Biquad, BiquadKind, apply_width, softclip};
+use super::primitives::{Biquad, BiquadKind, softclip};
 use kt_model::FilterMode;
 
 /// Coefficient recalculation — in sub-blocks: a chunk of 1024 (21 ms) on frequency
@@ -952,39 +1015,7 @@ impl CrushNode {
     }
 }
 
-/// Stereo m/s width. width == 1.0 — an EXPLICIT pass-through (m/s repacking is
-/// not byte-identical).
-pub struct WidthNode {
-    width: SmoothedParam,
-}
-
-impl WidthNode {
-    fn new() -> WidthNode {
-        WidthNode { width: SmoothedParam::with_ms(1.0, 20.0) }
-    }
-
-    fn apply(&mut self, width: f32) {
-        self.width.set_target(width.clamp(0.0, 2.0));
-    }
-
-    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
-        self.width.set_target(auto.value(slot, "width", self.width.target as f64, s) as f32);
-    }
-
-    fn process(&mut self, buf: &mut [f32]) {
-        if self.width.value() == 1.0 && self.width.target == 1.0 {
-            return;
-        }
-        for fr in buf.chunks_exact_mut(CH) {
-            let w = self.width.tick().clamp(0.0, 2.0);
-            apply_width(fr, w);
-        }
-    }
-
-    fn reset(&mut self) {
-        self.width.reset_to_target();
-    }
-}
+// stereo_width moved into src/plugins/fx-audio-tone (plugin-api-stage1, stage 3)
 
 // ---------------------------------------------------------------------------
 // Ka3 nodes (R.47, item 328): the LFO family

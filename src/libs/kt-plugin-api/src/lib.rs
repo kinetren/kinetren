@@ -806,7 +806,9 @@ pub enum Gpu {
 }
 
 /// A count of frames as a function of the parameter values (a tail, a look-ahead).
-pub type FramesFn = fn(&ParamValues) -> i64;
+/// A tail or look-ahead formula: of the values and of the slot's own curves (pitch is neutral only
+/// while no curve moves it; an echo rings while its mix or its mix curve is above zero).
+pub type FramesFn = fn(&ParamValues, &dyn SlotCurves) -> i64;
 
 /// What the host's invariants depend on — DATA, checked once at registration (D2, D4).
 #[derive(Debug, Clone)]
@@ -967,10 +969,96 @@ pub fn frame_with(rgba: &mut [u8], mut op: impl FnMut(&mut [f64; 4])) {
     }
 }
 
+/// The curves of ONE chain slot as the host gives them to an audio kernel (D2a). The domain is the
+/// clip's output progress `s` in 0..1 (R.37); the host owns the maths of shapes and links.
+pub trait SlotCurves {
+    /// The parameter's value at `s`: its curve with segment shapes, or `base` without one.
+    fn value(&self, param: &str, base: f64, s: f64) -> f64;
+    /// The parameter's profile points (empty — no curve); an LFO copies them at `bind`.
+    fn points(&self, param: &str) -> &curves::ParamPoints;
+    /// A reader of the parameter by position that the state may keep (pitch reads per grain).
+    fn owned(&self, param: &str) -> Box<dyn CurveRead>;
+}
+
+/// A slot's curve kept by an audio state: the value at progress `s`, `base` without a curve.
+pub trait CurveRead: Send {
+    fn value(&self, base: f64, s: f64) -> f64;
+}
+
+/// No curves: the registry's checks and every caller without a clip.
+pub struct NoCurves;
+
+struct NoCurve;
+
+impl CurveRead for NoCurve {
+    fn value(&self, base: f64, _s: f64) -> f64 {
+        base
+    }
+}
+
+impl SlotCurves for NoCurves {
+    fn value(&self, _param: &str, base: f64, _s: f64) -> f64 {
+        base
+    }
+    fn points(&self, _param: &str) -> &curves::ParamPoints {
+        &[]
+    }
+    fn owned(&self, _param: &str) -> Box<dyn CurveRead> {
+        Box::new(NoCurve)
+    }
+}
+
+/// Project settings an audio kernel reads, by name (D2a; today only `pitch_engine`, 0 — the
+/// granular engine, 1 — the vocoder). A change of one rebuilds the processor.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct HostOpts {
+    pub opts: Vec<(&'static str, f64)>,
+}
+
+impl HostOpts {
+    pub fn get(&self, name: &str) -> Option<f64> {
+        self.opts.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)
+    }
+}
+
+/// The state of one audio slot (D2a), owned by the host's processor and touched only by the audio
+/// render thread (invariant 2): the host calls it once per chunk, the per-frame loop is inside.
+pub trait AudioState: Send {
+    /// The slot's values in passport order, already cast through their rows (an `f32` field is the
+    /// same `f32`); `structural` — the chain was rebuilt or seeked, buffers may be re-created.
+    fn apply(&mut self, k: &[f64], structural: bool);
+    /// Copy what `process` needs from the slot's curves (no model access later).
+    fn bind(&mut self, _c: &dyn SlotCurves, _clip_len: i64) {}
+    /// Smoothing targets at the chunk's progress `s`; the host calls it ONLY when the clip has
+    /// automation (the bytes of chains without curves rest on that gate).
+    fn set_targets(&mut self, _c: &dyn SlotCurves, _s: f64) {}
+    /// One chunk in place (f32 48 kHz/2ch interleaved); `pos` — the clip-local frame of its first
+    /// frame; `key` — the sidechain signal of the same window, when the host has one.
+    fn process(&mut self, buf: &mut [f32], pos: i64, key: Option<&[f32]>);
+    /// The look-ahead the built state uses, in frames (agrees with the manifest's formula, t322g).
+    fn lookahead(&self) -> i64 {
+        0
+    }
+    /// How long the state rings after its input stops (agrees with the manifest's, t322f).
+    fn tail(&self) -> kt_time::Tick {
+        kt_time::Tick::ZERO
+    }
+    /// A real seek: zero the buffers, jump the smoothers to their targets.
+    fn reset(&mut self);
+}
+
+/// An audio effect's kernel: builds the state of one slot.
+pub trait AudioKernel: Send + Sync {
+    fn build(&self, opts: &HostOpts) -> Box<dyn AudioState>;
+}
+
 /// A plugin: its manifest and its kernels.
 pub trait Plugin: Send + Sync {
     fn manifest(&self) -> &Manifest;
     fn video(&self) -> Option<&dyn VideoKernel> {
+        None
+    }
+    fn audio(&self) -> Option<&dyn AudioKernel> {
         None
     }
 }
@@ -978,12 +1066,22 @@ pub trait Plugin: Send + Sync {
 /// The tail of an audio plugin in frames — ONE home of the formula: the registry, the static
 /// `chain_tail` and the processor read it through this function (D2).
 pub fn tail_frames(m: &Manifest, p: &ParamValues) -> i64 {
-    m.decl.tail.map_or(0, |f| f(p))
+    tail_frames_with(m, p, &NoCurves)
+}
+
+/// `tail_frames` with the slot's curves (the host's static `chain_tail`).
+pub fn tail_frames_with(m: &Manifest, p: &ParamValues, c: &dyn SlotCurves) -> i64 {
+    m.decl.tail.map_or(0, |f| f(p, c))
 }
 
 /// The look-ahead of an audio plugin in frames — the same rule as `tail_frames`.
 pub fn lookahead_frames(m: &Manifest, p: &ParamValues) -> i64 {
-    m.decl.lookahead.map_or(0, |f| f(p))
+    lookahead_frames_with(m, p, &NoCurves)
+}
+
+/// `lookahead_frames` with the slot's curves (the host's static `chain_lookahead`).
+pub fn lookahead_frames_with(m: &Manifest, p: &ParamValues, c: &dyn SlotCurves) -> i64 {
+    m.decl.lookahead.map_or(0, |f| f(p, c))
 }
 
 /// Why a plugin was refused (D4). Each names the plugin and the declaration that failed.

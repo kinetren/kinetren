@@ -16,6 +16,8 @@ use serde::Serialize;
 enum Frozen {
     /// `FxInstance::Posterize` before 2.4 (`#[serde(default = "default_levels")] levels: u32`).
     Posterize { levels: u32 },
+    /// `FxInstance::StereoWidth` before stage 3 (`#[serde(default = "default_one_f32")] width: f32`).
+    StereoWidth { width: f32 },
 }
 
 fn frozen(f: Frozen) -> String {
@@ -29,6 +31,14 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
         (FxInstance::posterize(), frozen(Frozen::Posterize { levels: 6 })),
         (FxInstance::plugin_with("posterize", &[4.0]).unwrap(), frozen(Frozen::Posterize { levels: 4 })),
         (FxInstance::plugin_with("posterize", &[32.0]).unwrap(), frozen(Frozen::Posterize { levels: 32 })),
+        (FxInstance::stereo_width(), frozen(Frozen::StereoWidth { width: 1.0 })),
+        (FxInstance::plugin_with("stereo_width", &[0.0]).unwrap(), frozen(Frozen::StereoWidth { width: 0.0 })),
+        // more digits than an f32 holds (a dragged or automated value): the variant's f32 field
+        // wrote "0.12345679"; an f64 row would write "0.123456789" (red proof of the row's Store)
+        (
+            FxInstance::plugin_with("stereo_width", &[0.123456789]).unwrap(),
+            frozen(Frozen::StereoWidth { width: 0.123456789 }),
+        ),
     ]
 }
 

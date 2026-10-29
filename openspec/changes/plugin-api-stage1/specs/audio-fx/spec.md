@@ -33,5 +33,5 @@ disagree).
 
 #### Scenario: A moved audio kind sounds byte for byte as before
 - **WHEN** an audio family (stage 2: dynamics, modulation, filters, delay, pitch) has moved into plugin crates, and the audio references and the harness run
-- **THEN** `GOLDEN_AUDIO` and every harness hash are unchanged; a model edit keeps the reverb tail and the limiter ring (the host-owned state is not recreated); a seek zeroes them
-- **TEST** t322 (`src/libs/kt-engine/tests/audio_fx_registry.rs`), t973 (`src/libs/kt-model/tests/plugin_format.rs`)
+- **THEN** `GOLDEN_AUDIO` and every harness hash are unchanged — a per-kind table printed on the tree before any audio kind moved holds the output of each audio kind at its default, with every row at 70 % of its range, with a curve on its first Smooth row and reversed (pitch also on the vocoder engine), and an audio kind without a row fails; a model edit keeps the reverb tail and the limiter ring (the host-owned state is not recreated); a seek zeroes them
+- **TEST** t322 (`src/libs/kt-engine/tests/audio_fx_registry.rs`), t973 (`src/libs/kt-model/tests/plugin_format.rs`), t973c (`src/libs/kt-engine/tests/plugin_sound.rs`)

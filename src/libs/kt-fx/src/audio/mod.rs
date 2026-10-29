@@ -175,6 +175,14 @@ pub fn chain_lookahead(fx: &[FxInstance], auto: &AutoProfiles) -> i64 {
                 );
                 if neutral { 0 } else { nodes::PITCH_LOOKAHEAD_FRAMES }
             }
+            // a plugin slot: the manifest's formula, the one home of it (D2a; t322g)
+            f @ FxInstance::Plugin(p) => nodes::plugin_audio(f).map_or(0, |(m, _)| {
+                kt_plugin_api::lookahead_frames_with(
+                    m,
+                    &kt_plugin_api::ParamValues(p.values.clone()),
+                    &nodes::SlotView { auto, slot },
+                )
+            }),
             _ => 0i64,
         })
         .sum()
@@ -191,7 +199,16 @@ pub struct ChainOpts {
 pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
     let wet = auto.mix_points(fx);
     fx.iter()
-        .map(|f| match f {
+        .enumerate()
+        .map(|(slot, f)| match f {
+            // a plugin slot: the manifest's formula, the one home of it (D2a; t322f)
+            f @ FxInstance::Plugin(p) => nodes::plugin_audio(f).map_or(Tick::ZERO, |(m, _)| {
+                Tick::from_audio_frames(kt_plugin_api::tail_frames_with(
+                    m,
+                    &kt_plugin_api::ParamValues(p.values.clone()),
+                    &nodes::SlotView { auto, slot },
+                ))
+            }),
             FxInstance::SlowedReverb { mix, reverb_delay_ms, decay, .. }
                 if *mix > 0.0 || wet.iter().any(|(_, v)| *v > 0.0) =>
             {
@@ -315,7 +332,7 @@ impl TrackProcessor {
             self.nodes = fx
                 .iter()
                 .enumerate()
-                .filter_map(|(slot, f)| AudioNode::build(f).map(|n| (slot, n)))
+                .filter_map(|(slot, f)| AudioNode::build(f, self.opts.pitch_engine).map(|n| (slot, n)))
                 .collect();
             self.fingerprint = chain_fingerprint(fx);
         }
@@ -599,12 +616,12 @@ impl ClipProcessor {
             self.nodes = fx
                 .iter()
                 .enumerate()
-                .filter_map(|(slot, f)| AudioNode::build(f).map(|n| (slot, n)))
+                .filter_map(|(slot, f)| AudioNode::build(f, self.opts.pitch_engine).map(|n| (slot, n)))
                 .collect();
         }
         debug_assert_eq!(
             self.nodes.len(),
-            fx.iter().filter(|f| AudioNode::build(f).is_some()).count(),
+            fx.iter().filter(|f| AudioNode::has_node(f)).count(),
             "node list out of sync with the chain"
         );
         self.mix = fx.iter().position(|f| f.is_layer_mix()).map(|i| match &fx[i] {

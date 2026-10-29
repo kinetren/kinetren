@@ -1039,7 +1039,9 @@ fn t324_ka2_spectral_probes() {
     );
 
     // StereoWidth 0 — mono: the channels are equal; 2 — the side energy grows
-    let p = fx_project(vec![FxInstance::StereoWidth { width: 0.0 }], "synth:ramp", dur);
+    kt_plugins_builtin::install();
+    let width = |w: f64| FxInstance::plugin_with("stereo_width", &[w]).expect("a built-in plugin");
+    let p = fx_project(vec![width(0.0)], "synth:ramp", dur);
     let r = AudioRenderer::new(&p);
     let mut f = direct(AudioPattern::Ramp);
     let mut store = FxStateStore::new();

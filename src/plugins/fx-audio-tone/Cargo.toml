@@ -1,0 +1,11 @@
+[package]
+name = "fx-audio-tone"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# A family crate is a LEAF (plugin-api-stage1, D6; t975): it depends on the plugin API and on nothing
+# of the core, so an edit here recompiles this crate, the assembler and the programs only.
+[dependencies]
+kt-plugin-api = { workspace = true }

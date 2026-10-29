@@ -40,10 +40,10 @@ fn t972_incompatible_declarations_are_refused_by_name() {
     reg.register(plugin("posterize", Media::VideoFx, video(VideoClass::PointWise, Gpu::Wgsl(TAP))))
         .expect("the first posterize registers");
     // the look-ahead of the last two cases: 48 frames per ms of the passport's `time_ms`
-    fn ms_frames(p: &ParamValues) -> i64 {
+    fn ms_frames(p: &ParamValues, _c: &dyn kt_plugin_api::SlotCurves) -> i64 {
         (p.get(0) * 48.0) as i64
     }
-    fn tail_of(p: &ParamValues) -> i64 {
+    fn tail_of(p: &ParamValues, _c: &dyn kt_plugin_api::SlotCurves) -> i64 {
         (p.get(0) * 480.0) as i64
     }
     let cases: Vec<(Arc<dyn Plugin>, &str, &str)> = vec![
@@ -98,7 +98,7 @@ fn t972_incompatible_declarations_are_refused_by_name() {
     assert_eq!(reg.ids(), vec!["posterize"], "a refused plugin became visible");
 
     // a well-formed stateful audio plugin: state, a tail and a look-ahead under the pre-roll
-    fn short_look(p: &ParamValues) -> i64 {
+    fn short_look(p: &ParamValues, _c: &dyn kt_plugin_api::SlotCurves) -> i64 {
         (p.get(0) * 20.0) as i64 // 200 ms → 4000 frames < 4800
     }
     let ok = plugin(

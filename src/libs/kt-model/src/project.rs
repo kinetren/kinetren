@@ -5347,11 +5347,6 @@ pub enum FxInstance {
         #[serde(default = "default_one_f32", skip_serializing_if = "is_one_f32")]
         mix: f32,
     },
-    /// Stereo width m/s (R.47): 0 — mono, 1 — as recorded, 2 — wider.
-    StereoWidth {
-        #[serde(default = "default_one_f32")]
-        width: f32,
-    },
     /// Tremolo (R.47): volume LFO; the phase is the integral of the frequency curve over
     /// the position of the clip (determinism without warm-up).
     Tremolo {
@@ -5846,7 +5841,6 @@ impl FxInstance {
             | FxInstance::Eq { .. }
             | FxInstance::Distortion { .. }
             | FxInstance::Bitcrusher { .. }
-            | FxInstance::StereoWidth { .. }
             | FxInstance::Tremolo { .. }
             | FxInstance::AutoPan { .. }
             | FxInstance::Vibrato { .. }
@@ -5904,7 +5898,6 @@ impl FxInstance {
             FxInstance::Eq { .. } => "eq",
             FxInstance::Distortion { .. } => "distortion",
             FxInstance::Bitcrusher { .. } => "bitcrusher",
-            FxInstance::StereoWidth { .. } => "stereo_width",
             FxInstance::Tremolo { .. } => "tremolo",
             FxInstance::AutoPan { .. } => "auto_pan",
             FxInstance::Vibrato { .. } => "vibrato",
@@ -6147,9 +6140,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         bits: f32, 1.0, 16.0, 8.0, 0.1, None, Smooth;
         rate_hz: f32, 500.0, 48000.0, 12000.0, 100.0, Hz, Smooth;
         mix: f32, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
-    },
-    StereoWidth {
-        width: f32, 0.0, 2.0, 1.0, 0.01, Ratio, Smooth;
     },
     Tremolo {
         rate_hz: f32, 0.1, 20.0, 5.0, 0.01, Hz, Smooth;
@@ -7000,8 +6990,9 @@ impl FxInstance {
         FxInstance::Bitcrusher { bits: 8.0, rate_hz: 12_000.0, mix: 1.0 }
     }
 
+    /// Stereo width at its defaults — a plugin slot (plugin-api-stage1, stage 3).
     pub fn stereo_width() -> FxInstance {
-        FxInstance::StereoWidth { width: 1.0 }
+        FxInstance::plugin("stereo_width").expect("stereo_width is not registered: install the built-in plugin set first")
     }
 
     pub fn tremolo() -> FxInstance {

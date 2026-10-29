@@ -158,6 +158,16 @@ once (English message, first line = the stage and what was done).
 ## 3. Audio FX
 
 - [ ] 3.1 Move the 17 audio plugin kinds into `fx-audio-dynamics`, `fx-audio-tone`, `fx-audio-modulation`; `ClipProcessor` holds plugin state in a host slot (D2), `chain_tail`/`chain_lookahead` read the manifests. Verify t322 (all items), `GOLDEN_AUDIO`, t337, t338 green; t973 extended to all audio kinds
+  - In progress. 3.1a (c53131f): the DSP primitives and `param_integral` moved into
+    `kt_plugin_api::{dsp, curves}`. 3.1b: the D2a contract (`AudioKernel`, `AudioState`,
+    `SlotCurves`, `CurveRead`, `HostOpts`; `FramesFn` takes the slot's curves), the host in kt-fx
+    (`AudioNode::Plugin`, `SlotView` over `AutoProfiles`, `host_opts`, the plugin arms of
+    `chain_tail`/`chain_lookahead`) and the pilot `stereo_width` in `src/plugins/fx-audio-tone`.
+    t973c (`kt-engine/tests/plugin_sound.rs`) holds the SOUND of every audio kind — four cases per
+    kind (default, rows at 70 %, a curve, reversed; pitch on the vocoder) — against a table printed
+    on c53131f before anything moved; red proof: a 1.3 width clamp in the moved node turns
+    `stereo_width (at 70 %)` red. t973 got `stereo_width` with 1.0 / 0.0 / 0.123456789 (the last
+    one is red with an `F64` row: 0.37 was not — f32 and f64 print it alike).
 - [ ] 3.2 Rewrite the "add an audio effect" checklist in `src/libs/kt-fx/CLAUDE.md` for the plugin form; commit stage 3
 
 ## 4. Video FX
