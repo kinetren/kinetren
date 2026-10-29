@@ -12,3 +12,4 @@ kt-plugin-api = { workspace = true }
 fx-video-color = { workspace = true }
 fx-audio-tone = { workspace = true }
 fx-audio-dynamics = { workspace = true }
+fx-audio-modulation = { workspace = true }

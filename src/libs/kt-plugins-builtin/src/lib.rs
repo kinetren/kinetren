@@ -8,13 +8,21 @@ use kt_plugin_api::Registry;
 
 /// The built-in plugin ids, in a fixed order. It grows by one stage at a time (the pilot first).
 pub const BUILTIN_IDS: &[&str] =
-    &["posterize", "eq", "distortion", "bitcrusher", "stereo_width", "gain", "gate", "limiter"];
+    &[
+    "posterize", "eq", "distortion", "bitcrusher", "stereo_width", "gain", "gate", "limiter",
+    "tremolo", "auto_pan", "vibrato", "chorus", "flanger", "phaser",
+];
 
 /// The registry of the built-in set; panics on a refusal or when the families do not give exactly
 /// `BUILTIN_IDS` in that order (a built-in is never silently missing).
 pub fn builtin() -> Registry {
     let mut reg = Registry::new();
-    let families = [fx_video_color::plugins(), fx_audio_tone::plugins(), fx_audio_dynamics::plugins()];
+    let families = [
+        fx_video_color::plugins(),
+        fx_audio_tone::plugins(),
+        fx_audio_dynamics::plugins(),
+        fx_audio_modulation::plugins(),
+    ];
     for p in families.into_iter().flatten() {
         let id = p.manifest().id.to_string();
         if let Err(e) = reg.register(p) {

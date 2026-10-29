@@ -52,6 +52,13 @@ enum Frozen {
     },
     Gate { threshold_db: f32, attack_ms: f32, hold_ms: f32, release_ms: f32 },
     Limiter { threshold_db: f32, ceiling_db: f32, lookahead_ms: f32, release_ms: f32 },
+    /// The modulation family before stage 3 (every field always written).
+    Tremolo { rate_hz: f32, depth: f32 },
+    AutoPan { rate_hz: f32, depth: f32 },
+    Vibrato { rate_hz: f32, depth_ms: f32 },
+    Chorus { rate_hz: f32, depth_ms: f32, mix: f32, voices: u32 },
+    Flanger { rate_hz: f32, depth_ms: f32, feedback: f32, mix: f32 },
+    Phaser { rate_hz: f32, depth: f32, feedback: f32, stages: u32, mix: f32 },
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -76,6 +83,12 @@ fn empty_reads() -> Vec<(&'static str, String)> {
         (r#"{"kind":"limiter"}"#, frozen(Frozen::Limiter { threshold_db: -6.0, ceiling_db: -0.3, lookahead_ms: 5.0, release_ms: 80.0 })),
         // a file without `pan` read 0 (`#[serde(default)]`)
         (r#"{"kind":"gain","db":-3.0}"#, frozen(Frozen::Gain { db: -3.0, pan: 0.0 })),
+        (r#"{"kind":"tremolo"}"#, frozen(Frozen::Tremolo { rate_hz: 5.0, depth: 0.6 })),
+        (r#"{"kind":"auto_pan"}"#, frozen(Frozen::AutoPan { rate_hz: 1.0, depth: 0.8 })),
+        (r#"{"kind":"vibrato"}"#, frozen(Frozen::Vibrato { rate_hz: 5.0, depth_ms: 0.5 })),
+        (r#"{"kind":"chorus"}"#, frozen(Frozen::Chorus { rate_hz: 0.8, depth_ms: 3.5, mix: 0.5, voices: 2 })),
+        (r#"{"kind":"flanger"}"#, frozen(Frozen::Flanger { rate_hz: 0.25, depth_ms: 2.0, feedback: 0.5, mix: 0.5 })),
+        (r#"{"kind":"phaser"}"#, frozen(Frozen::Phaser { rate_hz: 0.4, depth: 0.7, feedback: 0.3, stages: 4, mix: 0.5 })),
     ]
 }
 
@@ -120,6 +133,27 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
         (
             FxInstance::plugin_with("gate", &[-30.0, 0.5, 120.0, 250.0]).unwrap(),
             frozen(Frozen::Gate { threshold_db: -30.0, attack_ms: 0.5, hold_ms: 120.0, release_ms: 250.0 }),
+        ),
+        (FxInstance::tremolo(), frozen(Frozen::Tremolo { rate_hz: 5.0, depth: 0.6 })),
+        (FxInstance::plugin_with("tremolo", &[12.5, 0.95]).unwrap(), frozen(Frozen::Tremolo { rate_hz: 12.5, depth: 0.95 })),
+        (FxInstance::auto_pan(), frozen(Frozen::AutoPan { rate_hz: 1.0, depth: 0.8 })),
+        (FxInstance::plugin_with("auto_pan", &[0.123456789, 0.1]).unwrap(), frozen(Frozen::AutoPan { rate_hz: 0.123456789, depth: 0.1 })),
+        (FxInstance::vibrato(), frozen(Frozen::Vibrato { rate_hz: 5.0, depth_ms: 0.5 })),
+        (FxInstance::plugin_with("vibrato", &[7.0, 4.25]).unwrap(), frozen(Frozen::Vibrato { rate_hz: 7.0, depth_ms: 4.25 })),
+        (FxInstance::chorus(), frozen(Frozen::Chorus { rate_hz: 0.8, depth_ms: 3.5, mix: 0.5, voices: 2 })),
+        (
+            FxInstance::plugin_with("chorus", &[2.0, 9.5, 0.75, 3.0]).unwrap(),
+            frozen(Frozen::Chorus { rate_hz: 2.0, depth_ms: 9.5, mix: 0.75, voices: 3 }),
+        ),
+        (FxInstance::flanger(), frozen(Frozen::Flanger { rate_hz: 0.25, depth_ms: 2.0, feedback: 0.5, mix: 0.5 })),
+        (
+            FxInstance::plugin_with("flanger", &[1.5, 6.0, -0.75, 0.9]).unwrap(),
+            frozen(Frozen::Flanger { rate_hz: 1.5, depth_ms: 6.0, feedback: -0.75, mix: 0.9 }),
+        ),
+        (FxInstance::phaser(), frozen(Frozen::Phaser { rate_hz: 0.4, depth: 0.7, feedback: 0.3, stages: 4, mix: 0.5 })),
+        (
+            FxInstance::plugin_with("phaser", &[3.0, 0.2, 0.85, 7.0, 1.0]).unwrap(),
+            frozen(Frozen::Phaser { rate_hz: 3.0, depth: 0.2, feedback: 0.85, stages: 7, mix: 1.0 }),
         ),
         (FxInstance::limiter(), frozen(Frozen::Limiter { threshold_db: -6.0, ceiling_db: -0.3, lookahead_ms: 5.0, release_ms: 80.0 })),
         (

@@ -3,7 +3,8 @@
 //! filters, envelopes. Everything is deterministic and lock-free —
 //! there is one owner of the state (the audio-render thread, invariant 2).
 
-use kt_time::Tick;
+/// The engine's time unit, for a family's `tail` (a family has no kt-time of its own).
+pub use kt_time::Tick;
 
 /// Smoothed parameter: one-pole toward the target, ~20 ms. It does not “teleport”
 /// on set_target — only in reset().

@@ -307,7 +307,7 @@ fn t322_audio_registry_contract() {
 #[test]
 fn t325_lfo_phase_is_a_function_of_position() {
     kt_plugins_builtin::install();
-    let trem = vec![FxInstance::Tremolo { rate_hz: 5.0, depth: 1.0 }];
+    let trem = vec![kt_model::FxInstance::plugin_with("tremolo", &[5.0, 1.0]).unwrap()];
 
     // (a) in one piece == in pieces: the phase does not depend on buffer slicing
     let whole = render(trem.clone(), vec![], false, 0);
@@ -333,7 +333,7 @@ fn t325_lfo_phase_is_a_function_of_position() {
     // (b) sine under tremolo: the rate_hz curve 2 -> 8 Hz speeds up the modulation
     // (the count of envelope minima in the second half is larger than in the first)
     let sine_render = |auto: Vec<Vec<ParamCurve>>| -> Vec<f32> {
-        let mut p = project(vec![FxInstance::Tremolo { rate_hz: 2.0, depth: 1.0 }], auto, false);
+        let mut p = project(vec![kt_model::FxInstance::plugin_with("tremolo", &[2.0, 1.0]).unwrap()], auto, false);
         p.media[0].path = "synth:sine:440".into();
         let r = AudioRenderer::new(&p);
         let mut f = DirectFetcher::new(None);

@@ -4057,51 +4057,6 @@ fn default_resonance() -> f32 {
 fn default_half_f32() -> f32 {
     0.5
 }
-fn default_trem_rate() -> f32 {
-    5.0
-}
-fn default_trem_depth() -> f32 {
-    0.6
-}
-fn default_autopan_depth() -> f32 {
-    0.8
-}
-fn default_vib_rate() -> f32 {
-    5.0
-}
-fn default_vib_depth() -> f32 {
-    0.5
-}
-fn default_chorus_rate() -> f32 {
-    0.8
-}
-fn default_chorus_depth() -> f32 {
-    3.5
-}
-fn default_voices() -> u32 {
-    2
-}
-fn default_flanger_rate() -> f32 {
-    0.25
-}
-fn default_flanger_depth() -> f32 {
-    2.0
-}
-fn default_flanger_fb() -> f32 {
-    0.5
-}
-fn default_phaser_rate() -> f32 {
-    0.4
-}
-fn default_phaser_depth() -> f32 {
-    0.7
-}
-fn default_phaser_fb() -> f32 {
-    0.3
-}
-fn default_stages() -> u32 {
-    4
-}
 fn default_delay_time() -> f32 {
     350.0
 }
@@ -5259,66 +5214,6 @@ pub enum FxInstance {
         #[serde(default = "default_resonance")]
         resonance: f32,
     },
-    /// Tremolo (R.47): volume LFO; the phase is the integral of the frequency curve over
-    /// the position of the clip (determinism without warm-up).
-    Tremolo {
-        #[serde(default = "default_trem_rate")]
-        rate_hz: f32,
-        #[serde(default = "default_trem_depth")]
-        depth: f32,
-    },
-    /// Autopan (R.47): balance LFO, the pan law — as for Gain.pan.
-    AutoPan {
-        #[serde(default = "default_one_f32")]
-        rate_hz: f32,
-        #[serde(default = "default_autopan_depth")]
-        depth: f32,
-    },
-    /// Vibrato (R.47): a modulated delay, 100 % wet (with dry it would be
-    /// a chorus) — the mix parameter is deliberately absent.
-    Vibrato {
-        #[serde(default = "default_vib_rate")]
-        rate_hz: f32,
-        #[serde(default = "default_vib_depth")]
-        depth_ms: f32,
-    },
-    /// Chorus (R.47): 1-3 voices on modulated delays, stereo —
-    /// a phase shift of the LFO by 90° in the right channel.
-    Chorus {
-        #[serde(default = "default_chorus_rate")]
-        rate_hz: f32,
-        #[serde(default = "default_chorus_depth")]
-        depth_ms: f32,
-        #[serde(default = "default_half_f32")]
-        mix: f32,
-        #[serde(default = "default_voices")]
-        voices: u32,
-    },
-    /// Flanger (R.47): a short modulated delay with feedback
-    /// (negative — phase inversion).
-    Flanger {
-        #[serde(default = "default_flanger_rate")]
-        rate_hz: f32,
-        #[serde(default = "default_flanger_depth")]
-        depth_ms: f32,
-        #[serde(default = "default_flanger_fb")]
-        feedback: f32,
-        #[serde(default = "default_half_f32")]
-        mix: f32,
-    },
-    /// Phaser (R.47): a cascade of 1-pole allpass with a sweep 200..2000 Hz.
-    Phaser {
-        #[serde(default = "default_phaser_rate")]
-        rate_hz: f32,
-        #[serde(default = "default_phaser_depth")]
-        depth: f32,
-        #[serde(default = "default_phaser_fb")]
-        feedback: f32,
-        #[serde(default = "default_stages")]
-        stages: u32,
-        #[serde(default = "default_half_f32")]
-        mix: f32,
-    },
     /// Echo (R.47): a ring at maximum, the time — fractional reading with
     /// tape glide (not structural), a filter in the loop — the tail darkens.
     Delay {
@@ -5722,12 +5617,6 @@ impl FxInstance {
         match self {
             | FxInstance::SlowedReverb { .. }
             | FxInstance::Filter { .. }
-            | FxInstance::Tremolo { .. }
-            | FxInstance::AutoPan { .. }
-            | FxInstance::Vibrato { .. }
-            | FxInstance::Chorus { .. }
-            | FxInstance::Flanger { .. }
-            | FxInstance::Phaser { .. }
             | FxInstance::Delay { .. }
             | FxInstance::Compressor { .. }
             | FxInstance::PitchShift { .. } => FxClass::Audio,
@@ -5773,12 +5662,6 @@ impl FxInstance {
             FxInstance::LayerMix { .. } => "layer_mix",
             FxInstance::SlowedReverb { .. } => "slowed_reverb",
             FxInstance::Filter { .. } => "filter",
-            FxInstance::Tremolo { .. } => "tremolo",
-            FxInstance::AutoPan { .. } => "auto_pan",
-            FxInstance::Vibrato { .. } => "vibrato",
-            FxInstance::Chorus { .. } => "chorus",
-            FxInstance::Flanger { .. } => "flanger",
-            FxInstance::Phaser { .. } => "phaser",
             FxInstance::Delay { .. } => "delay",
             FxInstance::Compressor { .. } => "compressor",
             FxInstance::PitchShift { .. } => "pitch_shift",
@@ -5990,39 +5873,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
     Filter {
         cutoff_hz: f32, 20.0, 20000.0, 800.0, 10.0, Hz, Smooth;
         resonance: f32, 0.5, 10.0, 0.707, 0.01, None, Smooth;
-    },
-    Tremolo {
-        rate_hz: f32, 0.1, 20.0, 5.0, 0.01, Hz, Smooth;
-        depth: f32, 0.0, 1.0, 0.6, 0.01, Norm, Smooth;
-    },
-    AutoPan {
-        rate_hz: f32, 0.05, 10.0, 1.0, 0.01, Hz, Smooth;
-        depth: f32, 0.0, 1.0, 0.8, 0.01, Norm, Smooth;
-    },
-    Vibrato {
-        rate_hz: f32, 0.1, 12.0, 5.0, 0.01, Hz, Smooth;
-        depth_ms: f32, 0.05, 5.0, 0.5, 0.05, Ms, Smooth;
-    },
-    Chorus {
-        rate_hz: f32, 0.05, 8.0, 0.8, 0.01, Hz, Smooth;
-        depth_ms: f32, 0.0, 12.0, 3.5, 0.1, Ms, Smooth;
-        mix: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        // number of voices rebuilds the lines — not subject to a curve
-        voices: u32, 1.0, 3.0, 2.0, 1.0, Count, Structural;
-    },
-    Flanger {
-        rate_hz: f32, 0.05, 4.0, 0.25, 0.01, Hz, Smooth;
-        depth_ms: f32, 0.1, 8.0, 2.0, 0.1, Ms, Smooth;
-        feedback: f32, -0.9, 0.9, 0.5, 0.01, Norm, Smooth;
-        mix: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-    },
-    Phaser {
-        rate_hz: f32, 0.05, 4.0, 0.4, 0.01, Hz, Smooth;
-        depth: f32, 0.0, 1.0, 0.7, 0.01, Norm, Smooth;
-        feedback: f32, 0.0, 0.9, 0.3, 0.01, Norm, Smooth;
-        // number of cascades rebuilds the state — not subject to a curve
-        stages: u32, 2.0, 8.0, 4.0, 1.0, Count, Structural;
-        mix: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
     },
     Delay {
         time_ms: f32, 1.0, 1500.0, 350.0, 1.0, Ms, Smooth;
@@ -6828,28 +6678,34 @@ impl FxInstance {
         FxInstance::plugin("stereo_width").expect("stereo_width is not registered: install the built-in plugin set first")
     }
 
+    /// Tremolo at its defaults — a plugin slot (plugin-api-stage1, stage 3).
     pub fn tremolo() -> FxInstance {
-        FxInstance::Tremolo { rate_hz: 5.0, depth: 0.6 }
+        FxInstance::plugin("tremolo").expect("tremolo is not registered: install the built-in plugin set first")
     }
 
+    /// AutoPan at its defaults — a plugin slot (plugin-api-stage1, stage 3).
     pub fn auto_pan() -> FxInstance {
-        FxInstance::AutoPan { rate_hz: 1.0, depth: 0.8 }
+        FxInstance::plugin("auto_pan").expect("auto_pan is not registered: install the built-in plugin set first")
     }
 
+    /// Vibrato at its defaults — a plugin slot (plugin-api-stage1, stage 3).
     pub fn vibrato() -> FxInstance {
-        FxInstance::Vibrato { rate_hz: 5.0, depth_ms: 0.5 }
+        FxInstance::plugin("vibrato").expect("vibrato is not registered: install the built-in plugin set first")
     }
 
+    /// Chorus at its defaults — a plugin slot (plugin-api-stage1, stage 3).
     pub fn chorus() -> FxInstance {
-        FxInstance::Chorus { rate_hz: 0.8, depth_ms: 3.5, mix: 0.5, voices: 2 }
+        FxInstance::plugin("chorus").expect("chorus is not registered: install the built-in plugin set first")
     }
 
+    /// Flanger at its defaults — a plugin slot (plugin-api-stage1, stage 3).
     pub fn flanger() -> FxInstance {
-        FxInstance::Flanger { rate_hz: 0.25, depth_ms: 2.0, feedback: 0.5, mix: 0.5 }
+        FxInstance::plugin("flanger").expect("flanger is not registered: install the built-in plugin set first")
     }
 
+    /// Phaser at its defaults — a plugin slot (plugin-api-stage1, stage 3).
     pub fn phaser() -> FxInstance {
-        FxInstance::Phaser { rate_hz: 0.4, depth: 0.7, feedback: 0.3, stages: 4, mix: 0.5 }
+        FxInstance::plugin("phaser").expect("phaser is not registered: install the built-in plugin set first")
     }
 
     pub fn delay() -> FxInstance {

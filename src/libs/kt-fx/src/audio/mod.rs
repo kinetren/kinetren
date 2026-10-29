@@ -227,11 +227,6 @@ pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
                     feedback.clamp(0.01, 0.9),
                 )
             }
-            FxInstance::Vibrato { .. } => Tick::from_audio_frames((48_000.0 * 0.008) as i64),
-            FxInstance::Chorus { .. } => Tick::from_audio_frames((48_000.0 * 0.030) as i64),
-            FxInstance::Flanger { .. } => {
-                crate::audio::primitives::tail_frames_for(48_000.0 * 0.010, 0.9)
-            }
             FxInstance::Filter { cutoff_hz, resonance, .. } => {
                 let secs = 6.9 * resonance.clamp(0.5, 10.0)
                     / (std::f32::consts::PI * cutoff_hz.clamp(20.0, 20_000.0));

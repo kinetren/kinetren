@@ -21,6 +21,7 @@ members = [
     "plugins/fx-video-color",
     "plugins/fx-audio-tone",
     "plugins/fx-audio-dynamics",
+    "plugins/fx-audio-modulation",
 ]
 
 [workspace.package]
@@ -47,6 +48,7 @@ kt-plugins-builtin = { path = "libs/kt-plugins-builtin" }
 fx-video-color = { path = "plugins/fx-video-color" }
 fx-audio-tone = { path = "plugins/fx-audio-tone" }
 fx-audio-dynamics = { path = "plugins/fx-audio-dynamics" }
+fx-audio-modulation = { path = "plugins/fx-audio-modulation" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
