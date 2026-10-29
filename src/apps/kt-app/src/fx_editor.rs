@@ -582,7 +582,8 @@ impl KtApp {
                                         crate::icons::PIN,
                                         pub_doc
                                             .sequence(clip.media)
-                                            .map(|s| s.name.clone())
+                                            .map(|s| crate::i18n::reel_display_name(&s.name)
+                                                .into_owned())
                                             .unwrap_or_else(|| tr(k::pubp::INST_TITLE).to_string())
                                     ),
                                     on: None,

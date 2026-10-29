@@ -1326,3 +1326,11 @@ refused = "{0} cannot be used: {1}"
 installed = "FFmpeg {0} loaded from {1}"
 restart = "The folder is saved and will be used after a restart: FFmpeg is already loaded."
 failed = "FFmpeg was not installed: {0}"
+
+[desktop]
+generic_name = "Video Editor"
+comment = "Non-linear video editor"
+keywords = "video editor editing timeline nle montage cut"
+mime_project = "Kinetren project"
+mime_otio = "OpenTimelineIO timeline"
+mime_legacy = "Older Kinotrain project"

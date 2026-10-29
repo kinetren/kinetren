@@ -2308,7 +2308,7 @@ impl KtApp {
                         .model
                         .project()
                         .sequence(b.seq)
-                        .map(|s| s.name.clone())
+                        .map(|s| crate::i18n::reel_display_name(&s.name).into_owned())
                         .unwrap_or_default();
                     let local = lane - b.base.get(kind);
                     format!("{name} {}", kt_model::lane_label(kind, local))
@@ -5933,7 +5933,7 @@ impl KtApp {
                             .model
                             .project()
                             .sequence(seq)
-                            .map(|s| s.name.clone())
+                            .map(|s| crate::i18n::reel_display_name(&s.name).into_owned())
                             .unwrap_or_default();
                         self.seq_name = Some(crate::app::SeqNameDialog { seq, name, focus: true });
                         ui.close();

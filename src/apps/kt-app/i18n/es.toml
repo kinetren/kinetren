@@ -1323,3 +1323,11 @@ refused = "{0} no sirve: {1}"
 installed = "FFmpeg {0} cargado desde {1}"
 restart = "La carpeta se guardó y se usará tras reiniciar: FFmpeg ya está cargado."
 failed = "FFmpeg no se instaló: {0}"
+
+[desktop]
+generic_name = "Editor de vídeo"
+comment = "Editor de vídeo no lineal"
+keywords = "vídeo editor edición montaje corte nle"
+mime_project = "Proyecto de Kinetren"
+mime_otio = "Línea de tiempo de OpenTimelineIO"
+mime_legacy = "Proyecto antiguo de Kinotrain"

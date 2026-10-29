@@ -376,7 +376,11 @@ impl KtApp {
         let title = format!(
             "{} — {}",
             tr(k::pubp::LIST_TITLE),
-            self.model.document().sequence(w.seq).map(|s| s.name.clone()).unwrap_or_default()
+            self.model
+                .document()
+                .sequence(w.seq)
+                .map(|s| crate::i18n::reel_display_name(&s.name).into_owned())
+                .unwrap_or_default()
         );
         // The target’s passport is the single source of limits (R.60). We take it
         // BEFORE the window: `self` is already borrowed inside the window closure. The row runs
@@ -734,7 +738,9 @@ impl KtApp {
         let title = format!(
             "{} — {}",
             tr(k::pubp::INST_TITLE),
-            doc.sequence(seq).map(|s| s.name.clone()).unwrap_or_default()
+            doc.sequence(seq)
+                .map(|s| crate::i18n::reel_display_name(&s.name).into_owned())
+                .unwrap_or_default()
         );
         let mut ops: Vec<Command> = Vec::new();
         // what to edit in the model at the end of the frame: handles with a changed

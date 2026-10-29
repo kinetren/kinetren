@@ -18,10 +18,11 @@ FROM ubuntu:22.04 AS base
 ARG RUST_TOOLCHAIN=1.97.1
 ENV DEBIAN_FRONTEND=noninteractive
 # binutils: the delivery checks (ldd, objdump -T) run inside this container,
-# so the host needs nothing but Docker
+# so the host needs nothing but Docker; shared-mime-info, xdg-utils: t935 builds a MIME
+# database and asks it for the type of our `.kt` (change i18n-gaps)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates build-essential pkg-config clang libclang-dev \
-    libasound2-dev binutils \
+    libasound2-dev binutils shared-mime-info xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH

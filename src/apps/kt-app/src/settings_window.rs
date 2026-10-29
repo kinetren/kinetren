@@ -125,7 +125,12 @@ impl KtApp {
         let mut cancel = false;
         let cur = self.model.document().settings.clone();
         let reel_name =
-            d.reel.and_then(|id| self.model.document().sequence(id).map(|s| s.name.clone()));
+            d.reel.and_then(|id| {
+                self.model
+                    .document()
+                    .sequence(id)
+                    .map(|s| crate::i18n::reel_display_name(&s.name).into_owned())
+            });
         let title = match &reel_name {
             Some(n) => crate::tf!(k::settings::REEL_TITLE, n),
             None => tr(k::settings::TITLE).to_string(),

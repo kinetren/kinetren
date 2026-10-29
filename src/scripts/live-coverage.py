@@ -145,7 +145,9 @@ MIGRATED = {
 # window frames, the picker and four probes it added itself (`tb.diag`,
 # `win.diag`, `win.transition`, `fxreg.add.video`); `win.render_progress`
 # and `render.start` stay untouched — the README does not show a render.
-UNTOUCHED_LIMIT = 84
+# 84 → 81 (i18n-gaps, 2026-10-29): the collector skips every `*_tests.rs`, not only two of
+# them; `lang.`, `desktop.` and test data of `i18n_tests.rs` were never places a person touches.
+UNTOUCHED_LIMIT = 81
 
 
 def as_pattern(name):
@@ -157,7 +159,9 @@ def as_pattern(name):
 def published():
     out = {}
     for p in sorted(SRC.glob("*.rs")):
-        if p.name in ("reach_tests.rs", "layout_tests.rs"):
+        # test files publish nothing a person can touch: their dotted strings are catalog key
+        # prefixes and test data ("lang.", "desktop.", "msg.nest_default_name" in i18n_tests.rs)
+        if p.name.endswith("_tests.rs"):
             continue
         text = p.read_text(encoding="utf-8")
         for m in NOTE.finditer(text):

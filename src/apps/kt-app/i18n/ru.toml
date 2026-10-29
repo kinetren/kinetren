@@ -1323,3 +1323,11 @@ refused = "{0} не подходит: {1}"
 installed = "FFmpeg {0} загружен из {1}"
 restart = "Папка сохранена и будет использована после перезапуска: FFmpeg уже загружен."
 failed = "FFmpeg не установлен: {0}"
+
+[desktop]
+generic_name = "Видеоредактор"
+comment = "Нелинейный видеоредактор"
+keywords = "видео редактор монтаж таймлайн нарезка нелинейный"
+mime_project = "Проект Kinetren"
+mime_otio = "Таймлайн OpenTimelineIO"
+mime_legacy = "Старый проект Kinotrain"

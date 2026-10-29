@@ -95,7 +95,7 @@ pub struct BinDragState {
 /// is built in a closure, and the action must happen OUTSIDE it — otherwise `self`
 /// is taken by a borrow.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ReelVerb {
+pub(crate) enum ReelVerb {
     Expand,
     Open,
     Rename,
@@ -209,7 +209,9 @@ impl KtApp {
             .media
             .iter()
             .map(|m| (m.id, m.path.clone()))
-            .chain(self.model.document().sequences.iter().map(|s| (s.id, s.name.clone())))
+            .chain(self.model.document().sequences.iter().map(|s| {
+                (s.id, crate::i18n::reel_display_name(&s.name).into_owned())
+            }))
             .collect();
         // the card width is computed ONCE from the panel width: inside a
         // wrapped row the available_width shrinks and the cards came out
@@ -1124,7 +1126,7 @@ impl KtApp {
     /// Each verb is THE SAME BODY as the event's menu item (rule 17):
     /// a second way to expand, enter, rename or remove a reel
     /// must not be created, otherwise they would diverge.
-    fn reel_verb_from_bin(&mut self, seq: MediaId, verb: ReelVerb) {
+    pub(crate) fn reel_verb_from_bin(&mut self, seq: MediaId, verb: ReelVerb) {
         // “expand” and “enter” act ON THE INSTANCE: expanding is a view around a specific place,
         // not a property of the reel. If there is not a single place — say so, rather than
         // stay silent.
@@ -1142,8 +1144,12 @@ impl KtApp {
                 }
             }
             ReelVerb::Rename => {
-                let name =
-                    self.model.document().sequence(seq).map(|s| s.name.clone()).unwrap_or_default();
+                let name = self
+                    .model
+                    .document()
+                    .sequence(seq)
+                    .map(|s| crate::i18n::reel_display_name(&s.name).into_owned())
+                    .unwrap_or_default();
                 self.seq_name = Some(crate::app::SeqNameDialog { seq, name, focus: true });
             }
             ReelVerb::Published => self.open_published_win(seq),

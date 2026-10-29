@@ -15768,6 +15768,180 @@ fn t763_handles_are_hittable_and_the_nearest_wins() {
     );
 }
 
+/// Everything a frame shows as text: the painted galleys (full text before eliding) and the
+/// accessibility labels and values.
+fn shown_texts(h: &Harness<'_, KtApp>) -> Vec<String> {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    let mut out: Vec<String> =
+        crate::reach_tests::painted_texts(h).into_iter().map(|t| t.src).collect();
+    out.extend(h.query_all_by_label_contains("").filter_map(|n| {
+        let a = n.accesskit_node();
+        a.value().map(|v| v.to_string()).or_else(|| a.label().map(|l| l.to_string()))
+    }));
+    out
+}
+
+/// Collapse three events into three reels in the CURRENT interface language, the third renamed.
+fn three_reels(h: &mut Harness<'static, KtApp>, third: &str) -> Vec<kt_model::MediaId> {
+    for id in [2u64, 3, 1] {
+        h.state_mut().select_only(kt_model::ClipId(id));
+        h.step();
+        h.state_mut().collapse_selection();
+        h.step();
+    }
+    let seqs: Vec<kt_model::MediaId> =
+        h.state().model.document().sequences.iter().map(|s| s.id).collect();
+    assert_eq!(seqs.len(), 3, "scene: three reels");
+    h.state_mut().apply(kt_model::Command::RenameSequence { id: seqs[2], name: third.into() });
+    h.step();
+    seqs
+}
+
+/// Test 932 (i18n-gaps, D3): a reel name the PROGRAM chose follows the interface language.
+///
+/// ktprompts 26.10.18 item 10: «Лента» in the English interface. The collapse gesture names a
+/// reel with the catalog's default and writes it into the project; reopened in English it stayed
+/// Russian. Collapsed twice in Russian («Лента», «Лента 2»), a third reel renamed «Интро»: in
+/// English the reels read "Reel", "Reel 2", «Интро»; in Chinese the zh-Hans default and its "2";
+/// the saved text keeps «Лента», «Лента 2», «Интро»; the rename dialog offers the shown name, and
+/// renaming "Reel 2" stores what was typed.
+#[test]
+fn t932_program_chosen_reel_names_follow_the_language() {
+    use crate::i18n::{Lang, set_lang};
+    let (mut h, _g) = harness_three_clips_dt(None); // the Russian interface
+    let seqs = three_reels(&mut h, "Интро");
+    let stored = |h: &Harness<'_, KtApp>| -> Vec<String> {
+        h.state().model.document().sequences.iter().map(|s| s.name.clone()).collect()
+    };
+    assert_eq!(stored(&h), ["Лента", "Лента 2", "Интро"], "scene: the program's names in Russian");
+    let text = crate::app::project_text_of(&h.state().model.document(), &Default::default(), None);
+    for n in ["\"Лента\"", "\"Лента 2\"", "\"Интро\""] {
+        assert!(text.contains(n), "the saved project lost {n}");
+    }
+
+    // the notifications and the status line are sentences written in the language of their
+    // moment (the collapse reports in Russian): history, not a shown reel name
+    h.state_mut().notices.clear();
+    h.state_mut().status = None;
+    for (lang, reel) in [(Lang::En, "Reel"), (Lang::Zh, tr_for(Lang::Zh))] {
+        set_lang(lang);
+        h.step();
+        h.step();
+        let shown = shown_texts(&h);
+        for want in [reel.to_string(), format!("{reel} 2"), "Интро".to_string()] {
+            assert!(shown.iter().any(|t| t == &want), "{lang:?}: no “{want}” shown: {shown:?}");
+        }
+        assert!(
+            !shown.iter().any(|t| t.contains("Лента")),
+            "{lang:?}: the Russian default is still shown: {:?}",
+            shown.iter().filter(|t| t.contains("Лента")).collect::<Vec<_>>()
+        );
+        assert_eq!(stored(&h), ["Лента", "Лента 2", "Интро"], "{lang:?}: showing changed the data");
+    }
+
+    // the rename dialog offers the SHOWN name, and what is typed is stored
+    set_lang(Lang::En);
+    h.step();
+    h.state_mut().reel_verb_from_bin(seqs[1], crate::bin_panel::ReelVerb::Rename);
+    assert_eq!(h.state().seq_name.as_ref().map(|d| d.name.as_str()), Some("Reel 2"));
+    h.state_mut().apply(kt_model::Command::RenameSequence { id: seqs[1], name: "Outro".into() });
+    h.state_mut().seq_name = None;
+    h.step();
+    assert_eq!(stored(&h), ["Лента", "Outro", "Интро"], "the rename did not store what was typed");
+    set_lang(Lang::Ru);
+}
+
+/// Test 934 (i18n-gaps, D3): every place that shows a reel name shows the program-chosen one
+/// in the current language — the owner's place first.
+///
+/// The owner saw «Лента» in the head of an instance's chain strip ("📌 Лента"). A reel collapsed
+/// in the Russian interface with published parameters (the news template), shown in English:
+/// the strip head, the crumbs inside the reel, the reel's settings window title, the bin card and
+/// the search all say "Reel"; the search finds the reel by "Reel" and by «Лента».
+#[test]
+fn t934_every_place_shows_the_reel_name_in_the_language() {
+    use crate::i18n::{Lang, set_lang};
+    let (mut h, s) = harness_news_template(); // collapsed in the Russian interface
+    let stored = h.state().model.document().sequence(s.seq).map(|q| q.name.clone());
+    assert_eq!(stored.as_deref(), Some(tr_for(Lang::Ru)), "scene: the reel's stored name");
+    h.state_mut().notices.clear();
+    h.state_mut().status = None;
+    set_lang(Lang::En);
+    h.step();
+    let no_russian = |h: &Harness<'_, KtApp>, place: &str| {
+        let shown = shown_texts(h);
+        let bad: Vec<&String> = shown.iter().filter(|t| t.contains("Лента")).collect();
+        assert!(bad.is_empty(), "{place}: the Russian default is shown: {bad:?}");
+    };
+
+    // 1) the head of the instance's chain strip — the owner's place
+    h.state_mut().open_fx_editor_head(s.b);
+    h.step();
+    h.step();
+    let head = format!("{} Reel", crate::icons::PIN);
+    let painted = crate::reach_tests::painted_texts(&h);
+    assert!(
+        painted.iter().any(|t| t.src == head),
+        "the strip head is not “{head}”: {:?}",
+        painted.iter().filter(|t| t.src.starts_with(crate::icons::PIN)).map(|t| &t.src).collect::<Vec<_>>()
+    );
+    no_russian(&h, "the FX window");
+    h.state_mut().fx_editors.clear();
+    h.step();
+
+    // 2) the bin card (at the root)
+    assert!(shown_texts(&h).iter().any(|t| t == "Reel"), "the bin card does not read “Reel”");
+    no_russian(&h, "the root");
+
+    // 3) the search: by the shown name and by the stored one
+    let p = h.state().model.project().clone();
+    for q in ["Reel", "Лента"] {
+        let hits = crate::app::search_hits(&p, &[], q);
+        assert!(
+            hits.iter().any(|x| x.label.contains("Reel")),
+            "searching “{q}” does not find the reel as “Reel”: {hits:?}"
+        );
+    }
+
+    // 4) the crumbs inside the reel and 5) its settings window title
+    h.state_mut().enter_nest(s.a);
+    h.step();
+    assert!(h.state().nest_crumbs().iter().any(|c| c == "Reel"), "{:?}", h.state().nest_crumbs());
+    h.state_mut().open_project_settings();
+    h.step();
+    h.step();
+    let title = crate::tf!(k::settings::REEL_TITLE, "Reel");
+    assert!(shown_texts(&h).iter().any(|t| t == &title), "the settings window is not titled “{title}”");
+    no_russian(&h, "inside the reel");
+    set_lang(Lang::Ru);
+}
+
+/// Test 932b (i18n-gaps, D3): the matching rules of `reel_display_name` — the default of ANY
+/// catalog, alone or with a number, becomes the current language's; anything else is the person's.
+#[test]
+fn t932b_reel_display_name_rules() {
+    use crate::i18n::{Lang, reel_display_name as d, set_lang};
+    set_lang(Lang::En);
+    for stored in ["Лента", "Bobina", "Reel", "片段", "بكرة"] {
+        assert_eq!(d(stored), "Reel", "{stored}");
+        assert_eq!(d(&format!("{stored} 12")), "Reel 12", "{stored} with a number");
+    }
+    for own in ["Лента новостей", "Reel2", "Reel 2b", "Лента ", "Интро", "", "My Reel"] {
+        assert_eq!(d(own), own, "the person's name “{own}” was translated");
+    }
+    set_lang(Lang::Ru);
+    assert_eq!(d("Reel 3"), "Лента 3");
+}
+
+/// The default reel name of a catalog language (for the expectations of t932/t934).
+fn tr_for(lang: crate::i18n::Lang) -> &'static str {
+    let was = crate::i18n::current();
+    crate::i18n::set_lang(lang);
+    let s = tr(k::msg::NEST_DEFAULT_NAME);
+    crate::i18n::set_lang(was);
+    s
+}
+
 /// Test 947, the panel half (morpher-event-grid-cost, D1): the performance panel tells the
 /// video compose cost — a "Compose" line with the last frame's time — which follows the frames
 /// while playing and stays put after Stop, composing nothing more (invariant 12).

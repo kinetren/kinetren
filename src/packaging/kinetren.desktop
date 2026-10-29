@@ -1,15 +1,28 @@
 [Desktop Entry]
 Type=Application
 Name=Kinetren
+# The translated lines equal the [desktop] section of the catalogs (apps/kt-app/i18n/*.toml),
+# guarded by t930: edit the catalog first, then paste the line the test prints.
 GenericName=Video Editor
 GenericName[ru]=Видеоредактор
+GenericName[es]=Editor de vídeo
+GenericName[zh_CN]=视频编辑器
+GenericName[ar]=محرر فيديو
 Comment=Non-linear video editor
 Comment[ru]=Нелинейный видеоредактор
+Comment[es]=Editor de vídeo no lineal
+Comment[zh_CN]=非线性视频编辑器
+Comment[ar]=محرر فيديو غير خطي
+Keywords=video;editor;editing;timeline;nle;montage;cut;
+Keywords[ru]=видео;редактор;монтаж;таймлайн;нарезка;нелинейный;
+Keywords[es]=vídeo;editor;edición;montaje;corte;nle;
+Keywords[zh_CN]=视频;编辑;剪辑;时间线;非线性;
+Keywords[ar]=فيديو;تحرير;مونتاج;قص;
 Exec=kinetren %f
 Icon=kinetren
 Terminal=false
 Categories=AudioVideo;AudioVideoEditing;Video;
-MimeType=application/x-opentimelineio;application/x-kinetren-project;
+MimeType=application/x-opentimelineio;application/x-kinetren-project;application/x-kinotrain-legacy-project;
 # WM_CLASS on X11 is the binary name (winit sets no app_id there); without a
 # match the taskbar does not tie the window to this entry and shows a stub.
 # The binary has been `kinetren` since 2026-10-22 (it was kt-app).

@@ -54,12 +54,14 @@ jobs:
         # t802) run its dummy scenarios; they skip without Xvfb, so install it
         # explicitly instead of depending on what the runner image carries;
         # x11-utils, x11-apps, imagemagick: xdpyinfo, xwd and convert, which t809 calls
-        # to read the screen it compares against
+        # to read the screen it compares against; shared-mime-info, xdg-utils:
+        # update-mime-database and xdg-mime, which t935 runs to tell our `.kt` from Kotlin
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang libclang-dev pkg-config libasound2-dev ffmpeg \
-            xvfb openbox python3-xlib x11-utils x11-apps imagemagick
+            xvfb openbox python3-xlib x11-utils x11-apps imagemagick \
+            shared-mime-info xdg-utils
 
       - uses: dtolnay/rust-toolchain@master
         with:

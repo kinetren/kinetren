@@ -45,6 +45,7 @@ const FILES: &[&str] = &[
     "README.md",
     "src/apps/kt-app/Cargo.toml",
     "src/packaging/kinetren.desktop",
+    "src/packaging/kinetren-mime.xml",
     "src/packaging/install.sh",
     "src/scripts/vendor-ffmpeg-headers.sh",
     "src/scripts/fetch-ffmpeg-win.sh",
@@ -282,4 +283,134 @@ fn t866_guard_catches_ffmpeg9_drift() {
         assert!(text.contains(want), "{tag}: expected {want:?} in:\n{text}");
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// Test 931 (i18n-gaps, D2): the MIME file names our files and only ours.
+///
+/// `*.kt` is also Kotlin's glob, so the project type carries a magic rule on its root marker;
+/// `*.ktproj` is its own legacy type (the former program's format, opened to name the import door);
+/// the desktop entry lists exactly the three types. Each class of drift is red on a copy.
+#[test]
+fn t931_mime_names_our_files_and_only_ours() {
+    if cfg!(windows) {
+        eprintln!("t931 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    type Break = fn(&Path);
+    let cases: [(&str, Break, &str); 4] = [
+        (
+            "no-magic",
+            |d| edit(d, "src/packaging/kinetren-mime.xml", "offset=\"0:64\"", "offset=\"x\""),
+            "the magic rule on its root marker",
+        ),
+        (
+            "ktproj-in-project",
+            |d| {
+                edit(
+                    d,
+                    "src/packaging/kinetren-mime.xml",
+                    "<glob pattern=\"*.kt\"/>",
+                    "<glob pattern=\"*.kt\"/>\n    <glob pattern=\"*.ktproj\"/>",
+                )
+            },
+            "`*.ktproj` belongs to the legacy type only",
+        ),
+        (
+            "no-legacy-type",
+            |d| edit(d, "src/packaging/kinetren-mime.xml", "<glob pattern=\"*.ktproj\"/>", ""),
+            "the legacy type must glob `*.ktproj`",
+        ),
+        (
+            "mimetype-list",
+            |d| {
+                edit(
+                    d,
+                    "src/packaging/kinetren.desktop",
+                    "application/x-kinotrain-legacy-project;",
+                    "",
+                )
+            },
+            "`MimeType=` must list exactly",
+        ),
+    ];
+    for (tag, brk, want) in cases {
+        let dir = copy_tree(tag);
+        brk(&dir);
+        let (ok, text) = guard(&dir);
+        assert!(!ok, "{tag}: the guard must fail:\n{text}");
+        assert!(text.contains(want), "{tag}: expected {want:?} in:\n{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Test 935 (i18n-gaps, D2): the system's MIME database tells our project from Kotlin.
+///
+/// In a temporary `XDG_DATA_HOME` the MIME file is installed next to the system's own database
+/// (which declares `text/x-kotlin` with `*.kt`), `update-mime-database` builds it, and the type of
+/// three files is asked: a project written by `project_file::to_text`, a Kotlin source and the
+/// legacy fixture. Without `update-mime-database` on the machine the test says why it did not run;
+/// the build container installs `shared-mime-info`, so CI always runs it.
+#[test]
+fn t935_the_mime_database_tells_our_project_from_kotlin() {
+    let have = |tool: &str| {
+        std::process::Command::new("sh")
+            .args(["-c", &format!("command -v {tool}")])
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    if cfg!(windows) || !have("update-mime-database") || !have("xdg-mime") {
+        eprintln!("t935 not run: update-mime-database / xdg-mime are not on this machine");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("kt-mime-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let data = dir.join("data");
+    let packages = data.join("mime/packages");
+    std::fs::create_dir_all(&packages).unwrap();
+    std::fs::copy(repo().join("src/packaging/kinetren-mime.xml"), packages.join("kinetren-mime.xml"))
+        .unwrap();
+    // the system's own definitions (Kotlin's `*.kt` among them) are part of the question
+    let freedesktop = Path::new("/usr/share/mime/packages/freedesktop.org.xml");
+    if freedesktop.exists() {
+        std::fs::copy(freedesktop, packages.join("freedesktop.org.xml")).unwrap();
+    }
+    let st = std::process::Command::new("update-mime-database")
+        .arg(data.join("mime"))
+        .env("XDG_DATA_HOME", &data)
+        .env("XDG_DATA_DIRS", &data)
+        .status()
+        .unwrap();
+    assert!(st.success(), "update-mime-database failed");
+    let files = dir.join("files");
+    std::fs::create_dir_all(&files).unwrap();
+    let p = kt_model::Project::new(kt_model::ProjectSettings {
+        fps: 30,
+        width: 320,
+        height: 180,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    });
+    std::fs::write(files.join("film.kt"), kt_model::project_file::to_text(&p, None)).unwrap();
+    std::fs::write(files.join("Main.kt"), "package demo\n\nfun main() {\n    println(\"hi\")\n}\n")
+        .unwrap();
+    std::fs::copy(repo().join("src/fixtures/demo.ktproj"), files.join("demo.ktproj")).unwrap();
+    let ask = |f: &str| -> String {
+        let out = std::process::Command::new("xdg-mime")
+            .args(["query", "filetype"])
+            .arg(files.join(f))
+            .env("XDG_DATA_HOME", &data)
+            .env("XDG_DATA_DIRS", &data)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    assert_eq!(ask("film.kt"), "application/x-kinetren-project", "our project");
+    if freedesktop.exists() {
+        assert_eq!(ask("Main.kt"), "text/x-kotlin", "a Kotlin source is not ours");
+    }
+    assert_eq!(ask("demo.ktproj"), "application/x-kinotrain-legacy-project", "the older format");
+    let _ = std::fs::remove_dir_all(&dir);
 }

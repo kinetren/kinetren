@@ -1323,3 +1323,11 @@ refused = "لا يصلح {0}: {1}"
 installed = "حُمّل FFmpeg {0} من {1}"
 restart = "حُفظ المجلد وسيُستخدم بعد إعادة التشغيل: FFmpeg محمّل بالفعل."
 failed = "لم يُثبَّت FFmpeg: {0}"
+
+[desktop]
+generic_name = "محرر فيديو"
+comment = "محرر فيديو غير خطي"
+keywords = "فيديو تحرير مونتاج قص"
+mime_project = "مشروع Kinetren"
+mime_otio = "مخطط زمني OpenTimelineIO"
+mime_legacy = "مشروع Kinotrain قديم"

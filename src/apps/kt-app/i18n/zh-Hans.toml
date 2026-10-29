@@ -1323,3 +1323,11 @@ refused = "{0} 无法使用：{1}"
 installed = "已从 {1} 加载 FFmpeg {0}"
 restart = "文件夹已保存，将在重启后使用：FFmpeg 已经加载。"
 failed = "FFmpeg 未安装：{0}"
+
+[desktop]
+generic_name = "视频编辑器"
+comment = "非线性视频编辑器"
+keywords = "视频 编辑 剪辑 时间线 非线性"
+mime_project = "Kinetren 项目"
+mime_otio = "OpenTimelineIO 时间线"
+mime_legacy = "旧版 Kinotrain 项目"

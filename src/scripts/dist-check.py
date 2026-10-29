@@ -39,6 +39,12 @@ RELEASE = ".github/workflows/release.yml"
 README = "README.md"
 APP_MANIFEST = "src/apps/kt-app/Cargo.toml"
 DESKTOP = "src/packaging/kinetren.desktop"
+MIME = "src/packaging/kinetren-mime.xml"
+MIME_TYPES = [
+    "application/x-opentimelineio",
+    "application/x-kinetren-project",
+    "application/x-kinotrain-legacy-project",
+]
 INSTALL = "src/packaging/install.sh"
 VENDOR_HEADERS = "src/scripts/vendor-ffmpeg-headers.sh"
 FETCH_WIN = "src/scripts/fetch-ffmpeg-win.sh"
@@ -322,6 +328,39 @@ def check_binary_name(r):
             r.err(INSTALL, "must remove the `kt-app` an older install left")
 
 
+def check_mime(r):
+    """The MIME file names our files and only ours (change i18n-gaps, D2): `*.kt` is shared with
+    Kotlin, so the project type carries a magic rule on its root marker; `*.ktproj` is the older
+    format's own type; the desktop entry opens exactly our three types."""
+    mime = r.read(MIME)
+    if mime is None:
+        return
+    blocks = {}
+    for b in mime.split("<mime-type ")[1:]:
+        m = re.match(r'type="([^"]+)"', b)
+        if m:
+            blocks[m.group(1)] = b.split("</mime-type>")[0]
+    proj = blocks.get("application/x-kinetren-project", "")
+    if '<glob pattern="*.kt"/>' not in proj:
+        r.err(MIME, "the project type must glob `*.kt`")
+    if not re.search(r'<match type="string" value="&quot;kinetren&quot;" offset="0:\d+"/>', proj):
+        r.err(MIME, "the project type needs the magic rule on its root marker \"kinetren\" (Kotlin shares `*.kt`)")
+    for ty, b in blocks.items():
+        if '<glob pattern="*.ktproj"/>' in b and ty != "application/x-kinotrain-legacy-project":
+            r.err(MIME, f"`*.ktproj` belongs to the legacy type only, not {ty}")
+    legacy = blocks.get("application/x-kinotrain-legacy-project", "")
+    if '<glob pattern="*.ktproj"/>' not in legacy or "Kinotrain" not in legacy:
+        r.err(MIME, "the legacy type must glob `*.ktproj` and name the old program (Kinotrain)")
+    if '<glob pattern="*.otio"/>' not in blocks.get("application/x-opentimelineio", ""):
+        r.err(MIME, "the OpenTimelineIO type must glob `*.otio`")
+    de = r.read(DESKTOP)
+    if de is not None:
+        m = re.search(r"^MimeType=(.*)$", de, re.M)
+        listed = [t for t in (m.group(1) if m else "").split(";") if t]
+        if sorted(listed) != sorted(MIME_TYPES):
+            r.err(DESKTOP, f"`MimeType=` must list exactly {';'.join(MIME_TYPES)}; it lists {listed}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", required=True)
@@ -337,6 +376,7 @@ def main():
     check_ffmpeg_test(r)
     check_readme(r)
     check_binary_name(r)
+    check_mime(r)
     if r.errors:
         for e in r.errors:
             print(e, file=sys.stderr)

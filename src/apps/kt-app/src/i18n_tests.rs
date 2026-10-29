@@ -5,7 +5,9 @@ use crate::i18n::{self, Lang, catalog, tables};
 
 /// Sections that are consumed not through `k::…` but otherwise: self-names end up
 /// in the generated `ENDONYM` and are read through `Lang::endonym()`.
-const NOT_REFERENCED_BY_PATH: [&str; 1] = ["lang."];
+// `desktop.` — the packaging texts (i18n-gaps, D1): read by the .desktop/MIME files, not the UI;
+// t930 is their user
+const NOT_REFERENCED_BY_PATH: [&str; 2] = ["lang.", "desktop."];
 
 /// The full key `menu.file.save` → the tail of the path of the constant `menu::file::SAVE`,
 /// by which the key is looked up in the sources.
@@ -254,6 +256,122 @@ fn t131_source_language_is_english() {
     );
 }
 
+fn has_cyrillic(s: &str) -> bool {
+    s.chars().any(|c| matches!(c as u32, 0x0400..=0x052F))
+}
+
+/// Cyrillic values of a catalog other than `ru.toml`: `(section.key, value)`. Only the endonym
+/// `[lang] ru` may be Russian there.
+fn cyrillic_in_catalog(text: &str) -> Vec<(String, String)> {
+    let mut section = String::new();
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let l = line.trim();
+        if let Some(s) = l.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            section = s.to_string();
+            continue;
+        }
+        let Some((key, value)) = l.split_once('=') else { continue };
+        let key = key.trim();
+        if has_cyrillic(value) && !(section == "lang" && key == "ru") {
+            out.push((format!("{section}.{key}"), value.trim().to_string()));
+        }
+    }
+    out
+}
+
+/// Committed test data that carries Cyrillic ON PURPOSE, each with its reason (D4). Anything else
+/// Cyrillic in the scanned files is a word that crept in.
+const CYRILLIC_TEST_DATA: [(&str, &str); 3] = [
+    ("libs/kt-engine/tests/title_golden.rs", "the frozen title golden renders a Cyrillic line (R.52)"),
+    ("libs/kt-otio/tests/format.rs", "a non-ASCII media path must survive the exchange round trip"),
+    ("apps/kt-cli/tests/readme_guard.rs", "the README guard injects a Cyrillic line to prove it is red"),
+];
+
+/// The first Cyrillic line of a committed text file, `None` if it has none.
+fn cyrillic_line(text: &str) -> Option<usize> {
+    text.lines().position(has_cyrillic).map(|i| i + 1)
+}
+
+/// Test 933 (i18n-gaps, D4): a Cyrillic word cannot hide outside `ru.toml` and the declared data.
+///
+/// The owner (kkt 2026-10-27 item 3): "check that ru words did not get anywhere else in other
+/// languages". t131 holds the Rust literals; this holds the rest: the four other catalogs value by
+/// value (only the endonym «Русский» of `[lang]`), and the committed fixtures, the live scenarios and
+/// the workspace's integration tests as text, against the declared list with reasons. The scanners
+/// are proven on broken copies here (a Russian word in a Spanish value, in a fixture line), not by
+/// writing into the tree.
+#[test]
+fn t933_cyrillic_stays_in_ru_and_in_declared_data() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("src/ workspace root")
+        .to_path_buf();
+    // the catalogs
+    let i18n = root.join("apps/kt-app/i18n");
+    for lang in ["en", "es", "zh-Hans", "ar"] {
+        let text = std::fs::read_to_string(i18n.join(format!("{lang}.toml"))).expect("catalog");
+        let bad = cyrillic_in_catalog(&text);
+        assert!(bad.is_empty(), "{lang}.toml carries Russian: {bad:?}");
+    }
+    // the committed fixtures, the live scenarios, the integration tests
+    let mut files = Vec::new();
+    let mut stack = vec![root.join("fixtures"), root.join("scripts/live")];
+    let mut tests = vec![root.join("libs"), root.join("apps")];
+    while let Some(dir) = tests.pop() {
+        for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() && p.file_name().is_some_and(|n| n != "target" && n != "src") {
+                if p.file_name().is_some_and(|n| n == "tests") {
+                    stack.push(p);
+                } else {
+                    tests.push(p);
+                }
+            }
+        }
+    }
+    while let Some(dir) = stack.pop() {
+        for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            if p.is_dir() {
+                if name != "out" {
+                    stack.push(p);
+                }
+            } else if [".kt", ".otio", ".ktproj", ".json", ".py", ".rs"].iter().any(|x| name.ends_with(x)) {
+                files.push(p);
+            }
+        }
+    }
+    let mut bad = Vec::new();
+    for p in &files {
+        let rel = p.strip_prefix(&root).unwrap_or(p).to_string_lossy().replace('\\', "/");
+        let Ok(text) = std::fs::read_to_string(p) else { continue };
+        if let Some(line) = cyrillic_line(&text)
+            && !CYRILLIC_TEST_DATA.iter().any(|(f, _)| *f == rel)
+        {
+            bad.push(format!("{rel}:{line}"));
+        }
+    }
+    assert!(bad.is_empty(), "Cyrillic outside the declared test data: {bad:?}");
+    for (f, why) in CYRILLIC_TEST_DATA {
+        // the walk itself reached the declared files: a walk that misses `tests/` would pass empty
+        assert!(files.iter().any(|p| p.ends_with(f)), "the scan did not reach {f}");
+        let text = std::fs::read_to_string(root.join(f)).unwrap_or_default();
+        assert!(cyrillic_line(&text).is_some(), "{f} is declared ({why}) but has no Cyrillic any more");
+    }
+    // the scanners on broken copies: a Russian word in a Spanish value, in a fixture line
+    let es = std::fs::read_to_string(i18n.join("es.toml")).unwrap();
+    let broken = es.replacen("nest_default_name = \"Bobina\"", "nest_default_name = \"Лента\"", 1);
+    assert_eq!(
+        cyrillic_in_catalog(&broken),
+        [("msg.nest_default_name".to_string(), "\"Лента\"".to_string())],
+        "the catalog scanner missed a Russian value"
+    );
+    assert_eq!(cyrillic_line("{\n  \"name\": \"Лента\"\n}"), Some(2), "the fixture scanner missed it");
+}
+
 /// Test 171 (item 4 of R.28): the menu item says WHAT and WHERE it will happen.
 ///
 /// The complaint verbatim: “fade out — it is not clear at all from the name of the item where it
@@ -421,3 +539,120 @@ fn t861_language_from_the_os_locale_when_no_variable() {
     assert_eq!(detect(&none, None), None);
 }
 
+
+/// The `[desktop]` section of a catalog: key → value.
+fn desktop_section(text: &str) -> std::collections::BTreeMap<String, String> {
+    let mut on = false;
+    let mut out = std::collections::BTreeMap::new();
+    for line in text.lines() {
+        let l = line.trim();
+        if l.starts_with('[') {
+            on = l == "[desktop]";
+            continue;
+        }
+        if let (true, Some((k, v))) = (on, l.split_once('=')) {
+            out.insert(k.trim().to_string(), v.trim().trim_matches('"').to_string());
+        }
+    }
+    out
+}
+
+/// What the packaging files must say for each catalog language (D1): the language's freedesktop
+/// locale (`None` — the untranslated base, English) and its `[desktop]` section; returns every
+/// mismatch as "file: key[locale]: wanted …".
+fn packaging_mismatches(
+    langs: &[(Option<&str>, std::collections::BTreeMap<String, String>)],
+    desktop: &str,
+    mime: &str,
+) -> Vec<String> {
+    let mut bad = Vec::new();
+    let de = |key: &str, loc: Option<&str>| -> Option<String> {
+        let name = match loc {
+            Some(l) => format!("{key}[{l}]="),
+            None => format!("{key}="),
+        };
+        desktop.lines().find_map(|l| l.strip_prefix(name.as_str())).map(str::to_string)
+    };
+    for (loc, sec) in langs {
+        let v = |k: &str| sec.get(k).cloned().unwrap_or_default();
+        let kw = format!("{};", v("keywords").split_whitespace().collect::<Vec<_>>().join(";"));
+        for (key, want) in
+            [("GenericName", v("generic_name")), ("Comment", v("comment")), ("Keywords", kw)]
+        {
+            if de(key, *loc).as_deref() != Some(want.as_str()) {
+                bad.push(format!("kinetren.desktop: {key}[{}]: wanted “{want}”", loc.unwrap_or("")));
+            }
+        }
+        for (ty, key) in [
+            ("application/x-kinetren-project", "mime_project"),
+            ("application/x-opentimelineio", "mime_otio"),
+            ("application/x-kinotrain-legacy-project", "mime_legacy"),
+        ] {
+            let want = match loc {
+                Some(l) => format!("<comment xml:lang=\"{l}\">{}</comment>", v(key)),
+                None => format!("<comment>{}</comment>", v(key)),
+            };
+            let block = mime
+                .split("<mime-type ")
+                .find(|b| b.starts_with(&format!("type=\"{ty}\"")))
+                .unwrap_or("");
+            if !block.contains(&want) {
+                bad.push(format!(
+                    "kinetren-mime.xml: {ty} comment[{}]: wanted {want}",
+                    loc.unwrap_or("")
+                ));
+            }
+        }
+    }
+    bad
+}
+
+/// Test 930 (i18n-gaps, D1): every catalog language is in the desktop and MIME files, equal to the
+/// catalog's `[desktop]` section.
+///
+/// The owner (kkt 2026-10-27 item 3): "the mime, desktop files hold only ru, translate the
+/// remaining languages there too". The languages come from the catalogs on disk — a sixth catalog
+/// language with no packaging lines is red; so is a removed line. `Keywords=` is the untranslated
+/// base plus one line per language, the catalog's space-separated words joined with `;`.
+#[test]
+fn t930_packaging_speaks_every_catalog_language() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let locale = |lang: &str| -> Option<&'static str> {
+        match lang {
+            "en" => None,
+            "ru" => Some("ru"),
+            "es" => Some("es"),
+            "zh-Hans" => Some("zh_CN"),
+            "ar" => Some("ar"),
+            other => panic!("a catalog language with no freedesktop locale mapped: {other}"),
+        }
+    };
+    let mut langs = Vec::new();
+    for e in std::fs::read_dir(src.join("apps/kt-app/i18n")).expect("catalogs").flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(lang) = name.strip_suffix(".toml") else { continue };
+        let sec = desktop_section(&std::fs::read_to_string(e.path()).unwrap());
+        assert_eq!(sec.len(), 6, "{name}: the [desktop] section is incomplete: {sec:?}");
+        langs.push((locale(lang), sec));
+    }
+    assert_eq!(langs.len(), crate::i18n::Lang::ALL.len(), "the catalogs on disk are the languages");
+    let desktop = std::fs::read_to_string(src.join("packaging/kinetren.desktop")).unwrap();
+    let mime = std::fs::read_to_string(src.join("packaging/kinetren-mime.xml")).unwrap();
+    let bad = packaging_mismatches(&langs, &desktop, &mime);
+    assert!(bad.is_empty(), "the packaging files differ from the catalogs:\n{}", bad.join("\n"));
+
+    // broken copies: a sixth language with no lines; Comment[es] removed
+    let mut six = langs.clone();
+    let mut fr = langs[0].1.clone();
+    fr.insert("comment".into(), "Éditeur vidéo non linéaire".into());
+    six.push((Some("fr"), fr));
+    let bad = packaging_mismatches(&six, &desktop, &mime);
+    assert!(bad.iter().any(|b| b.contains("Comment[fr]")), "a sixth language went unnoticed: {bad:?}");
+    let no_es: String = desktop
+        .lines()
+        .filter(|l| !l.starts_with("Comment[es]="))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    let bad = packaging_mismatches(&langs, &no_es, &mime);
+    assert!(bad.iter().any(|b| b.contains("Comment[es]")), "a removed Comment[es] went unnoticed: {bad:?}");
+}

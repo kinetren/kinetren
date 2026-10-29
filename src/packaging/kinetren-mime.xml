@@ -1,14 +1,35 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- The comments equal the [desktop] section of the catalogs (apps/kt-app/i18n/*.toml), t930.
+     `*.kt` is also Kotlin's glob (text/x-kotlin): with two types on one glob shared-mime-info
+     sniffs the content, and the magic rule names OUR file by its root marker "kinetren" (the
+     first key of the project file). `*.ktproj` is the older format: its own type, opened by
+     Kinetren, whose "Open" names the import door (R.67). t931, t935. -->
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-kinetren-project">
     <comment>Kinetren project</comment>
     <comment xml:lang="ru">Проект Kinetren</comment>
+    <comment xml:lang="es">Proyecto de Kinetren</comment>
+    <comment xml:lang="zh_CN">Kinetren 项目</comment>
+    <comment xml:lang="ar">مشروع Kinetren</comment>
     <glob pattern="*.kt"/>
+    <magic priority="80">
+      <match type="string" value="&quot;kinetren&quot;" offset="0:64"/>
+    </magic>
+  </mime-type>
+  <mime-type type="application/x-kinotrain-legacy-project">
+    <comment>Older Kinotrain project</comment>
+    <comment xml:lang="ru">Старый проект Kinotrain</comment>
+    <comment xml:lang="es">Proyecto antiguo de Kinotrain</comment>
+    <comment xml:lang="zh_CN">旧版 Kinotrain 项目</comment>
+    <comment xml:lang="ar">مشروع Kinotrain قديم</comment>
     <glob pattern="*.ktproj"/>
   </mime-type>
   <mime-type type="application/x-opentimelineio">
     <comment>OpenTimelineIO timeline</comment>
     <comment xml:lang="ru">Таймлайн OpenTimelineIO</comment>
+    <comment xml:lang="es">Línea de tiempo de OpenTimelineIO</comment>
+    <comment xml:lang="zh_CN">OpenTimelineIO 时间线</comment>
+    <comment xml:lang="ar">مخطط زمني OpenTimelineIO</comment>
     <glob pattern="*.otio"/>
   </mime-type>
 </mime-info>

@@ -136,6 +136,36 @@ pub fn ar_logical(k: Key) -> &'static str {
     tables::AR_LOGICAL[k.0 as usize]
 }
 
+/// A reel name the PROGRAM chose, shown in the current language (i18n-gaps, D3).
+///
+/// The collapse gesture names a new reel with the catalog's default (`msg.nest_default_name`,
+/// numbered by `unique_name`) and writes it into the project. That word belongs to the
+/// interface, not to the person: a project made in the Russian interface showed «Лента» in the
+/// English one (ktprompts 26.10.18 item 10). A stored name that equals the default of ANY catalog
+/// language — exactly, or followed by `" " + digits` — is shown as the current language's default
+/// with the same number; any other name is the person's text and is shown as it is. The stored
+/// name is never touched (no format flag, the owner's old files are covered too).
+pub fn reel_display_name(stored: &str) -> std::borrow::Cow<'_, str> {
+    let k = k::msg::NEST_DEFAULT_NAME;
+    let defaults = Lang::ALL
+        .iter()
+        .map(|l| tables::TABLES[*l as usize][k.0 as usize])
+        .chain(std::iter::once(tables::AR_LOGICAL[k.0 as usize]));
+    for d in defaults {
+        let Some(rest) = stored.strip_prefix(d) else { continue };
+        if rest.is_empty() {
+            return std::borrow::Cow::Borrowed(tr(k));
+        }
+        if let Some(n) = rest.strip_prefix(' ')
+            && !n.is_empty()
+            && n.bytes().all(|b| b.is_ascii_digit())
+        {
+            return std::borrow::Cow::Owned(format!("{} {n}", tr(k)));
+        }
+    }
+    std::borrow::Cow::Borrowed(stored)
+}
+
 /// Key name (`"menu.file.save"`) — for diagnostics and tests.
 #[allow(dead_code)]
 pub fn key_name(k: Key) -> &'static str {

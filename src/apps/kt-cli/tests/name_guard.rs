@@ -22,6 +22,9 @@ fn handles_the_rename(line: &str) -> bool {
     let l = line.to_lowercase();
     l.contains("former") || l.contains("2026-10-21") || l.contains("previous")
         || l.contains("\"kinotrain\"") || l.contains("\\\"kinotrain\\\"")
+        // the older format's own MIME type names the old program on purpose (i18n-gaps, D2):
+        // its type id and its catalog key
+        || l.contains("kinotrain-legacy") || l.contains("mime_legacy")
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -55,8 +58,17 @@ fn t833_the_former_name_appears_only_where_the_rename_is_handled() {
             continue;
         }
         let Ok(text) = std::fs::read_to_string(f) else { continue };
+        // inside the legacy MIME type's block every line describes the older format (D2)
+        let mut legacy = false;
         for (n, line) in text.lines().enumerate() {
-            if line.to_lowercase().contains("kinotrain") && !handles_the_rename(line) {
+            if line.contains("x-kinotrain-legacy-project") {
+                legacy = true;
+            }
+            let in_legacy = legacy;
+            if line.contains("</mime-type>") {
+                legacy = false;
+            }
+            if line.to_lowercase().contains("kinotrain") && !handles_the_rename(line) && !in_legacy {
                 stray.push(format!("src/{rel}:{}: {}", n + 1, line.trim()));
             }
         }

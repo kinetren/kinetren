@@ -3179,7 +3179,7 @@ impl KtApp {
         let mut n = kt_model::ops::NestCounters::of(p);
         let cmds = kt_model::ops::make_independent(self.model.project(), id, &name, n.ids());
         if self.apply_batch(cmds) {
-            self.note(crate::tf!(k::msg::NEST_INDEPENDENT, name));
+            self.note(crate::tf!(k::msg::NEST_INDEPENDENT, crate::i18n::reel_display_name(&name)));
         }
     }
 
@@ -3493,7 +3493,7 @@ impl KtApp {
 
     /// Path crumbs: the root and each reel on the way inside.
     pub fn nest_crumbs(&self) -> Vec<String> {
-        self.nest_path.iter().map(|s| s.name.clone()).collect()
+        self.nest_path.iter().map(|s| crate::i18n::reel_display_name(&s.name).into_owned()).collect()
     }
 
     /// Reel name window (reference — the preset name window, t345).
@@ -3502,13 +3502,16 @@ impl KtApp {
         let mut go = false;
         let mut cancel = false;
         let mut open = true;
+        // both forms of every other reel's name are taken: a name the program chose is SHOWN
+        // in the current language (i18n-gaps, D3), and "Reel" next to a stored «Лента» would
+        // read as two reels with one name
         let taken: Vec<String> = self
             .model
             .project()
             .sequences
             .iter()
             .filter(|s| s.id != d.seq)
-            .map(|s| s.name.clone())
+            .flat_map(|s| [s.name.clone(), crate::i18n::reel_display_name(&s.name).into_owned()])
             .collect();
         let win = crate::window_shell::Shell::new(
             egui::Id::new("seq_name"),
@@ -8165,18 +8168,25 @@ pub fn search_hits(
         }
     }
     for c in &p.clips {
-        let name = p
-            .media
-            .iter()
-            .find(|m| m.id == c.media)
-            .map(|m| {
-                std::path::Path::new(&m.path)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| m.path.clone())
-            })
-            .unwrap_or_default();
-        if let Some(r) = rank(&name) {
+        // a reel instance is found by its reel's name — as shown (i18n-gaps, D3) and as stored
+        let (name, stored) = match p.sequence(c.media) {
+            Some(s) => (crate::i18n::reel_display_name(&s.name).into_owned(), s.name.clone()),
+            None => {
+                let n = p
+                    .media
+                    .iter()
+                    .find(|m| m.id == c.media)
+                    .map(|m| {
+                        std::path::Path::new(&m.path)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| m.path.clone())
+                    })
+                    .unwrap_or_default();
+                (n, String::new())
+            }
+        };
+        if let Some(r) = rank(&name).or_else(|| (!stored.is_empty()).then(|| rank(&stored)).flatten()) {
             out.push((
                 r + 1, // clips below media with the same name
                 Hit {
