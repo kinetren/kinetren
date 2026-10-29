@@ -6,6 +6,9 @@
 //! crate does not depend on kt-model and an edit of one effect does not cascade through the core.
 //! kt-model re-exports everything here under its former names.
 
+pub mod curves;
+pub mod dsp;
+
 use serde::{Deserialize, Serialize};
 
 /// The address of a media item in the project (moved here with `ParamValue::Media`).

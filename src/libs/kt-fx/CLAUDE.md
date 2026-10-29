@@ -180,6 +180,11 @@ Tests: t519 (the fold), t520 (pixels), t521 (the composite, independently of kt-
 ## Node audio chain (R.47, items 324-326)
 
 Audio lives in `src/audio/{mod,nodes,primitives,warp}.rs`; the public surface is re-exported from lib.rs (the paths `kt_fx::…` did not change).
+The primitives themselves (`SmoothedParam`, `Biquad`, `DelayLine`, `EnvFollower`, `lfo_phase`,
+the freeverb comb/allpass) live in `kt_plugin_api::dsp` since plugin-api-stage1 (D2a), and
+`audio/primitives.rs` only re-exports them: the core nodes and the audio plugins share one text.
+They are called ACROSS a crate boundary now, and the release profile has no LTO — a small function
+on a per-frame path needs `#[inline]` there, or it stops being inlined.
 `ClipProcessor` holds a `Vec<(slot, AudioNode)>` — processing goes IN
 THE ORDER OF THE SLOTS (the owner's decision of R.47; the former fixed pipeline
 "the volume always after the reverb" is removed). The warp is NOT a node (a monopoly on
