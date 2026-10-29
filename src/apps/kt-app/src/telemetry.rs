@@ -876,7 +876,7 @@ fn ram_bytes() -> Option<u64> {
 }
 
 /// The production sources: files and system calls, read on the sender thread.
-fn gather_env(gpu: Option<GpuFacts>, screen: Option<(f32, Option<(f32, f32)>)>) -> EnvSources {
+fn gather_env(gpu: Option<GpuFacts>, screen: Option<Screen>) -> EnvSources {
     EnvSources {
         #[cfg(not(windows))]
         os_release: std::fs::read_to_string("/etc/os-release").ok(),
@@ -1183,6 +1183,9 @@ enum Msg {
     Flush(SyncSender<()>),
 }
 
+/// Pixels per point and the first monitor's logical size, from the first frame.
+type Screen = (f32, Option<(f32, f32)>);
+
 /// What the UI thread and the sender thread share.
 struct Shared {
     /// Block and first start; the person's choice lives in `choice`.
@@ -1206,7 +1209,7 @@ struct Shared {
     last_beat: Mutex<Snapshot>,
     /// What the UI knows for the probe: the adapter, and the scale and monitor size.
     gpu: Mutex<Option<GpuFacts>>,
-    screen: Mutex<Option<(f32, Option<(f32, f32)>)>>,
+    screen: Mutex<Option<Screen>>,
     /// The probe's sources in tests (production gathers them on the sender thread).
     env_override: Option<EnvSources>,
 }
