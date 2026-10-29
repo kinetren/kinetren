@@ -4063,24 +4063,6 @@ fn default_comp_att() -> f32 {
 fn default_comp_rel() -> f32 {
     150.0
 }
-fn default_duo_sr() -> u8 {
-    24
-}
-fn default_duo_sg() -> u8 {
-    18
-}
-fn default_duo_sb() -> u8 {
-    64
-}
-fn default_duo_hr() -> u8 {
-    255
-}
-fn default_duo_hg() -> u8 {
-    236
-}
-fn default_duo_hb() -> u8 {
-    190
-}
 fn default_two_u32() -> u32 {
     2
 }
@@ -5213,36 +5195,6 @@ pub enum FxInstance {
         key: Option<TrackId>,
     },
     // ---- video FX (port of bc_fx.cpp, item 25; parameters and defaults of v1) ----------
-    /// Basic colour correction (R.47, F-CLR-007): brightness/contrast/
-    /// saturation/hue. Point-wise — absorbed into the merged geometry pass.
-    ColorGrade {
-        #[serde(default, skip_serializing_if = "is_zero")]
-        brightness: f32,
-        #[serde(default, skip_serializing_if = "is_zero")]
-        contrast: f32,
-        #[serde(default = "default_one_f32", skip_serializing_if = "is_one_f32")]
-        saturation: f32,
-        #[serde(default, skip_serializing_if = "is_zero")]
-        hue: f32,
-    },
-    /// Two paints by luma (R.47): sepia/tint/invert — points of this
-    /// space. Point-wise.
-    Duotone {
-        #[serde(default = "default_duo_sr")]
-        shadow_r: u8,
-        #[serde(default = "default_duo_sg")]
-        shadow_g: u8,
-        #[serde(default = "default_duo_sb")]
-        shadow_b: u8,
-        #[serde(default = "default_duo_hr")]
-        high_r: u8,
-        #[serde(default = "default_duo_hg")]
-        high_g: u8,
-        #[serde(default = "default_duo_hb")]
-        high_b: u8,
-        #[serde(default = "default_one_f32")]
-        amount: f32,
-    },
     // Posterize is a plugin since plugin-api-stage1 (src/plugins/fx-video-color): its file text is
     // the variant's (t973), its slot is `Plugin` below.
     /// Vignette (R.47): darkening towards the edges, the coordinate of its own stage —
@@ -5613,8 +5565,6 @@ impl FxInstance {
             FxInstance::LayerMix { .. } => "layer_mix",
             FxInstance::SlowedReverb { .. } => "slowed_reverb",
             FxInstance::Compressor { .. } => "compressor",
-            FxInstance::ColorGrade { .. } => "color_grade",
-            FxInstance::Duotone { .. } => "duotone",
             FxInstance::Vignette { .. } => "vignette",
             FxInstance::CornerPin { .. } => "corner_pin",
             FxInstance::Sharpen { .. } => "sharpen",
@@ -5826,21 +5776,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         makeup_db: f32, 0.0, 24.0, 0.0, 0.1, Db, Smooth;
     },
     // ---- video 2D --------------------------------------------------------
-    ColorGrade {
-        brightness: f32, -1.0, 1.0, 0.0, 0.01, Norm, Smooth;
-        contrast: f32, -1.0, 1.0, 0.0, 0.01, Norm, Smooth;
-        saturation: f32, 0.0, 2.0, 1.0, 0.01, Ratio, Smooth;
-        hue: f32, -180.0, 180.0, 0.0, 1.0, Deg, Smooth;
-    },
-    Duotone {
-        shadow_r: u8, 0.0, 255.0, 24.0, 1.0, Rgb8, Smooth;
-        shadow_g: u8, 0.0, 255.0, 18.0, 1.0, Rgb8, Smooth;
-        shadow_b: u8, 0.0, 255.0, 64.0, 1.0, Rgb8, Smooth;
-        high_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        high_g: u8, 0.0, 255.0, 236.0, 1.0, Rgb8, Smooth;
-        high_b: u8, 0.0, 255.0, 190.0, 1.0, Rgb8, Smooth;
-        amount: f32, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
-    },
     Vignette {
         strength: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
         radius: f32, 0.0, 1.5, 0.7, 0.01, Norm, Smooth;
@@ -6665,20 +6600,14 @@ impl FxInstance {
         FxInstance::plugin("pitch_shift").expect("pitch_shift is not registered: install the built-in plugin set first")
     }
 
+    /// Color grading at its defaults (identity) — a plugin slot (plugin-api-stage1, stage 4).
     pub fn color_grade() -> FxInstance {
-        FxInstance::ColorGrade { brightness: 0.0, contrast: 0.0, saturation: 1.0, hue: 0.0 }
+        FxInstance::plugin("color_grade").expect("color_grade is not registered: install the built-in plugin set first")
     }
 
+    /// Duotone at its defaults — a plugin slot (plugin-api-stage1, stage 4).
     pub fn duotone() -> FxInstance {
-        FxInstance::Duotone {
-            shadow_r: 24,
-            shadow_g: 18,
-            shadow_b: 64,
-            high_r: 255,
-            high_g: 236,
-            high_b: 190,
-            amount: 1.0,
-        }
+        FxInstance::plugin("duotone").expect("duotone is not registered: install the built-in plugin set first")
     }
 
     /// Posterize at its defaults — a plugin slot (plugin-api-stage1); the built-in set must be

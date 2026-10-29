@@ -392,37 +392,9 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
                     else { v.z = vc; }
                 }
             }
-        } else if (tap_kind == 2u) { // ColorGrade: a mirror of tap_grade
-            let br = a.y;
-            let con = a.z;
-            let sat = a.w;
-            let hc = b.x;
-            let hs = b.y;
-            let l = (77.0 * v.x + 150.0 * v.y + 29.0 * v.z) / 256.0;
-            v = vec4<f32>(vec3<f32>(l) + (v.xyz - vec3<f32>(l)) * sat, v.w);
-            if (hc != 1.0 || hs != 0.0) {
-                let kk = 1.0 / sqrt(3.0);
-                let dotv = kk * (v.x + v.y + v.z);
-                let cx = kk * (v.y - v.z);
-                let cy = kk * (v.z - v.x);
-                let cz = kk * (v.x - v.y);
-                v = vec4<f32>(
-                    v.x * hc + cx * hs + kk * dotv * (1.0 - hc),
-                    v.y * hc + cy * hs + kk * dotv * (1.0 - hc),
-                    v.z * hc + cz * hs + kk * dotv * (1.0 - hc),
-                    v.w,
-                );
-            }
-            v = vec4<f32>((v.xyz - vec3<f32>(128.0)) * (1.0 + con) + vec3<f32>(128.0 + br * 255.0), v.w);
-        } else if (tap_kind == 3u) { // Duotone: a mirror of tap_duo
-            let sh3 = a.yzw;
-            let hi3 = b.xyz;
-            let am = b.w;
-            let l = clamp((77.0 * v.x + 150.0 * v.y + 29.0 * v.z) / 256.0 / 255.0, 0.0, 1.0);
-            let outc = sh3 + (hi3 - sh3) * l;
-            v = vec4<f32>(v.xyz + (outc - v.xyz) * am, v.w);
         // @PLUGIN_TAP_ARMS: kt-gpu pastes one `} else if (tap_kind == N) { v = tap_<id>(v, a, b);`
-        // per point-wise plugin of the registry here (plugin-api-stage1, D5); kind 4 was Posterize
+        // per point-wise plugin of the registry here (plugin-api-stage1, D5); kinds 2, 3, 4 were ColorGrade,
+        // Duotone, Posterize
         } else if (tap_kind == 5u) { // Vignette: a mirror of tap_vig
             let st = a.y;
             let ra = a.z;

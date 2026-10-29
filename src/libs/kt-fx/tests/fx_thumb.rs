@@ -89,6 +89,8 @@ fn t544b_pattern_feeds_every_class_of_effect() {
 /// compares DATA, not the picture.
 #[test]
 fn t544c_identity_is_identity_and_a_variant_is_not() {
+    // color_grade is a plugin (plugin-api-stage1, stage 4)
+    kt_plugins_builtin::install();
     let p = test_pattern(RW, RH, false);
     let base = hash(&p);
     assert_eq!(hash(&thumb(&p, &[])), base, "empty chain moved the bytes");

@@ -180,6 +180,7 @@ fn t184b_gpu_export_deterministic_and_close_to_cpu() {
 /// with a live adapter the CPU and GPU agree within the GEOM tolerance.
 #[test]
 fn t301_export_without_gpu_renders_3d() {
+    kt_plugins_builtin::install();
     let with_fx = |fx: Vec<FxInstance>| {
         let mut p = project();
         p.clips[0].fx = fx;
@@ -515,7 +516,7 @@ fn animated_nested_project(outer_fx: Vec<FxInstance>) -> Project {
     let mut p = nested_project(outer_fx, 1.0);
     let child = &mut p.sequences[0].clips[0];
     child.fx =
-        vec![FxInstance::ColorGrade { brightness: 0.0, contrast: 0.0, saturation: 1.0, hue: 0.0 }];
+        vec![kt_model::FxInstance::plugin_with("color_grade", &[0.0, 0.0, 1.0, 0.0]).unwrap()];
     child.fx_auto = vec![vec![ParamCurve {
         param: "brightness".into(),
 

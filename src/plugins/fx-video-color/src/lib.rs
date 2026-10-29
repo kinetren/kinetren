@@ -11,7 +11,7 @@ use kt_plugin_api::{
 
 /// The plugins of this family, in the assembler's order.
 pub fn plugins() -> Vec<Arc<dyn Plugin>> {
-    vec![Arc::new(Posterize::new())]
+    vec![Arc::new(ColorGrade::new()), Arc::new(Duotone::new()), Arc::new(Posterize::new())]
 }
 
 /// Posterize by channels (R.47): point-wise (inside a geometry series the supersampling softens
@@ -88,4 +88,178 @@ impl VideoKernel for Posterize {
     fn gpu_params(&self, p: &[f64]) -> [f32; 7] {
         [Posterize::levels(p) as f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     }
+}
+
+// ---------------------------------------------------------------------------
+// color_grade, duotone (stage 4: moved from kt-fx `geom.rs` / kt-gpu, verbatim)
+// ---------------------------------------------------------------------------
+
+/// Color grading on the subtap: luma (Rec.601 8-bit), saturation, hue, then
+/// contrast around 128 and brightness (the order is fixed — it is what keeps it from clipping
+/// hues). Hue — a rotation around the gray axis (Rodrigues, k = (1,1,1)/√3).
+/// The values are an f64 continuum; the final clamp+round — once, at the output.
+#[inline(always)]
+fn grade(v: &mut [f64; 4], br: f64, con: f64, sat: f64, hc: f64, hs: f64) {
+    let l = (77.0 * v[0] + 150.0 * v[1] + 29.0 * v[2]) / 256.0;
+    for c in v.iter_mut().take(3) {
+        *c = l + (*c - l) * sat;
+    }
+    if hc != 1.0 || hs != 0.0 {
+        let k = 1.0 / 3f64.sqrt();
+        let (x, y, z) = (v[0], v[1], v[2]);
+        let dot = k * (x + y + z);
+        let (cx, cy, cz) = (k * (y - z), k * (z - x), k * (x - y));
+        v[0] = x * hc + cx * hs + k * dot * (1.0 - hc);
+        v[1] = y * hc + cy * hs + k * dot * (1.0 - hc);
+        v[2] = z * hc + cz * hs + k * dot * (1.0 - hc);
+    }
+    for c in v.iter_mut().take(3) {
+        *c = (*c - 128.0) * (1.0 + con) + 128.0 + br * 255.0;
+    }
+}
+
+/// Duotone on the subtap: lerp of two colors by luma; alpha untouched.
+#[inline(always)]
+fn duo(v: &mut [f64; 4], shadow: &[f64], high: &[f64], amount: f64) {
+    let l = ((77.0 * v[0] + 150.0 * v[1] + 29.0 * v[2]) / 256.0 / 255.0).clamp(0.0, 1.0);
+    for (c, (sh, hi)) in v.iter_mut().take(3).zip(shadow.iter().zip(high.iter())) {
+        let out = sh + (hi - sh) * l;
+        *c += (out - *c) * amount;
+    }
+}
+
+/// Color grading (R.47): brightness, contrast, saturation, hue — point-wise.
+pub struct ColorGrade {
+    m: Manifest,
+}
+
+impl ColorGrade {
+    pub fn new() -> ColorGrade {
+        let p = |n, lo, hi, d, st, u| ParamSpec::num(n, lo, hi, d, st, u, ParamKind::Smooth);
+        ColorGrade {
+            m: Manifest {
+                id: "color_grade".into(),
+                media: Media::VideoFx,
+                passport: vec![
+                    p("brightness", -1.0, 1.0, 0.0, 0.01, ParamUnit::Norm),
+                    p("contrast", -1.0, 1.0, 0.0, 0.01, ParamUnit::Norm),
+                    p("saturation", 0.0, 2.0, 1.0, 0.01, ParamUnit::Ratio),
+                    p("hue", -180.0, 180.0, 0.0, 1.0, ParamUnit::Deg),
+                ],
+                // every field was `skip_serializing_if` at its default
+                rows: vec![f32_row(true), f32_row(true), f32_row(true), f32_row(true)],
+                decl: Decl {
+                    video_class: Some(VideoClass::PointWise),
+                    gpu: Gpu::Wgsl(include_str!("color_grade.wgsl")),
+                    ..Decl::default()
+                },
+                ui: UiDecl { name: "Color Grade", category_key: "fxreg.cat.color", keywords_key: "fxreg.kw.color_grade" },
+            },
+        }
+    }
+
+    /// (brightness, contrast, saturation, hue_cos, hue_sin) as the planner gave them.
+    fn numbers(p: &[f64]) -> [f64; 5] {
+        let g = |i: usize| p.get(i).copied().unwrap_or(0.0);
+        let h = g(3).to_radians();
+        [g(0), g(1), p.get(2).copied().unwrap_or(1.0), h.cos(), h.sin()]
+    }
+}
+
+impl Default for ColorGrade {
+    fn default() -> ColorGrade {
+        ColorGrade::new()
+    }
+}
+
+impl Plugin for ColorGrade {
+    fn manifest(&self) -> &Manifest {
+        &self.m
+    }
+    fn video(&self) -> Option<&dyn VideoKernel> {
+        Some(self)
+    }
+}
+
+impl VideoKernel for ColorGrade {
+    /// The hue's cos/sin once per plan (the variant's planner did the same).
+    fn cook(&self, p: &[f64]) -> Cooked {
+        let n = ColorGrade::numbers(p);
+        [n[0], n[1], n[2], n[3], n[4], 0.0, 0.0, 0.0]
+    }
+    fn tap(&self, k: &Cooked, v: &mut [f64; 4]) {
+        grade(v, k[0], k[1], k[2], k[3], k[4]);
+    }
+    fn gpu_params(&self, p: &[f64]) -> [f32; 7] {
+        let n = ColorGrade::numbers(p);
+        [n[0] as f32, n[1] as f32, n[2] as f32, n[3] as f32, n[4] as f32, 0.0, 0.0]
+    }
+}
+
+/// Duotone (R.47): luma mapped between two colors.
+pub struct Duotone {
+    m: Manifest,
+}
+
+impl Duotone {
+    pub fn new() -> Duotone {
+        let c = |n, d| ParamSpec::num(n, 0.0, 255.0, d, 1.0, ParamUnit::Rgb8, ParamKind::Smooth);
+        let u8_row = RowDecl { store: Store::U8, omit_default: false };
+        Duotone {
+            m: Manifest {
+                id: "duotone".into(),
+                media: Media::VideoFx,
+                passport: vec![
+                    c("shadow_r", 24.0),
+                    c("shadow_g", 18.0),
+                    c("shadow_b", 64.0),
+                    c("high_r", 255.0),
+                    c("high_g", 236.0),
+                    c("high_b", 190.0),
+                    ParamSpec::num("amount", 0.0, 1.0, 1.0, 0.01, ParamUnit::Norm, ParamKind::Smooth),
+                ],
+                rows: vec![u8_row, u8_row, u8_row, u8_row, u8_row, u8_row, f32_row(false)],
+                decl: Decl {
+                    video_class: Some(VideoClass::PointWise),
+                    gpu: Gpu::Wgsl(include_str!("duotone.wgsl")),
+                    ..Decl::default()
+                },
+                ui: UiDecl { name: "Duotone", category_key: "fxreg.cat.color", keywords_key: "fxreg.kw.duotone" },
+            },
+        }
+    }
+}
+
+impl Default for Duotone {
+    fn default() -> Duotone {
+        Duotone::new()
+    }
+}
+
+impl Plugin for Duotone {
+    fn manifest(&self) -> &Manifest {
+        &self.m
+    }
+    fn video(&self) -> Option<&dyn VideoKernel> {
+        Some(self)
+    }
+}
+
+impl VideoKernel for Duotone {
+    fn cook(&self, p: &[f64]) -> Cooked {
+        let g = |i: usize| p.get(i).copied().unwrap_or(0.0);
+        [g(0), g(1), g(2), g(3), g(4), g(5), g(6).clamp(0.0, 1.0), 0.0]
+    }
+    fn tap(&self, k: &Cooked, v: &mut [f64; 4]) {
+        duo(v, &k[0..3], &k[3..6], k[6]);
+    }
+    fn gpu_params(&self, p: &[f64]) -> [f32; 7] {
+        let g = |i: usize| p.get(i).copied().unwrap_or(0.0) as f32;
+        [g(0), g(1), g(2), g(3), g(4), g(5), g(6).clamp(0.0, 1.0)]
+    }
+}
+
+/// An `f32` row, written always or omitted at its default.
+fn f32_row(omit_default: bool) -> RowDecl {
+    RowDecl { store: Store::F32, omit_default }
 }

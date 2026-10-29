@@ -66,6 +66,18 @@ enum Frozen {
         #[serde(skip_serializing_if = "is_zero")]
         cents: f32,
     },
+    /// `ColorGrade` and `Duotone` before stage 4.
+    ColorGrade {
+        #[serde(skip_serializing_if = "is_zero")]
+        brightness: f32,
+        #[serde(skip_serializing_if = "is_zero")]
+        contrast: f32,
+        #[serde(skip_serializing_if = "is_one")]
+        saturation: f32,
+        #[serde(skip_serializing_if = "is_zero")]
+        hue: f32,
+    },
+    Duotone { shadow_r: u8, shadow_g: u8, shadow_b: u8, high_r: u8, high_g: u8, high_b: u8, amount: f32 },
     /// `Filter` before stage 3: its `mode` was the enum `FilterMode` (snake_case keys), always written.
     Filter { mode: FrozenFilterMode, cutoff_hz: f32, resonance: f32 },
     /// `Delay` before stage 3: `pingpong` was `skip_serializing_if = "Not::not"`.
@@ -110,6 +122,8 @@ fn empty_reads() -> Vec<(&'static str, String)> {
         (r#"{"kind":"limiter"}"#, frozen(Frozen::Limiter { threshold_db: -6.0, ceiling_db: -0.3, lookahead_ms: 5.0, release_ms: 80.0 })),
         // a file without `pan` read 0 (`#[serde(default)]`)
         (r#"{"kind":"gain","db":-3.0}"#, frozen(Frozen::Gain { db: -3.0, pan: 0.0 })),
+        (r#"{"kind":"color_grade"}"#, frozen(Frozen::ColorGrade { brightness: 0.0, contrast: 0.0, saturation: 1.0, hue: 0.0 })),
+        (r#"{"kind":"duotone"}"#, frozen(Frozen::Duotone { shadow_r: 24, shadow_g: 18, shadow_b: 64, high_r: 255, high_g: 236, high_b: 190, amount: 1.0 })),
         (r#"{"kind":"filter"}"#, frozen(Frozen::Filter { mode: FrozenFilterMode::Lowpass, cutoff_hz: 800.0, resonance: 0.707 })),
         (r#"{"kind":"delay"}"#, frozen(Frozen::Delay { time_ms: 350.0, feedback: 0.35, mix: 0.35, pingpong: false })),
         // an unknown mode key reads as the default, as `#[serde(default)]` would not (it refused):
@@ -167,6 +181,16 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
         (
             FxInstance::plugin_with("gate", &[-30.0, 0.5, 120.0, 250.0]).unwrap(),
             frozen(Frozen::Gate { threshold_db: -30.0, attack_ms: 0.5, hold_ms: 120.0, release_ms: 250.0 }),
+        ),
+        (FxInstance::color_grade(), frozen(Frozen::ColorGrade { brightness: 0.0, contrast: 0.0, saturation: 1.0, hue: 0.0 })),
+        (
+            FxInstance::plugin_with("color_grade", &[0.05, -0.3, 1.4, 0.123456789 * 100.0]).unwrap(),
+            frozen(Frozen::ColorGrade { brightness: 0.05, contrast: -0.3, saturation: 1.4, hue: 12.345679 }),
+        ),
+        (FxInstance::duotone(), frozen(Frozen::Duotone { shadow_r: 24, shadow_g: 18, shadow_b: 64, high_r: 255, high_g: 236, high_b: 190, amount: 1.0 })),
+        (
+            FxInstance::plugin_with("duotone", &[40.0, 0.0, 80.4, 255.0, 220.6, 160.0, 0.7]).unwrap(),
+            frozen(Frozen::Duotone { shadow_r: 40, shadow_g: 0, shadow_b: 80, high_r: 255, high_g: 221, high_b: 160, amount: 0.7 }),
         ),
         (FxInstance::filter(), frozen(Frozen::Filter { mode: FrozenFilterMode::Lowpass, cutoff_hz: 800.0, resonance: 0.707 })),
         (

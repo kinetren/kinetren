@@ -312,26 +312,6 @@ pub fn apply_barrier(
         }
         // per-pixel R.47 effects in a BARRIER position (leading/trailing slot):
         // the same f64 text of the formula as the tap of the fused pass — one home
-        FxInstance::ColorGrade { brightness, contrast, saturation, hue } => {
-            let h = (*hue as f64).to_radians();
-            let (hc, hs) = (h.cos(), h.sin());
-            pointwise_barrier(frame, |v, _| {
-                crate::geom::tap_grade(
-                    v,
-                    *brightness as f64,
-                    *contrast as f64,
-                    *saturation as f64,
-                    hc,
-                    hs,
-                )
-            })
-        }
-        FxInstance::Duotone { shadow_r, shadow_g, shadow_b, high_r, high_g, high_b, amount } => {
-            let sh = [*shadow_r as f64, *shadow_g as f64, *shadow_b as f64];
-            let hi = [*high_r as f64, *high_g as f64, *high_b as f64];
-            let a = (*amount as f64).clamp(0.0, 1.0);
-            pointwise_barrier(frame, |v, _| crate::geom::tap_duo(v, &sh, &hi, a))
-        }
         // a point-wise plugin at the barrier position: the same tap as inside the fused pass
         f @ FxInstance::Plugin(_) if crate::geom::PluginTap::of(f).is_some() => {
             let t = crate::geom::PluginTap::of(f).expect("checked");

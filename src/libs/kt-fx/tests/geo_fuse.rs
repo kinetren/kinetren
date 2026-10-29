@@ -511,7 +511,7 @@ fn bench_fx_1080p() {
     bench(
         "colorgrade+vignette (2 barriers)",
         &[
-            FxInstance::ColorGrade { brightness: 0.05, contrast: 0.3, saturation: 1.4, hue: 20.0 },
+            kt_model::FxInstance::plugin_with("color_grade", &[0.05, 0.3, 1.4, 20.0]).unwrap(),
             FxInstance::vignette(),
         ],
     );
@@ -1016,12 +1016,7 @@ fn t330_new_pointwise_absorb_and_meaning() {
     }
 
     // (b-1) ColorGrade: saturation 0 — the frame is desaturated (r==g==b)
-    let gray = run(&[FxInstance::ColorGrade {
-        brightness: 0.0,
-        contrast: 0.0,
-        saturation: 0.0,
-        hue: 0.0,
-    }]);
+    let gray = run(&[kt_model::FxInstance::plugin_with("color_grade", &[0.0, 0.0, 0.0, 0.0]).unwrap()]);
     let src = test_frame();
     assert_ne!(gray.rgba, src.rgba, "saturation 0 must change a colored frame");
     for px in gray.rgba.chunks_exact(4) {
@@ -1029,15 +1024,7 @@ fn t330_new_pointwise_absorb_and_meaning() {
     }
 
     // (b-2) Duotone: two colours — the output is only their segment
-    let duo = run(&[FxInstance::Duotone {
-        shadow_r: 0,
-        shadow_g: 0,
-        shadow_b: 255,
-        high_r: 255,
-        high_g: 0,
-        high_b: 0,
-        amount: 1.0,
-    }]);
+    let duo = run(&[kt_model::FxInstance::plugin_with("duotone", &[0.0, 0.0, 255.0, 255.0, 0.0, 0.0, 1.0]).unwrap()]);
     for px in duo.rgba.chunks_exact(4) {
         assert_eq!(px[1], 0, "duotone (blue..red) leaves no green");
         let sum = px[0] as i32 + px[2] as i32;

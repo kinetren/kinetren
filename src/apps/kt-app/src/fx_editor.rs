@@ -1369,8 +1369,6 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::EventGrid { .. } => "EventGrid",
         FxInstance::Pan3d { .. } => "Pan 3D",
         FxInstance::Compressor { .. } => "Compressor",
-        FxInstance::ColorGrade { .. } => "Color Grade",
-        FxInstance::Duotone { .. } => "Duotone",
         FxInstance::Vignette { .. } => "Vignette",
         FxInstance::CornerPin { .. } => "Corner Pin",
         FxInstance::Sharpen { .. } => "Sharpen",
@@ -1424,8 +1422,6 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
         ),
         ("EventGrid", FxInstance::EventGrid { cols: 2, rows: 2, center: true }),
         // R.47: per-point color/style + the first honest perspective
-        ("Color Grade", FxInstance::color_grade()),
-        ("Duotone", FxInstance::duotone()),
         ("Vignette", FxInstance::vignette()),
         ("Corner Pin", FxInstance::corner_pin()),
         // R.47 Q3: barriers
@@ -1528,7 +1524,7 @@ pub(crate) fn draw_video_fx_params(
         FxInstance::Glow { .. } => &["tint_r", "tint_g", "tint_b"],
         FxInstance::DropShadow { .. } => &["tint_r", "tint_g", "tint_b"],
         // both duotone colors — with eyedroppers (R.47 Q2)
-        FxInstance::Duotone { .. } => {
+        FxInstance::Plugin(p) if p.id == "duotone" => {
             &["shadow_r", "shadow_g", "shadow_b", "high_r", "high_g", "high_b"]
         }
         // on a VIDEO instance the warp means only speed: the reverb does not sound there,
@@ -1668,24 +1664,29 @@ pub(crate) fn draw_video_fx_params(
                 }
             });
         }
-        FxInstance::Duotone { shadow_r, shadow_g, shadow_b, high_r, high_g, high_b, .. } => {
+        // the two duotone colors (a plugin slot since plugin-api-stage1, stage 4): its u8 rows
+        FxInstance::Plugin(p) if p.id == "duotone" => {
+            let rgb = |p: &kt_model::PluginSlot, n: [&str; 3]| -> [f32; 3] {
+                n.map(|n| p.get(n).unwrap_or(0.0) as f32 / 255.0)
+            };
+            let set = |p: &mut kt_model::PluginSlot, n: [&str; 3], c: [f32; 3]| {
+                for (n, v) in n.iter().zip(c) {
+                    p.set(n, (v * 255.0) as u8 as f64);
+                }
+            };
             ui.horizontal(|ui| {
-                let mut sh =
-                    [*shadow_r as f32 / 255.0, *shadow_g as f32 / 255.0, *shadow_b as f32 / 255.0];
+                let shadow = ["shadow_r", "shadow_g", "shadow_b"];
+                let mut sh = rgb(p, shadow);
                 ui.label(tr(k::fx::SHADOW_COLOR));
                 if ui.color_edit_button_rgb(&mut sh).changed() {
-                    *shadow_r = (sh[0] * 255.0) as u8;
-                    *shadow_g = (sh[1] * 255.0) as u8;
-                    *shadow_b = (sh[2] * 255.0) as u8;
+                    set(p, shadow, sh);
                     ch.base = true;
                 }
-                let mut hi =
-                    [*high_r as f32 / 255.0, *high_g as f32 / 255.0, *high_b as f32 / 255.0];
+                let high = ["high_r", "high_g", "high_b"];
+                let mut hi = rgb(p, high);
                 ui.label(tr(k::fx::HIGH_COLOR));
                 if ui.color_edit_button_rgb(&mut hi).changed() {
-                    *high_r = (hi[0] * 255.0) as u8;
-                    *high_g = (hi[1] * 255.0) as u8;
-                    *high_b = (hi[2] * 255.0) as u8;
+                    set(p, high, hi);
                     ch.base = true;
                 }
             });

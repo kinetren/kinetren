@@ -950,20 +950,12 @@ fn t329_parity_cycle_over_the_registry() {
     // sandwich = a tap of the merged geometry pass (kind 2..5 in geom_fused.wgsl).
     let tuned: &[(FxInstance, FrameTol, FrameTol)] = &[
         (
-            FxInstance::ColorGrade { brightness: 0.12, contrast: 0.35, saturation: 1.6, hue: 60.0 },
+            kt_model::FxInstance::plugin_with("color_grade", &[0.12, 0.35, 1.6, 60.0]).unwrap(),
             FrameTol::BILINEAR,
             FrameTol::BILINEAR,
         ),
         (
-            FxInstance::Duotone {
-                shadow_r: 40,
-                shadow_g: 0,
-                shadow_b: 80,
-                high_r: 255,
-                high_g: 220,
-                high_b: 160,
-                amount: 0.7,
-            },
+            kt_model::FxInstance::plugin_with("duotone", &[40.0, 0.0, 80.0, 255.0, 220.0, 160.0, 0.7]).unwrap(),
             FrameTol::BILINEAR,
             FrameTol::BILINEAR,
         ),
@@ -1228,8 +1220,11 @@ fn t974_the_pilot_plugin_on_both_executors() {
     let (fused, own) = kt_gpu::assembled_shaders();
     assert_eq!(kt_gpu::assembled_shaders(), (fused.clone(), own.clone()), "the assembled text is not a pure function");
     assert!(fused.contains("fn tap_posterize(") && fused.contains("v = tap_posterize(v, a, b);"), "posterize is not in the fused pass");
-    assert_eq!(own.len(), 1, "one own pass per point-wise plugin");
-    assert_eq!(kt_gpu::plugin_taps().iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec!["posterize"]);
+    // every point-wise built-in with a WGSL text, in the assembler's order (stage 4 moved the colour
+    // family in front of the pilot)
+    let taps: Vec<&str> = kt_gpu::plugin_taps().iter().map(|(id, _)| *id).collect();
+    assert_eq!(taps, vec!["color_grade", "duotone", "posterize"]);
+    assert_eq!(own.len(), taps.len(), "one own pass per point-wise plugin");
     let Some(engine) = test_engine() else { return };
     let mirror = FxInstance::Mirror { horizontal: true, vertical: false };
     let vig = FxInstance::Vignette { strength: 0.6, radius: 0.5, softness: 0.4 };

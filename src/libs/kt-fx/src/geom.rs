@@ -521,8 +521,6 @@ pub fn is_pointwise(f: &FxInstance) -> bool {
         f,
         FxInstance::Greenscreen { .. }
             | FxInstance::Noise { .. }
-            | FxInstance::ColorGrade { .. }
-            | FxInstance::Duotone { .. }
             | FxInstance::Vignette { .. }
     ) || plugin_class(f) == Some(kt_plugin_api::VideoClass::PointWise)
 }
@@ -597,11 +595,6 @@ pub enum TapKind {
     /// is computed from floor of the stage coordinate; `special` is the special formula
     /// for the user `size == 1 && !color` (it has a different grain).
     Noise { seed: u32, k: i64, cell: u32, color: bool, special: bool, stage_w: u32, stage_h: u32 },
-    /// ColorGrade (R.47): cos/sin of the hue are precomputed in f64 —
-    /// the GPU receives them as a uniform with a single rounding.
-    Grade { brightness: f64, contrast: f64, saturation: f64, hue_cos: f64, hue_sin: f64 },
-    /// Duotone (R.47): lerp by luma between two colors.
-    Duo { shadow: [f64; 3], high: [f64; 3], amount: f64 },
     /// A point-wise PLUGIN (plugin-api-stage1, D5) — Posterize since the pilot.
     Plugin(PluginTap),
     /// Vignette (R.47): coordinate of ITS OWN stage (like Noise) — the darkening
@@ -1091,31 +1084,6 @@ fn build_program(
                         stage_h: h,
                     }));
                 }
-            }
-            FxInstance::ColorGrade { brightness, contrast, saturation, hue } => {
-                let h = (*hue as f64).to_radians();
-                fw.push(Step::Tap(TapKind::Grade {
-                    brightness: *brightness as f64,
-                    contrast: *contrast as f64,
-                    saturation: *saturation as f64,
-                    hue_cos: h.cos(),
-                    hue_sin: h.sin(),
-                }));
-            }
-            FxInstance::Duotone {
-                shadow_r,
-                shadow_g,
-                shadow_b,
-                high_r,
-                high_g,
-                high_b,
-                amount,
-            } => {
-                fw.push(Step::Tap(TapKind::Duo {
-                    shadow: [*shadow_r as f64, *shadow_g as f64, *shadow_b as f64],
-                    high: [*high_r as f64, *high_g as f64, *high_b as f64],
-                    amount: (*amount as f64).clamp(0.0, 1.0),
-                }));
             }
             f @ FxInstance::Plugin(_) => {
                 if let Some(t) = PluginTap::of(f) {
@@ -1935,37 +1903,7 @@ fn tap_noise(
     }
 }
 
-/// ColorGrade on the subtap (R.47): the order is saturation and hue BEFORE contrast
-/// and brightness (the basic panels of five editors; otherwise contrast recolours the
-/// hues). Hue — a rotation around the gray axis (Rodrigues, k = (1,1,1)/√3).
-/// The values are an f64 continuum; the final clamp+round — once, at the output.
-pub(crate) fn tap_grade(v: &mut [f64; 4], br: f64, con: f64, sat: f64, hc: f64, hs: f64) {
-    let l = (77.0 * v[0] + 150.0 * v[1] + 29.0 * v[2]) / 256.0;
-    for c in v.iter_mut().take(3) {
-        *c = l + (*c - l) * sat;
-    }
-    if hc != 1.0 || hs != 0.0 {
-        let k = 1.0 / 3f64.sqrt();
-        let (x, y, z) = (v[0], v[1], v[2]);
-        let dot = k * (x + y + z);
-        let (cx, cy, cz) = (k * (y - z), k * (z - x), k * (x - y));
-        v[0] = x * hc + cx * hs + k * dot * (1.0 - hc);
-        v[1] = y * hc + cy * hs + k * dot * (1.0 - hc);
-        v[2] = z * hc + cz * hs + k * dot * (1.0 - hc);
-    }
-    for c in v.iter_mut().take(3) {
-        *c = (*c - 128.0) * (1.0 + con) + 128.0 + br * 255.0;
-    }
-}
 
-/// Duotone on the subtap: lerp of two colors by luma; alpha untouched.
-pub(crate) fn tap_duo(v: &mut [f64; 4], shadow: &[f64; 3], high: &[f64; 3], amount: f64) {
-    let l = ((77.0 * v[0] + 150.0 * v[1] + 29.0 * v[2]) / 256.0 / 255.0).clamp(0.0, 1.0);
-    for (c, (sh, hi)) in v.iter_mut().take(3).zip(shadow.iter().zip(high.iter())) {
-        let out = sh + (hi - sh) * l;
-        *c += (out - *c) * amount;
-    }
-}
 
 /// Vignette on the subtap: coordinate of ITS OWN stage; the radius is normalized to
 /// the half-diagonal; smoothstep written out by hand (one text in both
@@ -2019,10 +1957,6 @@ fn sample_at(p: &GeomProgram, src: &Frame, x: f64, y: f64) -> [f64; 4] {
             TapKind::Noise { seed, k, cell, color, special, stage_w, stage_h } => {
                 tap_noise(&mut v, rec[ti], seed, k, cell, color, special, stage_w, stage_h)
             }
-            TapKind::Grade { brightness, contrast, saturation, hue_cos, hue_sin } => {
-                tap_grade(&mut v, brightness, contrast, saturation, hue_cos, hue_sin)
-            }
-            TapKind::Duo { shadow, high, amount } => tap_duo(&mut v, &shadow, &high, amount),
             TapKind::Plugin(t) => t.apply(&mut v),
             TapKind::Vig { strength, radius, softness, stage_w, stage_h } => {
                 tap_vig(&mut v, rec[ti], strength, radius, softness, stage_w, stage_h)

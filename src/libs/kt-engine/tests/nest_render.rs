@@ -165,6 +165,7 @@ fn render_video(p: &Project, t: Tick, q: Quality) -> (Vec<u8>, bool) {
 
 #[test]
 fn t434_law_e_audio_is_byte_for_byte() {
+    kt_plugins_builtin::install();
     let frames = (PART + PART + PART).to_audio_frames() as usize;
     let a = render_audio(&decomposed(ClipKind::Audio), frames);
     let b = render_audio(&nested(ClipKind::Audio), frames);
@@ -183,6 +184,7 @@ fn t434_law_e_audio_is_byte_for_byte() {
 
 #[test]
 fn t435_law_e_video_and_preview_equals_export() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let (a, b) = (decomposed(ClipKind::Video), nested(ClipKind::Video));
     let mut differs_from_black = false;
@@ -206,6 +208,7 @@ fn t435_law_e_video_and_preview_equals_export() {
 
 #[test]
 fn t436_nest_orders_the_same_frames_and_costs_the_same() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let (a, b) = (decomposed(ClipKind::Video), nested(ClipKind::Video));
     let va = VideoRenderer::new(&a);
@@ -304,6 +307,7 @@ fn spread_with(opacity: f32, fx: Vec<FxInstance>) -> Project {
 
 #[test]
 fn t438_law_g_level_on_the_nest_is_not_level_on_each_child() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let t = Tick(FRAME * 20); // inside the overlap
     let (nested_half, _) = (render_video(&nest_with(0.5, vec![]), t, q).0, ());
@@ -329,6 +333,7 @@ fn t438_law_g_level_on_the_nest_is_not_level_on_each_child() {
 
 #[test]
 fn t439_semi_transparent_subcomposite_is_not_twice_as_dark() {
+    kt_plugins_builtin::install();
     // A defect found by reconnaissance before it appeared: the composite accumulator
     // stores PREMULTIPLIED RGB with STRAIGHT alpha, while
     // `alpha_over` expects straight. Feeding a sub-composite back into a composite without
@@ -401,6 +406,7 @@ fn t439_semi_transparent_subcomposite_is_not_twice_as_dark() {
 
 #[test]
 fn t440_a_chain_on_the_nest_acts_on_the_assembled_picture() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let t = Tick(FRAME * 20);
     // Posterization is NONLINEAR: quantizing a mix of two colors is not a mix of their
@@ -427,6 +433,7 @@ fn t440_a_chain_on_the_nest_acts_on_the_assembled_picture() {
 
 #[test]
 fn t441_hunger_and_memoization_cross_the_boundary() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let t = Tick(FRAME * 20);
     let p = nest_with(1.0, vec![]);
@@ -516,6 +523,7 @@ fn warm_and_compose(
 
 #[test]
 fn t442_editing_inside_the_reel_invalidates_the_instance() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let t = Tick(FRAME * 20);
     // chain ON THE INSTANCE: precisely its post-FX frame is memoized, and
@@ -542,6 +550,7 @@ fn t442_editing_inside_the_reel_invalidates_the_instance() {
 
 #[test]
 fn t443_three_keys_separate_reels_instances_and_editions() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let t = Tick(FRAME * 20);
     let p = nest_with(1.0, vec![]);
@@ -667,6 +676,7 @@ fn spread_audio(fx: Vec<FxInstance>) -> Project {
 
 #[test]
 fn t447_audio_law_e_through_the_submix() {
+    kt_plugins_builtin::install();
     let frames = (PART + PART).to_audio_frames() as usize;
     let a = render_audio(&spread_audio(vec![]), frames);
     let b = render_audio(&audio_nest(vec![], vec![]), frames);
@@ -697,6 +707,7 @@ fn t447_audio_law_e_through_the_submix() {
 
 #[test]
 fn t449_one_reverb_on_ten_replicas_is_not_a_chain_on_each() {
+    kt_plugins_builtin::install();
     let frames = (PART + PART).to_audio_frames() as usize;
     let rev = vec![reverb()];
     // chain ON THE NEST: one tail for both lines, and it stretches ACROSS the seam
@@ -740,6 +751,7 @@ fn t449_one_reverb_on_ten_replicas_is_not_a_chain_on_each() {
 
 #[test]
 fn t448_submix_is_the_same_whole_and_in_chunks() {
+    kt_plugins_builtin::install();
     // A streaming chain inside a reel must survive the slicing of output: the player's
     // ring fills with chunks, and the seam between them must not be
     // audible (kin to t338 “chunk == chunks”).
@@ -804,6 +816,7 @@ fn zooming_nest(zoom: f64) -> Project {
 
 #[test]
 fn t450_nest_decode_stage_is_a_property_of_the_reel() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let t = Tick(FRAME * 5);
 
@@ -845,6 +858,7 @@ fn t450_nest_decode_stage_is_a_property_of_the_reel() {
 
 #[test]
 fn t451_nest_costs_its_subcomposite_in_the_chunk_budget() {
+    kt_plugins_builtin::install();
     let p = nest_with(1.0, vec![]);
     let v = VideoRenderer::new(&p);
     // inside the reel two overlapping events, outside one instance:
@@ -862,6 +876,7 @@ fn t451_nest_costs_its_subcomposite_in_the_chunk_budget() {
 
 #[test]
 fn t452_nest_warmth_is_the_intersection_of_its_children() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let p = nest_with(1.0, vec![]);
     let v = VideoRenderer::new(&p);
@@ -917,6 +932,7 @@ fn t452_nest_warmth_is_the_intersection_of_its_children() {
 /// silently did not crossfade the sound — while video took the transitions of its own reel.
 #[test]
 fn t463b_transition_inside_a_reel_is_audible() {
+    kt_plugins_builtin::install();
     let frames = (PART + PART).to_audio_frames() as usize;
     let add_tr = |v: &mut Vec<TransitionEvent>| {
         v.push(TransitionEvent {
@@ -985,6 +1001,7 @@ fn spread_audio_mirrored() -> Project {
 /// and the mirror is applied to its samples, the same way as to the samples of a file.
 #[test]
 fn t561_reversing_a_nest_equals_reversing_its_content() {
+    kt_plugins_builtin::install();
     let frames = (PART + PART).to_audio_frames() as usize;
     let mut p = audio_nest(vec![], vec![]);
     p.clips[0].reversed = true;
@@ -1009,6 +1026,7 @@ fn t561_reversing_a_nest_equals_reversing_its_content() {
 /// That is exactly why the “edit it, then slow it all down” use case gets a nest.
 #[test]
 fn t562_slowing_a_nest_is_not_slowing_each_piece() {
+    kt_plugins_builtin::install();
     let frames = (PART + PART).to_audio_frames() as usize;
     let slow = vec![FxInstance::slowed_reverb(0.5, 0.6, 60.0)];
     let on_nest = render_audio(&audio_nest(slow.clone(), vec![]), frames);
@@ -1029,6 +1047,7 @@ fn t562_slowing_a_nest_is_not_slowing_each_piece() {
 /// (invariant 11).
 #[test]
 fn t563_reversed_submix_is_the_same_whole_and_in_chunks() {
+    kt_plugins_builtin::install();
     let frames = (PART + PART).to_audio_frames() as usize;
     let mut p = audio_nest(vec![reverb()], vec![reverb()]);
     p.clips[0].reversed = true;
@@ -1069,6 +1088,7 @@ fn t563_reversed_submix_is_the_same_whole_and_in_chunks() {
 /// under reverse and stretch they also fought over the producer's cursor.
 #[test]
 fn t564_two_instances_of_one_reel_do_not_share_a_reverb() {
+    kt_plugins_builtin::install();
     let frames = (PART + PART).to_audio_frames() as usize;
     // one and the same reel in TWO places, offset, sounding at once
     let mut p = audio_nest(vec![], vec![reverb()]);
@@ -1113,6 +1133,7 @@ fn t564_two_instances_of_one_reel_do_not_share_a_reverb() {
 /// (invariant 4) right in the tree.
 #[test]
 fn t565_raw_reverse_transport_over_a_nest_is_not_silence() {
+    kt_plugins_builtin::install();
     let frames = PART.to_audio_frames() as usize;
     let p = audio_nest(vec![], vec![]);
     let r = AudioRenderer::new(&p);
@@ -1227,7 +1248,7 @@ fn warp_fx(rate: f64, frames: FrameMode) -> FxInstance {
 }
 
 fn grade() -> FxInstance {
-    FxInstance::ColorGrade { brightness: 0.0, contrast: 0.0, saturation: 1.0, hue: 0.0 }
+    kt_model::FxInstance::plugin_with("color_grade", &[0.0, 0.0, 1.0, 0.0]).unwrap()
 }
 
 /// A brightness curve over the WHOLE material of the child: linear and monotonic —
@@ -1301,6 +1322,7 @@ const QV: Quality = Quality { width: 64, height: 36 };
 /// coincided, the sub-composite was taken from the memo, and the pair was BYTE-FOR-BYTE equal.
 #[test]
 fn t579_a_slowed_reel_animates_in_half_steps() {
+    kt_plugins_builtin::install();
     let slow = one_child_nest(FLAT, Some((0.5, FrameMode::Nearest)), vec![grade()], grade_curve());
     let plain = one_child_nest(FLAT, None, vec![grade()], grade_curve());
 
@@ -1355,6 +1377,7 @@ fn t579_a_slowed_reel_animates_in_half_steps() {
 /// The second turns red on the OLD code.
 #[test]
 fn t580_footage_is_pinned_and_the_order_does_not_move() {
+    kt_plugins_builtin::install();
     let plain = one_child_nest(1, Some((0.5, FrameMode::Nearest)), vec![], vec![]);
     let v = VideoRenderer::new_with_facts(&plain, &facts(&plain));
     for i in 0..10i64 {
@@ -1395,6 +1418,7 @@ fn t580_footage_is_pinned_and_the_order_does_not_move() {
 /// and the pair is assembled by the leaf — with the same integer kernel as t250.
 #[test]
 fn t581_blend_on_a_nest_mixes_footage_inside() {
+    kt_plugins_builtin::install();
     use kt_media::synthetic::{AudioPattern, SyntheticSource};
 
     let blend = one_child_nest(1, Some((0.5, FrameMode::Blend)), vec![], vec![]);
@@ -1448,6 +1472,7 @@ fn t581_blend_on_a_nest_mixes_footage_inside() {
 /// picture from the memo — and the error would be invisible (the frame looks plausible).
 #[test]
 fn t582_the_memo_key_carries_the_frame_mode() {
+    kt_plugins_builtin::install();
     use kt_media::synthetic::{AudioPattern, SyntheticSource};
 
     let blend = one_child_nest(1, Some((0.5, FrameMode::Blend)), vec![], vec![]);
@@ -1497,6 +1522,7 @@ fn t582_the_memo_key_carries_the_frame_mode() {
 /// R.37 C5, just one floor lower.
 #[test]
 fn t583_the_chunk_budget_counts_the_pair_inside_the_reel() {
+    kt_plugins_builtin::install();
     let blend = one_child_nest(1, Some((0.5, FrameMode::Blend)), vec![], vec![]);
     let near = one_child_nest(1, Some((0.5, FrameMode::Nearest)), vec![], vec![]);
     assert_eq!(
@@ -1518,6 +1544,7 @@ fn t583_the_chunk_budget_counts_the_pair_inside_the_reel() {
 /// the sequence goes BACKWARD in half steps and does not fall over on the clamp.
 #[test]
 fn t584_reversed_and_slowed_nest_runs_backwards_in_half_steps() {
+    kt_plugins_builtin::install();
     let mut p = one_child_nest(FLAT, Some((0.5, FrameMode::Nearest)), vec![grade()], grade_curve());
     p.clips[0].reversed = true;
     p.validate().expect("a mirrored slowed nested item is legal");
@@ -1552,6 +1579,7 @@ fn t584_reversed_and_slowed_nest_runs_backwards_in_half_steps() {
 /// — all the more (two floors in a row).
 #[test]
 fn t585_procedural_sources_run_on_the_continuous_tick() {
+    kt_plugins_builtin::install();
     // (a) AT THE ROOT: a slowed generator straight on the track
     let mut root = base_gen();
     let mut c = ev(1, ClipKind::Video, 0, Tick(0), Tick(PART.0 * 2), GEN);
@@ -1693,6 +1721,7 @@ const T_TWIN: Tick = Tick(10 * PART.0 + FRAME * 5);
 
 #[test]
 fn t631_every_instance_of_a_reel_renders() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let t_zoom = Tick(FRAME * 5);
     // an empty chain; only a barrier without resample; the leading layer strength —
@@ -1725,6 +1754,7 @@ fn t631_every_instance_of_a_reel_renders() {
 
 #[test]
 fn t631b_chain_input_is_the_instances_own() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let t_zoom = Tick(FRAME * 5);
 
@@ -1778,6 +1808,7 @@ fn t631b_chain_input_is_the_instances_own() {
 
 #[test]
 fn t631c_reel_stage_rides_in_the_postfx_key() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     // ONE cache for both renders: first the reel without the zooming twin (step
     // 1), then with it (step 3). The twin's chain input is 1× in both cases,
@@ -1825,6 +1856,7 @@ fn t631c_reel_stage_rides_in_the_postfx_key() {
 /// the reel edit (memo and preview key) sees the raster change.
 #[test]
 fn t723_reel_with_its_own_raster_is_conformed_like_a_file() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let mut p = nested(ClipKind::Video);
     let before = kt_engine::content_hash(&p, MediaId(100));
@@ -1860,6 +1892,7 @@ fn t723_reel_with_its_own_raster_is_conformed_like_a_file() {
 /// its grid; without its own fps the old path applies (t579/t580).
 #[test]
 fn t724_reel_fps_holds_frames() {
+    kt_plugins_builtin::install();
     let mut held = one_child_nest(FLAT, None, vec![grade()], grade_curve());
     held.sequences[0].fps = Some(15); // project — 30
     held.validate().unwrap();
@@ -1900,6 +1933,7 @@ fn t724_reel_fps_holds_frames() {
 /// an own raster or fps takes it out of that — the oracle honestly bounds itself.
 #[test]
 fn t725_own_settings_leave_law_e() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let plain = decomposed(ClipKind::Video);
     let mut own = nested(ClipKind::Video);
@@ -1927,6 +1961,7 @@ fn t725_own_settings_leave_law_e() {
 /// while the generator has no aspect (kind None) and fills it.
 #[test]
 fn t726_generator_inside_a_square_reel_renders_at_the_reel_raster() {
+    kt_plugins_builtin::install();
     let mut p = one_child_nest(FLAT, None, vec![], vec![]);
     p.sequences[0].raster = Some((36, 36));
     p.validate().unwrap();
@@ -1949,6 +1984,7 @@ fn t726_generator_inside_a_square_reel_renders_at_the_reel_raster() {
 /// byte-for-byte (t434/t435/t447 hold it separately).
 #[test]
 fn t739_reel_applies_its_own_track_stages() {
+    kt_plugins_builtin::install();
     let p = one_child_nest(FLAT, None, vec![], vec![]);
     let (plain, complete) = render_with_facts(&p, Tick(FRAME * 3), QV);
     assert!(complete, "scene: the frame is full");

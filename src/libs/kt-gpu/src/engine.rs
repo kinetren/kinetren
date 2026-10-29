@@ -150,18 +150,6 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
                 ];
                 u.p[base + 1] = [stage_w as f32, stage_h as f32, 0.0, 0.0];
             }
-            kt_fx::geom::TapKind::Grade { brightness, contrast, saturation, hue_cos, hue_sin } => {
-                let meta = 2u32 | ((op.after_prim as u32) << 4);
-                u.p[base] =
-                    [f32::from_bits(meta), brightness as f32, contrast as f32, saturation as f32];
-                u.p[base + 1] = [hue_cos as f32, hue_sin as f32, 0.0, 0.0];
-            }
-            kt_fx::geom::TapKind::Duo { shadow, high, amount } => {
-                let meta = 3u32 | ((op.after_prim as u32) << 4);
-                u.p[base] =
-                    [f32::from_bits(meta), shadow[0] as f32, shadow[1] as f32, shadow[2] as f32];
-                u.p[base + 1] = [high[0] as f32, high[1] as f32, high[2] as f32, amount as f32];
-            }
             kt_fx::geom::TapKind::Plugin(t) => {
                 let kind = plugin_tap_kind(t.id);
                 let meta = kind | ((op.after_prim as u32) << 4);
@@ -200,9 +188,7 @@ enum Pipe {
     Composite,
     /// Layer blend strength (R.38 item 12): mixing of the dry and wet sides.
     LayerMix,
-    // pointwise R.47 in the barrier position
-    ColorGrade,
-    Duotone,
+    // pointwise R.47 in the barrier position (color_grade, duotone and posterize are plugins)
     Vignette,
     // R.47 barriers Kv3
     SharpenAdd,
@@ -219,7 +205,7 @@ enum Pipe {
     GridTile,
 }
 
-const PIPE_COUNT: usize = 21;
+const PIPE_COUNT: usize = 19;
 
 /// One chain step precomputed on the CPU (common maths: kt-fx:
 /// pan_frame/cam_at/noise_seed). The number of passes and the sizes are known in advance.
@@ -307,19 +293,6 @@ enum FxOp {
         ca: f32,
         sa: f32,
         k: f32,
-    },
-    /// Pointwise R.47 at the barrier position: one pass, mirrors of tap_*.
-    ColorGrade {
-        br: f32,
-        con: f32,
-        sat: f32,
-        hc: f32,
-        hs: f32,
-    },
-    Duotone {
-        shadow: [f32; 3],
-        high: [f32; 3],
-        amount: f32,
     },
     /// A point-wise PLUGIN at the barrier position (plugin-api-stage1, D5): its own generated pass,
     /// `idx` — into `Inner::plugin_pipes`; `f` — `P.f0`/`P.f1` = (unused, a.yzw, b.xyzw).
@@ -596,31 +569,6 @@ fn chain_ops(
                         });
                     }
                 }
-                FxInstance::ColorGrade { brightness, contrast, saturation, hue } => {
-                    let hr = (*hue as f64).to_radians();
-                    ops.push(FxOp::ColorGrade {
-                        br: *brightness,
-                        con: *contrast,
-                        sat: *saturation,
-                        hc: hr.cos() as f32,
-                        hs: hr.sin() as f32,
-                    });
-                }
-                FxInstance::Duotone {
-                    shadow_r,
-                    shadow_g,
-                    shadow_b,
-                    high_r,
-                    high_g,
-                    high_b,
-                    amount,
-                } => {
-                    ops.push(FxOp::Duotone {
-                        shadow: [*shadow_r as f32, *shadow_g as f32, *shadow_b as f32],
-                        high: [*high_r as f32, *high_g as f32, *high_b as f32],
-                        amount: amount.clamp(0.0, 1.0),
-                    });
-                }
                 f @ FxInstance::Plugin(_) if kt_fx::geom::PluginTap::of(f).is_some() => {
                     let t = kt_fx::geom::PluginTap::of(f).expect("checked");
                     let g = t.kernel.gpu_params(t.values());
@@ -863,8 +811,6 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("glow_add", include_str!("shaders/glow_add.wgsl")),
     ("composite", include_str!("shaders/composite.wgsl")),
     ("layer_mix", include_str!("shaders/layer_mix.wgsl")),
-    ("colorgrade", include_str!("shaders/colorgrade.wgsl")),
-    ("duotone", include_str!("shaders/duotone.wgsl")),
     ("vignette", include_str!("shaders/vignette.wgsl")),
     ("sharpen_add", include_str!("shaders/sharpen_add.wgsl")),
     ("pixelate", include_str!("shaders/pixelate.wgsl")),
@@ -1741,35 +1687,6 @@ impl Inner {
                         ..Default::default()
                     };
                     self.pass(enc, Pipe::Vhs, &dst.view, &view, &dummy, &dummy, u);
-                    if let Some(t) = owned.take() {
-                        self.pool.release(t);
-                    }
-                    view = dst.view.clone();
-                    owned = Some(dst);
-                }
-                FxOp::ColorGrade { br, con, sat, hc, hs } => {
-                    let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        f: [*br, *con, *sat, *hc, *hs, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::ColorGrade, &dst.view, &view, &dummy, &dummy, u);
-                    if let Some(t) = owned.take() {
-                        self.pool.release(t);
-                    }
-                    view = dst.view.clone();
-                    owned = Some(dst);
-                }
-                FxOp::Duotone { shadow, high, amount } => {
-                    let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        f: [
-                            shadow[0], shadow[1], shadow[2], 0.0, high[0], high[1], high[2],
-                            *amount,
-                        ],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::Duotone, &dst.view, &view, &dummy, &dummy, u);
                     if let Some(t) = owned.take() {
                         self.pool.release(t);
                     }

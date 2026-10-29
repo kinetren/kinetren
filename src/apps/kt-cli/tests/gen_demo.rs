@@ -196,12 +196,7 @@ fn gen_demo_concat() {
             0,
             4,
             1,
-            vec![FxInstance::ColorGrade {
-                brightness: 0.05,
-                contrast: 0.35,
-                saturation: 1.5,
-                hue: -20.0,
-            }],
+            vec![kt_model::FxInstance::plugin_with("color_grade", &[0.05, 0.35, 1.5, -20.0]).unwrap()],
         ),
         clip(2, 4, 4, 1, vec![FxInstance::duotone()]),
         clip(3, 8, 4, 1, vec![posterize(4)]),
