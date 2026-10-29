@@ -59,7 +59,8 @@ done).
 ## 6. Live and records
 
 - [ ] 6.1 Live scenario `src/scripts/live/welcome.py` (own process, own `XDG_DATA_HOME`): first start → the window with "Start the tour" primary → a template → Help → Welcome window… → a recent card → Help → Guide… → search "loop" → Help → Start the tour → step 1 closes by adding a title; `kt_live.step` screenshot per step. Verify `./scripts/live-check.sh welcome` green
-- [ ] 6.2 `src/apps/kt-app/CLAUDE.md`: the start order and the three new modules; commit stage 6
+- [x] 6.2 `src/apps/kt-app/CLAUDE.md`: the start order and the three new modules; commit stage 6
+  - Section "The start, the Guide and the tour": `plan_start`, `replace_with` carrying `start`, the memory default store, no-fsync records, the poster service, the auto-size trap, lessons on state, the sandbox, the Guide's arrows.
 
 ## 7. Finish
 

@@ -843,3 +843,43 @@ All four come from one list of remarks, and all four are about one thing: the in
 
 Where to look in the code: `track_window.rs` (the ducking section), `pubparam.rs`
 (`draw_inst_head` — the head of the strip), `fx_editor.rs` (`head_slot` of the reel instance and of the generator), `user_store.rs` (`Workspace::duck`).
+
+## The start, the Guide and the tour (welcome-window-and-tour)
+
+- **The start order lives in `welcome::plan_start`** (design D4): the facts are gathered once —
+  the recent rows with one `exists()` each, a pending recovery, FFmpeg, the switch — and the pure
+  `welcome::primary` decides: a project on the command line or a recovery → the former start; the
+  switch off → the last project silently; otherwise the welcome window over an EMPTY project,
+  after the FFmpeg window when FFmpeg is missing. `run` only executes the plan; t984 holds the
+  order, t986 the restart with the switch off.
+- **`KtApp::start` survives the in-place rebuild.** File → New/Open, a template, a recent card and
+  a lesson all go through `KtApp::replace_with`, which swaps `start` (the user store's
+  between-projects records, the welcome/Guide/lessons state) into the new app, queues the closing
+  project's poster and puts the new named project at the top of Recent. A new `*self = app`
+  outside it loses the store's in-memory state and the poster.
+- **`Start::default()` is a MEMORY store**: only `run` installs the real one. The harness never
+  reads the person's files; a test that needs disk sets `start.store = StartStore::at(Some(dir))`.
+- **The between-projects records are written tmp + rename WITHOUT fsync** (`StartStore::write`):
+  they are conveniences, and two fsyncs per open stalled t985 for 90 s on a busy disk — the same
+  would stall the UI thread on every open.
+- **Posters (D5) are a SERVICE that outlives every app** (`welcome::request_poster`, one thread,
+  coalesced by file, paused while playing): a poster is queued exactly when a project CLOSES,
+  i.e. when its app is replaced. The frame comes from `reel_preview::render_poster` (the offline
+  path's one body with the reel strip, t602) into `<store>/posters/<xxh3>.png`, never next to
+  the project. `on_exit` waits for it within 3 s.
+- **An auto-sized window must not hold a right-to-left layout or an unwrapped label in a
+  horizontal row**: the welcome window grew to 2010 points (off both screen edges) from the
+  action row's `right_to_left` and from guide labels laid out with `TextWrapMode::Extend` inside
+  `horizontal_top`. t986 checks that the window fits the screen.
+- **Lessons close on state, not gestures** (`lessons::done`, a closed `Predicate` enum), and are
+  re-evaluated only when `(model_rev, open windows, render result)` changes. A step's target is
+  a registry window, a File-menu path (opened by code: the File button's response id lives in
+  egui temp data `kt_menu_root_file`, probe 1.1) or the timeline; the target draws a STATIC
+  outline itself (`widgets::lesson_outline`). `no_teaching_layer_over_the_ui` keeps the layers
+  above `Order::Middle` a closed named list — a lesson is a panel, never a layer.
+- **The lesson sandbox** is `<store>/lessons/lesson-<n>.kt`, built by `kt_model::demo` from
+  generators (kt-cli `demo` calls the same builder); `lessons::is_sandbox` keeps it out of Recent
+  and out of posters.
+- **The Guide renders `docs/guide/*.md` compiled in** (`guide::PAGES`, guarded against the
+  directory by t989). No font of ours has `→`/`←`: the pages get Phosphor arrows at parse time,
+  and catalog text writes menu paths with `›` (Arabic `‹`).
