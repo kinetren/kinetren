@@ -31,6 +31,8 @@ pub struct RenderJob {
     pub last_tick: std::time::Instant,
     /// Sources rendered as a stub (R.33 item 10).
     pub missing: Vec<String>,
+    /// The video backend the job's thread chose (GPU or CPU), once it chose.
+    pub video_gpu: std::sync::Arc<std::sync::OnceLock<bool>>,
 }
 
 /// Render SETTINGS dialog (item 5): codec, quality, bitrate, resolution.
@@ -223,6 +225,8 @@ impl KtApp {
         };
         let opts_thread = opts.clone();
         let out_path_thread = out_path.clone();
+        let video_gpu = std::sync::Arc::new(std::sync::OnceLock::new());
+        let video_gpu_thread = video_gpu.clone();
         let job = crate::bg::BgJob::spawn("render", move |ctl, send| {
             let send_p = move |p| send.send(p);
             let (a, _) = open_all(&project, base.as_deref());
@@ -231,6 +235,7 @@ impl KtApp {
             // job (the UI queue does not share time with the export); if there is no engine
             // → CPU (for 2D this is a full-fledged path)
             let backends = kt_engine::ExportBackends { video_gpu: crate::app::export_video_gpu() };
+            let _ = video_gpu_thread.set(backends.video_gpu.is_some());
             kt_engine::export::export_mp4_with_backends(
                 &project,
                 a,
@@ -260,6 +265,7 @@ impl KtApp {
             last_frames: 0,
             last_tick: std::time::Instant::now(),
             missing: self.render_setup.missing.clone(),
+            video_gpu,
         });
         self.render_setup.open = false;
     }
@@ -676,8 +682,8 @@ impl KtApp {
         if let Some(r) = &shown {
             crate::widgets::field_probe::note("win.render_progress", r.response.rect);
         }
-        if close {
-            self.render_job = None;
+        if close && let Some(job) = self.render_job.take() {
+            crate::telemetry::signal(crate::telemetry::Signal::ExportEnded(&job));
         }
     }
 }

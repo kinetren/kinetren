@@ -134,19 +134,35 @@ pub fn install_panic_hook() {
     }));
 }
 
+/// The session the report will name (telemetry's `$session_id`, set once at start): the next
+/// start's `app_crashed` says which session ended in the crash (telemetry D8).
+static SESSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub fn set_session(id: &str) {
+    let _ = SESSION.set(id.to_string());
+}
+
 /// The body of the report. Taken out of the hook so that it can be checked without
 /// replacing the global hook in a test (the replacement would affect neighboring tests).
 pub(crate) fn crash_report(panic_text: &str) -> String {
     let dump = flight_slot().lock().ok().and_then(|s| s.as_ref().map(|f| f.dump()));
-    crash_report_with(panic_text, dump.as_deref())
+    crash_report_with(panic_text, dump.as_deref(), SESSION.get().map(String::as_str))
 }
 
-pub(crate) fn crash_report_with(panic_text: &str, flight: Option<&str>) -> String {
+pub(crate) fn crash_report_with(
+    panic_text: &str,
+    flight: Option<&str>,
+    session: Option<&str>,
+) -> String {
     let mut out = String::with_capacity(8 * 1024);
-    out.push_str(&format!("kinetren {}\n", kt_version::display()));
+    // the FULL version even in a release build: "which exact build crashed"
+    out.push_str(&format!("kinetren {}\n", kt_version::FULL));
     out.push_str(&format!("time: {}\n", stamp()));
     let t = std::thread::current();
     out.push_str(&format!("thread: {}\n", t.name().unwrap_or("<unnamed>")));
+    if let Some(s) = session {
+        out.push_str(&format!("session: {s}\n"));
+    }
     out.push_str(&format!("panic: {panic_text}\n\n"));
     out.push_str(&format!("{}\n", std::backtrace::Backtrace::force_capture()));
     // dump of the “black box”: what the program was doing in the last seconds
@@ -261,7 +277,11 @@ mod tests {
         assert_eq!(old.len(), ROTATE_BYTES as usize + 1, "old data lost on rotation");
 
         // an unreachable path — silently past it: the journal does not dare to bring the program down
-        write_to(&crate::layout_tests::unwritable_path("journal").with_file_name("kt-test.log"), "WARN", "ignored");
+        write_to(
+            &crate::layout_tests::unwritable_path("journal").with_file_name("kt-test.log"),
+            "WARN",
+            "ignored",
+        );
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 
@@ -276,12 +296,18 @@ mod tests {
         f.push(Ev::Play, 48_000, 0);
         // the dump is passed explicitly: the “black box” slot is global, and tests
         // run in parallel — a neighboring harness manages to put its own there
-        let r =
-            crash_report_with("assertion failed: everything broke for the user", Some(&f.dump()));
+        let r = crash_report_with(
+            "assertion failed: everything broke for the user",
+            Some(&f.dump()),
+            None,
+        );
         assert!(r.contains(kt_version::display()), "no version: a complaint without it is useless");
         assert!(r.contains("thread:"), "no thread");
         assert!(r.contains("assertion failed"), "the panic message itself is missing");
-        assert!(r.contains("crash_report_with"), "the backtrace has no names — the report is made of bare addresses");
+        assert!(
+            r.contains("crash_report_with"),
+            "the backtrace has no names — the report is made of bare addresses"
+        );
         assert!(r.contains("--- flight recorder ---"), "no black box dump");
         assert!(r.to_lowercase().contains("play"), "black box is empty: {r}");
     }

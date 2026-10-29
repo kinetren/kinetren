@@ -2,6 +2,7 @@
 
 use crate::audio_out;
 use crate::i18n::{k, tr};
+use crate::telemetry::OpenHow;
 use crate::timeline::{CtxTarget, Drag};
 use crate::util::*;
 use eframe::egui;
@@ -759,6 +760,7 @@ impl KtApp {
     pub(crate) fn new_empty(error: Option<String>) -> KtApp {
         let startup_error = error;
         let project = Self::empty_project();
+        crate::telemetry::signal(crate::telemetry::Signal::ProjectOpened(OpenHow::New, &project));
         let project2 = project.clone();
         let (player, audio, _, _) = Self::build_player(&project, None, None);
         let peaks: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -971,6 +973,7 @@ impl KtApp {
 
     pub(crate) fn open(path: &Path) -> Result<KtApp, String> {
         let (project, retained, notices) = load_project_file(path)?;
+        crate::telemetry::signal(crate::telemetry::Signal::ProjectOpened(OpenHow::Open, &project));
         Self::open_loaded(path, project, retained, notices)
     }
 
@@ -999,6 +1002,7 @@ impl KtApp {
             }
             Err(e) => return Err(e.to_string()),
         };
+        crate::telemetry::signal(crate::telemetry::Signal::ProjectOpened(OpenHow::Import, &b.project));
         let mut app = Self::open_loaded(path, b.project, b.retained, b.notices)?;
         app.project_path = None;
         app.save_hint = Some(path.with_extension(kt_model::project_file::EXTENSION));
@@ -3033,6 +3037,7 @@ impl KtApp {
         let Some(c) = self.recovery_offer.get(i).cloned() else { return };
         match load_project_file(&c.path) {
             Ok((project, retained, notices)) => {
+                crate::telemetry::signal(crate::telemetry::Signal::ProjectOpened(OpenHow::Recovery, &project));
                 self.model = kt_model::TimelineModel::new(project);
                 self.retained = retained;
                 self.model_rev += 1;
@@ -8992,12 +8997,14 @@ impl eframe::App for KtApp {
                     let info = rs.adapter.get_info();
                     self.gpu_info = Some(format!("{} / {:?}", info.name, info.backend));
                     let name = info.name.to_lowercase();
-                    info.device_type == eframe::wgpu::DeviceType::Cpu
+                    let sw = info.device_type == eframe::wgpu::DeviceType::Cpu
                         || name.contains("llvmpipe")
                         || name.contains("softpipe")
                         || name.contains("swiftshader")
                         // Windows' software rasterizer (WARP)
-                        || name.contains("microsoft basic render")
+                        || name.contains("microsoft basic render");
+                    crate::telemetry::signal(crate::telemetry::Signal::Gpu(&info, sw));
+                    sw
                 })
                 .unwrap_or(false);
             self.sw_render = Some(sw);
@@ -9179,6 +9186,7 @@ pub fn run() -> eframe::Result {
             // last_project pointed to A, and not a line was said about the hour.
             // the previous session crashed — the report lies there and waits (item 355)
             if let Some(p) = crate::journal::take_crash_report() {
+                crate::telemetry::signal(crate::telemetry::Signal::CrashReport(&p));
                 app.warn(crate::tf!(k::msg::PREV_SESSION_CRASHED, p.display()));
             }
             // without FFmpeg the FFmpeg window opens once, with one notice (windows-build)

@@ -477,6 +477,409 @@ impl Sink for HttpSink {
     }
 }
 
+// ---- milestones (D7) ------------------------------------------------------------------------
+
+/// How a project came into the editor (`project_opened.how`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenHow {
+    Open,
+    Import,
+    Recovery,
+    New,
+}
+
+impl OpenHow {
+    fn as_str(self) -> &'static str {
+        match self {
+            OpenHow::Open => "open",
+            OpenHow::Import => "import",
+            OpenHow::Recovery => "recovery",
+            OpenHow::New => "new",
+        }
+    }
+}
+
+/// One bucket function for counts: dashboards group without exact sizes (D7).
+pub fn count_bucket(n: u64) -> &'static str {
+    match n {
+        0 => "0",
+        1..=9 => "1-9",
+        10..=99 => "10-99",
+        100..=999 => "100-999",
+        _ => "1000+",
+    }
+}
+
+/// And one for durations in seconds.
+pub fn duration_bucket(secs: u64) -> &'static str {
+    match secs {
+        0..=59 => "<1m",
+        60..=599 => "1-10m",
+        600..=3600 => "10-60m",
+        _ => ">60m",
+    }
+}
+
+/// `project_opened`'s own keys: sizes in buckets and three flags — no name, no path.
+pub fn project_props(how: OpenHow, p: &kt_model::Project) -> Props {
+    let clips = p.clips.len() + p.sequences.iter().map(|s| s.clips.len()).sum::<usize>();
+    let end = p.clips.iter().map(|c| (c.start + c.duration).0).max().unwrap_or(0).max(0);
+    let curves = |c: &kt_model::ClipEvent| {
+        c.fx_auto.iter().any(|v| !v.is_empty())
+            || !c.gen_auto.is_empty()
+            || !c.geometry_auto.is_empty()
+    };
+    let all_clips = p.clips.iter().chain(p.sequences.iter().flat_map(|s| s.clips.iter()));
+    let mut out = Props::new();
+    out.insert("how".into(), how.as_str().into());
+    out.insert("clips".into(), count_bucket(clips as u64).into());
+    out.insert("tracks".into(), count_bucket(p.tracks.len() as u64).into());
+    out.insert("media".into(), count_bucket(p.media.len() as u64).into());
+    out.insert("duration_bucket".into(), duration_bucket(end as u64 / 90_000).into());
+    out.insert("has_reels".into(), (!p.sequences.is_empty()).into());
+    let morphers = !p.morphers.is_empty() || p.sequences.iter().any(|s| !s.morphers.is_empty());
+    out.insert("has_morphers".into(), morphers.into());
+    let auto = {
+        let mut clips = all_clips;
+        clips.any(curves) || p.tracks.iter().any(|t| t.fx_auto.iter().any(|v| !v.is_empty()))
+    };
+    out.insert("has_automation".into(), auto.into());
+    out
+}
+
+/// What an ended export was, in the terms of `export_finished`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExportFacts {
+    pub outcome: &'static str,
+    pub video_codec: Option<&'static str>,
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+    /// The length of what was to be exported.
+    pub total_s: f64,
+    /// Media seconds written, and the wall seconds it took.
+    pub media_s: f64,
+    pub wall_s: f64,
+    /// `None` until the job's thread chose the backend.
+    pub gpu: Option<bool>,
+}
+
+/// The codec family of an encoder name (`libx264`, `h264_nvenc` → `h264`).
+fn codec_family(encoder: &str) -> &'static str {
+    let e = encoder.to_ascii_lowercase();
+    if e.contains("264") {
+        "h264"
+    } else if e.contains("265") || e.contains("hevc") {
+        "hevc"
+    } else if e.contains("av1") {
+        "av1"
+    } else if e.contains("vp9") {
+        "vp9"
+    } else {
+        "other"
+    }
+}
+
+impl ExportFacts {
+    /// From the render dialog's job, at the moment the dialog lets it go.
+    pub fn of(job: &crate::render_dialog::RenderJob) -> Self {
+        let outcome = match &job.job.done {
+            Some(Ok(_)) => "ok",
+            Some(Err(_)) if job.job.is_cancelled() => "cancelled",
+            Some(Err(_)) => "failed",
+            None => "cancelled",
+        };
+        let encoder = match &job.job.done {
+            Some(Ok(stats)) => Some(stats.encoder.as_str()),
+            _ => job.opts.force_encoder.as_deref(),
+        };
+        let fps = job.fps.max(1) as f64;
+        ExportFacts {
+            outcome,
+            video_codec: encoder.filter(|e| !e.is_empty()).map(codec_family),
+            width: job.out_res.0,
+            height: job.out_res.1,
+            fps: job.fps,
+            total_s: job.progress.total_video_frames as f64 / fps,
+            media_s: job.progress.video_frames as f64 / fps,
+            wall_s: job.job.started.elapsed().as_secs_f64(),
+            gpu: job.video_gpu.get().copied(),
+        }
+    }
+
+    /// `export_finished`'s own keys.
+    pub fn props(&self) -> Props {
+        let mut p = Props::new();
+        p.insert("outcome".into(), self.outcome.into());
+        p.insert("container".into(), "mp4".into());
+        if let Some(c) = self.video_codec {
+            p.insert("video_codec".into(), c.into());
+        }
+        p.insert("audio_codec".into(), "aac".into());
+        p.insert("width".into(), self.width.into());
+        p.insert("height".into(), self.height.into());
+        p.insert("fps".into(), self.fps.into());
+        p.insert("duration_bucket".into(), duration_bucket(self.total_s as u64).into());
+        if let Some(g) = self.gpu {
+            p.insert("backend".into(), if g { "gpu" } else { "cpu" }.into());
+        }
+        if self.wall_s > 0.0 {
+            let x = (self.media_s / self.wall_s * 10.0).round() / 10.0;
+            p.insert("speed_x".into(), x.into());
+        }
+        p
+    }
+}
+
+// ---- crash places (D8) ----------------------------------------------------------------------
+
+/// `app_crashed`'s own keys from the panic hook's report: the version line, the thread, the
+/// place — and NOT the message, which often names the person's paths.
+pub fn crash_from_report(report: &str) -> Props {
+    let mut p = Props::new();
+    for line in report.lines() {
+        if let Some(v) = line.strip_prefix("kinetren ") {
+            p.entry("crashed_build").or_insert_with(|| v.trim().into());
+        } else if let Some(v) = line.strip_prefix("thread: ") {
+            p.entry("thread").or_insert_with(|| v.trim().into());
+        } else if let Some(v) = line.strip_prefix("session: ") {
+            let v = v.trim();
+            if is_uuid(v) {
+                p.entry("crashed_session_id").or_insert_with(|| v.into());
+            }
+        } else if let Some(rest) = line.split_once("panicked at ").map(|(_, r)| r)
+            && let Some(loc) = panic_location(rest)
+        {
+            p.entry("location").or_insert_with(|| loc.into());
+        }
+    }
+    p
+}
+
+/// `file:line:col` from the text after "panicked at ", the path cut to the part after `src/`
+/// (a relative workspace path is kept, an absolute one loses everything up to `/src/`, and
+/// with no `src/` only the file name stays). Everything after the place is dropped.
+fn panic_location(rest: &str) -> Option<String> {
+    let digits = |t: &str| t.chars().take_while(|c| c.is_ascii_digit()).count();
+    for (i, _) in rest.match_indices(':') {
+        let tail = &rest[i + 1..];
+        let nl = digits(tail);
+        let Some(after) = tail[nl..].strip_prefix(':').filter(|_| nl > 0) else { continue };
+        let nc = digits(after);
+        if nc == 0 {
+            continue;
+        }
+        let file = rest[..i].trim().replace('\\', "/");
+        let absolute = file.starts_with('/') || file.get(1..2) == Some(":");
+        let file = if let Some(f) = file.strip_prefix("src/") {
+            f.to_string()
+        } else if !absolute {
+            file
+        } else if let Some((_, f)) = file.split_once("/src/") {
+            f.to_string()
+        } else {
+            file.rsplit('/').next().unwrap_or_default().to_string()
+        };
+        return Some(format!("{file}:{}:{}", &tail[..nl], &after[..nc]));
+    }
+    None
+}
+
+// ---- the environment (D9) -------------------------------------------------------------------
+
+/// The adapter, as `ui()` reads it for the software-render check.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GpuFacts {
+    pub vendor: &'static str,
+    pub name: String,
+    pub kind: &'static str,
+    pub backend: String,
+    pub software: bool,
+}
+
+impl GpuFacts {
+    pub fn new(
+        vendor_id: u32,
+        name: &str,
+        kind: eframe::wgpu::DeviceType,
+        backend: eframe::wgpu::Backend,
+        software: bool,
+    ) -> Self {
+        use eframe::wgpu::DeviceType;
+        GpuFacts {
+            vendor: match vendor_id {
+                0x10de => "nvidia",
+                0x1002 | 0x1022 => "amd",
+                0x8086 => "intel",
+                0x106b => "apple",
+                0x5143 => "qualcomm",
+                0x13b5 => "arm",
+                0x1414 => "microsoft",
+                0x15ad => "vmware",
+                0x10005 => "mesa",
+                _ => "other",
+            },
+            name: name.chars().take(80).collect(),
+            kind: match kind {
+                DeviceType::DiscreteGpu => "discrete",
+                DeviceType::IntegratedGpu => "integrated",
+                DeviceType::VirtualGpu => "virtual",
+                DeviceType::Cpu => "cpu",
+                DeviceType::Other => "other",
+            },
+            backend: format!("{backend:?}").to_ascii_lowercase(),
+            software,
+        }
+    }
+}
+
+/// Everything the probe reads, as data (t886 runs on samples).
+#[derive(Debug, Clone, Default)]
+pub struct EnvSources {
+    /// The text of `/etc/os-release` (Linux).
+    pub os_release: Option<String>,
+    /// `(major, build)` from `RtlGetVersion` (Windows).
+    pub windows: Option<(u32, u32)>,
+    pub ram_bytes: Option<u64>,
+    pub cores: Option<usize>,
+    pub gpu: Option<GpuFacts>,
+    pub scale: Option<f32>,
+    /// The first monitor's logical size in points.
+    pub monitor: Option<(f32, f32)>,
+    /// `(major, source)`: `system`/`folder`/`downloaded`/`missing`.
+    pub ffmpeg: Option<(Option<u32>, &'static str)>,
+}
+
+fn os_release_name(text: &str) -> Option<String> {
+    let field = |k: &str| {
+        text.lines().find_map(|l| {
+            let v = l.strip_prefix(k)?.strip_prefix('=')?;
+            let v = v.trim().trim_matches('"').trim();
+            (!v.is_empty()).then(|| v.to_string())
+        })
+    };
+    let name = field("NAME")?;
+    Some(match field("VERSION_ID") {
+        Some(v) => format!("{name} {v}"),
+        None => name,
+    })
+}
+
+/// Coarse facts only; a value that cannot be read is omitted, never guessed (t886).
+pub fn probe_env(s: &EnvSources) -> Props {
+    let mut p = Props::new();
+    let os = if let Some((major, build)) = s.windows {
+        // Windows 11 still reports major 10; its builds start at 22000
+        let shown = if major == 10 && build >= 22_000 { 11 } else { major };
+        Some(format!("Windows {shown} (build {build})"))
+    } else {
+        s.os_release.as_deref().and_then(os_release_name)
+    };
+    if let Some(v) = os {
+        p.insert("$os_version".into(), v.into());
+    }
+    if let Some(c) = s.cores {
+        p.insert("cpu_cores".into(), (c as u64).into());
+    }
+    if let Some(b) = s.ram_bytes {
+        let gb = (b as f64 / (1u64 << 30) as f64).round() as u64;
+        p.insert("ram_gb".into(), gb.into());
+    }
+    if let Some(g) = &s.gpu {
+        p.insert("gpu_vendor".into(), g.vendor.into());
+        p.insert("gpu_name".into(), g.name.clone().into());
+        p.insert("gpu_type".into(), g.kind.into());
+        p.insert("gpu_backend".into(), g.backend.clone().into());
+        p.insert("software_render".into(), g.software.into());
+    }
+    if let Some(sc) = s.scale {
+        p.insert("screen_scale".into(), ((sc as f64 * 100.0).round() / 100.0).into());
+    }
+    if let Some((w, h)) = s.monitor {
+        let r = |v: f32| ((v / 10.0).round() * 10.0) as u64;
+        p.insert("screen_w".into(), r(w).into());
+        p.insert("screen_h".into(), r(h).into());
+    }
+    if let Some((major, source)) = s.ffmpeg {
+        if let Some(m) = major {
+            p.insert("ffmpeg_major".into(), m.into());
+        }
+        p.insert("ffmpeg_source".into(), source.into());
+    }
+    p
+}
+
+/// How the loaded FFmpeg was found; `missing` when the search found nothing.
+fn ffmpeg_state() -> (Option<u32>, &'static str) {
+    use kt_ffmpeg::search::Source;
+    let Some(report) = kt_ffmpeg::search_report_data() else {
+        return (None, "missing");
+    };
+    let Some((place, major, _)) = report.loaded.as_ref() else {
+        return (None, "missing");
+    };
+    let line = report.lines.iter().find(|l| l.reject.is_none() && &l.place == place);
+    let source = match line.map(|l| l.source) {
+        Some(Source::UserChoice) => "folder",
+        Some(Source::Download) => "downloaded",
+        _ => "system",
+    };
+    (Some(*major), source)
+}
+
+#[cfg(windows)]
+fn windows_version() -> Option<(u32, u32)> {
+    use windows_sys::Wdk::System::SystemServices::RtlGetVersion;
+    use windows_sys::Win32::System::SystemInformation::OSVERSIONINFOW;
+    // SAFETY: a zeroed plain-data struct with its size set, filled by the call
+    let mut v: OSVERSIONINFOW = unsafe { std::mem::zeroed() };
+    v.dwOSVersionInfoSize = std::mem::size_of::<OSVERSIONINFOW>() as u32;
+    // RtlGetVersion, not GetVersionEx: the latter lies without a manifest
+    (unsafe { RtlGetVersion(&mut v) } == 0).then_some((v.dwMajorVersion, v.dwBuildNumber))
+}
+
+#[cfg(windows)]
+fn ram_bytes() -> Option<u64> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    // SAFETY: as above
+    let mut m: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+    m.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    (unsafe { GlobalMemoryStatusEx(&mut m) } != 0).then_some(m.ullTotalPhys)
+}
+
+#[cfg(not(windows))]
+fn ram_bytes() -> Option<u64> {
+    let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let kb: u64 = text
+        .lines()
+        .find_map(|l| l.strip_prefix("MemTotal:"))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    Some(kb * 1024)
+}
+
+/// The production sources: files and system calls, read on the sender thread.
+fn gather_env(gpu: Option<GpuFacts>, screen: Option<(f32, Option<(f32, f32)>)>) -> EnvSources {
+    EnvSources {
+        #[cfg(not(windows))]
+        os_release: std::fs::read_to_string("/etc/os-release").ok(),
+        #[cfg(windows)]
+        os_release: None,
+        #[cfg(windows)]
+        windows: windows_version(),
+        #[cfg(not(windows))]
+        windows: None,
+        ram_bytes: ram_bytes(),
+        cores: std::thread::available_parallelism().ok().map(|n| n.get()),
+        gpu,
+        scale: screen.map(|s| s.0),
+        monitor: screen.and_then(|s| s.1),
+        ffmpeg: Some(ffmpeg_state()),
+    }
+}
+
 // ---- the one door (D5) ----------------------------------------------------------------------
 
 /// The heartbeat period (D5, D6): about twelve events per ACTIVE hour; one constant if the
@@ -500,6 +903,14 @@ pub enum Signal<'a> {
     Redo,
     /// The person's save went to disk.
     Saved,
+    /// A project came into the editor (opened, imported, recovered or new).
+    ProjectOpened(OpenHow, &'a kt_model::Project),
+    /// The render dialog lets an ended export go.
+    ExportEnded(&'a crate::render_dialog::RenderJob),
+    /// The wgpu adapter, read once in `ui()` with the software-render verdict.
+    Gpu(&'a eframe::wgpu::AdapterInfo, bool),
+    /// The previous session's crash report, handed over at start (`take_crash_report`).
+    CrashReport(&'a std::path::Path),
     /// Every drawn frame. After the first one this is atomics only (invariant 12).
     Frame {
         ctx: &'a egui::Context,
@@ -778,6 +1189,11 @@ struct Shared {
     os_version: Mutex<Option<String>>,
     /// The counters the last heartbeat carried: an unchanged snapshot sends nothing.
     last_beat: Mutex<Snapshot>,
+    /// What the UI knows for the probe: the adapter, and the scale and monitor size.
+    gpu: Mutex<Option<GpuFacts>>,
+    screen: Mutex<Option<(f32, Option<(f32, f32)>)>>,
+    /// The probe's sources in tests (production gathers them on the sender thread).
+    env_override: Option<EnvSources>,
 }
 
 impl Shared {
@@ -798,14 +1214,25 @@ impl Shared {
         event_json(&self.api_key, event, &self.install_id, &Build::THIS, &common, props)
     }
 
+    /// `app_started`, after the probe (it reads files: the sender thread does it).
     fn start_body(&self) -> String {
+        let sources = match &self.env_override {
+            Some(e) => e.clone(),
+            None => gather_env(
+                self.gpu.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+                *self.screen.lock().unwrap_or_else(|p| p.into_inner()),
+            ),
+        };
+        let env = probe_env(&sources);
+        let os_version = env.get("$os_version").and_then(|v| v.as_str()).map(str::to_string);
+        *self.os_version.lock().unwrap_or_else(|p| p.into_inner()) = os_version;
         let common = Common {
             session_id: self.session_id.clone(),
             os_version: None,
             lang: *self.lang.lock().unwrap_or_else(|p| p.into_inner()),
         };
         let inst = self.instance.as_ref().map(|i| (i.seq, i.running)).unwrap_or((1, 0));
-        let props = start_props(&Build::THIS, &common, &Props::new(), inst);
+        let props = start_props(&Build::THIS, &common, &env, inst);
         self.body("app_started", props)
     }
 
@@ -832,6 +1259,10 @@ impl Shared {
 pub struct Telemetry {
     shared: Arc<Shared>,
     notice_due: AtomicBool,
+    /// Milestones that came before the first frame: they follow `app_started`.
+    pending: Mutex<Vec<(&'static str, Props)>>,
+    /// One `app_crashed` per process.
+    crashed: AtomicBool,
     /// The sink waits here until the first event: a telemetry that never sends never spawns
     /// its thread (t839).
     sink: Mutex<Option<Box<dyn Sink>>>,
@@ -860,7 +1291,12 @@ impl Telemetry {
                 lang: Mutex::new("en"),
                 os_version: Mutex::new(None),
                 last_beat: Mutex::new(Snapshot::default()),
+                gpu: Mutex::new(None),
+                screen: Mutex::new(None),
+                env_override: None,
             }),
+            pending: Mutex::new(Vec::new()),
+            crashed: AtomicBool::new(false),
             sink: Mutex::new(Some(sink)),
             tx: Mutex::new(None),
             thread_spawned: AtomicBool::new(false),
@@ -873,6 +1309,8 @@ impl Telemetry {
         let dir = crate::journal::data_dir();
         let id = if consent.block.is_none() { install_id_in(&dir) } else { String::new() };
         let mut t = Self::new(consent, id, Box::new(HttpSink::production()));
+        // the crash report names the session it ended (D8)
+        crate::journal::set_session(&t.shared.session_id);
         if consent.on() {
             let s = t.setup();
             s.instance = Some(register_instance(&dir, &s.session_id));
@@ -894,6 +1332,12 @@ impl Telemetry {
     #[cfg(test)]
     pub fn with_clock(mut self, c: impl Clock + 'static) -> Self {
         self.setup().clock = Box::new(c);
+        self
+    }
+
+    #[cfg(test)]
+    pub fn with_env(mut self, e: EnvSources) -> Self {
+        self.setup().env_override = Some(e);
         self
     }
 
@@ -945,6 +1389,11 @@ impl Telemetry {
         };
         match s {
             Signal::Frame { ctx, playing } => {
+                if !self.shared.started.load(Ordering::Relaxed) {
+                    let monitor = ctx.input(|i| i.viewport().monitor_size).map(|m| (m.x, m.y));
+                    let screen = Some((ctx.pixels_per_point(), monitor));
+                    *self.shared.screen.lock().unwrap_or_else(|p| p.into_inner()) = screen;
+                }
                 let input = ctx.input(|i| i.events.iter().any(is_activity));
                 self.frame(playing, input);
             }
@@ -954,6 +1403,30 @@ impl Telemetry {
             Signal::Undo => one(&c.undos),
             Signal::Redo => one(&c.redos),
             Signal::Saved => one(&c.saves),
+            Signal::ProjectOpened(how, project) => {
+                one(&c.projects_opened);
+                self.milestone("project_opened", project_props(how, project));
+            }
+            Signal::ExportEnded(job) => {
+                let facts = ExportFacts::of(job);
+                bump(&c.exports, facts.outcome);
+                self.milestone("export_finished", facts.props());
+            }
+            Signal::Gpu(info, software) => {
+                let g = GpuFacts::new(
+                    info.vendor,
+                    &info.name,
+                    info.device_type,
+                    info.backend,
+                    software,
+                );
+                *self.shared.gpu.lock().unwrap_or_else(|p| p.into_inner()) = Some(g);
+            }
+            Signal::CrashReport(path) => {
+                if let Ok(text) = std::fs::read_to_string(path) {
+                    self.crash(&text);
+                }
+            }
             Signal::Exit => self.exit(EXIT_BUDGET),
         }
     }
@@ -965,8 +1438,29 @@ impl Telemetry {
             *s.lang.lock().unwrap_or_else(|p| p.into_inner()) = crate::i18n::current().code();
             s.started.store(true, Ordering::Relaxed);
             self.enqueue(Msg::Start);
+            let pending =
+                std::mem::take(&mut *self.pending.lock().unwrap_or_else(|p| p.into_inner()));
+            for (name, props) in pending {
+                self.enqueue(Msg::Event(name, props));
+            }
         }
         s.counters.frame(s.now_ms(), playing, input);
+    }
+
+    /// A rare event: sent at once after the start, queued before it.
+    fn milestone(&self, name: &'static str, props: Props) {
+        if self.shared.started.load(Ordering::Relaxed) {
+            self.enqueue(Msg::Event(name, props));
+        } else {
+            self.pending.lock().unwrap_or_else(|p| p.into_inner()).push((name, props));
+        }
+    }
+
+    /// `app_crashed` from the previous session's report — once per process.
+    fn crash(&self, report: &str) {
+        if !self.crashed.swap(true, Ordering::Relaxed) {
+            self.milestone("app_crashed", crash_from_report(report));
+        }
     }
 
     /// `app_closed` with the session length and the final counters, then wait at most
@@ -1291,26 +1785,104 @@ mod tests {
         assert_eq!(ev[1]["properties"]["undos"], 1);
     }
 
-    /// Every key of `row` with a plausible value; the person's data planted where a careless
-    /// hook would put it (t837).
-    fn full_props(event: &str) -> Props {
-        let mut p = Props::new();
-        for k in schema_row(event).unwrap() {
-            if COMMON_KEYS.contains(&k) {
-                continue;
-            }
-            let v: serde_json::Value = match k {
-                "$set" | "$set_once" | "media_imported" | "exports" | "fx_added" => {
-                    serde_json::json!({ "video": 1 })
-                }
-                "how" | "outcome" | "container" | "video_codec" | "audio_codec" | "backend"
-                | "duration_bucket" | "thread" | "location" | "crashed_build"
-                | "crashed_session_id" => "x".into(),
-                _ => 1.into(),
-            };
-            p.insert(k.into(), v);
-        }
+    /// A project with the person's names everywhere a careless hook would look (t837).
+    fn secret_project() -> kt_model::Project {
+        let mut p = empty_model().project().clone();
+        p.media.push(kt_model::MediaRef::new(kt_model::MediaId(1), "/media/someone/secret.mp4"));
+        let mut c = crate::layout_tests::sample_clip(kt_model::ClipId(1));
+        c.fx = vec![kt_model::FxInstance::gain(0.0)];
+        c.fx_auto = vec![vec![kt_model::ParamCurve {
+            param: "db".into(),
+            keys: vec![kt_model::AutoKey::at(kt_time::Tick(0), 1.0)],
+            source: Default::default(),
+        }]];
+        p.clips.push(c);
+        p.markers.push(kt_model::Marker::named(kt_time::Tick(0), "secret clip"));
         p
+    }
+
+    /// The report the panic hook writes for a panic whose message names a path.
+    fn secret_report(session: &str) -> String {
+        crate::journal::crash_report_with(
+            "panicked at src/apps/kt-app/src/timeline.rs:812:9: cannot open /home/someone/cut.kt",
+            None,
+            Some(session),
+        )
+    }
+
+    /// The environment sample of t886.
+    fn sample_env() -> EnvSources {
+        EnvSources {
+            os_release: Some("NAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nID=ubuntu\n".into()),
+            windows: None,
+            ram_bytes: Some((16.4 * (1u64 << 30) as f64) as u64),
+            cores: Some(12),
+            gpu: Some(GpuFacts::new(
+                0x10de,
+                "NVIDIA GeForce RTX 3060",
+                eframe::wgpu::DeviceType::DiscreteGpu,
+                eframe::wgpu::Backend::Vulkan,
+                false,
+            )),
+            scale: Some(1.25),
+            monitor: Some((2560.0, 1440.0)),
+            ffmpeg: Some((Some(7), "system")),
+        }
+    }
+
+    /// Every event built by its real builder from data full of the person's names (t837).
+    fn real_props(event: &str) -> Props {
+        use kt_model::{Command, MediaId};
+        let counters = || {
+            let c = Counters::default();
+            let model = empty_model();
+            let import =
+                Command::AddMedia { id: MediaId(1), path: "/home/someone/secret.mov".into() };
+            c.commands(
+                &[import, Command::AddClip(crate::layout_tests::sample_clip(kt_model::ClipId(1)))],
+                &model,
+                None,
+            );
+            c.frame(0, true, true);
+            c.frame(5_000, false, false);
+            bump(&c.exports, "ok");
+            bump(&c.fx_added, "Blur");
+            c.snapshot(10_000).props()
+        };
+        match event {
+            "app_started" => {
+                let common = Common { session_id: new_uuid_v7(), os_version: None, lang: "ru" };
+                start_props(&Build::THIS, &common, &probe_env(&sample_env()), (2, 1))
+            }
+            "app_heartbeat" => {
+                let mut p = counters();
+                p.insert("uptime_s".into(), 300.into());
+                p
+            }
+            "app_closed" => {
+                let mut p = counters();
+                p.insert("duration_s".into(), 42.into());
+                p
+            }
+            "project_opened" => project_props(OpenHow::Open, &secret_project()),
+            "export_finished" => export_sample().props(),
+            "app_crashed" => crash_from_report(&secret_report(&new_uuid_v7())),
+            e => panic!("no builder for {e}"),
+        }
+    }
+
+    fn export_sample() -> ExportFacts {
+        ExportFacts {
+            outcome: "cancelled",
+            video_codec: Some(codec_family("libx264")),
+            width: 1920,
+            height: 1080,
+            fps: 30,
+            total_s: 75.0,
+            media_s: 75.0,
+            wall_s: 50.0,
+            gpu: Some(true),
+        }
     }
 
     /// t837: every event carries exactly its row, nothing from the person's paths or machine.
@@ -1323,7 +1895,7 @@ mod tests {
             lang: "ru",
         };
         for (event, _) in SCHEMA {
-            let props = full_props(event);
+            let props = real_props(event);
             let s = event_json("phc_test", event, &new_uuid(), &Build::THIS, &common, props);
             let v: serde_json::Value = serde_json::from_str(&s).unwrap();
             let mut keys: Vec<&str> =
@@ -1343,6 +1915,114 @@ mod tests {
                 assert!(!s.contains(host), "host name in the payload");
             }
         }
+    }
+
+    /// t882: a crash is reported at the next start by its place only, once.
+    #[test]
+    fn t882_crash_by_place_only() {
+        let session = new_uuid_v7();
+        let p = crash_from_report(&secret_report(&session));
+        assert_eq!(p["location"], "apps/kt-app/src/timeline.rs:812:9");
+        assert_eq!(p["crashed_session_id"], session.as_str());
+        assert_eq!(p["crashed_build"], kt_version::FULL);
+        assert!(p["thread"].as_str().is_some_and(|t| !t.is_empty()));
+        // the forms the hook really writes: the place on its own line, workspace-relative,
+        // a registry path, a Windows path
+        let loc = |text: &str| panic_location(text);
+        assert_eq!(loc("apps/kt-app/src/x.rs:3:4:").as_deref(), Some("apps/kt-app/src/x.rs:3:4"));
+        assert_eq!(
+            loc("/home/someone/.cargo/registry/src/index/egui-0.36.1/src/context.rs:10:5:")
+                .as_deref(),
+            Some("index/egui-0.36.1/src/context.rs:10:5")
+        );
+        assert_eq!(
+            loc(r"C:\Users\someone\kt\src\apps\kt-app\src\app.rs:7:1:").as_deref(),
+            Some("apps/kt-app/src/app.rs:7:1")
+        );
+        assert_eq!(loc("/opt/someone/lib.rs:1:2").as_deref(), Some("lib.rs:1:2"));
+
+        // through the door, before the first frame: it follows app_started, and only once
+        let (t, rec, _) = recorded();
+        let dir = std::env::temp_dir().join(format!("kt-t882-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let report = dir.join("kt-app-crash.seen.txt");
+        std::fs::write(&report, secret_report(&session)).unwrap();
+        t.signal(Signal::CrashReport(&report));
+        t.signal(Signal::CrashReport(&report));
+        frame(&t, false);
+        t.signal(Signal::Exit);
+        wait_for(&rec, 3);
+        let ev = rec.events();
+        let names: Vec<&str> = ev.iter().map(|e| e["event"].as_str().unwrap()).collect();
+        assert_eq!(names, ["app_started", "app_crashed", "app_closed"]);
+        let body = rec.0.lock().unwrap().join("\n");
+        assert!(!body.contains("someone") && !body.contains("cannot open"), "{body}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// t883: the buckets and the export's properties.
+    #[test]
+    fn t883_buckets_and_export() {
+        let counts: Vec<&str> = [0, 1, 9, 10, 999, 1000].into_iter().map(count_bucket).collect();
+        assert_eq!(counts, ["0", "1-9", "1-9", "10-99", "100-999", "1000+"]);
+        let durs: Vec<&str> = [59, 60, 3600, 3601].into_iter().map(duration_bucket).collect();
+        assert_eq!(durs, ["<1m", "1-10m", "10-60m", ">60m"]);
+        let p = export_sample().props();
+        let mut keys: Vec<&str> = p.keys().map(|k| k.as_str()).collect();
+        keys.sort();
+        let mut want: Vec<&str> =
+            SCHEMA.iter().find(|(e, _)| *e == "export_finished").unwrap().1.to_vec();
+        want.sort();
+        assert_eq!(keys, want);
+        assert_eq!(p["outcome"], "cancelled");
+        assert_eq!(p["backend"], "gpu");
+        assert_eq!(p["speed_x"], 1.5);
+        assert_eq!(p["video_codec"], "h264");
+        assert_eq!(p["duration_bucket"], "1-10m");
+        // the project's sizes and flags, without a name
+        let pp = project_props(OpenHow::Recovery, &secret_project());
+        assert_eq!(pp["how"], "recovery");
+        assert_eq!(pp["clips"], "1-9");
+        assert_eq!(pp["media"], "1-9");
+        assert_eq!(pp["has_automation"], true);
+        assert_eq!(pp["has_reels"], false);
+    }
+
+    /// t886: the probe reads coarse facts and nothing personal; a missing file is omitted.
+    #[test]
+    fn t886_environment_probe() {
+        let p = probe_env(&sample_env());
+        assert_eq!(p["$os_version"], "Ubuntu 24.04");
+        assert_eq!(p["ram_gb"], 16);
+        assert_eq!(p["cpu_cores"], 12);
+        assert_eq!(p["gpu_type"], "discrete");
+        assert_eq!(p["gpu_backend"], "vulkan");
+        assert_eq!(p["gpu_vendor"], "nvidia");
+        assert_eq!(p["screen_w"], 2560);
+        assert_eq!(p["screen_h"], 1440);
+        assert_eq!(p["screen_scale"], 1.25);
+        assert_eq!(p["ffmpeg_major"], 7);
+        assert_eq!(p["ffmpeg_source"], "system");
+        assert!(p.keys().all(|k| ENV_KEYS.contains(&k.as_str())), "{p:?}");
+        let none = probe_env(&EnvSources { os_release: None, ..sample_env() });
+        assert!(none.get("$os_version").is_none(), "missing, not empty");
+        let win =
+            probe_env(&EnvSources { os_release: None, windows: Some((10, 22631)), ..sample_env() });
+        assert_eq!(win["$os_version"], "Windows 11 (build 22631)");
+        // the start carries the probe in $set, and every later event its $os_version
+        let rec = Recording::default();
+        let t = Telemetry::new(on(), new_uuid(), Box::new(rec.clone()))
+            .with_key("phc_test")
+            .with_env(sample_env());
+        frame(&t, false);
+        t.signal(Signal::Exit);
+        wait_for(&rec, 2);
+        let ev = rec.events();
+        assert_eq!(ev[0]["properties"]["$set"]["gpu_name"], "NVIDIA GeForce RTX 3060");
+        assert_eq!(ev[1]["properties"]["$os_version"], "Ubuntu 24.04");
+        // the production gatherers run on this machine without panicking
+        let real = probe_env(&gather_env(None, None));
+        assert!(real.keys().all(|k| ENV_KEYS.contains(&k.as_str())), "{real:?}");
     }
 
     /// t880: the start identifies the install — `$set` with the current properties,
@@ -1411,7 +2091,7 @@ mod tests {
 
     /// The doors of `telemetry::signal`, per file. A new door is a deliberate edit of this
     /// list (t887): the owner asked that telemetry not smear across the code.
-    const DOORS: &[(&str, usize)] = &[("app.rs", 8)];
+    const DOORS: &[(&str, usize)] = &[("app.rs", 14), ("render_dialog.rs", 1)];
     /// At most this many doors in all (spec).
     const MAX_DOORS: usize = 16;
 
@@ -1431,6 +2111,7 @@ mod tests {
             "telemetry::Telemetry>",
             "telemetry::Telemetry::for_process(",
             "telemetry::STORAGE_KEY",
+            "telemetry::OpenHow",
         ];
         let posthog = [
             "\"$session_id\"",

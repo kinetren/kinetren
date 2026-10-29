@@ -25,10 +25,13 @@
 
 ## 3. Milestones, crash, environment
 
-- [ ] 3.1 `project_opened` and `export_finished` built inside the module from `Signal::ProjectOpened`/`Signal::ExportEnded` (the latter one line where `render_dialog.rs` clears `render_job`); bucket functions (D7); verify t883 and t887
-- [ ] 3.2 Panic hook writes `session:`; `crash_from_report` parses version/thread/location and drops the message; `Signal::CrashReport` one line next to `take_crash_report`, `app_crashed` built in the module (D8); verify t882 and that t374/t375 (`journal.rs`) stay green
-- [ ] 3.3 `probe_env` over injected sources + production gatherers (`/etc/os-release`, `RtlGetVersion`, `/proc/meminfo`/`GlobalMemoryStatusEx`, adapter info from `ui()`, scale and monitor size, FFmpeg state from `ffmpeg_setup.rs`) (D9); verify t886 and that the Windows cross-build compiles (`./scripts/release-build.sh --target windows` or `make windows`)
-- [ ] 3.4 Commit stage 3
+- [x] 3.1 `project_opened` and `export_finished` built inside the module from `Signal::ProjectOpened`/`Signal::ExportEnded` (the latter one line where `render_dialog.rs` clears `render_job`); bucket functions (D7); verify t883 and t887
+  - `Signal::ProjectOpened(OpenHow, &Project)` in `open`, `open_older` (import), `restore_recovery`, `new_empty` (new); `Signal::ExportEnded(&RenderJob)` where the dialog takes the job; `ExportFacts::of` reads the outcome (`BgJob::is_cancelled` added), the codec family from the encoder name, the backend from `RenderJob.video_gpu` (a `OnceLock` the job's thread sets). Milestones before the first frame wait in `pending` and follow `app_started`. Red proofs: a 3599-s boundary turns t883 red; an extra `first_media` key turns t837 red (debug assert); without the export door t887 is red.
+- [x] 3.2 Panic hook writes `session:`; `crash_from_report` parses version/thread/location and drops the message; `Signal::CrashReport` one line next to `take_crash_report`, `app_crashed` built in the module (D8); verify t882 and that t374/t375 (`journal.rs`) stay green
+  - `journal::set_session` (from `for_process`), the report writes `session:` and the FULL version; `panic_location` finds the first `:line:col`, keeps a workspace-relative path, cuts an absolute one after `/src/` (Windows backslashes too), else keeps the file name; one `app_crashed` per process. Red proof: keeping the text after the place turns t882 red. t374/t375 green.
+- [x] 3.3 `probe_env` over injected sources + production gatherers (`/etc/os-release`, `RtlGetVersion`, `/proc/meminfo`/`GlobalMemoryStatusEx`, adapter info from `ui()`, scale and monitor size, FFmpeg state from `ffmpeg_setup.rs`) (D9); verify t886 and that the Windows cross-build compiles (`./scripts/release-build.sh --target windows` or `make windows`)
+  - `EnvSources` → `probe_env`; `gather_env` on the sender thread (`/etc/os-release`, `/proc/meminfo` / `RtlGetVersion`, `GlobalMemoryStatusEx` through windows-sys features `Wdk_System_SystemServices` + `Win32_System_SystemInformation`, no new crate); `Signal::Gpu(&AdapterInfo, software)` from the existing check in `ui()`; scale and monitor size read from the first frame's context; FFmpeg from `kt_ffmpeg::search_report_data` (chosen folder → `folder`, download → `downloaded`, other found places → `system`). RAM is rounded GiB. Red proof: decimal GB turns t886 red. Windows cross-build: see the stage-3 Windows record below.
+- [x] 3.4 Commit stage 3
 
 ## 4. Texts: bell only, spoiler, calm
 
