@@ -9,8 +9,10 @@ done).
 
 - [x] 0.1 The owner's words (item 8 of `kkt.txt`; the answers "a Guide window", "a welcome screen", "highlight the guide on the welcome screen"; the request of 2026-10-28 about the intro window) are recorded in `docs/user-feedback.md`, round of 2026-10-27/28; this proposal recorded
 - [x] 0.2 Feature notes: F-HLP-028 carries the dated section "Revised by the owner, 2026-10-28" and the status `accepted`; F-HLP-027, F-HLP-023 and F-HLP-029 carry dated revision paragraphs naming this change
-- [ ] 0.2b The README summary-table row of F-HLP-028 (status `rejected` → `accepted`) updated by hand from `features-index.py --table`. Verify `python3 src/scripts/features-index.py --check` and `openspec validate welcome-window-and-tour --strict` green; commit stage 0
-- [ ] 0.3 The open question 1 of design.md (the accent frame) is answered by the owner and recorded in `docs/user-feedback.md`; until then the frame is not built
+- [x] 0.2b The README summary-table row of F-HLP-028 (status `rejected` → `accepted`) updated by hand from `features-index.py --table`. Verify `python3 src/scripts/features-index.py --check` and `openspec validate welcome-window-and-tour --strict` green; commit stage 0
+  - Done in 1314b9b (the row reads `accepted`); both checks green on 2026-10-30.
+- [x] 0.3 The open question 1 of design.md (the accent frame) is answered by the owner and recorded in `docs/user-feedback.md`; until then the frame is not built
+  - Answered 2026-10-28 ("3. yes, it may draw"), recorded in `docs/user-feedback.md` (commit 5eb5b34): a static outline drawn by the target itself, no layer, no pulsation. Built in stage 4.
 
 ## 1. Probes before code
 
