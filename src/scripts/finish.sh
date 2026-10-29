@@ -204,6 +204,9 @@ fi
 
 # guard of the “user path” for new UI scenarios (R.67)
 python3 "$(dirname "$0")/specs-user-path.py" --check || exit 1
+# the owner's claims registry (R.71, t823): every numbered item of docs/ktprompts/*.txt has a
+# row with a state from the closed set, a `done` names a live test, a `question` asks
+python3 "$(dirname "$0")/ktprompts-index.py" --check || exit 1
 # guards of the live check (R.68): waiting instead of sleep, and live coverage —
 # how many places in the program the person has NOT touched with the mouse ONCE
 python3 "$(dirname "$0")/live-sleeps.py" --check || exit 1
