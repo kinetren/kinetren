@@ -28,6 +28,10 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(2);
 /// Name of the install id file inside the data directory.
 pub const ID_FILE: &str = "telemetry-id";
+/// The start counter of this install (`instance_seq`).
+pub const SEQ_FILE: &str = "telemetry-seq";
+/// One `<session>.lock` per running process (`instances_running`).
+pub const INSTANCES_DIR: &str = "instances";
 /// eframe storage key of the person's choice (`on`/`off`), next to `lang`.
 pub const STORAGE_KEY: &str = "telemetry";
 
@@ -102,6 +106,29 @@ pub fn resolve_consent(key: Option<&str>, env: &EnvView, stored: Option<&str>) -
 
 /// A random UUID v4 (no machine data in it).
 pub fn new_uuid() -> String {
+    uuid_text(random_16())
+}
+
+/// A UUID v7: 48 bits of Unix milliseconds, then random (D4). PostHog groups sessions only
+/// by v7 ids. The wall clock is read for the time prefix only — not an offline path.
+pub fn new_uuid_v7() -> String {
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    uuid_v7_at(ms)
+}
+
+fn uuid_v7_at(ms: u64) -> String {
+    let mut b = random_16();
+    b[..6].copy_from_slice(&ms.to_be_bytes()[2..]);
+    b[6] = (b[6] & 0x0f) | 0x70;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+}
+
+fn random_16() -> [u8; 16] {
     let mut b = [0u8; 16];
     if getrandom::fill(&mut b).is_err() {
         // no entropy source: a hash of time and pid is still not tied to the person
@@ -109,6 +136,10 @@ pub fn new_uuid() -> String {
         let h = xxhash_rust::xxh3::xxh3_128(seed.as_bytes());
         b = h.to_le_bytes();
     }
+    b
+}
+
+fn uuid_text(mut b: [u8; 16]) -> String {
     b[6] = (b[6] & 0x0f) | 0x40;
     b[8] = (b[8] & 0x3f) | 0x80;
     let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
@@ -120,6 +151,17 @@ fn is_uuid(s: &str) -> bool {
         && s.char_indices().all(|(i, c)| {
             if matches!(i, 8 | 13 | 18 | 23) { c == '-' } else { c.is_ascii_hexdigit() }
         })
+}
+
+/// A UUID whose version nibble is 7 (the stand-in checks `$session_id` with it, t888).
+pub fn is_uuid_v7(s: &str) -> bool {
+    is_uuid(s) && s.as_bytes()[14] == b'7'
+}
+
+/// The 48-bit millisecond prefix of a v7 id.
+#[cfg(test)]
+fn uuid_v7_ms(s: &str) -> u64 {
+    u64::from_str_radix(&s.replace('-', "")[..12], 16).unwrap_or(0)
 }
 
 /// The install id from `<dir>/telemetry-id`, created on first need; a malformed file is
@@ -138,34 +180,253 @@ pub fn install_id_in(dir: &std::path::Path) -> String {
     id
 }
 
-/// One event as the JSON body PostHog's capture endpoint takes. The property set is the
-/// allow-list of the spec, and nothing else may be added here without a spec change (t837).
+// ---- instances (D4) -------------------------------------------------------------------------
+
+/// This process among the others of the same install: the n-th start and how many other
+/// Kinetren processes hold their lock right now. The lock file is held for the process's life
+/// (`File::try_lock`, as `project_lock.rs`): the kernel releases it on any death.
+pub struct Instance {
+    pub seq: u64,
+    pub running: u64,
+    _lock: Option<std::fs::File>,
+}
+
+/// Register this process in `<dir>` (t881). A lock file nobody holds is a leftover of a dead
+/// process and is removed. A race of two starts on the counter may give one number twice —
+/// accepted, it is a statistic.
+pub fn register_instance(dir: &std::path::Path, session_id: &str) -> Instance {
+    let seq_path = dir.join(SEQ_FILE);
+    let seq = std::fs::read_to_string(&seq_path)
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0)
+        + 1;
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::write(&seq_path, format!("{seq}\n"));
+    let inst = dir.join(INSTANCES_DIR);
+    let _ = std::fs::create_dir_all(&inst);
+    let mine = inst.join(format!("{session_id}.lock"));
+    let mut running = 0;
+    for e in std::fs::read_dir(&inst).into_iter().flatten().flatten() {
+        let p = e.path();
+        if p == mine || p.extension().is_none_or(|x| x != "lock") {
+            continue;
+        }
+        let Ok(f) = std::fs::OpenOptions::new().read(true).write(true).open(&p) else {
+            continue;
+        };
+        match f.try_lock() {
+            Ok(()) => {
+                drop(f);
+                let _ = std::fs::remove_file(&p);
+            }
+            Err(std::fs::TryLockError::WouldBlock) => running += 1,
+            Err(std::fs::TryLockError::Error(_)) => {}
+        }
+    }
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&mine)
+        .ok()
+        .filter(|f| f.try_lock().is_ok());
+    Instance { seq, running, _lock: lock }
+}
+
+// ---- the schema (D1) ------------------------------------------------------------------------
+
+/// Keys every event carries (`$os_version` only when the probe could read it).
+pub const COMMON_KEYS: &[&str] = &[
+    "$session_id",
+    "$app_version",
+    "$app_build",
+    "$os",
+    "$os_version",
+    "arch",
+    "lang",
+    "$geoip_disable",
+];
+
+/// The environment probe's keys (D9): they go into the person's `$set` on every start.
+pub const ENV_KEYS: &[&str] = &[
+    "$os_version",
+    "cpu_cores",
+    "ram_gb",
+    "gpu_vendor",
+    "gpu_name",
+    "gpu_type",
+    "gpu_backend",
+    "software_render",
+    "screen_scale",
+    "screen_w",
+    "screen_h",
+    "ffmpeg_major",
+    "ffmpeg_source",
+];
+
+/// The person's properties in `$set` (D2): the build, the system and the environment.
+pub const PERSON_KEYS: &[&str] = &["$app_version", "$os", "arch", "lang"];
+/// `$set_once`: what the install was first seen with.
+pub const PERSON_ONCE_KEYS: &[&str] = &["first_app_version", "first_os"];
+
+/// The activity counters of heartbeat and close (D5).
+pub const COUNTER_KEYS: &[&str] = &[
+    "active_s",
+    "playback_s",
+    "playback_starts",
+    "media_imported",
+    "clips_added",
+    "edits",
+    "undos",
+    "redos",
+    "projects_opened",
+    "saves",
+    "exports",
+    "fx_added",
+];
+
+/// Each event and its own keys besides `COMMON_KEYS`. Nothing else can leave the machine:
+/// `event_json` drops (and in debug asserts on) any other key (t837).
+pub const SCHEMA: &[(&str, &[&str])] = &[
+    ("app_started", &["$set", "$set_once", "instance_seq", "instances_running"]),
+    ("app_heartbeat", &["uptime_s", "#counters"]),
+    ("app_closed", &["duration_s", "#counters"]),
+    (
+        "project_opened",
+        &[
+            "how",
+            "clips",
+            "tracks",
+            "media",
+            "duration_bucket",
+            "has_reels",
+            "has_morphers",
+            "has_automation",
+        ],
+    ),
+    (
+        "export_finished",
+        &[
+            "outcome",
+            "container",
+            "video_codec",
+            "audio_codec",
+            "width",
+            "height",
+            "fps",
+            "duration_bucket",
+            "backend",
+            "speed_x",
+        ],
+    ),
+    ("app_crashed", &["crashed_build", "thread", "location", "crashed_session_id"]),
+];
+
+/// The full key row of an event: the common keys, its own, `#counters` unfolded.
+pub fn schema_row(event: &str) -> Option<Vec<&'static str>> {
+    let (_, own) = SCHEMA.iter().find(|(e, _)| *e == event)?;
+    let mut row: Vec<&'static str> = COMMON_KEYS.to_vec();
+    for k in own.iter() {
+        if *k == "#counters" {
+            row.extend_from_slice(COUNTER_KEYS);
+        } else {
+            row.push(k);
+        }
+    }
+    Some(row)
+}
+
+/// What this binary is: the values of `$app_version`, `$app_build`, `$os`, `arch`.
+#[derive(Debug, Clone, Copy)]
+pub struct Build {
+    pub version: &'static str,
+    pub build: &'static str,
+    pub os: &'static str,
+    pub arch: &'static str,
+}
+
+impl Build {
+    pub const THIS: Build = Build {
+        version: kt_version::SHORT,
+        build: kt_version::FULL,
+        os: if cfg!(windows) { "Windows" } else { "Linux" },
+        arch: std::env::consts::ARCH,
+    };
+}
+
+/// The per-run part of every event: the session and what the probe found.
+#[derive(Debug, Clone, Default)]
+pub struct Common {
+    pub session_id: String,
+    pub os_version: Option<String>,
+    pub lang: &'static str,
+}
+
+pub type Props = serde_json::Map<String, serde_json::Value>;
+
+/// One event as the JSON body PostHog's capture endpoint takes: the common keys, then the
+/// event's own `props` filtered by its schema row (an unlisted key is a bug — debug asserts,
+/// release drops it).
 pub fn event_json(
     api_key: &str,
     event: &str,
     install_id: &str,
-    session_id: &str,
-    lang: &str,
-    duration_s: Option<u64>,
+    build: &Build,
+    common: &Common,
+    props: Props,
 ) -> String {
-    let mut props = serde_json::Map::new();
-    props.insert("$session_id".into(), session_id.into());
-    props.insert("app_version".into(), kt_version::display().into());
-    props.insert("os".into(), std::env::consts::OS.into());
-    props.insert("arch".into(), std::env::consts::ARCH.into());
-    props.insert("lang".into(), lang.into());
-    props.insert("$process_person_profile".into(), false.into());
-    props.insert("$geoip_disable".into(), true.into());
-    if let Some(d) = duration_s {
-        props.insert("duration_s".into(), d.into());
+    let row = schema_row(event).unwrap_or_default();
+    debug_assert!(!row.is_empty(), "telemetry: event {event} is not in SCHEMA");
+    let mut out = Props::new();
+    out.insert("$session_id".into(), common.session_id.clone().into());
+    out.insert("$app_version".into(), build.version.into());
+    out.insert("$app_build".into(), build.build.into());
+    out.insert("$os".into(), build.os.into());
+    if let Some(v) = &common.os_version {
+        out.insert("$os_version".into(), v.clone().into());
+    }
+    out.insert("arch".into(), build.arch.into());
+    out.insert("lang".into(), common.lang.into());
+    out.insert("$geoip_disable".into(), true.into());
+    for (k, v) in props {
+        debug_assert!(row.contains(&k.as_str()), "telemetry: {k} is not in the row of {event}");
+        if row.contains(&k.as_str()) && !COMMON_KEYS.contains(&k.as_str()) {
+            out.insert(k, v);
+        }
     }
     serde_json::json!({
         "api_key": api_key,
         "event": event,
         "distinct_id": install_id,
-        "properties": props,
+        "properties": out,
     })
     .to_string()
+}
+
+/// `app_started`'s own keys (D2): `$set` with the person's current properties (the build,
+/// the system, the environment probe's `env`), `$set_once` with what it was first seen with.
+pub fn start_props(build: &Build, common: &Common, env: &Props, inst: (u64, u64)) -> Props {
+    let mut set = Props::new();
+    set.insert("$app_version".into(), build.version.into());
+    set.insert("$os".into(), build.os.into());
+    set.insert("arch".into(), build.arch.into());
+    set.insert("lang".into(), common.lang.into());
+    for (k, v) in env {
+        if ENV_KEYS.contains(&k.as_str()) {
+            set.insert(k.clone(), v.clone());
+        }
+    }
+    let mut once = Props::new();
+    once.insert("first_app_version".into(), build.version.into());
+    once.insert("first_os".into(), build.os.into());
+    let mut p = Props::new();
+    p.insert("$set".into(), set.into());
+    p.insert("$set_once".into(), once.into());
+    p.insert("instance_seq".into(), inst.0.into());
+    p.insert("instances_running".into(), inst.1.into());
+    p
 }
 
 /// Where a finished body goes. The HTTP sink in production, a recording one in tests.
@@ -186,7 +447,10 @@ impl HttpSink {
             .timeout_global(Some(TOTAL_TIMEOUT));
         // the environment's proxy is never right for the machine itself (the live check's
         // local capture server; a container's forced proxy broke t841 under wine)
-        if ["http://127.0.0.1", "http://localhost", "http://[::1]"].iter().any(|p| url.starts_with(p)) {
+        if ["http://127.0.0.1", "http://localhost", "http://[::1]"]
+            .iter()
+            .any(|p| url.starts_with(p))
+        {
             b = b.proxy(None);
         }
         HttpSink { agent: b.build().into(), url }
@@ -225,6 +489,8 @@ pub struct Telemetry {
     api_key: String,
     install_id: String,
     session_id: String,
+    /// `(instance_seq, instances_running)` and the held lock (`register`).
+    instance: Option<Instance>,
     t0: Instant,
     started: AtomicBool,
     closed: AtomicBool,
@@ -245,7 +511,8 @@ impl Telemetry {
             consent: Mutex::new(consent),
             api_key: key().unwrap_or_default().to_string(),
             install_id,
-            session_id: new_uuid(),
+            session_id: new_uuid_v7(),
+            instance: None,
             t0: Instant::now(),
             started: AtomicBool::new(false),
             closed: AtomicBool::new(false),
@@ -258,12 +525,21 @@ impl Telemetry {
     /// The process-wide telemetry of a real start: env + stored choice + this build's key.
     pub fn for_process(stored: Option<&str>) -> Self {
         let consent = resolve_consent(key(), &EnvView::from_env(), stored);
-        let id = if consent.block.is_none() {
-            install_id_in(&crate::journal::data_dir())
-        } else {
-            String::new()
-        };
-        Self::new(consent, id, Box::new(HttpSink::production()))
+        let dir = crate::journal::data_dir();
+        let id = if consent.block.is_none() { install_id_in(&dir) } else { String::new() };
+        let mut t = Self::new(consent, id, Box::new(HttpSink::production()));
+        if consent.on() {
+            t.instance = Some(register_instance(&dir, &t.session_id));
+        }
+        t
+    }
+
+    fn common(&self, lang: &'static str) -> Common {
+        Common { session_id: self.session_id.clone(), os_version: None, lang }
+    }
+
+    fn body(&self, event: &str, lang: &'static str, props: Props) -> String {
+        event_json(&self.api_key, event, &self.install_id, &Build::THIS, &self.common(lang), props)
     }
 
     #[cfg(test)]
@@ -295,16 +571,11 @@ impl Telemetry {
 
     /// Called every frame; cheap after the first. Sends `app_started` once and returns
     /// `true` exactly once when the first-start notice is due.
-    pub fn frame(&self, lang: &str) -> bool {
+    pub fn frame(&self, lang: &'static str) -> bool {
         if !self.started.swap(true, Ordering::Relaxed) && self.consent().on() {
-            let body = event_json(
-                &self.api_key,
-                "app_started",
-                &self.install_id,
-                &self.session_id,
-                lang,
-                None,
-            );
+            let inst = self.instance.as_ref().map(|i| (i.seq, i.running)).unwrap_or((1, 0));
+            let props = start_props(&Build::THIS, &self.common(lang), &Props::new(), inst);
+            let body = self.body("app_started", lang, props);
             self.enqueue(Msg::Body(body));
         }
         self.notice_due.swap(false, Ordering::Relaxed)
@@ -312,25 +583,20 @@ impl Telemetry {
 
     /// `app_closed` with the session length, then wait at most `budget`. Only once, only if
     /// this session's start was sent and the person did not switch telemetry off.
-    pub fn closed(&self, lang: &str, budget: Duration) {
+    pub fn closed(&self, lang: &'static str, budget: Duration) {
         self.closed_after(self.t0.elapsed(), lang, budget);
     }
 
-    fn closed_after(&self, elapsed: Duration, lang: &str, budget: Duration) {
+    fn closed_after(&self, elapsed: Duration, lang: &'static str, budget: Duration) {
         if self.closed.swap(true, Ordering::Relaxed)
             || !self.started.load(Ordering::Relaxed)
             || !self.consent().on()
         {
             return;
         }
-        let body = event_json(
-            &self.api_key,
-            "app_closed",
-            &self.install_id,
-            &self.session_id,
-            lang,
-            Some(elapsed.as_secs()),
-        );
+        let mut props = Props::new();
+        props.insert("duration_s".into(), elapsed.as_secs().into());
+        let body = self.body("app_closed", lang, props);
         self.enqueue(Msg::Body(body));
         let (ack_tx, ack_rx) = sync_channel(1);
         if self.enqueue(Msg::Flush(ack_tx)) {
@@ -487,42 +753,121 @@ mod tests {
         assert_eq!(ev[0]["event"], "app_started");
     }
 
-    /// t837: only the allow-list, nothing from the person's paths or machine.
+    /// Every key of `row` with a plausible value; the person's data planted where a careless
+    /// hook would put it (t837).
+    fn full_props(event: &str) -> Props {
+        let mut p = Props::new();
+        for k in schema_row(event).unwrap() {
+            if COMMON_KEYS.contains(&k) {
+                continue;
+            }
+            let v: serde_json::Value = match k {
+                "$set" | "$set_once" | "media_imported" | "exports" | "fx_added" => {
+                    serde_json::json!({ "video": 1 })
+                }
+                "how" | "outcome" | "container" | "video_codec" | "audio_codec" | "backend"
+                | "duration_bucket" | "thread" | "location" | "crashed_build"
+                | "crashed_session_id" => "x".into(),
+                _ => 1.into(),
+            };
+            p.insert(k.into(), v);
+        }
+        p
+    }
+
+    /// t837: every event carries exactly its row, nothing from the person's paths or machine.
     #[test]
     fn t837_payload_is_the_allow_list() {
-        let _project = std::path::Path::new("/home/someone/secret/cut.kt");
         let host = std::fs::read_to_string("/etc/hostname").unwrap_or_default();
-        for (name, d) in [("app_started", None), ("app_closed", Some(42))] {
-            let s = event_json("phc_test", name, &new_uuid(), &new_uuid(), "ru", d);
+        let common = Common {
+            session_id: new_uuid_v7(),
+            os_version: Some("Ubuntu 24.04".into()),
+            lang: "ru",
+        };
+        for (event, _) in SCHEMA {
+            let props = full_props(event);
+            let s = event_json("phc_test", event, &new_uuid(), &Build::THIS, &common, props);
             let v: serde_json::Value = serde_json::from_str(&s).unwrap();
             let mut keys: Vec<&str> =
                 v["properties"].as_object().unwrap().keys().map(|k| k.as_str()).collect();
             keys.sort();
-            let mut want = vec![
-                "$geoip_disable",
-                "$process_person_profile",
-                "$session_id",
-                "app_version",
-                "arch",
-                "lang",
-                "os",
-            ];
-            if d.is_some() {
-                want.push("duration_s");
-            }
+            let mut want = schema_row(event).unwrap();
             want.sort();
-            assert_eq!(keys, want);
+            assert_eq!(keys, want, "{event}");
             let mut top: Vec<&str> = v.as_object().unwrap().keys().map(|k| k.as_str()).collect();
             top.sort();
             assert_eq!(top, ["api_key", "distinct_id", "event", "properties"]);
-            assert_eq!(v["properties"]["$process_person_profile"], false);
+            assert!(v["properties"].get("$process_person_profile").is_none(), "{event}");
             assert_eq!(v["properties"]["$geoip_disable"], true);
-            assert!(!s.contains("someone") && !s.contains("secret"));
+            assert!(!s.contains("someone") && !s.contains("secret"), "{event}: {s}");
             let host = host.trim();
             if host.len() > 3 {
                 assert!(!s.contains(host), "host name in the payload");
             }
         }
+    }
+
+    /// t880: the start identifies the install — `$set` with the current properties,
+    /// `$set_once` with the first ones, no person-profile opt-out.
+    #[test]
+    fn t880_start_identifies_the_install() {
+        let now =
+            Build { version: "kt26.11", build: "kt26.11.02-abcdef12", os: "Linux", arch: "x86_64" };
+        let common = Common { session_id: new_uuid_v7(), os_version: None, lang: "en" };
+        let mut env = Props::new();
+        for k in ENV_KEYS {
+            env.insert((*k).into(), 1.into());
+        }
+        let props = start_props(&now, &common, &env, (3, 1));
+        let s = event_json("phc_test", "app_started", &new_uuid(), &now, &common, props);
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        let p = &v["properties"];
+        assert!(p.get("$process_person_profile").is_none());
+        let mut set: Vec<&str> =
+            p["$set"].as_object().unwrap().keys().map(|k| k.as_str()).collect();
+        set.sort();
+        let mut want: Vec<&str> = PERSON_KEYS.iter().chain(ENV_KEYS).copied().collect();
+        want.sort();
+        assert_eq!(set, want);
+        assert_eq!(p["$set"]["$app_version"], "kt26.11");
+        assert_eq!(p["$app_version"], "kt26.11");
+        assert_eq!(p["$app_build"], "kt26.11.02-abcdef12");
+        assert_eq!(p["$os"], "Linux");
+        let mut once: Vec<&str> =
+            p["$set_once"].as_object().unwrap().keys().map(|k| k.as_str()).collect();
+        once.sort();
+        assert_eq!(once, PERSON_ONCE_KEYS);
+        assert_eq!(
+            (p["instance_seq"].as_u64(), p["instances_running"].as_u64()),
+            (Some(3), Some(1))
+        );
+    }
+
+    /// t881: two processes of one install are told apart; a lock nobody holds is stale.
+    #[test]
+    fn t881_instances_are_told_apart() {
+        let dir = std::env::temp_dir().join(format!("kt-t881-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let ids: Vec<String> = (0..3).map(|_| new_uuid_v7()).collect();
+        let a = register_instance(&dir, &ids[0]);
+        assert_eq!((a.seq, a.running), (1, 0));
+        let b = register_instance(&dir, &ids[1]);
+        assert_eq!((b.seq, b.running), (2, 1), "A holds its lock");
+        drop(a);
+        // a leftover of a killed process: a lock file nobody holds
+        let stale = dir.join(INSTANCES_DIR).join(format!("{}.lock", new_uuid_v7()));
+        std::fs::write(&stale, "").unwrap();
+        let c = register_instance(&dir, &ids[2]);
+        assert_eq!((c.seq, c.running), (3, 1), "B only");
+        assert!(!stale.exists(), "the stale lock is removed");
+        let mut prev = 0;
+        for id in &ids {
+            assert!(is_uuid_v7(id), "{id}");
+            assert!(uuid_v7_ms(id) >= prev);
+            prev = uuid_v7_ms(id);
+        }
+        drop((b, c));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// t838: the install id survives restarts and heals.
@@ -681,7 +1026,10 @@ mod tests {
         assert!(me.contains(&format!("option_env!(\"{}\")", "KINETREN_POSTHOG_KEY")));
         let rb = std::fs::read_to_string(root.join("scripts/release-build.sh")).unwrap();
         assert!(rb.contains("-e KINETREN_POSTHOG_KEY"), "release-build.sh does not pass the key");
-        assert!(rb.contains("packaging/posthog-key"), "release-build.sh does not read the key file");
+        assert!(
+            rb.contains("packaging/posthog-key"),
+            "release-build.sh does not read the key file"
+        );
         if cfg!(debug_assertions) {
             assert!(key().is_none(), "a debug build carries the key");
         }

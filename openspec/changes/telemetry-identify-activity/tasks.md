@@ -6,9 +6,11 @@
 
 ## 1. Schema, identify, instances (no UI)
 
-- [ ] 1.1 `telemetry.rs`: per-event key table (D1), standard keys `$os`/`$os_version`/`$app_version`/`$app_build` (D3), `$process_person_profile` removed, `$set`/`$set_once` on `app_started` (D2); verify t837 (every event against its row, with the path/clip/panic traps) and t880
-- [ ] 1.2 UUID v7 session id, `telemetry-seq`, `instances/<session>.lock` with `File::try_lock` and stale removal (D4); verify t881 and that t836/t841 stay green
-- [ ] 1.3 Commit stage 1 (`cargo test -p kt-app` green, clippy clean on touched files)
+- [x] 1.1 `telemetry.rs`: per-event key table (D1), standard keys `$os`/`$os_version`/`$app_version`/`$app_build` (D3), `$process_person_profile` removed, `$set`/`$set_once` on `app_started` (D2); verify t837 (every event against its row, with the path/clip/panic traps) and t880
+  - `SCHEMA` + `COMMON_KEYS`/`COUNTER_KEYS` (`#counters` unfolds), `schema_row`; `event_json` filters by the row and debug-asserts; `Build::THIS` (`$app_version` = `kt_version::SHORT`, `$app_build` = `FULL`); `start_props` builds `$set` (PERSON_KEYS + ENV_KEYS) and `$set_once`. Red proof: re-adding `$process_person_profile` turns t837 and t880 red. The traps of t837 become real once the builders exist (stage 3).
+- [x] 1.2 UUID v7 session id, `telemetry-seq`, `instances/<session>.lock` with `File::try_lock` and stale removal (D4); verify t881 and that t836/t841 stay green
+  - `new_uuid_v7`/`is_uuid_v7`, `register_instance(dir, session)` → `Instance { seq, running }` holding its lock; registered in `for_process` only when consent is on. Red proof: without the stale removal t881 is red. t836/t841/t838/t839/t840 green.
+- [x] 1.3 Commit stage 1 (`cargo test -p kt-app` green, clippy clean on touched files)
 
 ## 2. One door, counters and heartbeat
 
