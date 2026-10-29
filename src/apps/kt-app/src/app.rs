@@ -2123,6 +2123,10 @@ impl KtApp {
                                 .default_open(false)
                                 .show(ui, |ui| ui.label(d));
                             crate::widgets::field_probe::note("notices.details", r.header_response.rect);
+                            // the open part, for the live scenario's verdict (telemetry.py)
+                            if let Some(b) = &r.body_response {
+                                crate::widgets::field_probe::note("notices.details_body", b.rect);
+                            }
                         }
                     }
                 });

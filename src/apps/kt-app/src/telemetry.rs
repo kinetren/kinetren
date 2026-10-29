@@ -41,6 +41,26 @@ pub fn key() -> Option<&'static str> {
     option_env!("KINETREN_POSTHOG_KEY").map(str::trim).filter(|k| !k.is_empty())
 }
 
+/// A debug build's local target (D11): `KT_TELEMETRY_URL` and `KT_TELEMETRY_KEY`, BOTH set,
+/// send to a stand-in of PostHog (the live scenario `telemetry.py`). A release build ignores
+/// both, so a shipped binary can neither be redirected nor keyed from outside (t842).
+pub fn local_target_from(
+    debug: bool,
+    url: Option<String>,
+    key: Option<String>,
+) -> Option<(String, String)> {
+    let (url, key) = (url?.trim().to_string(), key?.trim().to_string());
+    (debug && !url.is_empty() && !key.is_empty()).then_some((url, key))
+}
+
+fn local_target() -> Option<(String, String)> {
+    local_target_from(
+        cfg!(debug_assertions),
+        std::env::var("KT_TELEMETRY_URL").ok(),
+        std::env::var("KT_TELEMETRY_KEY").ok(),
+    )
+}
+
 /// Why telemetry cannot be on, whatever the person chooses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Block {
@@ -454,15 +474,10 @@ impl HttpSink {
         HttpSink { agent: b.build().into(), url }
     }
 
-    /// The EU endpoint; a debug build honours `KT_TELEMETRY_URL` for the live check, a
-    /// release build ignores it, so a shipped binary cannot be redirected.
+    /// The EU endpoint; a debug build honours the local target (`local_target_from`) for the
+    /// live check, a release build ignores it, so a shipped binary cannot be redirected.
     pub fn production() -> Self {
-        let url = if cfg!(debug_assertions) {
-            std::env::var("KT_TELEMETRY_URL").unwrap_or_else(|_| EU_CAPTURE_URL.to_string())
-        } else {
-            EU_CAPTURE_URL.to_string()
-        };
-        Self::new(url)
+        Self::new(local_target().map(|t| t.0).unwrap_or_else(|| EU_CAPTURE_URL.to_string()))
     }
 }
 
@@ -1305,10 +1320,12 @@ impl Telemetry {
 
     /// The process-wide telemetry of a real start: env + stored choice + this build's key.
     pub fn for_process(stored: Option<&str>) -> Self {
-        let consent = resolve_consent(key(), &EnvView::from_env(), stored);
+        let key = key().map(str::to_string).or_else(|| local_target().map(|t| t.1));
+        let consent = resolve_consent(key.as_deref(), &EnvView::from_env(), stored);
         let dir = crate::journal::data_dir();
         let id = if consent.block.is_none() { install_id_in(&dir) } else { String::new() };
         let mut t = Self::new(consent, id, Box::new(HttpSink::production()));
+        t.setup().api_key = key.unwrap_or_default();
         // the crash report names the session it ended (D8)
         crate::journal::set_session(&t.shared.session_id);
         if consent.on() {
@@ -1615,6 +1632,115 @@ pub(crate) mod testing {
     impl Drop for Bound {
         fn drop(&mut self) {
             BOUND.with(|b| *b.borrow_mut() = None);
+        }
+    }
+
+    /// A local stand-in of PostHog's capture endpoint (D11): answers `200 {"status":1}` on
+    /// `POST /i/v0/e/` and refuses what the ingestion would refuse (t841, t888).
+    pub struct FakePostHog {
+        pub url: String,
+        accepted: Arc<Mutex<Vec<serde_json::Value>>>,
+        rejected: Arc<Mutex<Vec<String>>>,
+    }
+
+    /// What the ingestion checks, on one request: method and path, a JSON body, a non-empty
+    /// `api_key`, `event` and `distinct_id`, `properties` an object, `$session_id` a UUID v7,
+    /// `$set`/`$set_once` objects when present.
+    pub fn validate(request_line: &str, body: &str) -> Result<serde_json::Value, String> {
+        if !request_line.starts_with("POST /i/v0/e/ ") {
+            return Err(format!("not the capture endpoint: {request_line}"));
+        }
+        let v: serde_json::Value =
+            serde_json::from_str(body).map_err(|e| format!("not JSON: {e}"))?;
+        for k in ["api_key", "event", "distinct_id"] {
+            if !v[k].as_str().is_some_and(|s| !s.is_empty()) {
+                return Err(format!("{k} missing or empty"));
+            }
+        }
+        let p = v["properties"].as_object().ok_or("properties is not an object")?;
+        let sid = p.get("$session_id").and_then(|s| s.as_str()).unwrap_or("");
+        if !super::is_uuid_v7(sid) {
+            return Err(format!("$session_id is not a UUID v7: {sid:?}"));
+        }
+        for k in ["$set", "$set_once"] {
+            if p.get(k).is_some_and(|x| !x.is_object()) {
+                return Err(format!("{k} is not an object"));
+            }
+        }
+        Ok(v)
+    }
+
+    impl FakePostHog {
+        pub fn start() -> Self {
+            use std::io::{Read, Write};
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/i/v0/e/", l.local_addr().unwrap());
+            let (accepted, rejected) =
+                (Arc::new(Mutex::new(Vec::new())), Arc::new(Mutex::new(Vec::new())));
+            let (a, r) = (accepted.clone(), rejected.clone());
+            std::thread::spawn(move || {
+                for mut s in l.incoming().flatten() {
+                    let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    // headers, then Content-Length bytes
+                    let (head, body) = loop {
+                        let n = s.read(&mut chunk).unwrap_or(0);
+                        if n == 0 {
+                            break (String::new(), String::new());
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                        let text = String::from_utf8_lossy(&buf).to_string();
+                        if let Some(i) = text.find("\r\n\r\n") {
+                            let len = text[..i]
+                                .lines()
+                                .find_map(|l| {
+                                    let l = l.to_ascii_lowercase();
+                                    l.strip_prefix("content-length:")
+                                        .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                                })
+                                .unwrap_or(0);
+                            if buf.len() >= i + 4 + len {
+                                break (
+                                    text[..i].to_string(),
+                                    text[i + 4..i + 4 + len].to_string(),
+                                );
+                            }
+                        }
+                    };
+                    let line = head.lines().next().unwrap_or("").to_string();
+                    let answer: &[u8] = match validate(&line, &body) {
+                        Ok(v) => {
+                            a.lock().unwrap_or_else(|p| p.into_inner()).push(v);
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: close\r\n\r\n{\"status\":1}"
+                        }
+                        Err(e) => {
+                            r.lock().unwrap_or_else(|p| p.into_inner()).push(e);
+                            b"HTTP/1.1 400 Bad Request\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"
+                        }
+                    };
+                    let _ = s.write_all(answer);
+                }
+            });
+            FakePostHog { url, accepted, rejected }
+        }
+
+        pub fn accepted(&self) -> Vec<serde_json::Value> {
+            self.accepted.lock().unwrap_or_else(|p| p.into_inner()).clone()
+        }
+
+        pub fn rejected(&self) -> Vec<String> {
+            self.rejected.lock().unwrap_or_else(|p| p.into_inner()).clone()
+        }
+
+        /// Wait until `n` requests were answered (or a few seconds passed).
+        pub fn wait(&self, n: usize) {
+            let t0 = std::time::Instant::now();
+            while self.accepted().len() + self.rejected().len() < n
+                && t0.elapsed() < Duration::from_secs(10)
+            {
+                std::thread::sleep(Duration::from_millis(5));
+            }
         }
     }
 
@@ -2246,7 +2372,6 @@ mod tests {
     /// t841: a black-hole server costs at most the budget; a live one gets two POSTs.
     #[test]
     fn t841_never_blocks_and_posts_json() {
-        use std::io::{Read, Write};
         // black hole: accepts, never answers
         let hole = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/i/v0/e/", hole.local_addr().unwrap());
@@ -2264,57 +2389,27 @@ mod tests {
         t.signal(Signal::Exit);
         assert!(t1.elapsed() < Duration::from_millis(2500), "exit held {:?}", t1.elapsed());
 
-        // a server that answers 200
-        let ok = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}/i/v0/e/", ok.local_addr().unwrap());
-        let got = Arc::new(Mutex::new(Vec::<String>::new()));
-        let g = got.clone();
-        std::thread::spawn(move || {
-            for mut s in ok.incoming().flatten() {
-                let mut buf = Vec::new();
-                let mut chunk = [0u8; 4096];
-                let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
-                // read headers, then Content-Length bytes
-                loop {
-                    let n = s.read(&mut chunk).unwrap_or(0);
-                    if n == 0 {
-                        break;
-                    }
-                    buf.extend_from_slice(&chunk[..n]);
-                    let text = String::from_utf8_lossy(&buf).to_string();
-                    if let Some(i) = text.find("\r\n\r\n") {
-                        let len = text[..i]
-                            .lines()
-                            .find_map(|l| {
-                                let l = l.to_ascii_lowercase();
-                                l.strip_prefix("content-length:")
-                                    .map(|v| v.trim().parse::<usize>().unwrap_or(0))
-                            })
-                            .unwrap_or(0);
-                        if buf.len() >= i + 4 + len {
-                            g.lock().unwrap().push(text[..i + 4 + len].to_string());
-                            break;
-                        }
-                    }
-                }
-                let _ = s.write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
-                );
-            }
-        });
-        let t = Telemetry::new(on(), new_uuid(), Box::new(HttpSink::new(url))).with_key("phc_test");
+        // the local stand-in answers 200 and checks what the ingestion checks
+        let ph = super::testing::FakePostHog::start();
+        let t = Telemetry::new(on(), new_uuid(), Box::new(HttpSink::new(ph.url.clone())))
+            .with_key("phc_test");
         frame(&t, false);
         t.exit(Duration::from_secs(10));
-        let reqs = got.lock().unwrap().clone();
-        assert_eq!(reqs.len(), 2, "{reqs:?}");
-        for (r, ev) in reqs.iter().zip(["app_started", "app_closed"]) {
-            assert!(r.starts_with("POST /i/v0/e/ "), "{r}");
-            let body = &r[r.find("\r\n\r\n").unwrap() + 4..];
-            let v: serde_json::Value = serde_json::from_str(body).unwrap();
+        ph.wait(2);
+        assert!(ph.rejected().is_empty(), "{:?}", ph.rejected());
+        let got = ph.accepted();
+        assert_eq!(got.len(), 2, "{got:?}");
+        for (v, ev) in got.iter().zip(["app_started", "app_closed"]) {
             assert_eq!(v["api_key"], "phc_test");
             assert_eq!(v["event"], ev);
             assert!(v["distinct_id"].as_str().is_some_and(is_uuid));
         }
+        // and it refuses what PostHog would refuse
+        let bad = super::testing::validate(
+            "POST /i/v0/e/ HTTP/1.1",
+            r#"{"api_key":"k","event":"e","distinct_id":"d","properties":{"$session_id":"x"}}"#,
+        );
+        assert!(bad.is_err());
     }
 
     /// t842: the key stays out of source and dev builds.
@@ -2357,5 +2452,19 @@ mod tests {
         if cfg!(debug_assertions) {
             assert!(key().is_none(), "a debug build carries the key");
         }
+        // the local target: debug only, and only with BOTH variables
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(
+            local_target_from(false, s("http://127.0.0.1:1/"), s("k")),
+            None,
+            "release ignores both"
+        );
+        assert_eq!(local_target_from(true, s("http://127.0.0.1:1/"), None), None);
+        assert_eq!(local_target_from(true, None, s("k")), None);
+        assert_eq!(local_target_from(true, s(" "), s("k")), None);
+        assert_eq!(
+            local_target_from(true, s("http://127.0.0.1:1/"), s("k")),
+            Some(("http://127.0.0.1:1/".to_string(), "k".to_string()))
+        );
     }
 }

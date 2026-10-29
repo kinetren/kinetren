@@ -5309,3 +5309,59 @@ fn t884_real_ui_paths_move_the_counters() {
     assert!(s.active_s > 0, "{s:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Test 888 (telemetry-identify-activity): the harness app speaks valid PostHog — through the
+/// real `HttpSink` to the local stand-in, which refuses what the ingestion would refuse.
+#[test]
+fn t888_harness_app_speaks_valid_posthog() {
+    use crate::telemetry::testing::FakePostHog;
+    use crate::telemetry::{EnvView, HttpSink, Telemetry, new_uuid, resolve_consent};
+    use std::sync::Arc;
+
+    let ph = FakePostHog::start();
+    let consent = resolve_consent(Some("phc_test"), &EnvView::default(), Some("on"));
+    let sink = Box::new(HttpSink::new(ph.url.clone()));
+    let t = Arc::new(Telemetry::new(consent, new_uuid(), sink).with_key("phc_test"));
+    // bound before the app is built: the new document is the session's first project
+    let _bound = crate::telemetry::testing::bind(t.clone());
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().telemetry = Some(t.clone());
+    h.step();
+    #[derive(Debug)]
+    struct Dropped(std::path::PathBuf);
+    impl egui::DroppedFile for Dropped {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            std::fs::read(&self.0).map_err(|e| e.to_string())
+        }
+    }
+    let video = std::path::PathBuf::from(crate::util::tests::fixture("testsrc_h264.mp4"));
+    h.input_mut().dropped_files.push(Arc::new(Dropped(video)));
+    h.step();
+    h.step();
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    h.key_press(egui::Key::Space);
+    h.step();
+    eframe::App::on_exit(h.state_mut());
+    ph.wait(3);
+
+    assert!(ph.rejected().is_empty(), "the stand-in refused: {:?}", ph.rejected());
+    let ev = ph.accepted();
+    let names: Vec<&str> = ev.iter().map(|e| e["event"].as_str().unwrap_or("")).collect();
+    assert_eq!(names, ["app_started", "project_opened", "app_closed"]);
+    assert!(ev[0]["properties"]["$set"].is_object());
+    assert_eq!(ev[1]["properties"]["how"], "new");
+    let closed = &ev[2]["properties"];
+    assert_eq!(closed["media_imported"]["video"], 1, "{closed}");
+    assert_eq!(closed["playback_starts"], 1, "{closed}");
+    let one = |k: &str, f: &dyn Fn(&serde_json::Value) -> serde_json::Value| {
+        let v: Vec<_> = ev.iter().map(f).collect();
+        assert!(v.windows(2).all(|w| w[0] == w[1]), "{k} differs: {v:?}");
+    };
+    one("distinct_id", &|e| e["distinct_id"].clone());
+    one("$session_id", &|e| e["properties"]["$session_id"].clone());
+}
