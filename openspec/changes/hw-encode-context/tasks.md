@@ -95,5 +95,8 @@ first line = the stage and what was done). Stage only this change's files.
 
 ## 5. Finish
 
-- [ ] 5.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version `vYY.MM.DD-hash` here, with the t963 record of 3.3
+- [x] 5.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version `vYY.MM.DD-hash` here, with the t963 record of 3.3
+  - `./scripts/finish.sh` green: **kt26.10.29-2fa86d0a** (`nestparam` passed on the second try alone —
+    load, not this change). FFmpeg 9 (`KT_FFMPEG_TEST_IMAGE_READY=1 scripts/ffmpeg-test.sh`): 394 of
+    394, the optional table loads on 9. t963 is not recorded yet (3.3 is the owner's machine).
 - [ ] 5.2 After archiving: set F-EXP-004's verdict line to the delivered state (`CAPABILITY:` unchanged), and append the "why" (D1 the probe's finding, D3 skip-before-open, D5 optional table, D8 loud opt-in proof) to `openspec/specs/export/design.md` and `openspec/specs/media-index/design.md`
