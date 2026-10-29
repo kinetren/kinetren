@@ -6017,3 +6017,93 @@ fn stop_render(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>) {
     assert!(job.result.is_some(), "the cancelled render did not finish");
     h.state_mut().render_job = None;
 }
+
+/// Test 976 (plugin-api-stage1, D8; capability `plugins`): a plugin from the test door reaches the
+/// picker and the chain, and none of the reference lists.
+///
+/// `test_tint` is registered next to the built-in set in a test build only (`plugins::install`).
+/// The reference lists — the assembler's closed `BUILTIN_IDS` and the golden registry
+/// `FxInstance::all()` — never hold it; the picker shows it under the category its manifest
+/// declares, a click puts it into the chain with its passport's defaults, and the common
+/// parameter row draws it. Every catalog key a manifest names exists.
+#[test]
+fn t976_a_test_door_plugin_reaches_the_picker_and_no_reference_list() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let tint = crate::plugins::test_tint::ID;
+    let reg = crate::plugins::install();
+    assert!(reg.get(tint).is_some() && reg.is_test_only(tint), "the test door did not register {tint}");
+    // the reference lists: the assembler's closed list and the golden registry
+    assert!(!kt_plugins_builtin::BUILTIN_IDS.contains(&tint), "the closed list holds the test plugin");
+    let built_in: Vec<String> =
+        reg.ids().iter().filter(|id| !reg.is_test_only(id)).map(|id| id.to_string()).collect();
+    assert_eq!(built_in, kt_plugins_builtin::BUILTIN_IDS, "the registry's built-ins are not the closed list");
+    assert!(FxInstance::all().iter().all(|f| f.tag() != tint), "the golden registry holds the test plugin");
+    // every key a manifest names is in the catalogs (t125 checks they are non-empty in all five)
+    for key in crate::plugins::manifest_keys() {
+        assert!(crate::i18n::key_by_name(key).is_some(), "a manifest names the missing catalog key {key:?}");
+    }
+    let entry = crate::fx_registry::registry()
+        .iter()
+        .find(|e| e.template.tag() == tint)
+        .expect("the picker has the test plugin's row");
+    assert_eq!(entry.name, "Test Tint");
+    assert_eq!(entry.category, crate::i18n::k::fxreg::cat::COLOR, "not under the declared category");
+    assert!(entry.video && !entry.audio);
+
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+    let mut h = crate::layout_tests::harness_sized(1600.0, 900.0);
+    {
+        let app = h.state_mut();
+        crate::layout_tests::edit_project(app, |p| {
+            p.media.push(MediaRef::new(MediaId(1), "synth:1"));
+            p.clips.push(ClipEvent {
+                r#gen: None,
+                gen_auto: Vec::new(),
+                overrides: Vec::new(),
+                geometry: Default::default(),
+                geometry_pos: 0,
+                geometry_auto: Vec::new(),
+                id: ClipId(1),
+                link_group: None,
+                kind: ClipKind::Video,
+                lane: 0,
+                start: kt_time::Tick(0),
+                duration: kt_time::Tick(180_000),
+                source_in: kt_time::Tick(0),
+                media: MediaId(1),
+                gain_db: 0.0,
+                reversed: false,
+                fx: vec![],
+                fx_bypass: vec![],
+                fx_auto: vec![],
+                opacity: 1.0,
+                fx_off: false,
+            });
+        });
+        app.open_fx_editor(ClipId(1));
+    }
+    h.step();
+    h.step();
+    h.get_by_label(crate::i18n::tr(crate::i18n::k::fxreg::ADD)).click();
+    h.step();
+    h.step();
+    assert!(h.query_by_label("Blur").is_some(), "the picker did not open");
+    h.event(egui::Event::Text("tint".into()));
+    h.step();
+    h.step();
+    assert!(h.query_by_label("Blur").is_none(), "the search did not filter the gallery");
+    h.get_by_label("Test Tint").click();
+    h.step();
+    h.step();
+    let c = h.state().model.project().clips[0].clone();
+    let slot = c.fx.last().expect("the click put nothing into the chain");
+    assert_eq!(slot.tag(), tint, "the chain's last node is not the test plugin: {:?}", c.fx);
+    assert_eq!(slot.get_param("amount"), Some(0.5), "not the passport's default");
+    assert!(h.query_by_label("Test Tint").is_some(), "the strip does not show the plugin");
+    let label = crate::i18n::tr(crate::i18n::key_by_name("fxp.amount").expect("fxp.amount"));
+    assert!(
+        h.query_all_by_label(label).next().is_some(),
+        "the common parameter row does not draw the plugin's passport ({label})"
+    );
+}

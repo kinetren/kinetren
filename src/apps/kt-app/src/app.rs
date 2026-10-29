@@ -772,7 +772,7 @@ impl KtApp {
 
     pub(crate) fn new_empty(error: Option<String>) -> KtApp {
         // every KtApp reads projects: the built-in plugin set first (a no-op after `run` did it)
-        kt_plugins_builtin::install();
+        crate::plugins::install();
         let startup_error = error;
         let project = Self::empty_project();
         let project2 = project.clone();
@@ -1039,7 +1039,7 @@ impl KtApp {
         retained: kt_otio::Retained,
         notices: Vec<String>,
     ) -> Result<KtApp, String> {
-        kt_plugins_builtin::install();
+        crate::plugins::install();
         let base = path.parent();
         let (player, audio, err, media_lens) =
             Self::build_player(&project, base, Some(&path.with_extension("ktindex.db")));
@@ -9214,7 +9214,7 @@ pub fn run() -> eframe::Result {
     // reads its storage: that storage lives in the same directory
     let _ = crate::journal::data_dir();
     // the built-in plugin set, before any project is read (plugin-api-stage1, D6)
-    kt_plugins_builtin::install();
+    crate::plugins::install();
     // the FFmpeg folder chosen with Locate… is the first step of the search (windows-build)
     crate::ffmpeg_setup::install_search_dirs();
     // GPU: the egui-wgpu default is HighPerformance, i.e. the discrete card; on

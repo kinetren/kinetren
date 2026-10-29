@@ -264,6 +264,12 @@ The rules above were written down — and did not work: the R.38 mechanism turne
   takes ~0.2 s, so a "generous" pause of 0.1 s becomes 0.3+ s for egui
   and the double click falls apart into two single ones. Measured: 0.04 s — 5 of 5,
   0.10 s — 0 of 5.
+- **A quoted dotted string in a kt-app source IS a published place for the coverage guard**
+  (`scripts/live-coverage.py`, t804): its `SHAPE` pass reads every `"word.word"` literal outside
+  `*_tests.rs` — in a comment and in a `#[cfg(test)]` module too — as a probe name, and an
+  untouched one counts against `UNTOUCHED_LIMIT`. A catalog key a plugin manifest names is written
+  by its constant (`i18n::key_name(k::…)`) there, not as a literal (plugin-api-stage1 2.5: a test
+  plugin's `"fxreg.cat.color"` and a comment's example turned t804 red).
 - **A failed scenario must kill kt-app** (item 232): an exception from
   `Live.__enter__` does not call `__exit__`, and a forgotten program keeps running at hundreds of percent CPU, turning software rendering into a slideshow. The symptom —
   "suddenly ALL scenarios turned red at once": before looking for a regression in the

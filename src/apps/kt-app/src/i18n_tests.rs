@@ -62,9 +62,12 @@ fn t125_catalogs_are_complete_and_used() {
     }
 
     let sources = crate::font_tests::sources();
+    // a key a plugin manifest names is used by that plugin (plugin-api-stage1; t976 holds the
+    // other direction — every named key exists)
+    let named = crate::plugins::manifest_keys();
     let mut unused: Vec<&str> = Vec::new();
     for name in tables::KEY_NAMES.iter() {
-        if NOT_REFERENCED_BY_PATH.iter().any(|p| name.starts_with(p)) {
+        if NOT_REFERENCED_BY_PATH.iter().any(|p| name.starts_with(p)) || named.contains(name) {
             continue;
         }
         let path = const_path(name);

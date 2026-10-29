@@ -63,7 +63,6 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
         // R.47 Q2: color/style/perspective
         "Color Grade" => (k::fxreg::cat::COLOR, Some(k::fxreg::kw::COLOR_GRADE)),
         "Duotone" => (k::fxreg::cat::COLOR, Some(k::fxreg::kw::DUOTONE)),
-        "Posterize" => (k::fxreg::cat::COLOR, Some(k::fxreg::kw::POSTERIZE)),
         "Vignette" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::VIGNETTE)),
         "Corner Pin" => (k::fxreg::cat::GEOMETRY, Some(k::fxreg::kw::CORNER_PIN)),
         // R.47 Q3: barriers
@@ -389,9 +388,9 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
 pub fn registry() -> &'static [FxEntry] {
     static REG: std::sync::OnceLock<Vec<FxEntry>> = std::sync::OnceLock::new();
     REG.get_or_init(|| {
-        // the app owns the built-in plugin set (plugin-api-stage1): the picker may be built before
-        // any KtApp (tests, the thumbnail worker), and its plugin entries need the registry
-        kt_plugins_builtin::install();
+        // the app owns the plugin set (plugin-api-stage1): the picker may be built before any
+        // KtApp (tests, the thumbnail worker), and its plugin rows come from the manifests
+        crate::plugins::install();
         let mut v = vec![
             FxEntry {
                 name: "Gain",
@@ -566,6 +565,24 @@ pub fn registry() -> &'static [FxEntry] {
             let variants = video_variants(name, &tmpl);
             v.push(FxEntry {
                 name,
+                category,
+                audio: false,
+                video: true,
+                keywords,
+                template: tmpl,
+                variants,
+            });
+        }
+        // plugin rows: name, category and keywords are the manifest's (plugin-api-stage1, D7); a
+        // category key the catalogs do not have is a build defect of the plugin, t976 names it
+        for p in crate::plugins::video_fx() {
+            let m = p.manifest();
+            let tmpl = FxInstance::plugin(&m.id).expect("an installed plugin builds its slot");
+            let category = crate::i18n::key_by_name(m.ui.category_key).unwrap_or(k::fxreg::cat::STYLE);
+            let keywords = crate::i18n::key_by_name(m.ui.keywords_key);
+            let variants = video_variants(m.ui.name, &tmpl);
+            v.push(FxEntry {
+                name: m.ui.name,
                 category,
                 audio: false,
                 video: true,
@@ -1173,7 +1190,9 @@ mod tests {
         let reg = registry();
         // all 10 video templates are in place and byte-for-byte equal to the former ones
         let old = video_fx_templates();
-        assert_eq!(reg.iter().filter(|e| !e.audio).count(), old.len());
+        // the core templates plus one row per installed video plugin (plugin-api-stage1)
+        let plugins = crate::plugins::video_fx().count();
+        assert_eq!(reg.iter().filter(|e| !e.audio).count(), old.len() + plugins);
         // Exactly one entry is TWO-SIDED — the time warp (R.37).
         // It is not a pixel filter but a rule for choosing
         // the source frame, so it makes sense on both kinds; everything else must stay in its own bucket,
@@ -1243,7 +1262,7 @@ mod tests {
             filter_entries(reg, true, "").iter().map(|e| e.template.tag()).collect();
         assert_eq!(audio_in_picker, audio_kinds, "every audio kind of the registry is in the picker");
         // video list = all video templates + the two-sided Slowed+Reverb
-        assert_eq!(filter_entries(reg, false, "").len(), old.len() + 1);
+        assert_eq!(filter_entries(reg, false, "").len(), old.len() + plugins + 1);
         assert_eq!(filter_entries(reg, false, "reverb").len(), 1, "warp is also searched in the video picker");
         assert_eq!(filter_entries(reg, true, "ReVerb").len(), 1, "Cyrillic keyword");
         assert_eq!(filter_entries(reg, false, "vish").len(), 0);
@@ -1278,7 +1297,9 @@ mod tests {
         // the order of languages does not matter, but the names are read in a known way
         crate::i18n::set_lang(crate::i18n::Lang::Ru);
         let mut with_variants = 0;
-        for e in reg.iter().filter(|e| e.video && e.name != "Slowed+Reverb") {
+        // (the test door's plugin is not a product kind: it has no variants to curate)
+        let test_only = |e: &FxEntry| crate::plugins::install().is_test_only(e.template.tag());
+        for e in reg.iter().filter(|e| e.video && e.name != "Slowed+Reverb" && !test_only(e)) {
             // a forgotten entry in video_variants gives an empty
             // list — the same trap as the fallback category in t48
             assert!(
@@ -1348,7 +1369,14 @@ mod tests {
             crate::i18n::set_lang(crate::i18n::Lang::Ru);
         }
         // the count is a property of the registry, not a constant (the t48 rule)
-        assert_eq!(with_variants, video_fx_templates().len());
+        // (the test door's plugin has none; every built-in video kind has)
+        assert_eq!(
+            with_variants,
+            video_fx_templates().len()
+                + crate::plugins::video_fx()
+                    .filter(|p| !crate::plugins::install().is_test_only(&p.manifest().id))
+                    .count()
+        );
         // the head of the variants strip does not have one: it is not an effect (R.35)
         // and it is not in the registry — checked in t48.
 

@@ -99,7 +99,30 @@ once (English message, first line = the stage and what was done).
     the fused text turned t974 and t329 red. t328 goldens, t329, t181 green; no `GOLDEN_*` moved.
     Workspace (nextest, 1229 tests): green except t815 (the recovery write took 30 s at an I/O
     pressure of 93 %) and t663 (its 60 s wait loop under load) — both green alone (0.06 s, 0.03 s).
-- [ ] 2.5 `src/apps/kt-app/src/fx_registry.rs` builds Posterize's entry from its manifest; the test door `register_for_test`; write t976 in `src/apps/kt-app/src/reach_tests.rs` with the PATH of the spec. Verify t976, t48, t125, t100 green and `src/scripts/specs-user-path.py --check` (t799) accepts the PATH
+- [x] 2.5 `src/apps/kt-app/src/fx_registry.rs` builds Posterize's entry from its manifest; the test door `register_for_test`; write t976 in `src/apps/kt-app/src/reach_tests.rs` with the PATH of the spec. Verify t976, t48, t125, t100 green and `src/scripts/specs-user-path.py --check` (t799) accepts the PATH
+  - `src/apps/kt-app/src/plugins.rs` is the app's one install entry (every `KtApp` constructor and
+    `fx_registry::registry()` call it): the built-in set, plus `test_tint` through the test door in a
+    test build (`kt_plugins_builtin::install_with`). `Registry::register_for_test` runs the same
+    refusals and marks the id (`is_test_only`); `Registry::plugins()` iterates in order.
+    `fx_registry::registry()` appends one row per installed video plugin after the core templates:
+    name, category and keywords from the manifest (`i18n::key_by_name`, a linear search once per
+    plugin); Posterize left `video_fx_templates` and `video_meta`. Its curated variants (Hard /
+    Comic / Soft) stay in kt-app's `video_variants`, keyed by the manifest's name: they are picker
+    curation with translated names, not plugin data (stage 4 decides per family). Posterize's row
+    is last in the colour category, so the gallery order did not move.
+    t125 counts a catalog key a manifest names as used (`plugins::manifest_keys`); t48/t543 count
+    the plugin rows (the test plugin has no variants and is skipped by t543's curation check).
+    t976 (`reach_tests.rs`): the closed list and `FxInstance::all()` do not hold `test_tint`, the
+    registry's built-ins equal `BUILTIN_IDS`, every manifest key exists; the harness path of the
+    spec — FX window → "+" → "tint" (Blur is filtered out) → "Test Tint" → the last chain node is
+    the plugin at its default `amount` 0.5, the parameter row "Amount" is drawn. Red proof: without
+    the plugin rows t976 ("the picker has the test plugin's row") and t48 are red. t799 accepts the
+    PATH; t100, t125, t547, t254 green.
+    The workspace run turned t804 red (82 untouched places over the limit 81): the coverage guard
+    reads every quoted dotted string in kt-app's sources as a place, and the test plugin's
+    `"fxreg.cat.color"` (then a comment's own example) was one. The test plugin names the key by
+    its constant (`i18n::key_name`); the rule is in kt-app's CLAUDE.md; the limit did not move.
+    Workspace: green except t476 (load; green alone); kt-app + plugin crates + kt-cli 453/453.
 - [ ] 2.6 Speed check of the pilot on release: `cargo build --release -p kt-cli` and `kt-cli probe <fixture> 0 10 --time` before/after on a chain with Posterize; record here; over 3 % slower blocks the stage (design, Risks)
 - [ ] 2.7 Commit stage 2 (`cargo test --workspace`, `cargo clippy --all-targets` with no new warnings)
 

@@ -166,6 +166,13 @@ pub fn reel_display_name(stored: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Borrowed(stored)
 }
 
+/// The key named `name` (`"fxreg.cat.color"`) — the catalog keys a plugin manifest names
+/// (plugin-api-stage1); `None` for an unknown or empty name. A linear search: it runs once per
+/// plugin when the picker's registry is built, never in a draw path.
+pub fn key_by_name(name: &str) -> Option<Key> {
+    tables::KEY_NAMES.iter().position(|n| *n == name).map(|i| Key(i as u16))
+}
+
 /// Key name (`"menu.file.save"`) — for diagnostics and tests.
 #[allow(dead_code)]
 pub fn key_name(k: Key) -> &'static str {

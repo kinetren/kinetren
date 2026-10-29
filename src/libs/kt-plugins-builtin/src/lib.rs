@@ -27,8 +27,15 @@ pub fn builtin() -> Registry {
 /// Assemble and install the built-in set for this process (kt-app, kt-cli and tests call it once
 /// at start; a repeated call is a no-op).
 pub fn install() -> &'static Arc<Registry> {
+    install_with(|_| {})
+}
+
+/// The built-in set plus what `extra` registers (an app's test door, D8), installed once.
+pub fn install_with(extra: impl FnOnce(&mut Registry)) -> &'static Arc<Registry> {
     if kt_plugin_api::installed().is_none() {
-        kt_plugin_api::install(Arc::new(builtin()));
+        let mut reg = builtin();
+        extra(&mut reg);
+        kt_plugin_api::install(Arc::new(reg));
     }
     kt_plugin_api::installed().expect("installed")
 }

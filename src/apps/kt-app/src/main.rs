@@ -37,6 +37,7 @@ mod layout_tests;
 mod meters;
 mod morpher_editor;
 mod project_lock;
+mod plugins;
 mod pubparam;
 #[cfg(test)]
 mod reach_tests;

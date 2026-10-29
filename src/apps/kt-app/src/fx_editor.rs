@@ -1442,7 +1442,6 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
         // R.47: per-point color/style + the first honest perspective
         ("Color Grade", FxInstance::color_grade()),
         ("Duotone", FxInstance::duotone()),
-        ("Posterize", FxInstance::posterize()),
         ("Vignette", FxInstance::vignette()),
         ("Corner Pin", FxInstance::corner_pin()),
         // R.47 Q3: barriers

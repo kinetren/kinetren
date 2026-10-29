@@ -968,6 +968,8 @@ impl std::error::Error for Refusal {}
 #[derive(Default)]
 pub struct Registry {
     plugins: Vec<std::sync::Arc<dyn Plugin>>,
+    /// Ids that came through the test door (D8): never part of a reference list.
+    test_only: Vec<PluginId>,
 }
 
 impl Registry {
@@ -1030,6 +1032,21 @@ impl Registry {
         Ok(())
     }
 
+    /// The test door (D8): the same checks as `register`, and the id is marked as not built-in, so
+    /// the reference lists (the goldens, the harness lists) — the assembler's closed list — never
+    /// hold it, while every consumer of the registry (the picker, the format, the planner) does.
+    pub fn register_for_test(&mut self, p: std::sync::Arc<dyn Plugin>) -> Result<(), Refusal> {
+        let id = p.manifest().id.clone();
+        self.register(p)?;
+        self.test_only.push(id);
+        Ok(())
+    }
+
+    /// Whether `id` came through the test door.
+    pub fn is_test_only(&self, id: &str) -> bool {
+        self.test_only.iter().any(|t| t == id)
+    }
+
     pub fn get(&self, id: &str) -> Option<&std::sync::Arc<dyn Plugin>> {
         self.plugins.iter().find(|p| p.manifest().id == id)
     }
@@ -1037,6 +1054,11 @@ impl Registry {
     /// The ids in registration order.
     pub fn ids(&self) -> Vec<PluginId> {
         self.plugins.iter().map(|p| p.manifest().id.clone()).collect()
+    }
+
+    /// The registered plugins in registration order.
+    pub fn plugins(&self) -> impl Iterator<Item = &std::sync::Arc<dyn Plugin>> {
+        self.plugins.iter()
     }
 
     pub fn len(&self) -> usize {
