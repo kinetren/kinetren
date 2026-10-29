@@ -73,7 +73,7 @@ capability `video-fx`; depends on F-FX-002, F-FX-001):
   and eased keys ("Zoom Shake", "Punch In", "Handheld").
 
 **W2 — Glitch, film and soft looks** (`src/plugins/fx-video-stylize`, `src/plugins/fx-video-blur`;
-`video-fx`; depends on F-FX-003, F-CLR-008):
+`video-fx`; depends on F-FX-003, F-CLR-007):
 - `glitch_blocks` (B): block displacement and per-channel offset, a pure function of `burst_index`
   and a seed.
 - `film_damage` (B): scratches and dust specks; `gate_weave` (G): a per-frame affine jitter from the
@@ -141,7 +141,9 @@ the complaint. W4 waits for the analysis subsystem; W6 for an API extension.
 ### D4. The guards live in one kt-cli test file
 `src/apps/kt-cli/tests/fx_catalogue.rs` (kt-cli already links every crate and already hosts the
 README guard t826). It parses the note's id lists, its verdict table, its owner-items table and its
-Verdict list, and this design's waves; it reads `id:` lines of every note under `docs/features/`
+Verdict list, and this design's waves; a market cell counts as live-checked only through a numbered cite
+`(src N)` of a Sources item without `[NOT VERIFIED]` — "was this row checked" is otherwise prose the
+guard cannot read; it reads `id:` lines of every note under `docs/features/`
 and checks `openspec/specs/<cap>/spec.md` existence. t978 today compares with `FxInstance::all()` /
 `TransitionKind::ALL` / `GeneratorKind`; when `plugin-api-stage1` lands, it compares with the
 assembler's closed list plus the core kinds (one edit of the test, named in task 2.1). t981 keeps its

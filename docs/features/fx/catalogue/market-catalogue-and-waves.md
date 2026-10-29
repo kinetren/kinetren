@@ -67,29 +67,30 @@ compares these three lists with the code.
   `timecode`, `transparent`, `rect`, `ellipse`, `line`, `leader`, `table`, `window`.
 
 **What people use, against what we have.** Verdict vocabulary: `have` · `wave Wn` · `deferred
-(<dependency>)` · `rejected (<reason>)`.
+(<dependency>)` · `rejected (<reason>)`. A market cell either cites a source of the list at the end
+that was opened live (`(src N)`) or carries `[NOT VERIFIED]`; the guard t980 checks both.
 
 | Group | What the market offers | What we have | Verdict |
 |---|---|---|---|
-| Text animations | CapCut: In / Out / Loop preset slots (typewriter, fade, bounce, glitch, wave…); FCP/Resolve: title templates with published parameters | 5 title modes as curve presets (`TextAnim`: none, typewriter, fade, ticker…, F-TXT-006); public parameters of compositions (F-TL-012) | wave W3 |
+| Text animations | CapCut: In / Out / Loop preset slots (typewriter, fade, bounce, glitch, wave…) (src 3); FCP/Resolve: title templates with published parameters | 5 title modes as curve presets (`TextAnim`: none, typewriter, fade, ticker…, F-TXT-006); public parameters of compositions (F-TL-012) | wave W3 |
 | Lens: fisheye corners, flares, dirt, drops | CapCut: lens flare sold as transitions and overlays; AE: Lens Flare, Optics Compensation; Resolve: Lens Flare, Lens Reflections, Aperture Diffraction `[NOT VERIFIED]` | `lens_distort` only; no housing/corner mask, no flare, no dirt, no drops (the owner's ktprompts item FX 1) | wave W1 |
-| Glitch | CapCut: RGB Split, digital glitch, VHS tabs; Resolve: Glitch, Analog Damage `[NOT VERIFIED]` | `chromatic_aberration`, `vhs`, `noise`; transition `glitch` | wave W2 |
-| Light leaks / flashes as an effect | CapCut: light-leak overlays and flash transitions | transitions `light_leaks`, `film_burn`, `flash`; nothing as an effect on one clip | wave W2 |
-| Retro / film | CapCut: Movie Grain, Retro tab; Resolve: Film Look Creator, Film Damage `[NOT VERIFIED]` | `noise` (grain), `halftone`, `duotone` (sepia preset), `posterize`, `vhs`; no scratches, dust, gate weave, halation | wave W2 |
-| Shake / zoom punch | CapCut: Zoom Shake, camera shake presets | transitions `shake`, `zoom`, `spin`; `geometry` with curves and segment shapes (a zigzag segment, R.61) — but no one-click shake or zoom-punch | wave W1 |
-| Blur / bokeh | CapCut: Blur tab, Soft Focus, Dreamy Glow; Premiere: Gaussian, Directional, Camera Blur | `blur`, `radial_blur` (spin/zoom), `glow`; no lens (bokeh) blur, no directional blur | wave W2 (directional blur needs a Revision, see Verdict) |
-| Speed ramps | CapCut: speed curve with named presets; AE/Premiere: time remapping | `slowed_reverb` rate curve, signed rate and freeze (R.57) — no presets | wave W4 |
+| Glitch | CapCut: RGB Split, digital glitch, VHS tabs (src 1); Resolve: Glitch, Analog Damage `[NOT VERIFIED]` | `chromatic_aberration`, `vhs`, `noise`; transition `glitch` | wave W2 |
+| Light leaks / flashes as an effect | CapCut: light-leak overlays and flash transitions `[NOT VERIFIED]` | transitions `light_leaks`, `film_burn`, `flash`; nothing as an effect on one clip | wave W2 |
+| Retro / film | CapCut: Movie Grain, Retro tab (src 1); Resolve: Film Look Creator, Film Damage `[NOT VERIFIED]` | `noise` (grain), `halftone`, `duotone` (sepia preset), `posterize`, `vhs`; no scratches, dust, gate weave, halation | wave W2 |
+| Shake / zoom punch | CapCut: Zoom Shake, camera shake presets (src 1) | transitions `shake`, `zoom`, `spin`; `geometry` with curves and segment shapes (a zigzag segment, R.61) — but no one-click shake or zoom-punch | wave W1 |
+| Blur / bokeh | CapCut: Blur tab, Soft Focus, Dreamy Glow (src 1); Premiere: Gaussian, Directional, Camera Blur `[NOT VERIFIED]` | `blur`, `radial_blur` (spin/zoom), `glow`; no lens (bokeh) blur, no directional blur | wave W2 (directional blur needs a Revision, see Verdict) |
+| Speed ramps | CapCut: speed curve with named presets; AE/Premiere: time remapping `[NOT VERIFIED]` | `slowed_reverb` rate curve, signed rate and freeze (R.57) — no presets | wave W4 |
 | Beat sync | CapCut: auto beat sync, beat markers; Premiere: Remix/beat detection `[NOT VERIFIED]` | nothing: markers are manual, no beat analysis | wave W4 (needs offline analysis, first-wave conclusion 1 of `docs/features/README.md`) |
-| Masks | every editor: shape and Bézier masks on effects; CapCut: mask shapes on a clip | none (F-MSK-001…003 candidates) | deferred (F-MSK-001) |
-| Overlays (dust, drops on the lens, grain plates) | CapCut: overlay library with blend modes | blend modes on tracks/clips in progress (F-CMP-003); no procedural overlay generator | wave W1 (procedural), deferred (F-CMP-003) for media overlays |
-| Trails / echo / "buffer + blend levels" | AE: Echo, Time Displacement; ktprompts link "buffer effect + blend levels" | nothing: a video kernel is a pure function of ONE frame | wave W6 |
+| Masks | every editor: shape and Bézier masks on effects; CapCut: mask shapes on a clip `[NOT VERIFIED]` | none (F-MSK-001…003 candidates) | deferred (F-MSK-001) |
+| Overlays (dust, drops on the lens, grain plates) | CapCut: overlay library with blend modes `[NOT VERIFIED]` | blend modes on tracks/clips in progress (F-CMP-003); no procedural overlay generator | wave W1 (procedural), deferred (F-CMP-003) for media overlays |
+| Trails / echo / "buffer + blend levels" | AE: Echo, Time Displacement; ktprompts link "buffer effect + blend levels" `[NOT VERIFIED]` | nothing: a video kernel is a pure function of ONE frame | wave W6 |
 | Homothety / recursive zoom (Droste) | AE plugins (third-party) `[NOT VERIFIED]`; ktprompts "homothety (backrooms literally)" | `kaleidoscope`, `twirl` (the Warp primitive family) | wave W6 |
 | Bump mapping / relief light | AE: Bevel Alpha, CC Glass `[NOT VERIFIED]`; ktprompts link | `edges` only | wave W6 |
-| Parallax / 2.5D | AE: 3D layers and cameras; ktprompts "parallaxing — basic AE" | `pan3d`, cameras (planar quads) | deferred (3D research, ktprompts CORE: "real 3D") |
-| Physics for letters, fisheye on rate change | ktprompts FX 2 and the two TODOs | — | deferred (F-FX-005, F-SPD-002) |
+| Parallax / 2.5D | AE: 3D layers and cameras; ktprompts "parallaxing — basic AE" `[NOT VERIFIED]` | `pan3d`, cameras (planar quads) | deferred (3D research, ktprompts CORE: "real 3D") |
+| Physics for letters, fisheye on rate change | ktprompts FX 2 and the two TODOs `[NOT VERIFIED]` | — | deferred (F-FX-005, F-SPD-002) |
 | Voice effects | CapCut: voice changer presets (robot, chipmunk, megaphone, telephone…) `[NOT VERIFIED]` | the nodes exist (`filter`, `eq`, `distortion`, `pitch_shift`, `chorus`), the presets do not; no ring modulator | wave W7 |
-| Transitions: trend set | CapCut 2026 trend pages: speed-ramp cuts, beat-synced cuts, glitch, cinematic fade and zoom, smooth wipes, slow motion with motion blur | 33 kinds cover zoom, whip, glitch, flash, light leaks, film burn, volume kinds; missing: luma wipe with a user image, shape-mask reveals beyond circle/diamond/box, warp transitions (lens/ripple), motion-blurred slide/push | wave W5 |
-| AI effects (portrait, sky replacement, style transfer) | CapCut desktop "AI Effects" tab | — | rejected (determinism: invariant 11 requires byte-for-byte audio and a CPU reference for video; a model download per machine makes the frame a function of the model file) |
+| Transitions: trend set | CapCut 2026 trend pages: speed-ramp cuts, beat-synced cuts, glitch, cinematic fade and zoom, smooth wipes, slow motion with motion blur `[NOT VERIFIED]` | 33 kinds cover zoom, whip, glitch, flash, light leaks, film burn, volume kinds; missing: luma wipe with a user image, shape-mask reveals beyond circle/diamond/box, warp transitions (lens/ripple), motion-blurred slide/push | wave W5 |
+| AI effects (portrait, sky replacement, style transfer) | CapCut desktop "AI Effects" tab (src 1) | — | rejected (determinism: invariant 11 requires byte-for-byte audio and a CPU reference for video; a model download per machine makes the frame a function of the model file) |
 
 **The owner's FX items (`ktprompts_v26.10`, sections FX and the link list), each with a verdict.**
 
@@ -232,7 +233,7 @@ The ranked list (the guard t979 checks that every id it names exists):
 2. **W2 — Glitch, film and soft looks**: block-displacement glitch, film damage (scratches, dust, gate
    weave, halation), light leaks as an effect, lens (bokeh) blur, a directional mode of radial blur
    (Revision of the video-fx rejection: as a MODE of `radial_blur`, which the video-fx "Deferred" line
-   already allows). Depends on F-FX-003, F-CLR-008.
+   already allows). Depends on F-FX-003, F-CLR-007.
 3. **W5 — Transitions catch-up**: luma wipe with a user image, more iris shapes, warp transitions
    (lens/ripple/twirl), motion-blurred push/slide. Depends on F-CMP-002.
 4. **W3 — Text animation library**: In / Out / Loop slots as curve presets on the title, per-word
@@ -250,24 +251,25 @@ ktprompts CORE item), physics for letters (F-FX-005).
 
 ## Sources
 
-- https://www.capcut.com/help/recommended-alternative-effects — desktop / web / mobile effect tabs and
-  named looks, dated 2026-02-03 (accessed 2026-10-28)
-- https://www.capcut.com/es-es/help/capcut-transitions and https://www.capcut.com/de-de/help/capcut-transitions
-  — the 2026 trend list of transitions (search summary, accessed 2026-10-28; the pages themselves were
-  not opened `[NOT VERIFIED]`)
-- https://autoae.online/blog/how-to-do-text-animation-in-capcut-pc — In / Out / Loop slots, keyframes on
-  position/scale/rotation/opacity, the per-character limit, 15.07.2026 (accessed 2026-10-28)
-- https://www.capcut.com/tools/speed-ramp, https://shotkit.com/velocity-capcut/,
-  https://filmora.wondershare.fr/video-editing-tips/speed-ramp-capcut.html — the speed-curve presets
-  and auto beat sync; third-party pages disagree on the exact preset list (search summary, accessed
-  2026-10-28, `[NOT VERIFIED]` against the app)
-- https://www.capcut.com/de-de/help/update-capcut-pc-for-latest-version — update steps without a
-  version number (search summary, accessed 2026-10-28)
-- `docs/features/compositing/transitions/transition-vocabulary.md` (F-CMP-002) — the VEGAS, Premiere,
-  Resolve and FCP transition rows reused here
-- The owner's claims file `ktprompts_v26.10`, sections FX and the link list (fisheye corners, lens
-  dirt/drops/flares, letters as physical objects, "67 niche plugins" video, jag edit, homothety,
-  bump mapping, buffer + blend levels, audio-driven zoom) — read 2026-10-28; the videos themselves were
-  not watched `[NOT VERIFIED]`
-- No live check of any program was made; the Premiere, After Effects and Resolve counts are marked
-  `[NOT VERIFIED]` for the reasons recorded in `_editors.md`.
+1. https://www.capcut.com/help/recommended-alternative-effects — desktop / web / mobile effect tabs and
+   named looks, dated 2026-02-03 (accessed 2026-10-28)
+2. https://www.capcut.com/es-es/help/capcut-transitions and https://www.capcut.com/de-de/help/capcut-transitions
+   — the 2026 trend list of transitions (search summary, accessed 2026-10-28; the pages themselves were
+   not opened `[NOT VERIFIED]`)
+3. https://autoae.online/blog/how-to-do-text-animation-in-capcut-pc — In / Out / Loop slots, keyframes on
+   position/scale/rotation/opacity, the per-character limit, 15.07.2026 (accessed 2026-10-28)
+4. https://www.capcut.com/tools/speed-ramp, https://shotkit.com/velocity-capcut/,
+   https://filmora.wondershare.fr/video-editing-tips/speed-ramp-capcut.html — the speed-curve presets
+   and auto beat sync; third-party pages disagree on the exact preset list (search summary, accessed
+   2026-10-28, `[NOT VERIFIED]` against the app)
+5. https://www.capcut.com/de-de/help/update-capcut-pc-for-latest-version — update steps without a
+   version number (search summary, accessed 2026-10-28; the page itself was not opened `[NOT VERIFIED]`)
+6. `docs/features/compositing/transitions/transition-vocabulary.md` (F-CMP-002) — the VEGAS, Premiere,
+   Resolve and FCP transition rows reused here
+7. The owner's claims file `ktprompts_v26.10`, sections FX and the link list (fisheye corners, lens
+   dirt/drops/flares, letters as physical objects, "67 niche plugins" video, jag edit, homothety,
+   bump mapping, buffer + blend levels, audio-driven zoom) — read 2026-10-28; the videos themselves were
+   not watched `[NOT VERIFIED]`
+
+No live check of any program was made; the Premiere, After Effects and Resolve counts are marked
+`[NOT VERIFIED]` for the reasons recorded in `_editors.md`.
