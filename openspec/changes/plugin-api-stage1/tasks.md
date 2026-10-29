@@ -194,6 +194,18 @@ once (English message, first line = the stage and what was done).
 ## 4. Video FX
 
 - [ ] 4.1 Move the remaining 24 video plugin kinds into `fx-video-color`, `fx-video-stylize`, `fx-video-distort`, `fx-video-blur`: geo kinds through `geo()` primitives (no WGSL), point-wise through tap pieces, barriers through passes. Verify t328, t329, t181, t297, t330, t332, t333, t198, t974 green; t973 extended
+  - In progress. 4.1a (63e3801): color_grade and duotone moved into `fx-video-color` like the
+    pilot (one f64 tap + one WGSL text each; kt-gpu lost their pipes, FxOps, shaders and the fused
+    pass's tap kinds 2/3); t328 goldens and t329/t181 parity unchanged — red with the grade formula
+    broken; t974 lists the three point-wise plugins; t973 freezes both file forms.
+    The other 21 kinds need contracts the design does not have yet, to be designed (a D2b/D5a
+    revision) before code: (1) a POSITIONED tap — vignette measures its stage's coordinate,
+    noise pins its grain to its stage's grid and `burst_index`, greenscreen keys a channel; the
+    `VideoKernel::tap` of today sees one pixel's value only; (2) GEOMETRY primitives in the API —
+    `GeomPrim`/`Warp` live in kt-fx, and mirror (legacy byte path, t297), event_grid (the tile
+    program, t943/t944) and pan3d (camera context, t298) carry byte rules of their own; (3) a
+    BARRIER pass graph — blur/glow/edges/vhs/sharpen/pixelate/halftone/radial_blur/drop_shadow/
+    chroma_ab run multi-pass on the GPU with the K× rule and have AVX2 twins on the CPU (t198).
 - [ ] 4.2 FX picker, variants and thumbnails from manifests (`fx_registry.rs`, `fx_thumbs.rs`); verify t48, t252, t253, t976 and `layout_tests.rs`/`reach_tests.rs` green; rewrite the "add a video effect" checklist in `src/libs/kt-fx/CLAUDE.md` and `src/libs/kt-gpu/CLAUDE.md`; commit stage 4
 
 ## 5. Transitions
