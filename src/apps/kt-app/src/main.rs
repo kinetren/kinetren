@@ -52,6 +52,7 @@ mod timeline;
 mod toolbar;
 mod transition_editor;
 mod user_store;
+mod welcome;
 mod util;
 mod widgets;
 mod window_frame;

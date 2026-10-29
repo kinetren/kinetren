@@ -16,13 +16,14 @@ done).
 
 ## 1. Probes before code
 
-- [ ] 1.1 Probe: can egui 0.36 open a `menu_button` popup of the menu bar programmatically (memory popup id of the File menu) — a throwaway harness test in `src/apps/kt-app/src/reach_tests.rs` that opens File by code and finds "Create a generator…" in the accessibility tree of the next frame. Record the answer here; if no, adjust the t988 PATH to the fallback of design (Risks) before stage 4
+- [x] 1.1 Probe: can egui 0.36 open a `menu_button` popup of the menu bar programmatically (memory popup id of the File menu) — a throwaway harness test in `src/apps/kt-app/src/reach_tests.rs` that opens File by code and finds "Create a generator…" in the accessibility tree of the next frame. Record the answer here; if no, adjust the t988 PATH to the fallback of design (Risks) before stage 4
 - [ ] 1.2 Probe: render one poster frame of a fixture project through the reel-preview offline path at 320×180 on release, timing it (`cargo build --release -p kt-app`; a `#[ignore]` timing test); record the time here
 
 ## 2. Records in the user store
 
-- [ ] 2.1 `user_store.rs`: `recent.json` (bound 12, newest first, missing kept), `templates.json`, the tour progress and the start choice, each with the `.broken` and future-version rules; seed from `last_project` once; posters folder ownership. Write t985 and t987 first (red), then green
-- [ ] 2.2 Commit stage 2 (`cargo test -p kt-app`)
+- [x] 2.1 `user_store.rs`: `recent.json` (bound 12, newest first, missing kept), `templates.json`, the tour progress and the start choice, each with the `.broken` and future-version rules; seed from `last_project` once; posters folder ownership. Write t985 and t987 first (red), then green
+  - `StartStore` (four files, `RECORDS_VERSION` 1). Red proofs: a bound of 14 instead of 12 fails t985; a "Start over" that also resets the start choice fails t987. The records are written tmp + rename WITHOUT fsync: with `write_atomic` t985 took 90 s on a busy disk (two fsyncs per write), and the same would stall the UI thread on every open; a lost recent list costs nothing. The poster half of t985 (the real render) comes with 3.3.
+- [x] 2.2 Commit stage 2 (`cargo test -p kt-app`)
 
 ## 3. The welcome window
 

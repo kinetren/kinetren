@@ -6108,3 +6108,18 @@ fn t976_a_test_door_plugin_reaches_the_picker_and_no_reference_list() {
         "the common parameter row does not draw the plugin's passport ({label})"
     );
 }
+
+/// PROBE 1.1 (welcome-window-and-tour): egui 0.36 opens a menu-bar popup from code.
+#[test]
+fn probe_menu_opens_by_code() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = crate::layout_tests::harness_sized(1440.0, 860.0);
+    let label = crate::i18n::tr(crate::i18n::k::bin::menu::NEW_GENERATOR).to_string();
+    assert_eq!(h.query_all_by_label_contains(&label).count(), 0, "the menu is closed at first");
+    let id: egui::Id = h.ctx.data(|d| d.get_temp(egui::Id::new("kt_menu_root_file"))).expect("id");
+    egui::Popup::open_id(&h.ctx, id.with("popup"));
+    h.step();
+    h.step();
+    let labels = crate::layout_tests::menu_labels(&mut h);
+    assert!(h.query_all_by_label_contains(&label).count() > 0, "the File menu did not open by code: {labels:?}");
+}

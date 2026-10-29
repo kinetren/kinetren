@@ -397,6 +397,7 @@ impl KtApp {
             }
         });
         crate::widgets::field_probe::note("menu.file", file_btn.response.rect);
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("kt_menu_root_file"), file_btn.response.id));
         let edit_btn = ui.menu_button(tr(k::menu::edit::TITLE), |ui| {
             if Self::menu_btn(ui, tr(k::menu::edit::UNDO), "Ctrl+Z") {
                 self.undo();
