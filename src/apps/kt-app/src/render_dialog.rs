@@ -15,7 +15,7 @@ pub struct RenderJob {
     /// Common frame of a background TASK (R.49, item 367): channel, cancel, pause and
     /// stopping the thread on `Drop`. Render is the reference from which the frame was
     /// extracted; everything below is its own numbers for the Run panel.
-    pub job: crate::bg::BgJob<ExportProgress, Result<kt_engine::export::ExportStats, String>>,
+    pub job: crate::bg::BgJob<kt_engine::export::ExportEvent, Result<kt_engine::export::ExportStats, String>>,
     pub progress: ExportProgress,
     pub out_path: String,
     /// Launch settings (for the Output panel).
@@ -220,6 +220,7 @@ impl KtApp {
             audio_bitrate: self.render_setup.audio_bitrate,
             force_encoder: self.render_setup.encoder.clone(),
             resolution: self.render_setup.resolution,
+            placeholders: self.render_setup.missing.clone(),
         };
         let opts_thread = opts.clone();
         let out_path_thread = out_path.clone();
@@ -496,9 +497,9 @@ impl KtApp {
         self.draw_render_setup(ctx);
         let Some(job) = &mut self.render_job else { return };
         if job.job.poll()
-            && let Some(p) = job.job.progress
+            && let Some(kt_engine::export::ExportEvent::Progress(p)) = &job.job.progress
         {
-            job.progress = p;
+            job.progress = *p;
         }
         let mut close = false;
         let shown = crate::window_shell::Shell::new(

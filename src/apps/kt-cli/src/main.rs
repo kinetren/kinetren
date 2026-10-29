@@ -700,6 +700,20 @@ fn media_facts(project: &Project, project_path: &str) -> kt_engine::SourceFacts 
     out
 }
 
+/// One export log fact as an English line (render-window-v1-parity, D1).
+fn export_log_line(l: &kt_engine::export::ExportLog) -> String {
+    use kt_engine::export::{ExportLog, ExportPhase};
+    match l {
+        ExportLog::NotOpened { name, code } => format!("encoder {name} did not open (code {code})"),
+        ExportLog::Placeholder { label } => format!("placeholder rendered for {label}"),
+        ExportLog::Phase(ExportPhase::Video) => "phase: video".into(),
+        ExportLog::Phase(ExportPhase::Audio) => "phase: audio".into(),
+        ExportLog::Phase(ExportPhase::Finalize) | ExportLog::Finalizing => "finalizing the file".into(),
+        ExportLog::Phase(ExportPhase::Done) => "done".into(),
+        ExportLog::Error(e) => format!("error: {e}"),
+    }
+}
+
 /// Open all sources of the project. Common to the offline render and `probe --time`.
 ///
 /// `strict` — an unavailable file is an error (render: silent silence in the
@@ -1172,7 +1186,18 @@ fn run(args: &[String]) -> i32 {
                 &kt_engine::ExportBackends { video_gpu },
                 &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                |_| {},
+                // the log facts, in English, on stderr (render-window-v1-parity, D1)
+                |e| match e {
+                    kt_engine::export::ExportEvent::Opened(r) => eprintln!(
+                        "encoder: {} ({}, {}){}",
+                        r.encoder,
+                        if r.hardware { "hardware" } else { "software" },
+                        r.pix_fmt,
+                        r.options.iter().map(|(k, v)| format!(" {k}={v}")).collect::<String>()
+                    ),
+                    kt_engine::export::ExportEvent::Log(l) => eprintln!("{}", export_log_line(&l)),
+                    kt_engine::export::ExportEvent::Progress(_) => {}
+                },
             ) {
                 Ok(stats) => {
                     eprintln!(

@@ -321,6 +321,18 @@ pub fn available_encoders() -> Vec<String> {
     }
 }
 
+/// What the muxer's open cascade did (render-window-v1-parity, D2): the encoder that opened,
+/// whether it is hardware, the pixel format it is fed, the options it was opened with, and every
+/// candidate that exists in this FFmpeg and failed before it, with its error code.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OpenReport {
+    pub encoder: String,
+    pub hardware: bool,
+    pub pix_fmt: String,
+    pub options: Vec<(String, String)>,
+    pub tried: Vec<(String, i32)>,
+}
+
 /// MP4 muxer — dynamic dispatch by version.
 pub enum Muxer {
     V6(v6::Muxer),
@@ -346,6 +358,27 @@ impl Muxer {
             Muxer::V7(m) => m.encoder_name(),
             Muxer::V8(m) => m.encoder_name(),
             Muxer::V9(m) => m.encoder_name(),
+        }
+    }
+
+    /// What the open cascade did (D2).
+    pub fn open_report(&self) -> &OpenReport {
+        match self {
+            Muxer::V6(m) => m.open_report(),
+            Muxer::V7(m) => m.open_report(),
+            Muxer::V8(m) => m.open_report(),
+            Muxer::V9(m) => m.open_report(),
+        }
+    }
+
+    /// Encoded bytes handed to the muxer so far: (video, audio) packet sizes (D2) — per stream, so
+    /// the bitrate is the video's, and steady (no jump at the `+faststart` rewrite).
+    pub fn bytes(&self) -> (u64, u64) {
+        match self {
+            Muxer::V6(m) => m.bytes(),
+            Muxer::V7(m) => m.bytes(),
+            Muxer::V8(m) => m.bytes(),
+            Muxer::V9(m) => m.bytes(),
         }
     }
 

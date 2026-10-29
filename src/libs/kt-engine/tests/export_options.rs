@@ -71,6 +71,7 @@ fn t25_force_libx264_and_roundtrip_via_own_source() {
         video_bitrate: None,
         audio_bitrate: 128_000,
         resolution: None,
+        placeholders: Vec::new(),
     };
     let stats = export_mp4_with(
         &tiny_project(),
@@ -215,4 +216,116 @@ fn t33_exported_file_contains_every_frame() {
         decoded >= 60,
         "the file must contain all 60 frames (decoded {decoded}) — a drop in the muxer"
     );
+}
+
+/// A two-second (60 frames at 30 fps) version of the tiny project.
+fn two_seconds() -> Project {
+    let mut p = tiny_project();
+    for c in &mut p.clips {
+        c.duration = Tick(2 * 90_000);
+    }
+    p.validate().unwrap();
+    p
+}
+
+/// One export through the event API: every event, the stats, the size of the finished file.
+fn run_events(
+    out: &str,
+    encoder: Option<&str>,
+) -> (Vec<kt_engine::export::ExportEvent>, kt_engine::export::ExportStats, u64) {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let opts = ExportOptions { force_encoder: encoder.map(str::to_string), ..Default::default() };
+    let stats = {
+        let seen = seen.clone();
+        kt_engine::export_mp4_with_backends(
+            &two_seconds(),
+            sources(),
+            sources(),
+            out,
+            None,
+            &opts,
+            &kt_engine::ExportBackends::default(),
+            &Arc::new(AtomicBool::new(false)),
+            &Arc::new(AtomicBool::new(false)),
+            move |e| seen.lock().unwrap().push(e),
+        )
+        .expect("export")
+    };
+    let size = std::fs::metadata(out).unwrap().len();
+    let events = seen.lock().unwrap().clone();
+    (events, stats, size)
+}
+
+/// Test 954 (render-window-v1-parity, D1/D2): the encoder is named before the first frame, and
+/// the byte counters add up.
+///
+/// The muxer chooses the encoder before any frame, but only the final stats named it, so the
+/// progress window called it "auto encoder" for the whole run (the owner, kkt item 4; F-EXP-004).
+#[test]
+fn t954_encoder_named_before_the_first_frame_and_bytes_add_up() {
+    use kt_engine::export::{ExportEvent, ExportLog, ExportPhase};
+    let dir = tempfile::tempdir().unwrap();
+    for (tag, forced) in [("forced", Some("libx264")), ("cascade", None)] {
+        let out = dir.path().join(format!("t954-{tag}.mp4")).to_string_lossy().to_string();
+        let (events, stats, size) = run_events(&out, forced);
+        let first = events.iter().position(|e| !matches!(e, ExportEvent::Log(_))).expect("events");
+        let ExportEvent::Opened(rep) = &events[first] else {
+            panic!("{tag}: the first non-log event is not the encoder report: {:?}", events[first]);
+        };
+        let first_video = events
+            .iter()
+            .position(|e| matches!(e, ExportEvent::Progress(p) if p.phase == ExportPhase::Video))
+            .expect("video progress");
+        assert!(first < first_video, "{tag}: the report comes after a video step");
+        assert_eq!(rep.encoder, stats.encoder, "{tag}: the report names another encoder");
+        if forced.is_some() {
+            assert_eq!((rep.encoder.as_str(), rep.hardware, rep.pix_fmt.as_str()), ("libx264", false, "yuv420p"));
+            assert!(rep.options.iter().any(|(k, _)| k == "crf"), "{tag}: {:?}", rep.options);
+        }
+        // one "not opened" line per candidate tried before it, in the cascade's order
+        let not_opened: Vec<(String, i32)> = events
+            .iter()
+            .filter_map(|e| match e {
+                ExportEvent::Log(ExportLog::NotOpened { name, code }) => Some((name.clone(), *code)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(not_opened, rep.tried, "{tag}: the log and the report disagree");
+        let order = kt_media::muxer::encoder_cascade();
+        let at = |n: &str| order.iter().position(|o| o == n).unwrap();
+        let mut last = None;
+        for (n, code) in &rep.tried {
+            assert!(*code < 0, "{tag}: {n} failed with a non-error code {code}");
+            assert!(at(n) < at(&rep.encoder), "{tag}: {n} is not before {}", rep.encoder);
+            assert!(last.is_none_or(|l| l < at(n)), "{tag}: the tried order is not the cascade's");
+            last = Some(at(n));
+        }
+        // the byte counters never decrease, end above zero, and add up to no more than the file
+        let steps: Vec<(u64, u64)> = events
+            .iter()
+            .filter_map(|e| match e {
+                ExportEvent::Progress(p) => Some((p.video_bytes, p.audio_bytes)),
+                _ => None,
+            })
+            .collect();
+        assert!(steps.windows(2).all(|w| w[1].0 >= w[0].0 && w[1].1 >= w[0].1), "{tag}: bytes went down");
+        let (v, a) = *steps.last().unwrap();
+        assert!(v > 0 && a > 0, "{tag}: the last counters are zero: {v} {a}");
+        assert!(v + a <= size, "{tag}: {v} + {a} bytes exceed the file's {size}");
+    }
+}
+
+/// Test 955 (render-window-v1-parity, D1): the event stream holds no clock — two exports of the
+/// same project with `libx264` give the same events, element by element.
+#[test]
+fn t955_the_event_stream_holds_no_clock() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.mp4").to_string_lossy().to_string();
+    let b = dir.path().join("b.mp4").to_string_lossy().to_string();
+    let (ea, _, _) = run_events(&a, Some("libx264"));
+    let (eb, _, _) = run_events(&b, Some("libx264"));
+    assert_eq!(ea.len(), eb.len(), "the streams differ in length");
+    for (i, (x, y)) in ea.iter().zip(&eb).enumerate() {
+        assert_eq!(x, y, "event {i} differs");
+    }
 }

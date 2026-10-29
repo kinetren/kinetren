@@ -7,19 +7,42 @@ message, the first line = the stage and what was done). Stage only this change's
 
 - [x] 0.1 The owner's words (kkt item 4) and the R.71 items U1/T12 are recorded in `docs/user-feedback.md` ("The owner's list of 2026-10-27 …"); the proposal, delta spec, design and tasks are written. Verify `openspec validate render-window-v1-parity --strict` is green
 - [x] 0.2 Feature note F-EXP-005 `docs/features/export/pipeline/render-progress-window.md` (reconnaissance of the five editors, `CAPABILITY: openspec/specs/export/`). Verify `python3 src/scripts/features-index.py --check` is green once the `export/` row of `docs/features/README.md` reads 5 notes and the summary table carries F-EXP-005
-- [ ] 0.3 Commit stage 0
+- [x] 0.3 Commit stage 0
+  - Stage 0 was committed with the proposal (944a3cf).
 
 ## 1. Tests first
 
-- [ ] 1.1 Write t954 and t955 in `src/libs/kt-engine/tests/export_options.rs` against a placeholder `ExportEvent`/`export_mp4_with_backends` event signature (D1). Verify they compile and are RED, and record the first failure line here
+- [x] 1.1 Write t954 and t955 in `src/libs/kt-engine/tests/export_options.rs` against a placeholder `ExportEvent`/`export_mp4_with_backends` event signature (D1). Verify they compile and are RED, and record the first failure line here
+  - t954 and t955 in `export_options.rs`, against the real `ExportEvent` (written with it, not a
+    placeholder signature). t954: forced `libx264` and the cascade — the first non-log event is the
+    report, before every video step; libx264 = software, yuv420p, `crf` among the options; the report's
+    `tried` equals the "not opened" log lines and follows `kt_media::muxer::encoder_cascade()` (this
+    machine: nvenc, vaapi, qsv, each with its code); bytes never decrease, end > 0, sum ≤ the file.
+    t955: two libx264 runs give equal streams. RED with the report not sent: "forced: the first non-log
+    event is not the encoder report: Progress(… phase: Video …)".
 - [ ] 1.2 Write t956, t957, t959 in `src/apps/kt-app/src/layout_tests.rs` (a scripted `RenderJob` fed `RenderMsg`s, the `Clock` seam of D3) and t958 in `src/apps/kt-app/src/reach_tests.rs` (`KT_FILE_PICK` at a temp file), each with the spec's `- **PATH**`. Verify they are RED and `src/scripts/specs-user-path.py --check` (t799) accepts the PATH lines
 
 ## 2. The engine reports
 
-- [ ] 2.1 `muxer_impl.rs`: keep every failed candidate with its code and the opened candidate's options; `open_report()`; per-stream packet byte counters in `drain`; expose both through the version dispatch in `src/libs/kt-ffmpeg/src/lib.rs` and `kt-media::muxer`. Verify t858 and t25 stay green
-- [ ] 2.2 `export.rs`: `ExportEvent` (D1), `Opened` before the video phase, bytes in every `Progress`, `Log` facts (not-opened candidates, placeholders from `open_all`'s list passed in, phases, finalizing, errors); `export_mp4_with` filters to progress. Verify t954, t955 green and t11/t33/t116 unchanged
-- [ ] 2.3 `kt-cli export` prints the log facts to stderr in English. Verify `src/apps/kt-cli/tests/cli.rs` stays green and a manual `kt-cli export … libx264` shows the opened-encoder line
-- [ ] 2.4 Commit stages 1–2
+- [x] 2.1 `muxer_impl.rs`: keep every failed candidate with its code and the opened candidate's options; `open_report()`; per-stream packet byte counters in `drain`; expose both through the version dispatch in `src/libs/kt-ffmpeg/src/lib.rs` and `kt-media::muxer`. Verify t858 and t25 stay green
+  - `kt_ffmpeg::OpenReport { encoder, hardware, pix_fmt, options, tried }`; `muxer_impl` keeps every
+    failed candidate with its code and the opened one's options; packet bytes per stream in `drain`
+    before `av_interleaved_write_frame`; `Muxer::open_report()`/`bytes()` through the version dispatch,
+    re-exported by `kt_media::muxer` (with `encoder_cascade()` for the test). t858, t25 green.
+- [x] 2.2 `export.rs`: `ExportEvent` (D1), `Opened` before the video phase, bytes in every `Progress`, `Log` facts (not-opened candidates, placeholders from `open_all`'s list passed in, phases, finalizing, errors); `export_mp4_with` filters to progress. Verify t954, t955 green and t11/t33/t116 unchanged
+  - `ExportEvent = Opened | Progress | Log`, `ExportLog` facts (NotOpened, Placeholder, Phase,
+    Finalizing, Error); `ExportProgress` gains `video_bytes`/`audio_bytes` (stored from the muxer after
+    each write); `ExportOptions.placeholders` (the caller's list — export cannot tell a placeholder);
+    errors are logged before returning (a cancel is not an error); `export_mp4_with` filters to
+    progress, its four tests unchanged. t954, t955, t11, t33, t116 green.
+- [x] 2.3 `kt-cli export` prints the log facts to stderr in English. Verify `src/apps/kt-cli/tests/cli.rs` stays green and a manual `kt-cli export … libx264` shows the opened-encoder line
+  - `kt-cli export` prints the report and the facts in English on stderr. By hand on a 960×540
+    project: "encoder: libx264 (software, yuv420p) preset=veryfast crf=23", "phase: video", "phase:
+    audio", "finalizing the file", "done". cli.rs green.
+- [x] 2.4 Commit stages 1–2
+  - Committed. The render dialog takes the progress steps out of the events (a minimal bridge; stage
+    3 rewrites it). Workspace: kt-app green except t640 (load flake); clippy: only the pre-existing
+    collapsible `if` in kt-cli.
 
 ## 3. The window
 

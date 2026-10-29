@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Export progress (ETA/speed is computed by the UI — wall-clock is not ours, inv. 10).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExportProgress {
     pub audio_frames: u64,
     pub total_audio_frames: u64,
@@ -30,6 +30,32 @@ pub struct ExportProgress {
     pub total_video_frames: u64,
     /// Current phase (item 17: visible what the export is busy with).
     pub phase: ExportPhase,
+    /// Encoded bytes handed to the muxer so far, per stream (render-window-v1-parity, D2):
+    /// counts, never times — the size, the estimate and the bitrate are the caller's arithmetic.
+    pub video_bytes: u64,
+    pub audio_bytes: u64,
+}
+
+/// What an export reports (render-window-v1-parity, D1): EVENTS, not a state — the encoder that
+/// opened (once, before the first frame), the progress steps, and log facts. None carries a clock
+/// (invariant 11): two runs of one export give the same stream (t955).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExportEvent {
+    Opened(kt_media::muxer::OpenReport),
+    Progress(ExportProgress),
+    Log(ExportLog),
+}
+
+/// A log FACT, not preformatted text: the UI translates it, a test compares values.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExportLog {
+    /// A candidate of the cascade exists in this FFmpeg but did not open.
+    NotOpened { name: String, code: i32 },
+    /// A source is rendered as its placeholder (the caller's list).
+    Placeholder { label: String },
+    Phase(ExportPhase),
+    Finalizing,
+    Error(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -370,6 +396,9 @@ pub struct ExportOptions {
     pub force_encoder: Option<String>,
     /// Resolution override (None = from the project settings).
     pub resolution: Option<(u32, u32)>,
+    /// Labels of the sources the caller opened as placeholders: each becomes a log fact
+    /// (render-window-v1-parity, D1) — export cannot tell a placeholder from a source itself.
+    pub placeholders: Vec<String>,
 }
 
 impl Default for ExportOptions {
@@ -380,6 +409,7 @@ impl Default for ExportOptions {
             audio_bitrate: 192_000,
             force_encoder: None,
             resolution: None,
+            placeholders: Vec::new(),
         }
     }
 }
@@ -406,7 +436,11 @@ pub fn export_mp4_with(
         &ExportBackends::default(),
         cancel,
         pause,
-        progress,
+        move |e| {
+            if let ExportEvent::Progress(p) = e {
+                progress(p)
+            }
+        },
     )
 }
 
@@ -423,7 +457,7 @@ pub fn export_mp4_with_backends(
     backends: &ExportBackends,
     cancel: &Arc<AtomicBool>,
     pause: &Arc<AtomicBool>,
-    progress: impl Fn(ExportProgress) + Send + Sync + 'static,
+    events: impl Fn(ExportEvent) + Send + Sync + 'static,
 ) -> Result<ExportStats, ExportError> {
     // pause (port of v1 waitWhilePaused): cooperative wait of 40 ms,
     // cancellable; checked on every frame/chunk via the progress wrappers
@@ -450,7 +484,7 @@ pub fn export_mp4_with_backends(
     // so its hardware encoders are available. An external ffmpeg binary
     // and mkfifo are no longer needed (invariant 9 strengthened: not only without
     // temporary files, but also without external processes).
-    let mut muxer = kt_media::muxer::Muxer::open(&kt_media::muxer::MuxConfig {
+    let muxer = kt_media::muxer::Muxer::open(&kt_media::muxer::MuxConfig {
         path: out_path.to_string(),
         width: quality.width,
         height: quality.height,
@@ -459,34 +493,66 @@ pub fn export_mp4_with_backends(
         video_bitrate: opts.video_bitrate,
         audio_bitrate: opts.audio_bitrate,
         force_encoder: opts.force_encoder.clone(),
-    })
-    .map_err(|e| ExportError::Io(std::io::Error::other(e)))?;
+    });
+    let events = Arc::new(events);
+    let mut muxer = match muxer {
+        Ok(m) => m,
+        Err(e) => {
+            events(ExportEvent::Log(ExportLog::Error(e.to_string())));
+            return Err(ExportError::Io(std::io::Error::other(e)));
+        }
+    };
+    // THE ENCODER IS NAMED BEFORE THE FIRST FRAME (D1): the cascade's failures first, then the
+    // one that opened
+    let opened = muxer.open_report().clone();
+    for (name, code) in &opened.tried {
+        events(ExportEvent::Log(ExportLog::NotOpened { name: name.clone(), code: *code }));
+    }
+    events(ExportEvent::Opened(opened));
+    for label in &opts.placeholders {
+        events(ExportEvent::Log(ExportLog::Placeholder { label: label.clone() }));
+    }
 
     // Audio and video are rendered sequentially into one muxer (it
     // interleaves packets itself via av_interleaved_write_frame).
     let a_done = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let v_done = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let progress = Arc::new(progress);
+    // the muxer's byte counts, stored after each write (the writer owns the muxer)
+    let v_bytes = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let a_bytes = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let report = {
-        let progress = progress.clone();
+        let events = events.clone();
         let a_done = a_done.clone();
         let v_done = v_done.clone();
+        let v_bytes = v_bytes.clone();
+        let a_bytes = a_bytes.clone();
         move |phase: ExportPhase| {
-            progress(ExportProgress {
+            events(ExportEvent::Progress(ExportProgress {
                 audio_frames: a_done.load(Ordering::Relaxed),
                 total_audio_frames: total_audio,
                 video_frames: v_done.load(Ordering::Relaxed),
                 total_video_frames: total_video,
                 phase,
-            })
+                video_bytes: v_bytes.load(Ordering::Relaxed),
+                audio_bytes: a_bytes.load(Ordering::Relaxed),
+            }))
         }
+    };
+    let store_bytes = |m: &kt_media::muxer::Muxer| {
+        let (v, a) = m.bytes();
+        v_bytes.store(v, Ordering::Relaxed);
+        a_bytes.store(a, Ordering::Relaxed);
     };
 
     // 1) video (an error/cancel inside the phases — delete the partial file, item 17)
     let cleanup_on_err = |e: ExportError| {
+        if !matches!(e, ExportError::Cancelled) {
+            events(ExportEvent::Log(ExportLog::Error(e.to_string())));
+        }
         let _ = std::fs::remove_file(out_path);
         e
     };
+    events(ExportEvent::Log(ExportLog::Phase(ExportPhase::Video)));
     let vstats = {
         let v_done = v_done.clone();
         let report = report.clone();
@@ -504,11 +570,16 @@ pub fn export_mp4_with_backends(
                     report(ExportPhase::Video);
                 }
             },
-            |rgba| muxer.write_video(rgba).map_err(std::io::Error::other),
+            |rgba| {
+                muxer.write_video(rgba).map_err(std::io::Error::other)?;
+                store_bytes(&muxer);
+                Ok(())
+            },
         )
         .map_err(|e| cleanup_on_err(e.into()))?
     };
     // 2) audio
+    events(ExportEvent::Log(ExportLog::Phase(ExportPhase::Audio)));
     let astats = {
         let a_done = a_done.clone();
         let report = report.clone();
@@ -524,7 +595,11 @@ pub fn export_mp4_with_backends(
                     report(ExportPhase::Audio);
                 }
             },
-            |chunk| muxer.write_audio(chunk).map_err(std::io::Error::other),
+            |chunk| {
+                muxer.write_audio(chunk).map_err(std::io::Error::other)?;
+                store_bytes(&muxer);
+                Ok(())
+            },
         )
         .map_err(|e| cleanup_on_err(e.into()))?
     };
@@ -534,9 +609,15 @@ pub fn export_mp4_with_backends(
         let _ = std::fs::remove_file(out_path);
         return Err(ExportError::Cancelled);
     }
+    store_bytes(&muxer);
+    events(ExportEvent::Log(ExportLog::Finalizing));
     report(ExportPhase::Finalize);
     let encoder = muxer.encoder_name().to_string();
-    muxer.finish().map_err(|e| ExportError::Io(std::io::Error::other(e)))?;
+    if let Err(e) = muxer.finish() {
+        events(ExportEvent::Log(ExportLog::Error(e.to_string())));
+        return Err(ExportError::Io(std::io::Error::other(e)));
+    }
+    events(ExportEvent::Log(ExportLog::Phase(ExportPhase::Done)));
     report(ExportPhase::Done);
     Ok(ExportStats {
         video_frames: vstats.video_frames,

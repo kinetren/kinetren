@@ -56,6 +56,9 @@ pub struct Muxer {
     audio_fifo: Vec<f32>,
     frame_size: usize,
     encoder_name: String,
+    report: crate::OpenReport,
+    /// Encoded packet bytes written so far: [video, audio].
+    bytes: [u64; 2],
 }
 
 unsafe impl Send for Muxer {}
@@ -96,6 +99,8 @@ impl Muxer {
         unsafe { (api.av_log_set_level)(8) }; // AV_LOG_FATAL
         let mut opened: Option<(String, *mut ffi::AVCodecContext, ffi::AVPixelFormat)> = None;
         let mut last_err = String::new();
+        // every candidate that exists here and failed, with its code, and the opened one's facts
+        let mut report = crate::OpenReport::default();
         for spec in video_encoders() {
             let name = &spec.name;
             if let Some(pref) = &cfg.force_encoder
@@ -136,9 +141,18 @@ impl Muxer {
             let r = unsafe { (api.avcodec_open2)(ctx, codec, &mut vopts) };
             unsafe { (api.av_dict_free)(&mut vopts) };
             if r >= 0 {
+                report.encoder = name.to_string();
+                report.hardware = spec.hardware;
+                report.pix_fmt = match spec.pix {
+                    crate::encoders::PixFmt::Yuv420p => "yuv420p",
+                    crate::encoders::PixFmt::Nv12 => "nv12",
+                }
+                .to_string();
+                report.options = opts.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
                 opened = Some((name.to_string(), ctx, av_pix(spec.pix)));
                 break;
             }
+            report.tried.push((name.to_string(), r));
             last_err = format!("{name}: code {r}");
             let mut ctx = ctx;
             unsafe { (api.avcodec_free_context)(&mut ctx) };
@@ -253,11 +267,21 @@ impl Muxer {
             audio_fifo: Vec::new(),
             frame_size,
             encoder_name: enc_name.to_string(),
+            report,
+            bytes: [0, 0],
         })
     }
 
     pub fn encoder_name(&self) -> &str {
         &self.encoder_name
+    }
+
+    pub fn open_report(&self) -> &crate::OpenReport {
+        &self.report
+    }
+
+    pub fn bytes(&self) -> (u64, u64) {
+        (self.bytes[0], self.bytes[1])
     }
 
     pub fn write_video(&mut self, rgba: &[u8]) -> Result<(), FfError> {
@@ -371,6 +395,9 @@ impl Muxer {
                 let st = &**(*self.fmt).streams.add(stream_idx as usize);
                 (api.av_packet_rescale_ts)(self.pkt, tb_src, st.time_base);
                 (*self.pkt).stream_index = stream_idx;
+                // the packet's bytes, per stream, before the muxer takes them (D2)
+                let which = if stream_idx == self.vstream_idx { 0 } else { 1 };
+                self.bytes[which] += (*self.pkt).size.max(0) as u64;
                 let r = (api.av_interleaved_write_frame)(self.fmt, self.pkt);
                 (api.av_packet_unref)(self.pkt);
                 if r < 0 {
