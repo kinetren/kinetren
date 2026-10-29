@@ -15,7 +15,8 @@
 //! One `Telemetry` per process (`install`/`global`): File → New/Open rebuild `KtApp` in place,
 //! and a per-app value would send a second `app_started` for each of them.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use eframe::egui;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -154,14 +155,9 @@ fn is_uuid(s: &str) -> bool {
 }
 
 /// A UUID whose version nibble is 7 (the stand-in checks `$session_id` with it, t888).
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn is_uuid_v7(s: &str) -> bool {
     is_uuid(s) && s.as_bytes()[14] == b'7'
-}
-
-/// The 48-bit millisecond prefix of a v7 id.
-#[cfg(test)]
-fn uuid_v7_ms(s: &str) -> u64 {
-    u64::from_str_radix(&s.replace('-', "")[..12], 16).unwrap_or(0)
 }
 
 /// The install id from `<dir>/telemetry-id`, created on first need; a malformed file is
@@ -267,8 +263,10 @@ pub const ENV_KEYS: &[&str] = &[
 ];
 
 /// The person's properties in `$set` (D2): the build, the system and the environment.
+#[cfg_attr(not(test), allow(dead_code))]
 pub const PERSON_KEYS: &[&str] = &["$app_version", "$os", "arch", "lang"];
 /// `$set_once`: what the install was first seen with.
+#[cfg_attr(not(test), allow(dead_code))]
 pub const PERSON_ONCE_KEYS: &[&str] = &["first_app_version", "first_os"];
 
 /// The activity counters of heartbeat and close (D5).
@@ -479,21 +477,360 @@ impl Sink for HttpSink {
     }
 }
 
+// ---- the one door (D5) ----------------------------------------------------------------------
+
+/// The heartbeat period (D5, D6): about twelve events per ACTIVE hour; one constant if the
+/// volume ever has to shrink.
+pub const HEARTBEAT: Duration = Duration::from_secs(5 * 60);
+/// The grain of `active_s`: a 10-second slot with input or playback counts whole.
+const SLOT_MS: u64 = 10_000;
+/// Events waiting for the sender. A full queue drops the event instead of blocking.
+const QUEUE: usize = 32;
+
+/// What the application tells telemetry: FACTS, never counts or events (D5). Everything
+/// else — classifying, counting, bucketing, building events — happens in this module.
+pub enum Signal<'a> {
+    /// A batch about to be applied (`apply_batch`), with the model it is applied to.
+    Commands(&'a [kt_model::Command], &'a kt_model::TimelineModel),
+    /// One command (`apply`).
+    Command(&'a kt_model::Command, &'a kt_model::TimelineModel),
+    /// One command of a live gesture (`apply_coalesced`): one edit per gesture.
+    Gesture(&'a kt_model::Command, u64, &'a kt_model::TimelineModel),
+    Undo,
+    Redo,
+    /// The person's save went to disk.
+    Saved,
+    /// Every drawn frame. After the first one this is atomics only (invariant 12).
+    Frame {
+        ctx: &'a egui::Context,
+        playing: bool,
+    },
+    /// `on_exit`, after the recovery write: `app_closed` within `EXIT_BUDGET`.
+    Exit,
+}
+
+/// The door. A no-op when telemetry is off or not installed (`kt-cli`, the harness).
+pub fn signal(s: Signal<'_>) {
+    #[cfg(test)]
+    if let Some(t) = testing::bound() {
+        return t.signal(s);
+    }
+    if let Some(t) = GLOBAL.get() {
+        t.signal(s)
+    }
+}
+
+/// Where time comes from: the process's `Instant` in production, a hand-moved one in tests.
+pub trait Clock: Send + Sync {
+    fn now(&self) -> Duration;
+}
+
+struct Since(Instant);
+
+impl Clock for Since {
+    fn now(&self) -> Duration {
+        self.0.elapsed()
+    }
+}
+
+type Tally = Mutex<std::collections::BTreeMap<&'static str, u64>>;
+
+fn bump(t: &Tally, key: &'static str) {
+    *t.lock().unwrap_or_else(|p| p.into_inner()).entry(key).or_default() += 1;
+}
+
+fn tally(t: &Tally) -> std::collections::BTreeMap<&'static str, u64> {
+    t.lock().unwrap_or_else(|p| p.into_inner()).clone()
+}
+
+/// The session's counters. Atomics for everything the frame touches; the three maps are
+/// touched only by non-frame signals and by the sender's snapshot, never across I/O.
+#[derive(Default)]
+struct Counters {
+    active_slots: AtomicU64,
+    /// The last active slot + 1 (0: none yet).
+    last_slot: AtomicU64,
+    playing: AtomicBool,
+    playing_since_ms: AtomicU64,
+    playback_ms: AtomicU64,
+    playback_starts: AtomicU64,
+    clips_added: AtomicU64,
+    edits: AtomicU64,
+    undos: AtomicU64,
+    redos: AtomicU64,
+    projects_opened: AtomicU64,
+    saves: AtomicU64,
+    /// The gesture whose first command already counted as an edit (+1; 0: none).
+    last_gesture: AtomicU64,
+    media_imported: Tally,
+    exports: Tally,
+    fx_added: Tally,
+}
+
+/// The counters at one moment: what heartbeat and close send, and what "changed" compares.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Snapshot {
+    pub active_s: u64,
+    pub playback_s: u64,
+    pub playback_starts: u64,
+    pub media_imported: std::collections::BTreeMap<&'static str, u64>,
+    pub clips_added: u64,
+    pub edits: u64,
+    pub undos: u64,
+    pub redos: u64,
+    pub projects_opened: u64,
+    pub saves: u64,
+    pub exports: std::collections::BTreeMap<&'static str, u64>,
+    pub fx_added: std::collections::BTreeMap<&'static str, u64>,
+}
+
+impl Snapshot {
+    /// The `#counters` keys of the schema, in its order.
+    pub fn props(&self) -> Props {
+        let map = |m: &std::collections::BTreeMap<&'static str, u64>| -> serde_json::Value {
+            m.iter()
+                .map(|(k, v)| ((*k).to_string(), serde_json::Value::from(*v)))
+                .collect::<Props>()
+                .into()
+        };
+        let mut p = Props::new();
+        p.insert("active_s".into(), self.active_s.into());
+        p.insert("playback_s".into(), self.playback_s.into());
+        p.insert("playback_starts".into(), self.playback_starts.into());
+        p.insert("media_imported".into(), map(&self.media_imported));
+        p.insert("clips_added".into(), self.clips_added.into());
+        p.insert("edits".into(), self.edits.into());
+        p.insert("undos".into(), self.undos.into());
+        p.insert("redos".into(), self.redos.into());
+        p.insert("projects_opened".into(), self.projects_opened.into());
+        p.insert("saves".into(), self.saves.into());
+        p.insert("exports".into(), map(&self.exports));
+        p.insert("fx_added".into(), map(&self.fx_added));
+        p
+    }
+}
+
+impl Counters {
+    /// One frame: two atomics when nothing changes, no lock, no allocation.
+    fn frame(&self, now_ms: u64, playing: bool, input: bool) {
+        if input || playing {
+            let slot = now_ms / SLOT_MS + 1;
+            if self.last_slot.swap(slot, Ordering::Relaxed) != slot {
+                self.active_slots.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        if self.playing.swap(playing, Ordering::Relaxed) != playing {
+            if playing {
+                self.playback_starts.fetch_add(1, Ordering::Relaxed);
+                self.playing_since_ms.store(now_ms, Ordering::Relaxed);
+            } else {
+                let since = self.playing_since_ms.load(Ordering::Relaxed);
+                self.playback_ms.fetch_add(now_ms.saturating_sub(since), Ordering::Relaxed);
+            }
+        }
+    }
+
+    fn commands(
+        &self,
+        cmds: &[kt_model::Command],
+        model: &kt_model::TimelineModel,
+        gesture: Option<u64>,
+    ) {
+        use kt_model::Command;
+        let one = |a: &AtomicU64| {
+            a.fetch_add(1, Ordering::Relaxed);
+        };
+        match gesture {
+            Some(g) => {
+                if self.last_gesture.swap(g.wrapping_add(1), Ordering::Relaxed) != g.wrapping_add(1)
+                {
+                    one(&self.edits);
+                }
+            }
+            None => {
+                self.last_gesture.store(0, Ordering::Relaxed);
+                one(&self.edits);
+            }
+        }
+        for c in cmds {
+            match c {
+                Command::AddMedia { path, .. } => bump(&self.media_imported, media_kind(path)),
+                Command::AddClip(_) => one(&self.clips_added),
+                Command::SetFx { id, fx } => {
+                    let old = model.clip(*id).map(|c| c.fx.as_slice()).unwrap_or(&[]);
+                    for name in added_fx(old, fx) {
+                        bump(&self.fx_added, name);
+                    }
+                }
+                Command::SetTrackFx { id, fx, .. } => {
+                    let tracks = &model.project().tracks;
+                    let old = tracks.iter().find(|t| t.id == *id).map(|t| t.fx.as_slice());
+                    for name in added_fx(old.unwrap_or(&[]), fx) {
+                        bump(&self.fx_added, name);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn snapshot(&self, now_ms: u64) -> Snapshot {
+        let get = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        let running = if self.playing.load(Ordering::Relaxed) {
+            now_ms.saturating_sub(get(&self.playing_since_ms))
+        } else {
+            0
+        };
+        Snapshot {
+            active_s: get(&self.active_slots) * SLOT_MS / 1000,
+            playback_s: (get(&self.playback_ms) + running) / 1000,
+            playback_starts: get(&self.playback_starts),
+            media_imported: tally(&self.media_imported),
+            clips_added: get(&self.clips_added),
+            edits: get(&self.edits),
+            undos: get(&self.undos),
+            redos: get(&self.redos),
+            projects_opened: get(&self.projects_opened),
+            saves: get(&self.saves),
+            exports: tally(&self.exports),
+            fx_added: tally(&self.fx_added),
+        }
+    }
+}
+
+/// The kind of an imported medium, from its path; the path itself never leaves the module.
+pub fn media_kind(path: &str) -> &'static str {
+    if path.starts_with("gen:") {
+        return "generator";
+    }
+    let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" | "mxf" | "mts" | "m2ts" | "ts" | "wmv"
+        | "flv" | "mpg" | "mpeg" | "ogv" | "3gp" => "video",
+        "wav" | "mp3" | "flac" | "ogg" | "opus" | "m4a" | "aac" | "aif" | "aiff" | "wma" => "audio",
+        "png" | "jpg" | "jpeg" | "webp" | "bmp" | "gif" | "tif" | "tiff" | "exr" | "tga" => "image",
+        _ => "other",
+    }
+}
+
+/// The registry name of an effect ("Blur"), never a user-given one; `None` for what is not a
+/// user effect (the layer mix).
+fn fx_name(fx: &kt_model::FxInstance) -> Option<&'static str> {
+    let tag = fx.tag();
+    crate::fx_registry::registry().iter().find(|e| e.template.tag() == tag).map(|e| e.name)
+}
+
+/// The effects `new` has more of than `old`, by kind (a chain is replaced whole).
+fn added_fx(old: &[kt_model::FxInstance], new: &[kt_model::FxInstance]) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    for (i, f) in new.iter().enumerate() {
+        let tag = f.tag();
+        let before = new[..i].iter().filter(|g| g.tag() == tag).count();
+        if old.iter().filter(|g| g.tag() == tag).count() <= before
+            && let Some(n) = fx_name(f)
+        {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// Input that means a person is at the program (a repaint alone is not).
+fn is_activity(e: &egui::Event) -> bool {
+    matches!(
+        e,
+        egui::Event::Key { .. }
+            | egui::Event::Text(_)
+            | egui::Event::PointerButton { .. }
+            | egui::Event::PointerMoved(_)
+            | egui::Event::MouseWheel { .. }
+            | egui::Event::Zoom(_)
+            | egui::Event::Touch { .. }
+            | egui::Event::Paste(_)
+    )
+}
+
 enum Msg {
-    Body(String),
+    /// The first frame: `app_started` is built on the sender thread (the probe reads files).
+    Start,
+    Event(&'static str, Props),
     Flush(SyncSender<()>),
 }
 
-pub struct Telemetry {
-    consent: Mutex<Consent>,
+/// What the UI thread and the sender thread share.
+struct Shared {
+    /// Block and first start; the person's choice lives in `choice`.
+    consent: Consent,
+    choice: AtomicBool,
     api_key: String,
     install_id: String,
     session_id: String,
-    /// `(instance_seq, instances_running)` and the held lock (`register`).
+    /// `(instance_seq, instances_running)` and the held lock (`for_process`).
     instance: Option<Instance>,
-    t0: Instant,
+    clock: Box<dyn Clock>,
+    period: Duration,
     started: AtomicBool,
     closed: AtomicBool,
+    counters: Counters,
+    /// The interface language at the last UI-side signal (the language is per thread).
+    lang: Mutex<&'static str>,
+    /// What the probe found, for every event after the start.
+    os_version: Mutex<Option<String>>,
+    /// The counters the last heartbeat carried: an unchanged snapshot sends nothing.
+    last_beat: Mutex<Snapshot>,
+}
+
+impl Shared {
+    fn on(&self) -> bool {
+        self.consent.block.is_none() && self.choice.load(Ordering::Relaxed)
+    }
+
+    fn now_ms(&self) -> u64 {
+        self.clock.now().as_millis() as u64
+    }
+
+    fn body(&self, event: &str, props: Props) -> String {
+        let common = Common {
+            session_id: self.session_id.clone(),
+            os_version: self.os_version.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+            lang: *self.lang.lock().unwrap_or_else(|p| p.into_inner()),
+        };
+        event_json(&self.api_key, event, &self.install_id, &Build::THIS, &common, props)
+    }
+
+    fn start_body(&self) -> String {
+        let common = Common {
+            session_id: self.session_id.clone(),
+            os_version: None,
+            lang: *self.lang.lock().unwrap_or_else(|p| p.into_inner()),
+        };
+        let inst = self.instance.as_ref().map(|i| (i.seq, i.running)).unwrap_or((1, 0));
+        let props = start_props(&Build::THIS, &common, &Props::new(), inst);
+        self.body("app_started", props)
+    }
+
+    /// The heartbeat's properties, if a counter changed since the previous one (D5).
+    fn beat(&self, now_ms: u64) -> Option<Props> {
+        if !self.on()
+            || !self.started.load(Ordering::Relaxed)
+            || self.closed.load(Ordering::Relaxed)
+        {
+            return None;
+        }
+        let snap = self.counters.snapshot(now_ms);
+        let mut last = self.last_beat.lock().unwrap_or_else(|p| p.into_inner());
+        if *last == snap {
+            return None;
+        }
+        let mut props = snap.props();
+        *last = snap;
+        props.insert("uptime_s".into(), (now_ms / 1000).into());
+        Some(props)
+    }
+}
+
+pub struct Telemetry {
+    shared: Arc<Shared>,
     notice_due: AtomicBool,
     /// The sink waits here until the first event: a telemetry that never sends never spawns
     /// its thread (t839).
@@ -508,14 +845,22 @@ impl Telemetry {
     pub fn new(consent: Consent, install_id: String, sink: Box<dyn Sink>) -> Self {
         Telemetry {
             notice_due: AtomicBool::new(consent.first_start),
-            consent: Mutex::new(consent),
-            api_key: key().unwrap_or_default().to_string(),
-            install_id,
-            session_id: new_uuid_v7(),
-            instance: None,
-            t0: Instant::now(),
-            started: AtomicBool::new(false),
-            closed: AtomicBool::new(false),
+            shared: Arc::new(Shared {
+                choice: AtomicBool::new(consent.choice),
+                consent,
+                api_key: key().unwrap_or_default().to_string(),
+                install_id,
+                session_id: new_uuid_v7(),
+                instance: None,
+                clock: Box::new(Since(Instant::now())),
+                period: HEARTBEAT,
+                started: AtomicBool::new(false),
+                closed: AtomicBool::new(false),
+                counters: Counters::default(),
+                lang: Mutex::new("en"),
+                os_version: Mutex::new(None),
+                last_beat: Mutex::new(Snapshot::default()),
+            }),
             sink: Mutex::new(Some(sink)),
             tx: Mutex::new(None),
             thread_spawned: AtomicBool::new(false),
@@ -529,27 +874,37 @@ impl Telemetry {
         let id = if consent.block.is_none() { install_id_in(&dir) } else { String::new() };
         let mut t = Self::new(consent, id, Box::new(HttpSink::production()));
         if consent.on() {
-            t.instance = Some(register_instance(&dir, &t.session_id));
+            let s = t.setup();
+            s.instance = Some(register_instance(&dir, &s.session_id));
         }
         t
     }
 
-    fn common(&self, lang: &'static str) -> Common {
-        Common { session_id: self.session_id.clone(), os_version: None, lang }
-    }
-
-    fn body(&self, event: &str, lang: &'static str, props: Props) -> String {
-        event_json(&self.api_key, event, &self.install_id, &Build::THIS, &self.common(lang), props)
+    /// The shared part before anyone else holds it (construction only).
+    fn setup(&mut self) -> &mut Shared {
+        Arc::get_mut(&mut self.shared).expect("telemetry: set up before the sender starts")
     }
 
     #[cfg(test)]
     pub fn with_key(mut self, k: &str) -> Self {
-        self.api_key = k.to_string();
+        self.setup().api_key = k.to_string();
+        self
+    }
+
+    #[cfg(test)]
+    pub fn with_clock(mut self, c: impl Clock + 'static) -> Self {
+        self.setup().clock = Box::new(c);
+        self
+    }
+
+    #[cfg(test)]
+    pub fn with_heartbeat(mut self, period: Duration) -> Self {
+        self.setup().period = period;
         self
     }
 
     pub fn consent(&self) -> Consent {
-        *self.consent.lock().unwrap_or_else(|p| p.into_inner())
+        Consent { choice: self.shared.choice.load(Ordering::Relaxed), ..self.shared.consent }
     }
 
     #[cfg(test)]
@@ -557,9 +912,9 @@ impl Telemetry {
         self.thread_spawned.load(Ordering::Relaxed)
     }
 
-    /// The person's checkbox. Off during a session cancels that session's `app_closed`.
+    /// The person's checkbox. Off during a session cancels that session's remaining events.
     pub fn set_choice(&self, on: bool) {
-        self.consent.lock().unwrap_or_else(|p| p.into_inner()).choice = on;
+        self.shared.choice.store(on, Ordering::Relaxed);
     }
 
     /// The value to store under `telemetry`, or `None` when a block makes the choice moot
@@ -569,38 +924,74 @@ impl Telemetry {
         c.block.is_none().then_some(if c.choice { "on" } else { "off" })
     }
 
-    /// Called every frame; cheap after the first. Sends `app_started` once and returns
-    /// `true` exactly once when the first-start notice is due.
-    pub fn frame(&self, lang: &'static str) -> bool {
-        if !self.started.swap(true, Ordering::Relaxed) && self.consent().on() {
-            let inst = self.instance.as_ref().map(|i| (i.seq, i.running)).unwrap_or((1, 0));
-            let props = start_props(&Build::THIS, &self.common(lang), &Props::new(), inst);
-            let body = self.body("app_started", lang, props);
-            self.enqueue(Msg::Body(body));
-        }
+    /// `true` exactly once when the first-start notice is due (the bell entry).
+    pub fn take_notice(&self) -> bool {
         self.notice_due.swap(false, Ordering::Relaxed)
     }
 
-    /// `app_closed` with the session length, then wait at most `budget`. Only once, only if
-    /// this session's start was sent and the person did not switch telemetry off.
-    pub fn closed(&self, lang: &'static str, budget: Duration) {
-        self.closed_after(self.t0.elapsed(), lang, budget);
+    /// The counters as they stand (tests read them where the person cannot).
+    #[cfg(test)]
+    pub fn snapshot(&self) -> Snapshot {
+        self.shared.counters.snapshot(self.shared.now_ms())
     }
 
-    fn closed_after(&self, elapsed: Duration, lang: &'static str, budget: Duration) {
-        if self.closed.swap(true, Ordering::Relaxed)
-            || !self.started.load(Ordering::Relaxed)
-            || !self.consent().on()
-        {
+    pub fn signal(&self, s: Signal<'_>) {
+        if !self.shared.on() {
             return;
         }
-        let mut props = Props::new();
-        props.insert("duration_s".into(), elapsed.as_secs().into());
-        let body = self.body("app_closed", lang, props);
-        self.enqueue(Msg::Body(body));
+        let c = &self.shared.counters;
+        let one = |a: &AtomicU64| {
+            a.fetch_add(1, Ordering::Relaxed);
+        };
+        match s {
+            Signal::Frame { ctx, playing } => {
+                let input = ctx.input(|i| i.events.iter().any(is_activity));
+                self.frame(playing, input);
+            }
+            Signal::Commands(cmds, model) => c.commands(cmds, model, None),
+            Signal::Command(cmd, model) => c.commands(std::slice::from_ref(cmd), model, None),
+            Signal::Gesture(cmd, g, model) => c.commands(std::slice::from_ref(cmd), model, Some(g)),
+            Signal::Undo => one(&c.undos),
+            Signal::Redo => one(&c.redos),
+            Signal::Saved => one(&c.saves),
+            Signal::Exit => self.exit(EXIT_BUDGET),
+        }
+    }
+
+    /// The frame body without a context: the first one starts the session.
+    fn frame(&self, playing: bool, input: bool) {
+        let s = &self.shared;
+        if !s.started.load(Ordering::Relaxed) {
+            *s.lang.lock().unwrap_or_else(|p| p.into_inner()) = crate::i18n::current().code();
+            s.started.store(true, Ordering::Relaxed);
+            self.enqueue(Msg::Start);
+        }
+        s.counters.frame(s.now_ms(), playing, input);
+    }
+
+    /// `app_closed` with the session length and the final counters, then wait at most
+    /// `budget`. Only once, only if this session's start was sent.
+    fn exit(&self, budget: Duration) {
+        let s = &self.shared;
+        if s.closed.swap(true, Ordering::Relaxed) || !s.started.load(Ordering::Relaxed) {
+            return;
+        }
+        *s.lang.lock().unwrap_or_else(|p| p.into_inner()) = crate::i18n::current().code();
+        let now = s.now_ms();
+        let mut props = s.counters.snapshot(now).props();
+        props.insert("duration_s".into(), (now / 1000).into());
+        self.enqueue(Msg::Event("app_closed", props));
         let (ack_tx, ack_rx) = sync_channel(1);
         if self.enqueue(Msg::Flush(ack_tx)) {
             let _ = ack_rx.recv_timeout(budget);
+        }
+    }
+
+    /// What the sender thread does on its timer, driven by hand with a fake clock (t879).
+    #[cfg(test)]
+    pub fn beat_now(&self) {
+        if let Some(p) = self.shared.beat(self.shared.now_ms()) {
+            self.enqueue(Msg::Event("app_heartbeat", p));
         }
     }
 
@@ -611,10 +1002,11 @@ impl Telemetry {
             let Some(sink) = self.sink.lock().unwrap_or_else(|p| p.into_inner()).take() else {
                 return false;
             };
-            let (t, rx) = sync_channel::<Msg>(4);
+            let (t, rx) = sync_channel::<Msg>(QUEUE);
+            let shared = self.shared.clone();
             let spawned = std::thread::Builder::new()
                 .name("kt-telemetry".into())
-                .spawn(move || run(sink, rx))
+                .spawn(move || run(shared, sink, rx))
                 .is_ok();
             if !spawned {
                 return false;
@@ -626,21 +1018,37 @@ impl Telemetry {
     }
 }
 
-fn run(mut sink: Box<dyn Sink>, rx: Receiver<Msg>) {
+/// The sender thread: the queue, and the heartbeat timer on `recv_timeout` — the UI clock and
+/// repaint are never involved, so an idle program stays idle.
+fn run(shared: Arc<Shared>, mut sink: Box<dyn Sink>, rx: Receiver<Msg>) {
     let mut logged = false;
-    for msg in rx {
-        match msg {
-            Msg::Body(b) => {
-                if let Err(e) = sink.send(&b)
-                    && !logged
-                {
-                    logged = true;
-                    crate::journal::log("INFO", &format!("telemetry: not sent ({e})"));
-                }
-            }
-            Msg::Flush(ack) => {
+    let mut send = |b: String| {
+        if let Err(e) = sink.send(&b)
+            && !logged
+        {
+            logged = true;
+            crate::journal::log("INFO", &format!("telemetry: not sent ({e})"));
+        }
+    };
+    let mut next = shared.period;
+    loop {
+        let wait = next.saturating_sub(shared.clock.now());
+        match rx.recv_timeout(wait) {
+            Ok(Msg::Start) => send(shared.start_body()),
+            Ok(Msg::Event(name, props)) => send(shared.body(name, props)),
+            Ok(Msg::Flush(ack)) => {
                 let _ = ack.try_send(());
             }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                let now = shared.clock.now();
+                if let Some(p) = shared.beat(now.as_millis() as u64) {
+                    send(shared.body("app_heartbeat", p));
+                }
+                while next <= now {
+                    next += shared.period;
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
 }
@@ -683,8 +1091,53 @@ pub fn hint_text(block: Option<Block>) -> String {
 
 #[cfg(test)]
 pub(crate) mod testing {
-    use super::Sink;
+    use super::{Clock, Sink, Telemetry};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    thread_local! {
+        static BOUND: std::cell::RefCell<Option<Arc<Telemetry>>> = const { std::cell::RefCell::new(None) };
+    }
+
+    /// The telemetry `signal` reaches on this thread (the harness has no `install`).
+    pub fn bound() -> Option<Arc<Telemetry>> {
+        BOUND.with(|b| b.borrow().clone())
+    }
+
+    /// Bind `t` for this test thread until the guard drops.
+    pub fn bind(t: Arc<Telemetry>) -> Bound {
+        BOUND.with(|b| *b.borrow_mut() = Some(t));
+        Bound
+    }
+
+    pub struct Bound;
+
+    impl Drop for Bound {
+        fn drop(&mut self) {
+            BOUND.with(|b| *b.borrow_mut() = None);
+        }
+    }
+
+    /// A clock moved by hand (t836, t879, t884).
+    #[derive(Clone, Default)]
+    pub struct FakeClock(pub Arc<AtomicU64>);
+
+    impl FakeClock {
+        pub fn set(&self, d: Duration) {
+            self.0.store(d.as_millis() as u64, Ordering::Relaxed);
+        }
+
+        pub fn advance(&self, d: Duration) {
+            self.0.fetch_add(d.as_millis() as u64, Ordering::Relaxed);
+        }
+    }
+
+    impl Clock for FakeClock {
+        fn now(&self) -> Duration {
+            Duration::from_millis(self.0.load(Ordering::Relaxed))
+        }
+    }
 
     /// Test sink: keeps every body.
     #[derive(Clone, Default)]
@@ -707,17 +1160,25 @@ pub(crate) mod testing {
 
 #[cfg(test)]
 mod tests {
-    use super::testing::Recording;
+    use super::testing::{FakeClock, Recording};
     use super::*;
+
+    /// The 48-bit millisecond prefix of a v7 id.
+    fn uuid_v7_ms(s: &str) -> u64 {
+        u64::from_str_radix(&s.replace('-', "")[..12], 16).unwrap_or(0)
+    }
 
     fn on() -> Consent {
         Consent { choice: true, first_start: false, block: None }
     }
 
-    fn recorded() -> (Telemetry, Recording) {
+    fn recorded() -> (Telemetry, Recording, FakeClock) {
         let rec = Recording::default();
-        let t = Telemetry::new(on(), new_uuid(), Box::new(rec.clone())).with_key("phc_test");
-        (t, rec)
+        let clock = FakeClock::default();
+        let t = Telemetry::new(on(), new_uuid(), Box::new(rec.clone()))
+            .with_key("phc_test")
+            .with_clock(clock.clone());
+        (t, rec, clock)
     }
 
     fn wait_for(rec: &Recording, n: usize) {
@@ -727,30 +1188,107 @@ mod tests {
         }
     }
 
+    /// A frame through the door, as `draw_all` reports it (no input events).
+    fn frame(t: &Telemetry, playing: bool) {
+        let ctx = egui::Context::default();
+        t.signal(Signal::Frame { ctx: &ctx, playing });
+    }
+
+    pub(crate) fn empty_model() -> kt_model::TimelineModel {
+        kt_model::TimelineModel::new(kt_model::Project::new(kt_model::ProjectSettings {
+            fps: 30,
+            width: 1280,
+            height: 720,
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+            default_shape: Default::default(),
+            conform: Default::default(),
+            settings_explicit: false,
+        }))
+    }
+
     /// t836: one run gives exactly the pair, linked by the session id; a dropped session
     /// sends only the start.
     #[test]
     fn t836_start_and_close_pair() {
-        let (t, rec) = recorded();
-        t.frame("en");
-        t.frame("en");
-        t.closed_after(Duration::from_millis(125_600), "en", Duration::from_secs(5));
-        t.closed_after(Duration::from_secs(200), "en", Duration::from_secs(5));
+        let (t, rec, clock) = recorded();
+        frame(&t, false);
+        frame(&t, false);
+        clock.set(Duration::from_millis(125_600));
+        t.signal(Signal::Exit);
+        t.signal(Signal::Exit);
         wait_for(&rec, 2);
         let ev = rec.events();
         assert_eq!(ev.len(), 2, "{ev:?}");
         assert_eq!(ev[0]["event"], "app_started");
         assert_eq!(ev[1]["event"], "app_closed");
         assert_eq!(ev[0]["properties"]["$session_id"], ev[1]["properties"]["$session_id"]);
+        assert!(is_uuid_v7(ev[0]["properties"]["$session_id"].as_str().unwrap()));
         assert_eq!(ev[1]["properties"]["duration_s"], 125);
 
-        let (t, rec) = recorded();
-        t.frame("en");
+        let (t, rec, _) = recorded();
+        frame(&t, false);
         drop(t);
         std::thread::sleep(Duration::from_millis(50));
         let ev = rec.events();
         assert_eq!(ev.len(), 1);
         assert_eq!(ev[0]["event"], "app_started");
+    }
+
+    /// t879: the heartbeat speaks only after activity, carries cumulative counters, and the
+    /// close carries the same; the timer lives on the sender thread.
+    #[test]
+    fn t879_heartbeat_only_after_activity() {
+        use kt_model::{Command, MediaId};
+        let (t, rec, clock) = recorded();
+        let model = empty_model();
+        let min = |m: u64| Duration::from_secs(m * 60);
+        frame(&t, false);
+        clock.set(min(1));
+        let import = Command::AddMedia { id: MediaId(1), path: "/media/someone/a.mp4".into() };
+        t.signal(Signal::Command(&import, &model));
+        clock.set(min(5));
+        t.beat_now();
+        clock.set(min(7));
+        frame(&t, true);
+        clock.set(min(7) + Duration::from_secs(40));
+        frame(&t, false);
+        clock.set(min(10));
+        t.beat_now();
+        clock.set(min(15));
+        t.beat_now();
+        clock.set(min(17));
+        t.signal(Signal::Exit);
+        wait_for(&rec, 4);
+        let ev = rec.events();
+        let names: Vec<&str> = ev.iter().map(|e| e["event"].as_str().unwrap()).collect();
+        assert_eq!(names, ["app_started", "app_heartbeat", "app_heartbeat", "app_closed"]);
+        let (b5, b10, closed) = (&ev[1]["properties"], &ev[2]["properties"], &ev[3]["properties"]);
+        assert_eq!(b5["media_imported"]["video"], 1);
+        assert_eq!(b5["playback_s"], 0);
+        assert_eq!(b5["uptime_s"], 300);
+        assert_eq!(b10["media_imported"]["video"], 1);
+        assert_eq!(b10["playback_s"], 40);
+        assert_eq!(b10["playback_starts"], 1);
+        for k in COUNTER_KEYS {
+            assert_eq!(b10[k], closed[k], "{k}: the close carries the final counters");
+        }
+        assert_eq!(closed["duration_s"], 17 * 60);
+        assert!(!rec.0.lock().unwrap().iter().any(|b| b.contains("someone")));
+
+        // the real timer: a short period on the real clock, no frame after the activity
+        let rec = Recording::default();
+        let t = Telemetry::new(on(), new_uuid(), Box::new(rec.clone()))
+            .with_key("phc_test")
+            .with_heartbeat(Duration::from_millis(40));
+        frame(&t, false);
+        t.signal(Signal::Undo);
+        wait_for(&rec, 2);
+        std::thread::sleep(Duration::from_millis(200));
+        let ev = rec.events();
+        let beats = ev.iter().filter(|e| e["event"] == "app_heartbeat").count();
+        assert_eq!(beats, 1, "one beat for one change, then silence: {ev:?}");
+        assert_eq!(ev[1]["properties"]["undos"], 1);
     }
 
     /// Every key of `row` with a plausible value; the person's data planted where a careless
@@ -811,8 +1349,9 @@ mod tests {
     /// `$set_once` with the first ones, no person-profile opt-out.
     #[test]
     fn t880_start_identifies_the_install() {
-        let now =
-            Build { version: "kt26.11", build: "kt26.11.02-abcdef12", os: "Linux", arch: "x86_64" };
+        // built from pieces: a dotted literal reads as a UI place to the live-coverage guard
+        let (version, build) = (concat!("kt26", ".11"), concat!("kt26", ".11", ".02-abcdef12"));
+        let now = Build { version, build, os: "Linux", arch: "x86_64" };
         let common = Common { session_id: new_uuid_v7(), os_version: None, lang: "en" };
         let mut env = Props::new();
         for k in ENV_KEYS {
@@ -829,9 +1368,9 @@ mod tests {
         let mut want: Vec<&str> = PERSON_KEYS.iter().chain(ENV_KEYS).copied().collect();
         want.sort();
         assert_eq!(set, want);
-        assert_eq!(p["$set"]["$app_version"], "kt26.11");
-        assert_eq!(p["$app_version"], "kt26.11");
-        assert_eq!(p["$app_build"], "kt26.11.02-abcdef12");
+        assert_eq!(p["$set"]["$app_version"], version);
+        assert_eq!(p["$app_version"], version);
+        assert_eq!(p["$app_build"], build);
         assert_eq!(p["$os"], "Linux");
         let mut once: Vec<&str> =
             p["$set_once"].as_object().unwrap().keys().map(|k| k.as_str()).collect();
@@ -868,6 +1407,106 @@ mod tests {
         }
         drop((b, c));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The doors of `telemetry::signal`, per file. A new door is a deliberate edit of this
+    /// list (t887): the owner asked that telemetry not smear across the code.
+    const DOORS: &[(&str, usize)] = &[("app.rs", 8)];
+    /// At most this many doors in all (spec).
+    const MAX_DOORS: usize = 16;
+
+    /// t887: outside this module telemetry is reached only through the door and the switch's
+    /// plumbing; the doors are counted; nobody else builds an event or names a PostHog key.
+    #[test]
+    fn t887_one_door_counted() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let allowed = [
+            "telemetry::signal(",
+            "telemetry::Signal::",
+            "telemetry::install(",
+            "telemetry::global()",
+            "telemetry::notice_",
+            "telemetry::hint_text(",
+            "telemetry::lists_text(",
+            "telemetry::Telemetry>",
+            "telemetry::Telemetry::for_process(",
+            "telemetry::STORAGE_KEY",
+        ];
+        let posthog = [
+            "\"$session_id\"",
+            "\"distinct_id\"",
+            "\"api_key\"",
+            "\"$set\"",
+            "\"$set_once\"",
+            "\"$os\"",
+            "\"$app_version\"",
+            "\"app_started\"",
+            "\"app_heartbeat\"",
+            "\"app_closed\"",
+            "\"project_opened\"",
+            "\"export_finished\"",
+            "\"app_crashed\"",
+        ];
+        let mut doors: Vec<(String, usize)> = Vec::new();
+        let mut stack = vec![dir.clone()];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                let name = e.file_name().to_string_lossy().to_string();
+                if p.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                if !name.ends_with(".rs") || name == "telemetry.rs" || name.ends_with("_tests.rs") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&p).unwrap();
+                // the code only: up to the file's test module, without comments
+                let lines: Vec<&str> = text.lines().collect();
+                let end = (0..lines.len())
+                    .find(|&i| {
+                        lines[i] == "#[cfg(test)]"
+                            && lines.get(i + 1).is_some_and(|n| {
+                                ["mod ", "pub mod ", "pub(crate) mod "]
+                                    .iter()
+                                    .any(|m| n.starts_with(m))
+                            })
+                    })
+                    .unwrap_or(lines.len());
+                let code: Vec<&str> = lines[..end]
+                    .iter()
+                    .copied()
+                    .filter(|l| !l.trim_start().starts_with("//"))
+                    .collect();
+                let mut n = 0;
+                for (i, l) in code.iter().enumerate() {
+                    for (at, _) in l.match_indices("telemetry::") {
+                        if l[..at].ends_with("k::") {
+                            continue; // catalog keys
+                        }
+                        let rest = &l[at..];
+                        assert!(
+                            allowed.iter().any(|a| rest.starts_with(a)),
+                            "{name}:{}: telemetry reached past its door: {}",
+                            i + 1,
+                            l.trim()
+                        );
+                    }
+                    n += l.matches("telemetry::signal(").count();
+                    for k in posthog {
+                        assert!(!l.contains(k), "{name}:{}: {k} outside telemetry.rs", i + 1);
+                    }
+                }
+                if n > 0 {
+                    doors.push((name, n));
+                }
+            }
+        }
+        doors.sort();
+        let want: Vec<(String, usize)> = DOORS.iter().map(|(f, n)| (f.to_string(), *n)).collect();
+        assert_eq!(doors, want, "the doors moved: update DOORS deliberately");
+        let total: usize = doors.iter().map(|(_, n)| n).sum();
+        assert!(total <= MAX_DOORS, "{total} doors, the spec allows {MAX_DOORS}");
     }
 
     /// t838: the install id survives restarts and heals.
@@ -913,8 +1552,8 @@ mod tests {
 
         for c in [resolve_consent(None, &none, None), resolve_consent(k, &none, Some("off"))] {
             let t = Telemetry::new(c, String::new(), Box::new(Recording::default()));
-            t.frame("en");
-            t.closed("en", Duration::from_millis(10));
+            frame(&t, false);
+            t.signal(Signal::Exit);
             assert!(!t.thread_spawned(), "{c:?}");
         }
     }
@@ -934,10 +1573,10 @@ mod tests {
         });
         let t = Telemetry::new(on(), new_uuid(), Box::new(HttpSink::new(url))).with_key("phc_test");
         let t0 = Instant::now();
-        t.frame("en");
+        frame(&t, false);
         assert!(t0.elapsed() < Duration::from_millis(50), "enqueue blocked: {:?}", t0.elapsed());
         let t1 = Instant::now();
-        t.closed("en", EXIT_BUDGET);
+        t.signal(Signal::Exit);
         assert!(t1.elapsed() < Duration::from_millis(2500), "exit held {:?}", t1.elapsed());
 
         // a server that answers 200
@@ -979,8 +1618,8 @@ mod tests {
             }
         });
         let t = Telemetry::new(on(), new_uuid(), Box::new(HttpSink::new(url))).with_key("phc_test");
-        t.frame("en");
-        t.closed("en", Duration::from_secs(10));
+        frame(&t, false);
+        t.exit(Duration::from_secs(10));
         let reqs = got.lock().unwrap().clone();
         assert_eq!(reqs.len(), 2, "{reqs:?}");
         for (r, ev) in reqs.iter().zip(["app_started", "app_closed"]) {

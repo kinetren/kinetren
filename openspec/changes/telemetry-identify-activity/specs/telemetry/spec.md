@@ -215,14 +215,16 @@ multiply the volume tens of times for the same answer. Deriving the counts from 
 means one line per apply wrapper instead of a hook in every feature.
 
 #### Scenario: Real UI paths move the counters
-- **WHEN** the harness app with a recording telemetry imports a synthetic video and an audio
-  file, puts a clip on the timeline, adds a Blur, plays for 2 s of fake time, stops, undoes
-  once and saves
+- **WHEN** the harness app with a recording telemetry gets a fixture video and an audio file
+  dropped onto the window (each lands on the timeline as a clip), adds a Blur in the video
+  event's FX window, plays for 2 s of fake time, stops, undoes once and saves
 - **THEN** the counters read `media_imported {video:1, audio:1}`, `clips_added >= 1`,
   `fx_added {Blur:1}`, `playback_starts == 1`, `playback_s == 2`, `undos == 1`, `saves == 1`,
   `edits >= 3`, `active_s > 0`
-- **PATH** import two files into the bin → drag one onto the timeline → add Blur in the event's
-  FX window → Space, wait, Space → Ctrl+Z → Ctrl+S; nothing visible changes for the person
+- **PATH** drop a video and an audio file onto the window → both appear on the timeline → open
+  the video event's FX window → "+ effect", type "blur", click Blur → the chain shows Blur →
+  Esc → Space, the playhead runs; wait; Space, it stops → Ctrl+Z → Ctrl+S, the title loses
+  its star; nothing else changes for the person — the counting is invisible
 - **TEST** t884 (`src/apps/kt-app/src/reach_tests.rs`)
 
 ### Requirement: Rare milestones are events

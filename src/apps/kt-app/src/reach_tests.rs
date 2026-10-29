@@ -4709,6 +4709,7 @@ fn t840_telemetry_notice_once_and_switch_in_view() {
         Arc::new(Telemetry::new(consent, new_uuid(), Box::new(rec.clone())).with_key("phc_test"));
     let mut h = crate::layout_tests::harness();
     h.state_mut().telemetry = Some(t.clone());
+    let _bound = crate::telemetry::testing::bind(t.clone());
     for _ in 0..4 {
         h.step();
     }
@@ -4743,7 +4744,7 @@ fn t840_telemetry_notice_once_and_switch_in_view() {
     let consent = resolve_consent(Some("phc_test"), &EnvView::default(), t.stored_value());
     assert!(!consent.first_start && !consent.on());
     let t2 = Telemetry::new(consent, new_uuid(), Box::new(Recording::default()));
-    assert!(!t2.frame("en"), "the notice is not said again");
+    assert!(!t2.take_notice(), "the notice is not said again");
 
     // File → New/Open rebuild KtApp in place: every constructor takes the process telemetry,
     // so a new document never sends a second app_started
@@ -5149,5 +5150,108 @@ fn t878_update_switch_in_view_next_to_telemetry() {
     }
     assert!(!u2.thread_spawned() && fetch.calls() == 0);
     assert!(!h.state().last_title.contains(word), "title: {}", h.state().last_title);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 884 (telemetry-identify-activity): the real UI paths move the counters. The person
+/// does ordinary work; the counts come from the one door (`telemetry::signal`) in the apply
+/// wrappers, undo, save and the frame — nothing at the features themselves.
+#[test]
+fn t884_real_ui_paths_move_the_counters() {
+    use crate::i18n::{k, tr};
+    use crate::telemetry::testing::{FakeClock, Recording};
+    use crate::telemetry::{EnvView, Telemetry, new_uuid, resolve_consent};
+    use egui_kittest::kittest::Queryable;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+    let clock = FakeClock::default();
+    let consent = resolve_consent(Some("phc_test"), &EnvView::default(), Some("on"));
+    let t = Arc::new(
+        Telemetry::new(consent, new_uuid(), Box::new(Recording::default()))
+            .with_key("phc_test")
+            .with_clock(clock.clone()),
+    );
+    let _bound = crate::telemetry::testing::bind(t.clone());
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().telemetry = Some(t.clone());
+    h.step();
+
+    // a video and an audio file dropped onto the window: each lands on the timeline
+    #[derive(Debug)]
+    struct Dropped(std::path::PathBuf);
+    impl egui::DroppedFile for Dropped {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            std::fs::read(&self.0).map_err(|e| e.to_string())
+        }
+    }
+    for f in ["testsrc_h264.mp4", "sine48k_stereo.flac"] {
+        let path = std::path::PathBuf::from(crate::util::tests::fixture(f));
+        h.input_mut().dropped_files.push(Arc::new(Dropped(path)));
+        h.step();
+        h.step();
+    }
+    let video = h.state().model.project().clips.iter().find(|c| c.kind == kt_model::ClipKind::Video);
+    let video = video.map(|c| c.id).expect("the dropped video is on the timeline");
+
+    // Blur in the event's FX window: + effect, type, click the name
+    h.state_mut().open_fx_editor(video);
+    h.step();
+    h.step();
+    h.get_by_label(tr(k::fxreg::ADD)).click();
+    h.step();
+    h.step();
+    h.event(egui::Event::Text("blur".into()));
+    h.step();
+    h.step();
+    h.get_by_label("Blur").click();
+    h.step();
+    h.step();
+    let fx = &h.state().model.clip(video).unwrap().fx;
+    assert!(fx.iter().any(|f| matches!(f, kt_model::FxInstance::Blur { .. })), "{fx:?}");
+    h.key_press(egui::Key::Escape);
+    h.step();
+    h.key_press(egui::Key::Escape);
+    h.step();
+
+    // Space, two seconds, Space
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "Space starts playback");
+    clock.advance(Duration::from_secs(2));
+    h.step();
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    assert!(!h.state().player.transport.is_playing());
+
+    // Ctrl+Z, then Ctrl+S into a project file of our own (Linux: Ctrl is also Command)
+    let ctrl = egui::Modifiers { ctrl: true, command: true, ..Default::default() };
+    h.key_press_modifiers(ctrl, egui::Key::Z);
+    h.step();
+    let dir = std::env::temp_dir().join(format!("kt-t884-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    h.state_mut().project_path = Some(dir.join("p.kt"));
+    h.key_press_modifiers(ctrl, egui::Key::S);
+    h.step();
+    h.step();
+    assert!(dir.join("p.kt").exists(), "Ctrl+S wrote the project");
+
+    let s = t.snapshot();
+    assert_eq!(s.media_imported.get("video"), Some(&1), "{s:?}");
+    assert_eq!(s.media_imported.get("audio"), Some(&1), "{s:?}");
+    assert!(s.clips_added >= 1, "{s:?}");
+    assert_eq!(s.fx_added.get("Blur"), Some(&1), "{s:?}");
+    assert_eq!(s.playback_starts, 1, "{s:?}");
+    assert_eq!(s.playback_s, 2, "{s:?}");
+    assert_eq!(s.undos, 1, "{s:?}");
+    assert_eq!(s.saves, 1, "{s:?}");
+    assert!(s.edits >= 3, "{s:?}");
+    assert!(s.active_s > 0, "{s:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

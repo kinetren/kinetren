@@ -14,10 +14,14 @@
 
 ## 2. One door, counters and heartbeat
 
-- [ ] 2.1 `Signal` and `telemetry::signal` (D5): counters derived inside the module (commands classified per batch, playback and input slots from `Frame`), heartbeat on the sender thread with `recv_timeout` and an injectable clock, "send only if changed", final counters in `app_closed`; today's `t.frame(..)`/`t.closed(..)` calls become `Signal::Frame`/`Signal::Exit`; verify t879 and t836
-- [ ] 2.2 The doors in `src/apps/kt-app/src/app.rs` — one line each: `apply`, `apply_batch`, `apply_coalesced`, `undo`, `redo`, save, `KtApp::open`/`new_empty`/recovery, `draw_all`, `on_exit`; nothing else of telemetry outside `telemetry.rs`; verify t884 (real UI paths, PATH line) and the existing `layout_tests.rs`/`reach_tests.rs`
-- [ ] 2.3 Guard t887: the doors outside `telemetry.rs` are only the allowed forms, `signal(` sites ≤ 16 and equal to the number in the test
-- [ ] 2.4 Commit stage 2
+- [x] 2.1 `Signal` and `telemetry::signal` (D5): counters derived inside the module (commands classified per batch, playback and input slots from `Frame`), heartbeat on the sender thread with `recv_timeout` and an injectable clock, "send only if changed", final counters in `app_closed`; today's `t.frame(..)`/`t.closed(..)` calls become `Signal::Frame`/`Signal::Exit`; verify t879 and t836
+  - `Signal` (`Commands`/`Command`/`Gesture` with the model, `Undo`, `Redo`, `Saved`, `Frame { ctx, playing }`, `Exit`), `signal()` → the bound telemetry (tests, thread-local) or `GLOBAL`. `Counters`: atomics for the frame path (10-s slots, playback start/stop), three `Tally` maps; `Gesture` counts one edit per gesture id; `fx_added` is the registry name of what a `SetFx`/`SetTrackFx` chain has more of than the model's current chain. Sender loop on `recv_timeout(next mark)` with an injectable `Clock` and period; `Shared::beat` sends only a changed `Snapshot`. Consent's choice became an `AtomicBool` so the frame takes no lock. Red proof: without the "unchanged → nothing" check t879 gets a third heartbeat.
+- [x] 2.2 The doors in `src/apps/kt-app/src/app.rs` — one line each: `apply`, `apply_batch`, `apply_coalesced`, `undo`, `redo`, save, `KtApp::open`/`new_empty`/recovery, `draw_all`, `on_exit`; nothing else of telemetry outside `telemetry.rs`; verify t884 (real UI paths, PATH line) and the existing `layout_tests.rs`/`reach_tests.rs`
+  - 8 one-line doors in `app.rs` (frame, apply, apply_coalesced, apply_batch, undo, redo, save, on_exit); the notice is taken with `take_notice()` from the app's field. t884 drops two fixture files onto the window (the spec's PATH line now names that real gesture instead of a bin drag), adds Blur through the picker, Space/2 s fake time/Space, Ctrl+Z, Ctrl+S. Red proof: without the `Saved` door t884 reads `saves == 0`.
+- [x] 2.3 Guard t887: the doors outside `telemetry.rs` are only the allowed forms, `signal(` sites ≤ 16 and equal to the number in the test
+  - `DOORS` per file in the test, `MAX_DOORS = 16`; code before the file's `#[cfg(test)] mod`, comments skipped, `k::telemetry::` catalog keys ignored; PostHog key literals and event names forbidden elsewhere. Red proof: one door removed → `[("app.rs", 7)]` against 8.
+- [x] 2.4 Commit stage 2
+  - `cargo test -p kt-app`: 387 green; t799 and t804 are red on the base commit already (t799: `openspec/changes/ffmpeg-9` lacks a PATH line — another change; t804: the spec names `telemetry.py`, written in 5.2). A dotted test literal (`kt26.11`) read as a UI place to `live-coverage.py`, and a column-0 `#[cfg(test)]` early in the file hid the catalog keys from t125 — both fixed (built from pieces; helper moved into the test module).
 
 ## 3. Milestones, crash, environment
 

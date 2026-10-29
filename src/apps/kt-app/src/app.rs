@@ -1473,12 +1473,12 @@ impl KtApp {
         if crate::bench::enabled() {
             crate::bench::note_inputs(ui.ctx().input(|i| i.events.len()) as u64);
         }
-        // Telemetry (telemetry-posthog): `app_started` once per process on the first frame,
-        // and the first-start notice once — it lists what is sent and what is NOT sent and
-        // says where it is switched off (rule 19). After the first frame this is two atomics.
-        if let Some(t) = self.telemetry.clone()
-            && t.frame(crate::i18n::current().code())
-        {
+        // Telemetry through its one door (telemetry-identify-activity, D5): the first frame
+        // starts the session, every later one is a few atomics. The first-start notice once —
+        // it lists what is sent and what is NOT sent and says where it is switched off (rule 19).
+        let playing = self.player.transport.is_playing();
+        crate::telemetry::signal(crate::telemetry::Signal::Frame { ctx: ui.ctx(), playing });
+        if self.telemetry.as_ref().is_some_and(|t| t.take_notice()) {
             self.push_notice(Severity::Info, crate::telemetry::notice_text());
             self.status = Some((tr(k::telemetry::HEADLINE).to_string(), std::time::Instant::now()));
         }
@@ -3854,6 +3854,7 @@ impl KtApp {
         self.model_rev += 1;
         // through `apply_batch`, not `apply`: the kinship of born events
         // arrives by ONE path (item 357), and a single cut is no exception
+        crate::telemetry::signal(crate::telemetry::Signal::Command(&cmd, &self.model));
         match self.model.apply_batch(vec![cmd]) {
             Ok(births) => {
                 self.push_project_to_player();
@@ -3968,6 +3969,7 @@ impl KtApp {
         // of this media, not the renderers (otherwise every keypress in the
         // title field would stop the audio-render thread).
         let touches_plan = cmd.touches_render_plan();
+        crate::telemetry::signal(crate::telemetry::Signal::Gesture(&cmd, gesture, &self.model));
         if self.model.apply_coalesced(cmd, gesture).is_err() {
             return false;
         }
@@ -4022,6 +4024,7 @@ impl KtApp {
     pub fn apply_batch(&mut self, cmds: Vec<Command>) -> bool {
         self.model_rev += 1;
         self.warn_shared_band(&cmds);
+        crate::telemetry::signal(crate::telemetry::Signal::Commands(&cmds, &self.model));
         match self.model.apply_batch(cmds) {
             Ok(births) => {
                 self.push_project_to_player();
@@ -5228,6 +5231,7 @@ impl KtApp {
     pub fn undo(&mut self) {
         self.model_rev += 1;
         if self.model.undo().is_ok() {
+            crate::telemetry::signal(crate::telemetry::Signal::Undo);
             self.push_project_to_player();
             self.sync_media_sources();
             self.dirty_content = true;
@@ -5238,6 +5242,7 @@ impl KtApp {
     pub fn redo(&mut self) {
         self.model_rev += 1;
         if self.model.redo().is_ok() {
+            crate::telemetry::signal(crate::telemetry::Signal::Redo);
             self.push_project_to_player();
             self.sync_media_sources();
             self.dirty_content = true;
@@ -5370,6 +5375,7 @@ impl KtApp {
         // with its older snapshot (R.32)
         match write_project_guarded(&self.saved_rev, &path, self.model_rev, &out) {
             Ok(SaveOutcome::Wrote { dir_synced }) => {
+                crate::telemetry::signal(crate::telemetry::Signal::Saved);
                 self.dirty_content = false;
                 self.dirty_ui = false;
                 self.note(crate::tf!(k::msg::SAVED, path.display()));
@@ -9054,9 +9060,7 @@ impl eframe::App for KtApp {
         }
         // after the recovery write (durability first): the clean-close event, within a
         // fixed budget; a dead network looks exactly like no telemetry
-        if let Some(t) = &self.telemetry {
-            t.closed(crate::i18n::current().code(), crate::telemetry::EXIT_BUDGET);
-        }
+        crate::telemetry::signal(crate::telemetry::Signal::Exit);
     }
 }
 
