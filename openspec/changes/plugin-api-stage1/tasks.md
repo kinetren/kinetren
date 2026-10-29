@@ -191,6 +191,12 @@ once (English message, first line = the stage and what was done).
     Below the 3 % gate. Observed on BOTH trees and left for its own investigation: slowed_reverb
     alone takes either ~104 or ~415 ms from one process run to the next on the same code.
 
+## 3b. The two audio kinds that waited (design D11.4, D11.5)
+
+- [ ] 3b.1 `Store::TrackRef` with a `RowRole` (D11.4): the slot row, its file form (t973 against the frozen `key`), the engine routing by role (`kt-engine/src/audio.rs`), the track window and kt-otio by role; move the compressor into `fx-audio-dynamics`; write t995 (`src/libs/kt-engine/tests/sidechain.rs`) red first; verify t767–t778 (the sidechain set) and t973c
+- [ ] 3b.2 `Decl.time_warp` (D11.5): every place that finds the warp by the variant (kt-model `warp.rs`, `project.rs`, `model.rs`; kt-fx `audio/mod.rs`, `nodes.rs`; kt-app `fx_editor.rs`; kt-cli) asks the declaration; one warp slot per chain refused at validation; move Slowed+Reverb into `fx-audio-modulation`; write t996 red first; verify t11, t973c, t17, t282, t603d, t616 and the video warp set
+- [ ] 3b.3 Commit stage 3b; `python3 src/scripts/target-prune.py`
+
 ## 4. Video FX
 
 - [ ] 4.1 Move the remaining 24 video plugin kinds into `fx-video-color`, `fx-video-stylize`, `fx-video-distort`, `fx-video-blur`: geo kinds through `geo()` primitives (no WGSL), point-wise through tap pieces, barriers through passes. Verify t328, t329, t181, t297, t330, t332, t333, t198, t974 green; t973 extended
@@ -206,6 +212,9 @@ once (English message, first line = the stage and what was done).
     program, t943/t944) and pan3d (camera context, t298) carry byte rules of their own; (3) a
     BARRIER pass graph — blur/glow/edges/vhs/sharpen/pixelate/halftone/radial_blur/drop_shadow/
     chroma_ab run multi-pass on the GPU with the K× rule and have AVX2 twins on the CPU (t198).
+- [ ] 4.1b The positioned tap (D11.1): `TapCtx`, `cook_at`/`tap_at`, the fourth WGSL argument; move vignette, noise, greenscreen; write t992 red first; verify t328, t329, t181, t330, t198 (noise/greenscreen have AVX2 twins in `video_simd.rs` — the plugin keeps the scalar as the definition and the twin byte-equal)
+- [ ] 4.1c The geometry program (D11.2, D11.3): `GeoKernel`, `GeoCtx`, `GeoStep`, the open `Warp` with `warp_<id>` pasted into both loops of `geom_fused.wgsl`, the exact lone path; move lens_distort, twirl, ripple, kaleidoscope, cylinder3d, corner_pin, mirror, event_grid, pan3d; write t993 and t994 red first; verify t26, t297, t298, t308b, t330, t332, t333, t943, t944, t181, t329
+- [ ] 4.1d The ten barrier kinds: propose `plugin-api-barriers` (the GPU pass graph and the SIMD twins), linked from here; this change does not move them
 - [ ] 4.2 FX picker, variants and thumbnails from manifests (`fx_registry.rs`, `fx_thumbs.rs`); verify t48, t252, t253, t976 and `layout_tests.rs`/`reach_tests.rs` green; rewrite the "add a video effect" checklist in `src/libs/kt-fx/CLAUDE.md` and `src/libs/kt-gpu/CLAUDE.md`; commit stage 4
 
 ## 5. Transitions

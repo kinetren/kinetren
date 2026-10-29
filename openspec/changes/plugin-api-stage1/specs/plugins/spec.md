@@ -134,6 +134,46 @@ transitions vocabulary already closed once.
   its parameters appear below with sliders and units
 - **TEST** t976 (`src/apps/kt-app/src/reach_tests.rs`)
 
+### Requirement: Every effect a person picks is a plugin; each reason it was core is a contract
+Every user-facing effect SHALL be a plugin. What kept a kind in the core SHALL be a contract any
+plugin can use:
+- a POSITIONED tap: the stage's size, the sub-sample's coordinate and the burst index;
+- a GEOMETRY program of the host's primitives with one open primitive, a plugin warp of the
+  normalized centered space with one WGSL function;
+- an exact LONE path for a series of length 1 without a scale change;
+- a HOST-REFERENCE row: a track, with a role the host routes by;
+- a TIME-WARP declaration: the slot whose rate consumes the source.
+The core keeps only what is not a picked effect: the Geometry lead node, the strength marker
+LayerMix and the read-only CamMotion form. The barrier kinds move in their own change with a GPU
+pass graph.
+Why: the owner (2026-10-30): "take ALL the effects out — a mechanism as flexible and extensible as
+possible". A kind kept core for a reason is a reason a third-party effect could never have.
+
+#### Scenario: A positioned tap measures its own stage
+- **WHEN** vignette and noise, moved into plugins, run alone, inside a fused geometry series and as barriers, on both executors, at a decode scale step of 2
+- **THEN** the CPU bytes equal the pre-move goldens (vignette's radius measured on its stage, noise's grain pinned to its stage's grid and to the burst index), the GPU is within the point-wise tolerance, and the series stays one pass
+- **TEST** t992 (`src/libs/kt-gpu/tests/parity.rs`)
+
+#### Scenario: A geometry program fuses and keeps its rules
+- **WHEN** the five warp kinds, corner_pin, event_grid and pan3d, moved into plugins, run in series of any length on both executors
+- **THEN** the CPU bytes equal the pre-move goldens, a series of geometry plugins is one pass, the GPU is within the geometry tolerance, event_grid's exact tile program still decides from the primitives, and pan3d's points behind the camera and outside the quad stay transparent
+- **TEST** t993 (`src/libs/kt-gpu/tests/parity.rs`), t943, t944, t298
+
+#### Scenario: The exact lone path keeps a permutation's bytes
+- **WHEN** a moved mirror runs alone without a scale change, and then in a series and with a change of scale
+- **THEN** alone it takes the plugin's exact path and gives t297's bytes; in a series or with a scale change it is a step of the fused pass
+- **TEST** t994 (`src/libs/kt-fx/tests/geo_fuse.rs`), t297
+
+#### Scenario: A host-reference row routes without engine code
+- **WHEN** a compressor, moved into a plugin, keys on another track; the project is saved, reopened and rendered
+- **THEN** the file holds the former `key` text (absent when none), the key signal reaches the compressor through the row's role, and a deleted track leaves the row empty rather than pointing elsewhere
+- **TEST** t995 (`src/libs/kt-engine/tests/sidechain.rs`)
+
+#### Scenario: A declared time warp drives the source the way the variant did
+- **WHEN** Slowed+Reverb, moved into a plugin with a time-warp declaration, plays a curved signed rate on a linked A/V pair, is cut by a morpher layer and reversed
+- **THEN** the source windows, the frame map, the link-group sync and `clip_slice`'s anchor equal those of the frozen variant, the per-kind sound table and `GOLDEN_AUDIO` do not move, and a second warp slot in one chain is refused
+- **TEST** t996 (`src/libs/kt-engine/tests/plugin_sound.rs`), t973c, t11
+
 ### Requirement: A GPU kernel joins the one composition path, never beside it
 A built-in video plugin's GPU kernel SHALL be assembled into the GPU executor from the registry
 when the executor is created: a point-wise plugin supplies one WGSL tap function that is placed

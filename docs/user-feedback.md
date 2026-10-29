@@ -1975,6 +1975,24 @@ The owner, after the plugin-api-stage1 stage 3 report (translated):
   needs (142 → 20 GB, nothing rebuilt). `finish.sh` runs it, and every session runs it after
   every committed stage.
 
+The plugin-api-stage1 scope questions (2026-10-30), the owner's answers:
+
+> 1. (barrier effects need a GPU pass-graph contract — in this change or a separate one?)
+>    a separate change (the recommended option)
+> 2. (keep mirror, event_grid and pan3d as core kinds?) I would still like to take ALL the
+>    effects out — to build a mechanism as flexible and extensible as possible
+
+**Taken as:**
+- The ten barrier kinds move in their own change, `plugin-api-barriers`, with its own design of
+  the pass graph.
+- "Core kind" is no longer an answer for a user-facing effect. Revised design D7: mirror,
+  event_grid and pan3d become geometry plugins through a host PROGRAM of primitives (with an
+  exact lone path and the camera in the context). The compressor moves through a host-reference
+  row (its sidechain track). Slowed+Reverb moves through a time-warp declaration.
+- What stays in the core is not an effect a person picks: the Geometry lead node of every event,
+  the morpher's strength marker LayerMix, and CamMotion, a form that exists only to be converted
+  on reading.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

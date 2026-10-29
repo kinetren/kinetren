@@ -151,10 +151,10 @@ same `f32`); `chain_tail`/`chain_lookahead` ask the plugin's `tail_frames`/`look
 plugin slot and t322 keeps comparing them with the built state.
 
 Stage 3 settled three more things (2026-10-29):
-- **The compressor stays a core kind.** Its sidechain `key` is an `Option<TrackId>` the engine
-  routes (`kt-engine` audio.rs), the track window edits and kt-otio carries; a plugin slot holds
-  numbers in passport order, and a model address is not one. It moves when a slot can carry a host
-  reference (a later change), as the title may stay core in 6.2.
+- **The compressor stayed a core kind in stage 3.** Its sidechain `key` is an `Option<TrackId>`
+  the engine routes (`kt-engine` audio.rs), the track window edits and kt-otio carries; a plugin
+  slot held numbers only. The owner's D11 (2026-10-30) moves it through the host-reference row
+  (D11.4, stage 3b).
 - **An enum or bool field is a passport row with its own store.** `Store::Choice(keys)` keeps the
   variant's index and writes its key (`Filter.mode` as `"lowpass"`), `Store::Bool` writes
   `true`/`false` (`Delay.pingpong`, omitted at false). `ParamSpec::choice_row`/`flag_row` give the
@@ -208,10 +208,11 @@ The checks run in `Registry::register`, before any frame — t972.
 - **barrier**: the plugin's fragment pass is compiled over `common.wgsl` with a fixed uniform
   block of 16 floats (`uniforms()` computed on the CPU in f64 → f32 once per frame, as the warp
   precompute does today);
-- **geometry**: no WGSL; `geo()` returns primitives from the closed set, so the Jacobian
+- **geometry**: `geo()` returns a program of the host's primitives, so the Jacobian
   supersampling, the two primitive loops (`geo_map` and `geo_sample`) and f32 parity stay in one
-  hand-checked file. A new primitive is a core change (rare: R.47 added one, Warp with modes, for
-  five kinds).
+  hand-checked file. Revised by D11 (2026-10-30): ONE primitive is open — a plugin WARP, a pure
+  inverse map of the normalized centered space with one WGSL function pasted into both loops.
+  The other primitives stay the host's closed set.
 The dispatch numbers are assigned in the assembler's id order at engine creation; the assembled
 text is therefore a pure function of the registry (invariant 11, t974). Every key that is HASHED
 (`put_mix`, the GPU plan hash, the post-FX key) uses the id string, never the dispatch number —
@@ -274,14 +275,72 @@ completeness lock: adding a built-in id without a golden row fails the lock.
 1. API, registry, assembler, injection, and ONE pilot: **Posterize** — the smallest kernel that
    crosses all four executor positions (CPU barrier, CPU tap of the fused pass, its own GPU pass, the
    GPU tap arm), so D5 is proven before a single family moves.
-2. Audio FX (17 plugin kinds; the warp stays core).
-3. Video FX (25 kinds; `geometry` and `cam_motion` stay core).
+2. Audio FX (17 plugin kinds; revised by D11: the compressor and Slowed+Reverb move through the
+   host-reference row and the time-warp declaration — stage 3b).
+3. Video FX (25 kinds; revised by D11: positioned taps and the geometry program here, the ten
+   barriers in `plugin-api-barriers`; only the Geometry lead, LayerMix and CamMotion stay core).
 4. Transitions (33).
 5. Generators (15 kinds, the title last — if `text_anim_curves`/`migrate_gen_to_events`
    (`genmedia.rs`) must stay in kt-model, the title stays a core kind and the reason is recorded).
 6. Measured acceptance (t977) and the cleanup: the enum variants, `tag()` arms and hand-written
    checklists of moved kinds are deleted.
 Each stage ends green and committed; t973 grows the list of moved kinds every stage.
+
+### D11. Revision: every user-facing effect moves out (the owner, 2026-10-30)
+The owner on the scope questions: barriers in a separate change, and "I would still like to take
+ALL the effects out — to build a mechanism as flexible and extensible as possible". So "a core
+kind" is no longer an answer for an effect a person picks. Each reason something stayed in the
+core becomes a CONTRACT that any plugin can use. The core keeps only what is not an effect: the
+Geometry lead node of every event (R.62), the morpher's strength marker LayerMix (R.38) and
+CamMotion (a form that exists only to be converted on reading, R.34). The ten barrier kinds move
+in `plugin-api-barriers` with its own design of the GPU pass graph and of the CPU kernels'
+SIMD twins.
+
+**D11.1 A positioned tap** (vignette, noise, greenscreen). `VideoKernel::cook_at(p, &TapCtx)`,
+where `TapCtx { stage_w, stage_h, burst_index, in_scale }` is the stage the tap belongs to. The
+fused builder knows it already (vignette's `rec[ti]` and `stage_w/h`, noise's grid and seed).
+`tap_at(k, v, x, y)` gets the sub-sample's coordinate in that stage; the provided default calls
+`tap`. The WGSL function gains a fourth argument `q = (x, y, stage_w, stage_h)`. An integer the
+GPU needs bit-exact (noise's seed) travels through `f32::from_bits` in the seven numbers, as it
+does today. `noise`'s `special`/`color` bits are its own values.
+
+**D11.2 A geometry program.** `GeoKernel::program(k, &GeoCtx) -> Vec<GeoStep>`. `GeoCtx` carries
+the stage size, the output size, the progress `u`, `burst_index`, the event's lead geometry and the
+resolved camera (`Cam3d`, today `VideoFxCtx.cam3d`). `GeoStep` is the host's primitive vocabulary:
+`Affine`, `Clamp`, `Bounds`, `Fold` (event_grid's tile, so `grid_tile`'s exact tile program keeps
+deciding from the primitives, t943/t944), `Proj` (pan3d's and corner_pin's homography with its
+transparency rules, t298), and `Warp { plugin, p: [f64; 7] }`. The last calls the plugin's
+`warp(p, x, y)` on the CPU and its `warp_<id>(pt, a, b)` in BOTH WGSL loops, under the R.47
+contract: input and output are the normalized centered space, magnitudes ~1, the precomputable
+part cooked once. The f32-parity argument therefore stands, and t329's cycle covers every warp
+plugin. A neutral program (`is_identity(k)`) is skipped, as neutral steps are today.
+
+**D11.3 An exact lone path.** A series of length 1 without a scale change runs the OLD kernel of
+Pan/Mirror today (`GeomExec::Legacy`, t297). A geometry plugin may provide that path itself:
+`lone(k, &Frame) -> Option<Frame>` on the CPU and a WGSL pass (a pixel permutation for mirror).
+The host still decides WHEN, by the same rule (`k_in == k_out`, length 1). So mirror's bytes do not
+move, and a third-party permutation kind gets the same fast path.
+
+**D11.4 A host-reference row.** `Store::TrackRef`: an `Option<TrackId>` row, written as today's
+`key` (omitted when none), carried in the slot as the id's number with a "none" sentinel. The
+kernel never sees a model address. The row is declared with a ROLE (`RowRole::SidechainKey`);
+the engine routes the key signal by the role (kt-engine `audio.rs`), the track window edits the
+row by the role, and kt-otio carries it by the role. A second plugin with a key input gets
+routing without engine code. The compressor moves.
+
+**D11.5 A time-warp declaration.** `Decl.time_warp: Some(TimeWarp { rate_row })` marks the slot
+that consumes the source at its rate curve. The host's warp machinery finds the warp slot by the
+declaration, not by the variant: `AutoProfiles::warp_slot`, `chain_rate`, the source windows,
+`sync_warp_to_link_group`, `clip_slice`'s anchor, the video frame map. Its audio half is an
+ordinary AudioKernel (the freeverb node). The rule "one warp slot per chain" moves into
+registration and validation, and the R.39/R.57 maps stay in kt-model, untouched. Slowed+Reverb
+moves; this is also the door for a third-party time effect.
+
+Tests: t992 (positioned taps, vignette's stage coordinate and noise's grid on both executors),
+t993 (the geometry program, warps fused in one pass within tolerance, corner_pin/pan3d Proj
+rules), t994 (the exact lone path: t297's bytes for a moved mirror), t995 (the track reference:
+the file bytes and the routed key, t771-class), t996 (the time warp: windows, link sync and
+`clip_slice` against the frozen variant). t973/t973c/t328/t329 grow as kinds move.
 
 ### D10. Revision: the order of external hosts — wasm before dlopen/OpenFX
 F-EXT-003 and the automation design fix "built-in → dlopen → OFX". Revision: **built-in (this
