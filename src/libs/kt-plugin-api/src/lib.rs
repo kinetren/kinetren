@@ -995,3 +995,20 @@ impl Registry {
         self.plugins.is_empty()
     }
 }
+
+static INSTALLED: std::sync::OnceLock<std::sync::Arc<Registry>> = std::sync::OnceLock::new();
+
+/// Install the process's registry ONCE (D6): the format reader cannot take an argument through
+/// serde, so kt-app and kt-cli install the assembled built-in set here at start, and tests through
+/// the same function. A second install with a different id list panics in debug; the same list is
+/// accepted (several tests install it).
+pub fn install(reg: std::sync::Arc<Registry>) {
+    let ids = reg.ids();
+    let set = INSTALLED.get_or_init(|| reg);
+    debug_assert_eq!(set.ids(), ids, "a second registry with a different plugin list was installed");
+}
+
+/// The installed registry, if any.
+pub fn installed() -> Option<&'static std::sync::Arc<Registry>> {
+    INSTALLED.get()
+}

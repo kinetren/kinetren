@@ -16,6 +16,8 @@ path = "src/main.rs"
 kt-time = { workspace = true }
 kt-version = { workspace = true }
 kt-model = { workspace = true }
+# the built-in plugin set, installed at start (plugin-api-stage1, D6)
+kt-plugins-builtin = { workspace = true }
 # “glyph missing” in the title window is counted by the same crate that draws the frame (R.52)
 kt-text = { workspace = true }
 kt-otio = { workspace = true }

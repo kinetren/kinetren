@@ -44,7 +44,13 @@ once (English message, first line = the stage and what was done).
     kt-model` alone: `preserve_order` of serde_json is unified in from kt-otio — before this change
     too). The disk filled during the run (310 of 325 GB): `target/win-container` and
     `target/debug/incremental` of this worktree were removed (regenerable caches).
-- [ ] 2.2 Create `src/libs/kt-plugins-builtin` (`BUILTIN_IDS`, `builtin()`, the install-once slot) and the empty-but-registered family crate `src/plugins/fx-video-color`; add both to `src/Cargo.toml` members. Write t975 in `src/apps/kt-cli/tests/plugin_graph.rs` (manifest reading, no cargo invocation). Verify t975 green
+- [x] 2.2 Create `src/libs/kt-plugins-builtin` (`BUILTIN_IDS`, `builtin()`, the install-once slot) and the empty-but-registered family crate `src/plugins/fx-video-color`; add both to `src/Cargo.toml` members. Write t975 in `src/apps/kt-cli/tests/plugin_graph.rs` (manifest reading, no cargo invocation). Verify t975 green
+  - `src/libs/kt-plugins-builtin` (`BUILTIN_IDS` — empty until the pilot lands in 2.4, `builtin()`
+    which panics unless the families give exactly that list, `install()`), the install-once slot in
+    the API (`install`/`installed`), the family crate `src/plugins/fx-video-color` (depends on the
+    API only, no plugins yet); kt-app's `run` and kt-cli's `main` install the set before any project
+    is read. t975 (`apps/kt-cli/tests/plugin_graph.rs`, the manifests read as text) green; red proof:
+    kt-fx given the assembler as a dependency → "core crate kt-fx depends on kt-plugins-builtin".
 - [ ] 2.3 `FxInstance::Plugin` and `FxInstance::Missing` with the hand-written serde of D3; write t973 in `src/libs/kt-model/tests/plugin_format.rs` with the frozen pre-move serializer copied verbatim, then t973b in `src/libs/kt-engine/tests/plugin_missing.rs`. Verify both green on a project with every kind and with a missing id
 - [ ] 2.4 Move Posterize: CPU kernel and tap into `fx-video-color`, its WGSL tap into the same crate; `plan_chain` (`src/libs/kt-fx/src/plan.rs`) asks the manifest's class; `GpuFxEngine::new(ctx, &Registry)` assembles the tap dispatch of `geom_fused.wgsl` and the own pass (D5); kt-app/kt-cli inject `builtin()`. Write t974 in `src/libs/kt-gpu/tests/parity.rs`. Verify t974, t328, t329, t181 green and `GOLDEN_VIDEO` unchanged
 - [ ] 2.5 `src/apps/kt-app/src/fx_registry.rs` builds Posterize's entry from its manifest; the test door `register_for_test`; write t976 in `src/apps/kt-app/src/reach_tests.rs` with the PATH of the spec. Verify t976, t48, t125, t100 green and `src/scripts/specs-user-path.py --check` (t799) accepts the PATH

@@ -9197,6 +9197,8 @@ pub fn run() -> eframe::Result {
     // the former data directory (Kinotrain) moves into place BEFORE eframe
     // reads its storage: that storage lives in the same directory
     let _ = crate::journal::data_dir();
+    // the built-in plugin set, before any project is read (plugin-api-stage1, D6)
+    kt_plugins_builtin::install();
     // the FFmpeg folder chosen with Locate… is the first step of the search (windows-build)
     crate::ffmpeg_setup::install_search_dirs();
     // GPU: the egui-wgpu default is HighPerformance, i.e. the discrete card; on

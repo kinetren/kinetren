@@ -1,0 +1,12 @@
+[package]
+name = "kt-plugins-builtin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The assembler of the built-in set (plugin-api-stage1, D6): only kt-app, kt-cli and test targets
+# depend on it (t975); the registry it builds is handed to the core at run time.
+[dependencies]
+kt-plugin-api = { workspace = true }
+fx-video-color = { workspace = true }

@@ -1490,6 +1490,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fx-video-color"
+version = "0.1.0"
+dependencies = [
+ "kt-plugin-api",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2066,6 +2073,7 @@ dependencies = [
  "kt-media",
  "kt-model",
  "kt-otio",
+ "kt-plugins-builtin",
  "kt-text",
  "kt-time",
  "kt-version",
@@ -2104,6 +2112,7 @@ dependencies = [
  "kt-media",
  "kt-model",
  "kt-otio",
+ "kt-plugins-builtin",
  "kt-time",
  "kt-version",
  "serde_json",
@@ -2216,6 +2225,14 @@ version = "0.1.0"
 dependencies = [
  "kt-time",
  "serde",
+]
+
+[[package]]
+name = "kt-plugins-builtin"
+version = "0.1.0"
+dependencies = [
+ "fx-video-color",
+ "kt-plugin-api",
 ]
 
 [[package]]
