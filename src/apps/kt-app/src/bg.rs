@@ -51,6 +51,12 @@ pub struct BgCtl {
 }
 
 impl BgCtl {
+    /// Levers owned by a SERVICE rather than a `BgJob` (the poster service of the welcome
+    /// window outlives every app; welcome-window-and-tour D5).
+    pub fn from_flags(cancel: Arc<AtomicBool>, pause: Arc<AtomicBool>) -> BgCtl {
+        BgCtl { cancel, pause }
+    }
+
     /// “Is it time to finish”. Also WAITS until the pause is lifted: a pause is not
     /// a stop, and the one asking about cancellation must still respect it.
     pub fn should_stop(&self) -> bool {

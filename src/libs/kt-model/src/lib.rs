@@ -8,6 +8,7 @@
 //! The implementation — stage M1.
 
 pub mod autoplan;
+pub mod demo;
 pub mod formula;
 pub mod genmedia;
 pub mod links;

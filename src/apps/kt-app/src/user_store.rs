@@ -653,6 +653,7 @@ impl TourProgress {
         self.done.get(&lesson).is_some_and(|s| s.contains(&step))
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn finished_steps(&self) -> usize {
         self.done.values().map(|s| s.len()).sum()
     }
@@ -820,10 +821,17 @@ impl StartStore {
         self.dir.as_ref().map(|d| d.join(FILES[f]))
     }
 
+    /// The store's directory; `None` — memory only.
+    pub fn dir(&self) -> Option<&std::path::Path> {
+        self.dir.as_deref()
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn is_broken(&self, file: &str) -> bool {
         FILES.iter().position(|f| *f == file).is_some_and(|i| self.states[i].broken)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn is_readonly(&self, file: &str) -> bool {
         FILES.iter().position(|f| *f == file).is_some_and(|i| self.states[i].readonly)
     }
@@ -1133,6 +1141,41 @@ mod records_tests {
         for d in [store, projects, fresh, broken, future] {
             let _ = std::fs::remove_dir_all(d);
         }
+    }
+
+    /// Test 985, the poster half: a save and a close queue the poster job; it renders by the
+    /// offline path into the store's posters folder, and NOTHING appears in the project folder
+    /// or next to it (no sidecar written by the poster).
+    #[test]
+    fn t985_posters_render_into_the_store_never_into_the_project_folder() {
+        let store = tmp("t985p-store");
+        let projects = tmp("t985p-projects");
+        let path = projects.join("edit.kt");
+        let text = crate::app::project_text_of(&crate::lessons::lesson_project(), &Default::default(), Some(&projects));
+        crate::app::write_project_atomic(&path, &text).unwrap();
+        let mut app = crate::app::KtApp::open(&path).expect("open");
+        app.start.store = StartStore::at(Some(store.clone()));
+        let before = crate::welcome::posters_done();
+        app.queue_poster(); // what Ctrl+S and the close of a named project do
+        assert!(crate::welcome::wait_posters(std::time::Duration::from_secs(60)), "the poster job hung");
+        assert!(crate::welcome::posters_done() > before, "the job did not run");
+        let poster = app.start.store.poster_path(&path).unwrap();
+        assert!(poster.starts_with(store.join("posters")), "the poster lives in the store: {poster:?}");
+        let img = image::open(&poster).expect("a PNG poster");
+        assert_eq!((img.width(), img.height()), (320, 180));
+        drop(app);
+        let mut names: Vec<String> = std::fs::read_dir(&projects)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert!(
+            names.iter().all(|n| n == "edit.kt" || n.ends_with(".ktindex.db") || n.ends_with(".ktindex.db-journal")),
+            "a poster file appeared next to the project: {names:?}"
+        );
+        assert!(!names.iter().any(|n| n.ends_with(".png")), "a PNG in the project folder: {names:?}");
+        let _ = std::fs::remove_dir_all(&store);
+        let _ = std::fs::remove_dir_all(&projects);
     }
 
     /// Test 987 (welcome-window-and-tour, durability): a user template, the tour progress and

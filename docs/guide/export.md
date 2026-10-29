@@ -36,7 +36,7 @@ cargo run -p kt-cli -- <command> …
 |---|---|
 | `version` | print the version |
 | `new <out.kt>` | an empty project |
-| `demo <out.kt> [--files]` | a demo project on synthetic sources (renders with no media at all) |
+| `demo <out.kt> [--files \| --generators]` | a demo project on synthetic sources (renders with no media at all); `--generators` draws every picture with generators, as the tour does |
 | `showcase <out.kt> --sources <dir>` | a dense montage cut from every video in a directory — the README project |
 | `import <in.otio\|in.ktproj> <out.kt>` | import OpenTimelineIO or an old Kinetren project |
 | `export-otio <in.kt> <out.otio>` | export OpenTimelineIO |

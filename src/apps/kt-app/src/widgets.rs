@@ -491,6 +491,17 @@ pub fn group<R>(
     r.body_returned
 }
 
+/// The tour step's STATIC accent outline around its target (welcome-window-and-tour, the owner
+/// 2026-10-28: "yes, it may draw"). Drawn by the target in its own layer; nothing animates.
+pub fn lesson_outline(ui: &egui::Ui, rect: egui::Rect) {
+    ui.painter().rect_stroke(
+        rect.expand(1.0),
+        2.0,
+        egui::Stroke::new(2.0, crate::theme::ACCENT),
+        egui::StrokeKind::Outside,
+    );
+}
+
 /// ACTIONS row of the window — BELOW the scrolling body. A separate call, not
 /// a second closure: both closures would hold the same borrow
 /// (the hint accumulator), and the borrow checker is right.

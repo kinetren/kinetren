@@ -2665,6 +2665,8 @@ const WINDOWS: &[(&str, &str)] = &[
     ("kt_recovery", "recovery of unsaved work at startup"),
     ("kt_ask", "question on close — that very “obviously meaningful” window from the owner’s words"),
     ("kt_ffmpeg", "where FFmpeg was found and how to get it: per machine, outside any project, and reachable when nothing plays (windows-build)"),
+    ("kt_welcome", "start: templates, recent projects with posters, the tour, what's new — the first second has no project yet (welcome-window-and-tour)"),
+    ("kt_guide", "a searchable index “I want to… → where” and the guide pages — it lives beside the work (welcome-window-and-tour)"),
 ];
 
 /// Test 757 (R.63 item 12): EVERY window of the program is in the registry, and vice versa.
@@ -2945,6 +2947,7 @@ fn action_labels() -> Vec<String> {
         tr(k::ask::RECOVERY_RESTORE).to_string(),
         tr(k::ask::RECOVERY_LATER).to_string(),
         tr(k::ffmpeg::RESCAN).to_string(),
+        tr(k::welcome::CLOSE).to_string(),
     ]
 }
 
@@ -2981,6 +2984,11 @@ pub(crate) fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
         ("kt_diag", OpenWin::By(|h| h.state_mut().perf.diag_open = true), Closes::Titlebar { title: || crate::i18n::tr(crate::i18n::k::win::DIAG_TITLE).to_string(), why: "diagnostics is closed by the title cross: it is a developer window with no actions" }),
         ("kt_recovery", OpenWin::By(|h| h.state_mut().recovery_open = true), Closes::Action),
         ("kt_ffmpeg", OpenWin::By(|h| h.state_mut().ffmpeg_ui.open = true), Closes::Action),
+        ("kt_welcome", OpenWin::By(|h| h.state_mut().start.welcome.open = true), Closes::Action),
+        ("kt_guide", OpenWin::By(|h| h.state_mut().start.guide.open = true), Closes::Titlebar {
+            title: || crate::i18n::tr(crate::i18n::k::guide::TITLE).to_string(),
+            why: "the Guide is closed by the title cross: an index and pages with no action of their own",
+        }),
         ("kt_ask", OpenWin::By(|h| {
             h.state_mut().ask = Some(crate::app::Ask::DropProject);
         }), Closes::ActionShort {
@@ -6109,17 +6117,516 @@ fn t976_a_test_door_plugin_reaches_the_picker_and_no_reference_list() {
     );
 }
 
-/// PROBE 1.1 (welcome-window-and-tour): egui 0.36 opens a menu-bar popup from code.
+/// A store for the welcome tests in its own temporary directory.
+fn welcome_store(tag: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("kt-welcome-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+/// A real project file made of generators (so it opens with a picture and nothing missing).
+fn welcome_project(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let p = crate::lessons::lesson_project();
+    let path = dir.join(format!("{name}.kt"));
+    let text = crate::app::project_text_of(&p, &Default::default(), Some(dir));
+    crate::app::write_project_atomic(&path, &text).unwrap();
+    path
+}
+
+/// Test 986 (welcome-window-and-tour, ui-reach): the welcome window shows the five built-in
+/// templates and the person's own, the recent rows (a poster and a placeholder) with names and
+/// folders, the tour tile, the Guide link and What's new; a template click makes an unnamed
+/// project of its size; Help → Welcome window… and a recent card open that project; with
+/// "Show at start" off the next start opens the last project and no window; nothing repaints
+/// while the mouse is still.
+///
+/// - **PATH** start Kinetren → the welcome window over an empty editor: template tiles
+///   "1080p25 · 1080p30 · 4K30 · 9:16 · 1:1 · Shorts 60", "Recent" with two cards (a frame of the
+///   project and a grey placeholder with initials), on the right "Start the tour", "Guide" and
+///   "What's new in kt26.10" → click "9:16" → the window closes, the project is 1080×1920 30 fps,
+///   untitled → Help → Welcome window… → click the first recent card → that project opens →
+///   Help → Welcome window… → uncheck "Show at start" → quit and start again → the last project
+///   opens directly, no window
 #[test]
-fn probe_menu_opens_by_code() {
+fn t986_welcome_window_templates_recent_whats_new_and_the_switch() {
+    use crate::i18n::{k, tr};
     use egui_kittest::kittest::Queryable;
+    let store_dir = welcome_store("t986-store");
+    let projects = welcome_store("t986-projects");
+    let older = welcome_project(&projects, "older edit");
+    let newest = welcome_project(&projects, "newest edit");
+    let mut store = crate::user_store::StartStore::at(Some(store_dir.clone()));
+    store.begin_session(None);
+    store.touch_recent(&older, None);
+    store.touch_recent(&newest, None);
+    store.add_template(crate::user_store::UserTemplate {
+        name: "Shorts 60".into(),
+        width: 1080,
+        height: 1920,
+        fps: 60,
+    });
+    // the newest project's poster, by the real offline job (D5); the older one has none
+    let app = crate::app::KtApp::open(&newest).expect("open");
+    let job_out = store.poster_path(&newest).unwrap();
+    crate::welcome::request_poster(crate::welcome::PosterJob {
+        out: job_out.clone(),
+        project: app.model.project().clone(),
+        base: Some(projects.clone()),
+        at: kt_time::Tick(90_000),
+    });
+    drop(app);
+    assert!(crate::welcome::wait_posters(std::time::Duration::from_secs(60)), "the poster job hung");
+    assert!(job_out.exists(), "the poster was not written");
+
     let mut h = crate::layout_tests::harness_sized(1440.0, 860.0);
-    let label = crate::i18n::tr(crate::i18n::k::bin::menu::NEW_GENERATOR).to_string();
-    assert_eq!(h.query_all_by_label_contains(&label).count(), 0, "the menu is closed at first");
-    let id: egui::Id = h.ctx.data(|d| d.get_temp(egui::Id::new("kt_menu_root_file"))).expect("id");
-    egui::Popup::open_id(&h.ctx, id.with("popup"));
+    h.state_mut().start.store = store;
+    let ctx = h.ctx.clone();
+    h.state_mut().open_welcome(&ctx, None, false);
+    // the posters arrive from a helper thread; a frame each
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while h.state().start.welcome.posters.count() < 1 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    h.step();
+    // the window fits the screen (an auto-sized window once grew to the screen's maximum)
+    let win = h.ctx.memory(|m| m.area_rect(egui::Id::new("kt_welcome"))).expect("the window is drawn");
+    assert!(h.ctx.content_rect().contains_rect(win), "the welcome window sticks out of the screen: {win:?}");
+    assert_eq!(h.state().start.welcome.posters.count(), 1, "one poster and one placeholder");
+    assert_eq!(h.state().start.welcome.primary, crate::welcome::Tile::Recent(0), "the previous project is primary");
+    for label in ["1080p25", "1080p30", "4K30", "9:16", "1:1", "Shorts 60", "newest edit", "older edit"] {
+        assert!(h.query_all_by_label_contains(label).count() > 0, "the welcome window has no “{label}”");
+    }
+    for key in [k::welcome::TOUR, k::welcome::GUIDE, k::welcome::SHOW_AT_START] {
+        assert!(h.query_all_by_label_contains(tr(key)).count() > 0, "the welcome window has no “{}”", tr(key));
+    }
+    let folder = projects.display().to_string();
+    assert!(h.query_all_by_label_contains(&folder).count() >= 2, "each card names its folder");
+    let (ver, _) = crate::guide::whats_new(kt_version::SHORT);
+    let head = if ver == kt_version::SHORT {
+        crate::tf!(k::welcome::WHATS_NEW, &ver)
+    } else {
+        crate::tf!(k::welcome::WHATS_NEW_OLDER, &ver)
+    };
+    assert!(h.query_all_by_label_contains(&head).count() > 0, "no What's new panel: “{head}”");
+    // nothing repaints while the mouse is still (invariant 12): no animation, no loop
+    for _ in 0..3 {
+        h.step();
+    }
+    // the causes with the window open are those of the bare editor at rest — the window adds none
+    let causes = |h: &egui_kittest::Harness<'static, crate::app::KtApp>| -> Vec<(&'static str, u32)> {
+        h.ctx.repaint_causes().iter().map(|c| (c.file, c.line)).collect()
+    };
+    let with_window = causes(&h);
+    let mut bare = crate::layout_tests::harness_sized(1440.0, 860.0);
+    for _ in 0..3 {
+        bare.step();
+    }
+    let at_rest = causes(&bare);
+    assert!(
+        with_window.iter().all(|c| at_rest.contains(c)),
+        "the welcome window adds a repaint at rest: {with_window:?} against {at_rest:?}"
+    );
+
+    // ---- the 9:16 tile: an unnamed 1080×1920 30 fps project ----
+    h.get_by_label_contains("9:16").click();
     h.step();
     h.step();
-    let labels = crate::layout_tests::menu_labels(&mut h);
-    assert!(h.query_all_by_label_contains(&label).count() > 0, "the File menu did not open by code: {labels:?}");
+    let st = &h.state().model.project().settings;
+    assert_eq!((st.width, st.height, st.fps), (1080, 1920, 30), "the 9:16 tile made another frame");
+    assert!(h.state().project_path.is_none(), "a template makes an UNNAMED project");
+    assert!(!h.state().start.welcome.open, "the window closes on a template");
+    assert_eq!(h.state().start.store.start.last_template.as_deref(), Some("v916"));
+
+    // ---- Help → Welcome window… → the first recent card ----
+    h.get_by_label(tr(k::help::TITLE)).click();
+    h.step();
+    h.step();
+    h.get_by_label(tr(k::help::WELCOME)).click();
+    h.step();
+    h.step();
+    assert!(h.state().start.welcome.open, "Help → Welcome window… did not reopen the window");
+    for _ in 0..4 {
+        h.step();
+    }
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "newest edit").click();
+    h.step();
+    h.step();
+    assert_eq!(
+        h.state().project_path.as_deref().map(crate::user_store::project_key),
+        Some(crate::user_store::project_key(&newest)),
+        "the recent card did not open its project"
+    );
+    assert!(!h.state().start.welcome.open);
+
+    // ---- Help → Welcome window… → uncheck "Show at start" → the next start ----
+    h.get_by_label(tr(k::help::TITLE)).click();
+    h.step();
+    h.step();
+    h.get_by_label(tr(k::help::WELCOME)).click();
+    h.step();
+    h.step();
+    h.get_by_label(tr(k::welcome::SHOW_AT_START)).click();
+    h.step();
+    h.step();
+    assert!(!h.state().start.store.start.show_at_start, "the switch did not turn off");
+    let mut next = crate::user_store::StartStore::at(Some(store_dir.clone()));
+    let plan = crate::welcome::plan_start(&mut next, None, None, false, |_| false);
+    assert_eq!(plan.window, None, "with the switch off no window opens");
+    assert_eq!(
+        plan.open.as_deref().map(crate::user_store::project_key),
+        Some(crate::user_store::project_key(&newest)),
+        "with the switch off the last project opens as before"
+    );
+    let _ = std::fs::remove_dir_all(&store_dir);
+    let _ = std::fs::remove_dir_all(&projects);
+}
+
+/// Test 988 (welcome-window-and-tour, ui-reach): a lesson step closes on the project's state and
+/// "Show" reaches the target; progress survives a restart; "Start over" clears it.
+///
+/// - **PATH** start Kinetren for the first time → the welcome window, "Start the tour" focused →
+///   click it → the demo project opens and a panel on the right reads "Lesson 1 of 5 · The first
+///   edit" with step 1 "Add a title" and a "Show" button → click "Show" → the File menu opens and
+///   "Create a generator…" carries an accent outline → Create a generator… → Titles and countdown
+///   → Text → a title event appears and step 1 turns into a check mark, step 2 "Cut the event at
+///   the marker" appears → put the playhead on the marker and press S → the event is in two pieces
+///   and step 2 is checked → close the panel and quit → start again → the welcome window's
+///   primary tile reads "Continue the tour — lesson 1, step 3"
+#[test]
+fn t988_a_lesson_step_closes_on_the_project_state() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    let store_dir = welcome_store("t988");
+    let mut h = crate::layout_tests::harness_sized(1440.0, 860.0);
+    let mut store = crate::user_store::StartStore::at(Some(store_dir.clone()));
+    let plan = crate::welcome::plan_start(&mut store, None, None, false, |_| false);
+    assert_eq!(plan.window, Some(crate::welcome::Tile::Tour), "the first start: the tour is primary");
+    h.state_mut().start.store = store;
+    let ctx = h.ctx.clone();
+    h.state_mut().open_welcome(&ctx, plan.window.clone(), false);
+    for _ in 0..4 {
+        h.step();
+    }
+    h.get_by_label_contains(tr(k::welcome::TOUR)).click();
+    h.step();
+    h.step();
+    // the demo copy in the data directory: generators only, nothing missing
+    let path = h.state().project_path.clone().unwrap_or_else(|| {
+        let n: Vec<String> = h.state().notices.iter().map(|n| format!("{n:?}")).collect();
+        panic!("the lesson project is named; notices: {n:?}; welcome open {}; ask {:?}; dirty {} {}; pending {:?}", h.state().start.welcome.open, h.state().ask, h.state().dirty_content, h.state().dirty_ui, h.state().start.pending)
+    });
+    assert!(path.starts_with(store_dir.join("lessons")), "the copy lives in the store: {path:?}");
+    assert!(crate::lessons::is_sandbox(&path));
+    assert!(h.state().placeholder_media.is_empty(), "a lesson copy has a missing source");
+    assert!(
+        h.state().start.store.recent.is_empty(),
+        "a lesson sandbox is not the person's project — it must not be in Recent"
+    );
+    let head = crate::tf!(k::lessons::HEAD, 1, crate::lessons::LESSONS.len(), tr(k::lessons::L1));
+    assert!(h.query_all_by_label_contains(&head).count() > 0, "no lessons panel “{head}”");
+    assert!(h.query_all_by_label_contains(tr(k::lessons::L1_S1)).count() > 0, "step 1 is not shown");
+
+    // "Show": the File menu opens by code, the item is outlined (by the menu itself)
+    h.get_by_label(tr(k::lessons::SHOW)).click();
+    h.step();
+    h.step();
+    let gen_item = tr(k::bin::menu::NEW_GENERATOR);
+    assert!(h.query_all_by_label_contains(gen_item).count() > 1, "Show did not open the File menu");
+    assert!(h.state().lesson_marks_menu(k::bin::menu::NEW_GENERATOR), "the item is not the outlined target");
+    // the person's own gesture: Create a generator… → Titles and countdown → Text
+    // the lesson paragraph names the same item; the menu's own node STARTS with it
+    {
+        use egui_kittest::kittest::NodeT;
+        h.query_all_by_label_contains(gen_item)
+            .find(|n| n.accesskit_node().label().is_some_and(|l| l.starts_with(gen_item)))
+            .expect("the File menu item")
+            .hover();
+    }
+    h.step();
+    h.step();
+    let group = tr(k::genkind::GROUP_TITLES);
+    {
+        use egui_kittest::kittest::NodeT;
+        h.query_all_by_label_contains(group)
+            .find(|n| n.accesskit_node().label().is_some_and(|l| l.starts_with(group)))
+            .expect("the generator group")
+            .hover();
+    }
+    h.step();
+    h.step();
+    h.get_by_label(crate::gen_ui::kind_name(&kt_model::GeneratorKind::default_for_tag("text").unwrap())).click();
+    h.step();
+    h.step();
+    assert!(h.state().start.store.tour.is_done(1, 1), "the title step did not close by itself");
+    assert!(h.query_all_by_label_contains(tr(k::lessons::L1_S2)).count() > 0, "step 2 is not shown");
+
+    // step 2: the playhead on the marker, S
+    let at = h
+        .state()
+        .model
+        .project()
+        .markers
+        .iter()
+        .find(|m| m.name == crate::lessons::CUT_MARKER)
+        .map(|m| m.t)
+        .expect("the lesson marker");
+    h.state_mut().selected.clear();
+    h.state().player.seek(at);
+    h.step();
+    // the generator window the title opened is closed first: its text field holds the keys
+    h.state_mut().fx_editors.clear();
+    h.step();
+    h.step();
+    h.key_press(egui::Key::S);
+    h.step();
+    h.step();
+    assert!(h.state().start.store.tour.is_done(1, 2), "the cut at the marker did not close step 2");
+
+    // close the panel; restart: the welcome window continues lesson 1 at step 3
+    h.state_mut().start.lessons.open = false;
+    h.step();
+    let mut next = crate::user_store::StartStore::at(Some(store_dir.clone()));
+    let plan = crate::welcome::plan_start(&mut next, None, None, false, |_| false);
+    assert_eq!(
+        plan.window,
+        Some(crate::welcome::Tile::ContinueTour { lesson: 1, step: 3 }),
+        "the restart does not continue the tour"
+    );
+    assert_eq!(next.tour.finished_steps(), 2, "the progress did not survive the restart");
+
+    // "Start over": the progress goes, a new copy is made
+    let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+    h.state_mut().start.store = next;
+    h.state_mut().start_go(crate::welcome::StartGo::Lesson { lesson: 1, fresh: true });
+    h.step();
+    // the lesson copy was edited: "Start over" asks like any other open; the edits are not kept
+    assert!(h.state().ask.is_some(), "Start over over an edited lesson must ask first");
+    h.state_mut().answer_ask(crate::app::Answer::No);
+    h.step();
+    assert_eq!(h.state().start.store.tour.finished_steps(), 0, "Start over kept the progress");
+    let copy = h.state().model.project();
+    assert!(
+        !crate::lessons::done(&crate::lessons::Predicate::HasGenerator("text"), copy, &Default::default()),
+        "Start over did not make a new copy (the title is still there)"
+    );
+    let _ = before;
+    let _ = std::fs::remove_dir_all(&store_dir);
+}
+
+/// Test 988, second scenario (`no_teaching_layer_over_the_ui`): every lesson target exists in the
+/// registry, the observed windows or the menu catalog, every paragraph fits the catalog budget,
+/// and the layers above `Order::Middle` are a CLOSED named list — none belongs to a lesson.
+///
+/// - **PATH** there is no gesture: the guard runs with the program's own lessons; a person opening
+///   any lesson never sees a callout, a dimmed screen or a frame drawn over the editor
+#[test]
+fn no_teaching_layer_over_the_ui() {
+    use crate::lessons::{LESSONS, OBSERVED_WINDOWS, Target};
+    // (1) every target exists
+    for (li, l) in LESSONS.iter().enumerate() {
+        assert!(!crate::i18n::tr(l.title).is_empty());
+        for (si, st) in l.steps.iter().enumerate() {
+            let at = format!("lesson {} step {}", li + 1, si + 1);
+            match st.show {
+                Some(Target::Window(id)) => {
+                    assert!(WINDOWS.iter().any(|(w, _)| *w == id), "{at}: window “{id}” is not in WINDOWS");
+                }
+                Some(Target::Menu(path)) => {
+                    assert!(path.len() >= 2, "{at}: a menu path names its root and its item");
+                    for key in path {
+                        assert!(!crate::i18n::tr(*key).is_empty(), "{at}: an empty menu key");
+                    }
+                }
+                Some(Target::Panel(_)) | None => {}
+            }
+            if let crate::lessons::Predicate::WindowOpen(id) = st.done {
+                assert!(OBSERVED_WINDOWS.contains(&id), "{at}: “{id}” is not observed — the step could never close");
+                assert!(WINDOWS.iter().any(|(w, _)| *w == id), "{at}: “{id}” is not in WINDOWS");
+            }
+            for lang in crate::i18n::Lang::ALL {
+                crate::i18n::set_lang(lang);
+                let t = crate::i18n::tr(st.text);
+                assert!(!t.is_empty() && t.chars().count() <= 160, "{at}: {lang:?} paragraph over the budget");
+            }
+        }
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+
+    // (2) the closed list of layers above the window layer, by the sources
+    const LAYERS: &[&str] = &[
+        "ambient-overlay",
+        "status-hint",
+        "project-title",
+        "speed-drag-overlay",
+        "bin-group-name",
+        "marker-name-edit",
+        "lane-name-edit",
+        "area-name-edit",
+    ];
+    let mut seen: Vec<String> = Vec::new();
+    for (file, src) in production_corpus() {
+        if file.contains("kt-model/") {
+            continue;
+        }
+        let lines: Vec<&str> = src.lines().collect();
+        for (n, line) in lines.iter().enumerate() {
+            let t = line.trim();
+            if t.starts_with("//") {
+                continue;
+            }
+            if !(t.contains("Order::Foreground") || t.contains("Order::Tooltip") || t.contains("Order::Debug")) {
+                continue;
+            }
+            let near = lines[n.saturating_sub(3)..(n + 3).min(lines.len())].join("\n");
+            let name = near
+                .split("Id::new(\"")
+                .nth(1)
+                .and_then(|r| r.split('"').next())
+                .unwrap_or("")
+                .to_string();
+            assert!(
+                LAYERS.contains(&name.as_str()),
+                "{file}:{}: a layer above the windows that is not in the closed list (“{name}”). A lesson \
+                 is a panel, not a layer; a new overlay must be named here with its reason",
+                n + 1
+            );
+            seen.push(name);
+        }
+    }
+    assert!(seen.len() >= 6, "the layer scan found too little — it is broken: {seen:?}");
+
+    // (3) at run time, with the lessons panel open on every step of every lesson
+    let mut h = crate::layout_tests::harness_sized(1440.0, 860.0);
+    for (li, l) in LESSONS.iter().enumerate() {
+        for si in 0..l.steps.len() {
+            {
+                let app = h.state_mut();
+                app.start.store.reset_tour();
+                for s in 0..si {
+                    app.start.store.finish_step(li as u32 + 1, s as u32 + 1);
+                }
+                app.start.lessons.open = true;
+                app.start.lessons.lesson = li as u32 + 1;
+            }
+            h.step();
+            h.step();
+            let above: Vec<egui::LayerId> = h.ctx.memory(|m| m.layer_ids().filter(|l| l.order > egui::Order::Middle).collect());
+            for layer in above {
+                assert!(
+                    LAYERS.iter().any(|n| layer.id == egui::Id::new(*n)),
+                    "lesson {} step {}: a layer {layer:?} above the windows is not in the closed list",
+                    li + 1,
+                    si + 1
+                );
+            }
+        }
+    }
+}
+
+/// Test 989 (welcome-window-and-tour, ui-reach): Help → Guide… finds "where" and opens the page;
+/// every index entry resolves; every guide file passes the subset; the page list equals
+/// `docs/guide/`.
+///
+/// - **PATH** open Help → Guide… → a window with a search field on top, "I want to…" entries on
+///   the left and the pages list below them → type "loop" → two lines remain: "Play a part in a
+///   loop → drag on the ruler, then L" and the page heading "Markers and the region" → click the
+///   first → the right side shows the timeline page at "Markers and the region" → clear the search
+///   → click "Keyboard and mouse" → the key table of the guide
+#[test]
+fn t989_the_guide_finds_where_and_opens_the_page() {
+    use crate::i18n::{Lang, k, set_lang, tr};
+    use egui_kittest::kittest::Queryable;
+    // the compiled list equals the directory
+    let dir = workspace_root().join("../docs/guide");
+    let mut on_disk: Vec<String> = std::fs::read_dir(&dir)
+        .expect("docs/guide")
+        .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+        .filter(|n| n.ends_with(".md"))
+        .collect();
+    on_disk.sort();
+    let mut compiled: Vec<String> = crate::guide::PAGES.iter().map(|(f, _)| f.to_string()).collect();
+    compiled.sort();
+    assert_eq!(compiled, on_disk, "guide.rs PAGES must list exactly the files of docs/guide/");
+    // every file passes the subset; a copy with an HTML block fails, naming file and line
+    for (file, text) in crate::guide::PAGES {
+        crate::guide::parse(file, text).unwrap_or_else(|e| panic!("{e}"));
+    }
+    let bad = format!("{}\n<div>raw</div>\n", crate::guide::PAGES[0].1);
+    let err = crate::guide::parse("getting-started.md", &bad).expect_err("an HTML block must fail");
+    let line = bad.lines().position(|l| l.starts_with("<div>")).unwrap() + 1;
+    assert!(err.starts_with(&format!("getting-started.md:{line}:")), "the error names file and line: {err}");
+    // every index entry resolves to a heading, in every language
+    for lang in Lang::ALL {
+        set_lang(lang);
+        for e in crate::guide::index() {
+            let page = crate::guide::pages().iter().find(|p| p.file == e.file).expect("index page");
+            assert!(
+                page.blocks.iter().any(|b| matches!(b, crate::guide::Block::Heading { slug, .. } if slug == e.anchor)),
+                "index entry “{}” points to {}#{} — no such heading",
+                e.want,
+                e.file,
+                e.anchor
+            );
+            assert!(!e.want.is_empty() && !e.how.is_empty());
+        }
+    }
+    set_lang(Lang::En);
+    // the window
+    let mut h = crate::layout_tests::harness_sized(1440.0, 860.0);
+    set_lang(Lang::En);
+    h.step();
+    h.get_by_label(tr(k::help::TITLE)).click();
+    h.step();
+    h.step();
+    h.get_by_label(tr(k::help::GUIDE)).click();
+    h.step();
+    h.step();
+    assert!(h.state().start.guide.open, "Help → Guide… did not open the Guide");
+    h.state_mut().start.guide.query = "loop".into();
+    h.step();
+    h.step();
+    let want = tr(k::guide::index::LOOP);
+    let how = tr(k::guide::index::LOOP_HOW);
+    assert_eq!(want, "Play a part in a loop");
+    assert_eq!(how, "drag on the ruler, then L");
+    assert!(h.query_all_by_label_contains(how).count() > 0, "the index does not show the loop entry");
+    assert!(h.query_all_by_label_contains("Markers and the region").count() > 0, "the heading is not found");
+    let (entries, heads) = crate::guide::search("loop");
+    assert_eq!(entries.len(), 1, "one index entry for “loop”");
+    assert!(!heads.is_empty());
+    h.get_by_label_contains(how).click();
+    h.step();
+    h.step();
+    let g = &h.state().start.guide;
+    let page = &crate::guide::pages()[g.page];
+    assert_eq!(page.file, "timeline.md", "the entry opened another page");
+    h.state_mut().start.guide.query.clear();
+    h.step();
+    // the person turns the wheel over the left column to reach the page list
+    let over = h.get_by_label(tr(k::guide::WANT)).rect().center() + egui::vec2(0.0, 60.0);
+    h.hover_at(over);
+    for _ in 0..6 {
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -120.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        h.step();
+    }
+    h.step();
+    let win = h.ctx.memory(|m| m.area_rect(egui::Id::new("kt_guide"))).expect("the Guide window");
+    assert!(
+        win.contains_rect(h.get_by_label("Keyboard and mouse").rect()),
+        "the page list runs past the Guide window's bottom edge"
+    );
+    h.get_by_label("Keyboard and mouse").click();
+    h.step();
+    h.step();
+    let g = &h.state().start.guide;
+    assert_eq!(crate::guide::pages()[g.page].file, "shortcuts.md");
+    assert!(h.query_all_by_label_contains("play / pause").count() > 0, "the key table is not shown");
+    set_lang(Lang::Ru);
 }
