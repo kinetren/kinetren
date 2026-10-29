@@ -127,5 +127,10 @@ line = the stage and what was done). Stage only this change's files.
 
 ## 5. Finish and submission
 
-- [ ] 5.1 Run `./scripts/finish.sh` from `src/` (and `--release` once). Verify it is green and record the version `vYY.MM.DD-hash` here
+- [x] 5.1 Run `./scripts/finish.sh` from `src/` (and `--release` once). Verify it is green and record the version `vYY.MM.DD-hash` here
+  - `./scripts/finish.sh` green: **kt26.10.29-bf92858c** (`loop` passed on the second try alone — a known
+    load flake). Two red runs before it, both recorded: the live rig's stale `WM_CLASS` and t958's
+    unwaited renders (fixed in 3f3e342), then t947 reading the compose cost before it settled
+    (fixed in bf92858; `trans` flaked once). `--release` is not run: the release tarball is the
+    owner's step with the Flatpak bundle (D9), which needs flatpak on the machine.
 - [ ] 5.2 The owner opens the Flathub PR (D10) from the first release tag; record the PR URL and the reviewers' requests here; answers that change the manifest go back through this change's guards
