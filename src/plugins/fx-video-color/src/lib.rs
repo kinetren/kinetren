@@ -1,10 +1,74 @@
 //! Colour video effects as plugins (plugin-api-stage1): color_grade, duotone, posterize, vignette.
-//! Each moves here from kt-model/kt-fx in its stage; the crate is registered before its first
-//! plugin so the graph rule (t975) holds from the start.
+//! Posterize is the pilot (D9): the smallest kernel that crosses all four executor positions — the
+//! CPU barrier, the CPU tap of the fused pass, its own GPU pass and the GPU tap arm.
 
-use kt_plugin_api::Plugin;
+use std::sync::Arc;
+
+use kt_plugin_api::{
+    Decl, Gpu, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin, RowDecl, Store, UiDecl,
+    VideoClass, VideoKernel,
+};
 
 /// The plugins of this family, in the assembler's order.
-pub fn plugins() -> Vec<std::sync::Arc<dyn Plugin>> {
-    Vec::new()
+pub fn plugins() -> Vec<Arc<dyn Plugin>> {
+    vec![Arc::new(Posterize::new())]
+}
+
+/// Posterize by channels (R.47): point-wise (inside a geometry series the supersampling softens
+/// the steps — accepted, THRESHOLD).
+pub struct Posterize {
+    m: Manifest,
+}
+
+impl Posterize {
+    pub fn new() -> Posterize {
+        Posterize {
+            m: Manifest {
+                id: "posterize".into(),
+                media: Media::VideoFx,
+                // the row the variant declared: levels u32 2..32, default 6
+                passport: vec![ParamSpec::num("levels", 2.0, 32.0, 6.0, 1.0, ParamUnit::Count, ParamKind::Smooth)],
+                rows: vec![RowDecl { store: Store::U32, omit_default: false }],
+                decl: Decl {
+                    video_class: Some(VideoClass::PointWise),
+                    gpu: Gpu::Wgsl(include_str!("posterize.wgsl")),
+                    ..Decl::default()
+                },
+                ui: UiDecl { name: "Posterize", category_key: "fxreg.cat.color", keywords_key: "fxreg.kw.posterize" },
+            },
+        }
+    }
+
+    fn levels(p: &[f64]) -> u32 {
+        (p.first().copied().unwrap_or(6.0).round() as u32).clamp(2, 32)
+    }
+}
+
+impl Default for Posterize {
+    fn default() -> Posterize {
+        Posterize::new()
+    }
+}
+
+impl Plugin for Posterize {
+    fn manifest(&self) -> &Manifest {
+        &self.m
+    }
+    fn video(&self) -> Option<&dyn VideoKernel> {
+        Some(self)
+    }
+}
+
+impl VideoKernel for Posterize {
+    /// Quantization PER CHANNEL (the standard — AE Posterize); alpha untouched.
+    fn tap(&self, p: &[f64], v: &mut [f64; 4]) {
+        let n = Posterize::levels(p) as f64;
+        for c in v.iter_mut().take(3) {
+            let i = (*c * n / 256.0).floor().clamp(0.0, n - 1.0);
+            *c = i * 255.0 / (n - 1.0);
+        }
+    }
+    fn gpu_params(&self, p: &[f64]) -> [f32; 7] {
+        [Posterize::levels(p) as f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    }
 }

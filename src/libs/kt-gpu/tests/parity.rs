@@ -121,6 +121,7 @@ fn run_both(engine: &dyn VideoGpuExec, p: &FramePlan<'_>) -> (Vec<u8>, Vec<u8>, 
 
 #[test]
 fn t181_effect_parity_gpu_vs_cpu() {
+    kt_plugins_builtin::install();
     let Some(engine) = test_engine() else { return };
     let cases: Vec<(&str, Vec<FxInstance>, FrameTol)> = vec![
         ("pan", vec![FxInstance::geometry_at(-0.05, 0.03333, 1.5)], FrameTol::BILINEAR),
@@ -485,6 +486,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
 /// tolerances as the K×-barriers of R.45.
 #[test]
 fn t309_decode_stage_parity_gpu_vs_cpu() {
+    kt_plugins_builtin::install();
     let Some(engine) = test_engine() else { return };
     let zoom2 = FxInstance::geometry_zoom(2.0);
     let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
@@ -554,6 +556,7 @@ fn t309_decode_stage_parity_gpu_vs_cpu() {
 
 #[test]
 fn t182_composite_parity_byte_exact() {
+    kt_plugins_builtin::install();
     let Some(engine) = test_engine() else { return };
     let bg = Src::new(1, Some(frame(W, H, false, 0)), vec![]);
     let top_alpha = Src::new(2, Some(frame(W, H, true, 0x55)), vec![]);
@@ -630,7 +633,9 @@ fn t182_composite_parity_byte_exact() {
 
 #[test]
 fn t183_gpu_deterministic_on_device_and_dirty_pool() {
+    kt_plugins_builtin::install();
     let Some(e1) = test_engine() else { return };
+    kt_plugins_builtin::install();
     let Some(e2) = test_engine() else { return };
     // a chain WITHOUT t-dependent effects: a change of t alters the engine’s cache key
     // but not the bytes, so it forces a recalculation with a “dirty” pool
@@ -684,6 +689,7 @@ fn t183_gpu_deterministic_on_device_and_dirty_pool() {
 /// what invariant 7 forbids.
 #[test]
 fn t224_transition_parity_gpu_vs_cpu() {
+    kt_plugins_builtin::install();
     let Some(engine) = test_engine() else { return };
     let a = Src::new(1, Some(frame(W, H, false, 0)), vec![]);
     let b = Src::new(2, Some(frame(W, H, false, 0x5a)), vec![]);
@@ -858,6 +864,7 @@ fn t224_transition_parity_gpu_vs_cpu() {
 /// excluded explicitly.
 #[test]
 fn t329_parity_cycle_over_the_registry() {
+    kt_plugins_builtin::install();
     let Some(engine) = test_engine() else { return };
     // (tag, single tolerance, sandwich tolerance)
     let classes: &[(&str, FrameTol, FrameTol)] = &[
@@ -960,7 +967,7 @@ fn t329_parity_cycle_over_the_registry() {
             FrameTol::BILINEAR,
             FrameTol::BILINEAR,
         ),
-        (FxInstance::Posterize { levels: 4 }, FrameTol::THRESHOLD, FrameTol::THRESHOLD),
+        (posterize(4), FrameTol::THRESHOLD, FrameTol::THRESHOLD),
         // R.62: an additional “Geometry” node with a crop, shift, zoom and
         // rotation (Proj-affine + Bounds)
         (
@@ -1079,6 +1086,7 @@ fn t329_parity_cycle_over_the_registry() {
 #[test]
 fn t714b_lead_geometry_placement_parity() {
     use kt_fx::conform::{ConformRule, LeadCtx};
+    kt_plugins_builtin::install();
     let Some(engine) = test_engine() else { return };
     let vertical = frame(36, 64, false, 0);
     let rot = {
@@ -1123,6 +1131,7 @@ fn t714b_lead_geometry_placement_parity() {
 #[test]
 fn t737_blend_modes_gpu_matches_cpu() {
     use kt_model::BlendMode;
+    kt_plugins_builtin::install();
     let Some(engine) = test_engine() else { return };
     // the BOTTOM layer is an opaque background, the TOP one has alpha: this shows both
     // the formula of the mode and that a hole leaves the bottom untouched
@@ -1156,6 +1165,7 @@ fn t737_blend_modes_gpu_matches_cpu() {
 /// the op list is the two passes of the tile path.
 #[test]
 fn t944_one_tile_on_the_gpu_is_the_full_pass() {
+    kt_plugins_builtin::install();
     let Some(engine) = test_engine() else { return };
     let (w, h) = (320u32, 180u32);
     let grid = |cols, rows, center| FxInstance::EventGrid { cols, rows, center };
@@ -1197,5 +1207,54 @@ fn t944_one_tile_on_the_gpu_is_the_full_pass() {
         assert_eq!(engine.last_cost().passes, 1, "{name}: the double mirror is one full pass");
         assert!(gpu == gpu_full, "{name}: the GPU tile differs from the GPU full pass");
         assert_frames_close(&cpu, &gpu, w, h, FrameTol::BILINEAR, name);
+    }
+}
+
+/// Posterize — a plugin since plugin-api-stage1: the built-in set is installed on first use.
+fn posterize(levels: u32) -> FxInstance {
+    kt_plugins_builtin::install();
+    FxInstance::plugin_with("posterize", &[levels as f64]).expect("posterize is a built-in plugin")
+}
+
+/// t974 (plugin-api-stage1, D5; capability `plugins`): the pilot plugin on both executors.
+///
+/// Posterize moved into `src/plugins/fx-video-color` with ONE WGSL text, which the engine pastes
+/// into the fused pass's tap dispatch and into a generated pass of its own. The CPU bytes are the
+/// pre-move ones (t328's goldens do not move), the GPU is within the point-wise tolerance, a fused
+/// series stays one pass, and the assembled text is a pure function of the registry.
+#[test]
+fn t974_the_pilot_plugin_on_both_executors() {
+    kt_plugins_builtin::install();
+    let (fused, own) = kt_gpu::assembled_shaders();
+    assert_eq!(kt_gpu::assembled_shaders(), (fused.clone(), own.clone()), "the assembled text is not a pure function");
+    assert!(fused.contains("fn tap_posterize(") && fused.contains("v = tap_posterize(v, a, b);"), "posterize is not in the fused pass");
+    assert_eq!(own.len(), 1, "one own pass per point-wise plugin");
+    assert_eq!(kt_gpu::plugin_taps().iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec!["posterize"]);
+    let Some(engine) = test_engine() else { return };
+    let mirror = FxInstance::Mirror { horizontal: true, vertical: false };
+    let vig = FxInstance::Vignette { strength: 0.6, radius: 0.5, softness: 0.4 };
+    let blur = FxInstance::blur(2);
+    let cases: Vec<(&str, Vec<FxInstance>, FrameTol, Option<u32>)> = vec![
+        ("alone", vec![posterize(5)], FrameTol::THRESHOLD, Some(1)),
+        // a tap inside a geometry series: the series is ONE pass
+        ("fused", vec![mirror.clone(), posterize(5), mirror.clone(), vig], FrameTol::THRESHOLD, None),
+        // a barrier between two blurs: its own generated pass
+        ("barrier", vec![blur.clone(), posterize(5), blur], FrameTol::THRESHOLD, None),
+    ];
+    for (i, (name, fx, tol, passes)) in cases.into_iter().enumerate() {
+        let src = Src::new(9700 + i as u64, Some(frame(W, H, false, 0)), fx.clone());
+        let p = plan(90_000, vec![one(&src, 4096, false)]);
+        let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
+        assert!(cc && cg, "{name}: incomplete");
+        assert_frames_close(&cpu, &gpu, W, H, tol, name);
+        if let Some(n) = passes {
+            assert_eq!(engine.last_cost().passes, n, "{name}: passes");
+        }
+        if name == "fused" {
+            // the series around the plugin's tap is one pass on the GPU
+            let plan = kt_fx::plan::plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[]);
+            let runs = plan.ops.iter().filter(|op| matches!(op, kt_fx::plan::PlanOp::Run { .. })).count();
+            assert_eq!(runs, 1, "fused: the series with the plugin's tap is not one run: {:?}", plan.ops.len());
+        }
     }
 }

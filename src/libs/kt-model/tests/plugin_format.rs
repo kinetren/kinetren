@@ -13,14 +13,38 @@ use serde::Serialize;
 /// edited afterwards. Stage 2.4 adds `posterize`; each later stage adds its kinds.
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-#[allow(dead_code)]
 enum Frozen {
-    Placeholder,
+    /// `FxInstance::Posterize` before 2.4 (`#[serde(default = "default_levels")] levels: u32`).
+    Posterize { levels: u32 },
+}
+
+fn frozen(f: Frozen) -> String {
+    serde_json::to_string(&f).unwrap()
 }
 
 /// The moved kinds, each with its default and a non-default value: (the slot, its frozen form).
 fn moved_kinds() -> Vec<(FxInstance, String)> {
-    Vec::new()
+    kt_plugins_builtin::install();
+    vec![
+        (FxInstance::posterize(), frozen(Frozen::Posterize { levels: 6 })),
+        (FxInstance::plugin_with("posterize", &[4.0]).unwrap(), frozen(Frozen::Posterize { levels: 4 })),
+        (FxInstance::plugin_with("posterize", &[32.0]).unwrap(), frozen(Frozen::Posterize { levels: 32 })),
+    ]
+}
+
+/// The frozen variant also READ files that left out a defaulted field: the plugin reads them the same.
+#[test]
+fn t973_a_moved_kind_reads_the_old_defaults() {
+    kt_plugins_builtin::install();
+    let read: FxInstance = serde_json::from_str(r#"{"kind":"posterize"}"#).unwrap();
+    // against the FROZEN default (6), not `posterize()`: a moved default would agree with itself
+    assert_eq!(serde_json::to_string(&read).unwrap(), frozen(Frozen::Posterize { levels: 6 }), "a posterize without `levels` reads as the default 6");
+    let clamped: FxInstance = serde_json::from_str(r#"{"kind":"posterize","levels":99}"#).unwrap();
+    assert_eq!(
+        serde_json::to_string(&clamped).unwrap(),
+        r#"{"kind":"posterize","levels":99}"#,
+        "an out-of-range value in a file is kept as read, as the variant kept it"
+    );
 }
 
 fn project_with(fx: Vec<FxInstance>) -> Project {

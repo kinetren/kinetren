@@ -10,7 +10,7 @@ mod engine;
 mod pool;
 
 pub use context::{GpuContext, GpuInitError};
-pub use engine::GpuFxEngine;
+pub use engine::{GpuFxEngine, assembled_shaders, plugin_taps};
 
 /// A single method of comparing GPU-vs-CPU frames (R.29): ad-hoc epsilons in
 /// tests are forbidden; only this helper is used.
@@ -97,7 +97,9 @@ pub fn assert_frames_close(cpu: &[u8], gpu: &[u8], w: u32, h: u32, tol: FrameTol
     );
 }
 
-/// Adapter for tests: skip with a printout if there is NO wgpu adapter;
+/// Adapter for tests: skip with a printout if there is NO wgpu adapter; the caller installs the
+/// built-in plugin set FIRST (`kt_plugins_builtin::install()`): point-wise plugins are assembled
+/// into the passes when the engine is created (plugin-api-stage1, D5);
 /// `KT_REQUIRE_GPU=1` turns this skip into a failure too (a copy of
 /// KT_REQUIRE_CROSS_RENDER). lavapipe/llvmpipe is a full-fledged adapter.
 ///

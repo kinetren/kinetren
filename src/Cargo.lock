@@ -2162,6 +2162,7 @@ version = "0.1.0"
 dependencies = [
  "kt-model",
  "kt-plugin-api",
+ "kt-plugins-builtin",
  "kt-time",
  "realfft",
  "rubato",
@@ -2177,6 +2178,8 @@ dependencies = [
  "kt-fx",
  "kt-media",
  "kt-model",
+ "kt-plugin-api",
+ "kt-plugins-builtin",
  "kt-time",
  "pollster 0.4.0",
  "wgpu",

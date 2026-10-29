@@ -48,6 +48,8 @@ fn project_with_video() -> Project {
 /// the leading flag lives only on the node materialized from the event.
 #[test]
 fn t716_registry_and_identity() {
+    // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
+    kt_plugins_builtin::install();
     let tags: Vec<&str> = FxInstance::all().iter().map(|f| f.tag()).collect();
     assert!(!tags.contains(&"pan"), "Pan abolished (R.62)");
     assert!(tags.contains(&"geometry"));
@@ -75,6 +77,8 @@ fn t716_registry_and_identity() {
 /// delete on the node — the event field always exists.
 #[test]
 fn t716_set_geometry_command_and_validation() {
+    // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(project_with_video());
     let g = EventGeometry { rule: Conform::Fill, pos_x: 0.1, ..Default::default() };
     let auto = vec![ParamCurve {
@@ -108,6 +112,8 @@ fn t716_set_geometry_command_and_validation() {
 /// reads “project” is rejected by validation.
 #[test]
 fn t716_project_rule_is_a_rule() {
+    // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
+    kt_plugins_builtin::install();
     let mut p = project_with_video();
     p.settings.conform = ConformRule::Fill;
     assert!(p.validate().is_ok());
@@ -126,6 +132,8 @@ fn t716_project_rule_is_a_rule() {
 /// the pan of the former frame is converted into position.
 #[test]
 fn t716_cammotion_migrates_to_geometry() {
+    // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
+    kt_plugins_builtin::install();
     let mut p = project_with_video();
     p.clips[0].fx = vec![FxInstance::CamMotion {
         mode: PanMode::Fill,

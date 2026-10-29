@@ -73,7 +73,32 @@ once (English message, first line = the stage and what was done).
     `Missing`, written back unchanged), and every `KtApp` constructor installs the built-in set.
     Workspace: green except t815 (the recovery write took 5–20 s: the machine's I/O pressure was
     92 % — `/proc/pressure/io` — while another process filled the disk, 37 → 15 GB free).
-- [ ] 2.4 Move Posterize: CPU kernel and tap into `fx-video-color`, its WGSL tap into the same crate; `plan_chain` (`src/libs/kt-fx/src/plan.rs`) asks the manifest's class; `GpuFxEngine::new(ctx, &Registry)` assembles the tap dispatch of `geom_fused.wgsl` and the own pass (D5); kt-app/kt-cli inject `builtin()`. Write t974 in `src/libs/kt-gpu/tests/parity.rs`. Verify t974, t328, t329, t181 green and `GOLDEN_VIDEO` unchanged
+- [x] 2.4 Move Posterize: CPU kernel and tap into `fx-video-color`, its WGSL tap into the same crate; `plan_chain` (`src/libs/kt-fx/src/plan.rs`) asks the manifest's class; `GpuFxEngine::new(ctx, &Registry)` assembles the tap dispatch of `geom_fused.wgsl` and the own pass (D5); kt-app/kt-cli inject `builtin()`. Write t974 in `src/libs/kt-gpu/tests/parity.rs`. Verify t974, t328, t329, t181 green and `GOLDEN_VIDEO` unchanged
+  - Posterize is `src/plugins/fx-video-color` (passport `levels` 2..32 default 6, `U32` row,
+    `PointWise`, ONE WGSL text `posterize.wgsl` with `fn tap_posterize(v, a, b)`); the variant, its
+    specs and `default_levels` left kt-model, `FxInstance::posterize()`/`plugin(id)`/`plugin_with`
+    build slots. `VideoKernel` became `tap(&self, p: &[f64], rgba)` + `gpu_params(p) -> [f32; 7]`.
+    kt-fx: `TapKind::Plugin(PluginTap)` (a `Copy` tap holding the kernel and up to 8 values) took
+    the place of `Poster`; `is_pointwise`/the barrier arm ask the manifest's class.
+    kt-gpu: `Pipe::Posterize` and `shaders/posterize.wgsl` are gone; `assembled_shaders()` pastes
+    one dispatch arm per point-wise plugin before the `// @PLUGIN_TAP_ARMS` marker of
+    `geom_fused.wgsl` (kind `6 + i`, `< 16`) and generates its own pass; the engine keeps
+    `plugin_pipes`. Deviation from the task text: the engine reads the INSTALLED registry
+    (`kt_plugin_api::installed()`) instead of taking `&Registry` in `new` — the registry is one per
+    process (2.2), and a second source of the list would be a place to disagree. kt-app installs
+    in every `KtApp` constructor and in `fx_registry::registry()` (the picker can be built before a
+    KtApp: tests, the thumbnail worker); kt-cli in `main`. Tests that build `FxInstance::all()`
+    install the set first (dev-dependency `kt-plugins-builtin`; t975 still green).
+    t974 (`kt-gpu/tests/parity.rs`): alone / inside a geometry series (one run) / as a barrier
+    between blurs, CPU vs GPU within `FrameTol::THRESHOLD`, the assembled text is pure and lists
+    `posterize` once. t973 got its frozen `Frozen::Posterize { levels }` with 6/4/32 and
+    `t973_a_moved_kind_reads_the_old_defaults` (a file without `levels` reads as 6).
+    Red proofs: default 6 → 5 turned `t973_moving_a_kind_does_not_change_a_byte` and
+    `..._reads_the_old_defaults` red (the second was green at first — it compared with
+    `posterize()`, the same moved default; now against the frozen form); dropping the arms from
+    the fused text turned t974 and t329 red. t328 goldens, t329, t181 green; no `GOLDEN_*` moved.
+    Workspace (nextest, 1229 tests): green except t815 (the recovery write took 30 s at an I/O
+    pressure of 93 %) and t663 (its 60 s wait loop under load) — both green alone (0.06 s, 0.03 s).
 - [ ] 2.5 `src/apps/kt-app/src/fx_registry.rs` builds Posterize's entry from its manifest; the test door `register_for_test`; write t976 in `src/apps/kt-app/src/reach_tests.rs` with the PATH of the spec. Verify t976, t48, t125, t100 green and `src/scripts/specs-user-path.py --check` (t799) accepts the PATH
 - [ ] 2.6 Speed check of the pilot on release: `cargo build --release -p kt-cli` and `kt-cli probe <fixture> 0 10 --time` before/after on a chain with Posterize; record here; over 3 % slower blocks the stage (design, Risks)
 - [ ] 2.7 Commit stage 2 (`cargo test --workspace`, `cargo clippy --all-targets` with no new warnings)

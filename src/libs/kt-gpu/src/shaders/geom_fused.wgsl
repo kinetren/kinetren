@@ -421,10 +421,8 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
             let l = clamp((77.0 * v.x + 150.0 * v.y + 29.0 * v.z) / 256.0 / 255.0, 0.0, 1.0);
             let outc = sh3 + (hi3 - sh3) * l;
             v = vec4<f32>(v.xyz + (outc - v.xyz) * am, v.w);
-        } else if (tap_kind == 4u) { // Posterize: a mirror of tap_poster
-            let n = a.y;
-            let idx3 = clamp(floor(v.xyz * n / 256.0), vec3<f32>(0.0), vec3<f32>(n - 1.0));
-            v = vec4<f32>(idx3 * 255.0 / (n - 1.0), v.w);
+        // @PLUGIN_TAP_ARMS: kt-gpu pastes one `} else if (tap_kind == N) { v = tap_<id>(v, a, b);`
+        // per point-wise plugin of the registry here (plugin-api-stage1, D5); kind 4 was Posterize
         } else if (tap_kind == 5u) { // Vignette: a mirror of tap_vig
             let st = a.y;
             let ra = a.z;

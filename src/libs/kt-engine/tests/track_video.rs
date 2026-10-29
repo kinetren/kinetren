@@ -167,7 +167,7 @@ fn t735_video_mute_and_solo_leave_the_prefetch_order() {
 /// the already mixed picture.
 #[test]
 fn t736_track_chain_covers_the_whole_composite() {
-    use kt_model::{BlendMode, FxInstance};
+    use kt_model::BlendMode;
     // one track, two events back to back with a transition between them
     let mut p = Project::new(settings());
     p.media.push(MediaRef::new(MediaId(1), "synth:silence"));
@@ -216,13 +216,13 @@ fn t736_track_chain_covers_the_whole_composite() {
 
     // the CHAIN ON THE TRACK
     let mut on_track = p.clone();
-    on_track.track_at_mut(V, 0).unwrap().fx = vec![FxInstance::Posterize { levels: 3 }];
+    on_track.track_at_mut(V, 0).unwrap().fx = vec![posterize(3)];
     on_track.validate().unwrap();
 
     // the SAME chain, appended TO EACH EVENT
     let mut per_clip = p.clone();
     for c in per_clip.clips.iter_mut() {
-        c.fx = vec![FxInstance::Posterize { levels: 3 }];
+        c.fx = vec![posterize(3)];
     }
     per_clip.validate().unwrap();
 
@@ -263,4 +263,10 @@ fn t737_blend_modes_match_the_formula() {
     }
     // the registry is complete: each kind has its own formula, and none is forgotten
     assert_eq!(M::ALL.len(), 9);
+}
+
+/// Posterize — a plugin since plugin-api-stage1: the built-in set is installed on first use.
+fn posterize(levels: u32) -> FxInstance {
+    kt_plugins_builtin::install();
+    FxInstance::plugin_with("posterize", &[levels as f64]).expect("posterize is a built-in plugin")
 }

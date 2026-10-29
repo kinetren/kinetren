@@ -11,9 +11,13 @@ kt-model.workspace = true
 kt-media.workspace = true
 kt-cache.workspace = true
 kt-fx.workspace = true
+# point-wise plugins are assembled into the passes (plugin-api-stage1, D5)
+kt-plugin-api.workspace = true
 kt-engine.workspace = true
 wgpu.workspace = true
 pollster.workspace = true
 xxhash-rust.workspace = true
 
 [dev-dependencies]
+# the built-in plugin set for the tests (plugin-api-stage1; dev only — t975)
+kt-plugins-builtin = { workspace = true }

@@ -1387,7 +1387,6 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::PitchShift { .. } => "Pitch Shift",
         FxInstance::ColorGrade { .. } => "Color Grade",
         FxInstance::Duotone { .. } => "Duotone",
-        FxInstance::Posterize { .. } => "Posterize",
         FxInstance::Vignette { .. } => "Vignette",
         FxInstance::CornerPin { .. } => "Corner Pin",
         FxInstance::Sharpen { .. } => "Sharpen",

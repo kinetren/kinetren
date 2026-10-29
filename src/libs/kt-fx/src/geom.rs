@@ -523,9 +523,60 @@ pub fn is_pointwise(f: &FxInstance) -> bool {
             | FxInstance::Noise { .. }
             | FxInstance::ColorGrade { .. }
             | FxInstance::Duotone { .. }
-            | FxInstance::Posterize { .. }
             | FxInstance::Vignette { .. }
-    )
+    ) || plugin_class(f) == Some(kt_plugin_api::VideoClass::PointWise)
+}
+
+/// The planner class a video plugin declares (plugin-api-stage1, D5): `plan_chain` asks the
+/// manifest where it asks `is_geo`/`is_pointwise` of a built-in variant.
+pub fn plugin_class(f: &FxInstance) -> Option<kt_plugin_api::VideoClass> {
+    match f {
+        FxInstance::Plugin(p) => p.manifest().decl.video_class,
+        _ => None,
+    }
+}
+
+/// A point-wise plugin's op (plugin-api-stage1, D5): its kernel and its values (up to eight, so
+/// the op stays `Copy` like every tap). Resolved once per plan, never per pixel.
+#[derive(Clone, Copy)]
+pub struct PluginTap {
+    pub id: &'static str,
+    pub kernel: &'static dyn kt_plugin_api::VideoKernel,
+    values: [f64; 8],
+    n: usize,
+}
+
+impl PluginTap {
+    /// The tap of a point-wise plugin slot; `None` — not registered, not point-wise, no kernel.
+    pub fn of(f: &FxInstance) -> Option<PluginTap> {
+        let FxInstance::Plugin(slot) = f else { return None };
+        let plugin = kt_model::plugin_slot::registry().get(&slot.id)?;
+        let m = plugin.manifest();
+        if m.decl.video_class != Some(kt_plugin_api::VideoClass::PointWise) {
+            return None;
+        }
+        let kernel = plugin.video()?;
+        let mut values = [0.0; 8];
+        let n = slot.values.len().min(8);
+        values[..n].copy_from_slice(&slot.values[..n]);
+        Some(PluginTap { id: &m.id, kernel, values, n })
+    }
+
+    /// The values in passport order.
+    pub fn values(&self) -> &[f64] {
+        &self.values[..self.n]
+    }
+
+    /// The function of one pixel (the CPU, both positions).
+    pub fn apply(&self, v: &mut [f64; 4]) {
+        self.kernel.tap(self.values(), v);
+    }
+}
+
+impl std::fmt::Debug for PluginTap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PluginTap({}, {:?})", self.id, self.values())
+    }
 }
 
 /// Per-pixel op applied to the VALUE OF THE SUBTAP (after bilinear, before
@@ -543,8 +594,8 @@ pub enum TapKind {
     Grade { brightness: f64, contrast: f64, saturation: f64, hue_cos: f64, hue_sin: f64 },
     /// Duotone (R.47): lerp by luma between two colors.
     Duo { shadow: [f64; 3], high: [f64; 3], amount: f64 },
-    /// Posterize (R.47): quantization per channel.
-    Poster { levels: u32 },
+    /// A point-wise PLUGIN (plugin-api-stage1, D5) — Posterize since the pilot.
+    Plugin(PluginTap),
     /// Vignette (R.47): coordinate of ITS OWN stage (like Noise) — the darkening
     /// zooms with the picture inside the chain.
     Vig { strength: f64, radius: f64, softness: f64, stage_w: u32, stage_h: u32 },
@@ -1058,8 +1109,10 @@ fn build_program(
                     amount: (*amount as f64).clamp(0.0, 1.0),
                 }));
             }
-            FxInstance::Posterize { levels } => {
-                fw.push(Step::Tap(TapKind::Poster { levels: (*levels).clamp(2, 32) }));
+            f @ FxInstance::Plugin(_) => {
+                if let Some(t) = PluginTap::of(f) {
+                    fw.push(Step::Tap(TapKind::Plugin(t)));
+                }
             }
             FxInstance::Vignette { strength, radius, softness } => {
                 fw.push(Step::Tap(TapKind::Vig {
@@ -1906,15 +1959,6 @@ pub(crate) fn tap_duo(v: &mut [f64; 4], shadow: &[f64; 3], high: &[f64; 3], amou
     }
 }
 
-/// Posterize on the subtap: quantization PER CHANNEL (standard — AE Posterize).
-pub(crate) fn tap_poster(v: &mut [f64; 4], levels: u32) {
-    let n = levels.clamp(2, 32) as f64;
-    for c in v.iter_mut().take(3) {
-        let i = (*c * n / 256.0).floor().clamp(0.0, n - 1.0);
-        *c = i * 255.0 / (n - 1.0);
-    }
-}
-
 /// Vignette on the subtap: coordinate of ITS OWN stage; the radius is normalized to
 /// the half-diagonal; smoothstep written out by hand (one text in both
 /// executors).
@@ -1971,7 +2015,7 @@ fn sample_at(p: &GeomProgram, src: &Frame, x: f64, y: f64) -> [f64; 4] {
                 tap_grade(&mut v, brightness, contrast, saturation, hue_cos, hue_sin)
             }
             TapKind::Duo { shadow, high, amount } => tap_duo(&mut v, &shadow, &high, amount),
-            TapKind::Poster { levels } => tap_poster(&mut v, levels),
+            TapKind::Plugin(t) => t.apply(&mut v),
             TapKind::Vig { strength, radius, softness, stage_w, stage_h } => {
                 tap_vig(&mut v, rec[ti], strength, radius, softness, stage_w, stage_h)
             }

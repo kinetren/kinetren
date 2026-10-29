@@ -332,9 +332,10 @@ pub fn apply_barrier(
             let a = (*amount as f64).clamp(0.0, 1.0);
             pointwise_barrier(frame, |v, _| crate::geom::tap_duo(v, &sh, &hi, a))
         }
-        FxInstance::Posterize { levels } => {
-            let n = (*levels).clamp(2, 32);
-            pointwise_barrier(frame, |v, _| crate::geom::tap_poster(v, n))
+        // a point-wise plugin at the barrier position: the same tap as inside the fused pass
+        f @ FxInstance::Plugin(_) if crate::geom::PluginTap::of(f).is_some() => {
+            let t = crate::geom::PluginTap::of(f).expect("checked");
+            pointwise_barrier(frame, |v, _| t.apply(v))
         }
         FxInstance::Vignette { strength, radius, softness } => {
             let (st, ra, so) = (

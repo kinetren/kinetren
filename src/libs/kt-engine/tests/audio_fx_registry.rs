@@ -122,6 +122,8 @@ fn probe_values(spec: &ParamSpec) -> [f64; 2] {
 
 #[test]
 fn t322_audio_registry_contract() {
+    // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
+    kt_plugins_builtin::install();
     let audio: Vec<&FxInstance> = FxInstance::all().iter().filter(|f| f.is_audio()).collect();
     assert!(audio.len() >= 2, "registry must know the audio effects");
     let mut covered: Vec<&'static str> = Vec::new();

@@ -406,7 +406,7 @@ fn t440_a_chain_on_the_nest_acts_on_the_assembled_picture() {
     // Posterization is NONLINEAR: quantizing a mix of two colors is not a mix of their
     // quantizations. A linear effect (blur, level) on flat frames would show nothing, and the test
     // would be green on broken code.
-    let fx = vec![FxInstance::Posterize { levels: 3 }];
+    let fx = vec![posterize(3)];
     let on_nest = render_video(&nest_with(1.0, fx.clone()), t, q).0;
     let on_each = render_video(&spread_with(1.0, fx), t, q).0;
     assert_ne!(
@@ -520,7 +520,7 @@ fn t442_editing_inside_the_reel_invalidates_the_instance() {
     let t = Tick(FRAME * 20);
     // chain ON THE INSTANCE: precisely its post-FX frame is memoized, and
     // it is exactly that which would become stale
-    let mut p = nest_with(1.0, vec![FxInstance::Posterize { levels: 3 }]);
+    let mut p = nest_with(1.0, vec![posterize(3)]);
     // cache ONE for both runs — in the program it is one: a model edit
     // recreates the renderer, but not the cache
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
@@ -587,11 +587,11 @@ fn t443_three_keys_separate_reels_instances_and_editions() {
     // INSTANCES: two placements of ONE reel with different chains do not
     // collapse into one post-FX frame, while their sub-composite is SHARED —
     // that is where the gain lies
-    let mut two = nest_with(1.0, vec![FxInstance::Posterize { levels: 3 }]);
+    let mut two = nest_with(1.0, vec![posterize(3)]);
     let mut twin = two.clips[0].clone();
     twin.id = ClipId(11);
     twin.start = Tick(10 * PART.0);
-    twin.fx = vec![FxInstance::Posterize { levels: 5 }];
+    twin.fx = vec![posterize(5)];
     two.clips.push(twin);
     two.validate().unwrap();
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
@@ -1956,7 +1956,7 @@ fn t739_reel_applies_its_own_track_stages() {
     // a chain on a REEL TRACK — the instance picture must change
     let mut inner = p.clone();
     inner.sequences[0].track_at_mut(kt_model::LaneKind::Video, 0).unwrap().fx =
-        vec![FxInstance::Posterize { levels: 3 }];
+        vec![posterize(3)];
     inner.validate().unwrap();
     let (with_chain, complete) = render_with_facts(&inner, Tick(FRAME * 3), QV);
     assert!(complete);
@@ -1978,4 +1978,10 @@ fn t739_reel_applies_its_own_track_stages() {
         plain,
         "a track without properties changed the bytes"
     );
+}
+
+/// Posterize — a plugin since plugin-api-stage1: the built-in set is installed on first use.
+fn posterize(levels: u32) -> FxInstance {
+    kt_plugins_builtin::install();
+    FxInstance::plugin_with("posterize", &[levels as f64]).expect("posterize is a built-in plugin")
 }

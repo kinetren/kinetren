@@ -162,10 +162,12 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
                     [f32::from_bits(meta), shadow[0] as f32, shadow[1] as f32, shadow[2] as f32];
                 u.p[base + 1] = [high[0] as f32, high[1] as f32, high[2] as f32, amount as f32];
             }
-            kt_fx::geom::TapKind::Poster { levels } => {
-                let meta = 4u32 | ((op.after_prim as u32) << 4);
-                u.p[base] = [f32::from_bits(meta), levels as f32, 0.0, 0.0];
-                u.p[base + 1] = [0.0; 4];
+            kt_fx::geom::TapKind::Plugin(t) => {
+                let kind = plugin_tap_kind(t.id);
+                let meta = kind | ((op.after_prim as u32) << 4);
+                let g = t.kernel.gpu_params(t.values());
+                u.p[base] = [f32::from_bits(meta), g[0], g[1], g[2]];
+                u.p[base + 1] = [g[3], g[4], g[5], g[6]];
             }
             kt_fx::geom::TapKind::Vig { strength, radius, softness, stage_w, stage_h } => {
                 let meta = 5u32 | ((op.after_prim as u32) << 4);
@@ -201,7 +203,6 @@ enum Pipe {
     // pointwise R.47 in the barrier position
     ColorGrade,
     Duotone,
-    Posterize,
     Vignette,
     // R.47 barriers Kv3
     SharpenAdd,
@@ -218,7 +219,7 @@ enum Pipe {
     GridTile,
 }
 
-const PIPE_COUNT: usize = 22;
+const PIPE_COUNT: usize = 21;
 
 /// One chain step precomputed on the CPU (common maths: kt-fx:
 /// pan_frame/cam_at/noise_seed). The number of passes and the sizes are known in advance.
@@ -320,8 +321,11 @@ enum FxOp {
         high: [f32; 3],
         amount: f32,
     },
-    Posterize {
-        levels: u32,
+    /// A point-wise PLUGIN at the barrier position (plugin-api-stage1, D5): its own generated pass,
+    /// `idx` — into `Inner::plugin_pipes`; `f` — `P.f0`/`P.f1` = (unused, a.yzw, b.xyzw).
+    PluginTap {
+        idx: usize,
+        f: [f32; 8],
     },
     Vignette {
         strength: f32,
@@ -617,8 +621,11 @@ fn chain_ops(
                         amount: amount.clamp(0.0, 1.0),
                     });
                 }
-                FxInstance::Posterize { levels } => {
-                    ops.push(FxOp::Posterize { levels: (*levels).clamp(2, 32) });
+                f @ FxInstance::Plugin(_) if kt_fx::geom::PluginTap::of(f).is_some() => {
+                    let t = kt_fx::geom::PluginTap::of(f).expect("checked");
+                    let g = t.kernel.gpu_params(t.values());
+                    let idx = plugin_taps().iter().position(|(id, _)| *id == t.id).expect("assembled at engine creation");
+                    ops.push(FxOp::PluginTap { idx, f: [0.0, g[0], g[1], g[2], g[3], g[4], g[5], g[6]] });
                 }
                 FxInstance::Vignette { strength, radius, softness } => {
                     ops.push(FxOp::Vignette {
@@ -823,6 +830,8 @@ struct Inner {
     queue: Arc<wgpu::Queue>,
     layout: wgpu::BindGroupLayout,
     pipes: [wgpu::RenderPipeline; PIPE_COUNT],
+    /// The own passes of the point-wise plugins, in `plugin_taps()` order (D5).
+    plugin_pipes: Vec<wgpu::RenderPipeline>,
     /// The merged geometry pass (R.44): its own 1024 B uniform → its own layout/pipe.
     geom_layout: wgpu::BindGroupLayout,
     geom_pipe: wgpu::RenderPipeline,
@@ -856,7 +865,6 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("layer_mix", include_str!("shaders/layer_mix.wgsl")),
     ("colorgrade", include_str!("shaders/colorgrade.wgsl")),
     ("duotone", include_str!("shaders/duotone.wgsl")),
-    ("posterize", include_str!("shaders/posterize.wgsl")),
     ("vignette", include_str!("shaders/vignette.wgsl")),
     ("sharpen_add", include_str!("shaders/sharpen_add.wgsl")),
     ("pixelate", include_str!("shaders/pixelate.wgsl")),
@@ -870,6 +878,70 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
 ];
 
 const COMMON: &str = include_str!("shaders/common.wgsl");
+
+/// Where a pass's pipeline comes from.
+#[derive(Clone, Copy)]
+enum Which {
+    Fixed(Pipe),
+    Plugin(usize),
+}
+
+/// The point-wise plugins of the installed registry that offer WGSL, in registration order:
+/// (id, the `tap_<id>` function). The ONE list the assembler, the uniform packing and `chain_ops`
+/// read, so a dispatch number and an own-pass index can never disagree (plugin-api-stage1, D5).
+pub fn plugin_taps() -> Vec<(&'static str, &'static str)> {
+    let Some(reg) = kt_plugin_api::installed() else { return Vec::new() };
+    reg.ids()
+        .iter()
+        .filter_map(|id| {
+            let p = reg.get(id)?;
+            let m = p.manifest();
+            match (m.media, m.decl.video_class, m.decl.gpu) {
+                (kt_plugin_api::Media::VideoFx, Some(kt_plugin_api::VideoClass::PointWise), kt_plugin_api::Gpu::Wgsl(w)) => {
+                    let id: &'static str = &m.id;
+                    Some((id, w))
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// The tap dispatch number of a point-wise plugin in the fused pass: after the built-in kinds
+/// 0..5 (4 was Posterize). It is a function of the registry only, and NEVER hashed into a key —
+/// the keys carry the plugin id (the chain's Debug form).
+fn plugin_tap_kind(id: &str) -> u32 {
+    let i = plugin_taps().iter().position(|(p, _)| *p == id).expect("a tap of an unassembled plugin");
+    let kind = 6 + i as u32;
+    assert!(kind < 16, "the tap kind field is 4 bits: at most 10 point-wise plugins");
+    kind
+}
+
+/// The shader texts assembled from the registry (D5): the fused pass with one dispatch arm per
+/// point-wise plugin and their functions appended, and one own pass per plugin. A pure function of
+/// the registry — two engines of one process get the same text (t974, invariant 11).
+pub fn assembled_shaders() -> (String, Vec<String>) {
+    let taps = plugin_taps();
+    let mut arms = String::new();
+    let mut fns = String::new();
+    let mut own = Vec::new();
+    for (i, (id, wgsl)) in taps.iter().enumerate() {
+        arms.push_str(&format!("        }} else if (tap_kind == {}u) {{ v = tap_{id}(v, a, b);\n", 6 + i));
+        fns.push_str(wgsl);
+        fns.push('\n');
+        own.push(format!(
+            "{wgsl}\n@fragment\nfn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {{\n    \
+             let t = textureLoad(T0, vec2<i32>(pos.xy), 0);\n    \
+             let v = tap_{id}(vec4<f32>(f32(t.x), f32(t.y), f32(t.z), f32(t.w)), P.f0, P.f1);\n    \
+             return vec4<u32>(clamp(round(v), vec4<f32>(0.0), vec4<f32>(255.0)));\n}}\n"
+        ));
+    }
+    let marker = "        // @PLUGIN_TAP_ARMS";
+    let base = include_str!("shaders/geom_fused.wgsl");
+    assert!(base.contains(marker), "geom_fused.wgsl lost its plugin arm marker");
+    let fused = base.replacen(marker, &format!("{arms}{marker}"), 1) + "\n" + &fns;
+    (fused, own)
+}
 
 impl GpuFxEngine {
     /// Builds the pipelines; a shader/device compile error → Err
@@ -936,9 +1008,16 @@ impl GpuFxEngine {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipes: Vec<wgpu::RenderPipeline> = SHADERS
+        let (fused_src, plugin_srcs) = assembled_shaders();
+        let fixed: Vec<(String, String)> =
+            SHADERS.iter().map(|(n, b)| (n.to_string(), b.to_string())).collect();
+        let plugins: Vec<(String, String)> =
+            plugin_taps().iter().zip(&plugin_srcs).map(|((id, _), body)| (format!("plugin {id}"), body.clone())).collect();
+        let mut pipes: Vec<wgpu::RenderPipeline> = fixed
             .iter()
+            .chain(plugins.iter())
             .map(|(name, body)| {
+                let name = name.as_str();
                 let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some(name),
                     source: wgpu::ShaderSource::Wgsl(format!("{COMMON}\n{body}").into()),
@@ -995,7 +1074,7 @@ impl GpuFxEngine {
         });
         let geom_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("geom_fused"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/geom_fused.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(fused_src.into()),
         });
         let geom_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("geom_fused"),
@@ -1027,6 +1106,7 @@ impl GpuFxEngine {
         if let Some(e) = validation.or(internal) {
             return Err(GpuInitError::Pipeline(e.to_string()));
         }
+        let plugin_pipes = pipes.split_off(PIPE_COUNT);
         let pipes: [wgpu::RenderPipeline; PIPE_COUNT] =
             pipes.try_into().map_err(|_| GpuInitError::Pipeline("pipe count".into()))?;
 
@@ -1046,6 +1126,7 @@ impl GpuFxEngine {
                 queue,
                 layout,
                 pipes,
+                plugin_pipes,
                 geom_layout,
                 geom_pipe,
                 arena,
@@ -1695,13 +1776,10 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
-                FxOp::Posterize { levels } => {
+                FxOp::PluginTap { idx, f } => {
                     let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        f: [*levels as f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::Posterize, &dst.view, &view, &dummy, &dummy, u);
+                    let u = UniformData { f: *f, ..Default::default() };
+                    self.pass_which(enc, Which::Plugin(*idx), &dst.view, &view, &dummy, &dummy, u);
                     if let Some(t) = owned.take() {
                         self.pool.release(t);
                     }
@@ -2002,6 +2080,21 @@ impl Inner {
         t2: &wgpu::TextureView,
         u: UniformData,
     ) {
+        self.pass_which(enc, Which::Fixed(pipe), target, t0, t1, t2, u)
+    }
+
+    /// `pass` over a fixed pipe or an assembled plugin pipe (plugin-api-stage1, D5).
+    #[allow(clippy::too_many_arguments)]
+    fn pass_which(
+        &mut self,
+        enc: &mut wgpu::CommandEncoder,
+        which: Which,
+        target: &wgpu::TextureView,
+        t0: &wgpu::TextureView,
+        t1: &wgpu::TextureView,
+        t2: &wgpu::TextureView,
+        u: UniformData,
+    ) {
         let offset = self.slot as u64 * SLOT;
         debug_assert!(self.slot < self.arena_slots, "uniform arena overflow");
         self.slot += 1;
@@ -2048,7 +2141,10 @@ impl Inner {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        rp.set_pipeline(&self.pipes[pipe as usize]);
+        match which {
+            Which::Fixed(pipe) => rp.set_pipeline(&self.pipes[pipe as usize]),
+            Which::Plugin(i) => rp.set_pipeline(&self.plugin_pipes[i]),
+        }
         rp.set_bind_group(0, &bg, &[offset as u32]);
         rp.draw(0..3, 0..1);
     }

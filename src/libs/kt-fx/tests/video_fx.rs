@@ -486,6 +486,8 @@ fn t228_glow_vhs_greenscreen_params() {
 /// (The default pan and pan3d are both identities; their matching hashes are legal.)
 #[test]
 fn t328_golden_cycle_over_the_registry() {
+    // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
+    kt_plugins_builtin::install();
     use kt_fx::geom::{is_geo, is_pointwise};
     const GOLDEN_ALL: &[(&str, u64)] = &[
         // R.62: Pan is retired; the “Geometry” node with defaults is an identity

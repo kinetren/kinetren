@@ -4251,9 +4251,6 @@ fn default_kaleido_segments() -> u32 {
     6
 }
 
-fn default_levels() -> u32 {
-    6
-}
 fn default_vig_radius() -> f32 {
     0.7
 }
@@ -5491,12 +5488,8 @@ pub enum FxInstance {
         #[serde(default = "default_one_f32")]
         amount: f32,
     },
-    /// Posterize by channels (R.47). Point-wise (inside a geometry series
-    /// supersampling softens the steps — accepted, THRESHOLD).
-    Posterize {
-        #[serde(default = "default_levels")]
-        levels: u32,
-    },
+    // Posterize is a plugin since plugin-api-stage1 (src/plugins/fx-video-color): its file text is
+    // the variant's (t973), its slot is `Plugin` below.
     /// Vignette (R.47): darkening towards the edges, the coordinate of its own stage —
     /// inside the chain it is zoomed together with the picture. Point-wise.
     Vignette {
@@ -5925,7 +5918,6 @@ impl FxInstance {
             FxInstance::PitchShift { .. } => "pitch_shift",
             FxInstance::ColorGrade { .. } => "color_grade",
             FxInstance::Duotone { .. } => "duotone",
-            FxInstance::Posterize { .. } => "posterize",
             FxInstance::Vignette { .. } => "vignette",
             FxInstance::CornerPin { .. } => "corner_pin",
             FxInstance::Sharpen { .. } => "sharpen",
@@ -6225,9 +6217,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         high_g: u8, 0.0, 255.0, 236.0, 1.0, Rgb8, Smooth;
         high_b: u8, 0.0, 255.0, 190.0, 1.0, Rgb8, Smooth;
         amount: f32, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
-    },
-    Posterize {
-        levels: u32, 2.0, 32.0, 6.0, 1.0, Count, Smooth;
     },
     Vignette {
         strength: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
@@ -7087,8 +7076,25 @@ impl FxInstance {
         }
     }
 
+    /// Posterize at its defaults — a plugin slot (plugin-api-stage1); the built-in set must be
+    /// installed (`kt_plugins_builtin::install()`).
     pub fn posterize() -> FxInstance {
-        FxInstance::Posterize { levels: 6 }
+        FxInstance::plugin("posterize").expect("posterize is not registered: install the built-in plugin set first")
+    }
+
+    /// A plugin slot of `id` at its passport's defaults; `None` — no such plugin is registered.
+    pub fn plugin(id: &str) -> Option<FxInstance> {
+        crate::plugin_slot::PluginSlot::new(id).map(FxInstance::Plugin)
+    }
+
+    /// A plugin slot of `id` with the given values in passport order (clamped and cast like any
+    /// write); `None` — no such plugin.
+    pub fn plugin_with(id: &str, values: &[f64]) -> Option<FxInstance> {
+        let mut slot = crate::plugin_slot::PluginSlot::new(id)?;
+        for (i, v) in values.iter().enumerate() {
+            slot.set_idx(i, *v);
+        }
+        Some(FxInstance::Plugin(slot))
     }
 
     pub fn vignette() -> FxInstance {

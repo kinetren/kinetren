@@ -137,6 +137,8 @@ fn t212_keys_stick_to_material_through_edits() {
 /// values are clamped to the range; an unknown name is a failure (an orphan curve).
 #[test]
 fn t190_set_get_param_all_specs() {
+    // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
+    kt_plugins_builtin::install();
     // R.47 (item 326): a registry instead of a hand-written list — a kind not
     // in FxInstance::all() will not pass the completeness lock below.
     let variants: Vec<FxInstance> = FxInstance::all().to_vec();

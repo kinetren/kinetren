@@ -79,6 +79,8 @@ fn t550c_different_kinds_do_not_blend() {
 /// axis would be jerky).
 #[test]
 fn t550d_blend_stays_in_spec_for_every_kind() {
+    // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
+    kt_plugins_builtin::install();
     for f in FxInstance::all() {
         let specs = f.param_specs();
         if specs.is_empty() {

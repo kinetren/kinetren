@@ -204,7 +204,7 @@ fn gen_demo_concat() {
             }],
         ),
         clip(2, 4, 4, 1, vec![FxInstance::duotone()]),
-        clip(3, 8, 4, 1, vec![FxInstance::Posterize { levels: 4 }]),
+        clip(3, 8, 4, 1, vec![posterize(4)]),
         clip(4, 12, 4, 1, vec![grid2(), FxInstance::vignette(), zoom(2.0)]),
     ];
     save(&mut p, "06-color.kt");
@@ -275,4 +275,10 @@ fn gen_demo_concat() {
         clip(6, 20, 4, 1, vec![FxInstance::Cylinder3d { curvature: 0.8 }, zoom(1.3)]),
     ];
     save(&mut p, "08-warp.kt");
+}
+
+/// Posterize — a plugin since plugin-api-stage1: the built-in set is installed on first use.
+fn posterize(levels: u32) -> FxInstance {
+    kt_plugins_builtin::install();
+    FxInstance::plugin_with("posterize", &[levels as f64]).expect("posterize is a built-in plugin")
 }

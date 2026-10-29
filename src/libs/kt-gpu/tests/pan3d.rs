@@ -107,6 +107,7 @@ fn brightest(rgba: &[u8]) -> (u32, u32) {
 
 #[test]
 fn t187_pan3d_identity_shift_scale() {
+    kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
     let f = frame_with_marker(20, 12);
 
@@ -150,7 +151,9 @@ fn t187_pan3d_identity_shift_scale() {
 
 #[test]
 fn t187b_pan3d_deterministic_on_device() {
+    kt_plugins_builtin::install();
     let Some(e1) = test_engine() else { return };
+    kt_plugins_builtin::install();
     let Some(e2) = test_engine() else { return };
     let f = frame_with_marker(20, 12);
     let fx = [pan3d(3.0, 0.8)];

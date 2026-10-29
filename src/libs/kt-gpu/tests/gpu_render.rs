@@ -108,7 +108,9 @@ fn gpu_export_frames(backends: &ExportBackends, q: Quality, grab: &[usize]) -> V
 
 #[test]
 fn t184_gpu_preview_equals_gpu_export_cold_and_warm() {
+    kt_plugins_builtin::install();
     let Some(e1) = test_engine() else { return };
+    kt_plugins_builtin::install();
     let Some(e2) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let target = 17usize;
@@ -146,6 +148,7 @@ fn t184_gpu_preview_equals_gpu_export_cold_and_warm() {
 
 #[test]
 fn t184b_gpu_export_deterministic_and_close_to_cpu() {
+    kt_plugins_builtin::install();
     let Some(e1) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let grab = [0usize, 17, 40];
@@ -307,6 +310,7 @@ fn warm_cache(p: &Project, q: Quality, t: Tick) -> (VideoRenderer, kt_cache::Bur
 #[test]
 fn t444_nested_reel_conforms_gpu_to_cpu() {
     use kt_engine::VideoGpuExec;
+    kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let t = Tick(20 * 3000);
@@ -338,6 +342,7 @@ fn t444_nested_reel_conforms_gpu_to_cpu() {
 #[test]
 fn t445_nest_boundary_is_not_twice_as_dark_on_gpu() {
     use kt_engine::VideoGpuExec;
+    kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let t = Tick(20 * 3000);
@@ -357,7 +362,9 @@ fn t445_nest_boundary_is_not_twice_as_dark_on_gpu() {
 #[test]
 fn t446_nested_gpu_is_deterministic_on_device() {
     use kt_engine::VideoGpuExec;
+    kt_plugins_builtin::install();
     let Some(e1) = test_engine() else { return };
+    kt_plugins_builtin::install();
     let Some(e2) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let t = Tick(20 * 3000);
@@ -408,6 +415,7 @@ fn t446_nested_gpu_is_deterministic_on_device() {
 #[test]
 fn t496_gpu_frame_identity_follows_content() {
     use kt_engine::VideoGpuExec;
+    kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
     let q = Quality { width: 64, height: 36 };
     let t = Tick(0);
@@ -567,6 +575,7 @@ fn cpu_and_gpu(
 /// with the animation inside the composition.
 #[test]
 fn t586_slowed_nest_conforms_and_is_deterministic_on_gpu() {
+    kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let p = animated_nested_project(vec![warp_fx(0.5, FrameMode::Nearest)]);
@@ -600,6 +609,7 @@ fn t586_slowed_nest_conforms_and_is_deterministic_on_gpu() {
 /// ReadbackCache would return someone else’s picture.
 #[test]
 fn t587_blend_on_a_nest_differs_from_nearest_on_gpu() {
+    kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let t = Tick(21 * 3000); // a half-frame: the leaves have a pair
@@ -647,6 +657,7 @@ fn twin_nest_project(twin_fx: Vec<FxInstance>) -> Project {
 #[test]
 fn t632_reel_stage_and_chain_input_conform_gpu_to_cpu() {
     use kt_engine::VideoGpuExec;
+    kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let sec = 90_000i64;
@@ -691,6 +702,7 @@ fn t632_reel_stage_and_chain_input_conform_gpu_to_cpu() {
 #[test]
 fn t687_two_differently_overridden_instances_conform_gpu_to_cpu() {
     use kt_engine::VideoGpuExec;
+    kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
     let sec = 90_000i64;
     let q = Quality { width: 128, height: 72 };
@@ -747,6 +759,7 @@ fn t687_two_differently_overridden_instances_conform_gpu_to_cpu() {
 /// and the frame holds (the even and odd frames of the project are equal).
 #[test]
 fn t724b_reel_fps_holds_frames_on_gpu() {
+    kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let mut p = animated_nested_project(vec![]);
@@ -774,6 +787,7 @@ fn t724b_reel_fps_holds_frames_on_gpu() {
 /// byte-for-byte the frame a still gave before this change (no view: frame = canvas).
 #[test]
 fn t938_both_backends_place_a_still_by_the_rule() {
+    kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let t = Tick(0);
@@ -850,6 +864,7 @@ fn t938_both_backends_place_a_still_by_the_rule() {
 #[test]
 fn t945b_strength_zero_skips_the_layer_on_gpu() {
     use kt_engine::VideoGpuExec;
+    kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let bare = project();

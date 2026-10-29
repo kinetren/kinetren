@@ -389,6 +389,9 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
 pub fn registry() -> &'static [FxEntry] {
     static REG: std::sync::OnceLock<Vec<FxEntry>> = std::sync::OnceLock::new();
     REG.get_or_init(|| {
+        // the app owns the built-in plugin set (plugin-api-stage1): the picker may be built before
+        // any KtApp (tests, the thumbnail worker), and its plugin entries need the registry
+        kt_plugins_builtin::install();
         let mut v = vec![
             FxEntry {
                 name: "Gain",

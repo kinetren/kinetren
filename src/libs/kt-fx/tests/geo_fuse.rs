@@ -977,6 +977,8 @@ fn luma(f: &Frame, x: u32, y: u32) -> f64 {
 /// OWN STAGE, not the output: a zoom after it cuts the corners.
 #[test]
 fn t330_new_pointwise_absorb_and_meaning() {
+    // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
+    kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
     let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
     let zoom2 = FxInstance::geometry_zoom(2.0);
@@ -1024,7 +1026,7 @@ fn t330_new_pointwise_absorb_and_meaning() {
     }
 
     // (b-3) Posterize: no more than levels unique values per channel
-    let post = run(&[FxInstance::Posterize { levels: 4 }]);
+    let post = run(&[posterize(4)]);
     for c in 0..3 {
         let uniq: std::collections::BTreeSet<u8> =
             post.rgba.chunks_exact(4).map(|px| px[c]).collect();
@@ -1585,4 +1587,10 @@ fn t523_opaque_frames_are_byte_identical() {
         let b = apply_video_chain(std::slice::from_ref(&fx), with, &ctx());
         assert_eq!(a.rgba, b.rgba, "{fx:?}: the alpha gate shifted the bytes on an opaque frame");
     }
+}
+
+/// Posterize — a plugin since plugin-api-stage1: the built-in set is installed on first use.
+fn posterize(levels: u32) -> FxInstance {
+    kt_plugins_builtin::install();
+    FxInstance::plugin_with("posterize", &[levels as f64]).expect("posterize is a built-in plugin")
 }

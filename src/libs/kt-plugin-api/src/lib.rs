@@ -914,10 +914,20 @@ impl ParamValues {
 }
 
 /// A video effect's CPU kernel — the byte reference (invariant 7).
+///
+/// A POINT-WISE kernel (D5) gives one function of one pixel, `tap`, used by the CPU in both of its
+/// positions (inside the fused geometry pass and as its own barrier), and its GPU twin as the WGSL
+/// of `Gpu::Wgsl`: a function `tap_<id>(v: vec4<f32>, a: vec4<f32>, b: vec4<f32>) -> vec4<f32>`
+/// over straight RGBA in 0..255, reading its parameters from `a.yzw` and `b` — the seven numbers
+/// `gpu_params` packs (a.x is the host's). kt-gpu pastes that one text into the fused pass's tap
+/// dispatch AND into a generated pass of its own, so the "two WGSL mirrors" are one text.
 pub trait VideoKernel: Send + Sync {
-    /// A point-wise effect's function of one pixel, straight RGBA in 0..255 as f64 (the same
-    /// arithmetic the fused pass's tap does).
-    fn tap(&self, _p: &ParamValues, _rgba: &mut [f64; 4]) {}
+    /// The function of one pixel; `p` — the values in passport order.
+    fn tap(&self, _p: &[f64], _rgba: &mut [f64; 4]) {}
+    /// The parameters as the GPU reads them: `a.yzw`, then `b.xyzw` (rounded to f32 ONCE here).
+    fn gpu_params(&self, _p: &[f64]) -> [f32; 7] {
+        [0.0; 7]
+    }
 }
 
 /// A plugin: its manifest and its kernels.

@@ -26,6 +26,8 @@ fn owners() -> Vec<Box<dyn HasParams>> {
 
 #[test]
 fn t641_every_passport_is_typed_and_unique() {
+    // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
+    kt_plugins_builtin::install();
     for o in owners() {
         let specs = o.param_specs();
         let mut seen = std::collections::BTreeSet::new();
@@ -47,6 +49,8 @@ fn t641_every_passport_is_typed_and_unique() {
 
 #[test]
 fn t642_index_addressing_equals_names() {
+    // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
+    kt_plugins_builtin::install();
     for mut o in owners() {
         let specs: Vec<ParamSpec> = o.param_specs().to_vec();
         for (i, s) in specs.iter().enumerate() {
@@ -107,6 +111,8 @@ fn curve(param: &str, a: f64, b: f64, ease: bool) -> ParamCurve {
 
 #[test]
 fn t643_compiled_plan_equals_the_frozen_name_path() {
+    // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
+    kt_plugins_builtin::install();
     let probes = [
         Tick(-45_000),
         Tick(0),
@@ -157,6 +163,8 @@ fn t643_compiled_plan_equals_the_frozen_name_path() {
 
 #[test]
 fn t643b_nothing_to_do_compiles_to_nothing() {
+    // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
+    kt_plugins_builtin::install();
     let chain = vec![FxInstance::gain(0.0)];
     assert!(AutoPlan::compile(&chain, &[]).is_none(), "empty automation must compile to None");
     assert!(

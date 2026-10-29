@@ -52,6 +52,8 @@ fn t544_thumb_pattern_is_frozen_and_deterministic() {
 /// show “nothing changed” and lie about the effect.
 #[test]
 fn t544b_pattern_feeds_every_class_of_effect() {
+    // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
+    kt_plugins_builtin::install();
     let p = test_pattern(RW, RH, false);
     let base = hash(&p);
 
