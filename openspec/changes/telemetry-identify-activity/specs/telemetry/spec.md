@@ -294,9 +294,10 @@ step.
 Code outside `telemetry.rs` SHALL talk to telemetry only through `telemetry::signal(Signal)` —
 a free function that is a no-op when telemetry is off or not installed — plus the start-up and
 UI plumbing that exists for the switch (`install`, `global`, the notice and hint texts, the View
-checkbox). `Signal` is a small enum of FACTS (`Commands(&[Command])`, `Undo`, `Redo`, `Saved`,
-`ProjectOpened{how}`, `ExportEnded{..}`, `Frame{playing, had_input}`, `CrashReport(&str)`,
-`Exit`); classifying, counting, bucketing, building events and deciding what to send live in
+checkbox). `Signal` is a small enum of FACTS (`Commands(&[Command], &model)`, `Command`,
+`Gesture` (one edit per gesture), `Undo`, `Redo`, `Saved`, `ProjectOpened(how, &Project)`,
+`ExportEnded(&RenderJob)`, `Gpu(&AdapterInfo, software)`, `Frame { ctx, playing }`,
+`CrashReport(&Path)`, `Exit`); classifying, counting, bucketing, building events and deciding what to send live in
 `telemetry.rs` only. Each call site is ONE line, there are at most 16 of them, and the list is
 kept by a guard test. `signal` MUST NOT block, perform I/O or allocate on the per-frame path
 (`Frame`): it is a branch and atomic adds; other signals may take a short lock on the
@@ -309,8 +310,8 @@ keeps the next feature from adding its own telemetry code where it lives.
 - **WHEN** the guard scans `src/apps/kt-app/src/**/*.rs` except `telemetry.rs` and the test
   modules for `telemetry::`
 - **THEN** every occurrence is `telemetry::signal(`, `telemetry::Signal::`, `telemetry::install(`,
-  `telemetry::global()`, a text helper (`notice_*`, `hint_text`, `lists_text`) or a type in the
-  checkbox code; the number of `signal(` call sites is at most 16 and equals the number listed in
+  `telemetry::global()`, a text helper (`notice_*`, `hint_text`), `telemetry::OpenHow` or a
+  type in the checkbox code; the number of `signal(` call sites is at most 16 and equals the number listed in
   the test, so a new site is a deliberate edit of the guard; no file other than `telemetry.rs`
   builds JSON for telemetry or names a PostHog key
 - **TEST** t887 (`src/apps/kt-app/src/telemetry.rs`)

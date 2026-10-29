@@ -150,6 +150,28 @@ already ignores the URL), and the live scenario `src/scripts/live/telemetry.py` 
 stand-in with the same checks — it goes into `live-check.sh` with the others, so `finish.sh`
 proves on every run that the real program still reaches PostHog in the right shape.
 
+### D12. What implementation changed in the plan (2026-10-30)
+- **Signal variants.** The model rides with the commands (`Commands(&cmds, &model)`): an
+  effect chain is replaced whole (`SetFx`), so "which effect was added" is the registry name
+  the new chain has more of than the model's current one — the door runs BEFORE the apply.
+  `apply_coalesced` gets its own `Gesture(cmd, id, model)`: a drag sends a command per frame,
+  one gesture is one edit. `Gpu(&AdapterInfo, software)` comes from the software-render check
+  `ui()` already does; `Frame` carries the `egui::Context` (input activity, and on the first
+  frame the scale and monitor size). `CrashReport` takes the report's path; the module reads it.
+- **The harness reaches the door through a thread-local binding** (`testing::bind`, test
+  builds only): the harness installs no `GLOBAL`, and a per-app value would bring back the
+  second `app_started` per document that `install`/`global` exist to prevent.
+- **Milestones before the first frame** (the project opened at start, the crash report) wait
+  in the module and follow `app_started`; the probe and `app_started` are built on the sender
+  thread (they read files).
+- **`win.details`, not `telemetry.details_title`:** the collapsible notice is a general
+  facility. A new `telemetry.where` says where the data goes; `how_off` now names only the
+  environment switch, because the summary already names the View item.
+- **t884's path is a drop onto the window**, the real gesture that imports and places a clip in
+  one go, rather than a bin import plus a drag.
+- **The export backend** is a `OnceLock<bool>` on `RenderJob` that the job's thread sets when
+  it chooses GPU or CPU; until then `backend` is omitted.
+
 ## Risks / Trade-offs
 
 - [Identify makes events pseudonymous rather than anonymous] → the person is a random id with
