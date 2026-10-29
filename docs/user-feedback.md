@@ -1590,6 +1590,39 @@ And from the CORE section — a requirement for agents that is not yet in the ru
 
 **What was done at the proposal stage** (`openspec/changes/r71-ktprompts-index`): each item was checked against the code and the specs; some are already closed (generator automation — R.59, generator and effects in one window — R.59, freeze frame — R.57, crash report — R.49, leaving OTIO and git — R.70); some contradict his own decisions of R.67/R.70 (the format name, the import door); two claims are repeats of earlier topics (resize/the seek zone steal clicks — r.12/r.13; "obvious labels" — checklist item 17 of r.7). The registry with states and eleven questions are in the change's `design.md`; the owner's answers will be appended here verbatim.
 
+**The registries (2026-10-30, apply).** `docs/ktprompts/{v26.10,v26.10.18,kkt-26.10.27}-index.md` —
+one row per numbered item with its source line; the guard `src/scripts/ktprompts-index.py --check`
+(t823, in `finish.sh`). Building the guard found one more line nobody had read: `1. быстрого`
+(line 77 of `v26.10.txt`, it breaks off after "quick…") — question 12.
+
+**Questions to the owner** (numbered as in the registry's `question` rows; asked one or two at a
+time — "work through each point separately, one by one"):
+
+1. **Format name** (C1). The file says `ktproj`; R.70 chose `.kt`, because `.ktproj` is a live legacy
+   under the same suffix (a trap for people and scripts). Keep `.kt`?
+2. **Import of old files** (C2). The file says "delete it"; R.67 — your decision "import is its own
+   door". Your 115 MB projects open ONLY through it. Keep one door?
+3. **The threshold "10 million elements"** (C2a). Your 115 MB project = 15,220 events ≈ 3 MB `.kt`,
+   read in milliseconds. What project size is real, so that it counts as "does not hang"?
+4. **Reference chains/copies of events** (C2c) — is it about file size (1000 copies × 100 effects —
+   a few MB) or about "I edit in one place — all change"? The second is a composition with public
+   parameters (R.59), which already exists.
+5. **Timecode as a mode of the text generator** (G3) — one kind with the full text passport, not a
+   separate kind?
+6. **Which generators are needed first?** (G5; there are 8: solid, gradient, noise, bars/SMPTE,
+   shapes, text, timecode, test pattern.)
+7. **Space from pause** (U4). A short press — still a toggle, and "hold" starts from a threshold
+   (say 0.3 s)? Or always "release — stop"?
+8. **Frame step** (T11). Shift on back/forward is taken by the region edge; which modifier (Alt?) or
+   other buttons?
+9. **"marker over the region"** (U7) — which menu item or gesture is this? Not found by name.
+10. **Auto-mute by sections** (N3) — are sections set by regions (`MarkedArea` with the role
+    "title/content") or by track/clip type, like Auto-ducking in Premiere?
+11. **Order of rounds.** The kkt-26.10.27 defects and features first (their changes are open), then
+    R.72 generators → R.73 timeline and transport defects → R.74 render → R.75 windows/glow → R.76
+    automation/presets. Is that right?
+12. **The broken-off line** (Z1): `1. быстрого` ("1. quick…") — what was meant?
+
 ## Round readme-showcase (2026-10-21): README, screenshots, docs; English from now on
 
 From here on entries are written in English; the owner's words stay verbatim.
