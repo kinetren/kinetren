@@ -1951,6 +1951,30 @@ Second answer (2026-10-28), translated:
 backend, so `morpher-event-grid-cost` measures the GPU path first: the sub-sample loads per pixel
 and the strength-0 pass are the suspects, not the CPU fallback.
 
+## 2026-10-30 — specs, sessions and the disk
+
+The owner, after the plugin-api-stage1 stage 3 report (translated):
+
+> make a spec about slowed_reverb, and let's go on with the specs we discussed, and also with the
+> spec of the extended posthog analytics
+
+> make several more sessions on the specs — just keep in mind that the target folder in these
+> sessions eats the disk very fast... very... this needs thinking
+
+**Taken as:**
+- "slowed_reverb" is the bimodal render cost found by the stage 3 speed check: a new change
+  `slowed-reverb-bimodal-cost` (investigation first, the fix may not move a byte).
+- "The specs we discussed" are plugin-api-stage1's three missing video contracts: a positioned
+  tap, geometry primitives and a barrier pass graph. They are designed before any code.
+- "Extended posthog analytics" is `telemetry-identify-activity`, planned on
+  `wine-frame-and-dark-theme`. It got its own session from that branch, because `update-check`,
+  which it builds next to, is done there.
+- Several sessions on the open specs, each in its own worktree.
+- The disk: one agent day grew a worktree's `target` to 142 GB against ~22 GB of a fresh build,
+  all of it stale artifacts. `scripts/target-prune.py` deletes what cargo says the tree no longer
+  needs (142 → 20 GB, nothing rebuilt). `finish.sh` runs it, and every session runs it after
+  every committed stage.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
