@@ -5705,6 +5705,15 @@ fn ffmpeg_window(
     (h, dir)
 }
 
+/// What **Open folder** must show when nothing was installed (D5): the folder of a loaded FFmpeg
+/// when it is one (wine and Windows load a real build folder), else the download root.
+fn folder_without_install(root: &std::path::Path) -> std::path::PathBuf {
+    kt_ffmpeg::loaded_place()
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_dir())
+        .unwrap_or_else(|| root.to_path_buf())
+}
+
 /// Step the window until the download job ends (a deadline, not a count), collecting what it
 /// showed on the way.
 fn run_download(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>) -> Vec<String> {
@@ -5757,8 +5766,11 @@ fn t950_ffmpeg_window_says_what_download_does() {
     h.get_by_label(tr(k::ffmpeg::OPEN_FOLDER)).click();
     h.step();
     h.step();
-    assert_eq!(h.state().ffmpeg_ui.test_open.as_deref(), Some(&[dir.join("ffmpeg")][..]));
-    assert!(dir.join("ffmpeg").is_dir(), "the root was not created");
+    let want = folder_without_install(&dir.join("ffmpeg"));
+    assert_eq!(h.state().ffmpeg_ui.test_open.as_deref(), Some(&[want.clone()][..]));
+    if want == dir.join("ffmpeg") {
+        assert!(dir.join("ffmpeg").is_dir(), "the root was not created");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -5867,7 +5879,8 @@ fn t952_ffmpeg_window_after_success_and_failure() {
     h.get_by_label(tr(k::ffmpeg::OPEN_FOLDER)).click();
     h.step();
     h.step();
-    assert_eq!(h.state().ffmpeg_ui.test_open.as_deref(), Some(&[dir.join("ffmpeg")][..]), "Open folder after a failure");
+    let want = folder_without_install(&dir.join("ffmpeg"));
+    assert_eq!(h.state().ffmpeg_ui.test_open.as_deref(), Some(&[want][..]), "Open folder after a failure");
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&tmp);
 }

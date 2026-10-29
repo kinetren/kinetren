@@ -82,8 +82,17 @@ English and its first line names the stage and what was done. Depends on the arc
     reasons and "Tried:" → Open folder in the row (hovered; a click would launch a real file manager).
     Green. Screenshots: `target/live-out/ffmpeg_download/01-step-before.png`, `02-step-connecting.png`,
     `03-step-failed.png`, `04-step-open-folder.png`.
-- [ ] 3.2 `./scripts/windows-test.sh`: the kt-app tests under wine, including t949–t952. Verify they are green. The real-Windows click on the pinned gyan.dev archive (Explorer opening the folder) stays with the owner: name it in the report
-- [ ] 3.3 Commit stage 3
+- [x] 3.2 `./scripts/windows-test.sh`: the kt-app tests under wine, including t949–t952. Verify they are green. The real-Windows click on the pinned gyan.dev archive (Explorer opening the folder) stays with the owner: name it in the report
+  - `windows-test.sh` (the whole workspace under wine): t950 and t952 were red — under wine a real
+    FFmpeg folder is loaded (`KT_FFMPEG_WIN_DIR`), and by D5 Open folder shows it; the tests had assumed
+    nothing loaded. Their expectation now follows the rule (`folder_without_install`). Rerun with the
+    filter t948–t953, t848, t867, t850: 9 of 9 green under wine. The full run's other failures are not
+    this change's and are named in the report: t76 ×2, t83, t85, t86, t101, t129 (the window-frame tests:
+    under wine the system frame is the default), t815 (5.98 s to write a restore record), t758 and t27
+    (`video_stall` timing); not checked against master here. The real-Windows click on the pinned
+    gyan.dev archive (Explorer opening the folder) stays with the owner.
+- [x] 3.3 Commit stage 3
+  - Committed.
 
 ## 4. Records and finish
 
