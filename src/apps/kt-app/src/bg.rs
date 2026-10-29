@@ -75,7 +75,6 @@ pub struct BgJob<P, R> {
     done_rx: std::sync::mpsc::Receiver<R>,
     cancel: Arc<AtomicBool>,
     pause: Arc<AtomicBool>,
-    pub started: std::time::Instant,
     /// The last progress step received.
     pub progress: Option<P>,
     /// The result. `Some` — the task is finished.
@@ -105,7 +104,6 @@ impl<P: Send + 'static, R: Send + 'static> BgJob<P, R> {
             done_rx,
             cancel,
             pause,
-            started: std::time::Instant::now(),
             progress: None,
             done: None,
         }
@@ -117,6 +115,22 @@ impl<P: Send + 'static, R: Send + 'static> BgJob<P, R> {
         while let Ok(p) = self.prog_rx.try_recv() {
             any = true;
             self.progress = Some(p);
+        }
+        if let Ok(r) = self.done_rx.try_recv() {
+            any = true;
+            self.done = Some(r);
+        }
+        any
+    }
+
+    /// Like `poll`, but EVERY message that arrived is handed to `visit` in order, not only the
+    /// last one (render-window-v1-parity D4): the render's log lines and its one encoder report
+    /// would otherwise be lost between two frames. `progress` keeps nothing on this path.
+    pub fn poll_with(&mut self, mut visit: impl FnMut(P)) -> bool {
+        let mut any = false;
+        while let Ok(p) = self.prog_rx.try_recv() {
+            any = true;
+            visit(p);
         }
         if let Ok(r) = self.done_rx.try_recv() {
             any = true;

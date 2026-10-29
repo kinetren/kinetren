@@ -114,16 +114,17 @@ loudness / missing / lost-layer lines (unchanged texts). Repaint: `is_running()`
 the continuous repaint; nothing in the final state animates (invariant 12, t38 family).
 
 ### D7. Open file / Open folder: one small OS helper
-`os_open::open_path(path)` and `os_open::reveal_dir(path)`: on Linux `xdg-open <file|dir>`
-spawned and not waited for (inside Flatpak, `xdg-open` forwards to the OpenURI portal); on Windows
-`ShellExecuteW("open", …)` (the `Win32_UI_Shell` feature of the existing `windows-sys`). A spawn
+As built: the helper the FFmpeg window already had, `util::open_in_file_manager(path)` — `xdg-open
+<file|dir>` on Linux (inside Flatpak it forwards to the OpenURI portal), `explorer.exe <path>` on
+Windows, spawned and not waited for; the file opens in its default application, the folder in the
+file manager. A test sets `RenderSetup.test_open` and the path is recorded instead. A spawn
 failure → an error notice with the path (rule 16). This is UI, not export: invariant 9 ("no
 external process") is about the export path and is untouched. No crate is added.
 Alternatives: the `opener`/`open` crates (a dependency for two calls); `explorer /select,`
 (selects the file but is a second code path per OS — the folder is enough).
 
 ### D8. The overwrite question is an `Ask`
-`Ask::OverwriteRender { path, size, modified }`, drawn where the other questions are
+`Ask::OverwriteRender { path }` (size and date are read when the question is drawn), drawn where the other questions are
 (`app.rs:1949`), answers `Yes` = Replace (→ start with that path), `No` = Choose another name (→
 `pick_save` again with the same default name), `Cancel` = back to the settings window (it was
 closed by `launch_render`; it is reopened with its state). The check is `Path::exists` right after
@@ -138,6 +139,23 @@ The file `<data_dir>/render.log` is opened at start after renaming an existing o
 end), so a crash in libav (T17) still leaves the lines before it on disk. A write error → one
 `journal::log` line and a flag that the window shows. The lines are written in English
 (the journal's rule: the file is for a report), the window shows them translated.
+
+### D10. What the live scenario found (task 4.1)
+The harness tests were green on a window a person could not finish with:
+- **A long output path widened the window past the screen**, and Close went with it (the click of
+  the scenario landed nowhere). The values are truncated labels now (the full text is the hover
+  tooltip); the forms are 380 pt each, side by side.
+- **The finished window read "179 / 180" and 99 %**: the renderer reports the frames done BEFORE
+  each frame, so the last step was one short. The export stores the final counts before the next
+  phase (t954 asserts the last step equals the totals); a finished run fills the bar.
+- **A small file read "0.0 MB" and "0.0 Mbit/s"**: sizes under a megabyte are in KB, bitrates under
+  a megabit in kbit/s (`size_text`, `bitrate_text`).
+- **"Done" twice in the log**: the engine's own phase line is the result; the UI adds a line only
+  for a failure.
+- The scenario's first fixture rendered in under a second (6.9× real time), so Pause was never on
+  screen: the fixture is 40 s at 1280×720.
+- `live-check.sh` runs `target/debug/kinetren` as it is: after `cargo test` it must be rebuilt
+  (`cargo build -p kt-app`), or the scenario checks the previous build.
 
 ## Risks / Trade-offs
 

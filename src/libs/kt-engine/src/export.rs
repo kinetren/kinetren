@@ -578,6 +578,9 @@ pub fn export_mp4_with_backends(
         )
         .map_err(|e| cleanup_on_err(e.into()))?
     };
+    // the renderer reports the frames done BEFORE each frame: the last frame is counted here, or
+    // the finished window would read "179 / 180" (live scenario `render`)
+    v_done.store(vstats.video_frames, Ordering::Relaxed);
     // 2) audio
     events(ExportEvent::Log(ExportLog::Phase(ExportPhase::Audio)));
     let astats = {
@@ -609,6 +612,7 @@ pub fn export_mp4_with_backends(
         let _ = std::fs::remove_file(out_path);
         return Err(ExportError::Cancelled);
     }
+    a_done.store(astats.audio_frames, Ordering::Relaxed);
     store_bytes(&muxer);
     events(ExportEvent::Log(ExportLog::Finalizing));
     report(ExportPhase::Finalize);

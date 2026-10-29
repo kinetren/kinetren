@@ -2947,6 +2947,11 @@ fn action_labels() -> Vec<String> {
     ]
 }
 
+/// The windows of kind `Progress` the table can open (render-window-v1-parity): no cross, and Esc
+/// does not touch them — an Esc meant for the timeline must not cancel a run of minutes. t919 and
+/// t922 check the opposite for them: they stay open.
+pub(crate) const PROGRESS_WINDOWS: &[&str] = &["kt_render_progress"];
+
 /// Window table: the id from `WINDOWS` → how to open it.
 pub(crate) fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
     use kt_model::*;
@@ -2992,10 +2997,8 @@ pub(crate) fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
             "the export parameters window is created together with its render session; the session requires \
              a real codec, which the harness does not have",
         ), Closes::Action),
-        ("kt_render_progress", OpenWin::Cant(
-            "the export progress window lives only while an encoding task is RUNNING; the harness cannot bring it up \
-             without a real codec",
-        ), Closes::Action),
+        // a scripted job (render-window-v1-parity): the window is fed messages, no codec needed
+        ("kt_render_progress", OpenWin::By(crate::layout_tests::render_progress_scene), Closes::Action),
         ("kt_analysis", OpenWin::Cant(
             "the analysis progress window lives while the background task is alive; the harness does not start it \
              without a real source file",
@@ -5036,6 +5039,12 @@ fn t919_esc_closes_every_window() {
         let depth = h.state().model.undo_depth();
         press_esc(&mut h);
         checked += 1;
+        if PROGRESS_WINDOWS.contains(&id) {
+            if !any_visible(&h, &layers) {
+                problems.push(format!("the progress window “{id}” closed on Esc — the run would be lost"));
+            }
+            continue;
+        }
         if any_visible(&h, &layers) {
             problems.push(format!("“{id}” is still open after Esc"));
         }
@@ -5249,6 +5258,20 @@ fn t922_cross_and_esc_are_one_path() {
         let OpenWin::By(open) = how else { continue };
         // the modals have no cross: their kind declares it
         if id == "kt_recovery" || id == "kt_ask" {
+            continue;
+        }
+        // a progress window has neither: t919 checks that Esc leaves it, and the title has no cross
+        if PROGRESS_WINDOWS.contains(&id) {
+            let mut h = harness_sized(1600.0, 900.0);
+            let layers = opened_layers(&mut h, open);
+            let r = layers
+                .iter()
+                .find_map(|l| egui::AreaState::load(&h.ctx, l.id).map(|s| s.rect()))
+                .expect("the window is drawn");
+            click_at(&mut h, egui::pos2(r.right() - 12.0, r.top() + 12.0));
+            if !any_visible(&h, &layers) {
+                problems.push(format!("“{id}”: a click where a cross would stand closed the progress window"));
+            }
             continue;
         }
         let close = |by_cross: bool| -> (String, usize, bool, Vec<String>) {
@@ -5883,4 +5906,100 @@ fn t952_ffmpeg_window_after_success_and_failure() {
     assert_eq!(h.state().ffmpeg_ui.test_open.as_deref(), Some(&[want][..]), "Open folder after a failure");
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// The window layer ids on screen (render-window-v1-parity t956/t958): a test takes them once on a
+/// bare harness and asks `unregistered_windows` for what its scene added.
+pub(crate) fn middle_layers(h: &egui_kittest::Harness<'_, crate::app::KtApp>) -> std::collections::HashSet<egui::Id> {
+    h.ctx.memory(|m| {
+        m.areas().visible_layer_ids().into_iter().filter(|l| l.order == egui::Order::Middle).map(|l| l.id).collect()
+    })
+}
+
+/// The windows on screen that a scene opened and the `WINDOWS` registry does not hold.
+pub(crate) fn unregistered_windows(
+    h: &egui_kittest::Harness<'_, crate::app::KtApp>,
+    bare: &std::collections::HashSet<egui::Id>,
+) -> Vec<egui::Id> {
+    let known: Vec<egui::Id> = WINDOWS.iter().map(|(id, _)| egui::Id::new(*id)).collect();
+    middle_layers(h).into_iter().filter(|id| !bare.contains(id) && !known.contains(id)).collect()
+}
+
+/// Test 958 (render-window-v1-parity, D8): an existing file is not touched without Replace.
+///
+/// `launch_render` passed the path straight to the export, and the muxer's `avio_open` truncated the
+/// old file at once — a cancelled or failed render then also deleted it (ktprompts v26.10 U1).
+#[test]
+fn t958_render_over_an_existing_file_is_asked_first() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    // a window's first frame only measures it: the button is pressed once it stands in place
+    fn press(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>, label: &str) {
+        for _ in 0..3 {
+            h.step();
+        }
+        h.get_by_label(label).click();
+        for _ in 0..3 {
+            h.step();
+        }
+    }
+    use crate::app::Ask;
+    let dir = std::env::temp_dir().join(format!("kt-t958-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let old = dir.join("kt-demo-12s.mp4");
+    let bytes: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&old, &bytes).unwrap();
+    let mut h = crate::layout_tests::harness();
+    let bare = middle_layers(&h);
+    {
+        let app = h.state_mut();
+        app.render_setup.log_dir = dir.join("logs");
+        app.render_setup.test_pick = Some(old.clone());
+        app.start_render();
+    }
+    h.step();
+    // Render… in the settings window: the question, nothing written
+    press(&mut h, tr(k::render::START));
+    assert_eq!(h.state().ask, Some(Ask::OverwriteRender { path: old.clone() }), "no overwrite question");
+    assert!(h.state().render_job.is_none(), "the render started before the answer");
+    let texts = crate::layout_tests::shown_texts(&h);
+    let date = crate::journal::stamp_of(std::fs::metadata(&old).unwrap().modified().unwrap())[..16].to_string();
+    let body = crate::tf!(k::render::OVERWRITE_BODY, "kt-demo-12s.mp4", crate::render_dialog::size_text(4096), date);
+    assert!(texts.contains(&body), "the question does not name the file, its size and date ({body}): {texts:?}");
+    assert!(texts.iter().any(|t| t == tr(k::render::OVERWRITE_WHERE)), "the question does not say where to choose again");
+    assert_eq!(std::fs::read(&old).unwrap(), bytes, "the file changed before Replace");
+    // Choose another name: the save step again (the seam answers the same file) — asked again
+    press(&mut h, tr(k::render::OTHER_NAME));
+    assert_eq!(h.state().ask, Some(Ask::OverwriteRender { path: old.clone() }), "the save step did not come back");
+    assert!(h.state().render_job.is_none(), "another name started the render");
+    assert_eq!(std::fs::read(&old).unwrap(), bytes, "the file changed after another name");
+    // closing the question returns to the settings with every setting kept
+    h.state_mut().render_setup.quality = 31;
+    h.state_mut().answer_ask(crate::app::Answer::Cancel);
+    h.step();
+    assert!(h.state().render_setup.open && h.state().render_setup.quality == 31, "closing lost the settings");
+    assert_eq!(std::fs::read(&old).unwrap(), bytes, "the file changed after closing the question");
+    press(&mut h, tr(k::render::START));
+    // Replace: the render starts
+    press(&mut h, tr(k::render::REPLACE));
+    assert!(h.state().ask.is_none(), "the question stayed after Replace");
+    assert!(h.state().render_job.is_some(), "Replace did not start the render");
+    let extra = unregistered_windows(&h, &bare);
+    assert!(extra.is_empty(), "windows outside WINDOWS: {extra:?}");
+    h.state_mut().render_job = None;
+
+    // a path that does not exist: no question
+    let fresh = dir.join("new.mp4");
+    {
+        let app = h.state_mut();
+        app.render_setup.test_pick = Some(fresh);
+        app.start_render();
+    }
+    h.step();
+    press(&mut h, tr(k::render::START));
+    assert!(h.state().ask.is_none(), "a new path was asked about");
+    assert!(h.state().render_job.is_some(), "a new path did not start the render");
+    h.state_mut().render_job = None;
+    let _ = std::fs::remove_dir_all(&dir);
 }

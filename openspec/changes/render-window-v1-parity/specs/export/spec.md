@@ -26,7 +26,8 @@ offline path: counts are deterministic, clocks are not.
   options containing `crf`; with the cascade its name equals `ExportStats.encoder` and the log
   holds one "not opened" line (name and error code) for every candidate of the OS list placed
   before it that exists in the loaded FFmpeg; the video and audio byte counters never decrease, the
-  last ones are greater than zero, and their sum is not larger than the size of the finished file
+  last ones are greater than zero, and their sum is not larger than the size of the finished file; the last progress step
+  counts every video frame and audio sample of the totals
 - **TEST** t954 (`src/libs/kt-engine/tests/export_options.rs`)
 
 #### Scenario: The event stream holds no clock
@@ -72,7 +73,7 @@ Speed and the bitrate are per second of OUTPUT so they are comparable between pr
   mux, "Backend: GPU (…)", the file; on the right "Run" with phase, frames, elapsed, remaining,
   output length, size, bitrate; under them the speed line and the chart moving to the right; the
   bar; Pause and Cancel at the bottom
-- **TEST** t956 (`src/apps/kt-app/src/layout_tests.rs`), live scenario `render` (created by task 4.1 of this change)
+- **TEST** t956 (`src/apps/kt-app/src/layout_tests.rs`), live scenario `render` (`src/scripts/live/render.py`)
 
 ### Requirement: The finished render is frozen, summarised and opened from the window
 When the job finishes, the window SHALL stop every time-based number at the moment the result
@@ -102,7 +103,7 @@ during the final mux throws away a finished file (F-EXP-005 trick 3).
   "Rendered in 0:42 · 2.1× real time · 1260 frames · h264_nvenc · GPU · 48.3 MB · 9.2 Mbit/s"
   and the loudness line → Open folder → the file manager shows the folder holding the file
   → Open file → the video plays in the system player → Close
-- **TEST** t957 (`src/apps/kt-app/src/layout_tests.rs`), live scenario `render` (created by task 4.1 of this change)
+- **TEST** t957 (`src/apps/kt-app/src/layout_tests.rs`), live scenario `render` (`src/scripts/live/render.py`)
 
 ### Requirement: Rendering over an existing file is asked first
 When the output path chosen for a render already exists, the program SHALL ask before starting,
@@ -117,7 +118,8 @@ path straight to the export, and the muxer's `avio_open` truncates the old file 
 cancelled or failed render then also deletes it (`cleanup_on_err` removes the output path).
 
 #### Scenario: An existing file is not touched without Replace
-- **WHEN** the harness points the save seam (`KT_FILE_PICK`) at an existing file of known bytes and
+- **WHEN** the harness points the save seam (`RenderSetup.test_pick`; the live scenario uses
+  `KT_FILE_PICK`) at an existing file of known bytes and
   presses Render…; answers "Choose another name"; then again and answers Replace; separately points
   it at a path that does not exist
 - **THEN** the first press opens the overwrite question naming the file, its size and date, and the
@@ -128,7 +130,7 @@ cancelled or failed render then also deletes it (`cleanup_on_err` removes the ou
   is already there → the question "kt-demo-12s.mp4 already exists (48.3 MB, 2026-10-27 14:02).
   Replace it? The name can be chosen again in Render…" with Replace and Choose another name →
   Choose another name → the save dialog again → the same file → Replace → the progress window
-- **TEST** t958 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `render` (created by task 4.1 of this change)
+- **TEST** t958 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `render` (`src/scripts/live/render.py`)
 
 ### Requirement: The render log is kept in the window and in one file
 The progress window SHALL hold a collapsible log section (collapsed while the run is healthy,

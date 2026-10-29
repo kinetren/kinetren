@@ -312,6 +312,15 @@ fn t954_encoder_named_before_the_first_frame_and_bytes_add_up() {
         let (v, a) = *steps.last().unwrap();
         assert!(v > 0 && a > 0, "{tag}: the last counters are zero: {v} {a}");
         assert!(v + a <= size, "{tag}: {v} + {a} bytes exceed the file's {size}");
+        // the last step counts every frame and sample (the live window read "179 / 180" when done)
+        let Some(ExportEvent::Progress(fin)) = events.iter().rev().find(|e| matches!(e, ExportEvent::Progress(_))) else {
+            unreachable!()
+        };
+        assert_eq!(
+            (fin.video_frames, fin.audio_frames),
+            (fin.total_video_frames, fin.total_audio_frames),
+            "{tag}: the last step is short of the totals"
+        );
     }
 }
 

@@ -37,6 +37,10 @@ pub enum Ask {
     /// a file dropped onto the window is not a project,
     /// but a hint about the import door.
     DropProject,
+    /// The render's output file already exists (render-window-v1-parity D8): the muxer would
+    /// truncate it at once, and a cancelled or failed render would then delete it. Nothing is
+    /// written before Replace.
+    OverwriteRender { path: std::path::PathBuf },
 }
 
 /// What the program was going to do when it asked about unsaved changes.
@@ -2053,6 +2057,40 @@ impl KtApp {
                             }
                         });
                     }
+                    Ask::OverwriteRender { path } => {
+                        ui.heading(tr(k::render::OVERWRITE_TITLE));
+                        ui.add_space(6.0);
+                        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                        let meta = std::fs::metadata(path).ok();
+                        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                        let date = meta
+                            .and_then(|m| m.modified().ok())
+                            .map(|t| crate::journal::stamp_of(t)[..16].to_string())
+                            .unwrap_or_default();
+                        ui.label(crate::tf!(
+                            k::render::OVERWRITE_BODY,
+                            name,
+                            crate::render_dialog::size_text(size),
+                            date
+                        ));
+                        ui.add_space(4.0);
+                        ui.weak(path.display().to_string());
+                        // rule 19: where the name is chosen again
+                        ui.weak(tr(k::render::OVERWRITE_WHERE));
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            let r = ui.button(tr(k::render::REPLACE));
+                            crate::widgets::field_probe::note("ask.replace", r.rect);
+                            if r.clicked() {
+                                answer = Some(Answer::Yes);
+                            }
+                            let r = ui.button(tr(k::render::OTHER_NAME));
+                            crate::widgets::field_probe::note("ask.other_name", r.rect);
+                            if r.clicked() {
+                                answer = Some(Answer::No);
+                            }
+                        });
+                    }
                 }
             });
             // Esc gives the safe answer: nothing is lost, the question comes back
@@ -3614,6 +3652,11 @@ impl KtApp {
             (Ask::DropProject, Answer::Cancel) => {
                 self.pending_drop = None;
             }
+            // Replace — the render starts into the same path; another name — the save step again
+            // with the same default name; closing — back to the settings, every setting kept
+            (Ask::OverwriteRender { path }, Answer::Yes) => self.start_render_to(path),
+            (Ask::OverwriteRender { .. }, Answer::No) => self.launch_render(),
+            (Ask::OverwriteRender { .. }, Answer::Cancel) => self.render_setup.open = true,
             (Ask::Unsaved(p), Answer::No) => {
                 // the work is declared unneeded: we clear the flags BEFORE the transition, otherwise
                 // `Drop` would revive it from the recovery file
@@ -9131,17 +9174,16 @@ impl Drop for KtApp {
 
 /// GPU engine for export (R.29): its own headless device per job — kt-cli
 /// has no window, and the UI queue does not share time with the 4K export. None → CPU
-/// (for a 2D project this is a full-fledged path; `KT_VIDEO_GPU=0` — forced).
-pub(crate) fn export_video_gpu() -> Option<std::sync::Arc<dyn kt_engine::VideoGpuExec>> {
+/// (for a 2D project this is a full-fledged path; `KT_VIDEO_GPU=0` — forced). The error is the
+/// REASON the render window and its log name (render-window-v1-parity D4): a desktop start has no
+/// terminal, so an `eprintln!` here was never seen.
+pub(crate) fn export_video_gpu() -> Result<std::sync::Arc<dyn kt_engine::VideoGpuExec>, String> {
     if std::env::var("KT_VIDEO_GPU").as_deref() == Ok("0") {
-        return None;
+        return Err("KT_VIDEO_GPU=0".into());
     }
     match kt_gpu::GpuContext::new_headless().and_then(kt_gpu::GpuFxEngine::new) {
-        Ok(e) => Some(e),
-        Err(err) => {
-            eprintln!("video export on CPU (no GPU): {err}");
-            None
-        }
+        Ok(e) => Ok(e),
+        Err(err) => Err(err.to_string()),
     }
 }
 

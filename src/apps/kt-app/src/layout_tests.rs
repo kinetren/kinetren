@@ -18847,3 +18847,359 @@ fn t928_triple_click_on_a_reel_and_on_the_level_line() {
     assert_eq!(h.state().model.undo_depth(), depth + 1, "the reset is one step, the third click adds none");
     assert_eq!(h.state().model.project().region, region, "the third click on the level line sets no region");
 }
+
+// ---- render-window-v1-parity: the progress window fed scripted events (t956, t957, t959) ----
+
+thread_local! {
+    /// The scripted clock of the render window (D3): milliseconds since the scene's start.
+    static RENDER_NOW_MS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+fn render_clock_base() -> std::time::Instant {
+    static BASE: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    *BASE.get_or_init(std::time::Instant::now)
+}
+
+/// The `Clock` seam a scripted job runs on: the harness thread moves it with `set_render_now`.
+fn render_clock() -> std::time::Instant {
+    render_clock_base() + std::time::Duration::from_millis(RENDER_NOW_MS.with(|c| c.get()))
+}
+
+fn set_render_now(secs: f64) {
+    RENDER_NOW_MS.with(|c| c.set((secs * 1000.0) as u64));
+}
+
+/// A render job whose thread only waits for Cancel: every number the window shows comes from the
+/// messages the test hands to `on_msg` — the same path the background thread's messages take.
+pub(crate) fn scripted_render(app: &mut KtApp, log_dir: &std::path::Path) {
+    set_render_now(0.0);
+    let job = crate::bg::BgJob::spawn("scripted-render", |ctl, _send| {
+        while !ctl.should_stop() {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        Err("cancelled".to_string())
+    });
+    let s = app.model.document().settings.clone();
+    app.render_job = Some(crate::render_dialog::RenderJob::new(
+        job,
+        "/tmp/kt-scripted/out.mp4".into(),
+        kt_engine::export::ExportOptions::default(),
+        (s.width, s.height),
+        30,
+        Vec::new(),
+        log_dir,
+        render_clock,
+    ));
+}
+
+fn render_step(app: &mut KtApp, at: f64, frames: u64, total: u64, phase: kt_engine::export::ExportPhase) {
+    use crate::render_dialog::RenderMsg;
+    set_render_now(at);
+    let job = app.render_job.as_mut().expect("render job");
+    job.on_msg(RenderMsg::Engine(kt_engine::export::ExportEvent::Progress(kt_engine::export::ExportProgress {
+        video_frames: frames,
+        total_video_frames: total,
+        audio_frames: frames * 1600,
+        total_audio_frames: total * 1600,
+        phase,
+        // 250 000 video bytes per second of output at 30 fps — 2.0 Mbit/s
+        video_bytes: frames * 250_000 / 30,
+        audio_bytes: frames * 24_000 / 30,
+    })));
+}
+
+fn nvenc_report() -> kt_media::muxer::OpenReport {
+    kt_media::muxer::OpenReport {
+        encoder: "h264_nvenc".into(),
+        hardware: true,
+        pix_fmt: "yuv420p".into(),
+        options: vec![("preset".into(), "p4".into()), ("cq".into(), "23".into())],
+        tried: Vec::new(),
+    }
+}
+
+fn render_scratch(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("kt-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// The rectangle of the first node whose label is exactly `label`.
+fn label_rect(h: &Harness<'_, KtApp>, label: &str) -> Option<egui::Rect> {
+    use egui_kittest::kittest::Queryable;
+    h.query_all_by_label(label).map(|n| n.rect()).next()
+}
+
+/// Test 956 (render-window-v1-parity, D5): the rows come from the run.
+///
+/// The old window printed `{encoder or "auto encoder"} CRF {quality}` for the whole run — a guessed
+/// name and the x264 word for every encoder (the owner, kkt item 4; F-EXP-004 trick 3).
+#[test]
+fn t956_render_window_rows_come_from_the_run() {
+    use crate::render_dialog::{BackendLine, RenderMsg};
+    use kt_engine::export::{ExportEvent, ExportPhase};
+    let dir = render_scratch("t956");
+    let mut h = harness_lang(Lang::En);
+    let bare_windows = crate::reach_tests::middle_layers(&h);
+    scripted_render(h.state_mut(), &dir);
+    render_step(h.state_mut(), 0.2, 0, 120, ExportPhase::Video);
+    h.step();
+    h.step();
+    let texts = shown_texts(&h);
+    let video_row = texts.iter().any(|t| t.contains(tr(k::render::CHOOSING)));
+    assert!(video_row, "before the report the video row does not say the encoder is being chosen: {texts:?}");
+    assert!(
+        !texts.iter().any(|t| t.contains("h264_nvenc") || t.contains("libx264") || t.contains("auto encoder")),
+        "an encoder is named before it opened: {texts:?}"
+    );
+    {
+        let job = h.state_mut().render_job.as_mut().unwrap();
+        job.on_msg(RenderMsg::Backend(BackendLine::Gpu("llvmpipe".into())));
+        job.on_msg(RenderMsg::Engine(ExportEvent::Opened(nvenc_report())));
+    }
+    render_step(h.state_mut(), 1.0, 30, 120, ExportPhase::Video);
+    render_step(h.state_mut(), 2.0, 60, 120, ExportPhase::Video);
+    h.step();
+    h.step();
+    let texts = shown_texts(&h);
+    let s = h.state().model.document().settings.clone();
+    let want = [
+        format!("{}×{}", s.width, s.height),
+        crate::tf!(k::render::FPS_VALUE, 30),
+        "h264_nvenc (hardware) · yuv420p · CQ 23".to_string(),
+        crate::tf!(k::render::AUDIO_LINE, 192),
+        "MP4 (+faststart)".to_string(),
+        "GPU: llvmpipe".to_string(),
+        "/tmp/kt-scripted/out.mp4".to_string(),
+        tr(k::render::PHASE_VIDEO).to_string(),
+        "60 / 120".to_string(),
+        "0:02 / 0:04".to_string(),
+        // 60 frames · (250 000 + 24 000) / 30 bytes = 548 000 bytes, half the frames
+        crate::tf!(k::render::SIZE_VALUE, crate::render_dialog::size_text(548_000), crate::render_dialog::size_text(1_096_000)),
+        crate::tf!(k::render::BITRATE_VALUE, "2.0"),
+    ];
+    for w in &want {
+        assert!(texts.iter().any(|t| t == w), "the window does not show “{w}”: {texts:?}");
+    }
+    assert!(!texts.iter().any(|t| t.contains("CRF")), "the NVENC quality is called CRF: {texts:?}");
+    for row in [k::render::OUT_TITLE, k::render::RUN_TITLE, k::render::ROW_ELAPSED, k::render::ROW_REMAINING] {
+        assert!(texts.iter().any(|t| t == tr(row)), "the form has no “{}” row", tr(row));
+    }
+    // the speed chart: its title is drawn with an area under it, and it holds the two samples
+    let title = label_rect(&h, tr(k::render::SPEED_GRAPH)).expect("the speed chart is not drawn");
+    assert!(title.width() > 0.0, "the chart title is empty");
+    assert_eq!(h.state().render_job.as_ref().unwrap().graph.series[0].data.len(), 2, "chart samples");
+    // no window outside the registry
+    let extra = crate::reach_tests::unregistered_windows(&h, &bare_windows);
+    assert!(extra.is_empty(), "windows outside WINDOWS: {extra:?}");
+
+    // Pause and Cancel stay outside the scrolling body: in a LOW window they are on screen
+    let mut low = harness_sized(1100.0, 420.0);
+    crate::i18n::set_lang(Lang::En);
+    scripted_render(low.state_mut(), &dir);
+    low.state_mut().render_job.as_mut().unwrap().on_msg(RenderMsg::Engine(ExportEvent::Opened(nvenc_report())));
+    render_step(low.state_mut(), 1.0, 30, 120, ExportPhase::Video);
+    low.step();
+    low.step();
+    let screen = low.ctx.content_rect();
+    for b in [k::render::PAUSE, k::render::CANCEL] {
+        let r = label_rect(&low, tr(b)).unwrap_or_else(|| panic!("no “{}” button", tr(b)));
+        assert!(screen.contains_rect(r), "“{}” left the screen of a low window: {r:?}", tr(b));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 957 (render-window-v1-parity, D6/D7): the counters stop at the finish and the next actions
+/// appear away from where Cancel stood.
+///
+/// ktprompts v26.10 T12: elapsed was read from the job's start every frame, so after the end it kept
+/// growing and the average speed sank.
+#[test]
+fn t957_finished_render_is_frozen_and_opened_from_the_window() {
+    use crate::render_dialog::{BackendLine, RenderMsg};
+    use egui_kittest::kittest::{NodeT, Queryable};
+    use kt_engine::export::{ExportEvent, ExportPhase, ExportStats};
+    let dir = render_scratch("t957");
+    let mut h = harness_lang(Lang::En);
+    scripted_render(h.state_mut(), &dir);
+    h.state_mut().render_setup.test_open = Some(Vec::new());
+    {
+        let job = h.state_mut().render_job.as_mut().unwrap();
+        job.on_msg(RenderMsg::Backend(BackendLine::Gpu("llvmpipe".into())));
+        job.on_msg(RenderMsg::Engine(ExportEvent::Opened(nvenc_report())));
+    }
+    for i in 1..=8 {
+        render_step(h.state_mut(), i as f64, i * 15, 120, ExportPhase::Video);
+    }
+    h.step();
+    h.step();
+    let cancel = label_rect(&h, tr(k::render::CANCEL)).expect("Cancel during the run");
+    // the result arrives at 10 s
+    set_render_now(10.0);
+    h.state_mut().render_job.as_mut().unwrap().on_result(Ok(ExportStats {
+        video_frames: 120,
+        audio_frames: 192_000,
+        underruns: 0,
+        encoder: "h264_nvenc".into(),
+        missing_video_layers: 0,
+        loudness: None,
+    }));
+    h.step();
+    h.step();
+    let at10 = shown_texts(&h);
+    let elapsed10 = h.state().render_job.as_ref().unwrap().elapsed();
+    let final_line = at10
+        .iter()
+        .find(|t| t.contains("h264_nvenc") && t.contains("GPU") && t.contains("Mbit/s") && t.contains("0:10"))
+        .cloned()
+        .unwrap_or_else(|| panic!("no final block naming time, encoder, backend and bitrate: {at10:?}"));
+    assert!(final_line.contains("frames: 120"), "the final block does not count frames: {final_line}");
+    for secs in [11.0, 15.0] {
+        set_render_now(secs);
+        h.step();
+        h.step();
+        assert_eq!(h.state().render_job.as_ref().unwrap().elapsed(), elapsed10, "elapsed moved at {secs} s");
+        let now = shown_texts(&h);
+        assert!(now.contains(&final_line), "the final block changed at {secs} s: {now:?}");
+        assert!(!now.iter().any(|t| t == tr(k::render::ROW_REMAINING)), "“remaining” is still there at {secs} s");
+        let speed: Vec<&String> = now.iter().filter(|t| t.starts_with("Speed:")).collect();
+        let speed10: Vec<&String> = at10.iter().filter(|t| t.starts_with("Speed:")).collect();
+        assert_eq!(speed, speed10, "the speed line moved at {secs} s");
+    }
+    // Open file / Open folder, neither on Cancel's place; they reach the system's opener
+    for (b, want) in [
+        (k::render::OPEN_FILE, std::path::PathBuf::from("/tmp/kt-scripted/out.mp4")),
+        (k::render::OPEN_FOLDER, std::path::PathBuf::from("/tmp/kt-scripted")),
+    ] {
+        let r = label_rect(&h, tr(b)).unwrap_or_else(|| panic!("no “{}”", tr(b)));
+        assert!(!r.intersects(cancel), "“{}” lies where Cancel stood: {r:?} vs {cancel:?}", tr(b));
+        h.get_by_label(tr(b)).click();
+        h.step();
+        h.step();
+        let opened = h.state().render_setup.test_open.clone().unwrap();
+        assert_eq!(opened.last(), Some(&want), "“{}” opened something else", tr(b));
+    }
+    let close = label_rect(&h, tr(k::render::CLOSE)).expect("Close");
+    assert!(!close.intersects(cancel), "Close lies where Cancel stood");
+
+    // the Finalize phase: Cancel is disabled and its hint names the finishing step
+    let mut f = harness_lang(Lang::En);
+    scripted_render(f.state_mut(), &dir);
+    render_step(f.state_mut(), 1.0, 120, 120, ExportPhase::Finalize);
+    f.step();
+    f.step();
+    let node = f.get_by_label(tr(k::render::CANCEL));
+    assert!(node.accesskit_node().is_disabled(), "Cancel is enabled during the final mux");
+    let at = node.rect().center();
+    f.hover_at(at);
+    f.step();
+    f.step();
+    assert_eq!(f.state().hover_hint.as_deref(), Some(tr(k::render::CANCEL_FINALIZING)), "no hint on the disabled Cancel");
+
+    // an error: the log is offered, no Open file
+    let mut e = harness_lang(Lang::En);
+    scripted_render(e.state_mut(), &dir);
+    render_step(e.state_mut(), 1.0, 10, 120, ExportPhase::Video);
+    set_render_now(2.0);
+    e.state_mut().render_job.as_mut().unwrap().on_result(Err("encoder died".into()));
+    e.step();
+    e.step();
+    assert!(label_rect(&e, tr(k::render::OPEN_LOG)).is_some(), "a failed render does not offer its log");
+    assert!(label_rect(&e, tr(k::render::OPEN_FILE)).is_none(), "a failed render offers Open file");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 959 (render-window-v1-parity, D9): the log is bounded, rotated and named.
+///
+/// v1 kept 800 lines and wrote a file on error; we had one error line in the window and nothing on
+/// disk, and the GPU failure went to `eprintln!`, which a desktop start never shows.
+#[test]
+fn t959_render_log_is_bounded_rotated_and_named() {
+    use crate::render_dialog::{LOG_LINES, RenderMsg};
+    use kt_engine::export::{ExportEvent, ExportLog};
+    let dir = render_scratch("t959");
+    std::fs::write(dir.join("render.log"), b"previous run\n").unwrap();
+    let mut h = harness_lang(Lang::En);
+    scripted_render(h.state_mut(), &dir);
+    {
+        let job = h.state_mut().render_job.as_mut().unwrap();
+        for i in 0..1000 {
+            set_render_now(i as f64 * 0.01);
+            job.on_msg(RenderMsg::Engine(ExportEvent::Log(ExportLog::Placeholder { label: format!("m{i}") })));
+        }
+        set_render_now(11.0);
+        job.on_result(Err("encoder died".into()));
+        assert_eq!(job.log.len(), LOG_LINES, "the window's log is not bounded");
+        assert!(
+            matches!(&job.log.back().unwrap().1, crate::render_dialog::LogLine::Failed(_)),
+            "the last line is not the result"
+        );
+    }
+    h.step();
+    h.step();
+    let texts = shown_texts(&h);
+    let last = crate::tf!(k::render::LOG_PLACEHOLDER, "m999");
+    // painted and accessible: one line may come twice
+    let shown: Vec<&String> = texts.iter().filter(|t| t.ends_with(&last)).collect();
+    assert!(!shown.is_empty(), "the log is not open after the error, or the line is missing: {texts:?}");
+    assert!(shown[0].starts_with("[0:09] "), "the line has no elapsed stamp: {}", shown[0]);
+    assert!(!texts.iter().any(|t| t.ends_with(&crate::tf!(k::render::LOG_PLACEHOLDER, "m199"))), "line 200 survived the bound");
+    let path = dir.join("render.log");
+    assert!(
+        texts.iter().any(|t| t == &crate::tf!(k::render::LOG_PATH, path.display())),
+        "the window does not name the log file: {texts:?}"
+    );
+    h.state_mut().render_job = None;
+    let file = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(file.lines().count(), 1001, "render.log does not hold every line of the run");
+    assert!(file.lines().all(|l| l.starts_with('[')), "a file line has no stamp");
+    assert!(file.contains("placeholder rendered for m0") && file.contains("render failed: encoder died"), "{file}");
+    assert_eq!(std::fs::read(dir.join("render.log.1")).unwrap(), b"previous run\n", "the previous run was not kept");
+
+    // a read-only data directory: the render goes on, the window says the log is only here
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let ro = dir.join("ro");
+        std::fs::create_dir_all(&ro).unwrap();
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+        // root writes anyway — the case cannot be made there
+        if std::fs::File::create(ro.join("probe")).is_err() {
+            let mut r = harness_lang(Lang::En);
+            scripted_render(r.state_mut(), &ro);
+            render_step(r.state_mut(), 1.0, 10, 120, kt_engine::export::ExportPhase::Video);
+            set_render_now(2.0);
+            r.state_mut().render_job.as_mut().unwrap().on_result(Err("encoder died".into()));
+            r.step();
+            r.step();
+            let job = r.state().render_job.as_ref().unwrap();
+            assert!(job.log_file.failed, "an unwritable log is not noticed");
+            assert!(matches!(job.result, Some(Err(_))), "the result changed");
+            let texts = shown_texts(&r);
+            let want = crate::tf!(k::render::LOG_ONLY_WINDOW, ro.join("render.log").display());
+            assert!(texts.contains(&want), "the window does not say the log is only here: {texts:?}");
+        }
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    // the new texts are translated (identical-to-English only where the word is international)
+    for key in [k::render::LOG_TITLE, k::render::OPEN_FOLDER, k::render::OVERWRITE_BODY, k::render::CANCEL_FINALIZING] {
+        for lang in [Lang::Ru, Lang::Es, Lang::Zh, Lang::Ar] {
+            crate::i18n::set_lang(lang);
+            let v = tr(key).to_string();
+            crate::i18n::set_lang(Lang::En);
+            assert_ne!(v, tr(key), "{}: “{}” is not translated", lang.code(), tr(key));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The progress window of a scripted run, mid-run (the t779 form contract's opener).
+pub(crate) fn render_progress_scene(h: &mut Harness<'static, KtApp>) {
+    use crate::render_dialog::RenderMsg;
+    let dir = std::env::temp_dir().join(format!("kt-render-scene-{}", std::process::id()));
+    scripted_render(h.state_mut(), &dir);
+    let job = h.state_mut().render_job.as_mut().unwrap();
+    job.on_msg(RenderMsg::Engine(kt_engine::export::ExportEvent::Opened(nvenc_report())));
+    render_step(h.state_mut(), 1.0, 30, 120, kt_engine::export::ExportPhase::Video);
+}
