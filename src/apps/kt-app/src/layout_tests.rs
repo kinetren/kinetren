@@ -15974,8 +15974,20 @@ fn t947_perf_panel_shows_the_compose_cost() {
     assert_ne!(h.state().player.video_cost(), before, "playing composed nothing new");
     // after Stop the last values stay and nothing composes again (no cost while idle)
     h.state_mut().player.pause();
-    h.step();
-    h.step();
+    // a frame decoded before Stop may still land and compose once (under load, finish.sh): wait
+    // until the value settles, then it must not move again
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut last = h.state().player.video_cost();
+    loop {
+        h.step();
+        h.step();
+        let now = h.state().player.video_cost();
+        if now == last || std::time::Instant::now() > deadline {
+            break;
+        }
+        last = now;
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     let stopped = h.state().player.video_cost();
     for _ in 0..4 {
         h.step();
