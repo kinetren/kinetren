@@ -79,9 +79,23 @@ message, first line = the stage and what was done). Stage only this change's fil
 
 ## 4. Live and records
 
-- [ ] 4.1 Live scenario `src/scripts/live/nestparam.py` (extend it): with `KT_LANG=ru` collapse a selection, save, restart with English, open the instance's FX window — `kt_live.step` screenshots of the strip head "📌 Reel" and the bin card. Verify `./scripts/live-check.sh nestparam` green, screenshots listed here
+- [x] 4.1 Live scenario `src/scripts/live/nestparam.py` (extend it): with `KT_LANG=ru` collapse a selection, save, restart with English, open the instance's FX window — `kt_live.step` screenshots of the strip head "📌 Reel" and the bin card. Verify `./scripts/live-check.sh nestparam` green, screenshots listed here
+  - A scenario of its own, `src/scripts/live/nestlang.py` (`OWN_PROCESS = True`), not part of
+    `nestparam.py`: the language is read at start-up, and two own processes inside the stand's run put
+    a second window over the stand's (the first try clicked the stand's window). Russian: collapse two
+    events, save — the file holds «Лента»; English on the same file: the bin card, "Composition
+    parameters" → the strip head "📌 Reel" (`fx.head` probe, screenshot), entering → the dump's crumb
+    `nest.name` is "Reel"; the file still holds «Лента». Green. Screenshots:
+    `target/live-out/nestlang/01-step-ru-collapsed.png`, `01-step-en-bin.png`, `02-step-en-strip-head.png`,
+    `03-step-en-crumbs.png`.
 - [ ] 4.2 Manual check recorded here: `make install` on this machine, then the file manager shows `film.kt` as "Kinetren project" (in Spanish with `LANGUAGE=es`), a Kotlin file as Kotlin source, `demo.ktproj` as "Older Kinotrain project"; the application menu finds Kinetren by "montage"
-- [ ] 4.3 Commit stage 4
+  - OPEN — the owner's: `make install` would put a development build over the installed Kinetren in
+    the home directory, so it is not run by the agent. What it would show is held by t935 against a
+    temporary MIME database (our `film.kt`, a Kotlin `Main.kt`, `demo.ktproj`), and the desktop file
+    passes `desktop-file-validate`. To do by hand: `make install`, then the file manager on `film.kt`,
+    `Main.kt`, `demo.ktproj` (with `LANGUAGE=es` too) and the application menu search "montage".
+- [x] 4.3 Commit stage 4
+  - Committed.
 
 ## 5. Finish
 
