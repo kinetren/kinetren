@@ -203,7 +203,7 @@ pub use audio::{
     chain_source_window_ext, chain_tail,
 };
 pub use audio::{
-    ChainOpts, ClipProcessor, Freeverb, SmoothedParam, TrackProcessor, Warp, eq_mag_db,
+    ChainOpts, ClipProcessor, Freeverb, SmoothedParam, TrackProcessor, Warp,
 };
 
 /// The time-stretch map MOVED TO kt-model (R.39): it must be called by

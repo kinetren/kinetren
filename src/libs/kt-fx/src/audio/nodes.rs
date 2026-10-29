@@ -207,9 +207,6 @@ pub enum AudioNode {
     LayerMix,
     Reverb(ReverbNode),
     Filter(Box<FilterNode>),
-    Eq(Box<EqNode>),
-    Distortion(DistNode),
-    Bitcrusher(CrushNode),
     Tremolo(TremoloNode),
     AutoPan(AutoPanNode),
     Vibrato(Box<VibratoNode>),
@@ -286,9 +283,6 @@ impl AudioNode {
             FxInstance::LayerMix { .. } => Some(AudioNode::LayerMix),
             FxInstance::SlowedReverb { .. } => Some(AudioNode::Reverb(ReverbNode::new())),
             FxInstance::Filter { .. } => Some(AudioNode::Filter(Box::new(FilterNode::new()))),
-            FxInstance::Eq { .. } => Some(AudioNode::Eq(Box::new(EqNode::new()))),
-            FxInstance::Distortion { .. } => Some(AudioNode::Distortion(DistNode::new())),
-            FxInstance::Bitcrusher { .. } => Some(AudioNode::Bitcrusher(CrushNode::new())),
             FxInstance::Tremolo { .. } => Some(AudioNode::Tremolo(TremoloNode::new())),
             FxInstance::AutoPan { .. } => Some(AudioNode::AutoPan(AutoPanNode::new())),
             FxInstance::Vibrato { .. } => Some(AudioNode::Vibrato(Box::new(VibratoNode::new()))),
@@ -320,32 +314,6 @@ impl AudioNode {
             (AudioNode::Reverb(n), FxInstance::SlowedReverb { .. }) => n.apply(fx, structural),
             (AudioNode::Filter(n), FxInstance::Filter { mode, cutoff_hz, resonance }) => {
                 n.apply(*mode, *cutoff_hz, *resonance)
-            }
-            (
-                AudioNode::Eq(n),
-                FxInstance::Eq {
-                    low_gain_db,
-                    low_freq_hz,
-                    mid_gain_db,
-                    mid_freq_hz,
-                    mid_q,
-                    high_gain_db,
-                    high_freq_hz,
-                },
-            ) => n.apply([
-                *low_gain_db,
-                *low_freq_hz,
-                *mid_gain_db,
-                *mid_freq_hz,
-                *mid_q,
-                *high_gain_db,
-                *high_freq_hz,
-            ]),
-            (AudioNode::Distortion(n), FxInstance::Distortion { drive_db, tone, mix }) => {
-                n.apply(*drive_db, *tone, *mix)
-            }
-            (AudioNode::Bitcrusher(n), FxInstance::Bitcrusher { bits, rate_hz, mix }) => {
-                n.apply(*bits, *rate_hz, *mix)
             }
             (AudioNode::Tremolo(n), FxInstance::Tremolo { rate_hz, depth }) => {
                 n.apply(*rate_hz, *depth)
@@ -400,9 +368,6 @@ impl AudioNode {
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.set_targets(auto, slot, s),
             AudioNode::Filter(n) => n.set_targets(auto, slot, s),
-            AudioNode::Eq(n) => n.set_targets(auto, slot, s),
-            AudioNode::Distortion(n) => n.set_targets(auto, slot, s),
-            AudioNode::Bitcrusher(n) => n.set_targets(auto, slot, s),
             AudioNode::Tremolo(n) => n.set_targets(auto, slot, s),
             AudioNode::AutoPan(n) => n.set_targets(auto, slot, s),
             AudioNode::Limiter(n) => n.set_targets(auto, slot, s),
@@ -450,9 +415,6 @@ impl AudioNode {
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.rv.process(buf),
             AudioNode::Filter(n) => n.process(buf),
-            AudioNode::Eq(n) => n.process(buf),
-            AudioNode::Distortion(n) => n.process(buf),
-            AudioNode::Bitcrusher(n) => n.process(buf, _pos),
             AudioNode::Tremolo(n) => n.process(buf, _pos),
             AudioNode::AutoPan(n) => n.process(buf, _pos),
             AudioNode::Vibrato(n) => n.process(buf, _pos),
@@ -519,9 +481,6 @@ impl AudioNode {
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.rv.reset(),
             AudioNode::Filter(n) => n.reset(),
-            AudioNode::Eq(n) => n.reset(),
-            AudioNode::Distortion(n) => n.reset(),
-            AudioNode::Bitcrusher(n) => n.reset(),
             AudioNode::Tremolo(n) => n.reset(),
             AudioNode::AutoPan(n) => n.reset(),
             AudioNode::Vibrato(n) => n.reset(),
@@ -697,15 +656,12 @@ impl ReverbNode {
 }
 
 // ---------------------------------------------------------------------------
-// Ka2 nodes (R.47, item 327): filters, EQ, distortion, bitcrusher, width
+// Ka2 nodes (R.47, item 327): the filter (EQ, distortion, bitcrusher and width are plugins —
+// src/plugins/fx-audio-tone; coefficients are re-tuned every `TUNE_STEP` frames)
 // ---------------------------------------------------------------------------
 
-use super::primitives::{Biquad, BiquadKind, softclip};
+use super::primitives::{Biquad, BiquadKind, TUNE_STEP};
 use kt_model::FilterMode;
-
-/// Coefficient recalculation — in sub-blocks: a chunk of 1024 (21 ms) on frequency
-/// sweeps is audible as zipper; 128 frames — not.
-const TUNE_STEP: usize = 128;
 
 /// Resonant cut LP/HP/BP: RBJ biquad per channel.
 pub struct FilterNode {
@@ -785,237 +741,7 @@ impl FilterNode {
     }
 }
 
-/// Three-band EQ: shelf + peak + shelf, each — a biquad per channel.
-/// The Q of the EQ shelves and the mid-band Q floor — the SAME numbers for the
-/// sound and for the frequency response graph (R.48, item 347).
-pub(crate) const EQ_SHELF_Q: f32 = 0.707;
-pub(crate) const EQ_MID_Q_FLOOR: f32 = 0.3;
-
-/// Frequency response of the whole equalizer at frequency `at_hz`, dB. Values — in the order
-/// `EqNode::NAMES`: low_gain, low_freq, mid_gain, mid_freq, mid_q,
-/// high_gain, high_freq. The cascade = the sum of dB; the filters are tuned by the same
-/// `tune` that sounds, so the curve in the UI equals what is heard.
-pub fn eq_mag_db(v: &[f32; 7], at_hz: f32) -> f64 {
-    let mut b = Biquad::default();
-    let mut db = 0.0;
-    b.tune(&BiquadKind::LowShelf, v[1], EQ_SHELF_Q, v[0]);
-    db += b.mag_db(at_hz);
-    b.tune(&BiquadKind::Peak, v[3], v[4].max(EQ_MID_Q_FLOOR), v[2]);
-    db += b.mag_db(at_hz);
-    b.tune(&BiquadKind::HighShelf, v[6], EQ_SHELF_Q, v[5]);
-    db += b.mag_db(at_hz);
-    db
-}
-
-pub struct EqNode {
-    params: SmoothedParam7,
-    bands: [[Biquad; 3]; CH],
-}
-
-/// The seven smoothed EQ parameters in one block (low_g, low_f, mid_g,
-/// mid_f, mid_q, high_g, high_f).
-struct SmoothedParam7([SmoothedParam; 7]);
-
-impl EqNode {
-    const DEFAULTS: [f32; 7] = [0.0, 200.0, 0.0, 1000.0, 1.0, 0.0, 4000.0];
-    const NAMES: [&'static str; 7] = [
-        "low_gain_db",
-        "low_freq_hz",
-        "mid_gain_db",
-        "mid_freq_hz",
-        "mid_q",
-        "high_gain_db",
-        "high_freq_hz",
-    ];
-
-    fn new() -> EqNode {
-        EqNode {
-            params: SmoothedParam7(std::array::from_fn(|i| {
-                SmoothedParam::with_ms(Self::DEFAULTS[i], 20.0)
-            })),
-            bands: Default::default(),
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn apply(&mut self, vals: [f32; 7]) {
-        for (p, v) in self.params.0.iter_mut().zip(vals) {
-            p.set_target(v);
-        }
-    }
-
-    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
-        for (i, p) in self.params.0.iter_mut().enumerate() {
-            let v = auto.value(slot, Self::NAMES[i], p.target as f64, s) as f32;
-            p.set_target(v);
-        }
-    }
-
-    fn process(&mut self, buf: &mut [f32]) {
-        for block in buf.chunks_mut(TUNE_STEP * CH) {
-            let mut v = [0f32; 7];
-            for _ in 0..block.len() / CH {
-                for (dst, p) in v.iter_mut().zip(self.params.0.iter_mut()) {
-                    *dst = p.tick();
-                }
-            }
-            // all gains at zero — plain pass-through: the EQ is transparent byte-for-byte
-            if v[0] == 0.0 && v[2] == 0.0 && v[5] == 0.0 {
-                continue;
-            }
-            for ch in 0..CH {
-                // the same numbers as the frequency response graph (R.48): the same constants
-                self.bands[ch][0].tune(&BiquadKind::LowShelf, v[1], EQ_SHELF_Q, v[0]);
-                self.bands[ch][1].tune(&BiquadKind::Peak, v[3], v[4].max(EQ_MID_Q_FLOOR), v[2]);
-                self.bands[ch][2].tune(&BiquadKind::HighShelf, v[6], EQ_SHELF_Q, v[5]);
-            }
-            for fr in block.chunks_exact_mut(CH) {
-                for (ch, s) in fr.iter_mut().enumerate() {
-                    let mut x = *s;
-                    for b in &mut self.bands[ch] {
-                        x = b.process(x);
-                    }
-                    *s = x;
-                }
-            }
-        }
-    }
-
-    fn reset(&mut self) {
-        for chb in &mut self.bands {
-            for b in chb {
-                b.reset();
-            }
-        }
-        for p in &mut self.params.0 {
-            p.reset_to_target();
-        }
-    }
-}
-
-/// Soft saturation with level compensation and tone.
-pub struct DistNode {
-    drive_db: SmoothedParam,
-    tone: SmoothedParam,
-    mix: SmoothedParam,
-    lp: [f32; CH],
-}
-
-impl DistNode {
-    fn new() -> DistNode {
-        DistNode {
-            drive_db: SmoothedParam::with_ms(12.0, 20.0),
-            tone: SmoothedParam::with_ms(0.5, 20.0),
-            mix: SmoothedParam::with_ms(1.0, 20.0),
-            lp: [0.0; CH],
-        }
-    }
-
-    fn apply(&mut self, drive_db: f32, tone: f32, mix: f32) {
-        self.drive_db.set_target(drive_db);
-        self.tone.set_target(tone.clamp(0.0, 1.0));
-        self.mix.set_target(mix.clamp(0.0, 1.0));
-    }
-
-    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
-        self.drive_db
-            .set_target(auto.value(slot, "drive_db", self.drive_db.target as f64, s) as f32);
-        self.tone.set_target(auto.value(slot, "tone", self.tone.target as f64, s) as f32);
-        self.mix.set_target(auto.value(slot, "mix", self.mix.target as f64, s) as f32);
-    }
-
-    fn process(&mut self, buf: &mut [f32]) {
-        for fr in buf.chunks_exact_mut(CH) {
-            let g = 10f32.powf(self.drive_db.tick() / 20.0);
-            let comp = 1.0 / g.sqrt();
-            let tone = self.tone.tick().clamp(0.0, 1.0);
-            // tone: one-pole LP 500..12000 Hz (exp-map)
-            let f = 500.0 * (12_000.0f32 / 500.0).powf(tone);
-            let alpha = 1.0 - (-2.0 * std::f32::consts::PI * f / AUDIO_SAMPLE_RATE as f32).exp();
-            let k = self.mix.tick().clamp(0.0, 1.0);
-            for (ch, s) in fr.iter_mut().enumerate() {
-                let dry = *s;
-                let mut y = softclip(dry * g) * comp;
-                self.lp[ch] += (y - self.lp[ch]) * alpha;
-                y = self.lp[ch];
-                *s = dry * (1.0 - k) + y * k;
-            }
-        }
-    }
-
-    fn reset(&mut self) {
-        self.lp = [0.0; CH];
-        self.drive_db.reset_to_target();
-        self.tone.reset_to_target();
-        self.mix.reset_to_target();
-    }
-}
-
-/// Lo-fi: bit-depth quantization + sample hold on the POSITION GRID
-/// (floor(pos·rate/sr) — determinism: two renders of one clip give the same
-/// artifacts, precedent — the seed of video noise).
-pub struct CrushNode {
-    bits: SmoothedParam,
-    rate_hz: SmoothedParam,
-    mix: SmoothedParam,
-    held: [f32; CH],
-    held_cell: i64,
-}
-
-impl CrushNode {
-    fn new() -> CrushNode {
-        CrushNode {
-            bits: SmoothedParam::with_ms(8.0, 20.0),
-            rate_hz: SmoothedParam::with_ms(12_000.0, 20.0),
-            mix: SmoothedParam::with_ms(1.0, 20.0),
-            held: [0.0; CH],
-            held_cell: i64::MIN,
-        }
-    }
-
-    fn apply(&mut self, bits: f32, rate_hz: f32, mix: f32) {
-        self.bits.set_target(bits.clamp(1.0, 16.0));
-        self.rate_hz.set_target(rate_hz.clamp(500.0, 48_000.0));
-        self.mix.set_target(mix.clamp(0.0, 1.0));
-    }
-
-    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
-        self.bits.set_target(auto.value(slot, "bits", self.bits.target as f64, s) as f32);
-        self.rate_hz.set_target(auto.value(slot, "rate_hz", self.rate_hz.target as f64, s) as f32);
-        self.mix.set_target(auto.value(slot, "mix", self.mix.target as f64, s) as f32);
-    }
-
-    fn process(&mut self, buf: &mut [f32], pos: i64) {
-        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
-            let bits = self.bits.tick().clamp(1.0, 16.0);
-            let rate = self.rate_hz.tick().clamp(500.0, 48_000.0) as f64;
-            let k = self.mix.tick().clamp(0.0, 1.0);
-            let q = (2f32).powf(bits - 1.0);
-            let p = pos + i as i64;
-            // the hold grid is tied to the clip’s POSITION, not to a counter
-            let cell = ((p as f64) * rate / AUDIO_SAMPLE_RATE as f64).floor() as i64;
-            if cell != self.held_cell {
-                self.held_cell = cell;
-                for (ch, s) in fr.iter().enumerate() {
-                    self.held[ch] = (s * q).round() / q;
-                }
-            }
-            for (ch, s) in fr.iter_mut().enumerate() {
-                *s = *s * (1.0 - k) + self.held[ch] * k;
-            }
-        }
-    }
-
-    fn reset(&mut self) {
-        self.held = [0.0; CH];
-        self.held_cell = i64::MIN;
-        self.bits.reset_to_target();
-        self.rate_hz.reset_to_target();
-        self.mix.reset_to_target();
-    }
-}
-
-// stereo_width moved into src/plugins/fx-audio-tone (plugin-api-stage1, stage 3)
+// eq, distortion, bitcrusher, stereo_width moved into src/plugins/fx-audio-tone (plugin-api-stage1, stage 3)
 
 // ---------------------------------------------------------------------------
 // Ka3 nodes (R.47, item 328): the LFO family

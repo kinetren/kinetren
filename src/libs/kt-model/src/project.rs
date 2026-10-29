@@ -4054,26 +4054,8 @@ fn default_cutoff_hz() -> f32 {
 fn default_resonance() -> f32 {
     0.707
 }
-fn default_low_freq() -> f32 {
-    200.0
-}
-fn default_mid_freq() -> f32 {
-    1000.0
-}
-fn default_high_freq() -> f32 {
-    4000.0
-}
-fn default_drive_db() -> f32 {
-    12.0
-}
 fn default_half_f32() -> f32 {
     0.5
-}
-fn default_bits() -> f32 {
-    8.0
-}
-fn default_crush_rate() -> f32 {
-    12000.0
 }
 fn default_trem_rate() -> f32 {
     5.0
@@ -5312,41 +5294,6 @@ pub enum FxInstance {
         #[serde(default = "default_resonance")]
         resonance: f32,
     },
-    /// Three-band equaliser (R.47): shelf + peak + shelf.
-    Eq {
-        #[serde(default, skip_serializing_if = "is_zero")]
-        low_gain_db: f32,
-        #[serde(default = "default_low_freq")]
-        low_freq_hz: f32,
-        #[serde(default, skip_serializing_if = "is_zero")]
-        mid_gain_db: f32,
-        #[serde(default = "default_mid_freq")]
-        mid_freq_hz: f32,
-        #[serde(default = "default_one_f32", skip_serializing_if = "is_one_f32")]
-        mid_q: f32,
-        #[serde(default, skip_serializing_if = "is_zero")]
-        high_gain_db: f32,
-        #[serde(default = "default_high_freq")]
-        high_freq_hz: f32,
-    },
-    /// Soft saturation (R.47): softclip with level compensation.
-    Distortion {
-        #[serde(default = "default_drive_db")]
-        drive_db: f32,
-        #[serde(default = "default_half_f32")]
-        tone: f32,
-        #[serde(default = "default_one_f32", skip_serializing_if = "is_one_f32")]
-        mix: f32,
-    },
-    /// Lo-fi degradation (R.47): bit depth + sample hold.
-    Bitcrusher {
-        #[serde(default = "default_bits")]
-        bits: f32,
-        #[serde(default = "default_crush_rate")]
-        rate_hz: f32,
-        #[serde(default = "default_one_f32", skip_serializing_if = "is_one_f32")]
-        mix: f32,
-    },
     /// Tremolo (R.47): volume LFO; the phase is the integral of the frequency curve over
     /// the position of the clip (determinism without warm-up).
     Tremolo {
@@ -5838,9 +5785,6 @@ impl FxInstance {
             FxInstance::Gain { .. }
             | FxInstance::SlowedReverb { .. }
             | FxInstance::Filter { .. }
-            | FxInstance::Eq { .. }
-            | FxInstance::Distortion { .. }
-            | FxInstance::Bitcrusher { .. }
             | FxInstance::Tremolo { .. }
             | FxInstance::AutoPan { .. }
             | FxInstance::Vibrato { .. }
@@ -5895,9 +5839,6 @@ impl FxInstance {
             FxInstance::LayerMix { .. } => "layer_mix",
             FxInstance::SlowedReverb { .. } => "slowed_reverb",
             FxInstance::Filter { .. } => "filter",
-            FxInstance::Eq { .. } => "eq",
-            FxInstance::Distortion { .. } => "distortion",
-            FxInstance::Bitcrusher { .. } => "bitcrusher",
             FxInstance::Tremolo { .. } => "tremolo",
             FxInstance::AutoPan { .. } => "auto_pan",
             FxInstance::Vibrato { .. } => "vibrato",
@@ -6121,25 +6062,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
     Filter {
         cutoff_hz: f32, 20.0, 20000.0, 800.0, 10.0, Hz, Smooth;
         resonance: f32, 0.5, 10.0, 0.707, 0.01, None, Smooth;
-    },
-    Eq {
-        low_gain_db: f32, -24.0, 24.0, 0.0, 0.1, Db, Smooth;
-        low_freq_hz: f32, 20.0, 2000.0, 200.0, 10.0, Hz, Smooth;
-        mid_gain_db: f32, -24.0, 24.0, 0.0, 0.1, Db, Smooth;
-        mid_freq_hz: f32, 100.0, 10000.0, 1000.0, 10.0, Hz, Smooth;
-        mid_q: f32, 0.3, 8.0, 1.0, 0.01, None, Smooth;
-        high_gain_db: f32, -24.0, 24.0, 0.0, 0.1, Db, Smooth;
-        high_freq_hz: f32, 1000.0, 20000.0, 4000.0, 10.0, Hz, Smooth;
-    },
-    Distortion {
-        drive_db: f32, 0.0, 36.0, 12.0, 0.1, Db, Smooth;
-        tone: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        mix: f32, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
-    },
-    Bitcrusher {
-        bits: f32, 1.0, 16.0, 8.0, 0.1, None, Smooth;
-        rate_hz: f32, 500.0, 48000.0, 12000.0, 100.0, Hz, Smooth;
-        mix: f32, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
     },
     Tremolo {
         rate_hz: f32, 0.1, 20.0, 5.0, 0.01, Hz, Smooth;
@@ -6970,24 +6892,19 @@ impl FxInstance {
         FxInstance::Filter { mode: FilterMode::Lowpass, cutoff_hz: 800.0, resonance: 0.707 }
     }
 
+    /// The equaliser at its defaults — a plugin slot (plugin-api-stage1, stage 3).
     pub fn eq() -> FxInstance {
-        FxInstance::Eq {
-            low_gain_db: 0.0,
-            low_freq_hz: 200.0,
-            mid_gain_db: 0.0,
-            mid_freq_hz: 1000.0,
-            mid_q: 1.0,
-            high_gain_db: 0.0,
-            high_freq_hz: 4000.0,
-        }
+        FxInstance::plugin("eq").expect("eq is not registered: install the built-in plugin set first")
     }
 
+    /// Distortion at its defaults — a plugin slot (plugin-api-stage1, stage 3).
     pub fn distortion() -> FxInstance {
-        FxInstance::Distortion { drive_db: 12.0, tone: 0.5, mix: 1.0 }
+        FxInstance::plugin("distortion").expect("distortion is not registered: install the built-in plugin set first")
     }
 
+    /// The bitcrusher at its defaults — a plugin slot (plugin-api-stage1, stage 3).
     pub fn bitcrusher() -> FxInstance {
-        FxInstance::Bitcrusher { bits: 8.0, rate_hz: 12_000.0, mix: 1.0 }
+        FxInstance::plugin("bitcrusher").expect("bitcrusher is not registered: install the built-in plugin set first")
     }
 
     /// Stereo width at its defaults — a plugin slot (plugin-api-stage1, stage 3).

@@ -16,5 +16,7 @@ realfft = { workspace = true }
 [dev-dependencies]
 # the built-in plugin set for the tests (plugin-api-stage1; dev only — t975)
 kt-plugins-builtin = { workspace = true }
+# t348: the EQ graph function moved with the EQ (plugin-api-stage1; dev only — t975)
+fx-audio-tone = { workspace = true }
 realfft = { workspace = true }
 xxhash-rust = { workspace = true, features = ["xxh3"] }

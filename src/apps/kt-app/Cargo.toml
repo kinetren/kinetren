@@ -20,6 +20,8 @@ kt-model = { workspace = true }
 kt-plugins-builtin = { workspace = true }
 # the manifests the picker builds its plugin rows from (plugin-api-stage1, D7)
 kt-plugin-api = { workspace = true }
+# the EQ's frequency response is the sounding code's own function (R.48; plugin-api-stage1)
+fx-audio-tone = { workspace = true }
 # “glyph missing” in the title window is counted by the same crate that draws the frame (R.52)
 kt-text = { workspace = true }
 kt-otio = { workspace = true }

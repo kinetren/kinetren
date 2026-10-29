@@ -1370,9 +1370,6 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::EventGrid { .. } => "EventGrid",
         FxInstance::Pan3d { .. } => "Pan 3D",
         FxInstance::Filter { .. } => "Filter",
-        FxInstance::Eq { .. } => "EQ",
-        FxInstance::Distortion { .. } => "Distortion",
-        FxInstance::Bitcrusher { .. } => "Bitcrusher",
         FxInstance::Tremolo { .. } => "Tremolo",
         FxInstance::AutoPan { .. } => "AutoPan",
         FxInstance::Vibrato { .. } => "Vibrato",
@@ -1738,7 +1735,7 @@ pub(crate) fn draw_video_fx_params(
     // Drawn BEFORE the grid: the drag edits the values
     // before the fields show them, and in one frame they are
     // already in sync. The fields remain: the graph complements them, it does not replace them.
-    if matches!(f, FxInstance::Eq { .. }) {
+    if f.tag() == "eq" {
         ch |= crate::eq_graph::draw(ui, f, bind.as_deref_mut(), hover);
     }
 

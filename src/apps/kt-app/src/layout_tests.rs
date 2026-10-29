@@ -9044,10 +9044,10 @@ fn t349_eq_graph_drag_edits_the_model() {
     h.step();
 
     let clip = h.state().model.clip(ClipId(1)).unwrap().clone();
-    let (freq, gain) = match &clip.fx[0] {
-        FxInstance::Eq { mid_freq_hz, mid_gain_db, .. } => (*mid_freq_hz, *mid_gain_db),
-        other => panic!("expected an equalizer, got {other:?}"),
-    };
+    // the EQ is a plugin slot (plugin-api-stage1): its rows are read by name
+    assert_eq!(clip.fx[0].tag(), "eq", "expected an equalizer, got {:?}", clip.fx[0]);
+    let freq = clip.fx[0].get_param("mid_freq_hz").expect("mid_freq_hz") as f32;
+    let gain = clip.fx[0].get_param("mid_gain_db").expect("mid_gain_db") as f32;
     println!("t349 after drag: {freq:.0} Hz, {gain:+.2} dB");
     assert!(
         (freq as f64 - 2000.0).abs() / 2000.0 < 0.03,
@@ -9060,13 +9060,11 @@ fn t349_eq_graph_drag_edits_the_model() {
     h.state_mut().model.undo().expect("undo");
     assert_eq!(h.state().model.undo_depth(), depth - 1);
     let back = h.state().model.clip(ClipId(1)).unwrap().clone();
-    match &back.fx[0] {
-        FxInstance::Eq { mid_freq_hz, mid_gain_db, .. } => {
-            assert!((*mid_freq_hz - 1000.0).abs() < 1.0, "undo restored the frequency");
-            assert!(mid_gain_db.abs() < 0.01, "and the gain");
-        }
-        other => panic!("expected an equalizer, got {other:?}"),
-    }
+    assert_eq!(back.fx[0].tag(), "eq", "expected an equalizer, got {:?}", back.fx[0]);
+    let mid_freq_hz = back.fx[0].get_param("mid_freq_hz").expect("mid_freq_hz");
+    let mid_gain_db = back.fx[0].get_param("mid_gain_db").expect("mid_gain_db");
+    assert!((mid_freq_hz - 1000.0).abs() < 1.0, "undo restored the frequency");
+    assert!(mid_gain_db.abs() < 0.01, "and the gain");
 }
 
 /// Test 350 (R.48, item 347): the wheel over the middle point edits the Q factor
@@ -9097,10 +9095,8 @@ fn t350_eq_graph_wheel_sets_q() {
     h.step();
 
     let clip = h.state().model.clip(ClipId(1)).unwrap().clone();
-    let q = match &clip.fx[0] {
-        FxInstance::Eq { mid_q, .. } => *mid_q,
-        other => panic!("expected an equalizer, got {other:?}"),
-    };
+    assert_eq!(clip.fx[0].tag(), "eq", "expected an equalizer, got {:?}", clip.fx[0]);
+    let q = clip.fx[0].get_param("mid_q").expect("mid_q") as f32;
     println!("t350 Q after the wheel: {q:.2}");
     assert!(q < 1.0 - 0.05, "the wheel down must decrease the Q, not {q}");
     assert!(q >= 0.3, "and not go past the lower bound of the spec");

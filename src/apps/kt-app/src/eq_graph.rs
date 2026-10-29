@@ -7,7 +7,7 @@
 //! frequency and gain, the wheel over the middle adjusts the Q.
 //!
 //! Two rules from which everything follows:
-//! - **the curve is computed by the same code that sounds** (`kt_fx::eq_mag_db` on
+//! - **the curve is computed by the same code that sounds** (`fx_audio_tone::eq_mag_db` on
 //!   the coefficients of the real `Biquad`) — the picture cannot diverge from the DSP;
 //! - **the drag writes WHERE the field would write** (through `CurveBind`:
 //!   the base or the selected curve key) — paired ways of one action
@@ -156,7 +156,7 @@ pub fn draw(
     let pts: Vec<egui::Pos2> = (0..=n)
         .map(|i| {
             let hz = u_to_hz(i as f32 / n as f32);
-            let db = kt_fx::eq_mag_db(&vals, hz as f32).clamp(lo - 2.0, hi + 2.0);
+            let db = fx_audio_tone::eq_mag_db(&vals, hz as f32).clamp(lo - 2.0, hi + 2.0);
             egui::pos2(x_of(hz), y_of(db))
         })
         .collect();

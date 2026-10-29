@@ -125,38 +125,38 @@ fn t348_eq_mag_db_matches_band_semantics() {
     // v: low_gain, low_freq, mid_gain, mid_freq, mid_q, high_gain, high_freq
     let flat = [0.0, 200.0, 0.0, 1000.0, 1.0, 0.0, 4000.0];
     for hz in [20.0f32, 60.0, 200.0, 1000.0, 5000.0, 12000.0, 20000.0] {
-        let db = kt_fx::eq_mag_db(&flat, hz);
+        let db = fx_audio_tone::eq_mag_db(&flat, hz);
         assert!(db.abs() < 0.01, "zero gains must be an identity: {hz} Hz → {db} dB");
     }
 
     // a +6 dB peak at 1 kHz: at its frequency exactly +6, at the edges ~0
     let peak = [0.0, 200.0, 6.0, 1000.0, 1.0, 0.0, 4000.0];
-    let at_f0 = kt_fx::eq_mag_db(&peak, 1000.0);
+    let at_f0 = fx_audio_tone::eq_mag_db(&peak, 1000.0);
     println!("t348 peak at f0: {at_f0:.3} dB");
     assert!((at_f0 - 6.0).abs() < 0.05, "at its own frequency the peak equals the gain: {at_f0}");
-    assert!(kt_fx::eq_mag_db(&peak, 40.0).abs() < 0.3, "far below the peak is not audible");
-    assert!(kt_fx::eq_mag_db(&peak, 16000.0).abs() < 0.3, "and far above too");
+    assert!(fx_audio_tone::eq_mag_db(&peak, 40.0).abs() < 0.3, "far below the peak is not audible");
+    assert!(fx_audio_tone::eq_mag_db(&peak, 16000.0).abs() < 0.3, "and far above too");
 
     // Q narrows: at Q=8 the neighbour in frequency is affected less
     let wide = [0.0, 200.0, 6.0, 1000.0, 0.4, 0.0, 4000.0];
     let narrow = [0.0, 200.0, 6.0, 1000.0, 8.0, 0.0, 4000.0];
-    let (w, n) = (kt_fx::eq_mag_db(&wide, 2000.0), kt_fx::eq_mag_db(&narrow, 2000.0));
+    let (w, n) = (fx_audio_tone::eq_mag_db(&wide, 2000.0), fx_audio_tone::eq_mag_db(&narrow, 2000.0));
     println!("t348 at 2 kHz: wide {w:.2} dB, narrow {n:.2} dB");
     assert!(n < w - 1.0, "a high Q must narrow the band: {n} against {w}");
 
     // shelves: the low one raises the bottom and does not touch the top, the high one the other way round
     let low = [-12.0, 200.0, 0.0, 1000.0, 1.0, 0.0, 4000.0];
-    assert!(kt_fx::eq_mag_db(&low, 20.0) < -10.0, "a low shelf must cut the bottom");
-    assert!(kt_fx::eq_mag_db(&low, 16000.0).abs() < 0.2, "and must not touch the top");
+    assert!(fx_audio_tone::eq_mag_db(&low, 20.0) < -10.0, "a low shelf must cut the bottom");
+    assert!(fx_audio_tone::eq_mag_db(&low, 16000.0).abs() < 0.2, "and must not touch the top");
     let high = [0.0, 200.0, 0.0, 1000.0, 1.0, 6.0, 4000.0];
-    assert!(kt_fx::eq_mag_db(&high, 20000.0) > 4.0, "a high shelf must lift the top");
-    assert!(kt_fx::eq_mag_db(&high, 40.0).abs() < 0.2, "and must not touch the bottom");
+    assert!(fx_audio_tone::eq_mag_db(&high, 20000.0) > 4.0, "a high shelf must lift the top");
+    assert!(fx_audio_tone::eq_mag_db(&high, 40.0).abs() < 0.2, "and must not touch the bottom");
 
     // the cascade adds up: two bands together give the sum of their contributions
     let both = [-12.0, 200.0, 6.0, 1000.0, 1.0, 0.0, 4000.0];
-    let sum = kt_fx::eq_mag_db(&low, 1000.0) + kt_fx::eq_mag_db(&peak, 1000.0);
+    let sum = fx_audio_tone::eq_mag_db(&low, 1000.0) + fx_audio_tone::eq_mag_db(&peak, 1000.0);
     assert!(
-        (kt_fx::eq_mag_db(&both, 1000.0) - sum).abs() < 1e-9,
+        (fx_audio_tone::eq_mag_db(&both, 1000.0) - sum).abs() < 1e-9,
         "a cascade is the sum in dB of its bands"
     );
 }

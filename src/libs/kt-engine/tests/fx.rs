@@ -962,10 +962,10 @@ fn t323_slot_order_matters_on_nonlinear_chains() {
     };
     let quiet_then_drive = render(vec![
         FxInstance::gain(-40.0),
-        FxInstance::Distortion { drive_db: 24.0, tone: 1.0, mix: 1.0 },
+        plug("distortion", &[24.0, 1.0, 1.0]),
     ]);
     let drive_then_quiet = render(vec![
-        FxInstance::Distortion { drive_db: 24.0, tone: 1.0, mix: 1.0 },
+        plug("distortion", &[24.0, 1.0, 1.0]),
         FxInstance::gain(-40.0),
     ]);
     let rms = |s: &[f32]| -> f64 {
@@ -979,6 +979,8 @@ fn t323_slot_order_matters_on_nonlinear_chains() {
 /// their knobs say.
 #[test]
 fn t324_ka2_spectral_probes() {
+    // eq, distortion, bitcrusher, stereo_width are plugins (plugin-api-stage1)
+    kt_plugins_builtin::install();
     let dur = 48_000;
     let render = |fx: Vec<FxInstance>, hz: f64| -> Vec<f32> {
         let p = fx_project(fx, "synth:sine:1000", dur);
@@ -1021,7 +1023,7 @@ fn t324_ka2_spectral_probes() {
 
     // Bitcrusher bits 3 raises the noise floor on a pure sine
     let crushed =
-        render(vec![FxInstance::Bitcrusher { bits: 3.0, rate_hz: 48_000.0, mix: 1.0 }], 1000.0);
+        render(vec![plug("bitcrusher", &[3.0, 48_000.0, 1.0])], 1000.0);
     let clean = render(vec![], 1000.0);
     let mono: Vec<f32> = crushed.chunks_exact(CH).map(|f| (f[0] + f[1]) * 0.5).collect();
     let mono_clean: Vec<f32> = clean.chunks_exact(CH).map(|f| (f[0] + f[1]) * 0.5).collect();
@@ -1051,4 +1053,10 @@ fn t324_ka2_spectral_probes() {
     for fr in out.chunks_exact(CH) {
         assert!((fr[0] - fr[1]).abs() < 1e-6, "width 0 must be mono");
     }
+}
+
+/// A built-in audio plugin slot with the given values in passport order (plugin-api-stage1).
+fn plug(id: &str, values: &[f64]) -> FxInstance {
+    kt_plugins_builtin::install();
+    FxInstance::plugin_with(id, values).expect("a built-in plugin")
 }

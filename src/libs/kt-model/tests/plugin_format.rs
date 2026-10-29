@@ -18,6 +18,53 @@ enum Frozen {
     Posterize { levels: u32 },
     /// `FxInstance::StereoWidth` before stage 3 (`#[serde(default = "default_one_f32")] width: f32`).
     StereoWidth { width: f32 },
+    /// The three below before stage 3, field for field (`skip_serializing_if` copied as is).
+    Eq {
+        #[serde(skip_serializing_if = "is_zero")]
+        low_gain_db: f32,
+        low_freq_hz: f32,
+        #[serde(skip_serializing_if = "is_zero")]
+        mid_gain_db: f32,
+        mid_freq_hz: f32,
+        #[serde(skip_serializing_if = "is_one")]
+        mid_q: f32,
+        #[serde(skip_serializing_if = "is_zero")]
+        high_gain_db: f32,
+        high_freq_hz: f32,
+    },
+    Distortion {
+        drive_db: f32,
+        tone: f32,
+        #[serde(skip_serializing_if = "is_one")]
+        mix: f32,
+    },
+    Bitcrusher {
+        bits: f32,
+        rate_hz: f32,
+        #[serde(skip_serializing_if = "is_one")]
+        mix: f32,
+    },
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
+}
+
+/// A file that leaves every field out read the variant's serde defaults; the plugin reads the same.
+fn empty_reads() -> Vec<(&'static str, String)> {
+    vec![
+        (r#"{"kind":"eq"}"#, frozen(Frozen::Eq {
+            low_gain_db: 0.0, low_freq_hz: 200.0, mid_gain_db: 0.0, mid_freq_hz: 1000.0,
+            mid_q: 1.0, high_gain_db: 0.0, high_freq_hz: 4000.0,
+        })),
+        (r#"{"kind":"distortion"}"#, frozen(Frozen::Distortion { drive_db: 12.0, tone: 0.5, mix: 1.0 })),
+        (r#"{"kind":"bitcrusher"}"#, frozen(Frozen::Bitcrusher { bits: 8.0, rate_hz: 12000.0, mix: 1.0 })),
+        (r#"{"kind":"stereo_width"}"#, frozen(Frozen::StereoWidth { width: 1.0 })),
+    ]
 }
 
 fn frozen(f: Frozen) -> String {
@@ -25,6 +72,8 @@ fn frozen(f: Frozen) -> String {
 }
 
 /// The moved kinds, each with its default and a non-default value: (the slot, its frozen form).
+// values with more digits than an f32 holds are the point: the file must keep the f32's form
+#[allow(clippy::excessive_precision)]
 fn moved_kinds() -> Vec<(FxInstance, String)> {
     kt_plugins_builtin::install();
     vec![
@@ -32,6 +81,27 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
         (FxInstance::plugin_with("posterize", &[4.0]).unwrap(), frozen(Frozen::Posterize { levels: 4 })),
         (FxInstance::plugin_with("posterize", &[32.0]).unwrap(), frozen(Frozen::Posterize { levels: 32 })),
         (FxInstance::stereo_width(), frozen(Frozen::StereoWidth { width: 1.0 })),
+        (FxInstance::eq(), frozen(Frozen::Eq {
+            low_gain_db: 0.0, low_freq_hz: 200.0, mid_gain_db: 0.0, mid_freq_hz: 1000.0,
+            mid_q: 1.0, high_gain_db: 0.0, high_freq_hz: 4000.0,
+        })),
+        (
+            FxInstance::plugin_with("eq", &[-6.5, 120.0, 3.25, 2500.0, 0.7, 0.123456789, 8000.0]).unwrap(),
+            frozen(Frozen::Eq {
+                low_gain_db: -6.5, low_freq_hz: 120.0, mid_gain_db: 3.25, mid_freq_hz: 2500.0,
+                mid_q: 0.7, high_gain_db: 0.123456789, high_freq_hz: 8000.0,
+            }),
+        ),
+        (FxInstance::distortion(), frozen(Frozen::Distortion { drive_db: 12.0, tone: 0.5, mix: 1.0 })),
+        (
+            FxInstance::plugin_with("distortion", &[30.0, 0.25, 0.6]).unwrap(),
+            frozen(Frozen::Distortion { drive_db: 30.0, tone: 0.25, mix: 0.6 }),
+        ),
+        (FxInstance::bitcrusher(), frozen(Frozen::Bitcrusher { bits: 8.0, rate_hz: 12000.0, mix: 1.0 })),
+        (
+            FxInstance::plugin_with("bitcrusher", &[3.5, 4410.0, 0.5]).unwrap(),
+            frozen(Frozen::Bitcrusher { bits: 3.5, rate_hz: 4410.0, mix: 0.5 }),
+        ),
         (FxInstance::plugin_with("stereo_width", &[0.0]).unwrap(), frozen(Frozen::StereoWidth { width: 0.0 })),
         // more digits than an f32 holds (a dragged or automated value): the variant's f32 field
         // wrote "0.12345679"; an f64 row would write "0.123456789" (red proof of the row's Store)
@@ -46,6 +116,10 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
 #[test]
 fn t973_a_moved_kind_reads_the_old_defaults() {
     kt_plugins_builtin::install();
+    for (file, want) in empty_reads() {
+        let read: FxInstance = serde_json::from_str(file).unwrap();
+        assert_eq!(serde_json::to_string(&read).unwrap(), want, "{file} does not read the variant's defaults");
+    }
     let read: FxInstance = serde_json::from_str(r#"{"kind":"posterize"}"#).unwrap();
     // against the FROZEN default (6), not `posterize()`: a moved default would agree with itself
     assert_eq!(serde_json::to_string(&read).unwrap(), frozen(Frozen::Posterize { levels: 6 }), "a posterize without `levels` reads as the default 6");

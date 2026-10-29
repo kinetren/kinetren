@@ -7,7 +7,7 @@ use std::sync::Arc;
 use kt_plugin_api::Registry;
 
 /// The built-in plugin ids, in a fixed order. It grows by one stage at a time (the pilot first).
-pub const BUILTIN_IDS: &[&str] = &["posterize", "stereo_width"];
+pub const BUILTIN_IDS: &[&str] = &["posterize", "eq", "distortion", "bitcrusher", "stereo_width"];
 
 /// The registry of the built-in set; panics on a refusal or when the families do not give exactly
 /// `BUILTIN_IDS` in that order (a built-in is never silently missing).

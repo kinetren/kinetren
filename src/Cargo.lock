@@ -2069,6 +2069,7 @@ dependencies = [
  "eframe",
  "egui_kittest",
  "embed-resource",
+ "fx-audio-tone",
  "getrandom 0.3.4",
  "image",
  "kt-cache",
@@ -2168,6 +2169,7 @@ dependencies = [
 name = "kt-fx"
 version = "0.1.0"
 dependencies = [
+ "fx-audio-tone",
  "kt-model",
  "kt-plugin-api",
  "kt-plugins-builtin",

@@ -102,7 +102,11 @@ pub fn tail_frames_for(max_comb_len: f32, feedback: f32) -> Tick {
 
 /// Interleaved stereo: the engine's audio is f32 48 kHz/2ch (invariant 1).
 pub const CH: usize = 2;
-use kt_time::AUDIO_SAMPLE_RATE;
+pub use kt_time::AUDIO_SAMPLE_RATE;
+
+/// The sub-block of filter re-tuning from smoothed parameters, frames (R.47: a chunk of 1024 —
+/// 21 ms — is audible as zipper on sweeps).
+pub const TUNE_STEP: usize = 128;
 
 impl SmoothedParam {
     /// Smoothing with a CONFIGURABLE time (R.47): the attack/release of the
