@@ -106,6 +106,16 @@ reasons and history are in the `design.md` next to it. Here — one line each, t
   a table of fixes with the version each was added for; dropping support for a version removes
   its fixes. The reader does not learn new old forms; the plain "Open" rejects such a file naming
   its version and the import menu item. Spec — `project-format`.
+- **A model change the OTIO export cannot express goes into "What OTIO export loses"** (owner,
+  CORE section of `ktprompts_v26.10`: "any agent that adds any new feature that breaks otio must
+  record it in a separate list"): a row in that section of `docs/ktprompts/v26.10-index.md` — since
+  which change, what the model has, what the `.otio` export does with it (drops, flattens, writes
+  into `metadata["kt"]`). The project lives in `.kt`; OTIO is only a door, supported last.
+- **The owner's claims files are indexed** (R.71): every `docs/ktprompts/<name>.txt` (verbatim) has
+  `<name>-index.md` — a row per numbered item with its source line, a state from the closed set
+  (`done` R.NN + a live test / `partial` / `no` → capability or note / `question` / `future`) and a
+  stage. A new claims file gets its registry before any of its items is taken; a round that closes
+  an item moves its row. Guarded by `src/scripts/ktprompts-index.py --check` (t823) and `finish.sh`.
 - **A new UI scenario (test ≥ t783 in kt-app) carries a `- **PATH**` line** — the mouse steps and
   what the person sees after each; guarded by `src/scripts/specs-user-path.py --check` (t799)
   and `finish.sh`. A live scenario takes a screenshot per step (`kt_live.step`), `finish.sh`

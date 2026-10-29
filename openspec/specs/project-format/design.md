@@ -91,6 +91,8 @@ Then it hurt as it grew: a real film (Netflix "Sol Levante", 23.976, an hour-lon
 
 **What we pay.** A foreign editor will not open `.kt` directly — a trade that everyone made (Resolve, FCP, Premiere); the export door is named and checked live. The durability of the format is now ours: the version, the field-by-field and byte-by-byte round trip, atomicity and the revision guard are not touched. The OTIO golden fixtures remain and freeze the EXPORT.
 
+**What export loses (R.71).** Since the project left OTIO, a model change may have no OTIO form. The owner's requirement: such a change is recorded in a separate list, and the export (and import) is revisited "conditionally in a year". The list is the section "What OTIO export loses" of the claims registry `docs/ktprompts/v26.10-index.md`; the rule for agents is in the root `CLAUDE.md`.
+
 ## Renamed to Kinetren: the marker `kinetren`, the former `kinotrain` via the import (2026-10-21)
 
 The owner chose a full rename, including the root marker. Per the owner's rule (R.67),
