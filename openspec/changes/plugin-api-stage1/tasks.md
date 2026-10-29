@@ -146,7 +146,14 @@ once (English message, first line = the stage and what was done).
     the cooked value as is. t328 goldens, t974, t329, t181, kt-fx/kt-gpu/kt-model/kt-engine/plugin
     crates 612/612 green; kt-app + kt-cli 447/452 under an I/O pressure of 56–82 % (t815, t476,
     t411, t952, t951 — all five green alone).
-- [ ] 2.7 Commit stage 2 (`cargo test --workspace`, `cargo clippy --all-targets` with no new warnings)
+- [x] 2.7 Commit stage 2 (`cargo test --workspace`, `cargo clippy --all-targets` with no new warnings)
+  - Stage 2 is in f2b13cb (2.4), e99f487 (2.5), dc8b4b4 (2.6). `cargo test --workspace` (one process
+    per test binary, so the registry install order is exercised): 1226 passed, 4 failed in kt-app —
+    t802, t411, t640, t795 — at an I/O pressure up to 82 % (kt-app took 98 s); the four together
+    and then the whole kt-app binary again under `cargo test` green, 416/416 in 16 s. clippy: no new
+    warnings. Before stage 3 the audio contract was revised in design.md (D2a): the D2 sketch did
+    not carry the per-chunk curve targets, the LFO's copied curve, by-position curve reads, the
+    sidechain key or the pitch engine option the node chain gives a node today.
 
 ## 3. Audio FX
 

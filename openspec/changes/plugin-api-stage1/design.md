@@ -116,6 +116,40 @@ type behind a host-side `Box<dyn Any + Send>` slot owned by `ClipProcessor`; the
 ONE home of each formula: the static `chain_tail`/`chain_lookahead` call them for plugin slots, so
 t322's agreement items stop comparing two texts and keep asserting the processor's device.
 
+### D2a. The audio kernel as the node chain uses it (revised 2026-10-29, before stage 3)
+The sketch of D2 (`build`/`reset`/`process(p)`) does not carry what the R.47 node chain gives a
+node today, and a stage 3 written against it would move `GOLDEN_AUDIO`. Read in `kt-fx`
+`audio/nodes.rs` before the move, a node gets: the slot's values cast to the variant's field types
+(`apply(fx, structural)`); smoothing targets along its curves once per chunk, ONLY when the clip
+has automation (`set_targets(auto, slot, s)` — the gate keeps the bytes of old chains); its LFO
+frequency curve copied at bind time and integrated per frame (`lfo_phase` → `param_integral`); for
+pitch, curves read by grain position with segment shapes; the sidechain key of the same window
+(compressor); and a project setting (the pitch engine) that rebuilds the processor. So:
+```
+trait AudioKernel  { fn build(&self, opts: &HostOpts) -> Box<dyn AudioState>; }
+trait AudioState: Send {
+    fn apply(&mut self, k: &[f64], structural: bool);      // the row-cast values (Store), all of them
+    fn bind(&mut self, c: &dyn SlotCurves, clip_len: i64); // copies what process needs (no model access later)
+    fn set_targets(&mut self, c: &dyn SlotCurves, s: f64); // the host calls it only with automation
+    fn process(&mut self, buf: &mut [f32], pos: i64, key: Option<&[f32]>);
+    fn lookahead(&self) -> i64; fn tail(&self) -> Tick; fn reset(&mut self); }
+trait SlotCurves { fn value(&self, param, base, s) -> f64;   // kt-model's param_at, shapes included
+                   fn points(&self, param) -> &ParamPoints;
+                   fn owned(&self, param) -> Box<dyn CurveRead>; } // a by-position reader (pitch)
+```
+`HostOpts` carries the project settings a kernel declares it reads, by name (today only
+`pitch_engine`); a change of one is structural, as `ChainOpts` is now. The state is a
+`Box<dyn AudioState>` held in `ClipProcessor`'s node list next to the core nodes (`layer_mix`,
+`slowed_reverb`), so the dynamic call is per chunk, and the per-frame loop is inside the plugin.
+What moves DOWN into `kt-plugin-api` (pure, no model): `ParamPoints` and `param_integral` (the LFO
+integrates per frame and must not call back into the host), and the DSP primitives the nodes share
+(`SmoothedParam`, `Biquad`, `DelayLine`, `EnvFollower`, `lfo_phase`, `softclip`, `apply_width`, and
+the comb/allpass of the core reverb) as `kt_plugin_api::dsp`; kt-model and kt-fx re-export them, so
+each formula keeps one home. `param_at` and segment shapes stay in kt-model behind `SlotCurves`.
+Byte rule: `apply` gets each row cast through its `Store` (an `f32` field reaches the node as the
+same `f32`); `chain_tail`/`chain_lookahead` ask the plugin's `tail_frames`/`lookahead_frames` for a
+plugin slot and t322 keeps comparing them with the built state.
+
 ### D3. Ids are today's tags; a missing id is a kept slot
 `PluginId` = the string `tag()` returns. `FxInstance` gains one variant `Plugin(PluginSlot)`
 (`id`, `ParamValues`, plus nothing else — curves stay in `fx_auto` on the clip as today) and one
