@@ -184,6 +184,12 @@ once (English message, first line = the stage and what was done).
     file form and the defaults an empty slot reads), t322, t337, t338, t906/t907, `GOLDEN_AUDIO`
     (t11) green. Workspace (nextest, 1232): green except the load-sensitive kt-app set (t815, t411,
     t476, t951, t952, t640/t795, t802, t809, t958 — each green alone).
+    Release speed (design, Risks; a scratch test, `AudioRenderer` over 10 s of clicks, each audio
+    kind alone with its number rows at 70 %, best of 5), c53131f → ed78f71: every moved kind within
+    ±1 % (gain 6.5→6.2 ms, eq 187→188, delay 92.7→92.7, limiter 90.3→90.2, …), pitch_shift
+    156→158 ms (+1.5–1.8 %, the host's curve reader per grain), the chain of all 18 kinds 627→628 ms.
+    Below the 3 % gate. Observed on BOTH trees and left for its own investigation: slowed_reverb
+    alone takes either ~104 or ~415 ms from one process run to the next on the same code.
 
 ## 4. Video FX
 
