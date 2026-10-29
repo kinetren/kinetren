@@ -179,14 +179,14 @@ submission.
 1. **Application ID** — DECIDED by the owner (2026-10-28): `com.kinetren.Kinetren`. Was: `com.kinetren.Kinetren` (domain verification on kinetren.com) or
    `io.github.kinetren.Kinetren`? Recommended: `com.kinetren.Kinetren` if the site serves HTTPS on
    kinetren.com; the token file goes into the site repository.
-2. **File access** — `--filesystem=host` or `home` + removable mounts? Recommended: `host`.
-3. **Metainfo languages** — ship all five catalog languages, or English + Russian until a speaker
+2. **File access** — PENDING the owner; built with the recommendation below (2026-10-29) — `--filesystem=host` or `home` + removable mounts? Recommended: `host`.
+3. **Metainfo languages** — PENDING the owner; built with the recommendation below (2026-10-29) — ship all five catalog languages, or English + Russian until a speaker
    reviews es/zh-Hans/ar (Flathub forbids machine-generated translations)? Recommended: English +
    Russian first.
-4. **Settings of a tarball install** — copy them into the sandbox on first start? Recommended: no
+4. **Settings of a tarball install** — PENDING the owner; built with the recommendation below (2026-10-29) — copy them into the sandbox on first start? Recommended: no
    (two deliveries, two settings; the sandbox cannot read `~/.local/share` without extra access).
 5. **Licence on Flathub** — CONFIRMED by the owner (2026-10-28): the licence allows Flathub to
    distribute; the listing shows as proprietary. Was: confirm that the Non-Commercial License allows Flathub to distribute
    and that the listing shows as proprietary. Recommended: confirm, with donations off.
-6. **Runtime branch at submission** — 25.08 or 26.08? Recommended: the newest branch Flathub marks
+6. **Runtime branch at submission** — PENDING the owner; built with the recommendation below (2026-10-29) — 25.08 or 26.08? Recommended: the newest branch Flathub marks
    stable on the submission day (both load).

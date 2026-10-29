@@ -28,7 +28,7 @@ pub fn gradient_rect(
 }
 
 /// Programme logo (item 6 round 7.1): a film frame with the monogram “kt” —
-/// drawn by the painter, the same silhouette as in packaging/kinetren.svg.
+/// drawn by the painter, the same silhouette as in packaging/com.kinetren.Kinetren.svg.
 pub fn draw_logo(painter: &egui::Painter, rect: egui::Rect) {
     let a = crate::theme::ACCENT;
     let body = egui::Rect::from_center_size(rect.center(), rect.size() * 0.92);

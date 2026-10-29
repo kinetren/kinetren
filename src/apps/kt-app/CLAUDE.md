@@ -307,7 +307,7 @@ The rules above were written down — and did not work: the R.38 mechanism turne
 
 ## Icon and taskbar (item 6 of R.9)
 
-- `with_icon` is mandatory, otherwise the window has no icon at all. On X11 winit does NOT set app_id — WM_CLASS equals the binary name (`kt-app`), therefore `StartupWMClass` in `.desktop` must match exactly that, otherwise the taskbar does not link the window to the icon. `with_app_id` is needed for Wayland.
+- `with_icon` is mandatory, otherwise the window has no icon at all. **One application ID** (`app::APP_ID` = `com.kinetren.Kinetren`, flatpak-flathub D1): `with_app_id(APP_ID)` is the Wayland `app_id` AND, through winit, the X11 WM_CLASS class (measured with xprop: `"", "com.kinetren.Kinetren"`; an earlier note here said WM_CLASS was the binary name — it was `kinetren` because the id was `kinetren`). `StartupWMClass`, `Icon=`, the desktop file, icon and MIME package names are the same string, or the taskbar does not tie the window to its entry; `dist-check.py` (t966) keeps every copy equal.
 
 ## Time units: the playhead lives in AUDIO FRAMES (item 7 of R.10)
 

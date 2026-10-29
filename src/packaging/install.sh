@@ -19,22 +19,29 @@ rm -f "$APPS/kinotrain.desktop" "$ICONS/kinotrain.svg" "$MIME/kinotrain-mime.xml
 for s in 16 22 24 32 48 64 128 256; do
     rm -f "$HOME/.local/share/icons/hicolor/${s}x${s}/apps/kinotrain.png"  # former name
 done
+# the desktop names were `kinetren.*` before the one application ID (flatpak-flathub D1): remove
+# them, or the menu would show two entries, one of them for an old build
+rm -f "$APPS/kinetren.desktop" "$ICONS/kinetren.svg" "$MIME/kinetren-mime.xml"  # former desktop name
+for s in 16 22 24 32 48 64 128 256; do
+    rm -f "$HOME/.local/share/icons/hicolor/${s}x${s}/apps/kinetren.png"  # former desktop name
+done
+ID=com.kinetren.Kinetren
 install -m 755 kinetren kt-cli "$BIN/"
-install -m 644 kinetren.svg "$ICONS/kinetren.svg"
+install -m 644 "$ID.svg" "$ICONS/$ID.svg"
 # icons: some panels/taskbars scale SVG to small sizes poorly
 for s in 16 22 24 32 48 64 128 256; do
     d="$HOME/.local/share/icons/hicolor/${s}x${s}/apps"
     mkdir -p "$d"
-    [ -f "icons/$s/kinetren.png" ] && install -m 644 "icons/$s/kinetren.png" "$d/kinetren.png"
+    [ -f "icons/$s/$ID.png" ] && install -m 644 "icons/$s/$ID.png" "$d/$ID.png"
 done
-install -m 644 kinetren-mime.xml "$MIME/kinetren-mime.xml"
+install -m 644 "$ID.xml" "$MIME/$ID.xml"
 # Exec without a path: we rely on ~/.local/bin in PATH; if it is not there —
 # we substitute the absolute path.
 if command -v kinetren >/dev/null 2>&1; then
-    install -m 644 kinetren.desktop "$APPS/kinetren.desktop"
+    install -m 644 "$ID.desktop" "$APPS/$ID.desktop"
 else
-    sed "s|^Exec=kinetren|Exec=$BIN/kinetren|" kinetren.desktop > "$APPS/kinetren.desktop"
-    chmod 644 "$APPS/kinetren.desktop"
+    sed "s|^Exec=kinetren|Exec=$BIN/kinetren|" "$ID.desktop" > "$APPS/$ID.desktop"
+    chmod 644 "$APPS/$ID.desktop"
 fi
 
 command -v update-mime-database >/dev/null 2>&1 && update-mime-database "$HOME/.local/share/mime" || true

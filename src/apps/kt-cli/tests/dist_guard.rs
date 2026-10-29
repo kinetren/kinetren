@@ -44,13 +44,24 @@ const FILES: &[&str] = &[
     ".github/workflows/release.yml",
     "README.md",
     "src/apps/kt-app/Cargo.toml",
-    "src/packaging/kinetren.desktop",
-    "src/packaging/kinetren-mime.xml",
+    "src/packaging/com.kinetren.Kinetren.desktop",
+    "src/packaging/com.kinetren.Kinetren.xml",
     "src/packaging/install.sh",
     "src/scripts/vendor-ffmpeg-headers.sh",
     "src/scripts/fetch-ffmpeg-win.sh",
     "src/apps/kt-app/src/ffmpeg_setup.rs",
     "src/libs/kt-dirs/src/lib.rs",
+    // the one application ID (flatpak-flathub): the constant and the files it names
+    "src/apps/kt-app/src/app.rs",
+    "src/packaging/com.kinetren.Kinetren.svg",
+    "src/packaging/icons/16/com.kinetren.Kinetren.png",
+    "src/packaging/icons/22/com.kinetren.Kinetren.png",
+    "src/packaging/icons/24/com.kinetren.Kinetren.png",
+    "src/packaging/icons/32/com.kinetren.Kinetren.png",
+    "src/packaging/icons/48/com.kinetren.Kinetren.png",
+    "src/packaging/icons/64/com.kinetren.Kinetren.png",
+    "src/packaging/icons/128/com.kinetren.Kinetren.png",
+    "src/packaging/icons/256/com.kinetren.Kinetren.png",
 ];
 
 fn copy_tree(tag: &str) -> PathBuf {
@@ -116,8 +127,8 @@ fn t835_guard_catches_each_class_of_drift() {
         ),
         (
             "desktop",
-            |d| edit(d, "src/packaging/kinetren.desktop", "Exec=kinetren", "Exec=kt-app"),
-            "src/packaging/kinetren.desktop: `Exec=kinetren`",
+            |d| edit(d, "src/packaging/com.kinetren.Kinetren.desktop", "Exec=kinetren", "Exec=kt-app"),
+            "src/packaging/com.kinetren.Kinetren.desktop: `Exec=kinetren`",
         ),
         (
             "tarball",
@@ -300,7 +311,7 @@ fn t931_mime_names_our_files_and_only_ours() {
     let cases: [(&str, Break, &str); 4] = [
         (
             "no-magic",
-            |d| edit(d, "src/packaging/kinetren-mime.xml", "offset=\"0:64\"", "offset=\"x\""),
+            |d| edit(d, "src/packaging/com.kinetren.Kinetren.xml", "offset=\"0:64\"", "offset=\"x\""),
             "the magic rule on its root marker",
         ),
         (
@@ -308,7 +319,7 @@ fn t931_mime_names_our_files_and_only_ours() {
             |d| {
                 edit(
                     d,
-                    "src/packaging/kinetren-mime.xml",
+                    "src/packaging/com.kinetren.Kinetren.xml",
                     "<glob pattern=\"*.kt\"/>",
                     "<glob pattern=\"*.kt\"/>\n    <glob pattern=\"*.ktproj\"/>",
                 )
@@ -317,7 +328,7 @@ fn t931_mime_names_our_files_and_only_ours() {
         ),
         (
             "no-legacy-type",
-            |d| edit(d, "src/packaging/kinetren-mime.xml", "<glob pattern=\"*.ktproj\"/>", ""),
+            |d| edit(d, "src/packaging/com.kinetren.Kinetren.xml", "<glob pattern=\"*.ktproj\"/>", ""),
             "the legacy type must glob `*.ktproj`",
         ),
         (
@@ -325,7 +336,7 @@ fn t931_mime_names_our_files_and_only_ours() {
             |d| {
                 edit(
                     d,
-                    "src/packaging/kinetren.desktop",
+                    "src/packaging/com.kinetren.Kinetren.desktop",
                     "application/x-kinotrain-legacy-project;",
                     "",
                 )
@@ -367,7 +378,7 @@ fn t935_the_mime_database_tells_our_project_from_kotlin() {
     let data = dir.join("data");
     let packages = data.join("mime/packages");
     std::fs::create_dir_all(&packages).unwrap();
-    std::fs::copy(repo().join("src/packaging/kinetren-mime.xml"), packages.join("kinetren-mime.xml"))
+    std::fs::copy(repo().join("src/packaging/com.kinetren.Kinetren.xml"), packages.join("com.kinetren.Kinetren.xml"))
         .unwrap();
     // the system's own definitions (Kotlin's `*.kt` among them) are part of the question
     let freedesktop = Path::new("/usr/share/mime/packages/freedesktop.org.xml");
@@ -413,4 +424,73 @@ fn t935_the_mime_database_tells_our_project_from_kotlin() {
     }
     assert_eq!(ask("demo.ktproj"), "application/x-kinotrain-legacy-project", "the older format");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// t966 (flatpak-flathub, D1): every copy of the application ID is the same string.
+///
+/// A desktop ties the running window to its menu entry by this string, and Flathub rejects a
+/// listing whose desktop file, metainfo and manifest disagree. It used to be `kinetren` in five
+/// hand-written places; the constant in kt-app is now the one source, and each copy is checked.
+#[test]
+fn t966_every_copy_of_the_app_id_is_the_same_string() {
+    if cfg!(windows) {
+        eprintln!("t966 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    let id = "com.kinetren.Kinetren";
+    let dir = copy_tree("t966-clean");
+    let (ok, text) = guard(&dir);
+    assert!(ok, "an unchanged copy must pass:\n{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    type Break = fn(&Path);
+    let cases: [(&str, Break, &str); 4] = [
+        (
+            "metainfo-id",
+            |d| {
+                let meta = d.join("src/packaging/com.kinetren.Kinetren.metainfo.xml");
+                std::fs::write(
+                    meta,
+                    "<component><id>io.github.kinetren.Kinetren</id>\
+                     <launchable type=\"desktop-id\">com.kinetren.Kinetren.desktop</launchable></component>",
+                )
+                .unwrap()
+            },
+            "src/packaging/com.kinetren.Kinetren.metainfo.xml: `<id>io.github.kinetren.Kinetren</id>` differs from APP_ID `com.kinetren.Kinetren`",
+        ),
+        (
+            "desktop-icon",
+            |d| edit(d, "src/packaging/com.kinetren.Kinetren.desktop", "Icon=com.kinetren.Kinetren", "Icon=kinetren"),
+            "src/packaging/com.kinetren.Kinetren.desktop: `Icon=kinetren` differs from APP_ID `com.kinetren.Kinetren`",
+        ),
+        (
+            "wm-class",
+            |d| edit(d, "src/packaging/com.kinetren.Kinetren.desktop", "StartupWMClass=com.kinetren.Kinetren", "StartupWMClass=kinetren"),
+            "`StartupWMClass=kinetren` differs from APP_ID `com.kinetren.Kinetren`",
+        ),
+        (
+            "constant",
+            |d| {
+                edit(
+                    d,
+                    "src/apps/kt-app/src/app.rs",
+                    "pub const APP_ID: &str = \"com.kinetren.Kinetren\";",
+                    "pub const APP_ID: &str = \"com.kinetren.Editor\";",
+                )
+            },
+            "src/packaging/com.kinetren.Editor.desktop: missing",
+        ),
+    ];
+    for (tag, brk, want) in cases {
+        let dir = copy_tree(tag);
+        brk(&dir);
+        let (ok, text) = guard(&dir);
+        assert!(!ok, "{tag}: the guard must fail:\n{text}");
+        assert!(text.contains(want), "{tag}: expected {want:?} in:\n{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    // the window's id is the constant: the guard reads the same line kt-app compiles
+    let app = std::fs::read_to_string(repo().join("src/apps/kt-app/src/app.rs")).unwrap();
+    assert!(app.contains(".with_app_id(APP_ID)"), "the window does not use APP_ID");
+    assert!(app.contains(&format!("pub const APP_ID: &str = \"{id}\";")));
 }

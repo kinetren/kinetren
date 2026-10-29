@@ -2,7 +2,7 @@
 """kinetren.ico from the committed PNG sizes (change windows-build).
 
 An ICO may hold PNG images directly (Windows Vista and later), so no image library is
-needed: the PNGs of icons/<size>/kinetren.png are packed as they are. Run after changing
+needed: the PNGs of icons/<size>/com.kinetren.Kinetren.png are packed as they are. Run after changing
 the icon; the .ico is committed and compiled into kinetren.exe by kt-app's build.rs.
 
     python3 packaging/make-ico.py
@@ -13,7 +13,7 @@ import struct
 HERE = pathlib.Path(__file__).resolve().parent
 SIZES = [16, 24, 32, 48, 64, 128, 256]
 
-images = [(s, (HERE / "icons" / str(s) / "kinetren.png").read_bytes()) for s in SIZES]
+images = [(s, (HERE / "icons" / str(s) / "com.kinetren.Kinetren.png").read_bytes()) for s in SIZES]
 header = struct.pack("<HHH", 0, 1, len(images))
 offset = len(header) + 16 * len(images)
 entries, data = b"", b""

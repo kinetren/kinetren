@@ -219,8 +219,9 @@ fi
 # --- Tarball ---------------------------------------------------------------
 mkdir -p "$STAGE"
 for b in $BINS; do cp "$BIN_DIR/$b" "$STAGE/"; done
-cp packaging/kinetren.desktop packaging/kinetren.svg \
-    packaging/kinetren-mime.xml packaging/install.sh "$STAGE/"
+# the desktop names are the one application ID (flatpak-flathub D1)
+cp packaging/com.kinetren.Kinetren.desktop packaging/com.kinetren.Kinetren.svg \
+    packaging/com.kinetren.Kinetren.xml packaging/install.sh "$STAGE/"
 cp -r packaging/icons "$STAGE/"
 chmod +x "$STAGE/install.sh"
 tar -C "$OUT" -czf "$STAGE.tar.gz" "$(basename "$STAGE")"

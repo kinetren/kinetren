@@ -19,11 +19,11 @@ Keywords[es]=vídeo;editor;edición;montaje;corte;nle;
 Keywords[zh_CN]=视频;编辑;剪辑;时间线;非线性;
 Keywords[ar]=فيديو;تحرير;مونتاج;قص;
 Exec=kinetren %f
-Icon=kinetren
+Icon=com.kinetren.Kinetren
 Terminal=false
 Categories=AudioVideo;AudioVideoEditing;Video;
 MimeType=application/x-opentimelineio;application/x-kinetren-project;application/x-kinotrain-legacy-project;
-# WM_CLASS on X11 is the binary name (winit sets no app_id there); without a
-# match the taskbar does not tie the window to this entry and shows a stub.
-# The binary has been `kinetren` since 2026-10-22 (it was kt-app).
-StartupWMClass=kinetren
+# The window's application ID (kt-app `APP_ID`) is also the X11 WM_CLASS class
+# (measured with xprop); without a match the taskbar does not tie the window to this
+# entry and shows a stub. One ID for the tarball and the Flatpak (flatpak-flathub D1).
+StartupWMClass=com.kinetren.Kinetren

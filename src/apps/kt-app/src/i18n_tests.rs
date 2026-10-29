@@ -581,7 +581,7 @@ fn packaging_mismatches(
             [("GenericName", v("generic_name")), ("Comment", v("comment")), ("Keywords", kw)]
         {
             if de(key, *loc).as_deref() != Some(want.as_str()) {
-                bad.push(format!("kinetren.desktop: {key}[{}]: wanted “{want}”", loc.unwrap_or("")));
+                bad.push(format!("{}.desktop: {key}[{}]: wanted “{want}”", crate::app::APP_ID, loc.unwrap_or("")));
             }
         }
         for (ty, key) in [
@@ -599,7 +599,8 @@ fn packaging_mismatches(
                 .unwrap_or("");
             if !block.contains(&want) {
                 bad.push(format!(
-                    "kinetren-mime.xml: {ty} comment[{}]: wanted {want}",
+                    "{}.xml: {ty} comment[{}]: wanted {want}",
+                    crate::app::APP_ID,
                     loc.unwrap_or("")
                 ));
             }
@@ -637,8 +638,8 @@ fn t930_packaging_speaks_every_catalog_language() {
         langs.push((locale(lang), sec));
     }
     assert_eq!(langs.len(), crate::i18n::Lang::ALL.len(), "the catalogs on disk are the languages");
-    let desktop = std::fs::read_to_string(src.join("packaging/kinetren.desktop")).unwrap();
-    let mime = std::fs::read_to_string(src.join("packaging/kinetren-mime.xml")).unwrap();
+    let desktop = std::fs::read_to_string(src.join(format!("packaging/{}.desktop", crate::app::APP_ID))).unwrap();
+    let mime = std::fs::read_to_string(src.join(format!("packaging/{}.xml", crate::app::APP_ID))).unwrap();
     let bad = packaging_mismatches(&langs, &desktop, &mime);
     assert!(bad.is_empty(), "the packaging files differ from the catalogs:\n{}", bad.join("\n"));
 

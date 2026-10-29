@@ -38,8 +38,15 @@ CI = ".github/workflows/ci.yml"
 RELEASE = ".github/workflows/release.yml"
 README = "README.md"
 APP_MANIFEST = "src/apps/kt-app/Cargo.toml"
-DESKTOP = "src/packaging/kinetren.desktop"
-MIME = "src/packaging/kinetren-mime.xml"
+# One application ID (change flatpak-flathub, D1): the kt-app constant names every desktop file.
+APP_ID_SRC = "src/apps/kt-app/src/app.rs"
+APP_ID_RE = r'^pub const APP_ID: &str = "([^"]+)";'
+ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256]
+# the names an older install left under the former desktop names (install.sh removes them)
+FORMER_DESKTOP_NAMES = ["kinetren.desktop", "kinetren.svg", "kinetren.png", "kinetren-mime.xml"]
+# set by `main` from the constant: the desktop file and the MIME package are named by the ID
+DESKTOP = None
+MIME = None
 MIME_TYPES = [
     "application/x-opentimelineio",
     "application/x-kinetren-project",
@@ -318,14 +325,85 @@ def check_binary_name(r):
     if de is not None:
         if not re.search(r"^Exec=kinetren(\s|$)", de, re.M):
             r.err(DESKTOP, "`Exec=kinetren` is required")
-        if not re.search(r"^StartupWMClass=kinetren\s*$", de, re.M):
-            r.err(DESKTOP, "`StartupWMClass=kinetren` is required")
     ins = r.read(INSTALL)
     if ins is not None:
         if not re.search(r"^install -m 755 kinetren kt-cli ", ins, re.M):
             r.err(INSTALL, "must install `kinetren` and `kt-cli`")
         if 'rm -f "$BIN/kt-app"' not in ins:
             r.err(INSTALL, "must remove the `kt-app` an older install left")
+
+
+def read_app_id(r):
+    """The application ID from the kt-app constant; `None` (with the error) when it is missing."""
+    src = r.read(APP_ID_SRC)
+    m = re.search(APP_ID_RE, src or "", re.M)
+    if not m:
+        r.err(APP_ID_SRC, "`pub const APP_ID: &str = \"…\";` is required (the one application ID)")
+        return None
+    app_id = m.group(1)
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_-]*){2,4}", app_id):
+        r.err(APP_ID_SRC, f"APP_ID {app_id!r} is not a reverse-DNS ID of 3-5 parts")
+    return app_id
+
+
+def check_app_id(r, app_id):
+    """Every copy of the ID is the same string (change flatpak-flathub, t966): the desktop file's name,
+    `Icon=` and `StartupWMClass=`, the icon and MIME package file names, what install.sh and
+    release-build.sh install and pack, and — once they exist — the Flatpak manifest and the metainfo."""
+    de = r.read(DESKTOP)
+    if de is not None:
+        for key in ["Icon", "StartupWMClass"]:
+            m = re.search(rf"^{key}=(.*)$", de, re.M)
+            got = m.group(1).strip() if m else "(none)"
+            if got != app_id:
+                r.err(DESKTOP, f"`{key}={got}` differs from APP_ID `{app_id}` ({APP_ID_SRC})")
+    for rel in [f"src/packaging/{app_id}.svg"] + [f"src/packaging/icons/{s}/{app_id}.png" for s in ICON_SIZES]:
+        if not os.path.exists(os.path.join(r.root, rel)):
+            r.err(rel, f"missing: the icon is named by APP_ID `{app_id}`")
+    ins = r.read(INSTALL)
+    if ins is not None:
+        # the names are written once through `ID=<app id>` and `$ID.<ext>`, or literally
+        via_var = re.search(rf"^ID={re.escape(app_id)}\s*$", ins, re.M) is not None
+        for name in [f"{app_id}.desktop", f"{app_id}.svg", f"{app_id}.png", f"{app_id}.xml"]:
+            ext = name[len(app_id):]
+            if name not in ins and not (via_var and f"$ID{ext}" in ins):
+                r.err(INSTALL, f"must install `{name}` (named by APP_ID `{app_id}`)")
+        for former in FORMER_DESKTOP_NAMES:
+            if not re.search(rf"^\s*rm -f .*{re.escape(former)}", ins, re.M):
+                r.err(INSTALL, f"must remove `{former}` an older install left under the former desktop name")
+    rb = r.read(RELEASE_BUILD)
+    if rb is not None:
+        for name in [f"packaging/{app_id}.desktop", f"packaging/{app_id}.svg", f"packaging/{app_id}.xml"]:
+            if name not in rb:
+                r.err(RELEASE_BUILD, f"the tarball must carry `{name}` (named by APP_ID `{app_id}`)")
+    manifest = f"src/packaging/flatpak/{app_id}.yml"
+    flatpak_dir = os.path.join(r.root, "src/packaging/flatpak")
+    if os.path.isdir(flatpak_dir):
+        for f in os.listdir(flatpak_dir):
+            if f.endswith(".yml") and f != f"{app_id}.yml":
+                r.err(f"src/packaging/flatpak/{f}", f"a manifest named `{f}` differs from APP_ID `{app_id}`")
+        text = r.read(manifest)
+        if text is not None:
+            m = re.search(r"^id:\s*(\S+)", text, re.M)
+            got = m.group(1) if m else "(none)"
+            if got != app_id:
+                r.err(manifest, f"`id: {got}` differs from APP_ID `{app_id}`")
+    meta = f"src/packaging/{app_id}.metainfo.xml"
+    meta_files = [f for f in os.listdir(os.path.join(r.root, "src/packaging")) if f.endswith(".metainfo.xml")] \
+        if os.path.isdir(os.path.join(r.root, "src/packaging")) else []
+    for f in meta_files:
+        if f != f"{app_id}.metainfo.xml":
+            r.err(f"src/packaging/{f}", f"a metainfo named `{f}` differs from APP_ID `{app_id}`")
+    if meta_files:
+        text = r.read(meta) or ""
+        m = re.search(r"<id>([^<]+)</id>", text)
+        got = m.group(1) if m else "(none)"
+        if got != app_id:
+            r.err(meta, f"`<id>{got}</id>` differs from APP_ID `{app_id}`")
+        m = re.search(r'<launchable type="desktop-id">([^<]+)</launchable>', text)
+        got = m.group(1) if m else "(none)"
+        if got != f"{app_id}.desktop":
+            r.err(meta, f"`<launchable>{got}</launchable>` differs from `{app_id}.desktop`")
 
 
 def check_mime(r):
@@ -368,6 +446,10 @@ def main():
     ap.add_argument("--root", default=os.path.normpath(os.path.join(here, "..", "..")))
     args = ap.parse_args()
     r = Report(args.root)
+    global DESKTOP, MIME
+    app_id = read_app_id(r) or "kinetren"
+    DESKTOP = f"src/packaging/{app_id}.desktop"
+    MIME = f"src/packaging/{app_id}.xml"
     pinned = check_container(r)
     check_make(r)
     check_ci(r, pinned)
@@ -377,6 +459,7 @@ def main():
     check_readme(r)
     check_binary_name(r)
     check_mime(r)
+    check_app_id(r, app_id)
     if r.errors:
         for e in r.errors:
             print(e, file=sys.stderr)

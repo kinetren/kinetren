@@ -9177,6 +9177,11 @@ impl Drop for KtApp {
 /// (for a 2D project this is a full-fledged path; `KT_VIDEO_GPU=0` — forced). The error is the
 /// REASON the render window and its log name (render-window-v1-parity D4): a desktop start has no
 /// terminal, so an `eprintln!` here was never seen.
+/// The one application ID (change flatpak-flathub, D1; the owner chose it on 2026-10-28): the
+/// window's app_id, and the name of the desktop file, the icons, the MIME package, the Flatpak
+/// manifest and the AppStream metainfo. `dist-check.py` (t966) keeps every copy equal to this one.
+pub const APP_ID: &str = "com.kinetren.Kinetren";
+
 pub(crate) fn export_video_gpu() -> Result<std::sync::Arc<dyn kt_engine::VideoGpuExec>, String> {
     if std::env::var("KT_VIDEO_GPU").as_deref() == Ok("0") {
         return Err("KT_VIDEO_GPU=0".into());
@@ -9211,9 +9216,10 @@ pub fn run() -> eframe::Result {
             .with_inner_size([1440.0, 860.0])
             .with_min_inner_size([640.0, 640.0])
             .with_icon(app_icon())
-            // app_id for Wayland and the link with .desktop (on X11 WM_CLASS
-            // is still the binary name, see StartupWMClass in .desktop)
-            .with_app_id("kinetren")
+            // the one application ID (flatpak-flathub D1): the Wayland app_id and, on X11, the
+            // WM_CLASS class (measured with xprop: `"", "<APP_ID>"`) — the desktop file's
+            // `StartupWMClass` is the same string
+            .with_app_id(APP_ID)
             .with_decorations(decorations)
             .with_title("Kinetren"),
         wgpu_options,
