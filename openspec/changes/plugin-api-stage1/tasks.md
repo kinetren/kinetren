@@ -10,8 +10,23 @@ once (English message, first line = the stage and what was done).
 
 ## 1. Baseline measurement (before any code moves)
 
-- [ ] 1.1 On a warm tree of this commit, on the dev profile, measure and record here: (a) touch `tap_poster` in `src/libs/kt-fx/src/geom.rs` → `cargo build -p kt-app -p kt-cli` wall time and the list of recompiled workspace crates (`cargo build -v` "Compiling" lines); (b) the same after touching the `Posterize` variant in `src/libs/kt-model/src/project.rs`; (c) `cargo test --workspace --no-run` after (b); the machine's core count and the commit. Put the R.68 numbers (61 s / 43 s / 10 s) next to them. The script `src/scripts/plugin-rebuild-check.py` is written here in its measuring form (it becomes t977 in stage 6)
-- [ ] 1.2 Record the line counts of kt-model (19,252 / `project.rs` 9,741), kt-fx, kt-gpu, kt-engine, kt-app at this commit next to the timings, so stage 6 can report what moved out
+- [x] 1.1 On a warm tree of this commit, on the dev profile, measure and record here: (a) touch `tap_poster` in `src/libs/kt-fx/src/geom.rs` → `cargo build -p kt-app -p kt-cli` wall time and the list of recompiled workspace crates (`cargo build -v` "Compiling" lines); (b) the same after touching the `Posterize` variant in `src/libs/kt-model/src/project.rs`; (c) `cargo test --workspace --no-run` after (b); the machine's core count and the commit. Put the R.68 numbers (61 s / 43 s / 10 s) next to them. The script `src/scripts/plugin-rebuild-check.py` is written here in its measuring form (it becomes t977 in stage 6)
+  - Commit cb338e6, 32 cores, dev profile, warm tree, mold. `src/scripts/plugin-rebuild-check.py
+    measure <file> [-- cargo args]` makes a REAL one-line edit (a private const appended and removed
+    after; a bare touch is nearly free under rustc's incremental cache, 3.8 s):
+    | edit | `build -p kt-app -p kt-cli` | `test --workspace --no-run` | recompiled workspace crates |
+    |---|---|---|---|
+    | `kt-fx/src/geom.rs` (where `tap_poster` lives) | 2.0 s | 79.3 s | kt-fx, kt-engine, kt-gpu, kt-app, kt-cli |
+    | `kt-model/src/project.rs` (where `Posterize` lives) | 3.7 s | 169.7 s | + kt-model, kt-cache, kt-media, kt-otio |
+    R.68 (2026-09-27): 61 s / 43 s / 10 s. **The finding that matters for this change:** the binaries
+    themselves rebuild in seconds (incremental + mold); the cost is the TEST binaries — 80–170 s,
+    most of it the integration test crates of every dependent. A plugin crate depended on by kt-app
+    will still rebuild kt-app's test binary; what the move can save is the core crates' test
+    binaries (kt-model's, kt-media's, kt-otio's, kt-cache's) and their cascade — t977 must measure
+    `test --no-run`, not `build`, or it would report a win that is not there.
+- [x] 1.2 Record the line counts of kt-model (19,252 / `project.rs` 9,741), kt-fx, kt-gpu, kt-engine, kt-app at this commit next to the timings, so stage 6 can report what moved out
+  - At cb338e6 (Rust lines under `src/`): kt-model 19,336 (`project.rs` 9,735, `genmedia.rs` 1,857),
+    kt-fx 8,828, kt-gpu 2,564 + 1,846 WGSL, kt-engine 10,920, kt-app 69,300.
 
 ## 2. API, registry, assembler, injection, the pilot (Posterize)
 
