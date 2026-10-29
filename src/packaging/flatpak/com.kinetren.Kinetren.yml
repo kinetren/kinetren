@@ -1,0 +1,69 @@
+# Kinetren as a Flatpak (change flatpak-flathub). Built from this repository's source, offline,
+# with the crates of src/Cargo.lock (cargo-sources.json, `make flatpak-sources`). FFmpeg is the
+# RUNTIME's: the program loads it at run time by SONAME (invariant 10), and no module here ships
+# one. Shape guarded by src/scripts/dist-check.py (t966-t968). The Flathub copy of this file points
+# the first source at the release tag instead of the working tree (docs/flatpak.md, maintainer part).
+id: com.kinetren.Kinetren
+runtime: org.freedesktop.Platform
+# the newest stable branch whose FFmpeg the loader supports (runtime-ffmpeg.txt; design D2);
+# codecs-extra replaced ffmpeg-full in 25.08 and installs with the runtime — never add ffmpeg-full
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  # cargo and rustc; the build prints `rustc --version` (it must not be older than the Dockerfile's pin)
+  - org.freedesktop.Sdk.Extension.rust-stable
+  # libclang for bindgen (kt-ffmpeg's types); the exact name of the branch's LLVM extension is
+  # confirmed at the first local build (tasks 2.2)
+  - org.freedesktop.Sdk.Extension.llvm20
+command: kinetren
+finish-args:
+  # X11 shared memory (the window under Xwayland or X11)
+  - --share=ipc
+  # the window on Wayland
+  - --socket=wayland
+  # X11 only without Wayland: file drag and drop reads the pointer from the X server (x11rb)
+  - --socket=fallback-x11
+  # sound: cpal's ALSA output goes through the runtime's PulseAudio plugin
+  - --socket=pulseaudio
+  # the GPU: wgpu (preview and export composite) and VAAPI encoding (hw-encode-context)
+  - --device=dri
+  # the anonymous usage counter and the update check, both switchable in View
+  - --share=network
+  # projects reference media anywhere (USB disks, /media, network mounts); the document portal grants
+  # only the file a person picked, and a project would open with every clip a placeholder (design D4)
+  - --filesystem=host
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm20/bin
+  prepend-ld-library-path: /usr/lib/sdk/llvm20/lib
+  env:
+    CARGO_HOME: /run/build/kinetren/cargo
+    CARGO_NET_OFFLINE: 'true'
+    LIBCLANG_PATH: /usr/lib/sdk/llvm20/lib
+    # the version of the tagged commit (flatpak-builder sources carry no reliable .git, and
+    # kt-version would fall back to `nogit`); the release updates both with the tag
+    KT_VERSION_FULL: kt26.10.29-8f021960
+    KT_VERSION_SHORT: kt26.10
+modules:
+  - name: kinetren
+    buildsystem: simple
+    build-commands:
+      - rustc --version
+      - export KINETREN_POSTHOG_KEY="$(cat src/packaging/posthog-key)" && cd src && cargo --offline build --profile dist -p kt-app -p kt-cli
+      - install -Dm755 src/target/dist/kinetren /app/bin/kinetren
+      - install -Dm755 src/target/dist/kt-cli /app/bin/kt-cli
+      - install -Dm644 src/packaging/com.kinetren.Kinetren.desktop /app/share/applications/com.kinetren.Kinetren.desktop
+      - install -Dm644 src/packaging/com.kinetren.Kinetren.svg /app/share/icons/hicolor/scalable/apps/com.kinetren.Kinetren.svg
+      - for s in 16 22 24 32 48 64 128 256; do install -Dm644 src/packaging/icons/$s/com.kinetren.Kinetren.png /app/share/icons/hicolor/${s}x${s}/apps/com.kinetren.Kinetren.png; done
+      - install -Dm644 src/packaging/com.kinetren.Kinetren.xml /app/share/mime/packages/com.kinetren.Kinetren.xml
+      - install -Dm644 src/packaging/com.kinetren.Kinetren.metainfo.xml /app/share/metainfo/com.kinetren.Kinetren.metainfo.xml
+      # invariant 10, as release-build.sh checks the tarball: the binary links no libav*
+      - "! ldd /app/bin/kinetren | grep -q libav"
+    sources:
+      - type: dir
+        path: ../../..
+        # the build trees are tens of gigabytes and not sources
+        skip:
+          - src/target
+          - .flatpak-builder
+          - .git
+      - cargo-sources.json

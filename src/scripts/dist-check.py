@@ -53,6 +53,27 @@ MIME_TYPES = [
     "application/x-kinotrain-legacy-project",
 ]
 INSTALL = "src/packaging/install.sh"
+RUNTIME_FFMPEG = "src/packaging/flatpak/runtime-ffmpeg.txt"
+LOADER_MAJORS = "src/libs/kt-ffmpeg/src/search.rs"
+CARGO_SOURCES = "src/scripts/flatpak-cargo-sources.py"
+# finish-args (change flatpak-flathub, D5): exactly these, each with its reason comment
+FINISH_ARGS = [
+    "--share=ipc",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--socket=pulseaudio",
+    "--device=dri",
+    "--share=network",
+    "--filesystem=host",
+]
+FORBIDDEN_ARGS = [
+    "--device=all",
+    "--socket=x11",
+    "--filesystem=host-os",
+    "--filesystem=host-etc",
+    "--talk-name=org.freedesktop.Flatpak",
+    "--socket=session-bus",
+]
 VENDOR_HEADERS = "src/scripts/vendor-ffmpeg-headers.sh"
 FETCH_WIN = "src/scripts/fetch-ffmpeg-win.sh"
 FFMPEG_SETUP = "src/apps/kt-app/src/ffmpeg_setup.rs"
@@ -406,6 +427,99 @@ def check_app_id(r, app_id):
             r.err(meta, f"`<launchable>{got}</launchable>` differs from `{app_id}.desktop`")
 
 
+def check_flatpak(r, app_id):
+    """The manifest's shape (change flatpak-flathub, t967): the runtime branch maps to an FFmpeg major
+    the loader supports, no `ffmpeg-full` on >= 25.08, exactly the finish-args of D5 with a reason
+    each, no module shipping FFmpeg, the version and telemetry environment, the `ldd` check."""
+    manifest = f"src/packaging/flatpak/{app_id}.yml"
+    text = r.read(manifest)
+    if text is None:
+        return
+    lines = text.splitlines()
+    def field(key):
+        m = re.search(rf"^{key}:\s*'?([^'\s]+)'?\s*$", text, re.M)
+        return m.group(1) if m else None
+    if field("runtime") != "org.freedesktop.Platform" or field("sdk") != "org.freedesktop.Sdk":
+        r.err(manifest, "runtime/sdk must be org.freedesktop.Platform/org.freedesktop.Sdk")
+    branch = field("runtime-version")
+    table = {}
+    for line in (r.read(RUNTIME_FFMPEG) or "").splitlines():
+        cols = line.split()
+        if len(cols) >= 3 and not line.startswith("#"):
+            table[cols[0]] = int(cols[1])
+    supported = [int(m) for m in re.findall(r"^\s*\((\d+), Majors", r.read(LOADER_MAJORS) or "", re.M)]
+    if branch not in table:
+        r.err(manifest, f"runtime-version {branch} has no row in {RUNTIME_FFMPEG} (branch -> FFmpeg major)")
+    elif table[branch] not in supported:
+        r.err(manifest, f"runtime-version {branch} has FFmpeg {table[branch]}, the loader supports {supported}")
+    try:
+        newer = branch is not None and tuple(int(x) for x in branch.split(".")) >= (25, 8)
+    except ValueError:
+        newer = False
+    # the rules read the manifest without its comments (a comment may name what is forbidden)
+    code = "\n".join(l for l in lines if not l.strip().startswith("#"))
+    if newer and "ffmpeg-full" in code:
+        r.err(manifest, f"`ffmpeg-full` on runtime {branch}: codecs-extra replaced it in 25.08")
+    # finish-args: the block, each item preceded by a comment
+    start = next((i for i, l in enumerate(lines) if l.startswith("finish-args:")), None)
+    args = []
+    if start is None:
+        r.err(manifest, "no finish-args")
+    else:
+        prev_comment = False
+        for l in lines[start + 1:]:
+            if l and not l.startswith(" "):
+                break
+            t = l.strip()
+            if t.startswith("#"):
+                prev_comment = True
+                continue
+            if t.startswith("- "):
+                arg = t[2:].strip()
+                args.append(arg)
+                if not prev_comment:
+                    r.err(manifest, f"finish-args `{arg}` has no reason comment above it")
+                prev_comment = False
+    for a in args:
+        if a in FORBIDDEN_ARGS:
+            r.err(manifest, f"finish-args `{a}` is forbidden (design D5)")
+        elif a not in FINISH_ARGS and not a.startswith("--env=KINETREN_FFMPEG_DIR="):
+            r.err(manifest, f"finish-args `{a}` is not one of design D5")
+    for a in FINISH_ARGS:
+        if a not in args:
+            r.err(manifest, f"finish-args lack `{a}`")
+    if sum(a.startswith("--env=") for a in args) > 1:
+        r.err(manifest, "at most one `--env=KINETREN_FFMPEG_DIR=…`")
+    # invariant 10: nothing ships FFmpeg
+    if re.search(r"^\s*-?\s*name:\s*\S*(ffmpeg|libav)", code, re.M | re.I) or re.search(
+        r"^\s*(url|path):\s*\S*(ffmpeg|libav)", code, re.M | re.I
+    ):
+        r.err(manifest, "a module ships FFmpeg (invariant 10: the runtime's is loaded at run time)")
+    for key in ["KT_VERSION_FULL", "KT_VERSION_SHORT"]:
+        if not re.search(rf"^\s+{key}:\s*kt\d\d\.\d\d", text, re.M):
+            r.err(manifest, f"the version environment `{key}` is missing (the build would say `nogit`)")
+    if "KINETREN_POSTHOG_KEY" not in text or "src/packaging/posthog-key" not in text:
+        r.err(manifest, "the telemetry key is not taken from src/packaging/posthog-key")
+    if "ldd /app/bin/kinetren | grep -q libav" not in text:
+        r.err(manifest, "the post-install `ldd` check of invariant 10 is missing")
+    if "cargo-sources.json" not in text or "--offline" not in text:
+        r.err(manifest, "the build must be offline over cargo-sources.json")
+
+
+def check_cargo_sources(r):
+    """The offline crate sources follow the lock file (change flatpak-flathub, t968)."""
+    import subprocess
+    out = subprocess.run(
+        [sys.executable, os.path.join(r.root, CARGO_SOURCES), "--check",
+         "--lock", os.path.join(r.root, "src/Cargo.lock"),
+         "--out", os.path.join(r.root, "src/packaging/flatpak/cargo-sources.json")],
+        capture_output=True, text=True,
+    )
+    if out.returncode != 0:
+        for line in (out.stderr or out.stdout).strip().splitlines():
+            r.err("src/packaging/flatpak/cargo-sources.json", line)
+
+
 def check_mime(r):
     """The MIME file names our files and only ours (change i18n-gaps, D2): `*.kt` is shared with
     Kotlin, so the project type carries a magic rule on its root marker; `*.ktproj` is the older
@@ -460,6 +574,8 @@ def main():
     check_binary_name(r)
     check_mime(r)
     check_app_id(r, app_id)
+    check_flatpak(r, app_id)
+    check_cargo_sources(r)
     if r.errors:
         for e in r.errors:
             print(e, file=sys.stderr)

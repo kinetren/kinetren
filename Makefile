@@ -11,7 +11,7 @@ DIST     := $(RUST)/target/dist-out
 # release-build.sh clears dist-out before packing)
 STAGEDIR  = $(firstword $(patsubst %/kinetren,%,$(wildcard $(DIST)/kinetren-*-linux-*/kinetren)))
 
-.PHONY: all build install run test clean help docker-check windows windows-test ffmpeg-test hw-test
+.PHONY: all build install run test clean help docker-check windows windows-test ffmpeg-test hw-test flatpak-sources
 
 all: build ## the default: same as `make build`
 
@@ -30,6 +30,9 @@ windows-test: docker-check ## developers: the workspace tests for Windows under 
 
 ffmpeg-test: docker-check ## developers: the FFmpeg tests against FFmpeg 9 built from source, in Docker
 	$(RUST)/scripts/ffmpeg-test.sh
+
+flatpak-sources: ## developers: regenerate the Flatpak's offline crate sources from src/Cargo.lock
+	python3 $(RUST)/scripts/flatpak-cargo-sources.py
 
 # on the host, not in Docker: the proof needs this machine's render node and VAAPI driver, and
 # with KT_EXPECT_HW set t963 FAILS unless VAAPI opens (hw-encode-context D8)

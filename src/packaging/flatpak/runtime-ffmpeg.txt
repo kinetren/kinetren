@@ -1,0 +1,9 @@
+# The FFmpeg major of each org.freedesktop.Platform branch (change flatpak-flathub, D2).
+# dist-check (t967) maps the manifest's runtime-version through this table and requires the major
+# to be one the loader has a version module for (src/libs/kt-ffmpeg/src/search.rs, MAJORS).
+# A new branch is a new row, read from the runtime's own recipe — never assumed.
+#
+# branch  major  provenance (freedesktop-sdk, elements/include/ffmpeg.yml of the release branch)
+24.08     7      release/24.08: n7.0.3 (read 2026-10-28)
+25.08     7      release/25.08: n7.1.3 (read 2026-10-28)
+26.08     8      release/26.08: n8.1.3 (read 2026-10-28)

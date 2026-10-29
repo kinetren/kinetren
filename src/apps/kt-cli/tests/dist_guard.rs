@@ -62,6 +62,13 @@ const FILES: &[&str] = &[
     "src/packaging/icons/64/com.kinetren.Kinetren.png",
     "src/packaging/icons/128/com.kinetren.Kinetren.png",
     "src/packaging/icons/256/com.kinetren.Kinetren.png",
+    // the Flatpak (flatpak-flathub): the manifest, the branch table, the loader's majors, the sources
+    "src/packaging/flatpak/com.kinetren.Kinetren.yml",
+    "src/packaging/flatpak/runtime-ffmpeg.txt",
+    "src/libs/kt-ffmpeg/src/search.rs",
+    "src/packaging/flatpak/cargo-sources.json",
+    "src/Cargo.lock",
+    "src/scripts/flatpak-cargo-sources.py",
 ];
 
 fn copy_tree(tag: &str) -> PathBuf {
@@ -493,4 +500,91 @@ fn t966_every_copy_of_the_app_id_is_the_same_string() {
     let app = std::fs::read_to_string(repo().join("src/apps/kt-app/src/app.rs")).unwrap();
     assert!(app.contains(".with_app_id(APP_ID)"), "the window does not use APP_ID");
     assert!(app.contains(&format!("pub const APP_ID: &str = \"{id}\";")));
+}
+
+/// Run each break on a fresh copy and expect the guard to name it.
+fn expect_red(cases: &[(&str, fn(&Path), &str)]) {
+    for (tag, brk, want) in cases {
+        let dir = copy_tree(tag);
+        brk(&dir);
+        let (ok, text) = guard(&dir);
+        assert!(!ok, "{tag}: the guard must fail:\n{text}");
+        assert!(text.contains(want), "{tag}: expected {want:?} in:\n{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+const MANIFEST: &str = "src/packaging/flatpak/com.kinetren.Kinetren.yml";
+
+/// t967 (flatpak-flathub, D2–D6): the manifest's shape is guarded.
+///
+/// A runtime bump onto an FFmpeg major the loader has no module for, the replaced `ffmpeg-full`
+/// extension, a broad permission, a permission without its reason, a bundled FFmpeg or a build that
+/// says `nogit` — each would reach Flathub's review or the user before anyone noticed.
+#[test]
+fn t967_flatpak_manifest_shape_is_guarded() {
+    if cfg!(windows) {
+        eprintln!("t967 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    let cases: [(&str, fn(&Path), &str); 7] = [
+        (
+            "unsupported-major",
+            |d| {
+                edit(d, "src/packaging/flatpak/runtime-ffmpeg.txt", "26.08     8", "26.08     10");
+                edit(d, MANIFEST, "runtime-version: '25.08'", "runtime-version: '26.08'");
+            },
+            "runtime-version 26.08 has FFmpeg 10, the loader supports",
+        ),
+        (
+            "ffmpeg-full",
+            |d| edit(d, MANIFEST, "command: kinetren", "add-extensions:\n  org.freedesktop.Platform.ffmpeg-full: {}\ncommand: kinetren"),
+            "`ffmpeg-full` on runtime 25.08",
+        ),
+        ("device-all", |d| edit(d, MANIFEST, "- --device=dri", "- --device=all"), "finish-args `--device=all` is forbidden"),
+        ("x11", |d| edit(d, MANIFEST, "- --socket=fallback-x11", "- --socket=x11"), "finish-args `--socket=x11` is forbidden"),
+        (
+            "no-reason",
+            |d| edit(d, MANIFEST, "  # the window on Wayland\n", ""),
+            "finish-args `--socket=wayland` has no reason comment",
+        ),
+        (
+            "bundled-ffmpeg",
+            |d| edit(d, MANIFEST, "modules:\n", "modules:\n  - name: ffmpeg\n    buildsystem: autotools\n"),
+            "a module ships FFmpeg",
+        ),
+        (
+            "no-version",
+            |d| edit(d, MANIFEST, "    KT_VERSION_FULL: ", "    KT_VERSION_X: "),
+            "the version environment `KT_VERSION_FULL` is missing",
+        ),
+    ];
+    expect_red(&cases);
+}
+
+/// t968 (flatpak-flathub, D6): the offline crate sources follow `src/Cargo.lock`.
+///
+/// flatpak-builder builds without network: a crate bumped in the lock but absent from
+/// `cargo-sources.json` fails the store build, not ours — so the guard compares them on every run.
+#[test]
+fn t968_offline_crate_sources_follow_the_lock() {
+    if cfg!(windows) {
+        eprintln!("t968 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    let cases: [(&str, fn(&Path), &str); 1] = [(
+        "bumped-crate",
+        |d| {
+            let lock = std::fs::read_to_string(d.join("src/Cargo.lock")).unwrap();
+            // the first registry package: its version moves on by one patch
+            let at = lock.find("source = \"registry+").expect("a registry package");
+            let head = &lock[..at];
+            let v = head.rfind("version = \"").unwrap() + "version = \"".len();
+            let end = v + lock[v..].find('"').unwrap();
+            let bumped = format!("{}{}.999{}", &lock[..v], &lock[v..end], &lock[end..]);
+            std::fs::write(d.join("src/Cargo.lock"), bumped).unwrap();
+        },
+        "is not in cargo-sources.json — run `make flatpak-sources`",
+    )];
+    expect_red(&cases);
 }
