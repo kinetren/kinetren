@@ -1623,6 +1623,36 @@ time — "work through each point separately, one by one"):
     automation/presets. Is that right?
 12. **The broken-off line** (Z1): `1. быстрого` ("1. quick…") — what was meant?
 
+**Answers (AskUserQuestion, 2026-10-30), verbatim:**
+
+- Question 1 (format name): «я не хочу менять форматы, оставляем .kt. мне не понятна мотивация твоего
+  вопроса(контекст)» — "I don't want to change formats, we keep .kt. I don't understand the motivation
+  of your question (the context)". Explained: the file predates R.70 and says `ktproj`; without a
+  recorded answer the next agent reading the file might "fix" the extension back. C1 → done.
+- Question 2 (import): "Keep one door" (the recommended option). C2 → done, the decision of R.67 stands.
+- Question 3 (project size): «п.2. сотни тысяч - миллион, нужен замер, чтобы поискать узкие места в
+  программе, которые мы можем заранее предвидеть и починить, возможно breaking changes сделать, чтобы
+  никто не споткнулся об плохой код в будущем» — "option 2: hundreds of thousands – a million; a
+  measurement is needed to look for the program's bottlenecks we can foresee and fix ahead of time,
+  maybe make breaking changes, so that nobody stumbles over bad code in the future". C2a → a
+  measurement round (`project-scale`).
+- Question 4 (reference chains), first ask: «я НЕ ПОНИМАЮ ВОПРОСА И НЕ ПОНИМАЮ КОНТЕКСТА, ТЫ МНЕ ЕГО НЕ
+  ДАЛ ВООБЩЕ..» — "I DO NOT UNDERSTAND THE QUESTION AND DO NOT UNDERSTAND THE CONTEXT, YOU DID NOT GIVE
+  IT TO ME AT ALL..". Re-asked with his own item quoted, what R.70 already did, and the two meanings
+  of "reference" (A — only in the file, B — a live link). The answer: «п.А. мне кажется размер будет
+  заметен если я 10тыс раз поставлю событие с 100 одинаковыми эффектами, мне кажется даже если pts у
+  них будет разный и разные сурсы - это же все равно сколько места экономит и скорости чтения, разве
+  нет?» — "option A. I think the size will be noticeable if I place an event with 100 identical
+  effects 10 thousand times; even if their pts differ and the sources differ — it still saves a lot
+  of space and reading speed, doesn't it?" Yes: the key of the reference is the chain content, the
+  position and the source live apart from it. The earlier "a few MB" was not measured and was
+  withdrawn. C2c → the same measurement round.
+
+**Lesson (repeated twice in one session — questions 1 and 4):** a question to the owner carries its
+context IN the question: his own words from the file, what is already done, and what each option
+means for the program. A question that names only a round number or a mechanism ("R.59", "public
+parameters") is unanswerable for him.
+
 ## Round readme-showcase (2026-10-21): README, screenshots, docs; English from now on
 
 From here on entries are written in English; the owner's words stay verbatim.

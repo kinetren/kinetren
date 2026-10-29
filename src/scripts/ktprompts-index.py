@@ -31,6 +31,7 @@ live check in the round that takes the item (design.md, "Risks").
 There are no dependencies; the line numbers of a source are the numbers `cat -n` prints.
 """
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -79,14 +80,17 @@ def registry_rows(path):
 
 
 def known_tests():
+    # os.walk with pruning: rglob would descend into src/target (tens of GB of build output)
     found = set()
-    for p in SRC.rglob("*.rs"):
-        if "target" in p.relative_to(SRC).parts[:1]:
-            continue
-        try:
-            found.update(FNAME.findall(p.read_text(encoding="utf-8", errors="replace")))
-        except OSError:
-            pass
+    for top, dirs, files in os.walk(SRC):
+        dirs[:] = [d for d in dirs if d != "target" and not d.startswith(".")]
+        for f in files:
+            if f.endswith(".rs"):
+                try:
+                    text = Path(top, f).read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                found.update(FNAME.findall(text))
     return found
 
 
