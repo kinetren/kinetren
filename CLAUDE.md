@@ -38,6 +38,11 @@ python3 scripts/subset-fonts.py  # CJK/Arabic font subsets from the translation 
                            # cross-built with mingw in the `windows` stage of the same
                            # Dockerfile; inside, the PE imports are checked (no av*/sw*,
                            # no mingw runtime DLL); no FFmpeg DLL is ever packed
+./scripts/target-prune.py  # drop the STALE artifacts of target/debug (cargo names what the
+                           # tree needs; the rest goes). A fresh build is ~22 GB, but every
+                           # core edit leaves new copies of ~96 test binaries: one agent day
+                           # grew a worktree's target to 142 GB. finish.sh runs it; a
+                           # session runs it after every committed stage too
 ./scripts/windows-test.sh  # (make windows-test) the workspace tests for Windows under
                            # wine; the windows-latest CI job runs the same archive
 ```

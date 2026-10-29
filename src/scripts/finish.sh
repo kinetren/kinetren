@@ -14,7 +14,7 @@
 # set by the owner. An overrun is MARKED, but does not make the run
 # red: the rule “tests from the specs are not weakened” outranks the budget.
 #
-#   scripts/finish.sh            # debug build + checks + version + cleanup
+#   scripts/finish.sh            # debug build + checks + version + cleanup (stale artifacts too)
 #   scripts/finish.sh --release  # plus the release tarball in a container
 #   scripts/finish.sh --deep     # plus cleanup of intermediate objects
 set -euo pipefail
@@ -165,6 +165,10 @@ clean_targets() {
         # debug/ is not touched — otherwise the next edit waits for a full rebuild
         rm -rf target/release target/dist-container
     fi
+    # stale artifacts of earlier states of the tree (2026-10-30: one agent day grew a worktree's
+    # target to 142 GB against ~22 GB of a fresh build) — cargo names what this tree needs,
+    # the rest of debug/deps and debug/incremental goes; nothing the next run needs is touched
+    python3 scripts/target-prune.py || true
     du -sh target/debug target/release target/dist-container target/dist-out 2>/dev/null || true
 }
 stage "cleanup" clean_targets
