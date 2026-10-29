@@ -99,5 +99,10 @@ message, first line = the stage and what was done). Stage only this change's fil
 
 ## 5. Finish
 
-- [ ] 5.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version `vYY.MM.DD-hash` and the live screenshots here
+- [x] 5.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version `vYY.MM.DD-hash` and the live screenshots here
+  - The first run (kt26.10.29-90958215) was RED: t933 caught `nestlang.py`'s Russian test data (now
+    declared, with its reason) and the live run had flakes while the agent compiled alongside. The rerun:
+    **kt26.10.29-74895ad9**, green throughout — cargo, SIMD, every live scenario on the first try.
+    Screenshots: `target/live-out/nestlang/01-step-ru-collapsed.png`, `01-step-en-bin.png`,
+    `02-step-en-strip-head.png`, `03-step-en-crumbs.png`.
 - [ ] 5.2 After archiving: append to `openspec/specs/distribution/design.md` the "why" of D1 (catalog section, no generator) and D2 (Kotlin glob, the legacy type), and to `openspec/specs/ui-timeline/design.md` the "why" of D3 (recognised by text, no format flag) and D4
