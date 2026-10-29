@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use kt_plugin_api::{
-    Decl, Gpu, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin, RowDecl, Store, UiDecl,
-    VideoClass, VideoKernel,
+    Cooked, Decl, Gpu, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin, RowDecl, Store,
+    UiDecl, VideoClass, VideoKernel,
 };
 
 /// The plugins of this family, in the assembler's order.
@@ -44,6 +44,15 @@ impl Posterize {
     }
 }
 
+/// `n` levels per channel, RGB only.
+#[inline(always)]
+fn quantize(n: f64, v: &mut [f64; 4]) {
+    for c in v.iter_mut().take(3) {
+        let i = (*c * n / 256.0).floor().clamp(0.0, n - 1.0);
+        *c = i * 255.0 / (n - 1.0);
+    }
+}
+
 impl Default for Posterize {
     fn default() -> Posterize {
         Posterize::new()
@@ -60,13 +69,21 @@ impl Plugin for Posterize {
 }
 
 impl VideoKernel for Posterize {
+    /// `levels` clamped and cast once per frame (the variant held a `u32`).
+    fn cook(&self, p: &[f64]) -> Cooked {
+        [Posterize::levels(p) as f64, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    }
     /// Quantization PER CHANNEL (the standard — AE Posterize); alpha untouched.
-    fn tap(&self, p: &[f64], v: &mut [f64; 4]) {
-        let n = Posterize::levels(p) as f64;
-        for c in v.iter_mut().take(3) {
-            let i = (*c * n / 256.0).floor().clamp(0.0, n - 1.0);
-            *c = i * 255.0 / (n - 1.0);
-        }
+    fn tap(&self, k: &Cooked, v: &mut [f64; 4]) {
+        quantize(k[0], v);
+    }
+    /// The barrier loop with `n` taken through its `u32` range once per frame: the same value,
+    /// and the compiler knows `n - 1 >= 1` (the variant's `u32` field gave it that; without it the
+    /// loop was 6 % slower than the variant's, plugin-api-stage1 2.6). Inside the fused pass the
+    /// cooked value is read as is — there the per-sample cast cost 8 %.
+    fn frame(&self, k: &Cooked, rgba: &mut [u8]) {
+        let n = (k[0] as u32).clamp(2, 32) as f64;
+        kt_plugin_api::frame_with(rgba, |v| quantize(n, v));
     }
     fn gpu_params(&self, p: &[f64]) -> [f32; 7] {
         [Posterize::levels(p) as f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]

@@ -544,6 +544,8 @@ pub struct PluginTap {
     pub kernel: &'static dyn kt_plugin_api::VideoKernel,
     values: [f64; 8],
     n: usize,
+    /// `kernel.cook(values)`, once per plan (never per pixel)
+    cooked: kt_plugin_api::Cooked,
 }
 
 impl PluginTap {
@@ -559,7 +561,8 @@ impl PluginTap {
         let mut values = [0.0; 8];
         let n = slot.values.len().min(8);
         values[..n].copy_from_slice(&slot.values[..n]);
-        Some(PluginTap { id: &m.id, kernel, values, n })
+        let cooked = kernel.cook(&values[..n]);
+        Some(PluginTap { id: &m.id, kernel, values, n, cooked })
     }
 
     /// The values in passport order.
@@ -567,9 +570,14 @@ impl PluginTap {
         &self.values[..self.n]
     }
 
-    /// The function of one pixel (the CPU, both positions).
+    /// The function of one sample inside the fused pass (the CPU).
     pub fn apply(&self, v: &mut [f64; 4]) {
-        self.kernel.tap(self.values(), v);
+        self.kernel.tap(&self.cooked, v);
+    }
+
+    /// The whole frame at the barrier position: one dynamic call, the loop inside the kernel.
+    pub fn apply_frame(&self, rgba: &mut [u8]) {
+        self.kernel.frame(&self.cooked, rgba);
     }
 }
 

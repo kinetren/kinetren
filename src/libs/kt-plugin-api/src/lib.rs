@@ -922,11 +922,45 @@ impl ParamValues {
 /// `gpu_params` packs (a.x is the host's). kt-gpu pastes that one text into the fused pass's tap
 /// dispatch AND into a generated pass of its own, so the "two WGSL mirrors" are one text.
 pub trait VideoKernel: Send + Sync {
-    /// The function of one pixel; `p` — the values in passport order.
-    fn tap(&self, _p: &[f64], _rgba: &mut [f64; 4]) {}
+    /// The parameters prepared ONCE per frame for `tap` (clamped, cast, derived numbers), from the
+    /// values in passport order; the default — the values themselves (up to eight). The host calls
+    /// it when it builds the chain plan, never per pixel (plugin-api-stage1 2.6: re-deriving a
+    /// rounded parameter per pixel made Posterize 60 % slower than the variant it replaced).
+    fn cook(&self, p: &[f64]) -> Cooked {
+        let mut k = [0.0; 8];
+        let n = p.len().min(8);
+        k[..n].copy_from_slice(&p[..n]);
+        k
+    }
+    /// The function of one pixel over the cooked parameters (straight RGBA in 0..255).
+    fn tap(&self, _k: &Cooked, _rgba: &mut [f64; 4]) {}
+    /// A whole frame at the barrier position (straight RGBA8): each pixel through `tap`, rounded
+    /// and clamped per channel. The provided body is compiled per kernel type, so `tap` is a
+    /// static, inlinable call inside the loop and the host makes ONE dynamic call per frame;
+    /// a kernel overrides it only with the same bytes.
+    fn frame(&self, k: &Cooked, rgba: &mut [u8]) {
+        frame_with(rgba, |v| self.tap(k, v));
+    }
     /// The parameters as the GPU reads them: `a.yzw`, then `b.xyzw` (rounded to f32 ONCE here).
     fn gpu_params(&self, _p: &[f64]) -> [f32; 7] {
         [0.0; 7]
+    }
+}
+
+/// A video kernel's parameters prepared once per frame (`VideoKernel::cook`).
+pub type Cooked = [f64; 8];
+
+/// The barrier position's loop, the ONE text of it: each straight-RGBA8 pixel to f64, through `op`,
+/// rounded and clamped per channel — the bytes of kt-fx's point-wise barrier. A kernel that
+/// overrides `VideoKernel::frame` (to hoist a per-frame value) calls this, not a loop of its own.
+#[inline(always)]
+pub fn frame_with(rgba: &mut [u8], mut op: impl FnMut(&mut [f64; 4])) {
+    for px in rgba.chunks_exact_mut(4) {
+        let mut v = [px[0] as f64, px[1] as f64, px[2] as f64, px[3] as f64];
+        op(&mut v);
+        for (c, out) in v.iter().zip(px.iter_mut()) {
+            *out = c.round().clamp(0.0, 255.0) as u8;
+        }
     }
 }
 

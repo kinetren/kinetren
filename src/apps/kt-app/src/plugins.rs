@@ -39,8 +39,8 @@ pub mod test_tint {
     use std::sync::Arc;
 
     use kt_plugin_api::{
-        Decl, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin, Registry, RowDecl, Store,
-        UiDecl, VideoClass, VideoKernel,
+        Cooked, Decl, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin, Registry, RowDecl,
+        Store, UiDecl, VideoClass, VideoKernel,
     };
 
     pub const ID: &str = "test_tint";
@@ -93,8 +93,8 @@ pub mod test_tint {
 
     impl VideoKernel for TestTint {
         /// Pulls red toward 255 by `amount`.
-        fn tap(&self, p: &[f64], v: &mut [f64; 4]) {
-            let a = p.first().copied().unwrap_or(0.5).clamp(0.0, 1.0);
+        fn tap(&self, k: &Cooked, v: &mut [f64; 4]) {
+            let a = k[0].clamp(0.0, 1.0);
             v[0] += (255.0 - v[0]) * a;
         }
         fn gpu_params(&self, p: &[f64]) -> [f32; 7] {

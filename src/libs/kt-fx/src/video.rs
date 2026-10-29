@@ -335,7 +335,9 @@ pub fn apply_barrier(
         // a point-wise plugin at the barrier position: the same tap as inside the fused pass
         f @ FxInstance::Plugin(_) if crate::geom::PluginTap::of(f).is_some() => {
             let t = crate::geom::PluginTap::of(f).expect("checked");
-            pointwise_barrier(frame, |v, _| t.apply(v))
+            let mut frame = frame;
+            t.apply_frame(&mut frame.rgba);
+            frame
         }
         FxInstance::Vignette { strength, radius, softness } => {
             let (st, ra, so) = (

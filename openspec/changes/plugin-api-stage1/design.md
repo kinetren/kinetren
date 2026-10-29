@@ -249,7 +249,11 @@ change writes no wasm code.
 - [The hand-written serde of D3 drifts from today's derive output for a corner case (a `u8`
   written as `5.0`, a defaulted field reappearing)] → t973's frozen oracle covers every moved kind
   with default AND non-default values; a stage cannot be committed red.
-- [Dynamic dispatch on hot paths (per-pixel tap, per-block audio) costs speed] → taps are called
+- [Dynamic dispatch on hot paths (per-pixel tap, per-block audio) costs speed] → measured in
+  2.6: a dynamic `tap` per pixel made Posterize 63 % slower alone, so the video kernel got
+  `cook` (parameters once per plan) and `frame` (the barrier position as one dynamic call, its
+  provided body compiled per kernel; the loop text is `frame_with`); inside the fused pass the
+  per-sample `tap` stays dynamic and costs nothing measurable (−0.9 %). Taps are called
   per pixel only on the CPU reference path; the trait call is per frame or per block, the inner
   loop stays monomorphic inside the plugin; measured in stage 1 on release with `kt-cli probe --time`
   and the t322 timing, against the pre-move build. A slowdown over 3 % on the probe blocks the stage.

@@ -123,7 +123,29 @@ once (English message, first line = the stage and what was done).
     `"fxreg.cat.color"` (then a comment's own example) was one. The test plugin names the key by
     its constant (`i18n::key_name`); the rule is in kt-app's CLAUDE.md; the limit did not move.
     Workspace: green except t476 (load; green alone); kt-app + plugin crates + kt-cli 453/453.
-- [ ] 2.6 Speed check of the pilot on release: `cargo build --release -p kt-cli` and `kt-cli probe <fixture> 0 10 --time` before/after on a chain with Posterize; record here; over 3 % slower blocks the stage (design, Risks)
+- [x] 2.6 Speed check of the pilot on release: `cargo build --release -p kt-cli` and `kt-cli probe <fixture> 0 10 --time` before/after on a chain with Posterize; record here; over 3 % slower blocks the stage (design, Risks)
+  - Measured the CPU path, not `kt-cli probe --time`: the probe times the AUDIO render, and this
+    stage moves a video kernel only (no audio path changed; that measurement belongs to stage 3).
+    A scratch release test (`apply_video_chain`, 1920×1080, median of 15) on the pre-move tree
+    f21b4a1 (`FxInstance::Posterize { levels: 5 }`) and on this one (the plugin slot); the plans
+    are the same (`Bar0` / `Run0..3` / `Bar0, Bar1, Bar2`):
+    | chain | before | after 2.4 | after the fix |
+    |---|---|---|---|
+    | Posterize alone (barrier) | 22.2–22.6 ms | 36.4 ms (+63 %) | 22.3 ms (≈0 %) |
+    | Mirror, Posterize, Mirror (fused run) | 78.3 ms | 88.6 ms (+13 %) | 77.4–77.8 ms (−0.9 %) |
+    | Blur 2, Posterize, Blur 2 (barrier between) | 43.7 ms | 57.9 ms (+33 %) | 43.9 ms (+0.4 %) |
+    2.4 blocked the stage (design, Risks): a dynamic `tap` per pixel that re-derived the rounded
+    `levels` each call. The fix is the design's own rule — the trait call per frame, the inner loop
+    monomorphic inside the plugin: `VideoKernel::cook` prepares the parameters once per plan
+    (`PluginTap` keeps them), `VideoKernel::frame` is the barrier position as ONE dynamic call
+    (its provided body is compiled per kernel, so `tap` inlines), and `kt_plugin_api::frame_with`
+    is the one text of that loop (the bytes of kt-fx's `pointwise_barrier`). Posterize overrides
+    `frame` to take `n` through its `u32` range once per frame: the same value, and the compiler
+    again knows `n - 1 >= 1`, as the variant's `u32` field told it — without that the barrier loop
+    stayed 6 % slower; doing the same cast per sample in the fused pass cost 8 %, so `tap` reads
+    the cooked value as is. t328 goldens, t974, t329, t181, kt-fx/kt-gpu/kt-model/kt-engine/plugin
+    crates 612/612 green; kt-app + kt-cli 447/452 under an I/O pressure of 56–82 % (t815, t476,
+    t411, t952, t951 — all five green alone).
 - [ ] 2.7 Commit stage 2 (`cargo test --workspace`, `cargo clippy --all-targets` with no new warnings)
 
 ## 3. Audio FX
