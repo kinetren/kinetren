@@ -131,5 +131,8 @@ message, the first line = the stage and what was done). Stage only this change's
 
 ## 5. Finish
 
-- [ ] 5.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version `vYY.MM.DD-hash` and the live screenshots of 4.1 here
+- [x] 5.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version `vYY.MM.DD-hash` and the live screenshots of 4.1 here
+  - `./scripts/finish.sh` green: **kt26.10.29-ed1f2df9**. The live scenario `render` ran inside it
+    (8 screenshots `target/live-out/render/01-step-settings.png` … `08-step-closed.png`); `trans`
+    passed on the second try alone (a known load flake, not this change). Cost: 737 s (693 s live).
 - [ ] 5.2 After archiving: set F-EXP-005 to `done` with its frozen verdict and `CAPABILITY:`, and append the "why" (D1 events not state, D2 packet bytes, D3 clocks in the UI, D8 always ask, the owner's v1-level request) to `openspec/specs/export/design.md`
