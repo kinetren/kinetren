@@ -30,7 +30,20 @@ once (English message, first line = the stage and what was done).
 
 ## 2. API, registry, assembler, injection, the pilot (Posterize)
 
-- [ ] 2.1 Create `src/libs/kt-plugin-api` (deps: kt-time, serde): move the passport types and macros from `project.rs:499–6756`, re-export them from kt-model; add `Manifest`, `Decl`, `ParamValues`, the kernel traits and `Registry` with the D4 refusals. Write t972 in `src/libs/kt-plugin-api/tests/registry.rs` first and see it red, then green. t641, t190, t643 stay green
+- [x] 2.1 Create `src/libs/kt-plugin-api` (deps: kt-time, serde): move the passport types and macros from `project.rs:499–6756`, re-export them from kt-model; add `Manifest`, `Decl`, `ParamValues`, the kernel traits and `Registry` with the D4 refusals. Write t972 in `src/libs/kt-plugin-api/tests/registry.rs` first and see it red, then green. t641, t190, t643 stay green
+  - `src/libs/kt-plugin-api` (deps: kt-time, serde): the passport moved verbatim from `project.rs`
+    (FlagSpec, ParamScope, HasParams with its default value functions, text/choice specs,
+    ParamKind/Unit/Type/Value, ColorGroup, ParamName, ParamSpec; 737 lines) together with `MediaId`
+    (`ParamValue::Media` needs it); the four passport macros are `#[macro_export]` and name
+    everything through `$crate`. kt-model `pub use`s every name, so no caller changed. New: `Manifest`,
+    `Decl` (state, tail/look-ahead as `fn(&ParamValues) -> i64`, threads, video class, GPU side,
+    built-in), `Media`, `VideoClass`, `Gpu`, `ParamValues`, `Plugin`/`VideoKernel`, `Registry` with the
+    D4 refusals, `tail_frames`/`lookahead_frames` (the one home of each formula), and
+    `MIN_PREROLL_FRAMES` (kt-fx re-exports it — one home). t972 written first and red ("unresolved
+    imports"), then green. t641, t190, t643, t822 green (t822 is red only under `cargo test -p
+    kt-model` alone: `preserve_order` of serde_json is unified in from kt-otio — before this change
+    too). The disk filled during the run (310 of 325 GB): `target/win-container` and
+    `target/debug/incremental` of this worktree were removed (regenerable caches).
 - [ ] 2.2 Create `src/libs/kt-plugins-builtin` (`BUILTIN_IDS`, `builtin()`, the install-once slot) and the empty-but-registered family crate `src/plugins/fx-video-color`; add both to `src/Cargo.toml` members. Write t975 in `src/apps/kt-cli/tests/plugin_graph.rs` (manifest reading, no cargo invocation). Verify t975 green
 - [ ] 2.3 `FxInstance::Plugin` and `FxInstance::Missing` with the hand-written serde of D3; write t973 in `src/libs/kt-model/tests/plugin_format.rs` with the frozen pre-move serializer copied verbatim, then t973b in `src/libs/kt-engine/tests/plugin_missing.rs`. Verify both green on a project with every kind and with a missing id
 - [ ] 2.4 Move Posterize: CPU kernel and tap into `fx-video-color`, its WGSL tap into the same crate; `plan_chain` (`src/libs/kt-fx/src/plan.rs`) asks the manifest's class; `GpuFxEngine::new(ctx, &Registry)` assembles the tap dispatch of `geom_fused.wgsl` and the own pass (D5); kt-app/kt-cli inject `builtin()`. Write t974 in `src/libs/kt-gpu/tests/parity.rs`. Verify t974, t328, t329, t181 green and `GOLDEN_VIDEO` unchanged

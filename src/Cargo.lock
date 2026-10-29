@@ -2150,6 +2150,7 @@ name = "kt-fx"
 version = "0.1.0"
 dependencies = [
  "kt-model",
+ "kt-plugin-api",
  "kt-time",
  "realfft",
  "rubato",
@@ -2189,6 +2190,7 @@ dependencies = [
 name = "kt-model"
 version = "0.1.0"
 dependencies = [
+ "kt-plugin-api",
  "kt-time",
  "serde",
  "serde_json",
@@ -2206,6 +2208,14 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "kt-plugin-api"
+version = "0.1.0"
+dependencies = [
+ "kt-time",
+ "serde",
 ]
 
 [[package]]

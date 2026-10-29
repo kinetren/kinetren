@@ -7,6 +7,8 @@ publish.workspace = true
 
 [dependencies]
 kt-time = { workspace = true }
+# the parameter passport (plugin-api-stage1, D1)
+kt-plugin-api = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

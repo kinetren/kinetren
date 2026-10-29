@@ -7,6 +7,7 @@ members = [
     "libs/kt-time",
     "libs/kt-version",
     "libs/kt-dirs",
+    "libs/kt-plugin-api",
     "libs/kt-model",
     "libs/kt-otio",
     "libs/kt-ffmpeg",
@@ -27,6 +28,7 @@ publish = false
 kt-time = { path = "libs/kt-time" }
 kt-version = { path = "libs/kt-version" }
 kt-dirs = { path = "libs/kt-dirs" }
+kt-plugin-api = { path = "libs/kt-plugin-api" }
 kt-model = { path = "libs/kt-model" }
 kt-text = { path = "libs/kt-text" }
 kt-otio = { path = "libs/kt-otio" }

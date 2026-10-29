@@ -11,13 +11,14 @@
 //!   the buffers; a full reset — only reset() at a continuity break (e);
 //! - tail() reports the reverb tail — the graph extends the clip window (f).
 
-use kt_time::{AUDIO_CHANNELS, AUDIO_SAMPLE_RATE};
+use kt_time::AUDIO_CHANNELS;
 
 pub const CH: usize = AUDIO_CHANNELS;
 
 /// Pre-roll at a continuity break: max(tail, 100 ms) is rendered into garbage,
-/// so that the state (reverb, resampler) is warmed up deterministically.
-pub const MIN_PREROLL_FRAMES: i64 = (AUDIO_SAMPLE_RATE as i64) / 10;
+/// so that the state (reverb, resampler) is warmed up deterministically. Its one home is the
+/// plugin API (the registry refuses a look-ahead that reaches it — plugin-api-stage1, D4).
+pub use kt_plugin_api::MIN_PREROLL_FRAMES;
 
 /// The role of an access to the source. `Warmup` — the pre-roll after a seek: these frames
 /// are rendered into garbage and do not go to the output, so their cache miss is NOT an

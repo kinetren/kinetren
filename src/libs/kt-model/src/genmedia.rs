@@ -23,9 +23,8 @@ use kt_time::Tick;
 use serde::{Deserialize, Serialize};
 
 use crate::project::{
-    FlagSpec, HasParams, ParamCurve, ParamKind, ParamScope, ParamSpec, ParamUnit, ParamValue,
-    apply_curves, choice_spec, default_get_value, default_set_value, flags_for, fx_cast,
-    params_for, text_spec,
+    FlagSpec, HasParams, ParamCurve, ParamScope, ParamSpec, ParamValue, apply_curves, choice_spec,
+    default_get_value, default_set_value, flags_for, params_for, text_spec,
 };
 
 /// A generator kind with parameters. The serde representation (internally tagged

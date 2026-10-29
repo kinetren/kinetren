@@ -1,0 +1,12 @@
+[package]
+name = "kt-plugin-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# LOW on purpose (plugin-api-stage1, design D1): kt-time and serde only — a plugin crate must not
+# depend on kt-model, or an edit of one effect would cascade through the core again
+[dependencies]
+kt-time = { workspace = true }
+serde = { workspace = true }
