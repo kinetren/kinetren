@@ -21,7 +21,8 @@ at once (English message, first line = the stage and what was done).
 ## 2. After `plugin-api-stage1`
 
 - [ ] 2.1 Switch t978 from `FxInstance::all()` / `TransitionKind::ALL` / `GeneratorKind` to the assembler's closed list plus the core-owned kinds; verify t978 green and that a plugin registered through the test door is NOT required in the note
-- [ ] 2.2 Open the change for W1 ("Lens and camera") with `/opsx:propose`, starting from D2's W1 block; its reconnaissance is a live re-check of the lens group (F-FX-007 rows marked `[NOT VERIFIED]`). Verify the new change validates and t979/t982 still pass
+- [x] 2.2 Open the change for W1 ("Lens and camera") with `/opsx:propose`, starting from D2's W1 block; its reconnaissance is a live re-check of the lens group (F-FX-007 rows marked `[NOT VERIFIED]`). Verify the new change validates and t979/t982 still pass
+  - Note: the change is `fx-lens-and-camera` (t992–t997 reserved; the highest number on any local branch was t991). Its live re-check is the new note F-FX-008 (`docs/features/fx/stylize/lens-housing-dirt-drops-flare.md`, README 8 / 8): CapCut's fisheye has intensity and colour only, flare and camera moves are templates; Premiere's flare centre is placed and keyed by hand; dirt in engines multiplies the bloom (Unity Dirtiness); drops are refraction offsets (MotoGP write-up, AE displacement recipes). Resolve's light effects stay `[NOT VERIFIED]` (the manual mirror answers 403). F-FX-007's lens row now cites it (src 8). Two corrections to D2's W1 block: dirt and flare go to `fx-video-stylize` beside `glow` (a family cannot borrow another family's threshold code), and "Punch in" is already a factory preset. The wave's code waits for the three plugin API contracts `plugin-api-stage1` task 4.1 records (a positioned tap, geometry primitives in the API, a barrier pass); its stage 1 (presets) does not
 
 ## 3. Finish
 

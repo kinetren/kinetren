@@ -73,7 +73,7 @@ that was opened live (`(src N)`) or carries `[NOT VERIFIED]`; the guard t980 che
 | Group | What the market offers | What we have | Verdict |
 |---|---|---|---|
 | Text animations | CapCut: In / Out / Loop preset slots (typewriter, fade, bounce, glitch, wave…) (src 3); FCP/Resolve: title templates with published parameters | 5 title modes as curve presets (`TextAnim`: none, typewriter, fade, ticker…, F-TXT-006); public parameters of compositions (F-TL-012) | wave W3 |
-| Lens: fisheye corners, flares, dirt, drops | CapCut: lens flare sold as transitions and overlays; AE: Lens Flare, Optics Compensation; Resolve: Lens Flare, Lens Reflections, Aperture Diffraction `[NOT VERIFIED]` | `lens_distort` only; no housing/corner mask, no flare, no dirt, no drops (the owner's ktprompts item FX 1) | wave W1 |
+| Lens: fisheye corners, flares, dirt, drops | CapCut: lens flare sold as templates and overlays, a fisheye effect without a housing control (src 8); AE: Lens Flare, Optics Compensation; Resolve: Lens Flare, Lens Reflections, Aperture Diffraction `[NOT VERIFIED]` | `lens_distort` only; no housing/corner mask, no flare, no dirt, no drops (the owner's ktprompts item FX 1) | wave W1 |
 | Glitch | CapCut: RGB Split, digital glitch, VHS tabs (src 1); Resolve: Glitch, Analog Damage `[NOT VERIFIED]` | `chromatic_aberration`, `vhs`, `noise`; transition `glitch` | wave W2 |
 | Light leaks / flashes as an effect | CapCut: light-leak overlays and flash transitions `[NOT VERIFIED]` | transitions `light_leaks`, `film_burn`, `flash`; nothing as an effect on one clip | wave W2 |
 | Retro / film | CapCut: Movie Grain, Retro tab (src 1); Resolve: Film Look Creator, Film Damage `[NOT VERIFIED]` | `noise` (grain), `halftone`, `duotone` (sepia preset), `posterize`, `vhs`; no scratches, dust, gate weave, halation | wave W2 |
@@ -270,6 +270,8 @@ ktprompts CORE item), physics for letters (F-FX-005).
    dirt/drops/flares, letters as physical objects, "67 niche plugins" video, jag edit, homothety,
    bump mapping, buffer + blend levels, audio-driven zoom) — read 2026-10-28; the videos themselves were
    not watched `[NOT VERIFIED]`
+8. `docs/features/fx/stylize/lens-housing-dirt-drops-flare.md` (F-FX-008) — the live re-check of the
+   lens group made when wave W1 opened (2026-10-30)
 
-No live check of any program was made; the Premiere, After Effects and Resolve counts are marked
+No live check of any program was made before W1's re-check (src 8); the Premiere, After Effects and Resolve counts are marked
 `[NOT VERIFIED]` for the reasons recorded in `_editors.md`.

@@ -56,8 +56,9 @@ Classes: G = geo (closed primitives), P = point-wise (tap), B = barrier (own pas
 preset over an existing kind (no new kernel), A = audio node. Families are `plugin-api-stage1` D6
 crates.
 
-**W1 — Lens and camera** (`src/plugins/fx-video-distort`, `src/plugins/fx-video-color`;
-capability `video-fx`; depends on F-FX-002, F-FX-001):
+**W1 — Lens and camera** (`src/plugins/fx-video-distort`, `src/plugins/fx-video-color`,
+`src/plugins/fx-video-stylize`; capability `video-fx`; depends on F-FX-002, F-FX-001, F-FX-008;
+opened as the change fx-lens-and-camera):
 - `lens_housing` (P): the dark circular housing and soft corners of a fisheye, measured in the
   coordinates of its own stage like `vignette`; pairs with `lens_distort` in a factory preset
   "Fisheye lens".
@@ -70,7 +71,9 @@ capability `video-fx`; depends on F-FX-002, F-FX-001):
 - `lens_flare` (B): ghosts along the line through a light position and the frame centre; the
   position is a parameter (animatable), not detected.
 - Camera shake and zoom punch (V): factory chain presets on `geometry` curves with zigzag segments
-  and eased keys ("Zoom Shake", "Punch In", "Handheld").
+  and eased keys ("Zoom Shake", "Handheld"; "Punch in" is already a factory preset).
+- (The live re-check of 2026-10-30, F-FX-008, moved `lens_dirt` and `lens_flare` next to `glow` in
+  `fx-video-stylize`: a family crate cannot borrow another family's threshold code.)
 
 **W2 — Glitch, film and soft looks** (`src/plugins/fx-video-stylize`, `src/plugins/fx-video-blur`;
 `video-fx`; depends on F-FX-003, F-CLR-007):
