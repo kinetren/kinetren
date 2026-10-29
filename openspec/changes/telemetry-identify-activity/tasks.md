@@ -35,10 +35,14 @@
 
 ## 4. Texts: bell only, spoiler, calm
 
-- [ ] 4.1 `Notice.details` + a collapsed "Details" header in the notices window; first start posts summary + details to the bell only (no `status`); View hint = summary + not-sent (D10); verify t840 (with the updated PATH), t885, t843
-- [ ] 4.2 Catalog keys in all five `src/apps/kt-app/i18n/*.toml` (calm wording, ≤ 160 chars, Arabic punctuation), `headline` removed; `python3 scripts/subset-fonts.py`; verify `font_tests.rs`, `i18n_tests.rs`
-- [ ] 4.3 README "Privacy": one friendly paragraph, the lists in `<details>`, still saying what is NOT sent; verify `python3 src/scripts/readme-check.py --check`
-- [ ] 4.4 Commit stage 4
+- [x] 4.1 `Notice.details` + a collapsed "Details" header in the notices window; first start posts summary + details to the bell only (no `status`); View hint = summary + not-sent (D10); verify t840 (with the updated PATH), t885, t843
+  - `push_notice_with(.., details)`; the notices window draws a `CollapsingHeader` (`win.details`, closed by default, probe `notices.details` for the live scenario). The first start no longer writes `self.status`. Red proofs: `default_open(true)` turns t840 red ("collapsed at first"); treating a stored `on` as a first start turns t885 red. t843 green (the details part is not dumped).
+- [x] 4.2 Catalog keys in all five `src/apps/kt-app/i18n/*.toml` (calm wording, ≤ 160 chars, Arabic punctuation), `headline` removed; `python3 scripts/subset-fonts.py`; verify `font_tests.rs`, `i18n_tests.rs`
+  - `telemetry.summary`, `sent`, `where` (new: PostHog, EU, random number), `not_sent`, `how_off` (now the environment switch only — the View item is in the summary); the collapse title is the general `win.details` rather than `telemetry.details_title`, since the collapsible notice is a general facility. All ≤ 160, Arabic with `،`. `subset-fonts.py` regenerated the SC subset (778 codepoints). font/i18n tests green.
+- [x] 4.3 README "Privacy": one friendly paragraph, the lists in `<details>`, still saying what is NOT sent; verify `python3 src/scripts/readme-check.py --check`
+  - One paragraph (what it is for, not tied to you, one click off, said once in the bell), lists under `<details>`; "NOT sent" now also names the error-message text. readme-check green.
+- [x] 4.4 Commit stage 4
+  - `cargo test -p kt-app`: t804 red until 5.2 (the spec's `telemetry.py` and the new `notices.details` place), t799 red on the base (ffmpeg-9 change); t801 passed on a rerun (load).
 
 ## 5. Local PostHog stand-in, verify and finish
 

@@ -4669,9 +4669,10 @@ fn t832_project_of_the_former_name_comes_in_through_the_import_door() {
     assert_eq!(std::fs::read(&old).unwrap(), before, "the import touched the source");
 }
 
-/// Test 840 (telemetry-posthog): the first-start notice lists what is sent and what is NOT
-/// sent, is said once, and the switch is reachable in View next to Language; unchecking it
-/// is remembered and cancels the session's `app_closed`.
+/// Test 840 (telemetry-posthog, telemetry-identify-activity): the first-start entry lives in
+/// the bell only — one calm line naming the View item, the lists under a collapsed "Details" —
+/// is said once, and the switch is reachable in View next to Language; unchecking it is
+/// remembered and cancels the session's `app_closed`.
 #[test]
 fn t840_telemetry_notice_once_and_switch_in_view() {
     use crate::i18n::{Lang, k, set_lang, tr};
@@ -4680,28 +4681,32 @@ fn t840_telemetry_notice_once_and_switch_in_view() {
     use egui_kittest::kittest::Queryable;
     use std::sync::Arc;
 
-    // every catalog: the notice holds both lists and names the real menu item
+    // every catalog: the summary names the real menu item, the details hold both lists, the
+    // hint carries the summary and what is NOT sent
     for lang in Lang::ALL {
         set_lang(lang);
-        let notice = crate::telemetry::notice_text();
+        let summary = crate::telemetry::notice_text();
+        let details = crate::telemetry::notice_details();
         let hint = crate::telemetry::hint_text(None);
         for part in [tr(k::telemetry::SENT), tr(k::telemetry::NOT_SENT)] {
-            assert!(notice.contains(part) && hint.contains(part), "{lang:?}: {part}");
+            assert!(details.contains(part), "{lang:?}: {part}");
         }
-        let off = tr(k::telemetry::HOW_OFF);
+        assert!(hint.contains(&summary) && hint.contains(tr(k::telemetry::NOT_SENT)), "{lang:?}");
         // Arabic catalog strings come back in display order (words reordered, i18n::bidi):
         // there the item is named when each of its words is present
         let word = |w: &str| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
         let names = |s: &str| {
-            off.contains(s)
-                || s.split_whitespace().all(|w| off.split_whitespace().any(|o| word(o) == word(w)))
+            summary.contains(s)
+                || s.split_whitespace()
+                    .all(|w| summary.split_whitespace().any(|o| word(o) == word(w)))
         };
         assert!(
             names(tr(k::menu::view::TITLE)) && names(tr(k::telemetry::CHECKBOX)),
-            "{lang:?}: the notice must name View and the checkbox: {off}"
+            "{lang:?}: the entry must name View and the checkbox: {summary}"
         );
     }
 
+    set_lang(Lang::En);
     let rec = Recording::default();
     let consent = resolve_consent(Some("phc_test"), &EnvView::default(), None);
     assert!(consent.first_start);
@@ -4716,7 +4721,27 @@ fn t840_telemetry_notice_once_and_switch_in_view() {
     let said = |h: &egui_kittest::Harness<'_, crate::app::KtApp>| {
         h.state().notices.iter().filter(|n| n.text == crate::telemetry::notice_text()).count()
     };
-    assert_eq!(said(&h), 1, "the notice is said exactly once");
+    assert_eq!(said(&h), 1, "the entry is said exactly once");
+    let entry = h.state().notices.iter().find(|n| n.text == crate::telemetry::notice_text());
+    assert_eq!(entry.and_then(|n| n.details.clone()), Some(crate::telemetry::notice_details()));
+    let status = h.state().status.as_ref().map(|s| s.0.clone()).unwrap_or_default();
+    assert!(!status.contains("PostHog") && !status.contains(&crate::telemetry::notice_text()), "{status}");
+    assert!(!h.state().notices_open, "nothing pops up");
+
+    // the bell: one calm line, "Details" collapsed; a click opens the lists
+    h.get_by_label(&format!("{} 1", crate::icons::BELL)).click();
+    h.step();
+    h.step();
+    assert!(h.state().notices_open);
+    assert!(h.query_by_label(&crate::telemetry::notice_text()).is_some(), "the calm line");
+    assert!(h.query_by_label_contains(tr(k::telemetry::SENT)).is_none(), "collapsed at first");
+    h.get_by_label(tr(k::win::DETAILS)).click();
+    h.step();
+    h.step();
+    assert!(h.query_by_label_contains(tr(k::telemetry::SENT)).is_some(), "the lists under Details");
+    assert!(h.query_by_label_contains(tr(k::telemetry::NOT_SENT)).is_some());
+    h.state_mut().notices_open = false;
+    h.step();
 
     h.get_by_label(tr(k::menu::view::TITLE)).click();
     h.step();
@@ -4740,11 +4765,11 @@ fn t840_telemetry_notice_once_and_switch_in_view() {
         rec.events().iter().map(|e| e["event"].as_str().unwrap_or("").to_string()).collect();
     assert_eq!(events, ["app_started"], "switched off mid-session: no app_closed");
 
-    // the restart with the stored choice: no second notice, nothing sent
+    // the restart with the stored choice: no second entry, nothing sent
     let consent = resolve_consent(Some("phc_test"), &EnvView::default(), t.stored_value());
     assert!(!consent.first_start && !consent.on());
     let t2 = Telemetry::new(consent, new_uuid(), Box::new(Recording::default()));
-    assert!(!t2.take_notice(), "the notice is not said again");
+    assert!(!t2.take_notice(), "the entry is not said again");
 
     // File → New/Open rebuild KtApp in place: every constructor takes the process telemetry,
     // so a new document never sends a second app_started
@@ -4752,6 +4777,35 @@ fn t840_telemetry_notice_once_and_switch_in_view() {
     let ctors = src.matches("            lang_choice: None,\n").count();
     assert!(ctors >= 2);
     assert_eq!(src.matches("            telemetry: crate::telemetry::global(),\n").count(), ctors);
+}
+
+/// Test 885 (telemetry-identify-activity): who saw the old list is not told again — a stored
+/// `on` from the previous version means "seen" — and the events carry the new properties.
+#[test]
+fn t885_seen_list_is_not_told_again() {
+    use crate::telemetry::testing::Recording;
+    use crate::telemetry::{EnvView, Telemetry, new_uuid, resolve_consent};
+    use std::sync::Arc;
+
+    let rec = Recording::default();
+    let consent = resolve_consent(Some("phc_test"), &EnvView::default(), Some("on"));
+    let t =
+        Arc::new(Telemetry::new(consent, new_uuid(), Box::new(rec.clone())).with_key("phc_test"));
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().telemetry = Some(t.clone());
+    let _bound = crate::telemetry::testing::bind(t.clone());
+    for _ in 0..4 {
+        h.step();
+    }
+    let entries = h.state().notices.iter().filter(|n| n.text == crate::telemetry::notice_text());
+    assert_eq!(entries.count(), 0, "no entry for whoever already chose");
+    assert_eq!(h.state().notices_unread, 0, "the bell stays quiet");
+    eframe::App::on_exit(h.state_mut());
+    let ev = rec.events();
+    let names: Vec<&str> = ev.iter().map(|e| e["event"].as_str().unwrap_or("")).collect();
+    assert_eq!(names, ["app_started", "app_closed"]);
+    assert!(ev[0]["properties"]["$set"].is_object(), "the start identifies: {}", ev[0]);
+    assert!(ev[1]["properties"]["$app_build"].is_string());
 }
 
 /// t850 (windows-build, ui-reach): from the “FFmpeg not found” window to playing media,

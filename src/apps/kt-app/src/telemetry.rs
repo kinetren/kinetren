@@ -1559,27 +1559,32 @@ pub fn global() -> Option<Arc<Telemetry>> {
     GLOBAL.get().cloned()
 }
 
-/// What is sent and what is NOT sent — one catalog entry per list, shared by the notice and
-/// the checkbox hint, so the two cannot disagree (Audacity lesson, F-COL-046).
-pub fn lists_text(sep: &str) -> String {
-    use crate::i18n::{k, tr};
-    format!("{}{sep}{}", tr(k::telemetry::SENT), tr(k::telemetry::NOT_SENT))
-}
-
-/// The first-start notice: headline, both lists, and where it is switched off (rule 19).
+/// The bell entry's one calm line: anonymous statistics help, and where they are switched off
+/// (rule 19). The rest waits under the entry's collapsed "Details" (owner, 2026-10-28: the bell
+/// only, nothing that frightens).
 pub fn notice_text() -> String {
     use crate::i18n::{k, tr};
-    format!("{}\n{}\n{}", tr(k::telemetry::HEADLINE), lists_text("\n"), tr(k::telemetry::HOW_OFF))
+    tr(k::telemetry::SUMMARY).to_string()
 }
 
-/// The checkbox hint (one status-bar line): why it is disabled, if it is, then both lists.
+/// Under "Details": what is sent in plain words, where it goes, what is NOT sent, and the
+/// environment switch. The same catalog entries the README's lists are written from.
+pub fn notice_details() -> String {
+    use crate::i18n::{k, tr};
+    [k::telemetry::SENT, k::telemetry::WHERE, k::telemetry::NOT_SENT, k::telemetry::HOW_OFF]
+        .map(tr)
+        .join("\n")
+}
+
+/// The checkbox hint (one status-bar line): why it is disabled, if it is, then the summary and
+/// what is NOT sent — the two the person must not have to look for.
 pub fn hint_text(block: Option<Block>) -> String {
     use crate::i18n::{k, tr};
-    let lists = lists_text(" ");
+    let text = format!("{} {}", tr(k::telemetry::SUMMARY), tr(k::telemetry::NOT_SENT));
     match block {
-        None => lists,
-        Some(Block::NoKey) => format!("{} {lists}", tr(k::telemetry::NO_KEY)),
-        Some(Block::Env) => format!("{} {lists}", tr(k::telemetry::ENV_OFF)),
+        None => text,
+        Some(Block::NoKey) => format!("{} {text}", tr(k::telemetry::NO_KEY)),
+        Some(Block::Env) => format!("{} {text}", tr(k::telemetry::ENV_OFF)),
     }
 }
 
@@ -2107,7 +2112,6 @@ mod tests {
             "telemetry::global()",
             "telemetry::notice_",
             "telemetry::hint_text(",
-            "telemetry::lists_text(",
             "telemetry::Telemetry>",
             "telemetry::Telemetry::for_process(",
             "telemetry::STORAGE_KEY",

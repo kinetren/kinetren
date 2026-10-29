@@ -72,6 +72,9 @@ pub struct Notice {
     pub text: String,
     /// How many times in a row this same message came (shown as “×N”).
     pub repeats: u32,
+    /// More text under a collapsed "Details" (the telemetry entry): the line stays calm and
+    /// short, the rest is one click away.
+    pub details: Option<String>,
 }
 
 /// The result of the background reopening: media, a name for the message and the source
@@ -1482,9 +1485,10 @@ impl KtApp {
         // it lists what is sent and what is NOT sent and says where it is switched off (rule 19).
         let playing = self.player.transport.is_playing();
         crate::telemetry::signal(crate::telemetry::Signal::Frame { ctx: ui.ctx(), playing });
+        // The bell only: no status-line headline, no window (owner, 2026-10-28).
         if self.telemetry.as_ref().is_some_and(|t| t.take_notice()) {
-            self.push_notice(Severity::Info, crate::telemetry::notice_text());
-            self.status = Some((tr(k::telemetry::HEADLINE).to_string(), std::time::Instant::now()));
+            let details = Some(crate::telemetry::notice_details());
+            self.push_notice_with(Severity::Info, crate::telemetry::notice_text(), details);
         }
         // The daily new-version check (update-check): started once per process on the first
         // frame; the answer comes back from its thread with ONE repaint. A newer release is one
@@ -2100,7 +2104,7 @@ impl KtApp {
                     if self.notices.is_empty() {
                         ui.weak(tr(k::win::NOTICES_EMPTY));
                     }
-                    for n in self.notices.iter().rev() {
+                    for (i, n) in self.notices.iter().enumerate().rev() {
                         let col = match n.severity {
                             Severity::Warn => egui::Color32::from_rgb(255, 190, 120),
                             Severity::Info => egui::Color32::from_gray(200),
@@ -2112,6 +2116,14 @@ impl KtApp {
                                 ui.weak(format!("×{}", n.repeats));
                             }
                         });
+                        // the rest of a long notice — collapsed until asked for
+                        if let Some(d) = &n.details {
+                            let r = egui::CollapsingHeader::new(tr(k::win::DETAILS))
+                                .id_salt(("kt_notice_details", i, &n.at))
+                                .default_open(false)
+                                .show(ui, |ui| ui.label(d));
+                            crate::widgets::field_probe::note("notices.details", r.header_response.rect);
+                        }
                     }
                 });
             self.notices_open = open;
@@ -3806,6 +3818,10 @@ impl KtApp {
     }
 
     fn push_notice(&mut self, severity: Severity, text: String) {
+        self.push_notice_with(severity, text, None);
+    }
+
+    fn push_notice_with(&mut self, severity: Severity, text: String, details: Option<String>) {
         let at = chrono_like_now();
         // Consecutive duplicates collapse into “text ×N”, but the counter of
         // unread items ALWAYS grows (R.49, item 350): earlier the early return
@@ -3821,7 +3837,7 @@ impl KtApp {
             self.notices_unread += 1;
             return;
         }
-        self.notices.push_back(Notice { at, severity, text, repeats: 1 });
+        self.notices.push_back(Notice { at, severity, text, repeats: 1, details });
         if self.notices.len() > 200 {
             self.notices.pop_front();
         }
