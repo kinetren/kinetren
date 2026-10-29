@@ -19,10 +19,14 @@
 
 ## 2. Fix without moving a byte (design D2)
 
-- [ ] 2.1 The fix of the named cause. For H1: one buffer per reverb with alias-free line offsets. For H3: flush on write, ONLY if t973c and `GOLDEN_AUDIO` stay. For H2: no code; the finding goes into `openspec/specs/audio-render/design.md`. Verify t11, t973c and t6 green
-- [ ] 2.2 t991 (`src/libs/kt-engine/tests/cost.rs`): the proxy assertion of D3 for the named cause. Write it first and see it red on the unfixed code, then green
-- [ ] 2.3 Re-measure 1.1 (one mode over 20 runs), the 18-kind chain and t293's cost bound; record here
-- [ ] 2.4 kt-fx's `CLAUDE.md`: the code rule if the cause was in the code (for example, "a reverb's lines live in one buffer at alias-free offsets"); commit
+- [x] 2.1 The fix of the named cause. For H1: one buffer per reverb with alias-free line offsets. For H3: flush on write, ONLY if t973c and `GOLDEN_AUDIO` stay. For H2: no code; the finding goes into `openspec/specs/audio-render/design.md`. Verify t11, t973c and t6 green
+  - The named cause was none of these: `SyntheticSource::read_audio_burst` matches the pattern once per burst, each arm fills it with its own loop over the same per-sample functions `sample_at` uses. t11, t973c, t6 green, no golden edited; the reverb is untouched
+- [x] 2.2 t991 (`src/libs/kt-engine/tests/cost.rs`): the proxy assertion of D3 for the named cause. Write it first and see it red on the unfixed code, then green
+  - A `Clicks` source with 6.77e-310 in its unused bytes against the same with clean bytes, 2000 bursts, interleaved best of 5: same bytes, cost < 2×. Unfixed: 126.9 vs 18.6 ms (release), 154.2 vs 28.0 ms (dev) — red; fixed: green
+- [x] 2.3 Re-measure 1.1 (one mode over 20 runs), the 18-kind chain and t293's cost bound; record here
+  - t991_bench, 20 process runs: clean 52.3–54.4 ms, dirty 52.2–54.6 ms — one mode (was 104 / 415). The stage-3 harness, 5 runs: slowed_reverb 51.5–52.3 ms (first run 63.6 under load), the 18-kind chain 266.1–267.0 ms (was 627–687); every kind dropped by the stimulus' share (gain 6.0 → 2.4, delay 92 → 51, limiter 90 → 7, pitch_shift 156 → 74 ms). t293 (and t292/t294/t295/t710) green
+- [x] 2.4 kt-fx's `CLAUDE.md`: the code rule if the cause was in the code (for example, "a reverb's lines live in one buffer at alias-free offsets"); commit
+  - The cause was in kt-media, so the rule went into kt-media's `CLAUDE.md`: a burst dispatches on its pattern once, not per sample
 
 ## 3. Finish
 
