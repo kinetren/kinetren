@@ -5671,3 +5671,203 @@ fn t929_three_ways_to_a_region_over_an_event_are_one() {
     set_lang(Lang::Ru);
     assert!(problems.is_empty(), "the triple click is not promised: {}", problems.join("; "));
 }
+
+/// The FFmpeg window with the Windows rules forced, its download root and choice file in the
+/// test's own folder, **Open folder** recorded instead of run, and `urls` as the mirrors
+/// (ffmpeg-download-window-info, D6). `sha`/`size` describe the archive they serve.
+fn ffmpeg_window(
+    tag: &str,
+    urls: Vec<String>,
+    sha: String,
+    size: Option<u64>,
+) -> (egui_kittest::Harness<'static, crate::app::KtApp>, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("kt-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = crate::layout_tests::harness();
+    {
+        let ui = &mut h.state_mut().ffmpeg_ui;
+        ui.os = kt_ffmpeg::search::Os::Windows;
+        ui.download_root = dir.join("ffmpeg");
+        ui.choice_file = dir.join("choice.txt");
+        ui.test_open = Some(Vec::new());
+        ui.source = crate::ffmpeg_setup::DownloadSource {
+            urls,
+            sha256: sha,
+            version: crate::ffmpeg_setup::PINNED_VERSION.into(),
+            size,
+            archive: crate::ffmpeg_setup::PINNED_ARCHIVE.into(),
+        };
+        ui.open = true;
+    }
+    h.step();
+    h.step();
+    (h, dir)
+}
+
+/// Step the window until the download job ends (a deadline, not a count), collecting what it
+/// showed on the way.
+fn run_download(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>) -> Vec<String> {
+    let mut seen = Vec::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        h.step();
+        seen.extend(crate::layout_tests::shown_texts(h));
+        if h.state().ffmpeg_ui.job.is_none() {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the download did not end");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.step();
+    seen
+}
+
+/// Test 950 (ffmpeg-download-window-info, D7): BEFORE the click the window says what Download
+/// will do — the archive, its size, the host and the mirror, the start of the checksum, where it
+/// goes and how to undo it — with **Download** and **Open folder** in the actions row.
+#[test]
+fn t950_ffmpeg_window_says_what_download_does() {
+    use crate::ffmpeg_setup::{PINNED_ARCHIVE, PINNED_SHA256, PINNED_SIZE, PINNED_URLS, PINNED_VERSION};
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    let urls: Vec<String> = PINNED_URLS.iter().map(|u| u.to_string()).collect();
+    let (mut h, dir) = ffmpeg_window("t950", urls, PINNED_SHA256.into(), Some(PINNED_SIZE));
+    let dest = dir.join("ffmpeg").join(PINNED_VERSION);
+    let want = crate::tf!(
+        k::ffmpeg::WHAT_HAPPENS,
+        PINNED_ARCHIVE,
+        PINNED_SIZE.div_ceil(1024 * 1024),
+        "www.gyan.dev",
+        "github.com",
+        crate::ffmpeg_setup::short_hash(PINNED_SHA256)
+    );
+    let place = crate::tf!(k::ffmpeg::WHAT_HAPPENS_WHERE, dest.display());
+    let shown = crate::layout_tests::shown_texts(&h);
+    for w in [&want, &place] {
+        assert!(shown.iter().any(|t| t == w), "the “what happens” block is not shown:\n{w}\n{shown:?}");
+    }
+    assert!(want.contains("4d2060a8b34a940a…") && want.contains("(57 "), "{want}");
+    assert!(h.query_by_label(&crate::tf!(k::ffmpeg::DOWNLOAD, PINNED_VERSION)).is_some(), "no Download");
+    assert!(h.query_by_label(tr(k::ffmpeg::OPEN_FOLDER)).is_some(), "no Open folder");
+    // at rest no job runs, so the window adds no 100 ms cadence of its own (invariant 12; the
+    // program's 250 ms idle tick is t20's)
+    assert!(h.state().ffmpeg_ui.job.is_none(), "a job runs at rest");
+    // Open folder before any download: the download root, created so it can be shown
+    h.get_by_label(tr(k::ffmpeg::OPEN_FOLDER)).click();
+    h.step();
+    h.step();
+    assert_eq!(h.state().ffmpeg_ui.test_open.as_deref(), Some(&[dir.join("ffmpeg")][..]));
+    assert!(dir.join("ffmpeg").is_dir(), "the root was not created");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 951 (ffmpeg-download-window-info, D1/D2): WHILE downloading, the window names the mirror
+/// in use and its number, the bytes with speed and time left, and under "Tried:" the mirror that
+/// failed with its reason; **Cancel** stands where **Download** was. The phase texts come from the
+/// same `progress_text`.
+#[test]
+fn t951_ffmpeg_window_tells_the_download_as_it_goes() {
+    use crate::ffmpeg_setup::tests::{make_archive, serve, serve_status, sha};
+    use crate::ffmpeg_setup::{DownloadProgress, Phase, progress_text};
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    let tmp = std::env::temp_dir().join(format!("kt-t951a-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let bytes = make_archive(&tmp.join("a.7z"));
+    let urls = vec![serve_status("404 Not Found"), serve(bytes.clone(), 0, true)];
+    let (mut h, dir) = ffmpeg_window("t951", urls, sha(&bytes), Some(bytes.len() as u64));
+    h.get_by_label(&crate::tf!(k::ffmpeg::DOWNLOAD, crate::ffmpeg_setup::PINNED_VERSION)).click();
+    h.step();
+    let mut saw_cancel = false;
+    let mut seen = Vec::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while h.state().ffmpeg_ui.job.is_some() {
+        assert!(std::time::Instant::now() < deadline, "the download did not end");
+        h.step();
+        saw_cancel |= h.query_by_label(tr(k::ffmpeg::CANCEL)).is_some();
+        seen.extend(crate::layout_tests::shown_texts(&h));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let has = |s: &str| seen.iter().any(|t| t.contains(s));
+    assert!(saw_cancel, "Cancel was not shown while downloading");
+    assert!(has(&crate::tf!(k::ffmpeg::MIRROR, "127.0.0.1", 2, 2)), "the mirror line is missing");
+    assert!(has(tr(k::ffmpeg::TRIED)) && has("404"), "the failed mirror is not listed with its 404");
+    let mb_line = crate::tf!(k::ffmpeg::PROGRESS, 0, 1);
+    assert!(has(&mb_line), "the bytes line “{mb_line}” is missing");
+    // the phase texts of the same function (the phases pass faster than a frame here)
+    let p = |phase, unpacked, to_unpack| DownloadProgress { phase, unpacked, to_unpack, ..Default::default() };
+    assert_eq!(progress_text(&p(Phase::Verifying, 0, 0), None).1, tr(k::ffmpeg::VERIFYING));
+    assert_eq!(progress_text(&p(Phase::Unpacking, 2, 3), None).1, crate::tf!(k::ffmpeg::UNPACKING, 2, 3));
+    let receiving = DownloadProgress {
+        phase: Phase::Receiving,
+        done: 12 * 1024 * 1024,
+        announced: Some(57 * 1024 * 1024),
+        ..Default::default()
+    };
+    let text = progress_text(&receiving, Some(4.0 * 1024.0 * 1024.0)).1;
+    assert_eq!(
+        text,
+        format!(
+            "{} · {} · {}",
+            crate::tf!(k::ffmpeg::PROGRESS, 12, 57),
+            crate::tf!(k::ffmpeg::SPEED, "4.0"),
+            crate::tf!(k::ffmpeg::LEFT_SECS, 11)
+        )
+    );
+    let stalled = progress_text(&receiving, None).1;
+    assert_eq!(stalled, format!("{} · —", crate::tf!(k::ffmpeg::PROGRESS, 12, 57)), "a stall shows a dash, no time");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Test 952 (ffmpeg-download-window-info, D5): AFTER a success the window says where it went and
+/// that the checksum matched, and **Open folder** shows that folder; after a failure it lists every
+/// mirror with its own reason, leaves no traces, and **Open folder** shows the download root.
+#[test]
+fn t952_ffmpeg_window_after_success_and_failure() {
+    use crate::ffmpeg_setup::tests::{entries, make_archive, serve, serve_status, sha};
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    let tmp = std::env::temp_dir().join(format!("kt-t952a-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let bytes = make_archive(&tmp.join("a.7z"));
+
+    // success
+    let (mut h, dir) = ffmpeg_window("t952", vec![serve(bytes.clone(), 0, false)], sha(&bytes), None);
+    // the label in the harness's language (set when the harness is built)
+    let download = crate::tf!(k::ffmpeg::DOWNLOAD, crate::ffmpeg_setup::PINNED_VERSION);
+    h.get_by_label(&download).click();
+    let seen = run_download(&mut h);
+    let dest = dir.join("ffmpeg").join(crate::ffmpeg_setup::PINNED_VERSION);
+    let shown = crate::layout_tests::shown_texts(&h);
+    let into = crate::tf!(k::ffmpeg::INSTALLED_INTO, dest.display());
+    let matches = crate::tf!(k::ffmpeg::SHA_MATCHES, crate::ffmpeg_setup::short_hash(&sha(&bytes)));
+    assert!(shown.contains(&into) && shown.contains(&matches), "the success block: {shown:?}");
+    assert!(!seen.is_empty());
+    h.get_by_label(tr(k::ffmpeg::OPEN_FOLDER)).click();
+    h.step();
+    h.step();
+    assert_eq!(h.state().ffmpeg_ui.test_open.as_deref(), Some(&[dest.clone()][..]), "Open folder after a success");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // failure: a 404, then a wrong checksum
+    let wrong = "0".repeat(64);
+    let urls = vec![serve_status("404 Not Found"), serve(bytes.clone(), 0, false)];
+    let (mut h, dir) = ffmpeg_window("t952b", urls, wrong.clone(), None);
+    h.get_by_label(&download).click();
+    run_download(&mut h);
+    let shown = crate::layout_tests::shown_texts(&h);
+    let has = |s: &str| shown.iter().any(|t| t.contains(s));
+    assert!(has(crate::tf!(k::ffmpeg::FAILED, "").trim_end()), "the failure is not said: {shown:?}");
+    assert!(has(tr(k::ffmpeg::TRIED)), "no “Tried:” list");
+    assert!(has("— 404") || has("404"), "the first mirror's reason");
+    assert!(has(&format!("checksum mismatch: expected {wrong}")), "the second mirror's reason: {shown:?}");
+    assert!(entries(&dir.join("ffmpeg")).is_empty(), "traces left: {:?}", entries(&dir.join("ffmpeg")));
+    h.get_by_label(tr(k::ffmpeg::OPEN_FOLDER)).click();
+    h.step();
+    h.step();
+    assert_eq!(h.state().ffmpeg_ui.test_open.as_deref(), Some(&[dir.join("ffmpeg")][..]), "Open folder after a failure");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&tmp);
+}

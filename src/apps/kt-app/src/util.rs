@@ -426,6 +426,21 @@ pub fn mask_text(input: &str) -> (String, String) {
     (full[..cut].to_string(), full[cut..].to_string())
 }
 
+/// Show a folder in the system's file manager (ffmpeg-download-window-info, D5): `explorer.exe`
+/// on Windows, `xdg-open` elsewhere, detached and never waited on — the window must not freeze
+/// on a file manager that takes its time. A spawn failure comes back as text for the window.
+pub fn open_in_file_manager(path: &Path) -> Result<(), String> {
+    let program = if cfg!(windows) { "explorer.exe" } else { "xdg-open" };
+    std::process::Command::new(program)
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("{program} {}: {e}", path.display()))
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;

@@ -15770,7 +15770,7 @@ fn t763_handles_are_hittable_and_the_nearest_wins() {
 
 /// Everything a frame shows as text: the painted galleys (full text before eliding) and the
 /// accessibility labels and values.
-fn shown_texts(h: &Harness<'_, KtApp>) -> Vec<String> {
+pub(crate) fn shown_texts(h: &Harness<'_, KtApp>) -> Vec<String> {
     use egui_kittest::kittest::{NodeT, Queryable};
     let mut out: Vec<String> =
         crate::reach_tests::painted_texts(h).into_iter().map(|t| t.src).collect();

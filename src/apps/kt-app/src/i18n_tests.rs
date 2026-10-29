@@ -282,8 +282,9 @@ fn cyrillic_in_catalog(text: &str) -> Vec<(String, String)> {
 
 /// Committed test data that carries Cyrillic ON PURPOSE, each with its reason (D4). Anything else
 /// Cyrillic in the scanned files is a word that crept in.
-const CYRILLIC_TEST_DATA: [(&str, &str); 3] = [
+const CYRILLIC_TEST_DATA: [(&str, &str); 4] = [
     ("libs/kt-engine/tests/title_golden.rs", "the frozen title golden renders a Cyrillic line (R.52)"),
+    ("scripts/live/nestlang.py", "the live scenario reads the Russian default reel name from the saved file"),
     ("libs/kt-otio/tests/format.rs", "a non-ASCII media path must survive the exchange round trip"),
     ("apps/kt-cli/tests/readme_guard.rs", "the README guard injects a Cyrillic line to prove it is red"),
 ];
@@ -655,4 +656,40 @@ fn t930_packaging_speaks_every_catalog_language() {
         .collect();
     let bad = packaging_mismatches(&langs, &no_es, &mime);
     assert!(bad.iter().any(|b| b.contains("Comment[es]")), "a removed Comment[es] went unnoticed: {bad:?}");
+}
+
+/// Test 953 (ffmpeg-download-window-info): the download window's new lines speak every catalog
+/// language — the "what happens" block, the progress line and **Open folder** carry the same
+/// placeholders as English and no English left over (the glyphs are t100's, the keys t125's).
+#[test]
+fn t953_download_window_speaks_every_language() {
+    use crate::i18n::{Lang, k, set_lang, tr};
+    let keys = [
+        k::ffmpeg::WHAT_HAPPENS,
+        k::ffmpeg::WHAT_HAPPENS_WHERE,
+        k::ffmpeg::CONNECTING_TO,
+        k::ffmpeg::MIRROR,
+        k::ffmpeg::LEFT_SECS,
+        k::ffmpeg::LEFT_MINS,
+        k::ffmpeg::UNPACKING,
+        k::ffmpeg::TRIED,
+        k::ffmpeg::INSTALLED_INTO,
+        k::ffmpeg::SHA_MATCHES,
+        k::ffmpeg::OPEN_FOLDER,
+        k::ffmpeg::VERIFYING,
+    ];
+    let holes = |s: &str| -> Vec<String> {
+        (0..8).map(|i| format!("{{{i}}}")).filter(|p| s.contains(p.as_str())).collect()
+    };
+    set_lang(Lang::En);
+    let en: Vec<(&str, Vec<String>)> = keys.iter().map(|k| (tr(*k), holes(tr(*k)))).collect();
+    for lang in [Lang::Ru, Lang::Es, Lang::Zh, Lang::Ar] {
+        set_lang(lang);
+        for (k, (en_text, en_holes)) in keys.iter().zip(&en) {
+            let t = tr(*k);
+            assert_eq!(&holes(t), en_holes, "{lang:?} {}: placeholders differ", crate::i18n::key_name(*k));
+            assert_ne!(t, *en_text, "{lang:?} {}: English left over", crate::i18n::key_name(*k));
+        }
+    }
+    set_lang(Lang::Ru);
 }

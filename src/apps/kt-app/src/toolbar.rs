@@ -519,11 +519,14 @@ impl KtApp {
             }
             // where FFmpeg was found and how to get it (windows-build): a per-machine
             // matter, next to the other per-machine items of this menu
-            if ui.button(tr(k::menu::view::FFMPEG)).clicked() {
+            let r = ui.button(tr(k::menu::view::FFMPEG));
+            crate::widgets::field_probe::note("view.ffmpeg", r.rect);
+            if r.clicked() {
                 self.ffmpeg_ui.open = true;
                 ui.close();
             }
         });
+        crate::widgets::field_probe::note("menu.view", last.response.rect);
         last.response.rect.right()
     }
 
