@@ -465,7 +465,9 @@ fn t280_underruns_are_counted_in_frames_on_both_paths() {
 // ---- Tests 906–907 (pitch-loop-silence, ktprompts 26.10.18 item 7) ---------------
 
 fn pitch(semitones: f32) -> FxInstance {
-    FxInstance::PitchShift { semitones, cents: 0.0 }
+    // a plugin slot since plugin-api-stage1 (stage 3)
+    kt_plugins_builtin::install();
+    FxInstance::plugin_with("pitch_shift", &[semitones as f64, 0.0]).expect("a built-in plugin")
 }
 
 /// A pitched 440 Hz clip of 10 s on a project with the given pitch engine.

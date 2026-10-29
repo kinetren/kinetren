@@ -163,17 +163,6 @@ pub fn chain_lookahead(fx: &[FxInstance], auto: &AutoProfiles) -> i64 {
     fx.iter()
         .enumerate()
         .map(|(slot, f)| match f {
-            // for pitch, the neutral depends on the CURVES: a “zero” base is not
-            // neutral while a live curve is present
-            FxInstance::PitchShift { semitones, cents } => {
-                let neutral = nodes::pitch_is_neutral(
-                    *semitones,
-                    *cents,
-                    auto.points(slot, "semitones"),
-                    auto.points(slot, "cents"),
-                );
-                if neutral { 0 } else { nodes::PITCH_LOOKAHEAD_FRAMES }
-            }
             // a plugin slot: the manifest's formula, the one home of it (D2a; t322g)
             f @ FxInstance::Plugin(p) => nodes::plugin_audio(f).map_or(0, |(m, _)| {
                 kt_plugin_api::lookahead_frames_with(
@@ -331,9 +320,6 @@ impl TrackProcessor {
             self.fingerprint = chain_fingerprint(fx);
         }
         for (slot, node) in &mut self.nodes {
-            if structural {
-                node.set_engine(self.opts.pitch_engine);
-            }
             node.apply(&fx[*slot], structural);
         }
         // the track has neither a layer strength nor a dry side: there is nothing to mix with
@@ -622,9 +608,6 @@ impl ClipProcessor {
             _ => MixCfg { slot: i, from: usize::MAX, base_amount: 1.0 },
         });
         for (slot, node) in &mut self.nodes {
-            if structural {
-                node.set_engine(self.opts.pitch_engine);
-            }
             node.apply(&fx[*slot], structural);
             node.bind_lfo(&self.auto, *slot, self.clip_len);
         }

@@ -1371,7 +1371,6 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Filter { .. } => "Filter",
         FxInstance::Delay { .. } => "Delay",
         FxInstance::Compressor { .. } => "Compressor",
-        FxInstance::PitchShift { .. } => "Pitch Shift",
         FxInstance::ColorGrade { .. } => "Color Grade",
         FxInstance::Duotone { .. } => "Duotone",
         FxInstance::Vignette { .. } => "Vignette",
@@ -1709,7 +1708,7 @@ pub(crate) fn draw_video_fx_params(
                 ch.base |= ui.checkbox(spin, tr(k::fx::SPIN)).changed();
             });
         }
-        FxInstance::PitchShift { .. } => {
+        FxInstance::Plugin(p) if p.id == "pitch_shift" => {
             // rule 19: the dialog must say WHERE to change what is not
             // in it — the pitch engine lives in the project settings
             ui.label(tr(k::fx::PITCH_ENGINE_NOTE));

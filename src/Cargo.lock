@@ -1501,6 +1501,7 @@ name = "fx-audio-modulation"
 version = "0.1.0"
 dependencies = [
  "kt-plugin-api",
+ "realfft",
 ]
 
 [[package]]
@@ -2188,7 +2189,6 @@ dependencies = [
  "kt-plugin-api",
  "kt-plugins-builtin",
  "kt-time",
- "realfft",
  "rubato",
  "xxhash-rust",
 ]

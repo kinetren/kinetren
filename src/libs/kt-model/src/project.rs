@@ -5369,16 +5369,6 @@ pub enum FxInstance {
         #[serde(default = "default_halftone_angle")]
         angle: f32,
     },
-    /// Pitch change without changing duration (R.48, F-AUD-013). The engine
-    /// (WSOLA or phase vocoder) is a PROJECT SETTING: one choice for the
-    /// whole edit. Neutral (zero semitones and cents, no curves) gives the
-    /// previous sound, byte for byte.
-    PitchShift {
-        #[serde(default, skip_serializing_if = "is_zero")]
-        semitones: f32,
-        #[serde(default, skip_serializing_if = "is_zero")]
-        cents: f32,
-    },
     /// Lens distortion (R.47, F-FX-002): polynomial k1·r²+k2·r⁴ —
     /// barrel/pincushion. Geo (Warp prim), concatenated.
     LensDistort {
@@ -5618,8 +5608,7 @@ impl FxInstance {
             | FxInstance::SlowedReverb { .. }
             | FxInstance::Filter { .. }
             | FxInstance::Delay { .. }
-            | FxInstance::Compressor { .. }
-            | FxInstance::PitchShift { .. } => FxClass::Audio,
+            | FxInstance::Compressor { .. } => FxClass::Audio,
             FxInstance::Pan3d { .. } | FxInstance::Cylinder3d { .. } => FxClass::Video3d,
             // a plugin's class is its manifest's media (plugin-api-stage1, D2)
             FxInstance::Plugin(p) => match p.manifest().media {
@@ -5664,7 +5653,6 @@ impl FxInstance {
             FxInstance::Filter { .. } => "filter",
             FxInstance::Delay { .. } => "delay",
             FxInstance::Compressor { .. } => "compressor",
-            FxInstance::PitchShift { .. } => "pitch_shift",
             FxInstance::ColorGrade { .. } => "color_grade",
             FxInstance::Duotone { .. } => "duotone",
             FxInstance::Vignette { .. } => "vignette",
@@ -5934,10 +5922,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
     Halftone {
         size: u32, 2.0, 64.0, 8.0, 1.0, Px, Smooth;
         angle: f32, -90.0, 90.0, 45.0, 1.0, Deg, Smooth;
-    },
-    PitchShift {
-        semitones: f32, -24.0, 24.0, 0.0, 1.0, St, Smooth;
-        cents: f32, -100.0, 100.0, 0.0, 1.0, None, Smooth;
     },
     LensDistort {
         k1: f32, -1.0, 1.0, 0.35, 0.01, Norm, Smooth;
@@ -6733,8 +6717,9 @@ impl FxInstance {
         FxInstance::plugin("limiter").expect("limiter is not registered: install the built-in plugin set first")
     }
 
+    /// Pitch shift at its defaults (neutral) — a plugin slot (plugin-api-stage1, stage 3).
     pub fn pitch_shift() -> FxInstance {
-        FxInstance::PitchShift { semitones: 0.0, cents: 0.0 }
+        FxInstance::plugin("pitch_shift").expect("pitch_shift is not registered: install the built-in plugin set first")
     }
 
     pub fn color_grade() -> FxInstance {

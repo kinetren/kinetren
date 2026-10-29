@@ -10,7 +10,7 @@ use kt_plugin_api::Registry;
 pub const BUILTIN_IDS: &[&str] =
     &[
     "posterize", "eq", "distortion", "bitcrusher", "stereo_width", "gain", "gate", "limiter",
-    "tremolo", "auto_pan", "vibrato", "chorus", "flanger", "phaser",
+    "tremolo", "auto_pan", "vibrato", "chorus", "flanger", "phaser", "pitch_shift",
 ];
 
 /// The registry of the built-in set; panics on a refusal or when the families do not give exactly

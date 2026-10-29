@@ -208,7 +208,6 @@ pub enum AudioNode {
     Filter(Box<FilterNode>),
     Delay(Box<DelayNode>),
     Compressor(CompNode),
-    Pitch(Box<PitchNode>),
     /// An audio plugin's state (plugin-api-stage1, D2a): one dynamic call per chunk.
     Plugin(Box<dyn kt_plugin_api::AudioState>),
 }
@@ -275,7 +274,6 @@ impl AudioNode {
             FxInstance::Filter { .. } => Some(AudioNode::Filter(Box::new(FilterNode::new()))),
             FxInstance::Delay { .. } => Some(AudioNode::Delay(Box::new(DelayNode::new()))),
             FxInstance::Compressor { .. } => Some(AudioNode::Compressor(CompNode::new())),
-            FxInstance::PitchShift { .. } => Some(AudioNode::Pitch(Box::new(PitchNode::new()))),
             _ => None,
         }
     }
@@ -303,12 +301,6 @@ impl AudioNode {
                 AudioNode::Compressor(n),
                 FxInstance::Compressor { threshold_db, ratio, attack_ms, release_ms, makeup_db, .. },
             ) => n.apply(*threshold_db, *ratio, *attack_ms, *release_ms, *makeup_db),
-            // the pitch engine — a PROJECT setting: it does not come from the slot,
-            // but from ChainOpts (see ClipProcessor::new_with_opts)
-            (AudioNode::Pitch(n), FxInstance::PitchShift { semitones, cents }) => {
-                let engine = n.engine;
-                n.apply(*semitones, *cents, engine);
-            }
             // the chain fingerprint matched — the kinds by slots match by
             // construction; one can get here only through a matching error
             _ => debug_assert!(false, "node/slot kind mismatch"),
@@ -321,21 +313,17 @@ impl AudioNode {
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.set_targets(auto, slot, s),
             AudioNode::Filter(n) => n.set_targets(auto, slot, s),
-            // pitch reads curves BY GRAIN POSITION (bind), it does not need targets
-            AudioNode::Pitch(_) => {}
             AudioNode::Delay(n) => n.set_targets(auto, slot, s),
             AudioNode::Compressor(n) => n.set_targets(auto, slot, s),
         }
     }
 
-    /// Bind the LFO nodes to their frequency and clip-length curves (a copy of the points —
-    /// the model is not read in process). Called from apply_params/set_auto/
-    /// set_clip_len of the processor.
+    /// Bind a node to its slot's curves and the clip length (a plugin state copies what its
+    /// `process` reads — the LFO's rate curve, pitch's readers: the model is not read in
+    /// process). Called from apply_params/set_auto/set_clip_len of the processor.
     pub(crate) fn bind_lfo(&mut self, auto: &AutoProfiles, slot: usize, clip_len: i64) {
-        match self {
-            AudioNode::Plugin(n) => n.bind(&SlotView { auto, slot }, clip_len),
-            AudioNode::Pitch(n) => n.bind(auto, slot, clip_len),
-            _ => {}
+        if let AudioNode::Plugin(n) = self {
+            n.bind(&SlotView { auto, slot }, clip_len);
         }
     }
 
@@ -355,7 +343,6 @@ impl AudioNode {
             AudioNode::Filter(n) => n.process(buf),
             AudioNode::Delay(n) => n.process(buf),
             AudioNode::Compressor(n) => n.process(buf, key),
-            AudioNode::Pitch(n) => n.process(buf, _pos),
             AudioNode::Plugin(n) => n.process(buf, _pos, key),
         }
     }
@@ -369,23 +356,8 @@ impl AudioNode {
     /// The lookahead is NOT the tail: it enters the seek warm-up and the source window, but
     /// does NOT extend `ext_end` (otherwise the clip would sound
     /// after its own end).
-    /// Pass the pitch engine (a PROJECT setting, not a slot’s) to the node:
-    /// it receives it when the processor is created; a change of engine — a rebuild
-    /// of the whole processor (guarded by the opts check in FxStateStore).
-    pub(crate) fn set_engine(&mut self, engine: kt_model::PitchEngine) {
-        if let AudioNode::Pitch(n) = self {
-            n.engine = engine;
-            n.pv = None;
-            n.refresh_la();
-            if engine == kt_model::PitchEngine::Vocoder && n.la > 0 {
-                n.pv = Some(Box::new(PvState::new()));
-            }
-        }
-    }
-
     pub(crate) fn lookahead(&self) -> i64 {
         match self {
-            AudioNode::Pitch(n) => n.la,
             AudioNode::Plugin(n) => n.lookahead(),
             _ => 0,
         }
@@ -408,7 +380,6 @@ impl AudioNode {
             AudioNode::Filter(n) => n.reset(),
             AudioNode::Delay(n) => n.reset(),
             AudioNode::Compressor(n) => n.reset(),
-            AudioNode::Pitch(n) => n.reset(),
             AudioNode::Plugin(n) => n.reset(),
         }
     }
@@ -729,437 +700,6 @@ impl CompNode {
     }
 }
 
-/// Pitch lookahead (R.48, item 339): a grain of a two-octave upshift reads the
-/// input four times faster than the output, and by the end of the grain it needs material
-/// `LG·4` frames ahead plus the WSOLA search window. The constant is ONE for both
-/// engines: the vocoder needs less, the excess is simply history for it.
-/// Less than `MIN_PREROLL_FRAMES` (4800) — the seek warm-up always fills
-/// the ring with real material.
-pub(crate) const PITCH_LOOKAHEAD_FRAMES: i64 = 4608;
-
-/// The WSOLA synthesis grid step and the vocoder hop (absolute, from the clip zero —
-/// therefore slicing the buffers does not affect the result).
-const PITCH_HOP: i64 = 512;
-/// WSOLA grain length (Hann window, 50 % overlap: the sum of windows ≡ 1).
-const PITCH_GRAIN: usize = 1024;
-/// Half-width of the WSOLA search and its step (candidates are enumerated in
-/// ascending |off| — the tie-break is deterministic).
-const PITCH_SEARCH: i64 = 256;
-const PITCH_SEARCH_STEP: i64 = 8;
-/// Frame size of the phase vocoder.
-const PV_N: usize = 2048;
-/// Rings: the input must cover [output − search, input + chunk].
-const PITCH_RING: usize = 8192;
-/// OLA accumulator: must hold the processor chunk (1024) PLUS the full
-/// synthesis window (2048 for the vocoder) — otherwise a grain synthesized
-/// ahead would overwrite frames not yet handed out, and the result would depend on the
-/// slicing of the buffers (exactly what t338 caught on the 2048 ring).
-const PITCH_ACC: usize = 4096;
-
-/// Pitch neutral: both the base and the curves at zero. A neutral node does not touch
-/// the buffer at all (byte-for-byte the previous sound) and requires no lookahead.
-pub(crate) fn pitch_is_neutral(
-    semitones: f32,
-    cents: f32,
-    st_points: &[(f64, f64)],
-    ct_points: &[(f64, f64)],
-) -> bool {
-    semitones == 0.0
-        && cents == 0.0
-        && st_points.iter().all(|(_, v)| *v == 0.0)
-        && ct_points.iter().all(|(_, v)| *v == 0.0)
-}
-
-/// Phase vocoder state: FFT plans and phase accumulators.
-struct PvState {
-    fwd: std::sync::Arc<dyn realfft::RealToComplex<f32>>,
-    inv: std::sync::Arc<dyn realfft::ComplexToReal<f32>>,
-    /// Phases per CHANNEL: the stereo sides must not interfere.
-    prev_phase: [Vec<f32>; CH],
-    synth_phase: [Vec<f32>; CH],
-    window: Vec<f32>,
-    time: Vec<f32>,
-    spec: Vec<realfft::num_complex::Complex<f32>>,
-    out_spec: Vec<realfft::num_complex::Complex<f32>>,
-    mag: Vec<f32>,
-    freq: Vec<f32>,
-}
-
-impl PvState {
-    fn new() -> PvState {
-        let mut planner = realfft::RealFftPlanner::<f32>::new();
-        let fwd = planner.plan_fft_forward(PV_N);
-        let inv = planner.plan_fft_inverse(PV_N);
-        let bins = PV_N / 2 + 1;
-        PvState {
-            window: (0..PV_N)
-                .map(|i| {
-                    let x = std::f32::consts::TAU * i as f32 / PV_N as f32;
-                    0.5 - 0.5 * x.cos()
-                })
-                .collect(),
-            prev_phase: std::array::from_fn(|_| vec![0.0; bins]),
-            synth_phase: std::array::from_fn(|_| vec![0.0; bins]),
-            time: vec![0.0; PV_N],
-            spec: fwd.make_output_vec(),
-            out_spec: inv.make_input_vec(),
-            mag: vec![0.0; bins],
-            freq: vec![0.0; bins],
-            fwd,
-            inv,
-        }
-    }
-
-    fn reset(&mut self) {
-        for p in &mut self.prev_phase {
-            p.fill(0.0);
-        }
-        for p in &mut self.synth_phase {
-            p.fill(0.0);
-        }
-    }
-}
-
-/// Pitch change without a change of duration (R.48, item 339). A LOOKAHEAD node:
-/// it reads the input with a lookahead of `PITCH_LOOKAHEAD_FRAMES` and gives its output
-/// aligned — there is no delay for the engine (item 337).
-///
-/// Both engines synthesize on the ABSOLUTE grid of the STREAM position: grain
-/// number g always covers the output frames [g·HOP, g·HOP + GRAIN), and the
-/// pitch coefficient is taken by the grain's CLIP position — therefore the result depends
-/// neither on the slicing of the buffers nor on the number of calls (class t325a).
-///
-/// The stream position (pitch-loop-silence, D1) is set from the clip position at a real
-/// seek and then only advances: a SEAM (a loop wrap, a clip moved during playback) keeps the
-/// ring, the accumulator and the grid, exactly as the reverb keeps its tail. Before this, a
-/// seam restarted the node with an empty ring, and the first `PITCH_LOOKAHEAD_FRAMES` (96 ms)
-/// after every loop wrap were synthesized from zeros — "on a loop a piece of silence is always
-/// heard, on a small loop total silence" (ktprompts 26.10.18 item 7). Until the first seam the
-/// stream position IS the clip position, so every render without a seam is the former one bit
-/// for bit (t338).
-pub struct PitchNode {
-    engine: kt_model::PitchEngine,
-    semitones: f32,
-    cents: f32,
-    st_points: Vec<(f64, f64)>,
-    ct_points: Vec<(f64, f64)>,
-    /// Segment shapes of the curves (R.61): a node reading the value BY POSITION
-    /// must see the same row of shapes as the rest of the program.
-    st_shapes: Vec<kt_model::SegShape>,
-    ct_shapes: Vec<kt_model::SegShape>,
-    clip_len: i64,
-    /// 0 — neutral (the node is transparent).
-    la: i64,
-    /// Input ring by absolute STREAM positions.
-    ring: Vec<f32>,
-    /// Stream position of the next recording frame; `i64::MIN` — the stream has not yet existed.
-    written: i64,
-    /// The clip position the next input frame is expected at: another one is a seam.
-    clip_next: i64,
-    /// `(stream position, clip − stream)` from that stream position on: the clip position of a
-    /// grain, by which its pitch curve is read. One entry per seam inside the look-ahead window.
-    deltas: Vec<(i64, i64)>,
-    /// The output OLA accumulator (also by absolute stream positions).
-    acc: Vec<f32>,
-    /// Number of the next grain to synthesize.
-    next_grain: i64,
-    pv: Option<Box<PvState>>,
-}
-
-impl PitchNode {
-    fn new() -> PitchNode {
-        PitchNode {
-            engine: kt_model::PitchEngine::default(),
-            semitones: 0.0,
-            cents: 0.0,
-            st_points: Vec::new(),
-            ct_points: Vec::new(),
-            st_shapes: Vec::new(),
-            ct_shapes: Vec::new(),
-            clip_len: 1,
-            la: 0,
-            ring: vec![0.0; PITCH_RING * CH],
-            written: i64::MIN,
-            clip_next: i64::MIN,
-            deltas: Vec::new(),
-            acc: vec![0.0; PITCH_ACC * CH],
-            next_grain: 0,
-            pv: None,
-        }
-    }
-
-    fn apply(&mut self, semitones: f32, cents: f32, engine: kt_model::PitchEngine) {
-        self.semitones = semitones.clamp(-24.0, 24.0);
-        self.cents = cents.clamp(-100.0, 100.0);
-        self.engine = engine;
-        self.refresh_la();
-    }
-
-    /// Pitch curves (the same pattern as the LFO nodes): the value is taken
-    /// by the GRAIN position, not by the smoothing ticks — otherwise the result would depend
-    /// on the number of calls.
-    fn bind(&mut self, auto: &AutoProfiles, slot: usize, clip_len: i64) {
-        self.st_points = auto.points(slot, "semitones").to_vec();
-        self.ct_points = auto.points(slot, "cents").to_vec();
-        self.st_shapes = auto.shapes_of(slot, "semitones").to_vec();
-        self.ct_shapes = auto.shapes_of(slot, "cents").to_vec();
-        self.clip_len = clip_len.max(1);
-        self.refresh_la();
-    }
-
-    fn refresh_la(&mut self) {
-        let neutral =
-            pitch_is_neutral(self.semitones, self.cents, &self.st_points, &self.ct_points);
-        let la = if neutral { 0 } else { PITCH_LOOKAHEAD_FRAMES };
-        if la != self.la {
-            self.la = la;
-            self.reset();
-        }
-        if la > 0 && self.engine == kt_model::PitchEngine::Vocoder && self.pv.is_none() {
-            self.pv = Some(Box::new(PvState::new()));
-        }
-    }
-
-    /// Pitch coefficient at STREAM position `s`: the curves are read at its clip position.
-    fn ratio_at(&self, s: i64) -> f64 {
-        let delta = self.deltas.iter().rev().find(|(from, _)| *from <= s).map_or(0, |(_, d)| *d);
-        let p = s + delta;
-        let tau = p as f64 / self.clip_len as f64;
-        let st = kt_model::param_at(self.semitones as f64, &self.st_points, tau, &self.st_shapes);
-        let ct = kt_model::param_at(self.cents as f64, &self.ct_points, tau, &self.ct_shapes);
-        (2f64).powf((st + ct / 100.0) / 12.0).clamp(0.25, 4.0)
-    }
-
-    #[inline]
-    fn ring_at(&self, frame: i64, ch: usize) -> f32 {
-        let i = frame.rem_euclid(PITCH_RING as i64) as usize;
-        self.ring[i * CH + ch]
-    }
-
-    /// Linear interpolation of the input at a fractional position.
-    #[inline]
-    fn ring_frac(&self, pos: f64, ch: usize) -> f32 {
-        let i = pos.floor();
-        let f = (pos - i) as f32;
-        let a = self.ring_at(i as i64, ch);
-        let b = self.ring_at(i as i64 + 1, ch);
-        a * (1.0 - f) + b * f
-    }
-
-    #[inline]
-    fn acc_at(&mut self, frame: i64, ch: usize) -> &mut f32 {
-        let i = frame.rem_euclid(PITCH_ACC as i64) as usize;
-        &mut self.acc[i * CH + ch]
-    }
-
-    /// Start of a stream (a cold start or a real seek, after `reset`): the rings and the grid
-    /// begin at the clip position, which the stream position equals from here on.
-    fn restart(&mut self, in_pos: i64) {
-        self.ring.fill(0.0);
-        self.acc.fill(0.0);
-        self.written = in_pos;
-        self.clip_next = in_pos;
-        self.deltas.clear();
-        self.deltas.push((i64::MIN, 0));
-        self.next_grain = (in_pos - self.la).div_euclid(PITCH_HOP);
-        if let Some(pv) = &mut self.pv {
-            pv.reset();
-        }
-    }
-
-    fn process(&mut self, buf: &mut [f32], in_pos: i64) {
-        if self.la == 0 {
-            return; // neutral: do not touch the buffer at all
-        }
-        let n = (buf.len() / CH) as i64;
-        if self.written == i64::MIN {
-            self.restart(in_pos);
-        } else if self.clip_next != in_pos {
-            // a SEAM: the stream continues, only the clip position under it jumps
-            self.deltas.push((self.written, in_pos - self.written));
-            // the curve lookup needs the entries back to the oldest grain still to be
-            // synthesized (the output side, `la` + a vocoder frame behind the input)
-            let keep_from = self.written - self.la - PV_N as i64;
-            while self.deltas.len() > 1 && self.deltas[1].0 <= keep_from {
-                self.deltas.remove(0);
-            }
-        }
-        self.clip_next = in_pos + n;
-        let in_pos = self.written;
-        // 1) input into the ring
-        for (i, fr) in buf.chunks_exact(CH).enumerate() {
-            let idx = (in_pos + i as i64).rem_euclid(PITCH_RING as i64) as usize;
-            for (ch, v) in fr.iter().enumerate() {
-                self.ring[idx * CH + ch] = *v;
-            }
-        }
-        self.written = in_pos + n;
-        // 2) synthesis of the grains covering the needed output
-        let out_pos = in_pos - self.la;
-        let out_end = out_pos + n;
-        while self.next_grain * PITCH_HOP < out_end {
-            let g = self.next_grain;
-            match self.engine {
-                kt_model::PitchEngine::Wsola => self.grain_wsola(g),
-                kt_model::PitchEngine::Vocoder => self.grain_vocoder(g),
-            }
-            self.next_grain += 1;
-        }
-        // 3) output from the accumulator (what was read is zeroed — the ring
-        //    is reused by the next grains)
-        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
-            let t = out_pos + i as i64;
-            for (ch, v) in fr.iter_mut().enumerate() {
-                let a = self.acc_at(t, ch);
-                *v = *a;
-                *a = 0.0;
-            }
-        }
-    }
-
-    /// WSOLA grain: reads the input at speed `r` from the grain position and
-    /// mixes into the accumulator with a Hann window. The read offset is chosen
-    /// by cross-correlation with the already synthesized overlap — this is what
-    /// preserves the shape of the strike (unlike the vocoder).
-    fn grain_wsola(&mut self, g: i64) {
-        let start = g * PITCH_HOP;
-        let r = self.ratio_at(start);
-        let off = self.best_offset(start, r);
-        let base = (start + off) as f64;
-        for k in 0..PITCH_GRAIN {
-            let w = hann(k, PITCH_GRAIN);
-            let src = base + k as f64 * r;
-            for ch in 0..CH {
-                let v = self.ring_frac(src, ch) * w;
-                *self.acc_at(start + k as i64, ch) += v;
-            }
-        }
-    }
-
-    /// WSOLA search: candidates are enumerated in ascending |off|, the strictly
-    /// greater score wins — so on a tie the smaller shift remains
-    /// (determinism without dependence on the traversal order).
-    fn best_offset(&self, start: i64, r: f64) -> i64 {
-        let mut cands: Vec<i64> = vec![0];
-        let mut d = PITCH_SEARCH_STEP;
-        while d <= PITCH_SEARCH {
-            cands.push(-d);
-            cands.push(d);
-            d += PITCH_SEARCH_STEP;
-        }
-        let overlap = PITCH_HOP as usize;
-        let mut best = 0i64;
-        let mut best_score = f64::NEG_INFINITY;
-        for off in cands {
-            let base = (start + off) as f64;
-            let (mut num, mut den) = (0f64, 0f64);
-            for k in (0..overlap).step_by(2) {
-                let src = base + k as f64 * r;
-                let cand = (self.ring_frac(src, 0) + self.ring_frac(src, 1)) as f64;
-                let i = (start + k as i64).rem_euclid(PITCH_ACC as i64) as usize;
-                let prev = (self.acc[i * CH] + self.acc[i * CH + 1]) as f64;
-                num += cand * prev;
-                den += cand * cand;
-            }
-            let score = num / (den.sqrt() + 1e-9);
-            if score > best_score {
-                best_score = score;
-                best = off;
-            }
-        }
-        best
-    }
-
-    /// Phase vocoder grain: the frame spectrum is carried into the bins `k·r` with a
-    /// recomputation of the phase from the instantaneous frequency. Harmonics travel cleanly;
-    /// the transient is smeared — the price of the spectral method.
-    fn grain_vocoder(&mut self, g: i64) {
-        let start = g * PITCH_HOP;
-        let r = self.ratio_at(start) as f32;
-        let bins = PV_N / 2 + 1;
-        let hop = PITCH_HOP as f32;
-        let expected = std::f32::consts::TAU * hop / PV_N as f32;
-        for ch in 0..CH {
-            {
-                let pv = self.pv.as_deref_mut().expect("vocoder state");
-                for i in 0..PV_N {
-                    pv.time[i] = 0.0;
-                }
-            }
-            // analysis: the window from the ring
-            for i in 0..PV_N {
-                let v = self.ring_at(start + i as i64, ch);
-                let pv = self.pv.as_deref_mut().expect("vocoder state");
-                pv.time[i] = v * pv.window[i];
-            }
-            let pv = self.pv.as_deref_mut().expect("vocoder state");
-            pv.fwd.process(&mut pv.time, &mut pv.spec).expect("fft");
-            // Analysis: the magnitude and the INSTANTANEOUS frequency of each bin
-            // (the principal deviation of the phase against the expected one per hop).
-            for k in 0..bins {
-                let c = pv.spec[k];
-                let m = (c.re * c.re + c.im * c.im).sqrt();
-                let phase = c.im.atan2(c.re);
-                let mut dp = phase - pv.prev_phase[ch][k] - k as f32 * expected;
-                dp -= std::f32::consts::TAU * (dp / std::f32::consts::TAU).round();
-                pv.prev_phase[ch][k] = phase;
-                pv.mag[k] = m;
-                pv.freq[k] = k as f32 * expected + dp;
-            }
-            // Synthesis by the INVERSE mapping (as in video geometry):
-            // the target bin j asks the source at position j/r and gets the
-            // single frequency — with a direct carry k → round(k·r) several sources would
-            // share one bin, and the pitch drifted
-            // (measured: 612 Hz instead of 659 at +7 semitones).
-            for j in 0..bins {
-                let src = j as f32 / r;
-                let k0 = src.floor() as usize;
-                if k0 + 1 >= bins {
-                    pv.out_spec[j] = realfft::num_complex::Complex::new(0.0, 0.0);
-                    continue;
-                }
-                let f = src - k0 as f32;
-                let m = pv.mag[k0] * (1.0 - f) + pv.mag[k0 + 1] * f;
-                let w = (pv.freq[k0] * (1.0 - f) + pv.freq[k0 + 1] * f) * r;
-                pv.synth_phase[ch][j] += w;
-                let (sn, cs) = pv.synth_phase[ch][j].sin_cos();
-                pv.out_spec[j] = realfft::num_complex::Complex::new(m * cs, m * sn);
-            }
-            // DC and Nyquist of a real signal are real — realfft checks this and otherwise
-            // refuses to compute
-            pv.out_spec[0].im = 0.0;
-            let last = bins - 1;
-            pv.out_spec[last].im = 0.0;
-            pv.inv.process(&mut pv.out_spec, &mut pv.time).expect("ifft");
-            let norm = 1.0 / PV_N as f32;
-            for i in 0..PV_N {
-                pv.time[i] *= pv.window[i] * norm;
-            }
-            for i in 0..PV_N {
-                let v = self.pv.as_deref().expect("vocoder state").time[i];
-                *self.acc_at(start + i as i64, ch) += v;
-            }
-        }
-    }
-
-    fn reset(&mut self) {
-        self.ring.fill(0.0);
-        self.acc.fill(0.0);
-        self.written = i64::MIN;
-        self.clip_next = i64::MIN;
-        self.deltas.clear();
-        self.next_grain = 0;
-        if let Some(pv) = &mut self.pv {
-            pv.reset();
-        }
-    }
-}
-
-/// Hann window with 50 % overlap: the sum of two adjacent windows ≡ 1.
-#[inline]
-fn hann(i: usize, n: usize) -> f32 {
-    let x = std::f32::consts::TAU * i as f32 / n as f32;
-    0.5 - 0.5 * x.cos()
-}
+// pitch_shift moved into src/plugins/fx-audio-modulation (plugin-api-stage1, stage 3)
 
 // gain, gate, limiter moved into src/plugins/fx-audio-dynamics (plugin-api-stage1, stage 3)

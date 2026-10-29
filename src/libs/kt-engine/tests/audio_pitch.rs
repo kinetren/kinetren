@@ -153,6 +153,7 @@ fn band_energy(buf: &[f32], from: usize, hz: f64) -> f64 {
 /// `la == 0` in `PitchNode::process`.)
 #[test]
 fn t337_neutral_pitch_is_byte_passthrough() {
+    kt_plugins_builtin::install();
     let dry = render(vec![], PitchEngine::Wsola);
     for engine in [PitchEngine::Wsola, PitchEngine::Vocoder] {
         let neutral = render(vec![FxInstance::pitch_shift()], engine);
@@ -185,8 +186,9 @@ fn t337_neutral_pitch_is_byte_passthrough() {
 /// otherwise export and playback would sound different.
 #[test]
 fn t338_pitch_is_independent_of_chunking() {
+    kt_plugins_builtin::install();
     for engine in [PitchEngine::Wsola, PitchEngine::Vocoder] {
-        let fx = vec![FxInstance::PitchShift { semitones: 5.0, cents: 0.0 }];
+        let fx = vec![kt_model::FxInstance::plugin_with("pitch_shift", &[5.0, 0.0]).unwrap()];
         let one = render(fx.clone(), engine);
         let many = render_chunked(fx, engine, &[1000, 17, 48_000, DUR - 49_017]);
         assert_eq!(one.len(), many.len());
@@ -201,10 +203,11 @@ fn t338_pitch_is_independent_of_chunking() {
 /// over the original frequency (not merely be present).
 #[test]
 fn t339_pitch_shifts_the_frequency() {
+    kt_plugins_builtin::install();
     let from = 48_000usize / 2;
     for engine in [PitchEngine::Wsola, PitchEngine::Vocoder] {
         for st in [7.0f32, -5.0] {
-            let out = render(vec![FxInstance::PitchShift { semitones: st, cents: 0.0 }], engine);
+            let out = render(vec![kt_model::FxInstance::plugin_with("pitch_shift", &[(st) as f64, 0.0]).unwrap()], engine);
             let want = TONE * 2f64.powf(st as f64 / 12.0);
             let got = dominant_hz(&out, from);
             println!("t339 {engine:?} {st:+} st: peak {got:.1} Hz (expected {want:.1})");
@@ -220,8 +223,8 @@ fn t339_pitch_shifts_the_frequency() {
             );
         }
         // determinism between runs
-        let a = render(vec![FxInstance::PitchShift { semitones: 3.0, cents: 20.0 }], engine);
-        let b = render(vec![FxInstance::PitchShift { semitones: 3.0, cents: 20.0 }], engine);
+        let a = render(vec![kt_model::FxInstance::plugin_with("pitch_shift", &[3.0, 20.0]).unwrap()], engine);
+        let b = render(vec![kt_model::FxInstance::plugin_with("pitch_shift", &[3.0, 20.0]).unwrap()], engine);
         assert_eq!(a, b, "{engine:?}: render must be deterministic");
     }
 }
@@ -233,7 +236,8 @@ fn t339_pitch_shifts_the_frequency() {
 /// this is an ordinary model edit, not a hidden application setting.
 #[test]
 fn t340_pitch_engine_is_a_project_setting() {
-    let fx = vec![FxInstance::PitchShift { semitones: 7.0, cents: 0.0 }];
+    kt_plugins_builtin::install();
+    let fx = vec![kt_model::FxInstance::plugin_with("pitch_shift", &[7.0, 0.0]).unwrap()];
     let w = render(fx.clone(), PitchEngine::Wsola);
     let v = render(fx.clone(), PitchEngine::Vocoder);
     assert_ne!(w, v, "engines must sound different");
@@ -262,7 +266,8 @@ fn t340_pitch_engine_is_a_project_setting() {
 /// a neutral pitch stays byte-for-byte transparent in a loop and asks for no look-ahead.
 #[test]
 fn t910_seek_and_moved_clip_with_pitch() {
-    let seven = || vec![FxInstance::PitchShift { semitones: 7.0, cents: 0.0 }];
+    kt_plugins_builtin::install();
+    let seven = || vec![kt_model::FxInstance::plugin_with("pitch_shift", &[7.0, 0.0]).unwrap()];
     let burst = 1024i64;
     let silent = |buf: &[f32]| -> Option<(usize, usize)> {
         let mut run = 0usize;
@@ -332,7 +337,7 @@ fn t910_seek_and_moved_clip_with_pitch() {
         }
 
         // --- a neutral pitch in a loop is the dry loop, byte for byte --------------------
-        let neutral = project(vec![FxInstance::PitchShift { semitones: 0.0, cents: 0.0 }], vec![], engine);
+        let neutral = project(vec![kt_model::FxInstance::plugin_with("pitch_shift", &[0.0, 0.0]).unwrap()], vec![], engine);
         let dry = project(vec![], vec![], engine);
         let loop_of = |p: &Project| -> Vec<f32> {
             let r = AudioRenderer::new(p);

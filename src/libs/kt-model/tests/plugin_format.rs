@@ -59,6 +59,13 @@ enum Frozen {
     Chorus { rate_hz: f32, depth_ms: f32, mix: f32, voices: u32 },
     Flanger { rate_hz: f32, depth_ms: f32, feedback: f32, mix: f32 },
     Phaser { rate_hz: f32, depth: f32, feedback: f32, stages: u32, mix: f32 },
+    /// `PitchShift` before stage 3 (both fields `skip_serializing_if = "is_zero"`).
+    PitchShift {
+        #[serde(skip_serializing_if = "is_zero")]
+        semitones: f32,
+        #[serde(skip_serializing_if = "is_zero")]
+        cents: f32,
+    },
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -83,6 +90,7 @@ fn empty_reads() -> Vec<(&'static str, String)> {
         (r#"{"kind":"limiter"}"#, frozen(Frozen::Limiter { threshold_db: -6.0, ceiling_db: -0.3, lookahead_ms: 5.0, release_ms: 80.0 })),
         // a file without `pan` read 0 (`#[serde(default)]`)
         (r#"{"kind":"gain","db":-3.0}"#, frozen(Frozen::Gain { db: -3.0, pan: 0.0 })),
+        (r#"{"kind":"pitch_shift"}"#, frozen(Frozen::PitchShift { semitones: 0.0, cents: 0.0 })),
         (r#"{"kind":"tremolo"}"#, frozen(Frozen::Tremolo { rate_hz: 5.0, depth: 0.6 })),
         (r#"{"kind":"auto_pan"}"#, frozen(Frozen::AutoPan { rate_hz: 1.0, depth: 0.8 })),
         (r#"{"kind":"vibrato"}"#, frozen(Frozen::Vibrato { rate_hz: 5.0, depth_ms: 0.5 })),
@@ -134,6 +142,9 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
             FxInstance::plugin_with("gate", &[-30.0, 0.5, 120.0, 250.0]).unwrap(),
             frozen(Frozen::Gate { threshold_db: -30.0, attack_ms: 0.5, hold_ms: 120.0, release_ms: 250.0 }),
         ),
+        (FxInstance::pitch_shift(), frozen(Frozen::PitchShift { semitones: 0.0, cents: 0.0 })),
+        (FxInstance::plugin_with("pitch_shift", &[7.0, 0.0]).unwrap(), frozen(Frozen::PitchShift { semitones: 7.0, cents: 0.0 })),
+        (FxInstance::plugin_with("pitch_shift", &[-12.0, 33.5]).unwrap(), frozen(Frozen::PitchShift { semitones: -12.0, cents: 33.5 })),
         (FxInstance::tremolo(), frozen(Frozen::Tremolo { rate_hz: 5.0, depth: 0.6 })),
         (FxInstance::plugin_with("tremolo", &[12.5, 0.95]).unwrap(), frozen(Frozen::Tremolo { rate_hz: 12.5, depth: 0.95 })),
         (FxInstance::auto_pan(), frozen(Frozen::AutoPan { rate_hz: 1.0, depth: 0.8 })),

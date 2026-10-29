@@ -229,7 +229,7 @@ fn t911_track_chain_with_lookahead_at_a_wrap() {
             clip(3, 0, 40 * D, 20 * D, 2),
         ]);
         p.track_at_mut(A, 0).unwrap().fx = vec![
-            FxInstance::PitchShift { semitones: 7.0, cents: 0.0 },
+            kt_model::FxInstance::plugin_with("pitch_shift", &[7.0, 0.0]).unwrap(),
             kt_model::FxInstance::plugin_with("limiter", &[-6.0, -6.0, 5.0, 80.0]).unwrap(),
         ];
         p.validate().unwrap();

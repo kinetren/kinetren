@@ -486,7 +486,7 @@ fn t327_print_dense_chain_cost() {
             // lookahead nodes of R.48: the limiter is cheap, pitch is the most expensive
             // of all (grain resampling for every grain)
             FxInstance::limiter(),
-            FxInstance::PitchShift { semitones: 3.0, cents: 0.0 },
+            kt_model::FxInstance::plugin_with("pitch_shift", &[3.0, 0.0]).unwrap(),
             FxInstance::gain(-3.0),
         ]
     };
@@ -563,12 +563,12 @@ fn bench_pitch_cost() {
         ("limiter", vec![FxInstance::limiter()], PitchEngine::Wsola),
         (
             "pitch wsola",
-            vec![FxInstance::PitchShift { semitones: 3.0, cents: 0.0 }],
+            vec![kt_model::FxInstance::plugin_with("pitch_shift", &[3.0, 0.0]).unwrap()],
             PitchEngine::Wsola,
         ),
         (
             "pitch vocoder",
-            vec![FxInstance::PitchShift { semitones: 3.0, cents: 0.0 }],
+            vec![kt_model::FxInstance::plugin_with("pitch_shift", &[3.0, 0.0]).unwrap()],
             PitchEngine::Vocoder,
         ),
     ] {
