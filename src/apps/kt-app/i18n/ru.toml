@@ -542,6 +542,7 @@ strip = "Полоса"
 
 # FX editor of the clip.
 [fx]
+missing_plugin = "Отсутствующий плагин"
 hint_reset = "Двойной клик по подписи — сброс параметра"
 conform = "Приведение:"
 conform_project = "Как в проекте"
@@ -807,6 +808,7 @@ clip_at = "{0} @ {1}с"
 # One-off messages note()/warn(). There is NO agreement with the number:
 # we write “noun: N” (rule R.19, see README).
 [msg]
+plugin_missing = "Плагина нет в этой сборке: {0} — сохранён в файле и пропускается (события: {1})"
 area_needs_band = "Сначала выделите рамкой участок таймлайна (или регион)"
 area_stem = "область"
 area_saved = "Область сохранена: {0}"

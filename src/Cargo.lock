@@ -2134,9 +2134,11 @@ dependencies = [
  "kt-fx",
  "kt-media",
  "kt-model",
+ "kt-plugins-builtin",
  "kt-time",
  "realfft",
  "rtrb",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.20",
  "xxhash-rust",
@@ -2200,6 +2202,7 @@ name = "kt-model"
 version = "0.1.0"
 dependencies = [
  "kt-plugin-api",
+ "kt-plugins-builtin",
  "kt-time",
  "serde",
  "serde_json",

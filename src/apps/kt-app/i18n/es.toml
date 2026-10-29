@@ -542,6 +542,7 @@ strip = "Tira"
 
 # FX editor of the clip.
 [fx]
+missing_plugin = "Plugin ausente"
 hint_reset = "Doble clic en la etiqueta para restablecer el parámetro"
 conform = "Regla de cuadro:"
 conform_project = "Proyecto"
@@ -807,6 +808,7 @@ clip_at = "{0} @ {1}s"
 # One-off messages note()/warn(). There is NO agreement with the number:
 # we write “noun: N” (rule R.19, see README).
 [msg]
+plugin_missing = "Plugin ausente en esta versión: {0} — se conserva en el archivo y se omite (eventos: {1})"
 area_needs_band = "Selecciona antes una banda en la línea de tiempo (o una región)"
 area_stem = "área"
 area_saved = "Área guardada: {0}"

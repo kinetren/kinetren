@@ -542,6 +542,7 @@ strip = "Strip"
 
 # FX editor of the clip.
 [fx]
+missing_plugin = "Missing plugin"
 hint_reset = "Double-click the label to reset the parameter"
 conform = "Frame rule:"
 conform_project = "Project"
@@ -807,6 +808,7 @@ clip_at = "{0} @ {1}s"
 # One-off messages note()/warn(). There is NO agreement with the number:
 # we write “noun: N” (rule R.19, see README).
 [msg]
+plugin_missing = "Plugin not in this build: {0} — kept in the file and passed through (events: {1})"
 area_needs_band = "Select a band on the timeline first (or a region)"
 area_stem = "area"
 area_saved = "Area saved: {0}"

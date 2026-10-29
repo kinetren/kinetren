@@ -51,7 +51,28 @@ once (English message, first line = the stage and what was done).
     API only, no plugins yet); kt-app's `run` and kt-cli's `main` install the set before any project
     is read. t975 (`apps/kt-cli/tests/plugin_graph.rs`, the manifests read as text) green; red proof:
     kt-fx given the assembler as a dependency → "core crate kt-fx depends on kt-plugins-builtin".
-- [ ] 2.3 `FxInstance::Plugin` and `FxInstance::Missing` with the hand-written serde of D3; write t973 in `src/libs/kt-model/tests/plugin_format.rs` with the frozen pre-move serializer copied verbatim, then t973b in `src/libs/kt-engine/tests/plugin_missing.rs`. Verify both green on a project with every kind and with a missing id
+- [x] 2.3 `FxInstance::Plugin` and `FxInstance::Missing` with the hand-written serde of D3; write t973 in `src/libs/kt-model/tests/plugin_format.rs` with the frozen pre-move serializer copied verbatim, then t973b in `src/libs/kt-engine/tests/plugin_missing.rs`. Verify both green on a project with every kind and with a missing id
+  - `FxInstance::Plugin(PluginSlot)` and `FxInstance::Missing(MissingSlot)` — both `#[serde(untagged)]`
+    and LAST, so a `kind` no variant names is tried as a registered plugin, then kept raw (serde
+    1.0.229 supports untagged variants in a tagged enum; no hand-written serde for the 46 others).
+    `PluginSlot` writes `kind` and the passport rows in their file form — `Manifest.rows` /
+    `RowDecl { store, omit_default }` / `Store::cast` (`fx_cast!`'s rule) — and reads them back;
+    `MissingSlot` keeps the raw value (kt-model now asks serde_json for `preserve_order` itself —
+    kt-otio turned it on for the whole build anyway; this also makes t822 green under `-p kt-model`).
+    `param_specs`/`get`/`set`/`class`/`tag` answer from the installed registry. A missing slot drops
+    out of the ACTIVE chain with its curves (`is_missing`), so the engine never sees it and every
+    cache key is the chain's without it; `Project::missing_plugins()` names (id, event) once each,
+    and kt-app warns per id on open (`msg.plugin_missing`, five catalogs) — the display name
+    `fx.missing_plugin`. t973 (`kt-model/tests/plugin_format.rs`): the frozen-oracle loop (empty
+    until 2.4) and the missing slot's bytes (red first: the raw keys came back sorted); t973b
+    (`kt-engine/tests/plugin_missing.rs`): `[blur, wobble_x, glow]` renders as `[blur, glow]` (red
+    first: the planner took the missing slot for a barrier and panicked) and the id is named.
+    Revision of the design's "fails loudly in debug": the first workspace run had six kt-app tests
+    time out — background workers (presets, sidecar, recovery) deserialize FX, and the "no registry"
+    panic killed them silently. Before an install the registry is EMPTY (every plugin kind reads as
+    `Missing`, written back unchanged), and every `KtApp` constructor installs the built-in set.
+    Workspace: green except t815 (the recovery write took 5–20 s: the machine's I/O pressure was
+    92 % — `/proc/pressure/io` — while another process filled the disk, 37 → 15 GB free).
 - [ ] 2.4 Move Posterize: CPU kernel and tap into `fx-video-color`, its WGSL tap into the same crate; `plan_chain` (`src/libs/kt-fx/src/plan.rs`) asks the manifest's class; `GpuFxEngine::new(ctx, &Registry)` assembles the tap dispatch of `geom_fused.wgsl` and the own pass (D5); kt-app/kt-cli inject `builtin()`. Write t974 in `src/libs/kt-gpu/tests/parity.rs`. Verify t974, t328, t329, t181 green and `GOLDEN_VIDEO` unchanged
 - [ ] 2.5 `src/apps/kt-app/src/fx_registry.rs` builds Posterize's entry from its manifest; the test door `register_for_test`; write t976 in `src/apps/kt-app/src/reach_tests.rs` with the PATH of the spec. Verify t976, t48, t125, t100 green and `src/scripts/specs-user-path.py --check` (t799) accepts the PATH
 - [ ] 2.6 Speed check of the pilot on release: `cargo build --release -p kt-cli` and `kt-cli probe <fixture> 0 10 --time` before/after on a chain with Posterize; record here; over 3 % slower blocks the stage (design, Risks)

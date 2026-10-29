@@ -478,10 +478,16 @@ impl HasParams for FxInstance {
         FxInstance::param_specs(self)
     }
     fn get_param_idx(&self, idx: usize) -> Option<f64> {
-        fx_get_idx(self, idx)
+        match self {
+            FxInstance::Plugin(p) => p.get_idx(idx),
+            _ => fx_get_idx(self, idx),
+        }
     }
     fn set_param_idx(&mut self, idx: usize, v: f64) -> bool {
-        fx_set_idx(self, idx, v)
+        match self {
+            FxInstance::Plugin(p) => p.set_idx(idx, v),
+            _ => fx_set_idx(self, idx, v),
+        }
     }
     fn get_param(&self, name: &str) -> Option<f64> {
         FxInstance::get_param(self, name)
@@ -3286,7 +3292,7 @@ impl Track {
         self.fx
             .iter()
             .enumerate()
-            .filter(|(i, _)| !self.fx_bypass.get(*i).copied().unwrap_or(false))
+            .filter(|(i, f)| !self.fx_bypass.get(*i).copied().unwrap_or(false) && !f.is_missing())
             .map(|(_, f)| f.clone())
             .collect()
     }
@@ -4278,7 +4284,7 @@ impl ClipEvent {
         self.fx
             .iter()
             .enumerate()
-            .filter(|(i, _)| !self.fx_bypass.get(*i).copied().unwrap_or(false))
+            .filter(|(i, f)| !self.fx_bypass.get(*i).copied().unwrap_or(false) && !f.is_missing())
             .map(|(_, f)| f.clone())
             .collect()
     }
@@ -4293,7 +4299,7 @@ impl ClipEvent {
         self.fx
             .iter()
             .enumerate()
-            .filter(|(i, _)| !self.fx_bypass.get(*i).copied().unwrap_or(false))
+            .filter(|(i, f)| !self.fx_bypass.get(*i).copied().unwrap_or(false) && !f.is_missing())
             .map(|(i, _)| self.fx_auto.get(i).cloned().unwrap_or_default())
             .collect()
     }
@@ -5817,6 +5823,14 @@ pub enum FxInstance {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         camera: Option<CameraId>,
     },
+    /// A plugin-backed effect (plugin-api-stage1, D3): `kind` is its id, the rows follow its
+    /// passport. Untagged and LAST: a `kind` no variant above names is tried here.
+    #[serde(untagged)]
+    Plugin(crate::plugin_slot::PluginSlot),
+    /// An effect whose plugin this build lacks: kept and written back unchanged, passed through
+    /// by the engine.
+    #[serde(untagged)]
+    Missing(crate::plugin_slot::MissingSlot),
 }
 
 /// Effect class (R.29): a property of the variant's CODE, not of the data —
@@ -5852,8 +5866,22 @@ impl FxInstance {
             | FxInstance::Limiter { .. }
             | FxInstance::PitchShift { .. } => FxClass::Audio,
             FxInstance::Pan3d { .. } | FxInstance::Cylinder3d { .. } => FxClass::Video3d,
+            // a plugin's class is its manifest's media (plugin-api-stage1, D2)
+            FxInstance::Plugin(p) => match p.manifest().media {
+                kt_plugin_api::Media::AudioFx => FxClass::Audio,
+                _ => FxClass::Video2d,
+            },
+            // a missing plugin is passed through by the video path whatever it was
+            FxInstance::Missing(_) => FxClass::Video2d,
             _ => FxClass::Video2d,
         }
+    }
+
+    /// An effect whose plugin this build lacks (plugin-api-stage1, D3). It drops out of the ACTIVE
+    /// chain with its curves, like a bypassed slot: the engine passes the frame and the sound through
+    /// it, and every cache key is that of the chain without it.
+    pub fn is_missing(&self) -> bool {
+        matches!(self, FxInstance::Missing(_))
     }
 
     /// Audio effect? (video FX live in the same clip chain but are handled by the
@@ -5922,6 +5950,9 @@ impl FxInstance {
             FxInstance::Glow { .. } => "glow",
             FxInstance::EventGrid { .. } => "event_grid",
             FxInstance::Pan3d { .. } => "pan3d",
+            FxInstance::Plugin(p) => p.tag(),
+            // the file's id is `MissingSlot::id`; the tag of a slot nothing can run is fixed
+            FxInstance::Missing(_) => "missing",
         }
     }
 
@@ -5996,7 +6027,11 @@ impl FxInstance {
     /// had to be edited in sync; now all three are generated from one `fx_params!`
     /// declaration.
     pub fn param_specs(&self) -> &'static [ParamSpec] {
-        fx_specs(self)
+        match self {
+            // a plugin's passport lives in the installed registry (plugin-api-stage1)
+            FxInstance::Plugin(p) => p.specs(),
+            _ => fx_specs(self),
+        }
     }
 
     /// Only automatable parameters (`ParamKind::Smooth`). A curve on a structural
@@ -6015,12 +6050,18 @@ impl FxInstance {
     /// fields are rounded. false — the name does not fit the variant (an orphan
     /// curve).
     pub fn set_param(&mut self, name: &str, v: f64) -> bool {
+        if let FxInstance::Plugin(p) = self {
+            return p.set(name, v);
+        }
         let Some(spec) = self.param_spec(name) else { return false };
         fx_set_param(self, name, v.clamp(spec.min, spec.max))
     }
 
     /// Current value of a parameter by name (for the automation UI).
     pub fn get_param(&self, name: &str) -> Option<f64> {
+        if let FxInstance::Plugin(p) = self {
+            return p.get(name);
+        }
         fx_get_param(self, name)
     }
 
@@ -8968,6 +9009,26 @@ impl Project {
             .map(|c| c.id.0)
             .max()
             .unwrap_or(0)
+    }
+
+    /// The effects whose plugin this build lacks (plugin-api-stage1, D3): (the id the file names,
+    /// the event it sits on — on the event's own chain or on its track's), each pair once, in
+    /// document order. The program says them once per project; the engine passes them through.
+    pub fn missing_plugins(&self) -> Vec<(String, ClipId)> {
+        let mut out: Vec<(String, ClipId)> = Vec::new();
+        for (_, reel) in self.reels() {
+            for c in reel.clips() {
+                for fx in &c.fx {
+                    if let FxInstance::Missing(m) = fx {
+                        let item = (m.id().to_string(), c.id);
+                        if !out.contains(&item) {
+                            out.push(item);
+                        }
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// All reels of the document: the root first, then nested ones.

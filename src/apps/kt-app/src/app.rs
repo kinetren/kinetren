@@ -771,6 +771,8 @@ impl KtApp {
     }
 
     pub(crate) fn new_empty(error: Option<String>) -> KtApp {
+        // every KtApp reads projects: the built-in plugin set first (a no-op after `run` did it)
+        kt_plugins_builtin::install();
         let startup_error = error;
         let project = Self::empty_project();
         let project2 = project.clone();
@@ -1037,6 +1039,7 @@ impl KtApp {
         retained: kt_otio::Retained,
         notices: Vec<String>,
     ) -> Result<KtApp, String> {
+        kt_plugins_builtin::install();
         let base = path.parent();
         let (player, audio, err, media_lens) =
             Self::build_player(&project, base, Some(&path.with_extension("ktindex.db")));
@@ -1261,6 +1264,19 @@ impl KtApp {
         // import/conversion remarks — to the user (bell)
         for n in notices {
             app.note(n);
+        }
+        // effects whose plugin this build lacks (plugin-api-stage1, D3): kept in the file and
+        // passed through by the engine — said once per id, with the events it sits on
+        let mut by_id: Vec<(String, Vec<u64>)> = Vec::new();
+        for (id, clip) in app.model.document().missing_plugins() {
+            match by_id.iter_mut().find(|(i, _)| *i == id) {
+                Some((_, clips)) => clips.push(clip.0),
+                None => by_id.push((id, vec![clip.0])),
+            }
+        }
+        for (id, clips) in by_id {
+            let clips: Vec<String> = clips.iter().map(|c| c.to_string()).collect();
+            app.warn(crate::tf!(k::msg::PLUGIN_MISSING, id, clips.join(", ")));
         }
         // unavailable sources: EACH on a separate line in the bell and a
         // counter in the status. The project is open meanwhile, the edit is intact; instead of

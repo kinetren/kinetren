@@ -17,5 +17,8 @@ rtrb = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+# the built-in plugin set for the tests (plugin-api-stage1; dev only — t975)
+kt-plugins-builtin = { workspace = true }
+serde_json = { workspace = true }
 realfft = { workspace = true }
 tempfile = "3.27.0"

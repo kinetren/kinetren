@@ -22,6 +22,7 @@ fn plugin(id: &'static str, media: Media, decl: Decl) -> Arc<dyn Plugin> {
         id: id.into(),
         media,
         passport: vec![ParamSpec::num("time_ms", 1.0, 200.0, 20.0, 1.0, ParamUnit::Ms, ParamKind::Structural)],
+        rows: Vec::new(),
         decl,
         ui: Default::default(),
     }))

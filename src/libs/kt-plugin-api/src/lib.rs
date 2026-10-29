@@ -843,14 +843,56 @@ pub struct UiDecl {
     pub keywords_key: &'static str,
 }
 
+/// How a passport row is STORED in the project file (D3): the field type the kind had as an enum
+/// variant, so a moved kind writes the same text (`6`, not `6.0`; an f32's shortest form, not the
+/// f64 of it). Values are clamped and cast exactly as `fx_cast!` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Store {
+    F64,
+    F32,
+    U32,
+    U8,
+    I32,
+}
+
+impl Store {
+    /// The value as the field type would hold it (`fx_cast!`'s rule), back in f64.
+    pub fn cast(self, v: f64) -> f64 {
+        match self {
+            Store::F64 => v,
+            Store::F32 => v as f32 as f64,
+            Store::U32 => v.round().max(0.0) as u32 as f64,
+            Store::U8 => v.round().clamp(0.0, 255.0) as u8 as f64,
+            Store::I32 => v.round() as i32 as f64,
+        }
+    }
+}
+
+/// A passport row's file form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowDecl {
+    pub store: Store,
+    /// Not written at its default (today's `skip_serializing_if`, e.g. `Gain.pan`).
+    pub omit_default: bool,
+}
+
 /// A plugin's description of itself.
 #[derive(Debug, Clone)]
 pub struct Manifest {
     pub id: PluginId,
     pub media: Media,
     pub passport: Vec<ParamSpec>,
+    /// The file form of each passport row, in passport order (D3); empty — every row is f64.
+    pub rows: Vec<RowDecl>,
     pub decl: Decl,
     pub ui: UiDecl,
+}
+
+impl Manifest {
+    /// The file form of row `i` (f64, always written, when not declared).
+    pub fn row(&self, i: usize) -> RowDecl {
+        self.rows.get(i).copied().unwrap_or(RowDecl { store: Store::F64, omit_default: false })
+    }
 }
 
 /// Numeric parameter values in passport order.

@@ -542,6 +542,7 @@ strip = "条带"
 
 # FX editor of the clip.
 [fx]
+missing_plugin = "缺失的插件"
 hint_reset = "双击标签可将参数复位"
 conform = "适配规则："
 conform_project = "项目"
@@ -807,6 +808,7 @@ clip_at = "{0} @ {1} 秒"
 # One-off messages note()/warn(). There is NO agreement with the number:
 # we write “noun: N” (rule R.19, see README).
 [msg]
+plugin_missing = "此版本中没有该插件：{0}——已保留在文件中并直接跳过（事件：{1}）"
 area_needs_band = "请先在时间线上框选一段（或选择区域）"
 area_stem = "区域"
 area_saved = "已保存区域：{0}"

@@ -10,5 +10,11 @@ kt-time = { workspace = true }
 # the parameter passport (plugin-api-stage1, D1)
 kt-plugin-api = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+# preserve_order: a slot of a plugin this build lacks is written back exactly as read
+# (plugin-api-stage1, D3) — kt-otio turns it on for the whole build anyway
+serde_json = { workspace = true, features = ["preserve_order"] }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+# the built-in plugin set for the format tests (plugin-api-stage1; a dev-dependency only — t975)
+kt-plugins-builtin = { workspace = true }

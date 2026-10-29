@@ -542,6 +542,7 @@ strip = "شريط"
 
 # FX editor of the clip.
 [fx]
+missing_plugin = "إضافة مفقودة"
 hint_reset = "انقر نقرًا مزدوجًا على التسمية لإعادة ضبط المعامل"
 conform = "قاعدة الإطار:"
 conform_project = "المشروع"
@@ -807,6 +808,7 @@ clip_at = "{0} @ {1} ثانية"
 # One-off messages note()/warn(). There is NO agreement with the number:
 # we write “noun: N” (rule R.19, see README).
 [msg]
+plugin_missing = "الإضافة غير موجودة في هذا الإصدار: {0} — محفوظة في الملف ويتم تجاوزها (الأحداث: {1})"
 area_needs_band = "حدّد أولًا نطاقًا على الخط الزمني (أو منطقة)"
 area_stem = "منطقة"
 area_saved = "حُفظت المنطقة: {0}"

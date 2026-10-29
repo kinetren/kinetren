@@ -1401,6 +1401,10 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Ripple { .. } => "Ripple",
         FxInstance::Kaleidoscope { .. } => "Kaleidoscope",
         FxInstance::Cylinder3d { .. } => "Cylinder 3D",
+        // a plugin names itself in its manifest (plugin-api-stage1, D7)
+        FxInstance::Plugin(p) => p.manifest().ui.name,
+        // a plugin this build lacks: the id from the file, said as such
+        FxInstance::Missing(_) => crate::i18n::tr(crate::i18n::k::fx::MISSING_PLUGIN),
     }
 }
 
