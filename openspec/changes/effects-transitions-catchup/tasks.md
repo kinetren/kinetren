@@ -8,7 +8,8 @@ at once (English message, first line = the stage and what was done).
 
 - [x] 0.1 The owner's words (item 6 of `kkt.txt`, "plugins before effects") and the ktprompts FX items are recorded in `docs/user-feedback.md`, round of 2026-10-27/28; this proposal recorded
 - [x] 0.2 The reconnaissance note F-FX-007 (`docs/features/fx/catalogue/market-catalogue-and-waves.md`) and the `capcut-2026` row in `docs/features/_editors.md` are written
-- [ ] 0.3 The `fx/` coverage row of `docs/features/README.md` (6 / 6 → 7 / 7) and the summary-table row for F-FX-007 (inserted from `features-index.py --table`); the new subcategory `fx/catalogue/` named in the README's category prose. Verify `python3 src/scripts/features-index.py --check` green and `openspec validate effects-transitions-catchup --strict` green; commit stage 0
+- [x] 0.3 The `fx/` coverage row of `docs/features/README.md` (6 / 6 → 7 / 7) and the summary-table row for F-FX-007 (inserted from `features-index.py --table`); the new subcategory `fx/catalogue/` named in the README's category prose. Verify `python3 src/scripts/features-index.py --check` green and `openspec validate effects-transitions-catchup --strict` green; commit stage 0
+  - Note: the F-FX-007 summary row and the category text had already landed with the coordinator's README commit 1314b9b (row appended at the end of the table, coverage left at 7 / 6); this stage set the coverage to 7 / 7 and added the `fx/` subcategory paragraph naming `catalogue/`. The rest of the hand-kept summary table has drifted from `--table` in other notes' rows (titles, order) — not touched here
 
 ## 1. The guards
 

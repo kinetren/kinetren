@@ -77,7 +77,7 @@ The YAML frontmatter is the only place in `docs/` with a machine-readable format
 | `resilience/` | RES | keeping work safe, recovery, behavior under load and on foreign hardware | 13 / 13 |
 | `collab/` | COL | not working alone: claim, merge, say something about a frame, hand off, distribute material, pass on the bill, depend on the other side | 46 / 46 |
 | `compositing/` | CMP | how a frame becomes a frame: transform concatenation, resampling quality, resolution of intermediate stages, transition vocabulary, blend modes | 3 / 3 |
-| `fx/` | FX | video effects of a clip: stylization, distortions, blurs, 3D transforms, simulations; the market catalogue against ours | 7 / 6 |
+| `fx/` | FX | video effects of a clip: stylization, distortions, blurs, 3D transforms, simulations; the market catalogue against ours | 7 / 7 |
 
 A subcategory is a stable taxonomy declared here; it is not created or deleted on a whim. The directories are not numbered (`01-timeline/`): adding a category would reshuffle all the paths.
 
@@ -88,6 +88,8 @@ A subcategory is a stable taxonomy declared here; it is not created or deleted o
 Boundaries with the outside: **`resilience/` — "the MACHINE will survive", `collab/` — "a SECOND PERSON will survive"** (one line `app.rs:1063` gives output in both: there "there is no second state on disk", here "there is no check that the state on disk is not someone else's"); `help/` — the program tells the person, `collab/` — a person tells a person THROUGH the program; `project/` — the structure of MY document, `collab/` — the fate of the document with the second party; `export/` — the queue and output parameters, `offload/` — the form of a job that can be carried off the machine.
 
 **The doctrine of three registries.** `_editors.md` — what we compare with (verdict), field `editors:`. `_trackers.md` — where the number comes from (count), field `trackers:`. `_services.md` — what stands on the other side of the network (cost), field `services:`. The separation is not aesthetic: `read_editor_keys()` takes any line of its file with a slug in the first cell, and a third table there would silently make `frame-io` a legal value of `editors:`.
+
+`fx/` holds one effect family per subcategory (`stylize/`, `distort/`, `blur/`, `three-d/`, `simulate/`) and one subcategory that is not a family: **`catalogue/` — the whole catalogue against the market** (F-FX-007: every built-in kind listed from the code, the groups other editors offer, the ranked catch-up waves). A note about one new look goes into its family; `catalogue/` changes only when the list of kinds or the rank of the waves changes (the guards t978–t983 hold it to the code).
 
 `resilience/` was set up in the third wave (R.41). The boundary with `help/` is drawn like this: **`help/` — "how the program will SAY this", `resilience/` — "what the program will DO in this case"**. The report of a crash lives in `help/errors/`, and what survives the crash — here. The category appeared not because a new source appeared, but because the vendor documentation does not describe what it costs: the first two waves read the selling side, and the domain was not visible.
 
