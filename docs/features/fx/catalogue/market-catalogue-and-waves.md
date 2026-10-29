@@ -47,9 +47,12 @@ that short-form editing expects; none of the five core editors organises its pan
 |---|---|---|---|
 | CapCut | 2026 (desktop; build number `[NOT VERIFIED]`) | Effects panel, Transitions, Text → Animation, Speed → Curve | desktop effect tabs "Stylize", "Distort", "Blur", "Color Grading", "Transitions", "AI Effects" (web: "Trending", "Cinematic", "Retro", "Glitch"); named looks such as Movie Grain, RGB Split, Zoom Shake, Dreamy Glow, Soft Focus; text animation is three preset slots In / Out / Loop with a duration slider; speed is a curve with named presets (Montage, Hero, Bullet, Jump Cut, Flash In, Flash Out) and an automatic beat sync |
 
-**Our catalogue, from the code** (`src/libs/kt-model/src/project.rs`, `FxInstance::all()` /
-`TransitionKind::ALL`; `src/libs/kt-model/src/genmedia.rs`, `GeneratorKind::tag()`). The guard t978
-compares these three lists with the code.
+**Our catalogue, from the code**: the plugin assembler's closed list (`BUILTIN_IDS`,
+`src/libs/kt-plugins-builtin/src/lib.rs`, by each manifest's media) plus the core-owned kinds
+(`FxInstance::all()` without its plugin slots and `TransitionKind::ALL` in
+`src/libs/kt-model/src/project.rs`; `GeneratorKind::tag()` in `src/libs/kt-model/src/genmedia.rs`).
+The guard t978 compares the five lists with them; a plugin registered through another door is not
+listed.
 
 - **Audio effects (18):** `gain`, `slowed_reverb`, `filter`, `eq`, `distortion`, `bitcrusher`,
   `stereo_width`, `tremolo`, `auto_pan`, `vibrato`, `chorus`, `flanger`, `phaser`, `delay`,

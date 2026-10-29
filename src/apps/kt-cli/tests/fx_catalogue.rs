@@ -55,19 +55,84 @@ fn sorted(set: &BTreeSet<String>) -> String {
 
 // ---- t978: the lists equal the registries -------------------------------------------------------
 
-/// The registries by the headings of the note's lists.
+/// A video plugin registered through the test door (plugin-api-stage1, D8): the installed registry
+/// holds it, the reference lists never do, so the note must not be asked to list it.
+mod test_door {
+    use kt_plugin_api::{Decl, Manifest, Media, Plugin, UiDecl, VideoClass, VideoKernel};
+
+    pub const ID: &str = "catalogue_test_tint";
+
+    pub struct Tint(Manifest);
+
+    impl Tint {
+        pub fn new() -> Tint {
+            Tint(Manifest {
+                id: ID.into(),
+                media: Media::VideoFx,
+                passport: vec![],
+                rows: vec![],
+                decl: Decl { video_class: Some(VideoClass::PointWise), builtin: false, ..Decl::default() },
+                ui: UiDecl { name: "Catalogue Test Tint", category_key: "", keywords_key: "" },
+            })
+        }
+    }
+
+    impl Plugin for Tint {
+        fn manifest(&self) -> &Manifest {
+            &self.0
+        }
+        fn video(&self) -> Option<&dyn VideoKernel> {
+            Some(self)
+        }
+    }
+
+    impl VideoKernel for Tint {}
+}
+
+/// The process's registry: the built-in set plus the test-door plugin, installed once.
+fn installed() -> &'static std::sync::Arc<kt_plugin_api::Registry> {
+    kt_plugins_builtin::install_with(|reg| {
+        reg.register_for_test(std::sync::Arc::new(test_door::Tint::new())).expect("the test-door plugin registers")
+    })
+}
+
+/// The registries by the headings of the note's lists: the assembler's closed list
+/// (`BUILTIN_IDS`, sorted by each manifest's media) plus the core-owned kinds — the arms of
+/// `FxInstance::all()` that are not plugin slots, and every transition and generator (none of
+/// them is a plugin on this branch). The installed registry is asked only for the media of a
+/// built-in id, so a plugin from another door never becomes a row the note must carry.
 fn registry() -> Vec<(&'static str, BTreeSet<String>)> {
-    kt_plugins_builtin::install();
-    let all = FxInstance::all();
-    let tags = |f: &dyn Fn(&FxInstance) -> bool| -> BTreeSet<String> {
-        all.iter().filter(|x| f(x)).map(|x| x.tag().to_string()).collect()
-    };
+    use kt_plugin_api::Media;
+    let reg = installed();
+    let (mut audio, mut layer, mut video) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+    let mut transitions: BTreeSet<String> = TransitionKind::ALL.iter().map(|k| k.tag().to_string()).collect();
+    let mut generators: BTreeSet<String> = GeneratorKind::all().iter().map(|k| k.tag().to_string()).collect();
+    for id in kt_plugins_builtin::BUILTIN_IDS {
+        let p = reg.get(id).unwrap_or_else(|| panic!("the built-in {id} is not installed"));
+        let to = match p.manifest().media {
+            Media::AudioFx => &mut audio,
+            Media::VideoFx => &mut video,
+            Media::Transition => &mut transitions,
+            Media::Generator => &mut generators,
+        };
+        to.insert(id.to_string());
+    }
+    for f in FxInstance::all().iter().filter(|f| !matches!(f, FxInstance::Plugin(_))) {
+        let to = if f.is_layer_mix() {
+            &mut layer
+        } else if f.is_audio() {
+            &mut audio
+        } else {
+            &mut video
+        };
+        to.insert(f.tag().to_string());
+    }
     vec![
-        ("Audio effects", tags(&|f: &FxInstance| f.is_audio())),
-        ("Layer marker", tags(&|f: &FxInstance| f.is_layer_mix())),
-        ("Video effects", tags(&|f: &FxInstance| !f.is_audio() && !f.is_layer_mix())),
-        ("Transitions", TransitionKind::ALL.iter().map(|k| k.tag().to_string()).collect()),
-        ("Generators", GeneratorKind::all().iter().map(|k| k.tag().to_string()).collect()),
+        ("Audio effects", audio),
+        ("Layer marker", layer),
+        ("Video effects", video),
+        ("Transitions", transitions),
+        ("Generators", generators),
     ]
 }
 
@@ -120,6 +185,10 @@ fn check_lists(note: &str, reg: &[(&str, BTreeSet<String>)]) -> Vec<String> {
 #[test]
 fn t978_the_note_lists_exactly_the_built_in_kinds() {
     let reg = registry();
+    // the test-door plugin is installed and selectable, and the note is not asked to list it
+    let id = test_door::ID;
+    assert!(installed().get(id).is_some() && installed().is_test_only(id), "the test door did not register {id}");
+    assert!(reg.iter().all(|(_, ids)| !ids.contains(id)), "a reference list holds the test-door plugin");
     let note = read(NOTE);
     let broken = [
         (note.replacen("`vhs`, `glow`, `event_grid`", "`vhs`, `event_grid`", 1), "missing `glow`"),

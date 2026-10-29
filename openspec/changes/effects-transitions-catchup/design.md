@@ -147,9 +147,10 @@ README guard t826). It parses the note's id lists, its verdict table, its owner-
 Verdict list, and this design's waves; a market cell counts as live-checked only through a numbered cite
 `(src N)` of a Sources item without `[NOT VERIFIED]` — "was this row checked" is otherwise prose the
 guard cannot read; it reads `id:` lines of every note under `docs/features/`
-and checks `openspec/specs/<cap>/spec.md` existence. t978 today compares with `FxInstance::all()` /
-`TransitionKind::ALL` / `GeneratorKind`; when `plugin-api-stage1` lands, it compares with the
-assembler's closed list plus the core kinds (one edit of the test, named in task 2.1). t981 keeps its
+and checks `openspec/specs/<cap>/spec.md` existence. t978 compares with the
+assembler's closed list (`BUILTIN_IDS`, by manifest media) plus the core-owned kinds (task 2.1, done
+on the `BUILTIN_IDS` of this branch); a test-door plugin is installed in the test binary and is never
+required in the note. t981 keeps its
 closed list of rejected names inside the test (the t643 "frozen list" technique): parsing prose of
 design files for "what was rejected" would be fragile, and a reviewer sees the list change in a diff.
 After archiving, t979/t981 read the waves from `openspec/specs/video-fx/design.md` where the waves

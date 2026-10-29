@@ -2136,6 +2136,7 @@ dependencies = [
  "kt-media",
  "kt-model",
  "kt-otio",
+ "kt-plugin-api",
  "kt-plugins-builtin",
  "kt-time",
  "kt-version",
