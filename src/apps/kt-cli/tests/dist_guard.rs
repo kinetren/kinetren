@@ -69,6 +69,10 @@ const FILES: &[&str] = &[
     "src/packaging/flatpak/cargo-sources.json",
     "src/Cargo.lock",
     "src/scripts/flatpak-cargo-sources.py",
+    "src/packaging/com.kinetren.Kinetren.metainfo.xml",
+    "LICENSE",
+    "docs/flatpak.md",
+    "src/scripts/flatpak-build.sh",
 ];
 
 fn copy_tree(tag: &str) -> PathBuf {
@@ -586,5 +590,104 @@ fn t968_offline_crate_sources_follow_the_lock() {
         },
         "is not in cargo-sources.json — run `make flatpak-sources`",
     )];
+    expect_red(&cases);
+}
+
+const METAINFO: &str = "src/packaging/com.kinetren.Kinetren.metainfo.xml";
+
+/// t969 (flatpak-flathub, D7): the listing is complete and the GPU guide names its commands.
+///
+/// Flathub lists an app only with valid metainfo that matches the manifest, and the owner asked
+/// "at least give recommendations how to grant the application access in flatpak": a listing
+/// without its translation, a screenshot that moves, a version of another form or a guide without
+/// the undo would each reach a person.
+#[test]
+fn t969_metainfo_is_complete_and_the_guide_names_its_commands() {
+    if cfg!(windows) {
+        eprintln!("t969 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    let cases: [(&str, fn(&Path), &str); 5] = [
+        (
+            "no-ru",
+            |d| {
+                // every Russian paragraph goes
+                let p = d.join(METAINFO);
+                let t = std::fs::read_to_string(&p).unwrap();
+                std::fs::write(&p, t.replace("<p xml:lang=\"ru\">", "<p xml:lang=\"xx\">")).unwrap();
+            },
+            "the ru description is missing",
+        ),
+        (
+            "http-shot",
+            |d| edit(d, METAINFO, "<image>https://", "<image>http://"),
+            "is not an HTTPS URL of a release tag",
+        ),
+        (
+            "version-form",
+            |d| edit(d, METAINFO, "<release version=\"", "<release version=\"kt-"),
+            "is not of the release tag form YY.MM.DD",
+        ),
+        (
+            "no-undo",
+            |d| edit(d, "docs/flatpak.md", "flatpak override --user --reset", "flatpak override --user --show"),
+            "the guide lacks `flatpak override --user --reset com.kinetren.Kinetren`",
+        ),
+        (
+            "no-guide-link",
+            |d| edit(d, METAINFO, "<url type=\"help\">", "<url type=\"faq\">"),
+            "the listing does not link the GPU guide docs/flatpak.md",
+        ),
+    ];
+    expect_red(&cases);
+    // the real metainfo also passes appstreamcli's strict check when the tool is here
+    let have = std::process::Command::new("sh").args(["-c", "command -v appstreamcli"]).output();
+    if have.is_ok_and(|o| o.status.success()) {
+        let out = std::process::Command::new("appstreamcli")
+            .args(["validate", "--strict", "--no-net"])
+            .arg(repo().join(METAINFO))
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "appstreamcli validate --strict:\n{}", String::from_utf8_lossy(&out.stdout));
+    }
+}
+
+/// t971 (flatpak-flathub, D9): the Flatpak job and the release bundle keep their shape.
+///
+/// The runner has no GPU, so CI proves the sandbox's software path — exactly the failure "the
+/// package found the encoder-less FFmpeg" — and the free-plan decision keeps uploads out of CI.
+/// The run itself is `src/scripts/flatpak-check.sh` in that job.
+#[test]
+fn t971_flatpak_job_and_release_bundle_keep_their_shape() {
+    if cfg!(windows) {
+        eprintln!("t971 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    let cases: [(&str, fn(&Path), &str); 5] = [
+        ("no-job", |d| edit(d, ".github/workflows/ci.yml", "\n  flatpak:\n", "\n  flatpak-gone:\n"), "no `flatpak` job"),
+        (
+            "upload",
+            |d| {
+                edit(
+                    d,
+                    ".github/workflows/ci.yml",
+                    "        run: src/scripts/flatpak-build.sh\n",
+                    "        run: src/scripts/flatpak-build.sh\n      - uses: actions/upload-artifact@v4\n",
+                )
+            },
+            "the flatpak job uploads nothing",
+        ),
+        (
+            "no-lint",
+            |d| edit(d, "src/scripts/flatpak-build.sh", "flatpak-builder-lint org.flatpak.Builder repo", "true"),
+            "the linter on the repository is missing",
+        ),
+        (
+            "no-bundle",
+            |d| edit(d, ".github/workflows/release.yml", " \\\n            kinetren-*-linux-x86_64.flatpak kinetren-*-linux-x86_64.flatpak.sha256", ""),
+            "the release must build and attach",
+        ),
+        ("no-make", |d| edit(d, "Makefile", "\nflatpak: ##", "\nflatpak-gone: ##"), "target `flatpak` must run flatpak-build.sh"),
+    ];
     expect_red(&cases);
 }

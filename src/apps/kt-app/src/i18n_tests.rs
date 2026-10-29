@@ -694,3 +694,21 @@ fn t953_download_window_speaks_every_language() {
     }
     set_lang(Lang::Ru);
 }
+
+/// t970 (flatpak-flathub, D8), the window's half: the Flatpak FFmpeg hint exists in the five catalogs,
+/// translated, and names the runtime's way (`flatpak update`, `kt-cli ffmpeg`) in every language.
+#[test]
+fn t970_flatpak_ffmpeg_hint_in_every_language() {
+    use crate::i18n::{k, tr};
+    for lang in Lang::ALL {
+        crate::i18n::set_lang(lang);
+        let flat = tr(k::ffmpeg::HINT_FLATPAK).to_string();
+        let linux = tr(k::ffmpeg::HINT_LINUX).to_string();
+        crate::i18n::set_lang(Lang::En);
+        assert!(flat.contains("flatpak update") && flat.contains("kt-cli ffmpeg"), "{}: {flat}", lang.code());
+        assert_ne!(flat, linux, "{}: the Flatpak hint repeats the distribution one", lang.code());
+        if lang != Lang::En {
+            assert_ne!(flat, tr(k::ffmpeg::HINT_FLATPAK), "{}: not translated", lang.code());
+        }
+    }
+}

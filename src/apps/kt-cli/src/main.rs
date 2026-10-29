@@ -701,6 +701,25 @@ fn media_facts(project: &Project, project_path: &str) -> kt_engine::SourceFacts 
 }
 
 /// One export log fact as an English line (render-window-v1-parity, D1).
+/// Every frame of a file's grid through our own decoder: (frames read, the last frame's time).
+/// An error when the file has no video or a grid key is not covered.
+fn decode_all(path: &str) -> Result<(usize, kt_time::Tick), String> {
+    use kt_media::MediaSource;
+    let mut src = kt_media::ffmpeg::FfmpegSource::open(path).map_err(|e| e.to_string())?;
+    let info = src.info().clone();
+    let (num, den) = info.fps.filter(|_| info.has_video).ok_or("no video stream")?;
+    let step = kt_time::TICK_HZ as i64 * den as i64 / num.max(1) as i64;
+    let count = (info.duration.0 / step.max(1)).max(1);
+    let keys: Vec<kt_time::Tick> = (0..count).map(|i| kt_time::Tick(i * step)).collect();
+    let mut seen = 0usize;
+    src.read_video_span(&keys, Some(kt_media::Quality { width: 64, height: 36 }), &mut |_, _| seen += 1)
+        .map_err(|e| e.to_string())?;
+    if seen != keys.len() {
+        return Err(format!("{seen} of {} grid frames decoded", keys.len()));
+    }
+    Ok((seen, *keys.last().unwrap()))
+}
+
 /// `kt-cli ffmpeg --probe-encoders` (hw-encode-context D6): every hardware candidate of this OS
 /// opened by the export's own code at 1280×720 into a throwaway file — "opens" or the failing part.
 fn probe_encoders() -> String {
@@ -1264,9 +1283,27 @@ fn run(args: &[String]) -> i32 {
                 }
             }
         }
+        Some("decode") => {
+            // flatpak-flathub (flatpak-check.sh, t971): a file read by our own decoder over every
+            // frame of its grid — "the export decodes to its last frame", inside the sandbox too
+            let Some(input) = args.get(1) else {
+                eprintln!("usage: kt-cli decode <file>");
+                return 2;
+            };
+            match decode_all(input) {
+                Ok((frames, last)) => {
+                    println!("decoded {frames} video frames, the last at {:.3} s", last.0 as f64 / kt_time::TICK_HZ as f64);
+                    0
+                }
+                Err(e) => {
+                    eprintln!("decode {input}: {e}");
+                    1
+                }
+            }
+        }
         Some(cmd) => {
             eprintln!(
-                "unknown command: {cmd} (available: version, new, import, export-otio, demo, showcase, roundtrip, probe, render, export)"
+                "unknown command: {cmd} (available: version, new, import, export-otio, demo, showcase, roundtrip, probe, render, export, decode, ffmpeg)"
             );
             2
         }

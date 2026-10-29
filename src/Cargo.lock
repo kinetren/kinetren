@@ -2138,6 +2138,7 @@ name = "kt-ffmpeg"
 version = "0.1.0"
 dependencies = [
  "bindgen",
+ "kt-dirs",
  "kt-time",
  "libloading",
  "thiserror 2.0.20",

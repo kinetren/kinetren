@@ -373,3 +373,16 @@ fn t847_failure_not_cached_success_is() {
     assert!(report.contains(&full.to_string_lossy().to_string()), "{report}");
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// t970 (flatpak-flathub, D8), the FFmpeg half: inside a Flatpak the "not found" hint names the
+/// runtime and `kt-cli ffmpeg`, not distribution packages — the host's packages are invisible there.
+#[test]
+fn t970_flatpak_hint_names_the_runtime() {
+    use kt_dirs::Sandbox;
+    let inside = search::not_found_hint_in(Os::Linux, Sandbox::Flatpak);
+    let outside = search::not_found_hint_in(Os::Linux, Sandbox::None);
+    assert!(inside.contains("runtime") && inside.contains("kt-cli ffmpeg"), "{inside}");
+    assert!(!inside.contains("distribution"), "{inside}");
+    assert!(outside.contains("from your distribution"), "{outside}");
+    assert_eq!(search::not_found_hint_in(Os::Windows, Sandbox::Flatpak), search::not_found_hint_in(Os::Windows, Sandbox::None));
+}

@@ -153,6 +153,30 @@ pub fn data_dir() -> PathBuf {
     system().data.clone()
 }
 
+/// The sandbox the program runs in (change flatpak-flathub, D8): the ONE seam that every
+/// sandbox-dependent behaviour reads (the update check, the FFmpeg hint).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sandbox {
+    None,
+    /// Flatpak: `FLATPAK_ID` is set or `/.flatpak-info` exists.
+    Flatpak,
+}
+
+/// Pure: the sandbox of a machine as `env` shows it, with whether `/.flatpak-info` exists.
+pub fn sandbox_of(env: &dyn Env, flatpak_info: bool) -> Sandbox {
+    if flatpak_info || env.var_os("FLATPAK_ID").is_some_and(|v| !v.is_empty()) {
+        Sandbox::Flatpak
+    } else {
+        Sandbox::None
+    }
+}
+
+/// The sandbox of this process (asked once).
+pub fn sandbox() -> Sandbox {
+    static SANDBOX: std::sync::OnceLock<Sandbox> = std::sync::OnceLock::new();
+    *SANDBOX.get_or_init(|| sandbox_of(&SystemEnv, std::path::Path::new("/.flatpak-info").exists()))
+}
+
 /// The local directory of this machine (downloads).
 pub fn local_dir() -> PathBuf {
     system().local.clone()

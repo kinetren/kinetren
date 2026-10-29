@@ -114,6 +114,30 @@ jobs:
           path: nextest.log
           retention-days: 3
 
+  flatpak:
+    # The Flatpak (change flatpak-flathub, D9): built with flatpak-builder against the Flathub
+    # runtime, linted, its metainfo validated, and the sandbox's software path checked (the
+    # runtime's FFmpeg, a libx264 + AAC export that decodes — flatpak-check.sh). The runner has
+    # no GPU: hardware encoding stays a manual check. Nothing is uploaded.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: flatpak, flatpak-builder, appstream
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream
+
+      - name: The flatpak-builder cache
+        uses: actions/cache@v4
+        with:
+          path: .flatpak-builder
+          key: flatpak-builder-${{ hashFiles('src/packaging/flatpak/*.yml', 'src/packaging/flatpak/cargo-sources.json') }}
+
+      - name: Build, lint and check the Flatpak
+        run: src/scripts/flatpak-build.sh
+
   ffmpeg9:
     # FFmpeg 9 on Linux (change ffmpeg-9): the FFmpeg tests against shared FFmpeg 9.0.2,
     # built from the official source in the `ffmpeg-test` stage of the build container (for

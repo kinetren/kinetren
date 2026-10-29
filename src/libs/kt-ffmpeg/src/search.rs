@@ -442,8 +442,19 @@ impl fmt::Display for Report {
     }
 }
 
-/// The hint to show when nothing was loaded — per OS (media-index, "the search report").
+/// The hint to show when nothing was loaded — per OS (media-index, "the search report"); inside
+/// a Flatpak (`kt_dirs::sandbox`) the host's packages are invisible, so it names the runtime.
 pub fn not_found_hint(os: Os) -> &'static str {
+    not_found_hint_in(os, kt_dirs::sandbox())
+}
+
+/// `not_found_hint` for a given sandbox (tests).
+pub fn not_found_hint_in(os: Os, sandbox: kt_dirs::Sandbox) -> &'static str {
+    if os == Os::Linux && sandbox == kt_dirs::Sandbox::Flatpak {
+        return "Inside the Flatpak FFmpeg comes from the runtime (org.freedesktop.Platform with its \
+                codecs-extra extension): run `flatpak update`, and see what was found with \
+                `kt-cli ffmpeg` (flatpak run --command=kt-cli <app id> ffmpeg).";
+    }
     match os {
         Os::Linux => {
             "Install FFmpeg 6, 7, 8 or 9 from your distribution (libavcodec, libavformat, \

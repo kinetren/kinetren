@@ -7,6 +7,8 @@ publish.workspace = true
 
 [dependencies]
 kt-time = { workspace = true }
+# the sandbox seam (flatpak-flathub D8): inside a Flatpak the not-found hint names the runtime
+kt-dirs = { workspace = true }
 libloading = "0.8"
 thiserror = { workspace = true }
 

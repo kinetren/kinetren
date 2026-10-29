@@ -45,6 +45,14 @@ jobs:
         # this target cleans only its own packages, so the tarball above stays
         run: src/scripts/release-build.sh --target windows
 
+      - name: Build the Flatpak bundle
+        # the same build, lint and sandbox check as the CI job `flatpak` (change flatpak-flathub,
+        # D9); the bundle lets people try a release before Flathub has it
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream
+          src/scripts/flatpak-build.sh --bundle
+
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -55,4 +63,5 @@ jobs:
           case "$TAG" in *-*) PRE=(--prerelease) ;; esac
           gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes "${PRE[@]}" \
             kinetren-*.tar.gz kinetren-*.tar.gz.sha256 \
-            kinetren-*-windows-x86_64.zip kinetren-*-windows-x86_64.zip.sha256
+            kinetren-*-windows-x86_64.zip kinetren-*-windows-x86_64.zip.sha256 \
+            kinetren-*-linux-x86_64.flatpak kinetren-*-linux-x86_64.flatpak.sha256

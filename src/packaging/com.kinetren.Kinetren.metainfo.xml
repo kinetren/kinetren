@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The AppStream listing (change flatpak-flathub, D7). Its <id> and launchable are the one
+     application ID (kt-app APP_ID, guarded by t966); the languages are English and Russian until a
+     speaker reviews es / zh-Hans / ar (design Open Question 3: Flathub refuses machine translations).
+     Shape guarded by t969. -->
+<component type="desktop-application">
+  <id>com.kinetren.Kinetren</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary=https://github.com/kinetren/kinetren/blob/master/LICENSE</project_license>
+  <name>Kinetren</name>
+  <summary>Non-linear video editor</summary>
+  <summary xml:lang="ru">Нелинейный видеоредактор</summary>
+  <developer id="com.kinetren">
+    <name>Kinetren</name>
+  </developer>
+  <description>
+    <p>
+      Kinetren is a non-linear video editor: a timeline of video, audio and morph tracks, effects with
+      automation curves, transitions, titles, nested compositions and an in-process MP4 export.
+    </p>
+    <p>
+      Playback is driven by the audio clock, previews and export share one composition path on the
+      GPU with a byte-exact CPU fallback, and the export uses the hardware encoder that actually opens
+      on the machine.
+    </p>
+    <p>
+      Hardware encoding in the sandbox depends on the GPU driver the Flatpak can reach; the Flatpak
+      GPU guide (the Help link of this listing) says what to check and how to grant access. Licence: Kinetren Non-Commercial License 1.0 (free to share, not for commercial use).
+    </p>
+    <p xml:lang="ru">
+      Kinetren — нелинейный видеоредактор: лента дорожек видео, звука и морфов, эффекты с кривыми
+      автоматизации, переходы, титры, вложенные композиции и экспорт в MP4 внутри программы.
+    </p>
+    <p xml:lang="ru">
+      Воспроизведение идёт по часам звука, превью и экспорт собираются одним путём композиции на GPU
+      с побайтно точным запасным путём на CPU, а экспорт берёт аппаратный кодировщик, который
+      действительно открывается на этой машине.
+    </p>
+    <p xml:lang="ru">
+      Аппаратное кодирование в песочнице зависит от драйвера GPU, доступного Flatpak; что проверить и
+      как дать доступ — в руководстве по GPU во Flatpak (ссылка «Справка» этой страницы).
+      Лицензия: Kinetren Non-Commercial License 1.0 (можно делиться, нельзя использовать в коммерческих целях).
+    </p>
+  </description>
+  <launchable type="desktop-id">com.kinetren.Kinetren.desktop</launchable>
+  <url type="homepage">https://github.com/kinetren/kinetren</url>
+  <url type="bugtracker">https://github.com/kinetren/kinetren/issues</url>
+  <!-- the GPU guide the description names -->
+  <url type="help">https://github.com/kinetren/kinetren/blob/master/docs/flatpak.md</url>
+  <screenshots>
+    <!-- by the URLs of a release tag: they do not move with later commits -->
+    <screenshot type="default">
+      <caption>Playback: the media bin, the preview, level meters and the timeline</caption>
+      <image>https://raw.githubusercontent.com/kinetren/kinetren/v26.10.26/docs/images/hero.webp</image>
+    </screenshot>
+    <screenshot>
+      <caption>A composition expanded in place on the timeline</caption>
+      <image>https://raw.githubusercontent.com/kinetren/kinetren/v26.10.26/docs/images/timeline.webp</image>
+    </screenshot>
+    <screenshot>
+      <caption>The effect gallery on the event's own frame</caption>
+      <image>https://raw.githubusercontent.com/kinetren/kinetren/v26.10.26/docs/images/video-fx.webp</image>
+    </screenshot>
+    <screenshot>
+      <caption>The morpher editor</caption>
+      <image>https://raw.githubusercontent.com/kinetren/kinetren/v26.10.26/docs/images/morpher.webp</image>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1">
+    <!-- the anonymous usage counter (switchable in View) -->
+    <content_attribute id="social-info">mild</content_attribute>
+  </content_rating>
+  <releases>
+    <release version="26.10.26" date="2026-10-26"/>
+  </releases>
+</component>

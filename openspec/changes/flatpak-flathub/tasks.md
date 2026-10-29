@@ -80,15 +80,43 @@ line = the stage and what was done). Stage only this change's files.
 
 ## 3. Metainfo, sandbox behaviour, CI (D7–D9)
 
-- [ ] 3.1 `src/packaging/<ID>.metainfo.xml` (languages per Open Question 3, screenshots by tag URLs, OARS, licence, `<releases>` written by `release-build.sh`); t969's metainfo part. Verify `appstreamcli validate --strict` and the Flathub linter on the local build pass, and t969 green for the metainfo
-- [ ] 3.2 `kt_dirs::sandbox()` seam; the update-check consent input and the Flatpak FFmpeg hint in the five catalogs; t970 (`src/apps/kt-app/src/update_check.rs`, `i18n_tests.rs`). Verify t970 green and the update-check tests (t872–t878) still green
+- [x] 3.1 `src/packaging/<ID>.metainfo.xml` (languages per Open Question 3, screenshots by tag URLs, OARS, licence, `<releases>` written by `release-build.sh`); t969's metainfo part. Verify `appstreamcli validate --strict` and the Flathub linter on the local build pass, and t969 green for the metainfo
+  - `src/packaging/com.kinetren.Kinetren.metainfo.xml`: English + Russian (Q3's recommendation, pending
+    the owner), `LicenseRef-proprietary=…/LICENSE` with the licence named in the description, the
+    developer, homepage/bugtracker and a `help` URL to the guide (appstreamcli refuses a plain URL in
+    the description), four screenshots by `v26.10.26` tag URLs, OARS `social-info` mild, the release
+    26.10.26. `appstreamcli validate --strict --pedantic --no-net`: valid, one pedantic note
+    (uppercase letters in the ID — the owner's choice). t969 green (`check_metainfo`). NOT done: the
+    Flathub linter (it runs from the Flathub `org.flatpak.Builder` app — CI job / `make flatpak`), and
+    `<releases>` written by `release-build.sh`: the entry is by hand for now (writing a tracked file
+    during a release build would dirty the tag's tree).
+- [x] 3.2 `kt_dirs::sandbox()` seam; the update-check consent input and the Flatpak FFmpeg hint in the five catalogs; t970 (`src/apps/kt-app/src/update_check.rs`, `i18n_tests.rs`). Verify t970 green and the update-check tests (t872–t878) still green
+  - `kt_dirs::Sandbox` / `sandbox_of(env, info_file)` / `sandbox()`; `search::not_found_hint` names the
+    runtime and `kt-cli ffmpeg` inside a Flatpak (kt-ffmpeg now depends on kt-dirs); the FFmpeg window
+    picks `ffmpeg.hint_flatpak` (five catalogs) by its `os` and `sandbox` fields. t970 (the seam in
+    kt-dirs, the hint in kt-ffmpeg, the catalogs in kt-app) green. The update-check half is not here:
+    `update-check` is not applied on this branch, so it adds the sandbox input to `resolve_consent`
+    when it is applied (as tasks' preamble says); t872–t878 do not exist here.
 - [ ] 3.3 `src/scripts/flatpak-check.sh` (FFmpeg major = the runtime's, `libx264` + `aac`, `kt-cli export` of a committed fixture decoded to its last frame); `make flatpak`; the `flatpak` CI job and the release bundle (D9); t971's shape guard. Verify t971 green, `make flatpak` green locally, and the CI job green on a pushed branch (record the run URL here)
+  - `src/scripts/flatpak-build.sh` (build with `--install-deps-from=flathub`, the linter on manifest
+    and repo, `appstreamcli validate --strict`, `flatpak-check.sh`, `--bundle`), `flatpak-check.sh`
+    (the loaded major = the branch's, a libx264 + AAC export of the committed `check.kt` decoded to its
+    60th frame by the new `kt-cli decode`), `make flatpak`, the CI job `flatpak` (apt flatpak,
+    flatpak-builder, appstream; `.flatpak-builder` cached), the release step and assets. t971 green
+    (`check_flatpak_ci`). `kt-cli decode` checked here on the fixture (60 frames) and on a 105 s
+    export (3150 frames). NOT verified: `make flatpak` (no flatpak on this machine) and the CI job
+    on a pushed branch — this branch is not pushed; both are the next step on a machine with flatpak.
 - [ ] 3.4 Commit stage 3
 
 ## 4. GPU access and the guide
 
 - [ ] 4.1 On the owner's machines inside the sandbox: Intel/AMD — `kt-cli ffmpeg --probe-encoders` and a render with `h264_vaapi` (with and without `LIBVA_DRIVER_NAME`); NVIDIA — the same with `--device=dri` only and with `flatpak override --user --device=all <ID>`. Record per machine: driver, GL extension, which encoders open, here
-- [ ] 4.2 `docs/flatpak.md`: the per-vendor guide from 4.1's observations (not guesses), the verify commands, the undo (`flatpak override --user --reset <ID>`), and the maintainer part (D10: the Flathub submission steps). Verify t969's guide part green and the metainfo links the guide
+- [x] 4.2 `docs/flatpak.md`: the per-vendor guide from 4.1's observations (not guesses), the verify commands, the undo (`flatpak override --user --reset <ID>`), and the maintainer part (D10: the Flathub submission steps). Verify t969's guide part green and the metainfo links the guide
+  - `docs/flatpak.md`: the check command, Intel/AMD VAAPI with `LIBVA_DRIVER_NAME`, NVIDIA with the GL
+    extension and `--device=all`, the undo, files and settings, and the maintainer's submission steps
+    (D10). The per-vendor lines are the runtime's documented behaviour, marked on the page as to be
+    corrected from 4.1's measurements on the owner's machines. t969's guide part green; the metainfo
+    links the guide (`<url type="help">`).
 - [ ] 4.3 `openspec/specs/distribution/design.md` gets the "why" at archive (D1 one ID, D3 measured FFmpeg, D5 permissions, D9 no upload); F-RES-008 verdict updated. Verify `openspec validate --specs` and `features-index.py --check` green
 - [ ] 4.4 Commit stage 4
 

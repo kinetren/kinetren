@@ -458,6 +458,8 @@ pub struct FfmpegUi {
     pub samples: Samples,
     /// The OS whose rules the window follows (D6): native; a test sets Windows on any OS.
     pub os: kt_ffmpeg::search::Os,
+    /// The sandbox the window's hint follows (flatpak-flathub D8); a test sets Flatpak.
+    pub sandbox: kt_dirs::Sandbox,
     /// A test's record of the folders **Open folder** asked to show (D5), like `test_pick`.
     pub test_open: Option<Vec<PathBuf>>,
     /// What **Download** gets: the pin (a test points it at its own servers). Computed once —
@@ -484,6 +486,7 @@ impl Default for FfmpegUi {
             } else {
                 kt_ffmpeg::search::Os::NATIVE
             },
+            sandbox: kt_dirs::sandbox(),
             test_open: None,
             source: DownloadSource::pinned(),
         }
@@ -760,7 +763,12 @@ impl crate::app::KtApp {
                     }
                     if info.is_none() {
                         ui.add_space(4.0);
-                        let hint = if cfg!(windows) { k::ffmpeg::HINT_WINDOWS } else { k::ffmpeg::HINT_LINUX };
+                        // inside a Flatpak the host's packages are invisible: the runtime is named
+                        let hint = match (self.ffmpeg_ui.os, self.ffmpeg_ui.sandbox) {
+                            (kt_ffmpeg::search::Os::Windows, _) => k::ffmpeg::HINT_WINDOWS,
+                            (_, kt_dirs::Sandbox::Flatpak) => k::ffmpeg::HINT_FLATPAK,
+                            _ => k::ffmpeg::HINT_LINUX,
+                        };
                         ui.label(tr(hint));
                     }
                     if let Some((err, text)) = &self.ffmpeg_ui.message {

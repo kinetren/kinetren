@@ -54,6 +54,11 @@ MIME_TYPES = [
 ]
 INSTALL = "src/packaging/install.sh"
 RUNTIME_FFMPEG = "src/packaging/flatpak/runtime-ffmpeg.txt"
+LICENSE = "LICENSE"
+FLATPAK_GUIDE = "docs/flatpak.md"
+# the metainfo's languages besides English (design Open Question 3: English + Russian until a speaker
+# reviews es / zh-Hans / ar — Flathub refuses machine translations)
+METAINFO_LANGS = ["ru"]
 LOADER_MAJORS = "src/libs/kt-ffmpeg/src/search.rs"
 CARGO_SOURCES = "src/scripts/flatpak-cargo-sources.py"
 # finish-args (change flatpak-flathub, D5): exactly these, each with its reason comment
@@ -506,6 +511,89 @@ def check_flatpak(r, app_id):
         r.err(manifest, "the build must be offline over cargo-sources.json")
 
 
+def check_metainfo(r, app_id):
+    """The listing is complete and the guide names its commands (change flatpak-flathub, t969)."""
+    meta = f"src/packaging/{app_id}.metainfo.xml"
+    text = r.read(meta)
+    if text is None:
+        return
+    if not re.search(r"<summary>[^<]+</summary>", text) or not re.search(r"<description>\s*<p>", text):
+        r.err(meta, "the English summary and description are required")
+    for lang in METAINFO_LANGS:
+        if not re.search(rf'<summary xml:lang="{lang}">[^<]+</summary>', text):
+            r.err(meta, f"the {lang} summary is missing")
+        if not re.search(rf'<p xml:lang="{lang}">', text):
+            r.err(meta, f"the {lang} description is missing")
+    title = (r.read(LICENSE) or "").splitlines()[:1]
+    title = title[0].strip() if title else ""
+    lic = re.search(r"<project_license>([^<]+)</project_license>", text)
+    if not lic or not lic.group(1).startswith("LicenseRef-proprietary=") or not lic.group(1).endswith("/LICENSE"):
+        r.err(meta, "`<project_license>` must be LicenseRef-proprietary= the LICENSE file")
+    if title and title not in text:
+        r.err(meta, f"the description does not name the licence `{title}` (LICENSE)")
+    shots = re.findall(r"<image>([^<]+)</image>", text)
+    if len(shots) < 3:
+        r.err(meta, f"at least three screenshots are required, there are {len(shots)}")
+    for u in shots:
+        if not u.startswith("https://") or not re.search(r"/v\d\d\.\d\d\.\d\d(\.\d+)?/", u):
+            r.err(meta, f"the screenshot `{u}` is not an HTTPS URL of a release tag")
+    rel = re.search(r'<release version="([^"]+)"', text)
+    if not rel or not re.fullmatch(r"\d\d\.\d\d\.\d\d(\.\d+)?", rel.group(1)):
+        got = rel.group(1) if rel else "(none)"
+        r.err(meta, f"the newest <release> version `{got}` is not of the release tag form YY.MM.DD")
+    if 'content_rating type="oars-1.1"' not in text or "social-info" not in text:
+        r.err(meta, "the OARS rating must declare the anonymous usage counter (social-info)")
+    if not re.search(rf'<url type="help">[^<]*{re.escape(FLATPAK_GUIDE)}</url>', text):
+        r.err(meta, f"the listing does not link the GPU guide {FLATPAK_GUIDE}")
+    guide = r.read(FLATPAK_GUIDE)
+    if guide is not None:
+        for cmd in [
+            f"flatpak run --command=kt-cli {app_id} ffmpeg --probe-encoders",
+            f"flatpak override --user --env=LIBVA_DRIVER_NAME=",
+            f"flatpak override --user --device=all {app_id}",
+            f"flatpak override --user --reset {app_id}",
+        ]:
+            if cmd not in guide:
+                r.err(FLATPAK_GUIDE, f"the guide lacks `{cmd}`")
+
+
+FLATPAK_BUILD = "src/scripts/flatpak-build.sh"
+
+
+def check_flatpak_ci(r):
+    """The Flatpak job and the release bundle (change flatpak-flathub, t971): the CI job `flatpak`
+    builds, lints, validates the metainfo and checks the sandbox, uploads nothing; the release
+    attaches the bundle and its .sha256; `make flatpak` runs the same script."""
+    ci = r.read(CI) or ""
+    job = re.search(r"^  flatpak:\s*\n((?:    .*\n|\s*\n)*)", ci, re.M)
+    if not job:
+        r.err(CI, "no `flatpak` job")
+    else:
+        body = job.group(1)
+        if "src/scripts/flatpak-build.sh" not in body:
+            r.err(CI, "the flatpak job must run src/scripts/flatpak-build.sh")
+        if "upload-artifact" in body or "gh release" in body:
+            r.err(CI, "the flatpak job uploads nothing")
+    if not (re.search(r"^on:\s*\n\s+push:", ci, re.M) and "pull_request:" in ci):
+        r.err(CI, "CI must run on push and pull_request")
+    build = r.read(FLATPAK_BUILD) or ""
+    for piece, what in [
+        ("flatpak-builder --user --install-deps-from=flathub", "the build"),
+        ("flatpak-builder-lint org.flatpak.Builder manifest", "the linter on the manifest"),
+        ("flatpak-builder-lint org.flatpak.Builder repo", "the linter on the repository"),
+        ("appstreamcli validate", "the metainfo validation"),
+        ("src/scripts/flatpak-check.sh", "the sandbox check"),
+    ]:
+        if piece not in build:
+            r.err(FLATPAK_BUILD, f"{what} is missing (`{piece}`)")
+    rel = r.read(RELEASE) or ""
+    if "flatpak-build.sh --bundle" not in rel or ".flatpak.sha256" not in rel or "linux-x86_64.flatpak " not in rel:
+        r.err(RELEASE, "the release must build and attach kinetren-<version>-linux-x86_64.flatpak and its .sha256")
+    mk = r.read(MAKEFILE) or ""
+    if not re.search(r"^flatpak:.*\n\t.*flatpak-build\.sh", mk, re.M):
+        r.err(MAKEFILE, "target `flatpak` must run flatpak-build.sh")
+
+
 def check_cargo_sources(r):
     """The offline crate sources follow the lock file (change flatpak-flathub, t968)."""
     import subprocess
@@ -575,6 +663,8 @@ def main():
     check_mime(r)
     check_app_id(r, app_id)
     check_flatpak(r, app_id)
+    check_metainfo(r, app_id)
+    check_flatpak_ci(r)
     check_cargo_sources(r)
     if r.errors:
         for e in r.errors:

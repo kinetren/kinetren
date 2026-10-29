@@ -90,3 +90,13 @@ fn t851_directories_per_os_never_the_working_directory() {
     assert!(!cwd.join("kinetren").exists());
     let _ = std::fs::remove_dir_all(&cwd);
 }
+
+/// t970 (flatpak-flathub, D8), the seam: a Flatpak is `FLATPAK_ID` or `/.flatpak-info`, nothing else.
+#[test]
+fn t970_the_sandbox_seam() {
+    use kt_dirs::{Sandbox, sandbox_of};
+    assert_eq!(sandbox_of(&linux(&[]), false), Sandbox::None);
+    assert_eq!(sandbox_of(&linux(&[("FLATPAK_ID", "com.kinetren.Kinetren")]), false), Sandbox::Flatpak);
+    assert_eq!(sandbox_of(&linux(&[]), true), Sandbox::Flatpak, "the info file alone");
+    assert_eq!(sandbox_of(&linux(&[("FLATPAK_ID", "")]), false), Sandbox::None, "an empty id is no sandbox");
+}

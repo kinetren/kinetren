@@ -105,8 +105,9 @@ xdg-portal backend).
 
 ### Requirement: AppStream metainfo describes the listing, and a guide tells how to reach the GPU
 The repository SHALL carry `src/packaging/<ID>.metainfo.xml` with: `<id>` and the desktop launchable
-of the application ID; name, summary and description in English and in every language of the
-program's translation catalogs (`src/apps/kt-app/i18n/*.toml`); the licence as declared by `LICENSE`
+of the application ID; name, summary and description in English, and summary and description in
+each catalog language design Open Question 3 admits (Russian until a speaker reviews es, zh-Hans and
+ar — Flathub refuses machine-generated translations); the licence as declared by `LICENSE`
 (an SPDX `LicenseRef-…` for the Kinetren Non-Commercial License); the developer name; the homepage
 and bug-tracker URLs of `github.com/kinetren/kinetren`; at least three screenshots by HTTPS URLs that
 do not move between releases; a `<releases>` entry for every published release with the version
@@ -130,8 +131,8 @@ user's hardware is in it").
 - **WHEN** the guard reads the metainfo and `docs/flatpak.md`; then a temporary metainfo without the
   Russian description, with a screenshot by `http://`, or with a `<releases>` version not of the
   `kt-version` form
-- **THEN** on the tree: the id and launchable match the application ID, every catalog language has
-  a translated name, summary and description, the licence matches `LICENSE`'s title, the newest
+- **THEN** on the tree: the id and launchable match the application ID, every admitted language has
+  a translated summary and description, the licence matches `LICENSE`'s title, the newest
   release equals the version form, and the guide contains the `--probe-encoders` command, both
   `flatpak override` forms with the ID and an undo (`flatpak override --user --reset <ID>`); each
   temporary copy fails naming the missing piece
@@ -155,7 +156,9 @@ installed on the host are invisible inside the sandbox.
   is started and no title word appears; outside it the result is the change `update-check`'s;
   the hint inside names the runtime and `kt-cli ffmpeg`, the one outside names distribution
   packages; both texts exist in the five catalogs
-- **TEST** t970 (`src/apps/kt-app/src/update_check.rs`, `src/apps/kt-app/src/i18n_tests.rs`)
+- **TEST** t970 (`src/libs/kt-dirs/tests/dirs.rs` the seam, `src/libs/kt-ffmpeg/tests/loader_plan.rs`
+  the hint, `src/apps/kt-app/src/i18n_tests.rs` the five catalogs); the consent half lands in
+  `src/apps/kt-app/src/update_check.rs` with the change `update-check`, applied after this one
 
 ### Requirement: CI builds and checks the Flatpak; a release carries the bundle
 `.github/workflows/ci.yml` SHALL have a `flatpak` job that, on every push, builds the manifest with
@@ -163,8 +166,8 @@ installed on the host are invisible inside the sandbox.
 and the built repository, runs `appstreamcli validate` on the metainfo, and runs
 `src/scripts/flatpak-check.sh` against the build: inside the sandbox `kt-cli ffmpeg` reports a loaded
 FFmpeg whose major is the runtime's and which has the `libx264` and `aac` encoders, and
-`kt-cli export` of a committed fixture project into the sandbox's temporary directory finishes and
-decodes. The job MUST NOT upload anything. `make flatpak` SHALL run the same build and check
+`kt-cli export` of a committed fixture project (`src/packaging/flatpak/check.kt`) into a directory
+the sandbox can write finishes and `kt-cli decode` reads the file to its last frame. The job MUST NOT upload anything. `make flatpak` SHALL run the same build and check
 locally. The release workflow SHALL attach `kinetren-<version>-linux-x86_64.flatpak` (a single-file
 bundle of that build) with its `.sha256` next to the tarball.
 Why: the runner has no GPU, so CI proves the sandbox's software path (the FFmpeg it finds, an
