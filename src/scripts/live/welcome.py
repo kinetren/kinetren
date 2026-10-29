@@ -80,14 +80,15 @@ def main(out):
         app.click_probe("file.project_settings", "File → Project settings…")
         app.click_probe("settings.save_template", "Save as template…")
         app.click_probe("settings.template_name", "the template name field")
-        app.type_text("Shorts 30")
+        # lower case: XTest typing of capitals depends on the virtual keyboard map
+        app.type_text("shorts 30")
         app.click_probe("settings.template_save", "Save (the template)")
         tpl = wait_for(lambda: (read_json(os.path.join(store, "templates.json")) or {}).get("templates"))
         app.expect(
-            bool(tpl) and tpl[0] == {"name": "Shorts 30", "width": 1080, "height": 1920, "fps": 30},
+            bool(tpl) and tpl[0] == {"name": "shorts 30", "width": 1080, "height": 1920, "fps": 30},
             f"the template is saved with the project's frame: {tpl}",
         )
-        app.step("template-saved", "Project settings: the template “Shorts 30” saved")
+        app.step("template-saved", "Project settings: the template “shorts 30” saved")
         app.key("Escape")
         app.expect(app.wait_gone("settings.width"), "Esc closed Project settings")
 
@@ -98,8 +99,9 @@ def main(out):
         app.expect(bool(recent) and recent[0]["name"] == "welcome-made", f"the saved project heads Recent: {recent}")
         # an empty project gets no poster (nothing to show); the placeholder card is the honest look
         app.expect(
-            not any(n.endswith(".png") for n in os.listdir(out)),
-            "no poster file appeared next to the project",
+            not any(n.startswith("welcome-made") and not n.endswith(".kt") and ".ktindex" not in n
+                    for n in os.listdir(out)),
+            f"no poster file appeared next to the project: {sorted(os.listdir(out))}",
         )
 
         # --- 4. Help → Welcome window… → the recent card --------------------------------
@@ -108,6 +110,11 @@ def main(out):
         app.expect(app.has_probe("welcome.window"), "Help → Welcome window… reopened the window")
         app.expect(app.has_probe("welcome.recent.0"), "the window lists the saved project")
         app.step("reopened", "the welcome window again, the saved project as the first recent card")
+        app.click_probe("welcome.guide", "the window's Guide link")
+        app.expect(app.has_probe("guide.window"), "the Guide link opened the Guide")
+        app.key("Escape")
+        app.expect(app.wait_gone("guide.window"), "Esc closed the Guide (the top window)")
+        app.expect(app.has_probe("welcome.window"), "the welcome window stays under the closed Guide")
         app.click_probe("welcome.recent.0", "the first recent card")
         app.expect(app.wait_gone("welcome.window"), "the recent card opened its project")
         app.step("recent-opened", "the recent project is open")
@@ -151,7 +158,7 @@ def main(out):
         app.click_probe("help.start_over", "Help → Start the tour over")
         app.expect(app.has_probe("lessons.panel"), "the lessons panel is open after Help → Start the tour over")
 
-        # --- 8. Help → What's new → the switch, the Guide link, Close ------------------------
+        # --- 8. Help → What's new → the switch, Close ----------------------------------------
         app.click_probe("menu.help", "the Help menu")
         app.click_probe("help.whats_new", "Help → What's new")
         app.expect(app.has_probe("welcome.window"), "Help → What's new opened the welcome window")
@@ -159,10 +166,6 @@ def main(out):
         app.click_probe("welcome.show_at_start", "the Show at start checkbox")
         on = wait_for(lambda: (read_json(os.path.join(store, "start.json")) or {}).get("welcome_at_start") is False or None)
         app.expect(on is True, "unchecking Show at start reached the start record")
-        app.click_probe("welcome.guide", "the window's Guide link")
-        app.expect(app.has_probe("guide.window"), "the Guide link opened the Guide")
-        app.key("Escape")
-        app.expect(app.wait_gone("guide.window"), "Esc closed the Guide (the top window)")
         app.click_probe("welcome.close", "Close")
         app.expect(app.wait_gone("welcome.window"), "Close closed the welcome window")
         # the same switch in the View menu, back on

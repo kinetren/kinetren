@@ -6530,8 +6530,8 @@ fn no_teaching_layer_over_the_ui() {
 /// `docs/guide/`.
 ///
 /// - **PATH** open Help → Guide… → a window with a search field on top, "I want to…" entries on
-///   the left and the pages list below them → type "loop" → two lines remain: "Play a part in a
-///   loop → drag on the ruler, then L" and the page heading "Markers and the region" → click the
+///   the left and the pages list below them → type "loop" → the entry "Play a part in a loop →
+///   drag on the ruler, then L" remains, with "Markers and the region" among the headings → click the
 ///   first → the right side shows the timeline page at "Markers and the region" → clear the search
 ///   → click "Keyboard and mouse" → the key table of the guide
 #[test]

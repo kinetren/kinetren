@@ -156,8 +156,9 @@ index entry pointing at a heading is that address.
   shortcuts page is the content of `docs/guide/shortcuts.md`; every entry resolves and every file
   passes the subset check, while a test copy with an HTML block fails it naming the file and line
 - **PATH** open Help → Guide… → a window with a search field on top, "I want to…" entries on the left
-  and the pages list below them → type "loop" → two lines remain: "Play a part in a loop → drag on the
-  ruler, then L" and the page heading "Markers and the region" → click the first → the right side shows the
+  and the pages list below them → type "loop" → the entry "Play a part in a loop → drag on the
+  ruler, then L" remains, with the headings whose sections speak of loops, "Markers and the region"
+  among them → click the first → the right side shows the
   timeline page at "Markers and the region" → clear the search → click "Keyboard and mouse" → the key table
   of the guide
 - **TEST** t989 (`src/apps/kt-app/src/reach_tests.rs`)
