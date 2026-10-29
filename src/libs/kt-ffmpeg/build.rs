@@ -9,11 +9,13 @@ use std::path::PathBuf;
 
 const MAJORS: [&str; 4] = ["6", "7", "8", "9"];
 
-const HEADERS: [&str; 8] = [
+const HEADERS: [&str; 9] = [
     "libavutil/avutil.h",
     "libavutil/channel_layout.h",
     "libavutil/imgutils.h",
     "libavutil/opt.h",
+    // hw-encode-context D5: the device and frames contexts of the hardware encoders
+    "libavutil/hwcontext.h",
     "libavcodec/avcodec.h",
     "libavformat/avformat.h",
     "libswscale/swscale.h",

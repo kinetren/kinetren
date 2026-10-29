@@ -142,3 +142,72 @@ macro_rules! ffmpeg_api {
         }
     };
 }
+
+/// The OPTIONAL table of the hardware encoding contexts (hw-encode-context D5). Resolved after
+/// the required one: a missing name leaves the table absent with that name as the reason, and
+/// FFmpeg still loads (invariant 10 — a trimmed build must keep opening media). Each version
+/// module instantiates it with its own types; `load_with` takes a resolver, so the table's
+/// rule is tested without FFmpeg (t961).
+#[macro_export]
+macro_rules! ffmpeg_hw_api {
+    () => {
+        $crate::declare_optional_api! {
+            av_hwdevice_ctx_create: unsafe extern "C" fn(
+                *mut *mut ffi::AVBufferRef, ffi::AVHWDeviceType, *const c_char,
+                *mut ffi::AVDictionary, c_int) -> c_int,
+            av_hwframe_ctx_alloc: unsafe extern "C" fn(*mut ffi::AVBufferRef) -> *mut ffi::AVBufferRef,
+            av_hwframe_ctx_init: unsafe extern "C" fn(*mut ffi::AVBufferRef) -> c_int,
+            av_hwframe_get_buffer:
+                unsafe extern "C" fn(*mut ffi::AVBufferRef, *mut ffi::AVFrame, c_int) -> c_int,
+            av_hwframe_transfer_data:
+                unsafe extern "C" fn(*mut ffi::AVFrame, *const ffi::AVFrame, c_int) -> c_int,
+            av_buffer_ref: unsafe extern "C" fn(*const ffi::AVBufferRef) -> *mut ffi::AVBufferRef,
+            av_buffer_unref: unsafe extern "C" fn(*mut *mut ffi::AVBufferRef),
+        }
+    };
+}
+
+/// Declares `HwApi` and its loaders; every function lives in libavutil.
+#[macro_export]
+macro_rules! declare_optional_api {
+    ($( $name:ident : $ty:ty ),* $(,)?) => {
+        #[allow(non_snake_case)]
+        pub struct HwApi {
+            $( pub $name: $ty, )*
+        }
+
+        impl HwApi {
+            /// The names of the table, in order.
+            pub const NAMES: &'static [&'static str] = &[$( stringify!($name), )*];
+
+            /// Resolve every name through `resolve`; the first one it does not know is the error.
+            ///
+            /// # Safety
+            /// `resolve` must return the address of the function of that name with the
+            /// signature of this module's major.
+            pub unsafe fn load_with(
+                mut resolve: impl FnMut(&str) -> Option<*mut core::ffi::c_void>,
+            ) -> Result<HwApi, String> {
+                unsafe {
+                    Ok(HwApi {
+                        $( $name: {
+                            let p = resolve(stringify!($name)).filter(|p| !p.is_null())
+                                .ok_or_else(|| stringify!($name).to_string())?;
+                            core::mem::transmute::<*mut core::ffi::c_void, $ty>(p)
+                        }, )*
+                    })
+                }
+            }
+
+            /// # Safety
+            /// As `Api::load`: the libraries are of this module's major.
+            pub unsafe fn load(libs: &$crate::loader::Libs) -> Result<HwApi, String> {
+                unsafe {
+                    Self::load_with(|name| {
+                        libs.avutil.sym::<*mut core::ffi::c_void>(&format!("{name}\0")).ok()
+                    })
+                }
+            }
+        }
+    };
+}

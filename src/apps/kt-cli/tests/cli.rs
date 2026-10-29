@@ -1113,3 +1113,57 @@ fn t947_probe_time_tells_the_video_cost() {
     assert_eq!(max_subs(&def), max_subs(&cpu), "the backends count different work:\n{def}\n{cpu}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// t964 (hw-encode-context D6, media-index): `kt-cli ffmpeg` names the hardware encoding devices.
+///
+/// "No hardware encoder" has a device cause — no render node in a sandbox, no driver, a driver
+/// that cannot encode — that only the machine can name; the Flatpak guide sends people here.
+/// `KT_DRI_DIR` stands for `/dev/dri`: a regular file named `renderD128` is not a VAAPI device.
+#[test]
+fn t964_cli_names_the_hardware_encoding_devices() {
+    if !(cfg!(target_os = "linux") && kt_media::ffmpeg::backend_info().is_some()) {
+        eprintln!("t964 skipped: needs FFmpeg on Linux");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("kt-cli-t964-{}", std::process::id()));
+    let dri = dir.join("dri");
+    std::fs::create_dir_all(&dri).unwrap();
+    std::fs::write(dri.join("renderD128"), b"not a device").unwrap();
+    let run = |probe: bool| {
+        let mut c = cli();
+        c.arg("ffmpeg")
+            .env("KT_DRI_DIR", &dri)
+            .env_remove("KINETREN_VAAPI_DEVICE")
+            .env("XDG_DATA_HOME", dir.join("xdg"));
+        if probe {
+            c.arg("--probe-encoders");
+        }
+        c.output().unwrap()
+    };
+    let out = run(false);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{text}");
+    assert!(text.contains("hardware encoding:"), "no hardware section: {text}");
+    assert!(
+        text.contains("hardware context functions: present") || text.contains("hardware context functions: missing "),
+        "{text}"
+    );
+    let node = format!("{}/renderD128: does not open as a VAAPI device (", dri.display());
+    assert!(text.contains(&node), "the fake node is not named with a reason: {text}");
+    assert!(!text.contains("hardware encoders (opened"), "without the flag nothing is opened: {text}");
+
+    let out = run(true);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{text}");
+    for name in ["h264_nvenc", "h264_vaapi", "h264_qsv"] {
+        let line = text.lines().find(|l| l.trim_start().starts_with(&format!("{name}:")));
+        let line = line.unwrap_or_else(|| panic!("no probe line for {name}: {text}"));
+        assert!(line.contains(": opens") || line.contains(": fails: "), "{line}");
+    }
+    let vaapi = text.lines().find(|l| l.trim_start().starts_with("h264_vaapi:")).unwrap();
+    assert!(
+        vaapi.contains("opens") || vaapi.contains("no VAAPI device") || vaapi.contains("not in this FFmpeg build"),
+        "the VAAPI line does not name its failing part: {vaapi}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

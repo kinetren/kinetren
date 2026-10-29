@@ -24,16 +24,130 @@ fn av_pix(p: crate::encoders::PixFmt) -> ffi::AVPixelFormat {
     }
 }
 
-/// Encoders available in the system (for the UI).
-pub fn available_encoders(api: &Api) -> Vec<String> {
-    video_encoders()
-        .iter()
-        .filter(|e| {
-            let c = CString::new(e.name).unwrap();
-            !unsafe { (api.avcodec_find_encoder_by_name)(c.as_ptr()) }.is_null()
-        })
-        .map(|e| e.name.to_string())
-        .collect()
+/// The hardware table of this major, or why the device candidates are skipped (D5); the test
+/// seam can report it absent.
+fn hw_api() -> Result<&'static HwApi, String> {
+    if let Some(m) = crate::hw_seam::get().missing {
+        return Err(m);
+    }
+    match HW.get() {
+        Some(Ok(h)) => Ok(h),
+        Some(Err(m)) => Err(m.clone()),
+        None => Err("the hardware table is not loaded".into()),
+    }
+}
+
+/// Open the first VAAPI device of the plan (D3): the device and its path, or why none opened.
+/// The FFmpeg log is silenced by the caller: a node that is not a VAAPI device is normal.
+fn open_vaapi_device(hw: &HwApi) -> Result<(*mut ffi::AVBufferRef, String), String> {
+    let mut why = Vec::new();
+    for path in crate::vaapi_device_paths() {
+        let c = CString::new(path.as_str()).map_err(|_| "device path contains NUL".to_string())?;
+        let mut dev: *mut ffi::AVBufferRef = core::ptr::null_mut();
+        let r = unsafe {
+            (hw.av_hwdevice_ctx_create)(&mut dev, ffi::AV_HWDEVICE_TYPE_VAAPI, c.as_ptr(), core::ptr::null_mut(), 0)
+        };
+        if r >= 0 && !dev.is_null() {
+            return Ok((dev, path));
+        }
+        why.push(format!("{path}: code {r}"));
+    }
+    Err(if why.is_empty() {
+        format!("no VAAPI device (no render node in {})", crate::vaapi_device_dir_hint())
+    } else {
+        format!("no VAAPI device ({})", why.join(", "))
+    })
+}
+
+/// The driver's vendor string of an opened VAAPI device (the report): libva's
+/// `vaQueryVendorString` on the device's display — the first field of `AVVAAPIDeviceContext`.
+#[cfg(unix)]
+fn vaapi_vendor(dev: *mut ffi::AVBufferRef) -> String {
+    type Query = unsafe extern "C" fn(*mut c_void) -> *const c_char;
+    let Ok(lib) = (unsafe { libloading::Library::new("libva.so.2") }) else {
+        return "unknown (libva.so.2 not loaded)".into();
+    };
+    let Ok(query) = (unsafe { lib.get::<Query>(b"vaQueryVendorString\0") }) else {
+        return "unknown".into();
+    };
+    unsafe {
+        let ctx = (*dev).data as *const ffi::AVHWDeviceContext;
+        let display = *((*ctx).hwctx as *const *mut c_void);
+        let v = query(display);
+        if v.is_null() { "unknown".into() } else { core::ffi::CStr::from_ptr(v).to_string_lossy().into_owned() }
+    }
+}
+
+#[cfg(not(unix))]
+fn vaapi_vendor(_dev: *mut ffi::AVBufferRef) -> String {
+    "unknown".into()
+}
+
+/// The hardware section of the report (media-index): the table, and each render node.
+pub fn hw_report(api: &'static Api) -> crate::HwReport {
+    let functions = hw_api().map(|_| ());
+    let linux = crate::search::Os::NATIVE == crate::search::Os::Linux;
+    let mut nodes = Vec::new();
+    if linux {
+        let dir = crate::vaapi_device_dir_hint();
+        let all: Vec<String> = (128..=135)
+            .map(|n| format!("{dir}/renderD{n}"))
+            .filter(|p| std::path::Path::new(p).exists())
+            .collect();
+        unsafe { (api.av_log_set_level)(8) };
+        for node in all {
+            let v = match hw_api() {
+                Err(m) => Err(format!("hardware context functions missing: {m}")),
+                Ok(hw) => {
+                    let c = CString::new(node.as_str()).unwrap();
+                    let mut dev: *mut ffi::AVBufferRef = core::ptr::null_mut();
+                    let r = unsafe {
+                        (hw.av_hwdevice_ctx_create)(&mut dev, ffi::AV_HWDEVICE_TYPE_VAAPI, c.as_ptr(), core::ptr::null_mut(), 0)
+                    };
+                    if r >= 0 && !dev.is_null() {
+                        let vendor = vaapi_vendor(dev);
+                        unsafe { (hw.av_buffer_unref)(&mut dev) };
+                        Ok(vendor)
+                    } else {
+                        Err(format!("code {r}"))
+                    }
+                }
+            };
+            nodes.push((node, v));
+        }
+        unsafe { (api.av_log_set_level)(16) };
+    }
+    crate::HwReport { functions, nodes, linux }
+}
+
+/// Encoders available in the system (for the UI): present in this FFmpeg; a device candidate
+/// only with a device that opens, named (D6) — the encoder itself is not opened here.
+pub fn available_encoders(api: &'static Api) -> Vec<crate::AvailableEncoder> {
+    let mut out = Vec::new();
+    for e in video_encoders() {
+        let c = CString::new(e.name).unwrap();
+        if unsafe { (api.avcodec_find_encoder_by_name)(c.as_ptr()) }.is_null() {
+            continue;
+        }
+        let device = match e.ctx {
+            crate::encoders::HwKind::None => None,
+            crate::encoders::HwKind::Vaapi => {
+                let Ok(hw) = hw_api() else { continue };
+                unsafe { (api.av_log_set_level)(8) };
+                let dev = open_vaapi_device(hw);
+                unsafe { (api.av_log_set_level)(16) };
+                match dev {
+                    Ok((mut d, path)) => {
+                        unsafe { (hw.av_buffer_unref)(&mut d) };
+                        Some(path)
+                    }
+                    Err(_) => continue,
+                }
+            }
+        };
+        out.push(crate::AvailableEncoder { name: e.name.to_string(), device });
+    }
+    out
 }
 
 pub struct Muxer {
@@ -59,6 +173,12 @@ pub struct Muxer {
     report: crate::OpenReport,
     /// Encoded packet bytes written so far: [video, audio].
     bytes: [u64; 2],
+    /// A device encoder (D3/D4): the table, the device and frames contexts, and the surface each
+    /// NV12 frame is uploaded to. All null for a system-memory encoder.
+    hw: Option<&'static HwApi>,
+    hw_device: *mut ffi::AVBufferRef,
+    hw_frames: *mut ffi::AVBufferRef,
+    hwframe: *mut ffi::AVFrame,
 }
 
 unsafe impl Send for Muxer {}
@@ -98,6 +218,8 @@ impl Muxer {
         // during the probes, the FFmpeg log is silenced (failed candidates are normal)
         unsafe { (api.av_log_set_level)(8) }; // AV_LOG_FATAL
         let mut opened: Option<(String, *mut ffi::AVCodecContext, ffi::AVPixelFormat)> = None;
+        // the device and frames contexts of an opened device candidate (D3)
+        let mut hw_opened: Option<(&'static HwApi, *mut ffi::AVBufferRef, *mut ffi::AVBufferRef, String)> = None;
         let mut last_err = String::new();
         // every candidate that exists here and failed, with its code, and the opened one's facts
         let mut report = crate::OpenReport::default();
@@ -111,7 +233,58 @@ impl Muxer {
             let c = CString::new(*name).unwrap();
             let codec = unsafe { (api.avcodec_find_encoder_by_name)(c.as_ptr()) };
             if codec.is_null() {
+                // a forced name this FFmpeg lacks is named, not an empty "last error"
+                last_err = format!("{name}: not in this FFmpeg build");
                 continue;
+            }
+            // A DEVICE CANDIDATE IS ONE STEP: device → frames → open (D3). What fails before
+            // the open skips it WITHOUT `avcodec_open2` — the encoder's failed-init path stays
+            // out of the cascade (ktprompts v26.10 T16).
+            let mut device: Option<(&'static HwApi, *mut ffi::AVBufferRef, *mut ffi::AVBufferRef, String)> = None;
+            if spec.ctx == crate::encoders::HwKind::Vaapi {
+                let skip = |report: &mut crate::OpenReport, last_err: &mut String, why: String| {
+                    *last_err = format!("{name}: {why}");
+                    report.skipped.push((name.to_string(), why));
+                };
+                let hw = match hw_api() {
+                    Ok(h) => h,
+                    Err(m) => {
+                        skip(&mut report, &mut last_err, format!("hardware context functions missing: {m}"));
+                        continue;
+                    }
+                };
+                let (mut dev, path) = match open_vaapi_device(hw) {
+                    Ok(d) => d,
+                    Err(why) => {
+                        skip(&mut report, &mut last_err, why);
+                        continue;
+                    }
+                };
+                let mut frames = unsafe { (hw.av_hwframe_ctx_alloc)(dev) };
+                if frames.is_null() {
+                    unsafe { (hw.av_buffer_unref)(&mut dev) };
+                    skip(&mut report, &mut last_err, "frames context: not allocated".into());
+                    continue;
+                }
+                let (fw, fh) = spec.frames_size(width as u32, height as u32).unwrap_or((width as u32, height as u32));
+                let r = unsafe {
+                    let fc = (*frames).data as *mut ffi::AVHWFramesContext;
+                    (*fc).format = ffi::AV_PIX_FMT_VAAPI;
+                    (*fc).sw_format = av_pix(spec.pix);
+                    (*fc).width = fw as c_int;
+                    (*fc).height = fh as c_int;
+                    (*fc).initial_pool_size = 20;
+                    (hw.av_hwframe_ctx_init)(frames)
+                };
+                if r < 0 {
+                    unsafe {
+                        (hw.av_buffer_unref)(&mut frames);
+                        (hw.av_buffer_unref)(&mut dev);
+                    }
+                    skip(&mut report, &mut last_err, format!("frames context: code {r}"));
+                    continue;
+                }
+                device = Some((hw, dev, frames, path));
             }
             let ctx = unsafe { (api.avcodec_alloc_context3)(codec) };
             unsafe {
@@ -120,6 +293,10 @@ impl Muxer {
                 (*ctx).time_base = tb(1, cfg.fps as c_int);
                 (*ctx).framerate = tb(cfg.fps as c_int, 1);
                 (*ctx).pix_fmt = av_pix(spec.pix);
+                if let Some((hw, _, frames, _)) = &device {
+                    (*ctx).pix_fmt = ffi::AV_PIX_FMT_VAAPI;
+                    (*ctx).hw_frames_ctx = (hw.av_buffer_ref)(*frames);
+                }
                 (*ctx).gop_size = cfg.fps as c_int * 2;
                 (*ctx).max_b_frames = 0;
                 if global_header {
@@ -149,13 +326,21 @@ impl Muxer {
                 }
                 .to_string();
                 report.options = opts.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+                report.device = device.as_ref().map(|d| d.3.clone());
                 opened = Some((name.to_string(), ctx, av_pix(spec.pix)));
+                hw_opened = device;
                 break;
             }
             report.tried.push((name.to_string(), r));
-            last_err = format!("{name}: code {r}");
+            last_err = if device.is_some() { format!("{name}: encoder: code {r}") } else { format!("{name}: code {r}") };
             let mut ctx = ctx;
             unsafe { (api.avcodec_free_context)(&mut ctx) };
+            if let Some((hw, mut dev, mut frames, _)) = device {
+                unsafe {
+                    (hw.av_buffer_unref)(&mut frames);
+                    (hw.av_buffer_unref)(&mut dev);
+                }
+            }
         }
         unsafe { (api.av_log_set_level)(16) }; // back to AV_LOG_ERROR
         let (enc_name, venc, vpix) = opened.ok_or_else(|| {
@@ -234,6 +419,12 @@ impl Muxer {
             (*aframe).sample_rate = AUDIO_SAMPLE_RATE as c_int;
             (api.av_frame_get_buffer)(aframe, 0);
         }
+        // a device encoder gets each NV12 frame uploaded to a surface (D4)
+        let hwframe = if hw_opened.is_some() { unsafe { (api.av_frame_alloc)() } } else { core::ptr::null_mut() };
+        let (hw, hw_device, hw_frames) = match &hw_opened {
+            Some((hw, dev, frames, _)) => (Some(*hw), *dev, *frames),
+            None => (None, core::ptr::null_mut(), core::ptr::null_mut()),
+        };
         let sws = unsafe {
             (api.sws_getContext)(
                 width,
@@ -269,6 +460,10 @@ impl Muxer {
             encoder_name: enc_name.to_string(),
             report,
             bytes: [0, 0],
+            hw,
+            hw_device,
+            hw_frames,
+            hwframe,
         })
     }
 
@@ -306,6 +501,19 @@ impl Muxer {
                 (*self.vframe).linesize.as_ptr(),
             );
             (*self.vframe).pts = self.video_pts;
+            // a device encoder: the NV12 frame goes to a surface of the frames context (D4)
+            if let Some(hw) = self.hw {
+                let r = (hw.av_hwframe_get_buffer)(self.hw_frames, self.hwframe, 0);
+                if r < 0 {
+                    return Err(averr(api, "getting a VAAPI surface", r));
+                }
+                let r = (hw.av_hwframe_transfer_data)(self.hwframe, self.vframe, 0);
+                if r < 0 {
+                    (api.av_frame_unref)(self.hwframe);
+                    return Err(averr(api, "uploading a frame to the surface", r));
+                }
+                (*self.hwframe).pts = self.video_pts;
+            }
         }
         self.video_pts += 1;
         self.encode(true)
@@ -334,7 +542,8 @@ impl Muxer {
     fn encode(&mut self, video: bool) -> Result<(), FfError> {
         let api = self.api;
         let (enc, frame, stream_idx, tb_src) = if video {
-            (self.venc, self.vframe, self.vstream_idx, tb(1, self.fps))
+            let f = if self.hw.is_some() { self.hwframe } else { self.vframe };
+            (self.venc, f, self.vstream_idx, tb(1, self.fps))
         } else {
             (self.aenc, self.aframe, self.astream_idx, tb(1, AUDIO_SAMPLE_RATE as c_int))
         };
@@ -353,6 +562,10 @@ impl Muxer {
         loop {
             let r = unsafe { (api.avcodec_send_frame)(enc, frame) };
             if r >= 0 {
+                // the encoder holds its own reference to the surface
+                if video && self.hw.is_some() {
+                    unsafe { (api.av_frame_unref)(frame) };
+                }
                 break;
             }
             if r != AVERROR_EAGAIN {
@@ -438,10 +651,18 @@ impl Drop for Muxer {
                 (api.sws_freeContext)(self.sws);
             }
             (api.av_frame_free)(&mut self.vframe);
+            if !self.hwframe.is_null() {
+                (api.av_frame_free)(&mut self.hwframe);
+            }
             (api.av_frame_free)(&mut self.aframe);
             (api.av_packet_free)(&mut self.pkt);
             (api.avcodec_free_context)(&mut self.venc);
             (api.avcodec_free_context)(&mut self.aenc);
+            // D4: frames → encoder context → frames context → device
+            if let Some(hw) = self.hw {
+                (hw.av_buffer_unref)(&mut self.hw_frames);
+                (hw.av_buffer_unref)(&mut self.hw_device);
+            }
             if !self.fmt.is_null() {
                 (api.avio_closep)(&mut (*self.fmt).pb);
                 (api.avformat_free_context)(self.fmt);

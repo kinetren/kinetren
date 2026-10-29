@@ -18914,7 +18914,7 @@ fn nvenc_report() -> kt_media::muxer::OpenReport {
         hardware: true,
         pix_fmt: "yuv420p".into(),
         options: vec![("preset".into(), "p4".into()), ("cq".into(), "23".into())],
-        tried: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -19202,4 +19202,62 @@ pub(crate) fn render_progress_scene(h: &mut Harness<'static, KtApp>) {
     let job = h.state_mut().render_job.as_mut().unwrap();
     job.on_msg(RenderMsg::Engine(kt_engine::export::ExportEvent::Opened(nvenc_report())));
     render_step(h.state_mut(), 1.0, 30, 120, kt_engine::export::ExportPhase::Video);
+}
+
+/// Test 965 (hw-encode-context D6): the encoder list offers a device encoder only with its device,
+/// and the progress row names the device.
+///
+/// F-EXP-004: "the list shown to the user must coincide with what will actually open" — the
+/// settings offered `h264_vaapi` on every machine whose FFmpeg had it, and it never opened.
+#[test]
+fn t965_encoder_combo_and_progress_row_follow_the_device() {
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::{Queryable, by};
+    use kt_media::muxer::AvailableEncoder;
+    let enc = |name: &str, device: Option<&str>| AvailableEncoder { name: name.into(), device: device.map(str::to_string) };
+    let listed = |encoders: Vec<AvailableEncoder>| -> Vec<String> {
+        let mut h = harness_lang(Lang::En);
+        h.state_mut().start_render();
+        h.state_mut().render_setup.encoders = encoders;
+        for _ in 0..3 {
+            h.step();
+        }
+        // a ComboBox has no label in accesskit: it is found by its shown value
+        h.get(by().role(Role::ComboBox).value(tr(k::render::ENCODER_AUTO))).click();
+        for _ in 0..3 {
+            h.step();
+        }
+        shown_texts(&h)
+    };
+    let with = listed(vec![enc("h264_nvenc", None), enc("h264_vaapi", Some("/dev/dri/renderD128")), enc("libx264", None)]);
+    assert!(with.iter().any(|t| t == "h264_vaapi (/dev/dri/renderD128)"), "the device entry is not offered: {with:?}");
+    assert!(with.iter().any(|t| t == "libx264"), "the combo did not open: {with:?}");
+    let without = listed(vec![enc("h264_nvenc", None), enc("libx264", None)]);
+    assert!(without.iter().any(|t| t == "libx264"), "the combo did not open: {without:?}");
+    assert!(!without.iter().any(|t| t.contains("h264_vaapi")), "VAAPI offered without a device: {without:?}");
+
+    // the progress row of an opened VAAPI encoder names its device
+    let dir = render_scratch("t965");
+    let mut h = harness_lang(Lang::En);
+    scripted_render(h.state_mut(), &dir);
+    let report = kt_media::muxer::OpenReport {
+        encoder: "h264_vaapi".into(),
+        hardware: true,
+        pix_fmt: "nv12".into(),
+        options: vec![("qp".into(), "23".into())],
+        tried: Vec::new(),
+        skipped: Vec::new(),
+        device: Some("/dev/dri/renderD128".into()),
+    };
+    h.state_mut()
+        .render_job
+        .as_mut()
+        .unwrap()
+        .on_msg(crate::render_dialog::RenderMsg::Engine(kt_engine::export::ExportEvent::Opened(report)));
+    h.step();
+    h.step();
+    let texts = shown_texts(&h);
+    let row = "h264_vaapi (hardware · /dev/dri/renderD128) · nv12 · QP 23";
+    assert!(texts.iter().any(|t| t == row), "the video row does not name the device: {texts:?}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

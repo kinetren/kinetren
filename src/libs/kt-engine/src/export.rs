@@ -51,6 +51,9 @@ pub enum ExportEvent {
 pub enum ExportLog {
     /// A candidate of the cascade exists in this FFmpeg but did not open.
     NotOpened { name: String, code: i32 },
+    /// A device candidate skipped before its open (hw-encode-context D3): no device, the
+    /// hardware context functions missing, or the frames context refused.
+    Skipped { name: String, reason: String },
     /// A source is rendered as its placeholder (the caller's list).
     Placeholder { label: String },
     Phase(ExportPhase),
@@ -507,6 +510,9 @@ pub fn export_mp4_with_backends(
     let opened = muxer.open_report().clone();
     for (name, code) in &opened.tried {
         events(ExportEvent::Log(ExportLog::NotOpened { name: name.clone(), code: *code }));
+    }
+    for (name, reason) in &opened.skipped {
+        events(ExportEvent::Log(ExportLog::Skipped { name: name.clone(), reason: reason.clone() }));
     }
     events(ExportEvent::Opened(opened));
     for label in &opts.placeholders {

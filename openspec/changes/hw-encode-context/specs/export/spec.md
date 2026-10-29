@@ -67,7 +67,8 @@ and a forced `h264_vaapi` ended the program at render (ktprompts v26.10 T16). Sk
 - **TEST** t960 (`src/libs/kt-ffmpeg/tests/encoders.rs`)
 
 #### Scenario: Without a device the cascade falls through deterministically and a forced VAAPI is an error, not a crash
-- **WHEN** `KINETREN_VAAPI_DEVICE` points at a path that does not exist and a 30-frame export is run
+- **WHEN** the device (`KINETREN_VAAPI_DEVICE`, in the test its thread-local seam) points at a path
+  that does not exist and a 30-frame export is run
   twice with the encoder left to the cascade; then once with `h264_vaapi` forced; then once with
   `h264_vaapi` forced and the hardware context functions reported missing by the test seam
 - **THEN** both cascade runs choose the same encoder, and if the cascade reached `h264_vaapi` its

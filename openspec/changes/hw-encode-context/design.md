@@ -120,6 +120,19 @@ pattern). `make hw-test` runs the FFmpeg tests on the host with that variable. T
 the mean absolute difference is set from the first run on the owner's machine and written here
 (starting proposal: ≤ 6 of 255 per channel at QP 23 for the synthetic ramp).
 
+### D9. As built (stages 1–4, 2026-10-29)
+- **The probe on two machines without a render node did not crash** (task 1.1): FFmpeg 6.1.1 gives
+  −22 for a forced `h264_vaapi`; the FFmpeg 9 test build has no `h264_vaapi`, and the error then
+  carried an EMPTY reason ("last error: ") — now "not in this FFmpeg build". T16's cause (H1/H2)
+  is still to be seen on a machine with a render node.
+- **The test seam is thread-local** (`kt_ffmpeg::hw_seam`: device, `/dev/dri`, a missing function):
+  the export tests run in one process in parallel, and `KINETREN_VAAPI_DEVICE` would steer every
+  export of the binary. Processes (kt-cli) keep the variables, `KT_DRI_DIR` included.
+- **The settings list is asked once per window**: listing a device candidate opens its device, and
+  the combo used to call `available_encoders()` every frame (harmless while it was a name lookup).
+- **The skipped candidates are their own log fact** (`ExportLog::Skipped`), separate from
+  `NotOpened`: "the encoder was never opened" is exactly what t962 asserts.
+
 ## Risks / Trade-offs
 
 - [Auto on an Intel/AMD Linux machine changes its encoder from libx264 to VAAPI — worse quality at

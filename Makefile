@@ -11,7 +11,7 @@ DIST     := $(RUST)/target/dist-out
 # release-build.sh clears dist-out before packing)
 STAGEDIR  = $(firstword $(patsubst %/kinetren,%,$(wildcard $(DIST)/kinetren-*-linux-*/kinetren)))
 
-.PHONY: all build install run test clean help docker-check windows windows-test ffmpeg-test
+.PHONY: all build install run test clean help docker-check windows windows-test ffmpeg-test hw-test
 
 all: build ## the default: same as `make build`
 
@@ -30,6 +30,12 @@ windows-test: docker-check ## developers: the workspace tests for Windows under 
 
 ffmpeg-test: docker-check ## developers: the FFmpeg tests against FFmpeg 9 built from source, in Docker
 	$(RUST)/scripts/ffmpeg-test.sh
+
+# on the host, not in Docker: the proof needs this machine's render node and VAAPI driver, and
+# with KT_EXPECT_HW set t963 FAILS unless VAAPI opens (hw-encode-context D8)
+hw-test: ## developers: prove hardware encoding on this machine (VAAPI render node, t963)
+	cd $(RUST) && KT_EXPECT_HW=$${KT_EXPECT_HW:-vaapi} cargo test -p kt-engine --test export_options t963 -- --nocapture
+	cd $(RUST) && cargo run -q -p kt-cli -- ffmpeg --probe-encoders
 
 docker-check:
 	@command -v docker > /dev/null || { \

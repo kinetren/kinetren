@@ -45,6 +45,7 @@ impl LogLine {
             LogLine::Engine(ExportLog::NotOpened { name, code }) => {
                 format!("encoder {name} did not open (code {code})")
             }
+            LogLine::Engine(ExportLog::Skipped { name, reason }) => format!("encoder {name} skipped: {reason}"),
             LogLine::Engine(ExportLog::Placeholder { label }) => format!("placeholder rendered for {label}"),
             LogLine::Engine(ExportLog::Phase(ExportPhase::Video)) => "phase: video".into(),
             LogLine::Engine(ExportLog::Phase(ExportPhase::Audio)) => "phase: audio".into(),
@@ -70,6 +71,8 @@ impl LogLine {
             LogLine::Engine(ExportLog::NotOpened { name, code }) => {
                 crate::tf!(k::render::LOG_NOT_OPENED, name, code)
             }
+            // the reason is the export's own fact, in English like an error text
+            LogLine::Engine(ExportLog::Skipped { name, reason }) => crate::tf!(k::render::LOG_SKIPPED, name, reason),
             LogLine::Engine(ExportLog::Placeholder { label }) => crate::tf!(k::render::LOG_PLACEHOLDER, label),
             LogLine::Engine(ExportLog::Phase(ExportPhase::Video)) => tr(k::render::PHASE_VIDEO).into(),
             LogLine::Engine(ExportLog::Phase(ExportPhase::Audio)) => tr(k::render::PHASE_AUDIO).into(),
@@ -383,6 +386,8 @@ pub struct RenderSetup {
     /// A test's answer of the save dialog: the harness runs many tests in one process, and
     /// `KT_FILE_PICK` — an environment variable — would answer for all of them at once.
     pub test_pick: Option<std::path::PathBuf>,
+    /// The encoders the settings offer, asked when the window opens (`start_render`).
+    pub encoders: Vec<kt_media::muxer::AvailableEncoder>,
 }
 
 impl Default for RenderSetup {
@@ -403,6 +408,7 @@ impl Default for RenderSetup {
             },
             test_open: None,
             test_pick: None,
+            encoders: Vec::new(),
         }
     }
 }
@@ -525,6 +531,7 @@ impl KtApp {
         }
         let base = self.project_path.as_deref().and_then(|p| p.parent());
         self.render_setup.missing = missing_sources(&self.model.document(), base);
+        self.render_setup.encoders = kt_media::muxer::available_encoders();
         // The mismatch must be NAMED (rule 16, R.55 C1): from this
         // round on, INSIDE a reel the reel PLAYS, but the export still covers
         // the whole DOCUMENT. A person who pressed “Render” from inside a composition
@@ -650,7 +657,9 @@ impl KtApp {
                     ui,
                     |ui| {
                         ui.label(tr(k::render::VIDEO_CODEC));
-                        let encoders = kt_media::muxer::available_encoders();
+                        // asked once when the window opens (`start_render`): a device candidate
+                        // opens its device to be listed, which is not a per-frame cost
+                        let encoders = self.render_setup.encoders.clone();
                         let sel = self
                             .render_setup
                             .encoder
@@ -663,11 +672,12 @@ impl KtApp {
                                 tr(k::render::ENCODER_AUTO),
                             );
                             for e in &encoders {
-                                ui.selectable_value(
-                                    &mut self.render_setup.encoder,
-                                    Some(e.clone()),
-                                    e,
-                                );
+                                // a device encoder names the device it will use (hw-encode-context D6)
+                                let label = match &e.device {
+                                    Some(d) => format!("{} ({d})", e.name),
+                                    None => e.name.clone(),
+                                };
+                                ui.selectable_value(&mut self.render_setup.encoder, Some(e.name.clone()), label);
                             }
                         });
                         ui.end_row();
@@ -890,13 +900,15 @@ impl KtApp {
         };
         // THE ROWS COME FROM THE RUN (D5): the encoder that opened, never a guessed name
         let video = match &job.report {
-            Some(r) => format!(
-                "{} ({}) · {} · {}",
-                r.encoder,
-                tr(if r.hardware { k::render::HARDWARE } else { k::render::SOFTWARE }),
-                r.pix_fmt,
-                quality_text(r, &job.opts)
-            ),
+            Some(r) => {
+                let kind = tr(if r.hardware { k::render::HARDWARE } else { k::render::SOFTWARE });
+                // a device encoder names its device (hw-encode-context D6)
+                let kind = match &r.device {
+                    Some(d) => format!("{kind} · {d}"),
+                    None => kind.to_string(),
+                };
+                format!("{} ({kind}) · {} · {}", r.encoder, r.pix_fmt, quality_text(r, &job.opts))
+            }
             None => tr(k::render::CHOOSING).to_string(),
         };
         let out_rows: Vec<(&str, String)> = vec![

@@ -701,10 +701,51 @@ fn media_facts(project: &Project, project_path: &str) -> kt_engine::SourceFacts 
 }
 
 /// One export log fact as an English line (render-window-v1-parity, D1).
+/// `kt-cli ffmpeg --probe-encoders` (hw-encode-context D6): every hardware candidate of this OS
+/// opened by the export's own code at 1280×720 into a throwaway file — "opens" or the failing part.
+fn probe_encoders() -> String {
+    let mut out = String::from("hardware encoders (opened at 1280x720):\n");
+    let path = std::env::temp_dir().join(format!("kt-probe-encoders-{}.mp4", std::process::id()));
+    for spec in kt_ffmpeg::encoders::video_encoder_candidates(kt_ffmpeg::search::Os::NATIVE) {
+        if !spec.hardware {
+            continue;
+        }
+        let cfg = kt_ffmpeg::MuxConfig {
+            path: path.to_string_lossy().into_owned(),
+            width: 1280,
+            height: 720,
+            fps: 30,
+            quality: 23,
+            video_bitrate: None,
+            audio_bitrate: 128_000,
+            force_encoder: Some(spec.name.to_string()),
+        };
+        let line = match kt_ffmpeg::Muxer::open(&cfg) {
+            Ok(m) => match &m.open_report().device {
+                Some(d) => format!("  {}: opens on {d}\n", spec.name),
+                None => format!("  {}: opens\n", spec.name),
+            },
+            // the failing part only: "no VAAPI device (…)", "code N", "not in this FFmpeg build"
+            Err(e) => {
+                let e = e.to_string();
+                let part = e
+                    .split_once(&format!("{}: ", spec.name))
+                    .map(|(_, rest)| rest.strip_suffix(')').unwrap_or(rest).to_string())
+                    .unwrap_or(e);
+                format!("  {}: fails: {part}\n", spec.name)
+            }
+        };
+        out.push_str(&line);
+        let _ = std::fs::remove_file(&path);
+    }
+    out
+}
+
 fn export_log_line(l: &kt_engine::export::ExportLog) -> String {
     use kt_engine::export::{ExportLog, ExportPhase};
     match l {
         ExportLog::NotOpened { name, code } => format!("encoder {name} did not open (code {code})"),
+        ExportLog::Skipped { name, reason } => format!("encoder {name} skipped: {reason}"),
         ExportLog::Placeholder { label } => format!("placeholder rendered for {label}"),
         ExportLog::Phase(ExportPhase::Video) => "phase: video".into(),
         ExportLog::Phase(ExportPhase::Audio) => "phase: audio".into(),
@@ -900,6 +941,13 @@ fn run(args: &[String]) -> i32 {
             // the search report (media-index): what was loaded, what was rejected and why
             let ok = kt_ffmpeg::rescan().is_ok();
             print!("{}", kt_ffmpeg::search_report());
+            // the hardware encoding section (hw-encode-context D6): never changes the exit code
+            if let Some(hw) = kt_ffmpeg::hw_report() {
+                print!("{hw}");
+            }
+            if ok && args.iter().any(|a| a == "--probe-encoders") {
+                print!("{}", probe_encoders());
+            }
             if ok { 0 } else { 1 }
         }
         Some("version") | None => {

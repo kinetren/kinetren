@@ -133,6 +133,10 @@ macro_rules! version_module {
                 include!(concat!(env!("OUT_DIR"), "/", $types));
             }
             crate::ffmpeg_api!();
+            crate::ffmpeg_hw_api!();
+            /// The hardware table of this major, resolved when it loads (hw-encode-context D5):
+            /// `Err` names the first missing function.
+            pub static HW: std::sync::OnceLock<Result<HwApi, String>> = std::sync::OnceLock::new();
             include!("source_impl.rs");
             include!("muxer_impl.rs");
         }
@@ -238,10 +242,26 @@ pub fn rescan_with(env: &dyn search::Env) -> Result<BackendInfo, String> {
         let _ = MODULES.set(libs.module_paths());
         let backend = unsafe {
             match libs.major {
-                9 => Backend::V9(Box::leak(Box::new(v9::Api::load(libs).map_err(|e| e.to_string())?))),
-                8 => Backend::V8(Box::leak(Box::new(v8::Api::load(libs).map_err(|e| e.to_string())?))),
-                7 => Backend::V7(Box::leak(Box::new(v7::Api::load(libs).map_err(|e| e.to_string())?))),
-                6 => Backend::V6(Box::leak(Box::new(v6::Api::load(libs).map_err(|e| e.to_string())?))),
+                9 => {
+                    let api = v9::Api::load(libs).map_err(|e| e.to_string())?;
+                    let _ = v9::HW.set(v9::HwApi::load(libs));
+                    Backend::V9(Box::leak(Box::new(api)))
+                }
+                8 => {
+                    let api = v8::Api::load(libs).map_err(|e| e.to_string())?;
+                    let _ = v8::HW.set(v8::HwApi::load(libs));
+                    Backend::V8(Box::leak(Box::new(api)))
+                }
+                7 => {
+                    let api = v7::Api::load(libs).map_err(|e| e.to_string())?;
+                    let _ = v7::HW.set(v7::HwApi::load(libs));
+                    Backend::V7(Box::leak(Box::new(api)))
+                }
+                6 => {
+                    let api = v6::Api::load(libs).map_err(|e| e.to_string())?;
+                    let _ = v6::HW.set(v6::HwApi::load(libs));
+                    Backend::V6(Box::leak(Box::new(api)))
+                }
                 // ffmpeg-9 (design D2): never bind one major's struct layouts to another
                 // major's libraries — a table row without a module is an error, not a guess
                 m => return Err(format!("FFmpeg {m}: no version module for this major")),
@@ -310,14 +330,119 @@ pub fn backend_error() -> Option<String> {
     init().err()
 }
 
-/// List of video encoders available in the system (for the UI).
-pub fn available_encoders() -> Vec<String> {
+/// The test seam of the hardware path (hw-encode-context): THREAD-LOCAL, because a test binary
+/// runs many exports at once and an environment variable would steer all of them.
+pub mod hw_seam {
+    use std::cell::RefCell;
+
+    #[derive(Debug, Clone, Default)]
+    pub struct Seam {
+        /// Stands for `KINETREN_VAAPI_DEVICE`.
+        pub device: Option<String>,
+        /// Stands for `/dev/dri` (as `KT_DRI_DIR` does for a process).
+        pub dri_dir: Option<String>,
+        /// Report the hardware table as absent, naming this function.
+        pub missing: Option<String>,
+    }
+
+    thread_local! {
+        static SEAM: RefCell<Seam> = RefCell::new(Seam::default());
+    }
+
+    pub fn set(seam: Seam) {
+        SEAM.with(|s| *s.borrow_mut() = seam);
+    }
+
+    pub fn get() -> Seam {
+        SEAM.with(|s| s.borrow().clone())
+    }
+}
+
+/// The folder of the render nodes: `/dev/dri`, or the seam's / `KT_DRI_DIR`'s (tests).
+pub(crate) fn vaapi_device_dir_hint() -> String {
+    hw_seam::get()
+        .dri_dir
+        .or_else(|| std::env::var("KT_DRI_DIR").ok().filter(|d| !d.is_empty()))
+        .unwrap_or_else(|| "/dev/dri".into())
+}
+
+/// The VAAPI devices to try, in order (hw-encode-context D3): `KINETREN_VAAPI_DEVICE` alone when
+/// set, otherwise every `renderD128` … `renderD135` that exists.
+pub fn vaapi_device_paths() -> Vec<String> {
+    let named = hw_seam::get()
+        .device
+        .or_else(|| std::env::var("KINETREN_VAAPI_DEVICE").ok().filter(|d| !d.is_empty()));
+    if let Some(d) = named {
+        return vec![d];
+    }
+    let dir = vaapi_device_dir_hint();
+    (128..=135)
+        .map(|n| format!("{dir}/renderD{n}"))
+        .filter(|p| std::path::Path::new(p).exists())
+        .collect()
+}
+
+/// A video encoder the settings may offer, with the device it will use (hw-encode-context D6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AvailableEncoder {
+    pub name: String,
+    pub device: Option<String>,
+}
+
+/// List of video encoders available in the system (for the UI): those of the cascade present in
+/// this FFmpeg; a device candidate only with a device that opens (the device, not the encoder).
+pub fn available_encoders() -> Vec<AvailableEncoder> {
     match init() {
         Ok((Backend::V6(api), _)) => v6::available_encoders(api),
         Ok((Backend::V7(api), _)) => v7::available_encoders(api),
         Ok((Backend::V8(api), _)) => v8::available_encoders(api),
         Ok((Backend::V9(api), _)) => v9::available_encoders(api),
         Err(_) => Vec::new(),
+    }
+}
+
+/// The "hardware encoding" section of the FFmpeg report (media-index): the hardware table, and on
+/// Linux each render node with whether it opens as a VAAPI device and its driver.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HwReport {
+    /// `Err` names the missing function.
+    pub functions: Result<(), String>,
+    /// (node, `Ok(driver vendor)` or `Err(why it does not open)`).
+    pub nodes: Vec<(String, Result<String, String>)>,
+    /// Whether the nodes were looked at (Linux only).
+    pub linux: bool,
+}
+
+impl std::fmt::Display for HwReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "hardware encoding:")?;
+        match &self.functions {
+            Ok(()) => writeln!(f, "  hardware context functions: present")?,
+            Err(m) => writeln!(f, "  hardware context functions: missing {m}")?,
+        }
+        if self.linux {
+            if self.nodes.is_empty() {
+                writeln!(f, "  render nodes: none in {}", vaapi_device_dir_hint())?;
+            }
+            for (node, v) in &self.nodes {
+                match v {
+                    Ok(vendor) => writeln!(f, "  {node}: VAAPI device, driver {vendor}")?,
+                    Err(why) => writeln!(f, "  {node}: does not open as a VAAPI device ({why})")?,
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The hardware encoding section, `None` when FFmpeg is not loaded.
+pub fn hw_report() -> Option<HwReport> {
+    match init() {
+        Ok((Backend::V6(api), _)) => Some(v6::hw_report(api)),
+        Ok((Backend::V7(api), _)) => Some(v7::hw_report(api)),
+        Ok((Backend::V8(api), _)) => Some(v8::hw_report(api)),
+        Ok((Backend::V9(api), _)) => Some(v9::hw_report(api)),
+        Err(_) => None,
     }
 }
 
@@ -331,6 +456,11 @@ pub struct OpenReport {
     pub pix_fmt: String,
     pub options: Vec<(String, String)>,
     pub tried: Vec<(String, i32)>,
+    /// Device candidates skipped BEFORE `avcodec_open2` (hw-encode-context D3), with the reason:
+    /// "no VAAPI device …", "hardware context functions missing: …", "frames context: code N".
+    pub skipped: Vec<(String, String)>,
+    /// The device the opened encoder uses (a render node), if it needs one.
+    pub device: Option<String>,
 }
 
 /// MP4 muxer — dynamic dispatch by version.

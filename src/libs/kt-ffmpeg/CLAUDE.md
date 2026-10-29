@@ -43,10 +43,25 @@ with libav*"), `export` (the encoder cascade).
   muxer's filling of missing packet fields; our frames carried no duration, and the last video
   frame of every export had lasted zero on EVERY major (t33 failed only on 9, whose exact edit
   list cut that frame). Frames sent to an encoder carry their duration (`muxer_impl.rs`).
+- **Hardware contexts are an OPTIONAL table** (hw-encode-context D5): `ffmpeg_hw_api!` builds
+  `HwApi` per major, resolved after `Api` into the module's `HW`; a missing name leaves it
+  `Err(name)` and FFmpeg still loads. Never add a hardware-only function to the required
+  `ffmpeg_api!` — one missing symbol there is "FFmpeg not found" for the whole program.
+- **A device candidate is ONE step: device → frames → open** (`HwKind::Vaapi`, D3). What fails
+  before the open skips it WITHOUT `avcodec_open2` and lands in `OpenReport.skipped` with its
+  reason; a forced one errs naming the part. Each frame is converted to NV12 and uploaded to a
+  surface (pts and duration kept); `Drop` frees frames → contexts → frames context → device.
+  The list for the UI (`available_encoders`) opens the DEVICE, never the encoder, and kt-app asks
+  it once per settings window, not per frame.
+- **The hardware seam is thread-local** (`hw_seam`): a test binary runs exports in parallel, and
+  `KINETREN_VAAPI_DEVICE`/`KT_DRI_DIR` would steer all of them. Processes (kt-cli tests) use the
+  variables. The proof on hardware is opt-in and loud: `KT_EXPECT_HW=vaapi` (`make hw-test`) makes
+  t963 fail unless VAAPI opens.
 - **The download is a ROOT** (`<local>/ffmpeg`), not one folder: the Windows plan tries every
   version folder in it, newest first (numeric), so an earlier pin's download keeps working
   (t864); temporary `.partial-<pid>` entries are not candidates.
 
 Tests: t10/t21/t37/t112 (conformance), t844–t847 (search, one-folder load under wine/Windows,
 retry), t858 (encoders), t862 (table == headers), t863 (Linux plan), t864 (earlier download),
-t865 (a run proves its major).
+t865 (a run proves its major), t960 (device contexts), t961 (optional table == headers), t962
+(no device: skip or error, never a crash), t963 (VAAPI on hardware, opt-in), t964 (kt-cli report).
