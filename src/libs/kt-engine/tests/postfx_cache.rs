@@ -66,6 +66,7 @@ fn warm_pre_fx(vr: &VideoRenderer, cache: &kt_cache::BurstCache, t: Tick, q: kt_
 
 #[test]
 fn t66_postfx_cached_and_no_stale() {
+    kt_plugins_builtin::install();
     // Noise: the amplitude changes the bytes even on a flat synthetic frame
     // (SyntheticSource encodes pts as a solid color — Mirror/Vhs degenerate
     // to identity on it, a stale entry cannot be told apart by bytes)
@@ -125,6 +126,7 @@ fn t66_postfx_cached_and_no_stale() {
 /// stale entries when the file on disk changes).
 #[test]
 fn t66b_invalidate_source_drops_postfx() {
+    kt_plugins_builtin::install();
     let p = project_with_fx(vec![FxInstance::glow(1.0)], 48_000);
     let mut vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
@@ -146,6 +148,7 @@ fn t66b_invalidate_source_drops_postfx() {
 /// compose.
 #[test]
 fn t66c_export_compose_skips_postfx_memoization() {
+    kt_plugins_builtin::install();
     let p = project_with_fx(
         vec![FxInstance::Mirror { horizontal: true, vertical: false }, FxInstance::noise(0.3)],
         0,
@@ -183,6 +186,7 @@ fn t66c_export_compose_skips_postfx_memoization() {
 /// put_cam3d in plan_key since R.29).
 #[test]
 fn t66d_camera_edit_invalidates_postfx() {
+    kt_plugins_builtin::install();
     let pan3d = FxInstance::Pan3d {
         pos_x: 0.0,
         pos_y: 0.0,
@@ -252,12 +256,13 @@ fn t66d_camera_edit_invalidates_postfx() {
 /// The test's assertion is the observable consequence: the frame is different, no stale.
 #[test]
 fn t708_editing_the_formula_text_invalidates_the_frame() {
+    kt_plugins_builtin::install();
     // the vignette is VISIBLE on a flat frame: it darkens the edges regardless of
     // the content, unlike blur (on a uniform picture it is the identity) and unlike Pan3d
     // (without a camera the quad leaves the frame entirely)
     let with_formula = |expr: &str| {
         let mut p = project_with_fx(
-            vec![FxInstance::Vignette { strength: 0.5, radius: 0.7, softness: 0.45 }],
+            vec![kt_model::FxInstance::plugin_with("vignette", &[0.5, 0.7, 0.45]).unwrap()],
             48_000,
         );
         p.clips[0].fx_auto = vec![vec![ParamCurve {

@@ -76,6 +76,8 @@ fn project(clips: Vec<ClipEvent>, lanes: u32) -> Project {
 
 #[test]
 fn t644_a_clip_without_curves_borrows_its_chain() {
+    // vignette is a plugin (plugin-api-stage1, stage 4)
+    kt_plugins_builtin::install();
     // neighbour with a LIVE curve, a neighbour without curves, and a neighbour with one ORPHAN
     let p = project(
         vec![
@@ -113,6 +115,8 @@ fn t644_a_clip_without_curves_borrows_its_chain() {
 
 #[test]
 fn t645_curves_on_one_clip_do_not_tax_the_others() {
+    // vignette is a plugin (plugin-api-stage1, stage 4)
+    kt_plugins_builtin::install();
     // the frame cost of the NEIGHBOURS does not depend on how many curves there are on the
     // first clip: the neighbours' plan must be literally the same.
     let plain = |auto: Vec<Vec<ParamCurve>>| {

@@ -1369,7 +1369,6 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::EventGrid { .. } => "EventGrid",
         FxInstance::Pan3d { .. } => "Pan 3D",
         FxInstance::Compressor { .. } => "Compressor",
-        FxInstance::Vignette { .. } => "Vignette",
         FxInstance::CornerPin { .. } => "Corner Pin",
         FxInstance::Sharpen { .. } => "Sharpen",
         FxInstance::Pixelate { .. } => "Pixelate",
@@ -1422,7 +1421,6 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
         ),
         ("EventGrid", FxInstance::EventGrid { cols: 2, rows: 2, center: true }),
         // R.47: per-point color/style + the first honest perspective
-        ("Vignette", FxInstance::vignette()),
         ("Corner Pin", FxInstance::corner_pin()),
         // R.47 Q3: barriers
         ("Sharpen", FxInstance::sharpen()),

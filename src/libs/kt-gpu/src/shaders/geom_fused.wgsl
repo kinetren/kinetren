@@ -393,21 +393,8 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
                 }
             }
         // @PLUGIN_TAP_ARMS: kt-gpu pastes one `} else if (tap_kind == N) { v = tap_<id>(v, a, b);`
-        // per point-wise plugin of the registry here (plugin-api-stage1, D5); kinds 2, 3, 4 were ColorGrade,
-        // Duotone, Posterize
-        } else if (tap_kind == 5u) { // Vignette: a mirror of tap_vig
-            let st = a.y;
-            let ra = a.z;
-            let so = a.w;
-            let sw = b.x;
-            let sh1 = b.y;
-            let c = rec[t];
-            let ddx = (c.x + 0.5) / max(sw, 1.0) - 0.5;
-            let ddy = (c.y + 0.5) / max(sh1, 1.0) - 0.5;
-            let r = sqrt((2.0 * ddx) * (2.0 * ddx) + (2.0 * ddy) * (2.0 * ddy)) / sqrt(2.0);
-            let tt = clamp((r - ra) / max(so, 1e-6), 0.0, 1.0);
-            let ww = tt * tt * (3.0 - 2.0 * tt);
-            v = vec4<f32>(v.xyz * (1.0 - st * ww), v.w);
+        // per point-wise plugin of the registry here (plugin-api-stage1, D5); kinds 2, 3, 4, 5 were ColorGrade,
+        // Duotone, Posterize, Vignette
         } else if (tap_kind == 1u) { // Noise: the grain is pinned to the grid of its stage
             let seed = bitcast<u32>(a.y);
             let k = i32(bitcast<u32>(a.z));

@@ -150,8 +150,8 @@ Why: the owner (2026-10-30): "take ALL the effects out — a mechanism as flexib
 possible". A kind kept core for a reason is a reason a third-party effect could never have.
 
 #### Scenario: A positioned tap measures its own stage
-- **WHEN** vignette and noise, moved into plugins, run alone, inside a fused geometry series and as barriers, on both executors, at a decode scale step of 2
-- **THEN** the CPU bytes equal the pre-move goldens (vignette's radius measured on its stage, noise's grain pinned to its stage's grid and to the burst index), the GPU is within the point-wise tolerance, and the series stays one pass
+- **WHEN** vignette, moved into a plugin, runs alone, inside a fused geometry series that zooms before it, and as a barrier between two blurs, on both executors
+- **THEN** the CPU bytes equal the pre-move goldens (its radius measured on its own stage), the GPU is within the point-wise tolerance, the series stays one pass, and the assembled text passes the sub-sample's coordinate to the tap and the stage size in `b.zw`. Noise and greenscreen, whose barrier position is a kernel of its own (integer, K×, an AVX2 twin), move with the barrier pass graph
 - **TEST** t992 (`src/libs/kt-gpu/tests/parity.rs`)
 
 #### Scenario: A geometry program fuses and keeps its rules

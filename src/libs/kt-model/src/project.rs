@@ -4127,12 +4127,6 @@ fn default_kaleido_segments() -> u32 {
     6
 }
 
-fn default_vig_radius() -> f32 {
-    0.7
-}
-fn default_vig_soft() -> f32 {
-    0.45
-}
 fn default_one_f64() -> f64 {
     1.0
 }
@@ -5197,16 +5191,6 @@ pub enum FxInstance {
     // ---- video FX (port of bc_fx.cpp, item 25; parameters and defaults of v1) ----------
     // Posterize is a plugin since plugin-api-stage1 (src/plugins/fx-video-color): its file text is
     // the variant's (t973), its slot is `Plugin` below.
-    /// Vignette (R.47): darkening towards the edges, the coordinate of its own stage —
-    /// inside the chain it is zoomed together with the picture. Point-wise.
-    Vignette {
-        #[serde(default = "default_half_f32")]
-        strength: f32,
-        #[serde(default = "default_vig_radius")]
-        radius: f32,
-        #[serde(default = "default_vig_soft")]
-        softness: f32,
-    },
     /// Four-corner fit (R.47, F-FX-004): homography quad→quad,
     /// the main tool of “the screen in the frame”. Geometry — concatenated.
     CornerPin {
@@ -5565,7 +5549,6 @@ impl FxInstance {
             FxInstance::LayerMix { .. } => "layer_mix",
             FxInstance::SlowedReverb { .. } => "slowed_reverb",
             FxInstance::Compressor { .. } => "compressor",
-            FxInstance::Vignette { .. } => "vignette",
             FxInstance::CornerPin { .. } => "corner_pin",
             FxInstance::Sharpen { .. } => "sharpen",
             FxInstance::Pixelate { .. } => "pixelate",
@@ -5776,11 +5759,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         makeup_db: f32, 0.0, 24.0, 0.0, 0.1, Db, Smooth;
     },
     // ---- video 2D --------------------------------------------------------
-    Vignette {
-        strength: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        radius: f32, 0.0, 1.5, 0.7, 0.01, Norm, Smooth;
-        softness: f32, 0.05, 1.0, 0.45, 0.01, Norm, Smooth;
-    },
     Sharpen {
         amount: f32, 0.0, 4.0, 1.0, 0.01, Ratio, Smooth;
         radius: u32, 1.0, 16.0, 2.0, 1.0, Px, Smooth;
@@ -6631,8 +6609,9 @@ impl FxInstance {
         Some(FxInstance::Plugin(slot))
     }
 
+    /// The vignette at its defaults — a plugin slot (plugin-api-stage1, stage 4).
     pub fn vignette() -> FxInstance {
-        FxInstance::Vignette { strength: 0.5, radius: 0.7, softness: 0.45 }
+        FxInstance::plugin("vignette").expect("vignette is not registered: install the built-in plugin set first")
     }
 
     pub fn corner_pin() -> FxInstance {

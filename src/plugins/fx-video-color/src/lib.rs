@@ -5,13 +5,13 @@
 use std::sync::Arc;
 
 use kt_plugin_api::{
-    Cooked, Decl, Gpu, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin, RowDecl, Store,
+    Cooked, Decl, Gpu, Manifest, TapCtx, Media, ParamKind, ParamSpec, ParamUnit, Plugin, RowDecl, Store,
     UiDecl, VideoClass, VideoKernel,
 };
 
 /// The plugins of this family, in the assembler's order.
 pub fn plugins() -> Vec<Arc<dyn Plugin>> {
-    vec![Arc::new(ColorGrade::new()), Arc::new(Duotone::new()), Arc::new(Posterize::new())]
+    vec![Arc::new(ColorGrade::new()), Arc::new(Duotone::new()), Arc::new(Posterize::new()), Arc::new(Vignette::new())]
 }
 
 /// Posterize by channels (R.47): point-wise (inside a geometry series the supersampling softens
@@ -81,7 +81,7 @@ impl VideoKernel for Posterize {
     /// and the compiler knows `n - 1 >= 1` (the variant's `u32` field gave it that; without it the
     /// loop was 6 % slower than the variant's, plugin-api-stage1 2.6). Inside the fused pass the
     /// cooked value is read as is — there the per-sample cast cost 8 %.
-    fn frame(&self, k: &Cooked, rgba: &mut [u8]) {
+    fn frame(&self, k: &Cooked, rgba: &mut [u8], _w: u32) {
         let n = (k[0] as u32).clamp(2, 32) as f64;
         kt_plugin_api::frame_with(rgba, |v| quantize(n, v));
     }
@@ -262,4 +262,81 @@ impl VideoKernel for Duotone {
 /// An `f32` row, written always or omitted at its default.
 fn f32_row(omit_default: bool) -> RowDecl {
     RowDecl { store: Store::F32, omit_default }
+}
+
+// ---------------------------------------------------------------------------
+// vignette — the first POSITIONED tap (stage 4, D11.1): it measures its own stage
+// ---------------------------------------------------------------------------
+
+/// Vignette (R.47): darkening toward the corners, the radius normalized to the half-diagonal of
+/// ITS OWN stage; smoothstep written out by hand (one text in both executors).
+pub struct Vignette {
+    m: Manifest,
+}
+
+impl Vignette {
+    pub fn new() -> Vignette {
+        let p = |n, lo, hi, d| ParamSpec::num(n, lo, hi, d, 0.01, ParamUnit::Norm, ParamKind::Smooth);
+        Vignette {
+            m: Manifest {
+                id: "vignette".into(),
+                media: Media::VideoFx,
+                passport: vec![p("strength", 0.0, 1.0, 0.5), p("radius", 0.0, 1.5, 0.7), p("softness", 0.05, 1.0, 0.45)],
+                rows: vec![f32_row(false), f32_row(false), f32_row(false)],
+                decl: Decl {
+                    video_class: Some(VideoClass::PointWise),
+                    gpu: Gpu::Wgsl(include_str!("vignette.wgsl")),
+                    positioned: true,
+                    ..Decl::default()
+                },
+                ui: UiDecl { name: "Vignette", category_key: "fxreg.cat.style", keywords_key: "fxreg.kw.vignette" },
+            },
+        }
+    }
+
+    /// (strength, radius, softness) clamped as the variant's planner clamped them.
+    fn numbers(p: &[f64]) -> [f64; 3] {
+        let g = |i: usize, d: f64| p.get(i).copied().unwrap_or(d);
+        [g(0, 0.5).clamp(0.0, 1.0), g(1, 0.7).clamp(0.0, 1.5), g(2, 0.45).clamp(0.05, 1.0)]
+    }
+}
+
+impl Default for Vignette {
+    fn default() -> Vignette {
+        Vignette::new()
+    }
+}
+
+impl Plugin for Vignette {
+    fn manifest(&self) -> &Manifest {
+        &self.m
+    }
+    fn video(&self) -> Option<&dyn VideoKernel> {
+        Some(self)
+    }
+}
+
+impl VideoKernel for Vignette {
+    fn cook_at(&self, p: &[f64], cx: &TapCtx) -> Cooked {
+        let n = Vignette::numbers(p);
+        [n[0], n[1], n[2], cx.stage_w.max(1) as f64, cx.stage_h.max(1) as f64, 0.0, 0.0, 0.0]
+    }
+    #[inline(always)]
+    fn tap_at(&self, k: &Cooked, v: &mut [f64; 4], x: f64, y: f64) {
+        let (strength, radius, softness) = (k[0], k[1], k[2]);
+        let dx = (x + 0.5) / k[3] - 0.5;
+        let dy = (y + 0.5) / k[4] - 0.5;
+        let r = ((2.0 * dx) * (2.0 * dx) + (2.0 * dy) * (2.0 * dy)).sqrt() / std::f64::consts::SQRT_2;
+        let t = ((r - radius) / softness.max(1e-6)).clamp(0.0, 1.0);
+        let w = t * t * (3.0 - 2.0 * t);
+        let g = 1.0 - strength * w;
+        for c in v.iter_mut().take(3) {
+            *c *= g;
+        }
+    }
+    fn gpu_params(&self, p: &[f64]) -> [f32; 7] {
+        let n = Vignette::numbers(p);
+        // b.zw are the host's: the stage size
+        [n[0] as f32, n[1] as f32, n[2] as f32, 0.0, 0.0, 0.0, 0.0]
+    }
 }

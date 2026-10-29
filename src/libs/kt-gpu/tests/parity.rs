@@ -980,7 +980,7 @@ fn t329_parity_cycle_over_the_registry() {
             FrameTol::GEOM,
         ),
         (
-            FxInstance::Vignette { strength: 0.9, radius: 0.3, softness: 0.2 },
+            kt_model::FxInstance::plugin_with("vignette", &[0.9, 0.3, 0.2]).unwrap(),
             FrameTol::BILINEAR,
             FrameTol::BILINEAR,
         ),
@@ -1219,15 +1219,15 @@ fn t974_the_pilot_plugin_on_both_executors() {
     kt_plugins_builtin::install();
     let (fused, own) = kt_gpu::assembled_shaders();
     assert_eq!(kt_gpu::assembled_shaders(), (fused.clone(), own.clone()), "the assembled text is not a pure function");
-    assert!(fused.contains("fn tap_posterize(") && fused.contains("v = tap_posterize(v, a, b);"), "posterize is not in the fused pass");
+    assert!(fused.contains("fn tap_posterize(") && fused.contains("v = tap_posterize(v, a, b, rec[t]);"), "posterize is not in the fused pass");
     // every point-wise built-in with a WGSL text, in the assembler's order (stage 4 moved the colour
     // family in front of the pilot)
     let taps: Vec<&str> = kt_gpu::plugin_taps().iter().map(|(id, _)| *id).collect();
-    assert_eq!(taps, vec!["color_grade", "duotone", "posterize"]);
+    assert_eq!(taps, vec!["color_grade", "duotone", "posterize", "vignette"]);
     assert_eq!(own.len(), taps.len(), "one own pass per point-wise plugin");
     let Some(engine) = test_engine() else { return };
     let mirror = FxInstance::Mirror { horizontal: true, vertical: false };
-    let vig = FxInstance::Vignette { strength: 0.6, radius: 0.5, softness: 0.4 };
+    let vig = kt_model::FxInstance::plugin_with("vignette", &[0.6, 0.5, 0.4]).unwrap();
     let blur = FxInstance::blur(2);
     let cases: Vec<(&str, Vec<FxInstance>, FrameTol, Option<u32>)> = vec![
         ("alone", vec![posterize(5)], FrameTol::THRESHOLD, Some(1)),
@@ -1252,4 +1252,39 @@ fn t974_the_pilot_plugin_on_both_executors() {
             assert_eq!(runs, 1, "fused: the series with the plugin's tap is not one run: {:?}", plan.ops.len());
         }
     }
+}
+
+/// t992 (plugin-api-stage1, D11.1; capability `plugins`): a positioned tap measures its own stage.
+///
+/// Vignette moved into `fx-video-color` as the first POSITIONED plugin: the CPU tap gets the
+/// sub-sample's coordinate in its stage and the stage size through `cook_at`, the GPU tap the
+/// coordinate as its fourth argument and the stage size in `b.zw`. Inside a series that zooms
+/// before it the vignette is measured on the ZOOMED stage — so the frame after `zoom, vignette`
+/// differs from `vignette, zoom` — and both executors agree within the point-wise tolerance.
+#[test]
+fn t992_a_positioned_tap_measures_its_own_stage() {
+    kt_plugins_builtin::install();
+    let (fused, own) = kt_gpu::assembled_shaders();
+    assert!(fused.contains("v = tap_vignette(v, a, b, rec[t]);"), "the fused arm does not pass the coordinate");
+    assert!(own.iter().any(|t| t.contains("tap_vignette(") && t.contains("floor(pos.xy)")), "the own pass does not pass the pixel");
+    let vig = || FxInstance::plugin_with("vignette", &[0.9, 0.3, 0.2]).unwrap();
+    let zoomed = FxInstance::geometry_zoom(2.0);
+    let Some(engine) = test_engine() else { return };
+    let blur = FxInstance::blur(2);
+    let cases: Vec<(&str, Vec<FxInstance>)> = vec![
+        ("alone", vec![vig()]),
+        ("after a zoom", vec![zoomed.clone(), vig()]),
+        ("before a zoom", vec![vig(), zoomed.clone()]),
+        ("barrier", vec![blur.clone(), vig(), blur]),
+    ];
+    let mut cpu_frames = Vec::new();
+    for (i, (name, fx)) in cases.into_iter().enumerate() {
+        let src = Src::new(9920 + i as u64, Some(frame(W, H, false, 0)), fx);
+        let p = plan(90_000, vec![one(&src, 4096, false)]);
+        let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
+        assert!(cc && cg, "{name}: incomplete");
+        assert_frames_close(&cpu, &gpu, W, H, FrameTol::THRESHOLD, name);
+        cpu_frames.push(cpu);
+    }
+    assert_ne!(cpu_frames[1], cpu_frames[2], "the vignette is not measured on its own stage: the order of zoom and vignette does not matter");
 }

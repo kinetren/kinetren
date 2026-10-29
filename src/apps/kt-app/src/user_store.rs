@@ -220,6 +220,9 @@ impl FxPresetStore {
 /// Parse one record. An unknown effect kind, an empty name or broken
 /// curves — the record is skipped (it stays in the file).
 fn decode(v: &serde_json::Value, factory: bool) -> Option<PresetRow> {
+    // the slots are read BEFORE the picker's registry is asked: without the plugin set a moved
+    // kind would read as a missing plugin (plugin-api-stage1)
+    crate::plugins::install();
     let name = v.get("name")?.as_str()?.trim().to_string();
     if name.is_empty() {
         return None;

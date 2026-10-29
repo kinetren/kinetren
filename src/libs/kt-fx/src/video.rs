@@ -314,19 +314,13 @@ pub fn apply_barrier(
         // the same f64 text of the formula as the tap of the fused pass — one home
         // a point-wise plugin at the barrier position: the same tap as inside the fused pass
         f @ FxInstance::Plugin(_) if crate::geom::PluginTap::of(f).is_some() => {
-            let t = crate::geom::PluginTap::of(f).expect("checked");
+            // the barrier's stage is the frame itself (D11.1)
+            let stage = kt_plugin_api::TapCtx { stage_w: frame.w, stage_h: frame.h };
+            let t = crate::geom::PluginTap::of_at(f, stage).expect("checked");
             let mut frame = frame;
-            t.apply_frame(&mut frame.rgba);
+            let w = frame.w;
+            t.apply_frame(&mut frame.rgba, w);
             frame
-        }
-        FxInstance::Vignette { strength, radius, softness } => {
-            let (st, ra, so) = (
-                (*strength as f64).clamp(0.0, 1.0),
-                (*radius as f64).clamp(0.0, 1.5),
-                (*softness as f64).clamp(0.05, 1.0),
-            );
-            let (w, h) = (frame.w, frame.h);
-            pointwise_barrier(frame, move |v, xy| crate::geom::tap_vig(v, xy, st, ra, so, w, h))
         }
         // R.47 barriers Kv3
         FxInstance::Sharpen { amount, radius } => {
@@ -574,21 +568,8 @@ fn halftone(f: Frame, size: u32, angle: f64, scratch: &mut FxScratch, res_scale:
     res
 }
 
-/// A per-pixel effect as a barrier: the f64 continuum of the tap formula on each
-/// pixel, clamp+round ONCE at the output (the same discipline as
-/// exec_geom_cpu).
-fn pointwise_barrier(mut f: Frame, op: impl Fn(&mut [f64; 4], (f64, f64))) -> Frame {
-    let w = f.w as usize;
-    for (i, px) in f.rgba.chunks_exact_mut(4).enumerate() {
-        let (x, y) = ((i % w) as f64, (i / w) as f64);
-        let mut v = [px[0] as f64, px[1] as f64, px[2] as f64, px[3] as f64];
-        op(&mut v, (x, y));
-        for (c, out) in v.iter().zip(px.iter_mut()) {
-            *out = c.round().clamp(0.0, 255.0) as u8;
-        }
-    }
-    f
-}
+// a per-pixel effect as a barrier is the plugin's `frame` (`kt_plugin_api::frame_with_at`, the one
+// text of that loop since plugin-api-stage1: the f64 tap per pixel, clamp+round ONCE at the output)
 
 /// A single geo effect with the OLD kernels (`GeomExec::Legacy`): bytes as before
 /// R.44 — the goldens pan/cammotion/mirror t26 and the rule “a series of length 1 —

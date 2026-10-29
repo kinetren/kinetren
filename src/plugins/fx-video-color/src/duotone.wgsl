@@ -1,6 +1,6 @@
 // Duotone (R.47): a mirror of the plugin's tap (one text for the fused pass's tap arm and its own
 // generated pass — plugin-api-stage1, D5). a.yzw = shadow, b.xyz = high, b.w = amount.
-fn tap_duotone(v0: vec4<f32>, a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
+fn tap_duotone(v0: vec4<f32>, a: vec4<f32>, b: vec4<f32>, c: vec2<f32>) -> vec4<f32> {
     var v = v0;
     let sh3 = a.yzw;
     let hi3 = b.xyz;

@@ -852,6 +852,10 @@ pub struct Decl {
     pub gpu: Gpu,
     /// A built-in (the assembler's closed list): it must keep the GPU default.
     pub builtin: bool,
+    /// A POSITIONED point-wise kernel (D11.1): it reads its stage's size and the sample's
+    /// coordinate; on the GPU the host puts the stage size into `b.zw` (the last two of the seven
+    /// numbers are the host's then) and passes the coordinate as the tap's fourth argument.
+    pub positioned: bool,
 }
 
 impl Default for Decl {
@@ -864,6 +868,7 @@ impl Default for Decl {
             video_class: None,
             gpu: Gpu::None,
             builtin: true,
+            positioned: false,
         }
     }
 }
@@ -964,7 +969,8 @@ impl ParamValues {
 ///
 /// A POINT-WISE kernel (D5) gives one function of one pixel, `tap`, used by the CPU in both of its
 /// positions (inside the fused geometry pass and as its own barrier), and its GPU twin as the WGSL
-/// of `Gpu::Wgsl`: a function `tap_<id>(v: vec4<f32>, a: vec4<f32>, b: vec4<f32>) -> vec4<f32>`
+/// of `Gpu::Wgsl`: a function `tap_<id>(v: vec4<f32>, a: vec4<f32>, b: vec4<f32>, c: vec2<f32>) -> vec4<f32>`
+/// (`c` — the sample's coordinate in its stage, D11.1)
 /// over straight RGBA in 0..255, reading its parameters from `a.yzw` and `b` — the seven numbers
 /// `gpu_params` packs (a.x is the host's). kt-gpu pastes that one text into the fused pass's tap
 /// dispatch AND into a generated pass of its own, so the "two WGSL mirrors" are one text.
@@ -979,14 +985,27 @@ pub trait VideoKernel: Send + Sync {
         k[..n].copy_from_slice(&p[..n]);
         k
     }
+    /// `cook` with the tap's STAGE (D11.1): a positioned kernel (`Decl.positioned`) reads its
+    /// stage's size here — the size of the frame the tap's coordinate lives in; the default is
+    /// `cook`.
+    fn cook_at(&self, p: &[f64], _cx: &TapCtx) -> Cooked {
+        self.cook(p)
+    }
     /// The function of one pixel over the cooked parameters (straight RGBA in 0..255).
     fn tap(&self, _k: &Cooked, _rgba: &mut [f64; 4]) {}
-    /// A whole frame at the barrier position (straight RGBA8): each pixel through `tap`, rounded
-    /// and clamped per channel. The provided body is compiled per kernel type, so `tap` is a
-    /// static, inlinable call inside the loop and the host makes ONE dynamic call per frame;
-    /// a kernel overrides it only with the same bytes.
-    fn frame(&self, k: &Cooked, rgba: &mut [u8]) {
-        frame_with(rgba, |v| self.tap(k, v));
+    /// `tap` with the sample's coordinate in its stage (pixel units, the pixel's corner at the
+    /// integer, as the fused pass's sub-sample record and the barrier's pixel index give it);
+    /// the default ignores it.
+    #[inline(always)]
+    fn tap_at(&self, k: &Cooked, rgba: &mut [f64; 4], _x: f64, _y: f64) {
+        self.tap(k, rgba)
+    }
+    /// A whole frame at the barrier position (straight RGBA8, `w` pixels wide): each pixel through
+    /// `tap_at` at its coordinate, rounded and clamped per channel. The provided body is compiled
+    /// per kernel type, so the tap is a static, inlinable call inside the loop and the host makes
+    /// ONE dynamic call per frame; a kernel overrides it only with the same bytes.
+    fn frame(&self, k: &Cooked, rgba: &mut [u8], w: u32) {
+        frame_with_at(rgba, w, |v, x, y| self.tap_at(k, v, x, y));
     }
     /// The parameters as the GPU reads them: `a.yzw`, then `b.xyzw` (rounded to f32 ONCE here).
     fn gpu_params(&self, _p: &[f64]) -> [f32; 7] {
@@ -996,6 +1015,28 @@ pub trait VideoKernel: Send + Sync {
 
 /// A video kernel's parameters prepared once per frame (`VideoKernel::cook`).
 pub type Cooked = [f64; 8];
+
+/// The stage a tap belongs to (D11.1): the size of the frame its coordinate lives in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TapCtx {
+    pub stage_w: u32,
+    pub stage_h: u32,
+}
+
+/// `frame_with` with each pixel's coordinate (`x = i % w`, `y = i / w`, as f64) — the bytes of
+/// kt-fx's point-wise barrier for a positioned tap.
+#[inline(always)]
+pub fn frame_with_at(rgba: &mut [u8], w: u32, mut op: impl FnMut(&mut [f64; 4], f64, f64)) {
+    let w = w.max(1) as usize;
+    for (i, px) in rgba.chunks_exact_mut(4).enumerate() {
+        let (x, y) = ((i % w) as f64, (i / w) as f64);
+        let mut v = [px[0] as f64, px[1] as f64, px[2] as f64, px[3] as f64];
+        op(&mut v, x, y);
+        for (c, out) in v.iter().zip(px.iter_mut()) {
+            *out = c.round().clamp(0.0, 255.0) as u8;
+        }
+    }
+}
 
 /// The barrier position's loop, the ONE text of it: each straight-RGBA8 pixel to f64, through `op`,
 /// rounded and clamped per channel — the bytes of kt-fx's point-wise barrier. A kernel that

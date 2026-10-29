@@ -1047,7 +1047,7 @@ fn t330_new_pointwise_absorb_and_meaning() {
     // nothing to darken there.
     // radius 0.5: the frame corner (r=1) fades to zero, and the stage point under the
     // ZOOM corner (r≈0.48) stays inside the radius — the contrast (c) is full
-    let vig = FxInstance::Vignette { strength: 1.0, radius: 0.5, softness: 0.3 };
+    let vig = kt_model::FxInstance::plugin_with("vignette", &[1.0, 0.5, 0.3]).unwrap();
     let flat = || {
         let mut rgba = vec![200u8; (W * H * 4) as usize];
         for px in rgba.chunks_exact_mut(4) {

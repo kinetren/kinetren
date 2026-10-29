@@ -9,7 +9,7 @@ use kt_plugin_api::Registry;
 /// The built-in plugin ids, in a fixed order. It grows by one stage at a time (the pilot first).
 pub const BUILTIN_IDS: &[&str] =
     &[
-    "color_grade", "duotone", "posterize", "filter", "eq", "distortion", "bitcrusher", "stereo_width", "gain", "gate", "limiter",
+    "color_grade", "duotone", "posterize", "vignette", "filter", "eq", "distortion", "bitcrusher", "stereo_width", "gain", "gate", "limiter",
     "tremolo", "auto_pan", "vibrato", "chorus", "flanger", "phaser", "pitch_shift", "delay",
 ];
 

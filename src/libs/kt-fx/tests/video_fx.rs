@@ -72,6 +72,7 @@ const GOLDEN: [(&str, u64); 10] = [
 
 #[test]
 fn t26_golden_hashes_all_effects() {
+    kt_plugins_builtin::install();
     let cases: Vec<(&str, FxInstance)> = vec![
         ("pan", FxInstance::geometry_at(-0.05, 0.03333, 1.5)),
         (
@@ -118,6 +119,7 @@ fn t26_golden_hashes_all_effects() {
 /// u32 underflow (a panic in debug); the guard mirrors `chain_ops` of kt-gpu.
 #[test]
 fn t299_eventgrid_larger_than_frame_is_guarded() {
+    kt_plugins_builtin::install();
     for center in [false, true] {
         let f = run(FxInstance::EventGrid { cols: 1000, rows: 1000, center });
         assert_eq!((f.w, f.h), (W, H));
@@ -133,6 +135,7 @@ fn t299_eventgrid_larger_than_frame_is_guarded() {
 
 #[test]
 fn t26_mirror_is_involution() {
+    kt_plugins_builtin::install();
     let m = FxInstance::Mirror { horizontal: true, vertical: true };
     let once = apply_video_chain(std::slice::from_ref(&m), test_frame(), &ctx());
     let twice = apply_video_chain(&[m], once, &ctx());
@@ -141,6 +144,7 @@ fn t26_mirror_is_involution() {
 
 #[test]
 fn t26_blur_preserves_mean_and_reduces_variance() {
+    kt_plugins_builtin::install();
     let src = test_frame();
     let out = run(FxInstance::blur(12));
     assert!((mean_rgb(&src) - mean_rgb(&out)).abs() < 8.0, "blur preserves mean brightness");
@@ -159,6 +163,7 @@ fn t26_blur_preserves_mean_and_reduces_variance() {
 
 #[test]
 fn t26_greenscreen_keys_out_green_corner() {
+    kt_plugins_builtin::install();
     let out = run(FxInstance::greenscreen([0, 255, 0], 70, 25));
     assert!(out.has_alpha);
     // the centre of the green corner is transparent
@@ -170,6 +175,7 @@ fn t26_greenscreen_keys_out_green_corner() {
 
 #[test]
 fn t26_noise_is_deterministic_per_position() {
+    kt_plugins_builtin::install();
     let a = run(FxInstance::noise(0.3));
     let b = run(FxInstance::noise(0.3));
     assert_eq!(a.rgba, b.rgba, "one timeline position = one grain");
@@ -183,6 +189,7 @@ fn t26_noise_is_deterministic_per_position() {
 
 #[test]
 fn t26_eventgrid_tiles_are_identical() {
+    kt_plugins_builtin::install();
     let out = run(FxInstance::EventGrid { cols: 2, rows: 2, center: true });
     assert_eq!((out.w, out.h), (W, H));
     // the top-left and top-right cells are identical
@@ -201,6 +208,7 @@ fn t26_eventgrid_tiles_are_identical() {
 
 #[test]
 fn t26_pan_stretch_identity_when_no_zoom() {
+    kt_plugins_builtin::install();
     // stretch + zoom 1 + pan 0 on a frame of out size is almost an identity
     let out = run(FxInstance::geometry_zoom(1.0));
     let src = test_frame();
@@ -219,6 +227,7 @@ fn t26_pan_stretch_identity_when_no_zoom() {
 /// Mirror+EventGrid+Glow+VHS (the pool does not leak between frames).
 #[test]
 fn t68_pooled_chain_identical_with_dirty_scratch() {
+    kt_plugins_builtin::install();
     use kt_fx::video::{FxScratch, apply_video_chain_pooled};
     let all: Vec<Vec<FxInstance>> = vec![
         vec![FxInstance::geometry_at(-0.04286, 0.02857, 1.4)],
@@ -267,6 +276,7 @@ fn t68_pooled_chain_identical_with_dirty_scratch() {
 /// meaningfully.
 #[test]
 fn t228_new_fx_params_change_the_picture() {
+    kt_plugins_builtin::install();
     let hash = |f: Frame| xxh3_64(&f.rgba);
     // ---- Blur: separate axes -------------------------------------------
     let base = run(FxInstance::blur(12));
@@ -367,6 +377,7 @@ fn t228_new_fx_params_change_the_picture() {
 /// Test 228b (R.33 S5): the second batch of parameters: glow, VHS, chroma key.
 #[test]
 fn t228_glow_vhs_greenscreen_params() {
+    kt_plugins_builtin::install();
     let hash = |f: &Frame| xxh3_64(&f.rgba);
     let mean = |f: &Frame| {
         f.rgba.chunks_exact(4).map(|p| p[0] as u64 + p[1] as u64 + p[2] as u64).sum::<u64>()
@@ -594,6 +605,7 @@ fn lead_ctx(view: (f64, f64), rule: kt_fx::conform::ConformRule) -> VideoFxCtx {
 /// an identity byte for byte (the old path without a single resample).
 #[test]
 fn t713_lead_geometry_places_with_transparent_fields() {
+    kt_plugins_builtin::install();
     use kt_fx::conform::ConformRule;
     let lead = vec![FxInstance::geometry()];
     // matching proportions: the node is transparent, the frame is untouched
@@ -634,8 +646,9 @@ fn t713_lead_geometry_places_with_transparent_fields() {
 /// AFTER it on the canvas; a 90° rotation with zoom fills the canvas.
 #[test]
 fn t717_before_lead_is_source_space_after_is_canvas() {
+    kt_plugins_builtin::install();
     use kt_fx::conform::ConformRule;
-    let vig = FxInstance::Vignette { strength: 1.0, radius: 0.5, softness: 0.5 };
+    let vig = kt_model::FxInstance::plugin_with("vignette", &[1.0, 0.5, 0.5]).unwrap();
     let c = lead_ctx((36.0, 64.0), ConformRule::Fit);
     let before = apply_video_chain(&[vig.clone(), FxInstance::geometry()], vertical_frame(), &c);
     let after = apply_video_chain(&[FxInstance::geometry(), vig.clone()], vertical_frame(), &c);

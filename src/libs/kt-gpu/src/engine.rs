@@ -156,11 +156,11 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
                 let g = t.kernel.gpu_params(t.values());
                 u.p[base] = [f32::from_bits(meta), g[0], g[1], g[2]];
                 u.p[base + 1] = [g[3], g[4], g[5], g[6]];
-            }
-            kt_fx::geom::TapKind::Vig { strength, radius, softness, stage_w, stage_h } => {
-                let meta = 5u32 | ((op.after_prim as u32) << 4);
-                u.p[base] = [f32::from_bits(meta), strength as f32, radius as f32, softness as f32];
-                u.p[base + 1] = [stage_w as f32, stage_h as f32, 0.0, 0.0];
+                if t.positioned {
+                    // the tap's stage size (D11.1) — the host's half of `b`
+                    u.p[base + 1][2] = t.stage.stage_w as f32;
+                    u.p[base + 1][3] = t.stage.stage_h as f32;
+                }
             }
         }
     }
@@ -188,8 +188,7 @@ enum Pipe {
     Composite,
     /// Layer blend strength (R.38 item 12): mixing of the dry and wet sides.
     LayerMix,
-    // pointwise R.47 in the barrier position (color_grade, duotone and posterize are plugins)
-    Vignette,
+    // (the pointwise R.47 kinds — color_grade, duotone, posterize, vignette — are plugins)
     // R.47 barriers Kv3
     SharpenAdd,
     Pixelate,
@@ -205,7 +204,7 @@ enum Pipe {
     GridTile,
 }
 
-const PIPE_COUNT: usize = 19;
+const PIPE_COUNT: usize = 18;
 
 /// One chain step precomputed on the CPU (common maths: kt-fx:
 /// pan_frame/cam_at/noise_seed). The number of passes and the sizes are known in advance.
@@ -299,11 +298,8 @@ enum FxOp {
     PluginTap {
         idx: usize,
         f: [f32; 8],
-    },
-    Vignette {
-        strength: f32,
-        radius: f32,
-        softness: f32,
+        /// A positioned kernel (D11.1): `b.zw` = the pass's frame size, set at execution.
+        positioned: bool,
     },
     /// Merged geometry series (R.44): the program of inverse mappings is built in
     /// kt-fx (shared code with the CPU executor), one pass, a 1024 B uniform.
@@ -573,13 +569,10 @@ fn chain_ops(
                     let t = kt_fx::geom::PluginTap::of(f).expect("checked");
                     let g = t.kernel.gpu_params(t.values());
                     let idx = plugin_taps().iter().position(|(id, _)| *id == t.id).expect("assembled at engine creation");
-                    ops.push(FxOp::PluginTap { idx, f: [0.0, g[0], g[1], g[2], g[3], g[4], g[5], g[6]] });
-                }
-                FxInstance::Vignette { strength, radius, softness } => {
-                    ops.push(FxOp::Vignette {
-                        strength: strength.clamp(0.0, 1.0),
-                        radius: radius.clamp(0.0, 1.5),
-                        softness: softness.clamp(0.05, 1.0),
+                    ops.push(FxOp::PluginTap {
+                        idx,
+                        f: [0.0, g[0], g[1], g[2], g[3], g[4], g[5], g[6]],
+                        positioned: t.positioned,
                     });
                 }
                 FxInstance::Sharpen { amount, radius } => {
@@ -811,7 +804,6 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("glow_add", include_str!("shaders/glow_add.wgsl")),
     ("composite", include_str!("shaders/composite.wgsl")),
     ("layer_mix", include_str!("shaders/layer_mix.wgsl")),
-    ("vignette", include_str!("shaders/vignette.wgsl")),
     ("sharpen_add", include_str!("shaders/sharpen_add.wgsl")),
     ("pixelate", include_str!("shaders/pixelate.wgsl")),
     ("chroma_ab", include_str!("shaders/chroma_ab.wgsl")),
@@ -872,13 +864,13 @@ pub fn assembled_shaders() -> (String, Vec<String>) {
     let mut fns = String::new();
     let mut own = Vec::new();
     for (i, (id, wgsl)) in taps.iter().enumerate() {
-        arms.push_str(&format!("        }} else if (tap_kind == {}u) {{ v = tap_{id}(v, a, b);\n", 6 + i));
+        arms.push_str(&format!("        }} else if (tap_kind == {}u) {{ v = tap_{id}(v, a, b, rec[t]);\n", 6 + i));
         fns.push_str(wgsl);
         fns.push('\n');
         own.push(format!(
             "{wgsl}\n@fragment\nfn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {{\n    \
              let t = textureLoad(T0, vec2<i32>(pos.xy), 0);\n    \
-             let v = tap_{id}(vec4<f32>(f32(t.x), f32(t.y), f32(t.z), f32(t.w)), P.f0, P.f1);\n    \
+             let v = tap_{id}(vec4<f32>(f32(t.x), f32(t.y), f32(t.z), f32(t.w)), P.f0, P.f1, floor(pos.xy));\n    \
              return vec4<u32>(clamp(round(v), vec4<f32>(0.0), vec4<f32>(255.0)));\n}}\n"
         ));
     }
@@ -1693,24 +1685,16 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
-                FxOp::PluginTap { idx, f } => {
+                FxOp::PluginTap { idx, f, positioned } => {
                     let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData { f: *f, ..Default::default() };
-                    self.pass_which(enc, Which::Plugin(*idx), &dst.view, &view, &dummy, &dummy, u);
-                    if let Some(t) = owned.take() {
-                        self.pool.release(t);
+                    let mut f = *f;
+                    if *positioned {
+                        // the barrier's stage is the pass's frame (D11.1)
+                        f[6] = w as f32;
+                        f[7] = h as f32;
                     }
-                    view = dst.view.clone();
-                    owned = Some(dst);
-                }
-                FxOp::Vignette { strength, radius, softness } => {
-                    let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        u: [w, h, 0, 0, 0, 0, 0, 0],
-                        f: [*strength, *radius, *softness, 0.0, 0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::Vignette, &dst.view, &view, &dummy, &dummy, u);
+                    let u = UniformData { f, ..Default::default() };
+                    self.pass_which(enc, Which::Plugin(*idx), &dst.view, &view, &dummy, &dummy, u);
                     if let Some(t) = owned.take() {
                         self.pool.release(t);
                     }

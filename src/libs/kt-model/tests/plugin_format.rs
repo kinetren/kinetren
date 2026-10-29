@@ -66,6 +66,8 @@ enum Frozen {
         #[serde(skip_serializing_if = "is_zero")]
         cents: f32,
     },
+    /// `Vignette` before stage 4 (no field was skipped).
+    Vignette { strength: f32, radius: f32, softness: f32 },
     /// `ColorGrade` and `Duotone` before stage 4.
     ColorGrade {
         #[serde(skip_serializing_if = "is_zero")]
@@ -122,6 +124,7 @@ fn empty_reads() -> Vec<(&'static str, String)> {
         (r#"{"kind":"limiter"}"#, frozen(Frozen::Limiter { threshold_db: -6.0, ceiling_db: -0.3, lookahead_ms: 5.0, release_ms: 80.0 })),
         // a file without `pan` read 0 (`#[serde(default)]`)
         (r#"{"kind":"gain","db":-3.0}"#, frozen(Frozen::Gain { db: -3.0, pan: 0.0 })),
+        (r#"{"kind":"vignette"}"#, frozen(Frozen::Vignette { strength: 0.5, radius: 0.7, softness: 0.45 })),
         (r#"{"kind":"color_grade"}"#, frozen(Frozen::ColorGrade { brightness: 0.0, contrast: 0.0, saturation: 1.0, hue: 0.0 })),
         (r#"{"kind":"duotone"}"#, frozen(Frozen::Duotone { shadow_r: 24, shadow_g: 18, shadow_b: 64, high_r: 255, high_g: 236, high_b: 190, amount: 1.0 })),
         (r#"{"kind":"filter"}"#, frozen(Frozen::Filter { mode: FrozenFilterMode::Lowpass, cutoff_hz: 800.0, resonance: 0.707 })),
@@ -181,6 +184,11 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
         (
             FxInstance::plugin_with("gate", &[-30.0, 0.5, 120.0, 250.0]).unwrap(),
             frozen(Frozen::Gate { threshold_db: -30.0, attack_ms: 0.5, hold_ms: 120.0, release_ms: 250.0 }),
+        ),
+        (FxInstance::vignette(), frozen(Frozen::Vignette { strength: 0.5, radius: 0.7, softness: 0.45 })),
+        (
+            FxInstance::plugin_with("vignette", &[0.9, 0.3, 0.123456789]).unwrap(),
+            frozen(Frozen::Vignette { strength: 0.9, radius: 0.3, softness: 0.123456789 }),
         ),
         (FxInstance::color_grade(), frozen(Frozen::ColorGrade { brightness: 0.0, contrast: 0.0, saturation: 1.0, hue: 0.0 })),
         (

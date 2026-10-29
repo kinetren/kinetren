@@ -521,7 +521,6 @@ pub fn is_pointwise(f: &FxInstance) -> bool {
         f,
         FxInstance::Greenscreen { .. }
             | FxInstance::Noise { .. }
-            | FxInstance::Vignette { .. }
     ) || plugin_class(f) == Some(kt_plugin_api::VideoClass::PointWise)
 }
 
@@ -542,13 +541,21 @@ pub struct PluginTap {
     pub kernel: &'static dyn kt_plugin_api::VideoKernel,
     values: [f64; 8],
     n: usize,
-    /// `kernel.cook(values)`, once per plan (never per pixel)
+    /// `kernel.cook_at(values, stage)`, once per plan (never per pixel)
     cooked: kt_plugin_api::Cooked,
+    /// The stage the tap belongs to (D11.1): a positioned kernel's GPU arm reads it from `b.zw`.
+    pub stage: kt_plugin_api::TapCtx,
+    pub positioned: bool,
 }
 
 impl PluginTap {
     /// The tap of a point-wise plugin slot; `None` — not registered, not point-wise, no kernel.
     pub fn of(f: &FxInstance) -> Option<PluginTap> {
+        PluginTap::of_at(f, kt_plugin_api::TapCtx::default())
+    }
+
+    /// The tap of a point-wise plugin slot at its stage (D11.1).
+    pub fn of_at(f: &FxInstance, stage: kt_plugin_api::TapCtx) -> Option<PluginTap> {
         let FxInstance::Plugin(slot) = f else { return None };
         let plugin = kt_model::plugin_slot::registry().get(&slot.id)?;
         let m = plugin.manifest();
@@ -559,8 +566,8 @@ impl PluginTap {
         let mut values = [0.0; 8];
         let n = slot.values.len().min(8);
         values[..n].copy_from_slice(&slot.values[..n]);
-        let cooked = kernel.cook(&values[..n]);
-        Some(PluginTap { id: &m.id, kernel, values, n, cooked })
+        let cooked = kernel.cook_at(&values[..n], &stage);
+        Some(PluginTap { id: &m.id, kernel, values, n, cooked, stage, positioned: m.decl.positioned })
     }
 
     /// The values in passport order.
@@ -568,14 +575,14 @@ impl PluginTap {
         &self.values[..self.n]
     }
 
-    /// The function of one sample inside the fused pass (the CPU).
-    pub fn apply(&self, v: &mut [f64; 4]) {
-        self.kernel.tap(&self.cooked, v);
+    /// The function of one sample inside the fused pass (the CPU), at its stage coordinate.
+    pub fn apply(&self, v: &mut [f64; 4], at: (f64, f64)) {
+        self.kernel.tap_at(&self.cooked, v, at.0, at.1);
     }
 
     /// The whole frame at the barrier position: one dynamic call, the loop inside the kernel.
-    pub fn apply_frame(&self, rgba: &mut [u8]) {
-        self.kernel.frame(&self.cooked, rgba);
+    pub fn apply_frame(&self, rgba: &mut [u8], w: u32) {
+        self.kernel.frame(&self.cooked, rgba, w);
     }
 }
 
@@ -597,9 +604,6 @@ pub enum TapKind {
     Noise { seed: u32, k: i64, cell: u32, color: bool, special: bool, stage_w: u32, stage_h: u32 },
     /// A point-wise PLUGIN (plugin-api-stage1, D5) — Posterize since the pilot.
     Plugin(PluginTap),
-    /// Vignette (R.47): coordinate of ITS OWN stage (like Noise) — the darkening
-    /// zooms with the picture inside the chain.
-    Vig { strength: f64, radius: f64, softness: f64, stage_w: u32, stage_h: u32 },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1086,18 +1090,9 @@ fn build_program(
                 }
             }
             f @ FxInstance::Plugin(_) => {
-                if let Some(t) = PluginTap::of(f) {
+                if let Some(t) = PluginTap::of_at(f, kt_plugin_api::TapCtx { stage_w: w, stage_h: h }) {
                     fw.push(Step::Tap(TapKind::Plugin(t)));
                 }
-            }
-            FxInstance::Vignette { strength, radius, softness } => {
-                fw.push(Step::Tap(TapKind::Vig {
-                    strength: (*strength as f64).clamp(0.0, 1.0),
-                    radius: (*radius as f64).clamp(0.0, 1.5),
-                    softness: (*softness as f64).clamp(0.05, 1.0),
-                    stage_w: w,
-                    stage_h: h,
-                }));
             }
             FxInstance::CornerPin { x0, y0, x1, y1, x2, y2, x3, y3 } => {
                 // default is bit-exact: corners at the corners — the step is skipped,
@@ -1905,28 +1900,6 @@ fn tap_noise(
 
 
 
-/// Vignette on the subtap: coordinate of ITS OWN stage; the radius is normalized to
-/// the half-diagonal; smoothstep written out by hand (one text in both
-/// executors).
-pub(crate) fn tap_vig(
-    v: &mut [f64; 4],
-    coord: (f64, f64),
-    strength: f64,
-    radius: f64,
-    softness: f64,
-    stage_w: u32,
-    stage_h: u32,
-) {
-    let dx = (coord.0 + 0.5) / stage_w.max(1) as f64 - 0.5;
-    let dy = (coord.1 + 0.5) / stage_h.max(1) as f64 - 0.5;
-    let r = ((2.0 * dx) * (2.0 * dx) + (2.0 * dy) * (2.0 * dy)).sqrt() / std::f64::consts::SQRT_2;
-    let t = ((r - radius) / softness.max(1e-6)).clamp(0.0, 1.0);
-    let w = t * t * (3.0 - 2.0 * t);
-    let g = 1.0 - strength * w;
-    for c in v.iter_mut().take(3) {
-        *c *= g;
-    }
-}
 
 /// One subtap: the whole inverse chain + the tap (the Fold border and the Proj silhouette
 /// are anti-aliased honestly — each subtap decides the short circuits itself);
@@ -1957,10 +1930,7 @@ fn sample_at(p: &GeomProgram, src: &Frame, x: f64, y: f64) -> [f64; 4] {
             TapKind::Noise { seed, k, cell, color, special, stage_w, stage_h } => {
                 tap_noise(&mut v, rec[ti], seed, k, cell, color, special, stage_w, stage_h)
             }
-            TapKind::Plugin(t) => t.apply(&mut v),
-            TapKind::Vig { strength, radius, softness, stage_w, stage_h } => {
-                tap_vig(&mut v, rec[ti], strength, radius, softness, stage_w, stage_h)
-            }
+            TapKind::Plugin(t) => t.apply(&mut v, rec[ti]),
         }
     }
     v

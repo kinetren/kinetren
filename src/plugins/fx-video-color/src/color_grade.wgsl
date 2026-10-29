@@ -1,7 +1,7 @@
 // ColorGrade (R.47): a mirror of the plugin's tap on f32 (one text for the fused pass's tap arm and
 // its own generated pass — plugin-api-stage1, D5). a.yzw = (brightness, contrast, saturation),
 // b.xy = (hue_cos, hue_sin).
-fn tap_color_grade(v0: vec4<f32>, a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
+fn tap_color_grade(v0: vec4<f32>, a: vec4<f32>, b: vec4<f32>, c: vec2<f32>) -> vec4<f32> {
     var v = v0;
     let br = a.y;
     let con = a.z;

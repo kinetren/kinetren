@@ -296,7 +296,9 @@ CamMotion (a form that exists only to be converted on reading, R.34). The ten ba
 in `plugin-api-barriers` with its own design of the GPU pass graph and of the CPU kernels'
 SIMD twins.
 
-**D11.1 A positioned tap** (vignette, noise, greenscreen). `VideoKernel::cook_at(p, &TapCtx)`,
+**D11.1 A positioned tap** (vignette; noise and greenscreen turned out to be barrier kernels —
+their barrier position is an integer kernel of its own with K× and an AVX2 twin, the fused tap is
+the f64 continuum of it — so they move with the pass graph of `plugin-api-barriers`). `VideoKernel::cook_at(p, &TapCtx)`,
 where `TapCtx { stage_w, stage_h, burst_index, in_scale }` is the stage the tap belongs to. The
 fused builder knows it already (vignette's `rec[ti]` and `stage_w/h`, noise's grid and seed).
 `tap_at(k, v, x, y)` gets the sub-sample's coordinate in that stage; the provided default calls
