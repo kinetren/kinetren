@@ -95,7 +95,9 @@ fn hash(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool, engine:
 fn cases(f: &FxInstance) -> [u64; 4] {
     let engine = if f.tag() == "pitch_shift" { PitchEngine::Vocoder } else { PitchEngine::Wsola };
     let mut at70 = f.clone();
-    for spec in f.param_specs() {
+    // the number rows only: an enum variant's passport had no others (a plugin's choice and flag
+    // rows — filter's mode, delay's pingpong — were fields outside it), so the table compares alike
+    for spec in f.param_specs().iter().filter(|s| s.ty == ParamType::Num) {
         at70.set_param(&spec.name, spec.min + 0.7 * (spec.max - spec.min));
     }
     let curve = f.param_specs().iter().find(|s| s.kind == ParamKind::Smooth).map(|spec| {

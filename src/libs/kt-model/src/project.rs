@@ -4048,23 +4048,8 @@ fn is_default_frame_mode(m: &FrameMode) -> bool {
     *m == FrameMode::Nearest
 }
 
-fn default_cutoff_hz() -> f32 {
-    800.0
-}
-fn default_resonance() -> f32 {
-    0.707
-}
 fn default_half_f32() -> f32 {
     0.5
-}
-fn default_delay_time() -> f32 {
-    350.0
-}
-fn default_delay_fb() -> f32 {
-    0.35
-}
-fn default_delay_mix() -> f32 {
-    0.35
 }
 fn default_comp_thr() -> f32 {
     -18.0
@@ -5205,27 +5190,6 @@ pub enum FxInstance {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         automation: Vec<SlowedKeyframe>,
     },
-    /// Resonant filter (R.47): LP/HP/BP, RBJ biquad.
-    Filter {
-        #[serde(default)]
-        mode: FilterMode,
-        #[serde(default = "default_cutoff_hz")]
-        cutoff_hz: f32,
-        #[serde(default = "default_resonance")]
-        resonance: f32,
-    },
-    /// Echo (R.47): a ring at maximum, the time — fractional reading with
-    /// tape glide (not structural), a filter in the loop — the tail darkens.
-    Delay {
-        #[serde(default = "default_delay_time")]
-        time_ms: f32,
-        #[serde(default = "default_delay_fb")]
-        feedback: f32,
-        #[serde(default = "default_delay_mix")]
-        mix: f32,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        pingpong: bool,
-    },
     /// Compressor (R.47): peak detector with stereo link.
     Compressor {
         #[serde(default = "default_comp_thr")]
@@ -5606,8 +5570,6 @@ impl FxInstance {
     pub fn class(&self) -> FxClass {
         match self {
             | FxInstance::SlowedReverb { .. }
-            | FxInstance::Filter { .. }
-            | FxInstance::Delay { .. }
             | FxInstance::Compressor { .. } => FxClass::Audio,
             FxInstance::Pan3d { .. } | FxInstance::Cylinder3d { .. } => FxClass::Video3d,
             // a plugin's class is its manifest's media (plugin-api-stage1, D2)
@@ -5650,8 +5612,6 @@ impl FxInstance {
         match self {
             FxInstance::LayerMix { .. } => "layer_mix",
             FxInstance::SlowedReverb { .. } => "slowed_reverb",
-            FxInstance::Filter { .. } => "filter",
-            FxInstance::Delay { .. } => "delay",
             FxInstance::Compressor { .. } => "compressor",
             FxInstance::ColorGrade { .. } => "color_grade",
             FxInstance::Duotone { .. } => "duotone",
@@ -5857,15 +5817,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         // length of the pre-delay line — the same geometry as reverb_delay_ms
         predelay_ms: f32, 0.0, 200.0, 0.0, 1.0, Ms, Structural;
         width: f32, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
-    },
-    Filter {
-        cutoff_hz: f32, 20.0, 20000.0, 800.0, 10.0, Hz, Smooth;
-        resonance: f32, 0.5, 10.0, 0.707, 0.01, None, Smooth;
-    },
-    Delay {
-        time_ms: f32, 1.0, 1500.0, 350.0, 1.0, Ms, Smooth;
-        feedback: f32, 0.0, 0.9, 0.35, 0.01, Norm, Smooth;
-        mix: f32, 0.0, 1.0, 0.35, 0.01, Norm, Smooth;
     },
     Compressor {
         threshold_db: f32, -60.0, 0.0, -18.0, 0.1, Db, Smooth;
@@ -6378,16 +6329,6 @@ params_for_struct! { EventGeometry {
     anchor_y: f64, 0.0, 1.0, 0.5, 0.005, Norm, Smooth;
 } choice rule: CONFORM_KEYS, Conform}
 
-/// Audio filter type (R.47): low-pass / high-pass / band.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FilterMode {
-    #[default]
-    Lowpass,
-    Highpass,
-    Bandpass,
-}
-
 /// How to get a frame that is absent in the source (R.37 item 2): a stretched
 /// video asks for material between frames. `Nearest` — keep the nearest one
 /// (determinism, zero extra decode); `Blend` — linearly mix two adjacent
@@ -6638,8 +6579,9 @@ impl FxInstance {
     /// the next parameter does not require editing fifty places.
     /// Default constructors for kinds without their own constructor (R.47,
     /// item 326): needed by the registry `all()`; literals in tests go through them.
+    /// The filter at its defaults (low-pass 800 Hz) — a plugin slot (plugin-api-stage1, stage 3).
     pub fn filter() -> FxInstance {
-        FxInstance::Filter { mode: FilterMode::Lowpass, cutoff_hz: 800.0, resonance: 0.707 }
+        FxInstance::plugin("filter").expect("filter is not registered: install the built-in plugin set first")
     }
 
     /// The equaliser at its defaults — a plugin slot (plugin-api-stage1, stage 3).
@@ -6692,8 +6634,9 @@ impl FxInstance {
         FxInstance::plugin("phaser").expect("phaser is not registered: install the built-in plugin set first")
     }
 
+    /// The echo at its defaults — a plugin slot (plugin-api-stage1, stage 3).
     pub fn delay() -> FxInstance {
-        FxInstance::Delay { time_ms: 350.0, feedback: 0.35, mix: 0.35, pingpong: false }
+        FxInstance::plugin("delay").expect("delay is not registered: install the built-in plugin set first")
     }
 
     pub fn compressor() -> FxInstance {

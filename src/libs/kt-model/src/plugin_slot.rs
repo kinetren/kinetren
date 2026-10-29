@@ -93,6 +93,8 @@ impl Serialize for PluginSlot {
                 kt_plugin_api::Store::U32 => map.serialize_entry(key, &(v as u32))?,
                 kt_plugin_api::Store::U8 => map.serialize_entry(key, &(v as u8))?,
                 kt_plugin_api::Store::I32 => map.serialize_entry(key, &(v as i32))?,
+                kt_plugin_api::Store::Bool => map.serialize_entry(key, &(v != 0.0))?,
+                kt_plugin_api::Store::Choice(keys) => map.serialize_entry(key, keys[v as usize])?,
             }
         }
         map.end()
@@ -114,8 +116,16 @@ impl<'de> Deserialize<'de> for PluginSlot {
             .iter()
             .enumerate()
             .map(|(i, s)| {
-                let v = raw.get(&*s.name).and_then(|v| v.as_f64()).unwrap_or(s.default);
-                m.row(i).store.cast(v)
+                let store = m.row(i).store;
+                let field = raw.get(&*s.name);
+                let v = match store {
+                    kt_plugin_api::Store::Bool => field.and_then(|v| v.as_bool()).map(|b| if b { 1.0 } else { 0.0 }),
+                    kt_plugin_api::Store::Choice(keys) => {
+                        field.and_then(|v| v.as_str()).and_then(|k| keys.iter().position(|x| *x == k)).map(|i| i as f64)
+                    }
+                    _ => field.and_then(|v| v.as_f64()),
+                };
+                store.cast(v.unwrap_or(s.default))
             })
             .collect();
         Ok(PluginSlot { id: kind.to_string(), values })

@@ -157,7 +157,7 @@ once (English message, first line = the stage and what was done).
 
 ## 3. Audio FX
 
-- [ ] 3.1 Move the 17 audio plugin kinds into `fx-audio-dynamics`, `fx-audio-tone`, `fx-audio-modulation`; `ClipProcessor` holds plugin state in a host slot (D2), `chain_tail`/`chain_lookahead` read the manifests. Verify t322 (all items), `GOLDEN_AUDIO`, t337, t338 green; t973 extended to all audio kinds
+- [x] 3.1 Move the 17 audio plugin kinds into `fx-audio-dynamics`, `fx-audio-tone`, `fx-audio-modulation`; `ClipProcessor` holds plugin state in a host slot (D2), `chain_tail`/`chain_lookahead` read the manifests. Verify t322 (all items), `GOLDEN_AUDIO`, t337, t338 green; t973 extended to all audio kinds
   - In progress. 3.1a (c53131f): the DSP primitives and `param_integral` moved into
     `kt_plugin_api::{dsp, curves}`. 3.1b: the D2a contract (`AudioKernel`, `AudioState`,
     `SlotCurves`, `CurveRead`, `HostOpts`; `FramesFn` takes the slot's curves), the host in kt-fx
@@ -168,7 +168,22 @@ once (English message, first line = the stage and what was done).
     on c53131f before anything moved; red proof: a 1.3 width clamp in the moved node turns
     `stereo_width (at 70 %)` red. t973 got `stereo_width` with 1.0 / 0.0 / 0.123456789 (the last
     one is red with an `F64` row: 0.37 was not — f32 and f64 print it alike).
-- [ ] 3.2 Rewrite the "add an audio effect" checklist in `src/libs/kt-fx/CLAUDE.md` for the plugin form; commit stage 3
+- [x] 3.2 Rewrite the "add an audio effect" checklist in `src/libs/kt-fx/CLAUDE.md` for the plugin form; commit stage 3
+  - Done in 3.1c (e2fa282: eq, distortion, bitcrusher), 3.1d (aa5e85f: gain, gate, limiter),
+    3.1e (1b6330f: the six LFO kinds), 3.1f (811cc02: pitch_shift) and 3.1g (filter, delay): 17
+    audio kinds in `fx-audio-tone` (filter, eq, distortion, bitcrusher, stereo_width),
+    `fx-audio-dynamics` (gain, gate, limiter) and `fx-audio-modulation` (tremolo, auto_pan,
+    vibrato, chorus, flanger, phaser, pitch_shift, delay). Deviation: the COMPRESSOR stays core —
+    its sidechain key is a `TrackId` (design, after D2a); 16 kinds moved, not 17. Filter's `mode`
+    and delay's `pingpong` are choice/flag rows (`Store::Choice`/`Bool`); t641 was refined, not
+    loosened: a choice/flag row must have the type of its store and be structural (red proof: a
+    Smooth `mode` row). Found and fixed: the static Delay tail read the Slowed+Reverb slot's mix
+    curve — t990 (`kt-fx/tests/audio_nodes.rs`), red with the curve gate removed. t975 now limits a
+    family's WORKSPACE dependencies (pitch's realfft is third-party).
+    Every move: t973c (the sound, four cases per kind) green against the c53131f table, t973 (the
+    file form and the defaults an empty slot reads), t322, t337, t338, t906/t907, `GOLDEN_AUDIO`
+    (t11) green. Workspace (nextest, 1232): green except the load-sensitive kt-app set (t815, t411,
+    t476, t951, t952, t640/t795, t802, t809, t958 — each green alone).
 
 ## 4. Video FX
 

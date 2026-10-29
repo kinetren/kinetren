@@ -205,8 +205,6 @@ pub enum AudioNode {
     /// `produce()` — the node needs an inter-node buffer, which it does not own.
     LayerMix,
     Reverb(ReverbNode),
-    Filter(Box<FilterNode>),
-    Delay(Box<DelayNode>),
     Compressor(CompNode),
     /// An audio plugin's state (plugin-api-stage1, D2a): one dynamic call per chunk.
     Plugin(Box<dyn kt_plugin_api::AudioState>),
@@ -271,8 +269,6 @@ impl AudioNode {
         match fx {
             FxInstance::LayerMix { .. } => Some(AudioNode::LayerMix),
             FxInstance::SlowedReverb { .. } => Some(AudioNode::Reverb(ReverbNode::new())),
-            FxInstance::Filter { .. } => Some(AudioNode::Filter(Box::new(FilterNode::new()))),
-            FxInstance::Delay { .. } => Some(AudioNode::Delay(Box::new(DelayNode::new()))),
             FxInstance::Compressor { .. } => Some(AudioNode::Compressor(CompNode::new())),
             _ => None,
         }
@@ -291,12 +287,6 @@ impl AudioNode {
             (AudioNode::Plugin(n), FxInstance::Plugin(p)) => n.apply(&p.values, structural),
             (AudioNode::LayerMix, FxInstance::LayerMix { .. }) => {}
             (AudioNode::Reverb(n), FxInstance::SlowedReverb { .. }) => n.apply(fx, structural),
-            (AudioNode::Filter(n), FxInstance::Filter { mode, cutoff_hz, resonance }) => {
-                n.apply(*mode, *cutoff_hz, *resonance)
-            }
-            (AudioNode::Delay(n), FxInstance::Delay { time_ms, feedback, mix, pingpong }) => {
-                n.apply(*time_ms, *feedback, *mix, *pingpong)
-            }
             (
                 AudioNode::Compressor(n),
                 FxInstance::Compressor { threshold_db, ratio, attack_ms, release_ms, makeup_db, .. },
@@ -312,8 +302,6 @@ impl AudioNode {
             AudioNode::Plugin(n) => n.set_targets(&SlotView { auto, slot }, s),
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.set_targets(auto, slot, s),
-            AudioNode::Filter(n) => n.set_targets(auto, slot, s),
-            AudioNode::Delay(n) => n.set_targets(auto, slot, s),
             AudioNode::Compressor(n) => n.set_targets(auto, slot, s),
         }
     }
@@ -340,8 +328,6 @@ impl AudioNode {
         match self {
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.rv.process(buf),
-            AudioNode::Filter(n) => n.process(buf),
-            AudioNode::Delay(n) => n.process(buf),
             AudioNode::Compressor(n) => n.process(buf, key),
             AudioNode::Plugin(n) => n.process(buf, _pos, key),
         }
@@ -366,8 +352,6 @@ impl AudioNode {
     pub(crate) fn tail(&self) -> kt_time::Tick {
         match self {
             AudioNode::Reverb(n) => n.rv.tail(),
-            AudioNode::Filter(n) => n.tail(),
-            AudioNode::Delay(n) => n.tail(true),
             AudioNode::Plugin(n) => n.tail(),
             _ => kt_time::Tick::ZERO,
         }
@@ -377,8 +361,6 @@ impl AudioNode {
         match self {
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.rv.reset(),
-            AudioNode::Filter(n) => n.reset(),
-            AudioNode::Delay(n) => n.reset(),
             AudioNode::Compressor(n) => n.reset(),
             AudioNode::Plugin(n) => n.reset(),
         }
@@ -442,188 +424,15 @@ impl ReverbNode {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Ka2 nodes (R.47, item 327): the filter (EQ, distortion, bitcrusher and width are plugins —
-// src/plugins/fx-audio-tone; coefficients are re-tuned every `TUNE_STEP` frames)
-// ---------------------------------------------------------------------------
-
-use super::primitives::{Biquad, BiquadKind, TUNE_STEP};
-use kt_model::FilterMode;
-
-/// Resonant cut LP/HP/BP: RBJ biquad per channel.
-pub struct FilterNode {
-    mode: FilterMode,
-    cutoff: SmoothedParam,
-    q: SmoothedParam,
-    bq: [Biquad; CH],
-}
-
-impl FilterNode {
-    fn new() -> FilterNode {
-        FilterNode {
-            mode: FilterMode::Lowpass,
-            cutoff: SmoothedParam::with_ms(800.0, 20.0),
-            q: SmoothedParam::with_ms(0.707, 20.0),
-            bq: Default::default(),
-        }
-    }
-
-    fn kind(&self) -> BiquadKind {
-        match self.mode {
-            FilterMode::Lowpass => BiquadKind::Lowpass,
-            FilterMode::Highpass => BiquadKind::Highpass,
-            FilterMode::Bandpass => BiquadKind::Bandpass,
-        }
-    }
-
-    fn apply(&mut self, mode: FilterMode, cutoff_hz: f32, resonance: f32) {
-        // changing the kind does NOT re-create the state (2 f32 per channel): the transient
-        // from changing the shape is allowed and shorter than any re-creation click
-        self.mode = mode;
-        self.cutoff.set_target(cutoff_hz.clamp(20.0, 20_000.0));
-        self.q.set_target(resonance.clamp(0.5, 10.0));
-    }
-
-    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
-        let f = auto.value(slot, "cutoff_hz", self.cutoff.target as f64, s) as f32;
-        let q = auto.value(slot, "resonance", self.q.target as f64, s) as f32;
-        self.cutoff.set_target(f.clamp(20.0, 20_000.0));
-        self.q.set_target(q.clamp(0.5, 10.0));
-    }
-
-    fn process(&mut self, buf: &mut [f32]) {
-        let kind = self.kind();
-        for block in buf.chunks_mut(TUNE_STEP * CH) {
-            let mut f = 0.0;
-            let mut q = 0.0;
-            for _ in 0..block.len() / CH {
-                f = self.cutoff.tick();
-                q = self.q.tick();
-            }
-            for b in &mut self.bq {
-                b.tune(&kind, f, q, 0.0);
-            }
-            for fr in block.chunks_exact_mut(CH) {
-                for (ch, s) in fr.iter_mut().enumerate() {
-                    *s = self.bq[ch].process(*s);
-                }
-            }
-        }
-    }
-
-    fn tail(&self) -> Tick {
-        // resonance ringing: t60 = 6.9·Q/(π·f0)
-        let f0 = self.cutoff.value().max(20.0);
-        let q = self.q.value().max(0.5);
-        let secs = 6.9 * q / (std::f32::consts::PI * f0);
-        Tick::from_audio_frames((secs * AUDIO_SAMPLE_RATE as f32) as i64)
-    }
-
-    fn reset(&mut self) {
-        for b in &mut self.bq {
-            b.reset();
-        }
-        self.cutoff.reset_to_target();
-        self.q.reset_to_target();
-    }
-}
-
-// eq, distortion, bitcrusher, stereo_width moved into src/plugins/fx-audio-tone (plugin-api-stage1, stage 3)
-
-// tremolo, auto_pan, vibrato, chorus, flanger, phaser moved into src/plugins/fx-audio-modulation
+// filter, eq, distortion, bitcrusher, stereo_width moved into src/plugins/fx-audio-tone; tremolo,
+// auto_pan, vibrato, chorus, flanger, phaser, pitch_shift, delay into src/plugins/fx-audio-modulation
 // (plugin-api-stage1, stage 3)
 
-use super::primitives::DelayLine;
-
 // ---------------------------------------------------------------------------
-// Ka4 nodes (R.47, item 329): echo and dynamics
+// Ka4 nodes (R.47, item 329): the compressor — a core kind: its sidechain key is a model address
 // ---------------------------------------------------------------------------
 
 use super::primitives::EnvFollower;
-
-const DELAY_MAX_MS: f32 = 1500.0;
-const DELAY_MAX_FRAMES: usize = (48_000.0 * (DELAY_MAX_MS / 1000.0)) as usize + 8;
-
-/// Echo: the ring is allocated to the maximum (a time change is a fractional read,
-/// NOT structural); time is smoothed over 100 ms — tape glide without clicks;
-/// the filter in the loop — one-pole LP (the tail darkens with each repeat,
-/// a legacy of the F-AUD-009 feature); pingpong — cross feedback.
-pub struct DelayNode {
-    time_ms: SmoothedParam,
-    feedback: SmoothedParam,
-    mix: SmoothedParam,
-    pingpong: bool,
-    lines: [DelayLine; CH],
-    loop_lp: [f32; CH],
-}
-
-impl DelayNode {
-    fn new() -> DelayNode {
-        DelayNode {
-            time_ms: SmoothedParam::with_ms(350.0, 100.0),
-            feedback: SmoothedParam::with_ms(0.35, 20.0),
-            mix: SmoothedParam::with_ms(0.35, 20.0),
-            pingpong: false,
-            lines: std::array::from_fn(|_| DelayLine::new(DELAY_MAX_FRAMES)),
-            loop_lp: [0.0; CH],
-        }
-    }
-
-    fn apply(&mut self, time_ms: f32, feedback: f32, mix: f32, pingpong: bool) {
-        self.time_ms.set_target(time_ms.clamp(1.0, DELAY_MAX_MS));
-        self.feedback.set_target(feedback.clamp(0.0, 0.9));
-        self.mix.set_target(mix.clamp(0.0, 1.0));
-        self.pingpong = pingpong;
-    }
-
-    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
-        self.time_ms.set_target(auto.value(slot, "time_ms", self.time_ms.target as f64, s) as f32);
-        self.feedback
-            .set_target(auto.value(slot, "feedback", self.feedback.target as f64, s) as f32);
-        self.mix.set_target(auto.value(slot, "mix", self.mix.target as f64, s) as f32);
-    }
-
-    fn process(&mut self, buf: &mut [f32]) {
-        let sr = AUDIO_SAMPLE_RATE as f32;
-        // loop filter ~4 kHz: the repeats darken
-        let alpha = 1.0 - (-2.0 * std::f32::consts::PI * 4000.0 / sr).exp();
-        for fr in buf.chunks_exact_mut(CH) {
-            let d = self.time_ms.tick().clamp(1.0, DELAY_MAX_MS) * sr / 1000.0;
-            let fb = self.feedback.tick().clamp(0.0, 0.9);
-            let k = self.mix.tick().clamp(0.0, 1.0);
-            let mut wet = [0f32; CH];
-            for (w, line) in wet.iter_mut().zip(self.lines.iter()) {
-                *w = line.read_frac(d);
-            }
-            for ch in 0..CH {
-                let dry = fr[ch];
-                // ping-pong: the feedback goes to the OPPOSITE channel
-                let fb_src = if self.pingpong { wet[(ch + 1) % CH] } else { wet[ch] };
-                self.loop_lp[ch] += (fb_src - self.loop_lp[ch]) * alpha;
-                self.lines[ch].write(dry + self.loop_lp[ch] * fb);
-                fr[ch] = dry * (1.0 - k) + wet[ch] * k;
-            }
-        }
-    }
-
-    fn tail(&self, mix_on: bool) -> Tick {
-        if !mix_on {
-            return Tick::ZERO;
-        }
-        let frames = self.time_ms.target.clamp(1.0, DELAY_MAX_MS) / 1000.0 * 48_000.0;
-        tail_frames_for(frames, self.feedback.target.clamp(0.01, 0.9))
-    }
-
-    fn reset(&mut self) {
-        for l in &mut self.lines {
-            l.reset();
-        }
-        self.loop_lp = [0.0; CH];
-        self.time_ms.reset_to_target();
-        self.feedback.reset_to_target();
-        self.mix.reset_to_target();
-    }
-}
 
 /// Compressor: peak envelope, stereo link max(|l|,|r|), gr in dB.
 pub struct CompNode {

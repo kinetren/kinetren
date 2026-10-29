@@ -505,6 +505,35 @@ pub struct ParamSpec {
 }
 
 impl ParamSpec {
+    /// A plugin passport's CHOICE row (stage 3): the value is the variant's index (0..len), the
+    /// file holds its key (`Store::Choice`); structural, so no curve and no slider — the window
+    /// draws the kind's own combo.
+    pub fn choice_row(name: &'static str, keys: &'static [&'static str], default: usize) -> ParamSpec {
+        ParamSpec {
+            min: 0.0,
+            max: keys.len().saturating_sub(1) as f64,
+            default: default as f64,
+            step: 1.0,
+            kind: ParamKind::Structural,
+            ..choice_spec(name, keys)
+        }
+    }
+
+    /// A plugin passport's FLAG row (stage 3): 0/1, the file holds a `bool` (`Store::Bool`).
+    pub fn flag_row(name: &'static str, default: bool) -> ParamSpec {
+        ParamSpec {
+            name: std::borrow::Cow::Borrowed(name),
+            ty: ParamType::Flag,
+            min: 0.0,
+            max: 1.0,
+            default: if default { 1.0 } else { 0.0 },
+            step: 1.0,
+            unit: ParamUnit::None,
+            kind: ParamKind::Structural,
+            label: std::borrow::Cow::Borrowed(""),
+        }
+    }
+
     /// Numeric spec — the shape that the macro generates and that describes all
     /// built-in rows.
     pub const fn num(
@@ -858,6 +887,11 @@ pub enum Store {
     U32,
     U8,
     I32,
+    /// A `bool` field: the value 0/1, written `true`/`false` (Delay's `pingpong`).
+    Bool,
+    /// An enum field: the value is the variant's INDEX, the file holds its KEY (Filter's `mode`
+    /// as `"lowpass"`); an unknown key reads as the row's default.
+    Choice(&'static [&'static str]),
 }
 
 impl Store {
@@ -869,6 +903,14 @@ impl Store {
             Store::U32 => v.round().max(0.0) as u32 as f64,
             Store::U8 => v.round().clamp(0.0, 255.0) as u8 as f64,
             Store::I32 => v.round() as i32 as f64,
+            Store::Bool => {
+                if v >= 0.5 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Store::Choice(keys) => v.round().clamp(0.0, keys.len().saturating_sub(1) as f64),
         }
     }
 }

@@ -26,6 +26,11 @@ disagree).
 - **THEN** the harness runs it through all points of the contract without editing the test, and the set of covered ids equals the set of audio ids in the built-in set; a plugin from the test door is not covered and not required
 - **TEST** t322 (`src/libs/kt-engine/tests/audio_fx_registry.rs`)
 
+#### Scenario: The echo's tail follows its own mix curve
+- **WHEN** a chain holds a Delay at mix 0 whose own mix curve rises above 0, and a chain holds a Slowed+Reverb with a mix curve next to a Delay at mix 0
+- **THEN** the static tail of the first is the echo's t60 (its repeats ring past the clip's end), and the second's tail is the reverb's alone — the echo is gated by ITS mix and ITS curve, never by another slot's
+- **TEST** t990 (`src/libs/kt-fx/tests/audio_nodes.rs`)
+
 #### Scenario: Tail and look-ahead are one formula in two homes
 - **WHEN** a kind has memory (tail) or an analysis window (look-ahead)
 - **THEN** the static formula of the stateless chain matches the answer of the built processor: the tail within a 2 % tolerance for integer truncation of lines, look-ahead exactly in frames, with and without a curve; for a plugin both read the manifest's declaration

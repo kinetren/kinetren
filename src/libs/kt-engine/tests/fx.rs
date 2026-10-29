@@ -1013,11 +1013,8 @@ fn t324_ka2_spectral_probes() {
             out.chunks_exact(CH).map(|f| (f[0] as f64 + f[1] as f64) * 0.5).collect();
         (mono.iter().map(|v| v * v).sum::<f64>() / mono.len() as f64).sqrt()
     };
-    let lp = |cutoff: f32| FxInstance::Filter {
-        mode: FilterMode::Lowpass,
-        cutoff_hz: cutoff,
-        resonance: 0.707,
-    };
+    // low-pass (mode 0) — a plugin slot since plugin-api-stage1 (stage 3)
+    let lp = |cutoff: f32| plug("filter", &[0.0, cutoff as f64, 0.707]);
 
     // LP 800: 200 Hz passes, 8 kHz is muted by ≥ 40 dB
     let pass = rms_mono(&render(vec![lp(800.0)], 200.0));

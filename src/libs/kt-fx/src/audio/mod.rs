@@ -202,25 +202,6 @@ pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
             {
                 reverb_tail_for_delay(*reverb_delay_ms, *decay)
             }
-            // ringing of a resonant cut: t60 = 6.9*Q/(pi*f0) — the same
-            // formula as FilterNode::tail (guarded by agreement t322f)
-            // modulations with memory: the maximum of their delays (the same constants
-            // as in the nodes — agreement is guarded by t322f)
-            // echo: t60 of the decaying repeats (gate by mix — including the curve,
-            // as for reverb); the formula is the same as in the node (t322f)
-            FxInstance::Delay { time_ms, feedback, mix, .. }
-                if *mix > 0.0 || wet.iter().any(|(_, v)| *v > 0.0) =>
-            {
-                crate::audio::primitives::tail_frames_for(
-                    time_ms.clamp(1.0, 1500.0) / 1000.0 * 48_000.0,
-                    feedback.clamp(0.01, 0.9),
-                )
-            }
-            FxInstance::Filter { cutoff_hz, resonance, .. } => {
-                let secs = 6.9 * resonance.clamp(0.5, 10.0)
-                    / (std::f32::consts::PI * cutoff_hz.clamp(20.0, 20_000.0));
-                Tick::from_audio_frames((secs * 48_000.0) as i64)
-            }
             _ => Tick::ZERO,
         })
         .max()

@@ -1,5 +1,5 @@
 //! Modulation audio effects as plugins (plugin-api-stage1, stage 3): tremolo, auto_pan, vibrato,
-//! chorus, flanger, phaser, pitch_shift. Each node is the R.47 node of kt-fx moved verbatim onto
+//! chorus, flanger, phaser, pitch_shift, delay. Each node is the R.47 node of kt-fx moved verbatim onto
 //! `kt_plugin_api::dsp`; its passport repeats the enum variant's fields in their order, types and
 //! defaults (t973 holds the bytes of the file, t973c the bytes of the sound). The tail formulas are
 //! the manifests' declarations — the static `chain_tail` reads them, t322 compares them with the
@@ -23,6 +23,7 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
         Arc::new(Flanger::new()),
         Arc::new(Phaser::new()),
         Arc::new(PitchShift::new()),
+        Arc::new(Delay::new()),
     ]
 }
 
@@ -1145,4 +1146,132 @@ impl AudioState for PitchNode {
 fn hann(i: usize, n: usize) -> f32 {
     let x = std::f32::consts::TAU * i as f32 / n as f32;
     0.5 - 0.5 * x.cos()
+}
+
+// ---------------------------------------------------------------------------
+// delay (R.47, item 329): three numbers and a flag row `pingpong`
+// ---------------------------------------------------------------------------
+
+const DELAY_MAX_MS: f32 = 1500.0;
+const DELAY_MAX_FRAMES: usize = (48_000.0 * (DELAY_MAX_MS / 1000.0)) as usize + 8;
+
+/// The echo's tail: t60 of the decaying repeats, while the echo is heard — its `mix` above zero or
+/// its OWN mix curve above zero somewhere. (Before stage 3 the static formula read the mix curve of
+/// the chain's Slowed+Reverb slot instead of the echo's: a delay at mix 0 with a rising mix curve
+/// was given no tail, and a neighbour's curve gave a silent delay one — t990.)
+fn delay_tail(p: &ParamValues, c: &dyn SlotCurves) -> i64 {
+    let (time_ms, feedback, mix) = (p.get(0) as f32, p.get(1) as f32, p.get(2) as f32);
+    if !(mix > 0.0 || c.points("mix").iter().any(|(_, v)| *v > 0.0)) {
+        return 0;
+    }
+    tail_frames_for(time_ms.clamp(1.0, 1500.0) / 1000.0 * 48_000.0, feedback.clamp(0.01, 0.9)).to_audio_frames()
+}
+
+/// Echo (R.47): repeats with feedback, a darkening loop filter and ping-pong.
+pub struct Delay {
+    m: Manifest,
+}
+
+impl Delay {
+    pub fn new() -> Delay {
+        Delay {
+            m: manifest(
+                "delay",
+                vec![
+                    smooth("time_ms", 1.0, 1500.0, 350.0, 1.0, ParamUnit::Ms),
+                    smooth("feedback", 0.0, 0.9, 0.35, 0.01, ParamUnit::Norm),
+                    smooth("mix", 0.0, 1.0, 0.35, 0.01, ParamUnit::Norm),
+                    // `#[serde(default, skip_serializing_if = "Not::not")] pingpong: bool`
+                    ParamSpec::flag_row("pingpong", false),
+                ],
+                vec![f32_row(), f32_row(), f32_row(), RowDecl { store: Store::Bool, omit_default: true }],
+                "Delay",
+                "fxreg.kw.delay",
+                Decl { state: true, tail: Some(delay_tail), ..Decl::default() },
+            ),
+        }
+    }
+}
+
+plugin_boilerplate!(Delay);
+
+impl AudioKernel for Delay {
+    fn build(&self, _opts: &HostOpts) -> Box<dyn AudioState> {
+        Box::new(DelayNode {
+            time_ms: SmoothedParam::with_ms(350.0, 100.0),
+            feedback: SmoothedParam::with_ms(0.35, 20.0),
+            mix: SmoothedParam::with_ms(0.35, 20.0),
+            pingpong: false,
+            lines: std::array::from_fn(|_| DelayLine::new(DELAY_MAX_FRAMES)),
+            loop_lp: [0.0; CH],
+        })
+    }
+}
+
+/// Echo: the ring is allocated to the maximum (a time change is a fractional read,
+/// NOT structural); time is smoothed over 100 ms — tape glide without clicks;
+/// the filter in the loop — one-pole LP (the tail darkens with each repeat,
+/// a legacy of the F-AUD-009 feature); pingpong — cross feedback.
+struct DelayNode {
+    time_ms: SmoothedParam,
+    feedback: SmoothedParam,
+    mix: SmoothedParam,
+    pingpong: bool,
+    lines: [DelayLine; CH],
+    loop_lp: [f32; CH],
+}
+
+impl AudioState for DelayNode {
+    fn apply(&mut self, k: &[f64], _structural: bool) {
+        let (time_ms, feedback, mix, pingpong) = (k[0] as f32, k[1] as f32, k[2] as f32, k[3] != 0.0);
+        self.time_ms.set_target(time_ms.clamp(1.0, DELAY_MAX_MS));
+        self.feedback.set_target(feedback.clamp(0.0, 0.9));
+        self.mix.set_target(mix.clamp(0.0, 1.0));
+        self.pingpong = pingpong;
+    }
+
+    fn set_targets(&mut self, c: &dyn SlotCurves, s: f64) {
+        self.time_ms.set_target(c.value("time_ms", self.time_ms.target as f64, s) as f32);
+        self.feedback.set_target(c.value("feedback", self.feedback.target as f64, s) as f32);
+        self.mix.set_target(c.value("mix", self.mix.target as f64, s) as f32);
+    }
+
+    fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
+        let sr = AUDIO_SAMPLE_RATE as f32;
+        // loop filter ~4 kHz: the repeats darken
+        let alpha = 1.0 - (-2.0 * std::f32::consts::PI * 4000.0 / sr).exp();
+        for fr in buf.chunks_exact_mut(CH) {
+            let d = self.time_ms.tick().clamp(1.0, DELAY_MAX_MS) * sr / 1000.0;
+            let fb = self.feedback.tick().clamp(0.0, 0.9);
+            let k = self.mix.tick().clamp(0.0, 1.0);
+            let mut wet = [0f32; CH];
+            for (w, line) in wet.iter_mut().zip(self.lines.iter()) {
+                *w = line.read_frac(d);
+            }
+            for ch in 0..CH {
+                let dry = fr[ch];
+                // ping-pong: the feedback goes to the OPPOSITE channel
+                let fb_src = if self.pingpong { wet[(ch + 1) % CH] } else { wet[ch] };
+                self.loop_lp[ch] += (fb_src - self.loop_lp[ch]) * alpha;
+                self.lines[ch].write(dry + self.loop_lp[ch] * fb);
+                fr[ch] = dry * (1.0 - k) + wet[ch] * k;
+            }
+        }
+    }
+
+    /// The built state always rings out (the static formula gates it by the mix).
+    fn tail(&self) -> Tick {
+        let frames = self.time_ms.target.clamp(1.0, DELAY_MAX_MS) / 1000.0 * 48_000.0;
+        tail_frames_for(frames, self.feedback.target.clamp(0.01, 0.9))
+    }
+
+    fn reset(&mut self) {
+        for l in &mut self.lines {
+            l.reset();
+        }
+        self.loop_lp = [0.0; CH];
+        self.time_ms.reset_to_target();
+        self.feedback.reset_to_target();
+        self.mix.reset_to_target();
+    }
 }

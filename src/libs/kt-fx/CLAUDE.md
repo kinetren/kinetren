@@ -199,15 +199,25 @@ the phase of the LFO is a FUNCTION OF POSITION (`lfo_phase` = the integral of th
 BOTH formulas of the tail — `AudioNode::tail()` and the static `chain_tail`
 (their agreement is guarded by t322f); on zero input in the tail the node rings out.
 
-Checklist "add an audio effect": an enum variant + serde defaults +
-`params_for!` + a constructor + `class() -> Audio` (DO NOT forget — otherwise silently
-Video2d) + `tag()` (a compile-time lock) + `FxInstance::all()` + a variant of
-`AudioNode` (build/apply/set_targets/process/tail/reset) + a branch of
-`chain_tail` for a tail + a branch of `chain_lookahead` for lookahead +
-`fx_display_name` + the kt-app registry entry +
-`param_label`/catalogues ×5 + for new units `unit_suffix`. The t322 frame
-will run the newcomer automatically; a mismatch of tails/non-determinism is
-its job — do not write a copy-paste for each effect.
+Checklist "add an audio effect" (plugin-api-stage1, stage 3 — every user audio kind is a plugin;
+the core keeps `layer_mix`, `slowed_reverb` and the `compressor`, whose sidechain `key` is a model
+address): in its family crate under `src/plugins/fx-audio-*` — a `Manifest` (id = the file's
+`kind`, `Media::AudioFx`, the passport in FILE order with a `RowDecl` per row: `F32`/`U32`/…, a
+`Choice`/`Bool` store for an enum/bool field with `ParamSpec::choice_row`/`flag_row`,
+`omit_default` where the file leaves the row out at its default; `Decl.tail`/`lookahead` formulas
+when the state has memory or reads ahead — the ONE home of each, `chain_tail`/`chain_lookahead`
+read them) + an `AudioKernel` that builds a `Box<dyn AudioState>` (`apply` the row-cast values,
+`bind` copies what `process` reads from the slot's curves, `set_targets` per chunk only with
+automation, `process` with the sidechain key, `lookahead`/`tail` agreeing with the manifest,
+`reset`) + its id in `BUILTIN_IDS` (kt-plugins-builtin, in family order) + a constructor in kt-model
+if callers build it (`FxInstance::plugin(id)`) + the kt-app registry entry + `param_label`/
+catalogues ×5 (+ `unit_suffix` for new units); a choice or flag row draws the kind's own control
+(the numeric grid skips it). Nothing in `AudioNode`, `chain_tail` or `chain_lookahead` names the
+kind. The primitives are `kt_plugin_api::dsp` — a family has no kt-time or kt-model; a small
+per-frame helper there needs `#[inline]` (no LTO). The t322 frame runs the newcomer automatically;
+t973c holds every audio kind's sound against a table printed before it moved (a NEW kind gets its
+row printed with `KT_PRINT_GOLDEN=1` once), t973 its file form — do not write a copy-paste for each
+effect.
 
 
 ## Chain lookahead (R.48, items 337-339)

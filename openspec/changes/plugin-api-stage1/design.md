@@ -150,6 +150,22 @@ Byte rule: `apply` gets each row cast through its `Store` (an `f32` field reache
 same `f32`); `chain_tail`/`chain_lookahead` ask the plugin's `tail_frames`/`lookahead_frames` for a
 plugin slot and t322 keeps comparing them with the built state.
 
+Stage 3 settled three more things (2026-10-29):
+- **The compressor stays a core kind.** Its sidechain `key` is an `Option<TrackId>` the engine
+  routes (`kt-engine` audio.rs), the track window edits and kt-otio carries; a plugin slot holds
+  numbers in passport order, and a model address is not one. It moves when a slot can carry a host
+  reference (a later change), as the title may stay core in 6.2.
+- **An enum or bool field is a passport row with its own store.** `Store::Choice(keys)` keeps the
+  variant's index and writes its key (`Filter.mode` as `"lowpass"`), `Store::Bool` writes
+  `true`/`false` (`Delay.pingpong`, omitted at false). `ParamSpec::choice_row`/`flag_row` give the
+  row its type (`Choice`/`Flag`) and make it structural, so it takes no curve; the numeric grid
+  skips it and the window draws the kind's own control, as it drew the field. t641 checks that
+  such a row's type agrees with its store.
+- **t975's closed list is about the workspace.** D6 forbids a family depending on the core; a
+  third-party crate (pitch's `realfft`) is not core.
+And one defect found by the move: the static Delay tail was gated by the mix curve of the chain's
+Slowed+Reverb slot, not the echo's own (t990); the manifest's formula reads the slot's curves.
+
 ### D3. Ids are today's tags; a missing id is a kept slot
 `PluginId` = the string `tag()` returns. `FxInstance` gains one variant `Plugin(PluginSlot)`
 (`id`, `ParamValues`, plus nothing else — curves stay in `fx_auto` on the clip as today) and one

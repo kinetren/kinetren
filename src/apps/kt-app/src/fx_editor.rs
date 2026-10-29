@@ -1368,8 +1368,6 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Glow { .. } => "Glow",
         FxInstance::EventGrid { .. } => "EventGrid",
         FxInstance::Pan3d { .. } => "Pan 3D",
-        FxInstance::Filter { .. } => "Filter",
-        FxInstance::Delay { .. } => "Delay",
         FxInstance::Compressor { .. } => "Compressor",
         FxInstance::ColorGrade { .. } => "Color Grade",
         FxInstance::Duotone { .. } => "Duotone",
@@ -1557,29 +1555,31 @@ pub(crate) fn draw_video_fx_params(
             });
         };
     match f {
-        FxInstance::Delay { pingpong, .. } => {
+        // the echo's flag row (a plugin slot since plugin-api-stage1, stage 3)
+        FxInstance::Plugin(p) if p.id == "delay" => {
+            let mut pingpong = p.get("pingpong") == Some(1.0);
             ui.horizontal(|ui| {
-                ch.base |= ui.checkbox(pingpong, tr(k::fx::PINGPONG)).changed();
+                if ui.checkbox(&mut pingpong, tr(k::fx::PINGPONG)).changed() {
+                    p.set("pingpong", if pingpong { 1.0 } else { 0.0 });
+                    ch.base = true;
+                }
             });
         }
-        // the cut kind (R.47): captions from the catalog, values are serde kinds
-        FxInstance::Filter { mode, .. } => {
-            let label = |m: kt_model::FilterMode| match m {
-                kt_model::FilterMode::Lowpass => tr(k::fx::FILTER_LP),
-                kt_model::FilterMode::Highpass => tr(k::fx::FILTER_HP),
-                kt_model::FilterMode::Bandpass => tr(k::fx::FILTER_BP),
-            };
+        // the cut kind (R.47): captions from the catalog; the slot's choice row holds the index of
+        // the file key (`fx_audio_tone::FILTER_MODES`: lowpass, highpass, bandpass)
+        FxInstance::Plugin(p) if p.id == "filter" => {
+            let labels = [tr(k::fx::FILTER_LP), tr(k::fx::FILTER_HP), tr(k::fx::FILTER_BP)];
+            let mut mode = p.get("mode").unwrap_or(0.0) as usize;
             ui.horizontal(|ui| {
                 ui.label(tr(k::fx::MODE));
-                egui::ComboBox::from_id_salt("filtermode").selected_text(label(*mode)).show_ui(
+                egui::ComboBox::from_id_salt("filtermode").selected_text(labels[mode.min(2)]).show_ui(
                     ui,
                     |ui| {
-                        for m in [
-                            kt_model::FilterMode::Lowpass,
-                            kt_model::FilterMode::Highpass,
-                            kt_model::FilterMode::Bandpass,
-                        ] {
-                            ch.base |= ui.selectable_value(mode, m, label(m)).changed();
+                        for (i, l) in labels.iter().enumerate() {
+                            if ui.selectable_value(&mut mode, i, *l).changed() {
+                                p.set("mode", i as f64);
+                                ch.base = true;
+                            }
                         }
                     },
                 );

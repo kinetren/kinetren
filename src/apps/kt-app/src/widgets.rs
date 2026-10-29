@@ -1270,8 +1270,14 @@ pub fn params_grid_bound<P: HasParams + ?Sized>(
     // cycle. The clone is cheap — for built-in rows the name and the label are
     // `Cow::Borrowed`, no allocations arise at all, and the Vec itself is one per
     // window drawing (not per timeline frame — rule 12 is not touched).
-    let specs: Vec<ParamSpec> =
-        f.param_specs().iter().filter(|s| !skip.contains(&&*s.name)).cloned().collect();
+    // numbers only: a plugin's choice and flag rows (plugin-api-stage1, stage 3) are drawn by the
+    // kind's own combo and checkbox, as the enum fields were
+    let specs: Vec<ParamSpec> = f
+        .param_specs()
+        .iter()
+        .filter(|s| !skip.contains(&&*s.name) && s.ty == kt_model::ParamType::Num)
+        .cloned()
+        .collect();
     if specs.is_empty() {
         return ParamsChanged::default();
     }

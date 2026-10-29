@@ -160,3 +160,43 @@ fn t348_eq_mag_db_matches_band_semantics() {
         "a cascade is the sum in dB of its bands"
     );
 }
+
+/// t990 (plugin-api-stage1, stage 3; capability `audio-fx`): the echo's static tail is gated by
+/// ITS OWN mix curve.
+///
+/// Before stage 3 `chain_tail` gated the Delay by the mix curve of the chain's Slowed+Reverb slot
+/// (`AutoProfiles::mix_points`): an echo at mix 0 whose own mix curve rises was given no tail —
+/// its repeats were cut at the clip's end — and a neighbour's curve gave a silent echo one.
+#[test]
+fn t990_the_echo_tail_follows_its_own_mix_curve() {
+    use kt_model::{AutoKey, FxInstance, ParamCurve};
+    use kt_time::Tick;
+    kt_plugins_builtin::install();
+    let len = 48_000;
+    let quiet = FxInstance::plugin_with("delay", &[350.0, 0.35, 0.0, 0.0]).unwrap();
+    let rising = vec![vec![ParamCurve {
+        param: "mix".into(),
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick::from_audio_frames(len), 0.6)]),
+        source: Default::default(),
+    }]];
+    let none = kt_fx::AutoProfiles::from_curves(&[vec![]], 0, len);
+    let with = kt_fx::AutoProfiles::from_curves(&rising, 0, len);
+    assert_eq!(kt_fx::chain_tail(std::slice::from_ref(&quiet), &none), Tick::ZERO, "a silent echo rings");
+    assert!(
+        kt_fx::chain_tail(std::slice::from_ref(&quiet), &with) > Tick::ZERO,
+        "an echo whose own mix curve rises gets no tail: its repeats are cut at the clip's end"
+    );
+    // a Slowed+Reverb slot's mix curve is not the echo's
+    let chain = vec![FxInstance::slowed_reverb(1.0, 0.0, 100.0), quiet];
+    let neighbour = vec![
+        vec![ParamCurve {
+            param: "mix".into(),
+            keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick::from_audio_frames(len), 0.6)]),
+            source: Default::default(),
+        }],
+        vec![],
+    ];
+    let auto = kt_fx::AutoProfiles::from_curves(&neighbour, 0, len);
+    let reverb_only = kt_fx::chain_tail(&chain[..1], &auto);
+    assert_eq!(kt_fx::chain_tail(&chain, &auto), reverb_only, "the reverb's mix curve gave the silent echo a tail");
+}

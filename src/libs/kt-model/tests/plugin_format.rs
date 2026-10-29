@@ -66,6 +66,26 @@ enum Frozen {
         #[serde(skip_serializing_if = "is_zero")]
         cents: f32,
     },
+    /// `Filter` before stage 3: its `mode` was the enum `FilterMode` (snake_case keys), always written.
+    Filter { mode: FrozenFilterMode, cutoff_hz: f32, resonance: f32 },
+    /// `Delay` before stage 3: `pingpong` was `skip_serializing_if = "Not::not"`.
+    Delay {
+        time_ms: f32,
+        feedback: f32,
+        mix: f32,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        pingpong: bool,
+    },
+}
+
+/// `kt_model::FilterMode` before stage 3, verbatim.
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
+enum FrozenFilterMode {
+    Lowpass,
+    Highpass,
+    Bandpass,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -90,6 +110,12 @@ fn empty_reads() -> Vec<(&'static str, String)> {
         (r#"{"kind":"limiter"}"#, frozen(Frozen::Limiter { threshold_db: -6.0, ceiling_db: -0.3, lookahead_ms: 5.0, release_ms: 80.0 })),
         // a file without `pan` read 0 (`#[serde(default)]`)
         (r#"{"kind":"gain","db":-3.0}"#, frozen(Frozen::Gain { db: -3.0, pan: 0.0 })),
+        (r#"{"kind":"filter"}"#, frozen(Frozen::Filter { mode: FrozenFilterMode::Lowpass, cutoff_hz: 800.0, resonance: 0.707 })),
+        (r#"{"kind":"delay"}"#, frozen(Frozen::Delay { time_ms: 350.0, feedback: 0.35, mix: 0.35, pingpong: false })),
+        // an unknown mode key reads as the default, as `#[serde(default)]` would not (it refused):
+        // the plugin is the more lenient reader, never a stricter one
+        (r#"{"kind":"filter","mode":"bandpass","cutoff_hz":1200.0}"#, frozen(Frozen::Filter { mode: FrozenFilterMode::Bandpass, cutoff_hz: 1200.0, resonance: 0.707 })),
+        (r#"{"kind":"delay","pingpong":true}"#, frozen(Frozen::Delay { time_ms: 350.0, feedback: 0.35, mix: 0.35, pingpong: true })),
         (r#"{"kind":"pitch_shift"}"#, frozen(Frozen::PitchShift { semitones: 0.0, cents: 0.0 })),
         (r#"{"kind":"tremolo"}"#, frozen(Frozen::Tremolo { rate_hz: 5.0, depth: 0.6 })),
         (r#"{"kind":"auto_pan"}"#, frozen(Frozen::AutoPan { rate_hz: 1.0, depth: 0.8 })),
@@ -141,6 +167,20 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
         (
             FxInstance::plugin_with("gate", &[-30.0, 0.5, 120.0, 250.0]).unwrap(),
             frozen(Frozen::Gate { threshold_db: -30.0, attack_ms: 0.5, hold_ms: 120.0, release_ms: 250.0 }),
+        ),
+        (FxInstance::filter(), frozen(Frozen::Filter { mode: FrozenFilterMode::Lowpass, cutoff_hz: 800.0, resonance: 0.707 })),
+        (
+            FxInstance::plugin_with("filter", &[1.0, 2500.0, 4.5]).unwrap(),
+            frozen(Frozen::Filter { mode: FrozenFilterMode::Highpass, cutoff_hz: 2500.0, resonance: 4.5 }),
+        ),
+        (
+            FxInstance::plugin_with("filter", &[2.0, 0.123456789 * 1000.0, 0.5]).unwrap(),
+            frozen(Frozen::Filter { mode: FrozenFilterMode::Bandpass, cutoff_hz: 123.456789, resonance: 0.5 }),
+        ),
+        (FxInstance::delay(), frozen(Frozen::Delay { time_ms: 350.0, feedback: 0.35, mix: 0.35, pingpong: false })),
+        (
+            FxInstance::plugin_with("delay", &[120.0, 0.8, 0.5, 1.0]).unwrap(),
+            frozen(Frozen::Delay { time_ms: 120.0, feedback: 0.8, mix: 0.5, pingpong: true }),
         ),
         (FxInstance::pitch_shift(), frozen(Frozen::PitchShift { semitones: 0.0, cents: 0.0 })),
         (FxInstance::plugin_with("pitch_shift", &[7.0, 0.0]).unwrap(), frozen(Frozen::PitchShift { semitones: 7.0, cents: 0.0 })),

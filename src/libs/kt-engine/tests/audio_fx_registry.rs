@@ -385,7 +385,7 @@ fn t326_delay_and_dynamics_behave() {
     // --- Delay: repeat exactly at time_ms, the series decays, the tail is honest ----
     let time_ms = 250.0f32;
     let one = render_on(
-        vec![FxInstance::Delay { time_ms, feedback: 0.6, mix: 1.0, pingpong: false }],
+        vec![FxInstance::plugin_with("delay", &[time_ms as f64, 0.6, 1.0, 0.0]).unwrap()],
         vec![],
         false,
         0,
@@ -406,7 +406,7 @@ fn t326_delay_and_dynamics_behave() {
     // is only LEFT. The time 230 ms is chosen so that the repeats (11040,
     // 22080) do not coincide with the source's clicks (grid 4800).
     let pp = render_on(
-        vec![FxInstance::Delay { time_ms: 230.0, feedback: 0.6, mix: 1.0, pingpong: true }],
+        vec![FxInstance::plugin_with("delay", &[230.0, 0.6, 1.0, 1.0]).unwrap()],
         vec![],
         false,
         0,

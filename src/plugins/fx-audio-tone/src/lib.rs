@@ -5,15 +5,17 @@
 
 use std::sync::Arc;
 
-use kt_plugin_api::dsp::{AUDIO_SAMPLE_RATE, Biquad, BiquadKind, CH, SmoothedParam, TUNE_STEP, apply_width, softclip};
+use kt_plugin_api::dsp::{AUDIO_SAMPLE_RATE, Biquad, BiquadKind, CH, SmoothedParam, TUNE_STEP, Tick, apply_width, softclip};
 use kt_plugin_api::{
     AudioKernel, AudioState, Decl, HostOpts, Manifest, Media, ParamKind, ParamSpec, ParamUnit,
-    Plugin, RowDecl, SlotCurves, Store, UiDecl,
+    ParamValues, Plugin, RowDecl, SlotCurves, Store, UiDecl,
 };
 
 /// The plugins of this family, in the assembler's order.
 pub fn plugins() -> Vec<Arc<dyn Plugin>> {
-    vec![Arc::new(Eq::new()), Arc::new(Distortion::new()), Arc::new(Bitcrusher::new()), Arc::new(StereoWidth::new())]
+    vec![
+        Arc::new(Filter::new()),
+        Arc::new(Eq::new()), Arc::new(Distortion::new()), Arc::new(Bitcrusher::new()), Arc::new(StereoWidth::new())]
 }
 
 /// Stereo width m/s (R.47): 0 — mono, 1 — as recorded, 2 — wider.
@@ -450,5 +452,143 @@ impl AudioState for CrushNode {
         self.bits.reset_to_target();
         self.rate_hz.reset_to_target();
         self.mix.reset_to_target();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// filter (R.47): a choice row `mode` and two numbers
+// ---------------------------------------------------------------------------
+
+/// The filter modes in the file's spelling (the variant's `FilterMode`, snake_case).
+pub const FILTER_MODES: &[&str] = &["lowpass", "highpass", "bandpass"];
+
+/// The ringing of a resonant cut: t60 = 6.9·Q/(π·f0) — the same formula as the node's `tail`.
+fn filter_tail(p: &ParamValues, _c: &dyn SlotCurves) -> i64 {
+    let (cutoff_hz, resonance) = (p.get(1) as f32, p.get(2) as f32);
+    let secs = 6.9 * resonance.clamp(0.5, 10.0) / (std::f32::consts::PI * cutoff_hz.clamp(20.0, 20_000.0));
+    (secs * 48_000.0) as i64
+}
+
+/// Resonant cut (R.47): low-pass / high-pass / band.
+pub struct Filter {
+    m: Manifest,
+}
+
+impl Filter {
+    pub fn new() -> Filter {
+        let p = |n, lo, hi, d, st, u| ParamSpec::num(n, lo, hi, d, st, u, ParamKind::Smooth);
+        Filter {
+            m: audio_manifest(
+                "filter",
+                vec![
+                    // the variant's first field, always written as its key
+                    ParamSpec::choice_row("mode", FILTER_MODES, 0),
+                    p("cutoff_hz", 20.0, 20000.0, 800.0, 10.0, ParamUnit::Hz),
+                    p("resonance", 0.5, 10.0, 0.707, 0.01, ParamUnit::None),
+                ],
+                vec![RowDecl { store: Store::Choice(FILTER_MODES), omit_default: false }, row(false), row(false)],
+                UiDecl { name: "Filter", category_key: "fxreg.cat.filter", keywords_key: "fxreg.kw.filter" },
+                Decl { state: true, tail: Some(filter_tail), ..Decl::default() },
+            ),
+        }
+    }
+}
+
+impl Default for Filter {
+    fn default() -> Filter {
+        Filter::new()
+    }
+}
+
+impl Plugin for Filter {
+    fn manifest(&self) -> &Manifest {
+        &self.m
+    }
+    fn audio(&self) -> Option<&dyn AudioKernel> {
+        Some(self)
+    }
+}
+
+impl AudioKernel for Filter {
+    fn build(&self, _opts: &HostOpts) -> Box<dyn AudioState> {
+        Box::new(FilterNode {
+            mode: 0,
+            cutoff: SmoothedParam::with_ms(800.0, 20.0),
+            q: SmoothedParam::with_ms(0.707, 20.0),
+            bq: Default::default(),
+        })
+    }
+}
+
+/// Resonant cut LP/HP/BP: RBJ biquad per channel.
+struct FilterNode {
+    /// The index into `FILTER_MODES`.
+    mode: usize,
+    cutoff: SmoothedParam,
+    q: SmoothedParam,
+    bq: [Biquad; CH],
+}
+
+impl FilterNode {
+    fn kind(&self) -> BiquadKind {
+        match self.mode {
+            1 => BiquadKind::Highpass,
+            2 => BiquadKind::Bandpass,
+            _ => BiquadKind::Lowpass,
+        }
+    }
+}
+
+impl AudioState for FilterNode {
+    fn apply(&mut self, k: &[f64], _structural: bool) {
+        let (mode, cutoff_hz, resonance) = (k[0] as usize, k[1] as f32, k[2] as f32);
+        // changing the kind does NOT re-create the state (2 f32 per channel): the transient
+        // from changing the shape is allowed and shorter than any re-creation click
+        self.mode = mode;
+        self.cutoff.set_target(cutoff_hz.clamp(20.0, 20_000.0));
+        self.q.set_target(resonance.clamp(0.5, 10.0));
+    }
+
+    fn set_targets(&mut self, c: &dyn SlotCurves, s: f64) {
+        let f = c.value("cutoff_hz", self.cutoff.target as f64, s) as f32;
+        let q = c.value("resonance", self.q.target as f64, s) as f32;
+        self.cutoff.set_target(f.clamp(20.0, 20_000.0));
+        self.q.set_target(q.clamp(0.5, 10.0));
+    }
+
+    fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
+        let kind = self.kind();
+        for block in buf.chunks_mut(TUNE_STEP * CH) {
+            let mut f = 0.0;
+            let mut q = 0.0;
+            for _ in 0..block.len() / CH {
+                f = self.cutoff.tick();
+                q = self.q.tick();
+            }
+            for b in &mut self.bq {
+                b.tune(&kind, f, q, 0.0);
+            }
+            for fr in block.chunks_exact_mut(CH) {
+                for (ch, s) in fr.iter_mut().enumerate() {
+                    *s = self.bq[ch].process(*s);
+                }
+            }
+        }
+    }
+
+    fn tail(&self) -> Tick {
+        // resonance ringing: t60 = 6.9·Q/(π·f0)
+        let f0 = self.cutoff.value().max(20.0);
+        let q = self.q.value().max(0.5);
+        let secs = 6.9 * q / (std::f32::consts::PI * f0);
+        Tick::from_audio_frames((secs * AUDIO_SAMPLE_RATE as f32) as i64)
+    }
+
+    fn reset(&mut self) {
+        for b in &mut self.bq {
+            b.reset();
+        }
+        self.cutoff.reset_to_target();
+        self.q.reset_to_target();
     }
 }

@@ -28,7 +28,15 @@ fn owners() -> Vec<Box<dyn HasParams>> {
 fn t641_every_passport_is_typed_and_unique() {
     // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
     kt_plugins_builtin::install();
+    // the stores of a plugin's rows, by (kind, row name): a choice or flag row is legal there only
+    let plugin_store = |f: &FxInstance, name: &str| -> Option<kt_plugin_api::Store> {
+        let FxInstance::Plugin(p) = f else { return None };
+        let m = p.manifest();
+        m.passport.iter().position(|s| s.name == name).map(|i| m.row(i).store)
+    };
+    let mut fx_iter = FxInstance::all().iter();
     for o in owners() {
+        let fx = fx_iter.next();
         let specs = o.param_specs();
         let mut seen = std::collections::BTreeSet::new();
         for s in specs {
@@ -37,8 +45,22 @@ fn t641_every_passport_is_typed_and_unique() {
                 "parameter name {} occurs twice in one passport",
                 s.name
             );
-            // The built-in rows are declared by a macro, and all of them are numeric:
-            // the typing was set up for DYNAMIC owners.
+            // The built-in rows are numeric: the typing was set up for DYNAMIC owners. Since
+            // plugin-api-stage1 (stage 3) a plugin's enum and bool fields are rows of its passport
+            // too — and then the row's file form says so, and the row takes no curve.
+            match fx.and_then(|f| plugin_store(f, &s.name)) {
+                Some(kt_plugin_api::Store::Choice(keys)) => {
+                    assert_eq!(s.ty, ParamType::Choice { variants: std::borrow::Cow::Borrowed(keys) }, "{}: a choice row of another type", s.name);
+                    assert_eq!(s.kind, ParamKind::Structural, "{}: a choice row takes a curve", s.name);
+                    continue;
+                }
+                Some(kt_plugin_api::Store::Bool) => {
+                    assert_eq!(s.ty, ParamType::Flag, "{}: a bool row of another type", s.name);
+                    assert_eq!(s.kind, ParamKind::Structural, "{}: a flag row takes a curve", s.name);
+                    continue;
+                }
+                _ => {}
+            }
             assert_eq!(s.ty, ParamType::Num, "built-in row {} is not a number", s.name);
             assert!(s.label.is_empty(), "built-in row {} carries its own label", s.name);
             assert!(s.min <= s.default && s.default <= s.max, "{}: default out of range", s.name);
