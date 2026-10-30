@@ -203,7 +203,7 @@ fn t247_layer_never_slices_a_stretched_clip() {
             duration: Tick(SEC),
             targets: MorphTargets::Marks { names: vec!["Insert".into()] },
             patch: MorphPatch {
-                video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
+                video_fx: vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()],
                 audio_fx: vec![FxInstance::gain(3.0)],
                 ..Default::default()
             },

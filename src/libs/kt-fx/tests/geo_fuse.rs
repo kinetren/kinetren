@@ -70,8 +70,8 @@ fn t297_routing_single_legacy_multi_fused() {
     // “Geometry” node is ALWAYS fused (it has transparent margins)
     let cam = FxInstance::cam_motion();
     let pan = FxInstance::geometry_at(-0.05, 0.03333, 1.5);
-    let mir = FxInstance::Mirror { horizontal: true, vertical: false };
-    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
+    let mir = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
+    let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap();
     assert!(matches!(
         build_geom_exec(&[&cam], W, H, W, H, 0.5, None, 90_000, 1, 1),
         GeomExec::Legacy
@@ -104,8 +104,8 @@ fn t297_routing_single_legacy_multi_fused() {
 #[test]
 fn t297b_grid_then_mirror_is_exact_permutation() {
     kt_plugins_builtin::install();
-    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
-    let mir = FxInstance::Mirror { horizontal: true, vertical: false };
+    let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap();
+    let mir = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
     let fused = run(&[grid.clone(), mir]);
     let reference = run(&[grid]);
     assert_eq!(fused.rgba, mirror_h(&reference), "grid→mirror in one merged pass");
@@ -116,8 +116,8 @@ fn t297b_grid_then_mirror_is_exact_permutation() {
 #[test]
 fn t297c_audio_fx_inside_run_is_transparent() {
     kt_plugins_builtin::install();
-    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
-    let mir = FxInstance::Mirror { horizontal: true, vertical: false };
+    let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
+    let mir = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
     let gain = kt_model::FxInstance::plugin_with("gain", &[-6.0, 0.0]).unwrap();
     let with_audio = run(&[grid.clone(), gain, mir.clone()]);
     let without = run(&[grid, mir]);
@@ -129,7 +129,7 @@ fn t297c_audio_fx_inside_run_is_transparent() {
 #[test]
 fn t297d_double_mirror_fuses_to_identity() {
     kt_plugins_builtin::install();
-    let mir = FxInstance::Mirror { horizontal: true, vertical: false };
+    let mir = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
     let out = run(&[mir.clone(), mir]);
     assert_eq!(out.rgba, test_frame().rgba, "mirror∘mirror ≠ identity");
 }
@@ -141,7 +141,7 @@ fn t297d_double_mirror_fuses_to_identity() {
 #[test]
 fn t297f_mirror_only_run_keeps_dims() {
     kt_plugins_builtin::install();
-    let mir = FxInstance::Mirror { horizontal: true, vertical: false };
+    let mir = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
     let src = Frame { w: 96, h: 54, rgba: vec![7u8; 96 * 54 * 4], has_alpha: false };
     let out = apply_video_chain(&[mir.clone(), mir], src, &ctx());
     assert_eq!((out.w, out.h), (96, 54), "mirrors do not resample");
@@ -205,11 +205,11 @@ fn t297e_run_end_stops_at_barriers_only() {
     kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
     let fx = vec![
-        FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+        kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap(),
         kt_model::FxInstance::plugin_with("gain", &[0.0, 0.0]).unwrap(),
-        FxInstance::Mirror { horizontal: true, vertical: false },
+        kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(),
         FxInstance::blur(8),
-        FxInstance::EventGrid { cols: 3, rows: 3, center: false },
+        kt_model::FxInstance::plugin_with("event_grid", &[3.0, 3.0, 0.0]).unwrap(),
     ];
     assert!(is_geo(&fx[0]));
     // a run covers grid + (transparent gain) + mirror, but not blur
@@ -265,7 +265,7 @@ fn contrast(f: &Frame) -> f64 {
 #[test]
 fn t296_net_identity_chain_preserves_detail() {
     kt_plugins_builtin::install();
-    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
     let zoom2 = FxInstance::geometry_zoom(2.0);
     let out = apply_video_chain(&[grid, zoom2], checkerboard(), &ctx());
     let c = contrast(&out);
@@ -291,7 +291,7 @@ fn t296_net_identity_chain_preserves_detail() {
         scale,
         camera: None,
     };
-    let grid_c = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
+    let grid_c = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap();
     let out3d =
         apply_video_chain(&[grid_c.clone(), p3(1.0), grid_c, p3(4.0)], checkerboard(), &ctx3d);
     // contrast over the central third of the frame
@@ -337,7 +337,7 @@ fn t296b_supersampling_tames_minification_noise() {
     };
     let src_var = var(&src, 0, W, 0, H);
     let out = apply_video_chain(
-        &[FxInstance::EventGrid { cols: 4, rows: 4, center: false }],
+        &[kt_model::FxInstance::plugin_with("event_grid", &[4.0, 4.0, 0.0]).unwrap()],
         src,
         &ctx(),
     );
@@ -426,7 +426,7 @@ fn bench_geom_1080p() {
         scale,
         camera: None,
     };
-    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
+    let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap();
     let npx = (bw * bh) as f64;
     let bench = |name: &str, fx: &[FxInstance], c: &VideoFxCtx| {
         let t0 = Instant::now();
@@ -507,7 +507,7 @@ fn bench_fx_1080p() {
         );
     };
     let zoom2 = FxInstance::geometry_zoom(2.0);
-    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
+    let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap();
     bench(
         "colorgrade+vignette (2 barriers)",
         &[
@@ -547,8 +547,8 @@ fn bench_fx_1080p() {
 fn t306_chain_plan_segmentation() {
     kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
-    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
-    let mir = FxInstance::Mirror { horizontal: true, vertical: false };
+    let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
+    let mir = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
     let gain = kt_model::FxInstance::plugin_with("gain", &[0.0, 0.0]).unwrap();
     let blur = FxInstance::blur(8);
 
@@ -593,7 +593,7 @@ fn t306_chain_plan_segmentation() {
 fn t305_pointwise_inside_run() {
     kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
-    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
     let zoom2 = FxInstance::geometry_zoom(2.0);
     let gs = FxInstance::greenscreen([0, 255, 0], 70, 25);
 
@@ -876,7 +876,7 @@ fn t303_barrier_kernels_res_invariant() {
 #[test]
 fn t302_barrier_no_longer_kills_detail() {
     kt_plugins_builtin::install();
-    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
     let vhs0 = FxInstance::Vhs { rgb_shift: 0, bleed: 0.0, scan_step: 0, jitter: 0.0 };
     let zoom2 = FxInstance::geometry_zoom(2.0);
     let out = apply_video_chain(&[grid, vhs0, zoom2], checkerboard(), &ctx());
@@ -891,9 +891,9 @@ fn t302_barrier_no_longer_kills_detail() {
 fn t304_k_only_with_squeeze_and_zoom() {
     kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
-    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
     let vhs = FxInstance::vhs(4, 0.4);
-    let mir = FxInstance::Mirror { horizontal: true, vertical: false };
+    let mir = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
     let zoom05 = FxInstance::geometry_zoom(0.5);
     let zoom2 = FxInstance::geometry_zoom(2.0);
     let k_of = |fx: &[FxInstance]| -> Vec<u32> {
@@ -942,9 +942,9 @@ fn t304_k_only_with_squeeze_and_zoom() {
 fn t308_in_scale_feeds_the_squeeze_budget() {
     kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
-    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
     let vhs = FxInstance::vhs(4, 0.4);
-    let mir = FxInstance::Mirror { horizontal: true, vertical: false };
+    let mir = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
     let zoom2 = FxInstance::geometry_zoom(2.0);
     let zoom12 = FxInstance::geometry_zoom(1.2);
     let k_of = |fx: &[FxInstance], s: u32| -> Vec<u32> {
@@ -976,9 +976,9 @@ fn t308_in_scale_feeds_the_squeeze_budget() {
 #[test]
 fn t308b_mirror_run_between_k_segments() {
     kt_plugins_builtin::install();
-    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
     let vhs = FxInstance::vhs(4, 0.4);
-    let mir = FxInstance::Mirror { horizontal: true, vertical: false };
+    let mir = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
     let zoom2 = FxInstance::geometry_zoom(2.0);
     let out = run(&[grid, vhs, mir, FxInstance::blur(8), zoom2]);
     assert_eq!((out.w, out.h), (W, H), "chain must land in Quality");
@@ -999,7 +999,7 @@ fn t330_new_pointwise_absorb_and_meaning() {
     // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
     kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
-    let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let grid2 = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
     let zoom2 = FxInstance::geometry_zoom(2.0);
 
     // (a) absorption: each new per-pixel effect between geo steps — the run is ONE
@@ -1161,7 +1161,7 @@ fn t331_corner_pin() {
     assert_eq!(a.rgba, b.rgba, "and deterministic");
 
     // (5) a series with geo — one run
-    let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let grid2 = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
     let zoom2 = FxInstance::geometry_zoom(2.0);
     let fx = vec![grid2, right, zoom2];
     let p = plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[]);
@@ -1441,7 +1441,7 @@ fn t333_warp_prims() {
 fn t519_alpha_rule_folds_produces_and_destroys() {
     kt_plugins_builtin::install();
     use kt_fx::geom::build_geom_exec;
-    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
     let gs = FxInstance::Greenscreen {
         key_r: 0,
         key_g: 255,
@@ -1450,7 +1450,7 @@ fn t519_alpha_rule_folds_produces_and_destroys() {
         softness: 20,
         spill: 0.0,
     };
-    let mir = FxInstance::Mirror { horizontal: true, vertical: false };
+    let mir = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
 
     let prog = |fx: &[FxInstance]| {
         let refs: Vec<&FxInstance> = fx.iter().collect();
@@ -1488,7 +1488,7 @@ fn t520_grid_keeps_transparent_pixels_transparent() {
             }
         }
     }
-    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
     let out = apply_video_chain(&[grid], f, &ctx());
     assert!(out.has_alpha, "frame declared opaque — the composite will flood it with a slab");
     // the left quarter of each tile comes from the transparent half of the input
@@ -1579,4 +1579,39 @@ fn t523_opaque_frames_are_byte_identical() {
 fn posterize(levels: u32) -> FxInstance {
     kt_plugins_builtin::install();
     FxInstance::plugin_with("posterize", &[levels as f64]).expect("posterize is a built-in plugin")
+}
+
+/// t994 (plugin-api-stage1, D11.3; capability `plugins`): the exact lone path keeps a
+/// permutation's bytes.
+///
+/// Mirror is a plugin of `fx-video-distort` that offers `Lone::Mirror`; the HOST decides when it is
+/// taken (a series of one, no scale change) and runs its own permutation kernel. Alone it gives
+/// the exact flip (and a neutral mirror the input itself); with a scale change, or in a series, it
+/// is a step of the fused pass. The event grid offers no lone path and is always fused.
+#[test]
+fn t994_the_exact_lone_path_keeps_a_permutations_bytes() {
+    kt_plugins_builtin::install();
+    let mir = FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
+    let neutral = FxInstance::plugin_with("mirror", &[0.0, 0.0]).unwrap();
+    let grid = FxInstance::event_grid();
+    assert!(kt_fx::geom::plugin_lone(&mir).is_some(), "the mirror offers no lone path");
+    assert!(kt_fx::geom::plugin_lone(&grid).is_none(), "the grid offers a lone path");
+    for (name, f) in [("mirror", &mir), ("neutral mirror", &neutral)] {
+        assert!(
+            matches!(build_geom_exec(&[f], W, H, W, H, 0.5, None, 90_000, 1, 1), GeomExec::Legacy),
+            "{name} alone is not the lone path"
+        );
+        // a scale change (an S× input) forces the fused pass — the permutation cannot resample
+        assert!(
+            matches!(build_geom_exec(&[f], W * 2, H * 2, W, H, 0.5, None, 90_000, 2, 1), GeomExec::Fused(_)),
+            "{name} with a scale change is not fused"
+        );
+    }
+    assert!(matches!(
+        build_geom_exec(&[&mir, &FxInstance::geometry_zoom(1.5)], W, H, W, H, 0.5, None, 90_000, 1, 1),
+        GeomExec::Fused(_)
+    ));
+    let input = test_frame();
+    assert_eq!(run(&[mir]).rgba, mirror_h(&input), "the lone mirror is not the exact flip");
+    assert_eq!(run(&[neutral]).rgba, input.rgba, "a neutral lone mirror changed the frame");
 }

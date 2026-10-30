@@ -71,7 +71,7 @@ fn t66_postfx_cached_and_no_stale() {
     // (SyntheticSource encodes pts as a solid color — Mirror/Vhs degenerate
     // to identity on it, a stale entry cannot be told apart by bytes)
     let chain =
-        vec![FxInstance::Mirror { horizontal: true, vertical: false }, FxInstance::noise(0.3)];
+        vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(), FxInstance::noise(0.3)];
     let p = project_with_fx(chain.clone(), 48_000);
     let mut vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
@@ -95,7 +95,7 @@ fn t66_postfx_cached_and_no_stale() {
     // a change of a chain PARAMETER → another fx_hash → recomputation (cache bytes
     // grow: a new key is inserted, not a stale hit) and another result
     let p2 = project_with_fx(
-        vec![FxInstance::Mirror { horizontal: true, vertical: false }, FxInstance::noise(0.9)],
+        vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(), FxInstance::noise(0.9)],
         48_000,
     );
     let mut vr2 = VideoRenderer::new(&p2);
@@ -150,7 +150,7 @@ fn t66b_invalidate_source_drops_postfx() {
 fn t66c_export_compose_skips_postfx_memoization() {
     kt_plugins_builtin::install();
     let p = project_with_fx(
-        vec![FxInstance::Mirror { horizontal: true, vertical: false }, FxInstance::noise(0.3)],
+        vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(), FxInstance::noise(0.3)],
         0,
     );
     let q = kt_media::Quality { width: 640, height: 360 };

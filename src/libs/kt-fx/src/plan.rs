@@ -188,7 +188,7 @@ fn segment(
                         .find(|g| is_geo_active(g, lead, out_w, out_h))
                         .expect("legacy run has a geo step");
                     let l = legacy_lens(step, w, h, out_w, out_h, u);
-                    if !matches!(step, FxInstance::Mirror { .. }) {
+                    if crate::geom::plugin_lone(step).is_none() {
                         w = mow;
                         h = moh;
                     }

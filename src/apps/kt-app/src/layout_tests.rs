@@ -3557,7 +3557,7 @@ fn t217_one_chain_widget_for_events_and_morphers() {
         targets: MorphTargets::Clips { ids: vec![ClipId(9)] },
         patch: MorphPatch {
             video_fx: vec![
-                FxInstance::Mirror { horizontal: true, vertical: false },
+                kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(),
                 FxInstance::edges(48),
             ],
             ..Default::default()
@@ -3600,7 +3600,7 @@ fn t217_one_chain_widget_for_events_and_morphers() {
     let eff = app.model.project().effective_clips();
     let c = eff.iter().find(|c| c.id == ClipId(9)).unwrap();
     assert!(
-        !c.fx.iter().any(|f| matches!(f, FxInstance::Mirror { .. })),
+        !c.fx.iter().any(|f| f.tag() == "mirror"),
         "a disabled batch slot must not reach the clip"
     );
     assert!(
@@ -6975,7 +6975,7 @@ fn t244_morpher_has_one_chain_with_pinned_head() {
     // effects of BOTH kinds live in one strip and are laid out back again
     let app = h.state_mut();
     let mut ev = app.model.project().morphers[0].clone();
-    ev.patch.video_fx = vec![FxInstance::Mirror { horizontal: true, vertical: false }];
+    ev.patch.video_fx = vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()];
     ev.patch.audio_fx = vec![FxInstance::gain(3.0)];
     assert!(app.apply(Command::SetMorpher(ev)));
     h.step();

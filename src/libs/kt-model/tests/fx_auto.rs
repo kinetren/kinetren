@@ -189,8 +189,11 @@ fn t190_set_get_param_all_specs() {
         assert!(slowed.set_param("rate", v), "speed {v} did not set");
         assert_eq!(slowed.get_param("rate").unwrap(), v, "speed {v} drifted");
     }
-    // the mirror has no numeric parameters at all
-    assert!(FxInstance::Mirror { horizontal: true, vertical: false }.param_specs().is_empty());
+    // the mirror has no numeric parameters at all: its two rows are flags (a plugin since
+    // plugin-api-stage1, D11.3), drawn as checkboxes and never automated
+    let mirror = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
+    assert!(mirror.param_specs().iter().all(|s| s.ty == kt_model::ParamType::Flag));
+    assert_eq!(mirror.auto_params().count(), 0, "a mirror flag became automatable");
     // R.33: audio received specs — it is automated by the same mechanism
     let gain = FxInstance::gain(0.0);
     assert_eq!(
@@ -407,7 +410,7 @@ fn t214_master_switch_disables_chain_without_losing_it() {
         duration: Tick(90_000),
         targets: MorphTargets::Clips { ids: vec![ClipId(1)] },
         patch: MorphPatch {
-            video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
+            video_fx: vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()],
             ..Default::default()
         },
         timed: false,

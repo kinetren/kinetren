@@ -172,7 +172,7 @@ fn montage_fx(i: usize) -> Vec<FxInstance> {
         0 => vec![FxInstance::glow(0.6)],
         1 => vec![FxInstance::vhs(6, 0.5)],
         2 => vec![FxInstance::noise(0.08)],
-        _ => vec![FxInstance::Mirror { horizontal: true, vertical: false }, FxInstance::edges(40)],
+        _ => vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(), FxInstance::edges(40)],
     }
 }
 

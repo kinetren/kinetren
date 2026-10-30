@@ -587,7 +587,13 @@ pub(crate) fn apply_legacy_geo(
             scratch.put(frame.rgba);
             nf
         }
-        FxInstance::Mirror { horizontal, vertical } => mirror(frame, *horizontal, *vertical),
+        f @ FxInstance::Plugin(_) => match crate::geom::plugin_lone(f) {
+            Some(kt_plugin_api::Lone::Mirror { h, v }) => mirror(frame, h, v),
+            None => {
+                debug_assert!(false, "apply_legacy_geo: a plugin without a lone path");
+                frame
+            }
+        },
         _ => {
             debug_assert!(false, "apply_legacy_geo: not a legacy geo fx");
             frame

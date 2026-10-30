@@ -87,14 +87,14 @@ fn t26_golden_hashes_all_effects() {
                 ],
             },
         ),
-        ("mirror", FxInstance::Mirror { horizontal: true, vertical: false }),
+        ("mirror", kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()),
         ("blur", FxInstance::blur(8)),
         ("greenscreen", FxInstance::greenscreen([0, 255, 0], 70, 25)),
         ("edges", FxInstance::edges(48)),
         ("noise", FxInstance::noise(0.3)),
         ("vhs", FxInstance::vhs(4, 0.4)),
         ("glow", FxInstance::glow(0.65)),
-        ("eventgrid", FxInstance::EventGrid { cols: 2, rows: 2, center: true }),
+        ("eventgrid", kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap()),
     ];
     let mut failures = Vec::new();
     // zip would silently drop the extra case: the 11th effect would be left without
@@ -121,22 +121,22 @@ fn t26_golden_hashes_all_effects() {
 fn t299_eventgrid_larger_than_frame_is_guarded() {
     kt_plugins_builtin::install();
     for center in [false, true] {
-        let f = run(FxInstance::EventGrid { cols: 1000, rows: 1000, center });
+        let f = run(FxInstance::plugin_with("event_grid", &[1000.0, 1000.0, if center { 1.0 } else { 0.0 }]).unwrap());
         assert_eq!((f.w, f.h), (W, H));
-        let again = run(FxInstance::EventGrid { cols: 1000, rows: 1000, center });
+        let again = run(FxInstance::plugin_with("event_grid", &[1000.0, 1000.0, if center { 1.0 } else { 0.0 }]).unwrap());
         assert_eq!(f.rgba, again.rgba, "determinism (center={center})");
     }
     // a grid wider than the frame along X (cols clamped to 512 > W): center with the guard does not shift,
     // with grid_h == oh along Y gives offy = 0; the frames must match byte for byte
-    let a = run(FxInstance::EventGrid { cols: 1000, rows: 4, center: true });
-    let b = run(FxInstance::EventGrid { cols: 1000, rows: 4, center: false });
+    let a = run(kt_model::FxInstance::plugin_with("event_grid", &[1000.0, 4.0, 1.0]).unwrap());
+    let b = run(kt_model::FxInstance::plugin_with("event_grid", &[1000.0, 4.0, 0.0]).unwrap());
     assert_eq!(a.rgba, b.rgba, "the guard must mirror the GPU: outside the frame — from zero");
 }
 
 #[test]
 fn t26_mirror_is_involution() {
     kt_plugins_builtin::install();
-    let m = FxInstance::Mirror { horizontal: true, vertical: true };
+    let m = kt_model::FxInstance::plugin_with("mirror", &[1.0, 1.0]).unwrap();
     let once = apply_video_chain(std::slice::from_ref(&m), test_frame(), &ctx());
     let twice = apply_video_chain(&[m], once, &ctx());
     assert_eq!(twice.rgba, test_frame().rgba, "double mirror = source");
@@ -190,7 +190,7 @@ fn t26_noise_is_deterministic_per_position() {
 #[test]
 fn t26_eventgrid_tiles_are_identical() {
     kt_plugins_builtin::install();
-    let out = run(FxInstance::EventGrid { cols: 2, rows: 2, center: true });
+    let out = run(kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap());
     assert_eq!((out.w, out.h), (W, H));
     // the top-left and top-right cells are identical
     let cell_w = (W / 2) as usize;
@@ -237,19 +237,19 @@ fn t68_pooled_chain_identical_with_dirty_scratch() {
             time_scale: 1.0,
             keyframes: vec![],
         }],
-        vec![FxInstance::Mirror { horizontal: true, vertical: false }],
-        vec![FxInstance::Mirror { horizontal: true, vertical: true }],
+        vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()],
+        vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 1.0]).unwrap()],
         vec![FxInstance::blur(9)],
         vec![FxInstance::greenscreen([0, 255, 0], 90, 30)],
         vec![FxInstance::edges(40)],
         vec![FxInstance::noise(0.5)],
         vec![FxInstance::vhs(3, 0.4)],
         vec![FxInstance::glow(1.2)],
-        vec![FxInstance::EventGrid { cols: 3, rows: 2, center: true }],
+        vec![kt_model::FxInstance::plugin_with("event_grid", &[3.0, 2.0, 1.0]).unwrap()],
         // the chain from the user’s complaint (item 2, round 7)
         vec![
-            FxInstance::Mirror { horizontal: true, vertical: false },
-            FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+            kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(),
+            kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap(),
             FxInstance::glow(1.0),
             FxInstance::vhs(2, 0.5),
         ],

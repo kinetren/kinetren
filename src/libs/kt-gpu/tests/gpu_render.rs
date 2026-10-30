@@ -53,7 +53,7 @@ fn project() -> Project {
         fx_bypass: vec![],
         fx_auto: vec![],
         fx: vec![
-            FxInstance::Mirror { horizontal: true, vertical: false },
+            kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(),
             FxInstance::glow(1.0),
             FxInstance::vhs(2, 0.4),
         ],
@@ -317,7 +317,7 @@ fn t444_nested_reel_conforms_gpu_to_cpu() {
     let t = Tick(20 * 3000);
     // both with a chain on the embedding and without one: the chain changes the path (it is the
     // sub-composite, not the frame, that crosses the boundary), and both MUST converge
-    for fx in [vec![], vec![FxInstance::Mirror { horizontal: true, vertical: false }]] {
+    for fx in [vec![], vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()]] {
         let p = nested_project(fx.clone(), 0.5);
         let (mut video, cache) = warm_cache(&p, q, t);
         let plan = video.frame_plan(&cache, t, q);
@@ -878,7 +878,7 @@ fn t945b_strength_zero_skips_the_layer_on_gpu() {
         duration: Tick(90_000),
         targets: MorphTargets::Clips { ids: vec![ClipId(1)] },
         patch: MorphPatch {
-            video_fx: vec![FxInstance::EventGrid { cols: 12, rows: 30, center: false }],
+            video_fx: vec![kt_model::FxInstance::plugin_with("event_grid", &[12.0, 30.0, 0.0]).unwrap()],
             ..Default::default()
         },
         timed: true,

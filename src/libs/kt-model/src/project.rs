@@ -5262,12 +5262,7 @@ pub enum FxInstance {
         #[serde(default)]
         keyframes: Vec<CamKeyframe>,
     },
-    Mirror {
-        #[serde(default = "default_true")]
-        horizontal: bool,
-        #[serde(default)]
-        vertical: bool,
-    },
+    // Mirror and EventGrid are plugins since plugin-api-stage1 (src/plugins/fx-video-distort, D11.3).
     Blur {
         #[serde(default = "default_blur_radius")]
         radius: u32,
@@ -5352,14 +5347,6 @@ pub enum FxInstance {
         tint_g: u8,
         #[serde(default = "default_255", skip_serializing_if = "is_255")]
         tint_b: u8,
-    },
-    EventGrid {
-        #[serde(default = "default_one_u32")]
-        cols: u32,
-        #[serde(default = "default_one_u32")]
-        rows: u32,
-        #[serde(default = "default_true")]
-        center: bool,
     },
     // ---- 3D effects (R.29: category Video3d; since R.44 both backends compute them) ----
     /// Perspective layer: the clip frame is a quad in the 3D scene, rendered by the
@@ -5471,14 +5458,12 @@ impl FxInstance {
             FxInstance::Halftone { .. } => "halftone",
             FxInstance::Geometry { .. } => "geometry",
             FxInstance::CamMotion { .. } => "cam_motion",
-            FxInstance::Mirror { .. } => "mirror",
             FxInstance::Blur { .. } => "blur",
             FxInstance::Greenscreen { .. } => "greenscreen",
             FxInstance::Edges { .. } => "edges",
             FxInstance::Noise { .. } => "noise",
             FxInstance::Vhs { .. } => "vhs",
             FxInstance::Glow { .. } => "glow",
-            FxInstance::EventGrid { .. } => "event_grid",
             FxInstance::Pan3d { .. } => "pan3d",
             FxInstance::Plugin(p) => p.tag(),
             // the file's id is `MissingSlot::id`; the tag of a slot nothing can run is fixed
@@ -5746,10 +5731,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         tint_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
         tint_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
         tint_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-    },
-    EventGrid {
-        cols: u32, 1.0, 512.0, 1.0, 1.0, Count, Smooth;
-        rows: u32, 1.0, 512.0, 1.0, 1.0, Count, Smooth;
     },
     // ---- video 3D (R.29) -------------------------------------------------
     Pan3d {
@@ -6624,12 +6605,15 @@ impl FxInstance {
         FxInstance::CamMotion { mode: PanMode::Fit, ease: true, time_scale: 1.0, keyframes: vec![] }
     }
 
+    /// The horizontal mirror — a plugin slot (plugin-api-stage1, D11.3).
     pub fn mirror() -> FxInstance {
-        FxInstance::Mirror { horizontal: true, vertical: false }
+        FxInstance::plugin("mirror").expect("mirror is not registered: install the built-in plugin set first")
     }
 
+    /// A centred 2×2 event grid — a plugin slot (plugin-api-stage1, D11.3).
     pub fn event_grid() -> FxInstance {
-        FxInstance::EventGrid { cols: 2, rows: 2, center: true }
+        FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0])
+            .expect("event_grid is not registered: install the built-in plugin set first")
     }
 
     pub fn pan3d() -> FxInstance {

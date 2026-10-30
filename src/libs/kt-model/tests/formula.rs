@@ -16,6 +16,7 @@ fn vars(pairs: &[(&str, f64)]) -> BTreeMap<String, f64> {
 
 #[test]
 fn t701_formula_is_closed_deterministic_and_names_its_refusals() {
+    kt_plugins_builtin::install();
     let v = vars(&[("t", 2.0), ("x", 3.0), ("blur.radius", 8.0)]);
 
     // --- the SET of operations is computed, and computed the SAME way ---------------
@@ -114,6 +115,7 @@ fn t701_formula_is_closed_deterministic_and_names_its_refusals() {
 /// window — the line lied and drifted on scrolling.
 #[test]
 fn t784_formula_time_counts_from_material_start_everywhere() {
+    kt_plugins_builtin::install();
     use kt_model::*;
     use kt_time::Tick;
     let curve = ParamCurve {
@@ -138,7 +140,7 @@ fn t784_formula_time_counts_from_material_start_everywhere() {
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
-        fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
+        fx: vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()],
         fx_bypass: vec![],
         fx_auto: vec![vec![curve.clone()]],
         opacity: 1.0,

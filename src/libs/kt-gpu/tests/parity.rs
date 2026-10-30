@@ -138,7 +138,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
             }],
             FrameTol::BILINEAR,
         ),
-        ("mirror", vec![FxInstance::Mirror { horizontal: true, vertical: false }], FrameTol::EXACT),
+        ("mirror", vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()], FrameTol::EXACT),
         ("blur", vec![FxInstance::blur(8)], FrameTol::BILINEAR),
         ("greenscreen", vec![FxInstance::greenscreen([0, 255, 0], 70, 25)], FrameTol::THRESHOLD),
         ("edges", vec![FxInstance::edges(48)], FrameTol::THRESHOLD),
@@ -216,7 +216,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         ("glow", vec![FxInstance::glow(0.65)], FrameTol::BILINEAR),
         (
             "eventgrid",
-            vec![FxInstance::EventGrid { cols: 2, rows: 2, center: true }],
+            vec![kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap()],
             FrameTol::BILINEAR,
         ),
         // Merged geometry series (R.44): one pass of inverse mappings on
@@ -225,16 +225,16 @@ fn t181_effect_parity_gpu_vs_cpu() {
         (
             "geo-mirror-grid",
             vec![
-                FxInstance::Mirror { horizontal: true, vertical: false },
-                FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+                kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(),
+                kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap(),
             ],
             FrameTol::BILINEAR,
         ),
         (
             "geo-grid-mirror",
             vec![
-                FxInstance::EventGrid { cols: 2, rows: 2, center: true },
-                FxInstance::Mirror { horizontal: true, vertical: true },
+                kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap(),
+                kt_model::FxInstance::plugin_with("mirror", &[1.0, 1.0]).unwrap(),
             ],
             FrameTol::BILINEAR,
         ),
@@ -251,7 +251,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         (
             "geo-grid-pan-zoomback",
             vec![
-                FxInstance::EventGrid { cols: 2, rows: 2, center: true },
+                kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap(),
                 FxInstance::geometry_zoom(2.0),
             ],
             FrameTol::BILINEAR,
@@ -260,7 +260,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         (
             "geo-pan-shrink-clamp",
             vec![
-                FxInstance::Mirror { horizontal: false, vertical: true },
+                kt_model::FxInstance::plugin_with("mirror", &[0.0, 1.0]).unwrap(),
                 FxInstance::geometry_zoom(0.6),
             ],
             FrameTol::BILINEAR,
@@ -272,7 +272,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         (
             "tap-gs-in-run",
             vec![
-                FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+                kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap(),
                 FxInstance::greenscreen([0, 255, 0], 70, 25),
                 FxInstance::geometry_zoom(2.0),
             ],
@@ -281,7 +281,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         (
             "tap-noise-in-run",
             vec![
-                FxInstance::EventGrid { cols: 2, rows: 2, center: true },
+                kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap(),
                 FxInstance::Noise { amount: 0.6, size: 2, color: true },
                 FxInstance::geometry_at(-0.02222, -0.0, 1.8),
             ],
@@ -292,7 +292,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         (
             "k2-vhs",
             vec![
-                FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+                kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap(),
                 FxInstance::Vhs { rgb_shift: 2, bleed: 0.3, scan_step: 5, jitter: 0.4 },
                 FxInstance::geometry_zoom(2.0),
             ],
@@ -301,7 +301,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         (
             "k2-blur",
             vec![
-                FxInstance::EventGrid { cols: 2, rows: 2, center: true },
+                kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap(),
                 FxInstance::blur(8),
                 FxInstance::geometry_zoom(2.0),
             ],
@@ -310,7 +310,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         (
             "k2-glow",
             vec![
-                FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+                kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap(),
                 FxInstance::glow(0.9),
                 FxInstance::geometry_at(-0.02222, -0.0, 1.8),
             ],
@@ -319,7 +319,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         (
             "k2-edges",
             vec![
-                FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+                kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap(),
                 FxInstance::edges(48),
                 FxInstance::geometry_zoom(2.0),
             ],
@@ -330,7 +330,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         (
             "k2-noise-barrier",
             vec![
-                FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+                kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap(),
                 FxInstance::blur(4),
                 FxInstance::Noise { amount: 0.5, size: 2, color: true },
                 FxInstance::geometry_zoom(2.0),
@@ -340,8 +340,8 @@ fn t181_effect_parity_gpu_vs_cpu() {
         (
             "chain-user",
             vec![
-                FxInstance::Mirror { horizontal: true, vertical: false },
-                FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+                kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(),
+                kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap(),
                 FxInstance::glow(1.0),
                 FxInstance::vhs(2, 0.5),
             ],
@@ -358,7 +358,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         (
             "layer-mix-half",
             vec![
-                FxInstance::Mirror { horizontal: true, vertical: false },
+                kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(),
                 FxInstance::blur(8),
                 FxInstance::LayerMix { amount: 0.5, from: 1 },
             ],
@@ -422,7 +422,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         ),
         (
             "alpha-grid-blur",
-            vec![FxInstance::EventGrid { cols: 2, rows: 2, center: true }, FxInstance::blur(12)],
+            vec![kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap(), FxInstance::blur(12)],
             FrameTol::BILINEAR,
         ),
     ];
@@ -459,7 +459,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         scale,
         camera: None,
     };
-    let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
+    let grid2 = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap();
     let geo3d: Vec<(&str, Vec<FxInstance>)> = vec![
         ("pan3d-alone", vec![p3(4.0, 20.0, 0.9)]),
         ("grid-pan3d", vec![grid2.clone(), p3(0.0, 35.0, 1.0)]),
@@ -489,7 +489,7 @@ fn t309_decode_stage_parity_gpu_vs_cpu() {
     kt_plugins_builtin::install();
     let Some(engine) = test_engine() else { return };
     let zoom2 = FxInstance::geometry_zoom(2.0);
-    let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let grid2 = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
     let cases: Vec<(&str, Vec<FxInstance>, FrameTol)> = vec![
         // pure conjugation: the 2× input is brought back exactly to Quality by zoom
         ("s2-zoom", vec![zoom2.clone()], FrameTol::BILINEAR),
@@ -505,7 +505,7 @@ fn t309_decode_stage_parity_gpu_vs_cpu() {
         (
             "s2-mirror-zoom",
             vec![
-                FxInstance::Mirror { horizontal: true, vertical: false },
+                kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(),
                 FxInstance::vhs(4, 0.4),
                 zoom2.clone(),
             ],
@@ -660,9 +660,9 @@ fn t183_gpu_deterministic_on_device_and_dirty_pool() {
         12,
         Some(frame(W, H, false, 9)),
         vec![
-            FxInstance::EventGrid { cols: 3, rows: 2, center: true },
+            kt_model::FxInstance::plugin_with("event_grid", &[3.0, 2.0, 1.0]).unwrap(),
             FxInstance::blur(12),
-            FxInstance::Mirror { horizontal: true, vertical: false },
+            kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(),
             FxInstance::geometry_zoom(2.0),
         ],
     );
@@ -918,7 +918,7 @@ fn t329_parity_cycle_over_the_registry() {
         tags,
         "t329 class table and the video registry must cover each other"
     );
-    let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let grid2 = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
     let zoom2 = FxInstance::geometry_zoom(2.0);
     for (i, f) in video.iter().enumerate() {
         let (tol_single, tol_sand) = table[f.tag()];
@@ -1151,8 +1151,10 @@ fn t944_one_tile_on_the_gpu_is_the_full_pass() {
     kt_plugins_builtin::install();
     let Some(engine) = test_engine() else { return };
     let (w, h) = (320u32, 180u32);
-    let grid = |cols, rows, center| FxInstance::EventGrid { cols, rows, center };
-    let flip = FxInstance::Mirror { horizontal: true, vertical: false };
+    let grid = |cols: u32, rows: u32, center: bool| {
+        FxInstance::plugin_with("event_grid", &[cols as f64, rows as f64, if center { 1.0 } else { 0.0 }]).unwrap()
+    };
+    let flip = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
     let cases: Vec<(&str, Vec<FxInstance>, bool)> = vec![
         ("12x30", vec![grid(12, 30, false)], false),
         ("12x10-centred", vec![grid(12, 10, true)], false),
@@ -1217,7 +1219,7 @@ fn t974_the_pilot_plugin_on_both_executors() {
     assert_eq!(taps, vec!["color_grade", "duotone", "posterize", "vignette"]);
     assert_eq!(own.len(), taps.len(), "one own pass per point-wise plugin");
     let Some(engine) = test_engine() else { return };
-    let mirror = FxInstance::Mirror { horizontal: true, vertical: false };
+    let mirror = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
     let vig = kt_model::FxInstance::plugin_with("vignette", &[0.6, 0.5, 0.4]).unwrap();
     let blur = FxInstance::blur(2);
     let cases: Vec<(&str, Vec<FxInstance>, FrameTol, Option<u32>)> = vec![

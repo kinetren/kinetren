@@ -291,6 +291,7 @@ fn run_export_hashes() -> (u64, u64, u64, u64) {
 
 #[test]
 fn t11_streams_are_deterministic_across_runs() {
+    kt_plugins_builtin::install();
     let a = run_export_hashes();
     let b = run_export_hashes();
     assert_eq!(a, b, "export must be reproducible byte for byte");
@@ -322,6 +323,7 @@ const GOLDEN: &[(&str, &str, u64, u64, &str)] = &[
 
 #[test]
 fn t11_streams_match_committed_golden() {
+    kt_plugins_builtin::install();
     let (audio, video, _, _) = run_export_hashes();
     let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
     let Some(&(_, _, ga, gv, prov)) = GOLDEN.iter().find(|g| g.0 == os && g.1 == arch) else {
@@ -344,6 +346,7 @@ fn t11_streams_match_committed_golden() {
 /// platform without one would be compared against nothing and pass silently.
 #[test]
 fn t859_every_delivered_platform_has_references() {
+    kt_plugins_builtin::install();
     // whitespace-insensitive: rustfmt may lay the rows out over lines
     let title: String = include_str!("title_golden.rs").chars().filter(|c| !c.is_whitespace()).collect();
     for (os, arch) in DELIVERED {
@@ -374,12 +377,14 @@ const GOLDEN_VIDEO: u64 = 0x95b790352d74f586;
 #[test]
 #[ignore = "reference generator: cargo test -- --ignored t11_print"]
 fn t11_print_golden() {
+    kt_plugins_builtin::install();
     let (a, v, af, vf) = run_export_hashes();
     println!("GOLDEN_AUDIO = 0x{a:016x}; GOLDEN_VIDEO = 0x{v:016x}; frames a={af} v={vf}");
 }
 
 #[test]
 fn t11_preview_equals_export_frame() {
+    kt_plugins_builtin::install();
     // Frame No. 17 of the export stream == the preview composite of the same moment
     // at the same Quality (a single render path).
     let p = golden_project();
@@ -423,11 +428,12 @@ fn t11_preview_equals_export_frame() {
 /// break invariant No. 7.
 #[test]
 fn t67_preview_equals_export_with_fx_cold_and_warm() {
+    kt_plugins_builtin::install();
     let mut p = golden_project();
     // the chain from the user's complaint about the video clip
     for c in p.clips.iter_mut().filter(|c| c.kind == ClipKind::Video) {
         c.fx = vec![
-            FxInstance::Mirror { horizontal: true, vertical: false },
+            kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(),
             FxInstance::glow(1.0),
             FxInstance::vhs(2, 0.4),
         ];
@@ -533,6 +539,7 @@ fn generator_project() -> (Project, Sources) {
 /// project without generators.
 #[test]
 fn t479_generator_preview_equals_export() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 128, height: 72 };
     let target = 17usize; // a frame inside the solid's zone (t >= 30_000)
     let run = || {
@@ -592,6 +599,7 @@ fn t479_generator_preview_equals_export() {
 /// on the finished export frame, as in F-MED-004.
 #[test]
 fn t715_vertical_source_gets_fields_in_export() {
+    kt_plugins_builtin::install();
     let mut p = golden_project();
     // one video clip (id 5) on media 1; no audio and no second layer needed
     p.clips.retain(|c| c.id == ClipId(5));
@@ -632,6 +640,7 @@ fn t715_vertical_source_gets_fields_in_export() {
 /// coincide within the resampling tolerance; the rule and the node are not recomputed.
 #[test]
 fn t728b_export_in_another_resolution_is_similar_to_preview() {
+    kt_plugins_builtin::install();
     let mut p = golden_project();
     p.clips.retain(|c| c.id == ClipId(5));
     p.clips[0].duration = Tick(3000 * 6);

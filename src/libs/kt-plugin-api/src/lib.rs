@@ -1041,6 +1041,22 @@ pub enum GeoStep {
     /// quad (uv out of `0..1`) or behind the camera (`t.z <= 0`) the frame is TRANSPARENT — the step
     /// declares alpha. A degenerate map is `[[0,0,0],[0,0,0],[0,0,-1]]` (all transparent).
     Proj { m: [[f64; 3]; 3] },
+    /// A flip of the stage about its centre, horizontal and/or vertical: a pixel permutation that
+    /// does not change the raster. Both false — no step.
+    Mirror { h: bool, v: bool },
+    /// The event grid: the output canvas tiled by `cols×rows` integer cells of the stage (the grid
+    /// centred when `center` and it fits), black outside it. The stage after it is the canvas; the
+    /// host keeps the integer cell arithmetic and the exact tile program (`grid_tile`, t943/t944).
+    Grid { cols: u32, rows: u32, center: bool },
+}
+
+/// An exact path a geometry plugin offers for the case the HOST decides (D11.3): the plugin is the
+/// whole series and the scale does not change. The host executes it with its own exact kernel, so
+/// the bytes are those of the kind's old lone path (t297).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lone {
+    /// A pixel permutation (CPU `mirror`, the GPU's mirror pass).
+    Mirror { h: bool, v: bool },
 }
 
 /// The unit of a warp's normalized centered space (D11.2): what `1.0` is from the stage's centre.
@@ -1061,6 +1077,10 @@ pub trait GeoKernel: Send + Sync {
     /// f64 text of it; `warp_<id>` is its WGSL mirror, held to the geometry tolerance (t329, t993).
     fn warp(&self, _k: &[f64; 7], x: f64, y: f64) -> (f64, f64) {
         (x, y)
+    }
+    /// The exact lone path at these values (D11.3), or `None` — the plugin always runs fused.
+    fn lone(&self, _p: &[f64]) -> Option<Lone> {
+        None
     }
 }
 

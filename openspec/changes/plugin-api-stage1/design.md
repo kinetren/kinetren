@@ -334,6 +334,15 @@ holds `invert3` — one text for the plugin's quad and the core's pan3d. pan3d i
 model-address row (its pinned `camera`), the same store the compressor's sidechain key needs (3b.1):
 moving it before that store exists would put a camera lookup into a plugin.
 
+*As built for mirror and event_grid (4.1c-3, D11.3):* the plugin does not carry its own kernel for
+the lone path. `GeoKernel::lone(values) -> Option<Lone>` names an exact path from the host's
+vocabulary (`Lone::Mirror { h, v }` — a pixel permutation), and the host runs its own kernel on
+both executors (CPU `mirror`, the GPU's mirror pass), deciding WHEN by the old rule (a series of
+one, `k_in == k_out`). A plugin-supplied CPU/WGSL lone kernel stays possible later; today the only
+lone path is a permutation, and a second copy of it in a plugin would be a second text of the same
+bytes. A neutral mirror still takes the lone path (its steps are empty, its `lone` is not), so a
+mirror with both flags off gives the input byte for byte, as before.
+
 **D11.3 An exact lone path.** A series of length 1 without a scale change runs the OLD kernel of
 Pan/Mirror today (`GeomExec::Legacy`, t297). A geometry plugin may provide that path itself:
 `lone(k, &Frame) -> Option<Frame>` on the CPU and a WGSL pass (a pixel permutation for mirror).

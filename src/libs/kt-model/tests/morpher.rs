@@ -136,7 +136,7 @@ fn t35_effect_batch_live_and_typed() {
         duration: Tick(90 * 1500),
         targets: MorphTargets::Clips { ids: vec![ClipId(10), ClipId(11)] },
         patch: MorphPatch {
-            video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
+            video_fx: vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()],
             audio_fx: vec![FxInstance::gain(6.0)],
             ..Default::default()
         },
@@ -154,7 +154,7 @@ fn t35_effect_batch_live_and_typed() {
     assert!(a.fx[1].tag() == "gain" && a.fx[1].get_param("db") == Some(6.0));
     let v = eff.iter().find(|c| c.id == ClipId(11)).unwrap();
     assert_eq!(v.fx.len(), 1);
-    assert!(matches!(v.fx[0], FxInstance::Mirror { .. }));
+    assert!(v.fx[0].tag() == "mirror");
     // the appended slots are active (fx_bypass is shorter than the chain)
     assert_eq!(a.active_fx().len(), 2);
 }

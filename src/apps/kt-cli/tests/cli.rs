@@ -1000,6 +1000,8 @@ fn t940_probe_conform_line_is_the_render_s() {
 /// t946 in kt-engine: a synthetic 960×540 source, a morpher block with an event grid automated
 /// 1×1 → 12×30 → 12×10 → 1×1 and fades at both ends.
 fn owner_grid_case() -> kt_model::Project {
+    // the event grid is a plugin since plugin-api-stage1 (D11.3)
+    kt_plugins_builtin::install();
     use kt_model::*;
     use kt_time::Tick;
     const SEC: i64 = 90_000;
@@ -1052,7 +1054,7 @@ fn owner_grid_case() -> kt_model::Project {
         duration: Tick(6 * SEC),
         targets: MorphTargets::Clips { ids: vec![ClipId(1)] },
         patch: MorphPatch {
-            video_fx: vec![FxInstance::EventGrid { cols: 1, rows: 1, center: false }],
+            video_fx: vec![kt_model::FxInstance::plugin_with("event_grid", &[1.0, 1.0, 0.0]).unwrap()],
             video_auto: vec![vec![
                 curve("cols", [1.0, 12.0, 12.0, 1.0]),
                 curve("rows", [1.0, 30.0, 10.0, 1.0]),

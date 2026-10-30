@@ -36,6 +36,7 @@ const GOLDEN_PATTERN: [(&str, u32, u32, bool, u64); 3] = [
 
 #[test]
 fn t544_thumb_pattern_is_frozen_and_deterministic() {
+    kt_plugins_builtin::install();
     for (name, w, h, alpha, want) in GOLDEN_PATTERN {
         let a = test_pattern(w, h, alpha);
         let b = test_pattern(w, h, alpha);
@@ -59,7 +60,7 @@ fn t544b_pattern_feeds_every_class_of_effect() {
 
     // asymmetry: a mirror on ANY axis is visible
     for (h, v) in [(true, false), (false, true), (true, true)] {
-        let m = thumb(&p, &[FxInstance::Mirror { horizontal: h, vertical: v }]);
+        let m = thumb(&p, &[kt_model::FxInstance::plugin_with("mirror", &[f64::from(u8::from(h)), f64::from(u8::from(v))]).unwrap()]);
         assert_ne!(hash(&m), base, "mirror {h}/{v}: pattern is symmetric");
     }
     // keying: the green plate gives transparency
@@ -111,6 +112,7 @@ fn t544c_identity_is_identity_and_a_variant_is_not() {
 /// precisely the alpha variant.
 #[test]
 fn t544d_drop_shadow_needs_the_alpha_pattern() {
+    kt_plugins_builtin::install();
     let opaque = test_pattern(RW, RH, false);
     let alpha = test_pattern(RW, RH, true);
     let fx = [FxInstance::drop_shadow()];
@@ -132,6 +134,7 @@ fn t544d_drop_shadow_needs_the_alpha_pattern() {
 /// spirit: one composition code, the size is an execution parameter).
 #[test]
 fn t544e_thumb_is_fit_plus_chain_and_nothing_else() {
+    kt_plugins_builtin::install();
     let p = test_pattern(RW, RH, false);
     let fx = [FxInstance::blur(6), FxInstance::vhs(4, 0.4)];
     let (w, h) = (160, 90);
@@ -167,6 +170,7 @@ fn t544e_thumb_is_fit_plus_chain_and_nothing_else() {
 /// redrawn frame of the interface.
 #[test]
 fn t544f_noise_is_pinned_to_the_tick() {
+    kt_plugins_builtin::install();
     let p = test_pattern(RW, RH, false);
     let fx = [FxInstance::noise(0.25)];
     let mut s = FxScratch::default();

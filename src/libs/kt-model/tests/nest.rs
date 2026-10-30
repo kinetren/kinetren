@@ -738,7 +738,7 @@ fn t557_a_layer_inside_covers_what_it_covered_outside() {
         duration: Tick(2 * LEN.0),
         targets: MorphTargets::Below,
         patch: MorphPatch {
-            video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
+            video_fx: vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()],
             ..Default::default()
         },
         timed: true,
@@ -756,7 +756,7 @@ fn t557_a_layer_inside_covers_what_it_covered_outside() {
     let mirrored = |q: &Project| -> usize {
         q.effective_clips()
             .iter()
-            .filter(|c| c.fx.iter().any(|f| matches!(f, FxInstance::Mirror { .. })))
+            .filter(|c| c.fx.iter().any(|f| f.tag() == "mirror"))
             .count()
     };
     assert_eq!(mirrored(&p), 2, "the scene degenerated: the layer covers nothing, and outside too");
@@ -785,7 +785,7 @@ fn t557_a_layer_inside_covers_what_it_covered_outside() {
     let inside = m.project().effective_reel(Some(seq_id));
     let n_mirrored = inside
         .iter()
-        .filter(|c| c.fx.iter().any(|f| matches!(f, FxInstance::Mirror { .. })))
+        .filter(|c| c.fx.iter().any(|f| f.tag() == "mirror"))
         .count();
     assert_eq!(n_mirrored, 2, "inside the reel the layer covered nothing — it moved and died");
 }
@@ -869,7 +869,7 @@ fn t559_collapsing_under_an_area_layer_is_possible() {
         duration: Tick(2 * LEN.0),
         targets: MorphTargets::Areas { names: vec!["Piece".into()] },
         patch: MorphPatch {
-            video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
+            video_fx: vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()],
             ..Default::default()
         },
         timed: true,
@@ -922,7 +922,7 @@ fn expandable() -> Project {
         duration: LEN,
         targets: MorphTargets::Below,
         patch: MorphPatch {
-            video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
+            video_fx: vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()],
             ..Default::default()
         },
         timed: true,

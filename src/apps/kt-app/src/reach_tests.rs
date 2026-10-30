@@ -656,7 +656,7 @@ fn t254_click_is_a_click() {
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
-        fx: vec![FxInstance::blur(8), FxInstance::Mirror { horizontal: true, vertical: false }],
+        fx: vec![FxInstance::blur(8), kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()],
         fx_bypass: vec![false, false],
         fx_auto: vec![],
         opacity: 1.0,
@@ -676,10 +676,7 @@ fn t254_click_is_a_click() {
     let want = 1 - was;
     let names = [
         crate::fx_editor::fx_display_name(&FxInstance::blur(8)),
-        crate::fx_editor::fx_display_name(&FxInstance::Mirror {
-            horizontal: true,
-            vertical: false,
-        }),
+        crate::fx_editor::fx_display_name(&kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()),
     ];
     let second = names[want].to_string();
     assert!(h.query_by_label(&second).is_some(), "slot “{second}” must be visible in the strip");
@@ -769,17 +766,22 @@ fn t547_gallery_click_reaches_the_model() {
 
     // 2) the gallery is visible: the effect’s name and the captions of its variants
     assert!(h.query_by_label("Blur").is_some(), "effect row was not drawn");
-    let heavy = {
-        let e = crate::fx_registry::registry()
-            .iter()
-            .find(|e| e.name == "Blur")
-            .expect("Blur in the registry");
+    // the probed row is the LAST gallery row with variants, so it lies below the fold whatever
+    // the registry holds (it was "Blur" while the picker's head was longer: plugin-api-stage1
+    // moved kinds to the end of the list, and Blur rose above the fold)
+    let (row, heavy) = {
+        let rows = crate::fx_registry::gallery_rows(crate::fx_registry::filter_entries(
+            crate::fx_registry::registry(),
+            false,
+            "",
+        ));
+        let e = rows.iter().rev().find(|e| e.variants.len() >= 2).expect("a gallery row with variants");
         let v = &e.variants[1];
         // the accessible name of the cell is compound: the caption “Tight” exists in
         // six kinds, and they can be told apart only with the effect’s name
-        (format!("{} {}", e.name, crate::i18n::tr(v.name)), v.fx.clone())
+        (e.name, (format!("{} {}", e.name, crate::i18n::tr(v.name)), v.fx.clone()))
     };
-    // before the search the Blur cell lies BELOW THE FOLD of the scroll, and it is
+    // before the search that cell lies BELOW THE FOLD of the scroll, and it is
     // deliberately absent there: an invisible cell is neither drawn nor counted
     // (otherwise one opening of the gallery would order a hundred and fifty thumbnails —
     // found by the live scenario fxpicker)
@@ -793,7 +795,7 @@ fn t547_gallery_click_reaches_the_model() {
     // in the scroll entirely, and the needed row may be BELOW the fold — exactly
     // why the picker has a search. The search row gets focus by itself
     // when the menu opens (this is what is fixed here).
-    h.event(egui::Event::Text("blur".into()));
+    h.event(egui::Event::Text(row.to_lowercase()));
     h.step();
     h.step();
     assert!(
@@ -1321,7 +1323,7 @@ fn strip_metrics(file: &str) -> (f32, Vec<PaintedText>) {
     ev.patch.media = Some(MediaId(2));
     ev.patch.video_fx = vec![
         FxInstance::blur(8),
-        FxInstance::Mirror { horizontal: true, vertical: false },
+        kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(),
         FxInstance::edges(64),
     ];
     assert!(app.apply(Command::SetMorpher(ev)));

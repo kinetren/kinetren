@@ -472,9 +472,11 @@ fn chain_ops(
                         w = mow;
                         h = moh;
                     }
-                    FxInstance::Mirror { horizontal, vertical } => {
-                        if *horizontal || *vertical {
-                            ops.push(FxOp::Mirror { h: *horizontal, v: *vertical });
+                    f @ FxInstance::Plugin(_) => {
+                        if let Some(kt_plugin_api::Lone::Mirror { h, v }) = kt_fx::geom::plugin_lone(f)
+                            && (h || v)
+                        {
+                            ops.push(FxOp::Mirror { h, v });
                         }
                     }
                     _ => debug_assert!(false, "legacy geo must be CamMotion/Mirror"),

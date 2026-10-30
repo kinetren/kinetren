@@ -2971,7 +2971,7 @@ fn t783b_older_version_import_fixes_null_morph_targets() {
         "pan did not become geometry: {:?}",
         pan.video_fx[0]
     );
-    assert!(matches!(pan.video_fx[1], kt_model::FxInstance::EventGrid { .. }));
+    assert!(pan.video_fx[1].tag() == "event_grid");
     assert!(b.notices.iter().any(|n| n.contains("pan → geometry node (v6) ×1")), "{:?}", b.notices);
     let below = |i: usize| b.project.morphers[i].targets == MorphTargets::Below;
     assert!(below(0) && below(2) && below(5), "null did not become “everything below”");
@@ -3013,7 +3013,7 @@ fn t787b_segment_formula_and_layer_round_trip_as_v13_by_content() {
     kt_plugins_builtin::install();
     let mut p = rich_project();
     let clip = p.clips.iter_mut().find(|c| c.kind == kt_model::ClipKind::Video).unwrap();
-    clip.fx = vec![kt_model::FxInstance::Mirror { horizontal: true, vertical: false }];
+    clip.fx = vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()];
     let seg = kt_model::ParamCurve {
         param: "amount".into(),
         keys: vec![
@@ -3034,7 +3034,7 @@ fn t787b_segment_formula_and_layer_round_trip_as_v13_by_content() {
     // a layer over keys — also v13
     let mut p2 = rich_project();
     let clip = p2.clips.iter_mut().find(|c| c.kind == kt_model::ClipKind::Video).unwrap();
-    clip.fx = vec![kt_model::FxInstance::Mirror { horizontal: true, vertical: false }];
+    clip.fx = vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()];
     let layer = kt_model::ParamCurve {
         param: "amount".into(),
         keys: vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick(45_000), 1.0)],
@@ -3051,7 +3051,7 @@ fn t787b_segment_formula_and_layer_round_trip_as_v13_by_content() {
     // a source formula WITHOUT keys and without `k` — the former version, the former bytes
     let mut p3 = rich_project();
     let clip = p3.clips.iter_mut().find(|c| c.kind == kt_model::ClipKind::Video).unwrap();
-    clip.fx = vec![kt_model::FxInstance::Mirror { horizontal: true, vertical: false }];
+    clip.fx = vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()];
     clip.fx_auto = vec![vec![kt_model::ParamCurve {
         param: "amount".into(),
         keys: vec![],

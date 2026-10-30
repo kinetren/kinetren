@@ -62,6 +62,7 @@ fn direct() -> DirectFetcher {
 
 #[test]
 fn t24_reversed_audio_is_exact_mirror() {
+    kt_plugins_builtin::install();
     let fwd = clip(false, vec![], ClipKind::Audio);
     let rev = clip(true, vec![], ClipKind::Audio);
     let n = 48_000usize * 2;
@@ -85,6 +86,7 @@ fn t24_reversed_audio_is_exact_mirror() {
 
 #[test]
 fn t24_reversed_video_maps_to_mirrored_pts() {
+    kt_plugins_builtin::install();
     let fwd = clip(false, vec![], ClipKind::Video);
     let rev = clip(true, vec![], ClipKind::Video);
     let vf = VideoRenderer::new(&fwd);
@@ -107,6 +109,7 @@ fn t24_reversed_video_maps_to_mirrored_pts() {
 
 #[test]
 fn t24_reversed_with_slowed_fx_is_deterministic_and_not_silent() {
+    kt_plugins_builtin::install();
     let fx = vec![FxInstance::SlowedReverb {
         rate: 0.6,
         mix: 0.2,
@@ -135,8 +138,9 @@ fn t24_reversed_with_slowed_fx_is_deterministic_and_not_silent() {
 /// (preview == export), the cache holds pre-FX frames.
 #[test]
 fn t26_video_fx_applied_in_compose_and_deterministic() {
+    kt_plugins_builtin::install();
     let mut p = clip(false, vec![], ClipKind::Video);
-    p.clips[0].fx = vec![FxInstance::Mirror { horizontal: true, vertical: false }];
+    p.clips[0].fx = vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()];
     p.validate().unwrap();
     let mut vr = VideoRenderer::new(&p);
 
@@ -169,6 +173,7 @@ fn t26_video_fx_applied_in_compose_and_deterministic() {
 /// Test 29 (item 16): for a reversed clip the content does NOT depend on the right edge.
 #[test]
 fn t29_reversed_trim_end_preserves_left_edge_frames() {
+    kt_plugins_builtin::install();
     let p = clip(true, vec![], ClipKind::Video);
     let vr_before = VideoRenderer::new(&p);
     let step = TICK_HZ / 30;
@@ -188,6 +193,7 @@ fn t29_reversed_trim_end_preserves_left_edge_frames() {
 
 #[test]
 fn t29_reversed_trim_start_preserves_surviving_frames() {
+    kt_plugins_builtin::install();
     let p = clip(true, vec![], ClipKind::Video);
     let vr_before = VideoRenderer::new(&p);
     let step = TICK_HZ / 30;
@@ -207,6 +213,7 @@ fn t29_reversed_trim_start_preserves_surviving_frames() {
 
 #[test]
 fn t29_reversed_split_is_visually_seamless() {
+    kt_plugins_builtin::install();
     let p = clip(true, vec![], ClipKind::Video);
     let vr_before = VideoRenderer::new(&p);
     let step = TICK_HZ / 30;
@@ -226,6 +233,7 @@ fn t29_reversed_split_is_visually_seamless() {
 /// Test 29 (audio half): reverse + TrimEnd — samples at the left edge are exact.
 #[test]
 fn t29_reversed_audio_trim_end_left_edge_exact() {
+    kt_plugins_builtin::install();
     let p = clip(true, vec![], ClipKind::Audio);
     let n = 4096usize;
     let mut before = vec![0f32; n * CH];
@@ -284,6 +292,7 @@ fn slowed_dry(rate: f64) -> FxInstance {
 /// the POSITION of the material: t24 requires only determinism and “not silence”.
 #[test]
 fn t282_reversed_warped_clip_reads_its_own_material() {
+    kt_plugins_builtin::install();
     let src_in = 9_600i64;
     let len = 96_000i64;
     let rev = {
@@ -321,6 +330,7 @@ fn t282_reversed_warped_clip_reads_its_own_material() {
 /// `reset()` did not help — `hard_seek`/`seam` compute the position from the same field.
 #[test]
 fn t283_source_in_change_is_heard_with_the_same_chain() {
+    kt_plugins_builtin::install();
     let mut p = clip(false, vec![slowed_dry(1.0)], ClipKind::Audio);
     p.clips[0].duration = Tick::from_audio_frames(96_000);
     p.validate().unwrap();
@@ -412,6 +422,7 @@ fn render(p: &Project, frames: usize) -> Vec<f32> {
 /// shift.
 #[test]
 fn t616_negative_one_equals_reverse_with_a_shifted_in_point() {
+    kt_plugins_builtin::install();
     let n = 48_000usize;
     // “Reverse” at +1 from entry point 9600: plays [9600, 57600) backwards
     let rev = render(&signed_clip(1.0, 9_600, true), n);
@@ -433,6 +444,7 @@ fn t616_negative_one_equals_reverse_with_a_shifted_in_point() {
 /// time — the chain sees the ordinary forward stream and does not know the direction.
 #[test]
 fn t617_reverb_runs_forward_over_a_backward_read() {
+    kt_plugins_builtin::install();
     let n = 48_000usize;
     let with_fx = |rate: f64, src: i64, reversed: bool| {
         let mut p = signed_clip(rate, src, reversed);
@@ -471,6 +483,7 @@ fn t617_reverb_runs_forward_over_a_backward_read() {
 /// skipped and no doubled frame.
 #[test]
 fn t618_turning_point_is_a_palindrome() {
+    kt_plugins_builtin::install();
     let n = 48_000usize;
     let mut p = signed_clip(1.0, 9_600, false);
     // 1 → −1: the reversal exactly in the middle of the event
@@ -507,6 +520,7 @@ fn t618_turning_point_is_a_palindrome() {
 /// (owner's decision: “silence only at zero”).
 #[test]
 fn t619_zero_rate_is_silence_with_a_ringing_tail() {
+    kt_plugins_builtin::install();
     let n = 48_000usize;
     let mut p = signed_clip(0.0, 9_600, false);
     p.clips[0].fx = vec![FxInstance::slowed_reverb(0.0, 0.0, 85.0)];

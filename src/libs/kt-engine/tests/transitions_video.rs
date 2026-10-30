@@ -97,6 +97,7 @@ fn dissolve(a: &[u8], b: &[u8], k: u32) -> Vec<u8> {
 
 #[test]
 fn t137_dissolve_blends_pair_and_is_deterministic() {
+    kt_plugins_builtin::install();
     let p = project_pair();
     let mut vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
@@ -126,6 +127,7 @@ fn t137_dissolve_blends_pair_and_is_deterministic() {
 
 #[test]
 fn t137_missing_pair_half_gets_full_weight_and_incomplete() {
+    kt_plugins_builtin::install();
     use kt_media::MediaSource;
     let p = project_pair();
     let mut vr = VideoRenderer::new(&p);
@@ -148,6 +150,7 @@ fn t137_missing_pair_half_gets_full_weight_and_incomplete() {
 
 #[test]
 fn t137_layers_include_handles_in_window() {
+    kt_plugins_builtin::install();
     let p = project_pair();
     let vr = VideoRenderer::new(&p);
     let q = kt_media::Quality { width: 64, height: 36 };
@@ -162,6 +165,7 @@ fn t137_layers_include_handles_in_window() {
 
 #[test]
 fn t137_dissolve_survives_fx_chain_on_pair() {
+    kt_plugins_builtin::install();
     // FX clip in the pair: post-FX cache + blend; a repeated compose from the cache
     // is byte-identical (inheritance of t66)
     let mut p = project_pair();
@@ -185,6 +189,7 @@ fn t137_dissolve_survives_fx_chain_on_pair() {
 /// the composition's black background), and `complete` is not spoiled: there is nothing to wait for.
 #[test]
 fn t156_solo_fade_scales_alpha_and_stays_complete() {
+    kt_plugins_builtin::install();
     let mut p = project_pair();
     p.transitions.clear();
     p.transitions.push(TransitionEvent {
@@ -223,6 +228,7 @@ fn t156_solo_fade_scales_alpha_and_stays_complete() {
 /// Fade-out — the same, mirrored: toward the end of the clip the picture fades to black.
 #[test]
 fn t156_fade_out_goes_dark_at_the_edge() {
+    kt_plugins_builtin::install();
     let mut p = project_pair();
     p.clips.retain(|c| c.id == ClipId(1));
     p.transitions.clear();
@@ -286,6 +292,7 @@ fn over_black(src: &[u8], k: u32) -> Vec<u8> {
 /// the v1 rule applied: “on top is the one whose start is smaller”).
 #[test]
 fn t162_overlap_puts_the_later_clip_on_top() {
+    kt_plugins_builtin::install();
     let mut p = project_pair();
     p.transitions.clear();
     // clip 2 overlaps clip 1 on its own track
@@ -317,6 +324,7 @@ fn t162_overlap_puts_the_later_clip_on_top() {
 /// and when it is absent — black.
 #[test]
 fn t174_clip_opacity_scales_the_layer() {
+    kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let t = Tick(45_000);
     // two layers: lane 0 (top) and lane 1 (bottom), DIFFERENT sources
@@ -405,6 +413,7 @@ fn t174_clip_opacity_scales_the_layer() {
 /// a crossfade at the same moment gives one mixed color over the whole frame.
 #[test]
 fn t225_transition_kind_reaches_the_picture() {
+    kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let t = Tick(90_000); // the middle of the window 81_000..99_000
     let render = |kind: TransitionKind| {
@@ -471,6 +480,7 @@ fn t225_transition_kind_reaches_the_picture() {
 /// not in uniform transparency. The crossfade-fade stays as before.
 #[test]
 fn t225_solo_fade_with_kind_shapes_alpha() {
+    kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let render = |kind: TransitionKind, t: Tick| {
         let mut p = project_pair();
@@ -514,6 +524,7 @@ fn t225_solo_fade_with_kind_shapes_alpha() {
 /// not only with the transition's progress, but also with the curve.
 #[test]
 fn t232_transition_params_animate() {
+    kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let render = |auto: Vec<ParamCurve>, t: Tick| {
         let mut p = project_pair();
@@ -575,6 +586,7 @@ fn t232_transition_params_animate() {
 /// row/column — and both tests stayed green.
 #[test]
 fn t459_push_whip_bring_real_b_content() {
+    kt_plugins_builtin::install();
     use kt_engine::transitions::{TransMix, mix_into};
     const W: usize = 64;
     const H: usize = 36;
@@ -651,6 +663,7 @@ fn t459_push_whip_bring_real_b_content() {
 /// incoming half must show the middle of frame B.
 #[test]
 fn t459b_push_through_renderer_shows_real_b() {
+    kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let ramp_rgba = |marker: u8| -> Vec<u8> {
         let (w, h) = (64usize, 36usize);
@@ -708,6 +721,7 @@ fn t459b_push_through_renderer_shows_real_b() {
 /// the shape is cut from the other side.
 #[test]
 fn t461_transition_invert() {
+    kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let t = Tick(90_000); // the middle of the window, k = 0.5
     let render = |kind: TransitionKind, invert: bool| {
@@ -799,6 +813,7 @@ fn t461_transition_invert() {
 /// collapses into a Dissolve, and the kind reaches the frame.
 #[test]
 fn t464_overlap_transition_reaches_picture() {
+    kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let mk = |with: Option<TransitionKind>| {
         let mut p = Project::new(ProjectSettings {
@@ -900,6 +915,7 @@ fn t464_overlap_transition_reaches_picture() {
 /// analytic assertions of zones, not “something changed”.
 #[test]
 fn t467_new_kind_families_reach_picture() {
+    kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let t = Tick(90_000); // the middle of the window, k = 0.5
     let render = |kind: TransitionKind| {
@@ -1007,6 +1023,7 @@ fn t467_new_kind_families_reach_picture() {
 /// transparency behind the panels are computed analytically.
 #[test]
 fn t468_volume_kinds_reach_picture() {
+    kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let render = |kind: TransitionKind, t: Tick| {
         let mut p = project_pair();
@@ -1091,6 +1108,7 @@ fn t468_volume_kinds_reach_picture() {
 /// the COMPOSITE — what the person sees in the preview.
 #[test]
 fn t521_alpha_layer_under_a_chain_shows_through() {
+    kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let t = Tick(45_000);
     let mut p = Project::new(ProjectSettings {
@@ -1146,7 +1164,7 @@ fn t521_alpha_layer_under_a_chain_shows_through() {
             softness: 0,
             spill: 0.0,
         },
-        FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+        kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap(),
     ];
     p.clips[0].fx_bypass = vec![false; 2];
     p.clips[0].fx_auto = vec![vec![]; 2];

@@ -56,6 +56,7 @@ fn frame(w: u32, h: u32, kind: u32) -> Frame {
 /// the classic 0.49999999999999994 and hash-random values).
 #[test]
 fn t198_round_half_away_matches_scalar() {
+    kt_plugins_builtin::install();
     if !avx2() {
         return;
     }
@@ -103,6 +104,7 @@ fn t198_round_half_away_matches_scalar() {
 /// Bilinear: evil frames × evil rects × odd sizes.
 #[test]
 fn t198_bilinear_scalar_eq_avx2() {
+    kt_plugins_builtin::install();
     if !avx2() {
         return;
     }
@@ -156,6 +158,7 @@ fn t198_bilinear_scalar_eq_avx2() {
 #[test]
 #[ignore = "bench: cargo test --release -- --ignored --nocapture bench"]
 fn bench_simd_1080p() {
+    kt_plugins_builtin::install();
     if !avx2() {
         return;
     }
@@ -230,7 +233,7 @@ fn bench_simd_1080p() {
         ("greenscreen", FxInstance::greenscreen([0, 255, 0], 70, 25)),
         ("edges", FxInstance::edges(48)),
         ("vhs", FxInstance::vhs(4, 0.4)),
-        ("mirror", FxInstance::Mirror { horizontal: true, vertical: false }),
+        ("mirror", kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()),
     ] {
         let t = std::time::Instant::now();
         for _ in 0..iters {
@@ -252,6 +255,7 @@ fn bench_simd_1080p() {
 /// division n*k/32767 with truncation toward zero for negative n).
 #[test]
 fn t198_noise_scalar_eq_avx2() {
+    kt_plugins_builtin::install();
     if !avx2() {
         return;
     }
@@ -290,6 +294,7 @@ fn t198_noise_scalar_eq_avx2() {
 /// glow-additive: f64 mul+add with a cap and TRUNCATION (not round).
 #[test]
 fn t198_glow_add_scalar_eq_avx2() {
+    kt_plugins_builtin::install();
     if !avx2() {
         return;
     }
@@ -312,6 +317,7 @@ fn t198_glow_add_scalar_eq_avx2() {
 /// SIMD path on detection) against the scalar reference.
 #[test]
 fn t198_edges_scalar_eq_simd() {
+    kt_plugins_builtin::install();
     if !avx2() {
         return;
     }
@@ -360,6 +366,7 @@ fn t198_edges_scalar_eq_simd() {
 /// edges must together give exactly the scalar frame.
 #[test]
 fn t198_vhs_scalar_eq_simd() {
+    kt_plugins_builtin::install();
     if !avx2() {
         return;
     }

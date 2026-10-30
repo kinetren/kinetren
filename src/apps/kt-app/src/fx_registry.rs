@@ -51,14 +51,12 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
     // and a shortened `use` would hide the usage.
     match name {
         "Geometry" => (k::fxreg::cat::MOTION, Some(k::fxreg::kw::GEOMETRY)),
-        "Mirror" => (k::fxreg::cat::GEOMETRY, Some(k::fxreg::kw::MIRROR)),
         "Blur" => (k::fxreg::cat::BLUR, Some(k::fxreg::kw::BLUR)),
         "Greenscreen" => (k::fxreg::cat::KEY, Some(k::fxreg::kw::GREENSCREEN)),
         "Edges" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::EDGES)),
         "Noise" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::NOISE)),
         "VHS" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::VHS)),
         "Glow" => (k::fxreg::cat::GLOW, Some(k::fxreg::kw::GLOW)),
-        "EventGrid" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::EVENTGRID)),
         "Pan 3D" => (k::fxreg::cat::THREE_D, Some(k::fxreg::kw::PAN3D)),
         // R.47 Q2: color/style/perspective
         // R.47 Q3: barriers
@@ -111,14 +109,8 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
         // the mirror has no numeric parameters at all — only two checkboxes, so there are exactly two variants:
         // the third state is the template itself
         "Mirror" => vec![
-            FxVariant {
-                name: k::fxreg::var::VERTICAL,
-                fx: FxInstance::Mirror { horizontal: false, vertical: true },
-            },
-            FxVariant {
-                name: k::fxreg::var::BOTH,
-                fx: FxInstance::Mirror { horizontal: true, vertical: true },
-            },
+            var(tmpl, k::fxreg::var::VERTICAL, &[("horizontal", 0.0), ("vertical", 1.0)]),
+            var(tmpl, k::fxreg::var::BOTH, &[("horizontal", 1.0), ("vertical", 1.0)]),
         ],
         "Blur" => vec![
             var(tmpl, k::fxreg::var::SOFT, &[("radius", 3.0)]),
@@ -567,7 +559,8 @@ pub fn registry() -> &'static [FxEntry] {
         // category key the catalogs do not have is a build defect of the plugin, t976 names it
         for p in crate::plugins::video_fx() {
             let m = p.manifest();
-            let tmpl = FxInstance::plugin(&m.id).expect("an installed plugin builds its slot");
+            let tmpl = picker_template(&m.id)
+                .unwrap_or_else(|| FxInstance::plugin(&m.id).expect("an installed plugin builds its slot"));
             let category = crate::i18n::key_by_name(m.ui.category_key).unwrap_or(k::fxreg::cat::STYLE);
             let keywords = crate::i18n::key_by_name(m.ui.keywords_key);
             let variants = video_variants(m.ui.name, &tmpl);
@@ -583,6 +576,32 @@ pub fn registry() -> &'static [FxEntry] {
         }
         v
     })
+}
+
+/// A picker template that is NOT the passport's defaults. The passport default is the value a file
+/// without the row reads (event_grid: 1×1 — an identity), while the picker has always added a
+/// useful 2×2 centred grid; the template is the kind's constructor, as before the move.
+fn picker_template(id: &str) -> Option<FxInstance> {
+    match id {
+        "event_grid" => Some(FxInstance::event_grid()),
+        _ => None,
+    }
+}
+
+/// The gallery's row order. CATEGORIES ARE GROUPED WHEN DRAWN (R.54): the registry is sorted by
+/// meaning (the “quarters” of R.47), and categories repeat in it — the heading “Stylization” was
+/// printed five times, “Blur” three times. The order of the categories themselves is by first
+/// appearance; the sort is stable, so inside a category the registry order is intact.
+pub(crate) fn gallery_rows(list: Vec<&FxEntry>) -> Vec<&FxEntry> {
+    let mut cats: Vec<Key> = Vec::new();
+    for e in &list {
+        if !cats.contains(&e.category) {
+            cats.push(e.category);
+        }
+    }
+    let mut rows = list;
+    rows.sort_by_key(|e| cats.iter().position(|c| *c == e.category).unwrap_or(usize::MAX));
+    rows
 }
 
 /// Registry filter: kind (audio/video) + a substring of the query in the name or keywords, case-insensitive.
@@ -1013,19 +1032,7 @@ pub fn fx_picker_with_head(
             if list.is_empty() && head.is_none() {
                 ui.weak(tr(k::fxreg::NOTHING));
             }
-            // CATEGORIES ARE GROUPED WHEN DRAWN (R.54). The
-            // registry is sorted by meaning (the “quarters” of R.47),
-            // and categories repeat in it: the heading “Stylization” was printed five times, “Blur” — three times.
-            // The order of the categories themselves is by first appearance; the sort is stable,
-            // so inside a category the registry order is intact.
-            let mut cats: Vec<Key> = Vec::new();
-            for e in &list {
-                if !cats.contains(&e.category) {
-                    cats.push(e.category);
-                }
-            }
-            let mut rows = list;
-            rows.sort_by_key(|e| cats.iter().position(|c| *c == e.category).unwrap_or(usize::MAX));
+            let rows = gallery_rows(list);
             let mut last_cat: Option<Key> = None;
             egui::ScrollArea::vertical().id_salt("fxreg-rows").max_height(GALLERY_H).show(
                 ui,

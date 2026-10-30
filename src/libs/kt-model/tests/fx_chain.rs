@@ -34,7 +34,7 @@ fn project_with_video() -> Project {
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
-        fx: vec![FxInstance::blur(8), FxInstance::Mirror { horizontal: true, vertical: false }],
+        fx: vec![FxInstance::blur(8), kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()],
         fx_bypass: vec![],
         fx_auto: vec![],
         opacity: 1.0,

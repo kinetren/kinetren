@@ -112,6 +112,9 @@ enum Frozen {
     },
     Cylinder3d { curvature: f32 },
     CornerPin(Pin),
+    /// `Mirror` and `EventGrid` before 4.1c (every field always written).
+    Mirror { horizontal: bool, vertical: bool },
+    EventGrid { cols: u32, rows: u32, center: bool },
     /// `ColorGrade` and `Duotone` before stage 4.
     ColorGrade {
         #[serde(skip_serializing_if = "is_zero")]
@@ -183,6 +186,10 @@ fn empty_reads() -> Vec<(&'static str, String)> {
         (r#"{"kind":"kaleidoscope"}"#, frozen(Frozen::Kaleidoscope { segments: 6, angle: 0.0 })),
         (r#"{"kind":"cylinder3d"}"#, frozen(Frozen::Cylinder3d { curvature: 0.5 })),
         (r#"{"kind":"corner_pin"}"#, frozen(Frozen::CornerPin(PIN))),
+        (r#"{"kind":"mirror"}"#, frozen(Frozen::Mirror { horizontal: true, vertical: false })),
+        (r#"{"kind":"mirror","vertical":true}"#, frozen(Frozen::Mirror { horizontal: true, vertical: true })),
+        (r#"{"kind":"event_grid"}"#, frozen(Frozen::EventGrid { cols: 1, rows: 1, center: true })),
+        (r#"{"kind":"event_grid","cols":3,"center":false}"#, frozen(Frozen::EventGrid { cols: 3, rows: 1, center: false })),
         (r#"{"kind":"corner_pin","x0":0.25,"y3":1.5}"#, frozen(Frozen::CornerPin(Pin { x0: 0.25, y3: 1.5, ..PIN }))),
         (r#"{"kind":"color_grade"}"#, frozen(Frozen::ColorGrade { brightness: 0.0, contrast: 0.0, saturation: 1.0, hue: 0.0 })),
         (r#"{"kind":"duotone"}"#, frozen(Frozen::Duotone { shadow_r: 24, shadow_g: 18, shadow_b: 64, high_r: 255, high_g: 236, high_b: 190, amount: 1.0 })),
@@ -265,6 +272,13 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
         (FxInstance::cylinder3d(), frozen(Frozen::Cylinder3d { curvature: 0.5 })),
         (FxInstance::plugin_with("cylinder3d", &[0.85]).unwrap(), frozen(Frozen::Cylinder3d { curvature: 0.85 })),
         (FxInstance::corner_pin(), frozen(Frozen::CornerPin(PIN))),
+        (FxInstance::mirror(), frozen(Frozen::Mirror { horizontal: true, vertical: false })),
+        (FxInstance::plugin_with("mirror", &[0.0, 1.0]).unwrap(), frozen(Frozen::Mirror { horizontal: false, vertical: true })),
+        (FxInstance::event_grid(), frozen(Frozen::EventGrid { cols: 2, rows: 2, center: true })),
+        (
+            FxInstance::plugin_with("event_grid", &[12.0, 30.0, 0.0]).unwrap(),
+            frozen(Frozen::EventGrid { cols: 12, rows: 30, center: false }),
+        ),
         (
             FxInstance::plugin_with("corner_pin", &[0.1, 0.0, 1.0, 0.123456789, 0.0, 1.0, 0.9, 1.0]).unwrap(),
             frozen(Frozen::CornerPin(Pin { x0: 0.1, y1: 0.123456789, x3: 0.9, ..PIN })),

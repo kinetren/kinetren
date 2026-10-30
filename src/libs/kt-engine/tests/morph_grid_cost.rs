@@ -68,7 +68,7 @@ pub fn owner_case() -> Project {
         duration: Tick(6 * SEC),
         targets: MorphTargets::Clips { ids: vec![ClipId(1)] },
         patch: MorphPatch {
-            video_fx: vec![FxInstance::EventGrid { cols: 1, rows: 1, center: false }],
+            video_fx: vec![kt_model::FxInstance::plugin_with("event_grid", &[1.0, 1.0, 0.0]).unwrap()],
             video_auto: vec![vec![
                 curve("cols", [1.0, 12.0, 12.0, 1.0]),
                 curve("rows", [1.0, 30.0, 10.0, 1.0]),
@@ -134,6 +134,7 @@ fn render_range(p: &Project) -> (u64, (Tick, kt_fx::video::FrameCost)) {
 
 #[test]
 fn t946_owner_grid_case_renders_the_same() {
+    kt_plugins_builtin::install();
     let (got, peak) = render_range(&owner_case());
     eprintln!("t946 range hash: {got:#018x}; peak cost {peak:?}");
     assert_eq!(got, RANGE_HASH, "the owner's case renders other bytes than before the change");
@@ -147,6 +148,7 @@ fn t946_owner_grid_case_renders_the_same() {
 /// costs more than before.
 #[test]
 fn t946b_owner_grid_case_cost_is_bounded() {
+    kt_plugins_builtin::install();
     let p = owner_case();
     let full = W as u64 * H as u64 * 16;
     let mut vr = VideoRenderer::new(&p);
@@ -169,6 +171,7 @@ fn t946b_owner_grid_case_cost_is_bounded() {
 /// one mix of the dry side with itself. A strength just above 0 still runs the grid.
 #[test]
 fn t945_strength_zero_skips_the_layer() {
+    kt_plugins_builtin::install();
     let p = owner_case();
     let mut bare = p.clone();
     bare.morphers.clear();

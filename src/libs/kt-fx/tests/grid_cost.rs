@@ -13,7 +13,7 @@ const W: u32 = 960;
 const H: u32 = 540;
 
 fn grid(cols: u32, rows: u32) -> FxInstance {
-    FxInstance::EventGrid { cols, rows, center: false }
+    FxInstance::plugin_with("event_grid", &[cols as f64, rows as f64, 0.0]).unwrap()
 }
 
 fn program_cost(f: &FxInstance) -> u64 {
@@ -33,6 +33,7 @@ fn program_cost(f: &FxInstance) -> u64 {
 /// 12×10 is 80×54×16, 12×30 is 80×18×16; 1×1 and 2×2 are not marked and cost as before.
 #[test]
 fn t942_grid_cost_is_counted() {
+    kt_plugins_builtin::install();
     let px = W as u64 * H as u64;
     for (cols, rows, want) in
         [(1, 1, px), (2, 2, px * 4), (12, 10, 80 * 54 * 16), (12, 30, 80 * 18 * 16)]
@@ -102,8 +103,11 @@ fn fused(fx: &[FxInstance], in_w: u32, in_h: u32, out_w: u32, out_h: u32) -> kt_
 /// round per cell), a geometry step or a point-wise op AFTER the grid, 2×2 and below.
 #[test]
 fn t943_one_tile_is_exact_and_refused_where_it_would_not_be() {
-    let grid = |cols, rows, center| FxInstance::EventGrid { cols, rows, center };
-    let mirror = FxInstance::Mirror { horizontal: true, vertical: false };
+    kt_plugins_builtin::install();
+    let grid = |cols: u32, rows: u32, center: bool| {
+        FxInstance::plugin_with("event_grid", &[cols as f64, rows as f64, if center { 1.0 } else { 0.0 }]).unwrap()
+    };
+    let mirror = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
     let noise = FxInstance::noise(0.3);
     let mut checked = 0;
     for (ow, oh) in [(320u32, 180u32), (321, 181), (333, 177)] {

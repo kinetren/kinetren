@@ -20,7 +20,7 @@ fn dump() {
     let pa = test_pattern(320, 180, true);
     let mut s = FxScratch::default();
     for (name, base, fx) in [
-        ("mirror", &p, FxInstance::Mirror { horizontal: true, vertical: false }),
+        ("mirror", &p, kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()),
         ("blur", &p, FxInstance::blur(8)),
         ("edges-ink", &p, FxInstance::edges(90)),
         ("vhs-trash", &p, FxInstance::vhs(10, 0.85)),

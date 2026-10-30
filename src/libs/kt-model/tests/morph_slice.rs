@@ -68,7 +68,7 @@ fn layer(start: Tick, dur: Tick) -> MorpherEvent {
         targets: MorphTargets::Clips { ids: vec![ClipId(10)] },
         patch: MorphPatch {
             media: Some(MediaId(2)),
-            video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
+            video_fx: vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()],
             ..Default::default()
         },
         timed: true,
@@ -84,6 +84,7 @@ fn layer(start: Tick, dur: Tick) -> MorpherEvent {
 /// of the durations equals the original, and the patch went exactly to the middle one.
 #[test]
 fn t233_partial_cover_slices_into_three() {
+    kt_plugins_builtin::install();
     let mut p = base();
     p.morphers.push(layer(Tick(30_000), Tick(30_000)));
     p.validate().unwrap();
@@ -122,6 +123,7 @@ fn t233_partial_cover_slices_into_three() {
 /// the entry point of the piece moves with its END.
 #[test]
 fn t233_reversed_slices_keep_material() {
+    kt_plugins_builtin::install();
     let mut p = base();
     p.clips[0].reversed = true;
     p.morphers.push(layer(Tick(30_000), Tick(30_000)));
@@ -159,6 +161,7 @@ fn t233_reversed_slices_keep_material() {
 /// reserved range, the original is recovered from the id itself.
 #[test]
 fn t234_slice_ids_are_deterministic_and_reserved() {
+    kt_plugins_builtin::install();
     let mut p = base();
     p.morphers.push(layer(Tick(30_000), Tick(30_000)));
     let ids: Vec<ClipId> = p.effective_clips().iter().map(|c| c.id).collect();
@@ -192,6 +195,7 @@ fn t234_slice_ids_are_deterministic_and_reserved() {
 /// to this kind of clip does not cut it at all.
 #[test]
 fn t236_degenerate_windows() {
+    kt_plugins_builtin::install();
     // covered entirely — one clip with its own id
     let mut p = base();
     p.morphers.push(layer(Tick(-10_000), Tick(200_000)));
@@ -234,7 +238,7 @@ fn t236_degenerate_windows() {
     assert_eq!(video.len(), 1, "video is NOT cut either: the chain is turned off, not cut out");
     assert_eq!(video[0].id, ClipId(10), "and the piece holds the original id (invariant 3)");
     assert!(
-        video[0].fx.iter().any(|f| matches!(f, FxInstance::Mirror { .. })),
+        video[0].fx.iter().any(|f| f.tag() == "mirror"),
         "the layer’s chain must be on the body"
     );
     // GATE: the strength is zero outside the block’s window and full inside
@@ -261,6 +265,7 @@ fn t236_degenerate_windows() {
 /// neighbour (the Vegas rule) and would change the crossfade weights.
 #[test]
 fn t236_forbidden_zones_snap_the_boundary() {
+    kt_plugins_builtin::install();
     let mut p = base();
     p.clips.push(clip(11, ClipKind::Video, 0, LEN, LEN));
     p.transitions.push(TransitionEvent {
@@ -305,6 +310,7 @@ fn t236_forbidden_zones_snap_the_boundary() {
 /// the position of the block — the GOLDEN of migrated projects rests on this.
 #[test]
 fn t236_untimed_morpher_ignores_block_position() {
+    kt_plugins_builtin::install();
     let mut p = base();
     let mut m = layer(Tick(500_000), Tick(1_000)); // the block OUTSIDE the clip
     m.timed = false;
@@ -331,6 +337,7 @@ fn t236_untimed_morpher_ignores_block_position() {
 /// rows changes the order of effects and is rolled back by undo.
 #[test]
 fn t235_below_layer_and_bottom_up_order() {
+    kt_plugins_builtin::install();
     let mut p = base();
     p.ensure_tracks(LaneKind::Video, 2);
     p.ensure_tracks(LaneKind::Audio, 1);
@@ -339,7 +346,7 @@ fn t235_below_layer_and_bottom_up_order() {
     let mut m = layer(Tick(0), LEN);
     m.targets = MorphTargets::Below;
     m.patch = MorphPatch {
-        video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
+        video_fx: vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()],
         ..Default::default()
     };
     p.morphers.push(m);
@@ -376,11 +383,12 @@ fn t235_below_layer_and_bottom_up_order() {
 /// Test 235b: the stacking order bottom to top and its rollback by undo.
 #[test]
 fn t235_layer_order_is_bottom_up_and_undoable() {
+    kt_plugins_builtin::install();
     let mut p = base();
     p.ensure_tracks(LaneKind::Morph, 2);
     for (id, lane, fx) in [
-        (1u64, 0u32, FxInstance::Mirror { horizontal: true, vertical: false }),
-        (2, 1, FxInstance::Mirror { horizontal: false, vertical: true }),
+        (1u64, 0u32, kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()),
+        (2, 1, kt_model::FxInstance::plugin_with("mirror", &[0.0, 1.0]).unwrap()),
     ] {
         let mut m = layer(Tick(0), LEN);
         m.id = MorphId(id);
@@ -400,7 +408,7 @@ fn t235_layer_order_is_bottom_up_and_undoable() {
     let first = chain(&m);
     assert_eq!(first.len(), 2, "both layers act");
     assert!(
-        matches!(first[0], FxInstance::Mirror { vertical: true, .. }),
+        first[0].tag() == "mirror" && first[0].get_param("vertical") == Some(1.0),
         "the BOTTOM layer (row 1) was applied first"
     );
 
@@ -410,7 +418,7 @@ fn t235_layer_order_is_bottom_up_and_undoable() {
     m.apply(Command::SetLaneOrder { order }).unwrap();
     let swapped = chain(&m);
     assert!(
-        matches!(swapped[0], FxInstance::Mirror { horizontal: true, .. }),
+        swapped[0].tag() == "mirror" && swapped[0].get_param("horizontal") == Some(1.0),
         "reordering the rows reversed the overlay order"
     );
     m.undo().unwrap();
@@ -422,6 +430,7 @@ fn t235_layer_order_is_bottom_up_and_undoable() {
 /// the transition is re-hung on the piece that got the joint, all in ONE undo step.
 #[test]
 fn t239_bake_materializes_slices() {
+    kt_plugins_builtin::install();
     let mut p = base();
     p.clips.push(clip(11, ClipKind::Video, 0, LEN, LEN));
     p.transitions.push(TransitionEvent {
@@ -477,10 +486,11 @@ fn t239_bake_materializes_slices() {
 /// places — this is where the earlier defect lived).
 #[test]
 fn t243_patch_carries_source_and_chains() {
+    kt_plugins_builtin::install();
     let mut p = base();
     let mut m = layer(Tick(0), LEN);
     m.patch.source_in_delta = Tick(4_500);
-    m.patch.video_fx = vec![FxInstance::Mirror { horizontal: true, vertical: false }];
+    m.patch.video_fx = vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()];
     p.morphers.push(m);
     p.validate().unwrap();
 
@@ -515,6 +525,7 @@ fn t243_patch_carries_source_and_chains() {
 /// reference dead rather than silently dropping it.
 #[test]
 fn t247_named_areas_and_references() {
+    kt_plugins_builtin::install();
     // `unique_name` — one function for the check and for the insertion
     let taken = vec!["final".to_string(), "final 2".to_string()];
     assert_eq!(unique_name(&taken, "final", "area"), "final 3");
@@ -605,6 +616,7 @@ fn t247_named_areas_and_references() {
 /// all tracks; several overlapping references merge into one.
 #[test]
 fn t247_marks_give_windows_and_merge() {
+    kt_plugins_builtin::install();
     let mut p = base();
     p.markers.push(Marker {
         t: Tick(30_000),
@@ -645,6 +657,7 @@ fn t247_marks_give_windows_and_merge() {
 /// and the user can be asked to enter a prefix”).
 #[test]
 fn t249_clipboard_carries_morphers_areas_and_marks() {
+    kt_plugins_builtin::install();
     use kt_model::ops::*;
     let mut p = base();
     p.clips.push(clip(11, ClipKind::Video, 0, LEN, LEN));
@@ -763,6 +776,7 @@ fn t249_clipboard_carries_morphers_areas_and_marks() {
 /// and `apply_to` converts them into the material of the target — by the same mapping as everything else.
 #[test]
 fn t266_morph_layer_curves_rebase_to_target_material() {
+    kt_plugins_builtin::install();
     use kt_model::*;
     use kt_time::Tick;
 
@@ -912,6 +926,7 @@ fn warped(rate: f64, keys: Vec<AutoKey>, reversed: bool) -> ClipEvent {
 /// Test 270: half speed — half of the material.
 #[test]
 fn t270_split_half_speed_in_the_middle() {
+    kt_plugins_builtin::install();
     let c = warped(0.5, vec![], false);
     let half = TickRange::new(Tick(2 * 90_000), Tick(4 * 90_000));
     let right = clip_slice(&c, half, ClipId(2));
@@ -929,6 +944,7 @@ fn t270_split_half_speed_in_the_middle() {
 /// material actually consumed, not from the length of the event.
 #[test]
 fn t270b_split_reversed_half_speed() {
+    kt_plugins_builtin::install();
     let c = warped(0.5, vec![], true);
     // in total 2 s of material is consumed
     let first = clip_slice(&c, TickRange::new(Tick(0), Tick(2 * 90_000)), ClipId(1));
@@ -945,6 +961,7 @@ fn t270b_split_reversed_half_speed() {
 /// the keys travel together with the anchor, otherwise the whole curve drifts behind it.
 #[test]
 fn t270c_split_on_a_rate_curve_moves_keys_with_the_anchor() {
+    kt_plugins_builtin::install();
     // a ramp 1.0 → 2.0 over the whole event; keys in ticks of material from source_in
     let c = warped(
         1.0,
@@ -975,6 +992,7 @@ fn t270c_split_on_a_rate_curve_moves_keys_with_the_anchor() {
 /// material; the sum consumed equals the parent’s.
 #[test]
 fn t270d_slice_seam_has_no_gap() {
+    kt_plugins_builtin::install();
     for (rate, rev) in [(0.5, false), (2.0, false), (0.5, true), (2.0, true)] {
         let c = warped(rate, vec![], rev);
         let at = Tick(90_000 * 3 / 2); // not at a round boundary
@@ -999,6 +1017,7 @@ fn t270d_slice_seam_has_no_gap() {
 /// and all old tests rest on it.
 #[test]
 fn t270e_unwarped_slice_is_unchanged() {
+    kt_plugins_builtin::install();
     for reversed in [false, true] {
         for fx in [vec![], vec![FxInstance::blur(4)]] {
             let mut c = warped(1.0, vec![], reversed);
@@ -1057,6 +1076,7 @@ fn t270e_unwarped_slice_is_unchanged() {
 /// project below its row — including the sound, which has no such thing in the file.
 #[test]
 fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
+    kt_plugins_builtin::install();
     let warp = FxInstance::SlowedReverb {
         rate: 0.5,
         mix: 0.0,
@@ -1166,6 +1186,7 @@ fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
 /// The rule is the same as for `clip_slice`: the anchor and the keys move by ONE delta.
 #[test]
 fn t291_source_replacement_carries_the_clips_own_curves() {
+    kt_plugins_builtin::install();
     const STEP: i64 = 90_000 / 30;
     let peak = Tick(3_000 + LEN.0 / 2);
 
@@ -1282,6 +1303,7 @@ fn with_fades_both_ends(p: &mut Project, id: ClipId, len: Tick, fade: Tick) {
 /// neighbours are not touched at all.
 #[test]
 fn t555_time_window_is_exact_on_an_event_with_fades() {
+    kt_plugins_builtin::install();
     let mut p = base();
     with_fades_both_ends(&mut p, ClipId(10), LEN, Tick(20_000));
     p.validate().expect("a scene with two fades is legal");
@@ -1343,6 +1365,7 @@ fn t555_time_window_is_exact_on_an_event_with_fades() {
 /// body, the new one — the middle between the fades.
 #[test]
 fn t556_source_replacing_layer_still_cuts_but_only_inward() {
+    kt_plugins_builtin::install();
     let mut p = base();
     with_fades_both_ends(&mut p, ClipId(10), LEN, Tick(20_000));
     p.morphers.push(layer(Tick(5_000), Tick(80_000))); // patch.media = Some(2)
@@ -1376,6 +1399,7 @@ fn t556_source_replacing_layer_still_cuts_but_only_inward() {
 /// not let me ... cut it — childish excuses".
 #[test]
 fn t915_warped_clip_is_cut_at_the_integral() {
+    kt_plugins_builtin::install();
     const LEN4: Tick = Tick(4 * 90_000);
     let win = TickRange::new(Tick(90_000), Tick(3 * 90_000));
     let mut problems: Vec<String> = Vec::new();

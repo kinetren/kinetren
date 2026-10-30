@@ -1359,14 +1359,12 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Geometry { lead: true, .. } => "• Geometry",
         FxInstance::Geometry { .. } => "Geometry",
         FxInstance::CamMotion { .. } => "CamMotion",
-        FxInstance::Mirror { .. } => "Mirror",
         FxInstance::Blur { .. } => "Blur",
         FxInstance::Greenscreen { .. } => "Greenscreen",
         FxInstance::Edges { .. } => "Edges",
         FxInstance::Noise { .. } => "Noise",
         FxInstance::Vhs { .. } => "VHS",
         FxInstance::Glow { .. } => "Glow",
-        FxInstance::EventGrid { .. } => "EventGrid",
         FxInstance::Pan3d { .. } => "Pan 3D",
         FxInstance::Compressor { .. } => "Compressor",
         FxInstance::Sharpen { .. } => "Sharpen",
@@ -1390,7 +1388,6 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
         // one (the leading one is always present on an event and does not live in the catalog);
         // the former Pan is abolished
         ("Geometry", FxInstance::geometry_node()),
-        ("Mirror", FxInstance::Mirror { horizontal: true, vertical: false }),
         ("Blur", FxInstance::blur(8)),
         ("Greenscreen", FxInstance::greenscreen([0, 255, 0], 70, 25)),
         ("Edges", FxInstance::edges(48)),
@@ -1413,7 +1410,6 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
                 camera: None,
             },
         ),
-        ("EventGrid", FxInstance::EventGrid { cols: 2, rows: 2, center: true }),
         // R.47: per-point color/style + the first honest perspective
         // R.47 Q3: barriers
         ("Sharpen", FxInstance::sharpen()),
@@ -1600,10 +1596,16 @@ pub(crate) fn draw_video_fx_params(
             });
             ui.label(egui::RichText::new(tr(k::fx::RATE_LINKED)).weak().small());
         }
-        FxInstance::Mirror { horizontal, vertical } => {
+        // the mirror's two flag rows (a plugin slot since plugin-api-stage1, D11.3)
+        FxInstance::Plugin(p) if p.id == "mirror" => {
             ui.horizontal(|ui| {
-                ch.base |= ui.checkbox(horizontal, tr(k::fx::HORIZONTAL)).changed();
-                ch.base |= ui.checkbox(vertical, tr(k::fx::VERTICAL)).changed();
+                for (row, key) in [("horizontal", k::fx::HORIZONTAL), ("vertical", k::fx::VERTICAL)] {
+                    let mut on = p.get(row) == Some(1.0);
+                    if ui.checkbox(&mut on, tr(key)).changed() {
+                        p.set(row, if on { 1.0 } else { 0.0 });
+                        ch.base = true;
+                    }
+                }
             });
         }
         FxInstance::Greenscreen { key_r, key_g, key_b, .. } => {
@@ -1618,9 +1620,13 @@ pub(crate) fn draw_video_fx_params(
                 }
             });
         }
-        FxInstance::EventGrid { center, .. } => {
+        FxInstance::Plugin(p) if p.id == "event_grid" => {
+            let mut center = p.get("center") == Some(1.0);
             ui.horizontal(|ui| {
-                ch.base |= ui.checkbox(center, tr(k::fx::CENTER)).changed();
+                if ui.checkbox(&mut center, tr(k::fx::CENTER)).changed() {
+                    p.set("center", if center { 1.0 } else { 0.0 });
+                    ch.base = true;
+                }
             });
         }
         FxInstance::Edges { color_r, color_g, color_b, .. } => {

@@ -49,8 +49,6 @@ pub fn is_geo(f: &FxInstance) -> bool {
         f,
         FxInstance::Geometry { .. }
             | FxInstance::CamMotion { .. }
-            | FxInstance::Mirror { .. }
-            | FxInstance::EventGrid { .. }
             | FxInstance::Pan3d { .. }
     ) || plugin_class(f) == Some(kt_plugin_api::VideoClass::Geometry)
 }
@@ -509,6 +507,15 @@ impl std::fmt::Debug for WarpRef {
     }
 }
 
+/// The exact lone path a geometry plugin slot offers at its values (D11.3): the mirror's
+/// permutation. The HOST decides when it is taken (`build_geom_exec_in`: a series of one, no scale
+/// change) and executes it with its own kernel.
+pub fn plugin_lone(f: &FxInstance) -> Option<kt_plugin_api::Lone> {
+    let FxInstance::Plugin(slot) = f else { return None };
+    let plugin = kt_model::plugin_slot::registry().get(&slot.id)?;
+    plugin.geo()?.lone(&slot.values)
+}
+
 /// The steps of a geometry plugin slot at its stage (D11.2); `None` — not registered or not a
 /// geometry plugin. An empty list is a neutral slot: the step is skipped.
 pub fn plugin_geo_steps(
@@ -837,7 +844,7 @@ pub fn build_geom_exec_in(
         // A change of scale (a run between K× segments, S× input for R.46) requires a
         // resample — then the fused pass; otherwise the plan would assemble Legacy on
         // K≠1 edges (latent defect of R.45, test t308b).
-        if k_in == k_out && matches!(steps[0], FxInstance::Mirror { .. }) {
+        if k_in == k_out && plugin_lone(steps[0]).is_some() {
             return GeomExec::Legacy;
         }
         // a single CamMotion with NO minification AND NO K× edges — the old
@@ -1021,33 +1028,6 @@ fn build_program(
                     has_alpha = true;
                 }
             }
-            FxInstance::Mirror { horizontal, vertical } => {
-                if *horizontal || *vertical {
-                    fw.push(Step::Mirror { h: *horizontal, v: *vertical, iw: w, ih: h });
-                }
-            }
-            FxInstance::EventGrid { cols, rows, center } => {
-                let cols = (*cols).clamp(1, 512);
-                let rows = (*rows).clamp(1, 512);
-                let (cw, ch) = ((mow / cols).max(1), (moh / rows).max(1));
-                let (gw, gh) = (cw * cols, ch * rows);
-                // guard “grid larger than the frame” — shared with the kernels (item 306)
-                let (offx, offy) = if *center && gw <= mow && gh <= moh {
-                    ((mow - gw) / 2, (moh - gh) / 2)
-                } else {
-                    (0, 0)
-                };
-                fw.push(Step::Grid { offx, offy, gw, gh, cw, ch, iw: w, ih: h });
-                w = mow;
-                h = moh;
-                // ALPHA RULE (R.53, item 417): the grid PASSES alpha through.
-                // Here it used to say “there is no alpha anymore”, and that was untrue:
-                // the tile is a resampled input, the input alpha still lives
-                // in it; black (`Mapped::Black`) is filled only in the field
-                // OUTSIDE the grid. Because of the false declaration, a title
-                // or a greenscreen output under EventGrid landed in the composite as an
-                // opaque rectangle.
-            }
             FxInstance::Pan3d {
                 pos_x,
                 pos_y,
@@ -1123,6 +1103,31 @@ fn build_program(
                             // a warp does not change the raster: its stage is the one it enters
                             kt_plugin_api::GeoStep::Warp { k, norm } => {
                                 fw.push(Step::Warp { warp, p: k, norm, iw: w, ih: h });
+                            }
+                            kt_plugin_api::GeoStep::Mirror { h: mh, v: mv } => {
+                                fw.push(Step::Mirror { h: mh, v: mv, iw: w, ih: h });
+                            }
+                            kt_plugin_api::GeoStep::Grid { cols, rows, center } => {
+                        let cols = cols.clamp(1, 512);
+                        let rows = rows.clamp(1, 512);
+                        let (cw, ch) = ((mow / cols).max(1), (moh / rows).max(1));
+                        let (gw, gh) = (cw * cols, ch * rows);
+                        // guard “grid larger than the frame” — shared with the kernels (item 306)
+                        let (offx, offy) = if center && gw <= mow && gh <= moh {
+                            ((mow - gw) / 2, (moh - gh) / 2)
+                        } else {
+                            (0, 0)
+                        };
+                        fw.push(Step::Grid { offx, offy, gw, gh, cw, ch, iw: w, ih: h });
+                        w = mow;
+                        h = moh;
+                        // ALPHA RULE (R.53, item 417): the grid PASSES alpha through.
+                        // Here it used to say “there is no alpha anymore”, and that was untrue:
+                        // the tile is a resampled input, the input alpha still lives
+                        // in it; black (`Mapped::Black`) is filled only in the field
+                        // OUTSIDE the grid. Because of the false declaration, a title
+                        // or a greenscreen output under EventGrid landed in the composite as an
+                        // opaque rectangle.
                             }
                             // a homography lands on the canvas; outside the quad — transparent
                             kt_plugin_api::GeoStep::Proj { m } => {

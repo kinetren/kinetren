@@ -80,6 +80,7 @@ fn dq(p: &Project, nat: Option<(u32, u32)>, q: Quality) -> Quality {
 /// and the ceiling of intermediate buffers.
 #[test]
 fn t310_decode_stage_formula() {
+    kt_plugins_builtin::install();
     let q720 = Quality { width: 1280, height: 720 };
     let p2 = project(1280, 720, vec![zoom(2.0)], vec![]);
     // a FRACTIONAL headroom: 1920/1280 = 1.5 → scale 2, the remainder is covered by sws
@@ -100,10 +101,10 @@ fn t310_decode_stage_formula() {
         vec![],
         vec![zoom(1.0)],
         vec![zoom(0.5)],
-        vec![FxInstance::Mirror { horizontal: true, vertical: false }],
-        vec![FxInstance::EventGrid { cols: 2, rows: 2, center: true }],
+        vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()],
+        vec![kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap()],
         // net unit (R.44 scenario): the grid compressed, the zoom restored it
-        vec![FxInstance::EventGrid { cols: 2, rows: 2, center: true }, zoom(2.0)],
+        vec![kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap(), zoom(2.0)],
     ] {
         let p = project(1280, 720, fx.clone(), vec![]);
         assert_eq!(dq(&p, Some((3840, 2160)), q720), q720, "net zoom <= 1: {fx:?}");
@@ -125,6 +126,7 @@ fn t310_decode_stage_formula() {
 /// at its maximum, not at the moment of the first frame.
 #[test]
 fn t311_head_zoom_samples_the_whole_clip() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 320, height: 180 };
     let nat = Some((1280, 720));
     let key = |t_s: f64, v: f64| AutoKey::at(Tick((t_s * SEC as f64) as i64), v);
@@ -173,6 +175,7 @@ fn t311_head_zoom_samples_the_whole_clip() {
 /// axis: if they diverge — a permanent cache miss.
 #[test]
 fn t312_order_equals_read_with_quality() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 128, height: 72 };
     let p = project(128, 72, vec![zoom(2.0)], vec![]);
     let mut vr = VideoRenderer::new_with_natives(&p, &natives(512, 288));
@@ -221,6 +224,7 @@ fn t312_order_equals_read_with_quality() {
 /// the scale in the key the cache would return a stale one.
 #[test]
 fn t313_postfx_key_includes_the_stage() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 128, height: 72 };
     let p = project(128, 72, vec![zoom(2.0)], vec![]);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
@@ -257,6 +261,7 @@ fn t313_postfx_key_includes_the_stage() {
 /// it was assembled — exactly the regression of item 15 (“black render”).
 #[test]
 fn t314_export_chunk_respects_the_decode_stage() {
+    kt_plugins_builtin::install();
     // the sizes are chosen so that by Quality the chunk fits the budget, but by the
     // decode quality (×2 per side = ×4 memory) it no longer does
     let q = Quality { width: 960, height: 540 };
@@ -305,6 +310,7 @@ fn t314_export_chunk_respects_the_decode_stage() {
 /// a violation of invariant No. 4 in the user's eyes.
 #[test]
 fn t317_coverage_is_queried_at_the_decode_quality() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 128, height: 72 };
     let p = project(128, 72, vec![zoom(2.0)], vec![]);
     let vr = VideoRenderer::new_with_natives(&p, &natives(512, 288));
@@ -332,6 +338,7 @@ fn t317_coverage_is_queried_at_the_decode_quality() {
 /// and without a native, scale 1 even under zoom.
 #[test]
 fn t484b_generator_native_feeds_decode_stage() {
+    kt_plugins_builtin::install();
     use kt_media::generator::GEN_NATIVE;
     let q = Quality { width: 640, height: 360 };
     let zoomed = project(640, 360, vec![zoom(2.0)], vec![]);
@@ -353,6 +360,7 @@ fn t484b_generator_native_feeds_decode_stage() {
 /// and it is re-ordered.
 #[test]
 fn t633_a_layer_of_a_foreign_size_is_never_silent() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 128, height: 72 };
     let p = project(128, 72, vec![], vec![]);
     let mut vr = VideoRenderer::new(&p);
@@ -383,6 +391,7 @@ fn t633_a_layer_of_a_foreign_size_is_never_silent() {
 /// composite warmed strictly by `wanted_frames` is complete.
 #[test]
 fn t714_order_equals_read_on_every_conform_rule() {
+    kt_plugins_builtin::install();
     let q = Quality { width: 1920, height: 1080 };
     let rules = [Conform::Fit, Conform::Fill, Conform::AsIs, Conform::Stretch];
     let mut p = project(1920, 1080, vec![], vec![]);

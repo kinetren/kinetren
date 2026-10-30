@@ -1,6 +1,7 @@
 //! Distorting video effects as plugins (plugin-api-stage1, stage 4, D11.2): the five warps —
 //! lens_distort, twirl, ripple, kaleidoscope, cylinder3d — and corner_pin, one `Proj` step (its
-//! homography; outside the quad transparent). Each warp is a geometry program of one `Warp`
+//! homography; outside the quad transparent), mirror and event_grid (the host's own steps, the
+//! mirror's exact lone path, D11.3). Each warp is a geometry program of one `Warp`
 //! step: the inverse map of the normalized centered space, cooked once, and its WGSL mirror that
 //! kt-gpu pastes into both primitive loops of the fused pass. The steps, the clamps and the
 //! "neutral values skip the step" rule are the former builder's, verbatim (t328's goldens, t330).
@@ -8,7 +9,7 @@
 use std::sync::Arc;
 
 use kt_plugin_api::{
-    geo, Decl, GeoCtx, GeoKernel, GeoStep, Gpu, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin,
+    geo, Decl, GeoCtx, GeoKernel, GeoStep, Gpu, Lone, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin,
     RowDecl, Store, UiDecl, VideoClass, WarpNorm,
 };
 
@@ -21,6 +22,8 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
         Arc::new(Warp::kaleidoscope()),
         Arc::new(Warp::cylinder3d()),
         Arc::new(CornerPin::new()),
+        Arc::new(HostStep::mirror()),
+        Arc::new(HostStep::event_grid()),
     ]
 }
 
@@ -291,6 +294,86 @@ impl GeoKernel for CornerPin {
         }
         let m = corner_pin_inverse([(g(0), g(1)), (g(2), g(3)), (g(4), g(5)), (g(6), g(7))], cx.out_w, cx.out_h);
         vec![GeoStep::Proj { m }]
+    }
+}
+
+/// A geometry plugin whose map is one of the host's own steps (mirror, event grid): it only
+/// translates its values into the step.
+pub struct HostStep {
+    m: Manifest,
+    kind: HostKind,
+}
+
+#[derive(Clone, Copy)]
+enum HostKind {
+    Mirror,
+    Grid,
+}
+
+impl HostStep {
+    /// Mirror (port of v1): a flip of the stage. Alone and without a scale change it keeps the
+    /// exact permutation kernel (`Lone::Mirror`, t297).
+    pub fn mirror() -> HostStep {
+        HostStep {
+            m: Manifest {
+                id: "mirror".into(),
+                media: Media::VideoFx,
+                passport: vec![ParamSpec::flag_row("horizontal", true), ParamSpec::flag_row("vertical", false)],
+                rows: vec![row(Store::Bool, false), row(Store::Bool, false)],
+                decl: Decl { video_class: Some(VideoClass::Geometry), gpu: Gpu::Primitives, ..Decl::default() },
+                ui: UiDecl { name: "Mirror", category_key: "fxreg.cat.geometry", keywords_key: "fxreg.kw.mirror" },
+            },
+            kind: HostKind::Mirror,
+        }
+    }
+
+    /// EventGrid (port of v1): the event repeated in a grid of cells over the canvas.
+    pub fn event_grid() -> HostStep {
+        let count = |n| ParamSpec::num(n, 1.0, 512.0, 1.0, 1.0, ParamUnit::Count, ParamKind::Smooth);
+        HostStep {
+            m: Manifest {
+                id: "event_grid".into(),
+                media: Media::VideoFx,
+                passport: vec![count("cols"), count("rows"), ParamSpec::flag_row("center", true)],
+                rows: vec![row(Store::U32, false), row(Store::U32, false), row(Store::Bool, false)],
+                decl: Decl { video_class: Some(VideoClass::Geometry), gpu: Gpu::Primitives, ..Decl::default() },
+                ui: UiDecl { name: "EventGrid", category_key: "fxreg.cat.style", keywords_key: "fxreg.kw.eventgrid" },
+            },
+            kind: HostKind::Grid,
+        }
+    }
+}
+
+impl Plugin for HostStep {
+    fn manifest(&self) -> &Manifest {
+        &self.m
+    }
+    fn geo(&self) -> Option<&dyn GeoKernel> {
+        Some(self)
+    }
+}
+
+impl GeoKernel for HostStep {
+    fn steps(&self, p: &[f64], _cx: &GeoCtx) -> Vec<GeoStep> {
+        let flag = |i: usize| p.get(i).copied().unwrap_or(0.0) != 0.0;
+        match self.kind {
+            HostKind::Mirror => {
+                let (h, v) = (flag(0), flag(1));
+                if h || v { vec![GeoStep::Mirror { h, v }] } else { Vec::new() }
+            }
+            HostKind::Grid => {
+                let n = |i: usize| p.get(i).copied().unwrap_or(1.0) as u32;
+                vec![GeoStep::Grid { cols: n(0), rows: n(1), center: flag(2) }]
+            }
+        }
+    }
+
+    fn lone(&self, p: &[f64]) -> Option<Lone> {
+        let flag = |i: usize| p.get(i).copied().unwrap_or(0.0) != 0.0;
+        match self.kind {
+            HostKind::Mirror => Some(Lone::Mirror { h: flag(0), v: flag(1) }),
+            HostKind::Grid => None,
+        }
     }
 }
 

@@ -273,7 +273,10 @@ Three classes of video effect; the class determines ALL the placement of the cod
   warp is a GEOMETRY PLUGIN (`src/plugins/fx-video-distort`): its `GeoKernel::steps` gives the
   cooked numbers and the unit (`WarpNorm`), its `warp` is the ONE f64 map both CPU loops call
   through `WarpRef`, and its `warp_<id>` WGSL function is the mirror kt-gpu pastes into both
-  loops — edited in THE SAME COMMIT as the f64 text (t993, t329).
+  loops — edited in THE SAME COMMIT as the f64 text (t993, t329). corner_pin (`GeoStep::Proj`),
+  mirror (`GeoStep::Mirror`, the exact lone path through `GeoKernel::lone` → `plugin_lone`, t994)
+  and event_grid (`GeoStep::Grid`, the host keeps `grid_tile`) are geometry plugins too; the core
+  keeps the Geometry node, CamMotion and Pan3d.
 - **Pointwise** (`geom::is_pointwise`): the colour of a pixel without neighbours.
   The formula is ONE tap function (`tap_grade`/`tap_duo`/`tap_poster`/
   `tap_vig`, f64): it is called by the CPU barrier (`pointwise_barrier`) and the CPU tap

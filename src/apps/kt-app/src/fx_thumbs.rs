@@ -581,7 +581,7 @@ mod tests {
         let plain = render_job(&job(0, 0), &mut s);
         assert_eq!(plain.size, [CELL_W as usize, CELL_H as usize]);
         let mut with_fx = job(1, 0);
-        with_fx.chain = vec![FxInstance::Mirror { horizontal: true, vertical: false }];
+        with_fx.chain = vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()];
         let mirrored = render_job(&with_fx, &mut s);
         assert_ne!(plain.as_raw(), mirrored.as_raw(), "the chain changed nothing");
         // a second run on the SAME pool is byte-for-byte (a dirty pool, t68)

@@ -222,7 +222,7 @@ fn t238_slicing_is_inaudible() {
     // a video patch does not cut the audio at all
     let mut p = base(ClipKind::Audio);
     let mut m = layer(MorphPatch {
-        video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
+        video_fx: vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()],
         ..Default::default()
     });
     m.targets = MorphTargets::Clips { ids: vec![ClipId(10), ClipId(11)] };
@@ -294,7 +294,7 @@ fn t238_warped_clip_is_never_sliced() {
 fn t267_layer_strength_blends_only_the_layer() {
     kt_plugins_builtin::install();
     let t = Tick(45_000); // the middle of the layer's window
-    let own = FxInstance::Mirror { horizontal: true, vertical: false };
+    let own = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
     let layer_fx = FxInstance::edges(24);
 
     // the event with ITS OWN effect; the layer adds its own on top

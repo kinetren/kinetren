@@ -55,7 +55,7 @@ fn clip(id: u64, start_s: i64, dur_s: i64, media: u64, fx: Vec<FxInstance>) -> C
 }
 
 fn grid2() -> FxInstance {
-    FxInstance::EventGrid { cols: 2, rows: 2, center: true }
+    kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap()
 }
 
 fn pan3d(scale: f64) -> FxInstance {
