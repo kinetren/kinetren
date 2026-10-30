@@ -49,7 +49,7 @@ fn manifest(id: &'static str, passport: Vec<ParamSpec>, rows: Vec<RowDecl>, name
         passport,
         rows,
         decl,
-        ui: UiDecl { name, category_key: "fxreg.cat.modulation", keywords_key: kw },
+        ui: UiDecl { name, category_key: "fxreg.cat.modulation", keywords_key: kw, ..UiDecl::default() },
     }
 }
 

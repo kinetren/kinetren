@@ -284,7 +284,7 @@ impl WarpEcho {
                 passport: vec![ParamSpec::num("rate", -32.0, 32.0, 1.0, 0.01, ParamUnit::Ratio, ParamKind::Smooth)],
                 rows: vec![RowDecl { store: Store::F64, omit_default: false }],
                 decl: Decl { time_warp: Some(TimeWarp { rate_row: 0, frames_row: None }), ..Decl::default() },
-                ui: UiDecl { name: "Warp echo", category_key: "fxreg.cat.timestretch", keywords_key: "fxreg.kw.slowedreverb" },
+                ui: UiDecl { name: "Warp echo", category_key: "fxreg.cat.timestretch", keywords_key: "fxreg.kw.slowedreverb", ..UiDecl::default() },
             },
         }
     }

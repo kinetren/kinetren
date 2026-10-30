@@ -294,11 +294,19 @@ Three classes of video effect; the class determines ALL the placement of the cod
   DropShadow: an input without alpha — passthrough on both paths; the formula at
   alpha 255 degenerates into an identity (the early exit is an optimization).
 
-Checklist "add a video effect": an enum variant + serde defaults +
-`params_for!` + a constructor + `tag()` (a compile-time lock) + `all()` +
-a class (an arm of `is_geo`/`is_pointwise` OR the arms of apply_barrier + FxOp/pass in
-kt-gpu + chain_ops) + a line GOLDEN_ALL in t328 (the completeness lock will not let
-you forget it) + a tolerance class in t329 + `fx_display_name` + the picker template +
-`video_meta` (the t48 lock: a fallback category = an error) + `param_label` +
-catalogues ×5 (+ subset-fonts for new glyphs). The semantic test — in
-geo_fuse (t330/t332/t333 — samples by class).
+Checklist "add a video effect" (plugin-api-stage1: a picked effect is a PLUGIN; the ten barrier
+kinds still wait for `plugin-api-barriers`): in its family crate under `src/plugins/fx-video-*` —
+a `Manifest` (id = the file's `kind`, `Media::VideoFx`, the passport in FILE order with a `RowDecl`
+per row, `omit_default` where the file leaves the row out) with its `Decl.video_class`:
+- **point-wise** — a `VideoKernel` (`cook`/`tap`, or `cook_at`/`tap_at` with `Decl.positioned`)
+  and its WGSL `tap_<id>` in `Gpu::Wgsl` (kt-gpu pastes it into the fused arms and builds its own
+  pass; t974 holds the assembled text);
+- **geometry** — a `GeoKernel` whose `steps` give the host's vocabulary (`Warp` with a
+  `warp_<id>` WGSL in `Gpu::Warp`, `Proj`, `Mirror`, `Grid`; an exact lone path through `lone`),
+  neutral values give no steps;
+then `UiDecl` (the display name, the category and keyword key paths, the picker `variants` and,
+when the useful first click differs from the file's default, a `template`), its id in
+`BUILTIN_IDS` (kt-plugins-builtin, in family order), its place in kt-app's `VIDEO_ORDER`, a
+constructor in kt-model if callers build it, `param_label` + catalogues ×5 (+ subset-fonts for new
+glyphs). t328's GOLDEN_ALL line (the completeness lock), a tolerance class in t329 and t973's
+frozen form follow from `FxInstance::all()`; the semantic test — in geo_fuse (t330/t332/t333).

@@ -27,7 +27,7 @@ pub fn manifest_keys() -> Vec<&'static str> {
         .plugins()
         .flat_map(|p| {
             let m = p.manifest();
-            [m.ui.category_key, m.ui.keywords_key]
+            [m.ui.category_key, m.ui.keywords_key].into_iter().chain(m.ui.variants.iter().map(|v| v.name_key))
         })
         .filter(|k| !k.is_empty())
         .collect()
@@ -76,6 +76,7 @@ pub mod test_tint {
                         name: "Test Tint",
                         category_key: crate::i18n::key_name(crate::i18n::k::fxreg::cat::COLOR),
                         keywords_key: "",
+                        ..UiDecl::default()
                     },
                 },
             }

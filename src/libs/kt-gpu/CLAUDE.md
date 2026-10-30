@@ -90,9 +90,13 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
 
 ## R.47 (items 332-335): 19 passes, Warp, barriers
 
-- PIPE_COUNT grew by rounds (R.47 — 19, R.50 — +unpremul, R.53 — +premul):
-  + colorgrade/duotone/posterize/vignette (pointwise at the
-  barrier position, mirrors of the tap functions of kt-fx) + sharpen_add/pixelate/
+- **A picked point-wise or geometry effect needs NO code here** (plugin-api-stage1): its WGSL
+  (`tap_<id>`, `warp_<id>`) comes in its manifest and `assembled_shaders` pastes it — one dispatch
+  number per plugin in registry order (`plugin_taps`/`plugin_warps`), never hashed into a key; the
+  geometry steps without WGSL (`Proj`, `Mirror`, `Grid`) are the existing primitives. Only a new
+  BARRIER kind still adds a pipe, an FxOp and `chain_ops` arms (until `plugin-api-barriers`).
+- PIPE_COUNT grew by rounds (R.47 — 19, R.50 — +unpremul, R.53 — +premul) — the point-wise
+  colorgrade/duotone/posterize/vignette pipes LEFT with the plugins (4.1a/4.1b) — + sharpen_add/pixelate/
   chroma_ab/radial_blur/shadow_under/halftone. Sharpen and DropShadow —
   3 passes (Resample down/up + the final one with T1); passes()/slot_units MUST
   predict this.

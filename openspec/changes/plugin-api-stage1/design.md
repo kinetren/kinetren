@@ -265,6 +265,15 @@ handles) stay in kt-app and are looked up by plugin id; a plugin cannot ship UI 
 Labels of a dynamic owner already have their path (`ParamSpec::label`, R.59, t684) — that is what an
 external plugin will use in stage 2.
 
+*As built (4.2):* `UiDecl.variants` (`UiVariant { name_key, sets }` — a catalog key PATH and the
+values over the template) and `UiDecl.template` (values over the passport's defaults: event_grid's
+2×2, where the file's default is 1×1). kt-app's per-name variant table now holds the core kinds
+only; `manifest_keys` includes the variant keys, so t976 requires them in all five catalogs. The
+picker's ROW ORDER is the one the owner knew before the kinds moved: `VIDEO_ORDER` in
+`fx_registry.rs`, recovered from f7782e37 — a row takes its place whether it is a core template or
+a plugin, a third-party plugin comes after (t1018). Without it every moved kind had gone to the end
+of the video list, and the gallery's headings (grouped by first appearance) had moved with them.
+
 ### D8. The closed built-in list is the only input of the references
 `BUILTIN_IDS` in kt-plugins-builtin is a `const` slice in a fixed order. t328 (`GOLDEN_ALL`), t329,
 t322, t223/t224 and the generator goldens iterate it (plus the core-owned kinds). The test door

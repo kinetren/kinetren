@@ -134,6 +134,12 @@ transitions vocabulary already closed once.
   its parameters appear below with sliders and units
 - **TEST** t976 (`src/apps/kt-app/src/reach_tests.rs`)
 
+#### Scenario: The picker keeps its arrangement and a moved kind's cells are its manifest's
+- **WHEN** the FX picker is opened on a video clip after the effects moved into plugins
+- **THEN** the video rows stand in the order the picker had before any kind moved (core templates and plugins interleaved as they were, a third-party plugin after them), every row of that order is present, each moved built-in shows the variants its manifest names with captions from the catalogs, and event_grid's template is the manifest's 2×2 grid
+- **PATH** select a video event → open its FX chain window → click "+" → the gallery lists Geometry, Mirror, Blur, Greenscreen … in their former places under the same headings → the Mirror row shows its "Vertical" and "Both" cells next to the template → click the EventGrid template → the chain strip shows EventGrid with 2 columns and 2 rows
+- **TEST** t1018 (`src/apps/kt-app/src/fx_registry.rs`)
+
 ### Requirement: Every effect a person picks is a plugin; each reason it was core is a contract
 Every user-facing effect SHALL be a plugin. What kept a kind in the core SHALL be a contract any
 plugin can use:

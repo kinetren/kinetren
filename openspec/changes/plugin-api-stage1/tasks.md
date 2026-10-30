@@ -266,7 +266,7 @@ once (English message, first line = the stage and what was done).
     Done in 4.1c-1…4 above; the core keeps the Geometry node and CamMotion (the lead geometry
     and the legacy pan kernel, not effects a person picks)
 - [ ] 4.1d The ten barrier kinds: propose `plugin-api-barriers` (the GPU pass graph and the SIMD twins), linked from here; this change does not move them
-- [ ] 4.2 FX picker, variants and thumbnails from manifests (`fx_registry.rs`, `fx_thumbs.rs`); verify t48, t252, t253, t976 and `layout_tests.rs`/`reach_tests.rs` green; rewrite the "add a video effect" checklist in `src/libs/kt-fx/CLAUDE.md` and `src/libs/kt-gpu/CLAUDE.md`; commit stage 4
+- [x] 4.2 FX picker, variants and thumbnails from manifests (`fx_registry.rs`, `fx_thumbs.rs`); verify t48, t252, t253, t976 and `layout_tests.rs`/`reach_tests.rs` green; rewrite the "add a video effect" checklist in `src/libs/kt-fx/CLAUDE.md` and `src/libs/kt-gpu/CLAUDE.md`; commit stage 4
 
 ## 5. Transitions
 

@@ -105,12 +105,6 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
             var(tmpl, k::fxreg::var::PUNCH, &[("zoom", 2.0)]),
             var(tmpl, k::fxreg::var::OFFCENTER, &[("zoom", 1.4), ("pos_x", -0.12)]),
         ],
-        // the mirror has no numeric parameters at all — only two checkboxes, so there are exactly two variants:
-        // the third state is the template itself
-        "Mirror" => vec![
-            var(tmpl, k::fxreg::var::VERTICAL, &[("horizontal", 0.0), ("vertical", 1.0)]),
-            var(tmpl, k::fxreg::var::BOTH, &[("horizontal", 1.0), ("vertical", 1.0)]),
-        ],
         "Blur" => vec![
             var(tmpl, k::fxreg::var::SOFT, &[("radius", 3.0)]),
             var(tmpl, k::fxreg::var::HEAVY, &[("radius", 24.0)]),
@@ -186,100 +180,6 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
                 ],
             ),
         ],
-        "Pan 3D" => vec![
-            var(tmpl, k::fxreg::var::TILT, &[("rot_x", 15.0)]),
-            var(tmpl, k::fxreg::var::TURN, &[("rot_y", -20.0)]),
-            var(tmpl, k::fxreg::var::DEPTH, &[("pos_z", -200.0), ("rot_y", 10.0), ("scale", 0.85)]),
-        ],
-        "EventGrid" => vec![
-            var(tmpl, k::fxreg::var::GRID9, &[("cols", 3.0), ("rows", 3.0)]),
-            var(tmpl, k::fxreg::var::GRID16, &[("cols", 4.0), ("rows", 4.0)]),
-            var(tmpl, k::fxreg::var::STRIP, &[("cols", 4.0), ("rows", 1.0)]),
-        ],
-        "Color Grade" => vec![
-            var(
-                tmpl,
-                k::fxreg::var::WARM,
-                &[("hue", 8.0), ("saturation", 1.15), ("brightness", 0.04)],
-            ),
-            var(
-                tmpl,
-                k::fxreg::var::COOL,
-                &[("hue", -12.0), ("saturation", 0.9), ("contrast", 0.1)],
-            ),
-            var(tmpl, k::fxreg::var::BW, &[("saturation", 0.0), ("contrast", 0.15)]),
-        ],
-        "Duotone" => vec![
-            var(
-                tmpl,
-                k::fxreg::var::SEPIA,
-                &[
-                    ("shadow_r", 48.0),
-                    ("shadow_g", 28.0),
-                    ("shadow_b", 12.0),
-                    ("high_r", 255.0),
-                    ("high_g", 226.0),
-                    ("high_b", 180.0),
-                ],
-            ),
-            var(
-                tmpl,
-                k::fxreg::var::BLUE,
-                &[
-                    ("shadow_r", 8.0),
-                    ("shadow_g", 16.0),
-                    ("shadow_b", 64.0),
-                    ("high_r", 180.0),
-                    ("high_g", 220.0),
-                    ("high_b", 255.0),
-                ],
-            ),
-            var(
-                tmpl,
-                k::fxreg::var::NEON,
-                &[
-                    ("shadow_r", 32.0),
-                    ("shadow_g", 0.0),
-                    ("shadow_b", 64.0),
-                    ("high_r", 255.0),
-                    ("high_g", 64.0),
-                    ("high_b", 192.0),
-                ],
-            ),
-        ],
-        "Posterize" => vec![
-            var(tmpl, k::fxreg::var::HARD, &[("levels", 3.0)]),
-            var(tmpl, k::fxreg::var::COMIC, &[("levels", 4.0)]),
-            var(tmpl, k::fxreg::var::SOFT, &[("levels", 12.0)]),
-        ],
-        "Vignette" => vec![
-            var(
-                tmpl,
-                k::fxreg::var::SOFT,
-                &[("strength", 0.3), ("radius", 0.9), ("softness", 0.6)],
-            ),
-            var(
-                tmpl,
-                k::fxreg::var::STRONG,
-                &[("strength", 0.9), ("radius", 0.55), ("softness", 0.35)],
-            ),
-            var(
-                tmpl,
-                k::fxreg::var::TIGHT,
-                &[("strength", 0.7), ("radius", 0.4), ("softness", 0.2)],
-            ),
-        ],
-        "Corner Pin" => vec![
-            // trapezoid: the top edge is narrowed and lowered
-            var(
-                tmpl,
-                k::fxreg::var::PERSPECTIVE,
-                &[("x0", 0.12), ("y0", 0.06), ("x1", 0.88), ("y1", 0.06)],
-            ),
-            // the right edge is shorter than the left
-            var(tmpl, k::fxreg::var::TILT, &[("y1", 0.14), ("y3", 0.86)]),
-            var(tmpl, k::fxreg::var::SKEW, &[("x0", 0.18), ("x3", 0.82)]),
-        ],
         "Sharpen" => vec![
             var(tmpl, k::fxreg::var::SOFT, &[("amount", 0.5), ("radius", 1.0)]),
             var(tmpl, k::fxreg::var::STRONG, &[("amount", 2.0)]),
@@ -334,31 +234,6 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
             var(tmpl, k::fxreg::var::FINE, &[("size", 3.0), ("angle", 0.0)]),
             var(tmpl, k::fxreg::var::PRINT, &[("size", 5.0), ("angle", 15.0)]),
             var(tmpl, k::fxreg::var::COMIC, &[("size", 12.0)]),
-        ],
-        "Lens Distort" => vec![
-            var(tmpl, k::fxreg::var::BARREL, &[("k1", 0.6)]),
-            var(tmpl, k::fxreg::var::PINCUSHION, &[("k1", -0.45)]),
-            var(tmpl, k::fxreg::var::FISHEYE, &[("k1", 0.9), ("k2", 0.3)]),
-        ],
-        "Twirl" => vec![
-            var(tmpl, k::fxreg::var::SUBTLE, &[("angle", 45.0)]),
-            var(tmpl, k::fxreg::var::STRONG, &[("angle", 360.0)]),
-            var(tmpl, k::fxreg::var::REVERSE, &[("angle", -240.0)]),
-        ],
-        "Ripple" => vec![
-            var(tmpl, k::fxreg::var::WATER, &[("amount", 0.05), ("freq", 18.0)]),
-            var(tmpl, k::fxreg::var::RINGS, &[("amount", 0.15), ("freq", 6.0)]),
-            var(tmpl, k::fxreg::var::STRONG, &[("amount", 0.3), ("freq", 12.0)]),
-        ],
-        "Kaleidoscope" => vec![
-            var(tmpl, k::fxreg::var::MIRROR, &[("segments", 2.0)]),
-            var(tmpl, k::fxreg::var::STAR, &[("segments", 10.0)]),
-            var(tmpl, k::fxreg::var::MANDALA, &[("segments", 20.0), ("angle", 15.0)]),
-        ],
-        "Cylinder 3D" => vec![
-            var(tmpl, k::fxreg::var::SUBTLE, &[("curvature", 0.2)]),
-            var(tmpl, k::fxreg::var::STRONG, &[("curvature", 0.85)]),
-            var(tmpl, k::fxreg::var::TUBE, &[("curvature", 1.0)]),
         ],
         // an empty list = a forgotten entry; t543 turns
         // red on it just as t48 does on a fallback category
@@ -541,51 +416,74 @@ pub fn registry() -> &'static [FxEntry] {
                 template: FxInstance::stereo_width(),
             },
         ];
-        for (name, tmpl) in video_fx_templates() {
-            let (category, keywords) = video_meta(name);
-            let variants = video_variants(name, &tmpl);
-            v.push(FxEntry {
-                name,
-                category,
-                audio: false,
-                video: true,
-                keywords,
-                template: tmpl,
-                variants,
-            });
-        }
-        // plugin rows: name, category and keywords are the manifest's (plugin-api-stage1, D7); a
-        // category key the catalogs do not have is a build defect of the plugin, t976 names it
+        let mut video: Vec<FxEntry> = video_fx_templates()
+            .into_iter()
+            .map(|(name, tmpl)| {
+                let (category, keywords) = video_meta(name);
+                let variants = video_variants(name, &tmpl);
+                FxEntry { name, category, audio: false, video: true, keywords, template: tmpl, variants }
+            })
+            .collect();
+        // plugin rows: name, category, keywords, variants and the template are the manifest's
+        // (plugin-api-stage1, D7); a key the catalogs do not have is a build defect of the plugin,
+        // t976 names it
         for p in crate::plugins::video_fx() {
             let m = p.manifest();
-            let tmpl = picker_template(&m.id)
-                .unwrap_or_else(|| FxInstance::plugin(&m.id).expect("an installed plugin builds its slot"));
+            let mut tmpl = FxInstance::plugin(&m.id).expect("an installed plugin builds its slot");
+            for (n, val) in m.ui.template {
+                tmpl.set_param(n, *val);
+            }
             let category = crate::i18n::key_by_name(m.ui.category_key).unwrap_or(k::fxreg::cat::STYLE);
             let keywords = crate::i18n::key_by_name(m.ui.keywords_key);
-            let variants = video_variants(m.ui.name, &tmpl);
-            v.push(FxEntry {
-                name: m.ui.name,
-                category,
-                audio: false,
-                video: true,
-                keywords,
-                template: tmpl,
-                variants,
-            });
+            let variants = m
+                .ui
+                .variants
+                .iter()
+                .filter_map(|uv| crate::i18n::key_by_name(uv.name_key).map(|key| var(&tmpl, key, uv.sets)))
+                .collect();
+            video.push(FxEntry { name: m.ui.name, category, audio: false, video: true, keywords, template: tmpl, variants });
         }
+        // the picker's arrangement is the one the owner knew before the kinds moved (the R.47
+        // "quarters"): a row in VIDEO_ORDER takes its place whether it is a core template or a
+        // plugin, a row not in it (a third-party plugin) comes after them in its own order
+        video.sort_by_key(|e| VIDEO_ORDER.iter().position(|n| *n == e.name).unwrap_or(usize::MAX));
+        v.extend(video);
         v
     })
 }
 
-/// A picker template that is NOT the passport's defaults. The passport default is the value a file
-/// without the row reads (event_grid: 1×1 — an identity), while the picker has always added a
-/// useful 2×2 centred grid; the template is the kind's constructor, as before the move.
-fn picker_template(id: &str) -> Option<FxInstance> {
-    match id {
-        "event_grid" => Some(FxInstance::event_grid()),
-        _ => None,
-    }
-}
+/// The video rows in the order the picker showed them before any kind moved into a plugin (the
+/// registry is sorted by meaning — the R.47 "quarters" — and the gallery groups its categories by
+/// first appearance, so this order is also the order of the headings). Recovered from f7782e37;
+/// Geometry's lead node and CamMotion are not picked here.
+const VIDEO_ORDER: &[&str] = &[
+    "Geometry",
+    "Mirror",
+    "Blur",
+    "Greenscreen",
+    "Edges",
+    "Noise",
+    "VHS",
+    "Glow",
+    "Pan 3D",
+    "EventGrid",
+    "Color Grade",
+    "Duotone",
+    "Posterize",
+    "Vignette",
+    "Corner Pin",
+    "Sharpen",
+    "Pixelate",
+    "Chromatic Aberration",
+    "Radial Blur",
+    "Drop Shadow",
+    "Halftone",
+    "Lens Distort",
+    "Twirl",
+    "Ripple",
+    "Kaleidoscope",
+    "Cylinder 3D",
+];
 
 /// The gallery's row order. CATEGORIES ARE GROUPED WHEN DRAWN (R.54): the registry is sorted by
 /// meaning (the “quarters” of R.47), and categories repeat in it — the heading “Stylization” was
@@ -1177,6 +1075,39 @@ pub fn fx_picker_with_head(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test 1018 (plugin-api-stage1, 4.2; capability `plugins`): the picker keeps the arrangement
+    /// the owner knew and a moved kind's cells are its manifest's.
+    ///
+    /// The video rows follow `VIDEO_ORDER` (recovered from before any kind moved), whether a row is
+    /// a core template or a plugin, so the gallery's headings and the rows inside them stand where
+    /// they stood; no row of that list is lost; a third-party plugin comes after them. Each moved
+    /// built-in shows the variants its manifest names, captioned from the catalogs, and
+    /// event_grid's template is the manifest's 2×2 grid, not the file's 1×1.
+    #[test]
+    fn t1018_the_picker_keeps_its_order_and_the_cells_are_the_manifests() {
+        crate::plugins::install();
+        let video: Vec<&FxEntry> = filter_entries(registry(), false, "").into_iter().filter(|e| !e.audio).collect();
+        let names: Vec<&str> = video.iter().map(|e| e.name).collect();
+        let known: Vec<&str> = names.iter().copied().filter(|n| VIDEO_ORDER.contains(n)).collect();
+        assert_eq!(known, VIDEO_ORDER, "the video rows left the order the owner knew (or one is missing)");
+        let last_known = names.iter().rposition(|n| VIDEO_ORDER.contains(n)).unwrap();
+        assert!(
+            names[..last_known].iter().all(|n| VIDEO_ORDER.contains(n)),
+            "a row outside the known list stands among them: {names:?}"
+        );
+        for p in crate::plugins::video_fx() {
+            let m = p.manifest();
+            if crate::plugins::install().is_test_only(&m.id) {
+                continue;
+            }
+            let e = video.iter().find(|e| e.name == m.ui.name).expect("a built-in plugin row");
+            assert_eq!(e.variants.len(), m.ui.variants.len(), "{}: the cells are not the manifest's variants", m.id);
+            assert!(!e.variants.is_empty(), "{}: a built-in without variants (t543)", m.id);
+        }
+        let grid = video.iter().find(|e| e.name == "EventGrid").unwrap();
+        assert_eq!((grid.template.get_param("cols"), grid.template.get_param("rows")), (Some(2.0), Some(2.0)), "event_grid's template");
+    }
 
     /// Test 48 (item 3 of v1.4): completeness of the registry and identity of the templates with the former
     /// buttons/combos; the filter finds by a substring of

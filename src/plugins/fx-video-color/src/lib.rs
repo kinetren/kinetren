@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use kt_plugin_api::{
+use kt_plugin_api::{UiVariant, 
     Cooked, Decl, Gpu, Manifest, TapCtx, Media, ParamKind, ParamSpec, ParamUnit, Plugin, RowDecl, Store,
     UiDecl, VideoClass, VideoKernel,
 };
@@ -34,7 +34,7 @@ impl Posterize {
                     gpu: Gpu::Wgsl(include_str!("posterize.wgsl")),
                     ..Decl::default()
                 },
-                ui: UiDecl { name: "Posterize", category_key: "fxreg.cat.color", keywords_key: "fxreg.kw.posterize" },
+                ui: UiDecl { name: "Posterize", category_key: "fxreg.cat.color", keywords_key: "fxreg.kw.posterize", variants: POSTERIZE_VARIANTS, ..UiDecl::default() },
             },
         }
     }
@@ -153,7 +153,7 @@ impl ColorGrade {
                     gpu: Gpu::Wgsl(include_str!("color_grade.wgsl")),
                     ..Decl::default()
                 },
-                ui: UiDecl { name: "Color Grade", category_key: "fxreg.cat.color", keywords_key: "fxreg.kw.color_grade" },
+                ui: UiDecl { name: "Color Grade", category_key: "fxreg.cat.color", keywords_key: "fxreg.kw.color_grade", variants: COLOR_GRADE_VARIANTS, ..UiDecl::default() },
             },
         }
     }
@@ -224,7 +224,7 @@ impl Duotone {
                     gpu: Gpu::Wgsl(include_str!("duotone.wgsl")),
                     ..Decl::default()
                 },
-                ui: UiDecl { name: "Duotone", category_key: "fxreg.cat.color", keywords_key: "fxreg.kw.duotone" },
+                ui: UiDecl { name: "Duotone", category_key: "fxreg.cat.color", keywords_key: "fxreg.kw.duotone", variants: DUOTONE_VARIANTS, ..UiDecl::default() },
             },
         }
     }
@@ -289,7 +289,7 @@ impl Vignette {
                     positioned: true,
                     ..Decl::default()
                 },
-                ui: UiDecl { name: "Vignette", category_key: "fxreg.cat.style", keywords_key: "fxreg.kw.vignette" },
+                ui: UiDecl { name: "Vignette", category_key: "fxreg.cat.style", keywords_key: "fxreg.kw.vignette", variants: VIGNETTE_VARIANTS, ..UiDecl::default() },
             },
         }
     }
@@ -340,3 +340,35 @@ impl VideoKernel for Vignette {
         [n[0] as f32, n[1] as f32, n[2] as f32, 0.0, 0.0, 0.0, 0.0]
     }
 }
+
+// ---------------------------------------------------------------------------
+// picker variants (D7: the manifest names them, kt-app draws them)
+// ---------------------------------------------------------------------------
+
+/// The picker's variants of Color Grade (R.54), moved from kt-app's table (plugin-api-stage1, 4.2).
+const COLOR_GRADE_VARIANTS: &[UiVariant] = &[
+    UiVariant { name_key: "fxreg.var.warm", sets: &[("hue", 8.0), ("saturation", 1.15), ("brightness", 0.04)] },
+    UiVariant { name_key: "fxreg.var.cool", sets: &[("hue", -12.0), ("saturation", 0.9), ("contrast", 0.1)] },
+    UiVariant { name_key: "fxreg.var.bw", sets: &[("saturation", 0.0), ("contrast", 0.15)] },
+];
+
+/// The picker's variants of Duotone (R.54), moved from kt-app's table (plugin-api-stage1, 4.2).
+const DUOTONE_VARIANTS: &[UiVariant] = &[
+    UiVariant { name_key: "fxreg.var.sepia", sets: &[("shadow_r", 48.0), ("shadow_g", 28.0), ("shadow_b", 12.0), ("high_r", 255.0), ("high_g", 226.0), ("high_b", 180.0)] },
+    UiVariant { name_key: "fxreg.var.blue", sets: &[("shadow_r", 8.0), ("shadow_g", 16.0), ("shadow_b", 64.0), ("high_r", 180.0), ("high_g", 220.0), ("high_b", 255.0)] },
+    UiVariant { name_key: "fxreg.var.neon", sets: &[("shadow_r", 32.0), ("shadow_g", 0.0), ("shadow_b", 64.0), ("high_r", 255.0), ("high_g", 64.0), ("high_b", 192.0)] },
+];
+
+/// The picker's variants of Posterize (R.54), moved from kt-app's table (plugin-api-stage1, 4.2).
+const POSTERIZE_VARIANTS: &[UiVariant] = &[
+    UiVariant { name_key: "fxreg.var.hard", sets: &[("levels", 3.0)] },
+    UiVariant { name_key: "fxreg.var.comic", sets: &[("levels", 4.0)] },
+    UiVariant { name_key: "fxreg.var.soft", sets: &[("levels", 12.0)] },
+];
+
+/// The picker's variants of Vignette (R.54), moved from kt-app's table (plugin-api-stage1, 4.2).
+const VIGNETTE_VARIANTS: &[UiVariant] = &[
+    UiVariant { name_key: "fxreg.var.soft", sets: &[("strength", 0.3), ("radius", 0.9), ("softness", 0.6)] },
+    UiVariant { name_key: "fxreg.var.strong", sets: &[("strength", 0.9), ("radius", 0.55), ("softness", 0.35)] },
+    UiVariant { name_key: "fxreg.var.tight", sets: &[("strength", 0.7), ("radius", 0.4), ("softness", 0.2)] },
+];

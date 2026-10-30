@@ -37,6 +37,7 @@ impl StereoWidth {
                     name: "Stereo Width",
                     category_key: "fxreg.cat.stereo",
                     keywords_key: "fxreg.kw.stereowidth",
+                    ..UiDecl::default()
                 },
             },
         }
@@ -151,7 +152,7 @@ impl Eq {
                 ],
                 // the gains and mid_q were `skip_serializing_if` at their default, the freqs always written
                 vec![row(true), row(false), row(true), row(false), row(true), row(true), row(false)],
-                UiDecl { name: "EQ", category_key: "fxreg.cat.filter", keywords_key: "fxreg.kw.eq" },
+                UiDecl { name: "EQ", category_key: "fxreg.cat.filter", keywords_key: "fxreg.kw.eq", ..UiDecl::default() },
                 Decl { state: true, ..Decl::default() },
             ),
         }
@@ -267,7 +268,7 @@ impl Distortion {
                     p("mix", 0.0, 1.0, 1.0, 0.01, ParamUnit::Norm),
                 ],
                 vec![row(false), row(false), row(true)],
-                UiDecl { name: "Distortion", category_key: "fxreg.cat.distort", keywords_key: "fxreg.kw.distortion" },
+                UiDecl { name: "Distortion", category_key: "fxreg.cat.distort", keywords_key: "fxreg.kw.distortion", ..UiDecl::default() },
                 Decl { state: true, ..Decl::default() },
             ),
         }
@@ -366,7 +367,7 @@ impl Bitcrusher {
                     p("mix", 0.0, 1.0, 1.0, 0.01, ParamUnit::Norm),
                 ],
                 vec![row(false), row(false), row(true)],
-                UiDecl { name: "Bitcrusher", category_key: "fxreg.cat.distort", keywords_key: "fxreg.kw.bitcrusher" },
+                UiDecl { name: "Bitcrusher", category_key: "fxreg.cat.distort", keywords_key: "fxreg.kw.bitcrusher", ..UiDecl::default() },
                 Decl { state: true, ..Decl::default() },
             ),
         }
@@ -487,7 +488,7 @@ impl Filter {
                     p("resonance", 0.5, 10.0, 0.707, 0.01, ParamUnit::None),
                 ],
                 vec![RowDecl { store: Store::Choice(FILTER_MODES), omit_default: false }, row(false), row(false)],
-                UiDecl { name: "Filter", category_key: "fxreg.cat.filter", keywords_key: "fxreg.kw.filter" },
+                UiDecl { name: "Filter", category_key: "fxreg.cat.filter", keywords_key: "fxreg.kw.filter", ..UiDecl::default() },
                 Decl { state: true, tail: Some(filter_tail), ..Decl::default() },
             ),
         }

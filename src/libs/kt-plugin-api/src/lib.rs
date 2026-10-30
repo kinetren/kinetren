@@ -930,6 +930,19 @@ pub struct UiDecl {
     pub name: &'static str,
     pub category_key: &'static str,
     pub keywords_key: &'static str,
+    /// The picker's curated variants (R.54): a catalog key PATH for the cell's caption and the
+    /// values it sets over the template. An empty list is a forgotten entry for a built-in (t543).
+    pub variants: &'static [UiVariant],
+    /// Values the picker's TEMPLATE sets over the passport's defaults, when the useful first click
+    /// differs from what a file without the row reads (event_grid: the file's 1×1, the picker's 2×2).
+    pub template: &'static [(&'static str, f64)],
+}
+
+/// One picker variant of a plugin (D7): its caption key and the values it sets.
+#[derive(Debug, Clone, Copy)]
+pub struct UiVariant {
+    pub name_key: &'static str,
+    pub sets: &'static [(&'static str, f64)],
 }
 
 /// How a passport row is STORED in the project file (D3): the field type the kind had as an enum

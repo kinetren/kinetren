@@ -70,7 +70,7 @@ impl Gain {
                 // `db` always written; `pan` was `skip_serializing_if = "is_zero"`
                 rows: vec![row(false), row(true)],
                 decl: Decl { state: true, ..Decl::default() },
-                ui: UiDecl { name: "Gain", category_key: "fxreg.cat.volume", keywords_key: "fxreg.kw.gain" },
+                ui: UiDecl { name: "Gain", category_key: "fxreg.cat.volume", keywords_key: "fxreg.kw.gain", ..UiDecl::default() },
             },
         }
     }
@@ -205,7 +205,7 @@ impl Gate {
                 ],
                 rows: vec![row(false), row(false), row(false), row(false)],
                 decl: Decl { state: true, ..Decl::default() },
-                ui: UiDecl { name: "Gate", category_key: "fxreg.cat.dynamics", keywords_key: "fxreg.kw.gate" },
+                ui: UiDecl { name: "Gate", category_key: "fxreg.cat.dynamics", keywords_key: "fxreg.kw.gate", ..UiDecl::default() },
             },
         }
     }
@@ -331,7 +331,7 @@ impl Limiter {
                 ],
                 rows: vec![row(false), row(false), row(false), row(false)],
                 decl: Decl { state: true, lookahead: Some(limiter_lookahead), ..Decl::default() },
-                ui: UiDecl { name: "Limiter", category_key: "fxreg.cat.dynamics", keywords_key: "fxreg.kw.limiter" },
+                ui: UiDecl { name: "Limiter", category_key: "fxreg.cat.dynamics", keywords_key: "fxreg.kw.limiter", ..UiDecl::default() },
             },
         }
     }
@@ -501,7 +501,7 @@ impl Compressor {
                     RowDecl { store: Store::Ref(RowRole::SidechainKey), omit_default: true },
                 ],
                 decl: Decl { state: true, ..Decl::default() },
-                ui: UiDecl { name: "Compressor", category_key: "fxreg.cat.dynamics", keywords_key: "fxreg.kw.compressor" },
+                ui: UiDecl { name: "Compressor", category_key: "fxreg.cat.dynamics", keywords_key: "fxreg.kw.compressor", ..UiDecl::default() },
             },
         }
     }

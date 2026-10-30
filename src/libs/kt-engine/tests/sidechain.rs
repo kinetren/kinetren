@@ -317,7 +317,7 @@ impl KeyEcho {
                 passport: vec![ParamSpec::ref_row("key")],
                 rows: vec![RowDecl { store: Store::Ref(RowRole::SidechainKey), omit_default: true }],
                 decl: Decl { state: true, ..Decl::default() },
-                ui: UiDecl { name: "Key echo", category_key: "fxreg.cat.dynamics", keywords_key: "fxreg.kw.compressor" },
+                ui: UiDecl { name: "Key echo", category_key: "fxreg.cat.dynamics", keywords_key: "fxreg.kw.compressor", ..UiDecl::default() },
             },
         }
     }

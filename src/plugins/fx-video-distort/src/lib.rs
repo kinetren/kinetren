@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 mod pan3d;
 
-use kt_plugin_api::{
+use kt_plugin_api::{UiVariant, 
     geo, Decl, GeoCtx, GeoKernel, GeoStep, Gpu, Lone, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin,
     RowDecl, RowRole, Store, UiDecl, VideoClass, WarpNorm,
 };
@@ -83,7 +83,7 @@ impl Warp {
             vec![smooth("k1", -1.0, 1.0, 0.35, 0.01, ParamUnit::Norm), smooth("k2", -1.0, 1.0, 0.0, 0.01, ParamUnit::Norm)],
             vec![row(Store::F32, false), row(Store::F32, true)],
             include_str!("lens_distort.wgsl"),
-            UiDecl { name: "Lens Distort", category_key: "fxreg.cat.distort", keywords_key: "fxreg.kw.lens_distort" },
+            UiDecl { name: "Lens Distort", category_key: "fxreg.cat.distort", keywords_key: "fxreg.kw.lens_distort", variants: LENS_DISTORT_VARIANTS, ..UiDecl::default() },
         )
     }
 
@@ -94,7 +94,7 @@ impl Warp {
             vec![smooth("angle", -720.0, 720.0, 120.0, 1.0, ParamUnit::Deg), smooth("radius", 0.1, 1.5, 0.8, 0.01, ParamUnit::Norm)],
             vec![row(Store::F32, false), row(Store::F32, false)],
             include_str!("twirl.wgsl"),
-            UiDecl { name: "Twirl", category_key: "fxreg.cat.distort", keywords_key: "fxreg.kw.twirl" },
+            UiDecl { name: "Twirl", category_key: "fxreg.cat.distort", keywords_key: "fxreg.kw.twirl", variants: TWIRL_VARIANTS, ..UiDecl::default() },
         )
     }
 
@@ -109,7 +109,7 @@ impl Warp {
             ],
             vec![row(Store::F32, false), row(Store::F32, false), row(Store::F32, true)],
             include_str!("ripple.wgsl"),
-            UiDecl { name: "Ripple", category_key: "fxreg.cat.distort", keywords_key: "fxreg.kw.ripple" },
+            UiDecl { name: "Ripple", category_key: "fxreg.cat.distort", keywords_key: "fxreg.kw.ripple", variants: RIPPLE_VARIANTS, ..UiDecl::default() },
         )
     }
 
@@ -120,7 +120,7 @@ impl Warp {
             vec![smooth("segments", 2.0, 32.0, 6.0, 1.0, ParamUnit::Count), smooth("angle", -180.0, 180.0, 0.0, 1.0, ParamUnit::Deg)],
             vec![row(Store::U32, false), row(Store::F32, true)],
             include_str!("kaleidoscope.wgsl"),
-            UiDecl { name: "Kaleidoscope", category_key: "fxreg.cat.distort", keywords_key: "fxreg.kw.kaleidoscope" },
+            UiDecl { name: "Kaleidoscope", category_key: "fxreg.cat.distort", keywords_key: "fxreg.kw.kaleidoscope", variants: KALEIDOSCOPE_VARIANTS, ..UiDecl::default() },
         )
     }
 
@@ -131,7 +131,7 @@ impl Warp {
             vec![smooth("curvature", 0.0, 1.0, 0.5, 0.01, ParamUnit::Norm)],
             vec![row(Store::F32, false)],
             include_str!("cylinder3d.wgsl"),
-            UiDecl { name: "Cylinder 3D", category_key: "fxreg.cat.three_d", keywords_key: "fxreg.kw.cylinder3d" },
+            UiDecl { name: "Cylinder 3D", category_key: "fxreg.cat.three_d", keywords_key: "fxreg.kw.cylinder3d", variants: CYLINDER3D_VARIANTS, ..UiDecl::default() },
         )
     }
 }
@@ -258,7 +258,7 @@ impl CornerPin {
                 passport: names.iter().zip(defaults).map(|(n, d)| c(*n, d)).collect(),
                 rows: vec![row(Store::F64, true); 8],
                 decl: Decl { video_class: Some(VideoClass::Geometry), gpu: Gpu::Primitives, ..Decl::default() },
-                ui: UiDecl { name: "Corner Pin", category_key: "fxreg.cat.geometry", keywords_key: "fxreg.kw.corner_pin" },
+                ui: UiDecl { name: "Corner Pin", category_key: "fxreg.cat.geometry", keywords_key: "fxreg.kw.corner_pin", variants: CORNER_PIN_VARIANTS, ..UiDecl::default() },
             },
         }
     }
@@ -335,7 +335,7 @@ impl Pan3d {
                     r
                 },
                 decl: Decl { video_class: Some(VideoClass::Geometry), gpu: Gpu::Primitives, ..Decl::default() },
-                ui: UiDecl { name: "Pan 3D", category_key: "fxreg.cat.three_d", keywords_key: "fxreg.kw.pan3d" },
+                ui: UiDecl { name: "Pan 3D", category_key: "fxreg.cat.three_d", keywords_key: "fxreg.kw.pan3d", variants: PAN3D_VARIANTS, ..UiDecl::default() },
             },
         }
     }
@@ -399,7 +399,7 @@ impl HostStep {
                 passport: vec![ParamSpec::flag_row("horizontal", true), ParamSpec::flag_row("vertical", false)],
                 rows: vec![row(Store::Bool, false), row(Store::Bool, false)],
                 decl: Decl { video_class: Some(VideoClass::Geometry), gpu: Gpu::Primitives, ..Decl::default() },
-                ui: UiDecl { name: "Mirror", category_key: "fxreg.cat.geometry", keywords_key: "fxreg.kw.mirror" },
+                ui: UiDecl { name: "Mirror", category_key: "fxreg.cat.geometry", keywords_key: "fxreg.kw.mirror", variants: MIRROR_VARIANTS, ..UiDecl::default() },
             },
             kind: HostKind::Mirror,
         }
@@ -415,7 +415,7 @@ impl HostStep {
                 passport: vec![count("cols"), count("rows"), ParamSpec::flag_row("center", true)],
                 rows: vec![row(Store::U32, false), row(Store::U32, false), row(Store::Bool, false)],
                 decl: Decl { video_class: Some(VideoClass::Geometry), gpu: Gpu::Primitives, ..Decl::default() },
-                ui: UiDecl { name: "EventGrid", category_key: "fxreg.cat.style", keywords_key: "fxreg.kw.eventgrid" },
+                ui: UiDecl { name: "EventGrid", category_key: "fxreg.cat.style", keywords_key: "fxreg.kw.eventgrid", variants: EVENT_GRID_VARIANTS, template: &[("cols", 2.0), ("rows", 2.0)] },
             },
             kind: HostKind::Grid,
         }
@@ -493,3 +493,71 @@ fn corner_pin_inverse(c: [(f64, f64); 4], out_w: u32, out_h: u32) -> [[f64; 3]; 
         None => transparent,
     }
 }
+
+// ---------------------------------------------------------------------------
+// picker variants (D7: the manifest names them, kt-app draws them)
+// ---------------------------------------------------------------------------
+
+/// The picker's variants of Mirror (R.54), moved from kt-app's table (plugin-api-stage1, 4.2).
+const MIRROR_VARIANTS: &[UiVariant] = &[
+    UiVariant { name_key: "fxreg.var.vertical", sets: &[("horizontal", 0.0), ("vertical", 1.0)] },
+    UiVariant { name_key: "fxreg.var.both", sets: &[("horizontal", 1.0), ("vertical", 1.0)] },
+];
+
+/// The picker's variants of Pan 3D (R.54), moved from kt-app's table (plugin-api-stage1, 4.2).
+const PAN3D_VARIANTS: &[UiVariant] = &[
+    UiVariant { name_key: "fxreg.var.tilt", sets: &[("rot_x", 15.0)] },
+    UiVariant { name_key: "fxreg.var.turn", sets: &[("rot_y", -20.0)] },
+    UiVariant { name_key: "fxreg.var.depth", sets: &[("pos_z", -200.0), ("rot_y", 10.0), ("scale", 0.85)] },
+];
+
+/// The picker's variants of EventGrid (R.54), moved from kt-app's table (plugin-api-stage1, 4.2).
+const EVENT_GRID_VARIANTS: &[UiVariant] = &[
+    UiVariant { name_key: "fxreg.var.grid9", sets: &[("cols", 3.0), ("rows", 3.0)] },
+    UiVariant { name_key: "fxreg.var.grid16", sets: &[("cols", 4.0), ("rows", 4.0)] },
+    UiVariant { name_key: "fxreg.var.strip", sets: &[("cols", 4.0), ("rows", 1.0)] },
+];
+
+/// The picker's variants of Corner Pin (R.54), moved from kt-app's table (plugin-api-stage1, 4.2).
+const CORNER_PIN_VARIANTS: &[UiVariant] = &[
+    // trapezoid: the top edge is narrowed and lowered
+    UiVariant { name_key: "fxreg.var.perspective", sets: &[("x0", 0.12), ("y0", 0.06), ("x1", 0.88), ("y1", 0.06)] },
+    // the right edge is shorter than the left
+    UiVariant { name_key: "fxreg.var.tilt", sets: &[("y1", 0.14), ("y3", 0.86)] },
+    UiVariant { name_key: "fxreg.var.skew", sets: &[("x0", 0.18), ("x3", 0.82)] },
+];
+
+/// The picker's variants of Lens Distort (R.54), moved from kt-app's table (plugin-api-stage1, 4.2).
+const LENS_DISTORT_VARIANTS: &[UiVariant] = &[
+    UiVariant { name_key: "fxreg.var.barrel", sets: &[("k1", 0.6)] },
+    UiVariant { name_key: "fxreg.var.pincushion", sets: &[("k1", -0.45)] },
+    UiVariant { name_key: "fxreg.var.fisheye", sets: &[("k1", 0.9), ("k2", 0.3)] },
+];
+
+/// The picker's variants of Twirl (R.54), moved from kt-app's table (plugin-api-stage1, 4.2).
+const TWIRL_VARIANTS: &[UiVariant] = &[
+    UiVariant { name_key: "fxreg.var.subtle", sets: &[("angle", 45.0)] },
+    UiVariant { name_key: "fxreg.var.strong", sets: &[("angle", 360.0)] },
+    UiVariant { name_key: "fxreg.var.reverse", sets: &[("angle", -240.0)] },
+];
+
+/// The picker's variants of Ripple (R.54), moved from kt-app's table (plugin-api-stage1, 4.2).
+const RIPPLE_VARIANTS: &[UiVariant] = &[
+    UiVariant { name_key: "fxreg.var.water", sets: &[("amount", 0.05), ("freq", 18.0)] },
+    UiVariant { name_key: "fxreg.var.rings", sets: &[("amount", 0.15), ("freq", 6.0)] },
+    UiVariant { name_key: "fxreg.var.strong", sets: &[("amount", 0.3), ("freq", 12.0)] },
+];
+
+/// The picker's variants of Kaleidoscope (R.54), moved from kt-app's table (plugin-api-stage1, 4.2).
+const KALEIDOSCOPE_VARIANTS: &[UiVariant] = &[
+    UiVariant { name_key: "fxreg.var.mirror", sets: &[("segments", 2.0)] },
+    UiVariant { name_key: "fxreg.var.star", sets: &[("segments", 10.0)] },
+    UiVariant { name_key: "fxreg.var.mandala", sets: &[("segments", 20.0), ("angle", 15.0)] },
+];
+
+/// The picker's variants of Cylinder 3D (R.54), moved from kt-app's table (plugin-api-stage1, 4.2).
+const CYLINDER3D_VARIANTS: &[UiVariant] = &[
+    UiVariant { name_key: "fxreg.var.subtle", sets: &[("curvature", 0.2)] },
+    UiVariant { name_key: "fxreg.var.strong", sets: &[("curvature", 0.85)] },
+    UiVariant { name_key: "fxreg.var.tube", sets: &[("curvature", 1.0)] },
+];
