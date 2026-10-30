@@ -274,6 +274,36 @@ picker's ROW ORDER is the one the owner knew before the kinds moved: `VIDEO_ORDE
 a plugin, a third-party plugin comes after (t1018). Without it every moved kind had gone to the end
 of the video list, and the gallery's headings (grouped by first appearance) had moved with them.
 
+### D12. The transition contract (stage 5)
+
+A transition kind is a plugin of `Media::Transition` with a `TransKernel` (in
+`kt_plugin_api::trans`, next to the helpers every kernel shares):
+
+- `pack(values) -> [f32; 8]` — the former `TransMix::of` arm: the passport's values become the eight
+  numbers both executors read (the GPU's `f0`/`f1`), rounded to f32 ONCE on the CPU.
+- `pixel(a, b, u, v, k, p, cx, ext) -> [f32; 4]` — the former `kernel()` arm, the ONE CPU text;
+  `a`/`b` are the sides (`trans::Img`: a frame or an empty side of a solo fade), `cx` the canvas
+  (aspect, width, height in pixels).
+- `ext(p, k) -> [f32; 16]` — the volumetric kinds' panels (`trans_ext`: the f64 homographies rounded
+  once); the default is none.
+- `symmetric()` — the kind is its own inversion (the window hides the checkbox).
+- Its WGSL is `fn trans_<id>(uv: vec2<f32>, k: f32) -> vec4<f32>`, written over composite.wgsl's
+  helpers (`samp`, `front_mask`, `t_hash`, `value_noise`, `box9`, `over_straight`, `P`, `EXT`);
+  kt-gpu pastes it and assembles `if (mode == N) { return trans_<id>(uv, k); }` — N is the kind's
+  index among the registry's transition plugins (`plugin_transitions`), never hashed into a key
+  (`plan_key` carries the id).
+
+The crossfade stays a CORE kind: it is the integer `dissolve_into`, GOLDEN_VIDEO's, not a kernel.
+The helpers (`Img`, `mix4`, `smoothstep`, `front_mask`, `hash01`, `value_noise`, `box9`,
+`rot_sample`, `axis_sample`, `over_straight`, `face_h_inv`, `inv3`) move from kt-engine's
+`transitions.rs` into the API verbatim, so a kernel and the core share one text. The non-numeric
+fields become passport rows with their stores: `Dir` a `Choice(["left","right","up","down"])`,
+`IrisShape` a `Choice`, the flags `Bool`, the colours the existing `Rgb8` numbers — the file text is
+the variant's (t973, against a frozen copy). Transition names are TRANSLATED (unlike an effect's
+industry term): `UiDecl.name_key` names the catalog key the picker shows, `name` stays the English
+fallback. The guards: t1019 (the pixels frozen before any move), t224 (CPU against GPU per mode, both
+axes and flags), t459 (the closed form on ramps), t223 (completeness by the registry), t222 (OTIO).
+
 ### D8. The closed built-in list is the only input of the references
 `BUILTIN_IDS` in kt-plugins-builtin is a `const` slice in a fixed order. t328 (`GOLDEN_ALL`), t329,
 t322, t223/t224 and the generator goldens iterate it (plus the core-owned kinds). The test door
