@@ -145,3 +145,89 @@ fn t973c_a_moved_audio_kind_keeps_its_sound() {
     }
     assert!(problems.is_empty(), "a moved audio kind changed its sound: {problems:#?}");
 }
+
+/// The time-warp machinery of one curved, signed Slowed+Reverb, as numbers: the source windows
+/// and the mirror axis (kt-fx), the frame map and its span (kt-model `clip_warp`), the A/V pair's
+/// sync (`sync_warp_to_link_group` through `SetFx`/`SetFxAuto`) and `clip_slice`'s anchor and keys.
+/// Every number is read through names (`get_param`, curves), never through the slot's type, so
+/// the same text measures the variant and the plugin.
+fn warp_digest() -> Vec<String> {
+    const SEC: i64 = 90_000;
+    let slowed = FxInstance::slowed_reverb(0.7, 0.3, 80.0);
+    // a signed curve: slow, backward, fast (R.57) — on the material axis from source_in
+    let src_in = Tick(SEC);
+    let rate = ParamCurve {
+        param: "rate".into(),
+        keys: AutoKey::linear(vec![
+            AutoKey::at(src_in, 0.5),
+            AutoKey::at(Tick(src_in.0 + 2 * SEC), -0.4),
+            AutoKey::at(Tick(src_in.0 + 4 * SEC), 1.2),
+        ]),
+        source: Default::default(),
+    };
+    let mut out = Vec::new();
+    for reversed in [false, true] {
+        let mut p = project(vec![slowed.clone()], vec![vec![rate.clone()]], reversed, PitchEngine::Wsola);
+        let c = &mut p.clips[0];
+        c.source_in = src_in;
+        c.duration = Tick(4 * SEC);
+        let c = c.clone();
+        // the frame map (kt-model) — the video side of the warp
+        let w = kt_model::clip_warp(&c).expect("a warped clip has a map");
+        out.push(format!("rev={reversed} map used={} span={:?} len={}", w.used(), w.span(), w.span_len()));
+        for i in 0..=8 {
+            let tl = c.duration.0 * i / 8;
+            out.push(format!("  off({tl})={}", w.material_off(c.duration, reversed, tl)));
+        }
+        // the source windows and the mirror axis (kt-fx) — the audio side
+        let len = c.duration.to_audio_frames();
+        let auto = kt_model::AutoProfiles::from_curves_rev(&c.fx_auto, c.source_in.to_audio_frames(), len, reversed);
+        out.push(format!("  used={} avg={:.12}", kt_fx::chain_source_used(&c.fx, &auto, len), kt_model::chain_avg_rate(&c.fx, &auto)));
+        for (a, b) in [(0, 4800), (48_000, 60_000), (96_000, 120_000), (len - 4800, len)] {
+            out.push(format!("  win({a}..{b})={:?}", kt_fx::chain_source_window_ext(&c.fx, &auto, len, 0..len, a..b)));
+        }
+        // clip_slice's anchor and the keys it moves (a cut at 1.5 s)
+        let piece = kt_model::clip_slice(&c, kt_time::TickRange::new(Tick(c.start.0 + SEC * 3 / 2), Tick(c.start.0 + c.duration.0)), ClipId(9));
+        let keys: Vec<(i64, f64)> = piece.fx_auto[0].iter().find(|cu| cu.param == "rate").unwrap().keys.iter().map(|k| (k.t.0, k.v)).collect();
+        out.push(format!("  slice src_in={} keys={keys:?}", piece.source_in.0));
+    }
+    // the A/V pair: a warp set on the audio half reaches the video half (speed and its curve only)
+    let mut p = project(vec![], vec![], false, PitchEngine::Wsola);
+    let mut v = p.clips[0].clone();
+    v.id = ClipId(2);
+    v.kind = ClipKind::Video;
+    p.clips.push(v);
+    p.validate().unwrap();
+    let mut m = TimelineModel::new(p);
+    m.apply(Command::LinkClips { ids: vec![ClipId(1), ClipId(2)], group: GroupId(1) }).unwrap();
+    m.apply(Command::SetFx { id: ClipId(1), fx: vec![FxInstance::slowed_reverb(0.6, 0.4, 70.0)] }).unwrap();
+    m.apply(Command::SetFxAuto { id: ClipId(1), auto: vec![vec![rate.clone()]] }).unwrap();
+    let video = m.project().clips.iter().find(|c| c.id == ClipId(2)).unwrap();
+    let keys: Vec<(i64, f64)> = video.fx_auto.first().and_then(|cs| cs.iter().find(|cu| cu.param == "rate")).map(|cu| cu.keys.iter().map(|k| (k.t.0, k.v)).collect()).unwrap_or_default();
+    out.push(format!(
+        "pair: video slots={} rate={:?} mix={:?} keys={keys:?}",
+        video.fx.len(),
+        video.fx.first().and_then(|f| f.get_param("rate")),
+        video.fx.first().and_then(|f| f.get_param("mix")),
+    ));
+    out
+}
+
+/// xxh3 of `warp_digest` — printed on the variant (before 3b.2) with `KT_PRINT_GOLDEN=1`.
+const WARP_GOLDEN: u64 = 0x2258eee3ce5a93f0;
+
+/// t996 (plugin-api-stage1, D11.5; capability `plugins`): a declared time warp drives the source
+/// the way the variant did — the source windows, the mirror axis, the frame map, the A/V pair's
+/// sync and `clip_slice`'s anchor equal the variant's numbers (`WARP_GOLDEN`, printed before the
+/// move); the sound is t973c's slowed_reverb row and GOLDEN_AUDIO (t11).
+#[test]
+fn t996_a_declared_time_warp_drives_the_source_like_the_variant() {
+    kt_plugins_builtin::install();
+    let d = warp_digest();
+    let h = xxhash_rust::xxh3::xxh3_64(d.join("\n").as_bytes());
+    if std::env::var("KT_PRINT_GOLDEN").is_ok() {
+        println!("{}\nconst WARP_GOLDEN: u64 = 0x{h:016x};", d.join("\n"));
+        return;
+    }
+    assert_eq!(h, WARP_GOLDEN, "the warp machinery moved:\n{}", d.join("\n"));
+}
