@@ -453,7 +453,9 @@ everything that is edited on the event, not in a separate window.
 - The transition kind is chosen in TWO equal ways (item 17 of R.28):
   the submenu "Transition with next/previous" in the event's context menu, and
   the properties window (a double click on the transition window on the lane, or the item
-  "Transition properties…"). Both take the list from `TransitionKind::ALL`.
+  "Transition properties…"). Both take the list from `TransitionKind::all()`; a plugin kind's
+  category and name come from its manifest, its direction, iris shape and flag rows are drawn by
+  the window's own arrows, buttons and checkboxes (they are not grid rows).
 - The kind's parameters are drawn by THE SAME `widgets::params_grid` (through the trait
   `kt_model::HasParams`) — a transition has no form of its own and must not have one.
   Non-numeric things (direction, iris shape, colour) are handled by their own controls.

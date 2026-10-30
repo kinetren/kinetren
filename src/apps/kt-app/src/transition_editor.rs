@@ -31,14 +31,6 @@ pub fn kind_category(kind: &TransitionKind) -> Key {
         TransitionKind::Crossfade | TransitionKind::Missing(_) => k::trn::cat::BASIC,
         // a plugin kind's category is its manifest's (plugin-api-stage1, D12)
         TransitionKind::Plugin(p) => crate::i18n::key_by_name(p.manifest().ui.category_key).unwrap_or(k::trn::cat::BASIC),
-        TransitionKind::Swap { .. } => k::trn::cat::MOTION,
-        // volumetric (R.51): panels and cylinders
-        TransitionKind::Flip { .. }
-        | TransitionKind::Cube { .. }
-        | TransitionKind::Door { .. }
-        | TransitionKind::PagePeel { .. }
-        | TransitionKind::PageRoll { .. } => k::trn::cat::VOLUME,
-        _ => k::trn::cat::STYLE,
     }
 }
 
@@ -51,12 +43,6 @@ pub fn kind_name(kind: &TransitionKind) -> &'static str {
             let ui = &p.manifest().ui;
             crate::i18n::key_by_name(ui.name_key).map_or(ui.name, tr)
         }
-        TransitionKind::Swap { .. } => tr(k::trn::kind::SWAP),
-        TransitionKind::Flip { .. } => tr(k::trn::kind::FLIP),
-        TransitionKind::Cube { .. } => tr(k::trn::kind::CUBE),
-        TransitionKind::Door { .. } => tr(k::trn::kind::DOOR),
-        TransitionKind::PagePeel { .. } => tr(k::trn::kind::PAGE_PEEL),
-        TransitionKind::PageRoll { .. } => tr(k::trn::kind::PAGE_ROLL),
     }
 }
 
@@ -66,17 +52,6 @@ fn curve_name(c: AudioCurve) -> &'static str {
         AudioCurve::Linear => tr(k::trn::curve::LINEAR),
         AudioCurve::SCurve => tr(k::trn::curve::S_CURVE),
         AudioCurve::Exponential => tr(k::trn::curve::EXPONENTIAL),
-    }
-}
-
-/// The direction of the kind, if it has one: with its own control (arrows), not a
-/// number — a direction is not a number, and it is not expressed by the parameter spec.
-fn dir_of(kind: &mut TransitionKind) -> Option<&mut kt_model::Dir> {
-    match kind {
-        TransitionKind::Cube { dir, .. }
-        | TransitionKind::PagePeel { dir, .. }
-        | TransitionKind::PageRoll { dir, .. } => Some(dir),
-        _ => None,
     }
 }
 
@@ -186,23 +161,7 @@ impl KtApp {
                     } else {
                         &[]
                     };
-                    if let Some(dir) = dir_of(&mut t.kind) {
-                        ui.horizontal(|ui| {
-                            ui.label(tr(k::trn::DIR));
-                            for (d, label) in [
-                                (kt_model::Dir::Left, tr(k::trn::dir::LEFT)),
-                                (kt_model::Dir::Right, tr(k::trn::dir::RIGHT)),
-                                (kt_model::Dir::Up, tr(k::trn::dir::UP)),
-                                (kt_model::Dir::Down, tr(k::trn::dir::DOWN)),
-                            ] {
-                                if ui.selectable_label(*dir == d, label).clicked() && *dir != d {
-                                    *dir = d;
-                                    changed = true;
-                                }
-                            }
-                        });
-                    }
-                    // a plugin kind's direction row (D12): the same arrows, the row's index
+                    // the kind's direction row (D12): arrows, not a number — the row's index
                     // (left, right, up, down — the file keeps the former `Dir` text)
                     if let TransitionKind::Plugin(p) = &mut t.kind
                         && let Some(cur) = p.get("dir")
@@ -261,14 +220,6 @@ impl KtApp {
                                 }
                             }
                         }
-                    }
-                    // the axis for the R.51 symbiotic shifts and the panels
-                    if let TransitionKind::Swap { vertical, .. }
-                    | TransitionKind::Flip { vertical, .. }
-                    | TransitionKind::Door { vertical, .. } = &mut t.kind
-                        && ui.checkbox(vertical, tr(k::trn::VERTICAL_AXIS)).changed()
-                    {
-                        changed = true;
                     }
                     // transition inversion (R.51, item 398) — a property of the EVENT:
                     // the gesture is played backwards. For symmetric kinds

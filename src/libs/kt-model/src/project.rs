@@ -80,66 +80,9 @@ pub enum TransitionKind {
     Crossfade,
     // wipe, iris, clock, barn, luma, push, slide, zoom, spin, flash, dip, blinds, checker, blocks,
     // spiral, split, squeeze and stretch (src/plugins/transitions-basic), whip, blur_dissolve,
-    // pixelate, glitch, shake, film_burn, light_leaks and zoom_blur (src/plugins/transitions-styled)
-    // are plugins since plugin-api-stage1 (D12).
-    // ---- shift (symbiosis: BOTH frames move) ----------------------------
-    /// Exchange: the frames swap places along an arc, the order of the sides
-    /// switches in the middle (2.5D without depth).
-    Swap {
-        #[serde(default)]
-        vertical: bool,
-        #[serde(default = "default_swap_depth")]
-        depth: f64,
-    },
-    // ---- volumetric (R.51, item 401): panels and cylinders, occlusion
-    // analytic — there is no depth buffer in the composite and none is needed -------
-    /// Flip: the panel turns around its middle, on the back
-    /// the reverse side is visible with the incoming frame.
-    Flip {
-        #[serde(default)]
-        vertical: bool,
-        #[serde(default = "default_persp")]
-        persp: f64,
-        #[serde(default = "default_shade")]
-        shade: f64,
-    },
-    /// Cube: the outgoing and the incoming — two faces, the cube turns.
-    Cube {
-        #[serde(default)]
-        dir: Dir,
-        #[serde(default = "default_persp")]
-        persp: f64,
-        #[serde(default = "default_shade")]
-        shade: f64,
-    },
-    /// Doors: two leaves of the outgoing one swing open inward, behind them the incoming one.
-    Door {
-        #[serde(default)]
-        vertical: bool,
-        #[serde(default = "default_persp")]
-        persp: f64,
-        #[serde(default = "default_shade")]
-        shade: f64,
-    },
-    /// Page turn: the sheet wraps back around a cylinder, its back-side tail is visible;
-    /// under the sheet the incoming one opens.
-    PagePeel {
-        #[serde(default)]
-        dir: Dir,
-        #[serde(default = "default_curl")]
-        curl: f64,
-        #[serde(default = "default_shade")]
-        shadow: f64,
-    },
-    /// Scroll: the sheet winds onto a roll, the top coil is visible.
-    PageRoll {
-        #[serde(default)]
-        dir: Dir,
-        #[serde(default = "default_curl")]
-        curl: f64,
-        #[serde(default = "default_shade")]
-        shadow: f64,
-    },
+    // pixelate, glitch, shake, film_burn, light_leaks and zoom_blur (src/plugins/transitions-styled),
+    // swap, flip, cube, door, page_peel and page_roll (src/plugins/transitions-volume) are plugins
+    // since plugin-api-stage1 (D12).
     /// A plugin-backed kind (plugin-api-stage1, D12): `kind` is its id, the rows follow its
     /// passport. Untagged and LAST: a `kind` no variant above names is tried here.
     #[serde(untagged)]
@@ -148,22 +91,6 @@ pub enum TransitionKind {
     /// crossfade (the engine's integer dissolve).
     #[serde(untagged)]
     Missing(crate::plugin_slot::MissingSlot),
-}
-
-fn default_swap_depth() -> f64 {
-    0.3
-}
-
-fn default_persp() -> f64 {
-    0.5
-}
-
-fn default_shade() -> f64 {
-    0.5
-}
-
-fn default_curl() -> f64 {
-    0.18
 }
 
 // The parameter passport lives in kt-plugin-api (plugin-api-stage1, D1); the names stay here.
@@ -240,16 +167,16 @@ impl TransitionKind {
         TransitionKind::builtin("split"),
         TransitionKind::builtin("squeeze"),
         TransitionKind::builtin("stretch"),
-        TransitionKind::Swap { vertical: false, depth: 0.3 },
+        TransitionKind::builtin("swap"),
         TransitionKind::builtin("shake"),
         TransitionKind::builtin("film_burn"),
         TransitionKind::builtin("light_leaks"),
         TransitionKind::builtin("zoom_blur"),
-        TransitionKind::Flip { vertical: false, persp: 0.5, shade: 0.5 },
-        TransitionKind::Cube { dir: Dir::Left, persp: 0.5, shade: 0.5 },
-        TransitionKind::Door { vertical: false, persp: 0.5, shade: 0.5 },
-        TransitionKind::PagePeel { dir: Dir::Left, curl: 0.18, shadow: 0.5 },
-        TransitionKind::PageRoll { dir: Dir::Left, curl: 0.18, shadow: 0.5 },
+        TransitionKind::builtin("flip"),
+        TransitionKind::builtin("cube"),
+        TransitionKind::builtin("door"),
+        TransitionKind::builtin("page_peel"),
+        TransitionKind::builtin("page_roll"),
         ])
     }
 
@@ -284,12 +211,6 @@ impl TransitionKind {
             TransitionKind::Crossfade => "crossfade",
             TransitionKind::Plugin(p) => p.tag(),
             TransitionKind::Missing(_) => "missing",
-            TransitionKind::Swap { .. } => "swap",
-            TransitionKind::Flip { .. } => "flip",
-            TransitionKind::Cube { .. } => "cube",
-            TransitionKind::Door { .. } => "door",
-            TransitionKind::PagePeel { .. } => "page_peel",
-            TransitionKind::PageRoll { .. } => "page_roll",
         }
     }
 
@@ -308,12 +229,6 @@ impl TransitionKind {
                 .get(&p.id)
                 .and_then(|pl| pl.trans())
                 .is_some_and(|k| k.symmetric()),
-            TransitionKind::Swap { .. }
-            | TransitionKind::Flip { .. }
-            | TransitionKind::Cube { .. }
-            | TransitionKind::Door { .. }
-            | TransitionKind::PagePeel { .. }
-            | TransitionKind::PageRoll { .. } => false,
         }
     }
 
@@ -322,7 +237,8 @@ impl TransitionKind {
     pub fn param_specs(&self) -> &'static [ParamSpec] {
         match self {
             TransitionKind::Plugin(p) => p.specs(),
-            _ => transition_specs(self),
+            // the crossfade and a missing kind have no rows
+            TransitionKind::Crossfade | TransitionKind::Missing(_) => &[],
         }
     }
 
@@ -334,15 +250,14 @@ impl TransitionKind {
         if let TransitionKind::Plugin(p) = self {
             return p.set(name, v);
         }
-        let Some(spec) = self.param_spec(name) else { return false };
-        transition_set_param(self, name, v.clamp(spec.min, spec.max))
+        false
     }
 
     pub fn get_param(&self, name: &str) -> Option<f64> {
-        if let TransitionKind::Plugin(p) = self {
-            return p.get(name);
+        match self {
+            TransitionKind::Plugin(p) => p.get(name),
+            TransitionKind::Crossfade | TransitionKind::Missing(_) => None,
         }
-        transition_get_param(self, name)
     }
 }
 
@@ -5346,32 +5261,6 @@ params_for_struct! { CameraParams {
     rot_y: f64, -1440.0, 1440.0, 0.0, 0.5, Deg, Smooth;
     rot_z: f64, -1440.0, 1440.0, 0.0, 0.5, Deg, Smooth;
     fov_deg: f64, 1.0, 179.0, 39.6, 0.5, Deg, Smooth;
-}}
-
-params_for! { TransitionKind, transition_specs, transition_set_param, transition_get_param, transition_set_idx, transition_get_idx, {
-    Swap {
-        depth: f64, 0.0, 1.0, 0.3, 0.01, Norm, Smooth;
-    },
-    Flip {
-        persp: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        shade: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-    },
-    Cube {
-        persp: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        shade: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-    },
-    Door {
-        persp: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        shade: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-    },
-    PagePeel {
-        curl: f64, 0.05, 0.45, 0.18, 0.01, Norm, Smooth;
-        shadow: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-    },
-    PageRoll {
-        curl: f64, 0.05, 0.45, 0.18, 0.01, Norm, Smooth;
-        shadow: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-    },
 }}
 
 /// Crop-frame mode for pan/zoom (v1: fit/fill/stretch).

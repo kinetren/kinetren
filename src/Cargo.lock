@@ -2279,6 +2279,7 @@ dependencies = [
  "kt-plugin-api",
  "transitions-basic",
  "transitions-styled",
+ "transitions-volume",
 ]
 
 [[package]]
@@ -4214,6 +4215,13 @@ dependencies = [
 
 [[package]]
 name = "transitions-styled"
+version = "0.1.0"
+dependencies = [
+ "kt-plugin-api",
+]
+
+[[package]]
+name = "transitions-volume"
 version = "0.1.0"
 dependencies = [
  "kt-plugin-api",

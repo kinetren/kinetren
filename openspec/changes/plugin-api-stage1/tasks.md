@@ -280,8 +280,8 @@ once (English message, first line = the stage and what was done).
     `transitions-basic`; t1019's wipe row, t224, t459, t973 frozen form; the editor and OTIO by slot
 - [x] 5.1b The rest of `transitions-basic` (iris clock barn luma push slide dip flash zoom spin …)
 - [x] 5.1c `transitions-styled` (whip blur_dissolve pixelate glitch film_burn light_leaks zoom_blur shake …)
-- [ ] 5.1d `transitions-volume` (flip cube door page_peel page_roll swap) with `ext`
-- [ ] 5.1 Move the 33 kinds into `transitions-basic`, `transitions-styled`, `transitions-volume`; the composite's `trans` dispatch assembled from the registry; `put_mix` hashes the id. Verify t223, t224, t459, t468, t222 green and the transition window form (t780); t973 extended; commit stage 5
+- [x] 5.1d `transitions-volume` (flip cube door page_peel page_roll swap) with `ext`
+- [x] 5.1 Move the 33 kinds into `transitions-basic`, `transitions-styled`, `transitions-volume`; the composite's `trans` dispatch assembled from the registry; `put_mix` hashes the id. Verify t223, t224, t459, t468, t222 green and the transition window form (t780); t973 extended; commit stage 5
 
 ## 6. Generators
 

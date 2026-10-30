@@ -14,12 +14,14 @@ of a type means changing the format.
 
 ## Transitions (R.24, item 135; kinds — R.33 items 222-223)
 
-- **A kind — `TransitionKind`, built like `FxInstance`**: a tag + parameter fields,
-  the specs through THE SAME macro `params_for!`. The registry `TransitionKind::ALL` is
-  the only list of kinds (the UI menu and the completeness of the specs in t223 go by it); a new
-  kind is added AT THE END and MUST get into both it and the list of cases of the
-  GPU conformance t224. `Crossfade` is the default and the former rendering path
-  (GOLDEN does not move).
+- **A kind — `TransitionKind`: the crossfade, or a plugin slot** (plugin-api-stage1, D12). Every
+  kind but the crossfade lives in a family crate `src/plugins/transitions-{basic,styled,volume}`:
+  its passport lists the rows in the former variant's field order (the file text is unchanged —
+  t973), its kernel is `kt_plugin_api::TransKernel`. `TransitionKind::all()` is the only list of
+  kinds (the UI menu and the completeness of the specs in t223 go by it); a kind stands at its
+  former place through `TransitionKind::builtin(id)`, and a new one MUST get into the cases of the
+  GPU conformance t224. A kind this build lacks reads as `Missing` and plays as the crossfade.
+  `Crossfade` is the default and the former rendering path (GOLDEN does not move).
 - `TransitionEvent.audio` — the curve of the audio crossfade (`AudioCurve`); the sound
   is crossfaded ALWAYS, stylized audio transitions deliberately do not exist
   (the user's decision of R.33). The equal-power default is not serialized.
@@ -382,7 +384,7 @@ of the velocity envelope of Vegas). It follows that there are TWO AXES, and they
   In the file — `overlap_transitions` of the envelope of ITS OWN reel
   (a pair from different Tracks as a child of a sequential track is not expressible),
   the id is assigned on reading. Inversion/overlap/new kinds bump v7.
-- There are 33 kinds (t223; the anchor "16" was removed by the owner's decision, R.51); new ones go AT THE END of ALL and into the cases of t224 (both axes, both flags).
+- There are 33 kinds (t223; the anchor "16" was removed by the owner's decision, R.51); new ones go AT THE END of `all()` and into the cases of t224 (both axes, both flags).
 
 ## Morpher layer: CUT or SUPPRESS (R.55, item 437)
 

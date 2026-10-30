@@ -2212,9 +2212,17 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
     /// Transition parameters go INTO THE KEY: without them ReadbackCache would return a frame of
     /// another transition kind (R.33 S4). The ext scalars of volumetric kinds (R.51,
     /// `trans_ext`) are NOT included here and must not be: this is a deterministic
-    /// function of the already-hashed (mode, p, k), so there is nothing “missing” here.
+    /// function of the already-hashed (kind, p, k), so there is nothing “missing” here. A plugin
+    /// kind is hashed by its id, not by its mode: the mode is a function of the registry's order (D12).
     fn put_mix(h: &mut Xxh3, m: &TransMix) {
-        h.update(&m.mode.to_le_bytes());
+        match kt_engine::transitions::plugin_id(m.mode) {
+            Some(id) => {
+                h.update(&[1u8]);
+                h.update(id.as_bytes());
+                h.update(&[0u8]);
+            }
+            None => h.update(&m.mode.to_le_bytes()),
+        }
         for v in m.p {
             h.update(&v.to_bits().to_le_bytes());
         }

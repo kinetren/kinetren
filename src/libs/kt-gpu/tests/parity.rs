@@ -15,7 +15,7 @@ use kt_cache::{BurstCache, CacheConfig, SourceId};
 use kt_engine::{FramePlan, LayerSrc, PlanLayer, VideoGpuExec, compose_plan_cpu};
 use kt_gpu::{FrameTol, assert_frames_close, test_engine};
 use kt_media::VideoFrame;
-use kt_model::{CamKeyframe, Dir, FxInstance, PanMode, TransitionKind};
+use kt_model::{CamKeyframe, FxInstance, PanMode, TransitionKind};
 use kt_time::Tick;
 
 const W: u32 = 64;
@@ -728,8 +728,8 @@ fn t224_transition_parity_gpu_vs_cpu() {
         kt_model::TransitionKind::plugin_with("squeeze", &[3.0]).unwrap(),
         kt_model::TransitionKind::plugin_with("stretch", &[0.0]).unwrap(),
         kt_model::TransitionKind::plugin_with("stretch", &[1.0]).unwrap(),
-        TransitionKind::Swap { vertical: false, depth: 0.3 },
-        TransitionKind::Swap { vertical: true, depth: 0.7 },
+        kt_model::TransitionKind::plugin_with("swap", &[0.0, 0.3]).unwrap(),
+        kt_model::TransitionKind::plugin_with("swap", &[1.0, 0.7]).unwrap(),
         kt_model::TransitionKind::plugin_with("shake", &[0.5, 12.0]).unwrap(),
         kt_model::TransitionKind::plugin_with("shake", &[1.0, 3.0]).unwrap(),
         kt_model::TransitionKind::plugin_with("film_burn", &[6.0, 0.2, 255.0, 120.0, 0.0]).unwrap(),
@@ -763,17 +763,17 @@ fn t224_transition_parity_gpu_vs_cpu() {
     // division: the GEOM tolerance, as for pan3d (a pixel on an edge may
     // flip over entirely)
     let hard: Vec<TransitionKind> = vec![
-        TransitionKind::Flip { vertical: false, persp: 0.5, shade: 0.5 },
-        TransitionKind::Flip { vertical: true, persp: 1.0, shade: 0.0 },
-        TransitionKind::Cube { dir: Dir::Left, persp: 0.5, shade: 0.5 },
-        TransitionKind::Cube { dir: Dir::Right, persp: 0.2, shade: 0.0 },
-        TransitionKind::Cube { dir: Dir::Up, persp: 0.8, shade: 0.3 },
-        TransitionKind::Door { vertical: false, persp: 0.5, shade: 0.5 },
-        TransitionKind::Door { vertical: true, persp: 0.9, shade: 0.2 },
-        TransitionKind::PagePeel { dir: Dir::Left, curl: 0.18, shadow: 0.5 },
-        TransitionKind::PagePeel { dir: Dir::Down, curl: 0.35, shadow: 1.0 },
-        TransitionKind::PageRoll { dir: Dir::Right, curl: 0.18, shadow: 0.5 },
-        TransitionKind::PageRoll { dir: Dir::Up, curl: 0.3, shadow: 0.0 },
+        kt_model::TransitionKind::plugin_with("flip", &[0.0, 0.5, 0.5]).unwrap(),
+        kt_model::TransitionKind::plugin_with("flip", &[1.0, 1.0, 0.0]).unwrap(),
+        kt_model::TransitionKind::plugin_with("cube", &[0.0, 0.5, 0.5]).unwrap(),
+        kt_model::TransitionKind::plugin_with("cube", &[1.0, 0.2, 0.0]).unwrap(),
+        kt_model::TransitionKind::plugin_with("cube", &[2.0, 0.8, 0.3]).unwrap(),
+        kt_model::TransitionKind::plugin_with("door", &[0.0, 0.5, 0.5]).unwrap(),
+        kt_model::TransitionKind::plugin_with("door", &[1.0, 0.9, 0.2]).unwrap(),
+        kt_model::TransitionKind::plugin_with("page_peel", &[0.0, 0.18, 0.5]).unwrap(),
+        kt_model::TransitionKind::plugin_with("page_peel", &[3.0, 0.35, 1.0]).unwrap(),
+        kt_model::TransitionKind::plugin_with("page_roll", &[1.0, 0.18, 0.5]).unwrap(),
+        kt_model::TransitionKind::plugin_with("page_roll", &[2.0, 0.3, 0.0]).unwrap(),
     ];
     for kind in &hard {
         let mix = kt_engine::TransMix::of(kind);

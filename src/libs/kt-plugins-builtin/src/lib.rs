@@ -15,6 +15,7 @@ pub const BUILTIN_IDS: &[&str] =
     "wipe", "iris", "clock", "barn", "luma", "push", "slide", "zoom", "spin", "flash", "dip", "blinds", "checker",
     "blocks", "spiral", "split", "squeeze", "stretch",
     "whip", "blur_dissolve", "pixelate", "glitch", "shake", "film_burn", "light_leaks", "zoom_blur",
+    "swap", "flip", "cube", "door", "page_peel", "page_roll",
 ];
 
 /// The registry of the built-in set; panics on a refusal or when the families do not give exactly
@@ -29,6 +30,7 @@ pub fn builtin() -> Registry {
         fx_video_distort::plugins(),
         transitions_basic::plugins(),
         transitions_styled::plugins(),
+        transitions_volume::plugins(),
     ];
     for p in families.into_iter().flatten() {
         let id = p.manifest().id.to_string();

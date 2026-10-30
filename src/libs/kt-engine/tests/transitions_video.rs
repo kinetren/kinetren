@@ -995,7 +995,7 @@ fn t467_new_kind_families_reach_picture() {
 
     // exchange: at the middle both sides are compressed — at the edges the VOID
     // (transparency) is visible; both pictures are in the frame with a depth shadow
-    let sw = render(TransitionKind::Swap { vertical: false, depth: 0.4 });
+    let sw = render(kt_model::TransitionKind::plugin_with("swap", &[0.0, 0.4]).unwrap());
     assert_eq!(px(&sw, 1, 1)[3], 0, "the corner is empty — the quads moved away and shrank");
     let has = |want: [u8; 4], shade: f32| {
         let dim = |c: [u8; 4]| {
@@ -1065,7 +1065,7 @@ fn t468_volume_kinds_reach_picture() {
 
     // flip: the start — almost entirely A, the middle — the panel edge-on (the frame
     // transparent at the edges), the end — almost entirely B
-    let f = TransitionKind::Flip { vertical: false, persp: 0.5, shade: 0.0 };
+    let f = kt_model::TransitionKind::plugin_with("flip", &[0.0, 0.5, 0.0]).unwrap();
     near(px(&render(f.clone(), t0), 32, 18), ca0, "flip@start: the centre — the frame leaving");
     let mid = render(f.clone(), tm);
     assert_eq!(px(&mid, 4, 18)[3], 0, "flip@middle: behind the edge of the panel is empty");
@@ -1073,14 +1073,14 @@ fn t468_volume_kinds_reach_picture() {
     near(px(&render(f, t1), 32, 18), cb1, "flip@end: the centre — the frame entering");
 
     // door: at the middle of the leaves, the edges show the darkened A, the center — B
-    let d = TransitionKind::Door { vertical: false, persp: 0.5, shade: 0.5 };
+    let d = kt_model::TransitionKind::plugin_with("door", &[0.0, 0.5, 0.5]).unwrap();
     let dm = render(d, tm);
     near(px(&dm, 32, 18), cb, "door@middle: in the opening the frame entering");
     let sh_door = 1.0 - 0.5 * (std::f32::consts::FRAC_PI_4 - 5e-4).sin();
     near(px(&dm, 2, 18), dim(ca, sh_door), "door@middle: the left leaf is darkened");
 
     // cube: the middle — on the left a darkened outgoing, on the right a darkened incoming
-    let c = TransitionKind::Cube { dir: Dir::Left, persp: 0.5, shade: 0.5 };
+    let c = kt_model::TransitionKind::plugin_with("cube", &[0.0, 0.5, 0.5]).unwrap();
     let cm = render(c, tm);
     let sh_cube = 1.0 - 0.5 * 0.5;
     near(px(&cm, 6, 18), dim(ca, sh_cube), "cube@middle: on the left the face of the leaving frame");
@@ -1088,13 +1088,13 @@ fn t468_volume_kinds_reach_picture() {
 
     // peel to the left: at the start of motion (on the right of the screen) — the reverse side of the sheet,
     // at the far edge — already the clean incoming
-    let p1 = TransitionKind::PagePeel { dir: Dir::Left, curl: 0.18, shadow: 0.5 };
+    let p1 = kt_model::TransitionKind::plugin_with("page_peel", &[0.0, 0.18, 0.5]).unwrap();
     let pm = render(p1, tm);
     near(px(&pm, 61, 18), cb, "peel@middle: the uncovered part — the entering frame without shadow");
     near(px(&pm, 3, 18), dim(ca, 1.0 - 0.5 * 0.35), "peel@middle: the reverse side of the leaf");
 
     // roll to the right: the tail of the sheet still lies untouched, the start — the incoming
-    let r1 = TransitionKind::PageRoll { dir: Dir::Right, curl: 0.18, shadow: 0.5 };
+    let r1 = kt_model::TransitionKind::plugin_with("page_roll", &[1.0, 0.18, 0.5]).unwrap();
     let rm = render(r1, tm);
     near(px(&rm, 2, 18), cb, "roll@middle: what has passed — the entering frame");
     near(px(&rm, 61, 18), ca, "roll@middle: the tail of the leaf still lies");

@@ -189,145 +189,9 @@ fn box9(which: u32, uv: vec2<f32>, r: vec2<f32>) -> vec4<f32> {
 
 fn trans(uv: vec2<f32>, k: f32) -> vec4<f32> {
     let mode = P.u1.z;
-    let p0 = P.f0;
-    let p1 = P.f1;
-    let od = out_dims();
-    let aspect = od.x / od.y;
-    let pi = 3.14159265;
-    // the plugin kinds' arms (plugin-api-stage1, D12), assembled from the registry by kt-gpu
+    // every kind but the crossfade is a plugin (plugin-api-stage1, D12): its arm, assembled from
+    // the registry by kt-gpu, calls its trans_<id>
     // @PLUGIN_TRANS_ARMS
-    if (mode == 23u) { // swap: 2.5D exchange, the order changes at the midpoint
-        let vert = p0.x > 0.5;
-        let wave = sin(pi * k);
-        let off = 0.3 * wave;
-        let scale = max(1.0 - p0.y * wave, 0.05);
-        let sa = swap_quad(0u, uv, vert, off, scale, wave);
-        let sb = swap_quad(1u, uv, vert, -off, scale, wave);
-        if (k < 0.5) { return over_straight(sa, sb); }
-        return over_straight(sb, sa);
-    }
-    if (mode == 28u) { // flip: a panel by the homography from ext (item 401)
-        let vert = p0.x > 0.5;
-        var sx = uv.x; var sy = uv.y;
-        if (vert) { sx = uv.y; sy = uv.x; }
-        let st = hpanel(0u, sx, sy);
-        if (st.z > 0.5 && st.x >= 0.0 && st.x <= 1.0 && st.y >= 0.0 && st.y <= 1.0) {
-            let front = ext_at(8u) >= 0.0;
-            var ms = st.x;
-            if (!front) { ms = 1.0 - st.x; }
-            var mu = ms; var mv = st.y;
-            if (vert) { mu = st.y; mv = ms; }
-            var which = 1u;
-            if (front) { which = 0u; }
-            let c = samp(which, vec2<f32>(mu, mv));
-            return vec4<f32>(c.rgb * ext_at(9u), c.a);
-        }
-        return vec4<f32>(0.0);
-    }
-    if (mode == 29u) { // cube: two faces, the order is fixed (B, then A)
-        let vert = abs(p0.y) > 0.5;
-        var sx = uv.x; var sy = uv.y;
-        if (vert) { sx = uv.y; sy = uv.x; }
-        let sh = 1.0 - p0.w * sin(pi * k) * 0.5;
-        let stb = hpanel(8u, sx, sy);
-        if (stb.z > 0.5 && stb.x >= 0.0 && stb.x <= 1.0 && stb.y >= 0.0 && stb.y <= 1.0) {
-            var mu = stb.x; var mv = stb.y;
-            if (vert) { mu = stb.y; mv = stb.x; }
-            let c = samp(1u, vec2<f32>(mu, mv));
-            return vec4<f32>(c.rgb * sh, c.a);
-        }
-        let sta = hpanel(0u, sx, sy);
-        if (sta.z > 0.5 && sta.x >= 0.0 && sta.x <= 1.0 && sta.y >= 0.0 && sta.y <= 1.0) {
-            var mu = sta.x; var mv = sta.y;
-            if (vert) { mu = sta.y; mv = sta.x; }
-            let c = samp(0u, vec2<f32>(mu, mv));
-            return vec4<f32>(c.rgb * sh, c.a);
-        }
-        return vec4<f32>(0.0);
-    }
-    if (mode == 30u) { // door: the leaf and its mirror, with the incoming one behind them
-        let vert = p0.x > 0.5;
-        var sx = uv.x; var sy = uv.y;
-        if (vert) { sx = uv.y; sy = uv.x; }
-        let sh = ext_at(8u);
-        let stl = hpanel(0u, sx, sy);
-        if (stl.z > 0.5 && stl.x >= 0.0 && stl.x <= 0.5 && stl.y >= 0.0 && stl.y <= 1.0) {
-            var mu = stl.x; var mv = stl.y;
-            if (vert) { mu = stl.y; mv = stl.x; }
-            let c = samp(0u, vec2<f32>(mu, mv));
-            return vec4<f32>(c.rgb * sh, c.a);
-        }
-        let str = hpanel(0u, 1.0 - sx, sy);
-        if (str.z > 0.5 && str.x >= 0.0 && str.x <= 0.5 && str.y >= 0.0 && str.y <= 1.0) {
-            let ms = 1.0 - str.x;
-            var mu = ms; var mv = str.y;
-            if (vert) { mu = str.y; mv = ms; }
-            let c = samp(0u, vec2<f32>(mu, mv));
-            return vec4<f32>(c.rgb * sh, c.a);
-        }
-        return samp(1u, uv);
-    }
-    if (mode == 31u) { // page peel: a cylindrical curl (item 401)
-        let r = max(p0.z, 0.01);
-        let shadow = p0.w;
-        let c = axis_c(uv, p0.xy);
-        let f = 1.0 - k * (1.0 + pi * r);
-        let back = 1.0 - shadow * 0.35;
-        let m_tail = 2.0 * f + pi * r - c;
-        if (c <= f && m_tail >= f + pi * r && m_tail <= 1.0) {
-            let s0 = axis_sample(0u, uv, p0.xy, m_tail);
-            return vec4<f32>(s0.rgb * back, s0.a);
-        }
-        let dc = c - f;
-        if (dc >= 0.0 && dc <= r) {
-            let th1 = atan2(dc, sqrt(max(r * r - dc * dc, 0.0)));
-            let th2 = pi - th1;
-            let m2 = f + r * th2;
-            if (m2 <= 1.0) {
-                let s0 = axis_sample(0u, uv, p0.xy, m2);
-                return vec4<f32>(s0.rgb * back, s0.a);
-            }
-            let m1 = f + r * th1;
-            if (m1 <= 1.0) {
-                let sh = 1.0 - shadow * 0.3 * sin(th1);
-                let s0 = axis_sample(0u, uv, p0.xy, m1);
-                return vec4<f32>(s0.rgb * sh, s0.a);
-            }
-        }
-        if (c <= f) { return samp(0u, uv); }
-        let sh = 1.0 - shadow * 0.5 * max(1.0 - min(dc / max(r, 1e-4), 1.0), 0.0);
-        let s1 = samp(1u, uv);
-        return vec4<f32>(s1.rgb * sh, s1.a);
-    }
-    if (mode == 32u) { // page roll: the visible top turn of the roll
-        let r = max(p0.z, 0.01);
-        let shadow = p0.w;
-        let c = axis_c(uv, p0.xy);
-        let f = 1.0 - k * (1.0 + 2.0 * r);
-        let back = 1.0 - shadow * 0.35;
-        let dcr = f - c;
-        if (abs(dcr) <= r) {
-            let ad = abs(dcr);
-            let th1 = atan2(ad, sqrt(max(r * r - ad * ad, 0.0)));
-            var th = pi + th1;
-            if (dcr >= 0.0) { th = pi - th1; }
-            let mw = f + r * th;
-            if (mw <= 1.0) {
-                let sh = back * (1.0 - 0.2 * (1.0 - abs(sin(th))));
-                let s0 = axis_sample(0u, uv, p0.xy, mw);
-                return vec4<f32>(s0.rgb * sh, s0.a);
-            }
-            let m1 = f + r * th1;
-            if (dcr >= 0.0 && m1 <= 1.0) {
-                let s0 = axis_sample(0u, uv, p0.xy, m1);
-                return vec4<f32>(s0.rgb * back, s0.a);
-            }
-        }
-        if (c <= f) { return samp(0u, uv); }
-        let sh = 1.0 - shadow * 0.5 * max(1.0 - min((c - f) / max(r, 1e-4), 1.0), 0.0);
-        let s1 = samp(1u, uv);
-        return vec4<f32>(s1.rgb * sh, s1.a);
-    }
     return mix(samp(0u, uv), samp(1u, uv), k);
 }
 
@@ -359,21 +223,6 @@ fn axis_sample(which: u32, uv: vec2<f32>, d: vec2<f32>, m: f32) -> vec4<f32> {
     if (d.x < -0.5) { return samp(which, vec2<f32>(m, uv.y)); }
     if (d.y > 0.5) { return samp(which, vec2<f32>(uv.x, 1.0 - m)); }
     return samp(which, vec2<f32>(uv.x, m)); 
-}
-
-// The quad of the sides of the 2.5D exchange: the sample inside the rectangle, outside transparent,
-// the far side slightly darker (a mirror of the CPU kernel’s quad()).
-fn swap_quad(which: u32, uv: vec2<f32>, vert: bool, off: f32, scale: f32, wave: f32) -> vec4<f32> {
-    var q = vec2<f32>(0.5 + off, 0.5);
-    if (vert) { q = vec2<f32>(0.5, 0.5 + off); }
-    let su = (uv.x - q.x) / scale + 0.5;
-    let sv = (uv.y - q.y) / scale + 0.5;
-    if (su >= 0.0 && su < 1.0 && sv >= 0.0 && sv < 1.0) {
-        let c = samp(which, vec2<f32>(su, sv));
-        let shade = 1.0 - 0.25 * wave;
-        return vec4<f32>(c.rgb * shade, c.a);
-    }
-    return vec4<f32>(0.0);
 }
 
 /// Rounding to the nearest integer, the same way the CPU kernel writes bytes.

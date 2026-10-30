@@ -24,10 +24,14 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
 - **No atomics and no variable blending order**: the composite is a ping-pong of
   two accumulators by the shader (the CPU formula `alpha_over` is not expressible
   by fixed-function blending). This is the condition of determinism on the device (t183).
-- **Transitions (R.33): `composite.wgsl` is a mirror of `kt_engine::transitions`.**
-  The mode and 8 numbers arrive in u1.z/f0/f1 from `TransMix`; the clear bits (u1.w)
-  mark the empty side of a solo fade. The parameters of a kind MUST enter
-  `plan_key`, otherwise ReadbackCache will return the frame of another transition. Test t224
+- **Transitions (R.33; plugins since plugin-api-stage1, D12): a kind's `trans_<id>` WGSL is a
+  mirror of its kernel in its family crate.** `assembled_composite` pastes every kind's function
+  and its `if (mode == 64+i)` arm at `// @PLUGIN_TRANS_ARMS`; `trans()` itself keeps only the
+  fallback mix. Helpers more than one kind reads (`samp`, `front_mask`, `hpanel`, `axis_*`, …) stay
+  in composite.wgsl; a helper of one kind travels with it. The mode and 8 numbers arrive in
+  u1.z/f0/f1 from `TransMix`; the clear bits (u1.w) mark the empty side of a solo fade. The kind
+  (its ID, not its registry-dependent mode) and its parameters MUST enter `plan_key` (`put_mix`),
+  otherwise ReadbackCache will return the frame of another transition. Test t224
   runs each mode over several phases — and its list of cases MUST contain both axes of
   direction and both states of the flags: on the defaults
   (`Dir::Left` = (−1,0)) an error in the Y term of the formula is not visible.
@@ -129,8 +133,10 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
 - The `P.m` uniforms of the composite are OCCUPIED: the ext scalars of volumetric transitions
   (the homographies of the panels from `kt_engine::transitions::trans_ext`, f64→f32 on the
   CPU — both backends read the same bits). `ext` is not and MUST NOT be part of `put_mix`/`plan_key` — it is a deterministic function of what is already hashed.
-- t224: 32 modes; the volumetric ones (flip/cube/door/peel/roll) — a separate loop
-  with `FrameTol::GEOM` (the panel edges and the perspective division). The MODE_* numbers are a contract only between transitions.rs ↔ composite.wgsl, they do not get into the project files (the tag travels).
+- t224: 32 kinds; the volumetric ones (flip/cube/door/peel/roll) — a separate loop
+  with `FrameTol::GEOM` (the panel edges and the perspective division). The mode numbers are a
+  function of the registry (`MODE_PLUGIN + index`), they get neither into the project files (the
+  tag travels) nor into cache keys (the id does).
 
 ## Windows / D3D12 (windows-build)
 - FXC (the D3D12 shader compiler wgpu uses) rejects a write through a dynamic VECTOR index

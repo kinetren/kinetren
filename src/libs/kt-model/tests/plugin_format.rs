@@ -611,6 +611,10 @@ enum FrozenTrans {
         #[serde(skip_serializing_if = "is_center")]
         cy: f64,
     },
+    Swap { vertical: bool, depth: f64 },
+    Flip { vertical: bool, persp: f64, shade: f64 },
+    Cube { dir: &'static str, persp: f64, shade: f64 },
+    PagePeel { dir: &'static str, curl: f64, shadow: f64 },
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -675,6 +679,22 @@ fn t973_a_moved_transition_kind_keeps_its_text() {
             TransitionKind::plugin_with("zoom_blur", &[1.0, 0.2, 0.8]).unwrap(),
             frozen(FrozenTrans::ZoomBlur { amount: 1.0, cx: 0.2, cy: 0.8 }),
         ),
+        (
+            TransitionKind::plugin_with("swap", &[1.0, 0.7]).unwrap(),
+            frozen(FrozenTrans::Swap { vertical: true, depth: 0.7 }),
+        ),
+        (
+            TransitionKind::builtin("flip"),
+            frozen(FrozenTrans::Flip { vertical: false, persp: 0.5, shade: 0.5 }),
+        ),
+        (
+            TransitionKind::plugin_with("cube", &[2.0, 0.8, 0.3]).unwrap(),
+            frozen(FrozenTrans::Cube { dir: "up", persp: 0.8, shade: 0.3 }),
+        ),
+        (
+            TransitionKind::plugin_with("page_peel", &[3.0, 0.35, 1.0]).unwrap(),
+            frozen(FrozenTrans::PagePeel { dir: "down", curl: 0.35, shadow: 1.0 }),
+        ),
     ];
     for (kind, want) in &cases {
         assert_eq!(&serde_json::to_string(kind).unwrap(), want, "the moved kind's text changed");
@@ -685,7 +705,8 @@ fn t973_a_moved_transition_kind_keeps_its_text() {
     for id in [
         "wipe", "iris", "clock", "barn", "luma", "push", "slide", "zoom", "spin", "flash", "dip", "blinds",
         "checker", "blocks", "spiral", "split", "squeeze", "stretch", "whip", "blur_dissolve", "pixelate",
-        "glitch", "shake", "film_burn", "light_leaks", "zoom_blur",
+        "glitch", "shake", "film_burn", "light_leaks", "zoom_blur", "swap", "flip", "cube", "door", "page_peel",
+        "page_roll",
     ] {
         let bare: TransitionKind = serde_json::from_str(&format!(r#"{{"kind":"{id}"}}"#)).unwrap();
         assert_eq!(bare, TransitionKind::builtin(id), "{id}: the variant's serde defaults");
