@@ -1635,7 +1635,7 @@ time — "work through each point separately, one by one"):
   никто не споткнулся об плохой код в будущем» — "option 2: hundreds of thousands – a million; a
   measurement is needed to look for the program's bottlenecks we can foresee and fix ahead of time,
   maybe make breaking changes, so that nobody stumbles over bad code in the future". C2a → a
-  measurement round (`project-scale`).
+  measurement round (R.78).
 - Question 4 (reference chains), first ask: «я НЕ ПОНИМАЮ ВОПРОСА И НЕ ПОНИМАЮ КОНТЕКСТА, ТЫ МНЕ ЕГО НЕ
   ДАЛ ВООБЩЕ..» — "I DO NOT UNDERSTAND THE QUESTION AND DO NOT UNDERSTAND THE CONTEXT, YOU DID NOT GIVE
   IT TO ME AT ALL..". Re-asked with his own item quoted, what R.70 already did, and the two meanings
@@ -1650,29 +1650,29 @@ time — "work through each point separately, one by one"):
 
 - Question 5 (timecode, asked with the context "the timecode kind has ONE parameter — fps; Text has
   font, size, alignment, anchor, colour, animations and curves"): "Timecode = a mode of the text"
-  (the recommended option). G3 → R.72.
+  (the recommended option). G3 → R.73.
 - Question 6 (which generators first; the context — there are 15 kinds, not the 8 the plan said, and
   new kinds go as plugins after plugin-api-stage1): all four groups — backgrounds, shapes and plates,
   technical, audio-reactive — and verbatim: «только делай их не как в 90x, а чтобы еще и нормальные
   варианты, современные были. стили вообщем» — "only don't make them like in the 90s, there must
-  also be normal, modern variants. Styles, in short". G5 → R.72: every new kind ships with modern
+  also be normal, modern variants. Styles, in short". G5 → R.73: every new kind ships with modern
   style presets.
 
 - Question 7 (space from pause; the context — today a held space from pause keeps playing, the
   boost ramps to 4× and returns to 1× on release): "a threshold ~0.3 s" (the recommended option).
-  U4 → R.73.
+  U4 → R.72.
 - Question 8 (frame step; the context — Shift on Back/Forward and Shift+A/D already drag the region
   edge, the program has NO frame-step key, the arrows are free): «Ctrl вместо shift? Или просто
   стрелки, если так в других редакторах?» — "Ctrl instead of Shift? Or just arrows, if that is how
   other editors do it?". Taken as: ← / → step one frame (Premiere, Resolve and FCP do so), and
-  Ctrl+click on Back/Forward does the same with the mouse; Shift keeps the region edge. T11 → R.73.
+  Ctrl+click on Back/Forward does the same with the mouse; Shift keeps the region edge. T11 → R.72.
 
 - Question 9 (the "Marker over the region" item; the context — in my message BEFORE the dialog: the item
   found, its three behaviours, the range end already draggable by its flag). 9a "always new + a separate
   stretch item?": «помоему там в регионе из маркеров что-то не так с вторым маркером, ты НЕ ДАЛ МНЕ
   КОНТЕКСТА ПОЛНОГО.» — "I think in the region made of markers something is wrong with the second marker,
   YOU DID NOT GIVE ME THE FULL CONTEXT." 9b "which second marker does not move?": "the end of the range
-  marker". U7 → a defect at the range marker's end, reproduced live in R.73; the item split is shown to
+  marker". U7 → a defect at the range marker's end, reproduced live in R.72; the item split is shown to
   him there before it is made.
 - Question 10 (auto-mute by sections; the context IN the question — his item quoted, R.65 ducking reacts
   to loudness, Premiere's Auto-Ducking by clip type): «п.1. по типу клипа. еще должен сказать - что у нас
@@ -1681,10 +1681,18 @@ time — "work through each point separately, one by one"):
   дакинг у нас.» — "option 1: by clip type. I must also say that our ducking is not intuitive at
   all… it is very unclear what to turn and where to get something more or less normal, and it feels
   like it works at the edge of its abilities… our ducking is made very dumbly." N3 → a round of
-  its own (`ducking-by-role`): roles on events/tracks build an editable background curve, and the
+  its own (R.75): roles on events/tracks build an editable background curve, and the
   R.65 ducking UX is revised in the same round. A NEW claim about a closed round (R.65) — recorded
   in "What the user repeated" if it comes again.
 - Question 12 (the broken-off line «1. быстрого»): "drop it". Z1 → not a claim.
+
+- Question 11 (the order of rounds; the context IN the question — the open kkt changes first in any
+  case, then the seven groups of v26.10 with their items): "а → б → в → ж → г → д → е" (the recommended
+  option). The rounds: **R.72** timeline and transport defects → **R.73** generators (new kinds as
+  plugins, after plugin-api-stage1) → **R.74** render → **R.75** ducking by clip role and its UX →
+  **R.76** windows and glow → **R.77** automation and presets → **R.78** project scale (a measurement
+  at hundreds of thousands – a million events, references to identical chains). The round numbers in
+  the answers above follow this order.
 
 **Lesson (repeated THREE times in one session — questions 1, 4 and 9):** a question to the owner carries its
 context IN the question text itself — the dialog is what he reads; a paragraph of context in the message

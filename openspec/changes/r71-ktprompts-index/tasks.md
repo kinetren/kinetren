@@ -20,7 +20,7 @@ are verifiable separately; each ends with a commit in English (owner, 2026-10-21
 
 ## 4. Owner's answers and the nearest plan
 
-- [ ] 4.1 Questions 1–11 are asked to the owner (AskUserQuestion one or two at a time — he asked to discuss each point separately); the answers verbatim — in `docs/user-feedback.md` R.71, the registry's `question` rows are moved to decisions. Check: the guard is green, not one `question` row without an answer or without the mark "waiting".
+- [x] 4.1 Questions 1–11 are asked to the owner (AskUserQuestion one or two at a time — he asked to discuss each point separately); the answers verbatim — in `docs/user-feedback.md` R.71, the registry's `question` rows are moved to decisions. Check: the guard is green, not one `question` row without an answer or without the mark "waiting".
 - [ ] 4.2 Following the answer to question 11 — the change of the next round is opened (`/opsx:propose`) for the first stage of the registry; in the registry its items have the round number set. Check: `openspec list` shows the new change, the registry refers to it.
 
 ## 5. Finish

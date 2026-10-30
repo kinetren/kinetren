@@ -229,3 +229,13 @@ with the welcome window and the tour in parallel.
   everything else is taken.
 - **The file was written before R.70** and part of it already contradicts its decisions → the discrepancies are named as
   questions 1–2, not silently resolved.
+
+## Answers (2026-10-30)
+
+The owner answered questions 1–12 (verbatim in `docs/user-feedback.md`, R.71). The order of §5 is
+replaced by his answer to question 11: the open changes of round kkt-26.10.27 first, then **R.72**
+timeline and transport defects → **R.73** generators (new kinds as plugins) → **R.74** render →
+**R.75** ducking by clip role (and the R.65 ducking UX, which he called "not intuitive at all") →
+**R.76** windows and glow → **R.77** automation and presets → **R.78** project scale. The registry
+carries these numbers. Three of the questions came back as "you did not give me the context": the
+context of a question goes INTO the question text (the dialog is what he reads).
