@@ -3512,6 +3512,104 @@ fn t799_ui_scenarios_describe_the_user_path() {
     );
 }
 
+/// Test 823 (R.71): the owner's claims registry is complete and honest. Every numbered item
+/// of every `docs/ktprompts/*.txt` has a row in its `<name>-index.md`, a `done` row names a
+/// test that exists, a `question` row carries the question. Checked by RUNNING the guard on a
+/// COPY of the directory (tests do not write into the tree), and the guard is in `finish.sh`.
+///
+/// The owner: "make important notes for the agents, tests, etc., so that we do not return to
+/// the same kinds of problems".
+#[test]
+fn t823_the_claims_registry_is_complete_and_honest() {
+    if cfg!(windows) {
+        eprintln!("t823 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let script = root.join("src/scripts/ktprompts-index.py");
+    assert!(script.exists(), "guard is not in place: {}", script.display());
+    let docs = root.join("docs/ktprompts");
+
+    let run = |dir: &std::path::Path| -> (bool, String) {
+        let out = std::process::Command::new("python3")
+            .arg(&script)
+            .arg("--check")
+            .arg("--dir")
+            .arg(dir)
+            .output()
+            .expect("python3 for the claims guard");
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+
+    // 1) the real registries — green, with the count by state for each of the three sources
+    let (ok, said) = run(&docs);
+    assert!(ok, "the guard is red on the current registries: {said}");
+    for src in ["v26.10:", "v26.10.18:", "kkt-26.10.27:"] {
+        assert!(said.contains(&format!("ktprompts {src}")), "no counts for {src}: {said}");
+    }
+
+    // a corruption is made on a copy: (what to break, what the guard must name)
+    let corrupt = |name: &str, edit: &dyn Fn(&std::path::Path)| -> String {
+        let tmp = std::env::temp_dir().join(format!("kt-t823-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        for e in std::fs::read_dir(&docs).unwrap().flatten() {
+            std::fs::copy(e.path(), tmp.join(e.file_name())).unwrap();
+        }
+        edit(&tmp);
+        let (ok, said) = run(&tmp);
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert!(!ok, "the guard did NOT notice the corruption «{name}»: {said}");
+        said
+    };
+    let rewrite = |dir: &std::path::Path, f: &dyn Fn(&str) -> String| {
+        let p = dir.join("v26.10-index.md");
+        let text = std::fs::read_to_string(&p).unwrap();
+        let new = f(&text);
+        assert_ne!(new, text, "the corruption changed nothing — the scene is broken");
+        std::fs::write(&p, new).unwrap();
+    };
+
+    // 2) a deleted row — red with the source line of the item
+    let said = corrupt("row", &|d| {
+        rewrite(d, &|t| t.lines().filter(|l| !l.starts_with("| T13 |")).collect::<Vec<_>>().join("\n"))
+    });
+    assert!(said.contains("v26.10.txt:55"), "the guard is silent about the item's address: {said}");
+
+    // 3) a `done` row with a test that does not exist
+    let said = corrupt("test", &|d| rewrite(d, &|t| t.replacen("done R.59, t659", "done R.59, t9999", 1)));
+    assert!(said.contains("[G2]") && said.contains("t9999"), "the guard missed the dead test: {said}");
+
+    // 4) a `question` row without the question
+    let said = corrupt("question", &|d| {
+        rewrite(d, &|t| {
+            t.lines()
+                .map(|l| {
+                    if l.starts_with("| U4 |") {
+                        let mut c: Vec<&str> = l.split('|').collect();
+                        c[4] = " question ";
+                        c.join("|")
+                    } else {
+                        l.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+    });
+    assert!(said.contains("[U4]") && said.contains("question"), "the guard missed the empty question: {said}");
+
+    // 5) a fourth source without a registry — red with its file name
+    let said = corrupt("source", &|d| {
+        std::fs::write(d.join("v99.txt"), "1. a new claim\n").unwrap();
+    });
+    assert!(said.contains("v99.txt"), "the guard is silent about the source without a registry: {said}");
+
+    // 6) the guard itself stands in finish.sh
+    let finish = std::fs::read_to_string(root.join("src/scripts/finish.sh")).expect("finish.sh");
+    assert!(finish.contains("ktprompts-index.py"), "the claims guard is not called from finish.sh");
+}
+
 /// t800 (R.68): EVERY stage of `finish.sh` names its own cost, and the budget —
 /// five minutes — is printed and flagged when exceeded.
 ///

@@ -1590,6 +1590,116 @@ And from the CORE section — a requirement for agents that is not yet in the ru
 
 **What was done at the proposal stage** (`openspec/changes/r71-ktprompts-index`): each item was checked against the code and the specs; some are already closed (generator automation — R.59, generator and effects in one window — R.59, freeze frame — R.57, crash report — R.49, leaving OTIO and git — R.70); some contradict his own decisions of R.67/R.70 (the format name, the import door); two claims are repeats of earlier topics (resize/the seek zone steal clicks — r.12/r.13; "obvious labels" — checklist item 17 of r.7). The registry with states and eleven questions are in the change's `design.md`; the owner's answers will be appended here verbatim.
 
+**The registries (2026-10-30, apply).** `docs/ktprompts/{v26.10,v26.10.18,kkt-26.10.27}-index.md` —
+one row per numbered item with its source line; the guard `src/scripts/ktprompts-index.py --check`
+(t823, in `finish.sh`). Building the guard found one more line nobody had read: `1. быстрого`
+(line 77 of `v26.10.txt`, it breaks off after "quick…") — question 12.
+
+**Questions to the owner** (numbered as in the registry's `question` rows; asked one or two at a
+time — "work through each point separately, one by one"):
+
+1. **Format name** (C1). The file says `ktproj`; R.70 chose `.kt`, because `.ktproj` is a live legacy
+   under the same suffix (a trap for people and scripts). Keep `.kt`?
+2. **Import of old files** (C2). The file says "delete it"; R.67 — your decision "import is its own
+   door". Your 115 MB projects open ONLY through it. Keep one door?
+3. **The threshold "10 million elements"** (C2a). Your 115 MB project = 15,220 events ≈ 3 MB `.kt`,
+   read in milliseconds. What project size is real, so that it counts as "does not hang"?
+4. **Reference chains/copies of events** (C2c) — is it about file size (1000 copies × 100 effects —
+   a few MB) or about "I edit in one place — all change"? The second is a composition with public
+   parameters (R.59), which already exists.
+5. **Timecode as a mode of the text generator** (G3) — one kind with the full text passport, not a
+   separate kind?
+6. **Which generators are needed first?** (G5; there are 8: solid, gradient, noise, bars/SMPTE,
+   shapes, text, timecode, test pattern.)
+7. **Space from pause** (U4). A short press — still a toggle, and "hold" starts from a threshold
+   (say 0.3 s)? Or always "release — stop"?
+8. **Frame step** (T11). Shift on back/forward is taken by the region edge; which modifier (Alt?) or
+   other buttons?
+9. **"marker over the region"** (U7) — which menu item or gesture is this? Not found by name.
+10. **Auto-mute by sections** (N3) — are sections set by regions (`MarkedArea` with the role
+    "title/content") or by track/clip type, like Auto-ducking in Premiere?
+11. **Order of rounds.** The kkt-26.10.27 defects and features first (their changes are open), then
+    R.72 generators → R.73 timeline and transport defects → R.74 render → R.75 windows/glow → R.76
+    automation/presets. Is that right?
+12. **The broken-off line** (Z1): `1. быстрого` ("1. quick…") — what was meant?
+
+**Answers (AskUserQuestion, 2026-10-30), verbatim:**
+
+- Question 1 (format name): «я не хочу менять форматы, оставляем .kt. мне не понятна мотивация твоего
+  вопроса(контекст)» — "I don't want to change formats, we keep .kt. I don't understand the motivation
+  of your question (the context)". Explained: the file predates R.70 and says `ktproj`; without a
+  recorded answer the next agent reading the file might "fix" the extension back. C1 → done.
+- Question 2 (import): "Keep one door" (the recommended option). C2 → done, the decision of R.67 stands.
+- Question 3 (project size): «п.2. сотни тысяч - миллион, нужен замер, чтобы поискать узкие места в
+  программе, которые мы можем заранее предвидеть и починить, возможно breaking changes сделать, чтобы
+  никто не споткнулся об плохой код в будущем» — "option 2: hundreds of thousands – a million; a
+  measurement is needed to look for the program's bottlenecks we can foresee and fix ahead of time,
+  maybe make breaking changes, so that nobody stumbles over bad code in the future". C2a → a
+  measurement round (R.78).
+- Question 4 (reference chains), first ask: «я НЕ ПОНИМАЮ ВОПРОСА И НЕ ПОНИМАЮ КОНТЕКСТА, ТЫ МНЕ ЕГО НЕ
+  ДАЛ ВООБЩЕ..» — "I DO NOT UNDERSTAND THE QUESTION AND DO NOT UNDERSTAND THE CONTEXT, YOU DID NOT GIVE
+  IT TO ME AT ALL..". Re-asked with his own item quoted, what R.70 already did, and the two meanings
+  of "reference" (A — only in the file, B — a live link). The answer: «п.А. мне кажется размер будет
+  заметен если я 10тыс раз поставлю событие с 100 одинаковыми эффектами, мне кажется даже если pts у
+  них будет разный и разные сурсы - это же все равно сколько места экономит и скорости чтения, разве
+  нет?» — "option A. I think the size will be noticeable if I place an event with 100 identical
+  effects 10 thousand times; even if their pts differ and the sources differ — it still saves a lot
+  of space and reading speed, doesn't it?" Yes: the key of the reference is the chain content, the
+  position and the source live apart from it. The earlier "a few MB" was not measured and was
+  withdrawn. C2c → the same measurement round.
+
+- Question 5 (timecode, asked with the context "the timecode kind has ONE parameter — fps; Text has
+  font, size, alignment, anchor, colour, animations and curves"): "Timecode = a mode of the text"
+  (the recommended option). G3 → R.73.
+- Question 6 (which generators first; the context — there are 15 kinds, not the 8 the plan said, and
+  new kinds go as plugins after plugin-api-stage1): all four groups — backgrounds, shapes and plates,
+  technical, audio-reactive — and verbatim: «только делай их не как в 90x, а чтобы еще и нормальные
+  варианты, современные были. стили вообщем» — "only don't make them like in the 90s, there must
+  also be normal, modern variants. Styles, in short". G5 → R.73: every new kind ships with modern
+  style presets.
+
+- Question 7 (space from pause; the context — today a held space from pause keeps playing, the
+  boost ramps to 4× and returns to 1× on release): "a threshold ~0.3 s" (the recommended option).
+  U4 → R.72.
+- Question 8 (frame step; the context — Shift on Back/Forward and Shift+A/D already drag the region
+  edge, the program has NO frame-step key, the arrows are free): «Ctrl вместо shift? Или просто
+  стрелки, если так в других редакторах?» — "Ctrl instead of Shift? Or just arrows, if that is how
+  other editors do it?". Taken as: ← / → step one frame (Premiere, Resolve and FCP do so), and
+  Ctrl+click on Back/Forward does the same with the mouse; Shift keeps the region edge. T11 → R.72.
+
+- Question 9 (the "Marker over the region" item; the context — in my message BEFORE the dialog: the item
+  found, its three behaviours, the range end already draggable by its flag). 9a "always new + a separate
+  stretch item?": «помоему там в регионе из маркеров что-то не так с вторым маркером, ты НЕ ДАЛ МНЕ
+  КОНТЕКСТА ПОЛНОГО.» — "I think in the region made of markers something is wrong with the second marker,
+  YOU DID NOT GIVE ME THE FULL CONTEXT." 9b "which second marker does not move?": "the end of the range
+  marker". U7 → a defect at the range marker's end, reproduced live in R.72; the item split is shown to
+  him there before it is made.
+- Question 10 (auto-mute by sections; the context IN the question — his item quoted, R.65 ducking reacts
+  to loudness, Premiere's Auto-Ducking by clip type): «п.1. по типу клипа. еще должен сказать - что у нас
+  дакинг сделан как-то вообще не интуитивно понятно... очень не очевидно что и куда крутить чтобы было
+  более-менее нормально, и ощущение что у нас на грани возможностей он работает... очень втупую сделан
+  дакинг у нас.» — "option 1: by clip type. I must also say that our ducking is not intuitive at
+  all… it is very unclear what to turn and where to get something more or less normal, and it feels
+  like it works at the edge of its abilities… our ducking is made very dumbly." N3 → a round of
+  its own (R.75): roles on events/tracks build an editable background curve, and the
+  R.65 ducking UX is revised in the same round. A NEW claim about a closed round (R.65) — recorded
+  in "What the user repeated" if it comes again.
+- Question 12 (the broken-off line «1. быстрого»): "drop it". Z1 → not a claim.
+
+- Question 11 (the order of rounds; the context IN the question — the open kkt changes first in any
+  case, then the seven groups of v26.10 with their items): "а → б → в → ж → г → д → е" (the recommended
+  option). The rounds: **R.72** timeline and transport defects → **R.73** generators (new kinds as
+  plugins, after plugin-api-stage1) → **R.74** render → **R.75** ducking by clip role and its UX →
+  **R.76** windows and glow → **R.77** automation and presets → **R.78** project scale (a measurement
+  at hundreds of thousands – a million events, references to identical chains). The round numbers in
+  the answers above follow this order.
+
+**Lesson (repeated THREE times in one session — questions 1, 4 and 9):** a question to the owner carries its
+context IN the question text itself — the dialog is what he reads; a paragraph of context in the message
+before it did not reach him (question 9). The context: his own words from the file, what is already done, and what each option
+means for the program. A question that names only a round number or a mechanism ("R.59", "public
+parameters") is unanswerable for him.
+
 ## Round readme-showcase (2026-10-21): README, screenshots, docs; English from now on
 
 From here on entries are written in English; the owner's words stay verbatim.
