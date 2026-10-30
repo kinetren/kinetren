@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 use kt_model::{FxInstance, GeneratorKind, TransitionKind};
 
 const NOTE: &str = "docs/features/fx/catalogue/market-catalogue-and-waves.md";
-const DESIGN: &str = "openspec/changes/effects-transitions-catchup/design.md";
+// the waves and the rank live in the capability's design since the change was archived (its 3.2)
+const DESIGN: &str = "openspec/specs/video-fx/design.md";
 
 fn repo() -> PathBuf {
     // CARGO_MANIFEST_DIR = src/apps/kt-cli

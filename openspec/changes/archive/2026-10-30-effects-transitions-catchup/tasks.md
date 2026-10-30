@@ -29,4 +29,4 @@ at once (English message, first line = the stage and what was done).
 
 - [x] 3.1 Run `./scripts/finish.sh` from `src/`; record the version `vYY.MM.DD-hash` in the report
   - Note: VERSION kt26.10.30-aa712499 (built at the 2.1 commit; this record commit changes docs only). The run went red in live scenarios while four sessions shared the machine: `conform` passed on its automatic rerun, `trans` was red twice ("cursor placed in the middle of the transition: 0 ≈ 360000") and green when run alone afterwards (`./scripts/live-check.sh trans`: 1 of 1 green). No kt-app code changed on this branch since its base (6fd63d8): the diff is docs, openspec, `fx_catalogue.rs` and kt-cli's dev-dependency. Verification cost 989 s against the 300 s budget, 81 % of it the live scenarios
-- [ ] 3.2 After archiving: move D2/D3 (the waves and the rank) into `openspec/specs/video-fx/design.md`, point t979/t981 there, and set F-FX-007's verdict line `CAPABILITY: openspec/specs/video-fx/`
+- [x] 3.2 After archiving: move D2/D3 (the waves and the rank) into `openspec/specs/video-fx/design.md`, point t979/t981 there, and set F-FX-007's verdict line `CAPABILITY: openspec/specs/video-fx/`

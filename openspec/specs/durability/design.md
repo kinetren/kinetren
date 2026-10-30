@@ -113,3 +113,18 @@ Autosave wrote 115 MB every half minute not because it was badly built, but beca
   sharing/access/lock violation within ~1 s (antivirus, sync clients, editors); write-through
   counts as the directory sync (t853). Rejected: `ReplaceFileW` (fails when the target does not
   exist yet), an unbounded retry (a stuck editor would hang the exit save).
+
+## Posters of recent projects (welcome-window-and-tour, archived 2026-10-30)
+
+Moved here from the archived change's design (its task 7.2).
+
+### D5. Posters: rendered at save/close by the offline path, stored in the data directory
+On a successful Ctrl+S of a named project and on closing a named project, a poster job is queued:
+the same offline single-frame render the reel-preview service uses (own short-lived sources, the
+`frame_plan` composite, paused during playback), at the playhead or at a tenth of the length, scaled
+to 320×180, written as PNG to `<data_dir>/posters/<xxh3(canonical path)>.png` by tmp + rename. Not
+into the sidecar: the sidecar is the project's content cache next to the project; a poster is the
+program's list decoration and must not appear in the person's folder. The welcome window loads the
+finished PNGs on a helper thread and uploads textures when they arrive (one repaint each, invariant
+12); a missing poster is a placeholder with the project's initials. Clearing the list deletes only
+poster files the list owns.

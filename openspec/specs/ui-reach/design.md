@@ -323,3 +323,47 @@ reasons. **After**: where it was installed and that the SHA-256 matched, or ever
 shows the installed folder, else a loaded FFmpeg's folder, else the download root — and is hidden for
 a system SONAME, which has no folder. t948–t953, live `ffmpeg_download` (its success state is t952's:
 the scenario cannot build a 7z).
+
+## The welcome window and the lessons (welcome-window-and-tour, archived 2026-10-30)
+
+Moved here from the archived change's design (its task 7.2).
+
+### D1. Revision: a start window is taken (F-HLP-027 verdict)
+F-HLP-027 decided "a start screen as a separate window — no: at launch we do not have an empty window
+but a drawn editor, and a modal over it violates rule 13". Revision: **the welcome window is taken,
+switchable, and the former start stays one checkbox away** — reason: the owner's direct request of
+2026-10-28; the note's own concern is answered by (a) opening over an EMPTY project only (a project
+on the command line or a recovery skips it), (b) the primary tile making the common case one Enter,
+(c) "Show at start" off restoring exactly today's silent open, named in the window and in View (UI
+rule 19, "say where to get it back"). The note's smaller half (a visible recent list) is delivered
+inside the window.
+
+### D2. Revision: lessons in their own view are taken; the layer stays rejected (F-HLP-028, ui-reach)
+`openspec/specs/ui-reach/design.md` "Rejected and why" names three stops for a tour. Revision:
+**lessons in a docked side panel, steps closed by predicates over the project's state, are taken;
+coach marks over the interface stay rejected** — reason: the owner's request of 2026-10-28, and each
+stop is answered without weakening it: (1) repaint — nothing animates; a predicate is re-evaluated
+only when the model revision or the open-window set changes, never per frame at rest; (2) "one hint"
+— the panel is a panel (`SidePanel`), not a layer; the new guard `no_teaching_layer_over_the_ui`
+turns the closed list of layers above `Order::Middle` into a test (t988), which also closes the hole
+F-HLP-028 found in t83; (3) "nothing to aim at" — a step does not aim at pixels: it closes on the
+project's state, and "Show" names a registry id (a window of `WINDOWS`, a panel, a menu path of
+catalog keys). The addressee objection (the owner's complaints came mid-work) is answered by the
+Guide window (D9), which serves the middle of work; the lessons serve the first start.
+
+### D3. The welcome window is a registered window inside the main viewport
+`kt_welcome` joins `WINDOWS` ("start: templates, recent projects with posters, the tour, what's new —
+the first second has no project yet"). It is an `egui::Window` centred in the main viewport, not a
+second OS viewport: F-HLP-027's ADDRESS line found that a second top-level window brings tiling-WM and
+Alt+Tab defects (kde-invent #2124, kde-bugzilla #513581), and the detached preview is the only one we
+have. It obeys the form contract (t779: the body scrolls, the actions stay outside the scroll).
+
+### D8. The lesson project is a program-owned copy built from generators
+`demo_project` moves from `src/apps/kt-cli/src/main.rs:1167` into a shared module the GUI can call
+(kt-model, as a pure `Project` builder: it needs no media, only generator media `gen:<kind>`), in a
+generator-only form, so every lesson project opens with real thumbnails and no missing sources (the
+F-HLP-029 defect "eight nonexistent media" does not apply). Each lesson writes its copy to
+`<data_dir>/lessons/lesson-<n>.kt` when started; "Start over" rewrites it. kt-cli's `demo` command
+calls the same builder (one body, UI rule 17). F-HLP-029's "a copy in the folder the user named"
+stays the rule for a future "Open demo project" — a lesson sandbox is not the person's project and
+is not listed in Recent.

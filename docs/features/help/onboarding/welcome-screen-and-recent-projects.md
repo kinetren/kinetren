@@ -126,6 +126,7 @@ Half of the eight are crashes exactly at the moment of opening a list row (#4301
 About the price of the second form of answer — not as a file but as a window. Also, a live review of the Adobe start screen as an advertising platform is still absent: `helpx.adobe.com` returns 404 and an HTTP/2 error through the text proxy, `community.adobe.com` and `old.reddit.com` answer with 403. For the thesis this is no longer critical — it was closed by the kdenlive tracker.
 
 ## How it fits Kinotrain
+CAPABILITY: openspec/specs/ui-reach/ — the contract is in `spec.md`, the "why" and the paths in the code are in `design.md` (posters: `openspec/specs/durability/`).
 
 ### What already exists
 

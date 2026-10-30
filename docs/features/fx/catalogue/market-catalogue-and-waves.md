@@ -179,7 +179,7 @@ items.
 ## How it fits Kinotrain
 
 CAPABILITY: openspec/specs/video-fx/ — the catch-up waves are planned in
-`openspec/changes/effects-transitions-catchup/design.md`; transitions — `openspec/specs/transitions/`,
+`openspec/specs/video-fx/design.md` ("The catch-up waves and their rank"); transitions — `openspec/specs/transitions/`,
 voice presets — `openspec/specs/audio-fx/`.
 
 ### What already exists

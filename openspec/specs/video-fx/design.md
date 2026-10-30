@@ -219,3 +219,98 @@
   windows-latest runner the passes ran for minutes and died inside it; a machine with only WARP
   renders effects on the CPU. `KT_GPU_ALLOW_WARP=1` lets it through for experiments.
 - The GPU path on real Windows hardware is still a manual check (no GPU on the CI runner).
+
+## The catch-up waves and their rank (effects-transitions-catchup, archived 2026-10-30)
+
+Moved here from the archived change's design (its task 3.2); `t979`/`t981`/`t982`
+(`src/apps/kt-cli/tests/fx_catalogue.rs`) read these two sections.
+
+### D2. The ranked waves
+Classes: G = geo (closed primitives), P = point-wise (tap), B = barrier (own pass), V = variant or
+preset over an existing kind (no new kernel), A = audio node. Families are `plugin-api-stage1` D6
+crates.
+
+**W1 — Lens and camera** (`src/plugins/fx-video-distort`, `src/plugins/fx-video-color`,
+`src/plugins/fx-video-stylize`; capability `video-fx`; depends on F-FX-002, F-FX-001, F-FX-008;
+opened as the change fx-lens-and-camera):
+- `lens_housing` (P): the dark circular housing and soft corners of a fisheye, measured in the
+  coordinates of its own stage like `vignette`; pairs with `lens_distort` in a factory preset
+  "Fisheye lens".
+- `lens_dirt` (B): highlights extracted with `glow`'s threshold, multiplied by a procedural dirt
+  texture (seeded noise pinned to the stage grid, as `noise` pins grain), added back — invisible on
+  dark frames, as real dirt is (F-FX-007, trick 3).
+- `lens_drops` (G): refraction by drops is an output→input displacement, i.e. invertible by
+  construction — a new `drops` MODE of the Warp primitive (a core edit of `geom.rs` +
+  `geom_fused.wgsl`, the one core change of the wave), seeded drop positions and radii.
+- `lens_flare` (B): ghosts along the line through a light position and the frame centre; the
+  position is a parameter (animatable), not detected.
+- Camera shake and zoom punch (V): factory chain presets on `geometry` curves with zigzag segments
+  and eased keys ("Zoom Shake", "Handheld"; "Punch in" is already a factory preset).
+- (The live re-check of 2026-10-30, F-FX-008, moved `lens_dirt` and `lens_flare` next to `glow` in
+  `fx-video-stylize`: a family crate cannot borrow another family's threshold code.)
+
+**W2 — Glitch, film and soft looks** (`src/plugins/fx-video-stylize`, `src/plugins/fx-video-blur`;
+`video-fx`; depends on F-FX-003, F-CLR-007):
+- `glitch_blocks` (B): block displacement and per-channel offset, a pure function of `burst_index`
+  and a seed.
+- `film_damage` (B): scratches and dust specks; `gate_weave` (G): a per-frame affine jitter from the
+  burst index; `halation` (B): highlights blurred and tinted, the `glow` pattern.
+- `light_leak` (P): moving procedural light blobs, a pure function of `u` — the effect form of the
+  existing `light_leaks` transition.
+- `lens_blur` (B): a disc (bokeh) kernel with highlight weighting, under the K× rule.
+- A directional mode of `radial_blur`. Revision: a directional blur returns as a MODE of
+  `radial_blur`, not as a kind — the video-fx "Deferred" line already names this form, and the
+  rejection of a separate kind stands.
+- Sepia, "Movie Grain", "Cinematic" (V): variants of `duotone`, `noise`, `color_grade`. Revision:
+  sepia and invert stay variants of existing kinds, as the video-fx rejection of "sepia/invert as
+  separate kinds" requires — no new kind is created for them.
+
+**W5 — Transitions catch-up** (`src/plugins/transitions-basic`, `src/plugins/transitions-styled`;
+capability `transitions`; depends on F-CMP-002):
+- `luma` with a user image as the matte (the passport already has a media TYPE); more `iris` shapes
+  (heart, star, hexagon — appended at the end of the shape list); warp transitions (`lens_warp`,
+  `ripple_warp`, `twirl_warp`) on the same uniform road as the volume kinds; a motion-blur amount on
+  `push`/`slide` whose default 0 gives the former bytes.
+
+**W3 — Text animation library** (`src/plugins/generators-title`; capability `generators`; depends on
+F-TXT-006, F-TL-012):
+- In / Out / Loop as three preset slots on the title (curve presets over the title's passport, the
+  R.53 "presets set everything" form); per-word targets for the owner's "blur on one word of a
+  ticker". The first task of that change is an investigation: a per-span style inside the title
+  versus a word-box mask (the second waits for F-MSK-001).
+
+**W7 — Voice presets** (`src/plugins/fx-audio-modulation`; capability `audio-fx`; depends on
+F-AUD-010, F-AUT-004):
+- Presets over existing ids: telephone (`filter` band-pass + `distortion`), megaphone (`filter` +
+  `distortion` + `eq`), radio (`filter` + `bitcrusher`), chipmunk / deep (`pitch_shift`), small hall
+  (`delay` + `eq`).
+- One new node: `ring_mod` (A, a carrier frequency and mix; no state beyond the carrier phase,
+  which is a function of the clip position as the LFO rule requires) for "robot".
+
+**W4 — Speed-ramp presets and beat sync** (no new kernel: the presets live in the factory preset
+file, the beat analysis is a background job of the program; capabilities `automation` and
+`audio-fx`; depends on F-SPD-002, F-AUT-008):
+- Rate-curve presets for `slowed_reverb`: Montage, Hero, Bullet, Jump Cut, Flash In, Flash Out
+  (signed rate and freeze, R.57, make all six expressible).
+- Beat markers from an offline analysis job (the loudness pattern: background, cancellable, result in
+  the sidecar), then "snap the ramp to the beats".
+- Audio-reactive zoom: a link (F-AUT-008) from an analysis envelope to `geometry` scale.
+- Jag edit: a rate preset plus frame interpolation (F-SPD-003).
+
+**W6 — Temporal and relief** (`src/plugins/fx-video-stylize`, `src/plugins/fx-video-distort`;
+capabilities `video-fx` and `plugins`; depends on F-FX-005, F-CMP-003):
+- `echo` / `trails` and the owner's "buffer + blend levels": a NEW plugin declaration — a temporal
+  window of N past INPUT frames (pre-FX frames at t−1 … t−N from the cache, invariant 4) — so the
+  kernel stays a pure function and the post-FX memo stays honest. This extends `plugin-api-stage1`'s
+  refusal table and is designed in that wave's change.
+- `droste` (G): the homothety / recursive zoom as a log-polar `droste` MODE of the Warp primitive
+  (core edit, like W1's drops).
+- `relief` (B): normals from luminance and one light — bump mapping.
+
+### D3. The rank
+W1 first: it is the owner's own FX item 1, and four kernels plus presets cover the lens group that
+we lack entirely. W2 next: the most CapCut tabs (Retro, Glitch, Cinematic, Blur) for six kernels. W5:
+transitions are half of the complaint, and the gap is short because R.51 already took the trend set.
+W3 is ranked after them only because it starts with an investigation; it is the owner's complaint F2
+("the text generator is poor") and may be pulled forward on his word. W7 is cheap but audio was not
+the complaint. W4 waits for the analysis subsystem; W6 for an API extension.

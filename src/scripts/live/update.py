@@ -81,7 +81,12 @@ def main(out):
                 any("github.com/kinetren/kinetren/releases" in n for n in notes),
                 f"the notice says where to get it: {notes}",
             )
-            app.expect(int(g.get("windows", 0)) == 0, f"no window opened at start: {g.get('windows')}")
+            # the welcome window of a first start is welcome-window-and-tour's; the CHECK opens none
+            welcome = 1 if app.has_probe("welcome.window") else 0
+            app.expect(
+                int(g.get("windows", 0)) == welcome,
+                f"the check opened no window at start (the welcome window aside): {g.get('windows')}",
+            )
             app.expect("title.outdated" in probes(g), "the word is painted after the version")
             app.expect(len(Releases.requests) == 1, f"one request: {Releases.requests}")
             path, agent = Releases.requests[0] if Releases.requests else ("", "")
