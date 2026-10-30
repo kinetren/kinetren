@@ -30,4 +30,5 @@
 
 ## 3. Finish
 
-- [ ] 3.1 `cargo test --workspace` and `cargo clippy --all-targets` green; `python3 src/scripts/target-prune.py`; `./scripts/finish.sh`; the version in the report
+- [x] 3.1 `cargo test --workspace` and `cargo clippy --all-targets` green; `python3 src/scripts/target-prune.py`; `./scripts/finish.sh`; the version in the report
+  - `cargo test --workspace --no-fail-fast`: 1232 passed, 1 failed (t815, the restore-record timing under load avg 50–65; green alone). finish.sh (nextest): 1233 passed, SIMD conformance green, `VERSION: kt26.10.30-faa9f3f6`. Clippy: nothing in kt-media/kt-engine. target-prune freed 4.0 GB after stage 1 and 5.2 GB in finish.sh. Live scenarios: 33 of 53 red in the parallel pass under load (2492 s), 25 green alone at once; the remaining 8 (geomctl, loop, nestparam, nestshare, nestwarp, readme_shots, ruler, track) green when rerun at load < 2 (`loop` on its second and third run)
