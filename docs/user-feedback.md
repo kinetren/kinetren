@@ -1658,6 +1658,15 @@ time — "work through each point separately, one by one"):
   also be normal, modern variants. Styles, in short". G5 → R.72: every new kind ships with modern
   style presets.
 
+- Question 7 (space from pause; the context — today a held space from pause keeps playing, the
+  boost ramps to 4× and returns to 1× on release): "a threshold ~0.3 s" (the recommended option).
+  U4 → R.73.
+- Question 8 (frame step; the context — Shift on Back/Forward and Shift+A/D already drag the region
+  edge, the program has NO frame-step key, the arrows are free): «Ctrl вместо shift? Или просто
+  стрелки, если так в других редакторах?» — "Ctrl instead of Shift? Or just arrows, if that is how
+  other editors do it?". Taken as: ← / → step one frame (Premiere, Resolve and FCP do so), and
+  Ctrl+click on Back/Forward does the same with the mouse; Shift keeps the region edge. T11 → R.73.
+
 **Lesson (repeated twice in one session — questions 1 and 4):** a question to the owner carries its
 context IN the question: his own words from the file, what is already done, and what each option
 means for the program. A question that names only a round number or a mechanism ("R.59", "public
