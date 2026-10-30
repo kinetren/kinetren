@@ -57,6 +57,36 @@ pub const MODE_CUBE: u32 = 29;
 pub const MODE_DOOR: u32 = 30;
 pub const MODE_PEEL: u32 = 31;
 pub const MODE_ROLL: u32 = 32;
+/// A plugin kind's mode is `MODE_PLUGIN + its index` in the registry's transition list (D12) —
+/// a function of the registry, never hashed into a key (`plan_key` carries the kind's id).
+pub const MODE_PLUGIN: u32 = 64;
+
+/// The installed transition kernels by their mode's index, resolved once (the registry does not
+/// change after the install, and a pixel must not search it).
+fn plugin_kernels() -> &'static [(&'static str, &'static dyn kt_plugin_api::TransKernel)] {
+    static K: std::sync::OnceLock<Vec<(&'static str, &'static dyn kt_plugin_api::TransKernel)>> = std::sync::OnceLock::new();
+    let build = || -> Vec<(&'static str, &'static dyn kt_plugin_api::TransKernel)> {
+        kt_model::plugin_slot::registry()
+            .transitions()
+            .into_iter()
+            .filter_map(|p| Some((&*p.manifest().id, p.trans()?)))
+            .collect()
+    };
+    // a list built before the install would be empty for good: only a filled one is kept
+    if let Some(k) = K.get() {
+        return k;
+    }
+    let k = build();
+    if k.is_empty() {
+        return Box::leak(k.into_boxed_slice());
+    }
+    K.get_or_init(|| k)
+}
+
+/// The kernel of a plugin mode.
+fn plugin_kernel(mode: u32) -> Option<&'static dyn kt_plugin_api::TransKernel> {
+    plugin_kernels().get(mode.checked_sub(MODE_PLUGIN)? as usize).map(|(_, k)| *k)
+}
 
 /// The resolved transition for the executors: mode + 8 numbers (exactly the f0/f1
 /// uniforms of the GPU). The fields have no semantics of their own — the cores below define it.
@@ -88,16 +118,18 @@ impl TransMix {
         let mut p = [0.0f32; 8];
         let mode = match kind {
             TransitionKind::Crossfade => MODE_CROSSFADE,
-            TransitionKind::Wipe { dir, angle, softness } => {
-                let (dx, dy) = d(*dir);
-                let a = (*angle as f32).to_radians();
-                let (s, c) = (a.sin(), a.cos());
-                // the angle turns the direction — the diagonal is obtained by it
-                p[0] = dx * c - dy * s;
-                p[1] = dx * s + dy * c;
-                p[2] = *softness as f32;
-                MODE_WIPE
+            TransitionKind::Plugin(slot) => {
+                let i = plugin_kernels().iter().position(|(id, _)| *id == slot.id);
+                match i {
+                    Some(i) => {
+                        p = plugin_kernels()[i].1.pack(&slot.values);
+                        MODE_PLUGIN + i as u32
+                    }
+                    None => MODE_CROSSFADE,
+                }
             }
+            // a kind this build lacks plays as the crossfade
+            TransitionKind::Missing(_) => MODE_CROSSFADE,
             TransitionKind::Iris { shape, cx, cy, softness } => {
                 p[0] = match shape {
                     IrisShape::Circle => 0.0,
@@ -292,6 +324,9 @@ impl TransMix {
 /// they are not and must not be in the cache keys: ext is a deterministic function of the
 /// already hashed (mode, p, k) — see the comment at `put_mix` in kt-gpu.
 pub fn trans_ext(m: &TransMix, k: u32) -> [f32; 16] {
+    if m.mode >= MODE_PLUGIN {
+        return plugin_kernel(m.mode).map_or([0.0; 16], |kern| kern.ext(&m.p, k));
+    }
     let mut e = [0.0f32; 16];
     let kf = k as f64 / 4096.0;
     let p = m.p;
@@ -420,13 +455,10 @@ fn kernel(
 ) -> [f32; 4] {
     let p = m.p;
     match m.mode {
-        MODE_WIPE => {
-            // projection onto the direction, normalized by the square's span
-            let (dx, dy) = (p[0], p[1]);
-            let ext = (dx.abs() + dy.abs()).max(1e-6);
-            let s = ((u - 0.5) * dx + (v - 0.5) * dy + ext * 0.5) / ext;
-            mix4(a.sample(u, v), b.sample(u, v), front_mask(s, k, p[2]))
-        }
+        m if m >= MODE_PLUGIN => match plugin_kernel(m) {
+            Some(kern) => kern.pixel(a, b, u, v, k, &p, &kt_plugin_api::trans::Canvas { aspect, w: fw, h: fh }, ext),
+            None => mix4(a.sample(u, v), b.sample(u, v), k),
+        },
         MODE_IRIS => {
             // the centre (p2, p3) is arbitrary (R.51); rmax — the distance to the
             // FARTHEST corner of the frame in the same metric, so that the front

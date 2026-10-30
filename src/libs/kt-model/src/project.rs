@@ -78,15 +78,7 @@ pub enum TransitionKind {
     /// Linear dissolve (video) + crossfade (audio).
     #[default]
     Crossfade,
-    /// The edge moves across the frame: a linear wipe, `angle` gives a diagonal.
-    Wipe {
-        #[serde(default)]
-        dir: Dir,
-        #[serde(default)]
-        angle: f64,
-        #[serde(default = "default_soft")]
-        softness: f64,
-    },
+    // Wipe is a plugin since plugin-api-stage1 (src/plugins/transitions-basic, D12).
     /// Opening from the center: circle/diamond/rectangle. The center (R.51) —
     /// fractions of the frame, the default is the middle; at 0.5/0.5 the picture is byte-identical.
     Iris {
@@ -349,6 +341,14 @@ pub enum TransitionKind {
         #[serde(default = "default_shade")]
         shadow: f64,
     },
+    /// A plugin-backed kind (plugin-api-stage1, D12): `kind` is its id, the rows follow its
+    /// passport. Untagged and LAST: a `kind` no variant above names is tried here.
+    #[serde(untagged)]
+    Plugin(crate::plugin_slot::PluginSlot),
+    /// A kind whose plugin this build lacks: kept and written back unchanged; it plays as the
+    /// crossfade (the engine's integer dissolve).
+    #[serde(untagged)]
+    Missing(crate::plugin_slot::MissingSlot),
 }
 
 /// The opening shape of Iris.
@@ -512,10 +512,13 @@ impl HasParams for TransitionKind {
 impl TransitionKind {
     /// All kinds with the DEFAULTS of parameters are the single registry: the selection menu
     /// in the UI is built from it, and the tests also check the completeness of the specs
-    /// against it. A new kind that is not listed here shows up in a test at once.
-    pub const ALL: &'static [TransitionKind] = &[
+    /// against it. A new kind that is not listed here shows up in a test at once. A plugin kind
+    /// stands at its former place (the menu's order is the owner's), so this is built once.
+    pub fn all() -> &'static [TransitionKind] {
+        static ALL: std::sync::OnceLock<Vec<TransitionKind>> = std::sync::OnceLock::new();
+        ALL.get_or_init(|| vec![
         TransitionKind::Crossfade,
-        TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.15 },
+        TransitionKind::wipe(),
         TransitionKind::Iris { shape: IrisShape::Circle, cx: 0.5, cy: 0.5, softness: 0.15 },
         TransitionKind::Clock { reverse: false, cx: 0.5, cy: 0.5, softness: 0.15 },
         TransitionKind::Barn { vertical: false, softness: 0.15 },
@@ -547,13 +550,34 @@ impl TransitionKind {
         TransitionKind::Door { vertical: false, persp: 0.5, shade: 0.5 },
         TransitionKind::PagePeel { dir: Dir::Left, curl: 0.18, shadow: 0.5 },
         TransitionKind::PageRoll { dir: Dir::Left, curl: 0.18, shadow: 0.5 },
-    ];
+        ])
+    }
+
+    /// The wipe at its defaults — a plugin slot (plugin-api-stage1, D12).
+    pub fn wipe() -> TransitionKind {
+        TransitionKind::plugin("wipe").expect("wipe is not registered: install the built-in plugin set first")
+    }
+
+    /// A plugin kind at its passport's defaults; `None` — no such plugin is registered.
+    pub fn plugin(id: &str) -> Option<TransitionKind> {
+        crate::plugin_slot::PluginSlot::new(id).map(TransitionKind::Plugin)
+    }
+
+    /// A plugin kind with the given values in passport order (clamped and cast like any write).
+    pub fn plugin_with(id: &str, values: &[f64]) -> Option<TransitionKind> {
+        let mut slot = crate::plugin_slot::PluginSlot::new(id)?;
+        for (i, v) in values.iter().enumerate() {
+            slot.set_idx(i, *v);
+        }
+        Some(TransitionKind::Plugin(slot))
+    }
 
     /// The tag of the kind, as it is in the file (for the UI and comparison).
     pub fn tag(&self) -> &'static str {
         match self {
             TransitionKind::Crossfade => "crossfade",
-            TransitionKind::Wipe { .. } => "wipe",
+            TransitionKind::Plugin(p) => p.tag(),
+            TransitionKind::Missing(_) => "missing",
             TransitionKind::Iris { .. } => "iris",
             TransitionKind::Clock { .. } => "clock",
             TransitionKind::Barn { .. } => "barn",
@@ -607,8 +631,13 @@ impl TransitionKind {
             | TransitionKind::Dip { .. }
             // the strength of the rays sin(πk) and the change of side in the middle are symmetric
             | TransitionKind::ZoomBlur { .. } => true,
-            TransitionKind::Wipe { .. }
-            | TransitionKind::Iris { .. }
+            // a missing kind plays as the crossfade
+            TransitionKind::Missing(_) => true,
+            TransitionKind::Plugin(p) => crate::plugin_slot::registry()
+                .get(&p.id)
+                .and_then(|pl| pl.trans())
+                .is_some_and(|k| k.symmetric()),
+            TransitionKind::Iris { .. }
             | TransitionKind::Clock { .. }
             | TransitionKind::Barn { .. }
             | TransitionKind::Luma { .. }
@@ -638,7 +667,10 @@ impl TransitionKind {
     /// The numeric parameters of the kind — the same spec as for effects, so the UI
     /// draws them with the same code.
     pub fn param_specs(&self) -> &'static [ParamSpec] {
-        transition_specs(self)
+        match self {
+            TransitionKind::Plugin(p) => p.specs(),
+            _ => transition_specs(self),
+        }
     }
 
     pub fn param_spec(&self, name: &str) -> Option<&'static ParamSpec> {
@@ -646,11 +678,17 @@ impl TransitionKind {
     }
 
     pub fn set_param(&mut self, name: &str, v: f64) -> bool {
+        if let TransitionKind::Plugin(p) = self {
+            return p.set(name, v);
+        }
         let Some(spec) = self.param_spec(name) else { return false };
         transition_set_param(self, name, v.clamp(spec.min, spec.max))
     }
 
     pub fn get_param(&self, name: &str) -> Option<f64> {
+        if let TransitionKind::Plugin(p) = self {
+            return p.get(name);
+        }
         transition_get_param(self, name)
     }
 }
@@ -5370,7 +5408,7 @@ impl FxInstance {
     }
 
     /// Registry of ALL effect kinds with default parameters (analogue of
-    /// `TransitionKind::ALL`, R.47 item 326). It cannot be expressed as a constant —
+    /// `TransitionKind::all()`, R.47 item 326). It cannot be expressed as a constant —
     /// variants carry a Vec (keyframes, automation), so OnceLock is used.
     /// Parameterized tests (spec completeness, golden and conformance loops) are built
     /// on it: a kind not listed here is visible at once.
@@ -5658,10 +5696,6 @@ params_for_struct! { CameraParams {
 }}
 
 params_for! { TransitionKind, transition_specs, transition_set_param, transition_get_param, transition_set_idx, transition_get_idx, {
-    Wipe {
-        angle: f64, -180.0, 180.0, 0.0, 1.0, Deg, Smooth;
-        softness: f64, 0.0, 1.0, 0.15, 0.01, Norm, Smooth;
-    },
     Iris {
         cx: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
         cy: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;

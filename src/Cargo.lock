@@ -2277,6 +2277,7 @@ dependencies = [
  "fx-video-color",
  "fx-video-distort",
  "kt-plugin-api",
+ "transitions-basic",
 ]
 
 [[package]]
@@ -4201,6 +4202,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
+]
+
+[[package]]
+name = "transitions-basic"
+version = "0.1.0"
+dependencies = [
+ "kt-plugin-api",
 ]
 
 [[package]]

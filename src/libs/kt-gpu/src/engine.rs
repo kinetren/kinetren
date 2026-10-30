@@ -826,6 +826,42 @@ enum Which {
     Plugin(usize),
 }
 
+/// The transition plugins of the installed registry with their `trans_<id>` WGSL, in registration
+/// order (D12): a kind's mode is `MODE_PLUGIN + its index here`, as on the CPU.
+pub fn plugin_transitions() -> Vec<(&'static str, &'static str)> {
+    let Some(reg) = kt_plugin_api::installed() else { return Vec::new() };
+    reg.transitions()
+        .into_iter()
+        .filter_map(|p| {
+            let m = p.manifest();
+            match m.decl.gpu {
+                kt_plugin_api::Gpu::Wgsl(w) => {
+                    let id: &'static str = &m.id;
+                    Some((id, w))
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// composite.wgsl with one arm per transition plugin and their functions appended (D12): a pure
+/// function of the registry, like the fused pass's text.
+pub fn assembled_composite() -> String {
+    let marker = "    // @PLUGIN_TRANS_ARMS";
+    let base = include_str!("shaders/composite.wgsl");
+    assert!(base.contains(marker), "composite.wgsl lost its transition arm marker");
+    let mut arms = String::new();
+    let mut fns = String::new();
+    for (i, (id, wgsl)) in plugin_transitions().iter().enumerate() {
+        let mode = kt_engine::transitions::MODE_PLUGIN + i as u32;
+        arms.push_str(&format!("    if (mode == {mode}u) {{ return trans_{id}(uv, k); }}\n"));
+        fns.push_str(wgsl);
+        fns.push('\n');
+    }
+    base.replacen(marker, &format!("{arms}{marker}"), 1) + "\n" + &fns
+}
+
 /// The point-wise plugins of the installed registry that offer WGSL, in registration order:
 /// (id, the `tap_<id>` function). The ONE list the assembler, the uniform packing and `chain_ops`
 /// read, so a dispatch number and an own-pass index can never disagree (plugin-api-stage1, D5).
@@ -990,8 +1026,11 @@ impl GpuFxEngine {
             immediate_size: 0,
         });
         let (fused_src, plugin_srcs) = assembled_shaders();
-        let fixed: Vec<(String, String)> =
-            SHADERS.iter().map(|(n, b)| (n.to_string(), b.to_string())).collect();
+        let composite = assembled_composite();
+        let fixed: Vec<(String, String)> = SHADERS
+            .iter()
+            .map(|(n, b)| (n.to_string(), if *n == "composite" { composite.clone() } else { b.to_string() }))
+            .collect();
         let plugins: Vec<(String, String)> =
             plugin_taps().iter().zip(&plugin_srcs).map(|((id, _), body)| (format!("plugin {id}"), body.clone())).collect();
         let mut pipes: Vec<wgpu::RenderPipeline> = fixed

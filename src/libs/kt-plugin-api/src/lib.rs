@@ -937,6 +937,9 @@ pub struct UiDecl {
     /// Values the picker's TEMPLATE sets over the passport's defaults, when the useful first click
     /// differs from what a file without the row reads (event_grid: the file's 1×1, the picker's 2×2).
     pub template: &'static [(&'static str, f64)],
+    /// The catalog key of a TRANSLATED name (transitions, D12); empty — `name` is shown as is (an
+    /// effect's industry term).
+    pub name_key: &'static str,
 }
 
 /// One picker variant of a plugin (D7): its caption key and the values it sets.
@@ -1162,6 +1165,35 @@ pub trait GeoKernel: Send + Sync {
     }
 }
 
+/// A transition kind's kernel (D12): the eight numbers both executors read, the ONE CPU pixel, the
+/// volumetric panels. Its WGSL `trans_<id>(uv, k)` (in `Gpu::Wgsl`) is the pixel's mirror.
+pub trait TransKernel: Send + Sync {
+    /// The former `TransMix::of` arm: the passport's values → the eight numbers (f32, rounded once).
+    fn pack(&self, p: &[f64]) -> [f32; 8];
+    /// The former `kernel()` arm: the output pixel at `(u, v)` (pixel centres in 0..1) with progress
+    /// `k` (0..1); `a`/`b` the outgoing and incoming sides, `ext` the panels of `ext()`.
+    #[allow(clippy::too_many_arguments)]
+    fn pixel(
+        &self,
+        a: &trans::Img<'_>,
+        b: &trans::Img<'_>,
+        u: f32,
+        v: f32,
+        k: f32,
+        p: &[f32; 8],
+        cx: &trans::Canvas,
+        ext: &[f32; 16],
+    ) -> [f32; 4];
+    /// The volumetric kinds' panels at progress `k` (0..4096): the f64 homographies rounded once.
+    fn ext(&self, _p: &[f32; 8], _k: u32) -> [f32; 16] {
+        [0.0; 16]
+    }
+    /// The kind is its own inversion (the window hides the checkbox).
+    fn symmetric(&self) -> bool {
+        false
+    }
+}
+
 /// A video kernel's parameters prepared once per frame (`VideoKernel::cook`).
 pub type Cooked = [f64; 8];
 
@@ -1297,6 +1329,10 @@ pub trait Plugin: Send + Sync {
     fn geo(&self) -> Option<&dyn GeoKernel> {
         None
     }
+    /// A transition's kernel (D12).
+    fn trans(&self) -> Option<&dyn TransKernel> {
+        None
+    }
 }
 
 /// The tail of an audio plugin in frames — ONE home of the formula: the registry, the static
@@ -1411,7 +1447,15 @@ impl Registry {
                     ));
                 }
             }
-            Media::Transition | Media::Generator => {}
+            Media::Transition => {
+                if p.trans().is_none() {
+                    return refuse("a transition without a kernel");
+                }
+                if m.decl.builtin && !matches!(m.decl.gpu, Gpu::Wgsl(_)) {
+                    return refuse("a built-in transition without its WGSL trans_<id>");
+                }
+            }
+            Media::Generator => {}
         }
         if m.decl.time_warp.is_some() && m.media != Media::AudioFx {
             return refuse("a time warp on a plugin that is not an audio effect");
@@ -1440,6 +1484,12 @@ impl Registry {
     }
 
     /// The ids in registration order.
+    /// The transition plugins in registration order (D12): a plugin kind's mode is
+    /// `MODE_PLUGIN + its index here`, for the CPU kernel and the GPU arm alike.
+    pub fn transitions(&self) -> Vec<&std::sync::Arc<dyn Plugin>> {
+        self.plugins.iter().filter(|p| p.manifest().media == Media::Transition).collect()
+    }
+
     pub fn ids(&self) -> Vec<PluginId> {
         self.plugins.iter().map(|p| p.manifest().id.clone()).collect()
     }

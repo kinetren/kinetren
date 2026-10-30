@@ -6080,7 +6080,7 @@ impl KtApp {
                             ui.menu_button(label, |ui| {
                                 let mut pick: Option<TransitionKind> = None;
                                 let mut cat: Option<crate::i18n::Key> = None;
-                                for kind in TransitionKind::ALL {
+                                for kind in TransitionKind::all() {
                                     let c = crate::transition_editor::kind_category(kind);
                                     if cat != Some(c) {
                                         if cat.is_some() {

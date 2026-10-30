@@ -584,7 +584,7 @@ fn default_order() -> [TextLayer; 4] {
 
 impl GeneratorKind {
     /// All kinds with the parameter DEFAULTS — the only registry (the role of
-    /// `TransitionKind::ALL`; a function, not a const: the title has a String):
+    /// `TransitionKind::all()`; a function, not a const: the title has a String):
     /// it drives the creation menu in the UI and the completeness of the specs in tests. A new kind
     /// is added AT THE END.
     pub fn all() -> Vec<GeneratorKind> {

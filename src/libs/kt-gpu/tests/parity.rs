@@ -680,9 +680,9 @@ fn t224_transition_parity_gpu_vs_cpu() {
     // at all: that is exactly how the first version of this test missed a deliberately
     // broken mirror. Every axis and every flag MUST be in the list.
     let cases: Vec<TransitionKind> = vec![
-        TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.15 },
-        TransitionKind::Wipe { dir: Dir::Up, angle: 0.0, softness: 0.0 },
-        TransitionKind::Wipe { dir: Dir::Right, angle: 37.0, softness: 0.3 },
+        kt_model::TransitionKind::plugin_with("wipe", &[0.0, 0.0, 0.15]).unwrap(),
+        kt_model::TransitionKind::plugin_with("wipe", &[2.0, 0.0, 0.0]).unwrap(),
+        kt_model::TransitionKind::plugin_with("wipe", &[1.0, 37.0, 0.3]).unwrap(),
         TransitionKind::Iris { shape: IrisShape::Circle, cx: 0.5, cy: 0.5, softness: 0.15 },
         TransitionKind::Iris { shape: IrisShape::Diamond, cx: 0.5, cy: 0.5, softness: 0.0 },
         TransitionKind::Iris { shape: IrisShape::Box, cx: 0.5, cy: 0.5, softness: 0.4 },
@@ -797,13 +797,13 @@ fn t224_transition_parity_gpu_vs_cpu() {
     assert_eq!(seen.len(), 32, "all 32 non-crossfade modes checked: {seen:?}");
     assert_eq!(
         seen.len() + 1,
-        TransitionKind::ALL.len(),
+        TransitionKind::all().len(),
         "a new kind of transition must appear in this list too"
     );
 
     // solo fade WITH A VIEW: the second side is empty, the same code
     for (incoming, kind) in [
-        (true, TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.2 }),
+        (true, kt_model::TransitionKind::plugin_with("wipe", &[0.0, 0.0, 0.2]).unwrap()),
         (false, TransitionKind::Iris { shape: IrisShape::Circle, cx: 0.5, cy: 0.5, softness: 0.1 }),
         (true, TransitionKind::Push { dir: Dir::Up }),
         // R.51 representatives: the pattern and the symbiotic shift with a fade “out of emptiness”

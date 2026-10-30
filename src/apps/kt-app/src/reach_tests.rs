@@ -1819,6 +1819,7 @@ fn t396_hinted_objects_have_a_right_click_answer() {
 /// catches this: the key simply does not exist.
 #[test]
 fn t508_every_param_has_a_label() {
+    crate::plugins::install();
     use kt_model::HasParams;
     let mut bad: Vec<String> = Vec::new();
     let mut check = |who: &str, f: &dyn HasParams, covered: &[&str]| {
@@ -1835,6 +1836,11 @@ fn t508_every_param_has_a_label() {
                      the person will see the raw field name",
                     spec.name
                 );
+                continue;
+            }
+            // a choice row the window draws with its OWN control (the direction arrows of a
+            // transition, captioned by `trn.dir`) is not in the grid and needs no grid caption
+            if !matches!(spec.ty, kt_model::ParamType::Num) && covered.contains(&&*spec.name) {
                 continue;
             }
             let label = crate::widgets::param_label_scoped(scope, &spec.name);
@@ -1860,8 +1866,9 @@ fn t508_every_param_has_a_label() {
         check(k.tag(), &k, &covered);
     }
     // for transitions the colour is drawn by its own eyedropper (the transition window, R.33 C4)
-    const TRANS_COLOR: &[&str] = &["color_r", "color_g", "color_b", "tint_r", "tint_g", "tint_b"];
-    for k in kt_model::TransitionKind::ALL {
+    // (and the direction row of a plugin kind by its arrows, D12)
+    const TRANS_COLOR: &[&str] = &["color_r", "color_g", "color_b", "tint_r", "tint_g", "tint_b", "dir"];
+    for k in kt_model::TransitionKind::all() {
         check(k.tag(), k, TRANS_COLOR);
     }
     check("camera", &kt_model::CameraParams::default(), &[]);

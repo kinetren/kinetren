@@ -857,6 +857,7 @@ const ON_TRANS: PubId = PubId(13);
 /// `editing()` does not move, and a non-existent reel gets a rejection.
 #[test]
 fn t753_publishing_names_the_reel_not_the_context() {
+    kt_plugins_builtin::install();
     let mut p = template();
     // a neighbouring reel — to issue the command FROM ANOTHER reel
     let mut s2 = Sequence::new(SEQ2, "Neighbor");
@@ -881,7 +882,7 @@ fn t753_publishing_names_the_reel_not_the_context() {
             out_offset: Tick(FRAME * 2),
             // a crossfade has no numbers of its own at all — there is nothing to publish;
             // we take the variant that has parameters
-            kind: TransitionKind::Wipe { angle: 0.0, softness: 0.15, dir: Default::default() },
+            kind: kt_model::TransitionKind::plugin_with("wipe", &[0.0, 0.0, 0.15]).unwrap(),
             audio: Default::default(),
             auto: Vec::new(),
             invert: false,

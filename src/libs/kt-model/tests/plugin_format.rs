@@ -565,3 +565,40 @@ fn t973_a_missing_plugin_keeps_its_bytes() {
     assert_eq!(serde_json::to_string(&m.raw).unwrap(), wobble, "the raw content changed");
     assert_eq!(to_text(&read.project, None), text, "the save changed the bytes");
 }
+
+/// `TransitionKind`'s moved kinds before stage 5 — copied from the derive, never edited afterwards
+/// (`Dir` is written by its snake_case key; no field of `Wipe` was skipped).
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum FrozenTrans {
+    Wipe { dir: &'static str, angle: f64, softness: f64 },
+}
+
+/// t973 for transitions (plugin-api-stage1, D12): a moved transition kind writes the text its
+/// variant wrote, reads the variant's text (defaults for missing fields), and a kind this build
+/// lacks is kept and written back.
+#[test]
+fn t973_a_moved_transition_kind_keeps_its_text() {
+    kt_plugins_builtin::install();
+    let frozen = |f: FrozenTrans| serde_json::to_string(&f).unwrap();
+    let cases = [
+        (TransitionKind::wipe(), frozen(FrozenTrans::Wipe { dir: "left", angle: 0.0, softness: 0.15 })),
+        (
+            TransitionKind::plugin_with("wipe", &[2.0, 12.0, 0.123456789]).unwrap(),
+            frozen(FrozenTrans::Wipe { dir: "up", angle: 12.0, softness: 0.123456789 }),
+        ),
+    ];
+    for (kind, want) in &cases {
+        assert_eq!(&serde_json::to_string(kind).unwrap(), want, "the moved kind's text changed");
+        let back: TransitionKind = serde_json::from_str(want).unwrap();
+        assert_eq!(&back, kind, "the variant's text reads otherwise");
+    }
+    // the variant's defaults: a file without the fields
+    let bare: TransitionKind = serde_json::from_str(r#"{"kind":"wipe"}"#).unwrap();
+    assert_eq!(bare, TransitionKind::wipe(), "the variant's serde defaults");
+    // a kind this build lacks stays as it was
+    let raw = r#"{"kind":"warp_tunnel","depth":0.5}"#;
+    let missing: TransitionKind = serde_json::from_str(raw).unwrap();
+    assert!(matches!(&missing, TransitionKind::Missing(m) if m.id() == "warp_tunnel"), "{missing:?}");
+    assert_eq!(serde_json::to_string(&missing).unwrap(), raw, "the missing kind's text changed");
+}

@@ -106,7 +106,7 @@ fn registry() -> Vec<(&'static str, BTreeSet<String>)> {
     use kt_plugin_api::Media;
     let reg = installed();
     let (mut audio, mut layer, mut video) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
-    let mut transitions: BTreeSet<String> = TransitionKind::ALL.iter().map(|k| k.tag().to_string()).collect();
+    let mut transitions: BTreeSet<String> = TransitionKind::all().iter().map(|k| k.tag().to_string()).collect();
     let mut generators: BTreeSet<String> = GeneratorKind::all().iter().map(|k| k.tag().to_string()).collect();
     for id in kt_plugins_builtin::BUILTIN_IDS {
         let p = reg.get(id).unwrap_or_else(|| panic!("the built-in {id} is not installed"));

@@ -201,11 +201,8 @@ fn trans(uv: vec2<f32>, k: f32) -> vec4<f32> {
     let od = out_dims();
     let aspect = od.x / od.y;
     let pi = 3.14159265;
-    if (mode == 1u) { // wipe
-        let ext = max(abs(p0.x) + abs(p0.y), 1e-6);
-        let s = ((uv.x - 0.5) * p0.x + (uv.y - 0.5) * p0.y + ext * 0.5) / ext;
-        return mix(samp(0u, uv), samp(1u, uv), front_mask(s, k, p0.z));
-    }
+    // the plugin kinds' arms (plugin-api-stage1, D12), assembled from the registry by kt-gpu
+    // @PLUGIN_TRANS_ARMS
     if (mode == 2u) { // iris: centre (p0.zw), rmax up to the far corner (item 400)
         let c = vec2<f32>((uv.x - p0.z) * aspect, uv.y - p0.w);
         let e = vec2<f32>(max(p0.z, 1.0 - p0.z) * aspect, max(p0.w, 1.0 - p0.w));

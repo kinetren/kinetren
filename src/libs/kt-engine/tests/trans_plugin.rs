@@ -46,7 +46,8 @@ fn digest(kind: &TransitionKind) -> u64 {
     let mut text = String::new();
     for (case, kk) in [("default", kind.clone()), ("tuned", tuned(kind))] {
         let m = TransMix::of(&kk);
-        text.push_str(&format!("{case} mode={} p={:?}\n", m.mode, m.p.map(f32::to_bits)));
+        // the mode number is a function of the registry (D12), not of the pixels: it moves with a kind
+        text.push_str(&format!("{case} p={:?}\n", m.p.map(f32::to_bits)));
         for k in [0u32, 1024, 2048, 3072, 4096] {
             let ext = trans_ext(&m, k);
             text.push_str(&format!("  ext({k})={:?}\n", ext.map(f32::to_bits)));
@@ -63,47 +64,50 @@ fn digest(kind: &TransitionKind) -> u64 {
     xxhash_rust::xxh3::xxh3_64(text.as_bytes())
 }
 
-/// (tag, digest) — printed with `KT_PRINT_GOLDEN=1` on the enum, before any kind moved.
+/// (tag, digest) — printed with `KT_PRINT_GOLDEN=1` on the enum before any kind moved (906c5ea5);
+/// reprinted without the mode number at 5.1a, after the wipe's row was shown equal with its former
+/// mode substituted (the mode is the registry's, D12).
 #[rustfmt::skip]
 const GOLDEN: &[(&str, u64)] = &[
-    ("crossfade", 0xeeefe83d2093b283),
-    ("wipe", 0x3d026e4405beb616),
-    ("iris", 0x40a959542b330000),
-    ("clock", 0xbd22c81895ea7fbf),
-    ("barn", 0xdafbef069b063fff),
-    ("luma", 0x1f3477e5093f4680),
-    ("push", 0x4921cd3c2af97bb0),
-    ("slide", 0xbeeeaf30e2ca4a01),
-    ("zoom", 0xde124c050c828246),
-    ("spin", 0x55735c8b3b9c61a4),
-    ("whip", 0x2af2f4b5ddc499dc),
-    ("blur_dissolve", 0x664cc0736e334b57),
-    ("pixelate", 0x9919f3453b94a346),
-    ("glitch", 0x31e63bc907d5ffdc),
-    ("flash", 0x99b1c9ab43eeceb9),
-    ("dip", 0xbd35619b432991fb),
-    ("blinds", 0xb801a47c52e08c06),
-    ("checker", 0x4653abcec363d122),
-    ("blocks", 0xa17a6f2a2b842aec),
-    ("spiral", 0x84bb0ebab214d29c),
-    ("split", 0xa053cdc953b1fb8f),
-    ("squeeze", 0x1bd63391f777e042),
-    ("stretch", 0x152d64ea46c43d1a),
-    ("swap", 0x7d515ef9a1f2f131),
-    ("shake", 0x13fca52d21edb0ab),
-    ("film_burn", 0x1e7335a4cce44d57),
-    ("light_leaks", 0x2fabe0f3d01a1cf5),
-    ("zoom_blur", 0x201d4a5fed6ef3bf),
-    ("flip", 0xe1301eeb13c527fd),
-    ("cube", 0xe56f39017c6d3e23),
-    ("door", 0x4becfb91500d9003),
-    ("page_peel", 0xb2d51f946b6ff8ca),
-    ("page_roll", 0x09cc92edae0a72ad),
+    ("crossfade", 0xc2d4bf8577cc473c),
+    ("wipe", 0xdc677b6a51e9b9ba),
+    ("iris", 0x968787d5a410be5a),
+    ("clock", 0x6109eccf64fa7b76),
+    ("barn", 0x5a5ce2073cddbacf),
+    ("luma", 0x3d8aea4607a6f17d),
+    ("push", 0x71ec014fb5440286),
+    ("slide", 0x50533221a7ec6fb4),
+    ("zoom", 0x91107519d3183f84),
+    ("spin", 0x38cc8e6b8738581a),
+    ("whip", 0xc94b93ff3293ec5b),
+    ("blur_dissolve", 0xde24cb6ce3de98b2),
+    ("pixelate", 0xf16169e989fdb0c8),
+    ("glitch", 0x1bc6dffbb3e00686),
+    ("flash", 0x6922377e91b11fe3),
+    ("dip", 0xd4b114b9df506489),
+    ("blinds", 0x1b9cdea11a194485),
+    ("checker", 0x7a7acadeb36b5b56),
+    ("blocks", 0x8036c43535b775cd),
+    ("spiral", 0xbd70e5ab4fff0bea),
+    ("split", 0xc2d12451b77d5e3c),
+    ("squeeze", 0x2e8e8f4cec5a1c01),
+    ("stretch", 0xf002461b87f21a7b),
+    ("swap", 0xb1d4afb501041ace),
+    ("shake", 0x0f29c203e9dbf3d0),
+    ("film_burn", 0x337824a6302a7b16),
+    ("light_leaks", 0x2bbaad47bb904aea),
+    ("zoom_blur", 0x88e16edf42517dad),
+    ("flip", 0x30b4dca677b86f3d),
+    ("cube", 0xbc3484eb64cd3649),
+    ("door", 0x49af5280f1e789f0),
+    ("page_peel", 0x1162c56dbf954b33),
+    ("page_roll", 0xd5cd13875bc69291),
 ];
 
 #[test]
 fn t1019_a_moved_transition_kind_keeps_its_pixels() {
-    let kinds = TransitionKind::ALL;
+    kt_plugins_builtin::install();
+    let kinds = TransitionKind::all();
     if std::env::var("KT_PRINT_GOLDEN").is_ok() {
         for k in kinds {
             println!("    (\"{}\", 0x{:016x}),", k.tag(), digest(k));

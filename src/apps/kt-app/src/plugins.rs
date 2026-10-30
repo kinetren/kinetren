@@ -27,7 +27,7 @@ pub fn manifest_keys() -> Vec<&'static str> {
         .plugins()
         .flat_map(|p| {
             let m = p.manifest();
-            [m.ui.category_key, m.ui.keywords_key].into_iter().chain(m.ui.variants.iter().map(|v| v.name_key))
+            [m.ui.category_key, m.ui.keywords_key, m.ui.name_key].into_iter().chain(m.ui.variants.iter().map(|v| v.name_key))
         })
         .filter(|k| !k.is_empty())
         .collect()

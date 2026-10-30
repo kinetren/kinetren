@@ -4,7 +4,7 @@
 //! one variant, and the offsets were dragged with the mouse. The user’s claim —
 //! “on any splices the transition is always a fade… these must be unified like an fx-chain”,
 //! so the window is built like the FX editor: a kind picker by category
-//! (the registry `TransitionKind::ALL`), parameters — the same
+//! (the registry `TransitionKind::all()`), parameters — the same
 //! `widgets::params_grid` from the same `ParamSpec` as for effects,
 //! cancel rolls the whole session back in one undo step.
 
@@ -28,9 +28,10 @@ pub struct TransitionEditor {
 /// agreed with the user (wipes, shifts, stylised).
 pub fn kind_category(kind: &TransitionKind) -> Key {
     match kind {
-        TransitionKind::Crossfade => k::trn::cat::BASIC,
-        TransitionKind::Wipe { .. }
-        | TransitionKind::Iris { .. }
+        TransitionKind::Crossfade | TransitionKind::Missing(_) => k::trn::cat::BASIC,
+        // a plugin kind's category is its manifest's (plugin-api-stage1, D12)
+        TransitionKind::Plugin(p) => crate::i18n::key_by_name(p.manifest().ui.category_key).unwrap_or(k::trn::cat::BASIC),
+        TransitionKind::Iris { .. }
         | TransitionKind::Clock { .. }
         | TransitionKind::Barn { .. }
         | TransitionKind::Luma { .. } => k::trn::cat::WIPE,
@@ -61,8 +62,12 @@ pub fn kind_category(kind: &TransitionKind) -> Key {
 /// Localised name of the kind. Full paths — test 125 looks up the key by them.
 pub fn kind_name(kind: &TransitionKind) -> &'static str {
     match kind {
-        TransitionKind::Crossfade => tr(k::trn::kind::CROSSFADE),
-        TransitionKind::Wipe { .. } => tr(k::trn::kind::WIPE),
+        TransitionKind::Crossfade | TransitionKind::Missing(_) => tr(k::trn::kind::CROSSFADE),
+        // the TRANSLATED name the manifest names (D12), its English name as the fallback
+        TransitionKind::Plugin(p) => {
+            let ui = &p.manifest().ui;
+            crate::i18n::key_by_name(ui.name_key).map_or(ui.name, tr)
+        }
         TransitionKind::Iris { .. } => tr(k::trn::kind::IRIS),
         TransitionKind::Clock { .. } => tr(k::trn::kind::CLOCK),
         TransitionKind::Barn { .. } => tr(k::trn::kind::BARN),
@@ -110,8 +115,7 @@ fn curve_name(c: AudioCurve) -> &'static str {
 /// number — a direction is not a number, and it is not expressed by the parameter spec.
 fn dir_of(kind: &mut TransitionKind) -> Option<&mut kt_model::Dir> {
     match kind {
-        TransitionKind::Wipe { dir, .. }
-        | TransitionKind::Push { dir }
+        TransitionKind::Push { dir }
         | TransitionKind::Slide { dir }
         | TransitionKind::Whip { dir, .. }
         | TransitionKind::Squeeze { dir }
@@ -198,7 +202,7 @@ impl KtApp {
                             .selected_text(kind_name(&t.kind))
                             .show_ui(ui, |ui| {
                                 let mut cat: Option<Key> = None;
-                                for k in TransitionKind::ALL {
+                                for k in TransitionKind::all() {
                                     let c = kind_category(k);
                                     if cat != Some(c) {
                                         if cat.is_some() {
@@ -243,6 +247,30 @@ impl KtApp {
                             ] {
                                 if ui.selectable_label(*dir == d, label).clicked() && *dir != d {
                                     *dir = d;
+                                    changed = true;
+                                }
+                            }
+                        });
+                    }
+                    // a plugin kind's direction row (D12): the same arrows, the row's index
+                    // (left, right, up, down — the file keeps the former `Dir` text)
+                    if let TransitionKind::Plugin(p) = &mut t.kind
+                        && let Some(cur) = p.get("dir")
+                    {
+                        ui.horizontal(|ui| {
+                            ui.label(tr(k::trn::DIR));
+                            for (i, label) in [
+                                tr(k::trn::dir::LEFT),
+                                tr(k::trn::dir::RIGHT),
+                                tr(k::trn::dir::UP),
+                                tr(k::trn::dir::DOWN),
+                            ]
+                            .into_iter()
+                            .enumerate()
+                            {
+                                let i = i as f64;
+                                if ui.selectable_label(cur == i, label).clicked() && cur != i {
+                                    p.set("dir", i);
                                     changed = true;
                                 }
                             }

@@ -14,7 +14,7 @@ fn owners() -> Vec<Box<dyn HasParams>> {
     for f in FxInstance::all() {
         v.push(Box::new(f.clone()));
     }
-    for k in TransitionKind::ALL {
+    for k in TransitionKind::all() {
         v.push(Box::new(k.clone()));
     }
     for g in GeneratorKind::all() {
@@ -34,9 +34,17 @@ fn t641_every_passport_is_typed_and_unique() {
         let m = p.manifest();
         m.passport.iter().position(|s| s.name == name).map(|i| m.row(i).store)
     };
+    // the transitions follow the effects in `owners()`: a transition plugin's rows have stores too
+    let trans_store = |t: &TransitionKind, name: &str| -> Option<kt_plugin_api::Store> {
+        let TransitionKind::Plugin(p) = t else { return None };
+        let m = p.manifest();
+        m.passport.iter().position(|s| s.name == name).map(|i| m.row(i).store)
+    };
     let mut fx_iter = FxInstance::all().iter();
-    for o in owners() {
+    let mut trans_iter = TransitionKind::all().iter();
+    for (n, o) in owners().into_iter().enumerate() {
         let fx = fx_iter.next();
+        let tr = if fx.is_none() && n < FxInstance::all().len() + TransitionKind::all().len() { trans_iter.next() } else { None };
         let specs = o.param_specs();
         let mut seen = std::collections::BTreeSet::new();
         for s in specs {
@@ -48,7 +56,7 @@ fn t641_every_passport_is_typed_and_unique() {
             // The built-in rows are numeric: the typing was set up for DYNAMIC owners. Since
             // plugin-api-stage1 (stage 3) a plugin's enum and bool fields are rows of its passport
             // too — and then the row's file form says so, and the row takes no curve.
-            match fx.and_then(|f| plugin_store(f, &s.name)) {
+            match fx.and_then(|f| plugin_store(f, &s.name)).or_else(|| tr.and_then(|t| trans_store(t, &s.name))) {
                 Some(kt_plugin_api::Store::Choice(keys)) => {
                     assert_eq!(s.ty, ParamType::Choice { variants: std::borrow::Cow::Borrowed(keys) }, "{}: a choice row of another type", s.name);
                     assert_eq!(s.kind, ParamKind::Structural, "{}: a choice row takes a curve", s.name);

@@ -8,6 +8,14 @@
 /// the same policy as `dissolve_into`. `Clear` — the EMPTY side of a
 /// solo fade (transparency): thanks to it, a fade at the track's edge is
 /// computed by the same core as a pair, and a wipe “from nothing” works.
+/// The canvas a transition pixel is computed on: the output's aspect and size in pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Canvas {
+    pub aspect: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
 pub enum Img<'a> {
     Frame { px: &'a [u8], w: i32, h: i32, has_alpha: bool },
     Clear,

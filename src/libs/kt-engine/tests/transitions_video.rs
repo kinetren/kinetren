@@ -447,7 +447,7 @@ fn t225_transition_kind_reaches_the_picture() {
     assert_ne!(mix, cb);
 
     // wipe left without blur: B opens FROM THE RIGHT, the boundary is sharp
-    let wipe = render(TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 });
+    let wipe = render(kt_model::TransitionKind::plugin_with("wipe", &[0.0, 0.0, 0.0]).unwrap());
     assert_eq!(px(&wipe, 2, 18), ca, "on the left the frame still leaving");
     assert_eq!(px(&wipe, 61, 18), cb, "on the right the frame already entering");
     let blended = (0..q.width as usize)
@@ -513,7 +513,7 @@ fn t225_solo_fade_with_kind_shapes_alpha() {
     assert_eq!(alpha(&cross, 2, 18), alpha(&cross, 61, 18), "the fade is uniform");
 
     // wipe-fade: one side is still opaque, the other is already empty
-    let wipe = render(TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 }, t);
+    let wipe = render(kt_model::TransitionKind::plugin_with("wipe", &[0.0, 0.0, 0.0]).unwrap(), t);
     let (l, r) = (alpha(&wipe, 2, 18), alpha(&wipe, 61, 18));
     assert!(l > 250 && r < 5, "the wipe fade must cut the frame by alpha: {l}/{r}");
 }
@@ -529,7 +529,7 @@ fn t232_transition_params_animate() {
     let render = |auto: Vec<ParamCurve>, t: Tick| {
         let mut p = project_pair();
         // a wipe without blur: the edge angle is visible from the shape of the boundary
-        p.transitions[0].kind = TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 };
+        p.transitions[0].kind = kt_model::TransitionKind::plugin_with("wipe", &[0.0, 0.0, 0.0]).unwrap();
         p.transitions[0].auto = auto;
         p.validate().unwrap();
         let mut vr = VideoRenderer::new(&p);
@@ -561,7 +561,7 @@ fn t232_transition_params_animate() {
 
     // a key outside the window is legal (hidden by the edge edit), the load does not fail
     let mut p = project_pair();
-    p.transitions[0].kind = TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 };
+    p.transitions[0].kind = kt_model::TransitionKind::plugin_with("wipe", &[0.0, 0.0, 0.0]).unwrap();
     p.transitions[0].auto = vec![ParamCurve {
         param: "angle".into(),
 
@@ -754,7 +754,7 @@ fn t461_transition_invert() {
 
     // wipe: the inversion swaps the sides at the same boundary
     let wipe =
-        |inv| render(TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 }, inv);
+        |inv| render(kt_model::TransitionKind::plugin_with("wipe", &[0.0, 0.0, 0.0]).unwrap(), inv);
     let (w0, w1) = (wipe(false), wipe(true));
     assert_eq!(px(&w0, 2, 18), ca, "direct wipe: the frame leaving on the left");
     assert_eq!(px(&w0, 61, 18), cb, "direct wipe: the frame entering on the right");
@@ -778,7 +778,7 @@ fn t461_transition_invert() {
             b: None,
             in_offset: Tick(18_000),
             out_offset: Tick(0),
-            kind: TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 },
+            kind: kt_model::TransitionKind::plugin_with("wipe", &[0.0, 0.0, 0.0]).unwrap(),
             audio: Default::default(),
             auto: vec![],
             invert: inv,
@@ -899,7 +899,7 @@ fn t464_overlap_transition_reaches_picture() {
 
     // with a wipe: both sides are in the frame, the boundary in the middle of the window
     let wipe =
-        render(&mk(Some(TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 })), t);
+        render(&mk(Some(kt_model::TransitionKind::plugin_with("wipe", &[0.0, 0.0, 0.0]).unwrap())), t);
     assert_eq!(px(&wipe, 2, 18), ca, "on the left the frame still leaving");
     assert_eq!(px(&wipe, 61, 18), cb, "on the right the frame already entering");
 

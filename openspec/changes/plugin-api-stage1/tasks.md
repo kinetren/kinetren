@@ -274,7 +274,7 @@ once (English message, first line = the stage and what was done).
     prints, per kind, `TransMix::of` (defaults and every number row at 70 %), `trans_ext` and the
     bytes of `mix_into` at five phases over a pair and both solo fades; red with the rounding of
     `mix_into` moved (29 kinds)
-- [ ] 5.1a The contract and a pilot (D12): `kt_plugin_api::trans` (`TransKernel`, `Img`, the shared
+- [x] 5.1a The contract and a pilot (D12): `kt_plugin_api::trans` (`TransKernel`, `Img`, the shared
     helpers moved verbatim), `Media::Transition` registration checks, `UiDecl.name_key`; kt-engine
     dispatches a plugin kind through its kernel, kt-gpu assembles `trans_<id>` arms; move `wipe` into
     `transitions-basic`; t1019's wipe row, t224, t459, t973 frozen form; the editor and OTIO by slot

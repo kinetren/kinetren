@@ -1028,8 +1028,11 @@ fn reel_children(
                         } else {
                             match &t.kind {
                                 TransitionKind::Crossfade => "SMPTE_Dissolve".into(),
-                                TransitionKind::Wipe { .. }
-                                | TransitionKind::Iris { .. }
+                                // a plugin kind of the wipes' category is a SMPTE wipe (D12)
+                                TransitionKind::Plugin(p) if p.manifest().ui.category_key == "trn.cat.wipe" => {
+                                    "SMPTE_Wipe".into()
+                                }
+                                TransitionKind::Iris { .. }
                                 | TransitionKind::Clock { .. }
                                 | TransitionKind::Barn { .. }
                                 | TransitionKind::Luma { .. } => "SMPTE_Wipe".into(),

@@ -12,6 +12,7 @@ pub const BUILTIN_IDS: &[&str] =
     "color_grade", "duotone", "posterize", "vignette", "filter", "eq", "distortion", "bitcrusher", "stereo_width", "gain", "gate", "limiter", "compressor",
     "tremolo", "auto_pan", "vibrato", "chorus", "flanger", "phaser", "pitch_shift", "delay", "slowed_reverb",
     "lens_distort", "twirl", "ripple", "kaleidoscope", "cylinder3d", "corner_pin", "mirror", "event_grid", "pan3d",
+    "wipe",
 ];
 
 /// The registry of the built-in set; panics on a refusal or when the families do not give exactly
@@ -24,6 +25,7 @@ pub fn builtin() -> Registry {
         fx_audio_dynamics::plugins(),
         fx_audio_modulation::plugins(),
         fx_video_distort::plugins(),
+        transitions_basic::plugins(),
     ];
     for p in families.into_iter().flatten() {
         let id = p.manifest().id.to_string();

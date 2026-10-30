@@ -67,6 +67,7 @@ fn tr(id: u64, a: u64, b: u64, in_off: i64, out_off: i64) -> TransitionEvent {
 
 #[test]
 fn t135_commands_undo_and_window() {
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(base_project());
     m.apply(Command::AddTransition(tr(1, 1, 2, 9_000, 4_500))).unwrap();
     assert_eq!(m.project().transitions.len(), 1);
@@ -88,6 +89,7 @@ fn t135_commands_undo_and_window() {
 
 #[test]
 fn t135_validation_rejects_bad_transitions() {
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(base_project());
     // not neighbours (1 and 3 are not butted together)
     assert!(matches!(
@@ -172,6 +174,7 @@ fn t135_validation_rejects_bad_transitions() {
 
 #[test]
 fn t135_reconcile_on_neighbor_edits() {
+    kt_plugins_builtin::install();
     // Moving one neighbour tears the joint — the transition dies (moving it to another
     // track: a time shift would now honestly catch ClipOverlap)
     let mut m = TimelineModel::new(base_project());
@@ -215,6 +218,7 @@ fn t135_reconcile_on_neighbor_edits() {
 
 #[test]
 fn t135_split_retargets_outgoing() {
+    kt_plugins_builtin::install();
     // Split of the OUTGOING neighbour: the joint (its end) moves to the right half
     let mut m = TimelineModel::new(base_project());
     m.apply(Command::AddTransition(tr(1, 1, 2, 9_000, 9_000))).unwrap();
@@ -267,6 +271,7 @@ fn fade(id: u64, a: Option<u64>, b: Option<u64>, in_off: i64, out_off: i64) -> T
 /// from it; the offset TOWARD the emptiness is not limited by the body.
 #[test]
 fn t155_fade_is_a_transition_with_one_side() {
+    kt_plugins_builtin::install();
     let mut p = base_project();
     // fade-in of the first clip and fade-out of the last
     p.transitions.push(fade(1, None, Some(1), 9_000, 9_000));
@@ -300,6 +305,7 @@ fn t155_fade_is_a_transition_with_one_side() {
 /// clip takes the transition with it, copy-paste carries the fade together with its clip.
 #[test]
 fn t155_fade_survives_edits_and_clipboard() {
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(base_project());
     m.apply(Command::AddTransition(fade(1, None, Some(1), 9_000, 9_000))).unwrap();
 
@@ -344,6 +350,7 @@ fn t155_fade_survives_edits_and_clipboard() {
 /// as in Vegas, where an overlap simply stops being an overlap.
 #[test]
 fn t159_restore_handles_after_pulling_apart() {
+    kt_plugins_builtin::install();
     // we prepare the state “after the overlap”: clips butted together + transition
     let mut m = TimelineModel::new(base_project());
     let before_trim = m.project().clone();
@@ -382,6 +389,7 @@ fn t159_restore_handles_after_pulling_apart() {
 /// is split between both ends.
 #[test]
 fn t159_restore_is_clamped_by_free_space() {
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(base_project());
     // overlap: clip 2 slid 20_000 to the left, the joint is the middle of the overlap
     m.apply_batch(vec![
@@ -411,6 +419,7 @@ fn t159_restore_is_clamped_by_free_space() {
 /// decision, R.26 item 1).
 #[test]
 fn t159_restore_after_neighbour_removed() {
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(base_project());
     // overlap: clip 2 slid 20_000 to the left, the joint is the middle of the overlap
     m.apply_batch(vec![
@@ -435,6 +444,7 @@ fn t159_restore_after_neighbour_removed() {
 /// there is nothing for a fade to return: it is created by an explicit command, cutting nothing
 #[test]
 fn t159_fade_has_nothing_to_restore() {
+    kt_plugins_builtin::install();
     let mut m = TimelineModel::new(base_project());
     m.apply(Command::AddTransition(fade(7, None, Some(2), 9_000, 9_000))).unwrap();
     let cmds = vec![Command::RemoveClip { id: ClipId(2) }];
@@ -446,6 +456,7 @@ fn t159_fade_has_nothing_to_restore() {
 /// (the “no overlaps” invariant counts them too).
 #[test]
 fn t159_restore_stops_at_obstacles() {
+    kt_plugins_builtin::install();
     // we assemble the state “after the overlap” at once: clips butted together + transition,
     // and four thousand ticks past the joint stands a foreign construct
     let mut p = base_project();
@@ -492,6 +503,7 @@ fn t159_restore_stops_at_obstacles() {
 /// the gift) — so the clamp is done by restore_handles itself.
 #[test]
 fn t159_restore_never_breaks_the_gesture() {
+    kt_plugins_builtin::install();
     for reversed in [false, true] {
         let mut p = base_project();
         p.clips.retain(|c| c.id != ClipId(3));
@@ -530,7 +542,9 @@ fn t159_restore_never_breaks_the_gesture() {
 /// the user complained about.
 #[test]
 fn t223_transition_kind_specs() {
-    let all = TransitionKind::ALL;
+    // the list holds plugin kinds (plugin-api-stage1, D12)
+    kt_plugins_builtin::install();
+    let all = TransitionKind::all();
     assert_eq!(
         all.len(),
         33,
@@ -543,7 +557,7 @@ fn t223_transition_kind_specs() {
     assert_eq!(tags.len(), uniq, "kind tags are unique: {tags:?}");
 
     let mut with_params = 0;
-    for k in TransitionKind::ALL {
+    for k in TransitionKind::all() {
         let mut k = k.clone();
         for spec in k.param_specs() {
             with_params += 1;
@@ -557,7 +571,7 @@ fn t223_transition_kind_specs() {
             assert!(spec.step > 0.0, "{}.{name}: step must be positive", k.tag());
             // kind default == spec default: otherwise “reset” in the UI
             // gives something other than what creating the transition gives
-            let fresh = TransitionKind::ALL.iter().find(|x| x.tag() == k.tag()).unwrap().clone();
+            let fresh = TransitionKind::all().iter().find(|x| x.tag() == k.tag()).unwrap().clone();
             let got = fresh.get_param(&name).unwrap();
             assert!(
                 (got - spec.default).abs() <= 1e-9,
@@ -610,6 +624,7 @@ fn t223_transition_kind_specs() {
 /// (reconcile), return of handles and copy-paste.
 #[test]
 fn t462_overlap_transition_model() {
+    kt_plugins_builtin::install();
     // clips 1 and 2 overlapping in a “staircase”: [0..60k) and [30k..90k)
     let overlap_project = || {
         let mut p = base_project();
@@ -626,7 +641,7 @@ fn t462_overlap_transition_model() {
         b: Some(ClipId(b)),
         in_offset: Tick::ZERO,
         out_offset: Tick::ZERO,
-        kind: TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.1 },
+        kind: kt_model::TransitionKind::plugin_with("wipe", &[0.0, 0.0, 0.1]).unwrap(),
         audio: AudioCurve::Linear,
         auto: vec![],
         invert: false,

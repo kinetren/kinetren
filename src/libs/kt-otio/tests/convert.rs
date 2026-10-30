@@ -752,7 +752,7 @@ fn t222_transition_kind_roundtrip_and_version() {
 
     // 2. a wipe with parameters and a non-default audio curve
     let mut p = rich_project();
-    p.transitions[0].kind = TransitionKind::Wipe { dir: Dir::Up, softness: 0.25, angle: 12.0 };
+    p.transitions[0].kind = kt_model::TransitionKind::plugin_with("wipe", &[2.0, 12.0, 0.25]).unwrap();
     p.transitions[0].audio = AudioCurve::SCurve;
     p.validate().unwrap();
     let text = save_project(&p, &Retained::default(), None);
@@ -798,7 +798,7 @@ fn t222_transition_kind_roundtrip_and_version() {
 
     // 4b. curves of the kind's parameters (R.34 K4) travel in the same envelope
     let mut p = rich_project();
-    p.transitions[0].kind = TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.2 };
+    p.transitions[0].kind = kt_model::TransitionKind::plugin_with("wipe", &[0.0, 0.0, 0.2]).unwrap();
     p.transitions[0].auto = vec![ParamCurve {
         param: "angle".into(),
         keys: vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick(13_500), 45.0)],
@@ -827,7 +827,7 @@ fn t222_transition_kind_roundtrip_and_version() {
     // 6. inversion (R.51, item 398): travels in the envelope, bumps the file to v7,
     // switching it off clears both the key and the version
     let mut p = rich_project();
-    p.transitions[0].kind = TransitionKind::Wipe { dir: Dir::Up, softness: 0.25, angle: 12.0 };
+    p.transitions[0].kind = kt_model::TransitionKind::plugin_with("wipe", &[2.0, 12.0, 0.25]).unwrap();
     p.transitions[0].invert = true;
     p.validate().unwrap();
     let text = save_project(&p, &Retained::default(), None);

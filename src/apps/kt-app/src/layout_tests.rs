@@ -6631,6 +6631,7 @@ fn t505_missing_font_warns_once() {
 /// goes to the model; “Cancel” restores the previous one.
 #[test]
 fn t227_transition_editor_opens_and_sets_kind() {
+    crate::plugins::install();
     use kt_model::*;
     use kt_time::Tick;
     let (mut h, g) = harness_three_clips_dt(Some(0.02));
@@ -6688,7 +6689,7 @@ fn t227_transition_editor_opens_and_sets_kind() {
     {
         let app = h.state_mut();
         let mut t = app.model.project().transitions[0].clone();
-        t.kind = TransitionKind::Wipe { dir: Dir::Up, angle: 0.0, softness: 0.2 };
+        t.kind = kt_model::TransitionKind::plugin_with("wipe", &[2.0, 0.0, 0.2]).unwrap();
         t.audio = AudioCurve::SCurve;
         assert!(app.apply_coalesced(Command::SetTransition(t), gesture));
     }
@@ -9562,6 +9563,7 @@ fn t458_nest_looks_like_a_nest() {
 /// the settings (against rule 20 “nothing switches itself off”).
 #[test]
 fn t460_fade_handle_redrag_keeps_kind() {
+    crate::plugins::install();
     use kt_model::*;
     use kt_time::Tick;
     const TPP: f64 = 1000.0;
@@ -9600,7 +9602,7 @@ fn t460_fade_handle_redrag_keeps_kind() {
             b: Some(ClipId(1)),
             in_offset: Tick::ZERO,
             out_offset: Tick(40_000),
-            kind: TransitionKind::Wipe { dir: Dir::Left, angle: 10.0, softness: 0.2 },
+            kind: kt_model::TransitionKind::plugin_with("wipe", &[0.0, 10.0, 0.2]).unwrap(),
             audio: AudioCurve::SCurve,
             auto: vec![ParamCurve {
                 param: "angle".into(),
@@ -9646,7 +9648,7 @@ fn t460_fade_handle_redrag_keeps_kind() {
     );
     assert_eq!(
         t.kind,
-        TransitionKind::Wipe { dir: Dir::Left, angle: 10.0, softness: 0.2 },
+        kt_model::TransitionKind::plugin_with("wipe", &[0.0, 10.0, 0.2]).unwrap(),
         "the fade view survived a repeated corner drag"
     );
     assert_eq!(t.audio, AudioCurve::SCurve, "the audio curve was not reset");
