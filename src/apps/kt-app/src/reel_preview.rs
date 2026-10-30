@@ -667,6 +667,14 @@ pub fn render_poster(
             src.insert(m, s);
         }
     }
+    // a generator's values live on its EVENT: the plan asks for per-event generator sources
+    // (`GEN_TAG` addresses), which export raises itself from `gen_sources` — so does the poster.
+    // Without them every generator frame of a poster was black (probe 1.2 caught it)
+    for (addr, state) in kt_engine::gen_sources(p) {
+        let s = kt_media::factory::open_gen(&state);
+        facts.observe(addr, s.info());
+        src.insert(addr, s);
+    }
     if ctl.should_stop() {
         return None;
     }
@@ -681,4 +689,3 @@ pub fn render_poster(
     compose_offline_frame(&mut video, &mut src, &cache, t, q, &mut buf);
     (buf.len() == (q.width * q.height * 4) as usize).then_some(buf)
 }
-

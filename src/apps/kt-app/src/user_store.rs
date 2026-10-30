@@ -1163,6 +1163,10 @@ mod records_tests {
         assert!(poster.starts_with(store.join("posters")), "the poster lives in the store: {poster:?}");
         let img = image::open(&poster).expect("a PNG poster");
         assert_eq!((img.width(), img.height()), (320, 180));
+        // a frame of the project, not a black rectangle (the generator sources of the events
+        // were once missing from the poster's plan — every frame came out flat)
+        let colours: std::collections::HashSet<[u8; 3]> = img.to_rgb8().pixels().map(|p| p.0).collect();
+        assert!(colours.len() > 16, "the poster is flat ({} colours): nothing was composed", colours.len());
         drop(app);
         let mut names: Vec<String> = std::fs::read_dir(&projects)
             .unwrap()

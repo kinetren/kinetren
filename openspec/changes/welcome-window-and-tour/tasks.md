@@ -17,7 +17,8 @@ done).
 ## 1. Probes before code
 
 - [x] 1.1 Probe: can egui 0.36 open a `menu_button` popup of the menu bar programmatically (memory popup id of the File menu) — a throwaway harness test in `src/apps/kt-app/src/reach_tests.rs` that opens File by code and finds "Create a generator…" in the accessibility tree of the next frame. Record the answer here; if no, adjust the t988 PATH to the fallback of design (Risks) before stage 4
-- [ ] 1.2 Probe: render one poster frame of a fixture project through the reel-preview offline path at 320×180 on release, timing it (`cargo build --release -p kt-app`; a `#[ignore]` timing test); record the time here
+- [x] 1.2 Probe: render one poster frame of a fixture project through the reel-preview offline path at 320×180 on release, timing it (`cargo build --release -p kt-app`; a `#[ignore]` timing test); record the time here
+  - Measured 2026-10-30 on release (`cargo test --release -p kt-app -- --ignored probe_poster_render_time --nocapture`, load average ~30 from parallel sessions): one 320×180 poster of the lesson project = 14.3 ms cold, 11.6 ms warm — against a Ctrl+S it is noise, and it runs on its own thread, paused during playback. The probe CAUGHT A DEFECT: the first posters were flat black — a generator's values live on its event, so the plan asks for per-event generator sources (`GEN_TAG` addresses from `kt_engine::gen_sources`), which export opens itself and `render_poster` did not. Fixed; t985's poster half now asserts the poster is not flat (red on the old code). The reel strip (`render_reel_preview`) has the same shape and likely the same gap for generator events inside a reel — not touched here, a follow-up.
 
 ## 2. Records in the user store
 

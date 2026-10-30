@@ -928,12 +928,21 @@ mod tests {
         let ctl = crate::bg::BgCtl::from_flags(Default::default(), Default::default());
         let at = crate::reel_preview::poster_moment(&p, kt_time::Tick(0));
         let mut best = std::time::Duration::MAX;
+        let mut cold = None;
+        let mut colors = 0;
         for _ in 0..5 {
             let t0 = std::time::Instant::now();
             let px = crate::reel_preview::render_poster(&ctl, &p, None, at).expect("a poster");
-            best = best.min(t0.elapsed());
+            let dt = t0.elapsed();
+            cold.get_or_insert(dt);
+            best = best.min(dt);
             assert_eq!(px.len(), 320 * 180 * 4);
+            colors = px.chunks(4).map(|c| (c[0], c[1], c[2])).collect::<std::collections::HashSet<_>>().len();
         }
-        eprintln!("poster 320x180 of the lesson project: best of 5 = {best:?}");
+        assert!(colors > 16, "the poster is (nearly) flat: {colors} colours — nothing was composed");
+        eprintln!(
+            "poster 320x180 of the lesson project at {at:?}: cold {:?}, best of 5 {best:?}, {colors} colours",
+            cold.unwrap()
+        );
     }
 }
