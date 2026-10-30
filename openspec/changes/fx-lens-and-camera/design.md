@@ -63,7 +63,7 @@ admits new kinds only as plugins, and a later move would be four golden migratio
 `out = in + k · H(in) · D(cell, seed)`, where `H` is glow's blurred-luma soft knee (threshold, radius
 as glow's) and `D` a value-noise of the stage grid from the counter-based hash (two octaves, a
 "smudge" scale and a "speck" scale). Below the threshold `H = 0` exactly, so the dark-frame bytes
-stand (t993). The pattern is pinned to the stage grid like `noise`; under the K× rule it is sampled
+stand (t1011). The pattern is pinned to the stage grid like `noise`; under the K× rule it is sampled
 at the logical cell size, so 2× and 1× agree within `FrameTol`. Rejected: a texture file (ships
 media, scales badly, F-FX-007 trick 3) and dirt added to the frame directly (shows on black).
 
@@ -90,14 +90,14 @@ F-FX-008 trick 3).
 `geometry` zoom 1.0 → 1.15 eased over 0.3 s, then a zigzag segment (periods 6, amplitude 0.03) back
 to 1.0. "Handheld": `geometry` position x/y with long zigzag segments of small amplitude (periods 2
 per second, amplitude 0.01 of the frame), offset phases on x and y. The factory file version stays 1;
-"Punch in" is not touched (t996 compares its record).
+"Punch in" is not touched (t1014 compares its record).
 
 ## Risks / Trade-offs
 
 - [The plugin API contracts slip] → stage 1 (presets) is independent; stages 2–4 each wait for one
   contract only, so a slip delays one kind, not the wave.
 - [Drops at 30× minification alias] → the Jacobian supersampling of the fused pass already covers Warp
-  modes; t994 adds a minified case.
+  modes; t1012 adds a minified case.
 - [Dirt looks like noise on busy bright frames] → two scales and a coverage parameter; the default is
   tuned on our fixtures, not the owner's projects.
 

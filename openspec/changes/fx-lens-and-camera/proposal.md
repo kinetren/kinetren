@@ -49,4 +49,4 @@ confirmed the gap and the forms the market uses.
 - Depends on `plugin-api-stage1`'s three missing contracts (its task 4.1): a positioned tap
   (`lens_housing`), geometry primitives in the API (`lens_drops`), a barrier pass on the GPU
   (`lens_dirt`, `lens_flare`). The presets do not wait.
-- Tests reserved: t992–t997.
+- Tests reserved: t1010–t1015.

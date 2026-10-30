@@ -19,7 +19,7 @@ off the corners the moment the shot is zoomed, which is exactly the vignette les
 - **THEN** in the first chain the four corner pixels of the output are dark and the centre is the
   zoomed input; in the second the dark region is the first chain's housing scaled by 1.5 about the
   centre; amount 0 gives the input bytes
-- **TEST** t992 (`src/plugins/fx-video-color/tests/lens_housing.rs`)
+- **TEST** t1010 (`src/plugins/fx-video-color/tests/lens_housing.rs`)
 
 ### Requirement: Lens dirt shows only where the frame has highlights
 The built-in plugin `lens_dirt` SHALL take the frame's highlights with the threshold of `glow` (a
@@ -37,7 +37,7 @@ trick 1); an overlay plate shows dirt on a black frame and stays put when the sh
 - **THEN** the dark frame is unchanged byte for byte; with the disc, pixels change only within the
   blur radius of the disc and the change is the dirt pattern of that seed (another seed gives another
   pattern); the 2× render reduced to 1× is within `FrameTol` of the 1× render
-- **TEST** t993 (`src/plugins/fx-video-stylize/tests/lens_dirt.rs`)
+- **TEST** t1011 (`src/plugins/fx-video-stylize/tests/lens_dirt.rs`)
 
 ### Requirement: Lens drops are a Warp mode, edited as a pair
 `lens_drops` SHALL be a geometry plugin whose map is a new `drops` mode of the Warp primitive:
@@ -56,7 +56,7 @@ geometry family's own form, without a new pass; the fused map stays closed to pl
 - **THEN** the two CPU renders are byte-identical; the GPU render is within `FrameTol::WARP` of the
   CPU (the pair `geom.rs` ↔ `geom_fused.wgsl`); the plan holds ONE geo run for both steps; seed 8
   moves the drops; refraction 0 equals the `lens_distort`-only render byte for byte
-- **TEST** t994 (`src/libs/kt-fx/tests/lens_drops.rs`)
+- **TEST** t1012 (`src/libs/kt-fx/tests/lens_drops.rs`)
 
 ### Requirement: The lens flare is placed, not detected
 The built-in plugin `lens_flare` SHALL draw a core glow and ghosts along the line from its `x`/`y`
@@ -72,7 +72,7 @@ a detector would make the flare jump between frames and break "a pure function o
 - **THEN** the difference output − input is the same on both frames (up to the clamp at 255); on the
   curve the ghosts move along the line through the centre and stay drawn when the position leaves the
   frame; brightness 0 gives the input bytes
-- **TEST** t995 (`src/plugins/fx-video-stylize/tests/lens_flare.rs`)
+- **TEST** t1013 (`src/plugins/fx-video-stylize/tests/lens_flare.rs`)
 
 ### Requirement: Camera looks are chain presets, not kinds
 "Fisheye lens" (`lens_distort` + `lens_housing`), "Zoom Shake" and "Handheld" (a `geometry` curve with
@@ -92,4 +92,4 @@ shape already expresses jitter around a constant, so a kernel would duplicate th
 - **PATH** open the FX picker on a video event → the gallery shows; type "fisheye" → the "Fisheye
   lens" preset row is listed under the presets; click it → the chain strip shows "Lens distort" and
   "Lens housing", the preview shows the housing in the corners; Ctrl+Z → both slots are gone
-- **TEST** t996 (`src/apps/kt-app/src/user_store.rs`), t997 (`src/apps/kt-app/src/reach_tests.rs`)
+- **TEST** t1014 (`src/apps/kt-app/src/user_store.rs`), t1015 (`src/apps/kt-app/src/reach_tests.rs`)
