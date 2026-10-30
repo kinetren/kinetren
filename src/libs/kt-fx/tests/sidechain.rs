@@ -13,14 +13,7 @@ use kt_model::FxInstance;
 const SR: usize = 48_000;
 
 fn comp() -> FxInstance {
-    FxInstance::Compressor {
-        threshold_db: -24.0,
-        ratio: 8.0,
-        attack_ms: 5.0,
-        release_ms: 60.0,
-        makeup_db: 0.0,
-        key: None, // the key is fed DIRECTLY into process_keyed: kt-fx knows nothing about tracks
-    }
+    kt_model::FxInstance::plugin_with("compressor", &[-24.0, 8.0, 5.0, 60.0, 0.0, 0.0]).unwrap()
 }
 
 /// A steady tone is “music”.
@@ -55,6 +48,7 @@ fn rms(buf: &[f32], a: usize, b: usize) -> f32 {
 /// Test 767 (R.65): the key controls, its own input is compressed.
 #[test]
 fn t767_key_drives_the_detector_and_input_is_compressed() {
+    kt_plugins_builtin::install();
     let frames = SR / 2; // 0.5 c
     // the pause between lines is clearly longer than the release (60 ms ≈ 2880
     // frames): otherwise “did the level return” is measured at the half-decay point
@@ -103,6 +97,7 @@ fn t767_key_drives_the_detector_and_input_is_compressed() {
 /// Test 768 (R.65): neutrality and the cost of the key branch.
 #[test]
 fn t768_silent_key_is_transparent_and_costs_nothing() {
+    kt_plugins_builtin::install();
     let frames = 4_096;
     let mut p = TrackProcessor::new(&[comp()], ChainOpts::default());
     let mut out = tone(frames);

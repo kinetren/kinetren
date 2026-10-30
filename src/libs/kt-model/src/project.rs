@@ -1233,10 +1233,7 @@ pub const TRACK_TAG: u64 = 1 << 61;
 /// One home for the answer to “what is a key in the chain” — it is asked by both the check
 /// of the command, and the engine, and the format.
 pub fn sidechain_keys(fx: &[FxInstance]) -> impl Iterator<Item = TrackId> + '_ {
-    fx.iter().filter_map(|f| match f {
-        FxInstance::Compressor { key, .. } => *key,
-        _ => None,
-    })
+    fx.iter().filter_map(FxInstance::sidechain_key)
 }
 
 /// Whether the key graph closes if the track `target` gets the chain `fx`.
@@ -4048,18 +4045,6 @@ fn is_default_frame_mode(m: &FrameMode) -> bool {
     *m == FrameMode::Nearest
 }
 
-fn default_comp_thr() -> f32 {
-    -18.0
-}
-fn default_comp_ratio() -> f32 {
-    4.0
-}
-fn default_comp_att() -> f32 {
-    10.0
-}
-fn default_comp_rel() -> f32 {
-    150.0
-}
 fn default_two_u32() -> u32 {
     2
 }
@@ -5133,28 +5118,8 @@ pub enum FxInstance {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         automation: Vec<SlowedKeyframe>,
     },
-    /// Compressor (R.47): peak detector with stereo link.
-    Compressor {
-        #[serde(default = "default_comp_thr")]
-        threshold_db: f32,
-        #[serde(default = "default_comp_ratio")]
-        ratio: f32,
-        #[serde(default = "default_comp_att")]
-        attack_ms: f32,
-        #[serde(default = "default_comp_rel")]
-        release_ms: f32,
-        #[serde(default, skip_serializing_if = "is_zero")]
-        makeup_db: f32,
-        /// The SIDECHAIN KEY (R.65): the track along which the detector computes.
-        /// `None` — an ordinary compressor, and then the field is not written at all:
-        /// a file without a sidechain stays byte-for-byte the same.
-        ///
-        /// The address is a `TrackId`, NOT a track number: the number is the rank of the row, and
-        /// inserting a track above would move the key onto someone else's signal (the same
-        /// lesson as the FX-state key in R.62).
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        key: Option<TrackId>,
-    },
+    // Compressor is a plugin since plugin-api-stage1 (src/plugins/fx-audio-dynamics, D11.4): its
+    // sidechain `key` is a host-reference row, read and set by its role (`sidechain_key`).
     // ---- video FX (port of bc_fx.cpp, item 25; parameters and defaults of v1) ----------
     // Posterize is a plugin since plugin-api-stage1 (src/plugins/fx-video-color): its file text is
     // the variant's (t973), its slot is `Plugin` below.
@@ -5405,7 +5370,7 @@ impl FxInstance {
     pub fn class(&self) -> FxClass {
         match self {
             | FxInstance::SlowedReverb { .. }
-            | FxInstance::Compressor { .. } => FxClass::Audio,
+ => FxClass::Audio,
             FxInstance::Pan3d { .. } => FxClass::Video3d,
             // a plugin's class is its manifest's media (plugin-api-stage1, D2)
             FxInstance::Plugin(p) => match p.manifest().media {
@@ -5449,7 +5414,6 @@ impl FxInstance {
         match self {
             FxInstance::LayerMix { .. } => "layer_mix",
             FxInstance::SlowedReverb { .. } => "slowed_reverb",
-            FxInstance::Compressor { .. } => "compressor",
             FxInstance::Sharpen { .. } => "sharpen",
             FxInstance::Pixelate { .. } => "pixelate",
             FxInstance::ChromaticAberration { .. } => "chromatic_aberration",
@@ -5643,13 +5607,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         // length of the pre-delay line — the same geometry as reverb_delay_ms
         predelay_ms: f32, 0.0, 200.0, 0.0, 1.0, Ms, Structural;
         width: f32, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
-    },
-    Compressor {
-        threshold_db: f32, -60.0, 0.0, -18.0, 0.1, Db, Smooth;
-        ratio: f32, 1.0, 20.0, 4.0, 0.1, Ratio, Smooth;
-        attack_ms: f32, 0.1, 250.0, 10.0, 0.1, Ms, Smooth;
-        release_ms: f32, 5.0, 2000.0, 150.0, 1.0, Ms, Smooth;
-        makeup_db: f32, 0.0, 24.0, 0.0, 0.1, Db, Smooth;
     },
     // ---- video 2D --------------------------------------------------------
     Sharpen {
@@ -6411,14 +6368,26 @@ impl FxInstance {
         FxInstance::plugin("delay").expect("delay is not registered: install the built-in plugin set first")
     }
 
+    /// The compressor at its defaults, without a key — a plugin slot (plugin-api-stage1, D11.4).
     pub fn compressor() -> FxInstance {
-        FxInstance::Compressor {
-            threshold_db: -18.0,
-            ratio: 4.0,
-            attack_ms: 10.0,
-            release_ms: 150.0,
-            makeup_db: 0.0,
-            key: None,
+        FxInstance::plugin("compressor").expect("compressor is not registered: install the built-in plugin set first")
+    }
+
+    /// The slot's sidechain key (R.65, D11.4): its `RowRole::SidechainKey` row, when set. ONE
+    /// home for "what is this device's key" — the engine routes by it, the format cleans by it,
+    /// the track window edits through `set_sidechain_key`.
+    pub fn sidechain_key(&self) -> Option<TrackId> {
+        match self {
+            FxInstance::Plugin(p) => p.refs(kt_plugin_api::RowRole::SidechainKey).next().map(|(_, id)| TrackId(id)),
+            _ => None,
+        }
+    }
+
+    /// Set (or clear) the sidechain key; false when the effect has no key input.
+    pub fn set_sidechain_key(&mut self, key: Option<TrackId>) -> bool {
+        match self {
+            FxInstance::Plugin(p) => p.set_ref(kt_plugin_api::RowRole::SidechainKey, key.map(|k| k.0)),
+            _ => false,
         }
     }
 
@@ -7010,12 +6979,16 @@ impl Project {
     }
 
     /// First free track id in the WHOLE document.
+    ///
+    /// An id a sidechain key still names is NOT free (plugin-api-stage1, t995): deleting the key
+    /// track keeps the key (rule 20, t772 — no edit on the user's behalf), and handing its id to the
+    /// next new track would silently re-point that key at someone else's signal. The dead key
+    /// stays dead — the device sounds un-keyed — until undo brings its track back.
     pub fn next_track_id(&self) -> TrackId {
-        let m = self
-            .tracks
-            .iter()
-            .chain(self.sequences.iter().flat_map(|s| s.tracks.iter()))
+        let all = || self.tracks.iter().chain(self.sequences.iter().flat_map(|s| s.tracks.iter()));
+        let m = all()
             .map(|t| t.id.0)
+            .chain(all().flat_map(|t| sidechain_keys(&t.fx)).map(|k| k.0))
             .max()
             .unwrap_or(0);
         TrackId(m + 1)

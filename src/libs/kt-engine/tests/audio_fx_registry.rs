@@ -432,14 +432,7 @@ fn t326_delay_and_dynamics_behave() {
         20.0 * (rms * std::f64::consts::SQRT_2).log10()
     };
     let dry_db = comp(vec![]);
-    let comp_db = comp(vec![FxInstance::Compressor {
-        threshold_db: -18.0,
-        ratio: 4.0,
-        attack_ms: 1.0,
-        release_ms: 150.0,
-        makeup_db: 0.0,
-        key: None,
-    }]);
+    let comp_db = comp(vec![kt_model::FxInstance::plugin_with("compressor", &[-18.0, 4.0, 1.0, 150.0, 0.0, 0.0]).unwrap()]);
     // sine 0.5 = -6 dBFS: expect -18 + ( -6 - -18 )/4 = -15 dBFS
     let expect = -18.0 + (dry_db + 18.0) / 4.0;
     assert!(

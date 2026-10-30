@@ -356,6 +356,16 @@ the engine routes the key signal by the role (kt-engine `audio.rs`), the track w
 row by the role, and kt-otio carries it by the role. A second plugin with a key input gets
 routing without engine code. The compressor moves.
 
+*As built (3b.1):* the role lives in the store, `Store::TrackRef(RowRole::SidechainKey)`, and the
+row's type is `ParamType::TrackRef` (`ParamSpec::track_ref_row`: structural, never automated, never
+in the numeric grid). The slot holds the id's number, 0 is none; the file writes the bare integer
+(the old `TrackId` text) and omits it at none. `FxInstance::sidechain_key`/`set_sidechain_key` are
+the ONE home of "this device's key": the engine's stage builder, kt-otio's tolerant read, the
+model's validation and cycle check, and the track window all go through them, and none names the
+compressor. Found on the way (t995): `next_track_id` was max + 1, so deleting the last audio track
+and adding one handed the dead key's id to the new track — the kept key (rule 20) silently started
+listening to it. An id a sidechain key names is no longer free.
+
 **D11.5 A time-warp declaration.** `Decl.time_warp: Some(TimeWarp { rate_row })` marks the slot
 that consumes the source at its rate curve. The host's warp machinery finds the warp slot by the
 declaration, not by the variant: `AutoProfiles::warp_slot`, `chain_rate`, the source windows,

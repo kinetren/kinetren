@@ -200,8 +200,9 @@ BOTH formulas of the tail — `AudioNode::tail()` and the static `chain_tail`
 (their agreement is guarded by t322f); on zero input in the tail the node rings out.
 
 Checklist "add an audio effect" (plugin-api-stage1, stage 3 — every user audio kind is a plugin;
-the core keeps `layer_mix`, `slowed_reverb` and the `compressor`, whose sidechain `key` is a model
-address): in its family crate under `src/plugins/fx-audio-*` — a `Manifest` (id = the file's
+the core keeps `layer_mix` and `slowed_reverb`; the compressor moved in 3b.1, its sidechain `key`
+a `Store::TrackRef(RowRole::SidechainKey)` row the engine routes by role — a new effect with a key
+input declares the same row and gets the key signal in `process` with no host code): in its family crate under `src/plugins/fx-audio-*` — a `Manifest` (id = the file's
 `kind`, `Media::AudioFx`, the passport in FILE order with a `RowDecl` per row: `F32`/`U32`/…, a
 `Choice`/`Bool` store for an enum/bool field with `ParamSpec::choice_row`/`flag_row`,
 `omit_default` where the file leaves the row out at its default; `Decl.tail`/`lookahead` formulas

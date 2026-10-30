@@ -2863,13 +2863,10 @@ fn t773_sidechain_key_round_trips_as_v12() {
     let mut p = rich_project();
     p.ensure_tracks(A, 2);
     let speech = p.track_at(A, 1).unwrap().id;
-    p.track_at_mut(A, 0).unwrap().fx = vec![FxInstance::Compressor {
-        threshold_db: -24.0,
-        ratio: 8.0,
-        attack_ms: 5.0,
-        release_ms: 120.0,
-        makeup_db: 0.0,
-        key: Some(speech),
+    p.track_at_mut(A, 0).unwrap().fx = vec![{
+        let mut c = kt_model::FxInstance::plugin_with("compressor", &[-24.0, 8.0, 5.0, 120.0, 0.0, 0.0]).unwrap();
+        c.set_sidechain_key(Some(speech));
+        c
     }];
     p.validate().unwrap();
     let text = save_project(&p, &Retained::default(), None);

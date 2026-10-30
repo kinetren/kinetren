@@ -1786,10 +1786,8 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
             p.tracks.iter().map(|t| t.id).collect();
         let clean = |fx: &mut Vec<kt_model::FxInstance>, allow: bool| {
             for f in fx.iter_mut() {
-                if let kt_model::FxInstance::Compressor { key, .. } = f
-                    && key.is_some_and(|k| !allow || !known.contains(&k))
-                {
-                    *key = None;
+                if f.sidechain_key().is_some_and(|k| !allow || !known.contains(&k)) {
+                    f.set_sidechain_key(None);
                 }
             }
         };

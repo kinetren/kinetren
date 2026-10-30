@@ -34,16 +34,14 @@ pub struct TrackWindow {
 
 /// whether it is a compressor is a question asked three times in the ducking form.
 fn is_comp(f: &kt_model::FxInstance) -> bool {
-    matches!(f, kt_model::FxInstance::Compressor { .. })
+    f.tag() == "compressor"
 }
 
 /// a copy of the chain’s first compressor with another key — needed to
 /// ASK the model about a cycle without changing anything yet.
 fn comp_with_key(fx: &[kt_model::FxInstance], key: Option<TrackId>) -> kt_model::FxInstance {
     let mut c = fx.iter().find(|f| is_comp(f)).cloned().unwrap_or_else(kt_model::FxInstance::compressor);
-    if let kt_model::FxInstance::Compressor { key: k, .. } = &mut c {
-        *k = key;
-    }
+    c.set_sidechain_key(key);
     c
 }
 
@@ -53,16 +51,12 @@ fn comp_with_key(fx: &[kt_model::FxInstance], key: Option<TrackId>) -> kt_model:
 /// nothing is switched off by itself.
 fn set_key(fx: &mut Vec<kt_model::FxInstance>, bypass: &mut Vec<bool>, key: Option<TrackId>) {
     if let Some(i) = fx.iter().position(is_comp) {
-        if let kt_model::FxInstance::Compressor { key: k, .. } = &mut fx[i] {
-            *k = key;
-        }
+        fx[i].set_sidechain_key(key);
         return;
     }
     if key.is_some() {
         let mut c = kt_model::FxInstance::compressor();
-        if let kt_model::FxInstance::Compressor { key: k, .. } = &mut c {
-            *k = key;
-        }
+        c.set_sidechain_key(key);
         fx.push(c);
         bypass.push(false);
     }

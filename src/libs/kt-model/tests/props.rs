@@ -59,6 +59,13 @@ fn t641_every_passport_is_typed_and_unique() {
                     assert_eq!(s.kind, ParamKind::Structural, "{}: a flag row takes a curve", s.name);
                     continue;
                 }
+                // a host-reference row (D11.4, the compressor's key): an address, no curve
+                Some(kt_plugin_api::Store::TrackRef(_)) => {
+                    assert_eq!(s.ty, ParamType::TrackRef, "{}: a track reference row of another type", s.name);
+                    assert_eq!(s.kind, ParamKind::Structural, "{}: a track reference takes a curve", s.name);
+                    assert_eq!(s.default, 0.0, "{}: a track reference is not empty by default", s.name);
+                    continue;
+                }
                 _ => {}
             }
             assert_eq!(s.ty, ParamType::Num, "built-in row {} is not a number", s.name);

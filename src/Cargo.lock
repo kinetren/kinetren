@@ -2165,6 +2165,7 @@ dependencies = [
  "kt-fx",
  "kt-media",
  "kt-model",
+ "kt-plugin-api",
  "kt-plugins-builtin",
  "kt-time",
  "realfft",

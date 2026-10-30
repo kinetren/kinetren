@@ -193,6 +193,13 @@ once (English message, first line = the stage and what was done).
 
 ## 3b. The two audio kinds that waited (design D11.4, D11.5)
 
+- [x] 3b.1 done: `Store::TrackRef(RowRole::SidechainKey)`, `ParamType::TrackRef`,
+    `PluginSlot::refs`/`set_ref`, `FxInstance::sidechain_key`/`set_sidechain_key`; the compressor
+    (node verbatim) moves into `fx-audio-dynamics`; engine, kt-otio, model checks and the track
+    window ask the role. t995 red twice — with the key tied to the compressor kind (the unknown
+    `key_echo` plugin got silence) and with `next_track_id` handing out a dead key's id (a defect
+    found here, fixed: an id a key names is not free). t973 frozen forms; t973c's compressor
+    row (printed before the move) unchanged; t767–t778, t641 (refined for the new store) green
 - [ ] 3b.1 `Store::TrackRef` with a `RowRole` (D11.4): the slot row, its file form (t973 against the frozen `key`), the engine routing by role (`kt-engine/src/audio.rs`), the track window and kt-otio by role; move the compressor into `fx-audio-dynamics`; write t995 (`src/libs/kt-engine/tests/sidechain.rs`) red first; verify t767–t778 (the sidechain set) and t973c
 - [ ] 3b.2 `Decl.time_warp` (D11.5): every place that finds the warp by the variant (kt-model `warp.rs`, `project.rs`, `model.rs`; kt-fx `audio/mod.rs`, `nodes.rs`; kt-app `fx_editor.rs`; kt-cli) asks the declaration; one warp slot per chain refused at validation; move Slowed+Reverb into `fx-audio-modulation`; write t996 red first; verify t11, t973c, t17, t282, t603d, t616 and the video warp set
 - [ ] 3b.3 Commit stage 3b; `python3 src/scripts/target-prune.py`

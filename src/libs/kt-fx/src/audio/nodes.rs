@@ -205,7 +205,6 @@ pub enum AudioNode {
     /// `produce()` — the node needs an inter-node buffer, which it does not own.
     LayerMix,
     Reverb(ReverbNode),
-    Compressor(CompNode),
     /// An audio plugin's state (plugin-api-stage1, D2a): one dynamic call per chunk.
     Plugin(Box<dyn kt_plugin_api::AudioState>),
 }
@@ -269,7 +268,6 @@ impl AudioNode {
         match fx {
             FxInstance::LayerMix { .. } => Some(AudioNode::LayerMix),
             FxInstance::SlowedReverb { .. } => Some(AudioNode::Reverb(ReverbNode::new())),
-            FxInstance::Compressor { .. } => Some(AudioNode::Compressor(CompNode::new())),
             _ => None,
         }
     }
@@ -287,10 +285,6 @@ impl AudioNode {
             (AudioNode::Plugin(n), FxInstance::Plugin(p)) => n.apply(&p.values, structural),
             (AudioNode::LayerMix, FxInstance::LayerMix { .. }) => {}
             (AudioNode::Reverb(n), FxInstance::SlowedReverb { .. }) => n.apply(fx, structural),
-            (
-                AudioNode::Compressor(n),
-                FxInstance::Compressor { threshold_db, ratio, attack_ms, release_ms, makeup_db, .. },
-            ) => n.apply(*threshold_db, *ratio, *attack_ms, *release_ms, *makeup_db),
             // the chain fingerprint matched — the kinds by slots match by
             // construction; one can get here only through a matching error
             _ => debug_assert!(false, "node/slot kind mismatch"),
@@ -302,7 +296,6 @@ impl AudioNode {
             AudioNode::Plugin(n) => n.set_targets(&SlotView { auto, slot }, s),
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.set_targets(auto, slot, s),
-            AudioNode::Compressor(n) => n.set_targets(auto, slot, s),
         }
     }
 
@@ -328,7 +321,6 @@ impl AudioNode {
         match self {
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.rv.process(buf),
-            AudioNode::Compressor(n) => n.process(buf, key),
             AudioNode::Plugin(n) => n.process(buf, _pos, key),
         }
     }
@@ -361,7 +353,6 @@ impl AudioNode {
         match self {
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.rv.reset(),
-            AudioNode::Compressor(n) => n.reset(),
             AudioNode::Plugin(n) => n.reset(),
         }
     }
@@ -428,86 +419,7 @@ impl ReverbNode {
 // auto_pan, vibrato, chorus, flanger, phaser, pitch_shift, delay into src/plugins/fx-audio-modulation
 // (plugin-api-stage1, stage 3)
 
-// ---------------------------------------------------------------------------
-// Ka4 nodes (R.47, item 329): the compressor — a core kind: its sidechain key is a model address
-// ---------------------------------------------------------------------------
-
-use super::primitives::EnvFollower;
-
-/// Compressor: peak envelope, stereo link max(|l|,|r|), gr in dB.
-pub struct CompNode {
-    threshold_db: SmoothedParam,
-    ratio: SmoothedParam,
-    makeup_db: SmoothedParam,
-    env: EnvFollower,
-}
-
-impl CompNode {
-    fn new() -> CompNode {
-        CompNode {
-            threshold_db: SmoothedParam::with_ms(-18.0, 20.0),
-            ratio: SmoothedParam::with_ms(4.0, 20.0),
-            makeup_db: SmoothedParam::with_ms(0.0, 20.0),
-            env: EnvFollower::new(10.0, 150.0),
-        }
-    }
-
-    fn apply(&mut self, thr: f32, ratio: f32, att: f32, rel: f32, makeup: f32) {
-        self.threshold_db.set_target(thr.clamp(-60.0, 0.0));
-        self.ratio.set_target(ratio.clamp(1.0, 20.0));
-        self.makeup_db.set_target(makeup.clamp(0.0, 24.0));
-        self.env.set_times(att.clamp(0.1, 250.0), rel.clamp(5.0, 2000.0));
-    }
-
-    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
-        self.threshold_db.set_target(auto.value(
-            slot,
-            "threshold_db",
-            self.threshold_db.target as f64,
-            s,
-        ) as f32);
-        self.ratio.set_target(auto.value(slot, "ratio", self.ratio.target as f64, s) as f32);
-        self.makeup_db
-            .set_target(auto.value(slot, "makeup_db", self.makeup_db.target as f64, s) as f32);
-        let att = auto.value(slot, "attack_ms", 10.0, s) as f32;
-        let rel = auto.value(slot, "release_ms", 150.0, s) as f32;
-        self.env.set_times(att.clamp(0.1, 250.0), rel.clamp(5.0, 2000.0));
-    }
-
-    /// `key` — sidechain: the detector listens to IT, while compression still acts on its own
-    /// input. The compression law, limits and smoothing are the same — the key changes
-    /// only the envelope source (R.65). A key shorter than the buffer (the last
-    /// chunk of the window) gives a peak of 0 for the remainder — that is quieter than the threshold, i.e.
-    /// “the key is silent”, not a panic.
-    fn process(&mut self, buf: &mut [f32], key: Option<&[f32]>) {
-        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
-            let thr = self.threshold_db.tick();
-            let ratio = self.ratio.tick().max(1.0);
-            let makeup = 10f32.powf(self.makeup_db.tick() / 20.0);
-            let peak = match key {
-                None => fr.iter().fold(0f32, |m, s| m.max(s.abs())),
-                Some(k) => k
-                    .get(i * CH..i * CH + CH)
-                    .map_or(0.0, |kf| kf.iter().fold(0f32, |m, s| m.max(s.abs()))),
-            };
-            let env = self.env.tick(peak).max(1e-6);
-            let env_db = 20.0 * env.log10();
-            let over = (env_db - thr).max(0.0);
-            let gr_db = over * (1.0 - 1.0 / ratio);
-            let g = 10f32.powf(-gr_db / 20.0) * makeup;
-            for s in fr.iter_mut() {
-                *s *= g;
-            }
-        }
-    }
-
-    fn reset(&mut self) {
-        self.env.reset();
-        self.threshold_db.reset_to_target();
-        self.ratio.reset_to_target();
-        self.makeup_db.reset_to_target();
-    }
-}
+// compressor moved into src/plugins/fx-audio-dynamics (plugin-api-stage1, stage 3b, D11.4)
 
 // pitch_shift moved into src/plugins/fx-audio-modulation (plugin-api-stage1, stage 3)
 

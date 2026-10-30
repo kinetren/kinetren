@@ -3,20 +3,21 @@
 //! enum variant's fields in their order, types and defaults (t973 holds the bytes of the file,
 //! t973c the bytes of the sound).
 //!
-//! The compressor stays a core kind: its sidechain `key` is a model address (`TrackId`) the engine
-//! routes, and a plugin slot carries numbers only (design D2a).
+//! The compressor came last (stage 3b, D11.4): its sidechain `key` is a host-reference row
+//! (`Store::TrackRef(RowRole::SidechainKey)`) — the slot holds the track id's number, the engine
+//! routes the key signal by the row's role, and the kernel only receives the signal.
 
 use std::sync::Arc;
 
 use kt_plugin_api::dsp::{AUDIO_SAMPLE_RATE, CH, EnvFollower, SmoothedParam};
 use kt_plugin_api::{
     AudioKernel, AudioState, Decl, HostOpts, Manifest, Media, ParamKind, ParamSpec, ParamUnit,
-    ParamValues, Plugin, RowDecl, SlotCurves, Store, UiDecl,
+    ParamValues, Plugin, RowDecl, RowRole, SlotCurves, Store, UiDecl,
 };
 
 /// The plugins of this family, in the assembler's order.
 pub fn plugins() -> Vec<Arc<dyn Plugin>> {
-    vec![Arc::new(Gain::new()), Arc::new(Gate::new()), Arc::new(Limiter::new())]
+    vec![Arc::new(Gain::new()), Arc::new(Gate::new()), Arc::new(Limiter::new()), Arc::new(Compressor::new())]
 }
 
 /// A numeric row of a moved kind: an `f32` field, written always or omitted at its default.
@@ -461,5 +462,124 @@ impl AudioState for LimiterNode {
         self.gain = 1.0;
         self.threshold_db.reset_to_target();
         self.ceiling_db.reset_to_target();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// compressor
+// ---------------------------------------------------------------------------
+
+/// Compressor (R.47) with a sidechain key (R.65): peak envelope, stereo link max(|l|,|r|), gr in dB.
+pub struct Compressor {
+    m: Manifest,
+}
+
+impl Compressor {
+    pub fn new() -> Compressor {
+        Compressor {
+            m: Manifest {
+                id: "compressor".into(),
+                media: Media::AudioFx,
+                passport: vec![
+                    smooth("threshold_db", -60.0, 0.0, -18.0, 0.1, ParamUnit::Db),
+                    smooth("ratio", 1.0, 20.0, 4.0, 0.1, ParamUnit::Ratio),
+                    smooth("attack_ms", 0.1, 250.0, 10.0, 0.1, ParamUnit::Ms),
+                    smooth("release_ms", 5.0, 2000.0, 150.0, 1.0, ParamUnit::Ms),
+                    smooth("makeup_db", 0.0, 24.0, 0.0, 0.1, ParamUnit::Db),
+                    // The SIDECHAIN KEY: a `TrackId`, NOT a track number — the number is the rank
+                    // of the row, and inserting a track above would move the key onto someone
+                    // else's signal (R.65). None is not written: a file without a sidechain stays
+                    // byte-for-byte the same.
+                    ParamSpec::track_ref_row("key"),
+                ],
+                rows: vec![
+                    row(false),
+                    row(false),
+                    row(false),
+                    row(false),
+                    row(true),
+                    RowDecl { store: Store::TrackRef(RowRole::SidechainKey), omit_default: true },
+                ],
+                decl: Decl { state: true, ..Decl::default() },
+                ui: UiDecl { name: "Compressor", category_key: "fxreg.cat.dynamics", keywords_key: "fxreg.kw.compressor" },
+            },
+        }
+    }
+}
+
+plugin_boilerplate!(Compressor);
+
+impl AudioKernel for Compressor {
+    fn build(&self, _opts: &HostOpts) -> Box<dyn AudioState> {
+        Box::new(CompNode {
+            threshold_db: SmoothedParam::with_ms(-18.0, 20.0),
+            ratio: SmoothedParam::with_ms(4.0, 20.0),
+            makeup_db: SmoothedParam::with_ms(0.0, 20.0),
+            env: EnvFollower::new(10.0, 150.0),
+        })
+    }
+}
+
+/// The R.47 node, verbatim (t973c holds its sound).
+struct CompNode {
+    threshold_db: SmoothedParam,
+    ratio: SmoothedParam,
+    makeup_db: SmoothedParam,
+    env: EnvFollower,
+}
+
+impl AudioState for CompNode {
+    fn apply(&mut self, k: &[f64], _structural: bool) {
+        // k[5] is the key's track id: an address the kernel never reads
+        let (thr, ratio, att, rel, makeup) = (k[0] as f32, k[1] as f32, k[2] as f32, k[3] as f32, k[4] as f32);
+        self.threshold_db.set_target(thr.clamp(-60.0, 0.0));
+        self.ratio.set_target(ratio.clamp(1.0, 20.0));
+        self.makeup_db.set_target(makeup.clamp(0.0, 24.0));
+        self.env.set_times(att.clamp(0.1, 250.0), rel.clamp(5.0, 2000.0));
+    }
+
+    fn set_targets(&mut self, c: &dyn SlotCurves, s: f64) {
+        self.threshold_db.set_target(c.value("threshold_db", self.threshold_db.target as f64, s) as f32);
+        self.ratio.set_target(c.value("ratio", self.ratio.target as f64, s) as f32);
+        self.makeup_db.set_target(c.value("makeup_db", self.makeup_db.target as f64, s) as f32);
+        // the R.47 node reads the attack/release curves around the kind's defaults, not the
+        // slot's base (the times live inside the follower) — kept verbatim, the sound rests on it
+        let att = c.value("attack_ms", 10.0, s) as f32;
+        let rel = c.value("release_ms", 150.0, s) as f32;
+        self.env.set_times(att.clamp(0.1, 250.0), rel.clamp(5.0, 2000.0));
+    }
+
+    /// `key` — sidechain: the detector listens to IT, while compression still acts on its own
+    /// input. The compression law, limits and smoothing are the same — the key changes
+    /// only the envelope source (R.65). A key shorter than the buffer (the last
+    /// chunk of the window) gives a peak of 0 for the remainder — that is quieter than the threshold, i.e.
+    /// “the key is silent”, not a panic.
+    fn process(&mut self, buf: &mut [f32], _pos: i64, key: Option<&[f32]>) {
+        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+            let thr = self.threshold_db.tick();
+            let ratio = self.ratio.tick().max(1.0);
+            let makeup = 10f32.powf(self.makeup_db.tick() / 20.0);
+            let peak = match key {
+                None => fr.iter().fold(0f32, |m, s| m.max(s.abs())),
+                Some(k) => k
+                    .get(i * CH..i * CH + CH)
+                    .map_or(0.0, |kf| kf.iter().fold(0f32, |m, s| m.max(s.abs()))),
+            };
+            let env = self.env.tick(peak).max(1e-6);
+            let env_db = 20.0 * env.log10();
+            let over = (env_db - thr).max(0.0);
+            let gr_db = over * (1.0 - 1.0 / ratio);
+            let g = 10f32.powf(-gr_db / 20.0) * makeup;
+            for s in fr.iter_mut() {
+                *s *= g;
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.env.reset();
+        self.threshold_db.reset_to_target();
+        self.ratio.reset_to_target();
+        self.makeup_db.reset_to_target();
     }
 }

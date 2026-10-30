@@ -165,8 +165,8 @@ possible". A kind kept core for a reason is a reason a third-party effect could 
 - **TEST** t994 (`src/libs/kt-fx/tests/geo_fuse.rs`), t297
 
 #### Scenario: A host-reference row routes without engine code
-- **WHEN** a compressor, moved into a plugin, keys on another track; the project is saved, reopened and rendered
-- **THEN** the file holds the former `key` text (absent when none), the key signal reaches the compressor through the row's role, and a deleted track leaves the row empty rather than pointing elsewhere
+- **WHEN** a compressor, moved into a plugin, keys on another track; the project is saved, reopened and rendered; a second plugin with a key input, unknown to the engine, keys on the same track; the key track is deleted and a new track added
+- **THEN** the file holds the former `key` text (absent when none) and the reopened project sounds the same; the second plugin receives the key signal through the row's role with no engine code naming it; the deleted track's key is kept (rule 20, t772: no edit of another device on the user's behalf) and its id is never handed to the new track, so the key does not start listening to someone else's signal
 - **TEST** t995 (`src/libs/kt-engine/tests/sidechain.rs`)
 
 #### Scenario: A declared time warp drives the source the way the variant did

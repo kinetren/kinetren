@@ -1366,7 +1366,6 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Vhs { .. } => "VHS",
         FxInstance::Glow { .. } => "Glow",
         FxInstance::Pan3d { .. } => "Pan 3D",
-        FxInstance::Compressor { .. } => "Compressor",
         FxInstance::Sharpen { .. } => "Sharpen",
         FxInstance::Pixelate { .. } => "Pixelate",
         FxInstance::ChromaticAberration { .. } => "Chromatic Aberration",

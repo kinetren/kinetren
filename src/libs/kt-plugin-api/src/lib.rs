@@ -323,6 +323,10 @@ pub enum ParamType {
         multiline: bool,
     },
     Media,
+    /// A reference to a model object (D11.4) — a row of `Store::TrackRef`: drawn and edited by
+    /// its ROLE in the host's own place (the track window's ducking section for the sidechain
+    /// key), never in the numeric grid, never automated.
+    TrackRef,
 }
 
 impl ParamType {
@@ -360,6 +364,7 @@ enum ParamTypeRepr {
         multiline: bool,
     },
     Media,
+    TrackRef,
 }
 
 impl From<ParamTypeRepr> for ParamType {
@@ -373,6 +378,7 @@ impl From<ParamTypeRepr> for ParamType {
             }
             ParamTypeRepr::Text { multiline } => ParamType::Text { multiline },
             ParamTypeRepr::Media => ParamType::Media,
+            ParamTypeRepr::TrackRef => ParamType::TrackRef,
         }
     }
 }
@@ -386,6 +392,7 @@ impl From<ParamType> for ParamTypeRepr {
             ParamType::Choice { .. } => ParamTypeRepr::Choice,
             ParamType::Text { multiline } => ParamTypeRepr::Text { multiline },
             ParamType::Media => ParamTypeRepr::Media,
+            ParamType::TrackRef => ParamTypeRepr::TrackRef,
         }
     }
 }
@@ -517,6 +524,23 @@ impl ParamSpec {
             step: 1.0,
             kind: ParamKind::Structural,
             ..choice_spec(name, keys)
+        }
+    }
+
+    /// A plugin passport's TRACK REFERENCE row (D11.4, `Store::TrackRef`): the referenced track's
+    /// id number, 0 — none. The kernel never reads it as an address; the host routes it by role.
+    pub fn track_ref_row(name: &'static str) -> ParamSpec {
+        ParamSpec {
+            name: std::borrow::Cow::Borrowed(name),
+            ty: ParamType::TrackRef,
+            min: 0.0,
+            // track ids are u64 counters from 1; an f64 holds them exactly up to 2^53
+            max: 9_007_199_254_740_992.0,
+            default: 0.0,
+            step: 1.0,
+            unit: ParamUnit::None,
+            kind: ParamKind::Structural,
+            label: std::borrow::Cow::Borrowed(""),
         }
     }
 
@@ -903,6 +927,19 @@ pub enum Store {
     /// An enum field: the value is the variant's INDEX, the file holds its KEY (Filter's `mode`
     /// as `"lowpass"`); an unknown key reads as the row's default.
     Choice(&'static [&'static str]),
+    /// A model address (D11.4): an `Option<TrackId>` field — the value is the id's number, 0 is
+    /// none; the file holds the integer (omitted at none when the row omits its default). The
+    /// ROLE says what the host does with it.
+    TrackRef(RowRole),
+}
+
+/// What a host-reference row is to the host (D11.4). The engine routes the row by its role, the
+/// track window edits it by its role and the exchange format carries it by its role — a second
+/// plugin with a key input gets the routing without host code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowRole {
+    /// The sidechain key (R.65): the detector listens to that track's signal.
+    SidechainKey,
 }
 
 impl Store {
@@ -922,6 +959,7 @@ impl Store {
                 }
             }
             Store::Choice(keys) => v.round().clamp(0.0, keys.len().saturating_sub(1) as f64),
+            Store::TrackRef(_) => v.round().max(0.0),
         }
     }
 }

@@ -114,6 +114,17 @@ enum Frozen {
     CornerPin(Pin),
     /// `Mirror` and `EventGrid` before 4.1c (every field always written).
     Mirror { horizontal: bool, vertical: bool },
+    /// `Compressor` before 3b.1: the key is a `TrackId` (a bare number), omitted when none.
+    Compressor {
+        threshold_db: f32,
+        ratio: f32,
+        attack_ms: f32,
+        release_ms: f32,
+        #[serde(skip_serializing_if = "is_zero")]
+        makeup_db: f32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        key: Option<u64>,
+    },
     EventGrid { cols: u32, rows: u32, center: bool },
     /// `ColorGrade` and `Duotone` before stage 4.
     ColorGrade {
@@ -187,6 +198,14 @@ fn empty_reads() -> Vec<(&'static str, String)> {
         (r#"{"kind":"cylinder3d"}"#, frozen(Frozen::Cylinder3d { curvature: 0.5 })),
         (r#"{"kind":"corner_pin"}"#, frozen(Frozen::CornerPin(PIN))),
         (r#"{"kind":"mirror"}"#, frozen(Frozen::Mirror { horizontal: true, vertical: false })),
+        (
+            r#"{"kind":"compressor"}"#,
+            frozen(Frozen::Compressor { threshold_db: -18.0, ratio: 4.0, attack_ms: 10.0, release_ms: 150.0, makeup_db: 0.0, key: None }),
+        ),
+        (
+            r#"{"kind":"compressor","key":7}"#,
+            frozen(Frozen::Compressor { threshold_db: -18.0, ratio: 4.0, attack_ms: 10.0, release_ms: 150.0, makeup_db: 0.0, key: Some(7) }),
+        ),
         (r#"{"kind":"mirror","vertical":true}"#, frozen(Frozen::Mirror { horizontal: true, vertical: true })),
         (r#"{"kind":"event_grid"}"#, frozen(Frozen::EventGrid { cols: 1, rows: 1, center: true })),
         (r#"{"kind":"event_grid","cols":3,"center":false}"#, frozen(Frozen::EventGrid { cols: 3, rows: 1, center: false })),
@@ -273,6 +292,18 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
         (FxInstance::plugin_with("cylinder3d", &[0.85]).unwrap(), frozen(Frozen::Cylinder3d { curvature: 0.85 })),
         (FxInstance::corner_pin(), frozen(Frozen::CornerPin(PIN))),
         (FxInstance::mirror(), frozen(Frozen::Mirror { horizontal: true, vertical: false })),
+        (
+            FxInstance::compressor(),
+            frozen(Frozen::Compressor { threshold_db: -18.0, ratio: 4.0, attack_ms: 10.0, release_ms: 150.0, makeup_db: 0.0, key: None }),
+        ),
+        (
+            {
+                let mut c = FxInstance::plugin_with("compressor", &[-30.0, 12.0, 3.0, 10.0, 0.123456789, 0.0]).unwrap();
+                assert!(c.set_sidechain_key(Some(kt_model::TrackId(42))), "the compressor has no key row");
+                c
+            },
+            frozen(Frozen::Compressor { threshold_db: -30.0, ratio: 12.0, attack_ms: 3.0, release_ms: 10.0, makeup_db: 0.123456789, key: Some(42) }),
+        ),
         (FxInstance::plugin_with("mirror", &[0.0, 1.0]).unwrap(), frozen(Frozen::Mirror { horizontal: false, vertical: true })),
         (FxInstance::event_grid(), frozen(Frozen::EventGrid { cols: 2, rows: 2, center: true })),
         (

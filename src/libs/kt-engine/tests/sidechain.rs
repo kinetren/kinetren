@@ -105,13 +105,10 @@ fn music_only(p: &Project, bursts: i64) -> Vec<f32> {
 }
 
 fn ducker(key: Option<TrackId>) -> FxInstance {
-    FxInstance::Compressor {
-        threshold_db: -30.0,
-        ratio: 12.0,
-        attack_ms: 3.0,
-        release_ms: 10.0,
-        makeup_db: 0.0,
-        key,
+    {
+        let mut c = kt_model::FxInstance::plugin_with("compressor", &[-30.0, 12.0, 3.0, 10.0, 0.0, 0.0]).unwrap();
+        c.set_sidechain_key(key);
+        c
     }
 }
 
@@ -148,7 +145,7 @@ fn sources() -> DirectFetcher {
 /// check of the internals, not of what is heard.
 #[test]
 fn t769_music_ducks_under_speech_live() {
-    kt_plugins_builtin::install();
+    install();
     let (p, _, _) = scene(true);
     let out = stream(&p, &mut sources(), 12);
     let (p_plain, _, _) = scene(false);
@@ -179,7 +176,7 @@ fn t769_music_ducks_under_speech_live() {
 /// Test 770 (R.65): the order of stages by key, alignment, determinism.
 #[test]
 fn t770_stage_order_alignment_and_determinism() {
-    kt_plugins_builtin::install();
+    install();
     // a key BELOW the target by rank (speech — track 1, music — 0): the order
     // must be determined by dependency, not by the row's rank
     let (mut p, _, _speech) = scene(true);
@@ -234,7 +231,7 @@ fn t770_stage_order_alignment_and_determinism() {
 /// Test 771 (R.65): a dead and a muted key.
 #[test]
 fn t771_dead_and_muted_key() {
-    kt_plugins_builtin::install();
+    install();
     // --- DEAD KEY: there is no track with such an id -------------------------
     let (mut p, _, _) = scene(false);
     p.track_at_mut(A, 0).unwrap().fx = vec![ducker(Some(TrackId(9999)))];
@@ -275,7 +272,7 @@ fn t771_dead_and_muted_key() {
 /// Test 778 (R.65): the cost of the key branch is measured, not declared.
 #[test]
 fn t778_key_branch_cost_is_measured() {
-    kt_plugins_builtin::install();
+    install();
     let (p_key, _, _) = scene(true);
     let (p_plain, _, _) = scene(false);
     let run = |p: &Project| {
@@ -294,4 +291,116 @@ fn t778_key_branch_cost_is_measured() {
         with < without * 4.0 + 0.05,
         "the key branch is too costly: {with:.4} s against {without:.4} s without the key"
     );
+}
+
+/// The plugin set of this binary: the built-ins plus `key_echo` (t995), installed once.
+fn install() {
+    kt_plugins_builtin::install_with(|reg| {
+        reg.register_for_test(std::sync::Arc::new(KeyEcho::new())).expect("key_echo registers");
+    });
+}
+
+/// A test plugin with a key input and nothing else: its output IS the key signal (silence
+/// without one). The engine has no line naming it — if the key reaches it, the routing is the
+/// row's role, not the kind.
+struct KeyEcho {
+    m: kt_plugin_api::Manifest,
+}
+
+impl KeyEcho {
+    fn new() -> KeyEcho {
+        use kt_plugin_api::*;
+        KeyEcho {
+            m: Manifest {
+                id: "key_echo".into(),
+                media: Media::AudioFx,
+                passport: vec![ParamSpec::track_ref_row("key")],
+                rows: vec![RowDecl { store: Store::TrackRef(RowRole::SidechainKey), omit_default: true }],
+                decl: Decl { state: true, ..Decl::default() },
+                ui: UiDecl { name: "Key echo", category_key: "fxreg.cat.dynamics", keywords_key: "fxreg.kw.compressor" },
+            },
+        }
+    }
+}
+
+impl kt_plugin_api::Plugin for KeyEcho {
+    fn manifest(&self) -> &kt_plugin_api::Manifest {
+        &self.m
+    }
+    fn audio(&self) -> Option<&dyn kt_plugin_api::AudioKernel> {
+        Some(self)
+    }
+}
+
+impl kt_plugin_api::AudioKernel for KeyEcho {
+    fn build(&self, _opts: &kt_plugin_api::HostOpts) -> Box<dyn kt_plugin_api::AudioState> {
+        Box::new(KeyEchoState)
+    }
+}
+
+struct KeyEchoState;
+
+impl kt_plugin_api::AudioState for KeyEchoState {
+    fn apply(&mut self, _k: &[f64], _structural: bool) {}
+    fn process(&mut self, buf: &mut [f32], _pos: i64, key: Option<&[f32]>) {
+        for (i, s) in buf.iter_mut().enumerate() {
+            *s = key.and_then(|k| k.get(i).copied()).unwrap_or(0.0);
+        }
+    }
+    fn reset(&mut self) {}
+}
+
+/// Test 995 (plugin-api-stage1, D11.4; capability `plugins`): a host-reference row routes without
+/// engine code.
+///
+/// The compressor's key is a `Store::TrackRef(RowRole::SidechainKey)` row. (1) The file holds the
+/// former `key` text — the track id, absent when none — and the reopened project sounds the
+/// same. (2) A second plugin with a key input (`key_echo`, registered by this test only) gets
+/// the key signal with no engine code naming it: its track's output is the speech. (3) Deleting
+/// the key track keeps the key (rule 20, t772), and a NEW track never inherits the dead id, so
+/// the key does not start listening to someone else's signal.
+#[test]
+fn t995_a_host_reference_row_routes_without_engine_code() {
+    install();
+    // (1) the file form and the reopened sound
+    let (p, music, speech) = scene(true);
+    let slot = serde_json::to_string(&p.track(music).unwrap().fx[0]).unwrap();
+    assert!(slot.contains(&format!("\"key\":{}", speech.0)), "the key is not the former text: {slot}");
+    let unkeyed = serde_json::to_string(&ducker(None)).unwrap();
+    assert!(!unkeyed.contains("key"), "an empty key is written: {unkeyed}");
+    let back = kt_model::project_file::from_text(&kt_model::project_file::to_text(&p, None)).expect("reopens").project;
+    assert_eq!(back.track(music).unwrap().fx[0].sidechain_key(), Some(speech), "the key did not survive the file");
+    assert_eq!(stream(&back, &mut sources(), 12), stream(&p, &mut sources(), 12), "the reopened project sounds otherwise");
+
+    // (2) the routing is the row's role: a plugin the engine has never heard of gets the key
+    let (mut pe, music_e, speech_e) = scene(false);
+    let mut echo = FxInstance::plugin("key_echo").expect("the test plugin is installed");
+    assert!(echo.set_sidechain_key(Some(speech_e)), "key_echo has no key row");
+    pe.track_mut(music_e).unwrap().fx = vec![echo];
+    pe.validate().unwrap();
+    // the music track's whole output is the echo: the mix minus the same scene without the plugin
+    // is the echo less the music it replaced
+    let (plain, _, _) = scene(false);
+    let music = music_only(&plain, 12);
+    let echoed: Vec<f32> = stream(&pe, &mut sources(), 12)
+        .iter()
+        .zip(stream(&plain, &mut sources(), 12).iter())
+        .zip(music.iter())
+        .map(|((a, b), m)| a - b + m)
+        .collect();
+    for b in [1usize, 2, 7, 8] {
+        assert!((rms(&echoed, b) - 0.9).abs() < 1e-3, "burst {b}: the key did not reach the plugin ({})", rms(&echoed, b));
+    }
+    for b in [0usize, 4, 5, 11] {
+        assert!(rms(&echoed, b) < 1e-6, "burst {b}: a silent key came through ({})", rms(&echoed, b));
+    }
+
+    // (3) a deleted key track: its id is not handed to the next new track
+    let (mut pd, music_d, speech_d) = scene(true);
+    pd.clips.retain(|c| c.lane != 1);
+    pd.tracks.retain(|t| t.id != speech_d);
+    pd.ensure_tracks(A, 2);
+    let new = pd.track_at(A, 1).unwrap().id;
+    assert_ne!(new, speech_d, "a new track inherited the dead key's id — the key now listens to it");
+    assert_eq!(pd.track(music_d).unwrap().fx[0].sidechain_key(), Some(speech_d), "the dead key was rewritten");
 }

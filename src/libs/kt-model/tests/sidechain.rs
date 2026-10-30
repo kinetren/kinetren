@@ -63,13 +63,10 @@ fn scene() -> (TimelineModel, TrackId, TrackId, TrackId) {
 }
 
 fn comp_keyed(key: Option<TrackId>) -> FxInstance {
-    FxInstance::Compressor {
-        threshold_db: -24.0,
-        ratio: 8.0,
-        attack_ms: 5.0,
-        release_ms: 120.0,
-        makeup_db: 0.0,
-        key,
+    {
+        let mut c = kt_model::FxInstance::plugin_with("compressor", &[-24.0, 8.0, 5.0, 120.0, 0.0, 0.0]).unwrap();
+        c.set_sidechain_key(key);
+        c
     }
 }
 
@@ -80,6 +77,7 @@ fn set_track_fx(m: &mut TimelineModel, id: TrackId, fx: Vec<FxInstance>) -> Resu
 /// Test 772 (R.65): the key is checked, the rejection is named, the model is untouched.
 #[test]
 fn t772_sidechain_key_is_validated_and_refusals_are_named() {
+    kt_plugins_builtin::install();
     let (mut m, music, speech, video) = scene();
 
     // --- the normal case: music listens to speech ------------------------

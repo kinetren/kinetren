@@ -2887,15 +2887,11 @@ fn t777_sidechain_is_reachable_and_names_its_refusals() {
     {
         let app = h.state_mut();
         let mut c = kt_model::FxInstance::compressor();
-        if let kt_model::FxInstance::Compressor { key: k, .. } = &mut c {
-            *k = Some(key);
-        }
+        c.set_sidechain_key(Some(key));
         app.apply(kt_model::Command::SetTrackFx { id: bg, fx: vec![c.clone()], bypass: vec![] });
         // the reverse key — a cycle
         let mut back = kt_model::FxInstance::compressor();
-        if let kt_model::FxInstance::Compressor { key: k, .. } = &mut back {
-            *k = Some(bg);
-        }
+        back.set_sidechain_key(Some(bg));
         let e = app
             .model
             .apply(kt_model::Command::SetTrackFx { id: key, fx: vec![back], bypass: vec![] })

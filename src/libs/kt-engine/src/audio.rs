@@ -545,15 +545,14 @@ impl AudioRenderer {
                     let keys: Vec<(usize, kt_model::TrackId, u32)> = fx
                         .iter()
                         .enumerate()
-                        .filter_map(|(slot, f)| match f {
-                            kt_model::FxInstance::Compressor { key: Some(k), .. } => {
-                                let lane = tracks
-                                    .iter()
-                                    .filter(|t| t.kind == kt_model::LaneKind::Audio)
-                                    .position(|t| t.id == *k)?;
-                                Some((slot, *k, lane as u32))
-                            }
-                            _ => None,
+                        .filter_map(|(slot, f)| {
+                            // routed by the row's ROLE (D11.4): any plugin with a key input
+                            let k = f.sidechain_key()?;
+                            let lane = tracks
+                                .iter()
+                                .filter(|t| t.kind == kt_model::LaneKind::Audio)
+                                .position(|t| t.id == k)?;
+                            Some((slot, k, lane as u32))
                         })
                         .collect();
                     stages.push(TrackStage {

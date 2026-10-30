@@ -67,6 +67,29 @@ impl PluginSlot {
         self.get_idx(idx)
     }
 
+    /// The non-empty host-reference rows of `role` (D11.4): (row index, the referenced id).
+    pub fn refs(&self, role: kt_plugin_api::RowRole) -> impl Iterator<Item = (usize, u64)> + '_ {
+        let m = self.manifest();
+        (0..m.passport.len()).filter_map(move |i| match m.row(i).store {
+            kt_plugin_api::Store::TrackRef(r) if r == role => {
+                let v = self.values.get(i).copied().unwrap_or(0.0);
+                (v > 0.0).then_some((i, v as u64))
+            }
+            _ => None,
+        })
+    }
+
+    /// Set the FIRST row of `role` (`None` — clear it); false when the plugin has no such row.
+    pub fn set_ref(&mut self, role: kt_plugin_api::RowRole, id: Option<u64>) -> bool {
+        let m = self.manifest();
+        let Some(i) = (0..m.passport.len())
+            .find(|&i| matches!(m.row(i).store, kt_plugin_api::Store::TrackRef(r) if r == role))
+        else {
+            return false;
+        };
+        self.set_idx(i, id.map_or(0.0, |n| n as f64))
+    }
+
     pub fn set(&mut self, name: &str, v: f64) -> bool {
         match self.specs().iter().position(|s| s.name == name) {
             Some(idx) => self.set_idx(idx, v),
@@ -95,6 +118,7 @@ impl Serialize for PluginSlot {
                 kt_plugin_api::Store::I32 => map.serialize_entry(key, &(v as i32))?,
                 kt_plugin_api::Store::Bool => map.serialize_entry(key, &(v != 0.0))?,
                 kt_plugin_api::Store::Choice(keys) => map.serialize_entry(key, keys[v as usize])?,
+                kt_plugin_api::Store::TrackRef(_) => map.serialize_entry(key, &(v as u64))?,
             }
         }
         map.end()
@@ -123,6 +147,7 @@ impl<'de> Deserialize<'de> for PluginSlot {
                     kt_plugin_api::Store::Choice(keys) => {
                         field.and_then(|v| v.as_str()).and_then(|k| keys.iter().position(|x| *x == k)).map(|i| i as f64)
                     }
+                    kt_plugin_api::Store::TrackRef(_) => field.and_then(|v| v.as_u64()).map(|n| n as f64),
                     _ => field.and_then(|v| v.as_f64()),
                 };
                 store.cast(v.unwrap_or(s.default))

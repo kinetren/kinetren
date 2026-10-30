@@ -16331,7 +16331,7 @@ fn t775_ducking_is_two_compressors_in_the_track_window() {
             .model
             .project()
             .track(key)
-            .is_some_and(|t| t.fx.iter().any(|f| matches!(f, kt_model::FxInstance::Compressor { .. }))),
+            .is_some_and(|t| t.fx.iter().any(|f| f.tag() == "compressor")),
         "speech compressor is not set up"
     );
 
@@ -16356,7 +16356,7 @@ fn t775_ducking_is_two_compressors_in_the_track_window() {
         app.model
             .project()
             .track(key)
-            .is_some_and(|t| !t.fx.iter().any(|f| matches!(f, kt_model::FxInstance::Compressor { .. }))),
+            .is_some_and(|t| !t.fx.iter().any(|f| f.tag() == "compressor")),
         "“Cancel” did not restore the key track’s chain"
     );
 }
@@ -16379,9 +16379,7 @@ fn t776_key_list_offers_only_possible_tracks() {
     {
         let app = h.state_mut();
         let mut c = kt_model::FxInstance::compressor();
-        if let kt_model::FxInstance::Compressor { key, .. } = &mut c {
-            *key = Some(b);
-        }
+        c.set_sidechain_key(Some(b));
         app.apply(kt_model::Command::SetTrackFx { id: a, fx: vec![c], bypass: vec![] });
     }
     h.step();
