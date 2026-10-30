@@ -1192,18 +1192,7 @@ fn t291_source_replacement_carries_the_clips_own_curves() {
 
     let make = |replace: bool| -> ClipEvent {
         let mut p = base();
-        p.clips[0].fx = vec![FxInstance::Pan3d {
-            pos_x: 0.0,
-            pos_y: 0.0,
-            pos_z: 0.0,
-            rot_x: 0.0,
-            rot_y: 0.0,
-            rot_z: 0.0,
-            anchor_x: 0.5,
-            anchor_y: 0.5,
-            scale: 1.0,
-            camera: None,
-        }];
+        p.clips[0].fx = vec![kt_model::FxInstance::plugin_with("pan3d", &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 1.0, 0.0]).unwrap()];
         p.clips[0].fx_auto = vec![vec![ParamCurve {
             param: "rot_y".into(),
 

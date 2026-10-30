@@ -8,9 +8,11 @@
 
 use std::sync::Arc;
 
+mod pan3d;
+
 use kt_plugin_api::{
     geo, Decl, GeoCtx, GeoKernel, GeoStep, Gpu, Lone, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin,
-    RowDecl, Store, UiDecl, VideoClass, WarpNorm,
+    RowDecl, RowRole, Store, UiDecl, VideoClass, WarpNorm,
 };
 
 /// The plugins of this family, in the assembler's order.
@@ -24,6 +26,7 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
         Arc::new(CornerPin::new()),
         Arc::new(HostStep::mirror()),
         Arc::new(HostStep::event_grid()),
+        Arc::new(Pan3d::new()),
     ]
 }
 
@@ -294,6 +297,81 @@ impl GeoKernel for CornerPin {
         }
         let m = corner_pin_inverse([(g(0), g(1)), (g(2), g(3)), (g(4), g(5)), (g(6), g(7))], cx.out_w, cx.out_h);
         vec![GeoStep::Proj { m }]
+    }
+}
+
+/// Pan3d (R.29): the layer as a flat quad in the 3D world, seen by the resolved camera — one `Proj`
+/// step, the inverse of the forward homography. Without a camera there is no 3D (the step is
+/// skipped); the defaults with the 50 mm camera are the identity byte for byte (t298).
+pub struct Pan3d {
+    m: Manifest,
+}
+
+impl Pan3d {
+    pub fn new() -> Pan3d {
+        let px = |n| smooth(n, -100_000.0, 100_000.0, 0.0, 1.0, ParamUnit::Px);
+        let deg = |n| smooth(n, -1440.0, 1440.0, 0.0, 0.5, ParamUnit::Deg);
+        Pan3d {
+            m: Manifest {
+                id: "pan3d".into(),
+                media: Media::VideoFx,
+                passport: vec![
+                    px("pos_x"),
+                    px("pos_y"),
+                    px("pos_z"),
+                    deg("rot_x"),
+                    deg("rot_y"),
+                    deg("rot_z"),
+                    smooth("anchor_x", 0.0, 1.0, 0.5, 0.01, ParamUnit::Norm),
+                    smooth("anchor_y", 0.0, 1.0, 0.5, 0.01, ParamUnit::Norm),
+                    smooth("scale", 0.01, 32.0, 1.0, 0.01, ParamUnit::Ratio),
+                    // None — the camera active at the time (default, as in AE); Some(id) — a
+                    // pinned camera (there may be several cameras — R.29)
+                    ParamSpec::ref_row("camera"),
+                ],
+                rows: {
+                    let mut r = vec![row(Store::F64, false); 9];
+                    r.push(row(Store::Ref(RowRole::Camera), true));
+                    r
+                },
+                decl: Decl { video_class: Some(VideoClass::Geometry), gpu: Gpu::Primitives, ..Decl::default() },
+                ui: UiDecl { name: "Pan 3D", category_key: "fxreg.cat.three_d", keywords_key: "fxreg.kw.pan3d" },
+            },
+        }
+    }
+}
+
+impl Default for Pan3d {
+    fn default() -> Pan3d {
+        Pan3d::new()
+    }
+}
+
+impl Plugin for Pan3d {
+    fn manifest(&self) -> &Manifest {
+        &self.m
+    }
+    fn geo(&self) -> Option<&dyn GeoKernel> {
+        Some(self)
+    }
+}
+
+impl GeoKernel for Pan3d {
+    fn steps(&self, p: &[f64], cx: &GeoCtx) -> Vec<GeoStep> {
+        // no camera — no 3D: the step is skipped entirely, sizes do not change
+        let Some(c3) = cx.camera else { return Vec::new() };
+        let g = |i: usize| p.get(i).copied().unwrap_or(0.0);
+        let fwd = pan3d::pan3d_forward(
+            &c3,
+            (cx.out_w, cx.out_h),
+            [g(0), g(1), g(2)],
+            [g(3), g(4), g(5)],
+            g(8),
+            [g(6), g(7)],
+            (cx.stage_w as f64, cx.stage_h as f64),
+        );
+        // degenerate homography (|det| ≈ 0, quad edge-on) — transparent layer: m with t.z ≡ −1
+        vec![GeoStep::Proj { m: geo::invert3(&fwd).unwrap_or(geo::TRANSPARENT) }]
     }
 }
 

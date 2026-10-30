@@ -114,6 +114,20 @@ enum Frozen {
     CornerPin(Pin),
     /// `Mirror` and `EventGrid` before 4.1c (every field always written).
     Mirror { horizontal: bool, vertical: bool },
+    /// `Pan3d` before 4.1c-4: nine f64 rows always written, the pinned camera a bare id, omitted at none.
+    Pan3d {
+        pos_x: f64,
+        pos_y: f64,
+        pos_z: f64,
+        rot_x: f64,
+        rot_y: f64,
+        rot_z: f64,
+        anchor_x: f64,
+        anchor_y: f64,
+        scale: f64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        camera: Option<u64>,
+    },
     /// `Compressor` before 3b.1: the key is a `TrackId` (a bare number), omitted when none.
     Compressor {
         threshold_db: f32,
@@ -198,6 +212,8 @@ fn empty_reads() -> Vec<(&'static str, String)> {
         (r#"{"kind":"cylinder3d"}"#, frozen(Frozen::Cylinder3d { curvature: 0.5 })),
         (r#"{"kind":"corner_pin"}"#, frozen(Frozen::CornerPin(PIN))),
         (r#"{"kind":"mirror"}"#, frozen(Frozen::Mirror { horizontal: true, vertical: false })),
+        (r#"{"kind":"pan3d"}"#, frozen(pan3d_default(None))),
+        (r#"{"kind":"pan3d","camera":3}"#, frozen(pan3d_default(Some(3)))),
         (
             r#"{"kind":"compressor"}"#,
             frozen(Frozen::Compressor { threshold_db: -18.0, ratio: 4.0, attack_ms: 10.0, release_ms: 150.0, makeup_db: 0.0, key: None }),
@@ -226,6 +242,21 @@ fn empty_reads() -> Vec<(&'static str, String)> {
         (r#"{"kind":"flanger"}"#, frozen(Frozen::Flanger { rate_hz: 0.25, depth_ms: 2.0, feedback: 0.5, mix: 0.5 })),
         (r#"{"kind":"phaser"}"#, frozen(Frozen::Phaser { rate_hz: 0.4, depth: 0.7, feedback: 0.3, stages: 4, mix: 0.5 })),
     ]
+}
+
+fn pan3d_default(camera: Option<u64>) -> Frozen {
+    Frozen::Pan3d {
+        pos_x: 0.0,
+        pos_y: 0.0,
+        pos_z: 0.0,
+        rot_x: 0.0,
+        rot_y: 0.0,
+        rot_z: 0.0,
+        anchor_x: 0.5,
+        anchor_y: 0.5,
+        scale: 1.0,
+        camera,
+    }
 }
 
 fn frozen(f: Frozen) -> String {
@@ -292,6 +323,27 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
         (FxInstance::plugin_with("cylinder3d", &[0.85]).unwrap(), frozen(Frozen::Cylinder3d { curvature: 0.85 })),
         (FxInstance::corner_pin(), frozen(Frozen::CornerPin(PIN))),
         (FxInstance::mirror(), frozen(Frozen::Mirror { horizontal: true, vertical: false })),
+        (FxInstance::pan3d(), frozen(pan3d_default(None))),
+        (
+            {
+                let mut p = FxInstance::plugin_with("pan3d", &[10.5, -4.0, 120.0, 0.123456789, 25.0, -3.0, 0.25, 0.75, 1.1, 0.0])
+                    .unwrap();
+                assert!(p.set_pinned_camera(Some(kt_model::CameraId(9))), "pan3d has no camera row");
+                p
+            },
+            frozen(Frozen::Pan3d {
+                pos_x: 10.5,
+                pos_y: -4.0,
+                pos_z: 120.0,
+                rot_x: 0.123456789,
+                rot_y: 25.0,
+                rot_z: -3.0,
+                anchor_x: 0.25,
+                anchor_y: 0.75,
+                scale: 1.1,
+                camera: Some(9),
+            }),
+        ),
         (
             FxInstance::compressor(),
             frozen(Frozen::Compressor { threshold_db: -18.0, ratio: 4.0, attack_ms: 10.0, release_ms: 150.0, makeup_db: 0.0, key: None }),

@@ -447,18 +447,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
     // Pan3d series (R.44): the CPU reference has appeared (the inverse homography);
     // tolerance GEOM: the silhouette of the quad legitimately flips single pixels
     // (f32 predicates versus f64), inside it is bilinear precision.
-    let p3 = |pos_x: f64, rot_y: f64, scale: f64| FxInstance::Pan3d {
-        pos_x,
-        pos_y: 0.0,
-        pos_z: 0.0,
-        rot_x: 0.0,
-        rot_y,
-        rot_z: 0.0,
-        anchor_x: 0.5,
-        anchor_y: 0.5,
-        scale,
-        camera: None,
-    };
+    let p3 = |pos_x: f64, rot_y: f64, scale: f64| kt_model::FxInstance::plugin_with("pan3d", &[pos_x, 0.0, 0.0, 0.0, rot_y, 0.0, 0.5, 0.5, scale, 0.0]).unwrap();
     let grid2 = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap();
     let geo3d: Vec<(&str, Vec<FxInstance>)> = vec![
         ("pan3d-alone", vec![p3(4.0, 20.0, 0.9)]),
@@ -533,18 +522,7 @@ fn t309_decode_stage_parity_gpu_vs_cpu() {
     let mut src = Src::new(
         4100,
         Some(frame(W * 2, H * 2, false, 0)),
-        vec![FxInstance::Pan3d {
-            pos_x: 2.0,
-            pos_y: 0.0,
-            pos_z: 0.0,
-            rot_x: 0.0,
-            rot_y: 15.0,
-            rot_z: 0.0,
-            anchor_x: 0.5,
-            anchor_y: 0.5,
-            scale: 2.0,
-            camera: None,
-        }],
+        vec![kt_model::FxInstance::plugin_with("pan3d", &[2.0, 0.0, 0.0, 0.0, 15.0, 0.0, 0.5, 0.5, 2.0, 0.0]).unwrap()],
     );
     src.src_scale = 2;
     src.cam3d = Some(kt_engine::Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 });
@@ -922,7 +900,7 @@ fn t329_parity_cycle_over_the_registry() {
     let zoom2 = FxInstance::geometry_zoom(2.0);
     for (i, f) in video.iter().enumerate() {
         let (tol_single, tol_sand) = table[f.tag()];
-        let cam = matches!(f, FxInstance::Pan3d { .. })
+        let cam = f.uses_camera()
             .then(|| kt_engine::Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 });
         // single
         let mut src =
@@ -1328,22 +1306,35 @@ fn t993_a_geometry_program_fuses_and_keeps_its_rules() {
     cases.push(("corner_pin".into(), vec![persp.clone()]));
     cases.push(("corner_pin in a warp series".into(), vec![tuned("twirl"), persp.clone(), tuned("ripple")]));
     cases.push(("degenerate corner_pin".into(), vec![pin(&[0.3; 8])]));
+    // pan3d (4.1c-4): its camera comes from the engine (`GeoCtx::camera`); half the size leaves
+    // transparent margins, a quad turned edge-on to the camera is transparent entirely
+    let p3 = |rot_y: f64, scale: f64| FxInstance::plugin_with("pan3d", &[0.0, 0.0, 0.0, 0.0, rot_y, 0.0, 0.5, 0.5, scale, 0.0]).unwrap();
+    cases.push(("pan3d outside the quad".into(), vec![p3(20.0, 0.5)]));
+    cases.push(("pan3d in a warp series".into(), vec![tuned("twirl"), p3(20.0, 0.5), tuned("ripple")]));
+    cases.push(("pan3d edge-on".into(), vec![p3(90.0, 1.0)]));
+    let cam = Some(kt_engine::Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 });
     for (i, (name, fx)) in cases.into_iter().enumerate() {
-        let chain = kt_fx::plan::plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[]);
+        let c3 = if name.contains("pan3d") { cam } else { None };
+        let chain = kt_fx::plan::plan_chain(&fx, W, H, 1, W, H, 0.5, c3, 90_000, &[]);
         assert!(
             chain.ops.len() == 1 && matches!(chain.ops[0], kt_fx::plan::PlanOp::Run { .. }),
             "{name}: the series is not one run: {} ops",
             chain.ops.len()
         );
-        let src = Src::new(9930 + i as u64, Some(frame(W, H, false, 0)), fx);
+        let mut src = Src::new(9930 + i as u64, Some(frame(W, H, false, 0)), fx);
+        src.cam3d = c3;
         let p = plan(90_000, vec![one(&src, 4096, false)]);
         let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
         assert!(cc && cg, "{name}: incomplete");
         assert_frames_close(&cpu, &gpu, W, H, FrameTol::GEOM, &name);
-        if name.contains("corner_pin") {
+        if name.contains("corner_pin") || name.contains("pan3d") {
             // the top-left output pixel is outside every quad above — transparent on both
             assert_eq!(cpu[3], 0, "{name}: the corner outside the quad is not transparent");
             assert_eq!(gpu[3], 0, "{name}: the GPU corner outside the quad is not transparent");
+        }
+        if name.contains("edge-on") {
+            assert!(cpu.chunks_exact(4).all(|p| p[3] == 0), "{name}: an edge-on quad left pixels on the CPU");
+            assert!(gpu.chunks_exact(4).all(|p| p[3] == 0), "{name}: an edge-on quad left pixels on the GPU");
         }
     }
 }

@@ -554,7 +554,7 @@ fn t328_golden_cycle_over_the_registry() {
                 1,
             );
         }
-        let need_cam = matches!(f, FxInstance::Pan3d { .. });
+        let need_cam = f.uses_camera();
         let c = if need_cam {
             VideoFxCtx {
                 cam3d: Some(kt_fx::geom::Cam3d {

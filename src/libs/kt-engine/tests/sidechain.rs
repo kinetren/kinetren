@@ -314,8 +314,8 @@ impl KeyEcho {
             m: Manifest {
                 id: "key_echo".into(),
                 media: Media::AudioFx,
-                passport: vec![ParamSpec::track_ref_row("key")],
-                rows: vec![RowDecl { store: Store::TrackRef(RowRole::SidechainKey), omit_default: true }],
+                passport: vec![ParamSpec::ref_row("key")],
+                rows: vec![RowDecl { store: Store::Ref(RowRole::SidechainKey), omit_default: true }],
                 decl: Decl { state: true, ..Decl::default() },
                 ui: UiDecl { name: "Key echo", category_key: "fxreg.cat.dynamics", keywords_key: "fxreg.kw.compressor" },
             },
@@ -353,7 +353,7 @@ impl kt_plugin_api::AudioState for KeyEchoState {
 /// Test 995 (plugin-api-stage1, D11.4; capability `plugins`): a host-reference row routes without
 /// engine code.
 ///
-/// The compressor's key is a `Store::TrackRef(RowRole::SidechainKey)` row. (1) The file holds the
+/// The compressor's key is a `Store::Ref(RowRole::SidechainKey)` row. (1) The file holds the
 /// former `key` text — the track id, absent when none — and the reopened project sounds the
 /// same. (2) A second plugin with a key input (`key_echo`, registered by this test only) gets
 /// the key signal with no engine code naming it: its track's output is the speech. (3) Deleting

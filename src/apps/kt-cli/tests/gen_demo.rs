@@ -59,18 +59,7 @@ fn grid2() -> FxInstance {
 }
 
 fn pan3d(scale: f64) -> FxInstance {
-    FxInstance::Pan3d {
-        pos_x: 0.0,
-        pos_y: 0.0,
-        pos_z: 0.0,
-        rot_x: 0.0,
-        rot_y: 0.0,
-        rot_z: 0.0,
-        anchor_x: 0.5,
-        anchor_y: 0.5,
-        scale,
-        camera: None,
-    }
+    kt_model::FxInstance::plugin_with("pan3d", &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, scale, 0.0]).unwrap()
 }
 
 fn zoom(z: f64) -> FxInstance {

@@ -5314,37 +5314,8 @@ pub enum FxInstance {
         tint_b: u8,
     },
     // ---- 3D effects (R.29: category Video3d; since R.44 both backends compute them) ----
-    /// Perspective layer: the clip frame is a quad in the 3D scene, rendered by the
-    /// active (or pinned) camera to the project size. All defaults are identity:
-    /// without a camera and with zero parameters the frame matches the frame without
-    /// the effect. The units are frozen by the format: position in world px (X right,
-    /// Y down, Z into depth, origin at the centre of the project frame), rotations in
-    /// degrees (ZXY order, as orientation in AE), anchor in layer fractions (0.5, 0.5
-    /// is the centre).
-    Pan3d {
-        #[serde(default)]
-        pos_x: f64,
-        #[serde(default)]
-        pos_y: f64,
-        #[serde(default)]
-        pos_z: f64,
-        #[serde(default)]
-        rot_x: f64,
-        #[serde(default)]
-        rot_y: f64,
-        #[serde(default)]
-        rot_z: f64,
-        #[serde(default = "default_half")]
-        anchor_x: f64,
-        #[serde(default = "default_half")]
-        anchor_y: f64,
-        #[serde(default = "default_one")]
-        scale: f64,
-        /// None — the camera active at the time (default, as in AE);
-        /// Some(id) — a pinned camera (there may be several cameras — R.29).
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        camera: Option<CameraId>,
-    },
+    // Pan3d is a plugin since plugin-api-stage1 (src/plugins/fx-video-distort, 4.1c-4): its pinned
+    // `camera` is a host-reference row (`RowRole::Camera`, read by `pinned_camera`).
     /// A plugin-backed effect (plugin-api-stage1, D3): `kind` is its id, the rows follow its
     /// passport. Untagged and LAST: a `kind` no variant above names is tried here.
     #[serde(untagged)]
@@ -5371,7 +5342,6 @@ impl FxInstance {
         match self {
             | FxInstance::SlowedReverb { .. }
  => FxClass::Audio,
-            FxInstance::Pan3d { .. } => FxClass::Video3d,
             // a plugin's class is its manifest's media (plugin-api-stage1, D2)
             FxInstance::Plugin(p) => match p.manifest().media {
                 kt_plugin_api::Media::AudioFx => FxClass::Audio,
@@ -5428,7 +5398,6 @@ impl FxInstance {
             FxInstance::Noise { .. } => "noise",
             FxInstance::Vhs { .. } => "vhs",
             FxInstance::Glow { .. } => "glow",
-            FxInstance::Pan3d { .. } => "pan3d",
             FxInstance::Plugin(p) => p.tag(),
             // the file's id is `MissingSlot::id`; the tag of a slot nothing can run is fixed
             FxInstance::Missing(_) => "missing",
@@ -5688,18 +5657,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         tint_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
         tint_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
         tint_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-    },
-    // ---- video 3D (R.29) -------------------------------------------------
-    Pan3d {
-        pos_x: f64, -100_000.0, 100_000.0, 0.0, 1.0, Px, Smooth;
-        pos_y: f64, -100_000.0, 100_000.0, 0.0, 1.0, Px, Smooth;
-        pos_z: f64, -100_000.0, 100_000.0, 0.0, 1.0, Px, Smooth;
-        rot_x: f64, -1440.0, 1440.0, 0.0, 0.5, Deg, Smooth;
-        rot_y: f64, -1440.0, 1440.0, 0.0, 0.5, Deg, Smooth;
-        rot_z: f64, -1440.0, 1440.0, 0.0, 0.5, Deg, Smooth;
-        anchor_x: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        anchor_y: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        scale: f64, 0.01, 32.0, 1.0, 0.01, Ratio, Smooth;
     },
 }}
 
@@ -6585,18 +6542,37 @@ impl FxInstance {
             .expect("event_grid is not registered: install the built-in plugin set first")
     }
 
+    /// Pan3d at its defaults (identity with the 50 mm camera), on the active camera — a plugin slot
+    /// (plugin-api-stage1, 4.1c-4).
     pub fn pan3d() -> FxInstance {
-        FxInstance::Pan3d {
-            pos_x: 0.0,
-            pos_y: 0.0,
-            pos_z: 0.0,
-            rot_x: 0.0,
-            rot_y: 0.0,
-            rot_z: 0.0,
-            anchor_x: 0.5,
-            anchor_y: 0.5,
-            scale: 1.0,
-            camera: None,
+        FxInstance::plugin("pan3d").expect("pan3d is not registered: install the built-in plugin set first")
+    }
+
+    /// Whether the slot looks through a 3D camera (it has a `RowRole::Camera` row): the engine
+    /// resolves the camera for such a chain and probes the clip's decode scale over time.
+    pub fn uses_camera(&self) -> bool {
+        match self {
+            FxInstance::Plugin(p) => {
+                let m = p.manifest();
+                (0..m.passport.len()).any(|i| m.row(i).store == kt_plugin_api::Store::Ref(kt_plugin_api::RowRole::Camera))
+            }
+            _ => false,
+        }
+    }
+
+    /// The pinned camera of a camera slot (R.29): `None` — the camera active at the time.
+    pub fn pinned_camera(&self) -> Option<CameraId> {
+        match self {
+            FxInstance::Plugin(p) => p.refs(kt_plugin_api::RowRole::Camera).next().map(|(_, id)| CameraId(id)),
+            _ => None,
+        }
+    }
+
+    /// Pin (or unpin) the camera; false when the effect has no camera row.
+    pub fn set_pinned_camera(&mut self, camera: Option<CameraId>) -> bool {
+        match self {
+            FxInstance::Plugin(p) => p.set_ref(kt_plugin_api::RowRole::Camera, camera.map(|c| c.0)),
+            _ => false,
         }
     }
 

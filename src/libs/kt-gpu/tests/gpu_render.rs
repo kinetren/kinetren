@@ -188,18 +188,7 @@ fn t301_export_without_gpu_renders_3d() {
         p.validate().unwrap();
         p
     };
-    let pan3d = FxInstance::Pan3d {
-        pos_x: 0.0,
-        pos_y: 0.0,
-        pos_z: 0.0,
-        rot_x: 0.0,
-        rot_y: 15.0,
-        rot_z: 0.0,
-        anchor_x: 0.5,
-        anchor_y: 0.5,
-        scale: 0.8,
-        camera: None,
-    };
+    let pan3d = kt_model::FxInstance::plugin_with("pan3d", &[0.0, 0.0, 0.0, 0.0, 15.0, 0.0, 0.5, 0.5, 0.8, 0.0]).unwrap();
     let q = Quality { width: 128, height: 72 };
     let render = |p: &kt_model::Project, backends: &ExportBackends| -> Vec<u8> {
         let mut got = Vec::new();

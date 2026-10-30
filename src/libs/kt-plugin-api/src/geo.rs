@@ -42,3 +42,24 @@ pub fn invert3(g: &M3) -> Option<M3> {
     }
     Some(m)
 }
+
+/// The layer's resolved 3D camera (R.29), already interpolated at the frame's time: the fields of
+/// the model's camera, frozen by the file format, plus the world scale (quality px / project px —
+/// the preview is smaller than the project, and the Pan3d/camera coordinates are project px).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Camera3d {
+    pub pos_x: f64,
+    pub pos_y: f64,
+    /// 0 = “auto” (default distance 50 mm).
+    pub pos_z: f64,
+    /// Point of interest (two-node camera, as in AE). None — one-node: looks along +Z.
+    pub target: Option<(f64, f64, f64)>,
+    /// Extra rotation AFTER target (AE orientation), degrees, ZXY.
+    pub rot_x: f64,
+    pub rot_y: f64,
+    pub rot_z: f64,
+    /// Vertical FOV in degrees.
+    pub fov_deg: f64,
+    pub ortho: bool,
+    pub world_scale: f64,
+}

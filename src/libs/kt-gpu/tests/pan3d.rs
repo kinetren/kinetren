@@ -41,18 +41,7 @@ fn frame_with_marker(mx: u32, my: u32) -> Arc<VideoFrame> {
 }
 
 fn pan3d(pos_x: f64, scale: f64) -> FxInstance {
-    FxInstance::Pan3d {
-        pos_x,
-        pos_y: 0.0,
-        pos_z: 0.0,
-        rot_x: 0.0,
-        rot_y: 0.0,
-        rot_z: 0.0,
-        anchor_x: 0.5,
-        anchor_y: 0.5,
-        scale,
-        camera: None,
-    }
+    kt_model::FxInstance::plugin_with("pan3d", &[pos_x, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, scale, 0.0]).unwrap()
 }
 
 fn layer<'a>(fx: &'a [FxInstance], frame: &Arc<VideoFrame>, id: u64) -> PlanLayer<'a> {

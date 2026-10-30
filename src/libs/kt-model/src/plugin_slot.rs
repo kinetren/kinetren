@@ -71,7 +71,7 @@ impl PluginSlot {
     pub fn refs(&self, role: kt_plugin_api::RowRole) -> impl Iterator<Item = (usize, u64)> + '_ {
         let m = self.manifest();
         (0..m.passport.len()).filter_map(move |i| match m.row(i).store {
-            kt_plugin_api::Store::TrackRef(r) if r == role => {
+            kt_plugin_api::Store::Ref(r) if r == role => {
                 let v = self.values.get(i).copied().unwrap_or(0.0);
                 (v > 0.0).then_some((i, v as u64))
             }
@@ -83,7 +83,7 @@ impl PluginSlot {
     pub fn set_ref(&mut self, role: kt_plugin_api::RowRole, id: Option<u64>) -> bool {
         let m = self.manifest();
         let Some(i) = (0..m.passport.len())
-            .find(|&i| matches!(m.row(i).store, kt_plugin_api::Store::TrackRef(r) if r == role))
+            .find(|&i| matches!(m.row(i).store, kt_plugin_api::Store::Ref(r) if r == role))
         else {
             return false;
         };
@@ -118,7 +118,7 @@ impl Serialize for PluginSlot {
                 kt_plugin_api::Store::I32 => map.serialize_entry(key, &(v as i32))?,
                 kt_plugin_api::Store::Bool => map.serialize_entry(key, &(v != 0.0))?,
                 kt_plugin_api::Store::Choice(keys) => map.serialize_entry(key, keys[v as usize])?,
-                kt_plugin_api::Store::TrackRef(_) => map.serialize_entry(key, &(v as u64))?,
+                kt_plugin_api::Store::Ref(_) => map.serialize_entry(key, &(v as u64))?,
             }
         }
         map.end()
@@ -147,7 +147,7 @@ impl<'de> Deserialize<'de> for PluginSlot {
                     kt_plugin_api::Store::Choice(keys) => {
                         field.and_then(|v| v.as_str()).and_then(|k| keys.iter().position(|x| *x == k)).map(|i| i as f64)
                     }
-                    kt_plugin_api::Store::TrackRef(_) => field.and_then(|v| v.as_u64()).map(|n| n as f64),
+                    kt_plugin_api::Store::Ref(_) => field.and_then(|v| v.as_u64()).map(|n| n as f64),
                     _ => field.and_then(|v| v.as_f64()),
                 };
                 store.cast(v.unwrap_or(s.default))

@@ -343,21 +343,29 @@ lone path is a permutation, and a second copy of it in a plugin would be a secon
 bytes. A neutral mirror still takes the lone path (its steps are empty, its `lone` is not), so a
 mirror with both flags off gives the input byte for byte, as before.
 
+*As built for pan3d (4.1c-4):* the pinned camera is the second role of the host-reference row,
+`RowRole::Camera` (the row was renamed `Store::Ref`/`ParamType::Ref` — a `TrackRef` naming a camera
+would lie). The ENGINE still resolves the camera per frame (pinned or active, `resolve_cam3d`, now
+by `FxInstance::uses_camera`/`pinned_camera`) and hands it to the step as `GeoCtx::camera`
+(`geo::Camera3d`, the model camera's fields plus the world scale — the API cannot name the model
+type). The forward homography moved verbatim into the plugin; without a camera the step is
+skipped, a degenerate map is `geo::TRANSPARENT`.
+
 **D11.3 An exact lone path.** A series of length 1 without a scale change runs the OLD kernel of
 Pan/Mirror today (`GeomExec::Legacy`, t297). A geometry plugin may provide that path itself:
 `lone(k, &Frame) -> Option<Frame>` on the CPU and a WGSL pass (a pixel permutation for mirror).
 The host still decides WHEN, by the same rule (`k_in == k_out`, length 1). So mirror's bytes do not
 move, and a third-party permutation kind gets the same fast path.
 
-**D11.4 A host-reference row.** `Store::TrackRef`: an `Option<TrackId>` row, written as today's
+**D11.4 A host-reference row.** `Store::Ref` (first `Store::TrackRef`; renamed when the pinned camera became its second role): an `Option<TrackId>` row, written as today's
 `key` (omitted when none), carried in the slot as the id's number with a "none" sentinel. The
 kernel never sees a model address. The row is declared with a ROLE (`RowRole::SidechainKey`);
 the engine routes the key signal by the role (kt-engine `audio.rs`), the track window edits the
 row by the role, and kt-otio carries it by the role. A second plugin with a key input gets
 routing without engine code. The compressor moves.
 
-*As built (3b.1):* the role lives in the store, `Store::TrackRef(RowRole::SidechainKey)`, and the
-row's type is `ParamType::TrackRef` (`ParamSpec::track_ref_row`: structural, never automated, never
+*As built (3b.1):* the role lives in the store, `Store::Ref(RowRole::SidechainKey)`, and the
+row's type is `ParamType::Ref` (`ParamSpec::ref_row`: structural, never automated, never
 in the numeric grid). The slot holds the id's number, 0 is none; the file writes the bare integer
 (the old `TrackId` text) and omits it at none. `FxInstance::sidechain_key`/`set_sidechain_key` are
 the ONE home of "this device's key": the engine's stage builder, kt-otio's tolerant read, the

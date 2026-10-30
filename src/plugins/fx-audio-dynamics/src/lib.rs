@@ -4,7 +4,7 @@
 //! t973c the bytes of the sound).
 //!
 //! The compressor came last (stage 3b, D11.4): its sidechain `key` is a host-reference row
-//! (`Store::TrackRef(RowRole::SidechainKey)`) — the slot holds the track id's number, the engine
+//! (`Store::Ref(RowRole::SidechainKey)`) — the slot holds the track id's number, the engine
 //! routes the key signal by the row's role, and the kernel only receives the signal.
 
 use std::sync::Arc;
@@ -490,7 +490,7 @@ impl Compressor {
                     // of the row, and inserting a track above would move the key onto someone
                     // else's signal (R.65). None is not written: a file without a sidechain stays
                     // byte-for-byte the same.
-                    ParamSpec::track_ref_row("key"),
+                    ParamSpec::ref_row("key"),
                 ],
                 rows: vec![
                     row(false),
@@ -498,7 +498,7 @@ impl Compressor {
                     row(false),
                     row(false),
                     row(true),
-                    RowDecl { store: Store::TrackRef(RowRole::SidechainKey), omit_default: true },
+                    RowDecl { store: Store::Ref(RowRole::SidechainKey), omit_default: true },
                 ],
                 decl: Decl { state: true, ..Decl::default() },
                 ui: UiDecl { name: "Compressor", category_key: "fxreg.cat.dynamics", keywords_key: "fxreg.kw.compressor" },

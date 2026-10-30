@@ -57,7 +57,6 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
         "Noise" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::NOISE)),
         "VHS" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::VHS)),
         "Glow" => (k::fxreg::cat::GLOW, Some(k::fxreg::kw::GLOW)),
-        "Pan 3D" => (k::fxreg::cat::THREE_D, Some(k::fxreg::kw::PAN3D)),
         // R.47 Q2: color/style/perspective
         // R.47 Q3: barriers
         "Sharpen" => (k::fxreg::cat::BLUR, Some(k::fxreg::kw::SHARPEN)),

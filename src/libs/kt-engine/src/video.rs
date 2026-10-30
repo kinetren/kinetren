@@ -681,7 +681,7 @@ fn clip_head_zoom(
     if !live && !kt_fx::video::has_video_fx_in(fx, lead, pw, ph) {
         return 1.0;
     }
-    let has_3d = fx.iter().any(|f| matches!(f, kt_model::FxInstance::Pan3d { .. }));
+    let has_3d = fx.iter().any(kt_model::FxInstance::uses_camera);
     let span = (end.0 - start.0).max(1);
     let mut probes: Vec<Tick> = Vec::new();
     if live || has_3d || !cameras.is_empty() {
@@ -1556,11 +1556,10 @@ pub fn resolve_cam3d(
     out_w: u32,
     project_w: u32,
 ) -> Option<Cam3d> {
+    // the first slot with a camera row decides (R.29), whatever its kind (D11.4)
     fx.iter()
-        .find_map(|f| match f {
-            kt_model::FxInstance::Pan3d { camera, .. } => Some(*camera),
-            _ => None,
-        })
+        .find(|f| f.uses_camera())
+        .map(kt_model::FxInstance::pinned_camera)
         .map(|pinned| {
             let ev = pinned
                 .and_then(|id| cameras.iter().find(|c| c.id == id))

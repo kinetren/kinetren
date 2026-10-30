@@ -323,10 +323,10 @@ pub enum ParamType {
         multiline: bool,
     },
     Media,
-    /// A reference to a model object (D11.4) — a row of `Store::TrackRef`: drawn and edited by
+    /// A reference to a model object (D11.4) — a row of `Store::Ref`: drawn and edited by
     /// its ROLE in the host's own place (the track window's ducking section for the sidechain
     /// key), never in the numeric grid, never automated.
-    TrackRef,
+    Ref,
 }
 
 impl ParamType {
@@ -364,7 +364,7 @@ enum ParamTypeRepr {
         multiline: bool,
     },
     Media,
-    TrackRef,
+    Ref,
 }
 
 impl From<ParamTypeRepr> for ParamType {
@@ -378,7 +378,7 @@ impl From<ParamTypeRepr> for ParamType {
             }
             ParamTypeRepr::Text { multiline } => ParamType::Text { multiline },
             ParamTypeRepr::Media => ParamType::Media,
-            ParamTypeRepr::TrackRef => ParamType::TrackRef,
+            ParamTypeRepr::Ref => ParamType::Ref,
         }
     }
 }
@@ -392,7 +392,7 @@ impl From<ParamType> for ParamTypeRepr {
             ParamType::Choice { .. } => ParamTypeRepr::Choice,
             ParamType::Text { multiline } => ParamTypeRepr::Text { multiline },
             ParamType::Media => ParamTypeRepr::Media,
-            ParamType::TrackRef => ParamTypeRepr::TrackRef,
+            ParamType::Ref => ParamTypeRepr::Ref,
         }
     }
 }
@@ -527,14 +527,14 @@ impl ParamSpec {
         }
     }
 
-    /// A plugin passport's TRACK REFERENCE row (D11.4, `Store::TrackRef`): the referenced track's
+    /// A plugin passport's REFERENCE row (D11.4, `Store::Ref`): the referenced object's
     /// id number, 0 — none. The kernel never reads it as an address; the host routes it by role.
-    pub fn track_ref_row(name: &'static str) -> ParamSpec {
+    pub fn ref_row(name: &'static str) -> ParamSpec {
         ParamSpec {
             name: std::borrow::Cow::Borrowed(name),
-            ty: ParamType::TrackRef,
+            ty: ParamType::Ref,
             min: 0.0,
-            // track ids are u64 counters from 1; an f64 holds them exactly up to 2^53
+            // model ids are u64 counters from 1; an f64 holds them exactly up to 2^53
             max: 9_007_199_254_740_992.0,
             default: 0.0,
             step: 1.0,
@@ -927,10 +927,10 @@ pub enum Store {
     /// An enum field: the value is the variant's INDEX, the file holds its KEY (Filter's `mode`
     /// as `"lowpass"`); an unknown key reads as the row's default.
     Choice(&'static [&'static str]),
-    /// A model address (D11.4): an `Option<TrackId>` field — the value is the id's number, 0 is
+    /// A model address (D11.4): an `Option<Id>` field (`TrackId`, `CameraId`) — the value is the id's number, 0 is
     /// none; the file holds the integer (omitted at none when the row omits its default). The
     /// ROLE says what the host does with it.
-    TrackRef(RowRole),
+    Ref(RowRole),
 }
 
 /// What a host-reference row is to the host (D11.4). The engine routes the row by its role, the
@@ -940,6 +940,9 @@ pub enum Store {
 pub enum RowRole {
     /// The sidechain key (R.65): the detector listens to that track's signal.
     SidechainKey,
+    /// The pinned 3D camera (R.29): none — the camera active at the frame's time. The engine
+    /// resolves it per frame and hands it to the geometry step in `GeoCtx::camera`.
+    Camera,
 }
 
 impl Store {
@@ -959,7 +962,7 @@ impl Store {
                 }
             }
             Store::Choice(keys) => v.round().clamp(0.0, keys.len().saturating_sub(1) as f64),
-            Store::TrackRef(_) => v.round().max(0.0),
+            Store::Ref(_) => v.round().max(0.0),
         }
     }
 }
@@ -1058,13 +1061,16 @@ pub trait VideoKernel: Send + Sync {
 }
 
 /// What a geometry plugin's step sees (D11.2): its stage — the size of the frame that enters it — and
-/// the series' output size (the canvas), both in LOGICAL pixels (the host conjugates K×).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// the series' output size (the canvas), both in LOGICAL pixels (the host conjugates K×), and the
+/// layer's resolved 3D camera when the chain has a camera row (`RowRole::Camera`): the pinned one,
+/// or the active one at the frame's time. `None` — no camera, no 3D.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct GeoCtx {
     pub stage_w: u32,
     pub stage_h: u32,
     pub out_w: u32,
     pub out_h: u32,
+    pub camera: Option<geo::Camera3d>,
 }
 
 /// One step of a geometry program (D11.2), in the host's vocabulary. `Warp` is the open one: the

@@ -25,22 +25,14 @@ fn cam(id: u64, lane: u32, start: i64, dur: i64, rot_y: f64) -> CameraEvent {
 }
 
 fn pan3d(camera: Option<CameraId>) -> FxInstance {
-    FxInstance::Pan3d {
-        pos_x: 0.0,
-        pos_y: 0.0,
-        pos_z: 0.0,
-        rot_x: 0.0,
-        rot_y: 0.0,
-        rot_z: 0.0,
-        anchor_x: 0.5,
-        anchor_y: 0.5,
-        scale: 1.0,
-        camera,
-    }
+    let mut p = kt_model::FxInstance::pan3d();
+    p.set_pinned_camera(camera);
+    p
 }
 
 #[test]
 fn t545_camera_resolution_has_one_rule() {
+    kt_plugins_builtin::install();
     let cams = [cam(1, 0, 0, 90_000, 11.0), cam(2, 0, 90_000, 90_000, 22.0)];
 
     // 1) no Pan3d in the chain — no camera either: Pan3d is skipped, and the other

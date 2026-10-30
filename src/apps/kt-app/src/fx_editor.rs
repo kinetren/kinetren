@@ -372,18 +372,7 @@ impl KtApp {
         // a clip where 3D is not yet set. The resolution rule is one with the engine
         // (kt_engine::resolve_cam3d, item 429).
         let pv_cam = kt_engine::resolve_cam3d(
-            &[kt_model::FxInstance::Pan3d {
-                pos_x: 0.0,
-                pos_y: 0.0,
-                pos_z: 0.0,
-                rot_x: 0.0,
-                rot_y: 0.0,
-                rot_z: 0.0,
-                anchor_x: 0.5,
-                anchor_y: 0.5,
-                scale: 1.0,
-                camera: None,
-            }],
+            &[kt_model::FxInstance::pan3d()],
             &self.model.project().cameras,
             pv_t,
             crate::fx_thumbs::REF_W,
@@ -1365,7 +1354,6 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Noise { .. } => "Noise",
         FxInstance::Vhs { .. } => "VHS",
         FxInstance::Glow { .. } => "Glow",
-        FxInstance::Pan3d { .. } => "Pan 3D",
         FxInstance::Sharpen { .. } => "Sharpen",
         FxInstance::Pixelate { .. } => "Pixelate",
         FxInstance::ChromaticAberration { .. } => "Chromatic Aberration",
@@ -1393,22 +1381,6 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
         ("Noise", FxInstance::noise(0.08)),
         ("VHS", FxInstance::vhs(4, 0.4)),
         ("Glow", FxInstance::glow(0.65)),
-        (
-            // R.29: the first 3D effect; defaults are identity (layer 1:1)
-            "Pan 3D",
-            FxInstance::Pan3d {
-                pos_x: 0.0,
-                pos_y: 0.0,
-                pos_z: 0.0,
-                rot_x: 0.0,
-                rot_y: 0.0,
-                rot_z: 0.0,
-                anchor_x: 0.5,
-                anchor_y: 0.5,
-                scale: 1.0,
-                camera: None,
-            },
-        ),
         // R.47: per-point color/style + the first honest perspective
         // R.47 Q3: barriers
         ("Sharpen", FxInstance::sharpen()),
@@ -1734,7 +1706,10 @@ pub(crate) fn draw_video_fx_params(
 
     // --- tail: Pan3d camera and CamMotion keyframes ------------------------
     match f {
-        FxInstance::Pan3d { camera, .. } => {
+        // the pinned camera is the slot's camera row (R.29, D11.4), drawn here by its role
+        f if f.uses_camera() => {
+            let mut camera = f.pinned_camera();
+            let before = camera;
             ui.horizontal(|ui| {
                 ui.label(tr(k::fx::CAMERA));
                 let sel = match camera {
@@ -1746,15 +1721,16 @@ pub(crate) fn draw_video_fx_params(
                         .unwrap_or_else(|| format!("C{}", id.0)),
                 };
                 egui::ComboBox::from_id_salt("pan3dcam").selected_text(sel).show_ui(ui, |ui| {
-                    ch.base |=
-                        ui.selectable_value(camera, None, tr(k::fx::CAMERA_ACTIVE)).changed();
+                    ui.selectable_value(&mut camera, None, tr(k::fx::CAMERA_ACTIVE));
                     for (cid, name) in cameras {
-                        ch.base |= ui
-                            .selectable_value(camera, Some(kt_model::CameraId(*cid)), name.clone())
-                            .changed();
+                        ui.selectable_value(&mut camera, Some(kt_model::CameraId(*cid)), name.clone());
                     }
                 });
             });
+            if camera != before {
+                f.set_pinned_camera(camera);
+                ch.base = true;
+            }
         }
         FxInstance::CamMotion { ease: true, keyframes, .. } => {
             ui.weak(crate::tf!(k::fx::KEYFRAMES_N, keyframes.len()));

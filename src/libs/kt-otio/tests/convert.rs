@@ -520,18 +520,7 @@ fn t180_media_start_timecode_is_subtracted_and_restored() {
 fn project_3d() -> Project {
     let mut p = rich_project();
     // Pan3d on the top video clip: an ordinary kt effect, does NOT bump the version
-    p.clips[0].fx = vec![FxInstance::Pan3d {
-        pos_x: 10.0,
-        pos_y: -4.0,
-        pos_z: 120.0,
-        rot_x: 0.0,
-        rot_y: 25.0,
-        rot_z: 0.0,
-        anchor_x: 0.5,
-        anchor_y: 0.5,
-        scale: 1.1,
-        camera: Some(CameraId(2)),
-    }];
+    p.clips[0].fx = vec![kt_model::FxInstance::plugin_with("pan3d", &[10.0, -4.0, 120.0, 0.0, 25.0, 0.0, 0.5, 0.5, 1.1, 2.0]).unwrap()];
     // automation (R.30): the rotation curve — frozen by the same golden
     p.clips[0].fx_auto = vec![vec![ParamCurve {
         param: "rot_y".into(),

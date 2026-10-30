@@ -201,7 +201,7 @@ BOTH formulas of the tail — `AudioNode::tail()` and the static `chain_tail`
 
 Checklist "add an audio effect" (plugin-api-stage1, stage 3 — every user audio kind is a plugin;
 the core keeps `layer_mix` and `slowed_reverb`; the compressor moved in 3b.1, its sidechain `key`
-a `Store::TrackRef(RowRole::SidechainKey)` row the engine routes by role — a new effect with a key
+a `Store::Ref(RowRole::SidechainKey)` row the engine routes by role — a new effect with a key
 input declares the same row and gets the key signal in `process` with no host code): in its family crate under `src/plugins/fx-audio-*` — a `Manifest` (id = the file's
 `kind`, `Media::AudioFx`, the passport in FILE order with a `RowDecl` per row: `F32`/`U32`/…, a
 `Choice`/`Bool` store for an enum/bool field with `ParamSpec::choice_row`/`flag_row`,
@@ -276,8 +276,9 @@ Three classes of video effect; the class determines ALL the placement of the cod
   through `WarpRef`, and its `warp_<id>` WGSL function is the mirror kt-gpu pastes into both
   loops — edited in THE SAME COMMIT as the f64 text (t993, t329). corner_pin (`GeoStep::Proj`),
   mirror (`GeoStep::Mirror`, the exact lone path through `GeoKernel::lone` → `plugin_lone`, t994)
-  and event_grid (`GeoStep::Grid`, the host keeps `grid_tile`) are geometry plugins too; the core
-  keeps the Geometry node, CamMotion and Pan3d.
+  and event_grid (`GeoStep::Grid`, the host keeps `grid_tile`) are geometry plugins too, and so is
+  pan3d (a `Proj` from the camera the engine resolves, `GeoCtx::camera`; its `pan3d_forward` lives in
+  `fx-video-distort/src/pan3d.rs`); the core keeps the Geometry node and CamMotion.
 - **Pointwise** (`geom::is_pointwise`): the colour of a pixel without neighbours.
   The formula is ONE tap function (`tap_grade`/`tap_duo`/`tap_poster`/
   `tap_vig`, f64): it is called by the CPU barrier (`pointwise_barrier`) and the CPU tap

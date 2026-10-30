@@ -193,14 +193,14 @@ once (English message, first line = the stage and what was done).
 
 ## 3b. The two audio kinds that waited (design D11.4, D11.5)
 
-- [x] 3b.1 done: `Store::TrackRef(RowRole::SidechainKey)`, `ParamType::TrackRef`,
+- [x] 3b.1 done: `Store::Ref(RowRole::SidechainKey)`, `ParamType::Ref`,
     `PluginSlot::refs`/`set_ref`, `FxInstance::sidechain_key`/`set_sidechain_key`; the compressor
     (node verbatim) moves into `fx-audio-dynamics`; engine, kt-otio, model checks and the track
     window ask the role. t995 red twice — with the key tied to the compressor kind (the unknown
     `key_echo` plugin got silence) and with `next_track_id` handing out a dead key's id (a defect
     found here, fixed: an id a key names is not free). t973 frozen forms; t973c's compressor
     row (printed before the move) unchanged; t767–t778, t641 (refined for the new store) green
-- [ ] 3b.1 `Store::TrackRef` with a `RowRole` (D11.4): the slot row, its file form (t973 against the frozen `key`), the engine routing by role (`kt-engine/src/audio.rs`), the track window and kt-otio by role; move the compressor into `fx-audio-dynamics`; write t995 (`src/libs/kt-engine/tests/sidechain.rs`) red first; verify t767–t778 (the sidechain set) and t973c
+- [ ] 3b.1 `Store::Ref` with a `RowRole` (D11.4): the slot row, its file form (t973 against the frozen `key`), the engine routing by role (`kt-engine/src/audio.rs`), the track window and kt-otio by role; move the compressor into `fx-audio-dynamics`; write t995 (`src/libs/kt-engine/tests/sidechain.rs`) red first; verify t767–t778 (the sidechain set) and t973c
 - [ ] 3b.2 `Decl.time_warp` (D11.5): every place that finds the warp by the variant (kt-model `warp.rs`, `project.rs`, `model.rs`; kt-fx `audio/mod.rs`, `nodes.rs`; kt-app `fx_editor.rs`; kt-cli) asks the declaration; one warp slot per chain refused at validation; move Slowed+Reverb into `fx-audio-modulation`; write t996 red first; verify t11, t973c, t17, t282, t603d, t616 and the video warp set
 - [ ] 3b.3 Commit stage 3b; `python3 src/scripts/target-prune.py`
 
@@ -249,7 +249,16 @@ once (English message, first line = the stage and what was done).
     executors); both move into `fx-video-distort`, their flag rows are `Store::Bool`, the FX
     window draws the checkboxes from the slot. t994 red with the lone path withdrawn; t973 frozen
     forms; t297, t297b–f, t308b, t299, t943, t944, t26 unchanged
-- [ ] 4.1c The geometry program (D11.2, D11.3): `GeoKernel`, `GeoCtx`, `GeoStep`, the open `Warp` with `warp_<id>` pasted into both loops of `geom_fused.wgsl`, the exact lone path; move lens_distort, twirl, ripple, kaleidoscope, cylinder3d, corner_pin, mirror, event_grid, pan3d; write t993 and t994 red first; verify t26, t297, t298, t308b, t330, t332, t333, t943, t944, t181, t329
+- [x] 4.1c-4 pan3d: `RowRole::Camera` (the host-reference row renamed `Store::Ref`/`ParamType::Ref`
+    for its second role), `geo::Camera3d` in `GeoCtx::camera` (the engine's `Cam3d::for_plugin`);
+    `pan3d_forward` moves verbatim into `fx-video-distort/src/pan3d.rs`, one `Proj` step;
+    `FxInstance::uses_camera`/`pinned_camera`/`set_pinned_camera` replace the variant match in
+    `resolve_cam3d`, the decode-scale probes and the FX window's camera combo. t993 gains pan3d
+    (outside the quad, in a warp series, edge-on) — red with the camera ignored; t973 frozen
+    forms; t187, t298, t66d, t181, t329, t328 unchanged
+- [x] 4.1c The geometry program (D11.2, D11.3): `GeoKernel`, `GeoCtx`, `GeoStep`, the open `Warp` with `warp_<id>` pasted into both loops of `geom_fused.wgsl`, the exact lone path; move lens_distort, twirl, ripple, kaleidoscope, cylinder3d, corner_pin, mirror, event_grid, pan3d; write t993 and t994 red first; verify t26, t297, t298, t308b, t330, t332, t333, t943, t944, t181, t329
+    Done in 4.1c-1…4 above; the core keeps the Geometry node and CamMotion (the lead geometry
+    and the legacy pan kernel, not effects a person picks)
 - [ ] 4.1d The ten barrier kinds: propose `plugin-api-barriers` (the GPU pass graph and the SIMD twins), linked from here; this change does not move them
 - [ ] 4.2 FX picker, variants and thumbnails from manifests (`fx_registry.rs`, `fx_thumbs.rs`); verify t48, t252, t253, t976 and `layout_tests.rs`/`reach_tests.rs` green; rewrite the "add a video effect" checklist in `src/libs/kt-fx/CLAUDE.md` and `src/libs/kt-gpu/CLAUDE.md`; commit stage 4
 

@@ -156,18 +156,7 @@ fn t297f_mirror_only_run_keeps_dims() {
 fn t298_pan3d_cpu_edges() {
     kt_plugins_builtin::install();
     use kt_fx::geom::Cam3d;
-    let p3 = |rot_x: f64, scale: f64| FxInstance::Pan3d {
-        pos_x: 0.0,
-        pos_y: 0.0,
-        pos_z: 0.0,
-        rot_x,
-        rot_y: 0.0,
-        rot_z: 0.0,
-        anchor_x: 0.5,
-        anchor_y: 0.5,
-        scale,
-        camera: None,
-    };
+    let p3 = |rot_x: f64, scale: f64| kt_model::FxInstance::plugin_with("pan3d", &[0.0, 0.0, 0.0, rot_x, 0.0, 0.0, 0.5, 0.5, scale, 0.0]).unwrap();
     let cam = Some(Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 });
     let ctx3d = VideoFxCtx { cam3d: cam, ..ctx() };
 
@@ -279,18 +268,7 @@ fn t296_net_identity_chain_preserves_detail() {
         cam3d: Some(Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 }),
         ..ctx()
     };
-    let p3 = |scale: f64| FxInstance::Pan3d {
-        pos_x: 0.0,
-        pos_y: 0.0,
-        pos_z: 0.0,
-        rot_x: 0.0,
-        rot_y: 0.0,
-        rot_z: 0.0,
-        anchor_x: 0.5,
-        anchor_y: 0.5,
-        scale,
-        camera: None,
-    };
+    let p3 = |scale: f64| kt_model::FxInstance::plugin_with("pan3d", &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, scale, 0.0]).unwrap();
     let grid_c = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap();
     let out3d =
         apply_video_chain(&[grid_c.clone(), p3(1.0), grid_c, p3(4.0)], checkerboard(), &ctx3d);
@@ -414,18 +392,7 @@ fn bench_geom_1080p() {
         cam3d: Some(Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 }),
         ..bctx
     };
-    let p3 = |scale: f64| FxInstance::Pan3d {
-        pos_x: 0.0,
-        pos_y: 0.0,
-        pos_z: 0.0,
-        rot_x: 0.0,
-        rot_y: 10.0,
-        rot_z: 0.0,
-        anchor_x: 0.5,
-        anchor_y: 0.5,
-        scale,
-        camera: None,
-    };
+    let p3 = |scale: f64| kt_model::FxInstance::plugin_with("pan3d", &[0.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.5, 0.5, scale, 0.0]).unwrap();
     let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap();
     let npx = (bw * bh) as f64;
     let bench = |name: &str, fx: &[FxInstance], c: &VideoFxCtx| {

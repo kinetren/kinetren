@@ -187,18 +187,8 @@ fn t66c_export_compose_skips_postfx_memoization() {
 #[test]
 fn t66d_camera_edit_invalidates_postfx() {
     kt_plugins_builtin::install();
-    let pan3d = FxInstance::Pan3d {
-        pos_x: 0.0,
-        pos_y: 0.0,
-        pos_z: 0.0,
-        rot_x: 0.0,
-        rot_y: 0.0,
-        rot_z: 0.0,
-        anchor_x: 0.5,
-        anchor_y: 0.5,
-        scale: 0.5, // transparent margins: the quad's shift is visible on a flat frame too
-        camera: None,
-    };
+    // scale 0.5 — transparent margins: the quad's shift is visible on a flat frame too
+    let pan3d = FxInstance::plugin_with("pan3d", &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.5, 0.0]).unwrap();
     let cam_at = |pos_x: f64, start: i64| CameraEvent {
         ease: true,
         id: CameraId(1),
