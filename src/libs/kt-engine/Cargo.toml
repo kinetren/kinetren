@@ -15,12 +15,12 @@ kt-fx = { workspace = true }
 crossbeam-channel = { workspace = true }
 rtrb = { workspace = true }
 thiserror = { workspace = true }
+# the transition kernels' shared helpers (plugin-api-stage1, D12)
+kt-plugin-api = { workspace = true }
 
 [dev-dependencies]
 # the built-in plugin set for the tests (plugin-api-stage1; dev only — t975)
 kt-plugins-builtin = { workspace = true }
-# a test plugin with a key input (t995: a host-reference row routes without engine code)
-kt-plugin-api = { workspace = true }
 serde_json = { workspace = true }
 realfft = { workspace = true }
 tempfile = "3.27.0"
