@@ -20,3 +20,7 @@ kt-ffmpeg = { workspace = true }
 kt-dirs = { workspace = true }
 serde_json = { workspace = true }
 kt-otio = { workspace = true }
+
+[dev-dependencies]
+# the test door of the catalogue guard (fx_catalogue.rs, t978)
+kt-plugin-api = { workspace = true }

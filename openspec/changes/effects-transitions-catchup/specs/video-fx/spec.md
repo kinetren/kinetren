@@ -42,8 +42,10 @@ reasons that must be answered, not forgotten.
 - **WHEN** the guard reads the "What people use, against what we have" table of F-FX-007
 - **THEN** every row's last cell starts with `have`, `wave W<n>`, `deferred (` or `rejected (`;
   every `wave W<n>` names a wave that exists in the Verdict list; a `rejected (` or `deferred (`
-  cell carries a non-empty reason or dependency; a row with no live check carries `[NOT VERIFIED]`
-  in its market cell
+  cell carries a non-empty reason or dependency; a market cell either cites a numbered source of
+  the note's Sources list that was opened live (`(src N)`, the source carrying no `[NOT VERIFIED]`)
+  or carries `[NOT VERIFIED]` itself; copies with an unknown verdict, an unknown wave, an empty
+  reason, an unmarked unchecked row and a cite of an unopened source are each red with the group
 - **TEST** t980 (`src/apps/kt-cli/tests/fx_catalogue.rs`)
 
 #### Scenario: Reviving a rejected idea is an explicit revision
