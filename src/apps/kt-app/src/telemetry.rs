@@ -2022,6 +2022,7 @@ mod tests {
     /// t837: every event carries exactly its row, nothing from the person's paths or machine.
     #[test]
     fn t837_payload_is_the_allow_list() {
+        crate::plugins::install();
         let host = std::fs::read_to_string("/etc/hostname").unwrap_or_default();
         let common = Common {
             session_id: new_uuid_v7(),
@@ -2097,6 +2098,7 @@ mod tests {
     /// t883: the buckets and the export's properties.
     #[test]
     fn t883_buckets_and_export() {
+        crate::plugins::install();
         let counts: Vec<&str> = [0, 1, 9, 10, 999, 1000].into_iter().map(count_bucket).collect();
         assert_eq!(counts, ["0", "1-9", "1-9", "10-99", "100-999", "1000+"]);
         let durs: Vec<&str> = [59, 60, 3600, 3601].into_iter().map(duration_bucket).collect();
