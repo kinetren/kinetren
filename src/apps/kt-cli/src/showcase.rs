@@ -155,14 +155,12 @@ fn title(text: &str, size: f64, pos_y: f64) -> GeneratorKind {
 
 /// The four transition kinds the montage cycles through (≥ 3 distinct).
 fn transition_kind(i: usize) -> TransitionKind {
-    let pick = |want: fn(&TransitionKind) -> bool| {
-        TransitionKind::all().iter().find(|k| want(k)).cloned().unwrap_or_default()
-    };
+    let pick = |tag: &str| TransitionKind::all().iter().find(|k| k.tag() == tag).cloned().unwrap_or_default();
     match i % 4 {
         0 => TransitionKind::Crossfade,
-        1 => pick(|k| matches!(k, TransitionKind::Push { .. })),
-        2 => pick(|k| matches!(k, TransitionKind::Iris { .. })),
-        _ => pick(|k| matches!(k, TransitionKind::Whip { .. })),
+        1 => pick("push"),
+        2 => pick("iris"),
+        _ => pick("whip"),
     }
 }
 

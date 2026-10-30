@@ -203,57 +203,6 @@ fn trans(uv: vec2<f32>, k: f32) -> vec4<f32> {
     let pi = 3.14159265;
     // the plugin kinds' arms (plugin-api-stage1, D12), assembled from the registry by kt-gpu
     // @PLUGIN_TRANS_ARMS
-    if (mode == 2u) { // iris: centre (p0.zw), rmax up to the far corner (item 400)
-        let c = vec2<f32>((uv.x - p0.z) * aspect, uv.y - p0.w);
-        let e = vec2<f32>(max(p0.z, 1.0 - p0.z) * aspect, max(p0.w, 1.0 - p0.w));
-        let shape = i32(p0.x);
-        var r = length(c);
-        var rmax = max(length(e), 1e-6);
-        if (shape == 1) { r = abs(c.x) + abs(c.y); rmax = max(e.x + e.y, 1e-6); }
-        if (shape == 2) { r = max(abs(c.x), abs(c.y)); rmax = max(max(e.x, e.y), 1e-6); }
-        return mix(samp(0u, uv), samp(1u, uv), front_mask(r / rmax, k, p0.y));
-    }
-    if (mode == 3u) { // clock: centre (p0.zw)
-        var ang = atan2(uv.x - p0.z, -(uv.y - p0.w));
-        if (ang < 0.0) { ang = ang + 2.0 * pi; }
-        if (p0.x > 0.5) { ang = 2.0 * pi - ang; }
-        return mix(samp(0u, uv), samp(1u, uv), front_mask(ang / (2.0 * pi), k, p0.y));
-    }
-    if (mode == 4u) { // barn
-        var s = abs(uv.y - 0.5) * 2.0;
-        if (p0.x > 0.5) { s = abs(uv.x - 0.5) * 2.0; }
-        return mix(samp(0u, uv), samp(1u, uv), front_mask(s, k, p0.y));
-    }
-    if (mode == 5u) { // luma
-        let c = samp(0u, uv);
-        var l = (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) / 255.0;
-        if (p0.x > 0.5) { l = 1.0 - l; }
-        return mix(c, samp(1u, uv), front_mask(l, k, p0.y));
-    }
-    if (mode == 6u) { // push: B stands right up BEHIND A, on screen further along +dir (item 396)
-        let a = uv - p0.xy * k;
-        if (a.x >= 0.0 && a.x < 1.0 && a.y >= 0.0 && a.y < 1.0) { return samp(0u, a); }
-        return samp(1u, a + p0.xy);
-    }
-    if (mode == 7u) { // slide
-        let b = uv + p0.xy * (1.0 - k);
-        if (b.x >= 0.0 && b.x < 1.0 && b.y >= 0.0 && b.y < 1.0) { return samp(1u, b); }
-        return samp(0u, uv);
-    }
-    if (mode == 8u) { // zoom: centre (p0.yz)
-        let o = p0.yz;
-        let za = 1.0 + p0.x * k;
-        let zb = 1.0 + p0.x * (1.0 - k);
-        let sa = samp(0u, (uv - o) / za + o);
-        let sb = samp(1u, (uv - o) / zb + o);
-        return mix(sa, sb, k);
-    }
-    if (mode == 9u) { // spin: centre (p0.zw)
-        let o = p0.zw;
-        let sa = rot_sample(0u, uv, p0.x * k * 2.0 * pi, 1.0 + p0.y * k, aspect, o);
-        let sb = rot_sample(1u, uv, -p0.x * (1.0 - k) * 2.0 * pi, 1.0 + p0.y * (1.0 - k), aspect, o);
-        return mix(sa, sb, k);
-    }
     if (mode == 10u) { // whip
         let blur = p0.z * sin(pi * k);
         var acc = vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -283,89 +232,6 @@ fn trans(uv: vec2<f32>, k: f32) -> vec4<f32> {
         let ch = amt * 8.0 / od.x;
         let s = vec2<f32>(uv.x + shift, uv.y);
         return mix(glitch_pick(0u, s, ch), glitch_pick(1u, s, ch), k);
-    }
-    if (mode == 14u) { // flash
-        let base = mix(samp(0u, uv), samp(1u, uv), k);
-        let w = clamp(p0.w * sin(pi * k), 0.0, 1.0);
-        return vec4<f32>(mix(base.rgb, p0.rgb, w), base.a);
-    }
-    if (mode == 15u) { // dip
-        var src = samp(1u, uv);
-        var t = 2.0 - k * 2.0;
-        if (k < 0.5) { src = samp(0u, uv); t = k * 2.0; }
-        return vec4<f32>(mix(src.rgb, p0.rgb, t), src.a);
-    }
-    if (mode == 16u) { // blinds: the fraction inside the strip along the rotated axis
-        let ext = max(abs(p0.x) + abs(p0.y), 1e-6);
-        let c = ((uv.x - 0.5) * p0.x + (uv.y - 0.5) * p0.y + ext * 0.5) / ext;
-        let f = fract(c * max(p0.z, 1.0));
-        return mix(samp(0u, uv), samp(1u, uv), front_mask(f, k, p0.w));
-    }
-    if (mode == 17u) { // checker: counter-moving waves in the cells
-        let cols = max(p0.x, 1.0);
-        let rows = max(p0.y, 1.0);
-        let i = floor(uv.x * cols);
-        let j = floor(uv.y * rows);
-        let fx = fract(uv.x * cols);
-        var s = fx;
-        if (i32(i + j) % 2 != 0) { s = 1.0 - fx; }
-        return mix(samp(0u, uv), samp(1u, uv), front_mask(s, k, p0.z));
-    }
-    if (mode == 18u) { // blocks: the order of cells is the hash of the cell
-        let cols = max(p0.x, 1.0);
-        let rows = max(p0.y, 1.0);
-        let i = u32(floor(uv.x * cols));
-        let j = u32(floor(uv.y * rows));
-        let s = hash01(t_hash(i * 1973u) ^ t_hash(j * 9277u));
-        return mix(samp(0u, uv), samp(1u, uv), front_mask(s, k, p0.z));
-    }
-    if (mode == 19u) { // spiral: the Archimedean front around the centre (p0.zw)
-        let cx = uv.x - p0.z;
-        let cy = uv.y - p0.w;
-        var ang = atan2(cx, -cy);
-        if (ang < 0.0) { ang = ang + 2.0 * pi; }
-        let theta = ang / (2.0 * pi);
-        let ex = max(p0.z, 1.0 - p0.z) * aspect;
-        let ey = max(p0.w, 1.0 - p0.w);
-        let rmax = max(sqrt(ex * ex + ey * ey), 1e-6);
-        let r = sqrt(cx * aspect * (cx * aspect) + cy * cy) / rmax;
-        let turns = max(p0.x, 0.25);
-        let sfrac = (theta + turns * r) / (1.0 + turns);
-        return mix(samp(0u, uv), samp(1u, uv), front_mask(sfrac, k, p0.y));
-    }
-    if (mode == 20u) { // split: the halves of A slide apart, B is in the gap
-        var c = uv.x - 0.5;
-        if (p0.x > 0.5) { c = uv.y - 0.5; }
-        let h = k * 0.5;
-        if (abs(c) >= h) {
-            let off = h * sign(c);
-            if (p0.x > 0.5) { return samp(0u, vec2<f32>(uv.x, uv.y - off)); }
-            return samp(0u, vec2<f32>(uv.x - off, uv.y));
-        }
-        return samp(1u, uv);
-    }
-    if (mode == 21u) { // squeeze: A is squeezed, B unfolds along dir
-        var c = 1.0 - uv.y;
-        if (p0.x > 0.5) { c = uv.x; }
-        else if (p0.x < -0.5) { c = 1.0 - uv.x; }
-        else if (p0.y > 0.5) { c = uv.y; }
-        if (c < k) {
-            let c2 = c / max(k, 1e-4);
-            return samp(1u, sq_back(uv, c2, p0.xy));
-        }
-        let c2 = (c - k) / max(1.0 - k, 1e-4);
-        return samp(0u, sq_back(uv, c2, p0.xy));
-    }
-    if (mode == 22u) { // stretch: B stretches out of the central line
-        var c = uv.x - 0.5;
-        if (p0.x > 0.5) { c = uv.y - 0.5; }
-        let h = k * 0.5;
-        if (abs(c) < h) {
-            let c2 = c / max(k, 1e-4) + 0.5;
-            if (p0.x > 0.5) { return samp(1u, vec2<f32>(uv.x, c2)); }
-            return samp(1u, vec2<f32>(c2, uv.y));
-        }
-        return samp(0u, uv);
     }
     if (mode == 23u) { // swap: 2.5D exchange, the order changes at the midpoint
         let vert = p0.x > 0.5;
@@ -570,14 +436,6 @@ fn axis_sample(which: u32, uv: vec2<f32>, d: vec2<f32>, m: f32) -> vec4<f32> {
     if (d.x < -0.5) { return samp(which, vec2<f32>(m, uv.y)); }
     if (d.y > 0.5) { return samp(which, vec2<f32>(uv.x, 1.0 - m)); }
     return samp(which, vec2<f32>(uv.x, m)); 
-}
-
-// The axial “back to uv” of squeeze: a mirror of the CPU kernel’s back() (R.51).
-fn sq_back(uv: vec2<f32>, c2: f32, d: vec2<f32>) -> vec2<f32> {
-    if (d.x > 0.5) { return vec2<f32>(c2, uv.y); }
-    if (d.x < -0.5) { return vec2<f32>(1.0 - c2, uv.y); }
-    if (d.y > 0.5) { return vec2<f32>(uv.x, c2); }
-    return vec2<f32>(uv.x, 1.0 - c2);
 }
 
 // The quad of the sides of the 2.5D exchange: the sample inside the rectangle, outside transparent,

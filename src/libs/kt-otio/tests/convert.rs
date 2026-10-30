@@ -1567,7 +1567,7 @@ fn t465_overlap_transition_roundtrip() {
             b: Some(ClipId(2)),
             in_offset: Tick::ZERO,
             out_offset: Tick::ZERO,
-            kind: TransitionKind::Barn { vertical: false, softness: 0.2 },
+            kind: kt_model::TransitionKind::plugin_with("barn", &[0.0, 0.2]).unwrap(),
             audio: AudioCurve::SCurve,
             auto: vec![],
             invert: true,
@@ -1592,7 +1592,7 @@ fn t465_overlap_transition_roundtrip() {
     assert_eq!(got.len(), 1, "overlapping transition restored");
     let t = got[0];
     assert_eq!((t.a, t.b), (Some(ClipId(1)), Some(ClipId(2))));
-    assert_eq!(t.kind, TransitionKind::Barn { vertical: false, softness: 0.2 });
+    assert_eq!(t.kind, kt_model::TransitionKind::plugin_with("barn", &[0.0, 0.2]).unwrap());
     assert_eq!(t.audio, AudioCurve::SCurve);
     assert!(t.invert);
     let w = t.window(&b.project).unwrap();

@@ -11,40 +11,23 @@
 //! (GOLDEN_VIDEO does not move).
 
 use kt_media::VideoFrame;
-use kt_model::{Dir, IrisShape, TransitionKind};
+use kt_model::{Dir, TransitionKind};
 use kt_plugin_api::trans::{
-    Img, axis_c, axis_sample, box9, face_h_inv, fracf, front_mask, hash01, hash_u32, hpanel, kf, mix4, over_straight, quant,
-    rot_sample, shade3, value_noise,
+    Img, axis_c, axis_sample, box9, face_h_inv, front_mask, hash01, hpanel, kf, mix4, over_straight, quant, shade3,
+    value_noise,
 };
 
 /// Modes shared by CPU and WGSL. The value goes into the uniform, so the
 /// numbers are frozen: add a new mode ONLY AT THE END.
 pub const MODE_CROSSFADE: u32 = 0;
-pub const MODE_WIPE: u32 = 1;
-pub const MODE_IRIS: u32 = 2;
-pub const MODE_CLOCK: u32 = 3;
-pub const MODE_BARN: u32 = 4;
-pub const MODE_LUMA: u32 = 5;
-pub const MODE_PUSH: u32 = 6;
-pub const MODE_SLIDE: u32 = 7;
-pub const MODE_ZOOM: u32 = 8;
-pub const MODE_SPIN: u32 = 9;
+// 1-9 and 14-22 were the basic kinds, plugins since plugin-api-stage1 (D12).
 pub const MODE_WHIP: u32 = 10;
 pub const MODE_BLUR: u32 = 11;
 pub const MODE_PIXELATE: u32 = 12;
 pub const MODE_GLITCH: u32 = 13;
-pub const MODE_FLASH: u32 = 14;
-pub const MODE_DIP: u32 = 15;
 // R.51 (item 400): patterns, shift-symbioses, stylized ones. The numbers are a contract
 // ONLY between transitions.rs and composite.wgsl (edited in one commit):
 // the project file receives tag(), the cache keys receive the ready-made TransMix.
-pub const MODE_BLINDS: u32 = 16;
-pub const MODE_CHECKER: u32 = 17;
-pub const MODE_BLOCKS: u32 = 18;
-pub const MODE_SPIRAL: u32 = 19;
-pub const MODE_SPLIT: u32 = 20;
-pub const MODE_SQUEEZE: u32 = 21;
-pub const MODE_STRETCH: u32 = 22;
 pub const MODE_SWAP: u32 = 23;
 pub const MODE_SHAKE: u32 = 24;
 pub const MODE_BURN: u32 = 25;
@@ -130,55 +113,6 @@ impl TransMix {
             }
             // a kind this build lacks plays as the crossfade
             TransitionKind::Missing(_) => MODE_CROSSFADE,
-            TransitionKind::Iris { shape, cx, cy, softness } => {
-                p[0] = match shape {
-                    IrisShape::Circle => 0.0,
-                    IrisShape::Diamond => 1.0,
-                    IrisShape::Box => 2.0,
-                };
-                p[1] = *softness as f32;
-                p[2] = *cx as f32;
-                p[3] = *cy as f32;
-                MODE_IRIS
-            }
-            TransitionKind::Clock { reverse, cx, cy, softness } => {
-                p[0] = if *reverse { 1.0 } else { 0.0 };
-                p[1] = *softness as f32;
-                p[2] = *cx as f32;
-                p[3] = *cy as f32;
-                MODE_CLOCK
-            }
-            TransitionKind::Barn { vertical, softness } => {
-                p[0] = if *vertical { 1.0 } else { 0.0 };
-                p[1] = *softness as f32;
-                MODE_BARN
-            }
-            TransitionKind::Luma { invert, softness } => {
-                p[0] = if *invert { 1.0 } else { 0.0 };
-                p[1] = *softness as f32;
-                MODE_LUMA
-            }
-            TransitionKind::Push { dir } => {
-                (p[0], p[1]) = d(*dir);
-                MODE_PUSH
-            }
-            TransitionKind::Slide { dir } => {
-                (p[0], p[1]) = d(*dir);
-                MODE_SLIDE
-            }
-            TransitionKind::Zoom { amount, cx, cy } => {
-                p[0] = *amount as f32;
-                p[1] = *cx as f32;
-                p[2] = *cy as f32;
-                MODE_ZOOM
-            }
-            TransitionKind::Spin { turns, amount, cx, cy } => {
-                p[0] = *turns as f32;
-                p[1] = *amount as f32;
-                p[2] = *cx as f32;
-                p[3] = *cy as f32;
-                MODE_SPIN
-            }
             TransitionKind::Whip { dir, blur } => {
                 (p[0], p[1]) = d(*dir);
                 p[2] = *blur as f32;
@@ -195,60 +129,6 @@ impl TransMix {
             TransitionKind::Glitch { amount } => {
                 p[0] = *amount as f32;
                 MODE_GLITCH
-            }
-            TransitionKind::Flash { color_r, color_g, color_b, strength } => {
-                p[0] = *color_r as f32;
-                p[1] = *color_g as f32;
-                p[2] = *color_b as f32;
-                p[3] = *strength as f32;
-                MODE_FLASH
-            }
-            TransitionKind::Dip { color_r, color_g, color_b } => {
-                p[0] = *color_r as f32;
-                p[1] = *color_g as f32;
-                p[2] = *color_b as f32;
-                MODE_DIP
-            }
-            TransitionKind::Blinds { count, angle, softness } => {
-                // the angle rotates the axis of the stripes — the same scheme as wipe
-                let a = (*angle as f32).to_radians();
-                let (sn, cs) = (a.sin(), a.cos());
-                p[0] = cs;
-                p[1] = sn;
-                p[2] = *count as f32;
-                p[3] = *softness as f32;
-                MODE_BLINDS
-            }
-            TransitionKind::Checker { cols, rows, softness } => {
-                p[0] = *cols as f32;
-                p[1] = *rows as f32;
-                p[2] = *softness as f32;
-                MODE_CHECKER
-            }
-            TransitionKind::Blocks { cols, rows, softness } => {
-                p[0] = *cols as f32;
-                p[1] = *rows as f32;
-                p[2] = *softness as f32;
-                MODE_BLOCKS
-            }
-            TransitionKind::Spiral { turns, cx, cy, softness } => {
-                p[0] = *turns as f32;
-                p[1] = *softness as f32;
-                p[2] = *cx as f32;
-                p[3] = *cy as f32;
-                MODE_SPIRAL
-            }
-            TransitionKind::Split { vertical } => {
-                p[0] = if *vertical { 1.0 } else { 0.0 };
-                MODE_SPLIT
-            }
-            TransitionKind::Squeeze { dir } => {
-                (p[0], p[1]) = d(*dir);
-                MODE_SQUEEZE
-            }
-            TransitionKind::Stretch { vertical } => {
-                p[0] = if *vertical { 1.0 } else { 0.0 };
-                MODE_STRETCH
             }
             TransitionKind::Swap { vertical, depth } => {
                 p[0] = if *vertical { 1.0 } else { 0.0 };
@@ -459,104 +339,6 @@ fn kernel(
             Some(kern) => kern.pixel(a, b, u, v, k, &p, &kt_plugin_api::trans::Canvas { aspect, w: fw, h: fh }, ext),
             None => mix4(a.sample(u, v), b.sample(u, v), k),
         },
-        MODE_IRIS => {
-            // the centre (p2, p3) is arbitrary (R.51); rmax — the distance to the
-            // FARTHEST corner of the frame in the same metric, so that the front
-            // always covers the frame entirely.
-            let (cx, cy) = ((u - p[2]) * aspect, v - p[3]);
-            let metric = |dx: f32, dy: f32| match p[0] as i32 {
-                1 => dx.abs() + dy.abs(),
-                2 => dx.abs().max(dy.abs()),
-                _ => (dx * dx + dy * dy).sqrt(),
-            };
-            let r = metric(cx, cy);
-            let ex = (p[2].max(1.0 - p[2])) * aspect;
-            let ey = p[3].max(1.0 - p[3]);
-            let rmax = metric(ex, ey).max(1e-6);
-            mix4(a.sample(u, v), b.sample(u, v), front_mask(r / rmax, k, p[1]))
-        }
-        MODE_CLOCK => {
-            let (cx, cy) = (u - p[2], v - p[3]);
-            // 0 at the top, clockwise; reverse — counter-clockwise
-            let mut ang = cx.atan2(-cy);
-            if ang < 0.0 {
-                ang += std::f32::consts::TAU;
-            }
-            if p[0] > 0.5 {
-                ang = std::f32::consts::TAU - ang;
-            }
-            let s = ang / std::f32::consts::TAU;
-            mix4(a.sample(u, v), b.sample(u, v), front_mask(s, k, p[1]))
-        }
-        MODE_BARN => {
-            let s = if p[0] > 0.5 { (u - 0.5).abs() * 2.0 } else { (v - 0.5).abs() * 2.0 };
-            // the leaves go OUT FROM the centre: the front is computed from it outward
-            mix4(a.sample(u, v), b.sample(u, v), front_mask(s, k, p[1]))
-        }
-        MODE_LUMA => {
-            let c = a.sample(u, v);
-            let mut l = (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255.0;
-            if p[0] > 0.5 {
-                l = 1.0 - l;
-            }
-            mix4(c, b.sample(u, v), front_mask(l, k, p[1]))
-        }
-        MODE_PUSH => {
-            // the content MOVES toward dir, so the screen pixel
-            // shows the source BEHIND itself at dir·k; B stands right
-            // BEHIND the outgoing A — a full screen further ALONG the direction
-            // of motion (`+dir`, item 396: with `−dir` the coordinate went past
-            // [0,1) and the clamp drew a smeared edge instead of B).
-            let (dx, dy) = (p[0], p[1]);
-            let (au, av) = (u - dx * k, v - dy * k);
-            if (0.0..1.0).contains(&au) && (0.0..1.0).contains(&av) {
-                a.sample(au, av)
-            } else {
-                b.sample(au + dx, av + dy)
-            }
-        }
-        MODE_SLIDE => {
-            let (bu, bv) = (u + p[0] * (1.0 - k), v + p[1] * (1.0 - k));
-            if (0.0..1.0).contains(&bu) && (0.0..1.0).contains(&bv) {
-                b.sample(bu, bv)
-            } else {
-                a.sample(u, v)
-            }
-        }
-        MODE_ZOOM => {
-            let amt = p[0];
-            let (ox, oy) = (p[1], p[2]);
-            let za = 1.0 + amt * k; // the outgoing one spreads apart
-            let zb = 1.0 + amt * (1.0 - k); // the incoming one rushes in
-            let sa = a.sample((u - ox) / za + ox, (v - oy) / za + oy);
-            let sb = b.sample((u - ox) / zb + ox, (v - oy) / zb + oy);
-            mix4(sa, sb, k)
-        }
-        MODE_SPIN => {
-            let (turns, amt) = (p[0], p[1]);
-            let (ox, oy) = (p[2], p[3]);
-            let sa = rot_sample(
-                a,
-                u,
-                v,
-                turns * k * std::f32::consts::TAU,
-                1.0 + amt * k,
-                aspect,
-                ox,
-                oy,
-            );
-            let sb = rot_sample(
-                b,
-                u,
-                v,
-                -turns * (1.0 - k) * std::f32::consts::TAU,
-                1.0 + amt * (1.0 - k),
-                aspect,
-                ox,
-                oy,
-            );
-            mix4(sa, sb, k)
-        }
         MODE_WHIP => {
             // a flyover like push, but with blur along the motion; the blur strength is
             // maximal in the middle of the gesture
@@ -608,123 +390,6 @@ fn kernel(
                 [r[0], g[1], bl[2], g[3]]
             };
             mix4(pick(a), pick(b), k)
-        }
-        MODE_FLASH => {
-            let base = mix4(a.sample(u, v), b.sample(u, v), k);
-            let w = (p[3] * (std::f32::consts::PI * k).sin()).clamp(0.0, 1.0);
-            [
-                base[0] + (p[0] - base[0]) * w,
-                base[1] + (p[1] - base[1]) * w,
-                base[2] + (p[2] - base[2]) * w,
-                base[3],
-            ]
-        }
-        MODE_DIP => {
-            // two phases: A → colour, colour → B (classic dip-to-colour)
-            let col = [p[0], p[1], p[2]];
-            let (src, t) =
-                if k < 0.5 { (a.sample(u, v), k * 2.0) } else { (b.sample(u, v), 2.0 - k * 2.0) };
-            [
-                src[0] + (col[0] - src[0]) * t,
-                src[1] + (col[1] - src[1]) * t,
-                src[2] + (col[2] - src[2]) * t,
-                src[3],
-            ]
-        }
-        MODE_BLINDS => {
-            // projection onto the rotated axis (as wipe), the fraction INSIDE the band:
-            // all bands open simultaneously
-            let (dx, dy) = (p[0], p[1]);
-            let ext = (dx.abs() + dy.abs()).max(1e-6);
-            let c = ((u - 0.5) * dx + (v - 0.5) * dy + ext * 0.5) / ext;
-            let f = fracf(c * p[2].max(1.0));
-            mix4(a.sample(u, v), b.sample(u, v), front_mask(f, k, p[3]))
-        }
-        MODE_CHECKER => {
-            // local wipe in a cell, even and odd ones — toward each other
-            let (cols, rows) = (p[0].max(1.0), p[1].max(1.0));
-            let (i, j) = ((u * cols).floor(), (v * rows).floor());
-            let fx = fracf(u * cols);
-            let s = if ((i + j) as i32) % 2 == 0 { fx } else { 1.0 - fx };
-            mix4(a.sample(u, v), b.sample(u, v), front_mask(s, k, p[2]))
-        }
-        MODE_BLOCKS => {
-            // the order of cells — the hash of the cell: determinism without a seed, the same
-            // trick as glitch. softness — a per-cell crossfade
-            let (cols, rows) = (p[0].max(1.0), p[1].max(1.0));
-            let (i, j) = ((u * cols).floor() as u32, (v * rows).floor() as u32);
-            let s = hash01(hash_u32(i.wrapping_mul(1973)) ^ hash_u32(j.wrapping_mul(9277)));
-            mix4(a.sample(u, v), b.sample(u, v), front_mask(s, k, p[2]))
-        }
-        MODE_SPIRAL => {
-            // Archimedean front: the angle (as clock) + turns along the radius
-            let (cx, cy) = (u - p[2], v - p[3]);
-            let mut ang = cx.atan2(-cy);
-            if ang < 0.0 {
-                ang += std::f32::consts::TAU;
-            }
-            let theta = ang / std::f32::consts::TAU;
-            let ex = (p[2].max(1.0 - p[2])) * aspect;
-            let ey = p[3].max(1.0 - p[3]);
-            let rmax = (ex * ex + ey * ey).sqrt().max(1e-6);
-            let r = ((cx * aspect) * (cx * aspect) + cy * cy).sqrt() / rmax;
-            let turns = p[0].max(0.25);
-            let sfrac = (theta + turns * r) / (1.0 + turns);
-            mix4(a.sample(u, v), b.sample(u, v), front_mask(sfrac, k, p[1]))
-        }
-        MODE_SPLIT => {
-            // symbiosis: the halves of A part, B opens in the gap
-            let c = if p[0] > 0.5 { v - 0.5 } else { u - 0.5 };
-            let h = k * 0.5;
-            if c.abs() >= h {
-                let off = h * c.signum();
-                if p[0] > 0.5 { a.sample(u, v - off) } else { a.sample(u - off, v) }
-            } else {
-                b.sample(u, v)
-            }
-        }
-        MODE_SQUEEZE => {
-            // symbiosis: A compresses toward the far edge, B straightens out from the
-            // near one; movement along dir
-            let (dx, dy) = (p[0], p[1]);
-            let c = if dx > 0.5 {
-                u
-            } else if dx < -0.5 {
-                1.0 - u
-            } else if dy > 0.5 {
-                v
-            } else {
-                1.0 - v
-            };
-            let back = |c2: f32| -> (f32, f32) {
-                if dx > 0.5 {
-                    (c2, v)
-                } else if dx < -0.5 {
-                    (1.0 - c2, v)
-                } else if dy > 0.5 {
-                    (u, c2)
-                } else {
-                    (u, 1.0 - c2)
-                }
-            };
-            if c < k {
-                let (su, sv) = back(c / k.max(1e-4));
-                b.sample(su, sv)
-            } else {
-                let (su, sv) = back((c - k) / (1.0 - k).max(1e-4));
-                a.sample(su, sv)
-            }
-        }
-        MODE_STRETCH => {
-            // symbiosis: B stretches out from the central line over A
-            let c = if p[0] > 0.5 { v - 0.5 } else { u - 0.5 };
-            let h = k * 0.5;
-            if c.abs() < h {
-                let c2 = c / k.max(1e-4) + 0.5;
-                if p[0] > 0.5 { b.sample(u, c2) } else { b.sample(c2, v) }
-            } else {
-                a.sample(u, v)
-            }
         }
         MODE_SWAP => {
             // 2.5D exchange: the sides travel along an arc, compressing inward; the order

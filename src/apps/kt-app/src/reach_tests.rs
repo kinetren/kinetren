@@ -1866,8 +1866,9 @@ fn t508_every_param_has_a_label() {
         check(k.tag(), &k, &covered);
     }
     // for transitions the colour is drawn by its own eyedropper (the transition window, R.33 C4)
-    // (and the direction row of a plugin kind by its arrows, D12)
-    const TRANS_COLOR: &[&str] = &["color_r", "color_g", "color_b", "tint_r", "tint_g", "tint_b", "dir"];
+    // (and a plugin kind's direction, shape and flag rows by their own buttons and checkboxes, D12)
+    const TRANS_COLOR: &[&str] =
+        &["color_r", "color_g", "color_b", "tint_r", "tint_g", "tint_b", "dir", "shape", "reverse", "vertical", "invert"];
     for k in kt_model::TransitionKind::all() {
         check(k.tag(), k, TRANS_COLOR);
     }

@@ -9659,6 +9659,7 @@ fn t460_fade_handle_redrag_keeps_kind() {
 /// configured transition moves the window, but keeps the kind/audio curve.
 #[test]
 fn t460b_overlap_redrag_keeps_kind() {
+    crate::plugins::install();
     use kt_model::*;
     use kt_time::Tick;
     const TPP: f64 = 1000.0;
@@ -9700,7 +9701,7 @@ fn t460b_overlap_redrag_keeps_kind() {
             b: Some(ClipId(2)),
             in_offset: Tick(9_000),
             out_offset: Tick(9_000),
-            kind: TransitionKind::Barn { vertical: true, softness: 0.1 },
+            kind: kt_model::TransitionKind::plugin_with("barn", &[1.0, 0.1]).unwrap(),
             audio: AudioCurve::Linear,
             auto: vec![],
             invert: false,
@@ -9739,7 +9740,7 @@ fn t460b_overlap_redrag_keeps_kind() {
     assert!((t.in_offset.0 - 20_000).abs() <= 1_000, "the window moved: {:?}", t.in_offset);
     assert_eq!(
         t.kind,
-        TransitionKind::Barn { vertical: true, softness: 0.1 },
+        kt_model::TransitionKind::plugin_with("barn", &[1.0, 0.1]).unwrap(),
         "the transition view survived a repeated overlap"
     );
     assert_eq!(t.audio, AudioCurve::Linear, "the audio curve was not reset");
@@ -9752,6 +9753,7 @@ fn t460b_overlap_redrag_keeps_kind() {
 /// opens its properties, as for the butt-joint one.
 #[test]
 fn t466_overlap_transition_reachable() {
+    crate::plugins::install();
     use kt_model::*;
     use kt_time::Tick;
     let overlap_app = |with_transition: bool| {
@@ -9771,7 +9773,7 @@ fn t466_overlap_transition_reachable() {
                     b: Some(ClipId(2)),
                     in_offset: Tick::ZERO,
                     out_offset: Tick::ZERO,
-                    kind: TransitionKind::Barn { vertical: false, softness: 0.1 },
+                    kind: kt_model::TransitionKind::plugin_with("barn", &[0.0, 0.1]).unwrap(),
                     audio: Default::default(),
                     auto: vec![],
                     invert: false,

@@ -567,11 +567,44 @@ fn t973_a_missing_plugin_keeps_its_bytes() {
 }
 
 /// `TransitionKind`'s moved kinds before stage 5 — copied from the derive, never edited afterwards
-/// (`Dir` is written by its snake_case key; no field of `Wipe` was skipped).
+/// (`Dir` and `IrisShape` are written by their snake_case keys; the centre is skipped at 0.5).
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum FrozenTrans {
     Wipe { dir: &'static str, angle: f64, softness: f64 },
+    Iris {
+        shape: &'static str,
+        #[serde(skip_serializing_if = "is_center")]
+        cx: f64,
+        #[serde(skip_serializing_if = "is_center")]
+        cy: f64,
+        softness: f64,
+    },
+    Clock {
+        reverse: bool,
+        #[serde(skip_serializing_if = "is_center")]
+        cx: f64,
+        #[serde(skip_serializing_if = "is_center")]
+        cy: f64,
+        softness: f64,
+    },
+    Barn { vertical: bool, softness: f64 },
+    Push { dir: &'static str },
+    Zoom {
+        amount: f64,
+        #[serde(skip_serializing_if = "is_center")]
+        cx: f64,
+        #[serde(skip_serializing_if = "is_center")]
+        cy: f64,
+    },
+    Flash { color_r: u8, color_g: u8, color_b: u8, strength: f64 },
+    Blinds { count: u32, angle: f64, softness: f64 },
+    Split { vertical: bool },
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_center(v: &f64) -> bool {
+    *v == 0.5
 }
 
 /// t973 for transitions (plugin-api-stage1, D12): a moved transition kind writes the text its
@@ -587,6 +620,33 @@ fn t973_a_moved_transition_kind_keeps_its_text() {
             TransitionKind::plugin_with("wipe", &[2.0, 12.0, 0.123456789]).unwrap(),
             frozen(FrozenTrans::Wipe { dir: "up", angle: 12.0, softness: 0.123456789 }),
         ),
+        (
+            TransitionKind::builtin("iris"),
+            frozen(FrozenTrans::Iris { shape: "circle", cx: 0.5, cy: 0.5, softness: 0.15 }),
+        ),
+        (
+            TransitionKind::plugin_with("iris", &[2.0, 0.25, 0.5, 0.4]).unwrap(),
+            frozen(FrozenTrans::Iris { shape: "box", cx: 0.25, cy: 0.5, softness: 0.4 }),
+        ),
+        (
+            TransitionKind::plugin_with("clock", &[1.0, 0.7, 0.3, 0.0]).unwrap(),
+            frozen(FrozenTrans::Clock { reverse: true, cx: 0.7, cy: 0.3, softness: 0.0 }),
+        ),
+        (
+            TransitionKind::plugin_with("barn", &[1.0, 0.2]).unwrap(),
+            frozen(FrozenTrans::Barn { vertical: true, softness: 0.2 }),
+        ),
+        (TransitionKind::plugin_with("push", &[3.0]).unwrap(), frozen(FrozenTrans::Push { dir: "down" })),
+        (TransitionKind::builtin("zoom"), frozen(FrozenTrans::Zoom { amount: 0.4, cx: 0.5, cy: 0.5 })),
+        (
+            TransitionKind::plugin_with("flash", &[255.0, 200.0, 40.0, 1.0]).unwrap(),
+            frozen(FrozenTrans::Flash { color_r: 255, color_g: 200, color_b: 40, strength: 1.0 }),
+        ),
+        (
+            TransitionKind::plugin_with("blinds", &[5.0, 30.0, 0.0]).unwrap(),
+            frozen(FrozenTrans::Blinds { count: 5, angle: 30.0, softness: 0.0 }),
+        ),
+        (TransitionKind::builtin("split"), frozen(FrozenTrans::Split { vertical: false })),
     ];
     for (kind, want) in &cases {
         assert_eq!(&serde_json::to_string(kind).unwrap(), want, "the moved kind's text changed");
@@ -594,8 +654,13 @@ fn t973_a_moved_transition_kind_keeps_its_text() {
         assert_eq!(&back, kind, "the variant's text reads otherwise");
     }
     // the variant's defaults: a file without the fields
-    let bare: TransitionKind = serde_json::from_str(r#"{"kind":"wipe"}"#).unwrap();
-    assert_eq!(bare, TransitionKind::wipe(), "the variant's serde defaults");
+    for id in [
+        "wipe", "iris", "clock", "barn", "luma", "push", "slide", "zoom", "spin", "flash", "dip", "blinds",
+        "checker", "blocks", "spiral", "split", "squeeze", "stretch",
+    ] {
+        let bare: TransitionKind = serde_json::from_str(&format!(r#"{{"kind":"{id}"}}"#)).unwrap();
+        assert_eq!(bare, TransitionKind::builtin(id), "{id}: the variant's serde defaults");
+    }
     // a kind this build lacks stays as it was
     let raw = r#"{"kind":"warp_tunnel","depth":0.5}"#;
     let missing: TransitionKind = serde_json::from_str(raw).unwrap();

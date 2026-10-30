@@ -1032,10 +1032,6 @@ fn reel_children(
                                 TransitionKind::Plugin(p) if p.manifest().ui.category_key == "trn.cat.wipe" => {
                                     "SMPTE_Wipe".into()
                                 }
-                                TransitionKind::Iris { .. }
-                                | TransitionKind::Clock { .. }
-                                | TransitionKind::Barn { .. }
-                                | TransitionKind::Luma { .. } => "SMPTE_Wipe".into(),
                                 _ => "Custom".to_string(),
                             }
                         };

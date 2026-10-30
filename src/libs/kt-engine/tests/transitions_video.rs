@@ -459,18 +459,18 @@ fn t225_transition_kind_reaches_the_picture() {
     assert!(blended <= 1, "a hard wipe has no blended pixels: {blended}");
 
     // vertical shutters: symmetric at BOTH edges, the foreign color in the center
-    let barn = render(TransitionKind::Barn { vertical: false, softness: 0.0 });
+    let barn = render(kt_model::TransitionKind::plugin_with("barn", &[0.0, 0.0]).unwrap());
     assert_eq!(px(&barn, 32, 1), ca, "at the upper edge the frame still leaving");
     assert_eq!(px(&barn, 32, 34), ca, "and at the lower one too — the shutters are symmetric");
     assert_eq!(px(&barn, 32, 18), cb, "in the centre the frame already entering");
 
     // a shift down: the halves swap places vertically
-    let push = render(TransitionKind::Push { dir: Dir::Down });
+    let push = render(kt_model::TransitionKind::plugin_with("push", &[3.0]).unwrap());
     assert_eq!(px(&push, 32, 30), ca, "the bottom is the frame leaving, pushed down");
     assert_eq!(px(&push, 32, 4), cb, "the entering frame slid in from above");
 
     // through black: in the middle of the transition the frame fades out entirely
-    let dip = render(TransitionKind::Dip { color_r: 0, color_g: 0, color_b: 0 });
+    let dip = render(kt_model::TransitionKind::plugin_with("dip", &[0.0, 0.0, 0.0]).unwrap());
     let mid = px(&dip, 32, 18);
     assert!(mid[0] < 4 && mid[1] < 4 && mid[2] < 4, "the middle of the dip — colour: {mid:?}");
     assert_eq!(mid[3], 255, "alpha is not lost during the dip");
@@ -624,7 +624,7 @@ fn t459_push_whip_bring_real_b_content() {
     };
 
     let mut dst = Vec::new();
-    for dir in [Dir::Left, Dir::Right, Dir::Up, Dir::Down] {
+    for (di, dir) in [Dir::Left, Dir::Right, Dir::Up, Dir::Down].into_iter().enumerate() {
         let (dx, dy) = dir.vec();
         let (dx, dy) = (dx as i32, dy as i32);
         for k in [1024u32, 2048] {
@@ -632,7 +632,7 @@ fn t459_push_whip_bring_real_b_content() {
             let kk = k as f32 / 4096.0;
             let (shift_x, shift_y) =
                 ((dx as f32 * kk * W as f32) as i32, (dy as f32 * kk * H as f32) as i32);
-            let m = TransMix::of(&TransitionKind::Push { dir });
+            let m = TransMix::of(&TransitionKind::plugin_with("push", &[di as f64]).unwrap());
             mix_into(&mut dst, Some(&a), Some(&b), k, m, W, H);
             for y in 0..H as i32 {
                 for x in 0..W as i32 {
@@ -680,7 +680,7 @@ fn t459b_push_through_renderer_shows_real_b() {
         rgba
     };
     let mut p = project_pair();
-    p.transitions[0].kind = TransitionKind::Push { dir: Dir::Down };
+    p.transitions[0].kind = kt_model::TransitionKind::plugin_with("push", &[3.0]).unwrap();
     p.validate().unwrap();
     let mut vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
@@ -763,8 +763,8 @@ fn t461_transition_invert() {
 
     // push: the inversion of a directional kind == the opposite direction
     assert_eq!(
-        render(TransitionKind::Push { dir: Dir::Right }, true),
-        render(TransitionKind::Push { dir: Dir::Left }, false),
+        render(kt_model::TransitionKind::plugin_with("push", &[1.0]).unwrap(), true),
+        render(kt_model::TransitionKind::plugin_with("push", &[0.0]).unwrap(), false),
         "the inverted push to the right must match the push to the left"
     );
 
@@ -940,7 +940,7 @@ fn t467_new_kind_families_reach_picture() {
 
     // chessboard 8×6 without softness: at k=0.5 the even cell has its LEFT
     // half open, the odd one its RIGHT half (counter-waves)
-    let ch = render(TransitionKind::Checker { cols: 8, rows: 6, softness: 0.0 });
+    let ch = render(kt_model::TransitionKind::plugin_with("checker", &[8.0, 6.0, 0.0]).unwrap());
     // cell (0,0) even: columns 0..8, the open half 0..4
     assert_eq!(px(&ch, 1, 3), cb, "the even cell opens from the left");
     assert_eq!(px(&ch, 6, 3), ca, "the right half of the even one is still leaving");
@@ -949,19 +949,19 @@ fn t467_new_kind_families_reach_picture() {
     assert_eq!(px(&ch, 9, 3), ca);
 
     // the split: the halves of A moved apart, in the gap [16..48) B is open
-    let sp = render(TransitionKind::Split { vertical: false });
+    let sp = render(kt_model::TransitionKind::plugin_with("split", &[0.0]).unwrap());
     assert_eq!(px(&sp, 8, 18), ca, "the left half of A is still on screen");
     assert_eq!(px(&sp, 32, 18), cb, "in the gap the frame already entering");
     assert_eq!(px(&sp, 56, 18), ca, "the right half of A");
 
     // stretching: in the band |u−0.5|<k/2 — B, outside A is untouched
-    let st = render(TransitionKind::Stretch { vertical: false });
+    let st = render(kt_model::TransitionKind::plugin_with("stretch", &[0.0]).unwrap());
     assert_eq!(px(&st, 32, 18), cb, "in the strip — the entering frame");
     assert_eq!(px(&st, 4, 18), ca, "outside — the leaving frame as it was");
     assert_eq!(px(&st, 60, 18), ca);
 
     // squeeze to the right: c<k — B unfolded, beyond — A squeezed
-    let sq = render(TransitionKind::Squeeze { dir: Dir::Right });
+    let sq = render(kt_model::TransitionKind::plugin_with("squeeze", &[1.0]).unwrap());
     assert_eq!(px(&sq, 8, 18), cb, "the near part — the entering frame");
     assert_eq!(px(&sq, 56, 18), ca, "the far one — the compressed leaving frame");
 
@@ -970,13 +970,13 @@ fn t467_new_kind_families_reach_picture() {
     assert_eq!(px(&zb, 32, 18), cb, "the centre of the rays is fixed and shows the side");
 
     // blinds, 8 strips without softness: at k=0.5 the left half of each is open
-    let bl = render(TransitionKind::Blinds { count: 8, angle: 0.0, softness: 0.0 });
+    let bl = render(kt_model::TransitionKind::plugin_with("blinds", &[8.0, 0.0, 0.0]).unwrap());
     assert_eq!(px(&bl, 1, 18), cb, "the start of the strip is open");
     assert_eq!(px(&bl, 6, 18), ca, "the tail of the strip is still leaving");
     assert_eq!(px(&bl, 9, 18), cb, "the second strip — the same");
 
     // random blocks: without softness each cell is entirely A or B
-    let bk = render(TransitionKind::Blocks { cols: 16, rows: 9, softness: 0.0 });
+    let bk = render(kt_model::TransitionKind::plugin_with("blocks", &[16.0, 9.0, 0.0]).unwrap());
     let mut seen_a = 0;
     let mut seen_b = 0;
     for j in 0..9 {

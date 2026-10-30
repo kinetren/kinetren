@@ -78,74 +78,9 @@ pub enum TransitionKind {
     /// Linear dissolve (video) + crossfade (audio).
     #[default]
     Crossfade,
-    // Wipe is a plugin since plugin-api-stage1 (src/plugins/transitions-basic, D12).
-    /// Opening from the center: circle/diamond/rectangle. The center (R.51) —
-    /// fractions of the frame, the default is the middle; at 0.5/0.5 the picture is byte-identical.
-    Iris {
-        #[serde(default)]
-        shape: IrisShape,
-        #[serde(default = "default_center", skip_serializing_if = "is_center")]
-        cx: f64,
-        #[serde(default = "default_center", skip_serializing_if = "is_center")]
-        cy: f64,
-        #[serde(default = "default_soft")]
-        softness: f64,
-    },
-    /// A clock hand around the center.
-    Clock {
-        #[serde(default)]
-        reverse: bool,
-        #[serde(default = "default_center", skip_serializing_if = "is_center")]
-        cx: f64,
-        #[serde(default = "default_center", skip_serializing_if = "is_center")]
-        cy: f64,
-        #[serde(default = "default_soft")]
-        softness: f64,
-    },
-    /// Shutters: two leaves diverge from the center.
-    Barn {
-        #[serde(default)]
-        vertical: bool,
-        #[serde(default = "default_soft")]
-        softness: f64,
-    },
-    /// A wipe by the BRIGHTNESS of the outgoing frame — a “reveal” by the picture.
-    Luma {
-        #[serde(default)]
-        invert: bool,
-        #[serde(default = "default_soft")]
-        softness: f64,
-    },
-    /// The incoming one pushes the outgoing one off the edge.
-    Push {
-        #[serde(default)]
-        dir: Dir,
-    },
-    /// The incoming one zooms over the top, the outgoing one stays.
-    Slide {
-        #[serde(default)]
-        dir: Dir,
-    },
-    /// A surge with approach: the outgoing one flies apart, the incoming one rushes in.
-    Zoom {
-        #[serde(default = "default_zoom_amount")]
-        amount: f64,
-        #[serde(default = "default_center", skip_serializing_if = "is_center")]
-        cx: f64,
-        #[serde(default = "default_center", skip_serializing_if = "is_center")]
-        cy: f64,
-    },
-    /// A rotation with a surge.
-    Spin {
-        #[serde(default = "default_one")]
-        turns: f64,
-        #[serde(default = "default_zoom_amount")]
-        amount: f64,
-        #[serde(default = "default_center", skip_serializing_if = "is_center")]
-        cx: f64,
-        #[serde(default = "default_center", skip_serializing_if = "is_center")]
-        cy: f64,
-    },
+    // wipe, iris, clock, barn, luma, push, slide, zoom, spin, flash, dip, blinds, checker, blocks,
+    // spiral, split, squeeze and stretch are plugins since plugin-api-stage1
+    // (src/plugins/transitions-basic, D12).
     /// A sharp camera pass with a smear.
     Whip {
         #[serde(default)]
@@ -168,81 +103,7 @@ pub enum TransitionKind {
         #[serde(default = "default_glitch")]
         amount: f64,
     },
-    /// Flash: the frame goes into the color and comes back.
-    Flash {
-        #[serde(default = "default_255")]
-        color_r: u8,
-        #[serde(default = "default_255")]
-        color_g: u8,
-        #[serde(default = "default_255")]
-        color_b: u8,
-        #[serde(default = "default_one")]
-        strength: f64,
-    },
-    /// Through the color: the outgoing one fades into the color, the incoming one emerges from it.
-    Dip {
-        #[serde(default)]
-        color_r: u8,
-        #[serde(default)]
-        color_g: u8,
-        #[serde(default)]
-        color_b: u8,
-    },
-    // ---- patterns (R.51, item 400) -------------------------------------
-    /// Blinds: the strips open in a fan, the angle gives a diagonal.
-    Blinds {
-        #[serde(default = "default_count8")]
-        count: u32,
-        #[serde(default)]
-        angle: f64,
-        #[serde(default = "default_soft_thin")]
-        softness: f64,
-    },
-    /// Checkers: the cells open in two opposing waves.
-    Checker {
-        #[serde(default = "default_count8")]
-        cols: u32,
-        #[serde(default = "default_count6")]
-        rows: u32,
-        #[serde(default = "default_soft_thin")]
-        softness: f64,
-    },
-    /// Random blocks: the cells flash up in a pseudo-random order.
-    Blocks {
-        #[serde(default = "default_count16")]
-        cols: u32,
-        #[serde(default = "default_count9")]
-        rows: u32,
-        #[serde(default = "default_blocks_soft")]
-        softness: f64,
-    },
-    /// Spiral: an Archimedean front spirals around the center.
-    Spiral {
-        #[serde(default = "default_spiral_turns")]
-        turns: f64,
-        #[serde(default = "default_center", skip_serializing_if = "is_center")]
-        cx: f64,
-        #[serde(default = "default_center", skip_serializing_if = "is_center")]
-        cy: f64,
-        #[serde(default = "default_soft_thin")]
-        softness: f64,
-    },
     // ---- shift (symbiosis: BOTH frames move) ----------------------------
-    /// Split: the halves of the outgoing one diverge, the incoming one opens.
-    Split {
-        #[serde(default)]
-        vertical: bool,
-    },
-    /// Squeeze: the outgoing one is compressed toward the far edge, the incoming one unfolds.
-    Squeeze {
-        #[serde(default)]
-        dir: Dir,
-    },
-    /// Stretch: the incoming one stretches out from the central line.
-    Stretch {
-        #[serde(default)]
-        vertical: bool,
-    },
     /// Exchange: the frames swap places along an arc, the order of the sides
     /// switches in the middle (2.5D without depth).
     Swap {
@@ -351,20 +212,6 @@ pub enum TransitionKind {
     Missing(crate::plugin_slot::MissingSlot),
 }
 
-/// The opening shape of Iris.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum IrisShape {
-    #[default]
-    Circle,
-    Diamond,
-    Box,
-}
-
-fn default_soft() -> f64 {
-    0.15
-}
-
 fn default_center() -> f64 {
     0.5
 }
@@ -372,34 +219,6 @@ fn default_center() -> f64 {
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_center(v: &f64) -> bool {
     *v == 0.5
-}
-
-fn default_soft_thin() -> f64 {
-    0.1
-}
-
-fn default_blocks_soft() -> f64 {
-    0.25
-}
-
-fn default_count6() -> u32 {
-    6
-}
-
-fn default_count8() -> u32 {
-    8
-}
-
-fn default_count9() -> u32 {
-    9
-}
-
-fn default_count16() -> u32 {
-    16
-}
-
-fn default_spiral_turns() -> f64 {
-    2.0
 }
 
 fn default_swap_depth() -> f64 {
@@ -444,10 +263,6 @@ fn default_shade() -> f64 {
 
 fn default_curl() -> f64 {
     0.18
-}
-
-fn default_zoom_amount() -> f64 {
-    0.4
 }
 
 fn default_whip_blur() -> f64 {
@@ -518,28 +333,28 @@ impl TransitionKind {
         static ALL: std::sync::OnceLock<Vec<TransitionKind>> = std::sync::OnceLock::new();
         ALL.get_or_init(|| vec![
         TransitionKind::Crossfade,
-        TransitionKind::wipe(),
-        TransitionKind::Iris { shape: IrisShape::Circle, cx: 0.5, cy: 0.5, softness: 0.15 },
-        TransitionKind::Clock { reverse: false, cx: 0.5, cy: 0.5, softness: 0.15 },
-        TransitionKind::Barn { vertical: false, softness: 0.15 },
-        TransitionKind::Luma { invert: false, softness: 0.15 },
-        TransitionKind::Push { dir: Dir::Left },
-        TransitionKind::Slide { dir: Dir::Left },
-        TransitionKind::Zoom { amount: 0.4, cx: 0.5, cy: 0.5 },
-        TransitionKind::Spin { turns: 1.0, amount: 0.4, cx: 0.5, cy: 0.5 },
+        TransitionKind::builtin("wipe"),
+        TransitionKind::builtin("iris"),
+        TransitionKind::builtin("clock"),
+        TransitionKind::builtin("barn"),
+        TransitionKind::builtin("luma"),
+        TransitionKind::builtin("push"),
+        TransitionKind::builtin("slide"),
+        TransitionKind::builtin("zoom"),
+        TransitionKind::builtin("spin"),
         TransitionKind::Whip { dir: Dir::Left, blur: 0.6 },
         TransitionKind::BlurDissolve { amount: 24.0 },
         TransitionKind::Pixelate { amount: 48.0 },
         TransitionKind::Glitch { amount: 0.5 },
-        TransitionKind::Flash { color_r: 255, color_g: 255, color_b: 255, strength: 1.0 },
-        TransitionKind::Dip { color_r: 0, color_g: 0, color_b: 0 },
-        TransitionKind::Blinds { count: 8, angle: 0.0, softness: 0.1 },
-        TransitionKind::Checker { cols: 8, rows: 6, softness: 0.1 },
-        TransitionKind::Blocks { cols: 16, rows: 9, softness: 0.25 },
-        TransitionKind::Spiral { turns: 2.0, cx: 0.5, cy: 0.5, softness: 0.1 },
-        TransitionKind::Split { vertical: false },
-        TransitionKind::Squeeze { dir: Dir::Left },
-        TransitionKind::Stretch { vertical: false },
+        TransitionKind::builtin("flash"),
+        TransitionKind::builtin("dip"),
+        TransitionKind::builtin("blinds"),
+        TransitionKind::builtin("checker"),
+        TransitionKind::builtin("blocks"),
+        TransitionKind::builtin("spiral"),
+        TransitionKind::builtin("split"),
+        TransitionKind::builtin("squeeze"),
+        TransitionKind::builtin("stretch"),
         TransitionKind::Swap { vertical: false, depth: 0.3 },
         TransitionKind::Shake { amount: 0.5, steps: 12 },
         TransitionKind::FilmBurn { scale: 6.0, softness: 0.2, tint_r: 255, tint_g: 120, tint_b: 0 },
@@ -555,7 +370,13 @@ impl TransitionKind {
 
     /// The wipe at its defaults — a plugin slot (plugin-api-stage1, D12).
     pub fn wipe() -> TransitionKind {
-        TransitionKind::plugin("wipe").expect("wipe is not registered: install the built-in plugin set first")
+        TransitionKind::builtin("wipe")
+    }
+
+    /// A built-in plugin kind at its defaults; the set must be installed (the registry's kinds).
+    pub fn builtin(id: &str) -> TransitionKind {
+        TransitionKind::plugin(id)
+            .unwrap_or_else(|| panic!("{id} is not registered: install the built-in plugin set first"))
     }
 
     /// A plugin kind at its passport's defaults; `None` — no such plugin is registered.
@@ -578,27 +399,10 @@ impl TransitionKind {
             TransitionKind::Crossfade => "crossfade",
             TransitionKind::Plugin(p) => p.tag(),
             TransitionKind::Missing(_) => "missing",
-            TransitionKind::Iris { .. } => "iris",
-            TransitionKind::Clock { .. } => "clock",
-            TransitionKind::Barn { .. } => "barn",
-            TransitionKind::Luma { .. } => "luma",
-            TransitionKind::Push { .. } => "push",
-            TransitionKind::Slide { .. } => "slide",
-            TransitionKind::Zoom { .. } => "zoom",
-            TransitionKind::Spin { .. } => "spin",
             TransitionKind::Whip { .. } => "whip",
             TransitionKind::BlurDissolve { .. } => "blur_dissolve",
             TransitionKind::Pixelate { .. } => "pixelate",
             TransitionKind::Glitch { .. } => "glitch",
-            TransitionKind::Flash { .. } => "flash",
-            TransitionKind::Dip { .. } => "dip",
-            TransitionKind::Blinds { .. } => "blinds",
-            TransitionKind::Checker { .. } => "checker",
-            TransitionKind::Blocks { .. } => "blocks",
-            TransitionKind::Spiral { .. } => "spiral",
-            TransitionKind::Split { .. } => "split",
-            TransitionKind::Squeeze { .. } => "squeeze",
-            TransitionKind::Stretch { .. } => "stretch",
             TransitionKind::Swap { .. } => "swap",
             TransitionKind::Shake { .. } => "shake",
             TransitionKind::FilmBurn { .. } => "film_burn",
@@ -618,17 +422,11 @@ impl TransitionKind {
     /// is exhaustive on purpose: a new kind must decide whether it is symmetric.
     pub fn symmetric(&self) -> bool {
         match self {
-            // for zoom both sides are computed by the same formula from their own role, and the
-            // mix identity `mix(y, x, 1−t) == mix(x, y, t)` makes
-            // the inversion an exact identity (spin does not: the sign of the rotation
-            // changes on inversion, and this is meaningful).
+            // the plugin kinds answer through their kernel (zoom, flash and dip are symmetric there)
             TransitionKind::Crossfade
-            | TransitionKind::Zoom { .. }
             | TransitionKind::BlurDissolve { .. }
             | TransitionKind::Pixelate { .. }
             | TransitionKind::Glitch { .. }
-            | TransitionKind::Flash { .. }
-            | TransitionKind::Dip { .. }
             // the strength of the rays sin(πk) and the change of side in the middle are symmetric
             | TransitionKind::ZoomBlur { .. } => true,
             // a missing kind plays as the crossfade
@@ -637,21 +435,7 @@ impl TransitionKind {
                 .get(&p.id)
                 .and_then(|pl| pl.trans())
                 .is_some_and(|k| k.symmetric()),
-            TransitionKind::Iris { .. }
-            | TransitionKind::Clock { .. }
-            | TransitionKind::Barn { .. }
-            | TransitionKind::Luma { .. }
-            | TransitionKind::Push { .. }
-            | TransitionKind::Slide { .. }
-            | TransitionKind::Spin { .. }
-            | TransitionKind::Whip { .. }
-            | TransitionKind::Blinds { .. }
-            | TransitionKind::Checker { .. }
-            | TransitionKind::Blocks { .. }
-            | TransitionKind::Spiral { .. }
-            | TransitionKind::Split { .. }
-            | TransitionKind::Squeeze { .. }
-            | TransitionKind::Stretch { .. }
+            TransitionKind::Whip { .. }
             | TransitionKind::Swap { .. }
             | TransitionKind::Shake { .. }
             | TransitionKind::FilmBurn { .. }
@@ -5696,33 +5480,6 @@ params_for_struct! { CameraParams {
 }}
 
 params_for! { TransitionKind, transition_specs, transition_set_param, transition_get_param, transition_set_idx, transition_get_idx, {
-    Iris {
-        cx: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        cy: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        softness: f64, 0.0, 1.0, 0.15, 0.01, Norm, Smooth;
-    },
-    Clock {
-        cx: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        cy: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        softness: f64, 0.0, 1.0, 0.15, 0.01, Norm, Smooth;
-    },
-    Barn {
-        softness: f64, 0.0, 1.0, 0.15, 0.01, Norm, Smooth;
-    },
-    Luma {
-        softness: f64, 0.0, 1.0, 0.15, 0.01, Norm, Smooth;
-    },
-    Zoom {
-        amount: f64, 0.0, 4.0, 0.4, 0.01, Ratio, Smooth;
-        cx: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        cy: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-    },
-    Spin {
-        turns: f64, -4.0, 4.0, 1.0, 0.05, Ratio, Smooth;
-        amount: f64, 0.0, 4.0, 0.4, 0.01, Ratio, Smooth;
-        cx: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        cy: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-    },
     Whip {
         blur: f64, 0.0, 1.0, 0.6, 0.01, Norm, Smooth;
     },
@@ -5734,38 +5491,6 @@ params_for! { TransitionKind, transition_specs, transition_set_param, transition
     },
     Glitch {
         amount: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-    },
-    Flash {
-        color_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        color_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        color_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        strength: f64, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
-    },
-    Dip {
-        color_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        color_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        color_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-    },
-    Blinds {
-        count: u32, 2.0, 64.0, 8.0, 1.0, Count, Smooth;
-        angle: f64, -90.0, 90.0, 0.0, 1.0, Deg, Smooth;
-        softness: f64, 0.0, 1.0, 0.1, 0.01, Norm, Smooth;
-    },
-    Checker {
-        cols: u32, 1.0, 64.0, 8.0, 1.0, Count, Smooth;
-        rows: u32, 1.0, 64.0, 6.0, 1.0, Count, Smooth;
-        softness: f64, 0.0, 1.0, 0.1, 0.01, Norm, Smooth;
-    },
-    Blocks {
-        cols: u32, 2.0, 64.0, 16.0, 1.0, Count, Smooth;
-        rows: u32, 2.0, 64.0, 9.0, 1.0, Count, Smooth;
-        softness: f64, 0.0, 1.0, 0.25, 0.01, Norm, Smooth;
-    },
-    Spiral {
-        turns: f64, 0.25, 6.0, 2.0, 0.05, Ratio, Smooth;
-        cx: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        cy: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        softness: f64, 0.0, 1.0, 0.1, 0.01, Norm, Smooth;
     },
     Swap {
         depth: f64, 0.0, 1.0, 0.3, 0.01, Norm, Smooth;

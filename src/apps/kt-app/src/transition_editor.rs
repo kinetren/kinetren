@@ -31,24 +31,7 @@ pub fn kind_category(kind: &TransitionKind) -> Key {
         TransitionKind::Crossfade | TransitionKind::Missing(_) => k::trn::cat::BASIC,
         // a plugin kind's category is its manifest's (plugin-api-stage1, D12)
         TransitionKind::Plugin(p) => crate::i18n::key_by_name(p.manifest().ui.category_key).unwrap_or(k::trn::cat::BASIC),
-        TransitionKind::Iris { .. }
-        | TransitionKind::Clock { .. }
-        | TransitionKind::Barn { .. }
-        | TransitionKind::Luma { .. } => k::trn::cat::WIPE,
-        TransitionKind::Push { .. }
-        | TransitionKind::Slide { .. }
-        | TransitionKind::Zoom { .. }
-        | TransitionKind::Spin { .. }
-        | TransitionKind::Whip { .. }
-        | TransitionKind::Split { .. }
-        | TransitionKind::Squeeze { .. }
-        | TransitionKind::Stretch { .. }
-        | TransitionKind::Swap { .. } => k::trn::cat::MOTION,
-        // patterns (R.51): mask patterns — their own family
-        TransitionKind::Blinds { .. }
-        | TransitionKind::Checker { .. }
-        | TransitionKind::Blocks { .. }
-        | TransitionKind::Spiral { .. } => k::trn::cat::PATTERN,
+        TransitionKind::Whip { .. } | TransitionKind::Swap { .. } => k::trn::cat::MOTION,
         // volumetric (R.51): panels and cylinders
         TransitionKind::Flip { .. }
         | TransitionKind::Cube { .. }
@@ -68,27 +51,10 @@ pub fn kind_name(kind: &TransitionKind) -> &'static str {
             let ui = &p.manifest().ui;
             crate::i18n::key_by_name(ui.name_key).map_or(ui.name, tr)
         }
-        TransitionKind::Iris { .. } => tr(k::trn::kind::IRIS),
-        TransitionKind::Clock { .. } => tr(k::trn::kind::CLOCK),
-        TransitionKind::Barn { .. } => tr(k::trn::kind::BARN),
-        TransitionKind::Luma { .. } => tr(k::trn::kind::LUMA),
-        TransitionKind::Push { .. } => tr(k::trn::kind::PUSH),
-        TransitionKind::Slide { .. } => tr(k::trn::kind::SLIDE),
-        TransitionKind::Zoom { .. } => tr(k::trn::kind::ZOOM),
-        TransitionKind::Spin { .. } => tr(k::trn::kind::SPIN),
         TransitionKind::Whip { .. } => tr(k::trn::kind::WHIP),
         TransitionKind::BlurDissolve { .. } => tr(k::trn::kind::BLUR),
         TransitionKind::Pixelate { .. } => tr(k::trn::kind::PIXELATE),
         TransitionKind::Glitch { .. } => tr(k::trn::kind::GLITCH),
-        TransitionKind::Flash { .. } => tr(k::trn::kind::FLASH),
-        TransitionKind::Dip { .. } => tr(k::trn::kind::DIP),
-        TransitionKind::Blinds { .. } => tr(k::trn::kind::BLINDS),
-        TransitionKind::Checker { .. } => tr(k::trn::kind::CHECKER),
-        TransitionKind::Blocks { .. } => tr(k::trn::kind::BLOCKS),
-        TransitionKind::Spiral { .. } => tr(k::trn::kind::SPIRAL),
-        TransitionKind::Split { .. } => tr(k::trn::kind::SPLIT),
-        TransitionKind::Squeeze { .. } => tr(k::trn::kind::SQUEEZE),
-        TransitionKind::Stretch { .. } => tr(k::trn::kind::STRETCH),
         TransitionKind::Swap { .. } => tr(k::trn::kind::SWAP),
         TransitionKind::Shake { .. } => tr(k::trn::kind::SHAKE),
         TransitionKind::FilmBurn { .. } => tr(k::trn::kind::FILM_BURN),
@@ -115,10 +81,7 @@ fn curve_name(c: AudioCurve) -> &'static str {
 /// number — a direction is not a number, and it is not expressed by the parameter spec.
 fn dir_of(kind: &mut TransitionKind) -> Option<&mut kt_model::Dir> {
     match kind {
-        TransitionKind::Push { dir }
-        | TransitionKind::Slide { dir }
-        | TransitionKind::Whip { dir, .. }
-        | TransitionKind::Squeeze { dir }
+        TransitionKind::Whip { dir, .. }
         | TransitionKind::Cube { dir, .. }
         | TransitionKind::PagePeel { dir, .. }
         | TransitionKind::PageRoll { dir, .. } => Some(dir),
@@ -222,8 +185,7 @@ impl KtApp {
                             });
                     });
                     // ---- kind parameters: the same grid as for effects -------
-                    let color =
-                        matches!(t.kind, TransitionKind::Flash { .. } | TransitionKind::Dip { .. });
+                    let color = matches!(&t.kind, TransitionKind::Plugin(p) if p.get("color_r").is_some());
                     // in burn and flare the colour is called tint_* — the same eyedropper
                     let tint = matches!(
                         t.kind,
@@ -276,44 +238,47 @@ impl KtApp {
                             }
                         });
                     }
-                    if let TransitionKind::Iris { shape, .. } = &mut t.kind {
+                    // the iris shape row (D12): circle, diamond, box — the row's index
+                    if let TransitionKind::Plugin(p) = &mut t.kind
+                        && let Some(cur) = p.get("shape")
+                    {
                         ui.horizontal(|ui| {
                             ui.label(tr(k::trn::SHAPE));
-                            for (s, label) in [
-                                (kt_model::IrisShape::Circle, tr(k::trn::shape::CIRCLE)),
-                                (kt_model::IrisShape::Diamond, tr(k::trn::shape::DIAMOND)),
-                                (kt_model::IrisShape::Box, tr(k::trn::shape::BOX)),
-                            ] {
-                                if ui.selectable_label(*shape == s, label).clicked() && *shape != s
-                                {
-                                    *shape = s;
+                            for (i, label) in
+                                [tr(k::trn::shape::CIRCLE), tr(k::trn::shape::DIAMOND), tr(k::trn::shape::BOX)]
+                                    .into_iter()
+                                    .enumerate()
+                            {
+                                let i = i as f64;
+                                if ui.selectable_label(cur == i, label).clicked() && cur != i {
+                                    p.set("shape", i);
                                     changed = true;
                                 }
                             }
                         });
                     }
-                    if let TransitionKind::Clock { reverse, .. } = &mut t.kind
-                        && ui.checkbox(reverse, tr(k::trn::REVERSE)).changed()
-                    {
-                        changed = true;
+                    // a plugin kind's flag rows, captioned as the variants' checkboxes were
+                    if let TransitionKind::Plugin(p) = &mut t.kind {
+                        let barn = p.tag() == "barn";
+                        for (row, label) in [
+                            ("reverse", tr(k::trn::REVERSE)),
+                            ("vertical", if barn { tr(k::trn::VERTICAL) } else { tr(k::trn::VERTICAL_AXIS) }),
+                            ("invert", tr(k::trn::INVERT)),
+                        ] {
+                            if let Some(cur) = p.get(row) {
+                                let mut on = cur > 0.5;
+                                if ui.checkbox(&mut on, label).changed() {
+                                    p.set(row, if on { 1.0 } else { 0.0 });
+                                    changed = true;
+                                }
+                            }
+                        }
                     }
-                    if let TransitionKind::Barn { vertical, .. } = &mut t.kind
-                        && ui.checkbox(vertical, tr(k::trn::VERTICAL)).changed()
-                    {
-                        changed = true;
-                    }
-                    // the axis for the R.51 symbiotic shifts — one checkbox for all three
-                    if let TransitionKind::Split { vertical }
-                    | TransitionKind::Stretch { vertical }
-                    | TransitionKind::Swap { vertical, .. }
+                    // the axis for the R.51 symbiotic shifts and the panels
+                    if let TransitionKind::Swap { vertical, .. }
                     | TransitionKind::Flip { vertical, .. }
                     | TransitionKind::Door { vertical, .. } = &mut t.kind
                         && ui.checkbox(vertical, tr(k::trn::VERTICAL_AXIS)).changed()
-                    {
-                        changed = true;
-                    }
-                    if let TransitionKind::Luma { invert, .. } = &mut t.kind
-                        && ui.checkbox(invert, tr(k::trn::INVERT)).changed()
                     {
                         changed = true;
                     }
@@ -363,7 +328,7 @@ impl KtApp {
                             egui::ComboBox::from_id_salt(("trauto", ed.id))
                                 .selected_text(tr(k::fx::AUTO_ADD))
                                 .show_ui(ui, |ui| {
-                                    for s in specs {
+                                    for s in specs.iter().filter(|s| s.kind == kt_model::ParamKind::Smooth) {
                                         if t.auto.iter().any(|c| c.param == s.name) {
                                             continue;
                                         }
