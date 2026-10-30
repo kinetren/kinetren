@@ -327,6 +327,13 @@ it and the former builder decided it by `mode == 4`. kt-fx keeps a `WarpRef { id
 `// @PLUGIN_WARP_ARMS` marker of BOTH loops. The 3D picker category of Cylinder 3D is the
 manifest's `fxreg.cat.three_d` (`FxInstance::class()` reads it).
 
+*As built for corner_pin (4.1c-2):* `GeoStep::Proj { m }` is the inverse homography from the output
+centre-space to the uv of the stage; the host lands the stage on the canvas and declares alpha
+(outside the quad transparent), so a plugin cannot forget the alpha rule. `kt_plugin_api::geo`
+holds `invert3` — one text for the plugin's quad and the core's pan3d. pan3d itself waits for a
+model-address row (its pinned `camera`), the same store the compressor's sidechain key needs (3b.1):
+moving it before that store exists would put a camera lookup into a plugin.
+
 **D11.3 An exact lone path.** A series of length 1 without a scale change runs the OLD kernel of
 Pan/Mirror today (`GeomExec::Legacy`, t297). A geometry plugin may provide that path itself:
 `lone(k, &Frame) -> Option<Frame>` on the CPU and a WGSL pass (a pixel permutation for mirror).

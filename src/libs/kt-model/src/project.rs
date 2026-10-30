@@ -4100,12 +4100,6 @@ fn is_zero_u8(v: &u8) -> bool {
     *v == 0
 }
 
-fn default_one_f64() -> f64 {
-    1.0
-}
-fn is_one_f64(v: &f64) -> bool {
-    *v == 1.0
-}
 fn default_one_f32() -> f32 {
     1.0
 }
@@ -5164,26 +5158,7 @@ pub enum FxInstance {
     // ---- video FX (port of bc_fx.cpp, item 25; parameters and defaults of v1) ----------
     // Posterize is a plugin since plugin-api-stage1 (src/plugins/fx-video-color): its file text is
     // the variant's (t973), its slot is `Plugin` below.
-    /// Four-corner fit (R.47, F-FX-004): homography quad→quad,
-    /// the main tool of “the screen in the frame”. Geometry — concatenated.
-    CornerPin {
-        #[serde(default, skip_serializing_if = "is_zero_f64")]
-        x0: f64,
-        #[serde(default, skip_serializing_if = "is_zero_f64")]
-        y0: f64,
-        #[serde(default = "default_one_f64", skip_serializing_if = "is_one_f64")]
-        x1: f64,
-        #[serde(default, skip_serializing_if = "is_zero_f64")]
-        y1: f64,
-        #[serde(default, skip_serializing_if = "is_zero_f64")]
-        x2: f64,
-        #[serde(default = "default_one_f64", skip_serializing_if = "is_one_f64")]
-        y2: f64,
-        #[serde(default = "default_one_f64", skip_serializing_if = "is_one_f64")]
-        x3: f64,
-        #[serde(default = "default_one_f64", skip_serializing_if = "is_one_f64")]
-        y3: f64,
-    },
+    // CornerPin is a plugin since plugin-api-stage1 (src/plugins/fx-video-distort, D11.2).
     /// Unsharp masking by mip (R.47, F-FX-001): source +
     /// (source − blurred base)·amount. Barrier.
     Sharpen {
@@ -5488,7 +5463,6 @@ impl FxInstance {
             FxInstance::LayerMix { .. } => "layer_mix",
             FxInstance::SlowedReverb { .. } => "slowed_reverb",
             FxInstance::Compressor { .. } => "compressor",
-            FxInstance::CornerPin { .. } => "corner_pin",
             FxInstance::Sharpen { .. } => "sharpen",
             FxInstance::Pixelate { .. } => "pixelate",
             FxInstance::ChromaticAberration { .. } => "chromatic_aberration",
@@ -5720,16 +5694,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
     Halftone {
         size: u32, 2.0, 64.0, 8.0, 1.0, Px, Smooth;
         angle: f32, -90.0, 90.0, 45.0, 1.0, Deg, Smooth;
-    },
-    CornerPin {
-        x0: f64, -1.0, 2.0, 0.0, 0.005, Norm, Smooth;
-        y0: f64, -1.0, 2.0, 0.0, 0.005, Norm, Smooth;
-        x1: f64, -1.0, 2.0, 1.0, 0.005, Norm, Smooth;
-        y1: f64, -1.0, 2.0, 0.0, 0.005, Norm, Smooth;
-        x2: f64, -1.0, 2.0, 0.0, 0.005, Norm, Smooth;
-        y2: f64, -1.0, 2.0, 1.0, 0.005, Norm, Smooth;
-        x3: f64, -1.0, 2.0, 1.0, 0.005, Norm, Smooth;
-        y3: f64, -1.0, 2.0, 1.0, 0.005, Norm, Smooth;
     },
     Geometry {
         crop_l: f64, 0.0, 0.95, 0.0, 0.005, Norm, Smooth;
@@ -6528,17 +6492,9 @@ impl FxInstance {
         FxInstance::plugin("vignette").expect("vignette is not registered: install the built-in plugin set first")
     }
 
+    /// corner_pin at its defaults (the corners at the corners: an identity) — a plugin slot.
     pub fn corner_pin() -> FxInstance {
-        FxInstance::CornerPin {
-            x0: 0.0,
-            y0: 0.0,
-            x1: 1.0,
-            y1: 0.0,
-            x2: 0.0,
-            y2: 1.0,
-            x3: 1.0,
-            y3: 1.0,
-        }
+        FxInstance::plugin("corner_pin").expect("corner_pin is not registered: install the built-in plugin set first")
     }
 
     pub fn sharpen() -> FxInstance {

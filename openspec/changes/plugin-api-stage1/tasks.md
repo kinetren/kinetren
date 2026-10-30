@@ -230,6 +230,12 @@ once (English message, first line = the stage and what was done).
     `warp_map` and the five builder arms deleted; kt-gpu `plugin_warps` + the arm marker in both
     loops. t993 (warp part) red with the twirl WGSL's sine negated (19.7 % of samples off);
     t973 frozen forms; t26, t328, t329, t181, t330, t332, t333 unchanged
+- [x] 4.1c-2 corner_pin: `GeoStep::Proj { m }` (the stage lands on the canvas and declares
+    alpha), `kt_plugin_api::geo` (`invert3`, `TRANSPARENT` — the one text kt-fx's pan3d calls too);
+    corner_pin moves into `fx-video-distort` with `Gpu::Primitives` (no WGSL). t993 gains the
+    homography alone, inside a warp series (one run) and degenerate, transparent outside the quad
+    on both executors — red with the step skipped; t973 frozen forms; t331 unchanged. pan3d waits
+    for the camera reference (its `camera` row is a model address, like the compressor's key — 3b.1)
 - [ ] 4.1c The geometry program (D11.2, D11.3): `GeoKernel`, `GeoCtx`, `GeoStep`, the open `Warp` with `warp_<id>` pasted into both loops of `geom_fused.wgsl`, the exact lone path; move lens_distort, twirl, ripple, kaleidoscope, cylinder3d, corner_pin, mirror, event_grid, pan3d; write t993 and t994 red first; verify t26, t297, t298, t308b, t330, t332, t333, t943, t944, t181, t329
 - [ ] 4.1d The ten barrier kinds: propose `plugin-api-barriers` (the GPU pass graph and the SIMD twins), linked from here; this change does not move them
 - [ ] 4.2 FX picker, variants and thumbnails from manifests (`fx_registry.rs`, `fx_thumbs.rs`); verify t48, t252, t253, t976 and `layout_tests.rs`/`reach_tests.rs` green; rewrite the "add a video effect" checklist in `src/libs/kt-fx/CLAUDE.md` and `src/libs/kt-gpu/CLAUDE.md`; commit stage 4

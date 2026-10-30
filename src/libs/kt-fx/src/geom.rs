@@ -52,7 +52,6 @@ pub fn is_geo(f: &FxInstance) -> bool {
             | FxInstance::Mirror { .. }
             | FxInstance::EventGrid { .. }
             | FxInstance::Pan3d { .. }
-            | FxInstance::CornerPin { .. }
     ) || plugin_class(f) == Some(kt_plugin_api::VideoClass::Geometry)
 }
 
@@ -1119,39 +1118,22 @@ fn build_program(
                 } else if let Some((warp, steps)) =
                     plugin_geo_steps(f, kt_plugin_api::GeoCtx { stage_w: w, stage_h: h, out_w: mow, out_h: moh })
                 {
-                    // a warp does not change the raster: its stage is the one it enters
                     for st in steps {
                         match st {
+                            // a warp does not change the raster: its stage is the one it enters
                             kt_plugin_api::GeoStep::Warp { k, norm } => {
                                 fw.push(Step::Warp { warp, p: k, norm, iw: w, ih: h });
                             }
+                            // a homography lands on the canvas; outside the quad — transparent
+                            kt_plugin_api::GeoStep::Proj { m } => {
+                                fw.push(Step::Proj { m, iw: w, ih: h });
+                                has_alpha_known = true;
+                                has_alpha = true;
+                                w = mow;
+                                h = moh;
+                            }
                         }
                     }
-                }
-            }
-            FxInstance::CornerPin { x0, y0, x1, y1, x2, y2, x3, y3 } => {
-                // default is bit-exact: corners at the corners — the step is skipped,
-                // the chain stays identity (identity byte-for-byte)
-                let ident = *x0 == 0.0
-                    && *y0 == 0.0
-                    && *x1 == 1.0
-                    && *y1 == 0.0
-                    && *x2 == 0.0
-                    && *y2 == 1.0
-                    && *x3 == 1.0
-                    && *y3 == 1.0;
-                if !ident {
-                    let m = corner_pin_inverse(
-                        [(*x0, *y0), (*x1, *y1), (*x2, *y2), (*x3, *y3)],
-                        mow,
-                        moh,
-                    );
-                    fw.push(Step::Proj { m, iw: w, ih: h });
-                    // outside the quad — transparent (as in Pan3d)
-                    has_alpha_known = true;
-                    has_alpha = true;
-                    w = mow;
-                    h = moh;
                 }
             }
             _ => debug_assert!(false, "non-geo step in build_program"),
@@ -1424,80 +1406,7 @@ fn rot_y(a: f64) -> M3 {
     [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]]
 }
 
-/// Inversion of the 3×3 via adj/det. None — degeneracy (quad edge-on to the camera).
-/// The sign of t.z of the inverse image under adj/det is correct: t = G⁻¹·(c,1) = q̃/w,
-/// i.e. sign(t.z) = sign(w) — the “behind the camera” test comes out by itself.
-/// INVERSE homography of Corner Pin (R.47, F-FX-004): the forward map
-/// “unit square → 4 corners in output fractions” is built in closed form
-/// (Heckbert), scaled into the pixel center-space of the output, and inverted.
-/// Degeneracy (zero denominator / non-invertible matrix) — a transparent
-/// matrix `t.z = −1` (precedent: Pan3d behind the camera).
-fn corner_pin_inverse(c: [(f64, f64); 4], out_w: u32, out_h: u32) -> [[f64; 3]; 3] {
-    let transparent = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, -1.0]];
-    // corners: TL, TR, BL, BR (uv-space of the source: (0,0)..(1,1))
-    let (p0, p1, p2, p3) = (c[0], c[1], c[2], c[3]);
-    let dx1 = (p1.0 - p3.0, p1.1 - p3.1);
-    let dx2 = (p2.0 - p3.0, p2.1 - p3.1);
-    let sx = p0.0 - p1.0 - p2.0 + p3.0;
-    let sy = p0.1 - p1.1 - p2.1 + p3.1;
-    let den = dx1.0 * dx2.1 - dx1.1 * dx2.0;
-    if den.abs() < 1e-12 {
-        return transparent;
-    }
-    let g = (sx * dx2.1 - sy * dx2.0) / den;
-    let hh = (dx1.0 * sy - dx1.1 * sx) / den;
-    // forward map uv(square) -> output fractions
-    let fwd = [
-        [p1.0 - p0.0 + g * p1.0, p2.0 - p0.0 + hh * p2.0, p0.0],
-        [p1.1 - p0.1 + g * p1.1, p2.1 - p0.1 + hh * p2.1, p0.1],
-        [g, hh, 1.0],
-    ];
-    // output fractions -> pixel center-space of the output: the x and y rows are multiplied
-    // by mow/moh (as the tail of pan3d_forward)
-    let (mw, mh) = (out_w.max(2) as f64, out_h.max(2) as f64);
-    let scaled = [
-        [fwd[0][0] * mw, fwd[0][1] * mw, fwd[0][2] * mw],
-        [fwd[1][0] * mh, fwd[1][1] * mh, fwd[1][2] * mh],
-        fwd[2],
-    ];
-    match invert3(&scaled) {
-        Some(inv) => inv,
-        None => transparent,
-    }
-}
-
-fn invert3(g: &M3) -> Option<M3> {
-    let adj = [
-        [
-            g[1][1] * g[2][2] - g[1][2] * g[2][1],
-            g[0][2] * g[2][1] - g[0][1] * g[2][2],
-            g[0][1] * g[1][2] - g[0][2] * g[1][1],
-        ],
-        [
-            g[1][2] * g[2][0] - g[1][0] * g[2][2],
-            g[0][0] * g[2][2] - g[0][2] * g[2][0],
-            g[0][2] * g[1][0] - g[0][0] * g[1][2],
-        ],
-        [
-            g[1][0] * g[2][1] - g[1][1] * g[2][0],
-            g[0][1] * g[2][0] - g[0][0] * g[2][1],
-            g[0][0] * g[1][1] - g[0][1] * g[1][0],
-        ],
-    ];
-    let det = g[0][0] * adj[0][0] + g[0][1] * adj[1][0] + g[0][2] * adj[2][0];
-    // the determinant scale of our matrices is ~ (ow·oh·f)² — the threshold is relative
-    let scale = g.iter().flatten().fold(0.0f64, |m, v| m.max(v.abs()));
-    if det.abs() <= scale * scale * scale * 1e-12 {
-        return None;
-    }
-    let mut m = [[0.0; 3]; 3];
-    for (i, row) in m.iter_mut().enumerate() {
-        for (j, v) in row.iter_mut().enumerate() {
-            *v = adj[i][j] / det;
-        }
-    }
-    Some(m)
-}
+use kt_plugin_api::geo::invert3;
 
 /// FORWARD homography of Pan3d: (q.x, q.y, 1) → (c.x·w, c.y·w, w), where q is the uv
 /// of the quad 0..1, c is the CENTER-space of the output pixels.

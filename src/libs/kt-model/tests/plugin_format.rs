@@ -11,6 +11,30 @@ use serde::Serialize;
 
 /// Today's derive output of the moved kinds — copied from `FxInstance` before each move, never
 /// edited afterwards. Stage 2.4 adds `posterize`; each later stage adds its kinds.
+/// `FxInstance::CornerPin`'s fields before 4.1c (f64 corners, each skipped at its default) — a
+/// struct, so a case can change one corner.
+#[derive(Serialize, Clone, Copy)]
+struct Pin {
+    #[serde(skip_serializing_if = "is_zero_f64")]
+    x0: f64,
+    #[serde(skip_serializing_if = "is_zero_f64")]
+    y0: f64,
+    #[serde(skip_serializing_if = "is_one_f64")]
+    x1: f64,
+    #[serde(skip_serializing_if = "is_zero_f64")]
+    y1: f64,
+    #[serde(skip_serializing_if = "is_zero_f64")]
+    x2: f64,
+    #[serde(skip_serializing_if = "is_one_f64")]
+    y2: f64,
+    #[serde(skip_serializing_if = "is_one_f64")]
+    x3: f64,
+    #[serde(skip_serializing_if = "is_one_f64")]
+    y3: f64,
+}
+
+const PIN: Pin = Pin { x0: 0.0, y0: 0.0, x1: 1.0, y1: 0.0, x2: 0.0, y2: 1.0, x3: 1.0, y3: 1.0 };
+
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Frozen {
@@ -87,6 +111,7 @@ enum Frozen {
         angle: f32,
     },
     Cylinder3d { curvature: f32 },
+    CornerPin(Pin),
     /// `ColorGrade` and `Duotone` before stage 4.
     ColorGrade {
         #[serde(skip_serializing_if = "is_zero")]
@@ -125,6 +150,14 @@ fn is_zero(v: &f32) -> bool {
     *v == 0.0
 }
 
+fn is_zero_f64(v: &f64) -> bool {
+    *v == 0.0
+}
+
+fn is_one_f64(v: &f64) -> bool {
+    *v == 1.0
+}
+
 fn is_one(v: &f32) -> bool {
     *v == 1.0
 }
@@ -149,6 +182,8 @@ fn empty_reads() -> Vec<(&'static str, String)> {
         (r#"{"kind":"ripple"}"#, frozen(Frozen::Ripple { amount: 0.08, freq: 10.0, phase: 0.0 })),
         (r#"{"kind":"kaleidoscope"}"#, frozen(Frozen::Kaleidoscope { segments: 6, angle: 0.0 })),
         (r#"{"kind":"cylinder3d"}"#, frozen(Frozen::Cylinder3d { curvature: 0.5 })),
+        (r#"{"kind":"corner_pin"}"#, frozen(Frozen::CornerPin(PIN))),
+        (r#"{"kind":"corner_pin","x0":0.25,"y3":1.5}"#, frozen(Frozen::CornerPin(Pin { x0: 0.25, y3: 1.5, ..PIN }))),
         (r#"{"kind":"color_grade"}"#, frozen(Frozen::ColorGrade { brightness: 0.0, contrast: 0.0, saturation: 1.0, hue: 0.0 })),
         (r#"{"kind":"duotone"}"#, frozen(Frozen::Duotone { shadow_r: 24, shadow_g: 18, shadow_b: 64, high_r: 255, high_g: 236, high_b: 190, amount: 1.0 })),
         (r#"{"kind":"filter"}"#, frozen(Frozen::Filter { mode: FrozenFilterMode::Lowpass, cutoff_hz: 800.0, resonance: 0.707 })),
@@ -229,6 +264,11 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
         ),
         (FxInstance::cylinder3d(), frozen(Frozen::Cylinder3d { curvature: 0.5 })),
         (FxInstance::plugin_with("cylinder3d", &[0.85]).unwrap(), frozen(Frozen::Cylinder3d { curvature: 0.85 })),
+        (FxInstance::corner_pin(), frozen(Frozen::CornerPin(PIN))),
+        (
+            FxInstance::plugin_with("corner_pin", &[0.1, 0.0, 1.0, 0.123456789, 0.0, 1.0, 0.9, 1.0]).unwrap(),
+            frozen(Frozen::CornerPin(Pin { x0: 0.1, y1: 0.123456789, x3: 0.9, ..PIN })),
+        ),
         (
             FxInstance::plugin_with("vignette", &[0.9, 0.3, 0.123456789]).unwrap(),
             frozen(Frozen::Vignette { strength: 0.9, radius: 0.3, softness: 0.123456789 }),

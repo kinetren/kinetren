@@ -1,5 +1,6 @@
 //! Distorting video effects as plugins (plugin-api-stage1, stage 4, D11.2): the five warps —
-//! lens_distort, twirl, ripple, kaleidoscope, cylinder3d. Each is a geometry program of one `Warp`
+//! lens_distort, twirl, ripple, kaleidoscope, cylinder3d — and corner_pin, one `Proj` step (its
+//! homography; outside the quad transparent). Each warp is a geometry program of one `Warp`
 //! step: the inverse map of the normalized centered space, cooked once, and its WGSL mirror that
 //! kt-gpu pastes into both primitive loops of the fused pass. The steps, the clamps and the
 //! "neutral values skip the step" rule are the former builder's, verbatim (t328's goldens, t330).
@@ -7,7 +8,7 @@
 use std::sync::Arc;
 
 use kt_plugin_api::{
-    Decl, GeoCtx, GeoKernel, GeoStep, Gpu, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin,
+    geo, Decl, GeoCtx, GeoKernel, GeoStep, Gpu, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin,
     RowDecl, Store, UiDecl, VideoClass, WarpNorm,
 };
 
@@ -19,6 +20,7 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
         Arc::new(Warp::ripple()),
         Arc::new(Warp::kaleidoscope()),
         Arc::new(Warp::cylinder3d()),
+        Arc::new(CornerPin::new()),
     ]
 }
 
@@ -229,5 +231,104 @@ impl GeoKernel for Warp {
                 (u, y)
             }
         }
+    }
+}
+
+/// Four-corner fit (R.47, F-FX-004): the homography quad → quad, the main tool of "the screen in
+/// the frame". A geometry plugin of one `Proj` step; the corners at the corners skip the step.
+pub struct CornerPin {
+    m: Manifest,
+}
+
+impl CornerPin {
+    pub fn new() -> CornerPin {
+        let c = |n, d| ParamSpec::num(n, -1.0, 2.0, d, 0.005, ParamUnit::Norm, ParamKind::Smooth);
+        let names = ["x0", "y0", "x1", "y1", "x2", "y2", "x3", "y3"];
+        let defaults = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+        CornerPin {
+            m: Manifest {
+                id: "corner_pin".into(),
+                media: Media::VideoFx,
+                passport: names.iter().zip(defaults).map(|(n, d)| c(*n, d)).collect(),
+                rows: vec![row(Store::F64, true); 8],
+                decl: Decl { video_class: Some(VideoClass::Geometry), gpu: Gpu::Primitives, ..Decl::default() },
+                ui: UiDecl { name: "Corner Pin", category_key: "fxreg.cat.geometry", keywords_key: "fxreg.kw.corner_pin" },
+            },
+        }
+    }
+}
+
+impl Default for CornerPin {
+    fn default() -> CornerPin {
+        CornerPin::new()
+    }
+}
+
+impl Plugin for CornerPin {
+    fn manifest(&self) -> &Manifest {
+        &self.m
+    }
+    fn geo(&self) -> Option<&dyn GeoKernel> {
+        Some(self)
+    }
+}
+
+impl GeoKernel for CornerPin {
+    fn steps(&self, p: &[f64], cx: &GeoCtx) -> Vec<GeoStep> {
+        let g = |i: usize| p.get(i).copied().unwrap_or(0.0);
+        // default is bit-exact: corners at the corners — the step is skipped,
+        // the chain stays identity (identity byte-for-byte)
+        let ident = g(0) == 0.0
+            && g(1) == 0.0
+            && g(2) == 1.0
+            && g(3) == 0.0
+            && g(4) == 0.0
+            && g(5) == 1.0
+            && g(6) == 1.0
+            && g(7) == 1.0;
+        if ident {
+            return Vec::new();
+        }
+        let m = corner_pin_inverse([(g(0), g(1)), (g(2), g(3)), (g(4), g(5)), (g(6), g(7))], cx.out_w, cx.out_h);
+        vec![GeoStep::Proj { m }]
+    }
+}
+
+/// INVERSE homography of Corner Pin (R.47, F-FX-004): the forward map
+/// “unit square → 4 corners in output fractions” is built in closed form
+/// (Heckbert), scaled into the pixel center-space of the output, and inverted.
+/// Degeneracy (zero denominator / non-invertible matrix) — a transparent
+/// matrix `t.z = −1` (precedent: Pan3d behind the camera).
+fn corner_pin_inverse(c: [(f64, f64); 4], out_w: u32, out_h: u32) -> [[f64; 3]; 3] {
+    let transparent = geo::TRANSPARENT;
+    // corners: TL, TR, BL, BR (uv-space of the source: (0,0)..(1,1))
+    let (p0, p1, p2, p3) = (c[0], c[1], c[2], c[3]);
+    let dx1 = (p1.0 - p3.0, p1.1 - p3.1);
+    let dx2 = (p2.0 - p3.0, p2.1 - p3.1);
+    let sx = p0.0 - p1.0 - p2.0 + p3.0;
+    let sy = p0.1 - p1.1 - p2.1 + p3.1;
+    let den = dx1.0 * dx2.1 - dx1.1 * dx2.0;
+    if den.abs() < 1e-12 {
+        return transparent;
+    }
+    let g = (sx * dx2.1 - sy * dx2.0) / den;
+    let hh = (dx1.0 * sy - dx1.1 * sx) / den;
+    // forward map uv(square) -> output fractions
+    let fwd = [
+        [p1.0 - p0.0 + g * p1.0, p2.0 - p0.0 + hh * p2.0, p0.0],
+        [p1.1 - p0.1 + g * p1.1, p2.1 - p0.1 + hh * p2.1, p0.1],
+        [g, hh, 1.0],
+    ];
+    // output fractions -> pixel center-space of the output: the x and y rows are multiplied
+    // by mow/moh (as the tail of pan3d_forward)
+    let (mw, mh) = (out_w.max(2) as f64, out_h.max(2) as f64);
+    let scaled = [
+        [fwd[0][0] * mw, fwd[0][1] * mw, fwd[0][2] * mw],
+        [fwd[1][0] * mh, fwd[1][1] * mh, fwd[1][2] * mh],
+        fwd[2],
+    ];
+    match geo::invert3(&scaled) {
+        Some(inv) => inv,
+        None => transparent,
     }
 }

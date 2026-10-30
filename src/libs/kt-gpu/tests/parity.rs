@@ -985,16 +985,7 @@ fn t329_parity_cycle_over_the_registry() {
             FrameTol::BILINEAR,
         ),
         (
-            FxInstance::CornerPin {
-                x0: 0.08,
-                y0: 0.06,
-                x1: 0.92,
-                y1: -0.04,
-                x2: -0.05,
-                y2: 0.95,
-                x3: 1.05,
-                y3: 1.1,
-            },
+            kt_model::FxInstance::plugin_with("corner_pin", &[0.08, 0.06, 0.92, -0.04, -0.05, 0.95, 1.05, 1.1]).unwrap(),
             FrameTol::GEOM,
             FrameTol::GEOM,
         ),
@@ -1290,15 +1281,17 @@ fn t992_a_positioned_tap_measures_its_own_stage() {
 }
 
 /// t993 (plugin-api-stage1, D11.2; capability `plugins`): a geometry program fuses and keeps its
-/// rules — the warp part (stage 4.1c-1).
+/// rules — the warps (4.1c-1) and corner_pin's homography (4.1c-2).
 ///
 /// The five warps live in `fx-video-distort`: each is one `Warp` step of the plugin's own map, its
 /// WGSL mirror pasted by kt-gpu into BOTH primitive loops of the fused pass (one function, two
 /// arms). Alone, after a zoom and all five in one series, a chain of warp plugins is ONE run of
-/// the plan, and the GPU stays within the geometry tolerance of the CPU. The CPU bytes of every
-/// kind at its defaults are t328's pre-move goldens; the neutral skip is t333's.
+/// the plan, and the GPU stays within the geometry tolerance of the CPU. corner_pin is one `Proj`
+/// step: inside a warp series it stays one run, outside its quad the frame is transparent on
+/// both executors, and a degenerate quad is all transparent. The CPU bytes of every kind at its
+/// defaults are t328's pre-move goldens; the neutral skips are t331's and t333's.
 #[test]
-fn t993_warp_plugins_fuse_into_one_pass() {
+fn t993_a_geometry_program_fuses_and_keeps_its_rules() {
     kt_plugins_builtin::install();
     let ids = ["lens_distort", "twirl", "ripple", "kaleidoscope", "cylinder3d"];
     let (fused, _) = kt_gpu::assembled_shaders();
@@ -1328,6 +1321,11 @@ fn t993_warp_plugins_fuse_into_one_pass() {
     let mut all: Vec<FxInstance> = ids.iter().map(|id| tuned(id)).collect();
     all.push(FxInstance::geometry_zoom(0.8));
     cases.push(("all five and a zoom".into(), all));
+    let pin = |c: &[f64]| FxInstance::plugin_with("corner_pin", c).unwrap();
+    let persp = pin(&[0.2, 0.1, 0.9, 0.0, 0.0, 1.0, 1.0, 0.85]);
+    cases.push(("corner_pin".into(), vec![persp.clone()]));
+    cases.push(("corner_pin in a warp series".into(), vec![tuned("twirl"), persp.clone(), tuned("ripple")]));
+    cases.push(("degenerate corner_pin".into(), vec![pin(&[0.3; 8])]));
     for (i, (name, fx)) in cases.into_iter().enumerate() {
         let chain = kt_fx::plan::plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[]);
         assert!(
@@ -1340,5 +1338,10 @@ fn t993_warp_plugins_fuse_into_one_pass() {
         let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
         assert!(cc && cg, "{name}: incomplete");
         assert_frames_close(&cpu, &gpu, W, H, FrameTol::GEOM, &name);
+        if name.contains("corner_pin") {
+            // the top-left output pixel is outside every quad above — transparent on both
+            assert_eq!(cpu[3], 0, "{name}: the corner outside the quad is not transparent");
+            assert_eq!(gpu[3], 0, "{name}: the GPU corner outside the quad is not transparent");
+        }
     }
 }

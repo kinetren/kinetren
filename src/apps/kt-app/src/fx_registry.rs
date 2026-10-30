@@ -61,7 +61,6 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
         "EventGrid" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::EVENTGRID)),
         "Pan 3D" => (k::fxreg::cat::THREE_D, Some(k::fxreg::kw::PAN3D)),
         // R.47 Q2: color/style/perspective
-        "Corner Pin" => (k::fxreg::cat::GEOMETRY, Some(k::fxreg::kw::CORNER_PIN)),
         // R.47 Q3: barriers
         "Sharpen" => (k::fxreg::cat::BLUR, Some(k::fxreg::kw::SHARPEN)),
         "Pixelate" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::PIXELATE)),

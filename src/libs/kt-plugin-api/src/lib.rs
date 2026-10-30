@@ -8,6 +8,7 @@
 
 pub mod curves;
 pub mod dsp;
+pub mod geo;
 
 use serde::{Deserialize, Serialize};
 
@@ -1035,6 +1036,11 @@ pub struct GeoCtx {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GeoStep {
     Warp { k: [f64; 7], norm: WarpNorm },
+    /// An INVERSE homography: the pixel centre-space of the series' output (`out_w×out_h`) → the
+    /// uv `0..1` of the stage it enters. The stage after it is the output canvas, and outside the
+    /// quad (uv out of `0..1`) or behind the camera (`t.z <= 0`) the frame is TRANSPARENT — the step
+    /// declares alpha. A degenerate map is `[[0,0,0],[0,0,0],[0,0,-1]]` (all transparent).
+    Proj { m: [[f64; 3]; 3] },
 }
 
 /// The unit of a warp's normalized centered space (D11.2): what `1.0` is from the stage's centre.

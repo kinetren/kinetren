@@ -1121,16 +1121,7 @@ fn t331_corner_pin() {
     };
 
     // (2) compression into the right half: uv-centre → x = 0.75·W
-    let right = FxInstance::CornerPin {
-        x0: 0.5,
-        y0: 0.0,
-        x1: 1.0,
-        y1: 0.0,
-        x2: 0.5,
-        y2: 1.0,
-        x3: 1.0,
-        y3: 1.0,
-    };
+    let right = kt_model::FxInstance::plugin_with("corner_pin", &[0.5, 0.0, 1.0, 0.0, 0.5, 1.0, 1.0, 1.0]).unwrap();
     let o = apply_video_chain(std::slice::from_ref(&right), marker(), &ctx());
     assert!(o.has_alpha, "corner pin declares alpha");
     for y in 0..H {
@@ -1154,16 +1145,7 @@ fn t331_corner_pin() {
             tlm.rgba[i + 2] = 0;
         }
     }
-    let persp = FxInstance::CornerPin {
-        x0: 0.25,
-        y0: 0.25,
-        x1: 1.0,
-        y1: 0.0,
-        x2: 0.0,
-        y2: 1.0,
-        x3: 1.0,
-        y3: 1.0,
-    };
+    let persp = kt_model::FxInstance::plugin_with("corner_pin", &[0.25, 0.25, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0]).unwrap();
     let o = apply_video_chain(std::slice::from_ref(&persp), tlm, &ctx());
     let (mx, my) = centroid(&o);
     assert!(
@@ -1172,16 +1154,7 @@ fn t331_corner_pin() {
     );
 
     // (4) degenerate quad: transparent and deterministic
-    let degen = FxInstance::CornerPin {
-        x0: 0.3,
-        y0: 0.3,
-        x1: 0.3,
-        y1: 0.3,
-        x2: 0.3,
-        y2: 0.3,
-        x3: 0.3,
-        y3: 0.3,
-    };
+    let degen = kt_model::FxInstance::plugin_with("corner_pin", &[0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3]).unwrap();
     let a = apply_video_chain(std::slice::from_ref(&degen), marker(), &ctx());
     let b = apply_video_chain(std::slice::from_ref(&degen), marker(), &ctx());
     assert!(a.rgba.chunks_exact(4).all(|px| px[3] == 0), "degenerate quad is transparent");
