@@ -3518,6 +3518,7 @@ fn t218_morpher_source_field_takes_files_and_reverts() {
 /// the event window and both morpher sections draw it with one piece of code.
 #[test]
 fn t217_one_chain_widget_for_events_and_morphers() {
+    crate::plugins::install();
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let mut h = harness();

@@ -632,6 +632,7 @@ fn t253_every_entity_has_its_verbs() {
 /// (`Node::click()` does exactly this) and requires the consequence.
 #[test]
 fn t254_click_is_a_click() {
+    crate::plugins::install();
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
 
@@ -1282,6 +1283,7 @@ fn t548_gallery_layout_is_stable_and_elided() {
 /// The morpher chain strip with a source named `file`: the vertical
 /// spread of its labels and the name labels themselves.
 fn strip_metrics(file: &str) -> (f32, Vec<PaintedText>) {
+    crate::plugins::install();
     use kt_model::*;
 
     let mut h = crate::layout_tests::harness();

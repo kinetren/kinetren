@@ -577,6 +577,7 @@ mod tests {
     /// the same result (otherwise the strip would flicker).
     #[test]
     fn t546d_render_job_gives_a_cell_and_the_chain_is_visible() {
+        crate::plugins::install();
         let mut s = kt_fx::video::FxScratch::default();
         let plain = render_job(&job(0, 0), &mut s);
         assert_eq!(plain.size, [CELL_W as usize, CELL_H as usize]);
