@@ -1674,6 +1674,16 @@ time — "work through each point separately, one by one"):
   YOU DID NOT GIVE ME THE FULL CONTEXT." 9b "which second marker does not move?": "the end of the range
   marker". U7 → a defect at the range marker's end, reproduced live in R.73; the item split is shown to
   him there before it is made.
+- Question 10 (auto-mute by sections; the context IN the question — his item quoted, R.65 ducking reacts
+  to loudness, Premiere's Auto-Ducking by clip type): «п.1. по типу клипа. еще должен сказать - что у нас
+  дакинг сделан как-то вообще не интуитивно понятно... очень не очевидно что и куда крутить чтобы было
+  более-менее нормально, и ощущение что у нас на грани возможностей он работает... очень втупую сделан
+  дакинг у нас.» — "option 1: by clip type. I must also say that our ducking is not intuitive at
+  all… it is very unclear what to turn and where to get something more or less normal, and it feels
+  like it works at the edge of its abilities… our ducking is made very dumbly." N3 → a round of
+  its own (`ducking-by-role`): roles on events/tracks build an editable background curve, and the
+  R.65 ducking UX is revised in the same round. A NEW claim about a closed round (R.65) — recorded
+  in "What the user repeated" if it comes again.
 - Question 12 (the broken-off line «1. быстрого»): "drop it". Z1 → not a claim.
 
 **Lesson (repeated THREE times in one session — questions 1, 4 and 9):** a question to the owner carries its
