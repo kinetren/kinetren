@@ -201,10 +201,12 @@ Rejected:
   low row says "zoom the row to change the level".
 - [The left jump zone's loss is not yet localised] → task 2.4 reproduces it live before the fix; the
   test asserts the consequence on a badge row.
-- [Freeze on a warped event] → t1007 has a curve case; the last piece is checked by
+- [Freeze on a warped event] → t1037 has a curve case; the last piece is checked by
   `ClipWarp::material_off` on both sides of the hold.
-- [Test numbers collide with parallel branches] → t1000+ (the highest in the tree and in open changes is
-  t991); renumber at apply if another branch lands first.
+- [Test numbers collide with parallel branches] → t1030–t1047. First proposed as t1000–t1017; moved on 2026-10-30 because
+  t997–t1009 are reserved by plugin-api-barriers (plugin-api-stage1, D11 / tasks 4.1d), t1010–t1015 by
+  fx-lens-and-camera (effects-transitions-catchup branch) and t1018 by plugin-api-stage1. Renumber again
+  at apply if another branch lands first.
 
 ## Migration Plan
 

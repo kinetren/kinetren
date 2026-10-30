@@ -12,4 +12,4 @@ audible on loud material and is not what "mute" means.
 #### Scenario: The floor renders zeros, the rest is unchanged
 - **WHEN** an event with a 0 dBFS sine is rendered at the gain floor, at −6 dB and at 0 dB
 - **THEN** the floor gives all-zero samples; −6 dB and 0 dB are byte-equal to the render before this change
-- **TEST** t1011 (`src/libs/kt-engine/tests/clip_gain_floor.rs`)
+- **TEST** t1041 (`src/libs/kt-engine/tests/clip_gain_floor.rs`)

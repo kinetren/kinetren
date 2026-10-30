@@ -15,4 +15,4 @@ took most of the header.
 - **WHEN** three video tracks; the second track's header is pressed on its name and dragged below the third in three steps; separately — hovered
 - **THEN** the order is 1, 3, 2 and one undo restores it; the hover shows the grab cursor and the hint
 - **PATH** hover a track's name at the left → the cursor becomes a hand, the status line says "drag to reorder" → drag it down past the next track → a blue line shows the place → release → the track is there
-- **TEST** t1017 (`src/apps/kt-app/src/reach_tests.rs`)
+- **TEST** t1047 (`src/apps/kt-app/src/reach_tests.rs`)

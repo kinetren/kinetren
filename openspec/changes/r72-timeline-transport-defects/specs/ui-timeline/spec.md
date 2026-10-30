@@ -17,7 +17,7 @@ and the volume change keeps triggering". The level line was tested first and at 
 - **WHEN** an audio event with gain −6 dB on an 84 px row is pressed 2 px inside its right bottom corner and dragged; separately — the same event on a 24 px row is pressed on its level line in the middle and dragged sideways; separately — on a 300 px wide event at 84 px the level line is dragged
 - **THEN** the first changes the length, not the gain; the second moves the event and its gain is unchanged; the third changes the gain
 - **PATH** zoom the rows out until they are low → drag an event by its middle → it moves, the volume stays; zoom back in → drag the bottom right corner → the event gets longer; drag the level line in the middle → the volume changes
-- **TEST** t1008 (`src/apps/kt-app/src/layout_tests.rs`), t1009 (`src/apps/kt-app/src/layout_tests.rs`)
+- **TEST** t1038 (`src/apps/kt-app/src/layout_tests.rs`), t1039 (`src/apps/kt-app/src/layout_tests.rs`)
 
 ### Requirement: An event's gain goes down to silence, and a non-default level is written on the event
 The event's gain SHALL span from +6.02 dB down to silence. The level line's bottom and the menu's
@@ -33,7 +33,7 @@ stopped at −6.02 dB, and the line's height was the only indicator.
 - **WHEN** an audio event's level line is dragged to the bottom; separately — a video event's opacity is set to 40 % in the menu; separately — both are reset
 - **THEN** the event renders silence (see `audio-render`), its label row shows `mute`; the video event shows `40 %`; after reset there is no chip
 - **PATH** drag an audio event's level line all the way down → the label reads "name · mute", play → silence → double-click the line → back to 0 dB, the chip is gone
-- **TEST** t1010 (`src/apps/kt-app/src/layout_tests.rs`)
+- **TEST** t1040 (`src/apps/kt-app/src/layout_tests.rs`)
 
 ### Requirement: A range marker's end is grabbed where it is drawn and does not snap to itself
 The end of a range marker SHALL be grabbed on the ruler at the nearest end within the grab radius. On
@@ -49,7 +49,7 @@ hover cue.
 - **WHEN** a region 2–6 s, "Marker over the region" makes a 2–6 s range; its end is dragged on the ruler from 6 s to 7 s in three steps; separately — hovered at the end
 - **THEN** the range is 2–7 s (no snap back to 6 s), the region is unchanged; the hover shows the resize cursor and the hint of the marker's end
 - **PATH** select a region → right-click the ruler → "Marker over the region" → hover the right flag of the marker → the hint says "marker end" → drag it right → the marker grows, the region stays
-- **TEST** t1012 (`src/apps/kt-app/src/layout_tests.rs`)
+- **TEST** t1042 (`src/apps/kt-app/src/layout_tests.rs`)
 
 ### Requirement: Vertical zoom keeps the row under the mouse
 A vertical zoom gesture SHALL keep the same row, at the same fraction of its height, under the
@@ -63,7 +63,7 @@ bottom.
 - **WHEN** a timeline with two morph rows, a camera row and four clip rows (one with a height override), the pointer over the third clip row, vertical zoom in and out by five steps each
 - **THEN** after every step the row under the pointer is the same row, its fraction within ±1 px
 - **PATH** point at the third track → Ctrl+Shift+wheel up → the tracks grow, the same track stays under the mouse → wheel down → they shrink around it
-- **TEST** t1013 (`src/apps/kt-app/src/layout_tests.rs`)
+- **TEST** t1043 (`src/apps/kt-app/src/layout_tests.rs`)
 
 ### Requirement: The scrollbar and both jump zones can be taken
 The timeline's vertical scrollbar SHALL be a no-resize rect. Its grab SHALL be wider than its drawing,
@@ -80,7 +80,7 @@ steals clicks", t101) returning on a new element.
 - **WHEN** the timeline is flush with the window's right edge; the scrollbar is pressed and dragged; separately — the left jump zone is clicked on a row where badges are; separately — an event lying in the right jump zone is clicked twice within 0.2 s
 - **THEN** the scrollbar scrolls and no `BeginResize` is sent; the left click jumps the view; the two clicks give two jumps and no FX window
 - **PATH** maximise the window → grab the timeline's scrollbar at the right edge → the tracks scroll, the window does not resize → click near the left edge on a track with buttons → the view jumps left → click twice near the right edge on an event → the view jumps twice, no window opens
-- **TEST** t1014 (`src/apps/kt-app/src/layout_tests.rs`), t1015 (`src/apps/kt-app/src/layout_tests.rs`)
+- **TEST** t1044 (`src/apps/kt-app/src/layout_tests.rs`), t1045 (`src/apps/kt-app/src/layout_tests.rs`)
 
 ### Requirement: Empty rows carry no captions
 An empty service row (morpher, camera) and an empty clip row SHALL draw no text inside the row. The
@@ -94,4 +94,4 @@ morpher here' and the camera one too, I ask to forbid agents to make dumb captio
 - **WHEN** a project with one empty morph row, one empty camera row and one empty video row is drawn
 - **THEN** no painted text lies inside the rows' rectangles; hovering the morph row shows its hint in the status line; its menu has "Add morpher layer"
 - **PATH** add a morph track → the empty row is plain, no caption → hover it → the status line explains it → right-click → "Add morpher layer"
-- **TEST** t1016 (`src/apps/kt-app/src/layout_tests.rs`)
+- **TEST** t1046 (`src/apps/kt-app/src/layout_tests.rs`)
