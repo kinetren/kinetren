@@ -1648,6 +1648,16 @@ time — "work through each point separately, one by one"):
   position and the source live apart from it. The earlier "a few MB" was not measured and was
   withdrawn. C2c → the same measurement round.
 
+- Question 5 (timecode, asked with the context "the timecode kind has ONE parameter — fps; Text has
+  font, size, alignment, anchor, colour, animations and curves"): "Timecode = a mode of the text"
+  (the recommended option). G3 → R.72.
+- Question 6 (which generators first; the context — there are 15 kinds, not the 8 the plan said, and
+  new kinds go as plugins after plugin-api-stage1): all four groups — backgrounds, shapes and plates,
+  technical, audio-reactive — and verbatim: «только делай их не как в 90x, а чтобы еще и нормальные
+  варианты, современные были. стили вообщем» — "only don't make them like in the 90s, there must
+  also be normal, modern variants. Styles, in short". G5 → R.72: every new kind ships with modern
+  style presets.
+
 **Lesson (repeated twice in one session — questions 1 and 4):** a question to the owner carries its
 context IN the question: his own words from the file, what is already done, and what each option
 means for the program. A question that names only a round number or a mechanism ("R.59", "public
