@@ -6310,6 +6310,8 @@ fn welcome_project(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
 ///   opens directly, no window
 #[test]
 fn t986_welcome_window_templates_recent_whats_new_and_the_switch() {
+    // the lesson sandbox is built by kt_model::demo, which uses plugin effects (one test per process)
+    crate::plugins::install();
     use crate::i18n::{k, tr};
     use egui_kittest::kittest::Queryable;
     let store_dir = welcome_store("t986-store");

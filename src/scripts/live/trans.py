@@ -47,7 +47,10 @@ def main(out):
             base = app.pixel(cx + dx, cy)
             # the cursor in the middle of the transition window
             app.click(app.x_at(4 * SEC), app.ruler_y())
-            app.near(app.playhead(), 4 * SEC, 6000, "cursor placed in the middle of the transition")
+            # wait for the program, not a raw read: the first frame after the click compiles the
+            # transition pipeline on llvmpipe (0.3 s with the 32 assembled kinds), and the dump read
+            # in it still held the former position
+            app.wait_playhead(lambda t: abs(t - 4 * SEC) <= 6000, "cursor placed in the middle of the transition")
             right = app.pixel_settled((cx + dx, cy), differs_from=base)
             left = app.pixel_settled((cx - dx, cy))
             app.shot(f"mid-{tag}")
