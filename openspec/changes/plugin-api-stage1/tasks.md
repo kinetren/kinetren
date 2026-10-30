@@ -270,6 +270,10 @@ once (English message, first line = the stage and what was done).
 
 ## 5. Transitions
 
+- [x] 5.0 Freeze the kinds' pixels before any moves: t1019 (`src/libs/kt-engine/tests/trans_plugin.rs`)
+    prints, per kind, `TransMix::of` (defaults and every number row at 70 %), `trans_ext` and the
+    bytes of `mix_into` at five phases over a pair and both solo fades; red with the rounding of
+    `mix_into` moved (29 kinds)
 - [ ] 5.1 Move the 33 kinds into `transitions-basic`, `transitions-styled`, `transitions-volume`; the composite's `trans` dispatch assembled from the registry; `put_mix` hashes the id. Verify t223, t224, t459, t468, t222 green and the transition window form (t780); t973 extended; commit stage 5
 
 ## 6. Generators
