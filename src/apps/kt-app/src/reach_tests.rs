@@ -6630,3 +6630,49 @@ fn t989_the_guide_finds_where_and_opens_the_page() {
     assert!(h.query_all_by_label_contains("play / pause").count() > 0, "the key table is not shown");
     set_lang(Lang::Ru);
 }
+
+/// Test 984b (welcome-window-and-tour, found by the live `nestdead`): the project name, the root
+/// crumb, answers a click where it is DRAWN — past the left column's edge too. The fourth menu
+/// (Help) pushed the title right; `ui.interact` clipped its click area to the column, and the
+/// only way "straight to the root" died while the harness stayed green.
+///
+/// - **PATH** enter a reel → the header reads "<project> › Reel", the project name running past
+///   the left column over the preview → click the part of the name past the column's edge → the
+///   editor is back at the project's root
+#[test]
+fn t984b_the_root_crumb_answers_past_the_column_edge() {
+    use egui_kittest::kittest::Queryable;
+    let (mut h, s) = crate::layout_tests::harness_news_template();
+    let help = crate::i18n::tr(crate::i18n::k::help::TITLE);
+    h.state_mut().enter_nest(s.a);
+    h.step();
+    h.step();
+    assert_eq!(h.state().nest_path.len(), 1, "did not get inside the reel");
+    let help_rect = h.get_by_label(help).rect();
+    let column = egui::containers::panel::PanelState::load(&h.ctx, egui::Id::new("left_col"))
+        .expect("the left column")
+        .outer_rect;
+    // the title starts 10 points after the last menu; aim at a point of it past the column edge
+    let title_left = help_rect.right() + 10.0;
+    let x = (column.right() + 6.0).max(title_left + 4.0);
+    let pos = egui::pos2(x, help_rect.center().y);
+    assert!(pos.x > column.right(), "the probe point must lie past the column edge");
+    h.event(egui::Event::PointerMoved(pos));
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+    assert!(
+        h.state().nest_path.is_empty(),
+        "a click on the project name past the column edge ({pos:?}, column ends at {}) did not lead \
+         to the root",
+        column.right()
+    );
+}

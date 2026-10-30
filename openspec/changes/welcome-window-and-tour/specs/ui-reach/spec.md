@@ -64,6 +64,16 @@ separate window — no" is revised by this request (design, D1).
   project opens directly, no window
 - **TEST** t986 (`src/apps/kt-app/src/reach_tests.rs`)
 
+#### Scenario: The project name answers where it is drawn, past the left column too
+- **WHEN** inside a reel the header's project name (the root crumb) runs past the left column over
+  the preview — the menu row now has four items — and the person clicks the part past the edge
+- **THEN** the editor leaves to the project's root: the crumbs take their clicks on the title's own
+  layer with the screen as the clip, so a click is not clipped to the column (found by the live
+  scenario `nestdead` after Help joined the menu row)
+- **PATH** enter a reel → the header reads "<project> › Reel", the project name running past the
+  left column → click the part of the name past the column's edge → the editor is at the root
+- **TEST** t984b (`src/apps/kt-app/src/reach_tests.rs`)
+
 ### Requirement: The tour is lessons in their own view; a step closes on the project's state
 The tour SHALL be a set of lessons shown in a docked side panel of the main window (it narrows the
 editor, it does not cover it); a lesson is an ordered list of steps, each a short paragraph of the

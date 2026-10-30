@@ -1174,7 +1174,8 @@ mod records_tests {
             .collect();
         names.sort();
         assert!(
-            names.iter().all(|n| n == "edit.kt" || n.ends_with(".ktindex.db") || n.ends_with(".ktindex.db-journal")),
+            // the project's own sidecar (with its WAL files) is the project's, not the poster's
+            names.iter().all(|n| n == "edit.kt" || n.starts_with("edit.ktindex.db")),
             "a poster file appeared next to the project: {names:?}"
         );
         assert!(!names.iter().any(|n| n.ends_with(".png")), "a PNG in the project folder: {names:?}");

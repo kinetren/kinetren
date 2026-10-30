@@ -190,7 +190,19 @@ impl KtApp {
         // THE PROJECT NAME ITSELF is the first crumb: by clicking it, the person
         // goes to the root in one movement. Without this a path of depth 1 would have no
         // clickable crumbs at all.
-        let root_hit = ui.interact(
+        // The title and the crumbs SPILL past the column over the preview (the user's decision),
+        // and `ui.interact` clips a click area to the column: once the menu row grew a fourth
+        // item (Help), the project name moved past the column's edge and stopped answering
+        // (live `nestdead`). The clicks live where the text is drawn — on the title's own layer,
+        // with the screen as the clip; no new layer appears (`no_teaching_layer_over_the_ui`).
+        let screen = ui.ctx().content_rect();
+        let mut over = ui.new_child(
+            egui::UiBuilder::new()
+                .layer_id(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("project-title")))
+                .max_rect(screen),
+        );
+        over.set_clip_rect(screen);
+        let root_hit = over.interact(
             title_at.expand2(egui::vec2(2.0, 3.0)),
             ui.id().with("crumb-root"),
             egui::Sense::click(),
@@ -221,7 +233,7 @@ impl KtApp {
                 col,
             );
             x = r.right() + 2.0;
-            let hit = ui.interact(
+            let hit = over.interact(
                 r.expand2(egui::vec2(2.0, 3.0)),
                 ui.id().with(("crumb", i)),
                 egui::Sense::click(),
