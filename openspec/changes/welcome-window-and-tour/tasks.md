@@ -66,5 +66,7 @@ done).
 
 ## 7. Finish
 
-- [ ] 7.1 Run `./scripts/finish.sh` from `src/`; record the version `vYY.MM.DD-hash` and the live screenshots of 6.1 in the report
+- [x] 7.1 Run `./scripts/finish.sh` from `src/`; record the version `vYY.MM.DD-hash` and the live screenshots of 6.1 in the report
+  - `KT_LIVE_DISPLAY=:173 ./scripts/finish.sh` green on f57a1345: VERSION kt26.10.30-f57a1345; workspace tests ok; SIMD ok; live scenarios 54/54 green (some on the second try — the parallel sessions' load); coverage 80/80. The first run was red twice in `nestdead`: the fourth menu (Help) pushed the project-name crumb past the left column and `ui.interact` clipped its click — fixed (the crumbs take clicks on the title's own layer), t984b added. Live steps of 6.1: `target/live-out/welcome/01-step-first-start.png` … `12-step-switch-back.png`.
 - [ ] 7.2 After archiving: F-HLP-027/028 verdict lines name `CAPABILITY: openspec/specs/ui-reach/`; append the "why" (D1, D2 revisions, D3 in-viewport, D5 posters outside the tree, D8 the lesson sandbox) to `openspec/specs/ui-reach/design.md` and `openspec/specs/durability/design.md`
+  - Not done: it follows the archive, and the archive waits for 3.5 (update-check) or the owner's decision to archive without it.
