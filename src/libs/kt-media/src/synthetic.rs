@@ -147,43 +147,50 @@ impl SyntheticSource {
     }
 
     /// The sample value `n` of channel `ch` for the pattern — the reference for assertions in tests.
+    /// The same per-pattern functions fill the bursts, so the reference and the source agree byte
+    /// for byte.
     pub fn sample_at(pattern: AudioPattern, n: i64, ch: usize) -> f32 {
         match pattern {
             AudioPattern::Silence => 0.0,
-            AudioPattern::Sine { hz } => {
-                (0.5 * (2.0 * std::f64::consts::PI * hz * n as f64 / AUDIO_SAMPLE_RATE as f64)
-                    .sin()) as f32
-            }
-            AudioPattern::Ramp => {
-                let v = n as f32 * 1e-6;
-                if ch == 0 { v } else { -v }
-            }
+            AudioPattern::Sine { hz } => sine(hz, n),
+            AudioPattern::Ramp => ramp(n, ch),
             AudioPattern::Dc { value } => value,
-            AudioPattern::Impulse => {
-                if n == 0 {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-            AudioPattern::Clicks => {
-                if n >= 0 && n % 4800 < 4 && ((n / 4800) % 2) as usize == ch {
-                    0.8
-                } else {
-                    0.0
-                }
-            }
-            AudioPattern::ClicksBed => {
-                let click = if n >= 0 && n % 4800 < 4 && ((n / 4800) % 2) as usize == ch {
-                    0.8
-                } else {
-                    0.0
-                };
-                let bed = 0.02
-                    * (2.0 * std::f64::consts::PI * 200.0 * n as f64 / AUDIO_SAMPLE_RATE as f64)
-                        .sin() as f32;
-                click + bed
-            }
+            AudioPattern::Impulse => impulse(n),
+            AudioPattern::Clicks => clicks(n, ch),
+            AudioPattern::ClicksBed => clicks_bed(n, ch),
+        }
+    }
+}
+
+fn sine(hz: f64, n: i64) -> f32 {
+    (0.5 * (2.0 * std::f64::consts::PI * hz * n as f64 / AUDIO_SAMPLE_RATE as f64).sin()) as f32
+}
+
+fn ramp(n: i64, ch: usize) -> f32 {
+    let v = n as f32 * 1e-6;
+    if ch == 0 { v } else { -v }
+}
+
+fn impulse(n: i64) -> f32 {
+    if n == 0 { 1.0 } else { 0.0 }
+}
+
+fn clicks(n: i64, ch: usize) -> f32 {
+    if n >= 0 && n % 4800 < 4 && ((n / 4800) % 2) as usize == ch { 0.8 } else { 0.0 }
+}
+
+fn clicks_bed(n: i64, ch: usize) -> f32 {
+    let bed = 0.02
+        * (2.0 * std::f64::consts::PI * 200.0 * n as f64 / AUDIO_SAMPLE_RATE as f64).sin() as f32;
+    clicks(n, ch) + bed
+}
+
+/// One burst of one pattern: `sample` is a single arm, so the loop holds that arm's arithmetic only.
+#[inline(always)]
+fn fill(data: &mut [f32], base: i64, sample: impl Fn(i64, usize) -> f32) {
+    for f in 0..AUDIO_BURST_FRAMES {
+        for ch in 0..AUDIO_CHANNELS {
+            data[f * AUDIO_CHANNELS + ch] = sample(base + f as i64, ch);
         }
     }
 }
@@ -211,11 +218,20 @@ impl MediaSource for SyntheticSource {
             return Err(MediaError::OutOfRange);
         }
         let mut burst = AudioBurst::silence(idx);
-        for f in 0..AUDIO_BURST_FRAMES {
-            for ch in 0..AUDIO_CHANNELS {
-                burst.data[f * AUDIO_CHANNELS + ch] =
-                    Self::sample_at(self.pattern, base + f as i64, ch);
-            }
+        // The pattern is matched ONCE per burst (slowed-reverb-bimodal-cost). Matched per sample,
+        // the compiler hoisted the `Sine` arm's sin() out of the match and ran it for every
+        // pattern on the `hz` bytes, which a dataless variant leaves as its stack frame had them:
+        // a subnormal there cost every sample microcode assists, and a Clicks burst 6.5 times as
+        // much, at random from one source to the next (t991).
+        let data = &mut burst.data[..];
+        match self.pattern {
+            AudioPattern::Silence => {}
+            AudioPattern::Sine { hz } => fill(data, base, |n, _| sine(hz, n)),
+            AudioPattern::Ramp => fill(data, base, ramp),
+            AudioPattern::Dc { value } => fill(data, base, |_, _| value),
+            AudioPattern::Impulse => fill(data, base, |n, _| impulse(n)),
+            AudioPattern::Clicks => fill(data, base, clicks),
+            AudioPattern::ClicksBed => fill(data, base, clicks_bed),
         }
         Ok(burst)
     }

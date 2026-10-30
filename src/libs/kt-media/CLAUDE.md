@@ -9,6 +9,13 @@ Media sources: the trait `MediaSource`, `SyntheticSource` (tests), `FfmpegSource
 - `read_audio_burst(idx)` is sample-accurate: burst idx covers the samples [idx·1024, (idx+1)·1024) from the start of the audio stream. Checked by the conformance test 10 (== decoding from scratch).
 - An instance of `MediaSource` is owned by one thread (`&mut self`) — the scheduler of kt-engine, not the crate itself, guarantees exclusivity.
 - `SyntheticSource` lives in the main crate (not under cfg(test)) and counts the calls (`audio_reads`/`video_reads`) — the regressions "zero decodes" (tests 13, 15) are built on this.
+- **A burst dispatches on its pattern ONCE, not per sample** (slowed-reverb-bimodal-cost). A
+  per-sample `match` over an enum with float payloads lets the compiler hoist one arm's pure math
+  (`sin`) out of the match and run it for EVERY variant, on the payload bytes a dataless variant
+  leaves from its stack frame. The bytes do not move, the cost does: a subnormal there made a
+  `Clicks` burst 6.5 times as expensive at random, and a whole audio measurement bimodal (104 or
+  415 ms). Each arm fills the burst with its own loop (`fill(data, base, arm)`); `sample_at`
+  calls the same arm functions, so the reference and the source agree byte for byte (t991).
 - `CheckerSource` (R.46) — a source with a REAL native size: stripes of 2 px in the native size and honest box minification. It is needed where SHARPNESS is measured: `SyntheticSource` draws a fill at any requested size, its `info.width/height` are fictitious, and the loss of detail on decoding in Quality cannot be expressed on it (t312-t317, t315).
 - The specifics of rsmpeg do not go beyond the crate; a change of the FFmpeg major does not touch the rest of the code.
 - **Parsing of pseudo-paths (`synth:`, `gen:`) — ONLY in `factory.rs`** (R.52). Before the factory, the parsing of `synth:` lived in kt-app and kt-cli and diverged by case (footnote to item 211): "synth:Ramp" was silently taken for a missing file. Rules: the parsing is case-insensitive; a broken pseudo-path is an honest `Err`, it does not go to FFmpeg; no new copies of the parsing are to be created — `open_pseudo`/`open_indexed`, the predicate — `kt_model::is_pseudo_path`.

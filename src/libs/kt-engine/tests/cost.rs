@@ -338,3 +338,109 @@ fn t710_a_formula_on_one_event_does_not_tax_the_project() {
     assert_eq!(before, after, "project without formulas stopped being deterministic");
     assert!(rms(&before) > 1e-4, "the reference must not be silence");
 }
+
+/// `AudioPattern::Clicks` whose UNUSED bytes (the `Sine { hz }` payload) hold `garbage`. A value
+/// built in the program gets there whatever its stack frame held: in the measurement of
+/// `slowed-reverb-bimodal-cost` it was a stack address, 6.77e-310 as an f64 — a subnormal.
+fn clicks_over(garbage: f64) -> AudioPattern {
+    let mut m = std::mem::MaybeUninit::<AudioPattern>::uninit();
+    // SAFETY: the bytes are written first, then a valid value over them; a dataless variant
+    // writes its tag and leaves the rest of the bytes as they were
+    unsafe {
+        let words = m.as_mut_ptr() as *mut f64;
+        for k in 0..std::mem::size_of::<AudioPattern>() / 8 {
+            words.add(k).write_unaligned(garbage);
+        }
+        m.as_mut_ptr().write(AudioPattern::Clicks);
+        m.assume_init()
+    }
+}
+
+/// Test 991 (slowed-reverb-bimodal-cost): the cost of a synthetic burst does not depend on bytes
+/// its pattern does not use.
+///
+/// One Slowed+Reverb slot at rate 12.8 cost ~104 or ~415 ms per 10 s at random from one process
+/// run (and one render) to the next. The reverb cost 24 ms in both modes; the difference was the
+/// SOURCE: `read_audio_burst` matched the pattern per sample, and the compiler hoisted the `Sine`
+/// arm's `sin(2π·hz·n/48000)` out of the match, computing it for `Clicks` too on the payload's
+/// leftover bytes. When they were a subnormal, every sample paid microcode assists: 2000 bursts
+/// cost 6.5 times as much (52 → 341 ms, release). The proxy: the same source with a dirty and a
+/// clean payload gives the same bytes at the same cost (best of 5, interleaved; the threshold 2×
+/// is far from both 1× and 6.5×).
+#[test]
+fn t991_a_synthetic_burst_costs_the_same_whatever_its_unused_bytes() {
+    use kt_media::MediaSource;
+    let read = |pattern: AudioPattern| -> (f64, u64) {
+        let mut src = SyntheticSource::new(Tick(90_000 * 600), pattern);
+        let mut h = 0u64;
+        let t = std::time::Instant::now();
+        for idx in 0..2000 {
+            let b = src.read_audio_burst(idx).unwrap();
+            h = h.rotate_left(5)
+                ^ b.data.iter().fold(0u64, |a, v| a.rotate_left(1) ^ v.to_bits() as u64);
+        }
+        (t.elapsed().as_secs_f64(), h)
+    };
+    let (mut dirty, mut clean) = (f64::INFINITY, f64::INFINITY);
+    for _ in 0..5 {
+        let (td, hd) = read(clicks_over(6.77e-310));
+        let (tc, hc) = read(clicks_over(0.0));
+        assert_eq!(hd, hc, "the unused bytes of a pattern changed its sound");
+        dirty = dirty.min(td);
+        clean = clean.min(tc);
+    }
+    assert!(
+        dirty < clean * 2.0,
+        "a Clicks burst whose unused bytes hold a subnormal costs {:.1} ms against {:.1} ms: \
+         another pattern's arithmetic runs per sample on them",
+        dirty * 1e3,
+        clean * 1e3
+    );
+}
+
+/// t991's `--ignored` twin: the release cost of the lone Slowed+Reverb slot (every number row at
+/// 70 % of its range: rate 12.8, reverb_delay_ms 350.3, …) over 10 s of `synth:clicks`, best of 5,
+/// printed for a clean and for a dirty pattern payload (not asserted — design D3).
+/// `cargo test --release -p kt-engine --test cost -- --ignored --nocapture t991`, repeated over
+/// process runs, must show ONE mode.
+#[test]
+#[ignore]
+fn t991_bench_lone_slowed_reverb_cost() {
+    let mut fx = slowed();
+    let specs: Vec<_> =
+        fx.param_specs().iter().filter(|s| s.ty == ParamType::Num).cloned().collect();
+    for spec in specs {
+        fx.set_param(&spec.name, spec.min + 0.7 * (spec.max - spec.min));
+    }
+    let mut p = base(1);
+    p.media[0] = MediaRef::new(MediaId(1), "synth:clicks");
+    let c = &mut p.clips[0];
+    c.fx = vec![fx];
+    c.reversed = false;
+    c.start = Tick(0);
+    c.source_in = Tick(0);
+    c.duration = Tick::from_audio_frames(480_000);
+    p.validate().unwrap();
+    for (label, garbage) in [("clean payload", 0.0), ("dirty payload", 6.77e-310)] {
+        let best = (0..5)
+            .map(|_| {
+                let r = AudioRenderer::new(&p);
+                let mut store = FxStateStore::new();
+                r.sync_fx(&mut store);
+                let mut f = DirectFetcher::new(None);
+                f.add_source(
+                    MediaId(1),
+                    Box::new(SyntheticSource::new(Tick(90_000 * 600), clicks_over(garbage))),
+                );
+                let mut out = vec![0f32; 480_000 * CH];
+                let t = std::time::Instant::now();
+                r.render_frames_with(&mut f, &mut store, 0, &mut out);
+                t.elapsed().as_secs_f64()
+            })
+            .fold(f64::INFINITY, f64::min);
+        println!(
+            "t991_bench: lone slowed_reverb at 70 %, 10 s, {label}: {:.1} ms (best of 5)",
+            best * 1e3
+        );
+    }
+}
