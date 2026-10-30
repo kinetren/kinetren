@@ -2103,6 +2103,33 @@ The plugin-api-stage1 scope questions (2026-10-30), the owner's answers:
   the morpher's strength marker LayerMix, and CamMotion, a form that exists only to be converted
   on reading.
 
+## Richer telemetry: identify, instances, activity (2026-10-28)
+
+> Я бы хотел расширить аналитику, сделать чтобы в posthog работал identify, передавать версию
+> программы, исполнение(win/lin), OS, а еще - чтобы в PH шел не только глобальный uuid, но было
+> различие между инстансами kinetren (типо вот запустили два инстанса на одном компе и
+> поработали, вот закидывали исходники в одном и проигрывали, а в другом вот закрыли почти
+> сразу). А то сейчас мало инфы передаем.
+> Это только как пример я сказал, ты может большее предложишь.
+
+**Answers (AskUserQuestion, 2026-10-28):** activity — *counters + a heartbeat* (separate events
+only for rare milestones; frequent actions are counters in a 5-minute heartbeat and in
+`app_closed`); extra data — *all four offered*: hardware and graphics, FFmpeg, crashes, export
+and project. On re-showing the notice:
+
+> Нет не показывать, и давай мы вообще отключим это окно впринципе - ограничимся колокольчиком.
+> И имей ввиду - что везде где мы писали про телеметрию - нужно конечно обновить информацию, но
+> не надо пугать юзеров.
+> В окне (хоть его и отрубаем) - тоже обнови инфу и тоже не пугай юзеров. Где можно - делаем
+> все под спойлеры, чтобы не пугать.
+
+**Taken as:** the first-start telemetry message lives ONLY in the bell (no status-line headline;
+the notices window never opened by itself and still does not); it is not shown again to those
+who saw the old list; every text about telemetry (bell entry, View hint, README) is updated in
+a calm tone with the detailed lists under a spoiler. Instances: every run already carries its
+own `$session_id`; the change adds what tells them apart in PostHog (activity, concurrent
+instances). Change `openspec/changes/telemetry-identify-activity`.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

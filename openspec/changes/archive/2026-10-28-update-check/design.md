@@ -91,9 +91,11 @@ recorded and the next start asks again. The thread is detached; exit is never de
 `draw_all` appends `" (" + tr(k::update::OUTDATED) + ")"` — the parentheses live in the catalog
 entry, so Arabic and Chinese can use their own — to the title when `outdated()`; the OS title
 gets the whole string. `toolbar.rs` paints the base title as today and, when outdated, the word
-right after it in the warning colour the bell uses, with its own hover rect → `self.hint(…)`
-showing the new version and the releases address (rule 10: one hint, in the status bar); the
-crumbs start after the word. `KtApp` keeps `title_outdated: bool` next to `last_title` instead of
+right after it in the warning colour the bell uses; hovering it puts the new version and the
+releases address into `hover_hint` (rule 10: one hint, in the status bar); the crumbs start
+after the word. The hover is a pointer hit-test of the word's rect (no popup layer above it),
+not a widget: the title spills over the preview by the user's earlier decision, and the
+preview's widgets, interacted later, won the hover — found by t875. `KtApp` keeps `title_outdated: bool` next to `last_title` instead of
 re-parsing the string.
 
 ### D8. One notice, info severity, text from one catalog entry

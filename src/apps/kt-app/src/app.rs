@@ -2,6 +2,7 @@
 
 use crate::audio_out;
 use crate::i18n::{k, tr};
+use crate::telemetry::OpenHow;
 use crate::timeline::{CtxTarget, Drag};
 use crate::util::*;
 use eframe::egui;
@@ -78,6 +79,9 @@ pub struct Notice {
     pub text: String,
     /// How many times in a row this same message came (shown as “×N”).
     pub repeats: u32,
+    /// More text under a collapsed "Details" (the telemetry entry): the line stays calm and
+    /// short, the rest is one click away.
+    pub details: Option<String>,
 }
 
 /// The result of the background reopening: media, a name for the message and the source
@@ -275,6 +279,9 @@ pub struct KtApp {
     /// rebuild `KtApp` in place and pick the same value up from `telemetry::global()`, so a
     /// new document never sends a second `app_started`. `None` in the harness.
     pub telemetry: Option<std::sync::Arc<crate::telemetry::Telemetry>>,
+    /// The daily new-version check (change update-check). One per PROCESS for the same reason
+    /// as telemetry: a rebuilt `KtApp` must neither ask nor say it again. `None` in the harness.
+    pub update: Option<std::sync::Arc<crate::update_check::Checker>>,
     /// Moment of the last pause (double Space = stop, item 15 round 6).
     pub paused_at: Option<std::time::Instant>,
     /// Space held down since this moment (item 3 round 16). None = not held.
@@ -358,6 +365,8 @@ pub struct KtApp {
     pub fader_grab: Option<f32>,
     /// Last sent window title (we send Title only on change).
     pub(crate) last_title: String,
+    /// `last_title` ends with the translated "(outdated)" word (the title row paints it apart).
+    pub(crate) title_outdated: bool,
     /// Reusable buffer of the preview composition (no per-frame allocations).
     pub(crate) preview_buf: Vec<u8>,
     /// Throttling of the glow mip: every N new frames (ambient does not flicker).
@@ -785,6 +794,7 @@ impl KtApp {
         // every KtApp reads projects: the built-in plugin set first (a no-op after `run` did it)
         crate::plugins::install();
         let startup_error = error;
+        crate::telemetry::signal(crate::telemetry::Signal::ProjectOpened(OpenHow::New, &project));
         let project2 = project.clone();
         let (player, audio, _, _) = Self::build_player(&project, None, None);
         let peaks: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -831,6 +841,7 @@ impl KtApp {
             ui_economy: false,
             lang_choice: None,
             telemetry: crate::telemetry::global(),
+            update: crate::update_check::global(),
             paused_at: None,
             space_down_at: None,
             space_boost: None,
@@ -867,6 +878,7 @@ impl KtApp {
             bin_card_rects: Vec::new(),
             fader_grab: None,
             last_title: String::new(),
+            title_outdated: false,
             preview_buf: Vec::new(),
             glow_skip: 0,
             gpu_info: None,
@@ -1000,6 +1012,7 @@ impl KtApp {
 
     pub(crate) fn open(path: &Path) -> Result<KtApp, String> {
         let (project, retained, notices) = load_project_file(path)?;
+        crate::telemetry::signal(crate::telemetry::Signal::ProjectOpened(OpenHow::Open, &project));
         Self::open_loaded(path, project, retained, notices)
     }
 
@@ -1028,6 +1041,7 @@ impl KtApp {
             }
             Err(e) => return Err(e.to_string()),
         };
+        crate::telemetry::signal(crate::telemetry::Signal::ProjectOpened(OpenHow::Import, &b.project));
         let mut app = Self::open_loaded(path, b.project, b.retained, b.notices)?;
         app.project_path = None;
         app.save_hint = Some(path.with_extension(kt_model::project_file::EXTENSION));
@@ -1104,6 +1118,7 @@ impl KtApp {
             ui_economy: false,
             lang_choice: None,
             telemetry: crate::telemetry::global(),
+            update: crate::update_check::global(),
             paused_at: None,
             space_down_at: None,
             space_boost: None,
@@ -1140,6 +1155,7 @@ impl KtApp {
             bin_card_rects: Vec::new(),
             fader_grab: None,
             last_title: String::new(),
+            title_outdated: false,
             preview_buf: Vec::new(),
             glow_skip: 0,
             gpu_info: None,
@@ -1519,14 +1535,28 @@ impl KtApp {
         if crate::bench::enabled() {
             crate::bench::note_inputs(ui.ctx().input(|i| i.events.len()) as u64);
         }
-        // Telemetry (telemetry-posthog): `app_started` once per process on the first frame,
-        // and the first-start notice once — it lists what is sent and what is NOT sent and
-        // says where it is switched off (rule 19). After the first frame this is two atomics.
-        if let Some(t) = self.telemetry.clone()
-            && t.frame(crate::i18n::current().code())
-        {
-            self.push_notice(Severity::Info, crate::telemetry::notice_text());
-            self.status = Some((tr(k::telemetry::HEADLINE).to_string(), std::time::Instant::now()));
+        // Telemetry through its one door (telemetry-identify-activity, D5): the first frame
+        // starts the session, every later one is a few atomics. The first-start notice once —
+        // it lists what is sent and what is NOT sent and says where it is switched off (rule 19).
+        let playing = self.player.transport.is_playing();
+        crate::telemetry::signal(crate::telemetry::Signal::Frame { ctx: ui.ctx(), playing });
+        // The bell only: no status-line headline, no window (owner, 2026-10-28).
+        if self.telemetry.as_ref().is_some_and(|t| t.take_notice()) {
+            let details = Some(crate::telemetry::notice_details());
+            self.push_notice_with(Severity::Info, crate::telemetry::notice_text(), details);
+        }
+        // The daily new-version check (update-check): started once per process on the first
+        // frame; the answer comes back from its thread with ONE repaint. A newer release is one
+        // notice in the bell — never a window at start (the owner's words) — and the title word.
+        if let Some(u) = self.update.clone() {
+            if !u.has_started() {
+                let ctx = ui.ctx().clone();
+                let today = crate::update_check::utc_day(std::time::SystemTime::now());
+                u.start(&today, Box::new(move || ctx.request_repaint()));
+            }
+            if let Some(new) = u.take_notice() {
+                self.push_notice(Severity::Info, crate::update_check::notice_text(&new, u.own()));
+            }
         }
         let ctx = ui.ctx().clone();
         // Loss of the video GPU executor in the middle of a session (DeviceLost) —
@@ -1547,15 +1577,19 @@ impl KtApp {
         let ui = &mut root;
         // project name — in the window title (item 19 round 6), not every frame
         // name WITHOUT extension (item 5 round 12: “.ktproj” is clear anyway) and build
-        // version: in debug the full vYY.MM.DD-hash, in release the short ktYY.MM
+        // version: in debug the full vYY.MM.DD-hash, in release the short ktYY.MM; a newer
+        // release adds a short word after the version (update-check, owner 2026-10-27)
+        self.title_outdated = self.update.as_ref().is_some_and(|u| u.is_outdated());
         let title = format!(
-            "{}{} — {}",
+            "{}{} — {}{}{}",
             self.project_path
                 .as_ref()
                 .and_then(|p| p.file_stem().map(|n| n.to_string_lossy().to_string()))
                 .unwrap_or_else(|| tr(k::win::UNTITLED).to_string()),
             if self.dirty_content { " *" } else { "" },
-            kt_version::display()
+            kt_version::display(),
+            if self.title_outdated { " " } else { "" },
+            if self.title_outdated { tr(k::update::OUTDATED) } else { "" }
         );
         if title != self.last_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -2183,7 +2217,7 @@ impl KtApp {
                     if self.notices.is_empty() {
                         ui.weak(tr(k::win::NOTICES_EMPTY));
                     }
-                    for n in self.notices.iter().rev() {
+                    for (i, n) in self.notices.iter().enumerate().rev() {
                         let col = match n.severity {
                             Severity::Warn => egui::Color32::from_rgb(255, 190, 120),
                             Severity::Info => egui::Color32::from_gray(200),
@@ -2195,6 +2229,18 @@ impl KtApp {
                                 ui.weak(format!("×{}", n.repeats));
                             }
                         });
+                        // the rest of a long notice — collapsed until asked for
+                        if let Some(d) = &n.details {
+                            let r = egui::CollapsingHeader::new(tr(k::win::DETAILS))
+                                .id_salt(("kt_notice_details", i, &n.at))
+                                .default_open(false)
+                                .show(ui, |ui| ui.label(d));
+                            crate::widgets::field_probe::note("notices.details", r.header_response.rect);
+                            // the open part, for the live scenario's verdict (telemetry.py)
+                            if let Some(b) = &r.body_response {
+                                crate::widgets::field_probe::note("notices.details_body", b.rect);
+                            }
+                        }
                     }
                 });
             if win.closed() {
@@ -3082,6 +3128,7 @@ impl KtApp {
         let Some(c) = self.recovery_offer.get(i).cloned() else { return };
         match load_project_file(&c.path) {
             Ok((project, retained, notices)) => {
+                crate::telemetry::signal(crate::telemetry::Signal::ProjectOpened(OpenHow::Recovery, &project));
                 self.model = kt_model::TimelineModel::new(project);
                 self.retained = retained;
                 self.model_rev += 1;
@@ -3859,6 +3906,10 @@ impl KtApp {
     }
 
     fn push_notice(&mut self, severity: Severity, text: String) {
+        self.push_notice_with(severity, text, None);
+    }
+
+    fn push_notice_with(&mut self, severity: Severity, text: String, details: Option<String>) {
         let at = chrono_like_now();
         // Consecutive duplicates collapse into “text ×N”, but the counter of
         // unread items ALWAYS grows (R.49, item 350): earlier the early return
@@ -3874,7 +3925,7 @@ impl KtApp {
             self.notices_unread += 1;
             return;
         }
-        self.notices.push_back(Notice { at, severity, text, repeats: 1 });
+        self.notices.push_back(Notice { at, severity, text, repeats: 1, details });
         if self.notices.len() > 200 {
             self.notices.pop_front();
         }
@@ -3912,6 +3963,7 @@ impl KtApp {
         self.model_rev += 1;
         // through `apply_batch`, not `apply`: the kinship of born events
         // arrives by ONE path (item 357), and a single cut is no exception
+        crate::telemetry::signal(crate::telemetry::Signal::Command(&cmd, &self.model));
         match self.model.apply_batch(vec![cmd]) {
             Ok(births) => {
                 self.push_project_to_player();
@@ -4026,6 +4078,7 @@ impl KtApp {
         // of this media, not the renderers (otherwise every keypress in the
         // title field would stop the audio-render thread).
         let touches_plan = cmd.touches_render_plan();
+        crate::telemetry::signal(crate::telemetry::Signal::Gesture(&cmd, gesture, &self.model));
         if self.model.apply_coalesced(cmd, gesture).is_err() {
             return false;
         }
@@ -4080,6 +4133,7 @@ impl KtApp {
     pub fn apply_batch(&mut self, cmds: Vec<Command>) -> bool {
         self.model_rev += 1;
         self.warn_shared_band(&cmds);
+        crate::telemetry::signal(crate::telemetry::Signal::Commands(&cmds, &self.model));
         match self.model.apply_batch(cmds) {
             Ok(births) => {
                 self.push_project_to_player();
@@ -5311,6 +5365,7 @@ impl KtApp {
     pub fn undo(&mut self) {
         self.model_rev += 1;
         if self.model.undo().is_ok() {
+            crate::telemetry::signal(crate::telemetry::Signal::Undo);
             self.push_project_to_player();
             self.sync_media_sources();
             self.dirty_content = true;
@@ -5321,6 +5376,7 @@ impl KtApp {
     pub fn redo(&mut self) {
         self.model_rev += 1;
         if self.model.redo().is_ok() {
+            crate::telemetry::signal(crate::telemetry::Signal::Redo);
             self.push_project_to_player();
             self.sync_media_sources();
             self.dirty_content = true;
@@ -5474,6 +5530,7 @@ impl KtApp {
         // with its older snapshot (R.32)
         match write_project_guarded(&self.saved_rev, &path, self.model_rev, &out) {
             Ok(SaveOutcome::Wrote { dir_synced }) => {
+                crate::telemetry::signal(crate::telemetry::Signal::Saved);
                 self.dirty_content = false;
                 self.dirty_ui = false;
                 self.note(crate::tf!(k::msg::SAVED, path.display()));
@@ -7169,6 +7226,7 @@ impl KtApp {
             }))
             .frame(false);
             let bell_resp = ui.add(bell_btn);
+            crate::widgets::field_probe::note("bell", bell_resp.rect);
             self.no_resize_rects.push(bell_resp.rect.expand(2.0));
             if self.hint(bell_resp, tr(k::win::NOTICES_TITLE)).clicked() {
                 self.notices_open = !self.notices_open;
@@ -9146,12 +9204,14 @@ impl eframe::App for KtApp {
                     let info = rs.adapter.get_info();
                     self.gpu_info = Some(format!("{} / {:?}", info.name, info.backend));
                     let name = info.name.to_lowercase();
-                    info.device_type == eframe::wgpu::DeviceType::Cpu
+                    let sw = info.device_type == eframe::wgpu::DeviceType::Cpu
                         || name.contains("llvmpipe")
                         || name.contains("softpipe")
                         || name.contains("swiftshader")
                         // Windows' software rasterizer (WARP)
-                        || name.contains("microsoft basic render")
+                        || name.contains("microsoft basic render");
+                    crate::telemetry::signal(crate::telemetry::Signal::Gpu(&info, sw));
+                    sw
                 })
                 .unwrap_or(false);
             self.sw_render = Some(sw);
@@ -9189,6 +9249,9 @@ impl eframe::App for KtApp {
         if let Some(v) = self.telemetry.as_ref().and_then(|t| t.stored_value()) {
             storage.set_string(crate::telemetry::STORAGE_KEY, v.to_string());
         }
+        if let Some(v) = self.update.as_ref().and_then(|u| u.stored_value()) {
+            storage.set_string(crate::update_check::STORAGE_KEY, v.to_string());
+        }
     }
 
     fn on_exit(&mut self) {
@@ -9214,9 +9277,7 @@ impl eframe::App for KtApp {
         crate::welcome::wait_posters(std::time::Duration::from_secs(3));
         // after the recovery write (durability first): the clean-close event, within a
         // fixed budget; a dead network looks exactly like no telemetry
-        if let Some(t) = &self.telemetry {
-            t.closed(crate::i18n::current().code(), crate::telemetry::EXIT_BUDGET);
-        }
+        crate::telemetry::signal(crate::telemetry::Signal::Exit);
     }
 }
 
@@ -9318,6 +9379,9 @@ pub fn run() -> eframe::Result {
             crate::telemetry::install(crate::telemetry::Telemetry::for_process(
                 cc.storage.and_then(|s| s.get_string(crate::telemetry::STORAGE_KEY)).as_deref(),
             ));
+            crate::update_check::install(crate::update_check::Checker::for_process(
+                cc.storage.and_then(|s| s.get_string(crate::update_check::STORAGE_KEY)).as_deref(),
+            ));
             // THE START ORDER (welcome-window-and-tour D4): the facts first, then one pure
             // decision. The between-projects records live in the user store; the former single
             // `last_project` seeds the recent list once.
@@ -9352,6 +9416,7 @@ pub fn run() -> eframe::Result {
             // last_project pointed to A, and not a line was said about the hour.
             // the previous session crashed — the report lies there and waits (item 355)
             if let Some(p) = crate::journal::take_crash_report() {
+                crate::telemetry::signal(crate::telemetry::Signal::CrashReport(&p));
                 app.warn(crate::tf!(k::msg::PREV_SESSION_CRASHED, p.display()));
             }
             // without FFmpeg the FFmpeg window opens once, with one notice (windows-build)

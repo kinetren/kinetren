@@ -4792,9 +4792,10 @@ fn t832_project_of_the_former_name_comes_in_through_the_import_door() {
     assert_eq!(std::fs::read(&old).unwrap(), before, "the import touched the source");
 }
 
-/// Test 840 (telemetry-posthog): the first-start notice lists what is sent and what is NOT
-/// sent, is said once, and the switch is reachable in View next to Language; unchecking it
-/// is remembered and cancels the session's `app_closed`.
+/// Test 840 (telemetry-posthog, telemetry-identify-activity): the first-start entry lives in
+/// the bell only — one calm line naming the View item, the lists under a collapsed "Details" —
+/// is said once, and the switch is reachable in View next to Language; unchecking it is
+/// remembered and cancels the session's `app_closed`.
 #[test]
 fn t840_telemetry_notice_once_and_switch_in_view() {
     use crate::i18n::{Lang, k, set_lang, tr};
@@ -4803,28 +4804,32 @@ fn t840_telemetry_notice_once_and_switch_in_view() {
     use egui_kittest::kittest::Queryable;
     use std::sync::Arc;
 
-    // every catalog: the notice holds both lists and names the real menu item
+    // every catalog: the summary names the real menu item, the details hold both lists, the
+    // hint carries the summary and what is NOT sent
     for lang in Lang::ALL {
         set_lang(lang);
-        let notice = crate::telemetry::notice_text();
+        let summary = crate::telemetry::notice_text();
+        let details = crate::telemetry::notice_details();
         let hint = crate::telemetry::hint_text(None);
         for part in [tr(k::telemetry::SENT), tr(k::telemetry::NOT_SENT)] {
-            assert!(notice.contains(part) && hint.contains(part), "{lang:?}: {part}");
+            assert!(details.contains(part), "{lang:?}: {part}");
         }
-        let off = tr(k::telemetry::HOW_OFF);
+        assert!(hint.contains(&summary) && hint.contains(tr(k::telemetry::NOT_SENT)), "{lang:?}");
         // Arabic catalog strings come back in display order (words reordered, i18n::bidi):
         // there the item is named when each of its words is present
         let word = |w: &str| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
         let names = |s: &str| {
-            off.contains(s)
-                || s.split_whitespace().all(|w| off.split_whitespace().any(|o| word(o) == word(w)))
+            summary.contains(s)
+                || s.split_whitespace()
+                    .all(|w| summary.split_whitespace().any(|o| word(o) == word(w)))
         };
         assert!(
             names(tr(k::menu::view::TITLE)) && names(tr(k::telemetry::CHECKBOX)),
-            "{lang:?}: the notice must name View and the checkbox: {off}"
+            "{lang:?}: the entry must name View and the checkbox: {summary}"
         );
     }
 
+    set_lang(Lang::En);
     let rec = Recording::default();
     let consent = resolve_consent(Some("phc_test"), &EnvView::default(), None);
     assert!(consent.first_start);
@@ -4832,13 +4837,34 @@ fn t840_telemetry_notice_once_and_switch_in_view() {
         Arc::new(Telemetry::new(consent, new_uuid(), Box::new(rec.clone())).with_key("phc_test"));
     let mut h = crate::layout_tests::harness();
     h.state_mut().telemetry = Some(t.clone());
+    let _bound = crate::telemetry::testing::bind(t.clone());
     for _ in 0..4 {
         h.step();
     }
     let said = |h: &egui_kittest::Harness<'_, crate::app::KtApp>| {
         h.state().notices.iter().filter(|n| n.text == crate::telemetry::notice_text()).count()
     };
-    assert_eq!(said(&h), 1, "the notice is said exactly once");
+    assert_eq!(said(&h), 1, "the entry is said exactly once");
+    let entry = h.state().notices.iter().find(|n| n.text == crate::telemetry::notice_text());
+    assert_eq!(entry.and_then(|n| n.details.clone()), Some(crate::telemetry::notice_details()));
+    let status = h.state().status.as_ref().map(|s| s.0.clone()).unwrap_or_default();
+    assert!(!status.contains("PostHog") && !status.contains(&crate::telemetry::notice_text()), "{status}");
+    assert!(!h.state().notices_open, "nothing pops up");
+
+    // the bell: one calm line, "Details" collapsed; a click opens the lists
+    h.get_by_label(&format!("{} 1", crate::icons::BELL)).click();
+    h.step();
+    h.step();
+    assert!(h.state().notices_open);
+    assert!(h.query_by_label(&crate::telemetry::notice_text()).is_some(), "the calm line");
+    assert!(h.query_by_label_contains(tr(k::telemetry::SENT)).is_none(), "collapsed at first");
+    h.get_by_label(tr(k::win::DETAILS)).click();
+    h.step();
+    h.step();
+    assert!(h.query_by_label_contains(tr(k::telemetry::SENT)).is_some(), "the lists under Details");
+    assert!(h.query_by_label_contains(tr(k::telemetry::NOT_SENT)).is_some());
+    h.state_mut().notices_open = false;
+    h.step();
 
     h.get_by_label(tr(k::menu::view::TITLE)).click();
     h.step();
@@ -4862,11 +4888,11 @@ fn t840_telemetry_notice_once_and_switch_in_view() {
         rec.events().iter().map(|e| e["event"].as_str().unwrap_or("").to_string()).collect();
     assert_eq!(events, ["app_started"], "switched off mid-session: no app_closed");
 
-    // the restart with the stored choice: no second notice, nothing sent
+    // the restart with the stored choice: no second entry, nothing sent
     let consent = resolve_consent(Some("phc_test"), &EnvView::default(), t.stored_value());
     assert!(!consent.first_start && !consent.on());
     let t2 = Telemetry::new(consent, new_uuid(), Box::new(Recording::default()));
-    assert!(!t2.frame("en"), "the notice is not said again");
+    assert!(!t2.take_notice(), "the entry is not said again");
 
     // File → New/Open rebuild KtApp in place: every constructor takes the process telemetry,
     // so a new document never sends a second app_started
@@ -4874,6 +4900,35 @@ fn t840_telemetry_notice_once_and_switch_in_view() {
     let ctors = src.matches("            lang_choice: None,\n").count();
     assert!(ctors >= 2);
     assert_eq!(src.matches("            telemetry: crate::telemetry::global(),\n").count(), ctors);
+}
+
+/// Test 885 (telemetry-identify-activity): who saw the old list is not told again — a stored
+/// `on` from the previous version means "seen" — and the events carry the new properties.
+#[test]
+fn t885_seen_list_is_not_told_again() {
+    use crate::telemetry::testing::Recording;
+    use crate::telemetry::{EnvView, Telemetry, new_uuid, resolve_consent};
+    use std::sync::Arc;
+
+    let rec = Recording::default();
+    let consent = resolve_consent(Some("phc_test"), &EnvView::default(), Some("on"));
+    let t =
+        Arc::new(Telemetry::new(consent, new_uuid(), Box::new(rec.clone())).with_key("phc_test"));
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().telemetry = Some(t.clone());
+    let _bound = crate::telemetry::testing::bind(t.clone());
+    for _ in 0..4 {
+        h.step();
+    }
+    let entries = h.state().notices.iter().filter(|n| n.text == crate::telemetry::notice_text());
+    assert_eq!(entries.count(), 0, "no entry for whoever already chose");
+    assert_eq!(h.state().notices_unread, 0, "the bell stays quiet");
+    eframe::App::on_exit(h.state_mut());
+    let ev = rec.events();
+    let names: Vec<&str> = ev.iter().map(|e| e["event"].as_str().unwrap_or("")).collect();
+    assert_eq!(names, ["app_started", "app_closed"]);
+    assert!(ev[0]["properties"]["$set"].is_object(), "the start identifies: {}", ev[0]);
+    assert!(ev[1]["properties"]["$app_build"].is_string());
 }
 
 /// t850 (windows-build, ui-reach): from the “FFmpeg not found” window to playing media,
@@ -6576,6 +6631,11 @@ fn no_teaching_layer_over_the_ui() {
             if !(t.contains("Order::Foreground") || t.contains("Order::Tooltip") || t.contains("Order::Debug")) {
                 continue;
             }
+            // comparing a layer's order (a hit test: "is the pointer over a window?", the
+            // update-check title word) creates no layer
+            if ["< egui::Order::", "<= egui::Order::", "> egui::Order::", ">= egui::Order::"].iter().any(|c| t.contains(c)) {
+                continue;
+            }
             let near = lines[n.saturating_sub(3)..(n + 3).min(lines.len())].join("\n");
             let name = near
                 .split("Id::new(\"")
@@ -6772,4 +6832,345 @@ fn t984b_the_root_crumb_answers_past_the_column_edge() {
          to the root",
         column.right()
     );
+}
+
+/// Test 875 (update-check, distribution): a newer release reaches the bell ONCE and the title
+/// keeps a short word after the version — no window, no question. A rebuilt `KtApp` (File →
+/// New/Open) keeps the word without a second notice; a second start the same day reads the
+/// stored answer, sends nothing and says nothing.
+#[test]
+fn t875_newer_release_in_the_bell_and_the_title_never_a_window() {
+    use crate::app::{KtApp, Severity};
+    use crate::i18n::{k, tr};
+    use crate::update_check::testing::{Canned, release_json, temp_dir, wait};
+    use crate::update_check::{API_URL, Checker, Consent, notice_text, utc_day};
+    use std::sync::Arc;
+
+    let own = "kt26.10.20-aaaaaaaa";
+    let new = "kt26.11.01-bbbbbbbb";
+    let on = Consent { choice: true, block: None, url: API_URL.into(), ignore_day: false };
+    let dir = temp_dir("t875");
+    let body = release_json("26.11.01", false, false, &["kinetren-26.11.01-bbbbbbbb-linux-x86_64.tar.gz"]);
+    let fetch = Canned::ok(&body);
+    let u = Arc::new(Checker::new(on.clone(), own, dir.clone(), Box::new(fetch.clone())));
+
+    // the same frames without a checker: what is open there is the baseline of "no window"
+    let mut base = crate::layout_tests::harness();
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().update = Some(u.clone());
+    h.step();
+    wait(&u, |u| u.is_outdated());
+    for _ in 0..3 {
+        h.step();
+    }
+    for _ in 0..4 {
+        base.step();
+    }
+    assert_eq!(fetch.calls(), 1, "one request per start");
+    let notice = notice_text(new, own);
+    let said = |h: &egui_kittest::Harness<'_, KtApp>| {
+        h.state().notices.iter().filter(|n| n.text == notice && n.severity == Severity::Info).count()
+    };
+    assert_eq!(said(&h), 1, "exactly one info notice: {:?}", h.state().notices);
+    let (new_day, own_day) = (crate::update_check::day_form(new), crate::update_check::day_form(own));
+    assert!(notice.contains(new_day) && notice.contains(own_day), "{notice}");
+    assert!(notice.contains(crate::update_check::RELEASES_PAGE), "{notice}");
+    assert!(h.state().notices_unread >= 1, "the bell counts it");
+    let word = tr(k::update::OUTDATED);
+    assert!(h.state().last_title.ends_with(&format!(" {word}")), "title: {}", h.state().last_title);
+    assert!(h.state().ask.is_none() && !h.state().notices_open, "no question, no notices window");
+    let windows = |h: &egui_kittest::Harness<'_, KtApp>| {
+        let mut v: Vec<egui::LayerId> = h.ctx.memory(|m| {
+            m.layer_ids().filter(|l| l.order == egui::Order::Middle || l.order == egui::Order::Foreground).collect()
+        });
+        v.sort_by_key(|l| format!("{l:?}"));
+        v
+    };
+    let extra: Vec<_> = windows(&h).into_iter().filter(|l| !windows(&base).contains(l)).collect();
+    assert!(
+        extra.iter().all(|l| l.order == egui::Order::Foreground),
+        "a window opened for the update: {extra:?}"
+    );
+
+    // the word is painted after the version in the title row, and hovering it says which
+    // release is out and where — in the status line
+    let word_rect = painted_texts(&h)
+        .into_iter()
+        .find(|t| t.src == word)
+        .map(|t| t.rect)
+        .expect("the word is painted in the title row");
+    let version_rect = painted_texts(&h)
+        .into_iter()
+        .find(|t| t.src.ends_with(kt_version::display()))
+        .map(|t| t.rect)
+        .expect("the title with the version is painted");
+    assert!(word_rect.left() >= version_rect.right() && (word_rect.center().y - version_rect.center().y).abs() < 2.0);
+    h.hover_at(word_rect.center());
+    h.step();
+    h.step();
+    let (line, _) = h.state().status_line_shown.clone();
+    assert!(line.contains(new_day) && line.contains(crate::update_check::RELEASES_PAGE), "status: {line}");
+
+    // File → New/Open: every constructor takes the process checker (global), so the word
+    // stays and the notice is not said again
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/app.rs")).unwrap();
+    let ctors = src.matches("            lang_choice: None,\n").count();
+    assert_eq!(src.matches("            update: crate::update_check::global(),\n").count(), ctors);
+    *h.state_mut() = KtApp::new_empty(None);
+    h.state_mut().update = Some(u.clone());
+    for _ in 0..3 {
+        h.step();
+    }
+    assert!(h.state().last_title.ends_with(word), "rebuilt app lost the word: {}", h.state().last_title);
+    assert_eq!(said(&h), 0, "a rebuilt app says nothing again");
+    assert_eq!(fetch.calls(), 1);
+
+    // the second start of the same day: the stored answer, no request, no notice
+    assert_eq!(
+        crate::update_check::due_in(&dir, &utc_day(std::time::SystemTime::now())),
+        crate::update_check::Due::No(Some(new.into()))
+    );
+    let fetch2 = Canned::ok(&body);
+    let u2 = Arc::new(Checker::new(on, own, dir.clone(), Box::new(fetch2.clone())));
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().update = Some(u2.clone());
+    for _ in 0..3 {
+        h.step();
+    }
+    assert_eq!(fetch2.calls(), 0, "checked today already: no request");
+    assert!(h.state().last_title.ends_with(word), "title: {}", h.state().last_title);
+    assert_eq!(said(&h), 0, "the bell is not told again the same day");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 878 (update-check, distribution): the switch sits in View right after the telemetry
+/// one, says what is asked and that nothing is downloaded; unchecking it takes the word out
+/// of the title and is remembered — the next start does not ask.
+#[test]
+fn t878_update_switch_in_view_next_to_telemetry() {
+    use crate::i18n::{k, tr};
+    use crate::telemetry::testing::Recording;
+    use crate::telemetry::{EnvView, Telemetry, new_uuid, resolve_consent};
+    use crate::update_check::testing::{Canned, temp_dir};
+    use crate::update_check::{API_URL, Checker, Consent, record_in, utc_day};
+    use egui_kittest::kittest::Queryable;
+    use std::sync::Arc;
+
+    let own = "kt26.10.20-aaaaaaaa";
+    let dir = temp_dir("t878");
+    let today = utc_day(std::time::SystemTime::now());
+    record_in(&dir, &today, Some("kt26.11.01-bbbbbbbb")).unwrap();
+    let on = Consent { choice: true, block: None, url: API_URL.into(), ignore_day: false };
+    let u = Arc::new(Checker::new(on, own, dir.clone(), Box::new(Canned::ok("{}"))));
+    let t = Arc::new(
+        Telemetry::new(
+            resolve_consent(Some("phc_test"), &EnvView::default(), Some("on")),
+            new_uuid(),
+            Box::new(Recording::default()),
+        )
+        .with_key("phc_test"),
+    );
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().update = Some(u.clone());
+    h.state_mut().telemetry = Some(t);
+    for _ in 0..3 {
+        h.step();
+    }
+    let word = tr(k::update::OUTDATED);
+    assert!(h.state().last_title.ends_with(word), "the stored answer marks the title: {}", h.state().last_title);
+
+    h.get_by_label(tr(k::menu::view::TITLE)).click();
+    h.step();
+    h.step();
+    let labels = crate::layout_tests::menu_labels(&mut h);
+    let at = |s: &str| labels.iter().position(|l| l == s);
+    let (tel, upd) = (at(tr(k::telemetry::CHECKBOX)), at(tr(k::update::CHECKBOX)));
+    assert!(upd.is_some() && tel.is_some(), "both switches in View; seen: {labels:?}");
+    assert_eq!(upd, tel.map(|i| i + 1), "the update switch is right after the telemetry one: {labels:?}");
+    let cb = h.get_by_label(tr(k::update::CHECKBOX)).rect();
+    h.hover_at(cb.center());
+    h.step();
+    h.step();
+    let (line, _) = h.state().status_line_shown.clone();
+    assert!(line.contains("GitHub") && line.contains(tr(k::update::CHECKBOX_HINT)), "hint: {line}");
+
+    h.get_by_label(tr(k::update::CHECKBOX)).click();
+    h.step();
+    h.step();
+    assert!(!u.consent().on(), "unchecking switches it off");
+    assert_eq!(u.stored_value(), Some("off"), "the choice is remembered");
+    assert!(!h.state().last_title.contains(word), "the word left the title: {}", h.state().last_title);
+    assert!(painted_texts(&h).iter().all(|t| t.src != word), "the word is not painted any more");
+
+    // the restart with the stored choice: no thread, no word, even with today's answer on disk
+    let c = crate::update_check::resolve_consent(false, &crate::update_check::EnvView::default(), u.stored_value());
+    let fetch = Canned::ok("{}");
+    let u2 = Arc::new(Checker::new(c, own, dir.clone(), Box::new(fetch.clone())));
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().update = Some(u2.clone());
+    for _ in 0..3 {
+        h.step();
+    }
+    assert!(!u2.thread_spawned() && fetch.calls() == 0);
+    assert!(!h.state().last_title.contains(word), "title: {}", h.state().last_title);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 884 (telemetry-identify-activity): the real UI paths move the counters. The person
+/// does ordinary work; the counts come from the one door (`telemetry::signal`) in the apply
+/// wrappers, undo, save and the frame — nothing at the features themselves.
+#[test]
+fn t884_real_ui_paths_move_the_counters() {
+    use crate::i18n::{k, tr};
+    use crate::telemetry::testing::{FakeClock, Recording};
+    use crate::telemetry::{EnvView, Telemetry, new_uuid, resolve_consent};
+    use egui_kittest::kittest::Queryable;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+    let clock = FakeClock::default();
+    let consent = resolve_consent(Some("phc_test"), &EnvView::default(), Some("on"));
+    let t = Arc::new(
+        Telemetry::new(consent, new_uuid(), Box::new(Recording::default()))
+            .with_key("phc_test")
+            .with_clock(clock.clone()),
+    );
+    let _bound = crate::telemetry::testing::bind(t.clone());
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().telemetry = Some(t.clone());
+    h.step();
+
+    // a video and an audio file dropped onto the window: each lands on the timeline
+    #[derive(Debug)]
+    struct Dropped(std::path::PathBuf);
+    impl egui::DroppedFile for Dropped {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            std::fs::read(&self.0).map_err(|e| e.to_string())
+        }
+    }
+    for f in ["testsrc_h264.mp4", "sine48k_stereo.flac"] {
+        let path = std::path::PathBuf::from(crate::util::tests::fixture(f));
+        h.input_mut().dropped_files.push(Arc::new(Dropped(path)));
+        h.step();
+        h.step();
+    }
+    let video = h.state().model.project().clips.iter().find(|c| c.kind == kt_model::ClipKind::Video);
+    let video = video.map(|c| c.id).expect("the dropped video is on the timeline");
+
+    // Blur in the event's FX window: + effect, type, click the name
+    h.state_mut().open_fx_editor(video);
+    h.step();
+    h.step();
+    h.get_by_label(tr(k::fxreg::ADD)).click();
+    h.step();
+    h.step();
+    h.event(egui::Event::Text("blur".into()));
+    h.step();
+    h.step();
+    h.get_by_label("Blur").click();
+    h.step();
+    h.step();
+    let fx = &h.state().model.clip(video).unwrap().fx;
+    assert!(fx.iter().any(|f| matches!(f, kt_model::FxInstance::Blur { .. })), "{fx:?}");
+    h.key_press(egui::Key::Escape);
+    h.step();
+    h.key_press(egui::Key::Escape);
+    h.step();
+
+    // Space, two seconds, Space
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "Space starts playback");
+    clock.advance(Duration::from_secs(2));
+    h.step();
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    assert!(!h.state().player.transport.is_playing());
+
+    // Ctrl+Z, then Ctrl+S into a project file of our own (Linux: Ctrl is also Command)
+    let ctrl = egui::Modifiers { ctrl: true, command: true, ..Default::default() };
+    h.key_press_modifiers(ctrl, egui::Key::Z);
+    h.step();
+    let dir = std::env::temp_dir().join(format!("kt-t884-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    h.state_mut().project_path = Some(dir.join("p.kt"));
+    h.key_press_modifiers(ctrl, egui::Key::S);
+    h.step();
+    h.step();
+    assert!(dir.join("p.kt").exists(), "Ctrl+S wrote the project");
+
+    let s = t.snapshot();
+    assert_eq!(s.media_imported.get("video"), Some(&1), "{s:?}");
+    assert_eq!(s.media_imported.get("audio"), Some(&1), "{s:?}");
+    assert!(s.clips_added >= 1, "{s:?}");
+    assert_eq!(s.fx_added.get("Blur"), Some(&1), "{s:?}");
+    assert_eq!(s.playback_starts, 1, "{s:?}");
+    assert_eq!(s.playback_s, 2, "{s:?}");
+    assert_eq!(s.undos, 1, "{s:?}");
+    assert_eq!(s.saves, 1, "{s:?}");
+    assert!(s.edits >= 3, "{s:?}");
+    assert!(s.active_s > 0, "{s:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 888 (telemetry-identify-activity): the harness app speaks valid PostHog — through the
+/// real `HttpSink` to the local stand-in, which refuses what the ingestion would refuse.
+#[test]
+fn t888_harness_app_speaks_valid_posthog() {
+    use crate::telemetry::testing::FakePostHog;
+    use crate::telemetry::{EnvView, HttpSink, Telemetry, new_uuid, resolve_consent};
+    use std::sync::Arc;
+
+    let ph = FakePostHog::start();
+    let consent = resolve_consent(Some("phc_test"), &EnvView::default(), Some("on"));
+    let sink = Box::new(HttpSink::new(ph.url.clone()));
+    let t = Arc::new(Telemetry::new(consent, new_uuid(), sink).with_key("phc_test"));
+    // bound before the app is built: the new document is the session's first project
+    let _bound = crate::telemetry::testing::bind(t.clone());
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().telemetry = Some(t.clone());
+    h.step();
+    #[derive(Debug)]
+    struct Dropped(std::path::PathBuf);
+    impl egui::DroppedFile for Dropped {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            std::fs::read(&self.0).map_err(|e| e.to_string())
+        }
+    }
+    let video = std::path::PathBuf::from(crate::util::tests::fixture("testsrc_h264.mp4"));
+    h.input_mut().dropped_files.push(Arc::new(Dropped(video)));
+    h.step();
+    h.step();
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    h.key_press(egui::Key::Space);
+    h.step();
+    eframe::App::on_exit(h.state_mut());
+    ph.wait(3);
+
+    assert!(ph.rejected().is_empty(), "the stand-in refused: {:?}", ph.rejected());
+    let ev = ph.accepted();
+    let names: Vec<&str> = ev.iter().map(|e| e["event"].as_str().unwrap_or("")).collect();
+    assert_eq!(names, ["app_started", "project_opened", "app_closed"]);
+    assert!(ev[0]["properties"]["$set"].is_object());
+    assert_eq!(ev[1]["properties"]["how"], "new");
+    let closed = &ev[2]["properties"];
+    assert_eq!(closed["media_imported"]["video"], 1, "{closed}");
+    assert_eq!(closed["playback_starts"], 1, "{closed}");
+    let one = |k: &str, f: &dyn Fn(&serde_json::Value) -> serde_json::Value| {
+        let v: Vec<_> = ev.iter().map(f).collect();
+        assert!(v.windows(2).all(|w| w[0] == w[1]), "{k} differs: {v:?}");
+    };
+    one("distinct_id", &|e| e["distinct_id"].clone());
+    one("$session_id", &|e| e["properties"]["$session_id"].clone());
 }

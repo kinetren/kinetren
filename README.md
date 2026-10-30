@@ -181,16 +181,26 @@ kt-cli export project.kt out.mp4
 ## Privacy
 
 Release builds send anonymous usage statistics to [PostHog](https://posthog.com) (servers in
-the EU), so we can see how many people run kinetren, how long a session lasts and how often it
-ends without a clean close. On the first start the program says so in the notices window.
+the EU). They help us see which versions and systems people use, what the program is used for
+and where it crashes — so we know what to fix first. Nothing in them is tied to you, and one
+click turns them off: View / Send anonymous usage statistics. On the first start the program
+says so once, in the bell.
 
-- **Sent:** program start and clean close, session length, version, OS and processor type,
-  interface language, and a random install number that is not tied to you or your computer.
-- **NOT sent:** projects, file names and paths, media, frames or sound, your name, the
-  computer name. The IP address is not stored.
+<details>
+<summary>What exactly is sent, and what is not</summary>
+
+- **Sent:** starts and closes, time in the program, how often features are used (numbers
+  only — imports, edits, effects by kind, playback, saves, exports), the version, the system
+  and hardware in rough terms (OS version, CPU cores, RAM in GB, graphics card, screen scale),
+  how FFmpeg was found, and the place in the code where a crash happened. Everything goes
+  under a random install number.
+- **NOT sent:** projects, file and media names or paths, frames or sound, your name, the
+  computer name, the text of error messages. The IP address is not stored.
 - **Turn it off:** View / Send anonymous usage statistics, or start with
   `KINETREN_TELEMETRY=0` (or `DO_NOT_TRACK=1`). A plain `cargo build` carries no key and
   sends nothing; `make` and the release tarball do.
+
+</details>
 
 ## Community
 

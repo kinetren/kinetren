@@ -21,6 +21,7 @@ untitled = "بلا عنوان"
 preview_title = "Kinetren — المعاينة"
 notices_title = "الإشعارات"
 notices_empty = "لا شيء بعد"
+details = "التفاصيل"
 search_title = "البحث في المشروع"
 diag_title = "التشخيص"
 analysis_title = "تحليل المادة"
@@ -1341,12 +1342,25 @@ patch = "الرقعة"
 # checkbox hint share the two lists — what IS sent and what is NOT sent.
 [telemetry]
 checkbox = "إرسال إحصاءات استخدام مجهولة"
-headline = "يرسل Kinetren إحصاءات استخدام مجهولة إلى PostHog (خوادم في الاتحاد الأوروبي)."
-sent = "يُرسَل: تشغيل البرنامج وإغلاقه السليم، مدة الجلسة، الإصدار، نظام التشغيل ونوع المعالج، لغة الواجهة، رقم تثبيت عشوائي."
-not_sent = "لا يُرسَل: المشاريع، أسماء الملفات ومساراتها، الوسائط، الإطارات أو الصوت، اسمك، اسم الحاسوب. لا يُحفَظ عنوان IP."
-how_off = "للإيقاف: عرض / إرسال إحصاءات استخدام مجهولة، أو التشغيل مع KINETREN_TELEMETRY=0."
+summary = "يرسل Kinetren إحصاءات استخدام مجهولة تساعد على تحسينه. للإيقاف: عرض / إرسال إحصاءات استخدام مجهولة."
+sent = "ما يُرسَل: التشغيل والإغلاق، الوقت في البرنامج، عدد مرات استخدام الميزات (أرقام فقط)، الإصدار، النظام والعتاد، FFmpeg، أماكن الأعطال."
+where = "إلى أين: PostHog، خوادم في الاتحاد الأوروبي، برقم تثبيت عشوائي غير مرتبط بك."
+not_sent = "لا يُرسَل: المشاريع، أسماء الملفات والوسائط أو مساراتها، الإطارات أو الصوت، اسمك، اسم الحاسوب. لا يُحفَظ عنوان IP."
+how_off = "يمكن الإيقاف أيضًا بواسطة KINETREN_TELEMETRY=0 أو DO_NOT_TRACK=1."
 no_key = "هذا الإصدار لا يرسل إحصاءات."
 env_off = "أُوقف بواسطة KINETREN_TELEMETRY أو DO_NOT_TRACK."
+
+# The daily new-version check (change update-check): the View checkbox, its hint, the one
+# notice in the bell and the short word after the version in the title.
+[update]
+checkbox = "التحقق من الإصدارات الجديدة يوميًا"
+checkbox_hint = "يسأل GitHub مرة واحدة يوميًا عن أحدث إصدار من Kinetren. لا يرسل سوى إصدار البرنامج، ولا ينزّل أي شيء."
+outdated = "(قديم)"
+notice = "صدر Kinetren {0} (لديك {1}). نزّله من {2}."
+how_off = "لإيقاف التحقق اليومي: عرض / التحقق من الإصدارات الجديدة يوميًا."
+title_hint = "صدر Kinetren {0} — {1}"
+dev_build = "نسخة التطوير هذه لا تتحقق من الإصدارات الجديدة."
+env_off = "أوقفه KINETREN_UPDATE_CHECK."
 
 # نافذة FFmpeg (change windows-build)
 [ffmpeg]

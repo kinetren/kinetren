@@ -21,6 +21,7 @@ untitled = "sin título"
 preview_title = "Kinetren — Previsualización"
 notices_title = "Avisos"
 notices_empty = "Todavía nada"
+details = "Detalles"
 search_title = "Buscar en el proyecto"
 diag_title = "Diagnóstico"
 analysis_title = "Analizando el material"
@@ -1341,12 +1342,25 @@ patch = "Parche"
 # checkbox hint share the two lists — what IS sent and what is NOT sent.
 [telemetry]
 checkbox = "Enviar estadísticas de uso anónimas"
-headline = "Kinetren envía estadísticas de uso anónimas a PostHog (servidores en la UE)."
-sent = "Se envía: inicio y cierre normal, duración de la sesión, versión, SO y tipo de procesador, idioma, un número de instalación aleatorio."
-not_sent = "NO se envía: proyectos, nombres y rutas de archivos, medios, fotogramas o sonido, tu nombre, el nombre del equipo. La IP no se guarda."
-how_off = "Desactivar: Ver / Enviar estadísticas de uso anónimas, o iniciar con KINETREN_TELEMETRY=0."
+summary = "Kinetren envía estadísticas de uso anónimas que ayudan a mejorarlo. Para desactivarlas: Ver / Enviar estadísticas de uso anónimas."
+sent = "Qué se envía: inicios y cierres, tiempo en el programa, frecuencia de uso de funciones (solo números), versión, sistema y hardware, FFmpeg, lugares de fallo."
+where = "A dónde: PostHog, servidores en la UE, con un número de instalación aleatorio que no está ligado a ti."
+not_sent = "No se envía: proyectos, nombres o rutas de archivos y medios, fotogramas o sonido, tu nombre, el nombre del equipo. La IP no se guarda."
+how_off = "También se puede desactivar con KINETREN_TELEMETRY=0 o DO_NOT_TRACK=1."
 no_key = "Esta compilación no envía estadísticas."
 env_off = "Desactivado por KINETREN_TELEMETRY o DO_NOT_TRACK."
+
+# The daily new-version check (change update-check): the View checkbox, its hint, the one
+# notice in the bell and the short word after the version in the title.
+[update]
+checkbox = "Buscar versiones nuevas a diario"
+checkbox_hint = "Una vez al día pregunta a GitHub cuál es la última versión de Kinetren. Solo envía la versión del programa; no descarga nada."
+outdated = "(obsoleta)"
+notice = "Ya está disponible Kinetren {0} (tienes {1}). Descárgalo en {2}."
+how_off = "Desactivar la comprobación diaria: Ver / Buscar versiones nuevas a diario."
+title_hint = "Ya está disponible Kinetren {0} — {1}"
+dev_build = "Esta compilación de desarrollo no busca versiones nuevas."
+env_off = "Desactivado por KINETREN_UPDATE_CHECK."
 
 # Ventana de FFmpeg (change windows-build)
 [ffmpeg]

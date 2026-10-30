@@ -21,6 +21,7 @@ untitled = "untitled"
 preview_title = "Kinetren — Preview"
 notices_title = "Notices"
 notices_empty = "Nothing yet"
+details = "Details"
 search_title = "Search the project"
 diag_title = "Diagnostics"
 analysis_title = "Analysing the material"
@@ -1339,16 +1340,30 @@ source = "Source"
 targets = "Targets"
 patch = "Patch"
 
-# Anonymous usage telemetry (change telemetry-posthog): the notice and the View menu
-# checkbox hint share the two lists — what IS sent and what is NOT sent.
+# Anonymous usage telemetry (changes telemetry-posthog, telemetry-identify-activity): the bell
+# entry is one calm `summary` line with the rest under a collapsed "Details" (`win.details`);
+# the View checkbox hint is `summary` + `not_sent`. Calm wording on purpose (owner, 2026-10-28).
 [telemetry]
 checkbox = "Send anonymous usage statistics"
-headline = "Kinetren sends anonymous usage statistics to PostHog (servers in the EU)."
-sent = "Sent: program start and clean close, session length, version, OS and processor type, interface language, a random install number."
-not_sent = "NOT sent: projects, file names and paths, media, frames or sound, your name, the computer name. The IP address is not stored."
-how_off = "Turn it off: View / Send anonymous usage statistics, or start with KINETREN_TELEMETRY=0."
+summary = "Kinetren sends anonymous usage statistics that help improve it. To turn them off: View / Send anonymous usage statistics."
+sent = "What is sent: starts and closes, time in the program, how often features are used (numbers only), version, system and hardware, FFmpeg, crash places."
+where = "Where it goes: PostHog, servers in the EU, under a random install number that is not tied to you."
+not_sent = "Not sent: projects, file and media names or paths, frames or sound, your name, the computer name. The IP address is not stored."
+how_off = "It can also be turned off with KINETREN_TELEMETRY=0 or DO_NOT_TRACK=1."
 no_key = "This build does not send statistics."
 env_off = "Switched off by KINETREN_TELEMETRY or DO_NOT_TRACK."
+
+# The daily new-version check (change update-check): the View checkbox, its hint, the one
+# notice in the bell and the short word after the version in the title.
+[update]
+checkbox = "Check for new versions daily"
+checkbox_hint = "Once a day asks GitHub which Kinetren release is the latest. Sends nothing but the program version; downloads nothing."
+outdated = "(outdated)"
+notice = "Kinetren {0} is out (you have {1}). Get it at {2}."
+how_off = "Turn the daily check off: View / Check for new versions daily."
+title_hint = "Kinetren {0} is out — {1}"
+dev_build = "This development build does not check for new versions."
+env_off = "Switched off by KINETREN_UPDATE_CHECK."
 
 # FFmpeg window (change windows-build): where the codec library was found, why other
 # folders were not used, and how to get it (Download on Windows, Locate, Rescan).

@@ -21,6 +21,7 @@ untitled = "безымянный"
 preview_title = "Kinetren — превью"
 notices_title = "Уведомления"
 notices_empty = "Пока пусто"
+details = "Подробнее"
 search_title = "Поиск по проекту"
 diag_title = "Диагностика"
 analysis_title = "Анализ материала"
@@ -1341,12 +1342,25 @@ patch = "Патч"
 # checkbox hint share the two lists — what IS sent and what is NOT sent.
 [telemetry]
 checkbox = "Отправлять анонимную статистику"
-headline = "Kinetren отправляет анонимную статистику использования в PostHog (серверы в ЕС)."
-sent = "Отправляется: запуск и штатное закрытие, длительность сессии, версия, ОС и тип процессора, язык интерфейса, случайный номер установки."
-not_sent = "НЕ отправляется: проекты, имена файлов и пути, медиа, кадры и звук, ваше имя, имя компьютера. IP-адрес не сохраняется."
-how_off = "Выключить: Вид / Отправлять анонимную статистику или запуск с KINETREN_TELEMETRY=0."
+summary = "Kinetren отправляет анонимную статистику, она помогает улучшать программу. Выключить: Вид / Отправлять анонимную статистику."
+sent = "Что отправляется: запуски и закрытия, время в программе, как часто используются функции (только числа), версия, система и железо, FFmpeg, места сбоев."
+where = "Куда: PostHog, серверы в ЕС, под случайным номером установки, не связанным с вами."
+not_sent = "Не отправляется: проекты, имена и пути файлов и медиа, кадры и звук, ваше имя, имя компьютера. IP-адрес не сохраняется."
+how_off = "Ещё можно выключить переменной KINETREN_TELEMETRY=0 или DO_NOT_TRACK=1."
 no_key = "Эта сборка статистику не отправляет."
 env_off = "Выключено переменной KINETREN_TELEMETRY или DO_NOT_TRACK."
+
+# The daily new-version check (change update-check): the View checkbox, its hint, the one
+# notice in the bell and the short word after the version in the title.
+[update]
+checkbox = "Ежедневно проверять новые версии"
+checkbox_hint = "Раз в день спрашивает у GitHub, какой выпуск Kinetren последний. Отправляет только версию программы, ничего не скачивает."
+outdated = "(устарела)"
+notice = "Вышел Kinetren {0} (у вас {1}). Скачать: {2}."
+how_off = "Выключить ежедневную проверку: Вид / Ежедневно проверять новые версии."
+title_hint = "Вышел Kinetren {0} — {1}"
+dev_build = "Эта сборка разработчика не проверяет новые версии."
+env_off = "Выключено переменной KINETREN_UPDATE_CHECK."
 
 # Окно FFmpeg (change windows-build)
 [ffmpeg]

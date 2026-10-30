@@ -1,22 +1,22 @@
 ---
 id: F-RES-013
 title: "A new version is available" — a notice, not an updater
-status: candidate
+status: done
 priority: B
 cost: S
 category: resilience/environment
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, shotcut-26.09, vscode-1.136]
-we_have: no
+we_have: yes
 crates: [kt-app, kt-version]
 invariants: [12]
 ui_rules: [10, 13, 19, 22, 27]
 round: update-check
-point: null
-tests: []
+point: "change update-check (archived 2026-10-28)"
+tests: [872, 873, 874, 875, 876, 877, 878]
 depends_on: []
 trackers: [pitivi, kde-bugzilla, shotcut, losslesscut, kde-invent]
 services: [github-releases]
-checked: 2026-10-27
+checked: 2026-10-28
 ---
 
 # F-RES-013 — "A new version is available" — a notice, not an updater
@@ -90,31 +90,9 @@ Across the whole `nle` corpus the filter finds 7 tasks out of 25,442, and 6 of t
 
 ## How it fits Kinotrain
 
-CAPABILITY: openspec/specs/distribution/ — the release channel ("Release on a version tag") exists; the requirement for the notice will be added there by the change.
-
-### What already exists
-
-- The release channel: `.github/workflows/release.yml` publishes a GitHub Release per `v*` tag with `kinetren-<YY.MM.DD-hash>-linux-x86_64.tar.gz` and `kinetren-<…>-windows-x86_64.zip` plus `.sha256`; a tag with `-` is a pre-release. The asset name is built in `src/scripts/release-build.sh` (`VERSION="${KT_VERSION_FULL#kt}"`), so it carries the full commit-date version.
-- The version: `src/libs/kt-version/src/lib.rs` — `FULL = ktYY.MM.DD-<hash8>` by the commit date, `SHORT = ktYY.MM`, `display()` gives FULL in debug and SHORT in release.
-- The title: `src/apps/kt-app/src/app.rs` ≈1496 builds `"{name}{ *} — {kt_version::display()}"` and sends `ViewportCommand::Title` (≈1506) only when the string changed — a suffix costs nothing per frame.
-- The notice: `push_notice` (`app.rs` ≈3777) appends to the bell's log, collapses consecutive duplicates into "×N" and still raises the unread counter; the bell with its badge is drawn in the status bar (`app.rs` ≈6990).
-- The network: `src/apps/kt-app/src/telemetry.rs` — a `ureq` agent with 1 s connect / 2 s total timeouts, one background thread spawned only on the first event, a compile-time key so that `cargo run`, tests and live scenarios never send; its checkbox stands in the View menu (`src/apps/kt-app/src/toolbar.rs:498`).
-
-### What is missing
-
-- Any read of the release channel from the program; any "what is the newest release" state; a per-day memory of the answer; the title suffix; the switch.
-
-### What hinders
-
-ADDRESS: src/apps/kt-app/src/app.rs — the class "the check delayed or broke the start" (pitivi #1489, #2276) is impossible for us only if the answer arrives the way telemetry sends: off the UI thread, with a hard timeout, and with a malformed or oversized answer treated as "unknown"; the class "the same release announced at every start" (Shotcut's complaint) is POSSIBLE and nothing catches it today — `push_notice` deduplicates only consecutive notices inside ONE process, and the bell's log is not kept across starts.
-
-- The comparator: `SHORT` drops the day, so the comparison must use `FULL`'s date (or the asset name), not the title string and not the hand-written tag.
-- Invariant 12: the UI must not wait for the network or repaint for it; the title already changes only on a string change.
-- kt-app rules: 10 (no pop-up — the bell and the title, one place each), 13 (no new strip or row for the suffix), 19 (the notice says where it is switched off — the View menu), 22 (no new window), 27 (a useful default, remembered).
-
-### Which invariants it touches
-
-Invariant 12 (no waiting and no extra repaint in the UI). Invariant 11 is not touched: the check lives only in the interactive release program, not in an offline path. Invariant 10 is not touched: the TLS stack is the one telemetry already links (`ureq` with `rustls`), FFmpeg is unrelated.
+CAPABILITY: openspec/specs/distribution/ — contract in `spec.md`, why and code paths in `design.md`.
+Once per UTC day a release build asks GitHub Releases on a background thread; "newer" comes from the asset names, not the tag; a newer release is one bell notice and a short word after the version in the title; a View checkbox switches it off; dev builds never ask.
+ADDRESS: src/apps/kt-app/src/update_check.rs — the start is never delayed (the UI only spawns the thread and never waits, t874), the same release is not announced twice in a day (the day's answer is stored in `<data_dir>/update-check`, t873, t875), and the switch sits next to the telemetry one in View (t878).
 
 ## Estimate
 
@@ -129,7 +107,11 @@ Invariant 12 (no waiting and no extra repaint in the UI). Invariant 11 is not to
 
 ## Verdict
 
-Take, as a notice and nothing more. The difference from the refusal in F-RES-008 ("neither a server nor a signature, and a self-updating binary is a separate class of defects") is that the server now exists — GitHub Releases is our release channel — and a notice writes nothing to disk except its own cached answer, so the class "the updater broke the binary" does not arise. The tracker shows where the risk is: not in missing the release but in the check itself — it must never delay the start, must not repeat the same release, and must be easy to switch off. The owner has decided to add it; the status becomes `accepted` when the change opens, and then this section collapses to the capability and one line.
+Done in change `update-check` (2026-10-28, capability `distribution`). Taken as a notice and
+nothing more: GitHub Releases is now our release channel, and a notice writes nothing but its
+own cached answer, so F-RES-008's "a self-updating binary is a separate class of defects" does
+not arise. The risks the trackers named — a check that delays the start, the same release
+announced at every start, no way to turn it off — are each closed by a test.
 
 ## Sources
 

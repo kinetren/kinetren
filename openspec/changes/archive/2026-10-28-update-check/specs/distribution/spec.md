@@ -58,10 +58,10 @@ day of silence; being wrong in the other direction teaches the person to ignore 
 
 #### Scenario: The request is anonymous and a dead server costs the UI nothing
 - **WHEN** the checker points at a local `TcpListener` that accepts and never answers, the
-  check is started and `on_exit` runs; then at a local listener that answers `200` with a
-  release JSON
-- **THEN** starting returns in under 1 ms, `on_exit` returns in under 50 ms, no notice is
-  produced and the day is not recorded; against the answering listener exactly one `GET` with
+  check is started and the checker is dropped (what `on_exit` leaves behind); then at a local
+  listener that answers `200` with a release JSON
+- **THEN** starting returns in under 50 ms (it only spawns the thread), dropping returns in
+  under 50 ms (nothing joins the thread), no notice is produced and the day is not recorded; against the answering listener exactly one `GET` with
   path `/repos/kinetren/kinetren/releases/latest` and no query string arrives, it carries
   `Accept` and `User-Agent: kinetren/<FULL>` and no header outside the allow-list `Host`,
   `Accept`, `User-Agent`, `Accept-Encoding`, `Connection`, and the text of the request holds neither the user name
@@ -120,7 +120,7 @@ it off. The choice SHALL be stored in eframe storage under `update_check` (`on`/
 menu SHALL carry a checkbox "Check for new versions daily" right after the telemetry checkbox;
 its hover text SHALL say what is asked (the latest release, from GitHub, once a day), what is
 sent (nothing but the program version) and that nothing is downloaded. Turning it off SHALL
-remove the title word at once; turning it on SHALL make the check due on the next start (not
+remove the title word on the next frame; turning it on SHALL make the check due on the next start (not
 in the middle of the session). When the environment or the build blocks the check, the
 checkbox SHALL be shown disabled with the reason in its hover text. A debug build SHALL honour
 `KT_UPDATE_URL` (the live scenario's local server) and check then regardless of the day; a
@@ -144,10 +144,10 @@ tests start the real `kinetren` dozens of times a day — none of them may reach
   "Check for new versions daily", draws a frame, then restarts with the stored state
 - **THEN** View holds the checkbox right after the telemetry checkbox, checked, and its hover
   text names GitHub and says nothing is downloaded; after unchecking, the title has no
-  "outdated" word in the same frame, the stored value is `off`, and after the restart the
+  "outdated" word on the next frame and the word is no longer painted, the stored value is `off`, and after the restart the
   checker spawns no thread and the title stays unmarked
 - **PATH** open View → "Check for new versions daily" is checked under "Send anonymous usage
   statistics" → hover it → the status bar says it asks GitHub once a day and downloads nothing
-  → uncheck it → the "(outdated)" word leaves the title at once → restart → the checkbox is
+  → uncheck it → the "(outdated)" word leaves the title → restart → the checkbox is
   still unchecked and the title is plain
 - **TEST** t878 (`src/apps/kt-app/src/reach_tests.rs`)

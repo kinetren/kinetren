@@ -21,6 +21,7 @@ untitled = "未命名"
 preview_title = "Kinetren — 预览"
 notices_title = "通知"
 notices_empty = "暂无内容"
+details = "详情"
 search_title = "在项目中搜索"
 diag_title = "诊断"
 analysis_title = "正在分析素材"
@@ -1341,12 +1342,25 @@ patch = "补丁"
 # checkbox hint share the two lists — what IS sent and what is NOT sent.
 [telemetry]
 checkbox = "发送匿名使用统计"
-headline = "Kinetren 会向 PostHog（欧盟服务器）发送匿名使用统计。"
-sent = "发送：程序启动与正常关闭、会话时长、版本、操作系统与处理器类型、界面语言、一个随机安装编号。"
-not_sent = "不发送：项目、文件名与路径、媒体、画面或声音、你的姓名、计算机名称。不保存 IP 地址。"
-how_off = "关闭：视图 / 发送匿名使用统计，或以 KINETREN_TELEMETRY=0 启动。"
+summary = "Kinetren 会发送匿名使用统计，帮助改进程序。关闭方法：视图 / 发送匿名使用统计。"
+sent = "发送内容：启动与关闭、使用时长、各功能的使用次数（仅数字）、版本、系统与硬件、FFmpeg、崩溃位置。"
+where = "发送到：PostHog（欧盟服务器），使用一个与你无关的随机安装编号。"
+not_sent = "不发送：项目、文件和媒体的名称或路径、画面或声音、你的姓名、计算机名称。不保存 IP 地址。"
+how_off = "也可以用 KINETREN_TELEMETRY=0 或 DO_NOT_TRACK=1 关闭。"
 no_key = "此版本不发送统计。"
 env_off = "已由 KINETREN_TELEMETRY 或 DO_NOT_TRACK 关闭。"
+
+# The daily new-version check (change update-check): the View checkbox, its hint, the one
+# notice in the bell and the short word after the version in the title.
+[update]
+checkbox = "每天检查新版本"
+checkbox_hint = "每天向 GitHub 询问一次 Kinetren 的最新版本。只发送程序版本，不下载任何内容。"
+outdated = "（已过时）"
+notice = "Kinetren {0} 已发布（您的版本是 {1}）。下载地址：{2}。"
+how_off = "关闭每日检查：视图 / 每天检查新版本。"
+title_hint = "Kinetren {0} 已发布 — {1}"
+dev_build = "此开发版本不检查新版本。"
+env_off = "已被 KINETREN_UPDATE_CHECK 关闭。"
 
 # FFmpeg 窗口 (change windows-build)
 [ffmpeg]

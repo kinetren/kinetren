@@ -1171,7 +1171,12 @@ impl KtApp {
                 let p = job.log_file.path.clone();
                 self.open_render_path(p);
             }
-            Some(Act::Close) => self.render_job = None,
+            Some(Act::Close) => {
+                // the dialog lets the job go: the export's facts (telemetry-identify-activity)
+                if let Some(job) = self.render_job.take() {
+                    crate::telemetry::signal(crate::telemetry::Signal::ExportEnded(&job));
+                }
+            }
             None => {}
         }
     }
