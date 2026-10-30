@@ -1667,8 +1667,18 @@ time — "work through each point separately, one by one"):
   other editors do it?". Taken as: ← / → step one frame (Premiere, Resolve and FCP do so), and
   Ctrl+click on Back/Forward does the same with the mouse; Shift keeps the region edge. T11 → R.73.
 
-**Lesson (repeated twice in one session — questions 1 and 4):** a question to the owner carries its
-context IN the question: his own words from the file, what is already done, and what each option
+- Question 9 (the "Marker over the region" item; the context — in my message BEFORE the dialog: the item
+  found, its three behaviours, the range end already draggable by its flag). 9a "always new + a separate
+  stretch item?": «помоему там в регионе из маркеров что-то не так с вторым маркером, ты НЕ ДАЛ МНЕ
+  КОНТЕКСТА ПОЛНОГО.» — "I think in the region made of markers something is wrong with the second marker,
+  YOU DID NOT GIVE ME THE FULL CONTEXT." 9b "which second marker does not move?": "the end of the range
+  marker". U7 → a defect at the range marker's end, reproduced live in R.73; the item split is shown to
+  him there before it is made.
+- Question 12 (the broken-off line «1. быстрого»): "drop it". Z1 → not a claim.
+
+**Lesson (repeated THREE times in one session — questions 1, 4 and 9):** a question to the owner carries its
+context IN the question text itself — the dialog is what he reads; a paragraph of context in the message
+before it did not reach him (question 9). The context: his own words from the file, what is already done, and what each option
 means for the program. A question that names only a round number or a mechanism ("R.59", "public
 parameters") is unanswerable for him.
 
