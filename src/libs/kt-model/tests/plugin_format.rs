@@ -68,6 +68,25 @@ enum Frozen {
     },
     /// `Vignette` before stage 4 (no field was skipped).
     Vignette { strength: f32, radius: f32, softness: f32 },
+    /// The five warps before 4.1c (`skip_serializing_if` copied as is).
+    LensDistort {
+        k1: f32,
+        #[serde(skip_serializing_if = "is_zero")]
+        k2: f32,
+    },
+    Twirl { angle: f32, radius: f32 },
+    Ripple {
+        amount: f32,
+        freq: f32,
+        #[serde(skip_serializing_if = "is_zero")]
+        phase: f32,
+    },
+    Kaleidoscope {
+        segments: u32,
+        #[serde(skip_serializing_if = "is_zero")]
+        angle: f32,
+    },
+    Cylinder3d { curvature: f32 },
     /// `ColorGrade` and `Duotone` before stage 4.
     ColorGrade {
         #[serde(skip_serializing_if = "is_zero")]
@@ -125,6 +144,11 @@ fn empty_reads() -> Vec<(&'static str, String)> {
         // a file without `pan` read 0 (`#[serde(default)]`)
         (r#"{"kind":"gain","db":-3.0}"#, frozen(Frozen::Gain { db: -3.0, pan: 0.0 })),
         (r#"{"kind":"vignette"}"#, frozen(Frozen::Vignette { strength: 0.5, radius: 0.7, softness: 0.45 })),
+        (r#"{"kind":"lens_distort"}"#, frozen(Frozen::LensDistort { k1: 0.35, k2: 0.0 })),
+        (r#"{"kind":"twirl"}"#, frozen(Frozen::Twirl { angle: 120.0, radius: 0.8 })),
+        (r#"{"kind":"ripple"}"#, frozen(Frozen::Ripple { amount: 0.08, freq: 10.0, phase: 0.0 })),
+        (r#"{"kind":"kaleidoscope"}"#, frozen(Frozen::Kaleidoscope { segments: 6, angle: 0.0 })),
+        (r#"{"kind":"cylinder3d"}"#, frozen(Frozen::Cylinder3d { curvature: 0.5 })),
         (r#"{"kind":"color_grade"}"#, frozen(Frozen::ColorGrade { brightness: 0.0, contrast: 0.0, saturation: 1.0, hue: 0.0 })),
         (r#"{"kind":"duotone"}"#, frozen(Frozen::Duotone { shadow_r: 24, shadow_g: 18, shadow_b: 64, high_r: 255, high_g: 236, high_b: 190, amount: 1.0 })),
         (r#"{"kind":"filter"}"#, frozen(Frozen::Filter { mode: FrozenFilterMode::Lowpass, cutoff_hz: 800.0, resonance: 0.707 })),
@@ -186,6 +210,25 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
             frozen(Frozen::Gate { threshold_db: -30.0, attack_ms: 0.5, hold_ms: 120.0, release_ms: 250.0 }),
         ),
         (FxInstance::vignette(), frozen(Frozen::Vignette { strength: 0.5, radius: 0.7, softness: 0.45 })),
+        (FxInstance::lens_distort(), frozen(Frozen::LensDistort { k1: 0.35, k2: 0.0 })),
+        (
+            FxInstance::plugin_with("lens_distort", &[-0.5, 0.123456789]).unwrap(),
+            frozen(Frozen::LensDistort { k1: -0.5, k2: 0.123456789 }),
+        ),
+        (FxInstance::twirl(), frozen(Frozen::Twirl { angle: 120.0, radius: 0.8 })),
+        (FxInstance::plugin_with("twirl", &[-240.0, 1.2]).unwrap(), frozen(Frozen::Twirl { angle: -240.0, radius: 1.2 })),
+        (FxInstance::ripple(), frozen(Frozen::Ripple { amount: 0.08, freq: 10.0, phase: 0.0 })),
+        (
+            FxInstance::plugin_with("ripple", &[0.15, 6.0, 137.5]).unwrap(),
+            frozen(Frozen::Ripple { amount: 0.15, freq: 6.0, phase: 137.5 }),
+        ),
+        (FxInstance::kaleidoscope(), frozen(Frozen::Kaleidoscope { segments: 6, angle: 0.0 })),
+        (
+            FxInstance::plugin_with("kaleidoscope", &[20.0, 15.0]).unwrap(),
+            frozen(Frozen::Kaleidoscope { segments: 20, angle: 15.0 }),
+        ),
+        (FxInstance::cylinder3d(), frozen(Frozen::Cylinder3d { curvature: 0.5 })),
+        (FxInstance::plugin_with("cylinder3d", &[0.85]).unwrap(), frozen(Frozen::Cylinder3d { curvature: 0.85 })),
         (
             FxInstance::plugin_with("vignette", &[0.9, 0.3, 0.123456789]).unwrap(),
             frozen(Frozen::Vignette { strength: 0.9, radius: 0.3, softness: 0.123456789 }),

@@ -53,12 +53,7 @@ pub fn is_geo(f: &FxInstance) -> bool {
             | FxInstance::EventGrid { .. }
             | FxInstance::Pan3d { .. }
             | FxInstance::CornerPin { .. }
-            | FxInstance::LensDistort { .. }
-            | FxInstance::Twirl { .. }
-            | FxInstance::Ripple { .. }
-            | FxInstance::Kaleidoscope { .. }
-            | FxInstance::Cylinder3d { .. }
-    )
+    ) || plugin_class(f) == Some(kt_plugin_api::VideoClass::Geometry)
 }
 
 /// Whether the “Geometry” node IN CONTEXT is identity (R.62). An extra node is
@@ -494,13 +489,41 @@ pub enum GeomPrim {
     /// Unlike Clamp (plateau), it does not invent pixels: the conform
     /// margins must be transparent (lesson from Pitivi #1378).
     Bounds { x0: f64, x1: f64, y0: f64, y1: f64 },
-    /// Nonlinear warp (R.47 Kv4): input and output are the NORMALIZED
-    /// centered space of the stage (pre/post-affines built by the
-    /// builder; r=1 is the short semi-axis, cylinder is normalized by X on
-    /// w/2). mode: 0 lens (polynomial), 1 twirl, 2 ripple, 3 kaleidoscope,
-    /// 4 cylinder; precomputable values (radians, 2π·freq, sin a, 1/a) — f64
+    /// Nonlinear warp (R.47 Kv4, a plugin's map since plugin-api-stage1 D11.2): input and output
+    /// are the NORMALIZED centered space of the stage (pre/post-affines built by the builder; the
+    /// unit is the plugin's `WarpNorm`); precomputable values (radians, 2π·freq, sin a, 1/a) — f64
     /// on CPU, into the uniform — once.
-    Warp { mode: u32, p: [f64; 7] },
+    Warp { warp: WarpRef, p: [f64; 7] },
+}
+
+/// A warp plugin's map (plugin-api-stage1, D11.2): its id — the GPU dispatch and the Debug form —
+/// and its kernel, resolved once per plan, never per pixel.
+#[derive(Clone, Copy)]
+pub struct WarpRef {
+    pub id: &'static str,
+    pub kernel: &'static dyn kt_plugin_api::GeoKernel,
+}
+
+impl std::fmt::Debug for WarpRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.id)
+    }
+}
+
+/// The steps of a geometry plugin slot at its stage (D11.2); `None` — not registered or not a
+/// geometry plugin. An empty list is a neutral slot: the step is skipped.
+pub fn plugin_geo_steps(
+    f: &FxInstance,
+    cx: kt_plugin_api::GeoCtx,
+) -> Option<(WarpRef, Vec<kt_plugin_api::GeoStep>)> {
+    let FxInstance::Plugin(slot) = f else { return None };
+    let plugin = kt_model::plugin_slot::registry().get(&slot.id)?;
+    let m = plugin.manifest();
+    if m.decl.video_class != Some(kt_plugin_api::VideoClass::Geometry) {
+        return None;
+    }
+    let kernel = plugin.geo()?;
+    Some((WarpRef { id: &m.id, kernel }, kernel.steps(&slot.values, &cx)))
 }
 
 /// Sentinel for the disabled Clamp axis (fits f32 uniforms without inf).
@@ -896,8 +919,9 @@ enum Step {
     /// R.47 nonlinear warp: does not change the raster, works in the normalized
     /// centered space of its own stage.
     Warp {
-        mode: u32,
+        warp: WarpRef,
         p: [f64; 7],
+        norm: kt_plugin_api::WarpNorm,
         iw: u32,
         ih: u32,
     },
@@ -1092,6 +1116,17 @@ fn build_program(
             f @ FxInstance::Plugin(_) => {
                 if let Some(t) = PluginTap::of_at(f, kt_plugin_api::TapCtx { stage_w: w, stage_h: h }) {
                     fw.push(Step::Tap(TapKind::Plugin(t)));
+                } else if let Some((warp, steps)) =
+                    plugin_geo_steps(f, kt_plugin_api::GeoCtx { stage_w: w, stage_h: h, out_w: mow, out_h: moh })
+                {
+                    // a warp does not change the raster: its stage is the one it enters
+                    for st in steps {
+                        match st {
+                            kt_plugin_api::GeoStep::Warp { k, norm } => {
+                                fw.push(Step::Warp { warp, p: k, norm, iw: w, ih: h });
+                            }
+                        }
+                    }
                 }
             }
             FxInstance::CornerPin { x0, y0, x1, y1, x2, y2, x3, y3 } => {
@@ -1117,64 +1152,6 @@ fn build_program(
                     has_alpha = true;
                     w = mow;
                     h = moh;
-                }
-            }
-            FxInstance::LensDistort { k1, k2 } => {
-                let (k1, k2) = ((*k1 as f64).clamp(-1.0, 1.0), (*k2 as f64).clamp(-1.0, 1.0));
-                if k1 != 0.0 || k2 != 0.0 {
-                    fw.push(Step::Warp {
-                        mode: 0,
-                        p: [k1, k2, 0.0, 0.0, 0.0, 0.0, 0.0],
-                        iw: w,
-                        ih: h,
-                    });
-                }
-            }
-            FxInstance::Twirl { angle, radius } => {
-                let a = (*angle as f64).clamp(-720.0, 720.0).to_radians();
-                let rad = (*radius as f64).clamp(0.1, 1.5);
-                if a != 0.0 {
-                    fw.push(Step::Warp {
-                        mode: 1,
-                        p: [a, rad, 0.0, 0.0, 0.0, 0.0, 0.0],
-                        iw: w,
-                        ih: h,
-                    });
-                }
-            }
-            FxInstance::Ripple { amount, freq, phase } => {
-                let amp = (*amount as f64).clamp(0.0, 0.5);
-                let k = 2.0 * std::f64::consts::PI * (*freq as f64).clamp(1.0, 40.0);
-                let ph = (*phase as f64).to_radians();
-                if amp != 0.0 {
-                    fw.push(Step::Warp {
-                        mode: 2,
-                        p: [amp, k, ph, 0.0, 0.0, 0.0, 0.0],
-                        iw: w,
-                        ih: h,
-                    });
-                }
-            }
-            FxInstance::Kaleidoscope { segments, angle } => {
-                let tau = 2.0 * std::f64::consts::PI / (*segments).clamp(2, 32) as f64;
-                let a0 = (*angle as f64).clamp(-180.0, 180.0).to_radians();
-                fw.push(Step::Warp {
-                    mode: 3,
-                    p: [tau, a0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                    iw: w,
-                    ih: h,
-                });
-            }
-            FxInstance::Cylinder3d { curvature } => {
-                let curv = (*curvature as f64).clamp(0.0, 1.0);
-                if curv >= 1e-3 {
-                    let a = curv * std::f64::consts::FRAC_PI_2 * 0.999;
-                    fw.push(Step::Warp {
-                        mode: 4,
-                        p: [a.sin(), 1.0 / a, 0.0, 0.0, 0.0, 0.0, 0.0],
-                        iw: w,
-                        ih: h,
-                    });
                 }
             }
             _ => debug_assert!(false, "non-geo step in build_program"),
@@ -1264,10 +1241,13 @@ fn build_program(
                     prims.push(GeomPrim::Bounds { x0: *x0, x1: *x1, y0: *y0, y1: *y1 });
                 }
             }
-            Step::Warp { mode, p, iw, ih } => {
+            Step::Warp { warp, p, norm, iw, ih } => {
                 let (rw, rh) = (*iw as f64, *ih as f64);
-                // r = 1 — short semi-axis; cylinder is normalized by X
-                let r = if *mode == 4 { rw / 2.0 } else { rw.min(rh) / 2.0 };
+                // r = 1 — the plugin's unit: the short semi-axis, or w/2 (the cylinder)
+                let r = match norm {
+                    kt_plugin_api::WarpNorm::ShortSemiAxis => rw.min(rh) / 2.0,
+                    kt_plugin_api::WarpNorm::HalfWidth => rw / 2.0,
+                };
                 // index → normalized centered
                 pending = pending.then(&Aff {
                     ax: 1.0 / r,
@@ -1276,7 +1256,7 @@ fn build_program(
                     by: (0.5 - rh / 2.0) / r,
                 });
                 flush(&mut pending, &mut prims);
-                prims.push(GeomPrim::Warp { mode: *mode, p: *p });
+                prims.push(GeomPrim::Warp { warp: *warp, p: *p });
                 // normalized → index of the same raster
                 pending = Aff { ax: r, bx: rw / 2.0 - 0.5, ay: r, by: rh / 2.0 - 0.5 };
             }
@@ -1633,55 +1613,6 @@ enum Mapped {
     Transparent,
 }
 
-/// Inverse map of the nonlinear warp (R.47): ONE f64 text, read by
-/// both CPU loops; the WGSL mirror is geom_fused.wgsl (the same line).
-/// Input/output — the normalized centered space of the stage.
-#[inline]
-fn warp_map(mode: u32, p: &[f64; 7], x: f64, y: f64) -> (f64, f64) {
-    match mode {
-        0 => {
-            // lens: polynomial s = 1 + k1·r² + k2·r⁴ (no trigonometry)
-            let r2 = x * x + y * y;
-            let s = 1.0 + p[0] * r2 + p[1] * r2 * r2;
-            (x * s, y * s)
-        }
-        1 => {
-            // twirl: rotation by a·(1 − r/rad)² inside the radius
-            let r = (x * x + y * y).sqrt();
-            if r >= p[1] {
-                return (x, y);
-            }
-            let t = 1.0 - r / p[1];
-            let (sn, cs) = (p[0] * t * t).sin_cos();
-            (x * cs - y * sn, x * sn + y * cs)
-        }
-        2 => {
-            // ripple: r' = r + amp·sin(k·r − φ)
-            let r = (x * x + y * y).sqrt();
-            if r <= 1e-9 {
-                return (x, y);
-            }
-            let k = (r + p[0] * (p[1] * r - p[2]).sin()) / r;
-            (x * k, y * k)
-        }
-        3 => {
-            // kaleidoscope: triangle wave over the sector (mirror
-            // repetition without int modulo — floor is the same in both texts)
-            let r = (x * x + y * y).sqrt();
-            let q = (y.atan2(x) - p[1]) / p[0];
-            let h = q / 2.0 - (q / 2.0).floor();
-            let m = 1.0 - (2.0 * h - 1.0).abs();
-            let (sn, cs) = (p[1] + m * p[0]).sin_cos();
-            (r * cs, r * sn)
-        }
-        _ => {
-            // cylinder: u' = asin(u·sin a)/a along X, edges → edges
-            let u = (x * p[0]).clamp(-1.0, 1.0).asin() * p[1];
-            (u, y)
-        }
-    }
-}
-
 #[inline]
 fn map_pos(prims: &[GeomPrim], ox: f64, oy: f64) -> Mapped {
     let (mut x, mut y) = (ox, oy);
@@ -1725,8 +1656,8 @@ fn map_pos(prims: &[GeomPrim], ox: f64, oy: f64) -> Mapped {
                 x = qx;
                 y = qy;
             }
-            GeomPrim::Warp { mode, p } => {
-                let (nx, ny) = warp_map(*mode, p, x, y);
+            GeomPrim::Warp { warp, p } => {
+                let (nx, ny) = warp.kernel.warp(p, x, y);
                 x = nx;
                 y = ny;
             }
@@ -1820,8 +1751,8 @@ fn map_pos_rec(
                 x = qx;
                 y = qy;
             }
-            GeomPrim::Warp { mode, p } => {
-                let (nx, ny) = warp_map(*mode, p, x, y);
+            GeomPrim::Warp { warp, p } => {
+                let (nx, ny) = warp.kernel.warp(p, x, y);
                 x = nx;
                 y = ny;
             }

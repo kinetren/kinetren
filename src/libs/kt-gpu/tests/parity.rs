@@ -1020,11 +1020,11 @@ fn t329_parity_cycle_over_the_registry() {
     // an investigation and, upon confirmation, the introduction of a WARP ×2 class based on the measurement,
     // NOT a tweak of GEOM)
     for (i, f) in [
-        FxInstance::LensDistort { k1: -0.8, k2: 0.5 },
-        FxInstance::Twirl { angle: 540.0, radius: 1.2 },
-        FxInstance::Ripple { amount: 0.3, freq: 30.0, phase: 137.0 },
-        FxInstance::Kaleidoscope { segments: 12, angle: 30.0 },
-        FxInstance::Cylinder3d { curvature: 0.95 },
+        kt_model::FxInstance::plugin_with("lens_distort", &[-0.8, 0.5]).unwrap(),
+        kt_model::FxInstance::plugin_with("twirl", &[540.0, 1.2]).unwrap(),
+        kt_model::FxInstance::plugin_with("ripple", &[0.3, 30.0, 137.0]).unwrap(),
+        kt_model::FxInstance::plugin_with("kaleidoscope", &[12.0, 30.0]).unwrap(),
+        kt_model::FxInstance::plugin_with("cylinder3d", &[0.95]).unwrap(),
     ]
     .into_iter()
     .enumerate()
@@ -1287,4 +1287,58 @@ fn t992_a_positioned_tap_measures_its_own_stage() {
         cpu_frames.push(cpu);
     }
     assert_ne!(cpu_frames[1], cpu_frames[2], "the vignette is not measured on its own stage: the order of zoom and vignette does not matter");
+}
+
+/// t993 (plugin-api-stage1, D11.2; capability `plugins`): a geometry program fuses and keeps its
+/// rules — the warp part (stage 4.1c-1).
+///
+/// The five warps live in `fx-video-distort`: each is one `Warp` step of the plugin's own map, its
+/// WGSL mirror pasted by kt-gpu into BOTH primitive loops of the fused pass (one function, two
+/// arms). Alone, after a zoom and all five in one series, a chain of warp plugins is ONE run of
+/// the plan, and the GPU stays within the geometry tolerance of the CPU. The CPU bytes of every
+/// kind at its defaults are t328's pre-move goldens; the neutral skip is t333's.
+#[test]
+fn t993_warp_plugins_fuse_into_one_pass() {
+    kt_plugins_builtin::install();
+    let ids = ["lens_distort", "twirl", "ripple", "kaleidoscope", "cylinder3d"];
+    let (fused, _) = kt_gpu::assembled_shaders();
+    let warps: Vec<&str> = kt_gpu::plugin_warps().iter().map(|(id, _)| *id).collect();
+    assert_eq!(warps, ids, "the warp plugins of the registry");
+    for id in ids {
+        assert_eq!(fused.matches(&format!("fn warp_{id}(")).count(), 1, "{id}: the function is not pasted once");
+        assert_eq!(
+            fused.matches(&format!("= warp_{id}(vec2<f32>(x, y), a, b);")).count(),
+            2,
+            "{id}: the arm is not in both primitive loops"
+        );
+    }
+    let tuned = |id: &str| match id {
+        "lens_distort" => FxInstance::plugin_with(id, &[-0.6, 0.3]).unwrap(),
+        "twirl" => FxInstance::plugin_with(id, &[200.0, 0.9]).unwrap(),
+        "ripple" => FxInstance::plugin_with(id, &[0.1, 8.0, 45.0]).unwrap(),
+        "kaleidoscope" => FxInstance::plugin_with(id, &[5.0, 20.0]).unwrap(),
+        _ => FxInstance::plugin_with(id, &[0.7]).unwrap(),
+    };
+    let Some(engine) = test_engine() else { return };
+    let mut cases: Vec<(String, Vec<FxInstance>)> = Vec::new();
+    for id in ids {
+        cases.push((format!("{id} alone"), vec![tuned(id)]));
+        cases.push((format!("{id} after a zoom"), vec![FxInstance::geometry_zoom(1.5), tuned(id)]));
+    }
+    let mut all: Vec<FxInstance> = ids.iter().map(|id| tuned(id)).collect();
+    all.push(FxInstance::geometry_zoom(0.8));
+    cases.push(("all five and a zoom".into(), all));
+    for (i, (name, fx)) in cases.into_iter().enumerate() {
+        let chain = kt_fx::plan::plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[]);
+        assert!(
+            chain.ops.len() == 1 && matches!(chain.ops[0], kt_fx::plan::PlanOp::Run { .. }),
+            "{name}: the series is not one run: {} ops",
+            chain.ops.len()
+        );
+        let src = Src::new(9930 + i as u64, Some(frame(W, H, false, 0)), fx);
+        let p = plan(90_000, vec![one(&src, 4096, false)]);
+        let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
+        assert!(cc && cg, "{name}: incomplete");
+        assert_frames_close(&cpu, &gpu, W, H, FrameTol::GEOM, &name);
+    }
 }

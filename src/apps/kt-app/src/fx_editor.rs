@@ -1376,11 +1376,6 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::RadialBlur { .. } => "Radial Blur",
         FxInstance::DropShadow { .. } => "Drop Shadow",
         FxInstance::Halftone { .. } => "Halftone",
-        FxInstance::LensDistort { .. } => "Lens Distort",
-        FxInstance::Twirl { .. } => "Twirl",
-        FxInstance::Ripple { .. } => "Ripple",
-        FxInstance::Kaleidoscope { .. } => "Kaleidoscope",
-        FxInstance::Cylinder3d { .. } => "Cylinder 3D",
         // a plugin names itself in its manifest (plugin-api-stage1, D7)
         FxInstance::Plugin(p) => p.manifest().ui.name,
         // a plugin this build lacks: the id from the file, said as such
@@ -1429,12 +1424,6 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
         ("Radial Blur", FxInstance::radial_blur()),
         ("Drop Shadow", FxInstance::drop_shadow()),
         ("Halftone", FxInstance::halftone()),
-        // R.47 Q4: non-linear geometry (Warp primitives) + cylinder
-        ("Lens Distort", FxInstance::lens_distort()),
-        ("Twirl", FxInstance::twirl()),
-        ("Ripple", FxInstance::ripple()),
-        ("Kaleidoscope", FxInstance::kaleidoscope()),
-        ("Cylinder 3D", FxInstance::cylinder3d()),
     ]
 }
 

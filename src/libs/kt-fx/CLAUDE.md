@@ -269,9 +269,11 @@ Three classes of video effect; the class determines ALL the placement of the cod
   space (the pre/post-affines are built by the builder; magnitudes ~1 — this
   holds the f32 parity of the GPU); the precomputable part — f64 on the CPU into the uniform
   once; neutral parameters — a SKIP of the step (identity bytes);
-  PerPixel supersampling (the condition `Proj|Warp`). The map is ONE function
-  `warp_map` for both CPU loops; the WGSL mirror is in geom_fused.wgsl (both copies
-  of the loop of the primitives!) is edited in THE SAME COMMIT.
+  PerPixel supersampling (the condition `Proj|Warp`). Since plugin-api-stage1 (D11.2) every
+  warp is a GEOMETRY PLUGIN (`src/plugins/fx-video-distort`): its `GeoKernel::steps` gives the
+  cooked numbers and the unit (`WarpNorm`), its `warp` is the ONE f64 map both CPU loops call
+  through `WarpRef`, and its `warp_<id>` WGSL function is the mirror kt-gpu pastes into both
+  loops — edited in THE SAME COMMIT as the f64 text (t993, t329).
 - **Pointwise** (`geom::is_pointwise`): the colour of a pixel without neighbours.
   The formula is ONE tap function (`tap_grade`/`tap_duo`/`tap_poster`/
   `tap_vig`, f64): it is called by the CPU barrier (`pointwise_barrier`) and the CPU tap

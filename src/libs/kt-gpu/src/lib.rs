@@ -10,7 +10,7 @@ mod engine;
 mod pool;
 
 pub use context::{GpuContext, GpuInitError};
-pub use engine::{GpuFxEngine, assembled_shaders, plugin_taps};
+pub use engine::{GpuFxEngine, assembled_shaders, plugin_taps, plugin_warps};
 
 /// A single method of comparing GPU-vs-CPU frames (R.29): ad-hoc epsilons in
 /// tests are forbidden; only this helper is used.

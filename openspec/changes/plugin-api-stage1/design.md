@@ -317,6 +317,16 @@ contract: input and output are the normalized centered space, magnitudes ~1, the
 part cooked once. The f32-parity argument therefore stands, and t329's cycle covers every warp
 plugin. A neutral program (`is_identity(k)`) is skipped, as neutral steps are today.
 
+*As built for the warps (4.1c-1):* `GeoKernel::steps(values, &GeoCtx) -> Vec<GeoStep>` returns an
+EMPTY list for neutral values (the skip lives in the plugin, next to its clamps), and
+`GeoStep::Warp { k, norm }` names the unit of the normalized space — `WarpNorm::ShortSemiAxis`
+(`min(w,h)/2`) or `HalfWidth` (`w/2`, the cylinder) — because the host's pre/post affines differ by
+it and the former builder decided it by `mode == 4`. kt-fx keeps a `WarpRef { id, kernel }` in
+`GeomPrim::Warp`; kt-gpu packs `mode` = the plugin's index among the registry's warp plugins
+(`plugin_warps`, never hashed into a key) and pastes `if (mode == Nu) { … warp_<id>(…) … }` at the
+`// @PLUGIN_WARP_ARMS` marker of BOTH loops. The 3D picker category of Cylinder 3D is the
+manifest's `fxreg.cat.three_d` (`FxInstance::class()` reads it).
+
 **D11.3 An exact lone path.** A series of length 1 without a scale change runs the OLD kernel of
 Pan/Mirror today (`GeomExec::Legacy`, t297). A geometry plugin may provide that path itself:
 `lone(k, &Frame) -> Option<Frame>` on the CPU and a WGSL pass (a pixel permutation for mirror).

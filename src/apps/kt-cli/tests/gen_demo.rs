@@ -251,7 +251,7 @@ fn gen_demo_concat() {
         source: Default::default(),
     };
     let mut ripple =
-        clip(1, 0, 4, 1, vec![FxInstance::Ripple { amount: 0.12, freq: 12.0, phase: 0.0 }]);
+        clip(1, 0, 4, 1, vec![kt_model::FxInstance::plugin_with("ripple", &[0.12, 12.0, 0.0]).unwrap()]);
     ripple.fx_auto = vec![vec![curve("phase", vec![key(0.0, 0.0), key(4.0, 1080.0)])]];
     let mut pin = clip(2, 4, 4, 1, vec![FxInstance::corner_pin()]);
     pin.fx_auto = vec![vec![
@@ -263,11 +263,11 @@ fn gen_demo_concat() {
     p.clips = vec![
         ripple,
         pin,
-        clip(3, 8, 4, 1, vec![FxInstance::LensDistort { k1: -0.5, k2: 0.0 }]),
+        clip(3, 8, 4, 1, vec![kt_model::FxInstance::plugin_with("lens_distort", &[-0.5, 0.0]).unwrap()]),
         clip(4, 12, 4, 1, vec![FxInstance::twirl()]),
         // the concatenation: kaleidoscope and cylinder WITH A ZOOM — one merged run
         clip(5, 16, 4, 1, vec![FxInstance::kaleidoscope(), zoom(1.5)]),
-        clip(6, 20, 4, 1, vec![FxInstance::Cylinder3d { curvature: 0.8 }, zoom(1.3)]),
+        clip(6, 20, 4, 1, vec![kt_model::FxInstance::plugin_with("cylinder3d", &[0.8]).unwrap(), zoom(1.3)]),
     ];
     save(&mut p, "08-warp.kt");
 }

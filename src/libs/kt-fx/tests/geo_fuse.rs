@@ -536,7 +536,7 @@ fn bench_fx_1080p() {
         &[grid, FxInstance::lens_distort(), FxInstance::twirl(), zoom2],
     );
     bench("kaleidoscope solo", &[FxInstance::kaleidoscope()]);
-    bench("cylinder 0.8", &[FxInstance::Cylinder3d { curvature: 0.8 }]);
+    bench("cylinder 0.8", &[kt_model::FxInstance::plugin_with("cylinder3d", &[0.8]).unwrap()]);
 }
 
 /// Test 306 (item 311, R.45): the chain plan — the single place of segmentation.
@@ -1326,10 +1326,10 @@ fn t333_warp_prims() {
 
     // (1) the neutral parameters of each warp — identity byte-for-byte
     for f in [
-        FxInstance::LensDistort { k1: 0.0, k2: 0.0 },
-        FxInstance::Twirl { angle: 0.0, radius: 0.8 },
-        FxInstance::Ripple { amount: 0.0, freq: 10.0, phase: 0.0 },
-        FxInstance::Cylinder3d { curvature: 0.0 },
+        kt_model::FxInstance::plugin_with("lens_distort", &[0.0, 0.0]).unwrap(),
+        kt_model::FxInstance::plugin_with("twirl", &[0.0, 0.8]).unwrap(),
+        kt_model::FxInstance::plugin_with("ripple", &[0.0, 10.0, 0.0]).unwrap(),
+        kt_model::FxInstance::plugin_with("cylinder3d", &[0.0]).unwrap(),
     ] {
         let out = run(std::slice::from_ref(&f));
         assert_eq!(out.rgba, src.rgba, "{}: neutral params are a byte identity", f.tag());
@@ -1346,8 +1346,8 @@ fn t333_warp_prims() {
 
     // (3) determinism: two runs byte-for-byte
     let hard = [
-        FxInstance::Twirl { angle: 540.0, radius: 1.2 },
-        FxInstance::Ripple { amount: 0.3, freq: 30.0, phase: 137.0 },
+        kt_model::FxInstance::plugin_with("twirl", &[540.0, 1.2]).unwrap(),
+        kt_model::FxInstance::plugin_with("ripple", &[0.3, 30.0, 137.0]).unwrap(),
     ];
     assert_eq!(run(&hard).rgba, run(&hard).rgba, "warp chain must be deterministic");
 
@@ -1381,7 +1381,7 @@ fn t333_warp_prims() {
         (sx / n, sy / n)
     };
     // the centre: the marker in the centre of the frame does not move
-    let tw = FxInstance::Twirl { angle: 180.0, radius: 1.0 };
+    let tw = kt_model::FxInstance::plugin_with("twirl", &[180.0, 1.0]).unwrap();
     let out = apply_video_chain(std::slice::from_ref(&tw), marker_at(W / 2, H / 2), &ctx());
     let (cx, cy) = centroid(&out);
     assert!(
@@ -1399,7 +1399,7 @@ fn t333_warp_prims() {
     // samples the source at r·(1+k1·r²) — a source marker at radius rs
     // is visible at the output where rs = r·(1+k1·r²).
     let k1 = 0.5f64;
-    let lens = FxInstance::LensDistort { k1: k1 as f32, k2: 0.0 };
+    let lens = kt_model::FxInstance::plugin_with("lens_distort", &[(k1 as f32) as f64, 0.0]).unwrap();
     let rr = (H / 2 - 4) as f64; // the marker radius in px (along Y, the short axis)
     let rn = rr / (H as f64 / 2.0); // normalized
     let out =
@@ -1417,7 +1417,7 @@ fn t333_warp_prims() {
     );
 
     // (6) kaleidoscope: the points of the first wedge remain themselves (≤1 LSB)
-    let kal = FxInstance::Kaleidoscope { segments: 6, angle: 0.0 };
+    let kal = kt_model::FxInstance::plugin_with("kaleidoscope", &[6.0, 0.0]).unwrap();
     let out = apply_video_chain(std::slice::from_ref(&kal), test_frame(), &ctx());
     let tau = std::f64::consts::TAU / 6.0;
     let mut checked = 0;
@@ -1440,7 +1440,7 @@ fn t333_warp_prims() {
     assert!(checked > 20, "wedge probe must cover pixels: {checked}");
 
     // (7) cylinder: the edges and the centre column are in place, compression toward the edges
-    let cyl = FxInstance::Cylinder3d { curvature: 0.9 };
+    let cyl = kt_model::FxInstance::plugin_with("cylinder3d", &[0.9]).unwrap();
     let out = apply_video_chain(std::slice::from_ref(&cyl), marker_at(W / 2, H / 4), &ctx());
     let (mx, _) = centroid(&out);
     assert!((mx - (W / 2) as f64).abs() <= 1.5, "cylinder center column fixed: {mx:.1}");

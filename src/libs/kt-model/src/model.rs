@@ -151,6 +151,9 @@ fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
 
 pub const MIN_CLIP_DURATION: Tick = Tick(90);
 
+// a command lives for one gesture and is not stored in bulk; `AddClip` carries a whole event and
+// is the large one by nature (the lint woke when the warps left `FxInstance`, plugin-api-stage1)
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     AddMedia {

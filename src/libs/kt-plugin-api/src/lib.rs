@@ -832,6 +832,11 @@ pub enum Gpu {
     Wgsl(&'static str),
     /// A geometry plugin's map, expressed in the host's closed primitive set (no WGSL).
     Primitives,
+    /// A geometry plugin with a WARP step (D11.2): the host's primitives plus ONE WGSL function
+    /// `warp_<id>(pt: vec2<f32>, a: vec4<f32>, b: vec4<f32>) -> vec2<f32>` — the inverse map of the
+    /// normalized centered space, `a.yzw`/`b.xyzw` the step's seven cooked numbers — which the
+    /// host pastes into BOTH primitive loops of the fused pass.
+    Warp(&'static str),
 }
 
 /// A count of frames as a function of the parameter values (a tail, a look-ahead).
@@ -1013,6 +1018,46 @@ pub trait VideoKernel: Send + Sync {
     }
 }
 
+/// What a geometry plugin's step sees (D11.2): its stage — the size of the frame that enters it — and
+/// the series' output size (the canvas), both in LOGICAL pixels (the host conjugates K×).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GeoCtx {
+    pub stage_w: u32,
+    pub stage_h: u32,
+    pub out_w: u32,
+    pub out_h: u32,
+}
+
+/// One step of a geometry program (D11.2), in the host's vocabulary. `Warp` is the open one: the
+/// plugin's own inverse map of the normalized centered space of its stage (input and output; the
+/// pre/post-affines are the host's), with seven numbers cooked once — the precomputable part (radians,
+/// 2π·freq, sin a, 1/a) in f64, so the GPU gets f32 values rounded once.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GeoStep {
+    Warp { k: [f64; 7], norm: WarpNorm },
+}
+
+/// The unit of a warp's normalized centered space (D11.2): what `1.0` is from the stage's centre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WarpNorm {
+    /// The shorter semi-axis, `min(w, h)/2` — a round map stays round on any aspect.
+    ShortSemiAxis,
+    /// Half the width, `w/2` — a map along X whose edges stay edges (the cylinder).
+    HalfWidth,
+}
+
+/// A geometry plugin's kernel (D11.2).
+pub trait GeoKernel: Send + Sync {
+    /// The steps of this slot at these values; EMPTY when the values are neutral (the step is
+    /// skipped, as the identity steps of the core kinds are, so the identity stays byte for byte).
+    fn steps(&self, p: &[f64], cx: &GeoCtx) -> Vec<GeoStep>;
+    /// The inverse map of a `Warp` step: output → input, in the normalized centered space. The ONE
+    /// f64 text of it; `warp_<id>` is its WGSL mirror, held to the geometry tolerance (t329, t993).
+    fn warp(&self, _k: &[f64; 7], x: f64, y: f64) -> (f64, f64) {
+        (x, y)
+    }
+}
+
 /// A video kernel's parameters prepared once per frame (`VideoKernel::cook`).
 pub type Cooked = [f64; 8];
 
@@ -1144,6 +1189,10 @@ pub trait Plugin: Send + Sync {
     fn audio(&self) -> Option<&dyn AudioKernel> {
         None
     }
+    /// A geometry plugin's kernel (D11.2).
+    fn geo(&self) -> Option<&dyn GeoKernel> {
+        None
+    }
 }
 
 /// The tail of an audio plugin in frames — ONE home of the formula: the registry, the static
@@ -1227,6 +1276,9 @@ impl Registry {
                     (None, _) => return refuse("a video effect without a planner class"),
                     (Some(VideoClass::Geometry), Gpu::Wgsl(_)) => {
                         return refuse("a geometry plugin offers WGSL instead of the host's primitives");
+                    }
+                    (Some(VideoClass::PointWise | VideoClass::Barrier), Gpu::Warp(_)) => {
+                        return refuse("a warp map from a plugin that is not a geometry plugin");
                     }
                     (Some(VideoClass::PointWise | VideoClass::Barrier), Gpu::None) if m.decl.builtin => {
                         return refuse("a built-in point-wise or barrier plugin without a GPU kernel");

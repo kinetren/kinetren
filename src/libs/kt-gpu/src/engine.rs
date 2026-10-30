@@ -111,8 +111,8 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
                 cur += 3;
                 3
             }
-            GeomPrim::Warp { mode, p } => {
-                u.p[cur] = [*mode as f32, p[0] as f32, p[1] as f32, p[2] as f32];
+            GeomPrim::Warp { warp, p } => {
+                u.p[cur] = [plugin_warp_mode(warp.id) as f32, p[0] as f32, p[1] as f32, p[2] as f32];
                 u.p[cur + 1] = [p[3] as f32, p[4] as f32, p[5] as f32, p[6] as f32];
                 cur += 2;
                 4
@@ -845,6 +845,32 @@ pub fn plugin_taps() -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
+/// The geometry plugins of the installed registry that offer a warp map, in registration order:
+/// (id, the `warp_<id>` function). The ONE list the assembler and the uniform packing read (D11.2).
+pub fn plugin_warps() -> Vec<(&'static str, &'static str)> {
+    let Some(reg) = kt_plugin_api::installed() else { return Vec::new() };
+    reg.ids()
+        .iter()
+        .filter_map(|id| {
+            let p = reg.get(id)?;
+            let m = p.manifest();
+            match (m.decl.video_class, m.decl.gpu) {
+                (Some(kt_plugin_api::VideoClass::Geometry), kt_plugin_api::Gpu::Warp(w)) => {
+                    let id: &'static str = &m.id;
+                    Some((id, w))
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// The warp dispatch number of a geometry plugin (the `mode` in the primitive's first slot): its
+/// index in `plugin_warps`. A function of the registry only, never hashed into a key.
+fn plugin_warp_mode(id: &str) -> u32 {
+    plugin_warps().iter().position(|(p, _)| *p == id).expect("a warp of an unassembled plugin") as u32
+}
+
 /// The tap dispatch number of a point-wise plugin in the fused pass: after the built-in kinds
 /// 0..5 (4 was Posterize). It is a function of the registry only, and NEVER hashed into a key —
 /// the keys carry the plugin id (the chain's Debug form).
@@ -874,10 +900,25 @@ pub fn assembled_shaders() -> (String, Vec<String>) {
              return vec4<u32>(clamp(round(v), vec4<f32>(0.0), vec4<f32>(255.0)));\n}}\n"
         ));
     }
+    // the warp maps (D11.2): one arm per plugin in BOTH primitive loops, one function each
+    let mut warp_arms = String::new();
+    for (i, (id, wgsl)) in plugin_warps().iter().enumerate() {
+        warp_arms.push_str(&format!(
+            "                if (mode == {i}u) {{ let q = warp_{id}(vec2<f32>(x, y), a, b); x = q.x; y = q.y; }}\n"
+        ));
+        fns.push_str(wgsl);
+        fns.push('\n');
+    }
     let marker = "        // @PLUGIN_TAP_ARMS";
+    let warp_marker = "                // @PLUGIN_WARP_ARMS";
     let base = include_str!("shaders/geom_fused.wgsl");
     assert!(base.contains(marker), "geom_fused.wgsl lost its plugin arm marker");
-    let fused = base.replacen(marker, &format!("{arms}{marker}"), 1) + "\n" + &fns;
+    assert_eq!(base.matches(warp_marker).count(), 2, "geom_fused.wgsl lost a warp arm marker (both loops)");
+    let fused = base
+        .replacen(marker, &format!("{arms}{marker}"), 1)
+        .replace(warp_marker, &format!("{warp_arms}{warp_marker}"))
+        + "\n"
+        + &fns;
     (fused, own)
 }
 

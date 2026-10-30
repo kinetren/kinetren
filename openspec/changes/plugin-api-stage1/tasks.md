@@ -224,6 +224,12 @@ once (English message, first line = the stage and what was done).
     with the stage width doubled (t328 red too). Found on the way: the factory presets were read
     before the picker's registry installed the plugin set — `user_store::decode` installs first
     (t344 caught it once vignette, in a factory preset, moved).
+- [x] 4.1c-1 The warps: `GeoKernel`/`GeoCtx`/`GeoStep::Warp { k, norm }`/`WarpNorm`, `Gpu::Warp`,
+    `Plugin::geo`; lens_distort, twirl, ripple, kaleidoscope, cylinder3d move into
+    `src/plugins/fx-video-distort` (one WGSL function each); kt-fx `WarpRef` in `GeomPrim::Warp`,
+    `warp_map` and the five builder arms deleted; kt-gpu `plugin_warps` + the arm marker in both
+    loops. t993 (warp part) red with the twirl WGSL's sine negated (19.7 % of samples off);
+    t973 frozen forms; t26, t328, t329, t181, t330, t332, t333 unchanged
 - [ ] 4.1c The geometry program (D11.2, D11.3): `GeoKernel`, `GeoCtx`, `GeoStep`, the open `Warp` with `warp_<id>` pasted into both loops of `geom_fused.wgsl`, the exact lone path; move lens_distort, twirl, ripple, kaleidoscope, cylinder3d, corner_pin, mirror, event_grid, pan3d; write t993 and t994 red first; verify t26, t297, t298, t308b, t330, t332, t333, t943, t944, t181, t329
 - [ ] 4.1d The ten barrier kinds: propose `plugin-api-barriers` (the GPU pass graph and the SIMD twins), linked from here; this change does not move them
 - [ ] 4.2 FX picker, variants and thumbnails from manifests (`fx_registry.rs`, `fx_thumbs.rs`); verify t48, t252, t253, t976 and `layout_tests.rs`/`reach_tests.rs` green; rewrite the "add a video effect" checklist in `src/libs/kt-fx/CLAUDE.md` and `src/libs/kt-gpu/CLAUDE.md`; commit stage 4

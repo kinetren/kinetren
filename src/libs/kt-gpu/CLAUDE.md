@@ -97,8 +97,9 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
   3 passes (Resample down/up + the final one with T1); passes()/slot_units MUST
   predict this.
 - `geom_fused.wgsl`: primitive kind 4 — Warp (2 uniform slots, [mode,p0..p2]
-  [p3..p6]); tap arm kind 2..5 — the pointwise effects of R.47; the codes and formulas —
-  mirrors of kt-fx (geom.rs::warp_map / tap_*), edited IN THE SAME COMMIT.
+  [p3..p6]); `mode` is the plugin's index in `plugin_warps()` (plugin-api-stage1, D11.2) and its
+  arm is assembled at `// @PLUGIN_WARP_ARMS` in BOTH loops (`assembled_shaders`, t993); the
+  formula is the plugin's `warp_<id>` WGSL, a mirror of its f64 `warp`, edited IN THE SAME COMMIT.
 - **Premultiplication before the mip (R.53, item 418).** `premul.wgsl` is a
   mirror of `kt_fx::video::premultiply`, `unpremul.wgsl` is a mirror of
   `kt_fx::video::unpremultiply` (the home of both functions is in kt-fx, from where

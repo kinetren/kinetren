@@ -5,6 +5,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
 #[test]
 fn dump() {
+    kt_plugins_builtin::install();
     let dir = std::env::var("KT_DUMP_DIR")
         .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
     for (name, w, h, alpha) in
