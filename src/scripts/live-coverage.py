@@ -83,7 +83,10 @@ USE_CLICK = re.compile(
     r'|scroll_probe_into_view)\(\s*f?"([^"]+)"'
 )
 SPEC_LIVE = re.compile(r"src/scripts/live/([a-z_0-9]+)\.py")
-FILE_EXT = {"otio", "kt", "png", "json", "db", "rs", "py", "toml", "wav", "mp4", "jpg", "ktproj", "dll", "exe"}
+# md: the guide pages compiled into the Guide window (`timeline.md`); tmp / broken: the user
+# store's side files (`json.tmp`, `recent.json.broken`) — names of files, not places
+FILE_EXT = {"otio", "kt", "png", "json", "db", "rs", "py", "toml", "wav", "mp4", "jpg", "ktproj", "dll", "exe",
+            "md", "tmp", "broken"}
 
 # REGISTRY OF THE MOVE (R.68, task 5.2). The criterion is in the spec `ui-reach`: live
 # what remains is a place never touched ONCE, a gesture hit, and a complex path from
@@ -147,7 +150,10 @@ MIGRATED = {
 # and `render.start` stay untouched — the README does not show a render.
 # 84 → 81 (i18n-gaps, 2026-10-29): the collector skips every `*_tests.rs`, not only two of
 # them; `lang.`, `desktop.` and test data of `i18n_tests.rs` were never places a person touches.
-UNTOUCHED_LIMIT = 81
+# 81 → 80 (welcome-window-and-tour, 2026-10-30): `live/welcome.py` touches every place the
+# welcome window, the Guide, the lessons panel, Help, View and "Save as template…" publish;
+# `md`/`tmp`/`broken` joined FILE_EXT (file names, not places), which also took `json.broken`.
+UNTOUCHED_LIMIT = 80
 
 
 def as_pattern(name):

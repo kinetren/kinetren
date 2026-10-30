@@ -601,3 +601,614 @@ pub fn save_workspace_at(path: &std::path::Path, w: &Workspace) {
     // by the same code as the project: a break midway leaves no stump
     let _ = kt_otio::write_atomic(path, &format!("{doc:#}\n"));
 }
+
+// ---- between-projects records (welcome-window-and-tour) -------------------
+//
+// The welcome window needs what lives BETWEEN projects: the recent list with its posters,
+// the person's project templates, the tour progress and the start choice. Each is its own
+// small file next to the workspace, with the store's common rules: a broken file is moved
+// aside to `.broken` on the first write and the record starts empty; a file of a future
+// version is read but never overwritten. A poster lives under `<store>/posters/`, keyed by
+// the project's path — never next to the project or in its sidecar: the sidecar is the
+// project's content cache (R.58), a poster is the program's list decoration.
+
+/// The version of the four record files this build writes.
+const RECORDS_VERSION: u64 = 1;
+
+/// How many recent projects the list keeps (UI rule 20: nothing grows by itself).
+pub const RECENT_KEEP: usize = 12;
+
+/// One row of the recent list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecentEntry {
+    pub path: PathBuf,
+    pub name: String,
+    /// Seconds since the Unix epoch of the last open or save.
+    pub opened: u64,
+    /// The template the project was made from (a built-in id or `user:<name>`).
+    pub template: Option<String>,
+}
+
+/// A template the person saved from Project settings.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UserTemplate {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+}
+
+/// Finished steps per lesson, and when the tour was last touched.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TourProgress {
+    pub done: std::collections::BTreeMap<u32, std::collections::BTreeSet<u32>>,
+    /// Seconds since the epoch of the last step finished or the last tour start; compared with
+    /// the newest recent entry: "a project was opened since the tour stopped".
+    pub touched: u64,
+}
+
+impl TourProgress {
+    pub fn started(&self) -> bool {
+        self.touched > 0 || self.done.values().any(|s| !s.is_empty())
+    }
+
+    pub fn is_done(&self, lesson: u32, step: u32) -> bool {
+        self.done.get(&lesson).is_some_and(|s| s.contains(&step))
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn finished_steps(&self) -> usize {
+        self.done.values().map(|s| s.len()).sum()
+    }
+}
+
+/// The start record: the switch and the facts the primary tile needs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StartChoice {
+    /// "Show the welcome window at start" — on by default (D11).
+    pub show_at_start: bool,
+    /// The template of the last "New from template" click.
+    pub last_template: Option<String>,
+    /// The former `last_project` key already seeded the recent list.
+    pub seeded: bool,
+    /// The program has started at least once with this store (the first start is the tour's).
+    pub started_before: bool,
+}
+
+impl Default for StartChoice {
+    fn default() -> StartChoice {
+        StartChoice { show_at_start: true, last_template: None, seeded: false, started_before: false }
+    }
+}
+
+/// Read-state of one record file.
+#[derive(Debug, Clone, Copy, Default)]
+struct FileState {
+    broken: bool,
+    readonly: bool,
+}
+
+/// The four between-projects records. `dir == None` — memory only (tests).
+pub struct StartStore {
+    dir: Option<PathBuf>,
+    pub recent: Vec<RecentEntry>,
+    pub templates: Vec<UserTemplate>,
+    pub tour: TourProgress,
+    pub start: StartChoice,
+    states: [FileState; 4],
+}
+
+const F_RECENT: usize = 0;
+const F_TEMPLATES: usize = 1;
+const F_TOUR: usize = 2;
+const F_START: usize = 3;
+const FILES: [&str; 4] = ["recent.json", "templates.json", "tour.json", "start.json"];
+
+pub fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// The project's path as the key of its list row and poster: canonical when the file exists,
+/// absolute otherwise (a deleted project keeps its row and its key).
+pub fn project_key(p: &std::path::Path) -> PathBuf {
+    std::fs::canonicalize(p)
+        .or_else(|_| std::path::absolute(p))
+        .unwrap_or_else(|_| p.to_path_buf())
+}
+
+fn read_record(path: Option<&std::path::Path>) -> (Option<serde_json::Value>, FileState) {
+    let Some(text) = path.and_then(|p| std::fs::read_to_string(p).ok()) else {
+        return (None, FileState::default());
+    };
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(v) => {
+            let ver = v.get("version").and_then(|x| x.as_u64()).unwrap_or(0);
+            (Some(v), FileState { broken: false, readonly: ver > RECORDS_VERSION })
+        }
+        Err(_) => (None, FileState { broken: true, readonly: false }),
+    }
+}
+
+impl Default for StartStore {
+    fn default() -> StartStore {
+        // under tests — memory only, unless a directory is set explicitly (as FxPresetStore)
+        let dir = (!cfg!(test) || std::env::var_os("KT_USER_STORE_DIR").is_some()).then(store_dir);
+        StartStore::at(dir)
+    }
+}
+
+impl StartStore {
+    /// The store in `dir` (`None` — memory only). Reads all four files.
+    pub fn at(dir: Option<PathBuf>) -> StartStore {
+        let mut s = StartStore {
+            dir,
+            recent: Vec::new(),
+            templates: Vec::new(),
+            tour: TourProgress::default(),
+            start: StartChoice::default(),
+            states: [FileState::default(); 4],
+        };
+        let (v, st) = read_record(s.file(F_RECENT).as_deref());
+        s.states[F_RECENT] = st;
+        if let Some(arr) = v.as_ref().and_then(|v| v.get("recent")).and_then(|x| x.as_array()) {
+            for e in arr.iter().take(RECENT_KEEP) {
+                let Some(path) = e.get("path").and_then(|x| x.as_str()) else { continue };
+                let path = PathBuf::from(path);
+                s.recent.push(RecentEntry {
+                    name: e
+                        .get("name")
+                        .and_then(|x| x.as_str())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| display_name(&path)),
+                    path,
+                    opened: e.get("opened").and_then(|x| x.as_u64()).unwrap_or(0),
+                    template: e.get("template").and_then(|x| x.as_str()).map(str::to_string),
+                });
+            }
+        }
+        let (v, st) = read_record(s.file(F_TEMPLATES).as_deref());
+        s.states[F_TEMPLATES] = st;
+        if let Some(arr) = v.as_ref().and_then(|v| v.get("templates")).and_then(|x| x.as_array()) {
+            for e in arr {
+                let (Some(name), Some(w), Some(h), Some(fps)) = (
+                    e.get("name").and_then(|x| x.as_str()),
+                    e.get("width").and_then(|x| x.as_u64()),
+                    e.get("height").and_then(|x| x.as_u64()),
+                    e.get("fps").and_then(|x| x.as_u64()),
+                ) else {
+                    continue;
+                };
+                if name.trim().is_empty() || w == 0 || h == 0 || fps == 0 {
+                    continue;
+                }
+                s.templates.push(UserTemplate {
+                    name: name.to_string(),
+                    width: w as u32,
+                    height: h as u32,
+                    fps: fps as u32,
+                });
+            }
+        }
+        let (v, st) = read_record(s.file(F_TOUR).as_deref());
+        s.states[F_TOUR] = st;
+        if let Some(v) = &v {
+            s.tour.touched = v.get("touched").and_then(|x| x.as_u64()).unwrap_or(0);
+            if let Some(obj) = v.get("done").and_then(|x| x.as_object()) {
+                for (lesson, steps) in obj {
+                    let Ok(l) = lesson.parse::<u32>() else { continue };
+                    let set: std::collections::BTreeSet<u32> = steps
+                        .as_array()
+                        .map(|a| a.iter().filter_map(|x| x.as_u64()).map(|x| x as u32).collect())
+                        .unwrap_or_default();
+                    s.tour.done.insert(l, set);
+                }
+            }
+        }
+        let (v, st) = read_record(s.file(F_START).as_deref());
+        s.states[F_START] = st;
+        if let Some(v) = &v {
+            s.start = StartChoice {
+                show_at_start: v.get("welcome_at_start").and_then(|x| x.as_bool()).unwrap_or(true),
+                last_template: v.get("last_template").and_then(|x| x.as_str()).map(str::to_string),
+                seeded: v.get("seeded").and_then(|x| x.as_bool()).unwrap_or(false),
+                started_before: v.get("started_before").and_then(|x| x.as_bool()).unwrap_or(true),
+            };
+        }
+        s
+    }
+
+    fn file(&self, f: usize) -> Option<PathBuf> {
+        self.dir.as_ref().map(|d| d.join(FILES[f]))
+    }
+
+    /// The store's directory; `None` — memory only.
+    pub fn dir(&self) -> Option<&std::path::Path> {
+        self.dir.as_deref()
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn is_broken(&self, file: &str) -> bool {
+        FILES.iter().position(|f| *f == file).is_some_and(|i| self.states[i].broken)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn is_readonly(&self, file: &str) -> bool {
+        FILES.iter().position(|f| *f == file).is_some_and(|i| self.states[i].readonly)
+    }
+
+    /// Where the poster of a project lives: `<store>/posters/<xxh3 of the key>.png`.
+    /// `None` for a memory store.
+    pub fn poster_path(&self, project: &std::path::Path) -> Option<PathBuf> {
+        let key = project_key(project);
+        let h = xxhash_rust::xxh3::xxh3_64(key.to_string_lossy().as_bytes());
+        self.dir.as_ref().map(|d| d.join("posters").join(format!("{h:016x}.png")))
+    }
+
+    fn write(&mut self, f: usize, body: serde_json::Value) {
+        let Some(path) = self.file(f) else { return };
+        if self.states[f].readonly {
+            return; // newer than us — we read it, we do not rewrite what we do not understand
+        }
+        if self.states[f].broken && path.exists() {
+            let _ = kt_otio::replace_file(&path, &path.with_extension("json.broken"));
+            self.states[f].broken = false;
+        }
+        let mut doc = body;
+        doc["version"] = serde_json::json!(RECORDS_VERSION);
+        if let Some(d) = path.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        // tmp + rename, WITHOUT fsync: a break midway leaves no stump, and these records are
+        // conveniences — a lost recent list costs nothing, while two fsyncs per open stall the
+        // UI thread for seconds on a busy disk (t985 took 90 s with `write_atomic`)
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, format!("{doc:#}\n")).is_ok() {
+            let _ = kt_otio::replace_file(&tmp, &path);
+        }
+    }
+
+    fn save_recent(&mut self) {
+        let arr: Vec<serde_json::Value> = self
+            .recent
+            .iter()
+            .map(|e| {
+                let mut v = serde_json::json!({
+                    "path": e.path.to_string_lossy(),
+                    "name": e.name,
+                    "opened": e.opened,
+                });
+                if let Some(t) = &e.template {
+                    v["template"] = serde_json::json!(t);
+                }
+                v
+            })
+            .collect();
+        self.write(F_RECENT, serde_json::json!({ "recent": arr }));
+    }
+
+    fn save_templates(&mut self) {
+        let arr: Vec<serde_json::Value> = self
+            .templates
+            .iter()
+            .map(|t| serde_json::json!({ "name": t.name, "width": t.width, "height": t.height, "fps": t.fps }))
+            .collect();
+        self.write(F_TEMPLATES, serde_json::json!({ "templates": arr }));
+    }
+
+    fn save_tour(&mut self) {
+        let done: serde_json::Map<String, serde_json::Value> = self
+            .tour
+            .done
+            .iter()
+            .map(|(l, s)| (l.to_string(), serde_json::json!(s.iter().collect::<Vec<_>>())))
+            .collect();
+        self.write(F_TOUR, serde_json::json!({ "done": done, "touched": self.tour.touched }));
+    }
+
+    fn save_start(&mut self) {
+        let mut v = serde_json::json!({
+            "welcome_at_start": self.start.show_at_start,
+            "seeded": self.start.seeded,
+            "started_before": self.start.started_before,
+        });
+        if let Some(t) = &self.start.last_template {
+            v["last_template"] = serde_json::json!(t);
+        }
+        self.write(F_START, v);
+    }
+
+    /// The first start of a build with these records: the former single `last_project`
+    /// seeds the list ONCE (design, Migration Plan). Returns whether this is the first start
+    /// of the program with this store at all (an empty store and no former key).
+    pub fn begin_session(&mut self, last_project: Option<&str>) -> bool {
+        let first = !self.start.started_before && self.recent.is_empty() && !self.tour.started();
+        let mut changed = !self.start.started_before;
+        self.start.started_before = true;
+        if !self.start.seeded {
+            self.start.seeded = true;
+            changed = true;
+            if let Some(p) = last_project.filter(|p| !p.is_empty())
+                && self.recent.is_empty()
+            {
+                let path = PathBuf::from(p);
+                self.recent.push(RecentEntry {
+                    name: display_name(&path),
+                    path: project_key(&path),
+                    opened: now_secs(),
+                    template: None,
+                });
+                self.save_recent();
+            }
+        }
+        if changed {
+            self.save_start();
+        }
+        first && last_project.is_none_or(|p| p.is_empty())
+    }
+
+    /// A named project was opened or saved: its row goes to the top (bounded, newest first).
+    /// A row pushed past the bound takes its poster with it.
+    pub fn touch_recent(&mut self, path: &std::path::Path, template: Option<&str>) {
+        let key = project_key(path);
+        let old = self.recent.iter().position(|e| e.path == key).map(|i| self.recent.remove(i));
+        let template = template.map(str::to_string).or_else(|| old.and_then(|e| e.template));
+        self.recent.insert(
+            0,
+            RecentEntry { name: display_name(&key), path: key, opened: now_secs(), template },
+        );
+        while self.recent.len() > RECENT_KEEP {
+            if let Some(gone) = self.recent.pop()
+                && let Some(p) = self.poster_path(&gone.path)
+            {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+        self.save_recent();
+    }
+
+    /// "Clear the list": the rows go, and so do the posters the list owned — nothing else.
+    pub fn clear_recent(&mut self) {
+        for e in std::mem::take(&mut self.recent) {
+            if let Some(p) = self.poster_path(&e.path) {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+        self.save_recent();
+    }
+
+    /// Drop one row (its context menu): the poster goes with it.
+    pub fn forget_recent(&mut self, path: &std::path::Path) {
+        let key = project_key(path);
+        self.recent.retain(|e| e.path != key);
+        if let Some(p) = self.poster_path(&key) {
+            let _ = std::fs::remove_file(p);
+        }
+        self.save_recent();
+    }
+
+    /// Save a template; a template of the same name is replaced.
+    pub fn add_template(&mut self, t: UserTemplate) {
+        self.templates.retain(|x| x.name != t.name);
+        self.templates.push(t);
+        self.save_templates();
+    }
+
+    pub fn remove_template(&mut self, name: &str) {
+        self.templates.retain(|x| x.name != name);
+        self.save_templates();
+    }
+
+    pub fn set_last_template(&mut self, id: &str) {
+        self.start.last_template = Some(id.to_string());
+        self.save_start();
+    }
+
+    pub fn set_show_at_start(&mut self, on: bool) {
+        if self.start.show_at_start != on {
+            self.start.show_at_start = on;
+            self.save_start();
+        }
+    }
+
+    /// A lesson step closed.
+    pub fn finish_step(&mut self, lesson: u32, step: u32) {
+        let fresh = self.tour.done.entry(lesson).or_default().insert(step);
+        self.tour.touched = now_secs().max(self.tour.touched);
+        if fresh {
+            self.save_tour();
+        }
+    }
+
+    /// The tour was started or continued (the "opened since" clock is reset).
+    pub fn touch_tour(&mut self) {
+        self.tour.touched = now_secs().max(self.tour.touched);
+        self.save_tour();
+    }
+
+    /// "Start over": the progress, and nothing else.
+    pub fn reset_tour(&mut self) {
+        self.tour = TourProgress::default();
+        self.save_tour();
+    }
+
+    /// A project was opened after the tour was last touched.
+    pub fn opened_since_tour(&self) -> bool {
+        self.recent.first().is_some_and(|e| e.opened > self.tour.touched)
+    }
+}
+
+/// The name of a project as the list shows it: the file name without the extension.
+pub fn display_name(p: &std::path::Path) -> String {
+    p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod records_tests {
+    use super::*;
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("kt-records-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// Test 985 (welcome-window-and-tour, durability): the recent list is bounded to 12,
+    /// newest first, keeps a missing file, "Clear" removes the posters it owned; the former
+    /// `last_project` seeds a list of one; a broken file goes aside to `.broken`, a version-99
+    /// file is read and left unwritten.
+    #[test]
+    fn t985_recent_list_is_bounded_keeps_missing_and_owns_its_posters() {
+        let store = tmp("t985-store");
+        let projects = tmp("t985-projects");
+        let mut s = StartStore::at(Some(store.clone()));
+        let mut paths = Vec::new();
+        for i in 0..14 {
+            let p = projects.join(format!("p{i:02}.kt"));
+            std::fs::write(&p, "x").unwrap();
+            s.touch_recent(&p, Some("1080p30"));
+            // the poster job's product (its own half of t985 runs the real render)
+            let poster = s.poster_path(&p).unwrap();
+            std::fs::create_dir_all(poster.parent().unwrap()).unwrap();
+            std::fs::write(&poster, b"png").unwrap();
+            paths.push(p);
+        }
+        assert_eq!(s.recent.len(), RECENT_KEEP, "the list is bounded");
+        assert_eq!(s.recent[0].name, "p13", "newest first");
+        assert_eq!(s.recent[11].name, "p02");
+        // the two rows pushed past the bound took their posters with them
+        for gone in &paths[..2] {
+            assert!(!s.poster_path(gone).unwrap().exists(), "a row past the bound left its poster");
+        }
+        for kept in &paths[2..] {
+            assert!(s.poster_path(kept).unwrap().exists());
+        }
+        // the 3rd kept project's file is deleted: the row stays, with its path
+        std::fs::remove_file(&paths[4]).unwrap();
+        let back = StartStore::at(Some(store.clone()));
+        assert_eq!(back.recent.len(), RECENT_KEEP, "the list survives a reload");
+        let row = back.recent.iter().find(|e| e.name == "p04").expect("a missing file stays listed");
+        assert!(!row.path.exists(), "and is reported missing by its path");
+        assert_eq!(row.template.as_deref(), Some("1080p30"), "the template it was made from");
+        // no file appeared in the projects folder but the projects themselves
+        let mut names: Vec<String> = std::fs::read_dir(&projects)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert!(names.iter().all(|n| n.ends_with(".kt")), "a foreign file in the project folder: {names:?}");
+        // Clear: the list empties, the posters it owned go
+        let mut back = back;
+        back.clear_recent();
+        assert!(back.recent.is_empty());
+        let left = std::fs::read_dir(store.join("posters")).unwrap().count();
+        assert_eq!(left, 0, "Clear must remove the posters the list owned");
+        assert!(StartStore::at(Some(store.clone())).recent.is_empty(), "the clear reached the file");
+
+        // the former last_project seeds a list of one, once
+        let fresh = tmp("t985-seed");
+        let mut s = StartStore::at(Some(fresh.clone()));
+        let first = s.begin_session(Some(paths[13].to_str().unwrap()));
+        assert!(!first, "a start with a former project is not the first start");
+        assert_eq!(s.recent.len(), 1, "last_project seeds the list");
+        let mut again = StartStore::at(Some(fresh.clone()));
+        again.clear_recent();
+        again.begin_session(Some(paths[13].to_str().unwrap()));
+        assert!(again.recent.is_empty(), "the seed happens ONCE");
+        // an empty store and no former key: the first start
+        let mut empty = StartStore::at(Some(tmp("t985-first")));
+        assert!(empty.begin_session(None), "an empty store is the first start");
+        assert!(!empty.begin_session(None), "the second start is not");
+
+        // a broken file: aside to .broken, the list starts empty
+        let broken = tmp("t985-broken");
+        std::fs::write(broken.join("recent.json"), "{ not json").unwrap();
+        let mut s = StartStore::at(Some(broken.clone()));
+        assert!(s.recent.is_empty() && s.is_broken("recent.json"));
+        s.touch_recent(&paths[13], None);
+        assert!(broken.join("recent.json.broken").exists(), "the broken file is kept aside");
+        assert_eq!(StartStore::at(Some(broken.clone())).recent.len(), 1);
+
+        // a file of version 99: read, never overwritten
+        let future = tmp("t985-future");
+        let text = r#"{"version":99,"recent":[{"path":"/x/a.kt","name":"a","opened":5}]}"#;
+        std::fs::write(future.join("recent.json"), text).unwrap();
+        let mut s = StartStore::at(Some(future.clone()));
+        assert_eq!(s.recent.len(), 1, "a future file is read");
+        assert!(s.is_readonly("recent.json"));
+        s.touch_recent(&paths[13], None);
+        assert_eq!(std::fs::read_to_string(future.join("recent.json")).unwrap(), text, "and not overwritten");
+        for d in [store, projects, fresh, broken, future] {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    }
+
+    /// Test 985, the poster half: a save and a close queue the poster job; it renders by the
+    /// offline path into the store's posters folder, and NOTHING appears in the project folder
+    /// or next to it (no sidecar written by the poster).
+    #[test]
+    fn t985_posters_render_into_the_store_never_into_the_project_folder() {
+        let store = tmp("t985p-store");
+        let projects = tmp("t985p-projects");
+        let path = projects.join("edit.kt");
+        let text = crate::app::project_text_of(&crate::lessons::lesson_project(), &Default::default(), Some(&projects));
+        crate::app::write_project_atomic(&path, &text).unwrap();
+        let mut app = crate::app::KtApp::open(&path).expect("open");
+        app.start.store = StartStore::at(Some(store.clone()));
+        let before = crate::welcome::posters_done();
+        app.queue_poster(); // what Ctrl+S and the close of a named project do
+        assert!(crate::welcome::wait_posters(std::time::Duration::from_secs(60)), "the poster job hung");
+        assert!(crate::welcome::posters_done() > before, "the job did not run");
+        let poster = app.start.store.poster_path(&path).unwrap();
+        assert!(poster.starts_with(store.join("posters")), "the poster lives in the store: {poster:?}");
+        let img = image::open(&poster).expect("a PNG poster");
+        assert_eq!((img.width(), img.height()), (320, 180));
+        // a frame of the project, not a black rectangle (the generator sources of the events
+        // were once missing from the poster's plan — every frame came out flat)
+        let colours: std::collections::HashSet<[u8; 3]> = img.to_rgb8().pixels().map(|p| p.0).collect();
+        assert!(colours.len() > 16, "the poster is flat ({} colours): nothing was composed", colours.len());
+        drop(app);
+        let mut names: Vec<String> = std::fs::read_dir(&projects)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert!(
+            // the project's own sidecar (with its WAL files) is the project's, not the poster's
+            names.iter().all(|n| n == "edit.kt" || n.starts_with("edit.ktindex.db")),
+            "a poster file appeared next to the project: {names:?}"
+        );
+        assert!(!names.iter().any(|n| n.ends_with(".png")), "a PNG in the project folder: {names:?}");
+        let _ = std::fs::remove_dir_all(&store);
+        let _ = std::fs::remove_dir_all(&projects);
+    }
+
+    /// Test 987 (welcome-window-and-tour, durability): a user template, the tour progress and
+    /// the start choice survive a restart; "Start over" clears the progress and nothing else.
+    #[test]
+    fn t987_templates_tour_and_start_choice_survive_a_restart() {
+        let dir = tmp("t987");
+        let mut s = StartStore::at(Some(dir.clone()));
+        s.add_template(UserTemplate { name: "Shorts 60".into(), width: 1080, height: 1920, fps: 60 });
+        s.finish_step(1, 0);
+        s.finish_step(1, 1);
+        s.set_show_at_start(false);
+        let mut back = StartStore::at(Some(dir.clone()));
+        assert_eq!(
+            back.templates,
+            vec![UserTemplate { name: "Shorts 60".into(), width: 1080, height: 1920, fps: 60 }]
+        );
+        assert_eq!(back.tour.finished_steps(), 2, "two finished steps survive");
+        assert!(back.tour.is_done(1, 0) && back.tour.is_done(1, 1));
+        assert!(!back.start.show_at_start, "the start choice is off after the reload");
+        back.reset_tour();
+        let after = StartStore::at(Some(dir.clone()));
+        assert_eq!(after.tour.finished_steps(), 0, "Start over clears the progress");
+        assert!(!after.start.show_at_start, "and nothing else: the start choice");
+        assert_eq!(after.templates.len(), 1, "and nothing else: the template");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

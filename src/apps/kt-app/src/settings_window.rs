@@ -30,6 +30,9 @@ pub struct SettingsWindow {
     pub shape: SegShape,
     pub error: Option<String>,
     pub focus: bool,
+    /// "Save as template…" pressed: the name is typed IN PLACE of the button row
+    /// (welcome-window-and-tour D6) — no extra window (R.63 item 12).
+    pub template_name: Option<String>,
 }
 
 /// Raster: both numbers are even and within 16…8192.
@@ -115,6 +118,7 @@ impl KtApp {
             shape: s.default_shape,
             error: None,
             focus: true,
+            template_name: None,
         });
     }
 
@@ -123,6 +127,7 @@ impl KtApp {
         let mut open = true;
         let mut apply = false;
         let mut cancel = false;
+        let mut save_template: Option<String> = None;
         let cur = self.model.document().settings.clone();
         let reel_name =
             d.reel.and_then(|id| {
@@ -288,11 +293,64 @@ impl KtApp {
                     if ui.button(tr(k::settings::CANCEL)).clicked() {
                         cancel = true;
                     }
+                    // the frame size and rate as a template of the welcome window (D6);
+                    // a reel's settings are not a project's, so the door is the project's only
+                    if !is_reel {
+                        ui.separator();
+                        match d.template_name.as_mut() {
+                            None => {
+                                let r = ui.button(tr(k::settings::SAVE_TEMPLATE));
+                                crate::widgets::field_probe::note("settings.save_template", r.rect);
+                                crate::widgets::hint(&r, tr(k::settings::SAVE_TEMPLATE_HINT));
+                                if r.clicked() {
+                                    d.template_name = Some(String::new());
+                                }
+                            }
+                            Some(name) => {
+                                let r = ui.add(
+                                    egui::TextEdit::singleline(name)
+                                        .id(egui::Id::new("settings_tpl"))
+                                        .hint_text(tr(k::settings::TEMPLATE_NAME))
+                                        .desired_width(120.0),
+                                );
+                                crate::widgets::field_probe::note("settings.template_name", r.rect);
+                                if !r.has_focus() && name.is_empty() && !r.lost_focus() {
+                                    r.request_focus();
+                                }
+                                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                let rs = ui.button(tr(k::settings::TEMPLATE_SAVE));
+                                crate::widgets::field_probe::note("settings.template_save", rs.rect);
+                                if (enter || rs.clicked()) && !name.trim().is_empty() {
+                                    save_template = Some(name.trim().to_string());
+                                }
+                            }
+                        }
+                    }
                 });
                 });
             });
         if win.closed() {
             open = false;
+        }
+        if let Some(name) = save_template {
+            match (parse_size(&d.width, &d.height), parse_fps(&d.fps)) {
+                (Ok((width, height)), Ok(fps)) => {
+                    self.start.store.add_template(crate::user_store::UserTemplate {
+                        name: name.clone(),
+                        width,
+                        height,
+                        fps,
+                    });
+                    self.note(crate::tf!(k::settings::TEMPLATE_SAVED, name));
+                    d.template_name = None;
+                    ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("settings_tpl")));
+                }
+                (size, fps) => {
+                    let e = size.err().or(fps.err()).unwrap_or_default();
+                    self.refuse(e.clone());
+                    d.error = Some(e);
+                }
+            }
         }
         if apply && let Some(id) = d.reel {
             let raster =
@@ -348,7 +406,7 @@ impl KtApp {
             self.settings_win = Some(d);
         } else {
             // everything that takes focus must GIVE IT BACK (rule 14)
-            for id in ["settings_w", "settings_h", "settings_fps"] {
+            for id in ["settings_w", "settings_h", "settings_fps", "settings_tpl"] {
                 ctx.memory_mut(|m| m.surrender_focus(egui::Id::new(id)));
             }
         }

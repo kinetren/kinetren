@@ -72,7 +72,7 @@ mod test_door {
                 passport: vec![],
                 rows: vec![],
                 decl: Decl { video_class: Some(VideoClass::PointWise), builtin: false, ..Decl::default() },
-                ui: UiDecl { name: "Catalogue Test Tint", category_key: "", keywords_key: "" },
+                ui: UiDecl { name: "Catalogue Test Tint", category_key: "", keywords_key: "", ..UiDecl::default() },
             })
         }
     }

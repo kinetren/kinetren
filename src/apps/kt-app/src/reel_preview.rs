@@ -534,29 +534,7 @@ pub fn render_reel_preview(
             return Err(CANCELLED.into());
         }
         let t = video.grid.align_floor(Tick(i as i64 * step));
-        let mut per_src: HashMap<(MediaId, Quality), Vec<Tick>> = HashMap::new();
-        for (media, pts, dq) in
-            video.wanted_frames(kt_time::TickRange::new(t, Tick(t.0 + video.grid.frame_step())), q)
-        {
-            per_src.entry((media, dq)).or_default().push(pts);
-        }
-        for ((media, dq), keys) in per_src {
-            let Some(s) = src.get_mut(&media) else { continue };
-            let sid = kt_engine::source_id(media);
-            let missing: Vec<Tick> = keys
-                .into_iter()
-                .filter(|k| {
-                    cache.get_video(sid, Some(dq), kt_engine::video_cache_idx(*k)).is_none()
-                })
-                .collect();
-            if missing.is_empty() {
-                continue;
-            }
-            let _ = s.read_video_span(&missing, Some(dq), &mut |k, frame| {
-                cache.insert_video(sid, Some(dq), kt_engine::video_cache_idx(k), frame.into());
-            });
-        }
-        video.compose_from_cache_into(&cache, t, q, &mut buf);
+        compose_offline_frame(&mut video, &mut src, &cache, t, q, &mut buf);
         if buf.len() == (q.width * q.height * 4) as usize
             && let Some(j) = crate::thumbs::encode_thumb_jpeg(q.width, q.height, buf.clone())
         {
@@ -618,4 +596,96 @@ pub fn render_reel_preview(
         warn_db_once("write peaks", &e);
     }
     Ok((crate::util::pyramid_to_peaks(pyramid), ReelOrigin::Rendered))
+}
+
+/// One frame of the offline path at `t`: decode what the plan wants into the job's own cache,
+/// then compose. Shared by the reel strip and the project poster — one body (rule 17).
+fn compose_offline_frame(
+    video: &mut kt_engine::VideoRenderer,
+    src: &mut HashMap<MediaId, Box<dyn kt_media::MediaSource>>,
+    cache: &kt_cache::BurstCache,
+    t: Tick,
+    q: Quality,
+    buf: &mut Vec<u8>,
+) {
+    let mut per_src: HashMap<(MediaId, Quality), Vec<Tick>> = HashMap::new();
+    for (media, pts, dq) in
+        video.wanted_frames(kt_time::TickRange::new(t, Tick(t.0 + video.grid.frame_step())), q)
+    {
+        per_src.entry((media, dq)).or_default().push(pts);
+    }
+    for ((media, dq), keys) in per_src {
+        let Some(s) = src.get_mut(&media) else { continue };
+        let sid = kt_engine::source_id(media);
+        let missing: Vec<Tick> = keys
+            .into_iter()
+            .filter(|k| cache.get_video(sid, Some(dq), kt_engine::video_cache_idx(*k)).is_none())
+            .collect();
+        if missing.is_empty() {
+            continue;
+        }
+        let _ = s.read_video_span(&missing, Some(dq), &mut |k, frame| {
+            cache.insert_video(sid, Some(dq), kt_engine::video_cache_idx(k), frame.into());
+        });
+    }
+    video.compose_from_cache_into(cache, t, q, buf);
+}
+
+/// The size of a project poster in the welcome window's recent list (welcome-window-and-tour D5).
+pub const POSTER_W: u32 = 320;
+pub const POSTER_H: u32 = 180;
+
+/// The moment of a poster: the playhead, or a tenth of the project's length when the playhead
+/// is at zero (a frame at zero is usually black).
+pub fn poster_moment(p: &Project, playhead: Tick) -> Tick {
+    if playhead.0 > 0 {
+        return playhead;
+    }
+    Tick(kt_engine::export::project_range(p).0 / 10)
+}
+
+/// The POSTER of a project (welcome-window-and-tour D5): one 320×180 frame by the same offline
+/// path as the reel strip — its own short-lived sources (invariant 5: not shared, no promised
+/// pace, finite and cancellable), the `frame_plan` composite. RGBA bytes, or `None` when the
+/// job was cancelled or nothing composed.
+pub fn render_poster(
+    ctl: &crate::bg::BgCtl,
+    p: &Project,
+    base: Option<&std::path::Path>,
+    at: Tick,
+) -> Option<Vec<u8>> {
+    let mut facts = kt_engine::video::SourceFacts::default();
+    let mut src: HashMap<MediaId, Box<dyn kt_media::MediaSource>> = HashMap::new();
+    for m in used_media(p) {
+        if ctl.should_stop() {
+            return None;
+        }
+        let Some(r) = p.media.iter().find(|r| r.id == m) else { continue };
+        let path = crate::util::resolve_media_path(base, &r.path);
+        if let Ok(s) = crate::util::open_source_indexed(&path, None) {
+            facts.observe(m, s.info());
+            src.insert(m, s);
+        }
+    }
+    // a generator's values live on its EVENT: the plan asks for per-event generator sources
+    // (`GEN_TAG` addresses), which export raises itself from `gen_sources` — so does the poster.
+    // Without them every generator frame of a poster was black (probe 1.2 caught it)
+    for (addr, state) in kt_engine::gen_sources(p) {
+        let s = kt_media::factory::open_gen(&state);
+        facts.observe(addr, s.info());
+        src.insert(addr, s);
+    }
+    if ctl.should_stop() {
+        return None;
+    }
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig {
+        max_audio_bytes: 1,
+        max_video_bytes: 16 << 20,
+    });
+    let mut video = kt_engine::VideoRenderer::new_with_facts(p, &facts);
+    let q = Quality { width: POSTER_W, height: POSTER_H };
+    let t = video.grid.align_floor(at);
+    let mut buf = Vec::new();
+    compose_offline_frame(&mut video, &mut src, &cache, t, q, &mut buf);
+    (buf.len() == (q.width * q.height * 4) as usize).then_some(buf)
 }

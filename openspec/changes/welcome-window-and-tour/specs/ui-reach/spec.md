@@ -64,6 +64,16 @@ separate window — no" is revised by this request (design, D1).
   project opens directly, no window
 - **TEST** t986 (`src/apps/kt-app/src/reach_tests.rs`)
 
+#### Scenario: The project name answers where it is drawn, past the left column too
+- **WHEN** inside a reel the header's project name (the root crumb) runs past the left column over
+  the preview — the menu row now has four items — and the person clicks the part past the edge
+- **THEN** the editor leaves to the project's root: the crumbs take their clicks on the title's own
+  layer with the screen as the clip, so a click is not clipped to the column (found by the live
+  scenario `nestdead` after Help joined the menu row)
+- **PATH** enter a reel → the header reads "<project> › Reel", the project name running past the
+  left column → click the part of the name past the column's edge → the editor is at the root
+- **TEST** t984b (`src/apps/kt-app/src/reach_tests.rs`)
+
 ### Requirement: The tour is lessons in their own view; a step closes on the project's state
 The tour SHALL be a set of lessons shown in a docked side panel of the main window (it narrows the
 editor, it does not cover it); a lesson is an ordered list of steps, each a short paragraph of the
@@ -92,14 +102,15 @@ removed by closing steps on the project's state, which the model already exposes
   the event at the marker" is done with S at the marker; the panel is closed and the program
   restarted; then "Start over" is used
 - **THEN** a demo copy opens from the data directory (generators only, no missing media); "Show"
-  opens the File menu with "Create a generator…" under the mouse; the step closes by itself when the title event exists,
+  opens the File menu and "Create a generator…" carries the static accent outline (the program
+  never moves the person's pointer); the step closes by itself when the title event exists,
   without pressing anything in the panel, and the cut step closes when the event at the marker is in
   two pieces; after the restart the welcome window offers "Continue the tour — lesson 1, step 3" and
   the progress is intact; "Start over" clears it and makes a new demo copy
 - **PATH** start Kinetren for the first time → the welcome window, "Start the tour" focused → click
   it → the demo project opens and a panel on the right reads "Lesson 1 of 5 · The first edit" with
-  step 1 "Add a title" and a "Show" button → click "Show" → the File menu opens with "Create a generator…" under
-  the mouse → Create a generator… → Title → a title event appears on the timeline and step 1 turns into a
+  step 1 "Add a title" and a "Show" button → click "Show" → the File menu opens and "Create a
+  generator…" carries an accent outline → Create a generator… → Titles and countdown → Text → a title event appears on the timeline and step 1 turns into a
   check mark, step 2 "Cut the event at the marker" appears → put the playhead on the marker and
   press S → the event is in two pieces and step 2 is checked → close the panel and quit → start
   again → the welcome window's primary tile reads "Continue the tour — lesson 1, step 3"
@@ -117,16 +128,28 @@ removed by closing steps on the project's state, which the model already exposes
   lesson never sees a callout, a dimmed screen or a frame drawn over the editor
 - **TEST** t988 (`src/apps/kt-app/src/reach_tests.rs`), `reach_tests::no_teaching_layer_over_the_ui` (t988, same file)
 
+#### Scenario: The current step's target carries a static outline, drawn by the target itself
+- **WHEN** a lesson step whose "Show" target is a menu item or a panel is current, the panel open
+- **THEN** the target draws a static accent outline in its own layer (the menu item inside its
+  menu, the timeline on the panels' layer) for as long as the step is current; nothing pulses,
+  nothing dims, no arrow is drawn, and no layer is added above `Order::Middle`
+- **PATH** there is no gesture of its own: open a lesson → the step's target (the File menu item
+  after "Show", or the timeline) is outlined in the accent colour → do the step → the outline moves
+  to the next step's target
+- **TEST** t988 (`src/apps/kt-app/src/reach_tests.rs`), `reach_tests::no_teaching_layer_over_the_ui` (t988, same file)
+
 ### Requirement: Help → Guide: "I want to … → where", with pages from the repository's guide
 The program SHALL have a Help menu with Guide…, Start the tour, Welcome window… and What's new. The
 Guide window SHALL hold a search field, an index of entries "I want to … → where / which gesture"
 (each entry a catalog key, translated ×5, naming the place — a menu path, a panel, a window — and the
 gesture or key), and the guide pages rendered from `docs/guide/*.md` (including `shortcuts.md`), which
 SHALL be compiled into the binary from the same files the repository shows — no second copy. Typing
-in the search SHALL filter the index entries and the page headings together; clicking an entry SHALL
+in the search SHALL filter the index entries and the page headings together (a heading is found
+by its own words or by the words of its section); clicking an entry SHALL
 open the page at its heading. Every index entry SHALL point to an existing heading of a guide page,
 and the renderer SHALL accept only the markdown subset the guide uses (headings, paragraphs, lists,
-bold, inline code, `<kbd>` key caps, tables, links; an image is shown as its caption); a guide file using anything else
+bold, italic, inline code, `<kbd>` key caps, tables, links, fenced code blocks; an image is shown as
+its caption); a guide file using anything else
 SHALL fail the guard, not render wrongly. The welcome window SHALL link to the Guide. The guide pages
 are English (capability `showcase`); the index entries are translated.
 Why: the owner — "we have no guideline inside the program explaining what can be done and where"
@@ -143,8 +166,9 @@ index entry pointing at a heading is that address.
   shortcuts page is the content of `docs/guide/shortcuts.md`; every entry resolves and every file
   passes the subset check, while a test copy with an HTML block fails it naming the file and line
 - **PATH** open Help → Guide… → a window with a search field on top, "I want to…" entries on the left
-  and the pages list below them → type "loop" → two lines remain: "Play a part in a loop → drag on the
-  ruler, then L" and the page heading "Markers and the region" → click the first → the right side shows the
+  and the pages list below them → type "loop" → the entry "Play a part in a loop → drag on the
+  ruler, then L" remains, with the headings whose sections speak of loops, "Markers and the region"
+  among them → click the first → the right side shows the
   timeline page at "Markers and the region" → clear the search → click "Keyboard and mouse" → the key table
   of the guide
 - **TEST** t989 (`src/apps/kt-app/src/reach_tests.rs`)

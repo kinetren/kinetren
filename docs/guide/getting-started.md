@@ -48,6 +48,13 @@ programs (`.otio`) and from older Kinetren versions (`.ktproj`) come in through
 original untouched. **File → Project settings…** sets frame rate, size and the rule for
 fitting sources of another size (fit with transparent borders, fill, stretch, or as is).
 
+## Help and the tour
+
+At start the welcome window offers a template, the recent projects and the tour; **Enter**
+takes the highlighted tile. **Help → Guide…** searches this guide from inside the program —
+type what you want to do, or open a page. **Help → Start the tour** opens short lessons on a
+demo project. What changed in each version: [What's new](whats-new.md).
+
 ## Language
 
 **View → Language** switches between English, Spanish, Simplified Chinese, Russian

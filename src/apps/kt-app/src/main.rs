@@ -27,6 +27,7 @@ mod fx_thumbs;
 mod gen_ui;
 mod geomctl;
 mod graphs;
+mod guide;
 mod i18n;
 #[cfg(test)]
 mod i18n_tests;
@@ -34,6 +35,7 @@ mod icons;
 mod journal;
 #[cfg(test)]
 mod layout_tests;
+mod lessons;
 mod meters;
 mod morpher_editor;
 mod project_lock;
@@ -52,6 +54,7 @@ mod timeline;
 mod toolbar;
 mod transition_editor;
 mod user_store;
+mod welcome;
 mod util;
 mod widgets;
 mod window_frame;

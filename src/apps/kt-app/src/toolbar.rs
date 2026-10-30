@@ -190,7 +190,19 @@ impl KtApp {
         // THE PROJECT NAME ITSELF is the first crumb: by clicking it, the person
         // goes to the root in one movement. Without this a path of depth 1 would have no
         // clickable crumbs at all.
-        let root_hit = ui.interact(
+        // The title and the crumbs SPILL past the column over the preview (the user's decision),
+        // and `ui.interact` clips a click area to the column: once the menu row grew a fourth
+        // item (Help), the project name moved past the column's edge and stopped answering
+        // (live `nestdead`). The clicks live where the text is drawn — on the title's own layer,
+        // with the screen as the clip; no new layer appears (`no_teaching_layer_over_the_ui`).
+        let screen = ui.ctx().content_rect();
+        let mut over = ui.new_child(
+            egui::UiBuilder::new()
+                .layer_id(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("project-title")))
+                .max_rect(screen),
+        );
+        over.set_clip_rect(screen);
+        let root_hit = over.interact(
             title_at.expand2(egui::vec2(2.0, 3.0)),
             ui.id().with("crumb-root"),
             egui::Sense::click(),
@@ -221,7 +233,7 @@ impl KtApp {
                 col,
             );
             x = r.right() + 2.0;
-            let hit = ui.interact(
+            let hit = over.interact(
                 r.expand2(egui::vec2(2.0, 3.0)),
                 ui.id().with(("crumb", i)),
                 egui::Sense::click(),
@@ -323,7 +335,7 @@ impl KtApp {
         crate::widgets::menu_item_probed(ui, label, Some(accel))
     }
 
-    /// Menu items (three root ones). Separate from the container, so that the
+    /// Menu items (four root ones). Separate from the container, so that the
     /// burger shows them too when the column is narrow.
     fn menu_items(&mut self, ui: &mut egui::Ui) -> f32 {
         let file_btn = ui.menu_button(tr(k::menu::file::TITLE), |ui| {
@@ -347,7 +359,14 @@ impl KtApp {
             // THE SAME BODY as in the bin’s empty-space menu (rule 17).
             // Until R.55 a generator was created ONLY from there, and a person could not
             // find this entry — the 8th round claim, verbatim.
-            if let Some(kd) = crate::gen_ui::generator_menu(ui) {
+            let top = ui.cursor().min;
+            let picked = crate::gen_ui::generator_menu(ui);
+            // the tour step's target outlines itself (welcome-window-and-tour: static, no layer)
+            if self.lesson_marks_menu(k::bin::menu::NEW_GENERATOR) {
+                let r = egui::Rect::from_min_max(top, egui::pos2(ui.max_rect().right(), ui.cursor().min.y));
+                crate::widgets::lesson_outline(ui, r);
+            }
+            if let Some(kd) = picked {
                 self.create_generator(kd);
                 ui.close();
             }
@@ -379,6 +398,9 @@ impl KtApp {
             ui.separator();
             let r = ui.button(tr(k::menu::file::RENDER));
             crate::widgets::field_probe::note("file.render", r.rect);
+            if self.lesson_marks_menu(k::menu::file::RENDER) {
+                crate::widgets::lesson_outline(ui, r.rect);
+            }
             if r.clicked() {
                 self.start_render();
                 ui.close();
@@ -397,6 +419,7 @@ impl KtApp {
             }
         });
         crate::widgets::field_probe::note("menu.file", file_btn.response.rect);
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("kt_menu_root_file"), file_btn.response.id));
         let edit_btn = ui.menu_button(tr(k::menu::edit::TITLE), |ui| {
             if Self::menu_btn(ui, tr(k::menu::edit::UNDO), "Ctrl+Z") {
                 self.undo();
@@ -456,7 +479,7 @@ impl KtApp {
             }
         });
         crate::widgets::field_probe::note("menu.edit", edit_btn.response.rect);
-        let last = ui.menu_button(tr(k::menu::view::TITLE), |ui| {
+        let view_btn = ui.menu_button(tr(k::menu::view::TITLE), |ui| {
             let detach_label = if self.preview_detached {
                 tr(k::menu::view::ATTACH_PREVIEW)
             } else {
@@ -525,8 +548,55 @@ impl KtApp {
                 self.ffmpeg_ui.open = true;
                 ui.close();
             }
+            // the welcome window's switch, in the menu where the per-machine choices live
+            // (welcome-window-and-tour D11; UI rule 19 — said where to get it back)
+            let mut on = self.start.store.start.show_at_start;
+            let r = ui.checkbox(&mut on, tr(k::menu::view::WELCOME_AT_START));
+            crate::widgets::field_probe::note("view.welcome_at_start", r.rect);
+            let r = self.hint(r, tr(k::welcome::HINT_SHOW_AT_START));
+            if r.changed() {
+                self.start.store.set_show_at_start(on);
+            }
         });
-        crate::widgets::field_probe::note("menu.view", last.response.rect);
+        crate::widgets::field_probe::note("menu.view", view_btn.response.rect);
+        // Help (welcome-window-and-tour): the Guide, the tour, the welcome window, What's new
+        let last = ui.menu_button(tr(k::help::TITLE), |ui| {
+            let r = ui.button(tr(k::help::GUIDE));
+            crate::widgets::field_probe::note("help.guide", r.rect);
+            if r.clicked() {
+                self.start.guide.open = true;
+                self.start.guide.focus = true;
+                ui.close();
+            }
+            let r = ui.button(tr(k::help::TOUR));
+            crate::widgets::field_probe::note("help.tour", r.rect);
+            if r.clicked() {
+                let lesson = crate::lessons::next_step(&self.start.store.tour).map(|(l, _)| l).unwrap_or(1);
+                self.start_go(crate::welcome::StartGo::Lesson { lesson, fresh: false });
+                ui.close();
+            }
+            let r = ui.button(tr(k::help::START_OVER));
+            crate::widgets::field_probe::note("help.start_over", r.rect);
+            let r = self.hint(r, tr(k::lessons::START_OVER_HINT));
+            if r.clicked() {
+                self.start_go(crate::welcome::StartGo::Lesson { lesson: 1, fresh: true });
+                ui.close();
+            }
+            ui.separator();
+            let r = ui.button(tr(k::help::WELCOME));
+            crate::widgets::field_probe::note("help.welcome", r.rect);
+            if r.clicked() {
+                self.open_welcome(ui.ctx(), None, false);
+                ui.close();
+            }
+            let r = ui.button(tr(k::help::WHATS_NEW));
+            crate::widgets::field_probe::note("help.whats_new", r.rect);
+            if r.clicked() {
+                self.open_welcome(ui.ctx(), None, true);
+                ui.close();
+            }
+        });
+        crate::widgets::field_probe::note("menu.help", last.response.rect);
         last.response.rect.right()
     }
 

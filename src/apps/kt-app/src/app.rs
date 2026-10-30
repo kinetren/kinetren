@@ -56,6 +56,9 @@ pub enum Pending {
     /// field `KtApp.pending_drop`: `Pending` is `Copy`, and a `PathBuf` is not put
     /// into it.
     DropOpen,
+    /// A start tile or a Help item (welcome-window-and-tour): what it goes to lives in
+    /// `KtApp.start.pending` — `Pending` is `Copy`.
+    Start,
 }
 
 /// The answer to the question. Three states, not a `bool`: “do not save” and “cancel” are
@@ -678,6 +681,9 @@ pub struct KtApp {
     /// `model_rev`, like the warp maps: `content_hash` walks the reel content, and
     /// doing that every UI frame is pointless.
     pub reel_hash_cache: (Option<u64>, Arc<HashMap<ClipId, crate::reel_preview::ReelKey>>),
+    /// The start, the Guide and the tour (welcome-window-and-tour): the state that lives
+    /// BETWEEN projects. `replace_with` carries it across the in-place rebuild of File → New/Open.
+    pub start: crate::welcome::Start,
 }
 
 impl KtApp {
@@ -771,10 +777,14 @@ impl KtApp {
     }
 
     pub(crate) fn new_empty(error: Option<String>) -> KtApp {
+        Self::new_with_project(error, Self::empty_project())
+    }
+
+    /// An unnamed document over `project` (a template of the welcome window, D6).
+    pub(crate) fn new_with_project(error: Option<String>, project: Project) -> KtApp {
         // every KtApp reads projects: the built-in plugin set first (a no-op after `run` did it)
         crate::plugins::install();
         let startup_error = error;
-        let project = Self::empty_project();
         let project2 = project.clone();
         let (player, audio, _, _) = Self::build_player(&project, None, None);
         let peaks: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -977,6 +987,7 @@ impl KtApp {
             reel_previews: Default::default(),
             reel_textures: HashMap::new(),
             reel_hash_cache: (None, Arc::new(HashMap::new())),
+            start: Default::default(),
         };
         // failure to open a file at startup is an ERROR, not a line for five
         // seconds (rule 16): the person reads it in the bell, when the hover hint
@@ -1249,6 +1260,7 @@ impl KtApp {
             reel_previews: Default::default(),
             reel_textures: HashMap::new(),
             reel_hash_cache: (None, Arc::new(HashMap::new())),
+            start: Default::default(),
         };
         // loop region of a loaded project — into the player at once (previously
         // sync happened only in on_region_changed, i.e. only on an EDIT of the region —
@@ -1597,6 +1609,9 @@ impl KtApp {
             .show(ui, |ui| {
                 self.draw_statusbar(ui);
             });
+        // The tour's lessons (welcome-window-and-tour D2): a docked panel on the right, drawn
+        // before the timeline so it spans the window's height and narrows the editor
+        self.draw_lessons_panel(ui);
         // Timeline (bottom, full width) + floating toolbar on top
         // Item 10 round 9: the timeline needs a CEILING, otherwise at small height it
         // takes everything and pushes out the header with the logo/menu and the window buttons (they
@@ -1827,6 +1842,10 @@ impl KtApp {
         self.drain_publish_req();
         self.draw_render_dialog(&ctx);
         self.draw_diagnostics(&ctx);
+        // the static outline of the tour step's panel target, on the panels' own layer
+        self.draw_lesson_outline(&ctx);
+        // the poster job sleeps while something plays (invariant 6)
+        crate::welcome::set_posters_paused(self.player.transport.is_playing() || self.render_job.is_some());
 
         // autosave (port of autosaveTimer): an unnamed project — into the
         // recovery file ~/.local/share/kinetren/ (item 20, v1).
@@ -2016,7 +2035,7 @@ impl KtApp {
                         ui.add_space(6.0);
                         ui.label(tr(match p {
                             Pending::New => k::ask::UNSAVED_NEW,
-                            Pending::Open | Pending::DropOpen | Pending::ImportOlder => {
+                            Pending::Open | Pending::DropOpen | Pending::ImportOlder | Pending::Start => {
                                 k::ask::UNSAVED_OPEN
                             }
                             Pending::Quit => k::ask::UNSAVED_QUIT,
@@ -2146,6 +2165,10 @@ impl KtApp {
 
         // FFmpeg window (windows-build): found or not, why, Download / Locate / Rescan
         self.draw_ffmpeg_window(ui.ctx());
+        // the welcome window and the Guide (welcome-window-and-tour); the welcome window
+        // waits for the FFmpeg window when FFmpeg was missing at start (D4)
+        self.draw_welcome(ui.ctx());
+        self.draw_guide(ui.ctx());
 
         // notifications window (item 18)
         if self.notices_open {
@@ -3687,11 +3710,12 @@ impl KtApp {
     /// Do what the question was asked for.
     fn proceed(&mut self, p: Pending) {
         match p {
-            Pending::New => *self = Self::new_empty(None),
+            Pending::New => self.replace_with(Self::new_empty(None)),
             Pending::Open => self.open_project_dialog_now(),
             Pending::ImportOlder => self.import_older_dialog_now(),
             Pending::Quit => self.quit_confirmed = true,
             Pending::DropOpen => self.open_dropped_now(),
+            Pending::Start => self.start_go_now(),
         }
     }
 
@@ -3706,7 +3730,7 @@ impl KtApp {
         match KtApp::open(&path) {
             Ok(mut app) => {
                 app.claim_project(&path);
-                *self = app;
+                self.replace_with(app);
             }
             Err(e) => self.warn(format!("{}: {e}", path.display())),
         }
@@ -5304,12 +5328,33 @@ impl KtApp {
         }
     }
 
+    /// Rebuild the application in place (File → New/Open, a start tile, a lesson): the state that
+    /// lives between projects (`start`) is carried across, the project being closed queues its
+    /// poster, and a named project of the person's goes to the top of the recent list
+    /// (welcome-window-and-tour D5).
+    pub(crate) fn replace_with(&mut self, mut app: KtApp) {
+        self.queue_poster();
+        std::mem::swap(&mut app.start, &mut self.start);
+        *self = app;
+        self.note_recent();
+    }
+
+    /// The current named project goes to the top of the recent list (not a lesson sandbox).
+    pub(crate) fn note_recent(&mut self) {
+        if let Some(p) = self.project_path.clone()
+            && !crate::lessons::is_sandbox(&p)
+        {
+            let made = self.start.made_from.take();
+            self.start.store.touch_recent(&p, made.as_deref());
+        }
+    }
+
     /// File → New menu (item 3 of round 7): a fresh unnamed project in place.
     /// The old state (player/streams/watchdog) is dropped correctly AFTER the
     /// construction of the new one.
     pub fn new_project(&mut self) {
         if self.guard_unsaved(Pending::New) {
-            *self = Self::new_empty(None);
+            self.replace_with(Self::new_empty(None));
         }
     }
 
@@ -5345,7 +5390,7 @@ impl KtApp {
                 self.recovery_on_drop = false;
                 self.drop_own_recovery();
                 app.claim_project(path);
-                *self = app;
+                self.replace_with(app);
             }
             Err(e) => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
         }
@@ -5362,7 +5407,7 @@ impl KtApp {
         match Self::open(&p) {
             Ok(mut app) => {
                 app.claim_project(&p);
-                *self = app;
+                self.replace_with(app);
             }
             Err(e) => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
         }
@@ -5434,6 +5479,9 @@ impl KtApp {
                 self.note(crate::tf!(k::msg::SAVED, path.display()));
                 self.warn_if_dir_unsynced(dir_synced);
                 self.save_workspace();
+                // the welcome window's list and poster (D5): outside the project's folder
+                self.note_recent();
+                self.queue_poster();
                 // the work went into the project — OUR OWN recovery is no longer
                 // needed. We remove exactly our own (R.49, item 351): someone else’s nearby —
                 // is the unsaved work of another copy of the program.
@@ -9161,6 +9209,9 @@ impl eframe::App for KtApp {
         } else {
             self.drop_own_recovery();
         }
+        // closing a named project renders its poster (D5): one frame, within a budget
+        self.queue_poster();
+        crate::welcome::wait_posters(std::time::Duration::from_secs(3));
         // after the recovery write (durability first): the clean-close event, within a
         // fixed budget; a dead network looks exactly like no telemetry
         if let Some(t) = &self.telemetry {
@@ -9267,19 +9318,32 @@ pub fn run() -> eframe::Result {
             crate::telemetry::install(crate::telemetry::Telemetry::for_process(
                 cc.storage.and_then(|s| s.get_string(crate::telemetry::STORAGE_KEY)).as_deref(),
             ));
-            let restored = arg
-                .clone()
-                .or_else(|| cc.storage.and_then(|s| s.get_string("last_project")))
-                .map(std::path::PathBuf::from)
-                .filter(|p| p.exists());
+            // THE START ORDER (welcome-window-and-tour D4): the facts first, then one pure
+            // decision. The between-projects records live in the user store; the former single
+            // `last_project` seeds the recent list once.
+            let mut store = crate::user_store::StartStore::default();
+            let last = cc.storage.and_then(|s| s.get_string("last_project"));
+            let plan = crate::welcome::plan_start(
+                &mut store,
+                last.as_deref(),
+                arg.as_deref(),
+                kt_ffmpeg::backend_info().is_none(),
+                |p| !recovery_candidates(p).is_empty(),
+            );
+            let (window, after_ffmpeg, restored) = (plan.window, plan.after_ffmpeg, plan.open);
             let mut app = match restored {
                 Some(path) => {
                     let mut a = KtApp::open(&path).unwrap_or_else(|e| KtApp::new_empty(Some(e)));
                     a.claim_project(&path);
                     a
                 }
+                // the welcome window says what to do; the status-line instruction is for the
+                // former start only
+                None if window.is_some() => KtApp::new_empty(None),
                 None => KtApp::new_empty(Some(tr(k::msg::OPEN_A_PROJECT).to_string())),
             };
+            app.start.store = store;
+            app.note_recent();
             app.lang_choice = lang_choice;
             // R.49 item 353: unsaved work no longer “replaces the project if
             // last_project was not found”, but is OFFERED — with the path and
@@ -9297,6 +9361,14 @@ pub fn run() -> eframe::Result {
                 app.warn(crate::tf!(k::msg::DATA_DIR_TEMP, crate::journal::data_dir().display()));
             }
             app.offer_recovery(true);
+            match window {
+                Some(tile) if after_ffmpeg => {
+                    app.start.welcome.primary = tile;
+                    app.start.after_ffmpeg = true;
+                }
+                Some(tile) => app.open_welcome(&cc.egui_ctx, Some(tile), false),
+                None => {}
+            }
             Ok(Box::new(app))
         }),
     )
@@ -9329,7 +9401,7 @@ impl KtApp {
     /// have a project file.
     pub(crate) fn import_older_path(&mut self, p: &Path) {
         match Self::open_older(p) {
-            Ok(app) => *self = app,
+            Ok(app) => self.replace_with(app),
             Err(e) => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
         }
     }

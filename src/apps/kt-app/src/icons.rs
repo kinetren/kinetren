@@ -42,6 +42,9 @@ pub const CHECK: &str = "\u{E182}"; // check mark in menu items (≡/✓ from Un
 #[allow(dead_code)] // used by the bin groups (item 13 of round 11)
 pub const LOCK: &str = "\u{E2FA}"; // lock (bin groups)
 pub const ARROWS_OUT: &str = "\u{E0A2}"; // free layout
+// the guide's "→" and "←" (no font of ours has U+2190/U+2192 — t100)
+pub const ARROW_RIGHT: &str = "\u{E06C}"; // arrow-right
+pub const ARROW_LEFT: &str = "\u{E058}"; // arrow-left
 pub const SKIP_FWD: &str = "\u{E5A6}"; // to the next point
 /// Pin of a public parameter of a composition (R.59, stage 3): stands before the
 /// label of a property declared outward, and on an instance event that
