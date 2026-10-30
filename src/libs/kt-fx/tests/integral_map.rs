@@ -5,7 +5,6 @@
 //! this is checked directly: the map in the event domain (`S(tau) = ∫rate`), and
 //! the processor must follow it on every chunk.
 use kt_fx::{CH, ClipProcessor, source_progress};
-use kt_model::FxInstance;
 
 /// Profile (share of the OUTPUT time, rate) → the clip curves and the kt-fx profiles.
 fn profiles(points: &[(f64, f64)], len_frames: i64) -> kt_fx::AutoProfiles {
@@ -30,19 +29,9 @@ fn profiles(points: &[(f64, f64)], len_frames: i64) -> kt_fx::AutoProfiles {
 
 #[test]
 fn clip_processor_follows_integral_map() {
+    kt_plugins_builtin::install();
     let automation = vec![(0.2, 1.0), (0.3, 0.35), (0.7, 0.6), (0.8, 1.0)];
-    let fx = vec![FxInstance::SlowedReverb {
-        rate: 1.0,
-        mix: 0.0,
-        reverb_delay_ms: 85.0,
-        damp: 0.32,
-        decay: 0.58,
-        wet_gain: 0.95,
-        predelay_ms: 0.0,
-        width: 1.0,
-        frames: Default::default(),
-        automation: vec![],
-    }];
+    let fx = vec![kt_model::FxInstance::plugin_with("slowed_reverb", &[1.0, 0.0, 85.0, 0.32, 0.58, 0.95, 0.0, 0.0, 1.0]).unwrap()];
     let len = 20 * 48_000i64;
     let auto = profiles(&automation, len);
     let mut p = ClipProcessor::new(&fx, &auto, 0, len);
@@ -76,19 +65,9 @@ fn clip_processor_follows_integral_map() {
 
 #[test]
 fn clip_processor_single_big_read_matches() {
+    kt_plugins_builtin::install();
     let automation = vec![(0.2, 1.0), (0.3, 0.35), (0.7, 0.6), (0.8, 1.0)];
-    let fx = vec![FxInstance::SlowedReverb {
-        rate: 1.0,
-        mix: 0.0,
-        reverb_delay_ms: 85.0,
-        damp: 0.32,
-        decay: 0.58,
-        wet_gain: 0.95,
-        predelay_ms: 0.0,
-        width: 1.0,
-        frames: Default::default(),
-        automation: vec![],
-    }];
+    let fx = vec![kt_model::FxInstance::plugin_with("slowed_reverb", &[1.0, 0.0, 85.0, 0.32, 0.58, 0.95, 0.0, 0.0, 1.0]).unwrap()];
     let len = 20 * 48_000i64;
     let auto = profiles(&automation, len);
     let mut p = ClipProcessor::new(&fx, &auto, 0, len);

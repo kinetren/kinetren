@@ -128,6 +128,21 @@ enum Frozen {
         #[serde(skip_serializing_if = "Option::is_none")]
         camera: Option<u64>,
     },
+    /// `SlowedReverb` before 3b.2 (its legacy `automation` is empty in every file we write).
+    SlowedReverb {
+        rate: f64,
+        mix: f32,
+        reverb_delay_ms: f32,
+        damp: f32,
+        decay: f32,
+        wet_gain: f32,
+        #[serde(skip_serializing_if = "is_zero")]
+        predelay_ms: f32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        frames: Option<&'static str>,
+        #[serde(skip_serializing_if = "is_one")]
+        width: f32,
+    },
     /// `Compressor` before 3b.1: the key is a `TrackId` (a bare number), omitted when none.
     Compressor {
         threshold_db: f32,
@@ -212,6 +227,10 @@ fn empty_reads() -> Vec<(&'static str, String)> {
         (r#"{"kind":"cylinder3d"}"#, frozen(Frozen::Cylinder3d { curvature: 0.5 })),
         (r#"{"kind":"corner_pin"}"#, frozen(Frozen::CornerPin(PIN))),
         (r#"{"kind":"mirror"}"#, frozen(Frozen::Mirror { horizontal: true, vertical: false })),
+        (
+            r#"{"kind":"slowed_reverb","rate":0.82,"mix":0.1,"reverb_delay_ms":85.0}"#,
+            frozen(Frozen::SlowedReverb { rate: 0.82, mix: 0.1, reverb_delay_ms: 85.0, damp: 0.2, decay: 0.84, wet_gain: 1.0, predelay_ms: 0.0, frames: None, width: 1.0 }),
+        ),
         (r#"{"kind":"pan3d"}"#, frozen(pan3d_default(None))),
         (r#"{"kind":"pan3d","camera":3}"#, frozen(pan3d_default(Some(3)))),
         (
@@ -323,6 +342,21 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
         (FxInstance::plugin_with("cylinder3d", &[0.85]).unwrap(), frozen(Frozen::Cylinder3d { curvature: 0.85 })),
         (FxInstance::corner_pin(), frozen(Frozen::CornerPin(PIN))),
         (FxInstance::mirror(), frozen(Frozen::Mirror { horizontal: true, vertical: false })),
+        (FxInstance::slowed_reverb(0.82, 0.1, 85.0), frozen(Frozen::SlowedReverb { rate: 0.82, mix: 0.1, reverb_delay_ms: 85.0, damp: 0.2, decay: 0.84, wet_gain: 1.0, predelay_ms: 0.0, frames: None, width: 1.0 })),
+        (
+            FxInstance::plugin_with("slowed_reverb", &[-0.5, 0.35, 120.0, 0.3, 0.9, 1.2, 15.0, 1.0, 0.123456789]).unwrap(),
+            frozen(Frozen::SlowedReverb {
+                rate: -0.5,
+                mix: 0.35,
+                reverb_delay_ms: 120.0,
+                damp: 0.3,
+                decay: 0.9,
+                wet_gain: 1.2,
+                predelay_ms: 15.0,
+                frames: Some("blend"),
+                width: 0.123456789,
+            }),
+        ),
         (FxInstance::pan3d(), frozen(pan3d_default(None))),
         (
             {

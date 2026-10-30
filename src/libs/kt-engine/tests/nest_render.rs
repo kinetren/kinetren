@@ -631,18 +631,7 @@ fn t443_three_keys_separate_reels_instances_and_editions() {
 /// Reverb without time stretching: warp on the nest is forbidden for now, and
 /// the tail is exactly what must stretch ACROSS the seam between the lines.
 fn reverb() -> FxInstance {
-    FxInstance::SlowedReverb {
-        rate: 1.0,
-        mix: 0.6,
-        reverb_delay_ms: 60.0,
-        damp: 0.4,
-        decay: 0.7,
-        wet_gain: 1.0,
-        predelay_ms: 0.0,
-        width: 1.0,
-        frames: Default::default(),
-        automation: vec![],
-    }
+    kt_model::FxInstance::plugin_with("slowed_reverb", &[1.0, 0.6, 60.0, 0.4, 0.7, 1.0, 0.0, 0.0, 1.0]).unwrap()
 }
 
 fn audio_nest(outer_fx: Vec<FxInstance>, inner_fx: Vec<FxInstance>) -> Project {
@@ -1233,18 +1222,7 @@ fn base_gen() -> Project {
 
 /// A warp effect on VIDEO: only speed and the frame mode matter.
 fn warp_fx(rate: f64, frames: FrameMode) -> FxInstance {
-    FxInstance::SlowedReverb {
-        rate,
-        mix: 0.0,
-        reverb_delay_ms: 85.0,
-        damp: 0.32,
-        decay: 0.58,
-        wet_gain: 0.95,
-        predelay_ms: 0.0,
-        frames,
-        width: 1.0,
-        automation: vec![],
-    }
+    kt_model::FxInstance::plugin_with("slowed_reverb", &[rate, 0.0, 85.0, 0.32, 0.58, 0.95, 0.0, if frames == kt_model::FrameMode::Blend { 1.0 } else { 0.0 }, 1.0]).unwrap()
 }
 
 fn grade() -> FxInstance {

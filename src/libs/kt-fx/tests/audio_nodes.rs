@@ -9,6 +9,7 @@ use kt_fx::{CH, Freeverb};
 /// fix the maximum output on a zero input after reset() — tens of dBFS.
 #[test]
 fn t319_reverb_reset_clears_predelay() {
+    kt_plugins_builtin::install();
     let mut rv = Freeverb::new(1.0, 100.0, 0.2, 0.7, 1.0, 120.0, 1.0);
     // warm the pre-delay ring with loud material
     let mut buf = vec![0f32; 4096 * CH];
@@ -46,6 +47,7 @@ mod primitives {
 
     #[test]
     fn biquad_lowpass_shape() {
+        kt_plugins_builtin::install();
         let mut f = Biquad::default();
         f.tune(&BiquadKind::Lowpass, 800.0, std::f32::consts::FRAC_1_SQRT_2, 0.0);
         let pass = rms_at(&mut f, 200.0);
@@ -60,6 +62,7 @@ mod primitives {
 
     #[test]
     fn delay_line_fractional_read() {
+        kt_plugins_builtin::install();
         let mut d = DelayLine::new(64);
         for i in 0..32 {
             d.write(i as f32);
@@ -73,6 +76,7 @@ mod primitives {
 
     #[test]
     fn param_integral_trapezoid() {
+        kt_plugins_builtin::install();
         // flat base without points: integral = base*t
         assert_eq!(kt_model::param_integral(5.0, &[], 2.0), 10.0);
         // ramp 0->10 on [0,1]: integral at 1 = 5; at 0.5 = 1.25
@@ -88,6 +92,7 @@ mod primitives {
 
     #[test]
     fn env_follower_times() {
+        kt_plugins_builtin::install();
         let mut e = EnvFollower::new(10.0, 100.0);
         // a step up: reaches 63% in about attack
         let att_frames = (0.010 * 48_000.0) as usize;
@@ -106,6 +111,7 @@ mod primitives {
 
     #[test]
     fn softclip_is_bounded_and_odd() {
+        kt_plugins_builtin::install();
         assert_eq!(softclip(0.0), 0.0);
         assert!((softclip(1.0) - 0.5).abs() < 1e-7);
         assert_eq!(softclip(-2.0), -softclip(2.0));
@@ -122,6 +128,7 @@ mod primitives {
 /// decays at the edges, shelves raise their own edge, Q narrows.
 #[test]
 fn t348_eq_mag_db_matches_band_semantics() {
+    kt_plugins_builtin::install();
     // v: low_gain, low_freq, mid_gain, mid_freq, mid_q, high_gain, high_freq
     let flat = [0.0, 200.0, 0.0, 1000.0, 1.0, 0.0, 4000.0];
     for hz in [20.0f32, 60.0, 200.0, 1000.0, 5000.0, 12000.0, 20000.0] {
@@ -169,6 +176,7 @@ fn t348_eq_mag_db_matches_band_semantics() {
 /// its repeats were cut at the clip's end — and a neighbour's curve gave a silent echo one.
 #[test]
 fn t990_the_echo_tail_follows_its_own_mix_curve() {
+    kt_plugins_builtin::install();
     use kt_model::{AutoKey, FxInstance, ParamCurve};
     use kt_time::Tick;
     kt_plugins_builtin::install();

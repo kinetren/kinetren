@@ -139,6 +139,7 @@ fn t212_keys_stick_to_material_through_edits() {
 /// values are clamped to the range; an unknown name is a failure (an orphan curve).
 #[test]
 fn t190_set_get_param_all_specs() {
+    kt_plugins_builtin::install();
     // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
     kt_plugins_builtin::install();
     // R.47 (item 326): a registry instead of a hand-written list — a kind not
@@ -602,10 +603,7 @@ fn t248_warp_rate_is_shared_by_the_link_group() {
     let slot = |m: &TimelineModel, id: u64| -> Option<FxInstance> {
         m.clip(ClipId(id)).unwrap().fx.iter().find(|f| f.warps_time()).cloned()
     };
-    let rate_of = |f: &FxInstance| match f {
-        FxInstance::SlowedReverb { rate, .. } => *rate,
-        _ => unreachable!(),
-    };
+    let rate_of = |f: &FxInstance| f.warp_rate().expect("a warp slot");
 
     // one addition puts the instance on BOTH events of the pair
     let depth = m.undo_depth();
@@ -621,9 +619,7 @@ fn t248_warp_rate_is_shared_by_the_link_group() {
 
     // editing the rate of the VIDEO propagates to the audio partner
     let mut vfx = m.clip(ClipId(1)).unwrap().fx.clone();
-    if let FxInstance::SlowedReverb { rate, .. } = &mut vfx[0] {
-        *rate = 0.25;
-    }
+    assert!(vfx[0].set_warp_rate(0.25));
     m.apply(Command::SetFx { id: ClipId(1), fx: vfx }).unwrap();
     assert_eq!(rate_of(&slot(&m, 2).unwrap()), 0.25, "speed is shared both ways");
 
@@ -651,12 +647,10 @@ fn t248_warp_rate_is_shared_by_the_link_group() {
 
     // the reverb of the video instance is its own and is not imposed on the partner
     let mut vfx = m.clip(ClipId(1)).unwrap().fx.clone();
-    if let FxInstance::SlowedReverb { mix, .. } = &mut vfx[0] {
-        *mix = 0.0;
-    }
+    assert!(vfx[0].set_param("mix", 0.0));
     m.apply(Command::SetFx { id: ClipId(1), fx: vfx }).unwrap();
     assert!(
-        matches!(slot(&m, 2).unwrap(), FxInstance::SlowedReverb { mix, .. } if mix == 0.2),
+        slot(&m, 2).unwrap().get_param("mix") == Some(0.2f32 as f64),
         "the reverb of the partner is untouched"
     );
 

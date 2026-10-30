@@ -5346,15 +5346,14 @@ fn t922_cross_and_esc_are_one_path() {
 /// (`clip_slice`, the integral of the speed).
 #[test]
 fn t917_slowed_event_copies_pastes_and_splits() {
+    crate::plugins::install();
     use crate::app::Severity;
     use kt_model::*;
     use kt_time::{Tick, TickRange};
     let mut h = crate::layout_tests::harness_sized(1600.0, 900.0);
     let slowed = || {
         let mut f = FxInstance::slowed_reverb(0.8, 0.3, 120.0);
-        if let FxInstance::SlowedReverb { rate, .. } = &mut f {
-            *rate = 0.8;
-        }
+        f.set_warp_rate(0.8);
         f
     };
     let curve = || {

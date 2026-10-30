@@ -886,6 +886,24 @@ pub struct Decl {
     /// coordinate; on the GPU the host puts the stage size into `b.zw` (the last two of the seven
     /// numbers are the host's then) and passes the coordinate as the tap's fourth argument.
     pub positioned: bool,
+    /// The slot CONSUMES THE SOURCE at its rate (D11.5): the host's warp machinery — the R.39/R.57
+    /// maps, the source windows and the mirror axis, the A/V pair's sync, `clip_slice`'s anchor,
+    /// the video frame map — finds the warp slot by this, not by a kind. One per chain.
+    pub time_warp: Option<TimeWarp>,
+    /// Fields of the kind's former variant that a door still migrates (Slowed+Reverb's
+    /// `automation`, `migrate_legacy_slowed`): the slot keeps them on read instead of dropping
+    /// them, and writes them back only while nothing consumed them — as the variant did.
+    pub legacy_fields: &'static [&'static str],
+}
+
+/// A time-warp declaration (D11.5): which rows the host's warp machinery reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimeWarp {
+    /// The signed rate row (−32…32, R.57): a Smooth number, its curve is the speed profile.
+    pub rate_row: usize,
+    /// The frame row (R.37 C5: how a video instance obtains an intermediate frame) — a choice of
+    /// `["nearest", "blend"]`; `None` — always the nearest frame.
+    pub frames_row: Option<usize>,
 }
 
 impl Default for Decl {
@@ -899,6 +917,8 @@ impl Default for Decl {
             gpu: Gpu::None,
             builtin: true,
             positioned: false,
+            time_warp: None,
+            legacy_fields: &[],
         }
     }
 }
@@ -1357,6 +1377,17 @@ impl Registry {
                 }
             }
             Media::AudioFx => {
+                if let Some(tw) = m.decl.time_warp {
+                    let rate = m.passport.get(tw.rate_row);
+                    if !rate.is_some_and(|r| r.ty == ParamType::Num && r.kind == ParamKind::Smooth) {
+                        return refuse("a time warp whose rate row is not a smooth number");
+                    }
+                    if let Some(f) = tw.frames_row
+                        && !matches!(m.row(f).store, Store::Choice(keys) if keys == ["nearest", "blend"])
+                    {
+                        return refuse("a time warp whose frame row is not the choice of nearest and blend");
+                    }
+                }
                 let top = lookahead_frames(m, &ParamValues::top(&m.passport));
                 let dflt = lookahead_frames(m, &ParamValues::defaults(&m.passport));
                 if top.max(dflt) >= MIN_PREROLL_FRAMES {
@@ -1367,6 +1398,9 @@ impl Registry {
                 }
             }
             Media::Transition | Media::Generator => {}
+        }
+        if m.decl.time_warp.is_some() && m.media != Media::AudioFx {
+            return refuse("a time warp on a plugin that is not an audio effect");
         }
         self.plugins.push(p);
         Ok(())

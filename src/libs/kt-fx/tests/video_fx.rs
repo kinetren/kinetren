@@ -545,7 +545,7 @@ fn t328_golden_cycle_over_the_registry() {
         "GOLDEN_ALL and the video registry must cover each other"
     );
     for f in video {
-        if !is_geo(f) && !is_pointwise(f) && !matches!(f, FxInstance::SlowedReverb { .. }) {
+        if !is_geo(f) && !is_pointwise(f) && !f.warps_time() {
             let _ = kt_fx::video::apply_barrier(
                 f,
                 test_frame(),

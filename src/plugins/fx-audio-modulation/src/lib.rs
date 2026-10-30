@@ -7,10 +7,10 @@
 
 use std::sync::Arc;
 
-use kt_plugin_api::dsp::{AUDIO_SAMPLE_RATE, CH, DelayLine, SmoothedParam, Tick, lfo_phase, tail_frames_for};
+use kt_plugin_api::dsp::{AUDIO_SAMPLE_RATE, CH, DelayLine, Freeverb, SmoothedParam, Tick, lfo_phase, tail_frames_for};
 use kt_plugin_api::{
     AudioKernel, AudioState, CurveRead, Decl, HostOpts, Manifest, Media, ParamKind, ParamSpec, ParamUnit,
-    ParamValues, Plugin, RowDecl, SlotCurves, Store, UiDecl,
+    ParamValues, Plugin, RowDecl, SlotCurves, Store, TimeWarp, UiDecl,
 };
 
 /// The plugins of this family, in the assembler's order.
@@ -24,6 +24,7 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
         Arc::new(Phaser::new()),
         Arc::new(PitchShift::new()),
         Arc::new(Delay::new()),
+        Arc::new(SlowedReverb::new()),
     ]
 }
 
@@ -1273,5 +1274,129 @@ impl AudioState for DelayNode {
         self.time_ms.reset_to_target();
         self.feedback.reset_to_target();
         self.mix.reset_to_target();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// slowed_reverb (plugin-api-stage1, 3b.2, D11.5)
+// ---------------------------------------------------------------------------
+
+/// The frame row's keys (R.37 C5): the file holds `"nearest"`/`"blend"`.
+pub const FRAME_MODES: &[&str] = &["nearest", "blend"];
+
+/// The tail of the reverb half: the freeverb's t60 along its longest line, while the reverb is
+/// heard (its mix or its mix curve above zero) — the former `chain_tail` arm, verbatim.
+fn slowed_tail(p: &ParamValues, c: &dyn SlotCurves) -> i64 {
+    let (mix, delay_ms, decay) = (p.get(1) as f32, p.get(2) as f32, p.get(4) as f32);
+    if !(mix > 0.0 || c.points("mix").iter().any(|(_, v)| *v > 0.0)) {
+        return 0;
+    }
+    kt_plugin_api::dsp::reverb_tail_for_delay(delay_ms, decay).to_audio_frames()
+}
+
+/// Slowed+Reverb: the WARP half consumes the source at the signed rate (the host's machinery,
+/// found through `Decl.time_warp`, not a kind — R.39/R.57 maps stay in kt-model); the REVERB half
+/// is this kernel, the R.47 freeverb node verbatim. On a video instance only the warp acts (the
+/// choice of the source frame), the reverb does not sound there.
+pub struct SlowedReverb {
+    m: Manifest,
+}
+
+impl SlowedReverb {
+    pub fn new() -> SlowedReverb {
+        let structural = |n, lo, hi, d, st| ParamSpec::num(n, lo, hi, d, st, ParamUnit::Ms, ParamKind::Structural);
+        SlowedReverb {
+            m: in_category(
+                manifest(
+                    "slowed_reverb",
+                    vec![
+                        // signed and including zero (R.57, the owner's decision): minus runs
+                        // BACKWARD through the material, zero — a freeze frame
+                        smooth("rate", -32.0, 32.0, 1.0, 0.01, ParamUnit::Ratio),
+                        smooth("mix", 0.0, 1.0, 0.0, 0.01, ParamUnit::Norm),
+                        // changing the length of comb lines rebuilds the reverb — not automatable
+                        structural("reverb_delay_ms", 1.0, 500.0, 60.0, 1.0),
+                        smooth("damp", 0.0, 0.99, 0.2, 0.01, ParamUnit::Norm),
+                        smooth("decay", 0.0, 0.98, 0.84, 0.01, ParamUnit::Norm),
+                        smooth("wet_gain", 0.0, 2.0, 1.0, 0.01, ParamUnit::Ratio),
+                        // the length of the pre-delay line — the same geometry as reverb_delay_ms
+                        structural("predelay_ms", 0.0, 200.0, 0.0, 1.0),
+                        // how a VIDEO instance obtains an intermediate frame (R.37 C5); in the
+                        // file between predelay_ms and width, where the variant had it
+                        ParamSpec::choice_row("frames", FRAME_MODES, 0),
+                        smooth("width", 0.0, 1.0, 1.0, 0.01, ParamUnit::Norm),
+                    ],
+                    vec![
+                        RowDecl { store: Store::F64, omit_default: false },
+                        f32_row(),
+                        f32_row(),
+                        f32_row(),
+                        f32_row(),
+                        f32_row(),
+                        RowDecl { store: Store::F32, omit_default: true },
+                        RowDecl { store: Store::Choice(FRAME_MODES), omit_default: true },
+                        RowDecl { store: Store::F32, omit_default: true },
+                    ],
+                    "Slowed+Reverb",
+                    "fxreg.kw.slowedreverb",
+                    Decl {
+                        state: true,
+                        tail: Some(slowed_tail),
+                        time_warp: Some(TimeWarp { rate_row: 0, frames_row: Some(7) }),
+                        // the pre-R.33 keyframes: `migrate_legacy_slowed` turns them into curves
+                        legacy_fields: &["automation"],
+                        ..Decl::default()
+                    },
+                ),
+                "fxreg.cat.timestretch",
+            ),
+        }
+    }
+}
+
+plugin_boilerplate!(SlowedReverb);
+
+impl AudioKernel for SlowedReverb {
+    fn build(&self, _opts: &HostOpts) -> Box<dyn AudioState> {
+        Box::new(ReverbNode { rv: Freeverb::new(0.0, 100.0, 0.2, 0.7, 1.0, 0.0, 1.0), base_mix: 0.0 })
+    }
+}
+
+/// The reverb half of the Slowed+Reverb slot (the warp half lives in a separate processor field —
+/// the warp holds the monopoly on consuming the source).
+struct ReverbNode {
+    rv: Freeverb,
+    base_mix: f64,
+}
+
+impl AudioState for ReverbNode {
+    fn apply(&mut self, k: &[f64], structural: bool) {
+        // k[0] is the rate (the host's warp), k[7] the frame mode (video only)
+        let (mix, delay, damp, decay, wet_gain, predelay, width) =
+            (k[1] as f32, k[2] as f32, k[3] as f32, k[4] as f32, k[5] as f32, k[6] as f32, k[8] as f32);
+        self.base_mix = mix as f64;
+        if structural {
+            self.rv = Freeverb::new(mix, delay, damp, decay, wet_gain, predelay, width);
+        } else {
+            self.rv.set_params(mix, delay, damp, decay, wet_gain, predelay, width);
+        }
+    }
+
+    fn set_targets(&mut self, c: &dyn SlotCurves, s: f64) {
+        // mix is smoothed by a one-pole inside the reverb (the same call as before R.47 — the
+        // bytes of a single-slot chain do not move)
+        self.rv.set_mix(c.value("mix", self.base_mix, s) as f32);
+    }
+
+    fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
+        self.rv.process(buf);
+    }
+
+    fn tail(&self) -> Tick {
+        self.rv.tail()
+    }
+
+    fn reset(&mut self) {
+        self.rv.reset();
     }
 }

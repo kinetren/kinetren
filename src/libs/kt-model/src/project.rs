@@ -4041,10 +4041,6 @@ fn one_f32() -> f32 {
     1.0
 }
 
-fn is_default_frame_mode(m: &FrameMode) -> bool {
-    *m == FrameMode::Nearest
-}
-
 fn default_two_u32() -> u32 {
     2
 }
@@ -4877,11 +4873,16 @@ pub fn clip_timeline_at(
 pub fn migrate_legacy_slowed(c: &mut ClipEvent) -> bool {
     let mut touched = false;
     for (i, f) in c.fx.iter_mut().enumerate() {
-        let FxInstance::SlowedReverb { automation, .. } = f else { continue };
-        if automation.is_empty() {
+        // the old field arrives in the slot's passthrough (a plugin since plugin-api-stage1)
+        let FxInstance::Plugin(p) = f else { continue };
+        if p.id != "slowed_reverb" {
             continue;
         }
-        let legacy = std::mem::take(automation);
+        let Some(raw) = p.extra.remove("automation") else { continue };
+        let legacy: Vec<SlowedKeyframe> = serde_json::from_value(raw).unwrap_or_default();
+        if legacy.is_empty() {
+            continue;
+        }
         if c.fx_auto.len() <= i {
             c.fx_auto.resize(i + 1, Vec::new());
         }
@@ -5082,42 +5083,9 @@ pub enum FxInstance {
         #[serde(default)]
         from: u32,
     },
-    SlowedReverb {
-        /// Base speed (0.25–32); automation overrides it.
-        rate: f64,
-        /// Wet-signal share 0..1.
-        mix: f32,
-        reverb_delay_ms: f32,
-        /// High-frequency damping in the comb lines 0..1 (the old reverbDamp).
-        #[serde(default = "default_damp")]
-        damp: f32,
-        /// Feedback of the comb lines 0..0.98 (the old reverbDecay).
-        #[serde(default = "default_decay")]
-        decay: f32,
-        /// Wet-output multiplier (the old reverbGain).
-        #[serde(default = "default_wet_gain")]
-        wet_gain: f32,
-        /// Pre-delay of the reverb input, ms (R.33 C5): the tail lags behind the
-        /// sound. 0 — the former behaviour byte-for-byte; structural (changes the
-        /// line length), therefore not subject to automation.
-        #[serde(default, skip_serializing_if = "is_zero")]
-        predelay_ms: f32,
-        /// How to obtain an intermediate frame when the effect stands on VIDEO
-        /// (R.37 item 2). For an audio instance the field is not visible — it means
-        /// nothing to it. The default is not serialized: files are byte-stable.
-        #[serde(default, skip_serializing_if = "is_default_frame_mode")]
-        frames: FrameMode,
-        /// Width of the stereo tail 0..1. 1 — the former stereo reverb.
-        #[serde(default = "default_one_f32", skip_serializing_if = "is_one_f32")]
-        width: f32,
-        /// Keyframe automation: t — the position IN THE SOURCE MATERIAL
-        /// (frames from source_in, normalized by the clip duration), NOT
-        /// the output time. A keyframe is glued to the material: early edits
-        /// do not shift the material of later points (item 1 of v1.3, test 31).
-        /// Between points linear interpolation, beyond the edges — the end ones.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        automation: Vec<SlowedKeyframe>,
-    },
+    // Slowed+Reverb is a plugin since plugin-api-stage1 (src/plugins/fx-audio-modulation, D11.5): the
+    // warp machinery finds it by `Decl.time_warp` (`warps_time`/`warp_rate`), its old `automation`
+    // reaches `migrate_legacy_slowed` through the slot's passthrough.
     // Compressor is a plugin since plugin-api-stage1 (src/plugins/fx-audio-dynamics, D11.4): its
     // sidechain `key` is a host-reference row, read and set by its role (`sidechain_key`).
     // ---- video FX (port of bc_fx.cpp, item 25; parameters and defaults of v1) ----------
@@ -5340,8 +5308,6 @@ pub enum FxClass {
 impl FxInstance {
     pub fn class(&self) -> FxClass {
         match self {
-            | FxInstance::SlowedReverb { .. }
- => FxClass::Audio,
             // a plugin's class is its manifest's media (plugin-api-stage1, D2)
             FxInstance::Plugin(p) => match p.manifest().media {
                 kt_plugin_api::Media::AudioFx => FxClass::Audio,
@@ -5383,7 +5349,6 @@ impl FxInstance {
     pub fn tag(&self) -> &'static str {
         match self {
             FxInstance::LayerMix { .. } => "layer_mix",
-            FxInstance::SlowedReverb { .. } => "slowed_reverb",
             FxInstance::Sharpen { .. } => "sharpen",
             FxInstance::Pixelate { .. } => "pixelate",
             FxInstance::ChromaticAberration { .. } => "chromatic_aberration",
@@ -5467,7 +5432,42 @@ impl FxInstance {
     /// length. Such a clip is not cut by the morpher layer at all (finding 2 of
     /// R.35) — a linearly computed `source_in` of the piece would point to the wrong place.
     pub fn warps_time(&self) -> bool {
-        matches!(self, FxInstance::SlowedReverb { .. })
+        self.time_warp().is_some()
+    }
+
+    /// The slot's time-warp declaration (D11.5): the slot consumes the source at its rate row.
+    pub fn time_warp(&self) -> Option<kt_plugin_api::TimeWarp> {
+        match self {
+            FxInstance::Plugin(p) => p.manifest().decl.time_warp,
+            _ => None,
+        }
+    }
+
+    /// The base rate of a time-warp slot (its declared rate row).
+    pub fn warp_rate(&self) -> Option<f64> {
+        let tw = self.time_warp()?;
+        match self {
+            FxInstance::Plugin(p) => p.values.get(tw.rate_row).copied(),
+            _ => None,
+        }
+    }
+
+    /// Set a time-warp slot's base rate (the A/V pair's sync); false — not a warp slot.
+    pub fn set_warp_rate(&mut self, rate: f64) -> bool {
+        let Some(tw) = self.time_warp() else { return false };
+        match self {
+            FxInstance::Plugin(p) => p.set_idx(tw.rate_row, rate),
+            _ => false,
+        }
+    }
+
+    /// Whether a time-warp slot blends neighbouring frames on video (R.37 C5).
+    pub fn warp_blends(&self) -> bool {
+        let Some(tw) = self.time_warp() else { return false };
+        match (self, tw.frames_row) {
+            (FxInstance::Plugin(p), Some(f)) => p.values.get(f).is_some_and(|v| *v == 1.0),
+            _ => false,
+        }
     }
 
     /// Variant parameters (R.33): ONE source of truth for automation, clamping and
@@ -5560,22 +5560,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
     // ---- audio (R.33: automated by the shared mechanism) ----------------
     LayerMix {
         amount: f64, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
-    },
-    SlowedReverb {
-        // speed range — RATE_CLAMP of the warp map (warp.rs, R.39:
-        // previously it lived in kt-fx and was a promise across the crate boundary).
-        // Signed and including zero (R.57, the owner’s decision): minus runs BACKWARD
-        // through the material, zero — a freeze frame.
-        rate: f64, -32.0, 32.0, 1.0, 0.01, Ratio, Smooth;
-        mix: f32, 0.0, 1.0, 0.0, 0.01, Norm, Smooth;
-        // changing the length of comb lines rebuilds the reverb — not automatable
-        reverb_delay_ms: f32, 1.0, 500.0, 60.0, 1.0, Ms, Structural;
-        damp: f32, 0.0, 0.99, 0.2, 0.01, Norm, Smooth;
-        decay: f32, 0.0, 0.98, 0.84, 0.01, Norm, Smooth;
-        wet_gain: f32, 0.0, 2.0, 1.0, 0.01, Ratio, Smooth;
-        // length of the pre-delay line — the same geometry as reverb_delay_ms
-        predelay_ms: f32, 0.0, 200.0, 0.0, 1.0, Ms, Structural;
-        width: f32, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
     },
     // ---- video 2D --------------------------------------------------------
     Sharpen {
@@ -6241,16 +6225,6 @@ fn default_glow_strength() -> f64 {
     0.65
 }
 
-fn default_damp() -> f32 {
-    0.2
-}
-fn default_decay() -> f32 {
-    0.84
-}
-fn default_wet_gain() -> f32 {
-    1.0
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SlowedKeyframe {
     pub t: f64,
@@ -6620,19 +6594,15 @@ impl FxInstance {
         FxInstance::Noise { amount, size: 1, color: false }
     }
 
+    /// Slowed+Reverb at a rate, a mix and a delay, the rest at the defaults — a plugin slot
+    /// (plugin-api-stage1, D11.5).
     pub fn slowed_reverb(rate: f64, mix: f32, reverb_delay_ms: f32) -> FxInstance {
-        FxInstance::SlowedReverb {
-            rate,
-            mix,
-            reverb_delay_ms,
-            damp: default_damp(),
-            decay: default_decay(),
-            wet_gain: default_wet_gain(),
-            predelay_ms: 0.0,
-            frames: FrameMode::Nearest,
-            width: 1.0,
-            automation: Vec::new(),
-        }
+        let mut f = FxInstance::plugin("slowed_reverb")
+            .expect("slowed_reverb is not registered: install the built-in plugin set first");
+        f.set_param("rate", rate);
+        f.set_param("mix", mix as f64);
+        f.set_param("reverb_delay_ms", reverb_delay_ms as f64);
+        f
     }
 }
 

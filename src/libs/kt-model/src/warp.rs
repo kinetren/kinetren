@@ -619,7 +619,7 @@ impl AutoProfiles {
     /// Index of the slot with the warp and its speed profile — the whole analytics of the
     /// source rests on it (how much material the clip will eat).
     fn warp_slot(fx: &[FxInstance]) -> Option<usize> {
-        fx.iter().position(|f| matches!(f, FxInstance::SlowedReverb { .. }))
+        fx.iter().position(FxInstance::warps_time)
     }
 
     /// Speed profile of the chain (empty — there is no warp or it has no curve).
@@ -635,23 +635,13 @@ impl AutoProfiles {
 
 /// Playback speed of the chain (1.0 = no warp).
 pub fn chain_rate(fx: &[FxInstance]) -> f64 {
-    fx.iter()
-        .find_map(|f| match f {
-            FxInstance::SlowedReverb { rate, .. } => Some(rate.clamp(RATE_CLAMP.0, RATE_CLAMP.1)),
-            _ => None,
-        })
-        .unwrap_or(1.0)
+    fx.iter().find_map(FxInstance::warp_rate).map_or(1.0, |rate| rate.clamp(RATE_CLAMP.0, RATE_CLAMP.1))
 }
 
 /// Average speed of the chain with automation: determines how much of the
 /// source the clip eats (for the source window and the duration).
 pub fn chain_avg_rate(fx: &[FxInstance], auto: &AutoProfiles) -> f64 {
-    fx.iter()
-        .find_map(|f| match f {
-            FxInstance::SlowedReverb { rate, .. } => Some(avg_rate(*rate, auto.rate_points(fx))),
-            _ => None,
-        })
-        .unwrap_or(1.0)
+    fx.iter().find_map(FxInstance::warp_rate).map_or(1.0, |rate| avg_rate(rate, auto.rate_points(fx)))
 }
 
 #[cfg(test)]
@@ -665,6 +655,7 @@ mod automation_tests {
 
     #[test]
     fn rate_interp_clamps_ends_and_is_linear() {
+        kt_plugins_builtin::install();
         let a = vec![kf(0.2, 1.0), kf(0.4, 0.5)];
         assert_eq!(rate_at(9.0, &a, 0.0), 1.0, "before the first point — its value (base is ignored)");
         assert_eq!(rate_at(9.0, &a, 0.3), 0.75);
@@ -675,6 +666,7 @@ mod automation_tests {
     /// independent numerical integrator (the song1 profile).
     #[test]
     fn source_map_roundtrip_and_matches_numeric() {
+        kt_plugins_builtin::install();
         let a = vec![
             kf(0.21616990640748734, 1.0),
             kf(0.2935781137508999, 0.35),
@@ -727,6 +719,7 @@ mod automation_tests {
 
     #[test]
     fn no_automation_map_is_linear() {
+        kt_plugins_builtin::install();
         assert_eq!(source_progress(0.5, &[], 0.5), 0.25);
         assert_eq!(avg_rate(0.82, &[]), 0.82);
         assert!((output_time_for_source(0.5, &[], 0.25) - 0.5).abs() < 1e-12);
@@ -737,6 +730,7 @@ mod automation_tests {
     /// moment at which the late keys fire.
     #[test]
     fn early_keyframe_shifts_material_not_time() {
+        kt_plugins_builtin::install();
         let a = vec![kf(0.4, 1.0), kf(0.5, 0.5), kf(0.7, 0.5), kf(0.75, 1.0)];
         let mut b = vec![kf(0.1, 1.0), kf(0.18, 2.0), kf(0.26, 2.0), kf(0.34, 1.0)];
         b.extend(a.iter().cloned());
@@ -767,6 +761,7 @@ mod zero_start_tests {
     /// of EVERY Split.
     #[test]
     fn t269_profile_starts_at_zero_with_a_hidden_key() {
+        kt_plugins_builtin::install();
         // ramp 1.0 → 2.0, the key at -1 is “hidden” to the left of the piece's start
         let hidden = [(-1.0, 1.0), (1.0, 2.0)];
 
@@ -955,12 +950,7 @@ pub fn clip_warp_of(
     reversed: bool,
 ) -> Option<ClipWarp> {
     let span = duration.0.max(1);
-    let (base, blend) = fx.iter().find_map(|f| match f {
-        FxInstance::SlowedReverb { rate, frames, .. } => {
-            Some((*rate, *frames == crate::FrameMode::Blend))
-        }
-        _ => None,
-    })?;
+    let (base, blend) = fx.iter().find_map(|f| Some((f.warp_rate()?, f.warp_blends())))?;
     // The profile is built by THE SAME function as for audio: one domain for both
     // kinds, otherwise picture and sound would drift apart on the speed curve.
     // The key position is normalized in AUDIO FRAMES (as for audio) — the fraction
@@ -988,14 +978,13 @@ pub fn clip_warp_of(
 /// where one asks “will the time move” (a nested item, R.50), an answer about the
 /// VALUES is needed.
 pub fn chain_warps_time(fx: &[FxInstance], auto: &[Vec<ParamCurve>]) -> bool {
-    fx.iter().enumerate().any(|(i, f)| match f {
-        FxInstance::SlowedReverb { rate, .. } => {
-            *rate != 1.0
+    fx.iter().enumerate().any(|(i, f)| {
+        f.warp_rate().is_some_and(|rate| {
+            rate != 1.0
                 || auto.get(i).is_some_and(|cs| {
                     cs.iter().any(|c| c.param == "rate" && c.keys.iter().any(|k| k.v != 1.0))
                 })
-        }
-        _ => false,
+        })
     })
 }
 
@@ -1031,6 +1020,7 @@ mod reversed_tests {
     /// `fx_auto` — which is why the defect survived.
     #[test]
     fn t271_reversed_curve_is_not_played_backwards() {
+        kt_plugins_builtin::install();
         // clip: source_in 0, length 1 s; a key at 0.25 of material = 0.75
         // of the output fraction for a mirrored clip
         let len = kt_time::Tick(90_000).to_audio_frames();
@@ -1133,6 +1123,7 @@ mod signed_tests {
     /// consumption keeps only growing.
     #[test]
     fn t603a_signed_map_walks_back_and_consumption_only_grows() {
+        kt_plugins_builtin::install();
         // 1 → −1 linearly: the position rises to the middle and comes back
         let a = vec![(0.0, 1.0), (1.0, -1.0)];
         assert!((source_progress(1.0, &a, 1.0) - 0.0).abs() < 1e-12, "the curve must return");
@@ -1155,6 +1146,7 @@ mod signed_tests {
     /// cross-checked against an independent numeric ∫|rate|.
     #[test]
     fn t603b_zero_crossing_split_is_exact() {
+        kt_plugins_builtin::install();
         let a = vec![(0.0, 2.0), (0.4, 2.0), (0.8, -2.0), (1.0, -1.0)];
         let numeric = |t_target: f64| -> f64 {
             let n = 400_000;
@@ -1180,6 +1172,7 @@ mod signed_tests {
     /// A⁻¹ returns the LEFT edge of the plateau — the first moment the counter reached it.
     #[test]
     fn t603c_zero_plateau_holds_consumption() {
+        kt_plugins_builtin::install();
         let a = vec![(0.0, 1.0), (0.25, 1.0), (0.25, 0.0), (0.5, 0.0), (0.5, 1.0), (1.0, 1.0)];
         let at = |t: f64| consumed_abs(1.0, &a, t);
         assert!((at(0.25) - 0.25).abs() < 1e-12);
@@ -1198,6 +1191,7 @@ mod signed_tests {
     /// shift, but it is better to learn about it here — here one can see WHAT shifted.
     #[test]
     fn t603d_positive_curves_are_bit_identical_to_the_old_map() {
+        kt_plugins_builtin::install();
         let profiles: Vec<Vec<(f64, f64)>> = vec![
             vec![],
             vec![(0.0, 0.5), (1.0, 2.0)],
@@ -1244,6 +1238,7 @@ mod signed_tests {
     /// at the ends of the window.
     #[test]
     fn t603e_span_finds_extrema_inside_segments() {
+        kt_plugins_builtin::install();
         // up and back: the maximum in the middle of the event
         let up_down = vec![(0.0, 1.0), (1.0, -1.0)];
         let (lo, hi) = span_over(1.0, &up_down, 0.0, 1.0);
@@ -1268,7 +1263,10 @@ mod signed_tests {
     /// collapses back into the previous one.
     #[test]
     fn t603f_mirror_axis_is_the_span() {
-        use crate::{ClipEvent, ClipId, ClipKind, FrameMode, FxInstance, MediaId};
+        kt_plugins_builtin::install();
+        // Slowed+Reverb is a plugin (plugin-api-stage1, D11.5)
+        kt_plugins_builtin::install();
+        use crate::{ClipEvent, ClipId, ClipKind, MediaId};
         let dur = Tick(360_000);
         let mk = |rate: f64, reversed: bool| ClipEvent {
             r#gen: None,
@@ -1287,18 +1285,7 @@ mod signed_tests {
             media: MediaId(1),
             gain_db: 0.0,
             reversed,
-            fx: vec![FxInstance::SlowedReverb {
-                rate,
-                mix: 0.0,
-                reverb_delay_ms: 60.0,
-                damp: 0.2,
-                decay: 0.84,
-                wet_gain: 1.0,
-                predelay_ms: 0.0,
-                width: 1.0,
-                frames: FrameMode::Nearest,
-                automation: vec![],
-            }],
+            fx: vec![crate::FxInstance::plugin_with("slowed_reverb", &[rate, 0.0, 60.0, 0.2, 0.84, 1.0, 0.0, 0.0, 1.0]).unwrap()],
             fx_bypass: vec![],
             fx_auto: vec![],
             opacity: 1.0,
@@ -1325,6 +1312,7 @@ mod signed_tests {
     /// Test 603g (R.57): the clamps became symmetric, zero passes through.
     #[test]
     fn t603g_clamp_is_symmetric_and_zero_passes() {
+        kt_plugins_builtin::install();
         assert_eq!(RATE_CLAMP, (-32.0, 32.0));
         let a = vec![(0.0, -40.0), (1.0, 40.0)];
         assert_eq!(eff_rate(1.0, &a, 0.0), -32.0);

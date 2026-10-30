@@ -177,18 +177,7 @@ fn montage_fx(i: usize) -> Vec<FxInstance> {
 }
 
 fn slowed() -> FxInstance {
-    FxInstance::SlowedReverb {
-        rate: 0.86,
-        mix: 0.34,
-        reverb_delay_ms: 150.0,
-        damp: 0.28,
-        decay: 0.86,
-        wet_gain: 1.1,
-        predelay_ms: 0.0,
-        width: 1.0,
-        frames: Default::default(),
-        automation: vec![],
-    }
+    kt_model::FxInstance::plugin_with("slowed_reverb", &[0.86, 0.34, 150.0, 0.28, 0.86, 1.1, 0.0, 0.0, 1.0]).unwrap()
 }
 
 /// `rate` and `mix` curves of the music bed, keys in MATERIAL ticks

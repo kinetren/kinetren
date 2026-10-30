@@ -887,7 +887,7 @@ fn t329_parity_cycle_over_the_registry() {
     let video: Vec<&FxInstance> = FxInstance::all()
         .iter()
         .filter(|f| {
-            !f.is_audio() && !f.is_layer_mix() && !matches!(f, FxInstance::SlowedReverb { .. })
+            !f.is_audio() && !f.is_layer_mix() && !f.warps_time()
         })
         .collect();
     let tags: std::collections::BTreeSet<&str> = video.iter().map(|f| f.tag()).collect();

@@ -121,7 +121,7 @@ fn cases(f: &FxInstance) -> [u64; 4] {
 
 #[test]
 fn t973c_a_moved_audio_kind_keeps_its_sound() {
-    kt_plugins_builtin::install();
+    install();
     let audio: Vec<&FxInstance> = FxInstance::all().iter().filter(|f| f.is_audio()).collect();
     if std::env::var("KT_PRINT_GOLDEN").is_ok() {
         for f in &audio {
@@ -222,7 +222,7 @@ const WARP_GOLDEN: u64 = 0x2258eee3ce5a93f0;
 /// move); the sound is t973c's slowed_reverb row and GOLDEN_AUDIO (t11).
 #[test]
 fn t996_a_declared_time_warp_drives_the_source_like_the_variant() {
-    kt_plugins_builtin::install();
+    install();
     let d = warp_digest();
     let h = xxhash_rust::xxh3::xxh3_64(d.join("\n").as_bytes());
     if std::env::var("KT_PRINT_GOLDEN").is_ok() {
@@ -230,4 +230,85 @@ fn t996_a_declared_time_warp_drives_the_source_like_the_variant() {
         return;
     }
     assert_eq!(h, WARP_GOLDEN, "the warp machinery moved:\n{}", d.join("\n"));
+
+    // the DECLARATION is the door (D11.5): a time effect the host has never heard of — a rate row
+    // and nothing else — consumes the source exactly as Slowed+Reverb at the same rate does
+    let rate = ParamCurve {
+        param: "rate".into(),
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 0.5), AutoKey::at(Tick(180_000), -0.4)]),
+        source: Default::default(),
+    };
+    let map = |f: FxInstance| {
+        let mut p = project(vec![f], vec![vec![rate.clone()]], false, PitchEngine::Wsola);
+        p.clips[0].duration = Tick(360_000);
+        let c = p.clips[0].clone();
+        let w = kt_model::clip_warp(&c).expect("a declared warp has a map");
+        let len = c.duration.to_audio_frames();
+        let auto = kt_model::AutoProfiles::from_curves_rev(&c.fx_auto, 0, len, false);
+        let offs: Vec<i64> = (0..=8).map(|i| w.material_off(c.duration, false, c.duration.0 * i / 8)).collect();
+        (w.used(), w.span(), offs, kt_fx::chain_source_used(&c.fx, &auto, len), kt_model::chain_avg_rate(&c.fx, &auto))
+    };
+    let mut echo = FxInstance::plugin("warp_echo").expect("the test plugin is installed");
+    assert!(echo.set_warp_rate(0.7), "warp_echo has no rate row");
+    assert_eq!(map(echo), map(FxInstance::slowed_reverb(0.7, 0.0, 60.0)), "the declared warp is not the variant's machinery");
+
+    // ONE warp slot per chain: a second is refused by the command, named
+    let mut m = TimelineModel::new(project(vec![], vec![], false, PitchEngine::Wsola));
+    let two = vec![FxInstance::slowed_reverb(0.7, 0.0, 60.0), FxInstance::plugin("warp_echo").unwrap()];
+    assert!(
+        matches!(m.apply(Command::SetFx { id: ClipId(1), fx: two }), Err(CommandError::TwoTimeWarps(ClipId(1)))),
+        "a second warp slot in one chain was accepted"
+    );
+}
+
+/// The plugin set of this binary: the built-ins plus `warp_echo` (t996), installed once.
+fn install() {
+    kt_plugins_builtin::install_with(|reg| {
+        reg.register_for_test(std::sync::Arc::new(WarpEcho::new())).expect("warp_echo registers");
+    });
+}
+
+/// A test time effect: a rate row and a time-warp declaration, its audio a pass-through. The warp
+/// machinery has no line naming it.
+struct WarpEcho {
+    m: kt_plugin_api::Manifest,
+}
+
+impl WarpEcho {
+    fn new() -> WarpEcho {
+        use kt_plugin_api::*;
+        WarpEcho {
+            m: Manifest {
+                id: "warp_echo".into(),
+                media: Media::AudioFx,
+                passport: vec![ParamSpec::num("rate", -32.0, 32.0, 1.0, 0.01, ParamUnit::Ratio, ParamKind::Smooth)],
+                rows: vec![RowDecl { store: Store::F64, omit_default: false }],
+                decl: Decl { time_warp: Some(TimeWarp { rate_row: 0, frames_row: None }), ..Decl::default() },
+                ui: UiDecl { name: "Warp echo", category_key: "fxreg.cat.timestretch", keywords_key: "fxreg.kw.slowedreverb" },
+            },
+        }
+    }
+}
+
+impl kt_plugin_api::Plugin for WarpEcho {
+    fn manifest(&self) -> &kt_plugin_api::Manifest {
+        &self.m
+    }
+    fn audio(&self) -> Option<&dyn kt_plugin_api::AudioKernel> {
+        Some(self)
+    }
+}
+
+impl kt_plugin_api::AudioKernel for WarpEcho {
+    fn build(&self, _opts: &kt_plugin_api::HostOpts) -> Box<dyn kt_plugin_api::AudioState> {
+        Box::new(Pass)
+    }
+}
+
+struct Pass;
+
+impl kt_plugin_api::AudioState for Pass {
+    fn apply(&mut self, _k: &[f64], _structural: bool) {}
+    fn process(&mut self, _buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {}
+    fn reset(&mut self) {}
 }

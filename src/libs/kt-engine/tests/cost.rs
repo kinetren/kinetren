@@ -47,18 +47,7 @@ impl AudioFetcher for Counting {
 }
 
 fn slowed() -> FxInstance {
-    FxInstance::SlowedReverb {
-        rate: 0.75,
-        mix: 0.2,
-        reverb_delay_ms: 85.0,
-        damp: 0.2,
-        decay: 0.84,
-        wet_gain: 1.0,
-        predelay_ms: 0.0,
-        width: 1.0,
-        frames: Default::default(),
-        automation: vec![],
-    }
+    kt_model::FxInstance::plugin_with("slowed_reverb", &[0.75, 0.2, 85.0, 0.2, 0.84, 1.0, 0.0, 0.0, 1.0]).unwrap()
 }
 
 /// `n` events of 300 ms in a row on DIFFERENT tracks, with slowed+reverb.
@@ -166,6 +155,7 @@ fn rms(v: &[f32]) -> f64 {
 /// order (f32 addition is not associative; GOLDEN_AUDIO rests on this).
 #[test]
 fn t292_distant_clips_do_not_change_the_sound() {
+    kt_plugins_builtin::install();
     let a = 48 * BODY_MS * 2;
     let b = a + 48_000;
     let (plain, _) = render(&base(7), a, b);
@@ -182,6 +172,7 @@ fn t292_distant_clips_do_not_change_the_sound() {
 /// the test catches a return of the LINEAR scan, not fluctuations of the machine.
 #[test]
 fn t293_cost_does_not_scale_with_project_size() {
+    kt_plugins_builtin::install();
     let a = 48 * BODY_MS * 2;
     let b = a + 48_000;
     let best = |p: &Project| -> f64 {
@@ -211,6 +202,7 @@ fn t293_cost_does_not_scale_with_project_size() {
 /// with the sinc resampler and reading the source.
 #[test]
 fn t294_reverb_tail_does_not_touch_the_source() {
+    kt_plugins_builtin::install();
     let p = base(7);
     let bodies_end = 48 * BODY_MS * 7;
     let r = AudioRenderer::new(&p);
@@ -249,6 +241,7 @@ fn t294_reverb_tail_does_not_touch_the_source() {
 /// without underruns.
 #[test]
 fn t295_looping_inside_the_tails_is_deterministic_and_silent_on_reads() {
+    kt_plugins_builtin::install();
     let p = base(7);
     let bodies_end = 48 * BODY_MS * 7;
     let region = bodies_end + BURST..bodies_end + BURST + 48_000 / 4;
@@ -300,6 +293,7 @@ fn t295_looping_inside_the_tails_is_deterministic_and_silent_on_reads() {
 /// event among two thousand does not raise the cost of the place.
 #[test]
 fn t710_a_formula_on_one_event_does_not_tax_the_project() {
+    kt_plugins_builtin::install();
     let a = 48 * BODY_MS * 2;
     let b = a + 48_000;
     let best = |p: &Project| -> f64 {

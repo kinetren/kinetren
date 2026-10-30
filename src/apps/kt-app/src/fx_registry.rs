@@ -1183,6 +1183,7 @@ mod tests {
     /// the name and by keyword and separates audio from video.
     #[test]
     fn t48_registry_complete_and_filter_works() {
+        crate::plugins::install();
         let reg = registry();
         // all 10 video templates are in place and byte-for-byte equal to the former ones
         let old = video_fx_templates();

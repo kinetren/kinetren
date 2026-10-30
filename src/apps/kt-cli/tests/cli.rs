@@ -23,6 +23,7 @@ fn cli() -> Command {
 
 #[test]
 fn t151_cli_otio_workflows() {
+    kt_plugins_builtin::install();
     let dir = std::env::temp_dir().join(format!("kt-cli-t151-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
 
@@ -119,6 +120,7 @@ fn t151_cli_otio_workflows() {
 /// replace it.
 #[test]
 fn t290_probe_reports_what_layers_changed() {
+    kt_plugins_builtin::install();
     let dir = std::env::temp_dir().join(format!("kt-cli-t290-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("probe.kt");
@@ -252,6 +254,7 @@ fn t290_probe_reports_what_layers_changed() {
 /// (“sub/sub/clip.mp4: decode failed”), silently rendering empty layers.
 #[test]
 fn t307_relative_media_paths_resolve_once() {
+    kt_plugins_builtin::install();
     if !Command::new("ffmpeg").arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
     {
         eprintln!("skipped: ffmpeg binary unavailable");
@@ -328,6 +331,7 @@ fn t307_relative_media_paths_resolve_once() {
 /// only by an explicit `--force`.
 #[test]
 fn t387_cli_does_not_overwrite_without_force() {
+    kt_plugins_builtin::install();
     let dir = std::env::temp_dir().join(format!("kt-cli-t387-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -368,6 +372,7 @@ fn t387_cli_does_not_overwrite_without_force() {
 /// whole program, and now it is in the demo by default.
 #[test]
 fn t388_demo_renders_without_any_media_files() {
+    kt_plugins_builtin::install();
     let dir = std::env::temp_dir().join(format!("kt-cli-t388-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -402,6 +407,7 @@ fn t388_demo_renders_without_any_media_files() {
 /// silence in the output file; `--allow-missing` switches this on consciously.
 #[test]
 fn t389_render_refuses_missing_media_unless_allowed() {
+    kt_plugins_builtin::install();
     let dir = std::env::temp_dir().join(format!("kt-cli-t389-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -429,6 +435,7 @@ fn t389_render_refuses_missing_media_unless_allowed() {
 /// that will be asked about a complaint “the picture is stretched/cropped”.
 #[test]
 fn t727_probe_reports_conform_geometry() {
+    kt_plugins_builtin::install();
     let dir = std::env::temp_dir().join(format!("kt-cli-t727-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("probe.kt");
@@ -448,6 +455,7 @@ fn t727_probe_reports_conform_geometry() {
 /// (the owner’s decision), but staying silent about them is not allowed.
 #[test]
 fn t740b_cli_reports_muted_and_solo_before_render() {
+    kt_plugins_builtin::install();
     let dir = std::env::temp_dir().join(format!("kt-cli-t740b-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("demo.kt");
@@ -495,6 +503,7 @@ fn t740b_cli_reports_muted_and_solo_before_render() {
 /// the same answer as “muted”.
 #[test]
 fn t746_probe_prints_tracks_with_switches_level_blend_and_stage() {
+    kt_plugins_builtin::install();
     let dir = std::env::temp_dir().join(format!("kt-cli-t746-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("demo.kt");
@@ -560,6 +569,7 @@ fn t746_probe_prints_tracks_with_switches_level_blend_and_stage() {
 /// this in one’s head from the file length and the speed.
 #[test]
 fn t748b_probe_names_the_material_end() {
+    kt_plugins_builtin::install();
     let dir = std::env::temp_dir().join(format!("kt-cli-t748b-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("edge.kt");
@@ -653,7 +663,8 @@ fn showcase_sources(tag: &str) -> std::path::PathBuf {
 /// project from a directory of real footage — the README's timeline.
 #[test]
 fn t824_showcase_is_rich_valid_and_deterministic() {
-    use kt_model::{ClipKind, FxInstance, GeneratorKind};
+    kt_plugins_builtin::install();
+    use kt_model::{ClipKind, GeneratorKind};
     let dir = showcase_sources("t824");
     let src = dir.join("sources");
     let run = |out: &std::path::Path| {
@@ -721,9 +732,9 @@ fn t824_showcase_is_rich_valid_and_deterministic() {
     let music = lane(ClipKind::Audio, 1);
     let slowed = music
         .iter()
-        .find(|c| c.fx.iter().any(|f| matches!(f, FxInstance::SlowedReverb { .. })))
+        .find(|c| c.fx.iter().any(|f| f.warps_time()))
         .expect("a Slowed+Reverb bed on the music track");
-    let slot = slowed.fx.iter().position(|f| matches!(f, FxInstance::SlowedReverb { .. })).unwrap();
+    let slot = slowed.fx.iter().position(|f| f.warps_time()).unwrap();
     let music_file = p.media.iter().find(|m| m.path.ends_with("sine48k_stereo.flac")).map(|m| m.id);
     assert_eq!(Some(slowed.media), music_file, "an audio-only file is the music bed");
     assert!(
@@ -762,6 +773,7 @@ fn t824_showcase_is_rich_valid_and_deterministic() {
 /// existing output are refused; `--force` writes atomically.
 #[test]
 fn t825_showcase_refuses_missing_sources_and_existing_output() {
+    kt_plugins_builtin::install();
     let dir = showcase_sources("t825");
     let out = dir.join("s.kt");
     let showcase = |src: &std::path::Path, force: bool| {
@@ -807,6 +819,7 @@ fn t825_showcase_refuses_missing_sources_and_existing_output() {
 /// is not touched.
 #[test]
 fn t829_cli_imports_a_project_of_the_former_name() {
+    kt_plugins_builtin::install();
     let dir = std::env::temp_dir().join(format!("kt-cli-t829-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -836,6 +849,7 @@ fn t829_cli_imports_a_project_of_the_former_name() {
 /// not yet migrated app of the former name (`kinotrain/locks`).
 #[test]
 fn t831_cli_and_app_agree_on_the_lock_directory() {
+    kt_plugins_builtin::install();
     let dir = std::env::temp_dir().join(format!("kt-cli-t831-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -875,6 +889,7 @@ fn t831_cli_and_app_agree_on_the_lock_directory() {
 /// hint of the OS and exits non-zero.
 #[test]
 fn t849_cli_prints_the_ffmpeg_search_report() {
+    kt_plugins_builtin::install();
     let dir = std::env::temp_dir().join(format!("kt-cli-t849-{}", std::process::id()));
     let empty = dir.join("empty");
     std::fs::create_dir_all(&empty).unwrap();
@@ -916,6 +931,7 @@ fn t849_cli_prints_the_ffmpeg_search_report() {
 /// frame, a missing picture (the placeholder) prints `unknown/stretch` and the whole canvas.
 #[test]
 fn t940_probe_conform_line_is_the_render_s() {
+    kt_plugins_builtin::install();
     use kt_model::*;
     let dir = showcase_sources("t940"); // runs fixtures/gen.sh
     let still = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1077,6 +1093,7 @@ fn owner_grid_case() -> kt_model::Project {
 /// `KT_T947_SAVE=<path>` also keeps the project for the release measurement (task 1.4).
 #[test]
 fn t947_probe_time_tells_the_video_cost() {
+    kt_plugins_builtin::install();
     let dir = std::env::temp_dir().join(format!("kt-cli-t947-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -1123,6 +1140,7 @@ fn t947_probe_time_tells_the_video_cost() {
 /// `KT_DRI_DIR` stands for `/dev/dri`: a regular file named `renderD128` is not a VAAPI device.
 #[test]
 fn t964_cli_names_the_hardware_encoding_devices() {
+    kt_plugins_builtin::install();
     if !(cfg!(target_os = "linux") && kt_media::ffmpeg::backend_info().is_some()) {
         eprintln!("t964 skipped: needs FFmpeg on Linux");
         return;

@@ -3242,6 +3242,7 @@ fn t185_gpu_loss_notice_once() {
 /// and typing a time into the table does not re-sort the rows under one's hands.
 #[test]
 fn t221_automation_widget_maps_material_and_keeps_input_stable() {
+    crate::plugins::install();
     use crate::automation::{AutoMode, AutoView};
     use kt_model::*;
     use kt_time::Tick;
@@ -7286,6 +7287,7 @@ fn t250_paste_prefix_dialog() {
 /// there would be a lie to the user (item 9 of the checklist).
 #[test]
 fn t248_video_warp_shows_only_what_matters() {
+    crate::plugins::install();
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let mut h = harness();
@@ -7350,6 +7352,7 @@ fn t248_video_warp_shows_only_what_matters() {
 /// a slowed clip drew not what it plays.
 #[test]
 fn t249_previews_follow_the_warp() {
+    crate::plugins::install();
     use kt_model::*;
     use kt_time::Tick;
     const SEC: i64 = 90_000;
@@ -7726,6 +7729,7 @@ fn t262_per_track_height() {
 /// “still missing the buttons controlling the automation timeline elements”.
 #[test]
 fn t265_automation_axis_and_field_bind() {
+    crate::plugins::install();
     use crate::automation::{AutoCtx, AutoView};
     use crate::widgets::{bound_apply, bound_value};
     use kt_model::{AutoKey, ParamCurve};
@@ -8435,6 +8439,7 @@ fn t279_axis_lock_and_keys_that_stay() {
 /// functions and was green on a broken program.
 #[test]
 fn t281_typed_key_value_reaches_the_model() {
+    crate::plugins::install();
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let mut h = harness();
@@ -11554,6 +11559,7 @@ fn t629_space_boost_from_small_base() {
 /// 0.5 % of the height and look straight.
 #[test]
 fn t630_signed_ratio_axis_is_log_by_modulus() {
+    crate::plugins::install();
     use crate::automation::{Axis, axis_of};
     use kt_model::{FxInstance, ParamUnit};
 
@@ -18416,6 +18422,7 @@ fn t918_no_window_grows_by_itself() {
 /// reads from the effective event.
 #[test]
 fn t914_speed_curve_shape_menu_offers_every_shape() {
+    crate::plugins::install();
     use crate::automation::MenuTarget;
     use egui_kittest::kittest::Queryable;
     use kt_model::*;

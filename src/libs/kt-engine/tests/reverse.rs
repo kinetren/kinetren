@@ -110,18 +110,7 @@ fn t24_reversed_video_maps_to_mirrored_pts() {
 #[test]
 fn t24_reversed_with_slowed_fx_is_deterministic_and_not_silent() {
     kt_plugins_builtin::install();
-    let fx = vec![FxInstance::SlowedReverb {
-        rate: 0.6,
-        mix: 0.2,
-        reverb_delay_ms: 85.0,
-        damp: 0.32,
-        decay: 0.58,
-        wet_gain: 0.95,
-        predelay_ms: 0.0,
-        width: 1.0,
-        frames: Default::default(),
-        automation: vec![],
-    }];
+    let fx = vec![kt_model::FxInstance::plugin_with("slowed_reverb", &[0.6, 0.2, 85.0, 0.32, 0.58, 0.95, 0.0, 0.0, 1.0]).unwrap()];
     let rev = clip(true, fx, ClipKind::Audio);
     let renderer = AudioRenderer::new(&rev);
     let n = 48_000usize;
@@ -261,18 +250,7 @@ fn mean_source_frame(out: &[f32], from: usize, n: usize) -> f64 {
 }
 
 fn slowed_dry(rate: f64) -> FxInstance {
-    FxInstance::SlowedReverb {
-        rate,
-        mix: 0.0,
-        reverb_delay_ms: 85.0,
-        damp: 0.32,
-        decay: 0.58,
-        wet_gain: 1.0,
-        predelay_ms: 0.0,
-        width: 1.0,
-        frames: Default::default(),
-        automation: vec![],
-    }
+    kt_model::FxInstance::plugin_with("slowed_reverb", &[rate, 0.0, 85.0, 0.32, 0.58, 1.0, 0.0, 0.0, 1.0]).unwrap()
 }
 
 /// Test 282 (R.43 item 2/item 292): a mirrored event with a warp reads EXACTLY its own

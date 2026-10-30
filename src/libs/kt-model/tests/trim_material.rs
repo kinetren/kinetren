@@ -68,6 +68,7 @@ fn end_of(m: &TimelineModel) -> i64 {
 
 #[test]
 fn t748c_trim_end_stops_at_the_material_end() {
+    kt_plugins_builtin::install();
     // 1) material 10 s, speed 1 — nothing past 10 s
     let mut m = scene(Some(Tick(10 * SEC)), None);
     m.apply(Command::TrimEnd { id: ClipId(1), new_end: Tick(30 * SEC) }).unwrap();

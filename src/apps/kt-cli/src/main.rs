@@ -1420,18 +1420,7 @@ fn demo_project(synth: bool) -> Project {
     // the same camera move that used to be CamMotion keyframes — now curves
     // on Pan (R.34 K2: the animation mechanism is one in the program)
     let cam = FxInstance::geometry_at(0.003, -0.001, 1.05);
-    let slowed = FxInstance::SlowedReverb {
-        rate: 0.86,
-        mix: 0.34,
-        reverb_delay_ms: 150.0,
-        damp: 0.28,
-        decay: 0.86,
-        wet_gain: 1.1,
-        predelay_ms: 0.0,
-        width: 1.0,
-        frames: Default::default(),
-        automation: vec![],
-    };
+    let slowed = kt_model::FxInstance::plugin_with("slowed_reverb", &[0.86, 0.34, 150.0, 0.28, 0.86, 1.1, 0.0, 0.0, 1.0]).unwrap();
     // slowed automation — with shared curves (R.33): keys in the ticks of the
     // MATERIAL of clip 25 (source_in = 0, length 74 s)
     let slowed_auto = |dur: f64| -> Vec<Vec<ParamCurve>> {

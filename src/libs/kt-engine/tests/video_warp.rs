@@ -233,18 +233,7 @@ fn t250_blend_mode_mixes_neighbouring_frames() {
     use kt_media::synthetic::{AudioPattern, SyntheticSource};
 
     let blend_fx = || {
-        vec![FxInstance::SlowedReverb {
-            rate: 0.5,
-            mix: 0.0,
-            reverb_delay_ms: 85.0,
-            damp: 0.32,
-            decay: 0.58,
-            wet_gain: 0.95,
-            predelay_ms: 0.0,
-            frames: FrameMode::Blend,
-            width: 1.0,
-            automation: vec![],
-        }]
+        vec![kt_model::FxInstance::plugin_with("slowed_reverb", &[0.5, 0.0, 85.0, 0.32, 0.58, 0.95, 0.0, 1.0, 1.0]).unwrap()]
     };
     let p = project(blend_fx(), vec![], false);
     let mut vr = VideoRenderer::new(&p);
@@ -297,18 +286,7 @@ fn t250_blend_mode_mixes_neighbouring_frames() {
 fn t250_blend_prefetches_both_sides() {
     kt_plugins_builtin::install();
     let p = project(
-        vec![FxInstance::SlowedReverb {
-            rate: 0.5,
-            mix: 0.0,
-            reverb_delay_ms: 85.0,
-            damp: 0.32,
-            decay: 0.58,
-            wet_gain: 0.95,
-            predelay_ms: 0.0,
-            frames: FrameMode::Blend,
-            width: 1.0,
-            automation: vec![],
-        }],
+        vec![kt_model::FxInstance::plugin_with("slowed_reverb", &[0.5, 0.0, 85.0, 0.32, 0.58, 0.95, 0.0, 1.0, 1.0]).unwrap()],
         vec![],
         false,
     );
@@ -523,9 +501,7 @@ fn t604c_edge_holds_at_the_material_start() {
 fn t604d_blend_pair_under_negative_rate() {
     kt_plugins_builtin::install();
     let mut fx = FxInstance::slowed_reverb(-0.5, 0.0, 85.0);
-    if let FxInstance::SlowedReverb { frames, .. } = &mut fx {
-        *frames = FrameMode::Blend;
-    }
+    assert!(fx.set_param("frames", 1.0), "the frame row: 1 is blend");
     let p = project(vec![fx], vec![], false);
     let vr = VideoRenderer::new(&p);
     // at mid-frame the pair must be (a, a+STEP) and the weight exactly one half

@@ -105,12 +105,8 @@ fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
         match (warp_slot(c), &tmpl) {
             // both have it — we carry over ONLY the speed and its curve
             (Some(j), Some(t)) => {
-                if let (
-                    FxInstance::SlowedReverb { rate, .. },
-                    FxInstance::SlowedReverb { rate: r0, .. },
-                ) = (&mut c.fx[j], t)
-                {
-                    *rate = *r0;
+                if let Some(r0) = t.warp_rate() {
+                    c.fx[j].set_warp_rate(r0);
                 }
                 if c.fx_auto.len() <= j {
                     c.fx_auto.resize(j + 1, Vec::new());
@@ -757,6 +753,8 @@ pub enum CommandError {
     SidechainCycle(TrackId),
     #[error("sidechain key belongs on a track chain, not on a clip")]
     SidechainOnClip,
+    #[error("event {0:?} would hold two time-warp effects: the source is consumed at one rate")]
+    TwoTimeWarps(ClipId),
     #[error("lane count would orphan clips")]
     LanesTooFew,
     #[error("{0:?} track {1} does not exist")]
@@ -1497,6 +1495,13 @@ impl TimelineModel {
                 // a place in the order of stages
                 if crate::sidechain_keys(fx).next().is_some() {
                     return Err(CommandError::SidechainOnClip);
+                }
+                // ONE warp slot per chain (D11.5): the source is consumed at one rate, and the
+                // machinery reads the first warp slot — a second would be a dead control. The
+                // refusal is the command's: a file that already holds two still reads (the first
+                // one warps, as it always did)
+                if fx.iter().filter(|f| f.warps_time()).count() > 1 {
+                    return Err(CommandError::TwoTimeWarps(*id));
                 }
             }
             Command::SetGeometry { id, pos, .. } => {

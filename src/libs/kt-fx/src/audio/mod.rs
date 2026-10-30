@@ -14,7 +14,6 @@ pub use warp::Warp;
 use crate::{CH, MIN_PREROLL_FRAMES, PullKind};
 use kt_model::FxInstance;
 use kt_time::Tick;
-use nodes::reverb_tail_for_delay;
 
 use kt_model::{AutoProfiles, ParamPoints, eff_rate, rate_at, source_progress};
 
@@ -59,17 +58,11 @@ pub fn chain_source_window_ext(
     // ONE function, so render and prefetch expand the same way
     // (if they diverge — a permanent cache miss, item 13/t17).
     let l1 = (local.end + chain_lookahead(fx, auto)).clamp(material.start, material.end);
-    let has_warp = fx.iter().any(|f| matches!(f, FxInstance::SlowedReverb { .. }));
+    let has_warp = fx.iter().any(FxInstance::warps_time);
     if !has_warp {
         return l0..l1.max(l0);
     }
-    let rate = fx
-        .iter()
-        .find_map(|f| match f {
-            FxInstance::SlowedReverb { rate, .. } => Some(*rate),
-            _ => None,
-        })
-        .unwrap_or(1.0);
+    let rate = fx.iter().find_map(FxInstance::warp_rate).unwrap_or(1.0);
     let automation = auto.rate_points(fx);
     // the source window does not go below zero only when the material starts
     // with the body of the clip (old behavior); the left handle is legally negative
@@ -105,10 +98,7 @@ pub fn chain_consumption_window_ext(
     let len = clip_len_frames.max(1);
     let l0 = (local.start - chain_lookahead(fx, auto)).clamp(material.start, material.end);
     let l1 = (local.end + chain_lookahead(fx, auto)).clamp(material.start, material.end);
-    let Some(rate) = fx.iter().find_map(|f| match f {
-        FxInstance::SlowedReverb { rate, .. } => Some(*rate),
-        _ => None,
-    }) else {
+    let Some(rate) = fx.iter().find_map(FxInstance::warp_rate) else {
         return l0..l1.max(l0);
     };
     let automation = auto.rate_points(fx);
@@ -135,10 +125,7 @@ pub fn chain_consumption_window_ext(
 /// event stayed in place — A/V diverged.
 pub fn chain_source_used(fx: &[FxInstance], auto: &AutoProfiles, clip_len_frames: i64) -> i64 {
     let len = clip_len_frames.max(1);
-    let Some(rate) = fx.iter().find_map(|f| match f {
-        FxInstance::SlowedReverb { rate, .. } => Some(*rate),
-        _ => None,
-    }) else {
+    let Some(rate) = fx.iter().find_map(FxInstance::warp_rate) else {
         return len;
     };
     // MIRROR AXIS — the maximum of the position’s SPAN (R.57): for a signed curve
@@ -185,7 +172,6 @@ pub struct ChainOpts {
 }
 
 pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
-    let wet = auto.mix_points(fx);
     fx.iter()
         .enumerate()
         .map(|(slot, f)| match f {
@@ -197,11 +183,6 @@ pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
                     &nodes::SlotView { auto, slot },
                 ))
             }),
-            FxInstance::SlowedReverb { mix, reverb_delay_ms, decay, .. }
-                if *mix > 0.0 || wet.iter().any(|(_, v)| *v > 0.0) =>
-            {
-                reverb_tail_for_delay(*reverb_delay_ms, *decay)
-            }
             _ => Tick::ZERO,
         })
         .max()
@@ -458,7 +439,7 @@ impl ClipProcessor {
             auto: auto.clone(),
             warp_slot: fx
                 .iter()
-                .position(|f| matches!(f, FxInstance::SlowedReverb { .. }))
+                .position(FxInstance::warps_time)
                 .unwrap_or(0),
             clip_len: clip_len_frames.max(1),
             head_ext: 0,
@@ -595,7 +576,7 @@ impl ClipProcessor {
         self.recompute_lookahead();
         // warp half of Slowed+Reverb (source consumption)
         for f in fx {
-            if let FxInstance::SlowedReverb { rate, .. } = f {
+            if let Some(rate) = f.warp_rate() {
                 self.rate = rate.clamp(kt_model::RATE_CLAMP.0, kt_model::RATE_CLAMP.1);
                 self.reach = kt_model::rate_reach(self.rate, self.rate_points());
                 let has_rate_curve = !self.rate_points().is_empty();
@@ -1035,10 +1016,7 @@ pub fn chain_addr_knots(
     clip_len_frames: i64,
 ) -> Option<Vec<AddrKnot>> {
     let len = clip_len_frames.max(1);
-    let rate = fx.iter().find_map(|f| match f {
-        FxInstance::SlowedReverb { rate, .. } => Some(*rate),
-        _ => None,
-    })?;
+    let rate = fx.iter().find_map(FxInstance::warp_rate)?;
     let points = auto.rate_points(fx);
     if !kt_model::rate_signed(rate, points) {
         return None;

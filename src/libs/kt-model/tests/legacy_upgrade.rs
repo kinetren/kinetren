@@ -62,6 +62,7 @@ fn raw_project(clips: Vec<ClipEvent>) -> Project {
 
 #[test]
 fn t143_audio_pair_becomes_transition() {
+    kt_plugins_builtin::install();
     // A[0,90000), B[60000,150000) — the overlap [60000,90000), C = 75000
     let mut p = raw_project(vec![
         clip(1, ClipKind::Audio, 0, 0, 90_000, 0),
@@ -88,6 +89,7 @@ fn t143_audio_pair_becomes_transition() {
 
 #[test]
 fn t143_reversed_incoming_keeps_source_in() {
+    kt_plugins_builtin::install();
     // for a reversed TrimStart the source_in is NOT touched (item 16) — the handle is mirrored
     let mut b = clip(2, ClipKind::Audio, 0, 60_000, 90_000, 5_000);
     b.reversed = true;
@@ -101,6 +103,7 @@ fn t143_reversed_incoming_keeps_source_in() {
 
 #[test]
 fn t143_three_overlap_and_fx_pairs_are_split_to_lanes() {
+    kt_plugins_builtin::install();
     // three clips in one zone → a pair is impossible, two move lower
     let mut p = raw_project(vec![
         clip(1, ClipKind::Audio, 0, 0, 90_000, 0),
@@ -127,6 +130,7 @@ fn t143_three_overlap_and_fx_pairs_are_split_to_lanes() {
 
 #[test]
 fn t143_video_overlap_demotes_later_clip_below() {
+    kt_plugins_builtin::install();
     // video: the one on top was the one with the smaller start (the old tie-break) —
     // the later one moves to the INSERTED track below, the existing bottom track
     // is shifted further down
@@ -154,6 +158,7 @@ fn t143_video_overlap_demotes_later_clip_below() {
 /// into roughly 40 video tracks.
 #[test]
 fn t164_legacy_import_keeps_overlaps_and_lanes() {
+    kt_plugins_builtin::install();
     let mut p = Project::new(ProjectSettings {
         fps: 30,
         width: 640,

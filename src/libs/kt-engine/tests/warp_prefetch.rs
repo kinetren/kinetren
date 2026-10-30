@@ -46,22 +46,17 @@ fn slowed_project() -> Project {
         reversed: false,
         fx_bypass: vec![],
         fx_auto: vec![],
-        fx: vec![FxInstance::SlowedReverb {
-            rate: 0.5,
-            mix: 0.15,
-            reverb_delay_ms: 85.0,
-            damp: 0.32,
-            decay: 0.58,
-            wet_gain: 0.95,
-            predelay_ms: 0.0,
-            width: 1.0,
-            frames: Default::default(),
-            automation: vec![
+        fx: vec![{
+        let mut f = kt_model::FxInstance::plugin_with("slowed_reverb", &[0.5, 0.15, 85.0, 0.32, 0.58, 0.95, 0.0, 0.0, 1.0]).unwrap();
+        if let kt_model::FxInstance::Plugin(p) = &mut f {
+            p.extra.insert("automation".into(), serde_json::to_value(vec![
                 SlowedKeyframe { t: 0.0, rate: 0.9, mix: 0.15 },
                 SlowedKeyframe { t: 0.5, rate: 0.4, mix: 0.15 },
                 SlowedKeyframe { t: 1.0, rate: 0.8, mix: 0.15 },
-            ],
-        }],
+            ]).unwrap());
+        }
+        f
+    }],
         opacity: 1.0,
         fx_off: false,
     });
@@ -98,6 +93,7 @@ fn rms(buf: &[f32]) -> f64 {
 /// Main invariant: wanted ⊇ consumed under any jumps.
 #[test]
 fn t17_wanted_bursts_cover_fx_consumption_after_random_seeks() {
+    kt_plugins_builtin::install();
     let project = slowed_project();
     let renderer = AudioRenderer::new(&project);
     let mut store = kt_engine::FxStateStore::new();
@@ -137,6 +133,7 @@ fn t17_wanted_bursts_cover_fx_consumption_after_random_seeks() {
 /// to the cold reference, and it is not silence.
 #[test]
 fn t17_seek_into_slowed_clip_from_warm_cache_matches_cold_reference() {
+    kt_plugins_builtin::install();
     let project = slowed_project();
     let renderer = AudioRenderer::new(&project);
     let frames = 48_000usize; // window 1 s
@@ -184,6 +181,7 @@ fn t17_seek_into_slowed_clip_from_warm_cache_matches_cold_reference() {
 /// the hard source window muted the sinc priming at the end).
 #[test]
 fn t17_slowed_clip_end_has_no_silent_tail() {
+    kt_plugins_builtin::install();
     let project = slowed_project();
     let renderer = AudioRenderer::new(&project);
     let mut store = kt_engine::FxStateStore::new();
@@ -222,6 +220,7 @@ fn t17_slowed_clip_end_has_no_silent_tail() {
 /// The claim is the same as t17, but for the raw path: wanted ⊇ consumed.
 #[test]
 fn t285_raw_reverse_prefetch_covers_what_raw_render_reads() {
+    kt_plugins_builtin::install();
     let project = slowed_project();
     let renderer = AudioRenderer::new(&project);
     let frames = 48_000usize / 2;

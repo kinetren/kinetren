@@ -103,18 +103,7 @@ fn clip(id: u64, media: u64, lane: u32, start: i64, dur: i64, src_in: i64) -> Cl
 }
 
 fn slowed_reverb(rate: f64, mix: f32) -> FxInstance {
-    FxInstance::SlowedReverb {
-        rate,
-        mix,
-        reverb_delay_ms: 60.0,
-        damp: 0.4,
-        decay: 0.7,
-        wet_gain: 1.0,
-        predelay_ms: 0.0,
-        width: 1.0,
-        frames: Default::default(),
-        automation: vec![],
-    }
+    kt_model::FxInstance::plugin_with("slowed_reverb", &[rate, (mix) as f64, 60.0, 0.4, 0.7, 1.0, 0.0, 0.0, 1.0]).unwrap()
 }
 
 /// One output burst from position `at`, with the wrap across the region.
@@ -133,6 +122,7 @@ fn looped_burst(
 
 #[test]
 fn t166_loop_wrap_is_a_seam_not_a_seek() {
+    kt_plugins_builtin::install();
     let mut p = base_project();
     let dur = 10 * AUDIO_SAMPLE_RATE as i64;
     let mut c = clip(1, 1, 0, 0, dur, 0);
@@ -203,6 +193,7 @@ fn t166_loop_wrap_is_a_seam_not_a_seek() {
 
 #[test]
 fn t167_short_region_does_not_re_seek_every_wrap() {
+    kt_plugins_builtin::install();
     let mut p = base_project();
     let dur = 4 * AUDIO_SAMPLE_RATE as i64;
     let mut c = clip(1, 1, 0, 0, dur, 0);
@@ -260,6 +251,7 @@ fn t167_short_region_does_not_re_seek_every_wrap() {
 
 #[test]
 fn t168_complex_montage_plays_without_underruns() {
+    kt_plugins_builtin::install();
     let sr = AUDIO_SAMPLE_RATE as i64;
     let mut p = base_project();
     p.overlap_layers = true;
@@ -339,6 +331,7 @@ fn t168_complex_montage_plays_without_underruns() {
 
 #[test]
 fn t167b_prefetch_lookahead_stays_inside_loop_region() {
+    kt_plugins_builtin::install();
     use kt_engine::lookahead_windows;
     // cursor outside the region — a linear window
     assert_eq!(lookahead_windows(10, 100, Some((500, 900))), vec![10..110]);
@@ -363,6 +356,7 @@ fn t167b_prefetch_lookahead_stays_inside_loop_region() {
 /// Verified exactly this: a thousand events do not produce a thousand lines.
 #[test]
 fn t175_flight_recorder_stays_compact() {
+    kt_plugins_builtin::install();
     use kt_engine::flight::{CAP, Ev, FlightRecorder, Snap};
     let f = FlightRecorder::new();
 
@@ -416,6 +410,7 @@ fn t175_flight_recorder_stays_compact() {
 /// several-fold, not a thousand-fold.
 #[test]
 fn t280_underruns_are_counted_in_frames_on_both_paths() {
+    kt_plugins_builtin::install();
     let sr = AUDIO_SAMPLE_RATE as i64;
     let span = sr / 2; // half a second of body
 
@@ -545,6 +540,7 @@ fn rms(buf: &[f32]) -> f64 {
 /// and (WSOLA) every lap within 1 dB of the first.
 #[test]
 fn t906_loop_with_pitch_has_no_silent_run() {
+    kt_plugins_builtin::install();
     let start = 2 * AUDIO_SAMPLE_RATE as i64 + 137;
     let span = AUDIO_SAMPLE_RATE as i64 + 61;
     let region = start..start + span;
@@ -588,6 +584,7 @@ fn t906_loop_with_pitch_has_no_silent_run() {
 /// signal, no repeated warm-ups, no underruns.
 #[test]
 fn t907_short_loop_with_pitch_still_sounds() {
+    kt_plugins_builtin::install();
     let dry = 0.5f64.sqrt() * 0.5; // the synthetic sine's RMS at half the amplitude bound
     let mut problems = Vec::new();
     for engine in [PitchEngine::Wsola, PitchEngine::Vocoder] {
@@ -631,6 +628,7 @@ impl AudioFetcher for Recorder {
 /// Test 908: the looped pitch is deterministic, sliced or not, and reads only what was ordered.
 #[test]
 fn t908_looped_pitch_is_deterministic_and_reads_what_was_ordered() {
+    kt_plugins_builtin::install();
     let start = 2 * AUDIO_SAMPLE_RATE as i64 + 137;
     let span = AUDIO_SAMPLE_RATE as i64 + 61;
     let region = start..start + span;

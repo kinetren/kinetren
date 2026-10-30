@@ -1343,7 +1343,6 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         // layer strength is not a user effect: it is absent from the picker, while in the morpher strip
         // it is captioned “Strength” (R.38 item 12)
         FxInstance::LayerMix { .. } => "Layer mix",
-        FxInstance::SlowedReverb { .. } => "Slowed+Reverb",
         // the leading node is marked with a dot: it is single, cannot be deleted and is not from the catalog
         FxInstance::Geometry { lead: true, .. } => "• Geometry",
         FxInstance::Geometry { .. } => "Geometry",
@@ -1481,7 +1480,7 @@ pub(crate) fn draw_video_fx_params(
         }
         // on a VIDEO instance the warp means only speed: the reverb does not sound there,
         // and showing its handles would lie to the user (R.37)
-        FxInstance::SlowedReverb { .. } if on_video => {
+        FxInstance::Plugin(p) if p.id == "slowed_reverb" && on_video => {
             &["mix", "reverb_delay_ms", "damp", "decay", "wet_gain", "predelay_ms", "width"]
         }
         _ => &[],
@@ -1545,7 +1544,11 @@ pub(crate) fn draw_video_fx_params(
                 *ease = e;
             }
         }
-        FxInstance::SlowedReverb { frames, .. } if on_video => {
+        // the frame row of the warp slot (a plugin since plugin-api-stage1, D11.5): 0 nearest, 1 blend
+        FxInstance::Plugin(p) if p.id == "slowed_reverb" && on_video => {
+            let mut frames =
+                if p.get("frames") == Some(1.0) { kt_model::FrameMode::Blend } else { kt_model::FrameMode::Nearest };
+            let before = frames;
             ui.horizontal(|ui| {
                 ui.label(tr(k::fx::FRAMES));
                 egui::ComboBox::from_id_salt("slowedframes")
@@ -1561,10 +1564,14 @@ pub(crate) fn draw_video_fx_params(
                             (kt_model::FrameMode::Nearest, k::fx::FRAMES_NEAREST),
                             (kt_model::FrameMode::Blend, k::fx::FRAMES_BLEND),
                         ] {
-                            ch.base |= ui.selectable_value(frames, m, tr(key)).changed();
+                            ui.selectable_value(&mut frames, m, tr(key));
                         }
                     });
             });
+            if frames != before {
+                p.set("frames", if frames == kt_model::FrameMode::Blend { 1.0 } else { 0.0 });
+                ch.base = true;
+            }
             ui.label(egui::RichText::new(tr(k::fx::RATE_LINKED)).weak().small());
         }
         // the mirror's two flag rows (a plugin slot since plugin-api-stage1, D11.3)

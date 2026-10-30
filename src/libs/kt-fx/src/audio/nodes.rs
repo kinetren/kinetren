@@ -1,188 +1,9 @@
 //! Audio nodes of the chain (R.47): Freeverb (a verbatim move from lib.rs) and —
 //! from the next step of Ka1 — enum AudioNode with all the effects.
 
-use super::primitives::{
-    ALLPASS_TUNINGS, Allpass, COMB_TUNINGS, Comb, STEREO_SPREAD, SmoothedParam, tail_frames_for,
-};
-use crate::CH;
-use kt_time::{AUDIO_SAMPLE_RATE, Tick};
-
-/// Stereo freeverb. Changing delay re-creates the lines (this is a structural change of
-/// the geometry — unavoidable), but wet/dry are smoothed and do NOT touch the buffers.
-pub struct Freeverb {
-    combs: [Vec<Comb>; CH],
-    allpasses: [Vec<Allpass>; CH],
-    wet: SmoothedParam,
-    delay_ms: f32,
-    damp: f32,
-    feedback: f32,
-    wet_gain: f32,
-    /// Pre-delay of the reverb input (R.33 C5): a ring per channel. Empty —
-    /// the previous path byte-for-byte.
-    predelay: [Vec<f32>; CH],
-    pre_pos: usize,
-    predelay_ms: f32,
-    /// Stereo tail width 0..1: 1 — the previous “real” stereo reverb,
-    /// 0 — a common mono tail for both channels.
-    width: f32,
-}
-
-impl Freeverb {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        mix: f32,
-        delay_ms: f32,
-        damp: f32,
-        decay: f32,
-        wet_gain: f32,
-        predelay_ms: f32,
-        width: f32,
-    ) -> Freeverb {
-        let scale = |base: usize, extra: usize| -> usize {
-            let s = base as f32 * (AUDIO_SAMPLE_RATE as f32 / 44_100.0) * (delay_ms / 100.0);
-            (s as usize + extra).max(8)
-        };
-        let combs = std::array::from_fn(|ch| {
-            COMB_TUNINGS
-                .iter()
-                .map(|&t| Comb::new(scale(t, ch * STEREO_SPREAD)))
-                .collect::<Vec<_>>()
-        });
-        let allpasses = std::array::from_fn(|ch| {
-            ALLPASS_TUNINGS
-                .iter()
-                .map(|&t| Allpass::new(scale(t, ch * STEREO_SPREAD)))
-                .collect::<Vec<_>>()
-        });
-        let pre = (predelay_ms.clamp(0.0, 200.0) / 1000.0 * AUDIO_SAMPLE_RATE as f32) as usize;
-        Freeverb {
-            combs,
-            allpasses,
-            wet: SmoothedParam::new(mix.clamp(0.0, 1.0)),
-            delay_ms,
-            damp: damp.clamp(0.0, 0.99),
-            feedback: decay.clamp(0.0, 0.98),
-            wet_gain: wet_gain.max(0.0),
-            predelay: std::array::from_fn(|_| vec![0.0; pre]),
-            pre_pos: 0,
-            predelay_ms: predelay_ms.clamp(0.0, 200.0),
-            width: width.clamp(0.0, 1.0),
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn set_params(
-        &mut self,
-        mix: f32,
-        delay_ms: f32,
-        damp: f32,
-        decay: f32,
-        wet_gain: f32,
-        predelay_ms: f32,
-        width: f32,
-    ) {
-        self.wet.set_target(mix.clamp(0.0, 1.0));
-        self.damp = damp.clamp(0.0, 0.99);
-        self.feedback = decay.clamp(0.0, 0.98);
-        self.wet_gain = wet_gain.max(0.0);
-        self.width = width.clamp(0.0, 1.0);
-        // structural change of geometry: re-creation is allowed only for a
-        // really different delay (threshold 0.5 ms, as in the old code, but wet/dry
-        // does not touch this); pre-delay — the same geometry
-        if (delay_ms - self.delay_ms).abs() > 0.5 || (predelay_ms - self.predelay_ms).abs() > 0.5 {
-            let keep_wet = self.wet;
-            *self =
-                Freeverb::new(keep_wet.target, delay_ms, damp, decay, wet_gain, predelay_ms, width);
-            self.wet = keep_wet;
-        }
-    }
-
-    /// Only the wet-mix target (automation) — smoothed, buffers not touched.
-    pub fn set_mix(&mut self, mix: f32) {
-        self.wet.set_target(mix.clamp(0.0, 1.0));
-    }
-
-    /// Tail: decay time to −60 dB (t60) along the longest comb line.
-    pub fn tail(&self) -> Tick {
-        let max_len = self.combs[CH - 1].iter().map(|c| c.buf.len()).max().unwrap_or(1);
-        tail_frames_for(max_len as f32, self.feedback)
-    }
-
-    pub fn process(&mut self, samples: &mut [f32]) {
-        // the previous path (without pre-delay, full width) remains
-        // VERBATIM: GOLDEN_AUDIO relies on it
-        let plain = self.predelay[0].is_empty() && self.width >= 1.0;
-        for frame in samples.chunks_exact_mut(CH) {
-            let wet_gain = self.wet.tick();
-            if plain {
-                for (ch, s) in frame.iter_mut().enumerate() {
-                    let dry = *s;
-                    let input = dry * 0.015;
-                    let mut wet = 0.0;
-                    for comb in &mut self.combs[ch] {
-                        wet += comb.process(input, self.damp, self.feedback);
-                    }
-                    for ap in &mut self.allpasses[ch] {
-                        wet = ap.process(wet);
-                    }
-                    *s = dry * (1.0 - wet_gain) + wet * self.wet_gain * wet_gain;
-                }
-                continue;
-            }
-            let mut wets = [0.0f32; CH];
-            for ch in 0..CH {
-                let dry = frame[ch];
-                let mut input = dry * 0.015;
-                if !self.predelay[ch].is_empty() {
-                    let pos = self.pre_pos % self.predelay[ch].len();
-                    input = std::mem::replace(&mut self.predelay[ch][pos], input);
-                }
-                let mut wet = 0.0;
-                for comb in &mut self.combs[ch] {
-                    wet += comb.process(input, self.damp, self.feedback);
-                }
-                for ap in &mut self.allpasses[ch] {
-                    wet = ap.process(wet);
-                }
-                wets[ch] = wet;
-            }
-            self.pre_pos = self.pre_pos.wrapping_add(1);
-            // width: 1 — channels as they are, 0 — a common mono tail
-            let (a, b) = (0.5 + 0.5 * self.width, 0.5 - 0.5 * self.width);
-            for ch in 0..CH {
-                let other = wets[(ch + 1) % CH];
-                let wet = wets[ch] * a + other * b;
-                let dry = frame[ch];
-                frame[ch] = dry * (1.0 - wet_gain) + wet * self.wet_gain * wet_gain;
-            }
-        }
-    }
-
-    pub fn reset(&mut self) {
-        for ch in 0..CH {
-            for c in &mut self.combs[ch] {
-                c.buf.fill(0.0);
-                c.filter_state = 0.0;
-            }
-            for a in &mut self.allpasses[ch] {
-                a.buf.fill(0.0);
-            }
-            // predelay also holds material (up to 200 ms) — without clearing it
-            // it leaked into the tail after a seek (t319, R.47 item 324)
-            self.predelay[ch].fill(0.0);
-        }
-        self.pre_pos = 0;
-        self.wet.reset_to_target();
-    }
-}
-
-pub(crate) fn reverb_tail_for_delay(delay_ms: f32, decay: f32) -> Tick {
-    let max_comb = COMB_TUNINGS[COMB_TUNINGS.len() - 1] as f32
-        * (AUDIO_SAMPLE_RATE as f32 / 44_100.0)
-        * (delay_ms / 100.0)
-        + ((CH - 1) * STEREO_SPREAD) as f32;
-    tail_frames_for(max_comb, decay)
-}
+// Freeverb and its tail formula live in `kt_plugin_api::dsp` since plugin-api-stage1 (3b.2): the
+// Slowed+Reverb plugin and the core share one text.
+pub use kt_plugin_api::dsp::Freeverb;
 
 // ---------------------------------------------------------------------------
 // Node chain (R.47, item 325): processing goes IN SLOT ORDER
@@ -204,7 +25,6 @@ pub enum AudioNode {
     /// Layer-strength marker: the dry-side snapshot and the blend are executed by
     /// `produce()` — the node needs an inter-node buffer, which it does not own.
     LayerMix,
-    Reverb(ReverbNode),
     /// An audio plugin's state (plugin-api-stage1, D2a): one dynamic call per chunk.
     Plugin(Box<dyn kt_plugin_api::AudioState>),
 }
@@ -267,7 +87,6 @@ impl AudioNode {
         }
         match fx {
             FxInstance::LayerMix { .. } => Some(AudioNode::LayerMix),
-            FxInstance::SlowedReverb { .. } => Some(AudioNode::Reverb(ReverbNode::new())),
             _ => None,
         }
     }
@@ -284,7 +103,6 @@ impl AudioNode {
         match (self, fx) {
             (AudioNode::Plugin(n), FxInstance::Plugin(p)) => n.apply(&p.values, structural),
             (AudioNode::LayerMix, FxInstance::LayerMix { .. }) => {}
-            (AudioNode::Reverb(n), FxInstance::SlowedReverb { .. }) => n.apply(fx, structural),
             // the chain fingerprint matched — the kinds by slots match by
             // construction; one can get here only through a matching error
             _ => debug_assert!(false, "node/slot kind mismatch"),
@@ -295,7 +113,6 @@ impl AudioNode {
         match self {
             AudioNode::Plugin(n) => n.set_targets(&SlotView { auto, slot }, s),
             AudioNode::LayerMix => {}
-            AudioNode::Reverb(n) => n.set_targets(auto, slot, s),
         }
     }
 
@@ -320,7 +137,6 @@ impl AudioNode {
     pub(crate) fn process(&mut self, buf: &mut [f32], _pos: i64, key: Option<&[f32]>) {
         match self {
             AudioNode::LayerMix => {}
-            AudioNode::Reverb(n) => n.rv.process(buf),
             AudioNode::Plugin(n) => n.process(buf, _pos, key),
         }
     }
@@ -343,7 +159,6 @@ impl AudioNode {
 
     pub(crate) fn tail(&self) -> kt_time::Tick {
         match self {
-            AudioNode::Reverb(n) => n.rv.tail(),
             AudioNode::Plugin(n) => n.tail(),
             _ => kt_time::Tick::ZERO,
         }
@@ -352,68 +167,12 @@ impl AudioNode {
     pub(crate) fn reset(&mut self) {
         match self {
             AudioNode::LayerMix => {}
-            AudioNode::Reverb(n) => n.rv.reset(),
             AudioNode::Plugin(n) => n.reset(),
         }
     }
 }
 
-/// The reverb half of the Slowed+Reverb slot (the warp half lives in a separate
-/// processor field — the warp holds the monopoly on consuming the source).
-pub struct ReverbNode {
-    pub(crate) rv: Freeverb,
-    base_mix: f64,
-}
-
-impl ReverbNode {
-    fn new() -> ReverbNode {
-        ReverbNode { rv: Freeverb::new(0.0, 100.0, 0.2, 0.7, 1.0, 0.0, 1.0), base_mix: 0.0 }
-    }
-
-    fn apply(&mut self, fx: &FxInstance, structural: bool) {
-        let FxInstance::SlowedReverb {
-            mix,
-            reverb_delay_ms,
-            damp,
-            decay,
-            wet_gain,
-            predelay_ms,
-            width,
-            ..
-        } = fx
-        else {
-            return;
-        };
-        self.base_mix = *mix as f64;
-        if structural {
-            self.rv = Freeverb::new(
-                *mix,
-                *reverb_delay_ms,
-                *damp,
-                *decay,
-                *wet_gain,
-                *predelay_ms,
-                *width,
-            );
-        } else {
-            self.rv.set_params(
-                *mix,
-                *reverb_delay_ms,
-                *damp,
-                *decay,
-                *wet_gain,
-                *predelay_ms,
-                *width,
-            );
-        }
-    }
-
-    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
-        // mix is smoothed by a one-pole inside the reverb (the same call as before
-        // R.47 — the bytes of a single-slot chain do not move)
-        self.rv.set_mix(auto.value(slot, "mix", self.base_mix, s) as f32);
-    }
-}
+// the reverb half of Slowed+Reverb moved into src/plugins/fx-audio-modulation (3b.2, D11.5)
 
 // filter, eq, distortion, bitcrusher, stereo_width moved into src/plugins/fx-audio-tone; tremolo,
 // auto_pan, vibrato, chorus, flanger, phaser, pitch_shift, delay into src/plugins/fx-audio-modulation

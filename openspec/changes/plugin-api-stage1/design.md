@@ -382,6 +382,21 @@ ordinary AudioKernel (the freeverb node). The rule "one warp slot per chain" mov
 registration and validation, and the R.39/R.57 maps stay in kt-model, untouched. Slowed+Reverb
 moves; this is also the door for a third-party time effect.
 
+*As built (3b.2):* `Decl.time_warp: Option<TimeWarp { rate_row, frames_row }>` (the frame row a
+choice of `["nearest", "blend"]`, checked at registration). `FxInstance::warps_time`/`time_warp`/
+`warp_rate`/`set_warp_rate`/`warp_blends` are the ONE home of "which slot warps and at what rate":
+kt-model's `AutoProfiles::warp_slot`, `chain_rate`, `chain_avg_rate`, `clip_warp_of`,
+`chain_warps_time` and the A/V pair's sync, kt-fx's source windows, mirror axis, address knots and
+the processor's warp half all ask them. The reverb half is an ordinary AudioKernel; `Freeverb` and
+`reverb_tail_for_delay` moved into `kt_plugin_api::dsp` (kt-fx re-exports `Freeverb`). The passport
+puts `frames` between `predelay_ms` and `width`, where the variant's field stood, so the file text is
+unchanged. "One warp slot per chain" is refused by `SetFx` (`CommandError::TwoTimeWarps`), not by
+the reader: a file that already holds two still opens, the first one warps as it always did. The
+pre-R.33 `automation` keyframes still reach `migrate_legacy_slowed` through
+`Decl.legacy_fields` — the slot keeps exactly the declared old fields (a generic passthrough picked up
+kt-otio's `auto` envelope key and wrote it back, t606/t189 caught it). t996 compares a digest frozen
+on the variant before the move (a8620769).
+
 Tests: t992 (positioned taps, vignette's stage coordinate and noise's grid on both executors),
 t993 (the geometry program, warps fused in one pass within tolerance, corner_pin/pan3d Proj
 rules), t994 (the exact lone path: t297's bytes for a moved mirror), t995 (the track reference:

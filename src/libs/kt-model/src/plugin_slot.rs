@@ -19,10 +19,29 @@ pub fn registry() -> &'static Registry {
 }
 
 /// A plugin-backed effect: its id and its numeric values in passport order.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct PluginSlot {
     pub id: String,
     pub values: Vec<f64>,
+    /// The legacy fields the plugin declares (`Decl.legacy_fields`) as the file had them: a field a
+    /// door still migrates (Slowed+Reverb's `automation`, `migrate_legacy_slowed`) reaches the
+    /// migration instead of being dropped by the read; written back after the rows only while
+    /// nothing consumed it, as the variant wrote it. Nothing else is kept — the envelope keys a
+    /// door puts next to the rows (kt-otio's `auto`) are the door's.
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for PluginSlot {
+    /// The derive's form while `extra` is empty: the Debug text is part of `content_hash`, so a slot
+    /// without foreign fields must print as it did before the field existed.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("PluginSlot");
+        d.field("id", &self.id).field("values", &self.values);
+        if !self.extra.is_empty() {
+            d.field("extra", &self.extra);
+        }
+        d.finish()
+    }
 }
 
 impl PluginSlot {
@@ -30,7 +49,7 @@ impl PluginSlot {
     pub fn new(id: &str) -> Option<PluginSlot> {
         let m = registry().get(id)?.manifest();
         let values = m.passport.iter().enumerate().map(|(i, s)| m.row(i).store.cast(s.default)).collect();
-        Some(PluginSlot { id: id.to_string(), values })
+        Some(PluginSlot { id: id.to_string(), values, extra: Default::default() })
     }
 
     pub fn manifest(&self) -> &'static Manifest {
@@ -121,6 +140,9 @@ impl Serialize for PluginSlot {
                 kt_plugin_api::Store::Ref(_) => map.serialize_entry(key, &(v as u64))?,
             }
         }
+        for (k, v) in &self.extra {
+            map.serialize_entry(k, v)?;
+        }
         map.end()
     }
 }
@@ -153,7 +175,13 @@ impl<'de> Deserialize<'de> for PluginSlot {
                 store.cast(v.unwrap_or(s.default))
             })
             .collect();
-        Ok(PluginSlot { id: kind.to_string(), values })
+        let extra = m
+            .decl
+            .legacy_fields
+            .iter()
+            .filter_map(|k| raw.get(*k).map(|v| (k.to_string(), v.clone())))
+            .collect();
+        Ok(PluginSlot { id: kind.to_string(), values, extra })
     }
 }
 

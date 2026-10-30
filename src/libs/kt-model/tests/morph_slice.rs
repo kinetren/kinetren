@@ -1077,18 +1077,7 @@ fn t270e_unwarped_slice_is_unchanged() {
 #[test]
 fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
     kt_plugins_builtin::install();
-    let warp = FxInstance::SlowedReverb {
-        rate: 0.5,
-        mix: 0.0,
-        reverb_delay_ms: 60.0,
-        damp: 0.4,
-        decay: 0.7,
-        wet_gain: 1.0,
-        predelay_ms: 0.0,
-        width: 1.0,
-        frames: Default::default(),
-        automation: vec![],
-    };
+    let warp = kt_model::FxInstance::plugin_with("slowed_reverb", &[0.5, 0.0, 60.0, 0.4, 0.7, 1.0, 0.0, 0.0, 1.0]).unwrap();
 
     // the row of the layer must be ABOVE the track of the clip, otherwise `Below` would not
     // cover it and the test would pass for a completely different reason

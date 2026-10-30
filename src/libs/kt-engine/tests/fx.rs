@@ -347,18 +347,7 @@ fn t4_automation_changes_rate_over_time() {
     // at output time τ exactly rate(τ) sounds. The checkpoints are taken
     // straight from the profile — the test no longer needs the map it guards.
     let dur = 40 * AUDIO_SAMPLE_RATE as i64;
-    let fx = vec![FxInstance::SlowedReverb {
-        rate: 1.0,
-        mix: 0.0,
-        reverb_delay_ms: 85.0,
-        damp: 0.32,
-        decay: 0.58,
-        wet_gain: 0.95,
-        predelay_ms: 0.0,
-        width: 1.0,
-        frames: Default::default(),
-        automation: vec![],
-    }];
+    let fx = vec![kt_model::FxInstance::plugin_with("slowed_reverb", &[1.0, 0.0, 85.0, 0.32, 0.58, 0.95, 0.0, 0.0, 1.0]).unwrap()];
     let p = fx_project_auto(fx, rate_curve(&automation_rate_profile(), dur), "synth:sine:240", dur);
     let r = AudioRenderer::new(&p);
     let mut f = direct(AudioPattern::Sine { hz: 240.0 });
@@ -403,18 +392,7 @@ fn t4_automation_consumes_source_by_integral() {
     // to the end (± the resampler delay), not to the avg fraction of a constant.
     let avg = kt_fx::avg_rate(1.0, automation_probe());
     let dur = 20 * AUDIO_SAMPLE_RATE as i64;
-    let fx = vec![FxInstance::SlowedReverb {
-        rate: 1.0,
-        mix: 0.0,
-        reverb_delay_ms: 85.0,
-        damp: 0.32,
-        decay: 0.58,
-        wet_gain: 0.95,
-        predelay_ms: 0.0,
-        width: 1.0,
-        frames: Default::default(),
-        automation: vec![],
-    }];
+    let fx = vec![kt_model::FxInstance::plugin_with("slowed_reverb", &[1.0, 0.0, 85.0, 0.32, 0.58, 0.95, 0.0, 0.0, 1.0]).unwrap()];
     let p = fx_project_auto(fx, rate_curve(automation_probe(), dur), "synth:ramp", dur);
     let r = AudioRenderer::new(&p);
     let mut f = direct(AudioPattern::Ramp);
@@ -461,18 +439,7 @@ fn t31_keyframes_anchor_to_event_time() {
     profile_b.extend(profile_a.iter().copied());
 
     let render = |profile: Vec<(f64, f64)>| -> Vec<f32> {
-        let fx = vec![FxInstance::SlowedReverb {
-            rate: 1.0,
-            mix: 0.0, // the ramp must not be contaminated by the reverb
-            reverb_delay_ms: 85.0,
-            damp: 0.32,
-            decay: 0.58,
-            wet_gain: 0.95,
-            predelay_ms: 0.0,
-            width: 1.0,
-            frames: Default::default(),
-            automation: vec![],
-        }];
+        let fx = vec![kt_model::FxInstance::plugin_with("slowed_reverb", &[1.0, 0.0, 85.0, 0.32, 0.58, 0.95, 0.0, 0.0, 1.0]).unwrap()];
         let p = fx_project_auto(fx, rate_curve(&profile, dur), "synth:ramp", dur);
         let r = AudioRenderer::new(&p);
         let mut f = direct(AudioPattern::Ramp);
@@ -611,21 +578,16 @@ fn t213_legacy_slowed_automation_migrates_to_curves() {
     kt_plugins_builtin::install();
     let dur = 20 * AUDIO_SAMPLE_RATE as i64;
     let mut p = fx_project(
-        vec![FxInstance::SlowedReverb {
-            rate: 1.0,
-            mix: 0.0,
-            reverb_delay_ms: 85.0,
-            damp: 0.32,
-            decay: 0.58,
-            wet_gain: 0.95,
-            predelay_ms: 0.0,
-            width: 1.0,
-            frames: Default::default(),
-            automation: vec![
+        vec![{
+        let mut f = kt_model::FxInstance::plugin_with("slowed_reverb", &[1.0, 0.0, 85.0, 0.32, 0.58, 0.95, 0.0, 0.0, 1.0]).unwrap();
+        if let kt_model::FxInstance::Plugin(p) = &mut f {
+            p.extra.insert("automation".into(), serde_json::to_value(vec![
                 SlowedKeyframe { t: 0.2, rate: 1.0, mix: 0.0 },
                 SlowedKeyframe { t: 0.8, rate: 0.5, mix: 0.0 },
-            ],
-        }],
+            ]).unwrap());
+        }
+        f
+    }],
         "synth:ramp",
         dur,
     );
@@ -633,7 +595,7 @@ fn t213_legacy_slowed_automation_migrates_to_curves() {
     let c = &p.clips[0];
     // the legacy field is now empty, the curves are set in material ticks
     assert!(
-        matches!(&c.fx[0], FxInstance::SlowedReverb { automation, .. } if automation.is_empty()),
+        matches!(&c.fx[0], FxInstance::Plugin(p) if !p.extra.contains_key("automation")),
         "the old field must be emptied — otherwise it moves back into the file"
     );
     let rate = c.fx_auto[0].iter().find(|k| k.param == "rate").expect("rate curve");
@@ -721,18 +683,7 @@ fn t229_new_audio_params() {
 
     // ---- SlowedReverb: pre-delay and width ----------------------------
     let rev = |predelay_ms: f32, width: f32| {
-        vec![FxInstance::SlowedReverb {
-            rate: 1.0,
-            mix: 1.0,
-            reverb_delay_ms: 85.0,
-            damp: 0.2,
-            decay: 0.84,
-            wet_gain: 1.0,
-            predelay_ms,
-            width,
-            frames: Default::default(),
-            automation: vec![],
-        }]
+        vec![kt_model::FxInstance::plugin_with("slowed_reverb", &[1.0, 1.0, 85.0, 0.2, 0.84, 1.0, (predelay_ms) as f64, 0.0, (width) as f64]).unwrap()]
     };
     let plain = render(rev(0.0, 1.0), vec![]);
     // the tail is audible AFTER the end of the material — we compare the onset of the response
@@ -773,18 +724,7 @@ fn t246_consumption_is_the_integral_over_event_time() {
         "map: a linear ramp 1→2 consumes exactly 1.5 of the event length"
     );
 
-    let fx = vec![FxInstance::SlowedReverb {
-        rate: 1.0,
-        mix: 0.0,
-        reverb_delay_ms: 85.0,
-        damp: 0.32,
-        decay: 0.58,
-        wet_gain: 0.95,
-        predelay_ms: 0.0,
-        width: 1.0,
-        frames: Default::default(),
-        automation: vec![],
-    }];
+    let fx = vec![kt_model::FxInstance::plugin_with("slowed_reverb", &[1.0, 0.0, 85.0, 0.32, 0.58, 0.95, 0.0, 0.0, 1.0]).unwrap()];
     let p = fx_project_auto(fx, rate_curve(&profile, dur), "synth:ramp", dur);
     let r = AudioRenderer::new(&p);
     let mut f = direct(AudioPattern::Ramp);
@@ -874,18 +814,7 @@ fn t320_slot_order_is_honest_gain_before_reverb_fades_the_input() {
     let p = fx_project_auto(
         vec![
             FxInstance::gain(0.0),
-            FxInstance::SlowedReverb {
-                rate: 1.0,
-                mix: 1.0,
-                reverb_delay_ms: 100.0,
-                damp: 0.1,
-                decay: 0.95,
-                wet_gain: 1.0,
-                predelay_ms: 0.0,
-                width: 1.0,
-                frames: Default::default(),
-                automation: vec![],
-            },
+            kt_model::FxInstance::plugin_with("slowed_reverb", &[1.0, 1.0, 100.0, 0.1, 0.95, 1.0, 0.0, 0.0, 1.0]).unwrap(),
         ],
         vec![
             vec![ParamCurve {
@@ -995,6 +924,7 @@ fn t323_slot_order_matters_on_nonlinear_chains() {
 /// their knobs say.
 #[test]
 fn t324_ka2_spectral_probes() {
+    kt_plugins_builtin::install();
     // eq, distortion, bitcrusher, stereo_width are plugins (plugin-api-stage1)
     kt_plugins_builtin::install();
     let dur = 48_000;

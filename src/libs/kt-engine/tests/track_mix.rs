@@ -85,6 +85,7 @@ fn render(p: &Project, f: &mut dyn AudioFetcher, frames: i64) -> Vec<f32> {
 /// Test 732 (R.62, change B): track level, mute and solo.
 #[test]
 fn t732_track_level_mute_and_solo() {
+    kt_plugins_builtin::install();
     let d = AUDIO_BURST_FRAMES as i64;
     let two = || project(vec![audio_clip(1, 0, d, 1), audio_clip(2, 1, d, 2)]);
     let src =
@@ -149,6 +150,7 @@ fn t732_track_level_mute_and_solo() {
 /// starting it from a cold start (invariant 3).
 #[test]
 fn t732b_mute_keeps_the_fx_state_alive() {
+    kt_plugins_builtin::install();
     let d = AUDIO_BURST_FRAMES as i64;
     let mut clip = audio_clip(1, 0, 8 * d, 1);
     clip.fx = vec![FxInstance::slowed_reverb(1.0, 0.9, 120.0)];

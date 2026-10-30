@@ -55,6 +55,7 @@ fn clip_with(rate_keys: Vec<AutoKey>) -> ClipEvent {
 
 #[test]
 fn t696_speed_curve_takes_the_linear_shape_only() {
+    kt_plugins_builtin::install();
     let straight = vec![
         AutoKey::shaped(Tick(0), 0.5, SegShape::Linear),
         AutoKey::shaped(LEN, 2.0, SegShape::Linear),
@@ -125,6 +126,7 @@ fn t696_speed_curve_takes_the_linear_shape_only() {
 /// render's path) read the same profile bit for bit, and a straight curve keeps its old profile.
 #[test]
 fn t913_speed_takes_every_shape_and_the_map_follows_it() {
+    kt_plugins_builtin::install();
     const LEN10: Tick = Tick(900_000);
     let ten = |rate_keys: Vec<AutoKey>, source: CurveSource| -> ClipEvent {
         let mut c = clip_with(rate_keys);

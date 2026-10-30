@@ -94,6 +94,7 @@ fn render(p: &Project, f: &mut dyn AudioFetcher, from_s: f64, len_s: f64) -> (Ve
 
 #[test]
 fn t748_material_end_is_silence_not_starvation() {
+    kt_plugins_builtin::install();
     // ---- 1. direct event: the second half is past the material ----------------
     let p = project(None);
     let mut f = fetcher_with_eof();
@@ -212,6 +213,7 @@ fn t748_material_end_is_silence_not_starvation() {
 /// the prefetch order does not go past the edge (invariant 4 — the order equals the read).
 #[test]
 fn t748e_video_holds_the_last_frame_past_the_material_end() {
+    kt_plugins_builtin::install();
     use kt_engine::{SourceFacts, VideoRenderer};
     use kt_media::Quality;
 

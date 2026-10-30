@@ -299,6 +299,7 @@ fn warm_cache(p: &Project, q: Quality, t: Tick) -> (VideoRenderer, kt_cache::Bur
 
 #[test]
 fn t444_nested_reel_conforms_gpu_to_cpu() {
+    kt_plugins_builtin::install();
     use kt_engine::VideoGpuExec;
     kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
@@ -331,6 +332,7 @@ fn t444_nested_reel_conforms_gpu_to_cpu() {
 
 #[test]
 fn t445_nest_boundary_is_not_twice_as_dark_on_gpu() {
+    kt_plugins_builtin::install();
     use kt_engine::VideoGpuExec;
     kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
@@ -351,6 +353,7 @@ fn t445_nest_boundary_is_not_twice_as_dark_on_gpu() {
 
 #[test]
 fn t446_nested_gpu_is_deterministic_on_device() {
+    kt_plugins_builtin::install();
     use kt_engine::VideoGpuExec;
     kt_plugins_builtin::install();
     let Some(e1) = test_engine() else { return };
@@ -404,6 +407,7 @@ fn t446_nested_gpu_is_deterministic_on_device() {
 /// The harness is blind to this (it is all CPU), so this test lives here.
 #[test]
 fn t496_gpu_frame_identity_follows_content() {
+    kt_plugins_builtin::install();
     use kt_engine::VideoGpuExec;
     kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
@@ -484,18 +488,7 @@ fn t496_gpu_frame_identity_follows_content() {
 
 /// A warp effect on a VIDEO instance: only the speed and the frame mode matter.
 fn warp_fx(rate: f64, frames: FrameMode) -> FxInstance {
-    FxInstance::SlowedReverb {
-        rate,
-        mix: 0.0,
-        reverb_delay_ms: 85.0,
-        damp: 0.32,
-        decay: 0.58,
-        wet_gain: 0.95,
-        predelay_ms: 0.0,
-        frames,
-        width: 1.0,
-        automation: vec![],
-    }
+    kt_model::FxInstance::plugin_with("slowed_reverb", &[rate, 0.0, 85.0, 0.32, 0.58, 0.95, 0.0, if frames == kt_model::FrameMode::Blend { 1.0 } else { 0.0 }, 1.0]).unwrap()
 }
 
 /// The same scene as `nested_project`, but the lower child has a LIVE
@@ -646,6 +639,7 @@ fn twin_nest_project(twin_fx: Vec<FxInstance>) -> Project {
 
 #[test]
 fn t632_reel_stage_and_chain_input_conform_gpu_to_cpu() {
+    kt_plugins_builtin::install();
     use kt_engine::VideoGpuExec;
     kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
@@ -691,6 +685,7 @@ fn t632_reel_stage_and_chain_input_conform_gpu_to_cpu() {
 /// it would be green for nothing).
 #[test]
 fn t687_two_differently_overridden_instances_conform_gpu_to_cpu() {
+    kt_plugins_builtin::install();
     use kt_engine::VideoGpuExec;
     kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
@@ -853,6 +848,7 @@ fn t938_both_backends_place_a_still_by_the_rule() {
 /// the CPU agrees within the class the composite always had.
 #[test]
 fn t945b_strength_zero_skips_the_layer_on_gpu() {
+    kt_plugins_builtin::install();
     use kt_engine::VideoGpuExec;
     kt_plugins_builtin::install();
     let Some(e) = test_engine() else { return };
