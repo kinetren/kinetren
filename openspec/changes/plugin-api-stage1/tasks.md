@@ -208,7 +208,7 @@ once (English message, first line = the stage and what was done).
     row only) gets the same map (red with the warp tied to the kind); a second warp slot refused
     (red without the check). t973c's slowed_reverb row, t973 forms, t11, t17, t282, t603d, t616 and
     the video warp set green
-- [ ] 3b.3 Commit stage 3b; `python3 src/scripts/target-prune.py`
+- [x] 3b.3 Commit stage 3b; `python3 src/scripts/target-prune.py` (a9e322c3, 325bdaad)
 
 ## 4. Video FX
 
