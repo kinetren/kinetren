@@ -25,4 +25,4 @@ are verifiable separately; each ends with a commit in English (owner, 2026-10-21
 
 ## 5. Finish
 
-- [ ] 5.1 `./scripts/finish.sh` in full (the code has not changed — only checked that the guard is built in and green); version `vYY.MM.DD-hash` in the report.
+- [x] 5.1 `./scripts/finish.sh` in full (the code has not changed — only checked that the guard is built in and green); version `vYY.MM.DD-hash` in the report.
