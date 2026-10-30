@@ -31,7 +31,7 @@ pub fn kind_category(kind: &TransitionKind) -> Key {
         TransitionKind::Crossfade | TransitionKind::Missing(_) => k::trn::cat::BASIC,
         // a plugin kind's category is its manifest's (plugin-api-stage1, D12)
         TransitionKind::Plugin(p) => crate::i18n::key_by_name(p.manifest().ui.category_key).unwrap_or(k::trn::cat::BASIC),
-        TransitionKind::Whip { .. } | TransitionKind::Swap { .. } => k::trn::cat::MOTION,
+        TransitionKind::Swap { .. } => k::trn::cat::MOTION,
         // volumetric (R.51): panels and cylinders
         TransitionKind::Flip { .. }
         | TransitionKind::Cube { .. }
@@ -51,15 +51,7 @@ pub fn kind_name(kind: &TransitionKind) -> &'static str {
             let ui = &p.manifest().ui;
             crate::i18n::key_by_name(ui.name_key).map_or(ui.name, tr)
         }
-        TransitionKind::Whip { .. } => tr(k::trn::kind::WHIP),
-        TransitionKind::BlurDissolve { .. } => tr(k::trn::kind::BLUR),
-        TransitionKind::Pixelate { .. } => tr(k::trn::kind::PIXELATE),
-        TransitionKind::Glitch { .. } => tr(k::trn::kind::GLITCH),
         TransitionKind::Swap { .. } => tr(k::trn::kind::SWAP),
-        TransitionKind::Shake { .. } => tr(k::trn::kind::SHAKE),
-        TransitionKind::FilmBurn { .. } => tr(k::trn::kind::FILM_BURN),
-        TransitionKind::LightLeaks { .. } => tr(k::trn::kind::LIGHT_LEAKS),
-        TransitionKind::ZoomBlur { .. } => tr(k::trn::kind::ZOOM_BLUR),
         TransitionKind::Flip { .. } => tr(k::trn::kind::FLIP),
         TransitionKind::Cube { .. } => tr(k::trn::kind::CUBE),
         TransitionKind::Door { .. } => tr(k::trn::kind::DOOR),
@@ -81,8 +73,7 @@ fn curve_name(c: AudioCurve) -> &'static str {
 /// number — a direction is not a number, and it is not expressed by the parameter spec.
 fn dir_of(kind: &mut TransitionKind) -> Option<&mut kt_model::Dir> {
     match kind {
-        TransitionKind::Whip { dir, .. }
-        | TransitionKind::Cube { dir, .. }
+        TransitionKind::Cube { dir, .. }
         | TransitionKind::PagePeel { dir, .. }
         | TransitionKind::PageRoll { dir, .. } => Some(dir),
         _ => None,
@@ -187,10 +178,7 @@ impl KtApp {
                     // ---- kind parameters: the same grid as for effects -------
                     let color = matches!(&t.kind, TransitionKind::Plugin(p) if p.get("color_r").is_some());
                     // in burn and flare the colour is called tint_* — the same eyedropper
-                    let tint = matches!(
-                        t.kind,
-                        TransitionKind::FilmBurn { .. } | TransitionKind::LightLeaks { .. }
-                    );
+                    let tint = matches!(&t.kind, TransitionKind::Plugin(p) if p.get("tint_r").is_some());
                     let skip: &[&str] = if color {
                         &["color_r", "color_g", "color_b"]
                     } else if tint {

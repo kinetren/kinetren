@@ -13,26 +13,17 @@
 use kt_media::VideoFrame;
 use kt_model::{Dir, TransitionKind};
 use kt_plugin_api::trans::{
-    Img, axis_c, axis_sample, box9, face_h_inv, front_mask, hash01, hpanel, kf, mix4, over_straight, quant, shade3,
-    value_noise,
+    Img, axis_c, axis_sample, face_h_inv, hpanel, kf, mix4, over_straight, shade3,
 };
 
 /// Modes shared by CPU and WGSL. The value goes into the uniform, so the
 /// numbers are frozen: add a new mode ONLY AT THE END.
 pub const MODE_CROSSFADE: u32 = 0;
 // 1-9 and 14-22 were the basic kinds, plugins since plugin-api-stage1 (D12).
-pub const MODE_WHIP: u32 = 10;
-pub const MODE_BLUR: u32 = 11;
-pub const MODE_PIXELATE: u32 = 12;
-pub const MODE_GLITCH: u32 = 13;
 // R.51 (item 400): patterns, shift-symbioses, stylized ones. The numbers are a contract
 // ONLY between transitions.rs and composite.wgsl (edited in one commit):
 // the project file receives tag(), the cache keys receive the ready-made TransMix.
 pub const MODE_SWAP: u32 = 23;
-pub const MODE_SHAKE: u32 = 24;
-pub const MODE_BURN: u32 = 25;
-pub const MODE_LEAKS: u32 = 26;
-pub const MODE_ZOOMBLUR: u32 = 27;
 // Volumetric (item 401): panels via inverse homographies in ext (see trans_ext),
 // peel/roll cylinders — analytics right in the core.
 pub const MODE_FLIP: u32 = 28;
@@ -113,53 +104,10 @@ impl TransMix {
             }
             // a kind this build lacks plays as the crossfade
             TransitionKind::Missing(_) => MODE_CROSSFADE,
-            TransitionKind::Whip { dir, blur } => {
-                (p[0], p[1]) = d(*dir);
-                p[2] = *blur as f32;
-                MODE_WHIP
-            }
-            TransitionKind::BlurDissolve { amount } => {
-                p[0] = *amount as f32;
-                MODE_BLUR
-            }
-            TransitionKind::Pixelate { amount } => {
-                p[0] = *amount as f32;
-                MODE_PIXELATE
-            }
-            TransitionKind::Glitch { amount } => {
-                p[0] = *amount as f32;
-                MODE_GLITCH
-            }
             TransitionKind::Swap { vertical, depth } => {
                 p[0] = if *vertical { 1.0 } else { 0.0 };
                 p[1] = *depth as f32;
                 MODE_SWAP
-            }
-            TransitionKind::Shake { amount, steps } => {
-                p[0] = *amount as f32;
-                p[1] = *steps as f32;
-                MODE_SHAKE
-            }
-            TransitionKind::FilmBurn { scale, softness, tint_r, tint_g, tint_b } => {
-                p[0] = *scale as f32;
-                p[1] = *softness as f32;
-                p[2] = *tint_r as f32;
-                p[3] = *tint_g as f32;
-                p[4] = *tint_b as f32;
-                MODE_BURN
-            }
-            TransitionKind::LightLeaks { strength, tint_r, tint_g, tint_b } => {
-                p[0] = *strength as f32;
-                p[1] = *tint_r as f32;
-                p[2] = *tint_g as f32;
-                p[3] = *tint_b as f32;
-                MODE_LEAKS
-            }
-            TransitionKind::ZoomBlur { amount, cx, cy } => {
-                p[0] = *amount as f32;
-                p[1] = *cx as f32;
-                p[2] = *cy as f32;
-                MODE_ZOOMBLUR
             }
             TransitionKind::Flip { vertical, persp, shade } => {
                 p[0] = if *vertical { 1.0 } else { 0.0 };
@@ -339,58 +287,6 @@ fn kernel(
             Some(kern) => kern.pixel(a, b, u, v, k, &p, &kt_plugin_api::trans::Canvas { aspect, w: fw, h: fh }, ext),
             None => mix4(a.sample(u, v), b.sample(u, v), k),
         },
-        MODE_WHIP => {
-            // a flyover like push, but with blur along the motion; the blur strength is
-            // maximal in the middle of the gesture
-            let (dx, dy) = (p[0], p[1]);
-            let blur = p[2] * (std::f32::consts::PI * k).sin();
-            let mut acc = [0.0f32; 4];
-            for i in 0..WHIP_TAPS {
-                let o = (i as f32 / (WHIP_TAPS - 1) as f32 - 0.5) * blur * 0.25;
-                let (su, sv) = (u + dx * o, v + dy * o);
-                let (au, av) = (su - dx * k, sv - dy * k);
-                let c = if (0.0..1.0).contains(&au) && (0.0..1.0).contains(&av) {
-                    a.sample(au, av)
-                } else {
-                    // B behind the outgoing A — `+dir`, as with push (item 396)
-                    b.sample(au + dx, av + dy)
-                };
-                for ch in 0..4 {
-                    acc[ch] += c[ch];
-                }
-            }
-            for ch in acc.iter_mut() {
-                *ch /= WHIP_TAPS as f32;
-            }
-            acc
-        }
-        MODE_BLUR => {
-            // the radius grows toward the middle of the transition and goes out there
-            let r = p[0] * (std::f32::consts::PI * k).sin();
-            let sa = box9(a, u, v, r / fw, r / fh);
-            let sb = box9(b, u, v, r / fw, r / fh);
-            mix4(sa, sb, k)
-        }
-        MODE_PIXELATE => {
-            let s = (p[0] * (std::f32::consts::PI * k).sin()).max(1.0);
-            let (bu, bv) = (quant(u, s / fw), quant(v, s / fh));
-            mix4(a.sample(bu, bv), b.sample(bu, bv), k)
-        }
-        MODE_GLITCH => {
-            let amt = p[0] * (std::f32::consts::PI * k).sin();
-            // the bands of rows travel horizontally, the channels diverge
-            let band = (v * 24.0).floor() as u32;
-            let shift = (hash01(band.wrapping_mul(1973)) - 0.5) * amt * 0.25;
-            let ch = amt * 8.0 / fw;
-            let (su, sv) = (u + shift, v);
-            let pick = |img: &Img<'_>| {
-                let r = img.sample(su + ch, sv);
-                let g = img.sample(su, sv);
-                let bl = img.sample(su - ch, sv);
-                [r[0], g[1], bl[2], g[3]]
-            };
-            mix4(pick(a), pick(b), k)
-        }
         MODE_SWAP => {
             // 2.5D exchange: the sides travel along an arc, compressing inward; the order
             // switches at the midpoint — occlusion is analytic, without
@@ -420,71 +316,6 @@ fn kernel(
             // k < 0.5 — the outgoing one is still ON TOP, further on — the incoming one
             let (top, bot) = if k < 0.5 { (sa, sb) } else { (sb, sa) };
             over_straight(top, bot)
-        }
-        MODE_SHAKE => {
-            // frame jerks: the step index by progress, the frame is a cut at 0.5
-            let steps = p[1].max(1.0);
-            let i = ((k * steps) as u32).min(steps as u32 - 1);
-            let amp = p[0] * 0.2 * (std::f32::consts::PI * k).sin();
-            let ox = (hash01(i.wrapping_mul(2).wrapping_add(1)) - 0.5) * amp;
-            let oy = (hash01(i.wrapping_mul(2).wrapping_add(2)) - 0.5) * amp;
-            let img = if k < 0.5 { a } else { b };
-            img.sample(u + ox, v + oy)
-        }
-        MODE_BURN => {
-            // the front by coarse noise, at the edge — a hot admixture of colour;
-            // the contribution is gated by alpha (otherwise a solo fade would light up emptiness)
-            let n = value_noise(u * p[0] * aspect, v * p[0]);
-            let mask = front_mask(n, k, p[1].max(0.02));
-            let base = mix4(a.sample(u, v), b.sample(u, v), mask);
-            let rim = (mask * (1.0 - mask) * 4.0).clamp(0.0, 1.0);
-            let gate = rim * base[3] / 255.0;
-            [
-                base[0] + (p[2] - base[0]) * gate,
-                base[1] + (p[3] - base[1]) * gate,
-                base[2] + (p[4] - base[2]) * gate,
-                base[3],
-            ]
-        }
-        MODE_LEAKS => {
-            // two coloured spots fly along the diagonals over the dissolve
-            let base = mix4(a.sample(u, v), b.sample(u, v), k);
-            let wave = (std::f32::consts::PI * k).sin();
-            let blob = |bx: f32, by: f32| -> f32 {
-                let dx = (u - bx) * aspect;
-                let dy = v - by;
-                let d = (dx * dx + dy * dy).sqrt() / 0.45;
-                let w = (1.0 - d).max(0.0);
-                w * w
-            };
-            let w = (blob(k * 1.2 - 0.1, 0.3 + 0.4 * k) + blob(1.1 - 1.2 * k, 0.7 - 0.4 * k))
-                * p[0]
-                * wave;
-            let gate = w.clamp(0.0, 1.0) * base[3] / 255.0;
-            [
-                base[0] + (p[1] - base[0]) * gate,
-                base[1] + (p[2] - base[1]) * gate,
-                base[2] + (p[3] - base[2]) * gate,
-                base[3],
-            ]
-        }
-        MODE_ZOOMBLUR => {
-            // rays from the centre: 7 taps along the ray, the side — a cut at 0.5
-            let (ox, oy) = (p[1], p[2]);
-            let amt = p[0] * (std::f32::consts::PI * k).sin();
-            let img = if k < 0.5 { a } else { b };
-            let mut acc = [0.0f32; 4];
-            for i in 0..WHIP_TAPS {
-                let z = 1.0 + amt * 0.6 * (i as f32 / (WHIP_TAPS - 1) as f32);
-                let c = img.sample((u - ox) / z + ox, (v - oy) / z + oy);
-                for ch in 0..4 {
-                    acc[ch] += c[ch];
-                }
-            }
-            for ch in acc.iter_mut() {
-                *ch /= WHIP_TAPS as f32;
-            }
-            acc
         }
         MODE_FLIP => {
             // panel by the inverse homography from ext; on the back — the reverse side
@@ -608,7 +439,6 @@ fn kernel(
     }
 }
 
-const WHIP_TAPS: usize = 7;
 
 
 

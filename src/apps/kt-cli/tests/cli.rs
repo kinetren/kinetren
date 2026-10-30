@@ -709,10 +709,13 @@ fn t824_showcase_is_rich_valid_and_deterministic() {
     // linked audio partners
     assert!(main.iter().any(|v| v.link_group.is_some()
         && p.clips.iter().any(|a| a.kind == ClipKind::Audio && a.link_group == v.link_group)));
-    // ≥ 3 transition kinds
-    let mut kinds: Vec<std::mem::Discriminant<kt_model::TransitionKind>> =
-        p.transitions.iter().map(|t| std::mem::discriminant(&t.kind)).collect();
-    kinds.sort_by_key(|d| format!("{d:?}"));
+    // ≥ 3 transition kinds — by the file's `kind` tag (the plugin kinds share one enum variant)
+    let mut kinds: Vec<String> = p
+        .transitions
+        .iter()
+        .map(|t| serde_json::to_value(&t.kind).unwrap()["kind"].as_str().unwrap_or("crossfade").to_string())
+        .collect();
+    kinds.sort();
     kinds.dedup();
     assert!(kinds.len() >= 3, "transition kinds: {}", kinds.len());
     // overlay with on-screen geometry, a title generator, ≥ 3 video FX kinds

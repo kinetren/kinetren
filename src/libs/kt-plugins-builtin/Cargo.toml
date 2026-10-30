@@ -15,3 +15,4 @@ fx-audio-dynamics = { workspace = true }
 fx-audio-modulation = { workspace = true }
 fx-video-distort = { workspace = true }
 transitions-basic = { workspace = true }
+transitions-styled = { workspace = true }

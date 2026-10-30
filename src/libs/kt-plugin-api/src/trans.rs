@@ -306,3 +306,181 @@ pub fn inv3(m: [f64; 9]) -> Option<[f64; 9]> {
         (m[0] * m[4] - m[1] * m[3]) * id,
     ])
 }
+
+// ---------------------------------------------------------------------------
+// The table-driven kind (D12): a family crate declares each kind as its manifest plus the former
+// `TransMix::of` arm (`pack`), `kernel()` arm (`pixel`) and, for a volumetric kind, its `trans_ext`
+// arm (`ext`), so the three family crates share one implementation of the plugin traits.
+// ---------------------------------------------------------------------------
+
+/// The former `TransMix::of` arm: the passport's values → the eight numbers.
+pub type Pack = fn(&[f64]) -> [f32; 8];
+/// The former `kernel()` arm.
+pub type Pixel = fn(&Img<'_>, &Img<'_>, f32, f32, f32, &[f32; 8], &Canvas, &[f32; 16]) -> [f32; 4];
+/// The former `trans_ext` arm: the packed numbers and the progress (0..4096) → the panels.
+pub type Ext = fn(&[f32; 8], u32) -> [f32; 16];
+
+/// One transition kind of a family crate.
+pub struct Kind {
+    m: crate::Manifest,
+    pack: Pack,
+    pixel: Pixel,
+    ext: Option<Ext>,
+    symmetric: bool,
+}
+
+impl Kind {
+    /// The volumetric kinds' panels.
+    pub fn with_ext(mut self, ext: Ext) -> Kind {
+        self.ext = Some(ext);
+        self
+    }
+}
+
+impl crate::Plugin for Kind {
+    fn manifest(&self) -> &crate::Manifest {
+        &self.m
+    }
+    fn trans(&self) -> Option<&dyn crate::TransKernel> {
+        Some(self)
+    }
+}
+
+impl crate::TransKernel for Kind {
+    fn pack(&self, v: &[f64]) -> [f32; 8] {
+        (self.pack)(v)
+    }
+    fn pixel(&self, a: &Img<'_>, b: &Img<'_>, u: f32, v: f32, k: f32, p: &[f32; 8], cx: &Canvas, ext: &[f32; 16]) -> [f32; 4] {
+        (self.pixel)(a, b, u, v, k, p, cx, ext)
+    }
+    fn ext(&self, p: &[f32; 8], k: u32) -> [f32; 16] {
+        self.ext.map_or([0.0; 16], |e| e(p, k))
+    }
+    fn symmetric(&self) -> bool {
+        self.symmetric
+    }
+}
+
+/// A passport row of a kind with its storage. The passport lists the rows in the former variant's
+/// FIELD order (the file writes them in that order).
+pub enum Row {
+    /// A number row, always written.
+    Num(crate::ParamSpec, crate::Store),
+    /// A centre coordinate (0..1), omitted at 0.5 (the former `skip_serializing_if = "is_center"`).
+    Center(&'static str),
+    /// The direction (`DIRS`).
+    Dir,
+    /// A choice row with its keys.
+    Choice(&'static str, &'static [&'static str]),
+    /// A flag row (default off).
+    Flag(&'static str),
+}
+
+/// The direction row's keys (the file holds the former `Dir` text).
+pub const DIRS: &[&str] = &["left", "right", "up", "down"];
+
+/// A smooth number row.
+pub fn smooth(n: &'static str, lo: f64, hi: f64, d: f64, st: f64, u: crate::ParamUnit, store: crate::Store) -> Row {
+    Row::Num(crate::ParamSpec::num(n, lo, hi, d, st, u, crate::ParamKind::Smooth), store)
+}
+
+/// The `softness` row (0..1).
+pub fn soft(d: f64) -> Row {
+    smooth("softness", 0.0, 1.0, d, 0.01, crate::ParamUnit::Norm, crate::Store::F64)
+}
+
+/// A colour component row (`u8`, 0..255).
+pub fn rgb(n: &'static str, d: f64) -> Row {
+    smooth(n, 0.0, 255.0, d, 1.0, crate::ParamUnit::Rgb8, crate::Store::U8)
+}
+
+/// A count row (`u32`).
+pub fn count(n: &'static str, lo: f64, hi: f64, d: f64) -> Row {
+    smooth(n, lo, hi, d, 1.0, crate::ParamUnit::Count, crate::Store::U32)
+}
+
+/// A kind: its id (the file's tag), English name, name and category catalog keys, whether it is its
+/// own inversion, the rows, its WGSL (`trans_<id>`) and the two arms.
+#[allow(clippy::too_many_arguments)]
+pub fn kind(
+    id: &'static str,
+    name: &'static str,
+    name_key: &'static str,
+    category: &'static str,
+    symmetric: bool,
+    rows: Vec<Row>,
+    wgsl: &'static str,
+    pack: Pack,
+    pixel: Pixel,
+) -> Kind {
+    use crate::{ParamKind, ParamSpec, ParamUnit, RowDecl, Store};
+    let mut passport = Vec::new();
+    let mut decls = Vec::new();
+    for r in rows {
+        let (spec, store, omit) = match r {
+            Row::Num(s, st) => (s, st, false),
+            Row::Center(n) => {
+                (ParamSpec::num(n, 0.0, 1.0, 0.5, 0.01, ParamUnit::Norm, ParamKind::Smooth), Store::F64, true)
+            }
+            Row::Dir => (ParamSpec::choice_row("dir", DIRS, 0), Store::Choice(DIRS), false),
+            Row::Choice(n, keys) => (ParamSpec::choice_row(n, keys, 0), Store::Choice(keys), false),
+            Row::Flag(n) => (ParamSpec::flag_row(n, false), Store::Bool, false),
+        };
+        passport.push(spec);
+        decls.push(RowDecl { store, omit_default: omit });
+    }
+    Kind {
+        m: crate::Manifest {
+            id: id.into(),
+            media: crate::Media::Transition,
+            passport,
+            rows: decls,
+            decl: crate::Decl { gpu: crate::Gpu::Wgsl(wgsl), ..crate::Decl::default() },
+            ui: crate::UiDecl { name, category_key: category, name_key, ..crate::UiDecl::default() },
+        },
+        pack,
+        pixel,
+        ext: None,
+        symmetric,
+    }
+}
+
+/// The unit vector of a direction row's index in frame coordinates (X right, Y down) — `Dir::vec`.
+#[inline]
+pub fn dir_vec(i: f64) -> (f32, f32) {
+    match i as u32 {
+        1 => (1.0, 0.0),
+        2 => (0.0, -1.0),
+        3 => (0.0, 1.0),
+        _ => (-1.0, 0.0),
+    }
+}
+
+/// A flag row's value as the uniform's 0/1.
+#[inline]
+pub fn flag(v: f64) -> f32 {
+    if v > 0.5 { 1.0 } else { 0.0 }
+}
+
+/// The values as they are (the kinds whose numbers map one to one onto the uniform).
+pub fn direct(v: &[f64]) -> [f32; 8] {
+    let mut p = [0.0f32; 8];
+    for (o, x) in p.iter_mut().zip(v) {
+        *o = *x as f32;
+    }
+    p
+}
+
+/// A kind whose only row is the direction: its vector in `p[0..2]`.
+pub fn dir_pack(v: &[f64]) -> [f32; 8] {
+    let mut p = [0.0f32; 8];
+    (p[0], p[1]) = dir_vec(v[0]);
+    p
+}
+
+/// A kind whose only row is a flag: `p[0]`.
+pub fn flag_pack(v: &[f64]) -> [f32; 8] {
+    let mut p = [0.0f32; 8];
+    p[0] = flag(v[0]);
+    p
+}

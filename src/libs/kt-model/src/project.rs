@@ -79,30 +79,9 @@ pub enum TransitionKind {
     #[default]
     Crossfade,
     // wipe, iris, clock, barn, luma, push, slide, zoom, spin, flash, dip, blinds, checker, blocks,
-    // spiral, split, squeeze and stretch are plugins since plugin-api-stage1
-    // (src/plugins/transitions-basic, D12).
-    /// A sharp camera pass with a smear.
-    Whip {
-        #[serde(default)]
-        dir: Dir,
-        #[serde(default = "default_whip_blur")]
-        blur: f64,
-    },
-    /// Dissolve through the blur of both frames.
-    BlurDissolve {
-        #[serde(default = "default_blur_amount")]
-        amount: f64,
-    },
-    /// Dissolve through enlarging the pixels.
-    Pixelate {
-        #[serde(default = "default_pixelate")]
-        amount: f64,
-    },
-    /// A digital glitch: row shifts and channel divergence.
-    Glitch {
-        #[serde(default = "default_glitch")]
-        amount: f64,
-    },
+    // spiral, split, squeeze and stretch (src/plugins/transitions-basic), whip, blur_dissolve,
+    // pixelate, glitch, shake, film_burn, light_leaks and zoom_blur (src/plugins/transitions-styled)
+    // are plugins since plugin-api-stage1 (D12).
     // ---- shift (symbiosis: BOTH frames move) ----------------------------
     /// Exchange: the frames swap places along an arc, the order of the sides
     /// switches in the middle (2.5D without depth).
@@ -111,47 +90,6 @@ pub enum TransitionKind {
         vertical: bool,
         #[serde(default = "default_swap_depth")]
         depth: f64,
-    },
-    // ---- stylized --------------------------------------------------
-    /// Shake: jerks of the frame, a change of side in the middle.
-    Shake {
-        #[serde(default = "default_glitch")]
-        amount: f64,
-        #[serde(default = "default_shake_steps")]
-        steps: u32,
-    },
-    /// Film burn: a front by large noise with a hot edge.
-    FilmBurn {
-        #[serde(default = "default_burn_scale")]
-        scale: f64,
-        #[serde(default = "default_burn_soft")]
-        softness: f64,
-        #[serde(default = "default_255")]
-        tint_r: u8,
-        #[serde(default = "default_burn_tint_g")]
-        tint_g: u8,
-        #[serde(default)]
-        tint_b: u8,
-    },
-    /// Light flares: colored spots fly across the frame over the dissolve.
-    LightLeaks {
-        #[serde(default = "default_leaks_strength")]
-        strength: f64,
-        #[serde(default = "default_255")]
-        tint_r: u8,
-        #[serde(default = "default_leaks_tint_g")]
-        tint_g: u8,
-        #[serde(default = "default_leaks_tint_b")]
-        tint_b: u8,
-    },
-    /// Radial smear: rays from the center, a change of side in the middle.
-    ZoomBlur {
-        #[serde(default = "default_whip_blur")]
-        amount: f64,
-        #[serde(default = "default_center", skip_serializing_if = "is_center")]
-        cx: f64,
-        #[serde(default = "default_center", skip_serializing_if = "is_center")]
-        cy: f64,
     },
     // ---- volumetric (R.51, item 401): panels and cylinders, occlusion
     // analytic — there is no depth buffer in the composite and none is needed -------
@@ -212,45 +150,8 @@ pub enum TransitionKind {
     Missing(crate::plugin_slot::MissingSlot),
 }
 
-fn default_center() -> f64 {
-    0.5
-}
-
-#[allow(clippy::trivially_copy_pass_by_ref)]
-fn is_center(v: &f64) -> bool {
-    *v == 0.5
-}
-
 fn default_swap_depth() -> f64 {
     0.3
-}
-
-fn default_shake_steps() -> u32 {
-    12
-}
-
-fn default_burn_scale() -> f64 {
-    6.0
-}
-
-fn default_burn_soft() -> f64 {
-    0.2
-}
-
-fn default_burn_tint_g() -> u8 {
-    120
-}
-
-fn default_leaks_strength() -> f64 {
-    0.6
-}
-
-fn default_leaks_tint_g() -> u8 {
-    90
-}
-
-fn default_leaks_tint_b() -> u8 {
-    40
 }
 
 fn default_persp() -> f64 {
@@ -263,22 +164,6 @@ fn default_shade() -> f64 {
 
 fn default_curl() -> f64 {
     0.18
-}
-
-fn default_whip_blur() -> f64 {
-    0.6
-}
-
-fn default_blur_amount() -> f64 {
-    24.0
-}
-
-fn default_pixelate() -> f64 {
-    48.0
-}
-
-fn default_glitch() -> f64 {
-    0.5
 }
 
 // The parameter passport lives in kt-plugin-api (plugin-api-stage1, D1); the names stay here.
@@ -342,10 +227,10 @@ impl TransitionKind {
         TransitionKind::builtin("slide"),
         TransitionKind::builtin("zoom"),
         TransitionKind::builtin("spin"),
-        TransitionKind::Whip { dir: Dir::Left, blur: 0.6 },
-        TransitionKind::BlurDissolve { amount: 24.0 },
-        TransitionKind::Pixelate { amount: 48.0 },
-        TransitionKind::Glitch { amount: 0.5 },
+        TransitionKind::builtin("whip"),
+        TransitionKind::builtin("blur_dissolve"),
+        TransitionKind::builtin("pixelate"),
+        TransitionKind::builtin("glitch"),
         TransitionKind::builtin("flash"),
         TransitionKind::builtin("dip"),
         TransitionKind::builtin("blinds"),
@@ -356,10 +241,10 @@ impl TransitionKind {
         TransitionKind::builtin("squeeze"),
         TransitionKind::builtin("stretch"),
         TransitionKind::Swap { vertical: false, depth: 0.3 },
-        TransitionKind::Shake { amount: 0.5, steps: 12 },
-        TransitionKind::FilmBurn { scale: 6.0, softness: 0.2, tint_r: 255, tint_g: 120, tint_b: 0 },
-        TransitionKind::LightLeaks { strength: 0.6, tint_r: 255, tint_g: 90, tint_b: 40 },
-        TransitionKind::ZoomBlur { amount: 0.6, cx: 0.5, cy: 0.5 },
+        TransitionKind::builtin("shake"),
+        TransitionKind::builtin("film_burn"),
+        TransitionKind::builtin("light_leaks"),
+        TransitionKind::builtin("zoom_blur"),
         TransitionKind::Flip { vertical: false, persp: 0.5, shade: 0.5 },
         TransitionKind::Cube { dir: Dir::Left, persp: 0.5, shade: 0.5 },
         TransitionKind::Door { vertical: false, persp: 0.5, shade: 0.5 },
@@ -399,15 +284,7 @@ impl TransitionKind {
             TransitionKind::Crossfade => "crossfade",
             TransitionKind::Plugin(p) => p.tag(),
             TransitionKind::Missing(_) => "missing",
-            TransitionKind::Whip { .. } => "whip",
-            TransitionKind::BlurDissolve { .. } => "blur_dissolve",
-            TransitionKind::Pixelate { .. } => "pixelate",
-            TransitionKind::Glitch { .. } => "glitch",
             TransitionKind::Swap { .. } => "swap",
-            TransitionKind::Shake { .. } => "shake",
-            TransitionKind::FilmBurn { .. } => "film_burn",
-            TransitionKind::LightLeaks { .. } => "light_leaks",
-            TransitionKind::ZoomBlur { .. } => "zoom_blur",
             TransitionKind::Flip { .. } => "flip",
             TransitionKind::Cube { .. } => "cube",
             TransitionKind::Door { .. } => "door",
@@ -422,24 +299,16 @@ impl TransitionKind {
     /// is exhaustive on purpose: a new kind must decide whether it is symmetric.
     pub fn symmetric(&self) -> bool {
         match self {
-            // the plugin kinds answer through their kernel (zoom, flash and dip are symmetric there)
-            TransitionKind::Crossfade
-            | TransitionKind::BlurDissolve { .. }
-            | TransitionKind::Pixelate { .. }
-            | TransitionKind::Glitch { .. }
-            // the strength of the rays sin(πk) and the change of side in the middle are symmetric
-            | TransitionKind::ZoomBlur { .. } => true,
+            TransitionKind::Crossfade => true,
             // a missing kind plays as the crossfade
             TransitionKind::Missing(_) => true,
+            // a plugin kind answers through its kernel (zoom, flash, dip, blur dissolve, pixelate,
+            // glitch and zoom blur are symmetric there)
             TransitionKind::Plugin(p) => crate::plugin_slot::registry()
                 .get(&p.id)
                 .and_then(|pl| pl.trans())
                 .is_some_and(|k| k.symmetric()),
-            TransitionKind::Whip { .. }
-            | TransitionKind::Swap { .. }
-            | TransitionKind::Shake { .. }
-            | TransitionKind::FilmBurn { .. }
-            | TransitionKind::LightLeaks { .. }
+            TransitionKind::Swap { .. }
             | TransitionKind::Flip { .. }
             | TransitionKind::Cube { .. }
             | TransitionKind::Door { .. }
@@ -5480,42 +5349,8 @@ params_for_struct! { CameraParams {
 }}
 
 params_for! { TransitionKind, transition_specs, transition_set_param, transition_get_param, transition_set_idx, transition_get_idx, {
-    Whip {
-        blur: f64, 0.0, 1.0, 0.6, 0.01, Norm, Smooth;
-    },
-    BlurDissolve {
-        amount: f64, 0.0, 64.0, 24.0, 1.0, Px, Smooth;
-    },
-    Pixelate {
-        amount: f64, 1.0, 256.0, 48.0, 1.0, Px, Smooth;
-    },
-    Glitch {
-        amount: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-    },
     Swap {
         depth: f64, 0.0, 1.0, 0.3, 0.01, Norm, Smooth;
-    },
-    Shake {
-        amount: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        steps: u32, 1.0, 30.0, 12.0, 1.0, Count, Smooth;
-    },
-    FilmBurn {
-        scale: f64, 1.0, 24.0, 6.0, 0.5, Ratio, Smooth;
-        softness: f64, 0.0, 1.0, 0.2, 0.01, Norm, Smooth;
-        tint_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        tint_g: u8, 0.0, 255.0, 120.0, 1.0, Rgb8, Smooth;
-        tint_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-    },
-    LightLeaks {
-        strength: f64, 0.0, 1.0, 0.6, 0.01, Norm, Smooth;
-        tint_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        tint_g: u8, 0.0, 255.0, 90.0, 1.0, Rgb8, Smooth;
-        tint_b: u8, 0.0, 255.0, 40.0, 1.0, Rgb8, Smooth;
-    },
-    ZoomBlur {
-        amount: f64, 0.0, 1.0, 0.6, 0.01, Norm, Smooth;
-        cx: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        cy: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
     },
     Flip {
         persp: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;

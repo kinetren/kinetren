@@ -187,13 +187,6 @@ fn box9(which: u32, uv: vec2<f32>, r: vec2<f32>) -> vec4<f32> {
     return acc / 9.0;
 }
 
-fn glitch_pick(which: u32, uv: vec2<f32>, ch: f32) -> vec4<f32> {
-    let r = samp(which, vec2<f32>(uv.x + ch, uv.y));
-    let g = samp(which, uv);
-    let b = samp(which, vec2<f32>(uv.x - ch, uv.y));
-    return vec4<f32>(r.r, g.g, b.b, g.a);
-}
-
 fn trans(uv: vec2<f32>, k: f32) -> vec4<f32> {
     let mode = P.u1.z;
     let p0 = P.f0;
@@ -203,36 +196,6 @@ fn trans(uv: vec2<f32>, k: f32) -> vec4<f32> {
     let pi = 3.14159265;
     // the plugin kinds' arms (plugin-api-stage1, D12), assembled from the registry by kt-gpu
     // @PLUGIN_TRANS_ARMS
-    if (mode == 10u) { // whip
-        let blur = p0.z * sin(pi * k);
-        var acc = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-        for (var i = 0; i < 7; i = i + 1) {
-            let o = (f32(i) / 6.0 - 0.5) * blur * 0.25;
-            let s = uv + p0.xy * o;
-            let a = s - p0.xy * k;
-            if (a.x >= 0.0 && a.x < 1.0 && a.y >= 0.0 && a.y < 1.0) { acc = acc + samp(0u, a); }
-            else { acc = acc + samp(1u, a + p0.xy); } // B behind A, +dir as in push (item 396)
-        }
-        return acc / 7.0;
-    }
-    if (mode == 11u) { // blur dissolve
-        let r = p0.x * sin(pi * k);
-        let rr = vec2<f32>(r / od.x, r / od.y);
-        return mix(box9(0u, uv, rr), box9(1u, uv, rr), k);
-    }
-    if (mode == 12u) { // pixelate
-        let s = max(p0.x * sin(pi * k), 1.0);
-        let b = vec2<f32>(quant(uv.x, s / od.x), quant(uv.y, s / od.y));
-        return mix(samp(0u, b), samp(1u, b), k);
-    }
-    if (mode == 13u) { // glitch
-        let amt = p0.x * sin(pi * k);
-        let band = u32(floor(uv.y * 24.0));
-        let shift = (hash01(band * 1973u) - 0.5) * amt * 0.25;
-        let ch = amt * 8.0 / od.x;
-        let s = vec2<f32>(uv.x + shift, uv.y);
-        return mix(glitch_pick(0u, s, ch), glitch_pick(1u, s, ch), k);
-    }
     if (mode == 23u) { // swap: 2.5D exchange, the order changes at the midpoint
         let vert = p0.x > 0.5;
         let wave = sin(pi * k);
@@ -242,46 +205,6 @@ fn trans(uv: vec2<f32>, k: f32) -> vec4<f32> {
         let sb = swap_quad(1u, uv, vert, -off, scale, wave);
         if (k < 0.5) { return over_straight(sa, sb); }
         return over_straight(sb, sa);
-    }
-    if (mode == 24u) { // shake: jerks; the side cuts over at 0.5
-        let steps = max(p0.y, 1.0);
-        let i = min(u32(k * steps), u32(steps) - 1u);
-        let amp = p0.x * 0.2 * sin(pi * k);
-        let ox = (hash01(i * 2u + 1u) - 0.5) * amp;
-        let oy = (hash01(i * 2u + 2u) - 0.5) * amp;
-        var which = 1u;
-        if (k < 0.5) { which = 0u; }
-        return samp(which, uv + vec2<f32>(ox, oy));
-    }
-    if (mode == 25u) { // film burn: the front by noise, a hot edge
-        let n = value_noise(uv.x * p0.x * aspect, uv.y * p0.x);
-        let mask = front_mask(n, k, max(p0.y, 0.02));
-        let base = mix(samp(0u, uv), samp(1u, uv), mask);
-        let rim = clamp(mask * (1.0 - mask) * 4.0, 0.0, 1.0);
-        let gate = rim * base.a / 255.0;
-        let tint = vec3<f32>(p0.z, p0.w, p1.x);
-        return vec4<f32>(mix(base.rgb, tint, gate), base.a);
-    }
-    if (mode == 26u) { // light leaks: two spots along the diagonals
-        let base = mix(samp(0u, uv), samp(1u, uv), k);
-        let wave = sin(pi * k);
-        let w = (leak_blob(uv, k * 1.2 - 0.1, 0.3 + 0.4 * k, aspect)
-            + leak_blob(uv, 1.1 - 1.2 * k, 0.7 - 0.4 * k, aspect)) * p0.x * wave;
-        let gate = clamp(w, 0.0, 1.0) * base.a / 255.0;
-        let tint = vec3<f32>(p0.y, p0.z, p0.w);
-        return vec4<f32>(mix(base.rgb, tint, gate), base.a);
-    }
-    if (mode == 27u) { // zoom blur: rays from the centre (p0.yz)
-        let o = p0.yz;
-        let amt = p0.x * sin(pi * k);
-        var which = 1u;
-        if (k < 0.5) { which = 0u; }
-        var acc = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-        for (var i = 0; i < 7; i = i + 1) {
-            let z = 1.0 + amt * 0.6 * (f32(i) / 6.0);
-            acc = acc + samp(which, (uv - o) / z + o);
-        }
-        return acc / 7.0;
     }
     if (mode == 28u) { // flip: a panel by the homography from ext (item 401)
         let vert = p0.x > 0.5;
@@ -451,15 +374,6 @@ fn swap_quad(which: u32, uv: vec2<f32>, vert: bool, off: f32, scale: f32, wave: 
         return vec4<f32>(c.rgb * shade, c.a);
     }
     return vec4<f32>(0.0);
-}
-
-// A glare spot: a mirror of the CPU kernel’s blob().
-fn leak_blob(uv: vec2<f32>, bx: f32, by: f32, aspect: f32) -> f32 {
-    let dx = (uv.x - bx) * aspect;
-    let dy = uv.y - by;
-    let d = sqrt(dx * dx + dy * dy) / 0.45;
-    let w = max(1.0 - d, 0.0);
-    return w * w;
 }
 
 /// Rounding to the nearest integer, the same way the CPU kernel writes bytes.

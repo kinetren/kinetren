@@ -600,6 +600,17 @@ enum FrozenTrans {
     Flash { color_r: u8, color_g: u8, color_b: u8, strength: f64 },
     Blinds { count: u32, angle: f64, softness: f64 },
     Split { vertical: bool },
+    Whip { dir: &'static str, blur: f64 },
+    BlurDissolve { amount: f64 },
+    Shake { amount: f64, steps: u32 },
+    FilmBurn { scale: f64, softness: f64, tint_r: u8, tint_g: u8, tint_b: u8 },
+    ZoomBlur {
+        amount: f64,
+        #[serde(skip_serializing_if = "is_center")]
+        cx: f64,
+        #[serde(skip_serializing_if = "is_center")]
+        cy: f64,
+    },
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -647,6 +658,23 @@ fn t973_a_moved_transition_kind_keeps_its_text() {
             frozen(FrozenTrans::Blinds { count: 5, angle: 30.0, softness: 0.0 }),
         ),
         (TransitionKind::builtin("split"), frozen(FrozenTrans::Split { vertical: false })),
+        (
+            TransitionKind::plugin_with("whip", &[3.0, 1.0]).unwrap(),
+            frozen(FrozenTrans::Whip { dir: "down", blur: 1.0 }),
+        ),
+        (TransitionKind::builtin("blur_dissolve"), frozen(FrozenTrans::BlurDissolve { amount: 24.0 })),
+        (
+            TransitionKind::plugin_with("shake", &[1.0, 3.0]).unwrap(),
+            frozen(FrozenTrans::Shake { amount: 1.0, steps: 3 }),
+        ),
+        (
+            TransitionKind::builtin("film_burn"),
+            frozen(FrozenTrans::FilmBurn { scale: 6.0, softness: 0.2, tint_r: 255, tint_g: 120, tint_b: 0 }),
+        ),
+        (
+            TransitionKind::plugin_with("zoom_blur", &[1.0, 0.2, 0.8]).unwrap(),
+            frozen(FrozenTrans::ZoomBlur { amount: 1.0, cx: 0.2, cy: 0.8 }),
+        ),
     ];
     for (kind, want) in &cases {
         assert_eq!(&serde_json::to_string(kind).unwrap(), want, "the moved kind's text changed");
@@ -656,7 +684,8 @@ fn t973_a_moved_transition_kind_keeps_its_text() {
     // the variant's defaults: a file without the fields
     for id in [
         "wipe", "iris", "clock", "barn", "luma", "push", "slide", "zoom", "spin", "flash", "dip", "blinds",
-        "checker", "blocks", "spiral", "split", "squeeze", "stretch",
+        "checker", "blocks", "spiral", "split", "squeeze", "stretch", "whip", "blur_dissolve", "pixelate",
+        "glitch", "shake", "film_burn", "light_leaks", "zoom_blur",
     ] {
         let bare: TransitionKind = serde_json::from_str(&format!(r#"{{"kind":"{id}"}}"#)).unwrap();
         assert_eq!(bare, TransitionKind::builtin(id), "{id}: the variant's serde defaults");

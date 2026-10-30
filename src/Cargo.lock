@@ -2278,6 +2278,7 @@ dependencies = [
  "fx-video-distort",
  "kt-plugin-api",
  "transitions-basic",
+ "transitions-styled",
 ]
 
 [[package]]
@@ -4206,6 +4207,13 @@ dependencies = [
 
 [[package]]
 name = "transitions-basic"
+version = "0.1.0"
+dependencies = [
+ "kt-plugin-api",
+]
+
+[[package]]
+name = "transitions-styled"
 version = "0.1.0"
 dependencies = [
  "kt-plugin-api",

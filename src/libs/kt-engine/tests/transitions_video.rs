@@ -650,7 +650,7 @@ fn t459_push_whip_bring_real_b_content() {
                 }
             }
             // whip with zero smear is exactly push: 7 taps at one point
-            let mw = TransMix::of(&TransitionKind::Whip { dir, blur: 0.0 });
+            let mw = TransMix::of(&TransitionKind::plugin_with("whip", &[di as f64, 0.0]).unwrap());
             let mut dw = Vec::new();
             mix_into(&mut dw, Some(&a), Some(&b), k, mw, W, H);
             assert_eq!(dw, dst, "whip {dir:?} blur=0 k={k} must match push byte for byte");
@@ -966,7 +966,7 @@ fn t467_new_kind_families_reach_picture() {
     assert_eq!(px(&sq, 56, 18), ca, "the far one — the compressed leaving frame");
 
     // radial smear: k=0.5 — the side is already B, the ray's center is motionless
-    let zb = render(TransitionKind::ZoomBlur { amount: 1.0, cx: 0.5, cy: 0.5 });
+    let zb = render(kt_model::TransitionKind::plugin_with("zoom_blur", &[1.0, 0.5, 0.5]).unwrap());
     assert_eq!(px(&zb, 32, 18), cb, "the centre of the rays is fixed and shows the side");
 
     // blinds, 8 strips without softness: at k=0.5 the left half of each is open
