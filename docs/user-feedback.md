@@ -2202,6 +2202,43 @@ The requests:
 - What's new got the October items it lacked and a `kt26.11` section.
 - Everything else waits for the discussion.
 
+**The owner's answers to the eight questions (2026-11-01, translated):**
+
+> 1. Where do these questions come from at all? Where was there talk about the crossfade? I
+>    mentioned the crossfade within the lessons — that the lessons are crooked. Did you really
+>    think just now?
+> 2. WHY THE HELL LEAVE IT IN FILE?! WHY IS IT THERE?! … of course the audio ones are needed —
+>    you hide some generators in the tests — pull them out.
+> 3. yes
+> 4. you pay a lot of attention to the UI in this question and completely ignore the complexity
+>    of the effects' physical mechanics
+> 5. no, I want the crash window right after the crash, not who knows when
+> 6. I do not understand where the question about the sound on Windows came from — the context
+>    is lost
+> 7. which of the 20 candidates? am I supposed to sit here guessing?
+> 8. 3–5 depending on complexity; obviously the base code can be thrown together like that, but
+>    when it comes to the build and integration, keep them closer to 3
+
+**Taken as:**
+- (1) The lesson-3 crossfade is a defect of the LESSON: it promises a crossfade from an overlap,
+  and the program makes a cut there (t163/t464). The lesson teaches what the program does. No
+  question to the owner was needed. A question without his claim, the current state and what each
+  option means is the defect the memory note "questions carry context" already names.
+- (2) "Create a generator" LEAVES File. It lives in Edit and in a track's right-click menu at
+  the clicked place. Audio generators become real kinds; the tone and the beep hidden inside
+  the test generators (SMPTE, the leader) are pulled out.
+- (3) A "Settings…" window in File holds the app's preferences. View keeps only what is viewed.
+- (4) A "real" effect is first a PHYSICS problem. Its note and design start from the physical
+  chain: what is modelled, at which sample rate, what is simplified and why, what it costs per
+  frame. The interface comes after and is secondary.
+- (5) The crash window appears RIGHT AFTER the crash. A dying process cannot show it reliably, so
+  a thin supervisor process watches the program and opens the window on any abnormal exit.
+- (6) Re-asked with its context: Windows gives other bytes for the frozen sound and pixel
+  tests, because the C runtime's `powf`/`tan` round differently. Either the platforms may
+  differ, or the kernels use their own math so they match (recommended).
+- (7) The 20 candidates were listed in the reply by number for the owner to pick.
+- (8) 3–5 executors at once by complexity; near 3 when building and integrating.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
