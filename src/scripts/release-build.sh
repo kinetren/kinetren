@@ -69,18 +69,9 @@ BINS="kinetren kt-cli"
 # in the host's network namespace it is reachable.
 docker build --network=host --target "$DOCKER_STAGE" -t "$IMAGE" -f packaging/Dockerfile packaging
 
-# crates.io registry cache: from the host if present (the owner's build); otherwise
-# a named volume, so that a second `make` on a machine without Rust does not download everything
-# again. A fresh volume belongs to root — we hand it to the user once.
+# the crates.io registry cache: the host's, or a volume handed to this user (cargo-registry.sh)
 UID_GID="$(id -u):$(id -g)"
-if [ -d "$HOME/.cargo/registry" ]; then
-    REGISTRY="$HOME/.cargo/registry"
-else
-    REGISTRY=kinetren-cargo-registry
-    docker volume create "$REGISTRY" > /dev/null
-    docker run --rm -u 0 -v "$REGISTRY:/usr/local/cargo/registry" "$IMAGE" \
-        chown "$UID_GID" /usr/local/cargo/registry
-fi
+REGISTRY="$(scripts/cargo-registry.sh "$IMAGE")"
 
 # --- Delivery checks ---------------------------------------------------
 # Run INSIDE the container (binutils are in the image), so the host needs

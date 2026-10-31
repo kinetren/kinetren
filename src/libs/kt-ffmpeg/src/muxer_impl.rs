@@ -223,7 +223,16 @@ impl Muxer {
         let mut last_err = String::new();
         // every candidate that exists here and failed, with its code, and the opened one's facts
         let mut report = crate::OpenReport::default();
-        for spec in video_encoders() {
+        let cascade = video_encoders();
+        // a forced name outside this system's cascade is never tried: say so, or the error
+        // read "last error: " with nothing after it (h264_vaapi on Windows, CI of 94e36e9e)
+        if let Some(pref) = &cfg.force_encoder
+            && !cascade.iter().any(|s| s.name == pref.as_str())
+        {
+            let names: Vec<&str> = cascade.iter().map(|s| s.name).collect();
+            last_err = format!("{pref}: not an encoder this system tries ({})", names.join(", "));
+        }
+        for spec in cascade {
             let name = &spec.name;
             if let Some(pref) = &cfg.force_encoder
                 && pref != name

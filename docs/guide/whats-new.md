@@ -5,6 +5,10 @@ month, newest first.
 
 ## kt26.11
 
+- **Windows: the welcome window names your project folders plainly** — `C:\Users\…`, not
+  `\\?\C:\Users\…`.
+- **Forcing an encoder this computer does not have** (VAAPI on Windows) now says so by name
+  instead of an empty error.
 - **Changing an audio effect takes effect at once.** Put a filter where an equaliser stood
   and you hear the filter right away — before, the old effect kept playing with the new
   settings until you jumped in time.

@@ -31,8 +31,8 @@ if [ ! -d fixtures/out ] && command -v ffmpeg > /dev/null; then
 fi
 
 UID_GID="$(id -u):$(id -g)"
-REGISTRY="$HOME/.cargo/registry"
-[ -d "$REGISTRY" ] || { REGISTRY=kinetren-cargo-registry; docker volume create "$REGISTRY" > /dev/null; }
+# the crates.io registry cache: the host's, or a volume handed to this user (cargo-registry.sh)
+REGISTRY="$(scripts/cargo-registry.sh "$IMAGE")"
 # the repository at /kt and the build in /kt/src, as for the Windows tests: tests that reach
 # the repository root (../../..) find it
 docker run --rm --network=host -u "$UID_GID" -v "$PWD/..:/kt" -w /kt/src \

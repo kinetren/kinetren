@@ -608,6 +608,63 @@ def check_flatpak_ci(r):
         r.err(MAKEFILE, "target `flatpak` must run flatpak-build.sh")
 
 
+# A package installed with `--no-install-recommends` loses its Recommends; where a check needs
+# one of them, it is named on the same line (change ci-green-again, t1060). Each row is a CI
+# failure of 94e36e9e: flatpak-builder strips with `eu-strip` (elfutils), and xdg-mime without a
+# desktop answers through `mimetype` (libfile-mimeinfo-perl) — without it libmagic's `file`
+# called our project JSON, or nothing answered at all (t935).
+RECOMMENDS_NEEDED = [
+    ("flatpak-builder", "elfutils", "flatpak-builder strips with eu-strip"),
+    ("xdg-utils", "libfile-mimeinfo-perl", "xdg-mime without a desktop asks `mimetype` (t935)"),
+]
+
+
+def apt_installs(text):
+    """Every `apt-get install` command of a workflow or a Dockerfile, backslash continuations
+    joined and cut at the next `&&`, as a list of words."""
+    joined = re.sub(r"\\[ \t]*\n", " ", text)
+    out = []
+    for m in re.finditer(r"apt-get install([^\n]*)", joined):
+        out.append(m.group(1).split("&&")[0].split())
+    return out
+
+
+def check_recommends(r):
+    """A package installed without its Recommends names the one a check needs (t1060)."""
+    for rel in [CI, RELEASE] + dockerfiles(r.root):
+        text = r.read(rel)
+        if text is None:
+            continue
+        for words in apt_installs(text):
+            if "--no-install-recommends" not in words:
+                continue
+            for pkg, need, why in RECOMMENDS_NEEDED:
+                if pkg in words and need not in words:
+                    r.err(rel, f"`{pkg}` without recommends must install `{need}` too: {why}")
+
+
+REGISTRY_SCRIPT = "src/scripts/cargo-registry.sh"
+
+
+def check_registry(r):
+    """Every script that mounts the crates.io registry into a container takes it from
+    cargo-registry.sh, which hands a fresh volume to the user (t1064): a root-owned volume killed
+    the ffmpeg9 CI job of 94e36e9e, whose runner has no ~/.cargo/registry."""
+    helper = r.read(REGISTRY_SCRIPT)
+    if helper is None:
+        r.err(REGISTRY_SCRIPT, "missing: the one body that picks the registry a container mounts")
+    elif not re.search(r"-u 0 .*\n?.*chown", helper):
+        r.err(REGISTRY_SCRIPT, "a fresh volume must be handed to the user (`docker run -u 0 … chown`)")
+    scripts = os.path.join(r.root, "src/scripts")
+    for f in sorted(os.listdir(scripts)):
+        rel = f"src/scripts/{f}"
+        if not f.endswith(".sh") or rel == REGISTRY_SCRIPT:
+            continue
+        text = r.read(rel) or ""
+        if ":/usr/local/cargo/registry" in text and 'REGISTRY="$(scripts/cargo-registry.sh' not in text:
+            r.err(rel, "mounts the cargo registry without scripts/cargo-registry.sh (a root-owned volume)")
+
+
 def check_cargo_sources(r):
     """The offline crate sources follow the lock file (change flatpak-flathub, t968)."""
     import subprocess
@@ -679,6 +736,8 @@ def main():
     check_flatpak(r, app_id)
     check_metainfo(r, app_id)
     check_flatpak_ci(r)
+    check_recommends(r)
+    check_registry(r)
     check_cargo_sources(r)
     if r.errors:
         for e in r.errors:

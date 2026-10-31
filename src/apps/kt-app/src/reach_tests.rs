@@ -3721,6 +3721,7 @@ fn live_check_available(root: &std::path::Path) -> Option<String> {
 
 fn run_live_check(
     root: &std::path::Path,
+    out: &str,
     workers: &str,
     display: &str,
     names: &[&str],
@@ -3728,9 +3729,11 @@ fn run_live_check(
     let out = std::process::Command::new("./scripts/live-check.sh")
         .args(names)
         .env("KT_LIVE_WORKERS", workers)
-        // its own run directory: a real run of live scenarios may go on alongside, and
-        // `live-check.sh` cleans the directory of verdicts
-        .env("KT_LIVE_OUT", root.join("target/live-guard").to_string_lossy().as_ref())
+        // its own run directory for EACH test: a real run of live scenarios or the other
+        // guard may go on alongside, and `live-check.sh` cleans the directory of verdicts at
+        // its start — t801 and t802 in one folder wiped each other's verdicts (CI of
+        // 94e36e9e: t801's re-run verdict was gone, change ci-green-again)
+        .env("KT_LIVE_OUT", root.join(out).to_string_lossy().as_ref())
         // its own screen numbers for EACH test: the tests run in parallel, and two runs on the same
         // screens would open windows on each other
         .env("KT_LIVE_DISPLAY", display)
@@ -3758,10 +3761,10 @@ fn t801_red_scenario_is_rerun_alone() {
         return;
     }
     // the run remembers the fake “red the first time” in a file — we remove it
-    let mark = root.join("target/live-guard/_flaky/already-ran");
+    let mark = root.join("target/live-guard-t801/_flaky/already-ran");
     std::fs::remove_file(&mark).ok();
 
-    let (ok, said) = run_live_check(&root, "2", ":80", &["_flaky", "_red"]);
+    let (ok, said) = run_live_check(&root, "target/live-guard-t801", "2", ":80", &["_flaky", "_red"]);
     assert!(!ok, "a run with an always-red scenario must be red:\n{said}");
     assert!(
         said.contains("PASSED ON THE SECOND TRY") && said.contains("_flaky"),
@@ -3771,13 +3774,13 @@ fn t801_red_scenario_is_rerun_alone() {
         said.contains("RED TWICE") && said.contains("_red"),
         "a scenario that failed twice is not named red:\n{said}"
     );
-    let verdict = std::fs::read_to_string(root.join("target/live-guard/verdicts/_flaky"))
+    let verdict = std::fs::read_to_string(root.join("target/live-guard-t801/verdicts/_flaky"))
         .unwrap_or_default();
     assert_eq!(verdict, "ok", "the re-run scenario stayed red");
 
     // a single run re-runs NOTHING: there a red result is the verdict
     std::fs::remove_file(&mark).ok();
-    let (ok1, said1) = run_live_check(&root, "1", ":80", &["_flaky"]);
+    let (ok1, said1) = run_live_check(&root, "target/live-guard-t801", "1", ":80", &["_flaky"]);
     assert!(!ok1, "a solo run must report red as it is:\n{said1}");
     assert!(
         said1.contains("the run is already single-process"),
@@ -3797,12 +3800,12 @@ fn t802_workers_are_isolated() {
         eprintln!("t802 skipped: {why}");
         return;
     }
-    let (ok, said) = run_live_check(&root, "3", ":84", &["_env1", "_env2", "_env3"]);
+    let (ok, said) = run_live_check(&root, "target/live-guard-t802", "3", ":84", &["_env1", "_env2", "_env3"]);
     assert!(ok, "stand-in scenarios must be green:\n{said}");
     let mut displays = std::collections::BTreeSet::new();
     let mut stores = std::collections::BTreeSet::new();
     for n in ["_env1", "_env2", "_env3"] {
-        let p = root.join("target/live-guard").join(n).join("env.json");
+        let p = root.join("target/live-guard-t802").join(n).join("env.json");
         let text = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
         let get = |key: &str| -> String {
             text.split(&format!("\"{key}\": \""))
@@ -6364,8 +6367,12 @@ fn t986_welcome_window_templates_recent_whats_new_and_the_switch() {
     for key in [k::welcome::TOUR, k::welcome::GUIDE, k::welcome::SHOW_AT_START] {
         assert!(h.query_all_by_label_contains(tr(key)).count() > 0, "the welcome window has no “{}”", tr(key));
     }
-    let folder = projects.display().to_string();
-    assert!(h.query_all_by_label_contains(&folder).count() >= 2, "each card names its folder");
+    // the folder as the card names it: canonical, as a person reads it — on Windows the temp
+    // directory may be an 8.3 spelling (`RUNNER~1`) that canonicalisation expands, and the bare
+    // `canonicalize` added the verbatim `\\?\` (CI of 94e36e9e on windows-latest)
+    let folder = kt_dirs::canonical(&projects).unwrap().display().to_string();
+    assert!(h.query_all_by_label_contains(&folder).count() >= 2, "each card names its folder: {folder}");
+    assert_eq!(h.query_all_by_label_contains(r"\\?\").count(), 0, "a card shows the verbatim prefix");
     let (ver, _) = crate::guide::whats_new(kt_version::SHORT);
     let head = if ver == kt_version::SHORT {
         crate::tf!(k::welcome::WHATS_NEW, &ver)

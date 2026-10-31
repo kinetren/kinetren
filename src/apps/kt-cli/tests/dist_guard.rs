@@ -39,6 +39,10 @@ fn t834_the_committed_tree_is_consistent() {
 const FILES: &[&str] = &[
     "src/packaging/Dockerfile",
     "src/scripts/release-build.sh",
+    // the scripts that mount the cargo registry, and the one body they take it from (t1064)
+    "src/scripts/cargo-registry.sh",
+    "src/scripts/ffmpeg-test.sh",
+    "src/scripts/windows-test.sh",
     "Makefile",
     ".github/workflows/ci.yml",
     ".github/workflows/release.yml",
@@ -378,8 +382,8 @@ fn t931_mime_names_our_files_and_only_ours() {
 /// In a temporary `XDG_DATA_HOME` the MIME file is installed next to the system's own database
 /// (which declares `text/x-kotlin` with `*.kt`), `update-mime-database` builds it, and the type of
 /// three files is asked: a project written by `project_file::to_text`, a Kotlin source and the
-/// legacy fixture. Without `update-mime-database` on the machine the test says why it did not run;
-/// the build container installs `shared-mime-info`, so CI always runs it.
+/// legacy fixture. Without `update-mime-database` or `mimetype` on the machine the test says why it
+/// did not run; CI and the build container install both, held by t1060.
 #[test]
 fn t935_the_mime_database_tells_our_project_from_kotlin() {
     let have = |tool: &str| {
@@ -390,6 +394,13 @@ fn t935_the_mime_database_tells_our_project_from_kotlin() {
     };
     if cfg!(windows) || !have("update-mime-database") || !have("xdg-mime") {
         eprintln!("t935 not run: update-mime-database / xdg-mime are not on this machine");
+        return;
+    }
+    // without a desktop xdg-mime asks `mimetype`, and without THAT libmagic's `file`, which reads
+    // the content and calls our project JSON — the database is never asked (CI of 94e36e9e).
+    // CI and the container install it (dist-check, t1060)
+    if !have("mimetype") {
+        eprintln!("t935 not run: no `mimetype` (libfile-mimeinfo-perl) — xdg-mime would not ask the database");
         return;
     }
     let dir = std::env::temp_dir().join(format!("kt-mime-{}", std::process::id()));
@@ -443,6 +454,84 @@ fn t935_the_mime_database_tells_our_project_from_kotlin() {
     }
     assert_eq!(ask("demo.ktproj"), "application/x-kinotrain-legacy-project", "the older format");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// t1060 (ci-green-again): a package installed without its Recommends names the one a check
+/// needs, in every workflow and Dockerfile.
+///
+/// CI of 94e36e9e lost two jobs to `--no-install-recommends`: the Flatpak build had no `eu-strip`
+/// (elfutils, a Recommends of flatpak-builder) and t935 got `application/json` for our project,
+/// because xdg-mime without a desktop asks `mimetype` (libfile-mimeinfo-perl, a Recommends of
+/// xdg-utils) and fell back to libmagic. Each break is one of those lines losing its package.
+#[test]
+fn t1060_packages_without_recommends_name_what_the_checks_need() {
+    if cfg!(windows) {
+        eprintln!("t1060 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    let cases: [Break; 4] = [
+        (
+            "ci-elfutils",
+            |d| edit(d, ".github/workflows/ci.yml", "flatpak-builder appstream elfutils", "flatpak-builder appstream"),
+            "`flatpak-builder` without recommends must install `elfutils`",
+        ),
+        (
+            "release-elfutils",
+            |d| edit(d, ".github/workflows/release.yml", "flatpak-builder appstream elfutils", "flatpak-builder appstream"),
+            "release.yml: `flatpak-builder` without recommends must install `elfutils`",
+        ),
+        (
+            "ci-mimetype",
+            |d| edit(d, ".github/workflows/ci.yml", "xdg-utils libfile-mimeinfo-perl", "xdg-utils"),
+            "ci.yml: `xdg-utils` without recommends must install `libfile-mimeinfo-perl`",
+        ),
+        (
+            "container-mimetype",
+            |d| edit(d, "src/packaging/Dockerfile", "xdg-utils libfile-mimeinfo-perl", "xdg-utils"),
+            "Dockerfile: `xdg-utils` without recommends must install `libfile-mimeinfo-perl`",
+        ),
+    ];
+    expect_red(&cases);
+}
+
+/// t1064 (ci-green-again): every script that mounts the crates.io registry into a container takes
+/// it from `cargo-registry.sh`, and that script hands a fresh volume to the user.
+///
+/// The ffmpeg9 CI job of 94e36e9e died in `cargo metadata`: the runner has no `~/.cargo/registry`,
+/// `ffmpeg-test.sh` mounted a fresh named volume (root's), and the container runs as the runner's
+/// user. `release-build.sh` handed the volume over; the two test scripts had their own copy
+/// without it.
+#[test]
+fn t1064_a_registry_volume_is_handed_to_the_user() {
+    if cfg!(windows) {
+        eprintln!("t1064 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    let cases: [Break; 3] = [
+        (
+            "own-copy",
+            |d| {
+                edit(
+                    d,
+                    "src/scripts/ffmpeg-test.sh",
+                    "REGISTRY=\"$(scripts/cargo-registry.sh \"$IMAGE\")\"",
+                    "REGISTRY=kinetren-cargo-registry",
+                )
+            },
+            "ffmpeg-test.sh: mounts the cargo registry without scripts/cargo-registry.sh",
+        ),
+        (
+            "no-chown",
+            |d| edit(d, "src/scripts/cargo-registry.sh", "chown", "true"),
+            "a fresh volume must be handed to the user",
+        ),
+        (
+            "no-helper",
+            |d| std::fs::remove_file(d.join("src/scripts/cargo-registry.sh")).unwrap(),
+            "cargo-registry.sh: missing",
+        ),
+    ];
+    expect_red(&cases);
 }
 
 /// t966 (flatpak-flathub, D1): every copy of the application ID is the same string.
@@ -519,8 +608,11 @@ fn t966_every_copy_of_the_app_id_is_the_same_string() {
     assert!(app.contains(&format!("pub const APP_ID: &str = \"{id}\";")));
 }
 
+/// One break of a guard test: its tag, the edit of a fresh copy, the text the guard must name.
+type Break = (&'static str, fn(&Path), &'static str);
+
 /// Run each break on a fresh copy and expect the guard to name it.
-fn expect_red(cases: &[(&str, fn(&Path), &str)]) {
+fn expect_red(cases: &[Break]) {
     for (tag, brk, want) in cases {
         let dir = copy_tree(tag);
         brk(&dir);
@@ -544,7 +636,7 @@ fn t967_flatpak_manifest_shape_is_guarded() {
         eprintln!("t967 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
         return;
     }
-    let cases: [(&str, fn(&Path), &str); 7] = [
+    let cases: [Break; 7] = [
         (
             "unsupported-major",
             |d| {
@@ -589,7 +681,7 @@ fn t968_offline_crate_sources_follow_the_lock() {
         eprintln!("t968 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
         return;
     }
-    let cases: [(&str, fn(&Path), &str); 1] = [(
+    let cases: [Break; 1] = [(
         "bumped-crate",
         |d| {
             let lock = std::fs::read_to_string(d.join("src/Cargo.lock")).unwrap();
@@ -620,7 +712,7 @@ fn t969_metainfo_is_complete_and_the_guide_names_its_commands() {
         eprintln!("t969 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
         return;
     }
-    let cases: [(&str, fn(&Path), &str); 5] = [
+    let cases: [Break; 5] = [
         (
             "no-ru",
             |d| {
@@ -676,7 +768,7 @@ fn t971_flatpak_job_and_release_bundle_keep_their_shape() {
         eprintln!("t971 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
         return;
     }
-    let cases: [(&str, fn(&Path), &str); 5] = [
+    let cases: [Break; 5] = [
         ("no-job", |d| edit(d, ".github/workflows/ci.yml", "\n  flatpak:\n", "\n  flatpak-gone:\n"), "no `flatpak` job"),
         (
             "upload",
