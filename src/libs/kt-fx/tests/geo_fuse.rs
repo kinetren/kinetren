@@ -483,7 +483,7 @@ fn bench_fx_1080p() {
         ],
     );
     bench("sharpen r=3", &[FxInstance::Sharpen { amount: 1.5, radius: 3 }]);
-    bench("pixelate 12", &[FxInstance::Pixelate { size: 12 }]);
+    bench("pixelate 12", &[FxInstance::plugin_with("pixelate", &[12.0]).unwrap()]);
     bench("chroma_ab 0.02", &[FxInstance::ChromaticAberration { amount: 0.02 }]);
     bench(
         "radial_blur zoom (16 taps)",
@@ -810,7 +810,7 @@ fn t303_barrier_kernels_res_invariant() {
                 },
             ),
             // threshold Kv3: the cell phase at the boundary legitimately flips
-            ("pixelate", FxInstance::Pixelate { size: 8 }),
+            ("pixelate", FxInstance::plugin_with("pixelate", &[8.0]).unwrap()),
         ] {
             let base = apply_barrier(&fx, test_frame(), &ctx(), &mut scratch, 1);
             let (kw, kh) = (W * k, H * k);
@@ -1153,7 +1153,7 @@ fn t332_barrier_semantics() {
     );
 
     // Pixelate: each 12×12 cell is constant
-    let pix = run(&[FxInstance::Pixelate { size: 12 }]);
+    let pix = run(&[FxInstance::plugin_with("pixelate", &[12.0]).unwrap()]);
     for cy in 0..H / 12 {
         for cx in 0..W / 12 {
             let base = ((cy * 12 * W + cx * 12) * 4) as usize;

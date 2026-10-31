@@ -197,7 +197,7 @@ fn gen_demo_concat() {
     let mut p = project();
     p.clips = vec![
         clip(1, 0, 4, 1, vec![FxInstance::Sharpen { amount: 2.0, radius: 3 }]),
-        clip(2, 4, 4, 1, vec![FxInstance::Pixelate { size: 16 }]),
+        clip(2, 4, 4, 1, vec![FxInstance::plugin_with("pixelate", &[16.0]).unwrap()]),
         clip(3, 8, 4, 1, vec![FxInstance::ChromaticAberration { amount: 0.02 }]),
         clip(
             4,

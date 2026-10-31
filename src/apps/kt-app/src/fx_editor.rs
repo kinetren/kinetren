@@ -1354,7 +1354,6 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Vhs { .. } => "VHS",
         FxInstance::Glow { .. } => "Glow",
         FxInstance::Sharpen { .. } => "Sharpen",
-        FxInstance::Pixelate { .. } => "Pixelate",
         FxInstance::ChromaticAberration { .. } => "Chromatic Aberration",
         FxInstance::RadialBlur { .. } => "Radial Blur",
         FxInstance::DropShadow { .. } => "Drop Shadow",
@@ -1383,7 +1382,6 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
         // R.47: per-point color/style + the first honest perspective
         // R.47 Q3: barriers
         ("Sharpen", FxInstance::sharpen()),
-        ("Pixelate", FxInstance::pixelate()),
         ("Chromatic Aberration", FxInstance::chromatic_aberration()),
         ("Radial Blur", FxInstance::radial_blur()),
         ("Drop Shadow", FxInstance::drop_shadow()),

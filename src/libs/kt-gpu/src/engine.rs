@@ -191,7 +191,6 @@ enum Pipe {
     // (the pointwise R.47 kinds — color_grade, duotone, posterize, vignette — are plugins)
     // R.47 barriers Kv3
     SharpenAdd,
-    Pixelate,
     ChromaAb,
     RadialBlur,
     ShadowUnder,
@@ -204,7 +203,7 @@ enum Pipe {
     GridTile,
 }
 
-const PIPE_COUNT: usize = 18;
+const PIPE_COUNT: usize = 17;
 
 /// One chain step precomputed on the CPU (common maths: kt-fx:
 /// pan_frame/cam_at/noise_seed). The number of passes and the sizes are known in advance.
@@ -267,9 +266,6 @@ enum FxOp {
         dh: u32,
         amount: f32,
     },
-    Pixelate {
-        cell: u32,
-    },
     ChromaAb {
         amount: f32,
     },
@@ -292,6 +288,12 @@ enum FxOp {
         ca: f32,
         sa: f32,
         k: f32,
+    },
+    /// A barrier PLUGIN's graph (plugin-api-barriers, D2): the host's nodes and its passes, `base` —
+    /// its first shader in `Inner::plugin_pipes`.
+    PluginBarrier {
+        base: usize,
+        nodes: Vec<kt_plugin_api::barrier::Node>,
     },
     /// A point-wise PLUGIN at the barrier position (plugin-api-stage1, D5): its own generated pass,
     /// `idx` — into `Inner::plugin_pipes`; `f` — `P.f0`/`P.f1` = (unused, a.yzw, b.xyzw).
@@ -330,6 +332,10 @@ impl FxOp {
         match self {
             FxOp::Glow { .. } => 3,
             FxOp::Sharpen { .. } | FxOp::DropShadow { .. } => 3,
+            // every node is a pass but `Save` (the arena prediction stays exact)
+            FxOp::PluginBarrier { nodes, .. } => {
+                nodes.iter().filter(|n| !matches!(n, kt_plugin_api::barrier::Node::Save(_))).count() as u32
+            }
             // a snapshot spawns no passes; when the sizes have diverged, mixing is completed
             // by resampling the dry side
             FxOp::Snapshot => 0,
@@ -567,6 +573,48 @@ fn chain_ops(
                         });
                     }
                 }
+                f @ FxInstance::Plugin(slot) if kt_fx::video::plugin_barrier(f).is_some() => {
+                    // a barrier plugin (plugin-api-barriers): its graph against the frame here; an empty
+                    // graph is a passthrough (drop_shadow on an opaque frame)
+                    let (b, values) = kt_fx::video::plugin_barrier(f).expect("checked");
+                    let g = kt_plugin_api::barrier::GpuCtx {
+                        w,
+                        h,
+                        res_scale,
+                        alpha: has_alpha_known.then_some(has_alpha),
+                        src_has_alpha,
+                        burst_index: t.0,
+                    };
+                    let mut nodes = Vec::new();
+                    b.gpu(&b.cook(values), &g, &mut nodes);
+                    debug_assert_eq!(
+                        kt_plugin_api::barrier::check_graph(&nodes, b.shaders().len(), &g, kt_fx::plan::MAX_INTER_DIM),
+                        Ok(()),
+                        "{}: a barrier graph the registry would refuse",
+                        slot.manifest().id
+                    );
+                    for n in &nodes {
+                        if let kt_plugin_api::barrier::Node::Resample { w: rw, h: rh } = n {
+                            mw = mw.max(*rw);
+                            mh = mh.max(*rh);
+                        }
+                    }
+                    if !nodes.is_empty() {
+                        ops.push(FxOp::PluginBarrier { base: barrier_pipe_base(&slot.manifest().id), nodes });
+                    }
+                    // the alpha rule (R.53, item 417): declared by the step, not matched by kind
+                    match slot.manifest().decl.alpha {
+                        kt_plugin_api::barrier::AlphaRel::Preserves => {}
+                        kt_plugin_api::barrier::AlphaRel::Produces => {
+                            has_alpha_known = true;
+                            has_alpha = true;
+                        }
+                        kt_plugin_api::barrier::AlphaRel::Destroys => {
+                            has_alpha_known = true;
+                            has_alpha = false;
+                        }
+                    }
+                }
                 f @ FxInstance::Plugin(_) if kt_fx::geom::PluginTap::of(f).is_some() => {
                     let t = kt_fx::geom::PluginTap::of(f).expect("checked");
                     let g = t.kernel.gpu_params(t.values());
@@ -581,9 +629,6 @@ fn chain_ops(
                     let step = (*radius).clamp(2, 16) * res_scale;
                     let (dw, dh) = ((w / step).max(1), (h / step).max(1));
                     ops.push(FxOp::Sharpen { dw, dh, amount: amount.clamp(0.0, 4.0) });
-                }
-                FxInstance::Pixelate { size } => {
-                    ops.push(FxOp::Pixelate { cell: (*size).clamp(2, 128) * res_scale });
                 }
                 FxInstance::ChromaticAberration { amount } => {
                     ops.push(FxOp::ChromaAb { amount: amount.clamp(0.0, 0.05) });
@@ -807,7 +852,6 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("composite", include_str!("shaders/composite.wgsl")),
     ("layer_mix", include_str!("shaders/layer_mix.wgsl")),
     ("sharpen_add", include_str!("shaders/sharpen_add.wgsl")),
-    ("pixelate", include_str!("shaders/pixelate.wgsl")),
     ("chroma_ab", include_str!("shaders/chroma_ab.wgsl")),
     ("radial_blur", include_str!("shaders/radial_blur.wgsl")),
     ("shadow_under", include_str!("shaders/shadow_under.wgsl")),
@@ -879,6 +923,38 @@ pub fn plugin_taps() -> Vec<(&'static str, &'static str)> {
             }
         })
         .collect()
+}
+
+/// The barrier plugins of the installed registry with their fragment passes, in registration order
+/// (plugin-api-barriers, D2). Their pipelines follow the point-wise plugins' own passes in
+/// `Inner::plugin_pipes`; `barrier_pipe_base` finds a plugin's first one. A function of the registry
+/// only, never hashed into a key (the chain's key carries the plugin id).
+pub fn plugin_barriers() -> Vec<(&'static str, &'static [&'static str])> {
+    let Some(reg) = kt_plugin_api::installed() else { return Vec::new() };
+    reg.plugins()
+        .filter_map(|p| {
+            let m = p.manifest();
+            match (m.media, m.decl.gpu, p.barrier()) {
+                (kt_plugin_api::Media::VideoFx, kt_plugin_api::Gpu::Barrier, Some(b)) => {
+                    let id: &'static str = &m.id;
+                    Some((id, b.shaders()))
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// The index of a barrier plugin's first pass in `Inner::plugin_pipes`.
+fn barrier_pipe_base(id: &str) -> usize {
+    let mut base = plugin_taps().len();
+    for (p, shaders) in plugin_barriers() {
+        if p == id {
+            return base;
+        }
+        base += shaders.len();
+    }
+    panic!("a barrier of an unassembled plugin: {id}")
 }
 
 /// The geometry plugins of the installed registry that offer a warp map, in registration order:
@@ -1027,8 +1103,14 @@ impl GpuFxEngine {
             .iter()
             .map(|(n, b)| (n.to_string(), if *n == "composite" { composite.clone() } else { b.to_string() }))
             .collect();
-        let plugins: Vec<(String, String)> =
+        let mut plugins: Vec<(String, String)> =
             plugin_taps().iter().zip(&plugin_srcs).map(|((id, _), body)| (format!("plugin {id}"), body.clone())).collect();
+        // the barrier plugins' passes follow, in `plugin_barriers` order (`barrier_pipe_base`)
+        for (id, shaders) in plugin_barriers() {
+            for (i, body) in shaders.iter().enumerate() {
+                plugins.push((format!("barrier {id} {i}"), body.to_string()));
+            }
+        }
         let mut pipes: Vec<wgpu::RenderPipeline> = fixed
             .iter()
             .chain(plugins.iter())
@@ -1763,6 +1845,78 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
+                FxOp::PluginBarrier { base, nodes } => {
+                    use kt_plugin_api::barrier::{Node, Slot};
+                    // `src` — the barrier's input, `prev` — the last node's output, `saved` — kept ones;
+                    // textures the graph made are released when nothing reads them any more
+                    let src = view.clone();
+                    let (mut pw, mut ph) = (w, h);
+                    let mut prev = view.clone();
+                    let mut prev_tex: Option<Tex> = None;
+                    let mut saved: Vec<(u8, wgpu::TextureView, Option<Tex>)> = Vec::new();
+                    for n in nodes.iter() {
+                        let pick = |s: &Slot, prev: &wgpu::TextureView| -> wgpu::TextureView {
+                            match s {
+                                Slot::Src => src.clone(),
+                                Slot::Prev => prev.clone(),
+                                Slot::Saved(i) => saved.iter().find(|(k, ..)| k == i).expect("checked graph").1.clone(),
+                                Slot::None => dummy.clone(),
+                            }
+                        };
+                        let (tw, th, which, t0, t1, t2, u) = match n {
+                            Node::Save(i) => {
+                                saved.push((*i, prev.clone(), prev_tex.take()));
+                                continue;
+                            }
+                            Node::Premul => (pw, ph, Which::Fixed(Pipe::Premul), prev.clone(), dummy.clone(), dummy.clone(), UniformData::default()),
+                            Node::Unpremul => (pw, ph, Which::Fixed(Pipe::Unpremul), prev.clone(), dummy.clone(), dummy.clone(), UniformData::default()),
+                            Node::Resample { w: rw, h: rh } => (
+                                *rw,
+                                *rh,
+                                Which::Fixed(Pipe::Resample),
+                                prev.clone(),
+                                dummy.clone(),
+                                dummy.clone(),
+                                UniformData {
+                                    u: [*rw, *rh, pw, ph, 0, 0, 0, 0],
+                                    f: [0.0, 0.0, pw as f32, ph as f32, 0.0, 0.0, 0.0, 0.0],
+                                    ..Default::default()
+                                },
+                            ),
+                            Node::Pass { shader, inputs, u, f } => (
+                                w,
+                                h,
+                                Which::Plugin(*base + *shader as usize),
+                                pick(&inputs[0], &prev),
+                                pick(&inputs[1], &prev),
+                                pick(&inputs[2], &prev),
+                                UniformData { u: *u, f: *f, ..Default::default() },
+                            ),
+                        };
+                        let dst = self.pool.acquire(&self.device, tw, th);
+                        self.pass_which(enc, which, &dst.view, &t0, &t1, &t2, u);
+                        if let Some(t) = prev_tex.take() {
+                            self.pool.release(t);
+                        }
+                        prev = dst.view.clone();
+                        prev_tex = Some(dst);
+                        pw = tw;
+                        ph = th;
+                    }
+                    debug_assert_eq!((pw, ph), (w, h), "a barrier graph ends off the frame size");
+                    for (_, _, t) in saved {
+                        if let Some(t) = t {
+                            self.pool.release(t);
+                        }
+                    }
+                    if let Some(t) = prev_tex {
+                        if let Some(o) = owned.take() {
+                            self.pool.release(o);
+                        }
+                        view = prev;
+                        owned = Some(t);
+                    }
+                }
                 FxOp::PluginTap { idx, f, positioned } => {
                     let dst = self.pool.acquire(&self.device, w, h);
                     let mut f = *f;
@@ -1802,16 +1956,6 @@ impl Inner {
                     };
                     self.pass(enc, Pipe::SharpenAdd, &dst.view, &view, &base.view, &dummy, u);
                     self.pool.release(base);
-                    if let Some(t) = owned.take() {
-                        self.pool.release(t);
-                    }
-                    view = dst.view.clone();
-                    owned = Some(dst);
-                }
-                FxOp::Pixelate { cell } => {
-                    let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData { u: [w, h, *cell, 0, 0, 0, 0, 0], ..Default::default() };
-                    self.pass(enc, Pipe::Pixelate, &dst.view, &view, &dummy, &dummy, u);
                     if let Some(t) = owned.take() {
                         self.pool.release(t);
                     }

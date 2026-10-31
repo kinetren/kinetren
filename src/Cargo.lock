@@ -1526,6 +1526,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fx-video-stylize"
+version = "0.1.0"
+dependencies = [
+ "kt-plugin-api",
+]
+
+[[package]]
 name = "generators-basic"
 version = "0.1.0"
 dependencies = [
@@ -2294,6 +2301,7 @@ dependencies = [
  "fx-audio-tone",
  "fx-video-color",
  "fx-video-distort",
+ "fx-video-stylize",
  "generators-basic",
  "generators-test",
  "kt-plugin-api",

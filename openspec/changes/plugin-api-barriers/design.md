@@ -115,7 +115,6 @@ the series.
 - a graph that reads `Saved(n)` before `Save(n)`, or whose output is not at the frame size (a
   graph of host nodes alone is legal: blur on the GPU is a mip down and up);
 - a `Size` that can exceed `MAX_INTER_DIM` for the largest K;
-- a missing alpha relation;
 - (a kernel marked `threads: Single` is refused for every plugin already, D4 of stage 1, so a SIMD
   path needs no refusal of its own).
 

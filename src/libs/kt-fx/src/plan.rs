@@ -32,7 +32,10 @@ use kt_model::FxInstance;
 /// 640×360 gets full K=4, export 1080p — up to K=2, 4K — no K×.
 /// It is raised with one constant; devices with a weak max_dim divert such
 /// plans to the CPU entirely (guard in kt-gpu resolve_chain).
-pub const MAX_INTER_DIM: u32 = 4096;
+pub const MAX_INTER_DIM: u32 = kt_plugin_api::barrier::MAX_INTER_DIM;
+// the largest K the planner hands a barrier is the supersampling ceiling; the plugin API checks
+// barrier graphs at that K (plugin-api-barriers)
+const _: () = assert!(crate::geom::SS_MAX == kt_plugin_api::barrier::MAX_RES_SCALE);
 
 /// One op of the plan. Audio FX do not enter the plan at all (they are transparent
 /// both for segmentation and for execution).

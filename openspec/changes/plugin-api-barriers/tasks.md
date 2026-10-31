@@ -34,21 +34,58 @@ stage that moves it.
 
 ## 2. The contract and the pilot (pixelate)
 
-- [ ] 2.1 `kt_plugin_api::barrier`:
+- [x] 2.1 `kt_plugin_api::barrier`:
   - `BarrierKernel` with `cook`/`frame`/`shaders`/`gpu` (the SIMD twin a branch of `frame` on `cx.simd`), `Decl.alpha`, the host's `Frame` and `Scratch`, and `BarrierCtx` (K, burst index, simd, `&dyn RasterHost`);
   - `PassGraph` with its nodes `Resample{Size}`/`Premul`/`Unpremul`/`Save(n)`/`Pass{wgsl, entry, inputs, uniforms}`;
   - `Decl.class = Barrier`.
 
   Verify: the API crate builds without kt-fx
-- [ ] 2.2 The registration refusals of design D5. Write t1054 first, red with the checks removed; verify t972 green
-- [ ] 2.3 kt-fx:
+  - `barrier.rs`: `Frame` (kt-fx re-exports it), `Scratch`, `RasterHost` (resample, sample,
+    premultiply/unpremultiply; `luma` waits for edges in 4.1), `BarrierCtx`, `AlphaRel`, `GpuCtx`,
+    `Slot`, `Node`, `BarrierKernel`, `check_graph`, and `MAX_RES_SCALE` / `MAX_INTER_DIM`, which
+    kt-fx now takes from here (with a const assert against `SS_MAX`). `Plugin::barrier()`,
+    `Decl.alpha`, `Gpu::Barrier`.
+- [x] 2.2 The registration refusals of design D5. Write t1054 first, red with the checks removed; verify t972 green
+  - t1054 (`kt-plugin-api/tests/barrier_registry.rs`) refuses:
+    - a barrier without a CPU kernel;
+    - one without a GPU kernel;
+    - a barrier offering a tap's WGSL;
+    - `Gpu::Barrier` on a point-wise plugin;
+    - a read of an unsaved slot;
+    - a half-size output;
+    - a resample above 4096;
+    - a trailing `Save`;
+    - a pass naming a missing shader;
+    - an empty graph on a frame with alpha.
+
+    It registers a graph of host nodes alone (blur's form). The graph is checked on the
+    passport's defaults and top, at K=1 and K=4. Red with the CPU-kernel check removed.
+  - "A missing alpha relation" is not representable: `AlphaRel` defaults to `Preserves`, the silent
+    one, so the refusal is gone from the spec. A trailing `Save` IS refused: found while writing
+    the executor — the saved list would release the texture the output still reads.
+- [x] 2.3 kt-fx:
   - implement `RasterHost` (`resample` = `bilinear_into` + its AVX2 twin, `mip_down`/`mip_up`, `luma`, `noise_hash`/`noise_seed`);
   - `apply_barrier` dispatches a plugin barrier through the kernel;
   - the host sets `BarrierCtx.simd` from the one `KT_SIMD`/detection switch.
 
   Verify: t198 green
-- [ ] 2.4 kt-gpu: a pass-graph executor (each distinct WGSL compiled once per engine over `common.wgsl`; slots counted from the graph; the existing `debug_assert` on the arena). Verify on the pilot
-- [ ] 2.5 Move pixelate into `src/plugins/fx-video-stylize` (new crate; added to `kt-plugins-builtin` and `BUILTIN_IDS`, in its `VIDEO_ORDER` place). Verify t1051, t973, t26, t328, t181, t329, t332, t303, t977 green; commit stage 2
+  - `kt_fx::video::{Raster, plugin_barrier}`; `FxScratch: Scratch`; `apply_barrier` makes ONE
+    dynamic call into a barrier plugin, `simd` = `simd_level() == Avx2`.
+- [x] 2.4 kt-gpu: a pass-graph executor (each distinct WGSL compiled once per engine over `common.wgsl`; slots counted from the graph; the existing `debug_assert` on the arena). Verify on the pilot
+  - `plugin_barriers()` and `barrier_pipe_base`: a barrier's passes follow the point-wise plugins'
+    own passes in `plugin_pipes`. `FxOp::PluginBarrier { base, nodes }`, whose `passes()` count is
+    its non-`Save` nodes. `chain_ops` builds the graph against the frame here and applies
+    `Decl.alpha` to the fold; the executor tracks `Src`/`Prev`/`Saved` and releases what nothing
+    reads. `assembled_shaders` (t974) is untouched.
+- [x] 2.5 Move pixelate into `src/plugins/fx-video-stylize` (new crate; added to `kt-plugins-builtin` and `BUILTIN_IDS`, in its `VIDEO_ORDER` place). Verify t1051, t973, t26, t328, t181, t329, t332, t303, t977 green; commit stage 2
+  - The variant, its tag arm, passport, constructor and `default_twelve_u32` leave kt-model; its arm
+    and kernel leave kt-fx; `Pipe::Pixelate`, `FxOp::Pixelate` and `pixelate.wgsl` (moved into the
+    crate) leave kt-gpu; kt-app's name, template, meta and variant rows go to the manifest. Callers
+    use `FxInstance::builtin("pixelate")` / `plugin_with`.
+  - t1051, t973 (`t973_barrier_kinds_keep_their_text`), t26, t328 green; t329 holds pixelate at
+    `FrameTol::EXACT` on the GPU, so the graph gives the variant's bytes. The workspace was 1273/1281
+    under load; the 8 reds (t801, t795, t640, t952, t951, t815, t476, t411) are green alone — t640
+    first red alone with "database is locked" while the machine was at load 40, then green.
 
 ## 3. The mip kinds
 

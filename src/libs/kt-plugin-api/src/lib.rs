@@ -6,6 +6,7 @@
 //! crate does not depend on kt-model and an edit of one effect does not cascade through the core.
 //! kt-model re-exports everything here under its former names.
 
+pub mod barrier;
 pub mod curves;
 pub mod dsp;
 pub mod generator;
@@ -887,6 +888,9 @@ pub enum Gpu {
     /// normalized centered space, `a.yzw`/`b.xyzw` the step's seven cooked numbers — which the
     /// host pastes into BOTH primitive loops of the fused pass.
     Warp(&'static str),
+    /// A barrier's GPU graph (plugin-api-barriers, D2): the plugin's `BarrierKernel::shaders` and the
+    /// graph its `gpu` builds per frame from the host's nodes and those passes.
+    Barrier,
 }
 
 /// A count of frames as a function of the parameter values (a tail, a look-ahead).
@@ -919,6 +923,9 @@ pub struct Decl {
     /// `automation`, `migrate_legacy_slowed`): the slot keeps them on read instead of dropping
     /// them, and writes them back only while nothing consumed them — as the variant did.
     pub legacy_fields: &'static [&'static str],
+    /// How the step relates to alpha (R.53, item 417; plugin-api-barriers D1): the chain's alpha
+    /// fold reads it instead of matching a kind.
+    pub alpha: barrier::AlphaRel,
 }
 
 /// A time-warp declaration (D11.5): which rows the host's warp machinery reads.
@@ -944,6 +951,7 @@ impl Default for Decl {
             positioned: false,
             time_warp: None,
             legacy_fields: &[],
+            alpha: barrier::AlphaRel::Preserves,
         }
     }
 }
@@ -1361,6 +1369,12 @@ pub trait Plugin: Send + Sync {
     fn generator(&self) -> Option<&dyn generator::GenKernel> {
         None
     }
+    /// A barrier's kernel (plugin-api-barriers, D1): the whole frame on the CPU and its GPU graph. A
+    /// barrier plugin has one; a point-wise plugin may have one too — its barrier position is then
+    /// this kernel, not its tap (noise, greenscreen: D4).
+    fn barrier(&self) -> Option<&dyn barrier::BarrierKernel> {
+        None
+    }
 }
 
 /// The tail of an audio plugin in frames — ONE home of the formula: the registry, the static
@@ -1451,7 +1465,43 @@ impl Registry {
                     (Some(VideoClass::PointWise | VideoClass::Barrier), Gpu::None) if m.decl.builtin => {
                         return refuse("a built-in point-wise or barrier plugin without a GPU kernel");
                     }
+                    (Some(VideoClass::Geometry | VideoClass::PointWise), Gpu::Barrier) => {
+                        return refuse("a barrier GPU graph on a plugin that is not a barrier");
+                    }
+                    (Some(VideoClass::Barrier), Gpu::Wgsl(_)) => {
+                        return refuse("a barrier offers a tap's WGSL instead of its pass graph");
+                    }
                     _ => {}
+                }
+                if m.decl.video_class == Some(VideoClass::Barrier) && p.barrier().is_none() {
+                    return refuse("a barrier without a CPU kernel");
+                }
+                if let Some(b) = p.barrier()
+                    && m.decl.gpu == Gpu::Barrier
+                {
+                    // the graph's shape is checked on the passport's defaults and its top, at K=1
+                    // and the largest K, with alpha in the frame (drop_shadow draws only then)
+                    for vals in [ParamValues::defaults(&m.passport), ParamValues::top(&m.passport)] {
+                        let k = b.cook(&vals.0);
+                        for rs in [1, barrier::MAX_RES_SCALE] {
+                            let g = barrier::GpuCtx {
+                                w: 64 * rs,
+                                h: 36 * rs,
+                                res_scale: rs,
+                                alpha: Some(true),
+                                src_has_alpha: true,
+                                burst_index: 0,
+                            };
+                            let mut nodes = Vec::new();
+                            b.gpu(&k, &g, &mut nodes);
+                            if nodes.is_empty() {
+                                return refuse("a barrier's GPU graph is empty on a frame with alpha");
+                            }
+                            if let Err(e) = barrier::check_graph(&nodes, b.shaders().len(), &g, barrier::MAX_INTER_DIM) {
+                                return refuse(&format!("a barrier's GPU graph: {e}"));
+                            }
+                        }
+                    }
                 }
             }
             Media::AudioFx => {

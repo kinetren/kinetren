@@ -3622,10 +3622,6 @@ fn default_two_u32() -> u32 {
     2
 }
 
-fn default_twelve_u32() -> u32 {
-    12
-}
-
 fn default_chroma_amount() -> f32 {
     0.012
 }
@@ -4677,12 +4673,8 @@ pub enum FxInstance {
         #[serde(default = "default_two_u32")]
         radius: u32,
     },
-    /// Mosaic (R.47, F-FX-001): an integer copy of the cell's centre.
-    /// Barrier.
-    Pixelate {
-        #[serde(default = "default_twelve_u32")]
-        size: u32,
-    },
+    // Pixelate is a plugin since plugin-api-barriers (src/plugins/fx-video-stylize): its file text
+    // is the variant's (t973).
     /// Chromatic aberration (R.47, F-FX-002): radial scale of
     /// channels — R towards the centre, B from the centre, G in place. Barrier.
     ChromaticAberration {
@@ -4927,7 +4919,6 @@ impl FxInstance {
         match self {
             FxInstance::LayerMix { .. } => "layer_mix",
             FxInstance::Sharpen { .. } => "sharpen",
-            FxInstance::Pixelate { .. } => "pixelate",
             FxInstance::ChromaticAberration { .. } => "chromatic_aberration",
             FxInstance::RadialBlur { .. } => "radial_blur",
             FxInstance::DropShadow { .. } => "drop_shadow",
@@ -4980,7 +4971,7 @@ impl FxInstance {
                 FxInstance::builtin("vignette"),
                 FxInstance::builtin("corner_pin"),
                 FxInstance::sharpen(),
-                FxInstance::pixelate(),
+                FxInstance::builtin("pixelate"),
                 FxInstance::chromatic_aberration(),
                 FxInstance::radial_blur(),
                 FxInstance::drop_shadow(),
@@ -5142,9 +5133,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
     Sharpen {
         amount: f32, 0.0, 4.0, 1.0, 0.01, Ratio, Smooth;
         radius: u32, 1.0, 16.0, 2.0, 1.0, Px, Smooth;
-    },
-    Pixelate {
-        size: u32, 2.0, 128.0, 12.0, 1.0, Px, Smooth;
     },
     ChromaticAberration {
         amount: f32, 0.0, 0.05, 0.012, 0.001, Norm, Smooth;
@@ -5756,9 +5744,6 @@ impl FxInstance {
         FxInstance::Sharpen { amount: 1.0, radius: 2 }
     }
 
-    pub fn pixelate() -> FxInstance {
-        FxInstance::Pixelate { size: 12 }
-    }
 
     pub fn chromatic_aberration() -> FxInstance {
         FxInstance::ChromaticAberration { amount: 0.012 }

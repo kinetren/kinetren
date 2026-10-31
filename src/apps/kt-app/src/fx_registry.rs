@@ -60,7 +60,6 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
         // R.47 Q2: color/style/perspective
         // R.47 Q3: barriers
         "Sharpen" => (k::fxreg::cat::BLUR, Some(k::fxreg::kw::SHARPEN)),
-        "Pixelate" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::PIXELATE)),
         "Chromatic Aberration" => {
             (k::fxreg::cat::DISTORT, Some(k::fxreg::kw::CHROMATIC_ABERRATION))
         }
@@ -184,11 +183,6 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
             var(tmpl, k::fxreg::var::SOFT, &[("amount", 0.5), ("radius", 1.0)]),
             var(tmpl, k::fxreg::var::STRONG, &[("amount", 2.0)]),
             var(tmpl, k::fxreg::var::HEAVY, &[("amount", 3.2), ("radius", 4.0)]),
-        ],
-        "Pixelate" => vec![
-            var(tmpl, k::fxreg::var::FINE, &[("size", 5.0)]),
-            var(tmpl, k::fxreg::var::COARSE, &[("size", 28.0)]),
-            var(tmpl, k::fxreg::var::CENSOR, &[("size", 64.0)]),
         ],
         "Chromatic Aberration" => vec![
             var(tmpl, k::fxreg::var::SUBTLE, &[("amount", 0.004)]),

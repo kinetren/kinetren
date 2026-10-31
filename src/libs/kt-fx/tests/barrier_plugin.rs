@@ -209,7 +209,7 @@ fn frame(s: u32, alpha: bool) -> Frame {
                 [230, 220 - (ly * 4) as u8, 40]
             };
             rgba[i..i + 3].copy_from_slice(&px);
-            let margin = lx < 6 || lx >= 44 || ly < 4 || ly >= 26;
+            let margin = !(6..44).contains(&lx) || !(4..26).contains(&ly);
             rgba[i + 3] = if alpha && margin { 0 } else { 255 };
         }
     }

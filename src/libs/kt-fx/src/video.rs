@@ -26,13 +26,9 @@ pub struct VideoFxCtx {
     pub lead: Option<crate::conform::LeadCtx>,
 }
 
-/// Frame in progress.
-pub struct Frame {
-    pub w: u32,
-    pub h: u32,
-    pub rgba: Vec<u8>,
-    pub has_alpha: bool,
-}
+/// Frame in progress — the plugin API's type (plugin-api-barriers, D1), so a barrier plugin takes
+/// and hands back the host's frame without a copy.
+pub use kt_plugin_api::barrier::Frame;
 
 /// Pool of RGBA buffers of the chain (item 2 of round 7): previously each effect allocated
 /// a full-size buffer for EACH frame (Mirror+Grid+Glow+VHS ≈ 6 allocations
@@ -95,6 +91,44 @@ impl FxScratch {
             self.bufs.push(b);
         }
     }
+}
+
+/// A barrier plugin draws its buffers from the same pool (invariant 12).
+impl kt_plugin_api::barrier::Scratch for FxScratch {
+    fn take(&mut self, len: usize) -> Vec<u8> {
+        FxScratch::take(self, len)
+    }
+    fn put(&mut self, b: Vec<u8>) {
+        FxScratch::put(self, b)
+    }
+}
+
+/// The raster code barrier plugins share with the host (plugin-api-barriers, D3): the same
+/// functions the core's own paths call, so each keeps ONE text and its SIMD twin.
+pub struct Raster;
+
+impl kt_plugin_api::barrier::RasterHost for Raster {
+    fn resample(&self, src: &Frame, tw: u32, th: u32, scratch: &mut dyn kt_plugin_api::barrier::Scratch) -> Frame {
+        let mut out = scratch.take((tw * th * 4) as usize);
+        bilinear_into(src, 0.0, 0.0, src.w as f64, src.h as f64, tw, th, &mut out);
+        Frame { w: tw, h: th, rgba: out, has_alpha: src.has_alpha }
+    }
+    fn sample(&self, f: &Frame, x: f64, y: f64) -> [f64; 4] {
+        crate::geom::sample_bilinear_f64(f, x, y)
+    }
+    fn premultiply(&self, rgba: &mut [u8]) {
+        premultiply(rgba)
+    }
+    fn unpremultiply(&self, rgba: &mut [u8]) {
+        unpremultiply(rgba)
+    }
+}
+
+/// A barrier plugin's kernel and the slot's values (plugin-api-barriers, D1): `None` — the slot is
+/// not a plugin with a barrier kernel.
+pub fn plugin_barrier(f: &FxInstance) -> Option<(&'static dyn kt_plugin_api::barrier::BarrierKernel, &[f64])> {
+    let FxInstance::Plugin(slot) = f else { return None };
+    Some((slot.plugin()?.barrier()?, &slot.values))
 }
 
 /// Built-in sample for the effect THUMBNAILS (R.54): what to show in the
@@ -292,6 +326,17 @@ pub fn apply_barrier(
     res_scale: u32,
 ) -> Frame {
     let rs = res_scale.max(1);
+    // a barrier plugin (plugin-api-barriers): one dynamic call per frame, the loop inside the kernel;
+    // SIMD is the host's ONE switch (R.32)
+    if let Some((b, values)) = plugin_barrier(f) {
+        let cx = kt_plugin_api::barrier::BarrierCtx {
+            res_scale: rs,
+            burst_index: ctx.burst_index,
+            simd: crate::simd::simd_level() == crate::simd::SimdLevel::Avx2,
+            raster: &Raster,
+        };
+        return b.frame(&b.cook(values), frame, &cx, scratch);
+    }
     match f {
         FxInstance::Blur { radius, radius_y } => blur(frame, *radius, *radius_y, scratch, rs),
         // greenscreen per-pixel — the resolution does not touch it
@@ -326,7 +371,6 @@ pub fn apply_barrier(
         FxInstance::Sharpen { amount, radius } => {
             sharpen(frame, (*amount as f64).clamp(0.0, 4.0), *radius, scratch, rs)
         }
-        FxInstance::Pixelate { size } => pixelate(frame, *size, scratch, rs),
         FxInstance::ChromaticAberration { amount } => {
             chroma_ab(frame, (*amount as f64).clamp(0.0, 0.05), scratch)
         }
@@ -378,25 +422,6 @@ fn sharpen(f: Frame, amount: f64, radius: u32, scratch: &mut FxScratch, res_scal
     }
     scratch.put(base);
     out
-}
-
-/// Mosaic (R.47): an integer copy of the cell centre C = size·K —
-/// EXACT parity with the GPU by construction.
-fn pixelate(f: Frame, size: u32, scratch: &mut FxScratch, res_scale: u32) -> Frame {
-    let c = size.clamp(2, 128) * res_scale;
-    let mut out = scratch.take(f.rgba.len());
-    for y in 0..f.h {
-        let sy = (y / c * c + c / 2).min(f.h - 1);
-        for x in 0..f.w {
-            let sx = (x / c * c + c / 2).min(f.w - 1);
-            let d = ((y * f.w + x) * 4) as usize;
-            let s = ((sy * f.w + sx) * 4) as usize;
-            out[d..d + 4].copy_from_slice(&f.rgba[s..s + 4]);
-        }
-    }
-    let res = Frame { w: f.w, h: f.h, rgba: out, has_alpha: f.has_alpha };
-    scratch.put(f.rgba);
-    res
 }
 
 /// Chromatic aberration (R.47): R is sampled closer to the centre (×(1−a)),
