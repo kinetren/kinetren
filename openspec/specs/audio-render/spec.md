@@ -40,7 +40,7 @@ Why: four threads without locks over a shared delay line poisoned the reverb (de
 - **TEST** t564 (`src/libs/kt-engine/tests/nest_render.rs`)
 
 ### Requirement: A model edit does not destroy FX state
-On any rebuild of the audio renderer, the chain state SHALL be matched by a composite key (clip id or track id) and a fingerprint of the chain's STRUCTURE (slot kinds): the same structure → the same processor; parameters arrive smoothed (one-pole ~20 ms); curves and GEOMETRY (entry point, length, handles) arrive as well; buffers are zeroed only on a real seek (`reset`). Structural changes (look-ahead window, pitch engine, geometry of reverb lines) SHALL rebuild the processor without touching the fingerprint. Muting a track (mute, not solo) MUST NOT remove its chains from the graph.
+On any rebuild of the audio renderer, the chain state SHALL be matched by a composite key (clip id or track id) and a fingerprint of the chain's STRUCTURE (slot kinds — each slot's effect kind, a plugin slot by its id, never by the enum variant all plugin slots share): the same structure → the same processor; parameters arrive smoothed (one-pole ~20 ms); curves and GEOMETRY (entry point, length, handles) arrive as well; buffers are zeroed only on a real seek (`reset`). Structural changes (look-ahead window, pitch engine, geometry of reverb lines) SHALL rebuild the processor without touching the fingerprint. Muting a track (mute, not solo) MUST NOT remove its chains from the graph.
 Why: any UI hiccup recreated the FX nodes and tore the reverb tails (defect f); the fingerprint knows only the slot kinds, and without conveying the geometry a trim left the processor with the old anchor — "sound from another event"; a key by track number would die when a neighbor was inserted.
 
 #### Scenario: Rebuilding the graph in the middle of a tail
@@ -67,6 +67,11 @@ Why: any UI hiccup recreated the FX nodes and tore the reverb tails (defect f); 
 - **WHEN** a track with a reverb on an event is muted and unmuted in the middle of the tail
 - **THEN** the chain is not recreated, and the tail continues from the same place
 - **TEST** t732 (`src/libs/kt-engine/tests/track_mix.rs`)
+
+#### Scenario: Another plugin kind in the same slot is another structure
+- **WHEN** an EQ in a slot is replaced by a filter, two plugin kinds are swapped in order, and separately a filter's cutoff is edited
+- **THEN** the first two give another fingerprint (the processor is rebuilt with the new kind's node), the value edit keeps it (the state survives)
+- **TEST** t1057 (`src/libs/kt-fx/tests/chain_kind.rs`)
 
 ### Requirement: There are two breaks — seek and splice — and they must not be confused
 A real seek (a change of generation, a sign flip of rate, a loop flip) SHALL go through `reset` and `hard_seek` with a pre-roll of `max(tail, 100 ms)` into the void; a break of the clip-local position during CONTINUOUS output (a loop-region wrap-around, an event shifted with the mouse during playback) SHALL be a SEAM: the source is reassigned, and the reverb and the resampler live on. Misses of the pre-roll SHALL be counted separately (`warmup_misses`) and MUST NOT enter the underruns.

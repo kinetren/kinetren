@@ -45,8 +45,7 @@ The full text, alternatives and measurements are in the archived change
 
   The core keeps only what a person does not pick: the Geometry lead node, CamMotion, LayerMix,
   the crossfade and the title. The title's rows are text, a font family and a layer order, and
-  its presets and R.53–R.58 migration are kt-model's. The barrier video kinds move in
-  `plugin-api-barriers`.
+  its presets and R.53–R.58 migration are kt-model's.
 - **The order of external hosts: wasm before dlopen/OpenFX (D10).** It revises F-EXT-003's
   "built-in → dlopen → OFX". A wasm module has only the imports we give it, so "no clock, no
   I/O" becomes a property; a trap is caught where a segfault is not; one binary serves Linux and
@@ -56,11 +55,32 @@ The full text, alternatives and measurements are in the archived change
   for an edit in kt-fx). The TEST build does not get cheaper: the assembler is a dev-dependency of
   seven core crates, whose ~100 integration test binaries relink (archived tasks 1.1 and 7.2).
 
+- **A barrier is a CPU kernel, its twin behind the host's one switch, and a declared GPU graph**
+  (`plugin-api-barriers`, 2026-11-01; the archived change's design.md D1–D7).
+  - `BarrierKernel::frame` is the byte reference. Its AVX2 branch runs only when `BarrierCtx::simd`,
+    which the host sets from `KT_SIMD` and the CPU, so the scalar reference stays ONE switch away
+    (R.32). A separate `frame_simd` entry was dropped as a second door with the same arguments.
+  - The GPU side is a graph of the host's nodes (`Resample`, `Premul`, `Unpremul`, `Save`) and the
+    plugin's own fragment passes over `common.wgsl`. A plugin never issues encoder commands: the
+    arena, the readback cache and device-loss poisoning stay the host's. A graph of host nodes
+    alone is legal (blur). The output must be at the frame size, and a trailing `Save` is refused —
+    the saved list would release the texture the output still reads.
+  - The shared raster code (the resample with its AVX2 twin, the bilinear sample,
+    premultiplication) is reached through `RasterHost`, not copied into the API. The geometry
+    resample and a barrier's mip stay one text.
+  - Noise and greenscreen are point-wise plugins with a barrier kernel: their tap inside a fused
+    series, their integer kernel at a series edge, exactly where the core kinds ran. The K rule
+    stays the planner's (t1055).
+  - Moving the barriers exposed three "is this the same kind" checks that compared the enum
+    discriminant, which every plugin slot shares:
+    - `FxInstance::lerp` blended blur's `radius` into glow's;
+    - `chain_fingerprint` kept an EQ's processor when a filter replaced it in the same slot
+      (t1057, audio-render);
+    - two test guards had gone blind the same way.
+    All compare the kind's tag now.
+
 ## Deferred
 
-- The barrier video kinds (blur, glow, edges, vhs, sharpen, pixelate, halftone, radial_blur,
-  drop_shadow, chromatic_aberration, noise, greenscreen): `plugin-api-barriers`, with a GPU pass
-  graph and gated SIMD twins.
 - The wasm host (stage 2), then dlopen and the OpenFX bridge (stage 3).
 - A plugin that ships UI: kind-specific widgets (the EQ graph, colour rows, camera handles) stay in
   kt-app, looked up by plugin id.

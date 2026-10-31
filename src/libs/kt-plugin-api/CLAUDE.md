@@ -13,11 +13,15 @@ keyed by `(Family, id)`. Depends on kt-time and serde ONLY: a plugin crate sees 
 - **Refusals happen in `Registry::register`, before any frame** (t972): video state, tail or
   look-ahead; a kernel not callable from several threads; an audio look-ahead reaching
   `MIN_PREROLL_FRAMES`; a built-in point-wise kernel without WGSL; a geometry kernel offering WGSL;
-  a generator decl naming a row its passport lacks. A new declaration gets its refusal here too.
+  a generator decl naming a row its passport lacks. For a barrier (t1054): no CPU kernel, no GPU
+  side as a built-in, a tap's WGSL instead of a graph, a graph reading an unsaved slot, ending off the
+  frame size or on a `Save`, a resample above `MAX_INTER_DIM`, a pass naming a missing shader, or an
+  empty graph on a frame with alpha. The graph is checked on the defaults and the top, at K 1 and 4.
+  A new declaration gets its refusal here too.
 - **Helpers shared by kernels and the host live here so each has ONE text**: `geo::invert3` and
   `TRANSPARENT`, `trans::Img`, the generator helpers (`smooth`, `rgb`, `coverage`, `lowbias32`…),
   `pixfont` (moved from kt-media). A helper the host has its own SIMD twin of stays in the host and
-  is reached through a context (the `plugin-api-barriers` design, `RasterHost`).
+  is reached through a context (`barrier::RasterHost`, plugin-api-barriers).
 - The module is `generator`, not `gen`: `gen` is a reserved keyword in Rust 2024.
 - Mandatory tests: t972 (`tests/registry.rs`) and every family's frozen-form test (t973,
   t1048) when a row or a declaration changes.
