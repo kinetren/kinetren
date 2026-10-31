@@ -1347,9 +1347,6 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Geometry { lead: true, .. } => "• Geometry",
         FxInstance::Geometry { .. } => "Geometry",
         FxInstance::CamMotion { .. } => "CamMotion",
-        FxInstance::Greenscreen { .. } => "Greenscreen",
-        FxInstance::Noise { .. } => "Noise",
-        FxInstance::Vhs { .. } => "VHS",
         // a plugin names itself in its manifest (plugin-api-stage1, D7)
         FxInstance::Plugin(p) => p.manifest().ui.name,
         // a plugin this build lacks: the id from the file, said as such
@@ -1365,9 +1362,6 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
         // one (the leading one is always present on an event and does not live in the catalog);
         // the former Pan is abolished
         ("Geometry", FxInstance::geometry_node()),
-        ("Greenscreen", FxInstance::greenscreen([0, 255, 0], 70, 25)),
-        ("Noise", FxInstance::noise(0.08)),
-        ("VHS", FxInstance::vhs(4, 0.4)),
         // R.47: per-point color/style + the first honest perspective
         // R.47 Q3: barriers
     ]
@@ -1451,7 +1445,7 @@ pub(crate) fn draw_video_fx_params(
     let mut ch = crate::widgets::ParamsChanged::default();
     // a key color is more convenient with an eyedropper than with three numbers
     let skip: &[&str] = match f {
-        FxInstance::Greenscreen { .. } => &["key_r", "key_g", "key_b"],
+        FxInstance::Plugin(p) if p.id == "greenscreen" => &["key_r", "key_g", "key_b"],
         // the outline line color and the glow tint — also with an eyedropper (R.33 S5)
         FxInstance::Plugin(p) if p.id == "edges" => &["color_r", "color_g", "color_b"],
         // the glow and shadow tints (plugin slots since plugin-api-barriers)
@@ -1568,14 +1562,16 @@ pub(crate) fn draw_video_fx_params(
                 }
             });
         }
-        FxInstance::Greenscreen { key_r, key_g, key_b, .. } => {
+        // the key colour: three u8 rows of the plugin slot (plugin-api-barriers 4.2)
+        FxInstance::Plugin(p) if p.id == "greenscreen" => {
+            let key = ["key_r", "key_g", "key_b"];
             ui.horizontal(|ui| {
-                let mut col = [*key_r as f32 / 255.0, *key_g as f32 / 255.0, *key_b as f32 / 255.0];
+                let mut col = key.map(|n| p.get(n).unwrap_or(0.0) as f32 / 255.0);
                 ui.label(tr(k::fx::KEY_COLOR));
                 if ui.color_edit_button_rgb(&mut col).changed() {
-                    *key_r = (col[0] * 255.0) as u8;
-                    *key_g = (col[1] * 255.0) as u8;
-                    *key_b = (col[2] * 255.0) as u8;
+                    for (n, v) in key.iter().zip(col) {
+                        p.set(n, (v * 255.0) as u8 as f64);
+                    }
                     ch.base = true;
                 }
             });
@@ -1659,9 +1655,14 @@ pub(crate) fn draw_video_fx_params(
             // in it — the pitch engine lives in the project settings
             ui.label(tr(k::fx::PITCH_ENGINE_NOTE));
         }
-        FxInstance::Noise { color, .. } => {
+        // noise's colour flag row (a plugin slot since plugin-api-barriers 4.2)
+        FxInstance::Plugin(p) if p.id == "noise" => {
             ui.horizontal(|ui| {
-                ch.base |= ui.checkbox(color, tr(k::fx::COLOR_NOISE)).changed();
+                let mut on = p.get("color") == Some(1.0);
+                if ui.checkbox(&mut on, tr(k::fx::COLOR_NOISE)).changed() {
+                    p.set("color", if on { 1.0 } else { 0.0 });
+                    ch.base = true;
+                }
             });
         }
         _ => {}

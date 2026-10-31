@@ -22,6 +22,16 @@ pub const MAX_RES_SCALE: u32 = 4;
 /// `MAX_INTER_DIM`, the same number).
 pub const MAX_INTER_DIM: u32 = 4096;
 
+/// The counter-based hash of the grain (lowbias32; kt-fx `noise_hash` re-exports it): integer and
+/// stateless, so the WGSL copies give the CPU's bytes on any device.
+pub use crate::generator::lowbias32 as noise_hash;
+
+/// The frame's grain seed from its burst index (noise, vhs; kt-fx `noise_seed` re-exports it).
+#[inline]
+pub fn noise_seed(burst_index: i64) -> u32 {
+    noise_hash(burst_index as u32)
+}
+
 /// A frame in progress: straight RGBA8, `w×h`. The host's frame type (kt-fx re-exports it), so a
 /// kernel hands the frame back without a copy.
 pub struct Frame {

@@ -726,7 +726,8 @@ fn t824_showcase_is_rich_valid_and_deterministic() {
     let mut fx: Vec<String> = videos
         .iter()
         .flat_map(|c| c.fx.iter())
-        .map(|f| format!("{:?}", std::mem::discriminant(f)))
+        // the KIND is the tag: every plugin slot shares one enum variant
+        .map(|f| f.tag().to_string())
         .collect();
     fx.sort();
     fx.dedup();

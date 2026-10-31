@@ -100,12 +100,8 @@ fn t550d_blend_stays_in_spec_for_every_kind() {
         for i in 0..=8 {
             let t = i as f64 / 8.0;
             let mid = f.lerp(&hi, t);
-            assert_eq!(
-                std::mem::discriminant(&mid),
-                std::mem::discriminant(f),
-                "{}: kind changed at t = {t}",
-                f.tag()
-            );
+            // the kind is the tag: every plugin slot shares one enum variant
+            assert_eq!(mid.tag(), f.tag(), "{}: kind changed at t = {t}", f.tag());
             for s in specs {
                 let v = mid.get_param(&s.name).unwrap_or(f64::NAN);
                 assert!(

@@ -196,7 +196,7 @@ fn bench_simd_1080p() {
     let mut nb2 = src.rgba.clone();
     let t = std::time::Instant::now();
     for _ in 0..iters {
-        st::noise_avx2(&mut nb2, 1920, 1080, 0xdead, 10);
+        fx_video_stylize::simd_testing::noise_avx2(&mut nb2, 1920, 1080, 0xdead, 10);
     }
     let na = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
     println!("noise 1080p: scalar {ns:.2} ms, avx2 {na:.2} ms, ×{:.2}", ns / na);
@@ -268,7 +268,7 @@ fn t198_noise_scalar_eq_avx2() {
                     let mut b = base.rgba.clone();
                     st::noise_scalar(&mut a, w, seed, k);
                     if w >= 8 {
-                        st::noise_avx2(&mut b, w, h, seed, k);
+                        fx_video_stylize::simd_testing::noise_avx2(&mut b, w, h, seed, k);
                     }
                     // the SIMD column tail is not touched, we finish it with scalar
                     let vec_w = if w >= 8 { w & !7 } else { 0 };

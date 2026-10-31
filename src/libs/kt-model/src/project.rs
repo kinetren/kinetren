@@ -1260,20 +1260,8 @@ fn default_true() -> bool {
     true
 }
 
-fn default_scan_step() -> u32 {
-    4
-}
-
-fn is_four_u32(v: &u32) -> bool {
-    *v == 4
-}
-
 fn is_zero_f64(v: &f64) -> bool {
     *v == 0.0
-}
-
-fn is_one_u32_v(v: &u32) -> bool {
-    *v == 1
 }
 
 fn is_zero_u32(v: &u32) -> bool {
@@ -4619,6 +4607,8 @@ pub enum FxInstance {
     // CornerPin is a plugin since plugin-api-stage1 (src/plugins/fx-video-distort, D11.2).
     // Blur, Glow, Sharpen, RadialBlur and DropShadow are plugins since plugin-api-barriers
     // (src/plugins/fx-video-blur): their file text is the variants' (t973).
+    // Greenscreen (src/plugins/fx-video-color), Noise and Vhs (fx-video-stylize) are plugins since
+    // plugin-api-barriers 4.2: their file text is the variants' (t973).
     // Edges, Halftone and ChromaticAberration are plugins since plugin-api-barriers 4.1
     // (src/plugins/fx-video-stylize): their file text is the variants' (t973).
     // Pixelate is a plugin since plugin-api-barriers (src/plugins/fx-video-stylize): its file text
@@ -4669,48 +4659,6 @@ pub enum FxInstance {
         keyframes: Vec<CamKeyframe>,
     },
     // Mirror and EventGrid are plugins since plugin-api-stage1 (src/plugins/fx-video-distort, D11.3).
-    Greenscreen {
-        #[serde(default)]
-        key_r: u8,
-        #[serde(default = "default_255")]
-        key_g: u8,
-        #[serde(default)]
-        key_b: u8,
-        #[serde(default = "default_tolerance")]
-        tolerance: u32,
-        #[serde(default = "default_softness")]
-        softness: u32,
-        /// Key-colour spill suppression (R.33, stage 5): the dominant channel of the key
-        /// is pulled toward its neighbours. 0 — previous behaviour.
-        #[serde(default, skip_serializing_if = "is_zero_f64")]
-        spill: f64,
-    },
-    Noise {
-        #[serde(default = "default_noise_amount")]
-        amount: f64,
-        /// Grain size in pixels (R.33, stage 5). 1 — the previous pixel grain,
-        /// byte for byte; larger values give coarse “film” grain.
-        #[serde(default = "default_one_u32", skip_serializing_if = "is_one_u32_v")]
-        size: u32,
-        /// Coloured noise: each channel has its own offset. `false` — the previous
-        /// monochrome one (a single shift for all three channels).
-        #[serde(default, skip_serializing_if = "is_false")]
-        color: bool,
-    },
-    Vhs {
-        #[serde(default = "default_rgb_shift")]
-        rgb_shift: u32,
-        #[serde(default = "default_bleed")]
-        bleed: f64,
-        /// Scan-line step (R.33, stage 5): every N-th row is darkened. 4 —
-        /// previous behaviour byte for byte, 0 — no scan lines at all.
-        #[serde(default = "default_scan_step", skip_serializing_if = "is_four_u32")]
-        scan_step: u32,
-        /// Horizontal row jitter, fraction of the frame. 0 — the previous
-        /// steady frame.
-        #[serde(default, skip_serializing_if = "is_zero_f64")]
-        jitter: f64,
-    },
     // ---- 3D effects (R.29: category Video3d; since R.44 both backends compute them) ----
     // Pan3d is a plugin since plugin-api-stage1 (src/plugins/fx-video-distort, 4.1c-4): its pinned
     // `camera` is a host-reference row (`RowRole::Camera`, read by `pinned_camera`).
@@ -4781,9 +4729,6 @@ impl FxInstance {
             FxInstance::LayerMix { .. } => "layer_mix",
             FxInstance::Geometry { .. } => "geometry",
             FxInstance::CamMotion { .. } => "cam_motion",
-            FxInstance::Greenscreen { .. } => "greenscreen",
-            FxInstance::Noise { .. } => "noise",
-            FxInstance::Vhs { .. } => "vhs",
             FxInstance::Plugin(p) => p.tag(),
             // the file's id is `MissingSlot::id`; the tag of a slot nothing can run is fixed
             FxInstance::Missing(_) => "missing",
@@ -4838,10 +4783,10 @@ impl FxInstance {
                 FxInstance::cam_motion(),
                 FxInstance::builtin("mirror"),
                 FxInstance::builtin("blur"),
-                FxInstance::greenscreen([0, 255, 0], 70, 25),
+                FxInstance::builtin("greenscreen"),
                 FxInstance::builtin("edges"),
                 FxInstance::noise(0.3),
-                FxInstance::vhs(4, 0.4),
+                FxInstance::builtin("vhs"),
                 FxInstance::builtin("glow"),
                 FxInstance::event_grid(),
                 FxInstance::builtin("pan3d"),
@@ -5003,24 +4948,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
     },
     CamMotion {
         time_scale: f64, 0.05, 8.0, 1.0, 0.01, Ratio, Smooth;
-    },
-    Greenscreen {
-        key_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        key_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        key_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        tolerance: u32, 1.0, 200.0, 70.0, 1.0, None, Smooth;
-        softness: u32, 0.0, 100.0, 25.0, 1.0, None, Smooth;
-        spill: f64, 0.0, 1.0, 0.0, 0.01, Norm, Smooth;
-    },
-    Noise {
-        amount: f64, 0.0, 1.0, 0.08, 0.01, Norm, Smooth;
-        size: u32, 1.0, 64.0, 1.0, 1.0, Px, Smooth;
-    },
-    Vhs {
-        rgb_shift: u32, 0.0, 12.0, 4.0, 1.0, Px, Smooth;
-        bleed: f64, 0.0, 1.0, 0.4, 0.01, Norm, Smooth;
-        scan_step: u32, 0.0, 32.0, 4.0, 1.0, Px, Smooth;
-        jitter: f64, 0.0, 1.0, 0.0, 0.01, Norm, Smooth;
     },
 }}
 
@@ -5451,27 +5378,6 @@ fn default_one() -> f64 {
 fn is_one(v: &f64) -> bool {
     *v == 1.0
 }
-fn default_one_u32() -> u32 {
-    1
-}
-fn default_255() -> u8 {
-    255
-}
-fn default_tolerance() -> u32 {
-    70
-}
-fn default_softness() -> u32 {
-    25
-}
-fn default_noise_amount() -> f64 {
-    0.08
-}
-fn default_rgb_shift() -> u32 {
-    4
-}
-fn default_bleed() -> f64 {
-    0.4
-}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SlowedKeyframe {
     pub t: f64,
@@ -5680,8 +5586,10 @@ impl FxInstance {
             .expect("gain is not registered: install the built-in plugin set first")
     }
 
+    /// A VHS of `rgb_shift` and `bleed` (scan step 4, no jitter) — a plugin slot (plugin-api-barriers 4.2).
     pub fn vhs(rgb_shift: u32, bleed: f64) -> FxInstance {
-        FxInstance::Vhs { rgb_shift, bleed, scan_step: 4, jitter: 0.0 }
+        FxInstance::plugin_with("vhs", &[rgb_shift as f64, bleed, 4.0, 0.0])
+            .expect("vhs is not registered: install the built-in plugin set first")
     }
 
     /// A glow of `strength` (radius 4, no threshold, white) — a plugin slot (plugin-api-barriers).
@@ -5690,19 +5598,15 @@ impl FxInstance {
             .expect("glow is not registered: install the built-in plugin set first")
     }
 
+    /// A chroma key on `key` (no spill suppression) — a plugin slot (plugin-api-barriers 4.2).
     pub fn greenscreen(key: [u8; 3], tolerance: u32, softness: u32) -> FxInstance {
-        FxInstance::Greenscreen {
-            key_r: key[0],
-            key_g: key[1],
-            key_b: key[2],
-            tolerance,
-            softness,
-            spill: 0.0,
-        }
+        FxInstance::plugin_with("greenscreen", &[key[0] as f64, key[1] as f64, key[2] as f64, tolerance as f64, softness as f64, 0.0])
+            .expect("greenscreen is not registered: install the built-in plugin set first")
     }
 
+    /// Noise of `amount` (fine, grey) — a plugin slot (plugin-api-barriers 4.2).
     pub fn noise(amount: f64) -> FxInstance {
-        FxInstance::Noise { amount, size: 1, color: false }
+        FxInstance::plugin_with("noise", &[amount, 1.0, 0.0]).expect("noise is not registered: install the built-in plugin set first")
     }
 
     /// Slowed+Reverb at a rate, a mix and a delay, the rest at the defaults — a plugin slot

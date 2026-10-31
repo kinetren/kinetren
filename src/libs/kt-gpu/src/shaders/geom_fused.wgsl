@@ -161,24 +161,6 @@ fn geo_tap(m: vec3<f32>) -> vec4<f32> {
     return bilin(m.x, m.y);
 }
 
-// lowbias32: a copy of noise.wgsl (a mirror of kt_fx::video::noise_hash).
-fn nh(v: u32) -> u32 {
-    var x = v;
-    x = x ^ (x >> 16u);
-    x = x * 0x7feb352du;
-    x = x ^ (x >> 15u);
-    x = x * 0x846ca68bu;
-    x = x ^ (x >> 16u);
-    return x;
-}
-
-// The grain offset of the common noise formula (integer division, as i64 in Rust).
-fn noff(gx: u32, gy: u32, ch: u32, seed: u32, k: i32) -> f32 {
-    let h = nh(gx ^ nh(gy ^ nh(ch ^ seed)));
-    let n = i32((h >> 16u) & 0x7fffu) - 16384;
-    return f32(n * k / 32767);
-}
-
 // meta of the i-th tap op: kind | after_prim<<2 | color<<7 | special<<8.
 fn tap_meta(i: u32) -> u32 {
     return bitcast<u32>(G.p[46u + i * 2u].x);
@@ -299,64 +281,11 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
         let a = G.p[46u + t * 2u];
         let b = G.p[47u + t * 2u];
         let tap_kind = tm & 0xfu;
-        if (tap_kind == 0u) { // Greenscreen (the continuum of the kernel’s formula)
-            let key = a.yzw;
-            let tol = b.x;
-            let hard = b.y;
-            let spill = b.z;
-            let kc = u32(b.w);
-            let dd = distance(v.xyz, key);
-            if (dd <= hard) {
-                v.w = 0.0;
-            } else if (dd < tol) {
-                v.w = v.w * (dd - hard) / max(tol - hard, 1e-9);
-            }
-            if (spill > 0.0 && v.w > 0.0) {
-                var vc = 0.0;
-                var o1 = 0.0;
-                var o2 = 0.0;
-                if (kc == 0u) { vc = v.x; o1 = v.y; o2 = v.z; }
-                else if (kc == 1u) { vc = v.y; o1 = v.z; o2 = v.x; }
-                else { vc = v.z; o1 = v.x; o2 = v.y; }
-                let other = max(o1, o2);
-                if (vc > other) {
-                    vc = vc - (vc - other) * spill;
-                    if (kc == 0u) { v.x = vc; }
-                    else if (kc == 1u) { v.y = vc; }
-                    else { v.z = vc; }
-                }
-            }
+        if (false) {
+        // kinds 0 and 1 were Greenscreen and Noise (plugins since plugin-api-barriers 4.2)
         // @PLUGIN_TAP_ARMS: kt-gpu pastes one `} else if (tap_kind == N) { v = tap_<id>(v, a, b);`
         // per point-wise plugin of the registry here (plugin-api-stage1, D5); kinds 2, 3, 4, 5 were ColorGrade,
         // Duotone, Posterize, Vignette
-        } else if (tap_kind == 1u) { // Noise: the grain is pinned to the grid of its stage
-            let seed = bitcast<u32>(a.y);
-            let k = i32(bitcast<u32>(a.z));
-            let cell = u32(a.w);
-            let sw = i32(b.x);
-            let sh = i32(b.y);
-            let c = rec[t];
-            let xi = u32(clamp(i32(floor(c.x)), 0, sw - 1));
-            let yi = u32(clamp(i32(floor(c.y)), 0, sh - 1));
-            if (((tm >> 10u) & 1u) == 1u) { // a special formula for size==1 && !color
-                let hsh = nh(xi ^ nh(yi ^ seed));
-                let nn = i32((hsh >> 16u) & 0x7fffu) - 16384;
-                let off = f32(nn * k / 32767);
-                v = vec4<f32>(v.xyz + vec3<f32>(off), v.w);
-            } else {
-                let gx = xi / cell;
-                let gy = yi / cell;
-                if (((tm >> 9u) & 1u) == 1u) { // colour grain
-                    v = vec4<f32>(
-                        v.x + noff(gx, gy, 1u, seed, k),
-                        v.y + noff(gx, gy, 2u, seed, k),
-                        v.z + noff(gx, gy, 3u, seed, k),
-                        v.w,
-                    );
-                } else {
-                    v = vec4<f32>(v.xyz + vec3<f32>(noff(gx, gy, 0u, seed, k)), v.w);
-                }
-            }
         } else {
             // unknown tap kind: the value is not touched (lock Kv1)
         }

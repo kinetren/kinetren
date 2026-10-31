@@ -51,9 +51,6 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
     // and a shortened `use` would hide the usage.
     match name {
         "Geometry" => (k::fxreg::cat::MOTION, Some(k::fxreg::kw::GEOMETRY)),
-        "Greenscreen" => (k::fxreg::cat::KEY, Some(k::fxreg::kw::GREENSCREEN)),
-        "Noise" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::NOISE)),
-        "VHS" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::VHS)),
         // R.47 Q2: color/style/perspective
         // R.47 Q3: barriers
         _ => (k::fxreg::cat::VIDEO, None),
@@ -93,29 +90,6 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
             var(tmpl, k::fxreg::var::CLOSEUP, &[("zoom", 1.25)]),
             var(tmpl, k::fxreg::var::PUNCH, &[("zoom", 2.0)]),
             var(tmpl, k::fxreg::var::OFFCENTER, &[("zoom", 1.4), ("pos_x", -0.12)]),
-        ],
-        "Greenscreen" => vec![
-            var(tmpl, k::fxreg::var::TIGHT, &[("tolerance", 40.0), ("softness", 10.0)]),
-            var(tmpl, k::fxreg::var::WIDE, &[("tolerance", 120.0), ("softness", 45.0)]),
-            var(tmpl, k::fxreg::var::BLUE, &[("key_g", 0.0), ("key_b", 255.0)]),
-        ],
-        "Noise" => vec![
-            var(tmpl, k::fxreg::var::FILM, &[("amount", 0.05), ("size", 2.0)]),
-            var(tmpl, k::fxreg::var::HEAVY, &[("amount", 0.25)]),
-            var(tmpl, k::fxreg::var::COARSE, &[("amount", 0.18), ("size", 8.0)]),
-        ],
-        "VHS" => vec![
-            var(
-                tmpl,
-                k::fxreg::var::SUBTLE,
-                &[("rgb_shift", 2.0), ("bleed", 0.2), ("scan_step", 3.0), ("jitter", 0.03)],
-            ),
-            var(tmpl, k::fxreg::var::CLASSIC, &[("bleed", 0.5), ("jitter", 0.12)]),
-            var(
-                tmpl,
-                k::fxreg::var::TRASH,
-                &[("rgb_shift", 10.0), ("bleed", 0.85), ("scan_step", 6.0), ("jitter", 0.45)],
-            ),
         ],
         // an empty list = a forgotten entry; t543 turns
         // red on it just as t48 does on a fallback category

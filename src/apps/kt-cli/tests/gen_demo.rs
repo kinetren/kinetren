@@ -124,7 +124,7 @@ fn gen_demo_concat() {
             1,
             vec![
                 grid2(),
-                FxInstance::Vhs { rgb_shift: 3, bleed: 0.35, scan_step: 4, jitter: 0.0 },
+                FxInstance::plugin_with("vhs", &[3.0, 0.35, 4.0, 0.0]).unwrap(),
                 zoom(2.0),
             ],
         ),
@@ -134,7 +134,7 @@ fn gen_demo_concat() {
             8,
             4,
             1,
-            vec![FxInstance::Vhs { rgb_shift: 3, bleed: 0.35, scan_step: 4, jitter: 0.0 }],
+            vec![FxInstance::plugin_with("vhs", &[3.0, 0.35, 4.0, 0.0]).unwrap()],
         ),
     ];
     save(&mut p, "03-barrier.kt");
@@ -149,7 +149,7 @@ fn gen_demo_concat() {
             8,
             4,
             1,
-            vec![grid2(), FxInstance::Noise { amount: 0.35, size: 2, color: true }, zoom(2.0)],
+            vec![grid2(), FxInstance::plugin_with("noise", &[0.35, 2.0, 1.0]).unwrap(), zoom(2.0)],
         ),
     ];
     save(&mut p, "04-pointwise.kt");
@@ -169,7 +169,7 @@ fn gen_demo_concat() {
             4,
             3,
             vec![
-                FxInstance::Vhs { rgb_shift: 3, bleed: 0.35, scan_step: 4, jitter: 0.0 },
+                FxInstance::plugin_with("vhs", &[3.0, 0.35, 4.0, 0.0]).unwrap(),
                 zoom(2.0),
             ],
         ),

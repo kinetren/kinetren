@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use kt_plugin_api::barrier::{AlphaRel, BarrierCtx, BarrierKernel, Frame, GpuCtx, Node, Scratch, Slot};
 use kt_plugin_api::{UiVariant, 
     Cooked, Decl, Gpu, Manifest, TapCtx, Media, ParamKind, ParamSpec, ParamUnit, Plugin, RowDecl, Store,
     UiDecl, VideoClass, VideoKernel,
@@ -11,7 +12,13 @@ use kt_plugin_api::{UiVariant,
 
 /// The plugins of this family, in the assembler's order.
 pub fn plugins() -> Vec<Arc<dyn Plugin>> {
-    vec![Arc::new(ColorGrade::new()), Arc::new(Duotone::new()), Arc::new(Posterize::new()), Arc::new(Vignette::new())]
+    vec![
+        Arc::new(ColorGrade::new()),
+        Arc::new(Duotone::new()),
+        Arc::new(Posterize::new()),
+        Arc::new(Vignette::new()),
+        Arc::new(Greenscreen::new()),
+    ]
 }
 
 /// Posterize by channels (R.47): point-wise (inside a geometry series the supersampling softens
@@ -372,3 +379,158 @@ const VIGNETTE_VARIANTS: &[UiVariant] = &[
     UiVariant { name_key: "fxreg.var.strong", sets: &[("strength", 0.9), ("radius", 0.55), ("softness", 0.35)] },
     UiVariant { name_key: "fxreg.var.tight", sets: &[("strength", 0.7), ("radius", 0.4), ("softness", 0.2)] },
 ];
+
+/// Chroma key (plugin-api-barriers 4.2): a DUAL-POSITION kind (design D4). Inside a fused geometry
+/// series it is a TAP — the f64 continuum of the kernel's formula, rounding once at the end; at a
+/// series edge it is the integer BARRIER kernel (deliberately scalar, R.32: ×1.29 under the 1.3
+/// threshold). It PRODUCES alpha (the alpha rule, R.53 item 417).
+pub struct Greenscreen {
+    m: Manifest,
+}
+
+impl Greenscreen {
+    pub fn new() -> Greenscreen {
+        let key = |n: &'static str, d: f64| ParamSpec::num(n, 0.0, 255.0, d, 1.0, ParamUnit::Rgb8, ParamKind::Smooth);
+        let int = |n: &'static str, lo: f64, hi: f64, d: f64| ParamSpec::num(n, lo, hi, d, 1.0, ParamUnit::None, ParamKind::Smooth);
+        Greenscreen {
+            m: Manifest {
+                id: "greenscreen".into(),
+                media: Media::VideoFx,
+                passport: vec![
+                    key("key_r", 0.0),
+                    key("key_g", 255.0),
+                    key("key_b", 0.0),
+                    int("tolerance", 1.0, 200.0, 70.0),
+                    int("softness", 0.0, 100.0, 25.0),
+                    ParamSpec::num("spill", 0.0, 1.0, 0.0, 0.01, ParamUnit::Norm, ParamKind::Smooth),
+                ],
+                rows: vec![
+                    RowDecl { store: Store::U8, omit_default: false },
+                    RowDecl { store: Store::U8, omit_default: false },
+                    RowDecl { store: Store::U8, omit_default: false },
+                    RowDecl { store: Store::U32, omit_default: false },
+                    RowDecl { store: Store::U32, omit_default: false },
+                    RowDecl { store: Store::F64, omit_default: true },
+                ],
+                decl: Decl {
+                    video_class: Some(VideoClass::PointWise),
+                    gpu: Gpu::Wgsl(include_str!("tap_greenscreen.wgsl")),
+                    alpha: AlphaRel::Produces,
+                    ..Decl::default()
+                },
+                ui: UiDecl {
+                    name: "Greenscreen",
+                    category_key: "fxreg.cat.key",
+                    keywords_key: "fxreg.kw.greenscreen",
+                    variants: GREENSCREEN_VARIANTS,
+                    ..UiDecl::default()
+                },
+            },
+        }
+    }
+
+    /// `[key_r, key_g, key_b, tolerance, hard, spill, kc]`: tolerance 1..200, softness 0..100,
+    /// hard = tolerance − softness (≥ 0), spill 0..1, kc the key's dominant channel.
+    fn keyed(p: &[f64]) -> Cooked {
+        let key = [p[0] as u8, p[1] as u8, p[2] as u8];
+        let tol = (p[3] as u32).clamp(1, 200) as f64;
+        let soft = (p[4] as u32).clamp(0, 100) as f64;
+        let kc = (0..3).max_by_key(|&i| key[i]).unwrap_or(1);
+        [key[0] as f64, key[1] as f64, key[2] as f64, tol, (tol - soft).max(0.0), p[5].clamp(0.0, 1.0), kc as f64, 0.0]
+    }
+}
+
+const GREENSCREEN_VARIANTS: &[UiVariant] = &[
+    UiVariant { name_key: "fxreg.var.tight", sets: &[("tolerance", 40.0), ("softness", 10.0)] },
+    UiVariant { name_key: "fxreg.var.wide", sets: &[("tolerance", 120.0), ("softness", 45.0)] },
+    UiVariant { name_key: "fxreg.var.blue", sets: &[("key_g", 0.0), ("key_b", 255.0)] },
+];
+
+impl Default for Greenscreen {
+    fn default() -> Greenscreen {
+        Greenscreen::new()
+    }
+}
+
+impl Plugin for Greenscreen {
+    fn manifest(&self) -> &Manifest {
+        &self.m
+    }
+    fn video(&self) -> Option<&dyn VideoKernel> {
+        Some(self)
+    }
+    fn barrier(&self) -> Option<&dyn BarrierKernel> {
+        Some(self)
+    }
+}
+
+impl VideoKernel for Greenscreen {
+    fn cook(&self, p: &[f64]) -> Cooked {
+        Greenscreen::keyed(p)
+    }
+    /// The f64 continuum of the kernel's formula on the sub-tap value.
+    #[inline(always)]
+    fn tap(&self, k: &Cooked, v: &mut [f64; 4]) {
+        let (key, tol, hard, spill, kc) = ([k[0], k[1], k[2]], k[3], k[4], k[5], k[6] as usize);
+        let d = ((v[0] - key[0]).powi(2) + (v[1] - key[1]).powi(2) + (v[2] - key[2]).powi(2)).sqrt();
+        if d <= hard {
+            v[3] = 0.0;
+        } else if d < tol {
+            v[3] *= (d - hard) / (tol - hard).max(1e-9);
+        }
+        if spill > 0.0 && v[3] > 0.0 {
+            let other = v[(kc + 1) % 3].max(v[(kc + 2) % 3]);
+            if v[kc] > other {
+                v[kc] -= (v[kc] - other) * spill;
+            }
+        }
+    }
+    /// a.yzw = the key, b = (tolerance, hard, spill, kc).
+    fn gpu_cooked(&self, k: &Cooked, _p: &[f64]) -> [f32; 7] {
+        [k[0] as f32, k[1] as f32, k[2] as f32, k[3] as f32, k[4] as f32, k[5] as f32, k[6] as f32]
+    }
+}
+
+impl BarrierKernel for Greenscreen {
+    fn cook(&self, p: &[f64]) -> Cooked {
+        Greenscreen::keyed(p)
+    }
+
+    fn frame(&self, k: &Cooked, mut f: Frame, _cx: &BarrierCtx, _scratch: &mut dyn Scratch) -> Frame {
+        let (key, tol, hard, spill, kc) = ([k[0], k[1], k[2]], k[3], k[4], k[5], k[6] as usize);
+        for px in f.rgba.chunks_exact_mut(4) {
+            let d = ((px[0] as f64 - key[0]).powi(2) + (px[1] as f64 - key[1]).powi(2) + (px[2] as f64 - key[2]).powi(2)).sqrt();
+            if d <= hard {
+                px[3] = 0;
+            } else if d < tol {
+                let a = (d - hard) / (tol - hard).max(1e-9);
+                px[3] = (px[3] as f64 * a).round() as u8;
+            }
+            // spill suppression (R.33 C5): the key's dominant channel is pulled toward the larger
+            // of the neighbours; spill = 0 — the former path byte-for-byte
+            if spill > 0.0 && px[3] > 0 {
+                let other = px[(kc + 1) % 3].max(px[(kc + 2) % 3]) as f64;
+                let v = px[kc] as f64;
+                if v > other {
+                    px[kc] = (v - (v - other) * spill).round() as u8;
+                }
+            }
+        }
+        f.has_alpha = true;
+        f
+    }
+
+    fn shaders(&self) -> &'static [&'static str] {
+        &[include_str!("greenscreen.wgsl")]
+    }
+
+    /// One pass: `u0.x` = kc, `f` = (key, tolerance, hard, spill) in f32.
+    fn gpu(&self, k: &Cooked, _g: &GpuCtx, out: &mut Vec<Node>) {
+        out.push(Node::Pass {
+            shader: 0,
+            inputs: [Slot::Prev, Slot::None, Slot::None],
+            u: [k[6] as u32, 0, 0, 0, 0, 0, 0, 0],
+            f: [k[0] as f32, k[1] as f32, k[2] as f32, k[3] as f32, k[4] as f32, k[5] as f32, 0.0, 0.0],
+        });
+    }
+}

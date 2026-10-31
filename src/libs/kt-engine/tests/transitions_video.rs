@@ -1155,14 +1155,7 @@ fn t521_alpha_layer_under_a_chain_shows_through() {
     // through, further the grid (the synthetic frames are a solid color from pts)
     let top = synth_frame(t, q);
     p.clips[0].fx = vec![
-        FxInstance::Greenscreen {
-            key_r: top[0],
-            key_g: top[1],
-            key_b: top[2],
-            tolerance: 8,
-            softness: 0,
-            spill: 0.0,
-        },
+        FxInstance::plugin_with("greenscreen", &[(top[0]) as f64, (top[1]) as f64, (top[2]) as f64, 8.0, 0.0, 0.0]).unwrap(),
         kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap(),
     ];
     p.clips[0].fx_bypass = vec![false; 2];

@@ -132,28 +132,10 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
     for (i, op) in prog.tap_ops.iter().enumerate() {
         let base = 46 + i * 2;
         match op.kind {
-            kt_fx::geom::TapKind::Gs { key, tol, hard, spill, kc } => {
-                let meta = (op.after_prim as u32) << 4;
-                u.p[base] = [f32::from_bits(meta), key[0] as f32, key[1] as f32, key[2] as f32];
-                u.p[base + 1] = [tol as f32, hard as f32, spill as f32, kc as f32];
-            }
-            kt_fx::geom::TapKind::Noise { seed, k, cell, color, special, stage_w, stage_h } => {
-                let meta = 1u32
-                    | ((op.after_prim as u32) << 4)
-                    | ((color as u32) << 9)
-                    | ((special as u32) << 10);
-                u.p[base] = [
-                    f32::from_bits(meta),
-                    f32::from_bits(seed),
-                    f32::from_bits(k as u32),
-                    cell as f32,
-                ];
-                u.p[base + 1] = [stage_w as f32, stage_h as f32, 0.0, 0.0];
-            }
             kt_fx::geom::TapKind::Plugin(t) => {
                 let kind = plugin_tap_kind(t.id);
                 let meta = kind | ((op.after_prim as u32) << 4);
-                let g = t.kernel.gpu_params(t.values());
+                let g = t.gpu();
                 u.p[base] = [f32::from_bits(meta), g[0], g[1], g[2]];
                 u.p[base + 1] = [g[3], g[4], g[5], g[6]];
                 if t.positioned {
@@ -180,9 +162,6 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
 enum Pipe {
     Resample,
     Mirror,
-    Noise,
-    Greenscreen,
-    Vhs,
     Composite,
     /// Layer blend strength (R.38 item 12): mixing of the dry and wet sides.
     LayerMix,
@@ -196,7 +175,7 @@ enum Pipe {
     GridTile,
 }
 
-const PIPE_COUNT: usize = 10;
+const PIPE_COUNT: usize = 7;
 
 /// One chain step precomputed on the CPU (common maths: kt-fx:
 /// pan_frame/cam_at/noise_seed). The number of passes and the sizes are known in advance.
@@ -210,29 +189,6 @@ enum FxOp {
     Mirror {
         h: bool,
         v: bool,
-    },
-    Noise {
-        seed: u32,
-        k: u32,
-        size: u32,
-        color: bool,
-        res_scale: u32,
-    },
-    Greenscreen {
-        key: [f32; 3],
-        tol: f32,
-        hard: f32,
-        spill: f32,
-        kc: u32,
-    },
-    Vhs {
-        shift: u32,
-        line_off: u32,
-        bleed: f32,
-        jq: i32,
-        step: u32,
-        seed: u32,
-        res_scale: u32,
     },
     /// R.47 barriers Kv3. Sharpen/DropShadow take 3 passes (mip down/up +
     /// final), the others take one.
@@ -448,33 +404,6 @@ fn chain_ops(
                 }
             },
             kt_fx::plan::PlanOp::Barrier { idx, res_scale } => match &fx[idx] {
-                FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness, spill } => {
-                    let tol = (*tolerance).clamp(1, 200);
-                    let soft = (*softness).clamp(0, 100);
-                    let hard = (tol as f64 - soft as f64).max(0.0);
-                    let key = [*key_r, *key_g, *key_b];
-                    ops.push(FxOp::Greenscreen {
-                        key: [key[0] as f32, key[1] as f32, key[2] as f32],
-                        tol: tol as f32,
-                        hard: hard as f32,
-                        spill: spill.clamp(0.0, 1.0) as f32,
-                        kc: (0..3).max_by_key(|&i| key[i]).unwrap_or(1) as u32,
-                    });
-                    has_alpha_known = true;
-                    has_alpha = true;
-                }
-                FxInstance::Noise { amount, size, color } => {
-                    let k = (amount.clamp(0.0, 1.0) * 32.0) as i64;
-                    if k > 0 {
-                        ops.push(FxOp::Noise {
-                            seed: kt_fx::video::noise_seed(t.0),
-                            k: k as u32,
-                            size: (*size).clamp(1, 64),
-                            color: *color,
-                            res_scale,
-                        });
-                    }
-                }
                 f @ FxInstance::Plugin(slot) if kt_fx::video::plugin_barrier(f).is_some() => {
                     // a barrier plugin (plugin-api-barriers): its graph against the frame here; an empty
                     // graph is a passthrough (drop_shadow on an opaque frame)
@@ -519,26 +448,12 @@ fn chain_ops(
                 }
                 f @ FxInstance::Plugin(_) if kt_fx::geom::PluginTap::of(f).is_some() => {
                     let t = kt_fx::geom::PluginTap::of(f).expect("checked");
-                    let g = t.kernel.gpu_params(t.values());
+                    let g = t.gpu();
                     let idx = plugin_taps().iter().position(|(id, _)| *id == t.id).expect("assembled at engine creation");
                     ops.push(FxOp::PluginTap {
                         idx,
                         f: [0.0, g[0], g[1], g[2], g[3], g[4], g[5], g[6]],
                         positioned: t.positioned,
-                    });
-                }
-                FxInstance::Vhs { rgb_shift, bleed, scan_step, jitter } => {
-                    ops.push(FxOp::Vhs {
-                        // R.45 (item 313): shift ×K; the line context (scan and
-                        // jitter) the shader takes from the logical line y/K
-                        shift: (*rgb_shift).clamp(0, 12) * res_scale,
-                        line_off: ((t.0 / 3000) % 7) as u32,
-                        bleed: bleed.clamp(0.0, 1.0) as f32,
-                        step: (*scan_step).clamp(0, 32),
-                        // the jitter quantum is the same as the CPU kernel computes
-                        jq: (jitter.clamp(0.0, 1.0) * 1024.0).round() as i32,
-                        seed: kt_fx::video::noise_seed(t.0),
-                        res_scale,
                     });
                 }
                 _ => debug_assert!(false, "barrier op on non-barrier fx"),
@@ -678,9 +593,6 @@ pub struct GpuFxEngine {
 const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("resample", include_str!("shaders/resample.wgsl")),
     ("mirror", include_str!("shaders/mirror.wgsl")),
-    ("noise", include_str!("shaders/noise.wgsl")),
-    ("greenscreen", include_str!("shaders/greenscreen.wgsl")),
-    ("vhs", include_str!("shaders/vhs.wgsl")),
     ("composite", include_str!("shaders/composite.wgsl")),
     ("layer_mix", include_str!("shaders/layer_mix.wgsl")),
     ("unpremul", include_str!("shaders/unpremul.wgsl")),
@@ -761,8 +673,9 @@ pub fn plugin_barriers() -> Vec<(&'static str, &'static [&'static str])> {
     reg.plugins()
         .filter_map(|p| {
             let m = p.manifest();
+            // a barrier, or a point-wise plugin with a barrier kernel of its own (noise, greenscreen)
             match (m.media, m.decl.gpu, p.barrier()) {
-                (kt_plugin_api::Media::VideoFx, kt_plugin_api::Gpu::Barrier, Some(b)) => {
+                (kt_plugin_api::Media::VideoFx, g, Some(b)) if g != kt_plugin_api::Gpu::None => {
                     let id: &'static str = &m.id;
                     Some((id, b.shaders()))
                 }
@@ -1612,47 +1525,6 @@ impl Inner {
                         ..Default::default()
                     };
                     self.pass(enc, Pipe::Mirror, &dst.view, &view, &dummy, &dummy, u);
-                    if let Some(t) = owned.take() {
-                        self.pool.release(t);
-                    }
-                    view = dst.view.clone();
-                    owned = Some(dst);
-                }
-                FxOp::Noise { seed, k, size, color, res_scale } => {
-                    let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        u: [*seed, *k, *size, *color as u32, *res_scale, 0, 0, 0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::Noise, &dst.view, &view, &dummy, &dummy, u);
-                    if let Some(t) = owned.take() {
-                        self.pool.release(t);
-                    }
-                    view = dst.view.clone();
-                    owned = Some(dst);
-                }
-                FxOp::Greenscreen { key, tol, hard, spill, kc } => {
-                    let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        u: [*kc, 0, 0, 0, 0, 0, 0, 0],
-                        f: [key[0], key[1], key[2], *tol, *hard, *spill, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::Greenscreen, &dst.view, &view, &dummy, &dummy, u);
-                    if let Some(t) = owned.take() {
-                        self.pool.release(t);
-                    }
-                    view = dst.view.clone();
-                    owned = Some(dst);
-                }
-                FxOp::Vhs { shift, line_off, bleed, jq, step, seed, res_scale } => {
-                    let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        u: [w, *shift, *line_off, *step, *seed, *jq as u32, *res_scale, 0],
-                        f: [*bleed, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::Vhs, &dst.view, &view, &dummy, &dummy, u);
                     if let Some(t) = owned.take() {
                         self.pool.release(t);
                     }

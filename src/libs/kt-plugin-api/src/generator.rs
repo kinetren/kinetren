@@ -241,6 +241,7 @@ pub fn coverage(d: i64, fe: i64) -> i64 {
 
 /// lowbias32 (Chris Wellons): the same avalanche hash as in kt-fx::video
 /// (`noise_hash`): integer, deterministic, stateless.
+#[inline]
 pub fn lowbias32(mut x: u32) -> u32 {
     x ^= x >> 16;
     x = x.wrapping_mul(0x7feb_352d);

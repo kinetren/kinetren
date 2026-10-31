@@ -335,10 +335,10 @@ fn t228_new_fx_params_change_the_picture() {
     let fine = run(FxInstance::noise(0.5));
     assert_eq!(
         hash(run(FxInstance::noise(0.5))),
-        hash(run(FxInstance::Noise { amount: 0.5, size: 1, color: false })),
+        hash(run(FxInstance::plugin_with("noise", &[0.5, 1.0, 0.0]).unwrap())),
         "size = 1, mono — the prior formula"
     );
-    let coarse = run(FxInstance::Noise { amount: 0.5, size: 8, color: false });
+    let coarse = run(FxInstance::plugin_with("noise", &[0.5, 8.0, 0.0]).unwrap());
     assert_ne!(hash(fine), xxh3_64(&coarse.rgba), "a large grain must differ");
     // coarse grain: inside an 8×8 block the shift is ONE, so the neighbouring pixels
     // of the block differ exactly as in the source
@@ -350,7 +350,7 @@ fn t228_new_fx_params_change_the_picture() {
     assert_eq!(d_at(&coarse, 0, 0), d_at(&coarse, 3, 3), "within a grain the shift is one");
     assert_ne!(d_at(&coarse, 0, 0), d_at(&coarse, 9, 9), "the neighbouring grain has its own");
     // colour noise: the channels have their own shifts
-    let col = run(FxInstance::Noise { amount: 0.5, size: 1, color: true });
+    let col = run(FxInstance::plugin_with("noise", &[0.5, 1.0, 1.0]).unwrap());
     let mut differs = 0;
     for (p, s) in col.rgba.chunks_exact(4).zip(src.rgba.chunks_exact(4)) {
         let dr = p[0] as i32 - s[0] as i32;
@@ -399,7 +399,7 @@ fn t228_glow_vhs_greenscreen_params() {
     let vplain = run(FxInstance::vhs(4, 0.4));
     assert_eq!(
         hash(&vplain),
-        hash(&run(FxInstance::Vhs { rgb_shift: 4, bleed: 0.4, scan_step: 4, jitter: 0.0 })),
+        hash(&run(FxInstance::plugin_with("vhs", &[4.0, 0.4, 4.0, 0.0]).unwrap())),
         "step 4 and zero jitter — the prior VHS"
     );
     // rows with a scan line: we count the rows where green dropped
@@ -412,8 +412,8 @@ fn t228_glow_vhs_greenscreen_params() {
             })
             .count()
     };
-    let sparse = run(FxInstance::Vhs { rgb_shift: 4, bleed: 0.4, scan_step: 12, jitter: 0.0 });
-    let none = run(FxInstance::Vhs { rgb_shift: 4, bleed: 0.4, scan_step: 0, jitter: 0.0 });
+    let sparse = run(FxInstance::plugin_with("vhs", &[4.0, 0.4, 12.0, 0.0]).unwrap());
+    let none = run(FxInstance::plugin_with("vhs", &[4.0, 0.4, 0.0, 0.0]).unwrap());
     assert!(
         dark_rows(&sparse) < dark_rows(&vplain),
         "sparse scan lines: {} against {}",
@@ -421,20 +421,13 @@ fn t228_glow_vhs_greenscreen_params() {
         dark_rows(&vplain)
     );
     assert_eq!(dark_rows(&none), 0, "step 0 — no scan lines at all");
-    let jit = run(FxInstance::Vhs { rgb_shift: 0, bleed: 0.0, scan_step: 0, jitter: 0.8 });
+    let jit = run(FxInstance::plugin_with("vhs", &[0.0, 0.0, 0.0, 0.8]).unwrap());
     assert_ne!(hash(&jit), hash(&src), "jitter must shift rows");
 
     // ---- Greenscreen: spill suppression --------------------------------
     let key = [0u8, 255, 0];
     let keyed = run(FxInstance::greenscreen(key, 70, 25));
-    let despilled = run(FxInstance::Greenscreen {
-        key_r: 0,
-        key_g: 255,
-        key_b: 0,
-        tolerance: 70,
-        softness: 25,
-        spill: 1.0,
-    });
+    let despilled = run(FxInstance::plugin_with("greenscreen", &[0.0, 255.0, 0.0, 70.0, 25.0, 1.0]).unwrap());
     // in visible pixels green MUST drop, alpha must not change
     let (mut lower, mut alpha_same) = (0usize, true);
     for (a, b) in keyed.rgba.chunks_exact(4).zip(despilled.rgba.chunks_exact(4)) {

@@ -136,11 +136,37 @@ stage that moves it.
   - Verified: t1051 on both SIMD paths, t198 (`KT_REQUIRE_SIMD=1`), t26 scalar, kt-gpu 28/28 with
     `KT_REQUIRE_GPU=1`. The workspace was 1276/1283; the seven load reds (t795, t640, t952, t951,
     t815, t200, t194) are green alone.
-- [ ] 4.2 Vhs and noise into `fx-video-stylize`, greenscreen into `fx-video-color`:
+- [x] 4.2 Vhs and noise into `fx-video-stylize`, greenscreen into `fx-video-color`:
   - the burst index arrives through `BarrierCtx`;
   - noise and greenscreen keep their positioned tap (D11.1) next to the barrier kernel, and the planner chooses by position (design D4).
 
   Verify t1051, t198, t26, t302, t304, t308, t181, t329, t992
+  - Noise and greenscreen are POINT-WISE plugins with a barrier kernel. Inside a series their tap
+    is the former fused arm verbatim (`tap_noise`/`tap_greenscreen` WGSL with their own hash
+    names; the f64 `tap_at`/`tap`); at a series edge the integer kernel with K×, noise's AVX2 twin
+    and its own pass.
+  - API additions:
+    - `TapCtx.burst_index` (noise's seed);
+    - `VideoKernel::gpu_cooked` (GPU numbers from the cooked form);
+    - `VideoKernel::active` (noise at k = 0 puts no tap in the program, as the core kind did);
+    - `noise_hash`/`noise_seed` in the API (kt-fx re-exports them; `lowbias32` got `#[inline]`).
+  - The fused program applies a plugin tap's `Decl.alpha` (greenscreen produces). kt-gpu's
+    `plugin_barriers` and the registry's graph check include point-wise plugins with a barrier
+    kernel.
+  - kt-gpu lost:
+    - `Pipe::{Noise, Greenscreen, Vhs}`, their `FxOp`s and WGSL (moved);
+    - the fused pass's tap kinds 0/1 and its `nh`/`noff`.
+  - kt-model lost the three variants, their passports and ten serde defaults; `noise(amount)`,
+    `vhs(shift, bleed)` and `greenscreen(key, tol, soft)` stay parametric. kt-app draws the key
+    colour and noise's colour flag by plugin id.
+  - Verified:
+    - t1051 on both SIMD paths, t198 (`KT_REQUIRE_SIMD=1`), t26 scalar;
+    - kt-gpu 28/28 with `KT_REQUIRE_GPU=1` (t181, t329, t992);
+    - the workspace: t801, t815, t951, t476 are load reds, green alone.
+  - Two more "same kind by discriminant" checks went blind once every barrier was a plugin:
+    - t824's "≥ 3 video FX kinds" in the showcase;
+    - t550d's "the kind does not change along the strength axis".
+    Both compare tags now. t974's tap list grows by greenscreen and noise.
 - [ ] 4.3 Write t1055 (`src/libs/kt-fx/tests/geo_fuse.rs`): a test barrier plugin the host does not name gets K=2 between a grid and a zoom and after S=2, as a built-in. Red with the planner reading K from a kind list
 - [ ] 4.4 Write t1052 (`src/libs/kt-gpu/tests/parity.rs`): every registered barrier on the GPU within its class, and a two-pass test plugin needing no host code. Red with the saved slot ignored. Write t1053 (`src/libs/kt-fx/tests/simd_parity.rs`): the twin parity over the registry. Red with one twin perturbed; commit stage 4
 

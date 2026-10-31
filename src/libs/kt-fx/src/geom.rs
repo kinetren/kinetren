@@ -565,11 +565,8 @@ pub const MAX_PRIM_SLOTS: usize = 46;
 /// (between geo steps of the run) are absorbed: leading/trailing ones stay
 /// barriers — at K=1 their bytes are indistinguishable from the old ones.
 pub fn is_pointwise(f: &FxInstance) -> bool {
-    matches!(
-        f,
-        FxInstance::Greenscreen { .. }
-            | FxInstance::Noise { .. }
-    ) || plugin_class(f) == Some(kt_plugin_api::VideoClass::PointWise)
+    // greenscreen and noise are point-wise plugins since plugin-api-barriers 4.2
+    plugin_class(f) == Some(kt_plugin_api::VideoClass::PointWise)
 }
 
 /// The planner class a video plugin declares (plugin-api-stage1, D5): `plan_chain` asks the
@@ -594,6 +591,8 @@ pub struct PluginTap {
     /// The stage the tap belongs to (D11.1): a positioned kernel's GPU arm reads it from `b.zw`.
     pub stage: kt_plugin_api::TapCtx,
     pub positioned: bool,
+    /// How the tap relates to alpha (the plugin's `Decl.alpha`), for the program's fold.
+    pub alpha: kt_plugin_api::barrier::AlphaRel,
 }
 
 impl PluginTap {
@@ -615,12 +614,22 @@ impl PluginTap {
         let n = slot.values.len().min(8);
         values[..n].copy_from_slice(&slot.values[..n]);
         let cooked = kernel.cook_at(&values[..n], &stage);
-        Some(PluginTap { id: &m.id, kernel, values, n, cooked, stage, positioned: m.decl.positioned })
+        Some(PluginTap { id: &m.id, kernel, values, n, cooked, stage, positioned: m.decl.positioned, alpha: m.decl.alpha })
     }
 
     /// The values in passport order.
     pub fn values(&self) -> &[f64] {
         &self.values[..self.n]
+    }
+
+    /// Whether the cooked tap does anything (an inactive one is left out of the program).
+    pub fn active(&self) -> bool {
+        self.kernel.active(&self.cooked)
+    }
+
+    /// The seven numbers the GPU tap reads (`a.yzw`, `b.xyzw`), packed from the cooked form.
+    pub fn gpu(&self) -> [f32; 7] {
+        self.kernel.gpu_cooked(&self.cooked, self.values())
     }
 
     /// The function of one sample inside the fused pass (the CPU), at its stage coordinate.
@@ -644,12 +653,6 @@ impl std::fmt::Debug for PluginTap {
 /// the box average), in chain order (R.45, item 312).
 #[derive(Debug, Clone, Copy)]
 pub enum TapKind {
-    /// Greenscreen: f64/f32 continuum of the integer kernel formula.
-    Gs { key: [f64; 3], tol: f64, hard: f64, spill: f64, kc: usize },
-    /// Noise: grain is pinned to the grid of ITS OWN step (decision R.45) — the offset
-    /// is computed from floor of the stage coordinate; `special` is the special formula
-    /// for the user `size == 1 && !color` (it has a different grain).
-    Noise { seed: u32, k: i64, cell: u32, color: bool, special: bool, stage_w: u32, stage_h: u32 },
     /// A point-wise PLUGIN (plugin-api-stage1, D5) — Posterize since the pilot.
     Plugin(PluginTap),
 }
@@ -1047,39 +1050,24 @@ fn build_program(
                     has_alpha = true;
                 }
             }
-            FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness, spill } => {
-                let tol = (*tolerance).clamp(1, 200) as f64;
-                let soft = (*softness).clamp(0, 100) as f64;
-                let key = [*key_r, *key_g, *key_b];
-                fw.push(Step::Tap(TapKind::Gs {
-                    key: [key[0] as f64, key[1] as f64, key[2] as f64],
-                    tol,
-                    hard: (tol - soft).max(0.0),
-                    spill: spill.clamp(0.0, 1.0),
-                    kc: (0..3).max_by_key(|&i| key[i]).unwrap_or(1),
-                }));
-                has_alpha_known = true;
-                has_alpha = true;
-            }
-            FxInstance::Noise { amount, size, color } => {
-                let k = (amount.clamp(0.0, 1.0) * 32.0) as i64;
-                // k == 0 — the effect is empty (like the kernel's early exit and the GPU branch)
-                if k > 0 {
-                    let size = (*size).clamp(1, 64);
-                    fw.push(Step::Tap(TapKind::Noise {
-                        seed: crate::video::noise_seed(burst_index),
-                        k,
-                        cell: size,
-                        color: *color,
-                        special: size == 1 && !*color,
-                        stage_w: w,
-                        stage_h: h,
-                    }));
-                }
-            }
             f @ FxInstance::Plugin(_) => {
-                if let Some(t) = PluginTap::of_at(f, kt_plugin_api::TapCtx { stage_w: w, stage_h: h }) {
-                    fw.push(Step::Tap(TapKind::Plugin(t)));
+                if let Some(t) = PluginTap::of_at(f, kt_plugin_api::TapCtx { stage_w: w, stage_h: h, burst_index }) {
+                    // an inactive tap is not in the program (noise at k = 0, as the core kind did)
+                    if t.active() {
+                        fw.push(Step::Tap(TapKind::Plugin(t)));
+                        // the alpha rule (R.53 item 417): declared by the step (greenscreen produces)
+                        match t.alpha {
+                            kt_plugin_api::barrier::AlphaRel::Preserves => {}
+                            kt_plugin_api::barrier::AlphaRel::Produces => {
+                                has_alpha_known = true;
+                                has_alpha = true;
+                            }
+                            kt_plugin_api::barrier::AlphaRel::Destroys => {
+                                has_alpha_known = true;
+                                has_alpha = false;
+                            }
+                        }
+                    }
                 } else if let Some((warp, steps)) =
                     plugin_geo_steps(
                         f,
@@ -1526,70 +1514,6 @@ fn map_pos_rec(
     (Mapped::At(x, y), prims.len())
 }
 
-/// Greenscreen on the subtap value: f64 continuum of the integer kernel formula
-/// (rounding happens once at the end of the pipeline).
-#[inline]
-fn tap_gs(v: &mut [f64; 4], key: &[f64; 3], tol: f64, hard: f64, spill: f64, kc: usize) {
-    let d = ((v[0] - key[0]).powi(2) + (v[1] - key[1]).powi(2) + (v[2] - key[2]).powi(2)).sqrt();
-    if d <= hard {
-        v[3] = 0.0;
-    } else if d < tol {
-        v[3] *= (d - hard) / (tol - hard).max(1e-9);
-    }
-    if spill > 0.0 && v[3] > 0.0 {
-        let other = v[(kc + 1) % 3].max(v[(kc + 2) % 3]);
-        if v[kc] > other {
-            v[kc] -= (v[kc] - other) * spill;
-        }
-    }
-}
-
-/// Noise on the subtap value: offset from the floor of the coordinate of ITS OWN stage
-/// (grain pinned to its grid, decision R.45); the hash formulas are verbatim
-/// the noise kernel (both branches).
-#[inline]
-#[allow(clippy::too_many_arguments)]
-fn tap_noise(
-    v: &mut [f64; 4],
-    coord: (f64, f64),
-    seed: u32,
-    k: i64,
-    cell: u32,
-    color: bool,
-    special: bool,
-    stage_w: u32,
-    stage_h: u32,
-) {
-    use crate::video::noise_hash as nh;
-    let xi = (coord.0.floor() as i64).clamp(0, stage_w as i64 - 1) as u32;
-    let yi = (coord.1.floor() as i64).clamp(0, stage_h as i64 - 1) as u32;
-    if special {
-        let hsh = nh(xi ^ nh(yi ^ seed));
-        let n = ((hsh >> 16) & 0x7fff) as i64 - 16384;
-        let off = (n * k / 32767) as f64;
-        for c in v.iter_mut().take(3) {
-            *c += off;
-        }
-    } else {
-        let (gx, gy) = (xi / cell, yi / cell);
-        let off_at = |ch: u32| -> f64 {
-            let hsh = nh(gx ^ nh(gy ^ nh(ch ^ seed)));
-            let n = ((hsh >> 16) & 0x7fff) as i64 - 16384;
-            (n * k / 32767) as f64
-        };
-        if color {
-            for (c, val) in v.iter_mut().take(3).enumerate() {
-                *val += off_at(c as u32 + 1);
-            }
-        } else {
-            let off = off_at(0);
-            for c in v.iter_mut().take(3) {
-                *c += off;
-            }
-        }
-    }
-}
-
 
 
 
@@ -1618,10 +1542,6 @@ fn sample_at(p: &GeomProgram, src: &Frame, x: f64, y: f64) -> [f64; 4] {
             continue; // the op's stage is cut by a short circuit
         }
         match op.kind {
-            TapKind::Gs { key, tol, hard, spill, kc } => tap_gs(&mut v, &key, tol, hard, spill, kc),
-            TapKind::Noise { seed, k, cell, color, special, stage_w, stage_h } => {
-                tap_noise(&mut v, rec[ti], seed, k, cell, color, special, stage_w, stage_h)
-            }
             TapKind::Plugin(t) => t.apply(&mut v, rec[ti]),
         }
     }

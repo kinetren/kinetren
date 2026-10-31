@@ -79,15 +79,6 @@ pub mod simd_testing {
         unsafe { crate::video_simd::bilinear_into_avx2(src, x0, y0, cw, ch, ow, oh, out) };
     }
 
-    /// AVX2 kernel of noise (in-place over the whole frame, the column tail is
-    /// not touched — the test finishes it with the scalar path).
-    #[cfg(target_arch = "x86_64")]
-    pub fn noise_avx2(rgba: &mut [u8], w: u32, h: u32, seed: u32, k: i64) {
-        assert!(std::is_x86_feature_detected!("avx2"), "AVX2 is required");
-        // SAFETY: the feature is checked; lengths are the responsibility of the test
-        unsafe { crate::video_simd::noise_avx2(rgba, w, h, seed, k) };
-    }
-
     /// Scalar references of noise/glow (copies of the bodies from video.rs).
     pub fn noise_scalar(rgba: &mut [u8], w: u32, seed: u32, k: i64) {
         for (p, px) in rgba.chunks_exact_mut(4).enumerate() {

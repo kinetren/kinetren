@@ -422,7 +422,7 @@ fn bench_geom_1080p() {
         "grid→vhs(K=2)→zoom, barrier at 3840×2160",
         &[
             grid.clone(),
-            FxInstance::Vhs { rgb_shift: 2, bleed: 0.3, scan_step: 5, jitter: 0.4 },
+            FxInstance::plugin_with("vhs", &[2.0, 0.3, 5.0, 0.4]).unwrap(),
             zoom2.clone(),
         ],
         &bctx,
@@ -604,7 +604,7 @@ fn t305_pointwise_inside_run() {
 
     // (b) grain: determinism and binding to the step — grain size=1 at the stage
     // BEFORE the zoom is stretched by it into 2×2 blocks of output pixels
-    let noise = FxInstance::Noise { amount: 0.9, size: 1, color: false };
+    let noise = FxInstance::plugin_with("noise", &[0.9, 1.0, 0.0]).unwrap();
     let grey = Frame { w: W, h: H, rgba: vec![128u8; (W * H * 4) as usize], has_alpha: false };
     let mk = || Frame { w: W, h: H, rgba: grey.rgba.clone(), has_alpha: false };
     let a = apply_video_chain(&[grid.clone(), noise.clone(), zoom2.clone()], mk(), &ctx());
@@ -655,8 +655,8 @@ fn t303_barrier_kernels_res_invariant() {
     let cases: Vec<(&str, FxInstance)> = vec![
         ("blur", FxInstance::blur(8)),
         ("glow", FxInstance::glow(0.9)),
-        ("vhs", FxInstance::Vhs { rgb_shift: 4, bleed: 0.4, scan_step: 5, jitter: 0.5 }),
-        ("noise", FxInstance::Noise { amount: 0.5, size: 2, color: true }),
+        ("vhs", FxInstance::plugin_with("vhs", &[4.0, 0.4, 5.0, 0.5]).unwrap()),
+        ("noise", FxInstance::plugin_with("noise", &[0.5, 2.0, 1.0]).unwrap()),
         ("noise-special", FxInstance::noise(0.5)),
     ];
     let mut scratch = FxScratch::default();
@@ -838,7 +838,7 @@ fn t303_barrier_kernels_res_invariant() {
 fn t302_barrier_no_longer_kills_detail() {
     kt_plugins_builtin::install();
     let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
-    let vhs0 = FxInstance::Vhs { rgb_shift: 0, bleed: 0.0, scan_step: 0, jitter: 0.0 };
+    let vhs0 = FxInstance::plugin_with("vhs", &[0.0, 0.0, 0.0, 0.0]).unwrap();
     let zoom2 = FxInstance::geometry_zoom(2.0);
     let out = apply_video_chain(&[grid, vhs0, zoom2], checkerboard(), &ctx());
     let c = contrast(&out);
@@ -1395,14 +1395,7 @@ fn t519_alpha_rule_folds_produces_and_destroys() {
     kt_plugins_builtin::install();
     use kt_fx::geom::build_geom_exec;
     let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
-    let gs = FxInstance::Greenscreen {
-        key_r: 0,
-        key_g: 255,
-        key_b: 0,
-        tolerance: 80,
-        softness: 20,
-        spill: 0.0,
-    };
+    let gs = FxInstance::plugin_with("greenscreen", &[0.0, 255.0, 0.0, 80.0, 20.0, 0.0]).unwrap();
     let mir = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
 
     let prog = |fx: &[FxInstance]| {

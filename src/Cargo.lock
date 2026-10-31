@@ -2223,6 +2223,7 @@ version = "0.1.0"
 dependencies = [
  "fx-audio-tone",
  "fx-video-blur",
+ "fx-video-stylize",
  "kt-model",
  "kt-plugin-api",
  "kt-plugins-builtin",

@@ -1130,6 +1130,17 @@ pub trait VideoKernel: Send + Sync {
     fn gpu_params(&self, _p: &[f64]) -> [f32; 7] {
         [0.0; 7]
     }
+    /// `gpu_params` from the cooked form (plugin-api-barriers 4.2): a tap whose GPU numbers depend
+    /// on its context (noise's seed from the burst index) packs them from `cook_at`'s result; the
+    /// default is `gpu_params` of the values.
+    fn gpu_cooked(&self, _k: &Cooked, p: &[f64]) -> [f32; 7] {
+        self.gpu_params(p)
+    }
+    /// Whether the cooked tap does anything (plugin-api-barriers 4.2): an inactive tap is not put
+    /// into the fused program at all (noise with k = 0, as the core kind's builder skipped it).
+    fn active(&self, _k: &Cooked) -> bool {
+        true
+    }
 }
 
 /// What a geometry plugin's step sees (D11.2): its stage — the size of the frame that enters it — and
@@ -1237,6 +1248,9 @@ pub type Cooked = [f64; 8];
 pub struct TapCtx {
     pub stage_w: u32,
     pub stage_h: u32,
+    /// The absolute timeline position in ticks (plugin-api-barriers 4.2): a positioned tap whose
+    /// pattern moves with time (noise's grain) seeds itself from it, as the barrier kernel does.
+    pub burst_index: i64,
 }
 
 /// `frame_with` with each pixel's coordinate (`x = i % w`, `y = i / w`, as f64) — the bytes of
@@ -1479,8 +1493,10 @@ impl Registry {
                 if m.decl.video_class == Some(VideoClass::Barrier) && p.barrier().is_none() {
                     return refuse("a barrier without a CPU kernel");
                 }
+                // a barrier, or a point-wise plugin whose barrier position is a kernel of its own
+                // (noise, greenscreen): the graph is checked whenever a GPU side is declared
                 if let Some(b) = p.barrier()
-                    && m.decl.gpu == Gpu::Barrier
+                    && m.decl.gpu != Gpu::None
                 {
                     // the graph's shape is checked on the passport's defaults and its top, at K=1
                     // and the largest K, with alpha in the frame (drop_shadow draws only then)

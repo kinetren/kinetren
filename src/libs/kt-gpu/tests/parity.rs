@@ -152,22 +152,22 @@ fn t181_effect_parity_gpu_vs_cpu() {
         ),
         (
             "noise-coarse",
-            vec![FxInstance::Noise { amount: 0.3, size: 8, color: false }],
+            vec![FxInstance::plugin_with("noise", &[0.3, 8.0, 0.0]).unwrap()],
             FrameTol::EXACT,
         ),
         (
             "noise-color",
-            vec![FxInstance::Noise { amount: 0.3, size: 3, color: true }],
+            vec![FxInstance::plugin_with("noise", &[0.3, 3.0, 1.0]).unwrap()],
             FrameTol::EXACT,
         ),
         (
             "vhs-scan-jitter",
-            vec![FxInstance::Vhs { rgb_shift: 4, bleed: 0.4, scan_step: 7, jitter: 0.5 }],
+            vec![FxInstance::plugin_with("vhs", &[4.0, 0.4, 7.0, 0.5]).unwrap()],
             FrameTol::BILINEAR,
         ),
         (
             "vhs-no-scan",
-            vec![FxInstance::Vhs { rgb_shift: 2, bleed: 0.2, scan_step: 0, jitter: 0.0 }],
+            vec![FxInstance::plugin_with("vhs", &[2.0, 0.2, 0.0, 0.0]).unwrap()],
             FrameTol::BILINEAR,
         ),
         (
@@ -182,14 +182,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         ),
         (
             "greenscreen-spill",
-            vec![FxInstance::Greenscreen {
-                key_r: 0,
-                key_g: 255,
-                key_b: 0,
-                tolerance: 70,
-                softness: 25,
-                spill: 0.8,
-            }],
+            vec![FxInstance::plugin_with("greenscreen", &[0.0, 255.0, 0.0, 70.0, 25.0, 0.8]).unwrap()],
             FrameTol::THRESHOLD,
         ),
         ("vhs", vec![FxInstance::vhs(4, 0.4)], FrameTol::BILINEAR),
@@ -262,7 +255,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
             "tap-noise-in-run",
             vec![
                 kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap(),
-                FxInstance::Noise { amount: 0.6, size: 2, color: true },
+                FxInstance::plugin_with("noise", &[0.6, 2.0, 1.0]).unwrap(),
                 FxInstance::geometry_at(-0.02222, -0.0, 1.8),
             ],
             FrameTol::THRESHOLD,
@@ -273,7 +266,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
             "k2-vhs",
             vec![
                 kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap(),
-                FxInstance::Vhs { rgb_shift: 2, bleed: 0.3, scan_step: 5, jitter: 0.4 },
+                FxInstance::plugin_with("vhs", &[2.0, 0.3, 5.0, 0.4]).unwrap(),
                 FxInstance::geometry_zoom(2.0),
             ],
             FrameTol::BILINEAR,
@@ -312,7 +305,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
             vec![
                 kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap(),
                 FxInstance::blur(4),
-                FxInstance::Noise { amount: 0.5, size: 2, color: true },
+                FxInstance::plugin_with("noise", &[0.5, 2.0, 1.0]).unwrap(),
                 FxInstance::geometry_zoom(2.0),
             ],
             FrameTol::THRESHOLD,
@@ -1161,7 +1154,9 @@ fn t974_the_pilot_plugin_on_both_executors() {
     // every point-wise built-in with a WGSL text, in the assembler's order (stage 4 moved the colour
     // family in front of the pilot)
     let taps: Vec<&str> = kt_gpu::plugin_taps().iter().map(|(id, _)| *id).collect();
-    assert_eq!(taps, vec!["color_grade", "duotone", "posterize", "vignette"]);
+    // greenscreen and noise are point-wise plugins whose barrier position is a kernel of their own
+    // (plugin-api-barriers 4.2): their taps are assembled like any other
+    assert_eq!(taps, vec!["color_grade", "duotone", "posterize", "vignette", "greenscreen", "noise"]);
     assert_eq!(own.len(), taps.len(), "one own pass per point-wise plugin");
     let Some(engine) = test_engine() else { return };
     let mirror = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
