@@ -118,6 +118,13 @@ def make_generator(app, group, kind, at_ticks):
     # a created generator opens its own effects window — we close it, otherwise
     # it overlaps the bin and the timeline
     app.key("Escape")
+    # and WAIT until it has closed: under four parallel scenarios the next right click on the bin
+    # came while the window still stood, no menu opened, and the second generator never landed
+    # (finish.sh 2026-10-31, green alone)
+    for _ in range(20):
+        if int(app.geom().get("windows", 0)) == 0:
+            break
+        poll_step(0.25)
 
 
 def video_row_ys(app):
