@@ -2239,6 +2239,22 @@ The requests:
 - (7) The 20 candidates were listed in the reply by number for the owner to pick.
 - (8) 3–5 executors at once by complexity; near 3 when building and integrating.
 
+**The owner's follow-up (2026-11-01, translated):**
+
+> p.6. our own math, close to Linux, if Linux is the more accurate one
+> p.7. what am I supposed to choose? I thought you would make an opsx:propose for all of them so
+>      that nothing gets lost; well, fine — go with the ones that were picked
+
+**Taken as:**
+- (6) The kernels on frozen audio and pixel paths stop calling the platform's transcendental functions. They call our own deterministic math, correctly rounded or glibc-matching. Linux and Windows then give the same bytes, and the Linux references stay where they can (`ci-green-again`).
+- (7) The five ★ candidates are taken:
+  - 1 ripple and trim modes;
+  - 8 scopes;
+  - 14 subtitles and text-based editing;
+  - 15 one project in several frame formats;
+  - 18 proxies.
+  The other fifteen are not lost: they stay as a numbered backlog in `docs/ktprompts/kkt-26.11.01-candidates.md`, linked from the registry. The owner expected every request to get a proposal so nothing is lost: an offered list must not be left as a choice he has to make.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
