@@ -304,6 +304,51 @@ industry term): `UiDecl.name_key` names the catalog key the picker shows, `name`
 fallback. The guards: t1019 (the pixels frozen before any move), t224 (CPU against GPU per mode, both
 axes and flags), t459 (the closed form on ramps), t223 (completeness by the registry), t222 (OTIO).
 
+### D13. The generator contract (stage 6)
+
+A generator kind other than the title is a plugin of `Media::Generator` with a `GenKernel` (in
+`kt_plugin_api::gen`, next to the helpers every kernel shares). Read in `kt-media/generator.rs` and
+`kt-model/genmedia.rs` before the move, a kind is five things, and the kernel carries all five:
+
+- `frame(p, pts, w, h) -> Box<[u8]>` — the former `render_at` arm: straight RGBA of EXACTLY `w×h`,
+  `pts` the material tick. The rule "float only in the preamble" stays the kernel's.
+- `tone(p) -> Option<f64>` and `gate(p, n) -> bool` — the sound: the level in dBFS when the kind
+  sounds with these values (SMPTE with `tone`, the leader with `beep`), and whether global sample `n`
+  sounds (the leader's whole seconds and 2-pop). The sine stays the HOST's one `tone_1k`, so the
+  phase rule (the global sample number) has one text; `tone` is also what `info_for`'s `has_audio`
+  reads, so `retune_gen`'s refusal on an audibility change keeps working.
+- Declarations as data (`GenDecl`): `alpha` (the former exhaustive `kind_has_alpha` — a field with no
+  default, so a new kind cannot slip past it), `live` (the former `depends_on_time`: the frame moves
+  with `pts` by itself, the Quality cache is off), `blank` (the default frame is empty by meaning —
+  the bin card writes the name), `path` (the token table below), `address` (the rows that are part of
+  the media ADDRESS, `gen_kind_path` — the table's sort), `menu` (the values of each creation-menu
+  row: one row of defaults, or the five tables), `names` (a name that is a function of a row's value:
+  the table sort → its catalog key) and `colors` (each eyedropper group's stem and caption key; the
+  alpha component is derived from a `<stem>_a` row).
+- The `gen:` path codec is DATA: `PathTok { key, val }` with `PathVal::{Hex3, Hex4, Num, Unit, Span,
+  Int(lo, hi), Flag1, Flag0, Choice(tokens)}` — exactly the former `apply_token` validators and
+  `format_gen_path` forms (a default is not written; `{v}` the shortest exact form; `Flag1` written
+  `1` when on, `Flag0` written `0` when off; a choice by its PATH token, which is not its file key:
+  `grey` against `grayscale`). kt-model's one codec reads the table, so `parse`/`format` of a plugin
+  kind cannot drift (t469).
+- The passport rows carry the variant's fields in order with their stores (`U8`, `U32`, `F64`,
+  `Bool`, `Choice` for the table), so the serde text of `ClipEvent.gen` and the OTIO `parameters` are
+  the variant's (t973 against a frozen copy).
+
+`GeneratorKind` becomes `Text {..}` (core until 6.2 decides), `Plugin(PluginSlot)` and
+`Missing(MissingSlot)`. A missing id opens a NAMED placeholder (`PlaceholderSource` with the kind's
+id, silence) — the frame says what is absent, not a black slab; `parse_gen_path` of a missing id is
+`None` as any unknown tag was. `GeneratorKind::all()` keeps its order: the registry's generators in
+`BUILTIN_IDS` order, the title at its former second place, the five tables expanded from `menu`.
+The 3×5 `pixfont` (timecode, leader, kt-media's placeholder) and `isqrt`/`coverage`/`lowbias32` move
+into the API verbatim, so a leaf family needs no kt-media. Families: `generators-basic` (solid
+gradient corners checker noise transparent rect ellipse line) and `generators-test` (smpte timecode
+leader table window). The title is expected to stay core: its rows are a String, a font family and a
+layer order (a `PluginSlot` holds numbers), and its presets (`text_anim_curves`) and migration
+(`migrate_gen_to_events`) are kt-model's; 6.2 records the decision. The guards: t1048 (every kind's
+frames, sound, paths and serde text frozen before any move), t469/t470 (the codec and the specs),
+t471b (the factory), t526/t527 (determinism, alpha), t531 (the tables' numbers), t973 (file text).
+
 ### D8. The closed built-in list is the only input of the references
 `BUILTIN_IDS` in kt-plugins-builtin is a `const` slice in a fixed order. t328 (`GOLDEN_ALL`), t329,
 t322, t223/t224 and the generator goldens iterate it (plus the core-owned kinds). The test door
