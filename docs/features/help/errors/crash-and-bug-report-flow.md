@@ -90,6 +90,15 @@ for anyone: there is not a single network client in the tree (`Cargo.lock` — z
 core editors do exactly the same, only for them it is a consequence of the organization of support, while for us it is
 a property of the program.
 
+**4. The window that says "it crashed" must belong to a process that did NOT crash.** A program cannot reliably
+draw anything while it dies: the panic runs on whichever thread failed, the event loop that would draw is the one
+that is unwinding, and a segfault, an abort or the OOM killer's SIGKILL never reach a handler at all. So the
+programs that do show something at once keep a second process alive BEFORE the crash: Firefox's crash reporter and
+Chromium's crashpad handler are separate executables, and VS Code's "window terminated unexpectedly" dialog is drawn
+by the main process about a renderer child. The owner's decision for us (2026-11-01, "I want the crash window right
+after the crash, not who knows when") follows the same rule with one binary: `kinetren` runs itself as a watched
+child, and the parent opens the window (change `render-crash-and-recovery`, `src/apps/kt-app/src/supervisor.rs`).
+
 ## Pros
 
 - An autosave that writes INTO THE PROJECT ITSELF (like Resolve's Live Save) makes restoring trivial: there is nothing
