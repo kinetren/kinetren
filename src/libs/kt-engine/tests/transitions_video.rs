@@ -624,9 +624,8 @@ fn t459_push_whip_bring_real_b_content() {
     };
 
     let mut dst = Vec::new();
-    for (di, dir) in [Dir::Left, Dir::Right, Dir::Up, Dir::Down].into_iter().enumerate() {
-        let (dx, dy) = dir.vec();
-        let (dx, dy) = (dx as i32, dy as i32);
+    // the direction row's order: left, right, up, down (X right, Y down)
+    for (di, (dx, dy)) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)].into_iter().enumerate() {
         for k in [1024u32, 2048] {
             // the shift at these k is integer both in X (64·k/4096) and in Y (36·k/4096)
             let kk = k as f32 / 4096.0;
@@ -642,7 +641,7 @@ fn t459_push_whip_bring_real_b_content() {
                         let got = dst[i + c] as i32;
                         assert!(
                             (got - want[c] as i32).abs() <= 1,
-                            "push {dir:?} k={k}: pixel ({x},{y}) channel {c}: \
+                            "push ({dx},{dy}) k={k}: pixel ({x},{y}) channel {c}: \
                              {got}, but the material there is {}",
                             want[c]
                         );
@@ -653,7 +652,7 @@ fn t459_push_whip_bring_real_b_content() {
             let mw = TransMix::of(&TransitionKind::plugin_with("whip", &[di as f64, 0.0]).unwrap());
             let mut dw = Vec::new();
             mix_into(&mut dw, Some(&a), Some(&b), k, mw, W, H);
-            assert_eq!(dw, dst, "whip {dir:?} blur=0 k={k} must match push byte for byte");
+            assert_eq!(dw, dst, "whip ({dx},{dy}) blur=0 k={k} must match push byte for byte");
         }
     }
 }

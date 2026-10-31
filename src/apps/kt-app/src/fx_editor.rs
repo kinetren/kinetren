@@ -372,7 +372,7 @@ impl KtApp {
         // a clip where 3D is not yet set. The resolution rule is one with the engine
         // (kt_engine::resolve_cam3d, item 429).
         let pv_cam = kt_engine::resolve_cam3d(
-            &[kt_model::FxInstance::pan3d()],
+            &[kt_model::FxInstance::builtin("pan3d")],
             &self.model.project().cameras,
             pv_t,
             crate::fx_thumbs::REF_W,

@@ -2840,7 +2840,7 @@ fn t773_sidechain_key_round_trips_as_v12() {
     let mut plain = rich_project();
     plain.ensure_tracks(A, 2);
     let before = save_project(&plain, &Retained::default(), None);
-    plain.track_at_mut(A, 0).unwrap().fx = vec![FxInstance::compressor()];
+    plain.track_at_mut(A, 0).unwrap().fx = vec![FxInstance::builtin("compressor")];
     plain.validate().unwrap();
     let text0 = save_project(&plain, &Retained::default(), None);
     let v0 = kt_otio::kt_version(&parse_document(&text0).unwrap()).unwrap();

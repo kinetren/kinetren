@@ -9002,7 +9002,7 @@ fn harness_with_eq_window() -> egui_kittest::Harness<'static, crate::app::KtApp>
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
-        fx: vec![FxInstance::eq()],
+        fx: vec![FxInstance::builtin("eq")],
         fx_bypass: vec![false],
         fx_auto: vec![vec![]],
         opacity: 1.0,
@@ -16385,7 +16385,7 @@ fn t776_key_list_offers_only_possible_tracks() {
     // A already listens to B — so B cannot listen to A (a cycle)
     {
         let app = h.state_mut();
-        let mut c = kt_model::FxInstance::compressor();
+        let mut c = kt_model::FxInstance::builtin("compressor");
         c.set_sidechain_key(Some(b));
         app.apply(kt_model::Command::SetTrackFx { id: a, fx: vec![c], bypass: vec![] });
     }

@@ -22,6 +22,32 @@ Status: a high-level overview map of the engine. Contracts and the reasons behin
 | [`ui-timeline`](../openspec/specs/ui-timeline/spec.md) · [why](../openspec/specs/ui-timeline/design.md) | layout, repaint, i18n, gestures |
 | [`ui-reach`](../openspec/specs/ui-reach/spec.md) · [why](../openspec/specs/ui-reach/design.md) | "there are no dead ends", right click |
 
+## Crates and the plugin layer
+
+```
+ kt-time ◄── kt-plugin-api ◄── src/plugins/<family> ◄── kt-plugins-builtin ◄── kt-app, kt-cli
+                    ▲                                    (the closed list)       (call install())
+                    └── kt-model, kt-fx, kt-media, kt-engine, kt-gpu
+                        (PluginSlot: id + passport values; Registry::get(family, id))
+```
+
+- **The core** (kt-time, kt-model, kt-fx, kt-media, kt-cache, kt-engine, kt-gpu, kt-otio, kt-text)
+  never depends on a plugin crate or the assembler; the five that run kinds (kt-model, kt-fx,
+  kt-media, kt-engine, kt-gpu) depend on `kt-plugin-api` (itself on kt-time and serde) and reach
+  a kind through the registry (`Registry::get(family, id)`), so a model, an engine and a GPU executor know only the
+  contract. The dependency rule is checked by t975 (`kt-cli/tests/plugin_graph.rs`).
+- **A plugin crate** is one family (`fx-audio-*`, `fx-video-*`, `transitions-*`, `generators-*`)
+  and depends only on the API crate and a declared closed list. Its id is the kind's file tag, so a
+  `.kt` reads the same text before and after a kind moved (t973, t1048).
+- **The assembler** `kt-plugins-builtin` holds the closed list of built-in ids (the golden and
+  parameterized tests iterate exactly it) and `install()`; kt-app and kt-cli call it at start, a
+  core crate's tests take it as a dev-dependency. An edit of a plugin kernel therefore rebuilds the
+  family, the assembler and the two binaries plus test targets — no core library (t977,
+  `scripts/plugin-rebuild-check.py check`, `finish.sh --rebuild-check`).
+- **Still core:** the Geometry node, CamMotion, LayerMix, the crossfade, the title (its rows are
+  text, a font family and a layer order; its presets and R.53–R.58 migration live in kt-model), and
+  the barrier video kinds until `plugin-api-barriers`.
+
 ## Flows and ownership
 
 ```
@@ -74,7 +100,7 @@ Keyed by media_id (identity key: path + size + mtime + xxhash + index_version): 
 
 ## Properties, automation, compositions, plugins
 
-The property model (passport + value + source), zero cost when unused, who resolves curves, public parameters of a composition, the plugin contract, and physics as a function — are in `openspec/specs/automation/design.md` and `openspec/specs/compositions/design.md`.
+The property model (passport + value + source), zero cost when unused, who resolves curves, public parameters of a composition, and physics as a function — are in `openspec/specs/automation/design.md` and `openspec/specs/compositions/design.md`. The plugin contract (the manifest, the kernels of each family, the registry, ids as tags, what stays core) — in the change `plugin-api-stage1` (`openspec/changes/plugin-api-stage1/design.md`, the capability `plugins` once archived).
 
 ## Runtime loading of FFmpeg (kt-ffmpeg)
 

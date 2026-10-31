@@ -17,15 +17,18 @@
 #   scripts/finish.sh            # debug build + checks + version + cleanup (stale artifacts too)
 #   scripts/finish.sh --release  # plus the release tarball in a container
 #   scripts/finish.sh --deep     # plus cleanup of intermediate objects
+#   scripts/finish.sh --rebuild-check  # plus t977: an edit of a plugin kernel rebuilds no core crate
 set -euo pipefail
 cd "$(dirname "$0")/.." # src/
 
 RELEASE=0
 DEEP=0
+REBUILD=0
 for a in "$@"; do
     case "$a" in
         --release) RELEASE=1 ;;
         --deep) DEEP=1 ;;
+        --rebuild-check) REBUILD=1 ;;
         *) echo "unknown key: $a" >&2; exit 2 ;;
     esac
 done
@@ -78,6 +81,12 @@ stage "build of what the user runs" cargo build -p kt-app -p kt-cli
 
 if [ "$RELEASE" = 1 ]; then
     stage "release tarball" scripts/release-build.sh
+fi
+
+# t977 (plugin-api-stage1): an edit of one plugin kernel recompiles only the family, the assembler,
+# kt-app and kt-cli (and test targets). Optional: it rebuilds the test binaries twice (~2 min).
+if [ "$REBUILD" = 1 ]; then
+    stage "rebuild check (t977)" python3 scripts/plugin-rebuild-check.py check || REBUILD_FAILED=1
 fi
 
 # Workshop test run — a stage of THIS script (R.68). The kt-gpu GPU conformance
@@ -187,6 +196,7 @@ echo
 [ -n "${LIVE_FAILED:-}" ] && echo "WARNING: live scenarios red — see target/live-out"
 [ -n "${WS_FAILED:-}" ] && echo "WARNING: workshop tests red — see target/finish-workspace-fail.log"
 [ -n "${SIMD_FAILED:-}" ] && echo "WARNING: SIMD conformance red (t198)"
+[ -n "${REBUILD_FAILED:-}" ] && echo "WARNING: rebuild check red (t977) — a plugin edit recompiled a core crate"
 echo "VERSION: $FULL$DIRTY"
 echo "run: $(pwd)/target/debug/kinetren"
 

@@ -202,13 +202,13 @@ fn t770_stage_order_alignment_and_determinism() {
     // and the key must arrive at THE SAME window — the ducking does not “drift” in time.
     // We measure the MUSIC SEPARATELY: on the sum the speech is louder and masks the dip.
     let (mut p2, _, sp2) = scene(false);
-    p2.track_at_mut(A, 0).unwrap().fx = vec![FxInstance::limiter(), ducker(Some(sp2))];
+    p2.track_at_mut(A, 0).unwrap().fx = vec![FxInstance::builtin("limiter"), ducker(Some(sp2))];
     p2.validate().unwrap();
     let with_key = music_only(&p2, 12);
     let (mut p3, _, _) = scene(false);
     // the reference — THE SAME chain without the instrument: a compressor with a silent key
     // must be transparent, and with a speech key — quieten
-    p3.track_at_mut(A, 0).unwrap().fx = vec![FxInstance::limiter()];
+    p3.track_at_mut(A, 0).unwrap().fx = vec![FxInstance::builtin("limiter")];
     p3.validate().unwrap();
     let no_key = music_only(&p3, 12);
     for b in [2usize, 8] {

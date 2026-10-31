@@ -25,7 +25,7 @@ fn cam(id: u64, lane: u32, start: i64, dur: i64, rot_y: f64) -> CameraEvent {
 }
 
 fn pan3d(camera: Option<CameraId>) -> FxInstance {
-    let mut p = kt_model::FxInstance::pan3d();
+    let mut p = kt_model::FxInstance::builtin("pan3d");
     p.set_pinned_camera(camera);
     p
 }

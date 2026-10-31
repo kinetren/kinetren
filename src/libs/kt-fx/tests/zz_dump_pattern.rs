@@ -29,7 +29,7 @@ fn dump() {
         ("halftone", &p, FxInstance::halftone()),
         ("glow", &p, FxInstance::glow(0.9)),
         ("shadow", &pa, FxInstance::drop_shadow()),
-        ("twirl", &p, FxInstance::twirl()),
+        ("twirl", &p, FxInstance::builtin("twirl")),
     ] {
         let f = render_fx_thumb(base, &[fx], 320, 180, 0.5, 90_000, None, &mut s);
         std::fs::write(format!("{dir}/fx-{name}.raw"), &f.rgba).unwrap();

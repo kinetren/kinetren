@@ -137,9 +137,9 @@ fn t334_lookahead_does_not_shift_the_output() {
 
     // buffer slicing does not affect the result (the lookahead lives in the node's ring,
     // not in the call counter)
-    let one = render(vec![FxInstance::limiter()], AudioPattern::Clicks, 0);
+    let one = render(vec![FxInstance::builtin("limiter")], AudioPattern::Clicks, 0);
     let many = render_chunked(
-        vec![FxInstance::limiter()],
+        vec![FxInstance::builtin("limiter")],
         AudioPattern::Clicks,
         &[1000, 17, 48_000, DUR - 49_017],
     );
@@ -148,12 +148,12 @@ fn t334_lookahead_does_not_shift_the_output() {
     // the layer strength over a lookahead node does not double the material: the dry
     // side is delayed by exactly the window the node consumed
     let mixed = render(
-        vec![FxInstance::limiter(), FxInstance::LayerMix { amount: 0.5, from: 0 }],
+        vec![FxInstance::builtin("limiter"), FxInstance::LayerMix { amount: 0.5, from: 0 }],
         AudioPattern::Clicks,
         0,
     );
     let dry_c = render(vec![], AudioPattern::Clicks, 0);
-    let wet = render(vec![FxInstance::limiter()], AudioPattern::Clicks, 0);
+    let wet = render(vec![FxInstance::builtin("limiter")], AudioPattern::Clicks, 0);
     for (i, ((m, d), w)) in mixed.iter().zip(&dry_c).zip(&wet).enumerate() {
         let want = 0.5 * d + 0.5 * w;
         assert!(
@@ -262,7 +262,7 @@ impl AudioFetcher for Recording {
 #[test]
 fn t336_prefetch_window_covers_the_lookahead() {
     kt_plugins_builtin::install();
-    let p = project(vec![FxInstance::limiter()], "synth:clicks");
+    let p = project(vec![FxInstance::builtin("limiter")], "synth:clicks");
     let r = AudioRenderer::new(&p);
     let mut store = FxStateStore::new();
     r.sync_fx(&mut store);

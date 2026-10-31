@@ -156,12 +156,12 @@ fn t337_neutral_pitch_is_byte_passthrough() {
     kt_plugins_builtin::install();
     let dry = render(vec![], PitchEngine::Wsola);
     for engine in [PitchEngine::Wsola, PitchEngine::Vocoder] {
-        let neutral = render(vec![FxInstance::pitch_shift()], engine);
+        let neutral = render(vec![FxInstance::builtin("pitch_shift")], engine);
         assert_eq!(dry, neutral, "neutral pitch must be an identity ({engine:?})");
     }
     // and the neutral setting needs no lookahead
     let auto = kt_fx::AutoProfiles::from_curves_rev(&[vec![]], 0, DUR, false);
-    assert_eq!(kt_fx::chain_lookahead(&[FxInstance::pitch_shift()], &auto), 0);
+    assert_eq!(kt_fx::chain_lookahead(&[FxInstance::builtin("pitch_shift")], &auto), 0);
     // but a live curve is NOT neutral, even with a zero base
     let curve = vec![vec![ParamCurve {
         param: "semitones".into(),
@@ -174,7 +174,7 @@ fn t337_neutral_pitch_is_byte_passthrough() {
     }]];
     let auto_c = kt_fx::AutoProfiles::from_curves_rev(&curve, 0, DUR, false);
     assert!(
-        kt_fx::chain_lookahead(&[FxInstance::pitch_shift()], &auto_c) > 0,
+        kt_fx::chain_lookahead(&[FxInstance::builtin("pitch_shift")], &auto_c) > 0,
         "a curve over a zero base is not neutral"
     );
 }

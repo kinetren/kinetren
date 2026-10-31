@@ -40,7 +40,7 @@ fn is_comp(f: &kt_model::FxInstance) -> bool {
 /// a copy of the chain’s first compressor with another key — needed to
 /// ASK the model about a cycle without changing anything yet.
 fn comp_with_key(fx: &[kt_model::FxInstance], key: Option<TrackId>) -> kt_model::FxInstance {
-    let mut c = fx.iter().find(|f| is_comp(f)).cloned().unwrap_or_else(kt_model::FxInstance::compressor);
+    let mut c = fx.iter().find(|f| is_comp(f)).cloned().unwrap_or_else(|| kt_model::FxInstance::builtin("compressor"));
     c.set_sidechain_key(key);
     c
 }
@@ -55,7 +55,7 @@ fn set_key(fx: &mut Vec<kt_model::FxInstance>, bypass: &mut Vec<bool>, key: Opti
         return;
     }
     if key.is_some() {
-        let mut c = kt_model::FxInstance::compressor();
+        let mut c = kt_model::FxInstance::builtin("compressor");
         c.set_sidechain_key(key);
         fx.push(c);
         bypass.push(false);
@@ -420,7 +420,7 @@ impl KtApp {
                                         let r = ui.button(tr(k::msg::DUCK_ADD_COMP));
                                         crate::widgets::field_probe::note("duck.add", r.rect);
                                         if r.clicked() {
-                                            kfx.push(kt_model::FxInstance::compressor());
+                                            kfx.push(kt_model::FxInstance::builtin("compressor"));
                                             kby.push(false);
                                             key_edit =
                                                 Some((key_id, kfx.clone(), kby.clone()));

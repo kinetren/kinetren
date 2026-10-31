@@ -40,30 +40,6 @@ pub struct TransitionId(pub u64);
 /// The minimal total width of the transition window (1 ms, as crate::MIN_CLIP_DURATION).
 pub const MIN_TRANSITION_DURATION: Tick = Tick(90);
 
-/// The direction of the transition gesture. One field instead of four kinds: the core for
-/// “left/right/up/down” is one, while the presets in the UI are different.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Dir {
-    #[default]
-    Left,
-    Right,
-    Up,
-    Down,
-}
-
-impl Dir {
-    /// The unit direction vector in the coordinates of the frame (X right, Y down).
-    pub fn vec(self) -> (f64, f64) {
-        match self {
-            Dir::Left => (-1.0, 0.0),
-            Dir::Right => (1.0, 0.0),
-            Dir::Up => (0.0, -1.0),
-            Dir::Down => (0.0, 1.0),
-        }
-    }
-}
-
 /// The kind of transition (R.33 item 1: “it would be nice to make the transitions different, toss in
 /// 10-20 modern ones, their control should be unified like the
 /// fx-chain”). Built like `FxInstance`: a tag + parameter fields, the parameter specs
@@ -178,11 +154,6 @@ impl TransitionKind {
         TransitionKind::builtin("page_peel"),
         TransitionKind::builtin("page_roll"),
         ])
-    }
-
-    /// The wipe at its defaults — a plugin slot (plugin-api-stage1, D12).
-    pub fn wipe() -> TransitionKind {
-        TransitionKind::builtin("wipe")
     }
 
     /// A built-in plugin kind at its defaults; the set must be installed (the registry's kinds).
@@ -4987,41 +4958,41 @@ impl FxInstance {
                 FxInstance::gain(0.0),
                 FxInstance::LayerMix { amount: 1.0, from: 0 },
                 FxInstance::slowed_reverb(0.85, 0.35, 100.0),
-                FxInstance::filter(),
-                FxInstance::eq(),
-                FxInstance::distortion(),
-                FxInstance::bitcrusher(),
-                FxInstance::stereo_width(),
-                FxInstance::tremolo(),
-                FxInstance::auto_pan(),
-                FxInstance::vibrato(),
-                FxInstance::chorus(),
-                FxInstance::flanger(),
-                FxInstance::phaser(),
-                FxInstance::delay(),
-                FxInstance::compressor(),
-                FxInstance::gate(),
-                FxInstance::limiter(),
-                FxInstance::pitch_shift(),
-                FxInstance::color_grade(),
-                FxInstance::duotone(),
-                FxInstance::posterize(),
-                FxInstance::vignette(),
-                FxInstance::corner_pin(),
+                FxInstance::builtin("filter"),
+                FxInstance::builtin("eq"),
+                FxInstance::builtin("distortion"),
+                FxInstance::builtin("bitcrusher"),
+                FxInstance::builtin("stereo_width"),
+                FxInstance::builtin("tremolo"),
+                FxInstance::builtin("auto_pan"),
+                FxInstance::builtin("vibrato"),
+                FxInstance::builtin("chorus"),
+                FxInstance::builtin("flanger"),
+                FxInstance::builtin("phaser"),
+                FxInstance::builtin("delay"),
+                FxInstance::builtin("compressor"),
+                FxInstance::builtin("gate"),
+                FxInstance::builtin("limiter"),
+                FxInstance::builtin("pitch_shift"),
+                FxInstance::builtin("color_grade"),
+                FxInstance::builtin("duotone"),
+                FxInstance::builtin("posterize"),
+                FxInstance::builtin("vignette"),
+                FxInstance::builtin("corner_pin"),
                 FxInstance::sharpen(),
                 FxInstance::pixelate(),
                 FxInstance::chromatic_aberration(),
                 FxInstance::radial_blur(),
                 FxInstance::drop_shadow(),
                 FxInstance::halftone(),
-                FxInstance::lens_distort(),
-                FxInstance::twirl(),
-                FxInstance::ripple(),
-                FxInstance::kaleidoscope(),
-                FxInstance::cylinder3d(),
+                FxInstance::builtin("lens_distort"),
+                FxInstance::builtin("twirl"),
+                FxInstance::builtin("ripple"),
+                FxInstance::builtin("kaleidoscope"),
+                FxInstance::builtin("cylinder3d"),
                 FxInstance::geometry(),
                 FxInstance::cam_motion(),
-                FxInstance::mirror(),
+                FxInstance::builtin("mirror"),
                 FxInstance::blur(8),
                 FxInstance::greenscreen([0, 255, 0], 70, 25),
                 FxInstance::edges(48),
@@ -5029,7 +5000,7 @@ impl FxInstance {
                 FxInstance::vhs(4, 0.4),
                 FxInstance::glow(0.65),
                 FxInstance::event_grid(),
-                FxInstance::pan3d(),
+                FxInstance::builtin("pan3d"),
             ]
         })
     }
@@ -5716,76 +5687,22 @@ pub struct SlowedKeyframe {
 }
 
 impl FxInstance {
-    /// Constructor with default reverb parameters (for tests/simple cases).
-    /// Effect constructors with DEFAULTS for added fields (R.33, stage 5).
-    /// Struct literals in calling code were replaced with them, so that
-    /// the next parameter does not require editing fifty places.
-    /// Default constructors for kinds without their own constructor (R.47,
-    /// item 326): needed by the registry `all()`; literals in tests go through them.
-    /// The filter at its defaults (low-pass 800 Hz) — a plugin slot (plugin-api-stage1, stage 3).
-    pub fn filter() -> FxInstance {
-        FxInstance::plugin("filter").expect("filter is not registered: install the built-in plugin set first")
-    }
+    // Effect constructors with DEFAULTS for added fields (R.33, stage 5): struct literals in
+    // calling code were replaced with them, so that the next parameter does not require editing
+    // fifty places. A plugin kind has one constructor, `builtin(id)` (plugin-api-stage1 7.1).
 
-    /// The equaliser at its defaults — a plugin slot (plugin-api-stage1, stage 3).
-    pub fn eq() -> FxInstance {
-        FxInstance::plugin("eq").expect("eq is not registered: install the built-in plugin set first")
-    }
 
-    /// Distortion at its defaults — a plugin slot (plugin-api-stage1, stage 3).
-    pub fn distortion() -> FxInstance {
-        FxInstance::plugin("distortion").expect("distortion is not registered: install the built-in plugin set first")
-    }
 
-    /// The bitcrusher at its defaults — a plugin slot (plugin-api-stage1, stage 3).
-    pub fn bitcrusher() -> FxInstance {
-        FxInstance::plugin("bitcrusher").expect("bitcrusher is not registered: install the built-in plugin set first")
-    }
 
-    /// Stereo width at its defaults — a plugin slot (plugin-api-stage1, stage 3).
-    pub fn stereo_width() -> FxInstance {
-        FxInstance::plugin("stereo_width").expect("stereo_width is not registered: install the built-in plugin set first")
-    }
 
-    /// Tremolo at its defaults — a plugin slot (plugin-api-stage1, stage 3).
-    pub fn tremolo() -> FxInstance {
-        FxInstance::plugin("tremolo").expect("tremolo is not registered: install the built-in plugin set first")
-    }
 
-    /// AutoPan at its defaults — a plugin slot (plugin-api-stage1, stage 3).
-    pub fn auto_pan() -> FxInstance {
-        FxInstance::plugin("auto_pan").expect("auto_pan is not registered: install the built-in plugin set first")
-    }
 
-    /// Vibrato at its defaults — a plugin slot (plugin-api-stage1, stage 3).
-    pub fn vibrato() -> FxInstance {
-        FxInstance::plugin("vibrato").expect("vibrato is not registered: install the built-in plugin set first")
-    }
 
-    /// Chorus at its defaults — a plugin slot (plugin-api-stage1, stage 3).
-    pub fn chorus() -> FxInstance {
-        FxInstance::plugin("chorus").expect("chorus is not registered: install the built-in plugin set first")
-    }
 
-    /// Flanger at its defaults — a plugin slot (plugin-api-stage1, stage 3).
-    pub fn flanger() -> FxInstance {
-        FxInstance::plugin("flanger").expect("flanger is not registered: install the built-in plugin set first")
-    }
 
-    /// Phaser at its defaults — a plugin slot (plugin-api-stage1, stage 3).
-    pub fn phaser() -> FxInstance {
-        FxInstance::plugin("phaser").expect("phaser is not registered: install the built-in plugin set first")
-    }
 
-    /// The echo at its defaults — a plugin slot (plugin-api-stage1, stage 3).
-    pub fn delay() -> FxInstance {
-        FxInstance::plugin("delay").expect("delay is not registered: install the built-in plugin set first")
-    }
 
-    /// The compressor at its defaults, without a key — a plugin slot (plugin-api-stage1, D11.4).
-    pub fn compressor() -> FxInstance {
-        FxInstance::plugin("compressor").expect("compressor is not registered: install the built-in plugin set first")
-    }
+
 
     /// The slot's sidechain key (R.65, D11.4): its `RowRole::SidechainKey` row, when set. ONE
     /// home for "what is this device's key" — the engine routes by it, the format cleans by it,
@@ -5805,35 +5722,17 @@ impl FxInstance {
         }
     }
 
-    /// The gate at its defaults — a plugin slot (plugin-api-stage1, stage 3).
-    pub fn gate() -> FxInstance {
-        FxInstance::plugin("gate").expect("gate is not registered: install the built-in plugin set first")
-    }
 
-    /// The limiter at its defaults — a plugin slot (plugin-api-stage1, stage 3).
-    pub fn limiter() -> FxInstance {
-        FxInstance::plugin("limiter").expect("limiter is not registered: install the built-in plugin set first")
-    }
 
-    /// Pitch shift at its defaults (neutral) — a plugin slot (plugin-api-stage1, stage 3).
-    pub fn pitch_shift() -> FxInstance {
-        FxInstance::plugin("pitch_shift").expect("pitch_shift is not registered: install the built-in plugin set first")
-    }
 
-    /// Color grading at its defaults (identity) — a plugin slot (plugin-api-stage1, stage 4).
-    pub fn color_grade() -> FxInstance {
-        FxInstance::plugin("color_grade").expect("color_grade is not registered: install the built-in plugin set first")
-    }
 
-    /// Duotone at its defaults — a plugin slot (plugin-api-stage1, stage 4).
-    pub fn duotone() -> FxInstance {
-        FxInstance::plugin("duotone").expect("duotone is not registered: install the built-in plugin set first")
-    }
 
-    /// Posterize at its defaults — a plugin slot (plugin-api-stage1); the built-in set must be
-    /// installed (`kt_plugins_builtin::install()`).
-    pub fn posterize() -> FxInstance {
-        FxInstance::plugin("posterize").expect("posterize is not registered: install the built-in plugin set first")
+
+    /// A BUILT-IN plugin kind at its passport's defaults (plugin-api-stage1 7.1: one constructor
+    /// instead of a wrapper per moved kind, as `TransitionKind::builtin`); the built-in set must be
+    /// installed (`kt_plugins_builtin::install()`), otherwise this panics naming the id.
+    pub fn builtin(id: &str) -> FxInstance {
+        FxInstance::plugin(id).unwrap_or_else(|| panic!("{id} is not registered: install the built-in plugin set first"))
     }
 
     /// A plugin slot of `id` at its passport's defaults; `None` — no such plugin is registered.
@@ -5851,15 +5750,7 @@ impl FxInstance {
         Some(FxInstance::Plugin(slot))
     }
 
-    /// The vignette at its defaults — a plugin slot (plugin-api-stage1, stage 4).
-    pub fn vignette() -> FxInstance {
-        FxInstance::plugin("vignette").expect("vignette is not registered: install the built-in plugin set first")
-    }
 
-    /// corner_pin at its defaults (the corners at the corners: an identity) — a plugin slot.
-    pub fn corner_pin() -> FxInstance {
-        FxInstance::plugin("corner_pin").expect("corner_pin is not registered: install the built-in plugin set first")
-    }
 
     pub fn sharpen() -> FxInstance {
         FxInstance::Sharpen { amount: 1.0, radius: 2 }
@@ -5893,30 +5784,10 @@ impl FxInstance {
         FxInstance::Halftone { size: 8, angle: 45.0 }
     }
 
-    /// lens_distort at its defaults — a plugin slot (plugin-api-stage1, D11.2).
-    pub fn lens_distort() -> FxInstance {
-        FxInstance::plugin("lens_distort").expect("lens_distort is not registered: install the built-in plugin set first")
-    }
 
-    /// twirl at its defaults — a plugin slot (plugin-api-stage1, D11.2).
-    pub fn twirl() -> FxInstance {
-        FxInstance::plugin("twirl").expect("twirl is not registered: install the built-in plugin set first")
-    }
 
-    /// ripple at its defaults — a plugin slot (plugin-api-stage1, D11.2).
-    pub fn ripple() -> FxInstance {
-        FxInstance::plugin("ripple").expect("ripple is not registered: install the built-in plugin set first")
-    }
 
-    /// kaleidoscope at its defaults — a plugin slot (plugin-api-stage1, D11.2).
-    pub fn kaleidoscope() -> FxInstance {
-        FxInstance::plugin("kaleidoscope").expect("kaleidoscope is not registered: install the built-in plugin set first")
-    }
 
-    /// cylinder3d at its defaults — a plugin slot (plugin-api-stage1, D11.2).
-    pub fn cylinder3d() -> FxInstance {
-        FxInstance::plugin("cylinder3d").expect("cylinder3d is not registered: install the built-in plugin set first")
-    }
 
     /// Additional “Geometry” node with zoom around the centre (replacing the
     /// former “Pan: stretch, zoom z”).
@@ -5988,10 +5859,6 @@ impl FxInstance {
         FxInstance::CamMotion { mode: PanMode::Fit, ease: true, time_scale: 1.0, keyframes: vec![] }
     }
 
-    /// The horizontal mirror — a plugin slot (plugin-api-stage1, D11.3).
-    pub fn mirror() -> FxInstance {
-        FxInstance::plugin("mirror").expect("mirror is not registered: install the built-in plugin set first")
-    }
 
     /// A centred 2×2 event grid — a plugin slot (plugin-api-stage1, D11.3).
     pub fn event_grid() -> FxInstance {
@@ -5999,11 +5866,6 @@ impl FxInstance {
             .expect("event_grid is not registered: install the built-in plugin set first")
     }
 
-    /// Pan3d at its defaults (identity with the 50 mm camera), on the active camera — a plugin slot
-    /// (plugin-api-stage1, 4.1c-4).
-    pub fn pan3d() -> FxInstance {
-        FxInstance::plugin("pan3d").expect("pan3d is not registered: install the built-in plugin set first")
-    }
 
     /// Whether the slot looks through a 3D camera (it has a `RowRole::Camera` row): the engine
     /// resolves the camera for such a chain and probes the clip's decode scale over time.

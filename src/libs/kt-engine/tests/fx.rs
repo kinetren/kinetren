@@ -955,7 +955,7 @@ fn t324_ka2_spectral_probes() {
     assert!(cut / dry8 < 0.01, "LP must kill 8 kHz by 40 dB: {}", cut / dry8);
 
     // EQ: low_gain −12 mutes 100 Hz by more than half, does not touch 8 kHz
-    let mut eq = FxInstance::eq();
+    let mut eq = FxInstance::builtin("eq");
     eq.set_param("low_gain_db", -12.0);
     let low = rms_mono(&render(vec![eq.clone()], 100.0));
     let dry100 = rms_mono(&render(vec![], 100.0));

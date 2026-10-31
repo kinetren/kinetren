@@ -278,7 +278,7 @@ pub fn registry() -> &'static [FxEntry] {
                 video: false,
                 variants: Vec::new(),
                 keywords: Some(k::fxreg::kw::FILTER),
-                template: FxInstance::filter(),
+                template: FxInstance::builtin("filter"),
             },
             FxEntry {
                 name: "EQ",
@@ -287,7 +287,7 @@ pub fn registry() -> &'static [FxEntry] {
                 video: false,
                 variants: Vec::new(),
                 keywords: Some(k::fxreg::kw::EQ),
-                template: FxInstance::eq(),
+                template: FxInstance::builtin("eq"),
             },
             FxEntry {
                 name: "Distortion",
@@ -296,7 +296,7 @@ pub fn registry() -> &'static [FxEntry] {
                 video: false,
                 variants: Vec::new(),
                 keywords: Some(k::fxreg::kw::DISTORTION),
-                template: FxInstance::distortion(),
+                template: FxInstance::builtin("distortion"),
             },
             FxEntry {
                 name: "Bitcrusher",
@@ -305,7 +305,7 @@ pub fn registry() -> &'static [FxEntry] {
                 video: false,
                 variants: Vec::new(),
                 keywords: Some(k::fxreg::kw::BITCRUSHER),
-                template: FxInstance::bitcrusher(),
+                template: FxInstance::builtin("bitcrusher"),
             },
             FxEntry {
                 name: "Tremolo",
@@ -314,7 +314,7 @@ pub fn registry() -> &'static [FxEntry] {
                 video: false,
                 variants: Vec::new(),
                 keywords: Some(k::fxreg::kw::TREMOLO),
-                template: FxInstance::tremolo(),
+                template: FxInstance::builtin("tremolo"),
             },
             FxEntry {
                 name: "AutoPan",
@@ -323,7 +323,7 @@ pub fn registry() -> &'static [FxEntry] {
                 video: false,
                 variants: Vec::new(),
                 keywords: Some(k::fxreg::kw::AUTOPAN),
-                template: FxInstance::auto_pan(),
+                template: FxInstance::builtin("auto_pan"),
             },
             FxEntry {
                 name: "Vibrato",
@@ -332,7 +332,7 @@ pub fn registry() -> &'static [FxEntry] {
                 video: false,
                 variants: Vec::new(),
                 keywords: Some(k::fxreg::kw::VIBRATO),
-                template: FxInstance::vibrato(),
+                template: FxInstance::builtin("vibrato"),
             },
             FxEntry {
                 name: "Chorus",
@@ -341,7 +341,7 @@ pub fn registry() -> &'static [FxEntry] {
                 video: false,
                 variants: Vec::new(),
                 keywords: Some(k::fxreg::kw::CHORUS),
-                template: FxInstance::chorus(),
+                template: FxInstance::builtin("chorus"),
             },
             FxEntry {
                 name: "Flanger",
@@ -350,7 +350,7 @@ pub fn registry() -> &'static [FxEntry] {
                 video: false,
                 variants: Vec::new(),
                 keywords: Some(k::fxreg::kw::FLANGER),
-                template: FxInstance::flanger(),
+                template: FxInstance::builtin("flanger"),
             },
             FxEntry {
                 name: "Phaser",
@@ -359,7 +359,7 @@ pub fn registry() -> &'static [FxEntry] {
                 video: false,
                 variants: Vec::new(),
                 keywords: Some(k::fxreg::kw::PHASER),
-                template: FxInstance::phaser(),
+                template: FxInstance::builtin("phaser"),
             },
             FxEntry {
                 name: "Delay",
@@ -368,7 +368,7 @@ pub fn registry() -> &'static [FxEntry] {
                 video: false,
                 variants: Vec::new(),
                 keywords: Some(k::fxreg::kw::DELAY),
-                template: FxInstance::delay(),
+                template: FxInstance::builtin("delay"),
             },
             FxEntry {
                 name: "Compressor",
@@ -377,7 +377,7 @@ pub fn registry() -> &'static [FxEntry] {
                 video: false,
                 variants: Vec::new(),
                 keywords: Some(k::fxreg::kw::COMPRESSOR),
-                template: FxInstance::compressor(),
+                template: FxInstance::builtin("compressor"),
             },
             FxEntry {
                 name: "Gate",
@@ -386,7 +386,7 @@ pub fn registry() -> &'static [FxEntry] {
                 video: false,
                 variants: Vec::new(),
                 keywords: Some(k::fxreg::kw::GATE),
-                template: FxInstance::gate(),
+                template: FxInstance::builtin("gate"),
             },
             FxEntry {
                 name: "Limiter",
@@ -395,7 +395,7 @@ pub fn registry() -> &'static [FxEntry] {
                 video: false,
                 variants: Vec::new(),
                 keywords: Some(k::fxreg::kw::LIMITER),
-                template: FxInstance::limiter(),
+                template: FxInstance::builtin("limiter"),
             },
             FxEntry {
                 name: "Pitch Shift",
@@ -404,7 +404,7 @@ pub fn registry() -> &'static [FxEntry] {
                 video: false,
                 variants: Vec::new(),
                 keywords: Some(k::fxreg::kw::PITCH_SHIFT),
-                template: FxInstance::pitch_shift(),
+                template: FxInstance::builtin("pitch_shift"),
             },
             FxEntry {
                 name: "Stereo Width",
@@ -413,7 +413,7 @@ pub fn registry() -> &'static [FxEntry] {
                 video: false,
                 variants: Vec::new(),
                 keywords: Some(k::fxreg::kw::STEREOWIDTH),
-                template: FxInstance::stereo_width(),
+                template: FxInstance::builtin("stereo_width"),
             },
         ];
         let mut video: Vec<FxEntry> = video_fx_templates()

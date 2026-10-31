@@ -212,8 +212,9 @@ once (English message, first line = the stage and what was done).
 
 ## 4. Video FX
 
-- [ ] 4.1 Move the remaining 24 video plugin kinds into `fx-video-color`, `fx-video-stylize`, `fx-video-distort`, `fx-video-blur`: geo kinds through `geo()` primitives (no WGSL), point-wise through tap pieces, barriers through passes. Verify t328, t329, t181, t297, t330, t332, t333, t198, t974 green; t973 extended
-  - In progress. 4.1a (63e3801): color_grade and duotone moved into `fx-video-color` like the
+- [x] 4.1 Move the remaining 24 video plugin kinds into `fx-video-color`, `fx-video-stylize`, `fx-video-distort`, `fx-video-blur`: geo kinds through `geo()` primitives (no WGSL), point-wise through tap pieces, barriers through passes. Verify t328, t329, t181, t297, t330, t332, t333, t198, t974 green; t973 extended
+  - Closed by 4.1a–4.1c below; the twelve barrier-position kinds (the ten of (3) plus noise and
+    greenscreen) move in `plugin-api-barriers` (4.1d), as the owner decided (D11). 4.1a (63e3801): color_grade and duotone moved into `fx-video-color` like the
     pilot (one f64 tap + one WGSL text each; kt-gpu lost their pipes, FxOps, shaders and the fused
     pass's tap kinds 2/3); t328 goldens and t329/t181 parity unchanged — red with the grade formula
     broken; t974 lists the three point-wise plugins; t973 freezes both file forms.
@@ -265,7 +266,11 @@ once (English message, first line = the stage and what was done).
 - [x] 4.1c The geometry program (D11.2, D11.3): `GeoKernel`, `GeoCtx`, `GeoStep`, the open `Warp` with `warp_<id>` pasted into both loops of `geom_fused.wgsl`, the exact lone path; move lens_distort, twirl, ripple, kaleidoscope, cylinder3d, corner_pin, mirror, event_grid, pan3d; write t993 and t994 red first; verify t26, t297, t298, t308b, t330, t332, t333, t943, t944, t181, t329
     Done in 4.1c-1…4 above; the core keeps the Geometry node and CamMotion (the lead geometry
     and the legacy pan kernel, not effects a person picks)
-- [ ] 4.1d The ten barrier kinds: propose `plugin-api-barriers` (the GPU pass graph and the SIMD twins), linked from here; this change does not move them
+- [x] 4.1d The ten barrier kinds: propose `plugin-api-barriers` (the GPU pass graph and the SIMD twins), linked from here; this change does not move them
+  - Proposed: `openspec/changes/plugin-api-barriers` (validated strict). It covers twelve kinds — the ten
+    plus noise and greenscreen (4.1b). Its contract: a CPU kernel, an optional SIMD twin the host gates,
+    a declared GPU pass graph of host nodes and plugin passes, and the raster helpers reached through a
+    `RasterHost` so the resample keeps one text. Reserved t1051–t1056; pilot pixelate.
 - [x] 4.2 FX picker, variants and thumbnails from manifests (`fx_registry.rs`, `fx_thumbs.rs`); verify t48, t252, t253, t976 and `layout_tests.rs`/`reach_tests.rs` green; rewrite the "add a video effect" checklist in `src/libs/kt-fx/CLAUDE.md` and `src/libs/kt-gpu/CLAUDE.md`; commit stage 4
 
 ## 5. Transitions
@@ -308,9 +313,39 @@ once (English message, first line = the stage and what was done).
 
 ## 7. Acceptance and cleanup
 
-- [ ] 7.1 Delete the enum variants, `tag()` arms and template tables of the moved kinds; the core keeps `geometry`, `cam_motion`, `layer_mix`, `slowed_reverb`. Verify `cargo test --workspace` green
-- [ ] 7.2 Turn `src/scripts/plugin-rebuild-check.py` into t977: touch a plugin kernel, assert the recompiled set is {family, kt-plugins-builtin, kt-app, kt-cli, dependent test targets}, print the times next to task 1.1 and R.68; wire it into `finish.sh` as an optional stage (`--rebuild-check`). Verify t977 green and record the numbers here
-- [ ] 7.3 Update `docs/architecture.md` (the crate map) and the root `CLAUDE.md` workspace map with `kt-plugin-api`, `kt-plugins-builtin` and `src/plugins/`; commit stage 7
+- [x] 7.1 Delete the enum variants, `tag()` arms and template tables of the moved kinds; the core keeps `geometry`, `cam_motion`, `layer_mix`, `slowed_reverb`. Verify `cargo test --workspace` green
+  - The variants and `tag()` arms went with each stage. Left were 28 one-line `FxInstance` wrappers
+    (`FxInstance::posterize()` … `pan3d()`, each `plugin(id).expect(..)`) and `TransitionKind::wipe()`;
+    they give way to `FxInstance::builtin(id)` (as `TransitionKind::builtin`), so the core names a
+    plugin id only in the closed `all()` lists. `slowed_reverb(rate, mix, delay)` (86 callers) and
+    `event_grid()` (the 2×2 template) stay as parametric constructors; `kt_model::Dir` (its last
+    reader a test) is gone. The barrier variants stay until `plugin-api-barriers`. `cargo nextest run
+    --workspace`: 1276/1279, the three reds (t951, t952: a background download's deadline; t476: a
+    sidecar probe's) green alone in 0.3 s.
+- [x] 7.2 Turn `src/scripts/plugin-rebuild-check.py` into t977: touch a plugin kernel, assert the recompiled set is {family, kt-plugins-builtin, kt-app, kt-cli, dependent test targets}, print the times next to task 1.1 and R.68; wire it into `finish.sh` as an optional stage (`--rebuild-check`). Verify t977 green and record the numbers here
+  - `plugin-rebuild-check.py check [<file>]` (default: the pilot's `plugins/fx-video-color/src/lib.rs`)
+    reads cargo's JSON artifact messages. A unit is a (package, target kind) that was compiled rather
+    than found fresh, so a crate's LIBRARY is told apart from its test binary, which the "Compiling"
+    line is not. It refuses a run that compiled nothing: the first form parsed `cargo -v` for env vars
+    it does not print, and passed an edit of kt-fx with an empty set.
+  - Red proof: an edit of `kt-fx/src/geom.rs` is RED, naming kt-engine and kt-gpu.
+  - `finish.sh --rebuild-check` runs it as a timed stage.
+  - The numbers (32 cores, dev profile, warm tree, the machine at load 10.5 before the run; 2026-10-31):
+    | edit | `build -p kt-app -p kt-cli` | `test --workspace --no-run` | libraries/binaries compiled again |
+    |---|---|---|---|
+    | the pilot plugin `fx-video-color` | 29.9 s | 167.2 s | fx-video-color, kt-plugins-builtin, kt-app, kt-cli; the test targets of 10 packages |
+    | `kt-fx/src/geom.rs` (the red proof, same session) | 73.7 s | 162.3 s | + kt-fx, kt-engine, kt-gpu |
+    | task 1.1, an edit in kt-fx (cb338e6) | 2.0 s | 79.3 s | kt-fx, kt-engine, kt-gpu, kt-app, kt-cli |
+    | task 1.1, an edit in kt-model | 3.7 s | 169.7 s | + kt-model, kt-cache, kt-media, kt-otio |
+    | R.68 (2026-09-27), a kt-model edit | — | 61 s | |
+  - **What the move does not win (as 1.1 predicted):** the core LIBRARIES no longer rebuild, which is
+    the acceptance. The TEST build does not get cheaper. `kt-plugins-builtin` is a dev-dependency of
+    seven core crates, and each of their integration test files is its own binary (kt-engine 49,
+    kt-model 25, kt-fx 14…). So an edit of one plugin relinks ~100 test binaries, about the cost of a
+    kt-model edit before. The seconds are noisy on this machine (the 1.1 numbers were taken quiet, and
+    the build column moved 2 → 30 s under load). Cutting the test cost is its own change: fewer test
+    binaries per crate, or registry-wide tests gathered into the crates that need the set.
+- [x] 7.3 Update `docs/architecture.md` (the crate map) and the root `CLAUDE.md` workspace map with `kt-plugin-api`, `kt-plugins-builtin` and `src/plugins/`; commit stage 7
 
 ## 8. Finish
 

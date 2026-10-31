@@ -81,9 +81,9 @@ fn t644_a_clip_without_curves_borrows_its_chain() {
     // neighbour with a LIVE curve, a neighbour without curves, and a neighbour with one ORPHAN
     let p = project(
         vec![
-            clip(1, 0, 0, vec![FxInstance::vignette()], vec![vec![curve("strength", 0.1, 0.9)]]),
-            clip(2, 1, 0, vec![FxInstance::vignette()], vec![]),
-            clip(3, 2, 0, vec![FxInstance::vignette()], vec![vec![curve("no_such", 0.0, 1.0)]]),
+            clip(1, 0, 0, vec![FxInstance::builtin("vignette")], vec![vec![curve("strength", 0.1, 0.9)]]),
+            clip(2, 1, 0, vec![FxInstance::builtin("vignette")], vec![]),
+            clip(3, 2, 0, vec![FxInstance::builtin("vignette")], vec![vec![curve("no_such", 0.0, 1.0)]]),
         ],
         3,
     );
@@ -122,8 +122,8 @@ fn t645_curves_on_one_clip_do_not_tax_the_others() {
     let plain = |auto: Vec<Vec<ParamCurve>>| {
         project(
             vec![
-                clip(1, 0, 0, vec![FxInstance::vignette()], auto),
-                clip(2, 1, 0, vec![FxInstance::vignette()], vec![]),
+                clip(1, 0, 0, vec![FxInstance::builtin("vignette")], auto),
+                clip(2, 1, 0, vec![FxInstance::builtin("vignette")], vec![]),
             ],
             2,
         )

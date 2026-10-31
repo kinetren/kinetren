@@ -479,7 +479,7 @@ fn bench_fx_1080p() {
         "colorgrade+vignette (2 barriers)",
         &[
             kt_model::FxInstance::plugin_with("color_grade", &[0.05, 0.3, 1.4, 20.0]).unwrap(),
-            FxInstance::vignette(),
+            FxInstance::builtin("vignette"),
         ],
     );
     bench("sharpen r=3", &[FxInstance::Sharpen { amount: 1.5, radius: 3 }]);
@@ -500,9 +500,9 @@ fn bench_fx_1080p() {
     );
     bench(
         "grid→lens→twirl→zoom (fused run, perpixel-SS)",
-        &[grid, FxInstance::lens_distort(), FxInstance::twirl(), zoom2],
+        &[grid, FxInstance::builtin("lens_distort"), FxInstance::builtin("twirl"), zoom2],
     );
-    bench("kaleidoscope solo", &[FxInstance::kaleidoscope()]);
+    bench("kaleidoscope solo", &[FxInstance::builtin("kaleidoscope")]);
     bench("cylinder 0.8", &[kt_model::FxInstance::plugin_with("cylinder3d", &[0.8]).unwrap()]);
 }
 
@@ -971,10 +971,10 @@ fn t330_new_pointwise_absorb_and_meaning() {
 
     // (a) absorption: each new per-pixel effect between geo steps — the run is ONE
     for f in [
-        FxInstance::color_grade(),
-        FxInstance::duotone(),
-        FxInstance::posterize(),
-        FxInstance::vignette(),
+        FxInstance::builtin("color_grade"),
+        FxInstance::builtin("duotone"),
+        FxInstance::builtin("posterize"),
+        FxInstance::builtin("vignette"),
     ] {
         let fx = vec![grid2.clone(), f.clone(), zoom2.clone()];
         let p = plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[]);
@@ -1053,7 +1053,7 @@ fn t331_corner_pin() {
     kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
     // (1) default: identity byte-for-byte, alpha is not declared
-    let out = run(&[FxInstance::corner_pin()]);
+    let out = run(&[FxInstance::builtin("corner_pin")]);
     let src = test_frame();
     assert_eq!(out.rgba, src.rgba, "default corners are a byte-exact identity");
     assert!(!out.has_alpha, "skipped step must not declare alpha");
@@ -1276,7 +1276,7 @@ fn t333_warp_prims() {
     }
 
     // (2) PerPixel supersampling is enabled for a program with a warp
-    let twirl = FxInstance::twirl();
+    let twirl = FxInstance::builtin("twirl");
     match build_geom_exec(&[&twirl], W, H, W, H, 0.5, None, 90_000, 1, 1) {
         GeomExec::Fused(prog) => {
             assert_eq!(prog.ss, SsSpec::PerPixel, "warp jacobian varies per pixel");
@@ -1391,7 +1391,7 @@ fn t333_warp_prims() {
     assert!(mx > (3 * W / 4) as f64 + 2.0, "cylinder must push mid-side content outward: {mx:.1}");
 
     // (8) a series of warps + zoom — ONE run
-    let fx = vec![FxInstance::lens_distort(), FxInstance::twirl(), FxInstance::geometry_zoom(2.0)];
+    let fx = vec![FxInstance::builtin("lens_distort"), FxInstance::builtin("twirl"), FxInstance::geometry_zoom(2.0)];
     let p = plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[]);
     assert_eq!(p.ops.len(), 1, "warp series stays one fused run");
     assert!(matches!(p.ops[0], PlanOp::Run { i: 0, j: 3, .. }));

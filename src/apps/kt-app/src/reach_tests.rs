@@ -2901,11 +2901,11 @@ fn t777_sidechain_is_reachable_and_names_its_refusals() {
     // REFUSAL NAMED: the model rejects the cycle with a reason, not silently
     {
         let app = h.state_mut();
-        let mut c = kt_model::FxInstance::compressor();
+        let mut c = kt_model::FxInstance::builtin("compressor");
         c.set_sidechain_key(Some(key));
         app.apply(kt_model::Command::SetTrackFx { id: bg, fx: vec![c.clone()], bypass: vec![] });
         // the reverse key — a cycle
-        let mut back = kt_model::FxInstance::compressor();
+        let mut back = kt_model::FxInstance::builtin("compressor");
         back.set_sidechain_key(Some(bg));
         let e = app
             .model
@@ -5706,7 +5706,7 @@ fn t912_morpher_picker_offers_audio_effects() {
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
     let pitch = crate::fx_registry::registry()
         .iter()
-        .find(|e| e.template.tag() == FxInstance::pitch_shift().tag())
+        .find(|e| e.template.tag() == FxInstance::builtin("pitch_shift").tag())
         .expect("Pitch shift in the registry");
     let mut h = crate::layout_tests::harness_sized(1600.0, 900.0);
     {

@@ -288,11 +288,11 @@ fn frozen(f: Frozen) -> String {
 fn moved_kinds() -> Vec<(FxInstance, String)> {
     kt_plugins_builtin::install();
     vec![
-        (FxInstance::posterize(), frozen(Frozen::Posterize { levels: 6 })),
+        (FxInstance::builtin("posterize"), frozen(Frozen::Posterize { levels: 6 })),
         (FxInstance::plugin_with("posterize", &[4.0]).unwrap(), frozen(Frozen::Posterize { levels: 4 })),
         (FxInstance::plugin_with("posterize", &[32.0]).unwrap(), frozen(Frozen::Posterize { levels: 32 })),
-        (FxInstance::stereo_width(), frozen(Frozen::StereoWidth { width: 1.0 })),
-        (FxInstance::eq(), frozen(Frozen::Eq {
+        (FxInstance::builtin("stereo_width"), frozen(Frozen::StereoWidth { width: 1.0 })),
+        (FxInstance::builtin("eq"), frozen(Frozen::Eq {
             low_gain_db: 0.0, low_freq_hz: 200.0, mid_gain_db: 0.0, mid_freq_hz: 1000.0,
             mid_q: 1.0, high_gain_db: 0.0, high_freq_hz: 4000.0,
         })),
@@ -303,45 +303,45 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
                 mid_q: 0.7, high_gain_db: 0.123456789, high_freq_hz: 8000.0,
             }),
         ),
-        (FxInstance::distortion(), frozen(Frozen::Distortion { drive_db: 12.0, tone: 0.5, mix: 1.0 })),
+        (FxInstance::builtin("distortion"), frozen(Frozen::Distortion { drive_db: 12.0, tone: 0.5, mix: 1.0 })),
         (
             FxInstance::plugin_with("distortion", &[30.0, 0.25, 0.6]).unwrap(),
             frozen(Frozen::Distortion { drive_db: 30.0, tone: 0.25, mix: 0.6 }),
         ),
-        (FxInstance::bitcrusher(), frozen(Frozen::Bitcrusher { bits: 8.0, rate_hz: 12000.0, mix: 1.0 })),
+        (FxInstance::builtin("bitcrusher"), frozen(Frozen::Bitcrusher { bits: 8.0, rate_hz: 12000.0, mix: 1.0 })),
         (FxInstance::gain(0.0), frozen(Frozen::Gain { db: 0.0, pan: 0.0 })),
         (FxInstance::gain(-7.25), frozen(Frozen::Gain { db: -7.25, pan: 0.0 })),
         (
             FxInstance::plugin_with("gain", &[2.0, -0.123456789]).unwrap(),
             frozen(Frozen::Gain { db: 2.0, pan: -0.123456789 }),
         ),
-        (FxInstance::gate(), frozen(Frozen::Gate { threshold_db: -40.0, attack_ms: 1.0, hold_ms: 40.0, release_ms: 100.0 })),
+        (FxInstance::builtin("gate"), frozen(Frozen::Gate { threshold_db: -40.0, attack_ms: 1.0, hold_ms: 40.0, release_ms: 100.0 })),
         (
             FxInstance::plugin_with("gate", &[-30.0, 0.5, 120.0, 250.0]).unwrap(),
             frozen(Frozen::Gate { threshold_db: -30.0, attack_ms: 0.5, hold_ms: 120.0, release_ms: 250.0 }),
         ),
-        (FxInstance::vignette(), frozen(Frozen::Vignette { strength: 0.5, radius: 0.7, softness: 0.45 })),
-        (FxInstance::lens_distort(), frozen(Frozen::LensDistort { k1: 0.35, k2: 0.0 })),
+        (FxInstance::builtin("vignette"), frozen(Frozen::Vignette { strength: 0.5, radius: 0.7, softness: 0.45 })),
+        (FxInstance::builtin("lens_distort"), frozen(Frozen::LensDistort { k1: 0.35, k2: 0.0 })),
         (
             FxInstance::plugin_with("lens_distort", &[-0.5, 0.123456789]).unwrap(),
             frozen(Frozen::LensDistort { k1: -0.5, k2: 0.123456789 }),
         ),
-        (FxInstance::twirl(), frozen(Frozen::Twirl { angle: 120.0, radius: 0.8 })),
+        (FxInstance::builtin("twirl"), frozen(Frozen::Twirl { angle: 120.0, radius: 0.8 })),
         (FxInstance::plugin_with("twirl", &[-240.0, 1.2]).unwrap(), frozen(Frozen::Twirl { angle: -240.0, radius: 1.2 })),
-        (FxInstance::ripple(), frozen(Frozen::Ripple { amount: 0.08, freq: 10.0, phase: 0.0 })),
+        (FxInstance::builtin("ripple"), frozen(Frozen::Ripple { amount: 0.08, freq: 10.0, phase: 0.0 })),
         (
             FxInstance::plugin_with("ripple", &[0.15, 6.0, 137.5]).unwrap(),
             frozen(Frozen::Ripple { amount: 0.15, freq: 6.0, phase: 137.5 }),
         ),
-        (FxInstance::kaleidoscope(), frozen(Frozen::Kaleidoscope { segments: 6, angle: 0.0 })),
+        (FxInstance::builtin("kaleidoscope"), frozen(Frozen::Kaleidoscope { segments: 6, angle: 0.0 })),
         (
             FxInstance::plugin_with("kaleidoscope", &[20.0, 15.0]).unwrap(),
             frozen(Frozen::Kaleidoscope { segments: 20, angle: 15.0 }),
         ),
-        (FxInstance::cylinder3d(), frozen(Frozen::Cylinder3d { curvature: 0.5 })),
+        (FxInstance::builtin("cylinder3d"), frozen(Frozen::Cylinder3d { curvature: 0.5 })),
         (FxInstance::plugin_with("cylinder3d", &[0.85]).unwrap(), frozen(Frozen::Cylinder3d { curvature: 0.85 })),
-        (FxInstance::corner_pin(), frozen(Frozen::CornerPin(PIN))),
-        (FxInstance::mirror(), frozen(Frozen::Mirror { horizontal: true, vertical: false })),
+        (FxInstance::builtin("corner_pin"), frozen(Frozen::CornerPin(PIN))),
+        (FxInstance::builtin("mirror"), frozen(Frozen::Mirror { horizontal: true, vertical: false })),
         (FxInstance::slowed_reverb(0.82, 0.1, 85.0), frozen(Frozen::SlowedReverb { rate: 0.82, mix: 0.1, reverb_delay_ms: 85.0, damp: 0.2, decay: 0.84, wet_gain: 1.0, predelay_ms: 0.0, frames: None, width: 1.0 })),
         (
             FxInstance::plugin_with("slowed_reverb", &[-0.5, 0.35, 120.0, 0.3, 0.9, 1.2, 15.0, 1.0, 0.123456789]).unwrap(),
@@ -357,7 +357,7 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
                 width: 0.123456789,
             }),
         ),
-        (FxInstance::pan3d(), frozen(pan3d_default(None))),
+        (FxInstance::builtin("pan3d"), frozen(pan3d_default(None))),
         (
             {
                 let mut p = FxInstance::plugin_with("pan3d", &[10.5, -4.0, 120.0, 0.123456789, 25.0, -3.0, 0.25, 0.75, 1.1, 0.0])
@@ -379,7 +379,7 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
             }),
         ),
         (
-            FxInstance::compressor(),
+            FxInstance::builtin("compressor"),
             frozen(Frozen::Compressor { threshold_db: -18.0, ratio: 4.0, attack_ms: 10.0, release_ms: 150.0, makeup_db: 0.0, key: None }),
         ),
         (
@@ -404,17 +404,17 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
             FxInstance::plugin_with("vignette", &[0.9, 0.3, 0.123456789]).unwrap(),
             frozen(Frozen::Vignette { strength: 0.9, radius: 0.3, softness: 0.123456789 }),
         ),
-        (FxInstance::color_grade(), frozen(Frozen::ColorGrade { brightness: 0.0, contrast: 0.0, saturation: 1.0, hue: 0.0 })),
+        (FxInstance::builtin("color_grade"), frozen(Frozen::ColorGrade { brightness: 0.0, contrast: 0.0, saturation: 1.0, hue: 0.0 })),
         (
             FxInstance::plugin_with("color_grade", &[0.05, -0.3, 1.4, 0.123456789 * 100.0]).unwrap(),
             frozen(Frozen::ColorGrade { brightness: 0.05, contrast: -0.3, saturation: 1.4, hue: 12.345679 }),
         ),
-        (FxInstance::duotone(), frozen(Frozen::Duotone { shadow_r: 24, shadow_g: 18, shadow_b: 64, high_r: 255, high_g: 236, high_b: 190, amount: 1.0 })),
+        (FxInstance::builtin("duotone"), frozen(Frozen::Duotone { shadow_r: 24, shadow_g: 18, shadow_b: 64, high_r: 255, high_g: 236, high_b: 190, amount: 1.0 })),
         (
             FxInstance::plugin_with("duotone", &[40.0, 0.0, 80.4, 255.0, 220.6, 160.0, 0.7]).unwrap(),
             frozen(Frozen::Duotone { shadow_r: 40, shadow_g: 0, shadow_b: 80, high_r: 255, high_g: 221, high_b: 160, amount: 0.7 }),
         ),
-        (FxInstance::filter(), frozen(Frozen::Filter { mode: FrozenFilterMode::Lowpass, cutoff_hz: 800.0, resonance: 0.707 })),
+        (FxInstance::builtin("filter"), frozen(Frozen::Filter { mode: FrozenFilterMode::Lowpass, cutoff_hz: 800.0, resonance: 0.707 })),
         (
             FxInstance::plugin_with("filter", &[1.0, 2500.0, 4.5]).unwrap(),
             frozen(Frozen::Filter { mode: FrozenFilterMode::Highpass, cutoff_hz: 2500.0, resonance: 4.5 }),
@@ -423,36 +423,36 @@ fn moved_kinds() -> Vec<(FxInstance, String)> {
             FxInstance::plugin_with("filter", &[2.0, 0.123456789 * 1000.0, 0.5]).unwrap(),
             frozen(Frozen::Filter { mode: FrozenFilterMode::Bandpass, cutoff_hz: 123.456789, resonance: 0.5 }),
         ),
-        (FxInstance::delay(), frozen(Frozen::Delay { time_ms: 350.0, feedback: 0.35, mix: 0.35, pingpong: false })),
+        (FxInstance::builtin("delay"), frozen(Frozen::Delay { time_ms: 350.0, feedback: 0.35, mix: 0.35, pingpong: false })),
         (
             FxInstance::plugin_with("delay", &[120.0, 0.8, 0.5, 1.0]).unwrap(),
             frozen(Frozen::Delay { time_ms: 120.0, feedback: 0.8, mix: 0.5, pingpong: true }),
         ),
-        (FxInstance::pitch_shift(), frozen(Frozen::PitchShift { semitones: 0.0, cents: 0.0 })),
+        (FxInstance::builtin("pitch_shift"), frozen(Frozen::PitchShift { semitones: 0.0, cents: 0.0 })),
         (FxInstance::plugin_with("pitch_shift", &[7.0, 0.0]).unwrap(), frozen(Frozen::PitchShift { semitones: 7.0, cents: 0.0 })),
         (FxInstance::plugin_with("pitch_shift", &[-12.0, 33.5]).unwrap(), frozen(Frozen::PitchShift { semitones: -12.0, cents: 33.5 })),
-        (FxInstance::tremolo(), frozen(Frozen::Tremolo { rate_hz: 5.0, depth: 0.6 })),
+        (FxInstance::builtin("tremolo"), frozen(Frozen::Tremolo { rate_hz: 5.0, depth: 0.6 })),
         (FxInstance::plugin_with("tremolo", &[12.5, 0.95]).unwrap(), frozen(Frozen::Tremolo { rate_hz: 12.5, depth: 0.95 })),
-        (FxInstance::auto_pan(), frozen(Frozen::AutoPan { rate_hz: 1.0, depth: 0.8 })),
+        (FxInstance::builtin("auto_pan"), frozen(Frozen::AutoPan { rate_hz: 1.0, depth: 0.8 })),
         (FxInstance::plugin_with("auto_pan", &[0.123456789, 0.1]).unwrap(), frozen(Frozen::AutoPan { rate_hz: 0.123456789, depth: 0.1 })),
-        (FxInstance::vibrato(), frozen(Frozen::Vibrato { rate_hz: 5.0, depth_ms: 0.5 })),
+        (FxInstance::builtin("vibrato"), frozen(Frozen::Vibrato { rate_hz: 5.0, depth_ms: 0.5 })),
         (FxInstance::plugin_with("vibrato", &[7.0, 4.25]).unwrap(), frozen(Frozen::Vibrato { rate_hz: 7.0, depth_ms: 4.25 })),
-        (FxInstance::chorus(), frozen(Frozen::Chorus { rate_hz: 0.8, depth_ms: 3.5, mix: 0.5, voices: 2 })),
+        (FxInstance::builtin("chorus"), frozen(Frozen::Chorus { rate_hz: 0.8, depth_ms: 3.5, mix: 0.5, voices: 2 })),
         (
             FxInstance::plugin_with("chorus", &[2.0, 9.5, 0.75, 3.0]).unwrap(),
             frozen(Frozen::Chorus { rate_hz: 2.0, depth_ms: 9.5, mix: 0.75, voices: 3 }),
         ),
-        (FxInstance::flanger(), frozen(Frozen::Flanger { rate_hz: 0.25, depth_ms: 2.0, feedback: 0.5, mix: 0.5 })),
+        (FxInstance::builtin("flanger"), frozen(Frozen::Flanger { rate_hz: 0.25, depth_ms: 2.0, feedback: 0.5, mix: 0.5 })),
         (
             FxInstance::plugin_with("flanger", &[1.5, 6.0, -0.75, 0.9]).unwrap(),
             frozen(Frozen::Flanger { rate_hz: 1.5, depth_ms: 6.0, feedback: -0.75, mix: 0.9 }),
         ),
-        (FxInstance::phaser(), frozen(Frozen::Phaser { rate_hz: 0.4, depth: 0.7, feedback: 0.3, stages: 4, mix: 0.5 })),
+        (FxInstance::builtin("phaser"), frozen(Frozen::Phaser { rate_hz: 0.4, depth: 0.7, feedback: 0.3, stages: 4, mix: 0.5 })),
         (
             FxInstance::plugin_with("phaser", &[3.0, 0.2, 0.85, 7.0, 1.0]).unwrap(),
             frozen(Frozen::Phaser { rate_hz: 3.0, depth: 0.2, feedback: 0.85, stages: 7, mix: 1.0 }),
         ),
-        (FxInstance::limiter(), frozen(Frozen::Limiter { threshold_db: -6.0, ceiling_db: -0.3, lookahead_ms: 5.0, release_ms: 80.0 })),
+        (FxInstance::builtin("limiter"), frozen(Frozen::Limiter { threshold_db: -6.0, ceiling_db: -0.3, lookahead_ms: 5.0, release_ms: 80.0 })),
         (
             FxInstance::plugin_with("limiter", &[-12.0, -1.0, 12.5, 200.0]).unwrap(),
             frozen(Frozen::Limiter { threshold_db: -12.0, ceiling_db: -1.0, lookahead_ms: 12.5, release_ms: 200.0 }),
@@ -630,7 +630,7 @@ fn t973_a_moved_transition_kind_keeps_its_text() {
     kt_plugins_builtin::install();
     let frozen = |f: FrozenTrans| serde_json::to_string(&f).unwrap();
     let cases = [
-        (TransitionKind::wipe(), frozen(FrozenTrans::Wipe { dir: "left", angle: 0.0, softness: 0.15 })),
+        (TransitionKind::builtin("wipe"), frozen(FrozenTrans::Wipe { dir: "left", angle: 0.0, softness: 0.15 })),
         (
             TransitionKind::plugin_with("wipe", &[2.0, 12.0, 0.123456789]).unwrap(),
             frozen(FrozenTrans::Wipe { dir: "up", angle: 12.0, softness: 0.123456789 }),

@@ -471,14 +471,14 @@ fn t327_print_dense_chain_cost() {
     kt_plugins_builtin::install();
     let chain = || {
         vec![
-            FxInstance::filter(),
-            FxInstance::eq(),
-            FxInstance::chorus(),
-            FxInstance::delay(),
-            FxInstance::compressor(),
+            FxInstance::builtin("filter"),
+            FxInstance::builtin("eq"),
+            FxInstance::builtin("chorus"),
+            FxInstance::builtin("delay"),
+            FxInstance::builtin("compressor"),
             // lookahead nodes of R.48: the limiter is cheap, pitch is the most expensive
             // of all (grain resampling for every grain)
-            FxInstance::limiter(),
+            FxInstance::builtin("limiter"),
             kt_model::FxInstance::plugin_with("pitch_shift", &[3.0, 0.0]).unwrap(),
             FxInstance::gain(-3.0),
         ]
@@ -553,7 +553,7 @@ fn bench_pitch_cost() {
     kt_plugins_builtin::install();
     for (name, fx, engine) in [
         ("dry", vec![], PitchEngine::Wsola),
-        ("limiter", vec![FxInstance::limiter()], PitchEngine::Wsola),
+        ("limiter", vec![FxInstance::builtin("limiter")], PitchEngine::Wsola),
         (
             "pitch wsola",
             vec![kt_model::FxInstance::plugin_with("pitch_shift", &[3.0, 0.0]).unwrap()],

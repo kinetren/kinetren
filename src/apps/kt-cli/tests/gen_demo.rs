@@ -187,9 +187,9 @@ fn gen_demo_concat() {
             1,
             vec![kt_model::FxInstance::plugin_with("color_grade", &[0.05, 0.35, 1.5, -20.0]).unwrap()],
         ),
-        clip(2, 4, 4, 1, vec![FxInstance::duotone()]),
+        clip(2, 4, 4, 1, vec![FxInstance::builtin("duotone")]),
         clip(3, 8, 4, 1, vec![posterize(4)]),
-        clip(4, 12, 4, 1, vec![grid2(), FxInstance::vignette(), zoom(2.0)]),
+        clip(4, 12, 4, 1, vec![grid2(), FxInstance::builtin("vignette"), zoom(2.0)]),
     ];
     save(&mut p, "06-color.kt");
 
@@ -242,7 +242,7 @@ fn gen_demo_concat() {
     let mut ripple =
         clip(1, 0, 4, 1, vec![kt_model::FxInstance::plugin_with("ripple", &[0.12, 12.0, 0.0]).unwrap()]);
     ripple.fx_auto = vec![vec![curve("phase", vec![key(0.0, 0.0), key(4.0, 1080.0)])]];
-    let mut pin = clip(2, 4, 4, 1, vec![FxInstance::corner_pin()]);
+    let mut pin = clip(2, 4, 4, 1, vec![FxInstance::builtin("corner_pin")]);
     pin.fx_auto = vec![vec![
         curve("x0", vec![key(0.0, 0.35), key(3.0, 0.0)]),
         curve("y0", vec![key(0.0, 0.25), key(3.0, 0.0)]),
@@ -253,9 +253,9 @@ fn gen_demo_concat() {
         ripple,
         pin,
         clip(3, 8, 4, 1, vec![kt_model::FxInstance::plugin_with("lens_distort", &[-0.5, 0.0]).unwrap()]),
-        clip(4, 12, 4, 1, vec![FxInstance::twirl()]),
+        clip(4, 12, 4, 1, vec![FxInstance::builtin("twirl")]),
         // the concatenation: kaleidoscope and cylinder WITH A ZOOM — one merged run
-        clip(5, 16, 4, 1, vec![FxInstance::kaleidoscope(), zoom(1.5)]),
+        clip(5, 16, 4, 1, vec![FxInstance::builtin("kaleidoscope"), zoom(1.5)]),
         clip(6, 20, 4, 1, vec![kt_model::FxInstance::plugin_with("cylinder3d", &[0.8]).unwrap(), zoom(1.3)]),
     ];
     save(&mut p, "08-warp.kt");

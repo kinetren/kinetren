@@ -64,7 +64,20 @@ src/libs/kt-text    title rasterization: harfrust+ab_glyph, vendored Noto Sans (
 src/libs/kt-cache   burst cache + coverage (the only truth about "warmth")
 src/libs/kt-fx      AudioFx/VideoFx: slowedreverb, gain, video FX
 src/libs/kt-engine  render graph, MediaWorker scheduler, transport, prefetch, export
+src/libs/kt-plugin-api  the plugin contract (plugin-api-stage1): manifest + param passport, the
+                     FX/transition/generator kernels, the registry by family; depends on kt-time and serde
+src/libs/kt-plugins-builtin  the assembler: the closed list of built-in plugin ids and `install()`;
+                     a normal dependency of kt-app and kt-cli only, a dev-dependency of core tests
+src/plugins/*       the effects a person picks, one crate per family: fx-audio-{dynamics,modulation,
+                     tone}, fx-video-{color,distort}, transitions-{basic,styled,volume},
+                     generators-{basic,test}; a plugin's id is its file tag. An edit here rebuilds
+                     the family, the assembler and the binaries, no core crate (t977)
 ```
+
+The core keeps what is not an effect a person picks: the Geometry node, CamMotion, LayerMix, the
+crossfade and the title; the ten barrier video kinds (blur, glow, edges, vhs, sharpen, pixelate,
+halftone, radial_blur, drop_shadow, chroma_ab) plus noise and greenscreen wait for
+`plugin-api-barriers` (the GPU pass graph and the SIMD twins).
 
 Every libs/ crate and apps/kt-app has its own `CLAUDE.md` with invariants and non-obvious decisions. Read it before editing the crate.
 

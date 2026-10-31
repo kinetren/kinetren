@@ -304,7 +304,7 @@ impl KtApp {
         let pv_svc = &self.fx_thumbs;
         let pv_tick = playhead.0 - playhead.0.rem_euclid(frame_step);
         let pv_cam = kt_engine::resolve_cam3d(
-            &[kt_model::FxInstance::pan3d()],
+            &[kt_model::FxInstance::builtin("pan3d")],
             &self.model.project().cameras,
             kt_time::Tick(pv_tick),
             crate::fx_thumbs::REF_W,

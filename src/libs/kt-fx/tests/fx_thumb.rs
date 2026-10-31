@@ -76,7 +76,7 @@ fn t544b_pattern_feeds_every_class_of_effect() {
         assert_ne!(hash(&f), base, "{}: pattern has no detail to work on", fx.tag());
     }
     // colour: the ramp and the bars
-    for fx in [FxInstance::posterize(), FxInstance::duotone(), FxInstance::vhs(4, 0.4)] {
+    for fx in [FxInstance::builtin("posterize"), FxInstance::builtin("duotone"), FxInstance::vhs(4, 0.4)] {
         let f = thumb(&p, std::slice::from_ref(&fx));
         assert_ne!(hash(&f), base, "{}: pattern has no colour to work on", fx.tag());
     }
@@ -102,8 +102,8 @@ fn t544c_identity_is_identity_and_a_variant_is_not() {
     assert_ne!(hash(&thumb(&p, &[zoomed])), base, "a zoom variant shows nothing");
 
     // Color Grade and Corner Pin — the same identities by template
-    assert_eq!(hash(&thumb(&p, &[FxInstance::color_grade()])), base);
-    assert_eq!(hash(&thumb(&p, &[FxInstance::corner_pin()])), base);
+    assert_eq!(hash(&thumb(&p, &[FxInstance::builtin("color_grade")])), base);
+    assert_eq!(hash(&thumb(&p, &[FxInstance::builtin("corner_pin")])), base);
 }
 
 /// A shadow exists only where there is transparency: on an opaque
