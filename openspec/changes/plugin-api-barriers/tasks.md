@@ -187,9 +187,20 @@ stage that moves it.
 
 ## 5. Cleanup and acceptance
 
-- [ ] 5.1 `FxInstance` keeps Geometry, CamMotion, LayerMix, Plugin, Missing. `apply_barrier` and kt-gpu's `FxOp` name no effect kind; the barrier `Pipe`s and WGSL files are gone. Write t1056 (`src/libs/kt-model/tests/plugin_format.rs`), red with a variant left. Verify `cargo test --workspace` green
-- [ ] 5.2 Run `python3 src/scripts/plugin-rebuild-check.py check src/plugins/fx-video-blur/src/lib.rs`: no core library recompiled. Record the numbers here next to 1.3
-- [ ] 5.3 Update `src/libs/kt-fx/CLAUDE.md` and `src/libs/kt-gpu/CLAUDE.md` (the "add a video effect" checklist for a barrier), `docs/architecture.md` and the root `CLAUDE.md` (no barrier kinds left in the core); commit stage 5
+- [x] 5.1 `FxInstance` keeps Geometry, CamMotion, LayerMix, Plugin, Missing. `apply_barrier` and kt-gpu's `FxOp` name no effect kind; the barrier `Pipe`s and WGSL files are gone. Write t1056 (`src/libs/kt-model/tests/plugin_format.rs`), red with a variant left. Verify `cargo test --workspace` green
+  - t1056 names the core's kinds in an EXHAUSTIVE match, so a variant left or added does not
+    compile until it is named; at run time it checks that the core kinds are exactly geometry,
+    cam_motion and layer_mix, the twelve moved ids are plugin slots, and neither `apply_barrier`
+    nor `chain_ops`'s barrier arm names an effect kind (a source scan). Red with one such line put
+    back into `apply_barrier`. kt-gpu holds seven fixed pipes, all the host's.
+- [x] 5.2 Run `python3 src/scripts/plugin-rebuild-check.py check src/plugins/fx-video-blur/src/lib.rs`: no core library recompiled. Record the numbers here next to 1.3
+  - t977 ok: an edit of `fx-video-blur` recompiled fx-video-blur, kt-plugins-builtin, kt-app and
+    kt-cli, and no core library. The machine was at load 10.2 before the run:
+    `build -p kt-app -p kt-cli` 18.2 s, `test --workspace --no-run` 200.6 s (tests of 10 packages).
+  - For comparison, 1.3: an edit of `kt-fx/src/video.rs`, where the barriers lived, took 19.1 s /
+    40.4 s (tests of 5 packages). The binaries cost about the same; the test build is ~4× dearer for
+    the reason recorded in 1.3, and the proposed follow-up removes it.
+- [x] 5.3 Update `src/libs/kt-fx/CLAUDE.md` and `src/libs/kt-gpu/CLAUDE.md` (the "add a video effect" checklist for a barrier), `docs/architecture.md` and the root `CLAUDE.md` (no barrier kinds left in the core); commit stage 5
 
 ## 6. Finish
 

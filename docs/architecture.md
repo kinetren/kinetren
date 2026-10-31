@@ -45,9 +45,13 @@ Status: a high-level overview map of the engine. Contracts and the reasons behin
   core crate's tests take it as a dev-dependency. An edit of a plugin kernel therefore rebuilds the
   family, the assembler and the two binaries plus test targets — no core library (t977,
   `scripts/plugin-rebuild-check.py check`, `finish.sh --rebuild-check`).
-- **Still core:** the Geometry node, CamMotion, LayerMix, the crossfade, the title (its rows are
-  text, a font family and a layer order; its presets and R.53–R.58 migration live in kt-model), and
-  the barrier video kinds until `plugin-api-barriers`.
+- **Still core:** the Geometry node, CamMotion, LayerMix, the crossfade and the title (its rows
+  are text, a font family and a layer order; its presets and R.53–R.58 migration live in kt-model).
+- **A barrier plugin** (`plugin-api-barriers`) gives a CPU kernel over the frame, with its AVX2
+  twin behind `BarrierCtx::simd`, and a GPU pass graph. The graph is built from the host's nodes
+  (`Resample`, `Premul`, `Save`) and its own fragment passes. The shared raster code — the
+  resample, the bilinear sample, premultiplication — is reached through `RasterHost`, so it keeps
+  one text with the core's own paths. The K× rule stays the planner's.
 
 ## Flows and ownership
 

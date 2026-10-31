@@ -95,7 +95,7 @@ BOTH backends in the same commit (t943 CPU sweep, t944 GPU tile == GPU full pass
 - Integer divisions: `/255` is the magic `(x*0x8080_8081)>>39` (the common `(t+(t>>8))>>8` is wrong at 255³!), `/32767` with sign — see noise. Any new division/rounding trick is closed by an EXHAUSTIVE micro-test.
 - A new kernel — only as a pair with the scalar one plus a case in t198 (`tests/simd_parity.rs`), necessarily with NON-MULTIPLE sizes (tails) and extreme values. Usefulness threshold — 1.3×: below it we keep the scalar code (so it was decided for greenscreen/mirror; figures in item 198).
 - If you change an effect formula, you change the scalar code, the AVX2 kernel AND the WGSL shader of kt-gpu in one commit (t181 guards the third pair).
-- All `unsafe` code is only in `video_simd.rs`; each kernel is called only after `simd::simd_level() == Avx2`. `KT_SIMD=0` — forced scalar, `KT_REQUIRE_SIMD=1` — forbids a vacuous skip in tests.
+- All `unsafe` code is only in `video_simd.rs` and, for a plugin family's twins, in that crate's `simd.rs` (plugin-api-barriers: the barriers' twins moved with them, behind `BarrierCtx::simd` — the host's ONE switch); each kernel is called only after `simd::simd_level() == Avx2`. `KT_SIMD=0` — forced scalar, `KT_REQUIRE_SIMD=1` — forbids a vacuous skip in tests.
 
 ## API
 - `ClipProcessor` — a stateful processor of one clip: warp (rubato `SincFixedOut`) + freeverb + the static gain of the chain. It is read strictly sequentially (`read(local, out, pull)`). There are TWO discontinuities, and they must not be confused (item 166): after `reset()` (a real seek — the player performs it) — `hard_seek` with pre-roll `max(tail, 100 ms)`; a position break during CONTINUOUS output (the loop region wrapping around, a clip shifted with the mouse during playback) — `seam`: the source is repositioned, the reverb and sinc live on. The pre-roll on every lap of the loop warmed the processor and grew into underruns — now it is not there.
@@ -287,15 +287,20 @@ Three classes of video effect; the class determines ALL the placement of the cod
   the tap arm of geom_fused (kind 2..5, meta 4 bits). In total one f64 text and
   its two WGSL mirrors; a divergence is caught by the t329 cycles. Vignette measures the coordinate of ITS OWN STAGE
   (rec[ti]/stage_w/h — a precedent from Noise).
-- **Barriers** (the remainder): they break the geo series; the K×-rule of item 313 applies to each on its own
+- **Barriers** (the remainder; PLUGINS since plugin-api-barriers, `src/plugins/fx-video-{blur,stylize}`
+  and greenscreen in `fx-video-color`): a `BarrierKernel` — the CPU `frame` over the host's
+  `RasterHost` (the resample, the bilinear sample and premultiplication keep ONE text here, with their
+  twins), the GPU pass graph, `Decl.alpha`. `apply_barrier` makes one dynamic call into it. Noise and
+  greenscreen are POINT-WISE plugins with a barrier kernel: their tap inside a series, the kernel at a
+  series edge. They break the geo series; the K×-rule of item 313 applies to each on its own
   (Sharpen/DropShadow — mip ×K and 3 GPU passes; Pixelate — cell ×K,
   EXACT; Halftone — the pattern in LOGICAL coordinates l=p/K; RadialBlur —
   fractions of the frame + EXACTLY 16 taps as a constant; ChromaAb — fractions of the frame).
   DropShadow: an input without alpha — passthrough on both paths; the formula at
   alpha 255 degenerates into an identity (the early exit is an optimization).
 
-Checklist "add a video effect" (plugin-api-stage1: a picked effect is a PLUGIN; the ten barrier
-kinds still wait for `plugin-api-barriers`): in its family crate under `src/plugins/fx-video-*` —
+Checklist "add a video effect" (plugin-api-stage1 and plugin-api-barriers: a picked effect is a
+PLUGIN, the barriers included): in its family crate under `src/plugins/fx-video-*` —
 a `Manifest` (id = the file's `kind`, `Media::VideoFx`, the passport in FILE order with a `RowDecl`
 per row, `omit_default` where the file leaves the row out) with its `Decl.video_class`:
 - **point-wise** — a `VideoKernel` (`cook`/`tap`, or `cook_at`/`tap_at` with `Decl.positioned`)
@@ -304,9 +309,15 @@ per row, `omit_default` where the file leaves the row out) with its `Decl.video_
 - **geometry** — a `GeoKernel` whose `steps` give the host's vocabulary (`Warp` with a
   `warp_<id>` WGSL in `Gpu::Warp`, `Proj`, `Mirror`, `Grid`; an exact lone path through `lone`),
   neutral values give no steps;
+- **barrier** — a `BarrierKernel`: `cook` (clamps once per frame), `frame` (the byte reference;
+  its AVX2 branch only when `cx.simd`, byte-equal — t1053 runs every barrier both ways), `shaders`
+  and `gpu` (the pass graph; the registry checks it on the defaults and the top at K 1 and 4,
+  t1054), with `Gpu::Barrier` and `Decl.alpha`. The kernel scales its pixel geometry by
+  `cx.res_scale` and never decides K (t1055). A test plugin that names no host code runs on both
+  executors (t1052);
 then `UiDecl` (the display name, the category and keyword key paths, the picker `variants` and,
 when the useful first click differs from the file's default, a `template`), its id in
 `BUILTIN_IDS` (kt-plugins-builtin, in family order), its place in kt-app's `VIDEO_ORDER`, a
 constructor in kt-model if callers build it, `param_label` + catalogues ×5 (+ subset-fonts for new
 glyphs). t328's GOLDEN_ALL line (the completeness lock), a tolerance class in t329 and t973's
-frozen form follow from `FxInstance::all()`; the semantic test — in geo_fuse (t330/t332/t333).
+frozen form follow from `FxInstance::all()` (a barrier: a row in t1051 too); the semantic test — in geo_fuse (t330/t332/t333).

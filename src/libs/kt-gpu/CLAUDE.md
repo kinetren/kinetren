@@ -97,13 +97,22 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
 - **A picked point-wise or geometry effect needs NO code here** (plugin-api-stage1): its WGSL
   (`tap_<id>`, `warp_<id>`) comes in its manifest and `assembled_shaders` pastes it — one dispatch
   number per plugin in registry order (`plugin_taps`/`plugin_warps`), never hashed into a key; the
-  geometry steps without WGSL (`Proj`, `Mirror`, `Grid`) are the existing primitives. Only a new
-  BARRIER kind still adds a pipe, an FxOp and `chain_ops` arms (until `plugin-api-barriers`).
-- PIPE_COUNT grew by rounds (R.47 — 19, R.50 — +unpremul, R.53 — +premul) — the point-wise
-  colorgrade/duotone/posterize/vignette pipes LEFT with the plugins (4.1a/4.1b) — + sharpen_add/pixelate/
-  chroma_ab/radial_blur/shadow_under/halftone. Sharpen and DropShadow —
-  3 passes (Resample down/up + the final one with T1); passes()/slot_units MUST
-  predict this.
+  geometry steps without WGSL (`Proj`, `Mirror`, `Grid`) are the existing primitives.
+- **A barrier needs NO code here either** (plugin-api-barriers):
+  - its `BarrierKernel::shaders` are compiled once per engine over `common.wgsl`, after the
+    point-wise plugins' own passes (`plugin_barriers`, `barrier_pipe_base`);
+  - its `gpu` graph becomes one `FxOp::PluginBarrier`, whose `passes()` is its non-`Save` nodes —
+    the arena prediction stays exact;
+  - `chain_ops` applies its `Decl.alpha` to the fold;
+  - an empty graph is a passthrough (drop_shadow on a frame the fold knows is opaque).
+  The fixed pipes left are the host's own: resample, mirror, composite, layer_mix, unpremul,
+  premul, grid_tile. A point-wise plugin with a barrier kernel (noise, greenscreen) gets both its
+  tap and its graph.
+- PIPE_COUNT grew by rounds (R.47 — 19, R.50 — +unpremul, R.53 — +premul) and shrank as the effects
+  became plugins: the point-wise pipes left in plugin-api-stage1 4.1a/4.1b, every barrier pipe (noise,
+  greenscreen, edges, vhs, glow_add, sharpen_add, pixelate, chroma_ab, radial_blur, shadow_under,
+  halftone) in plugin-api-barriers. Seven remain, all the host's. A plugin's passes are counted from
+  its graph (sharpen and drop_shadow: Resample down/up + the final pass with T1 — 3 slots).
 - `geom_fused.wgsl`: primitive kind 4 — Warp (2 uniform slots, [mode,p0..p2]
   [p3..p6]); `mode` is the plugin's index in `plugin_warps()` (plugin-api-stage1, D11.2) and its
   arm is assembled at `// @PLUGIN_WARP_ARMS` in BOTH loops (`assembled_shaders`, t993); the
