@@ -91,7 +91,7 @@ Further down the chain, it hurt too. The warp speed of the A/V pair was edited s
 ## Deferred
 
 - **Formula** (F-AUT-007, accepted): its own mini-formula, a closed set of operations, the text in the post-FX key, resolution before the audio stream, the counter of references in a project without formulas = 0.
-- **Plugins** (F-EXT-003, accepted): built-in → dlopen following the loader pattern of `src/libs/kt-ffmpeg/src/loader.rs` → OFX; in this round only the contract types.
+- **Plugins** (F-EXT-003, accepted): the built-in stage is DONE — capability `plugins` (`openspec/specs/plugins/`, plugin-api-stage1, 2026-10-31); the order of external hosts was revised to wasm (stage 2) before dlopen/OFX (stage 3), see its design.md D10; the barrier kinds move in `plugin-api-barriers`.
 - **Parameter links / rig** (F-AUT-008, candidate): decide right after the public parameters — a published handle driving several properties is a rig; the question "is the curve or the link more important" MUST have one answer for the whole program.
 - **Shapes of segments and Bezier handles** (F-AUT-006/F-AUT-001, candidate): in one decision — a shape is a polynomial in `curve_value`, `rate` stays an exception, "turn it on for all" is a command, not a machine setting.
 - **Track envelope** (F-AUT-003) — to be opened only with an answer to "does it move with the events".

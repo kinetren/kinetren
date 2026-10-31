@@ -108,7 +108,7 @@ an argument for "do not let in", here it is a description of the single case fro
 protect the user (a crash right after a routine update of the plugin set, without a single edit to the project).
 
 ## How it fits Kinotrain
-CAPABILITY: openspec/specs/automation/ — the contract is in `spec.md`, the "why" and the code paths are in `design.md`.
+CAPABILITY: openspec/specs/plugins/ — the contract is in `spec.md`, the "why" and the code paths are in `design.md` (the built-in stage, plugin-api-stage1, 2026-10-31; the parameter passport stays in openspec/specs/automation/).
 Accepted (interfaces): the parameter passport is built at runtime so that a plugin can declare its own; order — built-in → dylib → OpenFX later.
 
 ## Estimate
@@ -175,8 +175,8 @@ of this verdict change, by explicit revision rather than silently:
 
 The plugin id is the file tag the kind already has, so moving a kind into a plugin changes no byte
 of a project; the golden references iterate a closed built-in list and never see anything else.
-The design lives in `openspec/changes/plugin-api-stage1/design.md` (D4, D10); the contract will be
-the capability `plugins` after archiving.
+The design lives in `openspec/changes/archive/2026-10-31-plugin-api-stage1/design.md` (D4, D10);
+the contract is the capability `plugins` (`openspec/specs/plugins/`).
 
 ## Sources
 

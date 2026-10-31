@@ -354,4 +354,4 @@ once (English message, first line = the stage and what was done).
     live scenarios 56 green. nestparam passed only on the second try: its race was fixed in 9d891873
     and the scenario is green alone. Verification cost 798 s against the 300 s budget. The t977
     numbers are in 7.2.
-- [ ] 8.2 After archiving: F-EXT-003 verdict line names `CAPABILITY: openspec/specs/plugins/`; append the "why" (D3 ids-as-tags, D4 the media split, D5 closed geometry, D10 the order) to `openspec/specs/plugins/design.md` and the automation design's "Deferred → Plugins" line
+- [x] 8.2 After archiving: F-EXT-003 verdict line names `CAPABILITY: openspec/specs/plugins/`; append the "why" (D3 ids-as-tags, D4 the media split, D5 closed geometry, D10 the order) to `openspec/specs/plugins/design.md` and the automation design's "Deferred → Plugins" line

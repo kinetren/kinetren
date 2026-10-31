@@ -21,6 +21,7 @@ Status: a high-level overview map of the engine. Contracts and the reasons behin
 | [`durability`](../openspec/specs/durability/spec.md) · [why](../openspec/specs/durability/design.md) | autosave, recovery, finish.sh, live scenarios |
 | [`ui-timeline`](../openspec/specs/ui-timeline/spec.md) · [why](../openspec/specs/ui-timeline/design.md) | layout, repaint, i18n, gestures |
 | [`ui-reach`](../openspec/specs/ui-reach/spec.md) · [why](../openspec/specs/ui-reach/design.md) | "there are no dead ends", right click |
+| [`plugins`](../openspec/specs/plugins/spec.md) · [why](../openspec/specs/plugins/design.md) | the plugin contract and registry, family crates, ids as file tags, leaf rebuild |
 
 ## Crates and the plugin layer
 
@@ -100,7 +101,7 @@ Keyed by media_id (identity key: path + size + mtime + xxhash + index_version): 
 
 ## Properties, automation, compositions, plugins
 
-The property model (passport + value + source), zero cost when unused, who resolves curves, public parameters of a composition, and physics as a function — are in `openspec/specs/automation/design.md` and `openspec/specs/compositions/design.md`. The plugin contract (the manifest, the kernels of each family, the registry, ids as tags, what stays core) — in the change `plugin-api-stage1` (`openspec/changes/plugin-api-stage1/design.md`, the capability `plugins` once archived).
+The property model (passport + value + source), zero cost when unused, who resolves curves, public parameters of a composition, and physics as a function — are in `openspec/specs/automation/design.md` and `openspec/specs/compositions/design.md`. The plugin contract (the manifest, the kernels of each family, the registry, ids as tags, what stays core) — in `openspec/specs/plugins/spec.md`, the why in its `design.md`.
 
 ## Runtime loading of FFmpeg (kt-ffmpeg)
 
