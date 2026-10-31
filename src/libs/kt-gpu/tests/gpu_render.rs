@@ -428,7 +428,7 @@ fn t496_gpu_frame_identity_follows_content() {
 
         settings_explicit: false,
     });
-    let solid = |r: u8| GeneratorKind::Solid { color_r: r, color_g: 0, color_b: 0 };
+    let solid = |r: u8| GeneratorKind::solid(r, 0, 0);
     p.media.push(MediaRef::new(MediaId(1), kt_model::gen_kind_path(&solid(32))));
     p.clips.push(ClipEvent {
         // R.59, stage 2: the values are ON THE EVENT

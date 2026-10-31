@@ -349,6 +349,7 @@ fn t287_stutter_of_micro_clips_asks_for_one_burst() {
 /// parameters remains in the cache: the worker itself cleans them — the same thread that inserts them.
 #[test]
 fn t501_retune_is_not_cancelled_and_not_raced() {
+    kt_plugins_builtin::install();
     let cache = Arc::new(BurstCache::new(CacheConfig::default()));
     let media = MediaId(1);
     let sid = source_id(media);

@@ -352,12 +352,13 @@ fn t316_replace_media_updates_the_decode_stage() {
 /// (the owner's claim, R.53).
 #[test]
 fn t500_retune_keeps_worker_and_renderer() {
+    kt_plugins_builtin::install();
     let mut project = base_project();
     // a generator clip over an audio clip of the base project
     project.media.push(MediaRef::new(MediaId(2), "gen:solid"));
     project.clips.push(ClipEvent {
         // R.59, stage 2: values are on the EVENT, the source sits at its address
-        r#gen: Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
+        r#gen: Some(GeneratorKind::solid(0, 0, 0)),
         gen_auto: Vec::new(),
         overrides: Vec::new(),
         geometry: Default::default(),
@@ -417,10 +418,10 @@ fn t500_retune_keeps_worker_and_renderer() {
     let pver = player.project_version();
     let cver = player.content_version();
 
-    let orange = GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
+    let orange = GeneratorKind::solid(255, 136, 0);
     assert!(
         kt_media::factory::can_retune_gen(
-            &kt_model::GenState::new(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
+            &kt_model::GenState::new(GeneratorKind::solid(0, 0, 0)),
             &kt_model::GenState::new(orange.clone())
         ),
         "the colour changes without a change of passport"
@@ -470,13 +471,14 @@ fn t500_retune_keeps_worker_and_renderer() {
 /// of the values.
 #[test]
 fn t661_a_value_edit_does_not_rebuild_the_renderer() {
+    kt_plugins_builtin::install();
     use kt_model::{Command, GeneratorKind, ParamCurve};
 
     // the law P at the level of COMMANDS: the exhaustive match in kt-model will not let
     // a new command be forgotten, while its answer is pinned here
     let set = Command::SetClipGen {
         id: ClipId(2),
-        kind: Some(GeneratorKind::Solid { color_r: 1, color_g: 1, color_b: 1 }),
+        kind: Some(GeneratorKind::solid(1, 1, 1)),
     };
     let auto = Command::SetClipGenAuto { id: ClipId(2), auto: Vec::<ParamCurve>::new() };
     assert!(!set.touches_render_plan(), "the generator’s values of the plan do not touch it");
@@ -486,7 +488,7 @@ fn t661_a_value_edit_does_not_rebuild_the_renderer() {
     assert!(
         Command::ApplyGenToAll {
             media: MediaId(2),
-            kind: GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 },
+            kind: GeneratorKind::solid(0, 0, 0),
             auto: vec![],
         }
         .touches_render_plan()
@@ -496,7 +498,7 @@ fn t661_a_value_edit_does_not_rebuild_the_renderer() {
     let mut project = base_project();
     project.media.push(MediaRef::new(MediaId(2), "gen:solid"));
     project.clips.push(ClipEvent {
-        r#gen: Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
+        r#gen: Some(GeneratorKind::solid(0, 0, 0)),
         gen_auto: Vec::new(),
         overrides: Vec::new(),
         geometry: Default::default(),
@@ -531,7 +533,7 @@ fn t661_a_value_edit_does_not_rebuild_the_renderer() {
     let cver = player.content_version();
     assert!(player.update_gen(
         ClipId(2),
-        GeneratorKind::Solid { color_r: 9, color_g: 9, color_b: 9 },
+        GeneratorKind::solid(9, 9, 9),
         kt_model::text_anim_curves(kt_model::TextAnim::Typewriter, 1.0, 2.0),
     ));
     assert_eq!(player.worker_spawns(), spawns, "there is no need to recreate the decoder stream");
@@ -540,6 +542,6 @@ fn t661_a_value_edit_does_not_rebuild_the_renderer() {
     // the stored project stays truthful: it is read by export and diagnostics
     let p = player.project();
     let c = p.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
-    assert!(matches!(c.r#gen, Some(GeneratorKind::Solid { color_r: 9, .. })));
+    assert!(c.r#gen.as_ref().and_then(|g| g.get_param("color_r")) == Some(9.0));
     assert!(!c.gen_auto.is_empty(), "the curves must reach the stored project");
 }

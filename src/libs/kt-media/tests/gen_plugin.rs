@@ -112,3 +112,65 @@ fn t1048_a_moved_generator_kind_keeps_its_frames_sound_and_text() {
     assert_eq!(kinds.len(), GOLDEN.len(), "a golden row without its kind");
     assert!(problems.is_empty(), "{problems:#?}");
 }
+
+/// Test 1050 (plugin-api-stage1, D13): a generator kind whose plugin this build lacks. A file from a
+/// build with more plugins opens: the event's kind reads as `Missing`, the save writes its bytes
+/// back unchanged, and the source is a NAMED placeholder — an opaque frame that says what is absent,
+/// not a black or transparent slab.
+#[test]
+fn t1050_a_missing_generator_kind_is_kept_and_named() {
+    use kt_model::project_file::{from_text, to_text};
+    use kt_model::*;
+    kt_plugins_builtin::install();
+    let raw = r#"{"kind":"wobble_gen","amp":0.25,"mode":"sine"}"#;
+    let missing: GeneratorKind = serde_json::from_str(raw).expect("an unknown generator kind still reads");
+    assert!(matches!(&missing, GeneratorKind::Missing(m) if m.id() == "wobble_gen"), "{missing:?}");
+    assert_eq!(gen_kind_path(&missing), "gen:wobble_gen", "the media address of a missing kind is its id");
+
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    });
+    p.media.push(MediaRef::new(MediaId(1), "gen:wobble_gen"));
+    p.clips.push(ClipEvent {
+        r#gen: Some(missing.clone()),
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: Vec::new(),
+        fx_bypass: Vec::new(),
+        fx_auto: Vec::new(),
+        opacity: 1.0,
+        fx_off: false,
+    });
+    let text = to_text(&p, None);
+    let read = from_text(&text).expect("a file with a missing generator kind opens");
+    let kind = read.project.clips[0].r#gen.clone().expect("the event keeps its kind");
+    let GeneratorKind::Missing(m) = &kind else { panic!("not kept as missing: {kind:?}") };
+    assert_eq!(serde_json::to_string(&m.raw).unwrap(), raw, "the raw content changed");
+    assert_eq!(to_text(&read.project, None), text, "the save changed the bytes");
+
+    let mut src = kt_media::factory::open_gen(&GenState::new(kind));
+    let f = src.read_video_frame(Tick(0), Some(Quality { width: 160, height: 90 })).expect("a frame");
+    assert!(f.rgba.chunks_exact(4).all(|px| px[3] == 255), "the placeholder frame is opaque");
+    assert!(f.rgba.chunks_exact(4).any(|px| px[..3] != f.rgba[..3]), "the placeholder frame carries its label");
+    assert!(!src.info().has_audio, "a missing kind is silent");
+}

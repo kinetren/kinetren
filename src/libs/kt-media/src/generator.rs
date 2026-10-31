@@ -73,7 +73,7 @@ impl GeneratorSource {
         let has_audio = matches!(
             kind,
             GeneratorKind::SmpteBars { tone: true, .. } | GeneratorKind::Leader { beep: true, .. }
-        );
+        ) || plugin_tone(kind).is_some();
         MediaInfo {
             // “no duration”: when dropped, the UI substitutes its own default
             // (5 s), the trim is not limited, and there is no EOF.
@@ -121,6 +121,9 @@ impl GeneratorSource {
 /// included here: its animation became ordinary curves (R.59, stage 2), and the
 /// curves are seen by `GenState::animated`.
 fn depends_on_time(kind: &GeneratorKind) -> bool {
+    if let Some(g) = kind.kernel() {
+        return g.decl().live;
+    }
     matches!(
         kind,
         GeneratorKind::NoiseField { .. }
@@ -129,19 +132,27 @@ fn depends_on_time(kind: &GeneratorKind) -> bool {
     )
 }
 
+/// A plugin kind's level when it sounds with its values (D13): the host's one `tone_1k` plays it.
+fn plugin_tone(kind: &GeneratorKind) -> Option<f64> {
+    let GeneratorKind::Plugin(p) = kind else { return None };
+    kind.kernel()?.tone(&p.values)
+}
+
 /// Whether the kind’s alpha is honest: an EXHAUSTIVE match (R.53, item 419): a new
 /// kind will not build until its alpha has been stated. Before, the rule was a
 /// `matches!(…Text…)` check, past which a new transparent kind would
 /// slip through silently and land in the composite as a black slab.
 pub fn kind_has_alpha(kind: &GeneratorKind) -> bool {
     match kind {
+        // a plugin kind declares it (D13); a missing one is drawn by its placeholder
+        GeneratorKind::Plugin(_) => kind.kernel().is_some_and(|g| g.decl().alpha),
+        GeneratorKind::Missing(_) => false,
         GeneratorKind::Text { .. }
         | GeneratorKind::Transparent
         | GeneratorKind::Rect { .. }
         | GeneratorKind::Ellipse { .. }
         | GeneratorKind::Line { .. } => true,
-        GeneratorKind::Solid { .. }
-        | GeneratorKind::Gradient { .. }
+        GeneratorKind::Gradient { .. }
         | GeneratorKind::Corners { .. }
         | GeneratorKind::Checker { .. }
         | GeneratorKind::NoiseField { .. }
@@ -158,13 +169,13 @@ pub fn kind_has_alpha(kind: &GeneratorKind) -> bool {
 fn render_at(kind: &GeneratorKind, pts: Tick, w: u32, h: u32) -> Box<[u8]> {
     let n = (w as usize) * (h as usize);
     match kind {
-        GeneratorKind::Solid { color_r, color_g, color_b } => {
-            let mut buf = vec![0u8; n * 4];
-            for px in buf.chunks_exact_mut(4) {
-                px.copy_from_slice(&[*color_r, *color_g, *color_b, 255]);
-            }
-            buf.into_boxed_slice()
-        }
+        // a plugin kind draws itself (D13); its frame is exactly w×h by the contract
+        GeneratorKind::Plugin(p) => match kind.kernel() {
+            Some(g) => g.frame(&p.values, pts, w, h),
+            None => vec![0u8; n * 4].into_boxed_slice(),
+        },
+        // the factory opens a missing kind as a named placeholder; a source built by hand shows nothing
+        GeneratorKind::Missing(_) => vec![0u8; n * 4].into_boxed_slice(),
         GeneratorKind::Text { .. } => kt_text::render_rgba(&text_params(kind, w, h), w, h),
         GeneratorKind::Gradient { angle_deg, a_r, a_g, a_b, b_r, b_g, b_b } => {
             // a projection of the normalised coordinates onto the direction of the angle,
@@ -763,6 +774,13 @@ impl MediaSource for GeneratorSource {
     fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError> {
         // SMPTE tone: a 1 kHz sine at the level tone_db, sample-accurate from the
         // global sample number (byte for byte, as AudioPattern::Sine)
+        // a plugin kind's sound: the same tone with the kind's gate (D13)
+        if let (GeneratorKind::Plugin(p), Some(db)) = (&self.state.kind, plugin_tone(&self.state.kind))
+            && let Some(g) = self.state.kind.kernel()
+        {
+            let values = p.values.clone();
+            return Ok(tone_1k(idx, db, |n| g.gate(&values, n)));
+        }
         if let GeneratorKind::SmpteBars { tone: true, tone_db } = &self.state.kind {
             return Ok(tone_1k(idx, *tone_db, |_| true));
         }
@@ -829,7 +847,8 @@ mod tests {
     use super::*;
 
     fn solid(r: u8, g: u8, b: u8) -> GeneratorSource {
-        GeneratorSource::new(GeneratorKind::Solid { color_r: r, color_g: g, color_b: b })
+        kt_plugins_builtin::install();
+        GeneratorSource::new(GeneratorKind::solid(r, g, b))
     }
 
     /// t471 (kin of t208): the generator frame is deterministic, exactly
@@ -880,9 +899,9 @@ mod tests {
     #[test]
     fn t498_generator_retunes_in_place() {
         let q = Quality { width: 64, height: 36 };
-        let orange = GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
+        let orange = GeneratorKind::solid(255, 136, 0);
         let mut s =
-            GeneratorSource::new(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
+            GeneratorSource::new(GeneratorKind::solid(0, 0, 0));
         // we pre-warm the internal frame cache with the old parameters
         let before = s.read_video_frame(Tick(0), Some(q)).unwrap();
         assert_eq!(&before.rgba[..4], &[0, 0, 0, 255]);
@@ -919,7 +938,7 @@ mod tests {
         let q1 = Quality { width: 64, height: 36 };
         let q2 = Quality { width: 32, height: 18 };
         let mut s =
-            GeneratorSource::new(GeneratorKind::Solid { color_r: 9, color_g: 9, color_b: 9 });
+            GeneratorSource::new(GeneratorKind::solid(9, 9, 9));
         let a = s.read_video_frame(Tick(0), Some(q1)).unwrap();
         let b = s.read_video_frame(Tick(90_000), Some(q1)).unwrap();
         assert_eq!(a.rgba, b.rgba, "a static frame does not depend on time");

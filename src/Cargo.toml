@@ -26,6 +26,7 @@ members = [
     "plugins/transitions-basic",
     "plugins/transitions-styled",
     "plugins/transitions-volume",
+    "plugins/generators-basic",
 ]
 
 [workspace.package]
@@ -57,6 +58,7 @@ fx-video-distort = { path = "plugins/fx-video-distort" }
 transitions-basic = { path = "plugins/transitions-basic" }
 transitions-styled = { path = "plugins/transitions-styled" }
 transitions-volume = { path = "plugins/transitions-volume" }
+generators-basic = { path = "plugins/generators-basic" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

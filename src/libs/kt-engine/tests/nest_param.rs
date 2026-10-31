@@ -207,6 +207,7 @@ fn set_override(p: &mut Project, id: ClipId, ov: Override) {
 /// uniquely determining the values — they are set by the INSTANCE.
 #[test]
 fn t675_two_instances_with_different_headlines_render_differently() {
+    kt_plugins_builtin::install();
     let mut p = template();
     set_override(&mut p, INST_B, Override::value(HEADLINE, ParamValue::Text("SECOND".into())));
 
@@ -240,6 +241,7 @@ fn t675_two_instances_with_different_headlines_render_differently() {
 /// a guard that the pair with an empty set is the very same entry.
 #[test]
 fn t676_without_overrides_there_is_one_subrenderer_and_the_old_bytes() {
+    kt_plugins_builtin::install();
     let plain = template();
     let v = VideoRenderer::new(&plain);
     assert_eq!(
@@ -285,6 +287,7 @@ fn t676_without_overrides_there_is_one_subrenderer_and_the_old_bytes() {
 /// material — under the instance's trim and reverse.
 #[test]
 fn t674_an_override_curve_lands_on_the_same_material_frame() {
+    kt_plugins_builtin::install();
     let mut p = base();
     let mut s = Sequence::new(SEQ, "Reel");
     // the target is SHIFTED both along the reel's timeline and in its material: at zeros the
@@ -374,6 +377,7 @@ fn t674_an_override_curve_lands_on_the_same_material_frame() {
 /// The order goes deeper along the NEW address, and the read goes along the same one.
 #[test]
 fn t677_a_media_override_swaps_the_logo_and_order_equals_read() {
+    kt_plugins_builtin::install();
     let mut p = template();
     set_override(&mut p, INST_B, Override::value(LOGO, ParamValue::Media(MediaId(3))));
 
@@ -421,6 +425,7 @@ fn t677_a_media_override_swaps_the_logo_and_order_equals_read() {
 /// Test 678 (R.59, stage 3): the override is audible.
 #[test]
 fn t678_an_override_reaches_the_sound() {
+    kt_plugins_builtin::install();
     let mut p = base();
     let mut s = Sequence::new(SEQ, "Voice line");
     s.clips.push(clip(PLATE.0, ClipKind::Audio, 0, Tick::ZERO, PART, 2));
@@ -468,6 +473,7 @@ fn t678_an_override_reaches_the_sound() {
 /// and two orders (invariant 4).
 #[test]
 fn t679_a_published_zoom_raises_the_reel_stage_and_keeps_it_single() {
+    kt_plugins_builtin::install();
     // the inner reel — the one whose scale we measure
     let mut p = base();
     let mut inner = Sequence::new(MediaId(101), "Frame");
@@ -538,6 +544,7 @@ fn t679_a_published_zoom_raises_the_reel_stage_and_keeps_it_single() {
 /// code one floor down.
 #[test]
 fn t686_a_template_inside_a_template_resolves_recursively() {
+    kt_plugins_builtin::install();
     let mut p = base();
     // the inner reel with a title
     let mut inner = Sequence::new(MediaId(101), "Title");
@@ -612,6 +619,7 @@ fn t686_a_template_inside_a_template_resolves_recursively() {
 /// shows the values of the INSTANCE, not of the template.
 #[test]
 fn t688_law_e_holds_with_overrides_baked_in() {
+    kt_plugins_builtin::install();
     let mut p = template();
     // one setting: law E is about the identity of the nesting with its content
     p.clips.retain(|c| c.id != INST_B);
@@ -661,6 +669,7 @@ fn t688_law_e_holds_with_overrides_baked_in() {
 /// first rebuild of the plan (the same stale state that t663 guards against).
 #[test]
 fn t675b_an_overridden_instance_gets_its_own_generator_source() {
+    kt_plugins_builtin::install();
     let plain = template();
     let addrs = |p: &Project| -> Vec<MediaId> {
         let mut v: Vec<MediaId> = kt_engine::gen_sources(p).into_iter().map(|(a, _)| a).collect();
@@ -714,6 +723,7 @@ const GEO: PubId = PubId(5);
 /// the order matched the read, and the reel's edition differs between them.
 #[test]
 fn t752a_a_published_lead_geometry_changes_the_instance_frame() {
+    kt_plugins_builtin::install();
     let mut p = template();
     {
         let s = p.sequences.iter_mut().find(|s| s.id == SEQ).expect("reel");
@@ -779,6 +789,7 @@ const AMOUNT: PubId = PubId(6);
 /// no guard of its own.
 #[test]
 fn t755_a_published_effect_knob_changes_the_instance_frame() {
+    kt_plugins_builtin::install();
     let mut p = template();
     {
         let s = p.sequences.iter_mut().find(|s| s.id == SEQ).expect("reel");
@@ -848,6 +859,7 @@ fn t755_a_published_effect_knob_changes_the_instance_frame() {
 /// constant override 1.3, and at moment 0 s — to the frame with 1.0.
 #[test]
 fn t792b_override_formula_reaches_the_frame_in_instance_time() {
+    kt_plugins_builtin::install();
     let build = |curve: Option<ParamCurve>, value: f64| -> Project {
         let mut p = base();
         let mut s = Sequence::new(SEQ, "Reel");

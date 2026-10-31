@@ -510,7 +510,7 @@ fn generator_project() -> (Project, Sources) {
     };
     // the background — the whole scene; the solid enters at 30_000 (frame No. 10) as the upper layer
     let mut g2 = clip(2, 0, 30_000, 60_000, 2);
-    g2.r#gen = Some(kt_model::GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
+    g2.r#gen = Some(kt_model::GeneratorKind::solid(255, 136, 0));
     p.clips = vec![clip(1, 1, 0, 90_000, 1), g2];
     p.normalize(); // tracks fitted to the content (R.62)
     p.validate().unwrap();

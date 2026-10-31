@@ -356,7 +356,7 @@ fn scene(
             genclip.id = ClipId(4);
             genclip.media = MediaId(200);
             genclip.start = Tick(600_000);
-            genclip.r#gen = Some(GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
+            genclip.r#gen = Some(GeneratorKind::solid(255, 136, 0));
             p.clips.push(genclip);
         }
         if e == E::Nest {
@@ -2016,11 +2016,7 @@ fn t669_generator_thumbs_follow_the_event_address() {
     // 1) the predicate “no frame will come” is honest
     assert!(crate::gen_ui::blank_default(&GeneratorKind::default_text()));
     assert!(crate::gen_ui::blank_default(&GeneratorKind::Transparent));
-    assert!(!crate::gen_ui::blank_default(&GeneratorKind::Solid {
-        color_r: 255,
-        color_g: 136,
-        color_b: 0
-    }));
+    assert!(!crate::gen_ui::blank_default(&GeneratorKind::solid(255, 136, 0)));
 
     // 2) the filmstrip and the coverage strip ask for the EVENT’S ADDRESS
     let root = workspace_root();
@@ -2039,7 +2035,7 @@ fn t669_generator_thumbs_follow_the_event_address() {
 
     // 3) the event’s thumbnail source is raised by this address and knows the VALUES
     let (mut h, _g) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
-    let made = GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
+    let made = GeneratorKind::solid(255, 136, 0);
     h.state_mut().create_generator(made.clone());
     h.step();
     let (media, clip) = crate::layout_tests::made_generator(&h);
@@ -2971,11 +2967,7 @@ pub(crate) fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
         ("fx", OpenWin::By(|h| {
             // the scene is a generator: the event is raised by the same path as in the
             // program, and it requires no file on disk.
-            h.state_mut().create_generator(GeneratorKind::Solid {
-                color_r: 200,
-                color_g: 40,
-                color_b: 40,
-            });
+            h.state_mut().create_generator(GeneratorKind::solid(200, 40, 40));
             h.step();
             let id = first_clip(h);
             h.state_mut().open_fx_editor(id);

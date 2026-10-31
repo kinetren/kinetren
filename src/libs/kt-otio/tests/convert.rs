@@ -1648,7 +1648,7 @@ fn t473_generator_reference_roundtrip() {
     kt_plugins_builtin::install();
     let mut p = rich_project();
     // R.59, stage 2: in the media path — the KIND, values on the event
-    let orange = kt_model::GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
+    let orange = kt_model::GeneratorKind::solid(255, 136, 0);
     p.media.push(MediaRef::new(MediaId(7), "gen:solid"));
     p.media.push(MediaRef::new(MediaId(8), "synth:ramp"));
     let mut g = clip(30, ClipKind::Video, 0, 200_000, 45_000, 7);
@@ -1736,7 +1736,7 @@ fn t474_foreign_generator_kind_is_passthrough() {
     let mut p = rich_project();
     p.media.push(MediaRef::new(MediaId(7), "gen:solid"));
     let mut g = clip(30, ClipKind::Video, 0, 200_000, 45_000, 7);
-    g.r#gen = Some(kt_model::GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
+    g.r#gen = Some(kt_model::GeneratorKind::solid(255, 136, 0));
     p.clips.push(g);
     p.validate().unwrap();
     let text = save_project(&p, &Retained::default(), None);

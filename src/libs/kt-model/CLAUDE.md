@@ -77,6 +77,16 @@ of a type means changing the format.
 
 ## Generators (R.52, item 402)
 
+- **A kind is an enum variant or a plugin slot** (plugin-api-stage1, D13): the moved kinds live in
+  `src/plugins/generators-*` — passport rows in the former variant's field order and stores (the
+  file text does not move, t1048), the `gen:` path as a TOKEN TABLE (`GenDecl.path`) that the one
+  codec here reads (`plugin_tokens`/`plugin_apply`: the former `format_gen_path`/`apply_token`
+  forms and validators), the address rows (`GenDecl.address`) for `gen_kind_path`. A plugin's flags
+  are its passport's flag rows (`plugin_slot::flag_specs`). A kind this build lacks reads as
+  `Missing`: kept, written back, its address `gen:<id>` (t1050). Plugin ids are unique WITHIN a
+  family — the generator `checker` is not the transition `checker`, so the slot reads through
+  `de_generator` (t1049).
+
 - **The vocabulary of kinds — `genmedia.rs`, and only it**: `GeneratorKind`
   (the registry `ALL`, as for `TransitionKind`, the specs by the same `params_for!`),
   `parse_gen_path`/`format_gen_path` (canon: lower case, defaults

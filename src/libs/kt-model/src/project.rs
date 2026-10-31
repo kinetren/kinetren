@@ -7551,7 +7551,7 @@ impl Project {
                 return Err(ProjectError::UnknownMedia(c.id, c.media));
             }
             check_fx_auto_on(c.id, &c.fx_auto, keys_may_precede_material(&c.fx))?;
-            check_clip_gen(c, self.gen_media_path(c.media))?;
+            check_clip_gen(c, self.gen_check_path(c))?;
             self.validate_overrides(c)?;
             // CHAIN, REVERSE AND WARP on a nested item are legal (R.55, stage 4).
             // Until this round, reverse and stretch were rejected: the sub-mix
@@ -7716,6 +7716,22 @@ impl Project {
     pub fn gen_media_path(&self, id: MediaId) -> Option<&str> {
         let m = self.media.iter().find(|m| m.id == id)?;
         crate::genmedia::parse_gen_path(&m.path).map(|_| m.path.as_str())
+    }
+
+    /// The media address an event's generator values are checked against (`check_clip_gen`): the
+    /// generator media's path — or, for an event that carries a kind this build LACKS (D13), the
+    /// media's path when it names that same kind, so a file from a build with more plugins opens
+    /// (t1050). A path CHANGED to an unknown kind still clears the values (t518).
+    pub fn gen_check_path(&self, c: &ClipEvent) -> Option<&str> {
+        if let Some(crate::GeneratorKind::Missing(k)) = &c.r#gen {
+            let m = self.media.iter().find(|m| m.id == c.media)?;
+            if crate::genmedia::is_missing_gen_path(&m.path)
+                && crate::genmedia::gen_kind_path(&crate::GeneratorKind::Missing(k.clone())).eq_ignore_ascii_case(&m.path)
+            {
+                return Some(m.path.as_str());
+            }
+        }
+        self.gen_media_path(c.media)
     }
 
     /// The DEFAULT generator kind for a media address: the commands that create an event

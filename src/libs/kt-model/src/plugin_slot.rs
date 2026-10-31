@@ -238,3 +238,25 @@ impl<'de> Deserialize<'de> for MissingSlot {
         Ok(MissingSlot { raw })
     }
 }
+
+/// A plugin's flag rows as the `HasParams` flag list (D13): the window draws `flag_specs` as one
+/// row of checkboxes, and a flag of a plugin kind is a passport row. The list is built once per
+/// installed manifest (the registry is install-once, so the manifest's address is its identity).
+pub fn flag_specs(m: &'static Manifest) -> &'static [kt_plugin_api::FlagSpec] {
+    type Cache = Vec<(usize, &'static [kt_plugin_api::FlagSpec])>;
+    static CACHE: std::sync::Mutex<Cache> = std::sync::Mutex::new(Vec::new());
+    let key = m as *const Manifest as usize;
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, f)) = cache.iter().find(|(k, _)| *k == key) {
+        return f;
+    }
+    let flags: Vec<kt_plugin_api::FlagSpec> = m
+        .passport
+        .iter()
+        .filter(|s| s.ty == kt_plugin_api::ParamType::Flag)
+        .map(|s| kt_plugin_api::FlagSpec { name: Box::leak(s.name.to_string().into_boxed_str()), default: s.default >= 0.5 })
+        .collect();
+    let flags: &'static [kt_plugin_api::FlagSpec] = Box::leak(flags.into_boxed_slice());
+    cache.push((key, flags));
+    flags
+}

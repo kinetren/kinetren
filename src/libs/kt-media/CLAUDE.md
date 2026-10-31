@@ -20,6 +20,11 @@ Media sources: the trait `MediaSource`, `SyntheticSource` (tests), `FfmpegSource
 - The specifics of rsmpeg do not go beyond the crate; a change of the FFmpeg major does not touch the rest of the code.
 - **Parsing of pseudo-paths (`synth:`, `gen:`) — ONLY in `factory.rs`** (R.52). Before the factory, the parsing of `synth:` lived in kt-app and kt-cli and diverged by case (footnote to item 211): "synth:Ramp" was silently taken for a missing file. Rules: the parsing is case-insensitive; a broken pseudo-path is an honest `Err`, it does not go to FFmpeg; no new copies of the parsing are to be created — `open_pseudo`/`open_indexed`, the predicate — `kt_model::is_pseudo_path`.
 - **`GeneratorSource` (R.52, `generator.rs`)**: a frame of EXACTLY the requested Quality (the composite discards a foreign size silently), a deterministic function (parameters, pts, Quality) — invariant 11; "no sound" = `has_audio:false` AND `Ok(AudioBurst::silence)` (`Err` = false underruns in the negative cache of the worker). `info()`: duration=0 ("there is no duration", the UI substitutes its own default on drop), fps=None (the project grid), width/height=`GEN_NATIVE`=4096 — a "reserve of detail" for the decode scale step under a zooming chain (= `kt_fx::plan::MAX_INTER_DIM`, linked by a comment; the pseudo-paths do not take part in "Max (by sources)"). The vocabulary of kinds and the parameters — `kt_model::GeneratorKind` (the dependency kt-media → kt-model, acyclic).
+- **A plugin generator kind draws, sounds and declares itself** (plugin-api-stage1, D13):
+  `render_at` calls its `GenKernel::frame`, `info_for`/`read_audio_burst` its `tone`/`gate` (the
+  sine stays this crate's one `tone_1k`), `kind_has_alpha`/`depends_on_time` read `GenDecl.alpha`/
+  `live`. `factory::open_gen` opens a `Missing` kind as a NAMED `PlaceholderSource` (t1050). The
+  3×5 font is `kt_plugin_api::pixfont` (re-exported here) so a family crate can draw text.
 - **Generators of R.53 (items 419-424)**: shapes (`Rect`/`Ellipse`/`Line`),
   a transparent backing, a countdown, engineering tables and a level
   window. Rules that the new kind will have to observe:

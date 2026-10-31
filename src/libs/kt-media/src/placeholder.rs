@@ -60,6 +60,14 @@ impl PlaceholderSource {
         }
     }
 
+    /// The same placeholder under another passport: a generator kind this build lacks (D13) keeps
+    /// a generator's passport (no duration, the native size, silent), so the engine treats it
+    /// as the generator it stands for.
+    pub fn with_info(mut self, info: MediaInfo) -> PlaceholderSource {
+        self.info = info;
+        self
+    }
+
     fn frame_rgba(&mut self, q: Quality) -> &[u8] {
         if self.cache.as_ref().is_none_or(|(cq, _)| *cq != q) {
             self.cache = Some((q, render(&self.label, q.width, q.height)));

@@ -11,6 +11,7 @@ use kt_model::{
 /// file), garbage gives an honest `None`, defaults are not written.
 #[test]
 fn t469_gen_path_parse_format_canonical() {
+    kt_plugins_builtin::install();
     // canonical round trip of all registry kinds with defaults
     for k in GeneratorKind::all() {
         let path = format_gen_path(&k);
@@ -47,12 +48,12 @@ fn t469_gen_path_parse_format_canonical() {
 
     // defaults are not serialized: a black solid is a bare tag
     assert_eq!(
-        format_gen_path(&GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
+        format_gen_path(&GeneratorKind::solid(0, 0, 0)),
         "gen:solid"
     );
 
     // A non-default is written as one colour token, in lowercase.
-    let orange = GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
+    let orange = GeneratorKind::solid(255, 136, 0);
     assert_eq!(format_gen_path(&orange), "gen:solid:c=ff8800");
     assert_eq!(parse_gen_path("gen:solid:c=ff8800"), Some(orange.clone()));
 
@@ -119,6 +120,7 @@ fn t469b_gen_value_escaping_roundtrip() {
 /// instance itself, get/set walk every name.
 #[test]
 fn t470_generator_param_specs_are_complete() {
+    kt_plugins_builtin::install();
     // Kinds WITHOUT numbers are declared here by name (R.53, items 420/422): “specs are empty”
     // is a legitimate state for exactly them, and a new kind that lost its specs through
     // oversight still fails this test.
@@ -157,6 +159,7 @@ fn t470_generator_param_specs_are_complete() {
 /// undo/redo work, a live drag of the window collapses into ONE step.
 #[test]
 fn t475_set_media_path_command() {
+    kt_plugins_builtin::install();
     use kt_model::{
         ClipEvent, ClipId, ClipKind, Command, CommandError, MediaId, Project, ProjectSettings,
         TimelineModel,
@@ -178,7 +181,7 @@ fn t475_set_media_path_command() {
     });
     p.media.push(kt_model::MediaRef::new(MediaId(1), "gen:solid"));
     p.clips.push(ClipEvent {
-        r#gen: Some(kt_model::GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
+        r#gen: Some(kt_model::GeneratorKind::solid(0, 0, 0)),
         gen_auto: Vec::new(),
         overrides: Vec::new(),
         geometry: Default::default(),
@@ -228,7 +231,7 @@ fn t475_set_media_path_command() {
     // undo restores the previous kind TOGETHER WITH the values of the event
     m.undo().unwrap();
     assert_eq!(m.project().media[0].path, "gen:solid");
-    assert!(matches!(m.project().clips[0].r#gen, Some(kt_model::GeneratorKind::Solid { .. })));
+    assert!(m.project().clips[0].r#gen.as_ref().is_some_and(|g| g.tag() == "solid"));
     m.redo().unwrap();
     assert_eq!(m.project().media[0].path, "gen:gradient");
 
@@ -250,6 +253,7 @@ fn t475_set_media_path_command() {
 /// the author remembered.
 #[test]
 fn t510_generator_flags_are_complete_and_roundtrip() {
+    kt_plugins_builtin::install();
     use kt_model::GeneratorKind;
     for k in GeneratorKind::all() {
         let v = serde_json::to_value(&k).expect("kind is serialized");
@@ -292,6 +296,7 @@ fn t510_generator_flags_are_complete_and_roundtrip() {
 /// a broken value is `None`, not a silent clamp.
 #[test]
 fn t524_new_kinds_round_trip_through_the_path() {
+    kt_plugins_builtin::install();
     use kt_model::{TestTable, format_gen_path, parse_gen_path};
     // every registry kind: defaults give a BARE path without tokens
     for k in GeneratorKind::all() {
@@ -332,6 +337,7 @@ fn t524_new_kinds_round_trip_through_the_path() {
 /// five copies of the same code for the tables.
 #[test]
 fn t525_kinds_differ_by_their_numbers() {
+    kt_plugins_builtin::install();
     use std::collections::BTreeSet;
     let names = |k: &GeneratorKind| -> BTreeSet<String> {
         k.param_specs().iter().map(|s| s.name.to_string()).collect()
@@ -362,11 +368,12 @@ fn t525_kinds_differ_by_their_numbers() {
 /// “empty fields are not serialized” (otherwise old projects would stop being byte-stable).
 #[test]
 fn t656_generator_values_live_on_the_event() {
+    kt_plugins_builtin::install();
     use kt_model::{ClipEvent, ClipId, ClipKind, GeneratorKind, MediaId, TestTable, gen_kind_path};
     use kt_time::Tick;
 
     // the path carries the kind; the values are wiped from it
-    let mut orange = GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
+    let mut orange = GeneratorKind::solid(255, 136, 0);
     assert_eq!(gen_kind_path(&orange), "gen:solid");
     orange = GeneratorKind::default_text();
     if let GeneratorKind::Text { text, size, .. } = &mut orange {
@@ -419,7 +426,7 @@ fn t656_generator_values_live_on_the_event() {
 
     // and with a generator — it survives the round trip
     let mut g = plain.clone();
-    g.r#gen = Some(GeneratorKind::Solid { color_r: 1, color_g: 2, color_b: 3 });
+    g.r#gen = Some(GeneratorKind::solid(1, 2, 3));
     g.gen_auto = kt_model::text_anim_curves(kt_model::TextAnim::Typewriter, 1.0, 2.0);
     let back: ClipEvent = serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
     assert_eq!(back, g, "generator values and curves did not survive a round trip through serde");
@@ -440,6 +447,7 @@ fn t656_generator_values_live_on_the_event() {
 /// file, not a state someone could honestly have ended up in.
 #[test]
 fn t657_generator_values_are_validated_against_the_media() {
+    kt_plugins_builtin::install();
     use kt_model::{
         AutoKey, ClipEvent, ClipId, ClipKind, GeneratorKind, MediaId, MediaRef, ParamCurve,
         Project, ProjectError, ProjectSettings, TestTable,
@@ -463,7 +471,7 @@ fn t657_generator_values_are_validated_against_the_media() {
         p.media.push(MediaRef::new(MediaId(1), "gen:solid"));
         p.media.push(MediaRef::new(MediaId(2), "movie.mp4"));
         p.clips.push(ClipEvent {
-            r#gen: Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
+            r#gen: Some(GeneratorKind::solid(0, 0, 0)),
             gen_auto: Vec::new(),
             overrides: Vec::new(),
             geometry: Default::default(),

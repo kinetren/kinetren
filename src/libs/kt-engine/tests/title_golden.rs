@@ -43,7 +43,7 @@ fn title_project() -> (Project, Sources) {
         *size = 0.16;
         (*fill_r, *fill_g, *fill_b) = (255, 136, 0);
     }
-    let solid = GeneratorKind::Solid { color_r: 16, color_g: 32, color_b: 64 };
+    let solid = GeneratorKind::solid(16, 32, 64);
     // R.59, stage 2 (t662): on the media path the KIND stays, the values moved
     // to the event. ONLY THE PROJECT CONSTRUCTION was rewritten — the reference
     // `GOLDEN_TITLE_VIDEO` must stay the same to the bit.
@@ -105,6 +105,7 @@ fn run_hash() -> (u64, Vec<u8>) {
 
 #[test]
 fn t485_title_export_is_deterministic() {
+    kt_plugins_builtin::install();
     let (a, frame) = run_hash();
     let (b, _) = run_hash();
     assert_eq!(a, b, "the export of a title must be byte for byte between runs");
@@ -129,6 +130,7 @@ const GOLDEN: &[(&str, &str, u64, &str)] = &[
 
 #[test]
 fn t485_title_matches_committed_golden() {
+    kt_plugins_builtin::install();
     let (v, _) = run_hash();
     let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
     let Some(&(_, _, g, prov)) = GOLDEN.iter().find(|r| r.0 == os && r.1 == arch) else {
@@ -155,6 +157,7 @@ fn t485_print_golden() {
 /// is byte-for-byte equal to the preview composite of the same moment.
 #[test]
 fn t485_title_preview_equals_export() {
+    kt_plugins_builtin::install();
     let (_, export_frame) = run_hash();
     let (p, sources) = title_project();
     let q = Quality { width: 320, height: 180 };
@@ -190,13 +193,14 @@ fn t485_title_preview_equals_export() {
 /// needs updating (round rule: GOLDEN_* are not regenerated).
 #[test]
 fn t662_moving_values_to_the_event_did_not_move_the_golden() {
+    kt_plugins_builtin::install();
     let (p, sources) = title_project();
     assert!(sources.is_empty(), "the export itself raises the generator sources");
     // the media path carries ONLY THE KIND
     assert_eq!(p.media[0].path, "gen:solid");
     assert_eq!(p.media[1].path, "gen:text", "title text does not live in the media path");
     // and the values — on the events, and each has its own
-    assert!(matches!(p.clips[0].r#gen, Some(GeneratorKind::Solid { .. })));
+    assert!(p.clips[0].r#gen.as_ref().is_some_and(|g| g.tag() == "solid"));
     assert!(matches!(p.clips[1].r#gen, Some(GeneratorKind::Text { .. })));
     // the source address is derived from the EVENT
     assert_eq!(kt_engine::clip_source_addr(&p.clips[1]), kt_engine::gen_source_addr(p.clips[1].id));

@@ -136,6 +136,7 @@ fn text_of(p: &Project, inst: &[Override]) -> String {
 /// must answer — “what is set in the template” and “what plays here”.
 #[test]
 fn t671_publishing_and_overriding_go_through_commands() {
+    kt_plugins_builtin::install();
     let mut p = template();
     // we start from a clean reel: we publish with a COMMAND, from inside the reel
     p.sequence_mut(SEQ).unwrap().published.clear();
@@ -276,6 +277,7 @@ fn t671_publishing_and_overriding_go_through_commands() {
 /// all its overrides in ALL instances, in ONE history step.
 #[test]
 fn t672_a_published_target_lives_and_dies_with_its_clip() {
+    kt_plugins_builtin::install();
     let mut p = template();
     p.clips.iter_mut().find(|c| c.id == INST_B).unwrap().overrides =
         vec![Override::value(HEADLINE, ParamValue::Text("Second release".into()))];
@@ -374,6 +376,7 @@ fn t672_a_published_target_lives_and_dies_with_its_clip() {
 /// Test 672b: what validation must explicitly reject.
 #[test]
 fn t672b_validation_refuses_dangling_and_mistyped_overrides() {
+    kt_plugins_builtin::install();
     let mut p = template();
     p.clips.iter_mut().find(|c| c.id == INST_A).unwrap().overrides =
         vec![Override::value(PubId(77), ParamValue::Num(1.0))];
@@ -432,6 +435,7 @@ fn t672b_validation_refuses_dangling_and_mistyped_overrides() {
 /// clone of its transitions and cameras.
 #[test]
 fn t673_an_empty_override_set_takes_the_old_path() {
+    kt_plugins_builtin::install();
     let p = template();
 
     // 1) byte equality with the former clip-output door
@@ -480,6 +484,7 @@ fn t673_an_empty_override_set_takes_the_old_path() {
 /// the control has nowhere to live, so the values are BAKED IN and the count is named aloud.
 #[test]
 fn t690_a_band_shows_the_template_and_expanding_bakes_the_overrides() {
+    kt_plugins_builtin::install();
     let mut p = template();
     // one reel — one instance: the expansion strip is counted from it
     p.clips.retain(|c| c.id != INST_B);
@@ -539,6 +544,7 @@ fn t690_a_band_shows_the_template_and_expanding_bakes_the_overrides() {
 /// component, while its type is a group.
 #[test]
 fn t694_addr_spec_answers_for_every_owner() {
+    kt_plugins_builtin::install();
     let mut p = template();
 
     // effect slot: limits and default are the effect’s own spec sheet
@@ -633,6 +639,7 @@ fn t694_addr_spec_answers_for_every_owner() {
 /// value, R.59).
 #[test]
 fn t692_a_published_range_stores_narrowing_only() {
+    kt_plugins_builtin::install();
     let p = template();
     let addr = ParamAddr::new(PLATE, ParamOwner::FxSlot { slot: 0 }, "radius");
     let spec = p.addr_spec(Some(SEQ), &addr).expect("target passport");
@@ -698,6 +705,7 @@ const ZOOM: PubId = PubId(4);
 /// and an audio event has no such address.
 #[test]
 fn t752_the_lead_geometry_is_a_publishable_owner() {
+    kt_plugins_builtin::install();
     let mut p = template();
     {
         let s = p.sequence_mut(SEQ).expect("reel");
@@ -1036,6 +1044,7 @@ fn t753_publishing_names_the_reel_not_the_context() {
 /// erased the field.
 #[test]
 fn t792_override_curves_take_shapes_and_sources_in_the_reel_domain() {
+    kt_plugins_builtin::install();
     let mut p = template();
     // the second instance is ABOVE the first, at the same time (reel V4 above V1)
     let b = p.clips.iter_mut().find(|c| c.id == INST_B).unwrap();

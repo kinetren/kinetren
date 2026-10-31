@@ -6188,7 +6188,7 @@ fn t477_create_generator_from_bin() {
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
     let before = h.state().model.project().media.len();
-    let made = GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
+    let made = GeneratorKind::solid(255, 136, 0);
     h.state_mut().create_generator(made.clone());
     h.step();
     let (id, clip) = made_generator(&h);
@@ -6249,7 +6249,7 @@ fn t477_create_generator_from_bin() {
 fn t478_generator_edit_reaches_model_and_source() {
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
-    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
+    h.state_mut().create_generator(GeneratorKind::solid(0, 0, 0));
     h.step();
     let (id, clip) = made_generator(&h);
     let addr = kt_engine::gen_source_addr(clip);
@@ -6258,20 +6258,20 @@ fn t478_generator_edit_reaches_model_and_source() {
 
     // session of the window: two colour edits with the same gesture (as the eyedropper sends)
     for c in [(0x10, 0x40, 0x80), (0xff, 0x88, 0x00)] {
-        let kind = GeneratorKind::Solid { color_r: c.0, color_g: c.1, color_b: c.2 };
+        let kind = GeneratorKind::solid(c.0, c.1, c.2);
         let app = h.state_mut();
         assert!(app.apply_coalesced(Command::SetClipGen { id: clip, kind: Some(kind) }, gesture));
         h.step();
     }
     assert_eq!(
         gen_of(&h, clip),
-        GeneratorKind::Solid { color_r: 0xff, color_g: 0x88, color_b: 0x00 }
+        GeneratorKind::solid(0xff, 0x88, 0x00)
     );
     let app = h.state();
     // the player source caught up with the model (by reconfiguration, not recreation)
     assert_eq!(
         app.gen_states.get(&clip).map(|st| st.kind.clone()),
-        Some(GeneratorKind::Solid { color_r: 0xff, color_g: 0x88, color_b: 0x00 })
+        Some(GeneratorKind::solid(0xff, 0x88, 0x00))
     );
     assert_eq!(app.model.undo_depth(), depth + 1, "the window session is one history step");
     // ...and to the PICTURE: the player source delivers a frame of the NEW colour
@@ -6284,12 +6284,12 @@ fn t478_generator_edit_reaches_model_and_source() {
     h.step();
     assert_eq!(
         gen_of(&h, clip),
-        GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 },
+        GeneratorKind::solid(0, 0, 0),
         "undo must restore the event values"
     );
     assert_eq!(
         h.state().gen_states.get(&clip).map(|st| st.kind.clone()),
-        Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
+        Some(GeneratorKind::solid(0, 0, 0)),
         "undo must catch up the source — otherwise the picture lags behind the model"
     );
     let (px, _) = crate::layout_tests::generator_pixel_after(&h, addr, serial)
@@ -6303,7 +6303,7 @@ fn t478_generator_edit_reaches_model_and_source() {
     let backup = h.state().fx_editors[0].gen_backup.clone();
     assert_eq!(
         backup.iter().find(|(c, _, _)| *c == clip).map(|(_, k, _)| k.clone()).unwrap(),
-        Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
+        Some(GeneratorKind::solid(0, 0, 0)),
         "backup — the values at the moment of opening"
     );
     {
@@ -6312,7 +6312,7 @@ fn t478_generator_edit_reaches_model_and_source() {
         assert!(app.apply_coalesced(Command::SetClipGen { id: clip, kind }, gesture));
     }
     h.step();
-    assert_eq!(gen_of(&h, clip), GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
+    assert_eq!(gen_of(&h, clip), GeneratorKind::solid(0, 0, 0));
     {
         // the generator clip is taken first: creation puts it in at once
         // (item 416), and the model does not let go of media under a live event
@@ -6513,7 +6513,7 @@ fn t495_title_drag_in_preview_writes_pos() {
 fn t502_generator_edit_does_not_respawn_source() {
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
-    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
+    h.state_mut().create_generator(GeneratorKind::solid(0, 0, 0));
     h.step();
     let (_id, clip) = made_generator(&h);
     let addr = kt_engine::gen_source_addr(clip);
@@ -6522,7 +6522,7 @@ fn t502_generator_edit_does_not_respawn_source() {
     let pver = h.state().player.project_version();
 
     for i in 0..30u8 {
-        let kind = GeneratorKind::Solid { color_r: i, color_g: i, color_b: i };
+        let kind = GeneratorKind::solid(i, i, i);
         let app = h.state_mut();
         assert!(app.apply_coalesced(Command::SetClipGen { id: clip, kind: Some(kind) }, gesture));
         h.step();
@@ -6541,7 +6541,7 @@ fn t502_generator_edit_does_not_respawn_source() {
     );
     assert_eq!(
         app.gen_states.get(&clip).map(|st| st.kind.clone()),
-        Some(GeneratorKind::Solid { color_r: 0x1d, color_g: 0x1d, color_b: 0x1d }),
+        Some(GeneratorKind::solid(0x1d, 0x1d, 0x1d)),
         "the sync snapshot must catch up with the model"
     );
     assert_eq!(
@@ -9865,7 +9865,7 @@ fn t511_kind_picker_routes_between_windows() {
 
     let text_name = crate::gen_ui::kind_name(&GeneratorKind::default_text());
     let solid_name =
-        crate::gen_ui::kind_name(&GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
+        crate::gen_ui::kind_name(&GeneratorKind::solid(0, 0, 0));
 
     // the kind picker IS in the form and shows “Text”
     h.get(by().role(Role::ComboBox).value(text_name)).click();
@@ -9878,7 +9878,7 @@ fn t511_kind_picker_routes_between_windows() {
     let app = h.state();
     assert_eq!(app.model.project().media.last().unwrap().path, "gen:solid");
     assert!(
-        matches!(gen_of(&h, clip), GeneratorKind::Solid { .. }),
+        gen_of(&h, clip).tag() == "solid",
         "the event values must change together with the view"
     );
     assert_eq!(app.fx_editors.len(), 1, "a view change has no right to close the window");
@@ -10043,7 +10043,7 @@ fn t512_new_generator_lands_on_the_timeline() {
     let clips_before = h.state().model.project().clips.len();
     let depth = h.state().model.undo_depth();
 
-    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
+    h.state_mut().create_generator(GeneratorKind::solid(255, 136, 0));
     h.step();
 
     let app = h.state();
@@ -10078,7 +10078,7 @@ fn t512_new_generator_lands_on_the_timeline() {
 fn t513_generator_clip_is_labelled_by_its_kind() {
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
-    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
+    h.state_mut().create_generator(GeneratorKind::solid(255, 136, 0));
     h.step();
     let id = h.state().model.project().media.last().unwrap().id;
     let clip = h.state().model.project().clips.iter().find(|c| c.media == id).unwrap().id;
@@ -10087,7 +10087,7 @@ fn t513_generator_clip_is_labelled_by_its_kind() {
     let ru = name_of(&mut h).expect("the generator event has no label");
     assert_eq!(
         ru,
-        crate::gen_ui::kind_name(&GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 })
+        crate::gen_ui::kind_name(&GeneratorKind::solid(255, 136, 0))
     );
     assert!(!ru.contains("gen:"), "the label is still a raw path: {ru}");
     assert!(!ru.contains("ff8800"), "parameters went into the label: {ru}");
@@ -10120,7 +10120,7 @@ fn t513_generator_clip_is_labelled_by_its_kind() {
 fn t514_double_click_on_a_card_gives_one_clip_and_the_window() {
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
-    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
+    h.state_mut().create_generator(GeneratorKind::solid(255, 136, 0));
     for _ in 0..6 {
         h.step();
     }
@@ -10156,7 +10156,7 @@ fn t514_double_click_on_a_card_gives_one_clip_and_the_window() {
 fn t515_card_counts_places_on_the_timeline() {
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
-    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
+    h.state_mut().create_generator(GeneratorKind::solid(255, 136, 0));
     h.step();
     let id = h.state().model.project().media.last().unwrap().id;
     assert_eq!(h.state_mut().media_uses().get(&id).copied(), Some(1), "the creation clip was not counted");
@@ -10270,7 +10270,7 @@ fn t540_title_preset_sets_everything_in_one_step() {
 fn t541_param_edit_repaints_the_preview_without_moving_the_playhead() {
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
-    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
+    h.state_mut().create_generator(GeneratorKind::solid(0, 0, 0));
     for _ in 0..4 {
         h.step();
     }
@@ -10294,7 +10294,7 @@ fn t541_param_edit_repaints_the_preview_without_moving_the_playhead() {
         assert!(app.apply_coalesced(
             Command::SetClipGen {
                 id: clip,
-                kind: Some(GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 }),
+                kind: Some(GeneratorKind::solid(255, 136, 0)),
             },
             gesture
         ));
@@ -12081,7 +12081,7 @@ fn t667_apply_to_all_is_one_command_and_one_step() {
     use kt_model::*;
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
-    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
+    h.state_mut().create_generator(GeneratorKind::solid(0, 0, 0));
     h.step();
     let (id, first) = made_generator(&h);
     // second place of the same generator
@@ -12100,7 +12100,7 @@ fn t667_apply_to_all_is_one_command_and_one_step() {
 
     // editing ONE neighbouring event does not touch it
     let gesture = h.state().fx_editors[0].gesture;
-    let mine = GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
+    let mine = GeneratorKind::solid(255, 136, 0);
     {
         let app = h.state_mut();
         assert!(
@@ -12114,7 +12114,7 @@ fn t667_apply_to_all_is_one_command_and_one_step() {
     assert_eq!(gen_of(&h, first), mine);
     assert_eq!(
         gen_of(&h, second),
-        GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 },
+        GeneratorKind::solid(0, 0, 0),
         "editing one event has no right to touch its neighbors"
     );
 
@@ -12131,7 +12131,7 @@ fn t667_apply_to_all_is_one_command_and_one_step() {
     h.step();
     assert_eq!(
         gen_of(&h, second),
-        GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 },
+        GeneratorKind::solid(0, 0, 0),
         "one Ctrl+Z must restore the neighbor"
     );
 }
@@ -12279,7 +12279,7 @@ pub(crate) fn harness_news_template() -> (Harness<'static, KtApp>, NewsScene) {
     // The LOGO is a color plate next to the title. Its color is a real passport row
     // (`color_*` with unit Rgb8), unlike the title’s paints:
     // those live right in the variant and are not properties at all.
-    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 200, color_g: 30, color_b: 30 });
+    h.state_mut().create_generator(GeneratorKind::solid(200, 30, 30));
     h.step();
     let (_lm, logo_clip) = made_generator(&h);
     {
@@ -12335,7 +12335,7 @@ pub(crate) fn harness_news_template() -> (Harness<'static, KtApp>, NewsScene) {
         .project()
         .clips
         .iter()
-        .find(|c| matches!(c.r#gen, Some(GeneratorKind::Solid { .. })))
+        .find(|c| c.r#gen.as_ref().is_some_and(|g| g.tag() == "solid"))
         .expect("logo inside the reel")
         .id;
     let mut next = 0u64;
@@ -15329,11 +15329,7 @@ pub(crate) fn harness_geom_ctl() -> (Harness<'static, KtApp>, kt_model::ClipId) 
     // program, and the preview gets a REAL frame (without a frame there is neither a
     // picture nor controls over it — as with the title drag, t495)
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
-    h.state_mut().create_generator(GeneratorKind::Solid {
-        color_r: 200,
-        color_g: 40,
-        color_b: 40,
-    });
+    h.state_mut().create_generator(GeneratorKind::solid(200, 40, 40));
     h.step();
     let (_media, clip) = made_generator(&h);
     h.state_mut().fx_editors.clear();

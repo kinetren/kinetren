@@ -77,6 +77,13 @@ pub fn can_retune(old: &str, new: &str) -> bool {
 /// kt-cli) calls exactly this one, so “what the generator draws” is computed
 /// in one place.
 pub fn open_gen(state: &kt_model::GenState) -> Box<dyn MediaSource> {
+    // a kind whose plugin this build lacks (D13): the frame says WHAT is absent, not a black slab
+    if let kt_model::GeneratorKind::Missing(m) = &state.kind {
+        return Box::new(
+            crate::placeholder::PlaceholderSource::new(format!("generator {}", m.id()))
+                .with_info(GeneratorSource::info_for(&state.kind)),
+        );
+    }
     Box::new(GeneratorSource::from_state(state.clone()))
 }
 
@@ -122,10 +129,11 @@ mod tests {
     /// stopped stream, or “reconfigured” what was not changed.
     #[test]
     fn t499_can_retune_equals_retune() {
+        kt_plugins_builtin::install();
         use kt_model::{GeneratorKind, format_gen_path};
         let mut kinds: Vec<GeneratorKind> = GeneratorKind::all();
         // variations that change the passport and those that do not
-        kinds.push(GeneratorKind::Solid { color_r: 1, color_g: 2, color_b: 3 });
+        kinds.push(GeneratorKind::solid(1, 2, 3));
         kinds.push(GeneratorKind::SmpteBars { tone: true, tone_db: -12.0 });
         kinds.push(GeneratorKind::SmpteBars { tone: false, tone_db: -6.0 });
 
@@ -151,11 +159,12 @@ mod tests {
     /// old forever.
     #[test]
     fn t660_can_retune_gen_equals_retune_gen() {
+        kt_plugins_builtin::install();
         use kt_model::{GenState, GeneratorKind, TextAnim, text_anim_curves};
         let mut states: Vec<GenState> =
             GeneratorKind::all().into_iter().map(GenState::new).collect();
         // variations that change the passport and those that do not
-        states.push(GenState::new(GeneratorKind::Solid { color_r: 1, color_g: 2, color_b: 3 }));
+        states.push(GenState::new(GeneratorKind::solid(1, 2, 3)));
         states.push(GenState::new(GeneratorKind::SmpteBars { tone: true, tone_db: -12.0 }));
         states.push(GenState::new(GeneratorKind::SmpteBars { tone: false, tone_db: -6.0 }));
         states.push(GenState::new(GeneratorKind::Leader {
@@ -193,6 +202,7 @@ mod tests {
     /// a broken pseudo = Some(Err) (does not go to FFmpeg), a file = None.
     #[test]
     fn t471b_factory_routes_pseudo_paths() {
+        kt_plugins_builtin::install();
         assert!(open_pseudo("synth:ramp").unwrap().is_ok());
         assert!(open_pseudo("Synth:Ramp").unwrap().is_ok(), "regression of footnote item 211");
         assert!(open_pseudo("synth:sine:440").unwrap().is_ok());

@@ -79,7 +79,18 @@ pub fn generator_kind_menu(ui: &mut egui::Ui, label: &str) -> Option<GeneratorKi
 
 pub fn kind_name(kind: &GeneratorKind) -> &'static str {
     match kind {
-        GeneratorKind::Solid { .. } => tr(k::genkind::SOLID),
+        // a plugin kind's name is its manifest's catalog key — or, when the name is a function of a
+        // row's value (the tables' sort), that value's key (D13)
+        GeneratorKind::Plugin(p) => {
+            let ui = &p.manifest().ui;
+            let named = kind.kernel().and_then(|g| g.decl().names).and_then(|(row, keys)| {
+                let v = p.get(row)?;
+                keys.get(v.round().max(0.0) as usize).copied()
+            });
+            crate::i18n::key_by_name(named.unwrap_or(ui.name_key)).map_or(ui.name, tr)
+        }
+        // a kind this build lacks is named by its id (the placeholder frame says the same)
+        GeneratorKind::Missing(m) => missing_name(m.id()),
         GeneratorKind::Text { .. } => tr(k::genkind::TEXT),
         GeneratorKind::Gradient { .. } => tr(k::genkind::GRADIENT),
         GeneratorKind::Corners { .. } => tr(k::genkind::CORNERS),
@@ -112,6 +123,9 @@ pub fn kind_name(kind: &GeneratorKind) -> &'static str {
 /// instead of a black rectangle the card writes the KIND’S NAME (rule
 /// 16 — the impossibility of showing a picture is visible, not silent).
 pub fn blank_default(kind: &GeneratorKind) -> bool {
+    if let Some(g) = kind.kernel() {
+        return g.decl().blank;
+    }
     match kind {
         GeneratorKind::Text { text, .. } => text.trim().is_empty(),
         GeneratorKind::Transparent => true,
@@ -135,11 +149,16 @@ impl GenGroup {
         [GenGroup::Background, GenGroup::Shapes, GenGroup::Titles, GenGroup::Check];
 
     pub(crate) fn name(self) -> &'static str {
+        tr(self.key())
+    }
+
+    /// The group's catalog key — also the category key a plugin kind's manifest names (D13).
+    pub(crate) fn key(self) -> crate::i18n::Key {
         match self {
-            GenGroup::Background => tr(k::genkind::GROUP_BG),
-            GenGroup::Shapes => tr(k::genkind::GROUP_SHAPES),
-            GenGroup::Titles => tr(k::genkind::GROUP_TITLES),
-            GenGroup::Check => tr(k::genkind::GROUP_CHECK),
+            GenGroup::Background => k::genkind::GROUP_BG,
+            GenGroup::Shapes => k::genkind::GROUP_SHAPES,
+            GenGroup::Titles => k::genkind::GROUP_TITLES,
+            GenGroup::Check => k::genkind::GROUP_CHECK,
         }
     }
 
@@ -156,8 +175,13 @@ impl GenGroup {
 
     pub(crate) fn of(kind: &GeneratorKind) -> GenGroup {
         match kind {
-            GeneratorKind::Solid { .. }
-            | GeneratorKind::Gradient { .. }
+            // a plugin kind's group is its manifest's category key (D13)
+            GeneratorKind::Plugin(p) => {
+                let cat = crate::i18n::key_by_name(p.manifest().ui.category_key);
+                GenGroup::ALL.into_iter().find(|g| Some(g.key()) == cat).unwrap_or(GenGroup::Background)
+            }
+            GeneratorKind::Missing(_) => GenGroup::Background,
+            GeneratorKind::Gradient { .. }
             | GeneratorKind::Corners { .. }
             | GeneratorKind::Transparent
             | GeneratorKind::NoiseField { .. } => GenGroup::Background,
@@ -182,7 +206,8 @@ pub(crate) fn color_groups(
     kind: &GeneratorKind,
 ) -> &'static [(crate::i18n::Key, [&'static str; 3])] {
     match kind {
-        GeneratorKind::Solid { .. } => &[(k::trn::COLOR, ["color_r", "color_g", "color_b"])],
+        GeneratorKind::Plugin(p) => plugin_color_groups(p.manifest(), kind),
+        GeneratorKind::Missing(_) => &[],
         GeneratorKind::Gradient { .. } => {
             &[(k::genw::COLOR_A, ["a_r", "a_g", "a_b"]), (k::genw::COLOR_B, ["b_r", "b_g", "b_b"])]
         }
@@ -213,11 +238,64 @@ pub(crate) fn color_groups(
 /// The name of the alpha component of the kind’s colour group, if there is one (R.53, item 419).
 /// Shapes have a four-component colour; the other kinds do not.
 pub(crate) fn color_alpha(kind: &GeneratorKind) -> Option<&'static str> {
+    // a plugin kind: the alpha row of its first colour group, when it has one (D13)
+    if let GeneratorKind::Plugin(p) = kind {
+        let (stem, _) = kind.kernel()?.decl().colors.first()?;
+        let want = format!("{stem}_a");
+        return p.manifest().passport.iter().find(|s| s.name == want).map(|s| static_name(&s.name));
+    }
     matches!(
         kind,
         GeneratorKind::Rect { .. } | GeneratorKind::Ellipse { .. } | GeneratorKind::Line { .. }
     )
     .then_some("color_a")
+}
+
+/// A missing kind's name is its id: interned once per id (only a file from a build with more
+/// plugins carries one, and the name is drawn every frame).
+fn missing_name(id: &str) -> &'static str {
+    static SEEN: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(n) = seen.iter().find(|n| **n == id) {
+        return n;
+    }
+    let n: &'static str = Box::leak(id.to_string().into_boxed_str());
+    seen.push(n);
+    n
+}
+
+/// A row name of an installed manifest as `&'static str` (the registry is install-once).
+fn static_name(n: &'static str) -> &'static str {
+    n
+}
+
+/// A plugin kind's eyedropper groups from its declaration (D13), built once per manifest: the form
+/// is drawn every frame and must not allocate (invariant 12).
+fn plugin_color_groups(
+    m: &'static kt_plugin_api::Manifest,
+    kind: &GeneratorKind,
+) -> &'static [(crate::i18n::Key, [&'static str; 3])] {
+    type Groups = &'static [(crate::i18n::Key, [&'static str; 3])];
+    static CACHE: std::sync::Mutex<Vec<(usize, Groups)>> = std::sync::Mutex::new(Vec::new());
+    let key = m as *const kt_plugin_api::Manifest as usize;
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, g)) = cache.iter().find(|(k, _)| *k == key) {
+        return g;
+    }
+    let row = |n: String| m.passport.iter().find(|s| s.name == n).map(|s| static_name(&s.name));
+    let groups: Vec<_> = kind
+        .kernel()
+        .map(|g| g.decl().colors)
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|(stem, caption)| {
+            let label = crate::i18n::key_by_name(caption)?;
+            Some((label, [row(format!("{stem}_r"))?, row(format!("{stem}_g"))?, row(format!("{stem}_b"))?]))
+        })
+        .collect();
+    let groups: Groups = Box::leak(groups.into_boxed_slice());
+    cache.push((key, groups));
+    groups
 }
 
 /// Warning about a FONT SUBSTITUTION (R.52 S4): the chosen family is not on this machine — the frame is drawn

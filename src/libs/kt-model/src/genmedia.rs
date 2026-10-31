@@ -35,16 +35,7 @@ use crate::project::{
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum GeneratorKind {
-    /// A solid color — the only generator that is used
-    /// daily (F-TXT-003 reconnaissance). The default is black (UI rule 4).
-    Solid {
-        #[serde(default)]
-        color_r: u8,
-        #[serde(default)]
-        color_g: u8,
-        #[serde(default)]
-        color_b: u8,
-    },
+    // solid (src/plugins/generators-basic) is a plugin since plugin-api-stage1 (D13).
     /// Title (F-TXT-001): the text is drawn by kt-text (vendored font,
     /// the determinism rule — kt-text/CLAUDE.md). Everything is relative:
     /// the size is a fraction of the frame height, tracking/outline/shadow/padding are fractions of
@@ -332,6 +323,15 @@ pub enum GeneratorKind {
         #[serde(default = "default_one")]
         level: f64,
     },
+    /// A plugin-backed kind (plugin-api-stage1, D13): `kind` is its id, the rows follow its
+    /// passport. Untagged and LAST: a `kind` no variant above names is tried here, in the
+    /// GENERATORS' family (the transition `checker` is another plugin).
+    #[serde(untagged, deserialize_with = "crate::plugin_slot::de_generator")]
+    Plugin(crate::plugin_slot::PluginSlot),
+    /// A kind whose plugin this build lacks: kept and written back unchanged; its source is a
+    /// named placeholder (kt-media's factory).
+    #[serde(untagged)]
+    Missing(crate::plugin_slot::MissingSlot),
 }
 
 /// PRESET of title animation (R.53 items 423-424 → R.59 stage 2).
@@ -589,7 +589,7 @@ impl GeneratorKind {
     /// is added AT THE END.
     pub fn all() -> Vec<GeneratorKind> {
         vec![
-            GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 },
+            GeneratorKind::builtin("solid"),
             GeneratorKind::default_text(),
             GeneratorKind::Gradient {
                 angle_deg: 90.0,
@@ -680,6 +680,43 @@ impl GeneratorKind {
         ]
     }
 
+    /// A built-in plugin kind at its defaults; the set must be installed (the registry's kinds).
+    pub fn builtin(id: &str) -> GeneratorKind {
+        GeneratorKind::plugin(id)
+            .unwrap_or_else(|| panic!("{id} is not registered: install the built-in plugin set first"))
+    }
+
+    /// A plugin kind at its passport's defaults; `None` — no such generator is registered.
+    pub fn plugin(id: &str) -> Option<GeneratorKind> {
+        crate::plugin_slot::PluginSlot::new(kt_plugin_api::Family::Generator, id).map(GeneratorKind::Plugin)
+    }
+
+    /// A plugin kind with the given values by row name (clamped and cast like any write).
+    pub fn plugin_with(id: &str, values: &[(&str, f64)]) -> Option<GeneratorKind> {
+        let mut k = GeneratorKind::plugin(id)?;
+        for (n, v) in values {
+            k.set_param(n, *v);
+        }
+        Some(k)
+    }
+
+    /// A solid colour — the built-in plugin (`generators-basic`) at these values.
+    pub fn solid(r: u8, g: u8, b: u8) -> GeneratorKind {
+        let mut k = GeneratorKind::builtin("solid");
+        for (n, v) in [("color_r", r), ("color_g", g), ("color_b", b)] {
+            k.set_param(n, v as f64);
+        }
+        k
+    }
+
+    /// The generator kernel of a plugin kind.
+    pub fn kernel(&self) -> Option<&'static dyn kt_plugin_api::generator::GenKernel> {
+        match self {
+            GeneratorKind::Plugin(p) => p.plugin()?.generator(),
+            _ => None,
+        }
+    }
+
     /// A title with defaults (empty text — it is typed in the window).
     pub fn default_text() -> GeneratorKind {
         GeneratorKind::Text {
@@ -727,7 +764,8 @@ impl GeneratorKind {
     /// suffix (`kt.<tag>`) in the exchange file.
     pub fn tag(&self) -> &'static str {
         match self {
-            GeneratorKind::Solid { .. } => "solid",
+            GeneratorKind::Plugin(p) => p.tag(),
+            GeneratorKind::Missing(_) => "missing",
             GeneratorKind::Text { .. } => "text",
             GeneratorKind::Gradient { .. } => "gradient",
             GeneratorKind::Corners { .. } => "corners",
@@ -753,11 +791,6 @@ impl GeneratorKind {
 }
 
 params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, gen_set_idx, gen_get_idx, {
-    Solid {
-        color_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        color_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        color_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-    },
     // numeric parameters of the title; text/family/alignment/colors are not
     // specs (their own window controls, the “legal exception” F-TXT-001)
     // everything that is in FRACTIONS OF THE FRAME is shown as percentages (R.53, item 415):
@@ -883,25 +916,50 @@ flags_for! { GeneratorKind, gen_flag_specs, gen_set_flag, gen_get_flag, {
 
 impl HasParams for GeneratorKind {
     fn param_specs(&self) -> &'static [ParamSpec] {
-        gen_specs(self)
+        match self {
+            GeneratorKind::Plugin(p) => p.specs(),
+            GeneratorKind::Missing(_) => &[],
+            _ => gen_specs(self),
+        }
     }
     fn get_param(&self, name: &str) -> Option<f64> {
-        gen_get_param(self, name)
+        match self {
+            GeneratorKind::Plugin(p) => p.get(name),
+            GeneratorKind::Missing(_) => None,
+            _ => gen_get_param(self, name),
+        }
     }
     fn set_param(&mut self, name: &str, v: f64) -> bool {
-        gen_set_param(self, name, v)
+        match self {
+            GeneratorKind::Plugin(p) => p.set(name, v),
+            GeneratorKind::Missing(_) => false,
+            _ => gen_set_param(self, name, v),
+        }
     }
     fn params_scope(&self) -> ParamScope {
         ParamScope::Generator
     }
+    /// A plugin kind's flags are its passport's flag rows (D13).
     fn flag_specs(&self) -> &'static [FlagSpec] {
-        gen_flag_specs(self)
+        match self {
+            GeneratorKind::Plugin(p) => crate::plugin_slot::flag_specs(p.manifest()),
+            GeneratorKind::Missing(_) => &[],
+            _ => gen_flag_specs(self),
+        }
     }
     fn get_flag(&self, name: &str) -> Option<bool> {
-        gen_get_flag(self, name)
+        match self {
+            GeneratorKind::Plugin(p) => is_flag_row(p, name).then(|| p.get(name).is_some_and(|v| v >= 0.5)),
+            GeneratorKind::Missing(_) => None,
+            _ => gen_get_flag(self, name),
+        }
     }
     fn set_flag(&mut self, name: &str, v: bool) -> bool {
-        gen_set_flag(self, name, v)
+        match self {
+            GeneratorKind::Plugin(p) => is_flag_row(p, name) && p.set(name, if v { 1.0 } else { 0.0 }),
+            GeneratorKind::Missing(_) => false,
+            _ => gen_set_flag(self, name, v),
+        }
     }
 
     /// Non-numeric properties of the title (R.59, stage 3). The round was
@@ -958,6 +1016,11 @@ impl HasParams for GeneratorKind {
         }
         default_set_value(self, name, v)
     }
+}
+
+/// Whether `name` is a flag row of the plugin kind's passport.
+fn is_flag_row(p: &crate::plugin_slot::PluginSlot, name: &str) -> bool {
+    p.specs().iter().any(|s| s.name == name && s.ty == crate::project::ParamType::Flag)
 }
 
 const TEXT_ALIGN_KEYS: &[&str] = &["left", "center", "right"];
@@ -1080,6 +1143,14 @@ pub fn parse_gen_path_full(path: &str) -> Option<(GeneratorKind, Option<LegacyTe
     Some((kind, legacy))
 }
 
+/// A `gen:` path whose tag names no kind of this build (D13): the media of a plugin kind this build
+/// lacks. Its events carry the kind as `Missing`, and the source is a named placeholder.
+pub fn is_missing_gen_path(path: &str) -> bool {
+    let Some(rest) = strip_ci(path, "gen:") else { return false };
+    let tag = rest.split(':').next().unwrap_or("").to_ascii_lowercase();
+    !tag.is_empty() && GeneratorKind::default_for_tag(&tag).is_none()
+}
+
 /// A media path carrying ONLY THE KIND (R.59, stage 2).
 ///
 /// The values moved to the event, and what remained in `MediaRef.path` is “what kind of
@@ -1090,6 +1161,19 @@ pub fn parse_gen_path_full(path: &str) -> Option<(GeneratorKind, Option<LegacyTe
 /// part of the address, not a value of the event.
 pub fn gen_kind_path(k: &GeneratorKind) -> String {
     match k {
+        // a plugin kind's address rows are its declaration's (D13): the path token of each
+        GeneratorKind::Plugin(p) => {
+            let mut out = format!("gen:{}", p.tag());
+            let address = k.kernel().map_or(&[][..], |g| g.decl().address);
+            plugin_tokens(p, Some(address), &mut |key, val| {
+                out.push(':');
+                out.push_str(key);
+                out.push('=');
+                out.push_str(&val);
+            });
+            out
+        }
+        GeneratorKind::Missing(m) => format!("gen:{}", m.id()),
         GeneratorKind::TestPattern { table } if *table != TestTable::default() => {
             format!("gen:table:tb={}", table.token())
         }
@@ -1140,7 +1224,10 @@ impl GenState {
 /// as a single token `c=rrggbb`. `format(parse(s))` canonicalizes;
 /// the model always stores the canon (it is produced by the window and the kt-otio reader).
 pub fn format_gen_path(k: &GeneratorKind) -> String {
-    let mut out = format!("gen:{}", k.tag());
+    let mut out = match k {
+        GeneratorKind::Missing(m) => format!("gen:{}", m.id()),
+        _ => format!("gen:{}", k.tag()),
+    };
     let mut push = |key: &str, val: String| {
         out.push(':');
         out.push_str(key);
@@ -1148,11 +1235,8 @@ pub fn format_gen_path(k: &GeneratorKind) -> String {
         out.push_str(&val);
     };
     match k {
-        GeneratorKind::Solid { color_r, color_g, color_b } => {
-            if (*color_r, *color_g, *color_b) != (0, 0, 0) {
-                push("c", format!("{color_r:02x}{color_g:02x}{color_b:02x}"));
-            }
-        }
+        GeneratorKind::Plugin(p) => plugin_tokens(p, None, &mut |key, val| push(key, val)),
+        GeneratorKind::Missing(_) => {}
         GeneratorKind::Text {
             text,
             family,
@@ -1548,13 +1632,8 @@ fn order_from(s: &str) -> Option<[TextLayer; 4]> {
 /// One `key=value` token of the path. The key is already in lowercase.
 fn apply_token(k: &mut GeneratorKind, key: &str, val: &str) -> Option<()> {
     match k {
-        GeneratorKind::Solid { color_r, color_g, color_b } => match key {
-            "c" => {
-                (*color_r, *color_g, *color_b) = parse_rgb(val)?;
-                Some(())
-            }
-            _ => None,
-        },
+        GeneratorKind::Plugin(p) => plugin_apply(p, key, val),
+        GeneratorKind::Missing(_) => None,
         GeneratorKind::Text {
             text,
             family,
@@ -1794,6 +1873,90 @@ fn unit(val: &str) -> Option<f64> {
 /// (a backing under a title wider than the frame is a common thing).
 fn span(val: &str) -> Option<f64> {
     val.parse::<f64>().ok().filter(|v| v.is_finite() && (0.0..=2.0).contains(v))
+}
+
+/// The `gen:` tokens of a plugin kind, in its table's order: a token at its rows' defaults is not
+/// written (D13). `only` — the address rows (`gen_kind_path`); `None` — every token.
+fn plugin_tokens(p: &crate::plugin_slot::PluginSlot, only: Option<&[&str]>, push: &mut dyn FnMut(&str, String)) {
+    use kt_plugin_api::generator::PathVal;
+    let m = p.manifest();
+    let Some(g) = p.plugin().and_then(|pl| pl.generator()) else { return };
+    let at = |n: &str| -> (f64, f64) {
+        let i = m.passport.iter().position(|s| s.name == n).expect("the registry checked the row");
+        (p.values[i], m.row(i).store.cast(m.passport[i].default))
+    };
+    let hex = |st: &str, comps: &[&str]| -> Option<String> {
+        let vals: Vec<(f64, f64)> = comps.iter().map(|c| at(&format!("{st}_{c}"))).collect();
+        (vals.iter().any(|(v, d)| v != d)).then(|| vals.iter().map(|(v, _)| format!("{:02x}", *v as u8)).collect())
+    };
+    for t in g.decl().path {
+        let row = match t.val {
+            PathVal::Hex3(st) | PathVal::Hex4(st) => format!("{st}_r"),
+            PathVal::Num(n)
+            | PathVal::Unit(n)
+            | PathVal::Span(n)
+            | PathVal::Int(n, ..)
+            | PathVal::Flag1(n)
+            | PathVal::Flag0(n)
+            | PathVal::Choice(n, _) => n.to_string(),
+        };
+        if let Some(rows) = only
+            && !rows.iter().any(|r| *r == row)
+        {
+            continue;
+        }
+        let val = match t.val {
+            PathVal::Hex3(st) => hex(st, &["r", "g", "b"]),
+            PathVal::Hex4(st) => hex(st, &["r", "g", "b", "a"]),
+            PathVal::Num(n) | PathVal::Unit(n) | PathVal::Span(n) => {
+                let (v, d) = at(n);
+                (v != d).then(|| format!("{v}"))
+            }
+            PathVal::Int(n, ..) => {
+                let (v, d) = at(n);
+                (v != d).then(|| format!("{}", v as u32))
+            }
+            PathVal::Flag1(n) => (at(n).0 >= 0.5).then(|| "1".to_string()),
+            PathVal::Flag0(n) => (at(n).0 < 0.5).then(|| "0".to_string()),
+            PathVal::Choice(n, toks) => {
+                let (v, d) = at(n);
+                (v != d).then(|| toks[v as usize].to_string())
+            }
+        };
+        if let Some(v) = val {
+            push(t.key, v);
+        }
+    }
+}
+
+/// One `gen:` token into a plugin kind — the validators of the former `apply_token` (D13).
+fn plugin_apply(p: &mut crate::plugin_slot::PluginSlot, key: &str, val: &str) -> Option<()> {
+    use kt_plugin_api::generator::PathVal;
+    let g = p.plugin()?.generator()?;
+    let t = g.decl().path.iter().find(|t| t.key == key)?;
+    let mut set = |n: &str, v: f64| p.set(n, v).then_some(());
+    match t.val {
+        PathVal::Hex3(st) => {
+            let (r, gg, b) = parse_rgb(val)?;
+            set(&format!("{st}_r"), r as f64)?;
+            set(&format!("{st}_g"), gg as f64)?;
+            set(&format!("{st}_b"), b as f64)
+        }
+        PathVal::Hex4(st) => {
+            let (r, gg, b, a) = parse_rgba(val)?;
+            set(&format!("{st}_r"), r as f64)?;
+            set(&format!("{st}_g"), gg as f64)?;
+            set(&format!("{st}_b"), b as f64)?;
+            set(&format!("{st}_a"), a as f64)
+        }
+        PathVal::Num(n) => set(n, val.parse::<f64>().ok().filter(|v| v.is_finite())?),
+        PathVal::Unit(n) => set(n, unit(val)?),
+        PathVal::Span(n) => set(n, span(val)?),
+        PathVal::Int(n, lo, hi) => set(n, val.parse::<u32>().ok().filter(|v| (lo..=hi).contains(v))? as f64),
+        PathVal::Flag1(n) => set(n, if val == "1" { 1.0 } else { 0.0 }),
+        PathVal::Flag0(n) => set(n, if val != "0" { 1.0 } else { 0.0 }),
+        PathVal::Choice(n, toks) => set(n, toks.iter().position(|x| *x == val)? as f64),
+    }
 }
 
 /// `rrggbbaa` (8 hex digits) → a four-component tuple.

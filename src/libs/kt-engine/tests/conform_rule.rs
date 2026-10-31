@@ -114,12 +114,13 @@ fn fixture(name: &str) -> String {
 /// and a square still was stretched over a 16:9 canvas under every rule.
 #[test]
 fn t936_a_still_has_a_view_generators_and_the_placeholder_do_not() {
+    kt_plugins_builtin::install();
     use kt_media::MediaSource;
     let square = kt_media::ffmpeg::FfmpegSource::open(&fixture("still_square.png")).expect("square still");
     let video = kt_media::ffmpeg::FfmpegSource::open(&fixture("square.mp4")).expect("square video");
     let mut wide = square.info().clone();
     wide.sar = (2, 1);
-    let generator = kt_media::generator::GeneratorSource::new(GeneratorKind::Solid { color_r: 9, color_g: 9, color_b: 9 });
+    let generator = kt_media::generator::GeneratorSource::new(GeneratorKind::solid(9, 9, 9));
     let title = kt_media::generator::GeneratorSource::new(GeneratorKind::default_text());
     let placeholder = kt_media::placeholder::PlaceholderSource::new("gone.png");
     // (what, its facts, procedural, the view the renderer must see)

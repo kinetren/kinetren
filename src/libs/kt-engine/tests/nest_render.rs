@@ -1170,7 +1170,7 @@ fn gen_kind() -> GeneratorKind {
 /// automation. Without this there is nothing to measure “does the animation move monotonically” with:
 /// the synthetic color jumps with pts.
 fn flat_kind() -> GeneratorKind {
-    GeneratorKind::Solid { color_r: 20, color_g: 20, color_b: 20 }
+    GeneratorKind::solid(20, 20, 20)
 }
 
 /// R.59, stage 2: generator sources sit at EVENT addresses, and their list is one for all:

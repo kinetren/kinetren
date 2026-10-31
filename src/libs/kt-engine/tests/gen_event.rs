@@ -121,6 +121,7 @@ fn compose(p: &Project, t: Tick) -> (Vec<u8>, bool) {
 /// the pictures are different.
 #[test]
 fn t658_order_equals_read_for_two_titles_of_one_kind() {
+    kt_plugins_builtin::install();
     let p = two_titles();
     let video = VideoRenderer::new(&p);
     let order = video.layers_at(Tick(0), Q);
@@ -162,6 +163,7 @@ fn t658_order_equals_read_for_two_titles_of_one_kind() {
 /// “a second run equals the first to the bit” (invariant 11).
 #[test]
 fn t659_a_curve_on_a_generator_parameter_moves_the_bytes() {
+    kt_plugins_builtin::install();
     let mut p = base();
     p.media.push(MediaRef::new(MediaId(1), gen_kind_path(&title(""))));
     let mut c = clip(1, 0, 0, 180_000, 1);
@@ -203,11 +205,12 @@ fn t659_a_curve_on_a_generator_parameter_moves_the_bytes() {
 /// ancestors by the same code (`reel_chain_of_clip`).
 #[test]
 fn t663_a_reel_does_not_serve_a_stale_frame_after_a_retune() {
+    kt_plugins_builtin::install();
     use kt_engine::Player;
 
     let mut p = base();
-    let dark = GeneratorKind::Solid { color_r: 16, color_g: 16, color_b: 16 };
-    let bright = GeneratorKind::Solid { color_r: 220, color_g: 220, color_b: 220 };
+    let dark = GeneratorKind::solid(16, 16, 16);
+    let bright = GeneratorKind::solid(220, 220, 220);
     p.media.push(MediaRef::new(MediaId(1), gen_kind_path(&dark)));
     let mut s = Sequence::new(MediaId(100), "reel");
     let mut inner = clip(1, 0, 0, 90_000, 1);
@@ -257,6 +260,7 @@ fn t663_a_reel_does_not_serve_a_stale_frame_after_a_retune() {
 /// code for the player, export and kt-cli.
 #[test]
 fn t670_export_opens_its_own_generators_and_equals_preview() {
+    kt_plugins_builtin::install();
     let p = two_titles();
     let target = 7usize;
     let run = || {

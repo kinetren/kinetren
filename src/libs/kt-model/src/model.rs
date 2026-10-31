@@ -77,7 +77,7 @@ fn fit_gen_to_media(p: &Project, c: &mut ClipEvent) {
 /// A consistency check of the generator's values for a command — with THE SAME
 /// code as the file validation.
 fn kt_check(p: &Project, c: &ClipEvent) -> Result<(), CommandError> {
-    check_clip_gen(c, p.gen_media_path(c.media)).map_err(CommandError::InvalidClip)
+    check_clip_gen(c, p.gen_check_path(c)).map_err(CommandError::InvalidClip)
 }
 
 fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
