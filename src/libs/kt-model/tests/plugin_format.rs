@@ -756,3 +756,88 @@ fn t1049_a_plugin_id_is_unique_within_its_family_only() {
     let as_trans: TransitionKind = serde_json::from_value(wipe).expect("the wipe transition");
     assert!(matches!(&as_trans, TransitionKind::Plugin(p) if p.family == Family::Transition), "{as_trans:?}");
 }
+
+/// The barrier-position kinds' file text, frozen BEFORE `plugin-api-barriers` moves them (its
+/// 1.2). Each line is read from a file and written again, and must give the frozen text. The lines
+/// cover a kind left at its defaults (the empty form reads the variant's `serde(default)`s) and
+/// forms that move every row (a `skip_serializing_if` row is written only when not at its
+/// default). The pairs were printed by the core variants with `KT_PRINT_GOLDEN=1`; a moved kind
+/// must write them byte for byte, whether it is a variant or a plugin slot.
+const BARRIER_FORMS: &[(&str, &str)] = &[
+    (r#"{"kind":"blur"}"#, r#"{"kind":"blur","radius":8}"#),
+    (r#"{"kind":"blur","radius":3,"radius_y":7}"#, r#"{"kind":"blur","radius":3,"radius_y":7}"#),
+    (r#"{"kind":"glow"}"#, r#"{"kind":"glow","strength":0.65}"#),
+    (r#"{"kind":"glow","strength":1.2,"radius":5,"threshold":100,"tint_r":255,"tint_g":180,"tint_b":40}"#, r#"{"kind":"glow","strength":1.2,"radius":5,"threshold":100,"tint_g":180,"tint_b":40}"#),
+    (r#"{"kind":"edges"}"#, r#"{"kind":"edges","threshold":48}"#),
+    (r#"{"kind":"edges","threshold":20,"thickness":2,"color_r":255,"color_g":0,"color_b":0}"#, r#"{"kind":"edges","threshold":20,"thickness":2,"color_g":0,"color_b":0}"#),
+    (r#"{"kind":"vhs"}"#, r#"{"kind":"vhs","rgb_shift":4,"bleed":0.4}"#),
+    (r#"{"kind":"vhs","rgb_shift":7,"bleed":0.8,"scan_step":3,"jitter":0.5}"#, r#"{"kind":"vhs","rgb_shift":7,"bleed":0.8,"scan_step":3,"jitter":0.5}"#),
+    (r#"{"kind":"noise"}"#, r#"{"kind":"noise","amount":0.08}"#),
+    (r#"{"kind":"noise","amount":0.6,"size":3,"color":true}"#, r#"{"kind":"noise","amount":0.6,"size":3,"color":true}"#),
+    (r#"{"kind":"greenscreen"}"#, r#"{"kind":"greenscreen","key_r":0,"key_g":255,"key_b":0,"tolerance":70,"softness":25}"#),
+    (r#"{"kind":"greenscreen","key_r":200,"key_g":40,"key_b":20,"tolerance":90,"softness":10,"spill":0.123456789}"#, r#"{"kind":"greenscreen","key_r":200,"key_g":40,"key_b":20,"tolerance":90,"softness":10,"spill":0.123456789}"#),
+    (r#"{"kind":"sharpen"}"#, r#"{"kind":"sharpen","amount":1.0,"radius":2}"#),
+    (r#"{"kind":"sharpen","amount":2.5,"radius":4}"#, r#"{"kind":"sharpen","amount":2.5,"radius":4}"#),
+    (r#"{"kind":"pixelate"}"#, r#"{"kind":"pixelate","size":12}"#),
+    (r#"{"kind":"pixelate","size":5}"#, r#"{"kind":"pixelate","size":5}"#),
+    (r#"{"kind":"chromatic_aberration"}"#, r#"{"kind":"chromatic_aberration","amount":0.012}"#),
+    (r#"{"kind":"chromatic_aberration","amount":0.123456789}"#, r#"{"kind":"chromatic_aberration","amount":0.12345679}"#),
+    (r#"{"kind":"radial_blur"}"#, r#"{"kind":"radial_blur","amount":0.25}"#),
+    (r#"{"kind":"radial_blur","amount":0.6,"center_x":0.3,"center_y":0.6,"spin":true}"#, r#"{"kind":"radial_blur","amount":0.6,"center_x":0.3,"center_y":0.6,"spin":true}"#),
+    (r#"{"kind":"drop_shadow"}"#, r#"{"kind":"drop_shadow","offset_x":8,"offset_y":8,"radius":4,"opacity":0.6}"#),
+    (r#"{"kind":"drop_shadow","offset_x":-5,"offset_y":3,"radius":6,"opacity":0.8,"tint_r":30,"tint_g":0,"tint_b":90}"#, r#"{"kind":"drop_shadow","offset_x":-5,"offset_y":3,"radius":6,"opacity":0.8,"tint_r":30,"tint_b":90}"#),
+    (r#"{"kind":"halftone"}"#, r#"{"kind":"halftone","size":8,"angle":45.0}"#),
+    (r#"{"kind":"halftone","size":5,"angle":30.5}"#, r#"{"kind":"halftone","size":5,"angle":30.5}"#),
+];
+
+const BARRIER_INPUTS: &[&str] = &[
+    r#"{"kind":"blur"}"#,
+    r#"{"kind":"blur","radius":3,"radius_y":7}"#,
+    r#"{"kind":"glow"}"#,
+    r#"{"kind":"glow","strength":1.2,"radius":5,"threshold":100,"tint_r":255,"tint_g":180,"tint_b":40}"#,
+    r#"{"kind":"edges"}"#,
+    r#"{"kind":"edges","threshold":20,"thickness":2,"color_r":255,"color_g":0,"color_b":0}"#,
+    r#"{"kind":"vhs"}"#,
+    r#"{"kind":"vhs","rgb_shift":7,"bleed":0.8,"scan_step":3,"jitter":0.5}"#,
+    r#"{"kind":"noise"}"#,
+    r#"{"kind":"noise","amount":0.6,"size":3,"color":true}"#,
+    r#"{"kind":"greenscreen"}"#,
+    r#"{"kind":"greenscreen","key_r":200,"key_g":40,"key_b":20,"tolerance":90,"softness":10,"spill":0.123456789}"#,
+    r#"{"kind":"sharpen"}"#,
+    r#"{"kind":"sharpen","amount":2.5,"radius":4}"#,
+    r#"{"kind":"pixelate"}"#,
+    r#"{"kind":"pixelate","size":5}"#,
+    r#"{"kind":"chromatic_aberration"}"#,
+    r#"{"kind":"chromatic_aberration","amount":0.123456789}"#,
+    r#"{"kind":"radial_blur"}"#,
+    r#"{"kind":"radial_blur","amount":0.6,"center_x":0.3,"center_y":0.6,"spin":true}"#,
+    r#"{"kind":"drop_shadow"}"#,
+    r#"{"kind":"drop_shadow","offset_x":-5,"offset_y":3,"radius":6,"opacity":0.8,"tint_r":30,"tint_g":0,"tint_b":90}"#,
+    r#"{"kind":"halftone"}"#,
+    r#"{"kind":"halftone","size":5,"angle":30.5}"#,
+];
+
+#[test]
+fn t973_barrier_kinds_keep_their_text() {
+    kt_plugins_builtin::install();
+    let got: Vec<(&str, String)> = BARRIER_INPUTS
+        .iter()
+        .map(|i| {
+            let f: FxInstance = serde_json::from_str(i).unwrap_or_else(|e| panic!("{i}: {e}"));
+            (*i, serde_json::to_string(&f).unwrap())
+        })
+        .collect();
+    if std::env::var_os("KT_PRINT_GOLDEN").is_some() {
+        for (i, o) in &got {
+            println!("    (r#\"{i}\"#, r#\"{o}\"#),");
+        }
+    }
+    assert_eq!(got.len(), BARRIER_FORMS.len(), "an input without a frozen text or the reverse");
+    for ((i, o), (fi, fo)) in got.iter().zip(BARRIER_FORMS) {
+        assert_eq!(i, fi, "the inputs and the frozen table are out of order");
+        assert_eq!(o, fo, "{i}: the kind writes other text than it did before the move");
+        // and the written text reads back to itself
+        let again: FxInstance = serde_json::from_str(o).unwrap();
+        assert_eq!(&serde_json::to_string(&again).unwrap(), o, "{o} does not survive a second write");
+    }
+}

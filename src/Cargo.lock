@@ -2213,6 +2213,7 @@ dependencies = [
  "kt-plugins-builtin",
  "kt-time",
  "rubato",
+ "serde_json",
  "xxhash-rust",
 ]
 

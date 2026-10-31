@@ -14,10 +14,9 @@ The host SHALL decide when the twin runs: one runtime switch for the whole progr
 reading of the environment by a plugin. The host SHALL refuse at registration:
 - a barrier without a CPU kernel;
 - a built-in barrier without a pass graph;
-- a graph that reads a saved output before saving it, or that ends on a host node;
+- a graph that reads a saved output before saving it, or whose output is not at the frame size;
 - a size that can exceed the intermediate-buffer ceiling;
-- a missing alpha relation;
-- a twin on a kernel that is not callable from several threads.
+- a missing alpha relation.
 
 A kind that holds both a positioned tap and a barrier kernel SHALL run as a tap inside a fused
 geometry series and as the barrier kernel at a series edge, exactly where the core kind ran in
@@ -47,7 +46,7 @@ whole scalar reference (R.32).
 - **TEST** t1053 (`src/libs/kt-fx/tests/simd_parity.rs`), t198
 
 #### Scenario: An inconsistent barrier is refused before any frame
-- **WHEN** test plugins are registered with: no CPU kernel; no pass graph as a built-in; a graph reading a saved output before saving it; a graph ending on a resample; a size beyond the buffer ceiling at the largest K; no alpha relation; a twin on a single-thread kernel
+- **WHEN** test plugins are registered with: no CPU kernel; no pass graph as a built-in; a graph reading a saved output before saving it; a graph ending at a half-size resample; a size beyond the buffer ceiling at the largest K; no alpha relation
 - **THEN** each registration is refused with the reason named, and the registry is unchanged
 - **TEST** t1054 (`src/libs/kt-plugin-api/tests/registry.rs`), t972
 

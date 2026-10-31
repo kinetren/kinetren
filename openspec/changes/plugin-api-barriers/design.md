@@ -44,17 +44,22 @@ See proposal.md — Why. State at `plugin-api-stage1` (kt26.10.31):
 
 - `cook(p) -> Cooked`: the parameters once per plan (clamps, f64 precompute), as `cook_at` for
   taps.
-- `frame(&Cooked, &mut BarrierFrame, &BarrierCtx)` is the scalar CPU text, the byte reference.
-  `BarrierFrame` = rgba, w, h, has_alpha. `BarrierCtx` = `res_scale` K, `burst_index`, the scratch
-  pool and the raster host (D3).
-- `frame_simd(...) -> bool` is optional: the AVX2 twin. The plugin returns false when it cannot
-  take this frame; the HOST decides whether to call it at all (runtime detection and `KT_SIMD=0`
-  stay one switch in kt-fx).
-- `alpha() -> AlphaRel` (Produces / Preserves / Consumes) is the alpha rule's per-step relation,
+- `frame(&Cooked, Frame, &BarrierCtx, &mut dyn Scratch) -> Frame` is the CPU text, the byte
+  reference. `Frame` is the host's frame type, moved into the API so a kernel hands the frame
+  back without a copy (rgba, w, h, has_alpha). `BarrierCtx` = `res_scale` K, `burst_index`,
+  `simd` and the raster host (D3).
+- **The SIMD twin is a branch inside `frame`, taken only when `cx.simd`.** The HOST decides
+  `simd` once per frame from runtime detection and `KT_SIMD`, so `KT_SIMD=0` stays ONE switch
+  (R.32) and no plugin reads the environment. t1053 runs every barrier with `simd` true and false
+  and compares the bytes.
+- `Decl.alpha: AlphaRel` (Preserves / Produces / Destroys) is the alpha rule's per-step relation,
   declared rather than matched.
 
-*Alternative rejected:* one `frame` that branches on SIMD itself. Every plugin would read the
-environment and detect features, and `KT_SIMD=0` would stop being ONE switch (R.32).
+*Revised in stage 2 (2026-10-31):* the first draft had a separate `frame_simd(...) -> bool`. It
+was a second entry with the same arguments; the twin needs nothing but the host's permission, so
+`cx.simd` carries it. *Alternative rejected:* letting `frame` read `KT_SIMD` and detect features
+itself — every plugin would carry the switch, and the scalar reference would stop being ONE switch
+away.
 
 ### D2. The GPU side is a declared pass graph of host nodes and plugin passes
 `BarrierKernel::gpu(&Cooked, &GpuCtx) -> PassGraph` returns a short list of nodes:
@@ -107,10 +112,12 @@ the series.
 
 - a Barrier class without `frame`;
 - a built-in barrier without `gpu` (built-ins keep the GPU default);
-- a graph that reads `Saved(n)` before `Save(n)`, or that ends on a host node;
+- a graph that reads `Saved(n)` before `Save(n)`, or whose output is not at the frame size (a
+  graph of host nodes alone is legal: blur on the GPU is a mip down and up);
 - a `Size` that can exceed `MAX_INTER_DIM` for the largest K;
 - a missing alpha relation;
-- `frame_simd` on a plugin marked `threads: Single`.
+- (a kernel marked `threads: Single` is refused for every plugin already, D4 of stage 1, so a SIMD
+  path needs no refusal of its own).
 
 These checks follow the D4 refusals of stage 1: the refusal comes before any frame.
 

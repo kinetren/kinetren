@@ -17,3 +17,5 @@ kt-plugins-builtin = { workspace = true }
 # t348: the EQ graph function moved with the EQ (plugin-api-stage1; dev only — t975)
 fx-audio-tone = { workspace = true }
 xxhash-rust = { workspace = true, features = ["xxh3"] }
+# t1051: the barrier kinds are built from their file text (plugin-api-barriers)
+serde_json = { workspace = true }
