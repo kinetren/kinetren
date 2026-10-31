@@ -61,6 +61,14 @@ The third — "the music drowns out the voice" (the most frequent live complaint
 - Sync: `offset_from_pyramids` (`src/libs/kt-media/src/sync.rs`) compares `a[i]` with `b[i + lag]`; the first block is compared with itself (otherwise a false "onset" on the zero block gives a correlation of 0.98 for two unrelated noises); the starting level of the pyramid is chosen BY LENGTH, not as "the topmost" — at the top there are one or two blocks, and a full search would never happen. `sync_by_audio_commands` (`src/libs/kt-model/src/ops.rs`) goes only through `clip_timeline_at`/`clip_material_at` — its own arithmetic would drift on a reversal.
 - The `loudness` and `sync_offset` tables in the sidecar (`src/libs/kt-media/src/index.rs`) store integers ×100 (the round-trip is byte-exact) and were added without bumping `SCHEMA_VERSION` (a bump would wipe the batch index, peaks, and thumbnails of all media); for `sync_offset` the key is a PAIR, and a uniform `DELETE ... WHERE media_id` does not clear it (capability `media-index`).
 - Invariant 5 in the wording of R.49: the offline path (ducking, index, export) opens ITS OWN short-lived source under three conditions — it is shared with no one, it promises no tempo, and its task is finite and cancellable (`src/apps/kt-app/src/analysis.rs`, `bg.rs`). The playback cache is warm only around the cursor; there is no envelope of a whole track there.
+- **At an armed loop wrap the INPUT wraps first** (pitch-loop-silence, 2026-10-29). The chain's
+  input runs `La` ahead of the output, so the last `La` frames of a lap read material PAST the
+  region end, which never sounds in a loop: the limiter played it after the wrap (t909, 239 frames
+  per wrap). `ClipProcessor::set_loop_span` folds the input and every node's content position into
+  the region and re-seats the source there; `read` takes the output's jump as expected. The
+  renderer sets the span for an event that covers the region end and folds a track stage's input
+  window the same way (t911). Rejected: re-seating on the output jump and refilling the ring in
+  place — the nodes before the look-ahead node would process that window twice.
 
 ## Deferred
 

@@ -193,6 +193,17 @@ The most frequent live complaint from reconnaissance was "the music drowns out t
 - Checklist "add an audio effect" (`src/libs/kt-fx/CLAUDE.md`): `class() -> Audio` must not be forgotten — the kind would silently become Video2d; a branch in `chain_tail` for the tail, `chain_lookahead` for the look-ahead, the kt-app registry entry and the catalogs in ×5 languages (capability `ui-timeline`).
 - Chain presets and inserting a chain block with curves — capability `automation`
   (`src/apps/kt-app/src/user_store.rs`, `kt_model::append_chain_block`).
+- **Look-ahead rings are stream-keyed; a seam keeps them** (pitch-loop-silence, 2026-10-29). The
+  pitch node used to restart its ring, OLA accumulator and grain grid on every jump of the clip
+  position, and synthesised its whole look-ahead (`La` = 4 608 frames, 96 ms) from an empty ring
+  after every loop wrap; a loop shorter than about 5 100 frames was silent throughout (measured
+  4 136 frames WSOLA / 2 839 vocoder, t906/t907). Now the stream position is set at a real seek
+  and only advances; the curves are read at the grain's clip position through the
+  `(stream, clip − stream)` list (`PitchNode`, `src/plugins/fx-audio-modulation/src/lib.rs`).
+  Rejected: relabelling the ring by `−span` (laps collide modulo the ring for a short region), a
+  warm-up at every seam (it would push material twice through the nodes before), a crossfade
+  from the dry signal (it plays the wrong pitch for 96 ms). The vocoder's level depends on the
+  phase its synthesis starts from — not fixed there (algorithm out of scope).
 
 ## Deferred
 
