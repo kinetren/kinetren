@@ -867,10 +867,8 @@ pub fn assembled_composite() -> String {
 /// read, so a dispatch number and an own-pass index can never disagree (plugin-api-stage1, D5).
 pub fn plugin_taps() -> Vec<(&'static str, &'static str)> {
     let Some(reg) = kt_plugin_api::installed() else { return Vec::new() };
-    reg.ids()
-        .iter()
-        .filter_map(|id| {
-            let p = reg.get(id)?;
+    reg.plugins()
+        .filter_map(|p| {
             let m = p.manifest();
             match (m.media, m.decl.video_class, m.decl.gpu) {
                 (kt_plugin_api::Media::VideoFx, Some(kt_plugin_api::VideoClass::PointWise), kt_plugin_api::Gpu::Wgsl(w)) => {
@@ -887,10 +885,8 @@ pub fn plugin_taps() -> Vec<(&'static str, &'static str)> {
 /// (id, the `warp_<id>` function). The ONE list the assembler and the uniform packing read (D11.2).
 pub fn plugin_warps() -> Vec<(&'static str, &'static str)> {
     let Some(reg) = kt_plugin_api::installed() else { return Vec::new() };
-    reg.ids()
-        .iter()
-        .filter_map(|id| {
-            let p = reg.get(id)?;
+    reg.plugins()
+        .filter_map(|p| {
             let m = p.manifest();
             match (m.decl.video_class, m.decl.gpu) {
                 (Some(kt_plugin_api::VideoClass::Geometry), kt_plugin_api::Gpu::Warp(w)) => {

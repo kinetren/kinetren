@@ -15,6 +15,8 @@ kt-time = { workspace = true }
 # The generator vocabulary (GeneratorKind, parsing of the gen: path): R.52. The edge
 # is acyclic: kt-model depends only on kt-time and serde.
 kt-model = { workspace = true }
+# The generator contract (plugin-api-stage1, D13): a plugin kind's kernel and the shared helpers.
+kt-plugin-api = { workspace = true }
 # Rasterization of titles (the determinism rule: kt-text/CLAUDE.md).
 kt-text = { workspace = true }
 thiserror = { workspace = true }

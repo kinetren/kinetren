@@ -2225,6 +2225,7 @@ version = "0.1.0"
 dependencies = [
  "kt-ffmpeg",
  "kt-model",
+ "kt-plugin-api",
  "kt-plugins-builtin",
  "kt-text",
  "kt-time",

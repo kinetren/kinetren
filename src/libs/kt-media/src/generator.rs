@@ -22,6 +22,7 @@ use std::borrow::Cow;
 
 use crate::{AudioBurst, MediaError, MediaInfo, MediaSource, Quality, VideoFrame};
 use kt_model::{GenState, GeneratorKind};
+use kt_plugin_api::generator::{coverage, isqrt, lowbias32};
 use kt_time::Tick;
 
 /// “Detail reserve” of a vector source: the generator draws sharply at any size,
@@ -475,38 +476,7 @@ fn tone_1k(idx: i64, db: f64, gate: impl Fn(i64) -> bool) -> AudioBurst {
     b
 }
 
-/// An integer square root (Newton on u64): the analytic
-/// distance field of the shapes is computed IN WHOLE 1/256 px, and `f64::sqrt` in the
-/// pixel loop would break this rule for the sake of the same precision.
-fn isqrt(v: i64) -> i64 {
-    if v <= 0 {
-        return 0;
-    }
-    let mut x = v as u64;
-    let mut r = x;
-    let mut t = x.div_ceil(2);
-    while t < r {
-        r = t;
-        t = (r + x / r) / 2;
-    }
-    x = r;
-    x as i64
-}
 
-/// Pixel coverage from the signed distance `d` (1/256 px) and the width of the
-/// ramp `fe`: inside 255, outside 0, between linear. The same ramp as the
-/// outline of a title (kt-text), so the edges of a shape and the edges of a glyph
-/// look the same.
-fn coverage(d: i64, fe: i64) -> i64 {
-    let half = fe.max(1) / 2;
-    if d <= -half {
-        255
-    } else if d >= half {
-        0
-    } else {
-        255 - ((d + half) * 255) / fe.max(1)
-    }
-}
 
 /// The shape’s colour: in one place for the three kinds (all three fields are named
 /// the same way, but the enum variants differ).
@@ -677,16 +647,6 @@ fn sector_covers(dx: i64, dy: i64, phase: i64, rem: i64) -> bool {
     a * 90_000 >= rem * (a + b).max(1)
 }
 
-/// lowbias32 (Chris Wellons): the same avalanche hash as in kt-fx::video
-/// (`noise_hash`): integer, deterministic, stateless.
-fn lowbias32(mut x: u32) -> u32 {
-    x ^= x >> 16;
-    x = x.wrapping_mul(0x7feb_352d);
-    x ^= x >> 15;
-    x = x.wrapping_mul(0x846c_a68b);
-    x ^= x >> 16;
-    x
-}
 
 /// The layout of a title in the pixels of a `w`×`h` frame, for the drag frame in the
 /// preview (R.52 S6). Returns `None` for a non-title. It goes through the same

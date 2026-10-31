@@ -148,7 +148,8 @@ pub mod generator;
 pub mod index;
 #[cfg(feature = "ffmpeg")]
 pub mod muxer;
-pub(crate) mod pixfont;
+// The 3×5 font moved into the plugin API with the generators (plugin-api-stage1, D13).
+pub(crate) use kt_plugin_api::pixfont;
 pub mod placeholder;
 #[cfg(feature = "ffmpeg")]
 pub mod sync;

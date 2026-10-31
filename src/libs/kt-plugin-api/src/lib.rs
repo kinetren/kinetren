@@ -8,7 +8,9 @@
 
 pub mod curves;
 pub mod dsp;
+pub mod generator;
 pub mod geo;
+pub mod pixfont;
 pub mod trans;
 
 use serde::{Deserialize, Serialize};
@@ -830,6 +832,28 @@ pub enum Media {
     Generator,
 }
 
+/// Which kind of slot a plugin fills (plugin-api-stage1, D13). An id is unique WITHIN a family, not
+/// across: the generator `checker` and the transition `checker` are both the file's tag of their
+/// kind, and the video effect `pixelate` will meet the transition `pixelate`. A slot knows its
+/// family, so the format reader and every lookup ask for the right one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Family {
+    /// An effect slot of a chain (`FxInstance`): video and audio effects share it.
+    Fx,
+    Transition,
+    Generator,
+}
+
+impl Media {
+    pub fn family(self) -> Family {
+        match self {
+            Media::VideoFx | Media::AudioFx => Family::Fx,
+            Media::Transition => Family::Transition,
+            Media::Generator => Family::Generator,
+        }
+    }
+}
+
 /// The planner class of a video effect (kt-fx `plan_chain`): it decides where the code runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoClass {
@@ -1333,6 +1357,10 @@ pub trait Plugin: Send + Sync {
     fn trans(&self) -> Option<&dyn TransKernel> {
         None
     }
+    /// A generator's kernel (D13).
+    fn generator(&self) -> Option<&dyn generator::GenKernel> {
+        None
+    }
 }
 
 /// The tail of an audio plugin in frames — ONE home of the formula: the registry, the static
@@ -1394,8 +1422,8 @@ impl Registry {
         if !id_ok {
             return refuse("the id is not lower snake_case");
         }
-        if self.get(&m.id).is_some() {
-            return refuse("an id registered twice");
+        if self.get(m.media.family(), &m.id).is_some() {
+            return refuse("an id registered twice in its family");
         }
         if m.decl.threads == Threads::Single {
             return refuse("a kernel that must not be called concurrently");
@@ -1455,7 +1483,51 @@ impl Registry {
                     return refuse("a built-in transition without its WGSL trans_<id>");
                 }
             }
-            Media::Generator => {}
+            Media::Generator => {
+                let Some(g) = p.generator() else { return refuse("a generator without a kernel") };
+                let row = |n: &str| m.passport.iter().any(|s| s.name == n);
+                let named = |n: &str, what: &str| -> Result<(), Refusal> {
+                    if row(n) { Ok(()) } else { refuse(&format!("{what} names a row it lacks: {n}")) }
+                };
+                for t in g.decl().path {
+                    match t.val {
+                        generator::PathVal::Hex3(st) => {
+                            for c in ["r", "g", "b"] {
+                                named(&format!("{st}_{c}"), "a path token")?;
+                            }
+                        }
+                        generator::PathVal::Hex4(st) => {
+                            for c in ["r", "g", "b", "a"] {
+                                named(&format!("{st}_{c}"), "a path token")?;
+                            }
+                        }
+                        generator::PathVal::Num(n)
+                        | generator::PathVal::Unit(n)
+                        | generator::PathVal::Span(n)
+                        | generator::PathVal::Int(n, ..)
+                        | generator::PathVal::Flag1(n)
+                        | generator::PathVal::Flag0(n)
+                        | generator::PathVal::Choice(n, _) => named(n, "a path token")?,
+                    }
+                }
+                for n in g.decl().address {
+                    named(n, "the media address")?;
+                }
+                for (st, _) in g.decl().colors {
+                    named(&format!("{st}_r"), "an eyedropper group")?;
+                }
+                if let Some((n, keys)) = g.decl().names {
+                    named(n, "the value-named row")?;
+                    if keys.is_empty() {
+                        return refuse("a value-named row without names");
+                    }
+                }
+                for item in g.decl().menu {
+                    for (n, _) in *item {
+                        named(n, "a creation-menu row")?;
+                    }
+                }
+            }
         }
         if m.decl.time_warp.is_some() && m.media != Media::AudioFx {
             return refuse("a time warp on a plugin that is not an audio effect");
@@ -1479,8 +1551,9 @@ impl Registry {
         self.test_only.iter().any(|t| t == id)
     }
 
-    pub fn get(&self, id: &str) -> Option<&std::sync::Arc<dyn Plugin>> {
-        self.plugins.iter().find(|p| p.manifest().id == id)
+    /// The plugin of `family` with `id` (an id is unique within its family only).
+    pub fn get(&self, family: Family, id: &str) -> Option<&std::sync::Arc<dyn Plugin>> {
+        self.plugins.iter().find(|p| p.manifest().id == id && p.manifest().media.family() == family)
     }
 
     /// The ids in registration order.

@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use kt_plugin_api::{
+use kt_plugin_api::{Family, 
     Decl, Gpu, Manifest, Media, ParamKind, ParamSpec, ParamUnit, ParamValues, Plugin, Registry,
     Threads, VideoClass, lookahead_frames, tail_frames,
 };
@@ -107,7 +107,7 @@ fn t972_incompatible_declarations_are_refused_by_name() {
         Decl { state: true, tail: Some(tail_of), lookahead: Some(short_look), ..Default::default() },
     );
     reg.register(ok).expect("a stateful audio plugin with a tail and a short look-ahead is registered");
-    let m = reg.get("delay_x").unwrap().manifest().clone();
+    let m = reg.get(Family::Fx, "delay_x").unwrap().manifest().clone();
     let at = ParamValues::defaults(&m.passport);
     assert_eq!(tail_frames(&m, &at), 9600, "the tail is read from the manifest");
     assert_eq!(lookahead_frames(&m, &at), 400, "the look-ahead is read from the manifest");

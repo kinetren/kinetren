@@ -531,7 +531,7 @@ impl std::fmt::Debug for WarpRef {
 /// change) and executes it with its own kernel.
 pub fn plugin_lone(f: &FxInstance) -> Option<kt_plugin_api::Lone> {
     let FxInstance::Plugin(slot) = f else { return None };
-    let plugin = kt_model::plugin_slot::registry().get(&slot.id)?;
+    let plugin = slot.plugin()?;
     plugin.geo()?.lone(&slot.values)
 }
 
@@ -542,7 +542,7 @@ pub fn plugin_geo_steps(
     cx: kt_plugin_api::GeoCtx,
 ) -> Option<(WarpRef, Vec<kt_plugin_api::GeoStep>)> {
     let FxInstance::Plugin(slot) = f else { return None };
-    let plugin = kt_model::plugin_slot::registry().get(&slot.id)?;
+    let plugin = slot.plugin()?;
     let m = plugin.manifest();
     if m.decl.video_class != Some(kt_plugin_api::VideoClass::Geometry) {
         return None;
@@ -605,7 +605,7 @@ impl PluginTap {
     /// The tap of a point-wise plugin slot at its stage (D11.1).
     pub fn of_at(f: &FxInstance, stage: kt_plugin_api::TapCtx) -> Option<PluginTap> {
         let FxInstance::Plugin(slot) = f else { return None };
-        let plugin = kt_model::plugin_slot::registry().get(&slot.id)?;
+        let plugin = slot.plugin()?;
         let m = plugin.manifest();
         if m.decl.video_class != Some(kt_plugin_api::VideoClass::PointWise) {
             return None;

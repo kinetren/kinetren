@@ -4,7 +4,7 @@
 //! the rows declared `omit_default` left out at their default — t973 compares it with a frozen copy
 //! of the derive. A slot nobody registered keeps its raw content and writes it back unchanged.
 
-use kt_plugin_api::{Manifest, ParamSpec, Registry};
+use kt_plugin_api::{Family, Manifest, ParamSpec, Registry};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -21,6 +21,8 @@ pub fn registry() -> &'static Registry {
 /// A plugin-backed effect: its id and its numeric values in passport order.
 #[derive(Clone, PartialEq)]
 pub struct PluginSlot {
+    /// The family the id is looked up in (an id is unique within its family only, D13).
+    pub family: Family,
     pub id: String,
     pub values: Vec<f64>,
     /// The legacy fields the plugin declares (`Decl.legacy_fields`) as the file had them: a field a
@@ -45,16 +47,20 @@ impl std::fmt::Debug for PluginSlot {
 }
 
 impl PluginSlot {
-    /// A slot of `id` at its passport's defaults; `None` — no such plugin is registered.
-    pub fn new(id: &str) -> Option<PluginSlot> {
-        let m = registry().get(id)?.manifest();
+    /// A slot of `id` of `family` at its passport's defaults; `None` — no such plugin is registered.
+    pub fn new(family: Family, id: &str) -> Option<PluginSlot> {
+        let m = registry().get(family, id)?.manifest();
         let values = m.passport.iter().enumerate().map(|(i, s)| m.row(i).store.cast(s.default)).collect();
-        Some(PluginSlot { id: id.to_string(), values, extra: Default::default() })
+        Some(PluginSlot { family, id: id.to_string(), values, extra: Default::default() })
+    }
+
+    /// The installed plugin of this slot.
+    pub fn plugin(&self) -> Option<&'static std::sync::Arc<dyn kt_plugin_api::Plugin>> {
+        registry().get(self.family, &self.id)
     }
 
     pub fn manifest(&self) -> &'static Manifest {
-        registry()
-            .get(&self.id)
+        self.plugin()
             .unwrap_or_else(|| panic!("plugin `{}` is not registered", self.id))
             .manifest()
     }
@@ -147,14 +153,13 @@ impl Serialize for PluginSlot {
     }
 }
 
-impl<'de> Deserialize<'de> for PluginSlot {
-    fn deserialize<D: Deserializer<'de>>(de: D) -> Result<PluginSlot, D::Error> {
-        let raw = serde_json::Value::deserialize(de)?;
-        let kind = raw.get("kind").and_then(|k| k.as_str()).ok_or_else(|| serde::de::Error::custom("no kind"))?;
-        // an id this build does not register is not an error of the file: the slot is kept as
-        // `Missing` (the next untagged variant)
-        let Some(p) = registry().get(kind) else {
-            return Err(serde::de::Error::custom(format!("plugin `{kind}` is not registered")));
+impl PluginSlot {
+    /// Read a slot of `family` from its raw content; an id this family does not register is not an
+    /// error of the file: the slot is kept as `Missing` (the next untagged variant).
+    pub fn from_value(raw: &serde_json::Value, family: Family) -> Result<PluginSlot, String> {
+        let kind = raw.get("kind").and_then(|k| k.as_str()).ok_or("no kind")?;
+        let Some(p) = registry().get(family, kind) else {
+            return Err(format!("plugin `{kind}` is not registered"));
         };
         let m = p.manifest();
         let values = m
@@ -181,8 +186,28 @@ impl<'de> Deserialize<'de> for PluginSlot {
             .iter()
             .filter_map(|k| raw.get(*k).map(|v| (k.to_string(), v.clone())))
             .collect();
-        Ok(PluginSlot { id: kind.to_string(), values, extra })
+        Ok(PluginSlot { family, id: kind.to_string(), values, extra })
     }
+}
+
+fn de_family<'de, D: Deserializer<'de>>(de: D, family: Family) -> Result<PluginSlot, D::Error> {
+    let raw = serde_json::Value::deserialize(de)?;
+    PluginSlot::from_value(&raw, family).map_err(serde::de::Error::custom)
+}
+
+/// The reader of an effect slot (`FxInstance::Plugin`).
+pub fn de_fx<'de, D: Deserializer<'de>>(de: D) -> Result<PluginSlot, D::Error> {
+    de_family(de, Family::Fx)
+}
+
+/// The reader of a transition kind (`TransitionKind::Plugin`).
+pub fn de_transition<'de, D: Deserializer<'de>>(de: D) -> Result<PluginSlot, D::Error> {
+    de_family(de, Family::Transition)
+}
+
+/// The reader of a generator kind (`GeneratorKind::Plugin`).
+pub fn de_generator<'de, D: Deserializer<'de>>(de: D) -> Result<PluginSlot, D::Error> {
+    de_family(de, Family::Generator)
 }
 
 /// An effect whose plugin this build lacks: kept, passed through, written back unchanged.

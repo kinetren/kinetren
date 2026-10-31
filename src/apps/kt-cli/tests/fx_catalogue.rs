@@ -108,8 +108,10 @@ fn registry() -> Vec<(&'static str, BTreeSet<String>)> {
     let (mut audio, mut layer, mut video) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
     let mut transitions: BTreeSet<String> = TransitionKind::all().iter().map(|k| k.tag().to_string()).collect();
     let mut generators: BTreeSet<String> = GeneratorKind::all().iter().map(|k| k.tag().to_string()).collect();
-    for id in kt_plugins_builtin::BUILTIN_IDS {
-        let p = reg.get(id).unwrap_or_else(|| panic!("the built-in {id} is not installed"));
+    // the assembler checked that the families gave exactly BUILTIN_IDS; an id is unique within
+    // its family only (the generator and the transition `checker`), so walk the plugins
+    for p in reg.plugins().filter(|p| !reg.is_test_only(&p.manifest().id)) {
+        let id = &*p.manifest().id;
         let to = match p.manifest().media {
             Media::AudioFx => &mut audio,
             Media::VideoFx => &mut video,
@@ -188,7 +190,7 @@ fn t978_the_note_lists_exactly_the_built_in_kinds() {
     let reg = registry();
     // the test-door plugin is installed and selectable, and the note is not asked to list it
     let id = test_door::ID;
-    assert!(installed().get(id).is_some() && installed().is_test_only(id), "the test door did not register {id}");
+    assert!(installed().get(kt_plugin_api::Family::Fx, id).is_some() && installed().is_test_only(id), "the test door did not register {id}");
     assert!(reg.iter().all(|(_, ids)| !ids.contains(id)), "a reference list holds the test-door plugin");
     let note = read(NOTE);
     let broken = [

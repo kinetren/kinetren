@@ -6201,7 +6201,7 @@ fn t976_a_test_door_plugin_reaches_the_picker_and_no_reference_list() {
     use kt_model::*;
     let tint = crate::plugins::test_tint::ID;
     let reg = crate::plugins::install();
-    assert!(reg.get(tint).is_some() && reg.is_test_only(tint), "the test door did not register {tint}");
+    assert!(reg.get(kt_plugin_api::Family::Fx, tint).is_some() && reg.is_test_only(tint), "the test door did not register {tint}");
     // the reference lists: the assembler's closed list and the golden registry
     assert!(!kt_plugins_builtin::BUILTIN_IDS.contains(&tint), "the closed list holds the test plugin");
     let built_in: Vec<String> =

@@ -717,3 +717,42 @@ fn t973_a_moved_transition_kind_keeps_its_text() {
     assert!(matches!(&missing, TransitionKind::Missing(m) if m.id() == "warp_tunnel"), "{missing:?}");
     assert_eq!(serde_json::to_string(&missing).unwrap(), raw, "the missing kind's text changed");
 }
+
+/// Test 1049 (plugin-api-stage1, D13): an id is unique WITHIN its family, not across. The generator
+/// `checker` and the transition `checker` are both the file's tag of their kind; a reader looks the
+/// id up in ITS family, so an effect slot that names a transition's id is kept as a missing effect,
+/// never read as the transition (before, the registry held one id for every media and the first
+/// registered won).
+#[test]
+fn t1049_a_plugin_id_is_unique_within_its_family_only() {
+    use kt_plugin_api::{Decl, Family, Manifest, Media, Plugin, Registry, UiDecl};
+    struct Bare(Manifest);
+    impl Plugin for Bare {
+        fn manifest(&self) -> &Manifest {
+            &self.0
+        }
+    }
+    let bare = |media| {
+        std::sync::Arc::new(Bare(Manifest {
+            id: "same_id".into(),
+            media,
+            passport: Vec::new(),
+            rows: Vec::new(),
+            decl: Decl::default(),
+            ui: UiDecl::default(),
+        })) as std::sync::Arc<dyn Plugin>
+    };
+    // video and audio effects are ONE family (a chain holds both)
+    let mut reg = Registry::new();
+    reg.register(bare(Media::AudioFx)).expect("the first audio effect `same_id` is registered");
+    let twice = reg.register(bare(Media::VideoFx)).expect_err("a video effect of the same family and id");
+    assert!(twice.reason.contains("twice"), "{twice:?}");
+    assert!(reg.get(Family::Fx, "same_id").is_some() && reg.get(Family::Transition, "same_id").is_none());
+
+    kt_plugins_builtin::install();
+    let wipe = serde_json::json!({ "kind": "wipe" });
+    let as_fx: FxInstance = serde_json::from_value(wipe.clone()).expect("an unknown effect is kept");
+    assert!(matches!(as_fx, FxInstance::Missing(_)), "an effect slot read a transition's id: {as_fx:?}");
+    let as_trans: TransitionKind = serde_json::from_value(wipe).expect("the wipe transition");
+    assert!(matches!(&as_trans, TransitionKind::Plugin(p) if p.family == Family::Transition), "{as_trans:?}");
+}

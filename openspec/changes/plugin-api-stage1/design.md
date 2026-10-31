@@ -307,7 +307,7 @@ axes and flags), t459 (the closed form on ramps), t223 (completeness by the regi
 ### D13. The generator contract (stage 6)
 
 A generator kind other than the title is a plugin of `Media::Generator` with a `GenKernel` (in
-`kt_plugin_api::gen`, next to the helpers every kernel shares). Read in `kt-media/generator.rs` and
+`kt_plugin_api::generator`, next to the helpers every kernel shares). Read in `kt-media/generator.rs` and
 `kt-model/genmedia.rs` before the move, a kind is five things, and the kernel carries all five:
 
 - `frame(p, pts, w, h) -> Box<[u8]>` — the former `render_at` arm: straight RGBA of EXACTLY `w×h`,

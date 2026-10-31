@@ -74,7 +74,7 @@ pub(crate) fn host_opts(engine: kt_model::PitchEngine) -> kt_plugin_api::HostOpt
 /// The installed audio kernel of a plugin slot, if any.
 pub(crate) fn plugin_audio(fx: &FxInstance) -> Option<(&'static kt_plugin_api::Manifest, &'static dyn kt_plugin_api::AudioKernel)> {
     let FxInstance::Plugin(slot) = fx else { return None };
-    let p = kt_model::plugin_slot::registry().get(&slot.id)?;
+    let p = slot.plugin()?;
     Some((p.manifest(), p.audio()?))
 }
 

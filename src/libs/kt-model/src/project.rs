@@ -85,7 +85,7 @@ pub enum TransitionKind {
     // since plugin-api-stage1 (D12).
     /// A plugin-backed kind (plugin-api-stage1, D12): `kind` is its id, the rows follow its
     /// passport. Untagged and LAST: a `kind` no variant above names is tried here.
-    #[serde(untagged)]
+    #[serde(untagged, deserialize_with = "crate::plugin_slot::de_transition")]
     Plugin(crate::plugin_slot::PluginSlot),
     /// A kind whose plugin this build lacks: kept and written back unchanged; it plays as the
     /// crossfade (the engine's integer dissolve).
@@ -193,12 +193,12 @@ impl TransitionKind {
 
     /// A plugin kind at its passport's defaults; `None` — no such plugin is registered.
     pub fn plugin(id: &str) -> Option<TransitionKind> {
-        crate::plugin_slot::PluginSlot::new(id).map(TransitionKind::Plugin)
+        crate::plugin_slot::PluginSlot::new(kt_plugin_api::Family::Transition, id).map(TransitionKind::Plugin)
     }
 
     /// A plugin kind with the given values in passport order (clamped and cast like any write).
     pub fn plugin_with(id: &str, values: &[f64]) -> Option<TransitionKind> {
-        let mut slot = crate::plugin_slot::PluginSlot::new(id)?;
+        let mut slot = crate::plugin_slot::PluginSlot::new(kt_plugin_api::Family::Transition, id)?;
         for (i, v) in values.iter().enumerate() {
             slot.set_idx(i, *v);
         }
@@ -225,8 +225,8 @@ impl TransitionKind {
             TransitionKind::Missing(_) => true,
             // a plugin kind answers through its kernel (zoom, flash, dip, blur dissolve, pixelate,
             // glitch and zoom blur are symmetric there)
-            TransitionKind::Plugin(p) => crate::plugin_slot::registry()
-                .get(&p.id)
+            TransitionKind::Plugin(p) => p
+                .plugin()
                 .and_then(|pl| pl.trans())
                 .is_some_and(|k| k.symmetric()),
         }
@@ -4892,7 +4892,7 @@ pub enum FxInstance {
     // `camera` is a host-reference row (`RowRole::Camera`, read by `pinned_camera`).
     /// A plugin-backed effect (plugin-api-stage1, D3): `kind` is its id, the rows follow its
     /// passport. Untagged and LAST: a `kind` no variant above names is tried here.
-    #[serde(untagged)]
+    #[serde(untagged, deserialize_with = "crate::plugin_slot::de_fx")]
     Plugin(crate::plugin_slot::PluginSlot),
     /// An effect whose plugin this build lacks: kept and written back unchanged, passed through
     /// by the engine.
@@ -5838,13 +5838,13 @@ impl FxInstance {
 
     /// A plugin slot of `id` at its passport's defaults; `None` — no such plugin is registered.
     pub fn plugin(id: &str) -> Option<FxInstance> {
-        crate::plugin_slot::PluginSlot::new(id).map(FxInstance::Plugin)
+        crate::plugin_slot::PluginSlot::new(kt_plugin_api::Family::Fx, id).map(FxInstance::Plugin)
     }
 
     /// A plugin slot of `id` with the given values in passport order (clamped and cast like any
     /// write); `None` — no such plugin.
     pub fn plugin_with(id: &str, values: &[f64]) -> Option<FxInstance> {
-        let mut slot = crate::plugin_slot::PluginSlot::new(id)?;
+        let mut slot = crate::plugin_slot::PluginSlot::new(kt_plugin_api::Family::Fx, id)?;
         for (i, v) in values.iter().enumerate() {
             slot.set_idx(i, *v);
         }

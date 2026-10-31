@@ -289,7 +289,7 @@ once (English message, first line = the stage and what was done).
     per `GeneratorKind::all()` row and per kind at non-default values, the frame bytes at three
     sizes and four ticks, the first sound bursts, `format_gen_path`, `gen_kind_path` and the serde
     text; red with one byte of a frame changed
-- [ ] 6.1a The contract and a pilot (D13): `kt_plugin_api::gen` (`GenKernel`, `GenDecl`, `PathTok`,
+- [ ] 6.1a The contract and a pilot (D13): `kt_plugin_api::generator` (`GenKernel`, `GenDecl`, `PathTok`,
     `pixfont` and the shared helpers moved verbatim), `Media::Generator` registration checks; the
     codec reads the token table; the source, `info_for`, the factory (a named placeholder for a
     missing id) and the bin/menu by slot; move `solid` into `generators-basic`; t1048 green
