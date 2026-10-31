@@ -349,5 +349,9 @@ once (English message, first line = the stage and what was done).
 
 ## 8. Finish
 
-- [ ] 8.1 Run `./scripts/finish.sh` from `src/`; record the version `vYY.MM.DD-hash` and the t977 numbers in the report
+- [x] 8.1 Run `./scripts/finish.sh` from `src/`; record the version `vYY.MM.DD-hash` and the t977 numbers in the report
+  - kt26.10.31-01edfb30: workspace 1279/1279 (nextest, one test per process), SIMD conformance green,
+    live scenarios 56 green. nestparam passed only on the second try: its race was fixed in 9d891873
+    and the scenario is green alone. Verification cost 798 s against the 300 s budget. The t977
+    numbers are in 7.2.
 - [ ] 8.2 After archiving: F-EXT-003 verdict line names `CAPABILITY: openspec/specs/plugins/`; append the "why" (D3 ids-as-tags, D4 the media split, D5 closed geometry, D10 the order) to `openspec/specs/plugins/design.md` and the automation design's "Deferred → Plugins" line
