@@ -6580,6 +6580,7 @@ fn t503_gesture_frame_touches_no_media_paths() {
 /// and on every clip placement.
 #[test]
 fn t504_pseudo_path_never_opens_sqlite() {
+    crate::plugins::install();
     let dir = std::env::temp_dir().join(format!("kt-t504-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let db = dir.join("x.ktindex.db");

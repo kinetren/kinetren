@@ -1895,6 +1895,7 @@ fn t508_every_param_has_a_label() {
 /// nothing to switch it on with. We scan the kt-app corpus for calls of the shared widget `flags_row`.
 #[test]
 fn t509_every_flag_has_a_control() {
+    crate::plugins::install();
     let root = workspace_root();
     let mut files: Vec<String> = Vec::new();
     collect_rs(&root.join("apps/kt-app"), &mut files);
@@ -2018,6 +2019,7 @@ fn t637c_gesture_time_floor_is_never_a_bare_zero() {
 /// one must not stay silent about this: the card writes the kind’s name right into the thumbnail.
 #[test]
 fn t669_generator_thumbs_follow_the_event_address() {
+    crate::plugins::install();
     use kt_model::GeneratorKind;
 
     // 1) the predicate “no frame will come” is honest

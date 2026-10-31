@@ -398,6 +398,7 @@ mod tests {
     /// reset), a refusal changes nothing.
     #[test]
     fn t498_generator_retunes_in_place() {
+        kt_plugins_builtin::install();
         let q = Quality { width: 64, height: 36 };
         let orange = GeneratorKind::solid(255, 136, 0);
         let mut s =
@@ -435,6 +436,7 @@ mod tests {
     /// every 1080p frame.
     #[test]
     fn t507_generator_frame_is_rendered_once_per_quality() {
+        kt_plugins_builtin::install();
         let q1 = Quality { width: 64, height: 36 };
         let q2 = Quality { width: 32, height: 18 };
         let mut s =
@@ -498,6 +500,7 @@ mod tests {
     /// 1 kHz tone is byte-for-byte and audible at its level; the top band is 75% gray.
     #[test]
     fn t492_smpte_tone_and_bars() {
+        kt_plugins_builtin::install();
         let silent = GeneratorSource::new(GeneratorKind::plugin_with("smpte", &[("tone", 0.0), ("tone_db", -20.0)]).unwrap());
         assert!(!silent.info().has_audio, "without a tone no audio clip is created");
         let mut loud =
@@ -522,6 +525,7 @@ mod tests {
     /// t493 (R.52 stage 5): timecode — frame = f(source pts) and the fps parameter.
     #[test]
     fn t493_timecode_frames_follow_material() {
+        kt_plugins_builtin::install();
         let q = Quality { width: 640, height: 360 };
         let mut s = GeneratorSource::new(GeneratorKind::plugin_with("timecode", &[("fps", 30.0)]).unwrap());
         let a = s.read_video_frame(Tick(0), Some(q)).unwrap();
@@ -580,6 +584,7 @@ mod tests {
     /// under it, not “probably also”.
     #[test]
     fn t526_new_kinds_are_deterministic_and_exact() {
+        kt_plugins_builtin::install();
         let q = Quality { width: 96, height: 54 };
         for k in GeneratorKind::all() {
             let mut a = GeneratorSource::new(k.clone());
@@ -597,6 +602,7 @@ mod tests {
     /// the rule is EXHAUSTIVE (a new kind will not build without an answer).
     #[test]
     fn t527_alpha_is_declared_by_every_kind() {
+        kt_plugins_builtin::install();
         let q = Quality { width: 64, height: 36 };
         for k in GeneratorKind::all() {
             let want = kind_has_alpha(&k);
@@ -615,6 +621,7 @@ mod tests {
     /// transparent. The assertion is IN PIXELS, not “the field got set”.
     #[test]
     fn t528_rect_covers_what_it_says() {
+        kt_plugins_builtin::install();
         let q = Quality { width: 200, height: 100 };
         let k = kt_model::parse_gen_path("gen:rect:cx=0.5:cy=0.5:w=0.5:h=0.5:c=ff8800ff")
             .expect("shape path");
@@ -636,6 +643,7 @@ mod tests {
     /// transparent to the side, and also transparent beyond the end (projection clamp).
     #[test]
     fn t529_line_is_a_capsule_between_its_ends() {
+        kt_plugins_builtin::install();
         let q = Quality { width: 200, height: 100 };
         let k = kt_model::parse_gen_path("gen:line:x1=0.25:y1=0.5:x2=0.75:y2=0.5:th=0.1")
             .expect("segment path");
@@ -653,6 +661,7 @@ mod tests {
     /// last frame before zero is a white field “2-pop” exactly 1/fps long.
     #[test]
     fn t530_leader_counts_down_and_pops() {
+        kt_plugins_builtin::install();
         let q = Quality { width: 120, height: 90 };
         let k = kt_model::parse_gen_path("gen:leader:n=3:fps=30").expect("countdown path");
         let mut s = GeneratorSource::new(k);
@@ -714,6 +723,7 @@ mod tests {
     /// point of the signal: it is used to measure APL and panel warm-up.
     #[test]
     fn t532_level_window_covers_the_declared_area() {
+        kt_plugins_builtin::install();
         let q = Quality { width: 400, height: 200 };
         for (area, tol) in [(0.1_f64, 0.01), (0.25, 0.01), (1.0, 0.01)] {
             let path = format!("gen:window:ar={area}");
@@ -730,6 +740,7 @@ mod tests {
     /// only on whole seconds. Without a gate the countdown would hum continuously.
     #[test]
     fn t533_leader_beep_is_gated_to_whole_seconds() {
+        kt_plugins_builtin::install();
         let silent =
             GeneratorSource::new(kt_model::parse_gen_path("gen:leader:n=3").expect("path"));
         assert!(!silent.info().has_audio, "without a beep no audio clip is created");
@@ -759,6 +770,7 @@ mod tests {
     /// ordinary properties.
     #[test]
     fn t539_title_animation_follows_material_time() {
+        kt_plugins_builtin::install();
         use kt_model::{GenState, TextAnim, text_anim_curves, text_anim_values};
         let q = Quality { width: 240, height: 120 };
         let ink = |f: &VideoFrame| f.rgba.chunks_exact(4).map(|p| p[3] as u64).sum::<u64>();

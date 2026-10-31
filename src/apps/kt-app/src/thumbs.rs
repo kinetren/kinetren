@@ -874,6 +874,7 @@ mod key_tests {
     /// a real thumb of the given color.
     #[test]
     fn t476_generator_thumbs_without_a_file() {
+        crate::plugins::install();
         let mut project = kt_model::Project::new(kt_model::ProjectSettings {
             fps: 30,
             width: 640,
