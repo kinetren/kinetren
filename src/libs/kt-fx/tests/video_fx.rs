@@ -316,26 +316,14 @@ fn t228_new_fx_params_change_the_picture() {
     // ---- Edges: thickness and colour ------------------------------------------
     let thin = run(FxInstance::edges(48));
     let lit = |f: &Frame| f.rgba.chunks_exact(4).filter(|p| p[0] > 0 || p[1] > 0).count();
-    let thick = run(FxInstance::Edges {
-        threshold: 48,
-        thickness: 3,
-        color_r: 255,
-        color_g: 255,
-        color_b: 255,
-    });
+    let thick = run(FxInstance::plugin_with("edges", &[48.0, 3.0, 255.0, 255.0, 255.0]).unwrap());
     assert!(
         lit(&thick) > lit(&thin),
         "a thick line must light up more pixels: {} vs {}",
         lit(&thick),
         lit(&thin)
     );
-    let red = run(FxInstance::Edges {
-        threshold: 48,
-        thickness: 1,
-        color_r: 255,
-        color_g: 0,
-        color_b: 0,
-    });
+    let red = run(FxInstance::plugin_with("edges", &[48.0, 1.0, 255.0, 0.0, 0.0]).unwrap());
     let (mut any_r, mut green) = (false, 0usize);
     for p in red.rgba.chunks_exact(4) {
         any_r |= p[0] > 0;

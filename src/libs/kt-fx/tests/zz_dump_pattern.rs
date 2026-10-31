@@ -26,7 +26,7 @@ fn dump() {
         ("vhs-trash", &p, FxInstance::vhs(10, 0.85)),
         ("green", &p, FxInstance::greenscreen([0, 255, 0], 70, 25)),
         ("pixelate", &p, FxInstance::builtin("pixelate")),
-        ("halftone", &p, FxInstance::halftone()),
+        ("halftone", &p, FxInstance::builtin("halftone")),
         ("glow", &p, FxInstance::glow(0.9)),
         ("shadow", &pa, FxInstance::builtin("drop_shadow")),
         ("twirl", &p, FxInstance::builtin("twirl")),

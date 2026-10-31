@@ -52,15 +52,10 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
     match name {
         "Geometry" => (k::fxreg::cat::MOTION, Some(k::fxreg::kw::GEOMETRY)),
         "Greenscreen" => (k::fxreg::cat::KEY, Some(k::fxreg::kw::GREENSCREEN)),
-        "Edges" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::EDGES)),
         "Noise" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::NOISE)),
         "VHS" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::VHS)),
         // R.47 Q2: color/style/perspective
         // R.47 Q3: barriers
-        "Chromatic Aberration" => {
-            (k::fxreg::cat::DISTORT, Some(k::fxreg::kw::CHROMATIC_ABERRATION))
-        }
-        "Halftone" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::HALFTONE)),
         _ => (k::fxreg::cat::VIDEO, None),
     }
 }
@@ -104,29 +99,6 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
             var(tmpl, k::fxreg::var::WIDE, &[("tolerance", 120.0), ("softness", 45.0)]),
             var(tmpl, k::fxreg::var::BLUE, &[("key_g", 0.0), ("key_b", 255.0)]),
         ],
-        "Edges" => vec![
-            var(
-                tmpl,
-                k::fxreg::var::INK,
-                &[("threshold", 90.0), ("color_r", 0.0), ("color_g", 0.0), ("color_b", 0.0)],
-            ),
-            var(
-                tmpl,
-                k::fxreg::var::NEON,
-                &[
-                    ("threshold", 36.0),
-                    ("thickness", 2.0),
-                    ("color_r", 0.0),
-                    ("color_g", 255.0),
-                    ("color_b", 160.0),
-                ],
-            ),
-            var(
-                tmpl,
-                k::fxreg::var::BLUEPRINT,
-                &[("threshold", 60.0), ("color_r", 80.0), ("color_g", 160.0), ("color_b", 255.0)],
-            ),
-        ],
         "Noise" => vec![
             var(tmpl, k::fxreg::var::FILM, &[("amount", 0.05), ("size", 2.0)]),
             var(tmpl, k::fxreg::var::HEAVY, &[("amount", 0.25)]),
@@ -144,20 +116,6 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
                 k::fxreg::var::TRASH,
                 &[("rgb_shift", 10.0), ("bleed", 0.85), ("scan_step", 6.0), ("jitter", 0.45)],
             ),
-        ],
-        "Chromatic Aberration" => vec![
-            var(tmpl, k::fxreg::var::SUBTLE, &[("amount", 0.004)]),
-            var(tmpl, k::fxreg::var::STRONG, &[("amount", 0.028)]),
-            // NOT 0.05 (the spec ceiling): the field is f32, and the clamp in `set_param` is computed in f64 —
-            // the exact ceiling when written to f32 rounds UP and
-            // the value ends up OUTSIDE the spec (found by t543).
-            // A variant is a kind, not a limit check
-            var(tmpl, k::fxreg::var::GLITCH, &[("amount", 0.045)]),
-        ],
-        "Halftone" => vec![
-            var(tmpl, k::fxreg::var::FINE, &[("size", 3.0), ("angle", 0.0)]),
-            var(tmpl, k::fxreg::var::PRINT, &[("size", 5.0), ("angle", 15.0)]),
-            var(tmpl, k::fxreg::var::COMIC, &[("size", 12.0)]),
         ],
         // an empty list = a forgotten entry; t543 turns
         // red on it just as t48 does on a fallback category

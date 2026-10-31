@@ -147,13 +147,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         ("blur-xy", vec![FxInstance::plugin_with("blur", &[24.0, 4.0]).unwrap()], FrameTol::BILINEAR),
         (
             "edges-thick-color",
-            vec![FxInstance::Edges {
-                threshold: 48,
-                thickness: 3,
-                color_r: 255,
-                color_g: 90,
-                color_b: 0,
-            }],
+            vec![FxInstance::plugin_with("edges", &[48.0, 3.0, 255.0, 90.0, 0.0]).unwrap()],
             FrameTol::THRESHOLD,
         ),
         (

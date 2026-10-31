@@ -12,7 +12,7 @@ pub const BUILTIN_IDS: &[&str] =
     "color_grade", "duotone", "posterize", "vignette", "filter", "eq", "distortion", "bitcrusher", "stereo_width", "gain", "gate", "limiter", "compressor",
     "tremolo", "auto_pan", "vibrato", "chorus", "flanger", "phaser", "pitch_shift", "delay", "slowed_reverb",
     "lens_distort", "twirl", "ripple", "kaleidoscope", "cylinder3d", "corner_pin", "mirror", "event_grid", "pan3d",
-    "pixelate",
+    "pixelate", "edges", "halftone", "chromatic_aberration",
     "blur", "glow", "sharpen", "radial_blur", "drop_shadow",
     "wipe", "iris", "clock", "barn", "luma", "push", "slide", "zoom", "spin", "flash", "dip", "blinds", "checker",
     "blocks", "spiral", "split", "squeeze", "stretch",

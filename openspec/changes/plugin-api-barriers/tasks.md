@@ -126,7 +126,16 @@ stage that moves it.
 
 ## 4. The rest and the dual-position kinds
 
-- [ ] 4.1 Edges (the luma + sobel twins), halftone and chromatic_aberration into `fx-video-stylize`. Verify t1051, t198, t332, t181, t329
+- [x] 4.1 Edges (the luma + sobel twins), halftone and chromatic_aberration into `fx-video-stylize`. Verify t1051, t198, t332, t181, t329
+  - The three kernels are verbatim; their samples go through `RasterHost::sample`. Edges' `luma_avx2`
+    and `sobel_row_avx2` moved into the crate's `simd.rs`, behind `cx.simd`, and t198 still checks
+    them through the public chain. kt-gpu lost `Pipe::{Edges, ChromaAb, Halftone}`, their `FxOp`s
+    and the three WGSL files (moved). kt-model lost the variants, their passports and constructors
+    and five serde defaults; `edges(threshold)` stays parametric. kt-app draws edges' line colour by
+    plugin id.
+  - Verified: t1051 on both SIMD paths, t198 (`KT_REQUIRE_SIMD=1`), t26 scalar, kt-gpu 28/28 with
+    `KT_REQUIRE_GPU=1`. The workspace was 1276/1283; the seven load reds (t795, t640, t952, t951,
+    t815, t200, t194) are green alone.
 - [ ] 4.2 Vhs and noise into `fx-video-stylize`, greenscreen into `fx-video-color`:
   - the burst index arrives through `BarrierCtx`;
   - noise and greenscreen keep their positioned tap (D11.1) next to the barrier kernel, and the planner chooses by position (design D4).

@@ -342,9 +342,6 @@ pub fn apply_barrier(
         FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness, spill } => {
             greenscreen(frame, [*key_r, *key_g, *key_b], *tolerance, *softness, *spill)
         }
-        FxInstance::Edges { threshold, thickness, color_r, color_g, color_b } => {
-            edges(frame, *threshold, *thickness, [*color_r, *color_g, *color_b], scratch, rs)
-        }
         FxInstance::Noise { amount, size, color } => {
             noise(frame, *amount, *size, *color, ctx.burst_index, rs)
         }
@@ -364,79 +361,11 @@ pub fn apply_barrier(
             frame
         }
         // R.47 barriers Kv3
-        FxInstance::ChromaticAberration { amount } => {
-            chroma_ab(frame, (*amount as f64).clamp(0.0, 0.05), scratch)
-        }
-        FxInstance::Halftone { size, angle } => halftone(frame, *size, *angle as f64, scratch, rs),
         _ => {
             debug_assert!(false, "barrier op on non-barrier fx");
             frame
         }
     }
-}
-
-/// Chromatic aberration (R.47): R is sampled closer to the centre (×(1−a)),
-/// B further out (×(1+a)), G and alpha in place. Positions are frame fractions,
-/// the K× execution scales itself.
-fn chroma_ab(f: Frame, amount: f64, scratch: &mut FxScratch) -> Frame {
-    let (cw, ch) = (f.w as f64 / 2.0, f.h as f64 / 2.0);
-    let mut out = scratch.take(f.rgba.len());
-    for y in 0..f.h {
-        for x in 0..f.w {
-            let d = ((y * f.w + x) * 4) as usize;
-            let (px, py) = (x as f64 + 0.5 - cw, y as f64 + 0.5 - ch);
-            let r = crate::geom::sample_bilinear_f64(
-                &f,
-                cw + px * (1.0 - amount) - 0.5,
-                ch + py * (1.0 - amount) - 0.5,
-            )[0];
-            let b = crate::geom::sample_bilinear_f64(
-                &f,
-                cw + px * (1.0 + amount) - 0.5,
-                ch + py * (1.0 + amount) - 0.5,
-            )[2];
-            out[d] = r.round().clamp(0.0, 255.0) as u8;
-            out[d + 1] = f.rgba[d + 1];
-            out[d + 2] = b.round().clamp(0.0, 255.0) as u8;
-            out[d + 3] = f.rgba[d + 3];
-        }
-    }
-    let res = Frame { w: f.w, h: f.h, rgba: out, has_alpha: f.has_alpha };
-    scratch.put(f.rgba);
-    res
-}
-
-/// Halftone raster (R.47): black dots on white, radius from the luma
-/// of the cell centre. The pattern entirely in LOGICAL coordinates l = p/K —
-/// the K× execution sees the same grid.
-fn halftone(f: Frame, size: u32, angle: f64, scratch: &mut FxScratch, res_scale: u32) -> Frame {
-    let s = size.clamp(2, 64) as f64;
-    let k = res_scale as f64;
-    let (sa, ca) = angle.clamp(-90.0, 90.0).to_radians().sin_cos();
-    let mut out = scratch.take(f.rgba.len());
-    for y in 0..f.h {
-        for x in 0..f.w {
-            let d = ((y * f.w + x) * 4) as usize;
-            let (lx, ly) = ((x as f64 + 0.5) / k, (y as f64 + 0.5) / k);
-            // rotation by −angle: the grid stands in the rotated space
-            let (ux, uy) = (lx * ca + ly * sa, -lx * sa + ly * ca);
-            let (ccx, ccy) = ((ux / s).floor() * s + 0.5 * s, (uy / s).floor() * s + 0.5 * s);
-            // cell centre back into logic and into the physics of the frame
-            let (gx, gy) = (ccx * ca - ccy * sa, ccx * sa + ccy * ca);
-            let smp = crate::geom::sample_bilinear_f64(&f, gx * k - 0.5, gy * k - 0.5);
-            let l = (77.0 * smp[0] + 150.0 * smp[1] + 29.0 * smp[2]) / 256.0;
-            let rd = 0.5 * s * 1.25 * (1.0 - (l / 255.0).clamp(0.0, 1.0)).sqrt();
-            let dist = ((ux - ccx) * (ux - ccx) + (uy - ccy) * (uy - ccy)).sqrt();
-            let v = if dist <= rd { 0u8 } else { 255u8 };
-            out[d] = v;
-            out[d + 1] = v;
-            out[d + 2] = v;
-            out[d + 3] = f.rgba[d + 3];
-        }
-    }
-    let res = Frame { w: f.w, h: f.h, rgba: out, has_alpha: f.has_alpha };
-    scratch.put(f.rgba);
-    res
 }
 
 // a per-pixel effect as a barrier is the plugin's `frame` (`kt_plugin_api::frame_with_at`, the one
@@ -797,85 +726,6 @@ fn greenscreen(mut f: Frame, key: [u8; 3], tolerance: u32, softness: u32, spill:
     }
     f.has_alpha = true;
     f
-}
-
-/// Sobel by luma (v1: (77R+150G+29B)>>8, threshold, grey output).
-fn edges(
-    f: Frame,
-    threshold: u32,
-    thickness: u32,
-    color: [u8; 3],
-    scratch: &mut FxScratch,
-    res_scale: u32,
-) -> Frame {
-    let th = threshold.clamp(1, 255) as i32;
-    // thickness = the Sobel sampling step; 1 and white colour — the former 3×3 kernel
-    // byte-for-byte (including the AVX2 path)
-    // R.45 (item 313): the Sobel stride and the border ×K; the plain gate (d == 1)
-    // switches off by itself at K > 1 — the effective stride ≥ 2
-    let d = thickness.clamp(1, 8) as i64 * res_scale as i64;
-    let plain = d == 1 && color == [255, 255, 255];
-    let (w, h) = (f.w as usize, f.h as usize);
-    #[cfg(target_arch = "x86_64")]
-    let simd =
-        crate::simd::simd_level() == crate::simd::SimdLevel::Avx2 && f.rgba.len() >= w * h * 4;
-    #[cfg(not(target_arch = "x86_64"))]
-    let simd = false;
-    let luma: Vec<i32> = if simd {
-        let mut v = vec![0i32; w * h];
-        #[cfg(target_arch = "x86_64")]
-        // SAFETY: the level is checked by the detector; the buffer lengths — above
-        unsafe {
-            crate::video_simd::luma_avx2(&mut v, &f.rgba, w * h)
-        };
-        v
-    } else {
-        f.rgba
-            .chunks_exact(4)
-            .map(|p| (77 * p[0] as i32 + 150 * p[1] as i32 + 29 * p[2] as i32) >> 8)
-            .collect()
-    };
-    // ALPHA RULE (R.53, item 418): edges no longer fills alpha with 255, but RAISES it
-    // to the strength of the line — `a_out = max(a_in, v)`. On an opaque
-    // input (a_in = 255) this is an identity, and the bytes are the former ones; on an input with
-    // alpha the outline has stopped being an opaque plate over the whole frame and
-    // has become what it is asked to be — an overlay of contours.
-    let keep_alpha = f.has_alpha;
-    let mut out = scratch.take(f.rgba.len());
-    for (o, i) in out.chunks_exact_mut(4).zip(f.rgba.chunks_exact(4)) {
-        o[3] = if keep_alpha { i[3] } else { 255 };
-    }
-    let m = d as usize; // the border is wider with a thick line
-    for y in m..h.saturating_sub(m) {
-        // the vector part of the row; the scalar loop below finishes the tail
-        let mut x_from = m;
-        #[cfg(target_arch = "x86_64")]
-        // The AVX2 kernel writes alpha 255 hard: on a frame WITH ALPHA we count with the
-        // scalar path (it is not a hot path there anyway — titles, not 4K editing)
-        if plain && simd && w > 2 && !keep_alpha {
-            // SAFETY: the level is checked; rows y-1..y+1 exist, out is full
-            x_from = unsafe { crate::video_simd::sobel_row_avx2(&mut out, &luma, w, y, th, w - 1) };
-        }
-        for x in x_from..w.saturating_sub(m) {
-            let l = |dx: i64, dy: i64| {
-                luma[(y as i64 + dy * d) as usize * w + (x as i64 + dx * d) as usize]
-            };
-            let gx = -l(-1, -1) - 2 * l(-1, 0) - l(-1, 1) + l(1, -1) + 2 * l(1, 0) + l(1, 1);
-            let gy = -l(-1, -1) - 2 * l(0, -1) - l(1, -1) + l(-1, 1) + 2 * l(0, 1) + l(1, 1);
-            let mag = (((gx * gx + gy * gy) as f64).sqrt() as i32).min(255);
-            let v = if mag < th { 0 } else { mag as u8 };
-            let i = (y * w + x) * 4;
-            // colour of the lines: the grey value is multiplied by it (255 — the former)
-            for c in 0..3 {
-                out[i + c] = ((v as u32 * color[c] as u32) / 255) as u8;
-            }
-            if keep_alpha {
-                out[i + 3] = out[i + 3].max(v);
-            }
-        }
-    }
-    scratch.put(f.rgba);
-    Frame { w: f.w, h: f.h, rgba: out, has_alpha: keep_alpha }
 }
 
 /// The lowbias32 finalizer (Chris Wellons): an integer avalanche hash,

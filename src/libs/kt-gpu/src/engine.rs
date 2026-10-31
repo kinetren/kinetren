@@ -182,15 +182,12 @@ enum Pipe {
     Mirror,
     Noise,
     Greenscreen,
-    Edges,
     Vhs,
     Composite,
     /// Layer blend strength (R.38 item 12): mixing of the dry and wet sides.
     LayerMix,
     // (the pointwise R.47 kinds — color_grade, duotone, posterize, vignette — are plugins)
     // R.47 barriers Kv3
-    ChromaAb,
-    Halftone,
     /// Embedding boundary (R.50): straight alpha from premultiplied.
     Unpremul,
     /// Premultiplication before the mip (R.53, item 418).
@@ -199,7 +196,7 @@ enum Pipe {
     GridTile,
 }
 
-const PIPE_COUNT: usize = 13;
+const PIPE_COUNT: usize = 10;
 
 /// One chain step precomputed on the CPU (common maths: kt-fx:
 /// pan_frame/cam_at/noise_seed). The number of passes and the sizes are known in advance.
@@ -228,11 +225,6 @@ enum FxOp {
         spill: f32,
         kc: u32,
     },
-    Edges {
-        th: u32,
-        d: u32,
-        color: [u32; 3],
-    },
     Vhs {
         shift: u32,
         line_off: u32,
@@ -244,15 +236,6 @@ enum FxOp {
     },
     /// R.47 barriers Kv3. Sharpen/DropShadow take 3 passes (mip down/up +
     /// final), the others take one.
-    ChromaAb {
-        amount: f32,
-    },
-    Halftone {
-        size: f32,
-        ca: f32,
-        sa: f32,
-        k: f32,
-    },
     /// A barrier PLUGIN's graph (plugin-api-barriers, D2): the host's nodes and its passes, `base` —
     /// its first shader in `Inner::plugin_pipes`.
     PluginBarrier {
@@ -480,17 +463,6 @@ fn chain_ops(
                     has_alpha_known = true;
                     has_alpha = true;
                 }
-                FxInstance::Edges { threshold, thickness, color_r, color_g, color_b } => {
-                    ops.push(FxOp::Edges {
-                        th: (*threshold).clamp(1, 255),
-                        // R.45 (item 313): Sobel stride ×K
-                        d: (*thickness).clamp(1, 8) * res_scale,
-                        color: [*color_r as u32, *color_g as u32, *color_b as u32],
-                    });
-                    // ALPHA RULE (R.53, item 418): edges SKIPS the alpha
-                    // (`a_out = max(a_in, line strength)`) rather than destroying
-                    // it: it does not touch the convolution, like all the geometry.
-                }
                 FxInstance::Noise { amount, size, color } => {
                     let k = (amount.clamp(0.0, 1.0) * 32.0) as i64;
                     if k > 0 {
@@ -553,18 +525,6 @@ fn chain_ops(
                         idx,
                         f: [0.0, g[0], g[1], g[2], g[3], g[4], g[5], g[6]],
                         positioned: t.positioned,
-                    });
-                }
-                FxInstance::ChromaticAberration { amount } => {
-                    ops.push(FxOp::ChromaAb { amount: amount.clamp(0.0, 0.05) });
-                }
-                FxInstance::Halftone { size, angle } => {
-                    let a = (angle.clamp(-90.0, 90.0) as f64).to_radians();
-                    ops.push(FxOp::Halftone {
-                        size: (*size).clamp(2, 64) as f32,
-                        ca: a.cos() as f32,
-                        sa: a.sin() as f32,
-                        k: res_scale as f32,
                     });
                 }
                 FxInstance::Vhs { rgb_shift, bleed, scan_step, jitter } => {
@@ -720,12 +680,9 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("mirror", include_str!("shaders/mirror.wgsl")),
     ("noise", include_str!("shaders/noise.wgsl")),
     ("greenscreen", include_str!("shaders/greenscreen.wgsl")),
-    ("edges", include_str!("shaders/edges.wgsl")),
     ("vhs", include_str!("shaders/vhs.wgsl")),
     ("composite", include_str!("shaders/composite.wgsl")),
     ("layer_mix", include_str!("shaders/layer_mix.wgsl")),
-    ("chroma_ab", include_str!("shaders/chroma_ab.wgsl")),
-    ("halftone", include_str!("shaders/halftone.wgsl")),
     ("unpremul", include_str!("shaders/unpremul.wgsl")),
     ("premul", include_str!("shaders/premul.wgsl")),
     ("grid_tile", include_str!("shaders/grid_tile.wgsl")),
@@ -1688,19 +1645,6 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
-                FxOp::Edges { th, d, color } => {
-                    let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        u: [w, h, *th, *d, color[0], color[1], color[2], 0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::Edges, &dst.view, &view, &dummy, &dummy, u);
-                    if let Some(t) = owned.take() {
-                        self.pool.release(t);
-                    }
-                    view = dst.view.clone();
-                    owned = Some(dst);
-                }
                 FxOp::Vhs { shift, line_off, bleed, jq, step, seed, res_scale } => {
                     let dst = self.pool.acquire(&self.device, w, h);
                     let u = UniformData {
@@ -1797,34 +1741,6 @@ impl Inner {
                     }
                     let u = UniformData { f, ..Default::default() };
                     self.pass_which(enc, Which::Plugin(*idx), &dst.view, &view, &dummy, &dummy, u);
-                    if let Some(t) = owned.take() {
-                        self.pool.release(t);
-                    }
-                    view = dst.view.clone();
-                    owned = Some(dst);
-                }
-                FxOp::ChromaAb { amount } => {
-                    let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        u: [w, h, 0, 0, 0, 0, 0, 0],
-                        f: [*amount, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::ChromaAb, &dst.view, &view, &dummy, &dummy, u);
-                    if let Some(t) = owned.take() {
-                        self.pool.release(t);
-                    }
-                    view = dst.view.clone();
-                    owned = Some(dst);
-                }
-                FxOp::Halftone { size, ca, sa, k } => {
-                    let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        u: [w, h, 0, 0, 0, 0, 0, 0],
-                        f: [*size, *ca, *sa, *k, 0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::Halftone, &dst.view, &view, &dummy, &dummy, u);
                     if let Some(t) = owned.take() {
                         self.pool.release(t);
                     }

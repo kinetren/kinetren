@@ -198,7 +198,7 @@ fn gen_demo_concat() {
     p.clips = vec![
         clip(1, 0, 4, 1, vec![FxInstance::plugin_with("sharpen", &[2.0, 3.0]).unwrap()]),
         clip(2, 4, 4, 1, vec![FxInstance::plugin_with("pixelate", &[16.0]).unwrap()]),
-        clip(3, 8, 4, 1, vec![FxInstance::ChromaticAberration { amount: 0.02 }]),
+        clip(3, 8, 4, 1, vec![FxInstance::plugin_with("chromatic_aberration", &[0.02]).unwrap()]),
         clip(
             4,
             12,
@@ -217,7 +217,7 @@ fn gen_demo_concat() {
                 FxInstance::plugin_with("drop_shadow", &[14.0, 14.0, 6.0, 0.7, 0.0, 0.0, 0.0]).unwrap(),
             ],
         ),
-        clip(6, 20, 4, 1, vec![FxInstance::Halftone { size: 10, angle: 45.0 }]),
+        clip(6, 20, 4, 1, vec![FxInstance::plugin_with("halftone", &[10.0, 45.0]).unwrap()]),
     ];
     save(&mut p, "07-fx-barriers.kt");
 

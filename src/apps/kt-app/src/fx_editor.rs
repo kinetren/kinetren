@@ -1348,11 +1348,8 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Geometry { .. } => "Geometry",
         FxInstance::CamMotion { .. } => "CamMotion",
         FxInstance::Greenscreen { .. } => "Greenscreen",
-        FxInstance::Edges { .. } => "Edges",
         FxInstance::Noise { .. } => "Noise",
         FxInstance::Vhs { .. } => "VHS",
-        FxInstance::ChromaticAberration { .. } => "Chromatic Aberration",
-        FxInstance::Halftone { .. } => "Halftone",
         // a plugin names itself in its manifest (plugin-api-stage1, D7)
         FxInstance::Plugin(p) => p.manifest().ui.name,
         // a plugin this build lacks: the id from the file, said as such
@@ -1369,13 +1366,10 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
         // the former Pan is abolished
         ("Geometry", FxInstance::geometry_node()),
         ("Greenscreen", FxInstance::greenscreen([0, 255, 0], 70, 25)),
-        ("Edges", FxInstance::edges(48)),
         ("Noise", FxInstance::noise(0.08)),
         ("VHS", FxInstance::vhs(4, 0.4)),
         // R.47: per-point color/style + the first honest perspective
         // R.47 Q3: barriers
-        ("Chromatic Aberration", FxInstance::chromatic_aberration()),
-        ("Halftone", FxInstance::halftone()),
     ]
 }
 
@@ -1459,7 +1453,7 @@ pub(crate) fn draw_video_fx_params(
     let skip: &[&str] = match f {
         FxInstance::Greenscreen { .. } => &["key_r", "key_g", "key_b"],
         // the outline line color and the glow tint — also with an eyedropper (R.33 S5)
-        FxInstance::Edges { .. } => &["color_r", "color_g", "color_b"],
+        FxInstance::Plugin(p) if p.id == "edges" => &["color_r", "color_g", "color_b"],
         // the glow and shadow tints (plugin slots since plugin-api-barriers)
         FxInstance::Plugin(p) if p.id == "glow" || p.id == "drop_shadow" => &["tint_r", "tint_g", "tint_b"],
         // both duotone colors — with eyedroppers (R.47 Q2)
@@ -1595,15 +1589,16 @@ pub(crate) fn draw_video_fx_params(
                 }
             });
         }
-        FxInstance::Edges { color_r, color_g, color_b, .. } => {
+        // the outline's line colour: three u8 rows of the plugin slot (plugin-api-barriers 4.1)
+        FxInstance::Plugin(p) if p.id == "edges" => {
+            let line = ["color_r", "color_g", "color_b"];
             ui.horizontal(|ui| {
-                let mut col =
-                    [*color_r as f32 / 255.0, *color_g as f32 / 255.0, *color_b as f32 / 255.0];
+                let mut col = line.map(|n| p.get(n).unwrap_or(0.0) as f32 / 255.0);
                 ui.label(tr(k::fx::LINE_COLOR));
                 if ui.color_edit_button_rgb(&mut col).changed() {
-                    *color_r = (col[0] * 255.0) as u8;
-                    *color_g = (col[1] * 255.0) as u8;
-                    *color_b = (col[2] * 255.0) as u8;
+                    for (n, v) in line.iter().zip(col) {
+                        p.set(n, (v * 255.0) as u8 as f64);
+                    }
                     ch.base = true;
                 }
             });

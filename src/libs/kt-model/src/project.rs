@@ -1276,10 +1276,6 @@ fn is_one_u32_v(v: &u32) -> bool {
     *v == 1
 }
 
-fn is_255(v: &u8) -> bool {
-    *v == 255
-}
-
 fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
@@ -3614,18 +3610,6 @@ fn one_f32() -> f32 {
     1.0
 }
 
-fn default_chroma_amount() -> f32 {
-    0.012
-}
-
-fn default_eight_u32() -> u32 {
-    8
-}
-
-fn default_halftone_angle() -> f32 {
-    45.0
-}
-
 fn is_one_f32(v: &f32) -> bool {
     *v == 1.0
 }
@@ -4635,22 +4619,10 @@ pub enum FxInstance {
     // CornerPin is a plugin since plugin-api-stage1 (src/plugins/fx-video-distort, D11.2).
     // Blur, Glow, Sharpen, RadialBlur and DropShadow are plugins since plugin-api-barriers
     // (src/plugins/fx-video-blur): their file text is the variants' (t973).
+    // Edges, Halftone and ChromaticAberration are plugins since plugin-api-barriers 4.1
+    // (src/plugins/fx-video-stylize): their file text is the variants' (t973).
     // Pixelate is a plugin since plugin-api-barriers (src/plugins/fx-video-stylize): its file text
     // is the variant's (t973).
-    /// Chromatic aberration (R.47, F-FX-002): radial scale of
-    /// channels — R towards the centre, B from the centre, G in place. Barrier.
-    ChromaticAberration {
-        #[serde(default = "default_chroma_amount")]
-        amount: f32,
-    },
-    /// Halftone raster (R.47, F-FX-001): dots by luma on a rotated
-    /// grid; the pattern lives in logical coordinates. Barrier.
-    Halftone {
-        #[serde(default = "default_eight_u32")]
-        size: u32,
-        #[serde(default = "default_halftone_angle")]
-        angle: f32,
-    },
     // LensDistort, Twirl, Ripple, Kaleidoscope and Cylinder3d are plugins since plugin-api-stage1
     // (src/plugins/fx-video-distort, D11.2): their file text is the variants' (t973).
     /// Node “Geometry” (R.62): crop (input fractions), position (canvas fractions),
@@ -4712,22 +4684,6 @@ pub enum FxInstance {
         /// is pulled toward its neighbours. 0 — previous behaviour.
         #[serde(default, skip_serializing_if = "is_zero_f64")]
         spill: f64,
-    },
-    Edges {
-        #[serde(default = "default_edges_threshold")]
-        threshold: u32,
-        /// Line thickness = Sobel sampling step (R.33, stage 5). 1 — the previous
-        /// 3×3 kernel, byte for byte.
-        #[serde(default = "default_one_u32", skip_serializing_if = "is_one_u32_v")]
-        thickness: u32,
-        /// Line colour: the grey output is multiplied by it. 255,255,255 — the
-        /// previous white.
-        #[serde(default = "default_255", skip_serializing_if = "is_255")]
-        color_r: u8,
-        #[serde(default = "default_255", skip_serializing_if = "is_255")]
-        color_g: u8,
-        #[serde(default = "default_255", skip_serializing_if = "is_255")]
-        color_b: u8,
     },
     Noise {
         #[serde(default = "default_noise_amount")]
@@ -4823,12 +4779,9 @@ impl FxInstance {
     pub fn tag(&self) -> &'static str {
         match self {
             FxInstance::LayerMix { .. } => "layer_mix",
-            FxInstance::ChromaticAberration { .. } => "chromatic_aberration",
-            FxInstance::Halftone { .. } => "halftone",
             FxInstance::Geometry { .. } => "geometry",
             FxInstance::CamMotion { .. } => "cam_motion",
             FxInstance::Greenscreen { .. } => "greenscreen",
-            FxInstance::Edges { .. } => "edges",
             FxInstance::Noise { .. } => "noise",
             FxInstance::Vhs { .. } => "vhs",
             FxInstance::Plugin(p) => p.tag(),
@@ -4872,10 +4825,10 @@ impl FxInstance {
                 FxInstance::builtin("corner_pin"),
                 FxInstance::builtin("sharpen"),
                 FxInstance::builtin("pixelate"),
-                FxInstance::chromatic_aberration(),
+                FxInstance::builtin("chromatic_aberration"),
                 FxInstance::builtin("radial_blur"),
                 FxInstance::builtin("drop_shadow"),
-                FxInstance::halftone(),
+                FxInstance::builtin("halftone"),
                 FxInstance::builtin("lens_distort"),
                 FxInstance::builtin("twirl"),
                 FxInstance::builtin("ripple"),
@@ -4886,7 +4839,7 @@ impl FxInstance {
                 FxInstance::builtin("mirror"),
                 FxInstance::builtin("blur"),
                 FxInstance::greenscreen([0, 255, 0], 70, 25),
-                FxInstance::edges(48),
+                FxInstance::builtin("edges"),
                 FxInstance::noise(0.3),
                 FxInstance::vhs(4, 0.4),
                 FxInstance::builtin("glow"),
@@ -5036,13 +4989,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         amount: f64, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
     },
     // ---- video 2D --------------------------------------------------------
-    ChromaticAberration {
-        amount: f32, 0.0, 0.05, 0.012, 0.001, Norm, Smooth;
-    },
-    Halftone {
-        size: u32, 2.0, 64.0, 8.0, 1.0, Px, Smooth;
-        angle: f32, -90.0, 90.0, 45.0, 1.0, Deg, Smooth;
-    },
     Geometry {
         crop_l: f64, 0.0, 0.95, 0.0, 0.005, Norm, Smooth;
         crop_t: f64, 0.0, 0.95, 0.0, 0.005, Norm, Smooth;
@@ -5065,13 +5011,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         tolerance: u32, 1.0, 200.0, 70.0, 1.0, None, Smooth;
         softness: u32, 0.0, 100.0, 25.0, 1.0, None, Smooth;
         spill: f64, 0.0, 1.0, 0.0, 0.01, Norm, Smooth;
-    },
-    Edges {
-        threshold: u32, 1.0, 255.0, 48.0, 1.0, None, Smooth;
-        thickness: u32, 1.0, 8.0, 1.0, 1.0, Px, Smooth;
-        color_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        color_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        color_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
     },
     Noise {
         amount: f64, 0.0, 1.0, 0.08, 0.01, Norm, Smooth;
@@ -5524,9 +5463,6 @@ fn default_tolerance() -> u32 {
 fn default_softness() -> u32 {
     25
 }
-fn default_edges_threshold() -> u32 {
-    48
-}
 fn default_noise_amount() -> f64 {
     0.08
 }
@@ -5611,15 +5547,9 @@ impl FxInstance {
 
 
 
-    pub fn chromatic_aberration() -> FxInstance {
-        FxInstance::ChromaticAberration { amount: 0.012 }
-    }
 
 
 
-    pub fn halftone() -> FxInstance {
-        FxInstance::Halftone { size: 8, angle: 45.0 }
-    }
 
 
 
@@ -5738,8 +5668,10 @@ impl FxInstance {
             .expect("blur is not registered: install the built-in plugin set first")
     }
 
+    /// White edges at `threshold`, one pixel thick — a plugin slot (plugin-api-barriers 4.1).
     pub fn edges(threshold: u32) -> FxInstance {
-        FxInstance::Edges { threshold, thickness: 1, color_r: 255, color_g: 255, color_b: 255 }
+        FxInstance::plugin_with("edges", &[threshold as f64, 1.0, 255.0, 255.0, 255.0])
+            .expect("edges is not registered: install the built-in plugin set first")
     }
 
     /// Gain of `db` at the centre — a plugin slot (plugin-api-stage1, stage 3).

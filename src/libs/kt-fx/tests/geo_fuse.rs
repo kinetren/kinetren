@@ -484,7 +484,7 @@ fn bench_fx_1080p() {
     );
     bench("sharpen r=3", &[FxInstance::plugin_with("sharpen", &[1.5, 3.0]).unwrap()]);
     bench("pixelate 12", &[FxInstance::plugin_with("pixelate", &[12.0]).unwrap()]);
-    bench("chroma_ab 0.02", &[FxInstance::ChromaticAberration { amount: 0.02 }]);
+    bench("chroma_ab 0.02", &[FxInstance::plugin_with("chromatic_aberration", &[0.02]).unwrap()]);
     bench(
         "radial_blur zoom (16 taps)",
         &[FxInstance::plugin_with("radial_blur", &[0.5, 0.0, 0.0, 0.0]).unwrap()],
@@ -493,7 +493,7 @@ fn bench_fx_1080p() {
         "radial_blur spin",
         &[FxInstance::plugin_with("radial_blur", &[0.5, 0.0, 0.0, 1.0]).unwrap()],
     );
-    bench("halftone 8/45", &[FxInstance::Halftone { size: 8, angle: 45.0 }]);
+    bench("halftone 8/45", &[FxInstance::plugin_with("halftone", &[8.0, 45.0]).unwrap()]);
     bench(
         "greenscreen→drop_shadow (shadow with alpha)",
         &[FxInstance::greenscreen([0, 255, 0], 70, 25), FxInstance::builtin("drop_shadow")],
@@ -689,7 +689,7 @@ fn t303_barrier_kernels_res_invariant() {
         // R.47 Kv3 (smooth): thresholds ×2 from the measurement (see printout)
         for (name, fx) in [
             ("sharpen", FxInstance::plugin_with("sharpen", &[2.0, 4.0]).unwrap()),
-            ("chroma", FxInstance::ChromaticAberration { amount: 0.03 }),
+            ("chroma", FxInstance::plugin_with("chromatic_aberration", &[0.03]).unwrap()),
             (
                 "radial-zoom",
                 FxInstance::plugin_with("radial_blur", &[0.5, 0.0, 0.0, 0.0]).unwrap(),
@@ -767,7 +767,7 @@ fn t303_barrier_kernels_res_invariant() {
         // What is compared is the COVERAGE: the mean luma of 8×8 blocks (the position and size of the
         // dots), thresholds ×2 from the measurement (see printout).
         {
-            let fx = FxInstance::Halftone { size: 8, angle: 45.0 };
+            let fx = FxInstance::plugin_with("halftone", &[8.0, 45.0]).unwrap();
             let base = apply_barrier(&fx, test_frame(), &ctx(), &mut scratch, 1);
             let (kw, kh) = (W * k, H * k);
             let mut up = vec![0u8; (kw * kh * 4) as usize];
@@ -801,13 +801,7 @@ fn t303_barrier_kernels_res_invariant() {
             ("edges", FxInstance::edges(48)),
             (
                 "edges-thick",
-                FxInstance::Edges {
-                    threshold: 48,
-                    thickness: 2,
-                    color_r: 255,
-                    color_g: 255,
-                    color_b: 255,
-                },
+                FxInstance::plugin_with("edges", &[48.0, 2.0, 255.0, 255.0, 255.0]).unwrap(),
             ),
             // threshold Kv3: the cell phase at the boundary legitimately flips
             ("pixelate", FxInstance::plugin_with("pixelate", &[8.0]).unwrap()),
@@ -1171,7 +1165,7 @@ fn t332_barrier_semantics() {
     }
 
     // ChromaticAberration: the centre is untouched, at the edge the channels have split
-    let ca = run(&[FxInstance::ChromaticAberration { amount: 0.04 }]);
+    let ca = run(&[FxInstance::plugin_with("chromatic_aberration", &[0.04]).unwrap()]);
     let src = test_frame();
     let c = (((H / 2) * W + W / 2) * 4) as usize;
     assert_eq!(ca.rgba[c..c + 4], src.rgba[c..c + 4], "chroma: center pixel is a fixed point");
@@ -1228,7 +1222,7 @@ fn t332_barrier_semantics() {
     );
 
     // Halftone: the output is two-level; there are more dots in the dark zone
-    let ht = run(&[FxInstance::Halftone { size: 8, angle: 45.0 }]);
+    let ht = run(&[FxInstance::plugin_with("halftone", &[8.0, 45.0]).unwrap()]);
     for pxl in ht.rgba.chunks_exact(4) {
         assert!(
             (pxl[0] == 0 || pxl[0] == 255) && pxl[0] == pxl[1] && pxl[1] == pxl[2],

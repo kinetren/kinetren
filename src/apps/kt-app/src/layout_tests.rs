@@ -3606,7 +3606,7 @@ fn t217_one_chain_widget_for_events_and_morphers() {
         "a disabled batch slot must not reach the clip"
     );
     assert!(
-        c.fx.iter().any(|f| matches!(f, FxInstance::Edges { .. })),
+        c.fx.iter().any(|f| matches!(f, FxInstance::Plugin(q) if q.id == "edges")),
         "an enabled batch slot must remain"
     );
     assert_eq!(
