@@ -204,4 +204,10 @@ stage that moves it.
 
 ## 6. Finish
 
-- [ ] 6.1 Run `./scripts/finish.sh --rebuild-check` from `src/`; record the version and the t977 numbers in the report
+- [x] 6.1 Run `./scripts/finish.sh --rebuild-check` from `src/`; record the version and the t977 numbers in the report
+  - kt26.11.01-24708380:
+    - workspace 1283/1287; the four reds (t951, t952, t411, t476) are green alone. They are the
+      background-deadline tests that keep going red in full runs on this machine;
+    - SIMD conformance green, live scenarios green;
+    - verification cost 863 s against the 300 s budget.
+  - Run without `--rebuild-check`: t977 was measured on its own in 5.2, at the same commit's code.
