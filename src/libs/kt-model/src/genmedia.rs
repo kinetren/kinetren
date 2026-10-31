@@ -127,77 +127,6 @@ pub enum GeneratorKind {
         #[serde(default)]
         offset_y: f64,
     },
-    /// A linear gradient between two colors (angle in degrees).
-    Gradient {
-        #[serde(default = "default_angle")]
-        angle_deg: f64,
-        #[serde(default)]
-        a_r: u8,
-        #[serde(default)]
-        a_g: u8,
-        #[serde(default)]
-        a_b: u8,
-        #[serde(default = "default_255")]
-        b_r: u8,
-        #[serde(default = "default_255")]
-        b_g: u8,
-        #[serde(default = "default_255")]
-        b_b: u8,
-    },
-    /// A four-color gradient across the corners (bilinear).
-    Corners {
-        #[serde(default = "default_255")]
-        tl_r: u8,
-        #[serde(default)]
-        tl_g: u8,
-        #[serde(default)]
-        tl_b: u8,
-        #[serde(default)]
-        tr_r: u8,
-        #[serde(default = "default_255")]
-        tr_g: u8,
-        #[serde(default)]
-        tr_b: u8,
-        #[serde(default)]
-        bl_r: u8,
-        #[serde(default)]
-        bl_g: u8,
-        #[serde(default = "default_255")]
-        bl_b: u8,
-        #[serde(default = "default_255")]
-        br_r: u8,
-        #[serde(default = "default_255")]
-        br_g: u8,
-        #[serde(default = "default_255")]
-        br_b: u8,
-    },
-    /// Checkerboard: the cell is given by a COUNT of columns (resolution-independent).
-    Checker {
-        #[serde(default = "default_cols")]
-        cols: u32,
-        #[serde(default)]
-        a_r: u8,
-        #[serde(default)]
-        a_g: u8,
-        #[serde(default)]
-        a_b: u8,
-        #[serde(default = "default_255")]
-        b_r: u8,
-        #[serde(default = "default_255")]
-        b_g: u8,
-        #[serde(default = "default_255")]
-        b_b: u8,
-    },
-    /// Noise field: a counter-based seed from (x, y, pts of the MATERIAL) —
-    /// a clip shift does not change the seed; a full brightness range (a “gray
-    /// field” that the Noise EFFECT cannot give — F-TXT-003).
-    #[serde(rename = "noise")]
-    NoiseField {
-        #[serde(default = "default_one")]
-        amount: f64,
-        #[serde(default = "default_true_flag")]
-        mono: bool,
-    },
     /// SMPTE bars at 75% (+ reference marks in the bottom third); a 1 kHz tone — a parameter:
     /// enabling it makes the media audible (level in dBFS).
     #[serde(rename = "smpte")]
@@ -214,83 +143,6 @@ pub enum GeneratorKind {
     Timecode {
         #[serde(default = "default_tc_fps")]
         fps: u32,
-    },
-    // --- R.53, items 419-422: shapes, backing, countdown, tables ----------
-    /// a TRANSPARENT backing (item 420): a frame of zeros. A placeholder on the
-    /// track and a matte blank. A separate kind, not “Solid with alpha”: a
-    /// semi-transparent fill is already expressed by the event's level, and a second switch for
-    /// the same meaning is forbidden (UI rule 9).
-    Transparent,
-    /// A rectangle with rounding (item 419). Sizes are in fractions of ITS OWN
-    /// axis, so the backing survives a change of project format;
-    /// isotropic lengths (rounding, feathering) are in fractions of the HEIGHT.
-    Rect {
-        #[serde(default = "default_half")]
-        cx: f64,
-        #[serde(default = "default_half")]
-        cy: f64,
-        #[serde(default = "default_shape_w")]
-        w: f64,
-        #[serde(default = "default_shape_h")]
-        h: f64,
-        #[serde(default)]
-        radius: f64,
-        #[serde(default = "default_feather")]
-        feather: f64,
-        #[serde(default = "default_255")]
-        color_r: u8,
-        #[serde(default = "default_255")]
-        color_g: u8,
-        #[serde(default = "default_255")]
-        color_b: u8,
-        #[serde(default = "default_255")]
-        color_a: u8,
-    },
-    /// An ellipse (item 419). A separate kind from the rectangle: it has no
-    /// rounding, and merging would give a dead control (UI rule 9).
-    Ellipse {
-        #[serde(default = "default_half")]
-        cx: f64,
-        #[serde(default = "default_half")]
-        cy: f64,
-        #[serde(default = "default_shape_w")]
-        w: f64,
-        #[serde(default = "default_shape_h")]
-        h: f64,
-        #[serde(default = "default_feather")]
-        feather: f64,
-        #[serde(default = "default_255")]
-        color_r: u8,
-        #[serde(default = "default_255")]
-        color_g: u8,
-        #[serde(default = "default_255")]
-        color_b: u8,
-        #[serde(default = "default_255")]
-        color_a: u8,
-    },
-    /// A line segment (item 419): the ends, not a center with dimensions — its own
-    /// pair of parameters, hence its own kind.
-    Line {
-        #[serde(default = "default_line_x1")]
-        x1: f64,
-        #[serde(default = "default_half")]
-        y1: f64,
-        #[serde(default = "default_line_x2")]
-        x2: f64,
-        #[serde(default = "default_half")]
-        y2: f64,
-        #[serde(default = "default_thickness")]
-        thickness: f64,
-        #[serde(default = "default_feather")]
-        feather: f64,
-        #[serde(default = "default_255")]
-        color_r: u8,
-        #[serde(default = "default_255")]
-        color_g: u8,
-        #[serde(default = "default_255")]
-        color_b: u8,
-        #[serde(default = "default_255")]
-        color_a: u8,
     },
     /// A countdown (item 421): a cross, a circle, a running sector and a
     /// digit. Time is the pts of the MATERIAL, as for the timecode. The “2-pop” is
@@ -533,15 +385,6 @@ fn default_plate_px() -> f64 {
 fn default_plate_py() -> f64 {
     0.12
 }
-fn default_angle() -> f64 {
-    90.0
-}
-fn default_cols() -> u32 {
-    8
-}
-fn default_true_flag() -> bool {
-    true
-}
 fn default_tone_db() -> f64 {
     -20.0
 }
@@ -550,26 +393,6 @@ fn default_tc_fps() -> u32 {
 }
 fn default_anim_secs() -> f64 {
     1.0
-}
-fn default_shape_w() -> f64 {
-    0.5
-}
-fn default_shape_h() -> f64 {
-    0.25
-}
-/// The default edge feathering — half a percent of the height: without it the
-/// analytic edge looks “staircased” on a large frame.
-fn default_feather() -> f64 {
-    0.005
-}
-fn default_thickness() -> f64 {
-    0.01
-}
-fn default_line_x1() -> f64 {
-    0.2
-}
-fn default_line_x2() -> f64 {
-    0.8
 }
 fn default_leader_secs() -> u32 {
     8
@@ -591,80 +414,19 @@ impl GeneratorKind {
         vec![
             GeneratorKind::builtin("solid"),
             GeneratorKind::default_text(),
-            GeneratorKind::Gradient {
-                angle_deg: 90.0,
-                a_r: 0,
-                a_g: 0,
-                a_b: 0,
-                b_r: 255,
-                b_g: 255,
-                b_b: 255,
-            },
-            GeneratorKind::Corners {
-                tl_r: 255,
-                tl_g: 0,
-                tl_b: 0,
-                tr_r: 0,
-                tr_g: 255,
-                tr_b: 0,
-                bl_r: 0,
-                bl_g: 0,
-                bl_b: 255,
-                br_r: 255,
-                br_g: 255,
-                br_b: 255,
-            },
-            GeneratorKind::Checker {
-                cols: 8,
-                a_r: 0,
-                a_g: 0,
-                a_b: 0,
-                b_r: 255,
-                b_g: 255,
-                b_b: 255,
-            },
-            GeneratorKind::NoiseField { amount: 1.0, mono: true },
+            GeneratorKind::builtin("gradient"),
+            GeneratorKind::builtin("corners"),
+            GeneratorKind::builtin("checker"),
+            GeneratorKind::builtin("noise"),
             GeneratorKind::SmpteBars { tone: false, tone_db: -20.0 },
             GeneratorKind::Timecode { fps: 30 },
             // R.53: new kinds — AT THE END of the registry. Engineering tables
             // stand as FIVE rows of one kind: the menu shows each variety,
             // and they share one code.
-            GeneratorKind::Transparent,
-            GeneratorKind::Rect {
-                cx: 0.5,
-                cy: 0.5,
-                w: default_shape_w(),
-                h: default_shape_h(),
-                radius: 0.0,
-                feather: default_feather(),
-                color_r: 255,
-                color_g: 255,
-                color_b: 255,
-                color_a: 255,
-            },
-            GeneratorKind::Ellipse {
-                cx: 0.5,
-                cy: 0.5,
-                w: default_shape_w(),
-                h: default_shape_h(),
-                feather: default_feather(),
-                color_r: 255,
-                color_g: 255,
-                color_b: 255,
-                color_a: 255,
-            },
-            GeneratorKind::Line {
-                x1: default_line_x1(),
-                y1: 0.5,
-                x2: default_line_x2(),
-                y2: 0.5,
-                thickness: default_thickness(),
-                feather: default_feather(),
-                color_r: 255,
-                color_g: 255,
-                color_b: 255,
-                color_a: 255,
-            },
+            GeneratorKind::builtin("transparent"),
+            GeneratorKind::builtin("rect"),
+            GeneratorKind::builtin("ellipse"),
+            GeneratorKind::builtin("line"),
             GeneratorKind::Leader {
                 seconds: default_leader_secs(),
                 fps: default_tc_fps(),
@@ -767,16 +529,8 @@ impl GeneratorKind {
             GeneratorKind::Plugin(p) => p.tag(),
             GeneratorKind::Missing(_) => "missing",
             GeneratorKind::Text { .. } => "text",
-            GeneratorKind::Gradient { .. } => "gradient",
-            GeneratorKind::Corners { .. } => "corners",
-            GeneratorKind::Checker { .. } => "checker",
-            GeneratorKind::NoiseField { .. } => "noise",
             GeneratorKind::SmpteBars { .. } => "smpte",
             GeneratorKind::Timecode { .. } => "timecode",
-            GeneratorKind::Transparent => "transparent",
-            GeneratorKind::Rect { .. } => "rect",
-            GeneratorKind::Ellipse { .. } => "ellipse",
-            GeneratorKind::Line { .. } => "line",
             GeneratorKind::Leader { .. } => "leader",
             GeneratorKind::TestPattern { .. } => "table",
             GeneratorKind::WindowPattern { .. } => "window",
@@ -815,41 +569,6 @@ params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, gen_set_id
         offset_x: f64, -4.0, 4.0, 0.0, 0.001, Percent, Smooth;
         offset_y: f64, -4.0, 4.0, 0.0, 0.001, Percent, Smooth;
     },
-    Gradient {
-        angle_deg: f64, 0.0, 360.0, 90.0, 1.0, Deg, Smooth;
-        a_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        a_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        a_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        b_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        b_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        b_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-    },
-    Corners {
-        tl_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        tl_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        tl_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        tr_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        tr_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        tr_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        bl_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        bl_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        bl_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        br_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        br_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        br_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-    },
-    Checker {
-        cols: u32, 1.0, 256.0, 8.0, 1.0, Count, Structural;
-        a_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        a_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        a_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        b_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        b_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        b_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-    },
-    NoiseField {
-        amount: f64, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
-    },
     SmpteBars {
         tone_db: f64, -60.0, 0.0, -20.0, 0.5, Db, Smooth;
     },
@@ -858,41 +577,6 @@ params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, gen_set_id
     },
     // R.53 (item 419): fractions of ITS OWN axis for sizes and positions, fractions of the HEIGHT for
     // isotropic lengths — the backing survives a change of project format
-    Rect {
-        cx: f64, 0.0, 1.0, 0.5, 0.001, Percent, Smooth;
-        cy: f64, 0.0, 1.0, 0.5, 0.001, Percent, Smooth;
-        w: f64, 0.0, 2.0, 0.5, 0.001, Percent, Smooth;
-        h: f64, 0.0, 2.0, 0.25, 0.001, Percent, Smooth;
-        radius: f64, 0.0, 1.0, 0.0, 0.001, Percent, Smooth;
-        feather: f64, 0.0, 0.5, 0.005, 0.001, Percent, Smooth;
-        color_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        color_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        color_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        color_a: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-    },
-    Ellipse {
-        cx: f64, 0.0, 1.0, 0.5, 0.001, Percent, Smooth;
-        cy: f64, 0.0, 1.0, 0.5, 0.001, Percent, Smooth;
-        w: f64, 0.0, 2.0, 0.5, 0.001, Percent, Smooth;
-        h: f64, 0.0, 2.0, 0.25, 0.001, Percent, Smooth;
-        feather: f64, 0.0, 0.5, 0.005, 0.001, Percent, Smooth;
-        color_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        color_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        color_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        color_a: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-    },
-    Line {
-        x1: f64, 0.0, 1.0, 0.2, 0.001, Percent, Smooth;
-        y1: f64, 0.0, 1.0, 0.5, 0.001, Percent, Smooth;
-        x2: f64, 0.0, 1.0, 0.8, 0.001, Percent, Smooth;
-        y2: f64, 0.0, 1.0, 0.5, 0.001, Percent, Smooth;
-        thickness: f64, 0.0, 0.5, 0.01, 0.001, Percent, Smooth;
-        feather: f64, 0.0, 0.5, 0.005, 0.001, Percent, Smooth;
-        color_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        color_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        color_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        color_a: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-    },
     Leader {
         seconds: u32, 1.0, 60.0, 8.0, 1.0, Count, Structural;
         fps: u32, 1.0, 120.0, 30.0, 1.0, Count, Structural;
@@ -908,7 +592,6 @@ flags_for! { GeneratorKind, gen_flag_specs, gen_set_flag, gen_get_flag, {
     // “yes/no” is not dragged by a slider and not automated by a curve, but it must not
     // be forgotten either: the 1 kHz tone and colored noise existed in the format since R.52, and
     // there was nothing to enable them with (R.53, item 414).
-    NoiseField { mono: true },
     SmpteBars { tone: false },
     Text { bold: false },
     Leader { beep: false },
@@ -1355,64 +1038,6 @@ pub fn format_gen_path(k: &GeneratorKind) -> String {
                 push("oy", f(offset_y));
             }
         }
-        GeneratorKind::Gradient { angle_deg, a_r, a_g, a_b, b_r, b_g, b_b } => {
-            if *angle_deg != default_angle() {
-                push("ang", format!("{angle_deg}"));
-            }
-            if (*a_r, *a_g, *a_b) != (0, 0, 0) {
-                push("a", format!("{a_r:02x}{a_g:02x}{a_b:02x}"));
-            }
-            if (*b_r, *b_g, *b_b) != (255, 255, 255) {
-                push("b", format!("{b_r:02x}{b_g:02x}{b_b:02x}"));
-            }
-        }
-        GeneratorKind::Corners {
-            tl_r,
-            tl_g,
-            tl_b,
-            tr_r,
-            tr_g,
-            tr_b,
-            bl_r,
-            bl_g,
-            bl_b,
-            br_r,
-            br_g,
-            br_b,
-        } => {
-            let hex = |r: &u8, g: &u8, b: &u8| format!("{r:02x}{g:02x}{b:02x}");
-            if (*tl_r, *tl_g, *tl_b) != (255, 0, 0) {
-                push("tl", hex(tl_r, tl_g, tl_b));
-            }
-            if (*tr_r, *tr_g, *tr_b) != (0, 255, 0) {
-                push("tr", hex(tr_r, tr_g, tr_b));
-            }
-            if (*bl_r, *bl_g, *bl_b) != (0, 0, 255) {
-                push("bl", hex(bl_r, bl_g, bl_b));
-            }
-            if (*br_r, *br_g, *br_b) != (255, 255, 255) {
-                push("br", hex(br_r, br_g, br_b));
-            }
-        }
-        GeneratorKind::Checker { cols, a_r, a_g, a_b, b_r, b_g, b_b } => {
-            if *cols != default_cols() {
-                push("n", format!("{cols}"));
-            }
-            if (*a_r, *a_g, *a_b) != (0, 0, 0) {
-                push("a", format!("{a_r:02x}{a_g:02x}{a_b:02x}"));
-            }
-            if (*b_r, *b_g, *b_b) != (255, 255, 255) {
-                push("b", format!("{b_r:02x}{b_g:02x}{b_b:02x}"));
-            }
-        }
-        GeneratorKind::NoiseField { amount, mono } => {
-            if *amount != 1.0 {
-                push("amt", format!("{amount}"));
-            }
-            if !*mono {
-                push("mono", "0".into());
-            }
-        }
         GeneratorKind::SmpteBars { tone, tone_db } => {
             if *tone {
                 push("tone", "1".into());
@@ -1427,98 +1052,6 @@ pub fn format_gen_path(k: &GeneratorKind) -> String {
             }
         }
         // --- R.53 (items 419-422) -------------------------------------------
-        GeneratorKind::Transparent => {}
-        GeneratorKind::Rect {
-            cx,
-            cy,
-            w,
-            h,
-            radius,
-            feather,
-            color_r,
-            color_g,
-            color_b,
-            color_a,
-        } => {
-            let f = |v: &f64| format!("{v}");
-            if *cx != 0.5 {
-                push("cx", f(cx));
-            }
-            if *cy != 0.5 {
-                push("cy", f(cy));
-            }
-            if *w != default_shape_w() {
-                push("w", f(w));
-            }
-            if *h != default_shape_h() {
-                push("h", f(h));
-            }
-            if *radius != 0.0 {
-                push("rad", f(radius));
-            }
-            if *feather != default_feather() {
-                push("fe", f(feather));
-            }
-            if (*color_r, *color_g, *color_b, *color_a) != (255, 255, 255, 255) {
-                push("c", format!("{color_r:02x}{color_g:02x}{color_b:02x}{color_a:02x}"));
-            }
-        }
-        GeneratorKind::Ellipse { cx, cy, w, h, feather, color_r, color_g, color_b, color_a } => {
-            let f = |v: &f64| format!("{v}");
-            if *cx != 0.5 {
-                push("cx", f(cx));
-            }
-            if *cy != 0.5 {
-                push("cy", f(cy));
-            }
-            if *w != default_shape_w() {
-                push("w", f(w));
-            }
-            if *h != default_shape_h() {
-                push("h", f(h));
-            }
-            if *feather != default_feather() {
-                push("fe", f(feather));
-            }
-            if (*color_r, *color_g, *color_b, *color_a) != (255, 255, 255, 255) {
-                push("c", format!("{color_r:02x}{color_g:02x}{color_b:02x}{color_a:02x}"));
-            }
-        }
-        GeneratorKind::Line {
-            x1,
-            y1,
-            x2,
-            y2,
-            thickness,
-            feather,
-            color_r,
-            color_g,
-            color_b,
-            color_a,
-        } => {
-            let f = |v: &f64| format!("{v}");
-            if *x1 != default_line_x1() {
-                push("x1", f(x1));
-            }
-            if *y1 != 0.5 {
-                push("y1", f(y1));
-            }
-            if *x2 != default_line_x2() {
-                push("x2", f(x2));
-            }
-            if *y2 != 0.5 {
-                push("y2", f(y2));
-            }
-            if *thickness != default_thickness() {
-                push("th", f(thickness));
-            }
-            if *feather != default_feather() {
-                push("fe", f(feather));
-            }
-            if (*color_r, *color_g, *color_b, *color_a) != (255, 255, 255, 255) {
-                push("c", format!("{color_r:02x}{color_g:02x}{color_b:02x}{color_a:02x}"));
-            }
-        }
         GeneratorKind::Leader { seconds, fps, beep, beep_db } => {
             if *seconds != default_leader_secs() {
                 push("n", format!("{seconds}"));
@@ -1708,55 +1241,6 @@ fn apply_token(k: &mut GeneratorKind, key: &str, val: &str) -> Option<()> {
             }
             Some(())
         }
-        GeneratorKind::Gradient { angle_deg, a_r, a_g, a_b, b_r, b_g, b_b } => {
-            match key {
-                "ang" => *angle_deg = val.parse::<f64>().ok().filter(|v| v.is_finite())?,
-                "a" => (*a_r, *a_g, *a_b) = parse_rgb(val)?,
-                "b" => (*b_r, *b_g, *b_b) = parse_rgb(val)?,
-                _ => return None,
-            }
-            Some(())
-        }
-        GeneratorKind::Corners {
-            tl_r,
-            tl_g,
-            tl_b,
-            tr_r,
-            tr_g,
-            tr_b,
-            bl_r,
-            bl_g,
-            bl_b,
-            br_r,
-            br_g,
-            br_b,
-        } => {
-            match key {
-                "tl" => (*tl_r, *tl_g, *tl_b) = parse_rgb(val)?,
-                "tr" => (*tr_r, *tr_g, *tr_b) = parse_rgb(val)?,
-                "bl" => (*bl_r, *bl_g, *bl_b) = parse_rgb(val)?,
-                "br" => (*br_r, *br_g, *br_b) = parse_rgb(val)?,
-                _ => return None,
-            }
-            Some(())
-        }
-        GeneratorKind::Checker { cols, a_r, a_g, a_b, b_r, b_g, b_b } => {
-            match key {
-                "n" => *cols = val.parse::<u32>().ok().filter(|v| (1..=256).contains(v))?,
-                "a" => (*a_r, *a_g, *a_b) = parse_rgb(val)?,
-                "b" => (*b_r, *b_g, *b_b) = parse_rgb(val)?,
-                _ => return None,
-            }
-            Some(())
-        }
-        GeneratorKind::NoiseField { amount, mono } => {
-            match key {
-                "amt" => *amount = val.parse::<f64>().ok().filter(|v| v.is_finite())?,
-                "mono" => *mono = val != "0",
-                _ => return None,
-            }
-            Some(())
-        }
         GeneratorKind::SmpteBars { tone, tone_db } => {
             match key {
                 "tone" => *tone = val == "1",
@@ -1772,69 +1256,7 @@ fn apply_token(k: &mut GeneratorKind, key: &str, val: &str) -> Option<()> {
             }
             Some(())
         }
-        // --- R.53 (items 419-422) -------------------------------------------
-        // the backing has no parameters: any token is a broken path
-        GeneratorKind::Transparent => None,
-        GeneratorKind::Rect {
-            cx,
-            cy,
-            w,
-            h,
-            radius,
-            feather,
-            color_r,
-            color_g,
-            color_b,
-            color_a,
-        } => {
-            match key {
-                "cx" => *cx = unit(val)?,
-                "cy" => *cy = unit(val)?,
-                "w" => *w = span(val)?,
-                "h" => *h = span(val)?,
-                "rad" => *radius = unit(val)?,
-                "fe" => *feather = unit(val)?,
-                "c" => (*color_r, *color_g, *color_b, *color_a) = parse_rgba(val)?,
-                _ => return None,
-            }
-            Some(())
-        }
-        GeneratorKind::Ellipse { cx, cy, w, h, feather, color_r, color_g, color_b, color_a } => {
-            match key {
-                "cx" => *cx = unit(val)?,
-                "cy" => *cy = unit(val)?,
-                "w" => *w = span(val)?,
-                "h" => *h = span(val)?,
-                "fe" => *feather = unit(val)?,
-                "c" => (*color_r, *color_g, *color_b, *color_a) = parse_rgba(val)?,
-                _ => return None,
-            }
-            Some(())
-        }
-        GeneratorKind::Line {
-            x1,
-            y1,
-            x2,
-            y2,
-            thickness,
-            feather,
-            color_r,
-            color_g,
-            color_b,
-            color_a,
-        } => {
-            match key {
-                "x1" => *x1 = unit(val)?,
-                "y1" => *y1 = unit(val)?,
-                "x2" => *x2 = unit(val)?,
-                "y2" => *y2 = unit(val)?,
-                "th" => *thickness = unit(val)?,
-                "fe" => *feather = unit(val)?,
-                "c" => (*color_r, *color_g, *color_b, *color_a) = parse_rgba(val)?,
-                _ => return None,
-            }
-            Some(())
-        }
+        // --- R.53 (items 421-422) -------------------------------------------
         GeneratorKind::Leader { seconds, fps, beep, beep_db } => {
             match key {
                 "n" => *seconds = val.parse::<u32>().ok().filter(|v| (1..=60).contains(v))?,

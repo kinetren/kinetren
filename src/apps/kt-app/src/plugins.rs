@@ -27,7 +27,18 @@ pub fn manifest_keys() -> Vec<&'static str> {
         .plugins()
         .flat_map(|p| {
             let m = p.manifest();
-            [m.ui.category_key, m.ui.keywords_key, m.ui.name_key].into_iter().chain(m.ui.variants.iter().map(|v| v.name_key))
+            // a generator's declaration names its eyedroppers' captions and its value names (D13)
+            let gen_keys: Vec<&'static str> = p
+                .generator()
+                .map(|g| {
+                    let d = g.decl();
+                    d.colors.iter().map(|(_, k)| *k).chain(d.names.iter().flat_map(|(_, ks)| ks.iter().copied())).collect()
+                })
+                .unwrap_or_default();
+            [m.ui.category_key, m.ui.keywords_key, m.ui.name_key]
+                .into_iter()
+                .chain(m.ui.variants.iter().map(|v| v.name_key))
+                .chain(gen_keys)
         })
         .filter(|k| !k.is_empty())
         .collect()

@@ -92,16 +92,8 @@ pub fn kind_name(kind: &GeneratorKind) -> &'static str {
         // a kind this build lacks is named by its id (the placeholder frame says the same)
         GeneratorKind::Missing(m) => missing_name(m.id()),
         GeneratorKind::Text { .. } => tr(k::genkind::TEXT),
-        GeneratorKind::Gradient { .. } => tr(k::genkind::GRADIENT),
-        GeneratorKind::Corners { .. } => tr(k::genkind::CORNERS),
-        GeneratorKind::Checker { .. } => tr(k::genkind::CHECKER),
-        GeneratorKind::NoiseField { .. } => tr(k::genkind::NOISE),
         GeneratorKind::SmpteBars { .. } => tr(k::genkind::SMPTE),
         GeneratorKind::Timecode { .. } => tr(k::genkind::TIMECODE),
-        GeneratorKind::Transparent => tr(k::genkind::TRANSPARENT),
-        GeneratorKind::Rect { .. } => tr(k::genkind::RECT),
-        GeneratorKind::Ellipse { .. } => tr(k::genkind::ELLIPSE),
-        GeneratorKind::Line { .. } => tr(k::genkind::LINE),
         GeneratorKind::Leader { .. } => tr(k::genkind::LEADER),
         // the table variety is part of the NAME: there are five of them in the menu, and “just a table”
         // would not say which one (UI rule 18)
@@ -128,7 +120,6 @@ pub fn blank_default(kind: &GeneratorKind) -> bool {
     }
     match kind {
         GeneratorKind::Text { text, .. } => text.trim().is_empty(),
-        GeneratorKind::Transparent => true,
         _ => false,
     }
 }
@@ -181,18 +172,10 @@ impl GenGroup {
                 GenGroup::ALL.into_iter().find(|g| Some(g.key()) == cat).unwrap_or(GenGroup::Background)
             }
             GeneratorKind::Missing(_) => GenGroup::Background,
-            GeneratorKind::Gradient { .. }
-            | GeneratorKind::Corners { .. }
-            | GeneratorKind::Transparent
-            | GeneratorKind::NoiseField { .. } => GenGroup::Background,
-            GeneratorKind::Rect { .. }
-            | GeneratorKind::Ellipse { .. }
-            | GeneratorKind::Line { .. } => GenGroup::Shapes,
             GeneratorKind::Text { .. }
             | GeneratorKind::Timecode { .. }
             | GeneratorKind::Leader { .. } => GenGroup::Titles,
-            GeneratorKind::Checker { .. }
-            | GeneratorKind::SmpteBars { .. }
+            GeneratorKind::SmpteBars { .. }
             | GeneratorKind::TestPattern { .. }
             | GeneratorKind::WindowPattern { .. } => GenGroup::Check,
         }
@@ -208,27 +191,9 @@ pub(crate) fn color_groups(
     match kind {
         GeneratorKind::Plugin(p) => plugin_color_groups(p.manifest(), kind),
         GeneratorKind::Missing(_) => &[],
-        GeneratorKind::Gradient { .. } => {
-            &[(k::genw::COLOR_A, ["a_r", "a_g", "a_b"]), (k::genw::COLOR_B, ["b_r", "b_g", "b_b"])]
-        }
-        GeneratorKind::Corners { .. } => &[
-            (k::genw::CORNER_TL, ["tl_r", "tl_g", "tl_b"]),
-            (k::genw::CORNER_TR, ["tr_r", "tr_g", "tr_b"]),
-            (k::genw::CORNER_BL, ["bl_r", "bl_g", "bl_b"]),
-            (k::genw::CORNER_BR, ["br_r", "br_g", "br_b"]),
-        ],
-        GeneratorKind::Checker { .. } => {
-            &[(k::genw::COLOR_A, ["a_r", "a_g", "a_b"]), (k::genw::COLOR_B, ["b_r", "b_g", "b_b"])]
-        }
-        // shapes have a colour WITH ALPHA (R.53, item 419)
-        GeneratorKind::Rect { .. } | GeneratorKind::Ellipse { .. } | GeneratorKind::Line { .. } => {
-            &[(k::trn::COLOR, ["color_r", "color_g", "color_b"])]
-        }
         GeneratorKind::Text { .. }
-        | GeneratorKind::NoiseField { .. }
         | GeneratorKind::SmpteBars { .. }
         | GeneratorKind::Timecode { .. }
-        | GeneratorKind::Transparent
         | GeneratorKind::Leader { .. }
         | GeneratorKind::TestPattern { .. }
         | GeneratorKind::WindowPattern { .. } => &[],
@@ -244,11 +209,8 @@ pub(crate) fn color_alpha(kind: &GeneratorKind) -> Option<&'static str> {
         let want = format!("{stem}_a");
         return p.manifest().passport.iter().find(|s| s.name == want).map(|s| static_name(&s.name));
     }
-    matches!(
-        kind,
-        GeneratorKind::Rect { .. } | GeneratorKind::Ellipse { .. } | GeneratorKind::Line { .. }
-    )
-    .then_some("color_a")
+    // no enum kind has a four-component colour since the shapes became plugins
+    None
 }
 
 /// A missing kind's name is its id: interned once per id (only a file from a build with more

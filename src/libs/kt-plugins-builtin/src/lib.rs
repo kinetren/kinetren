@@ -16,7 +16,7 @@ pub const BUILTIN_IDS: &[&str] =
     "blocks", "spiral", "split", "squeeze", "stretch",
     "whip", "blur_dissolve", "pixelate", "glitch", "shake", "film_burn", "light_leaks", "zoom_blur",
     "swap", "flip", "cube", "door", "page_peel", "page_roll",
-    "solid",
+    "solid", "gradient", "corners", "checker", "noise", "transparent", "rect", "ellipse", "line",
 ];
 
 /// The registry of the built-in set; panics on a refusal or when the families do not give exactly

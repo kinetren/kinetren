@@ -293,7 +293,7 @@ once (English message, first line = the stage and what was done).
     `pixfont` and the shared helpers moved verbatim), `Media::Generator` registration checks; the
     codec reads the token table; the source, `info_for`, the factory (a named placeholder for a
     missing id) and the bin/menu by slot; move `solid` into `generators-basic`; t1048 green
-- [ ] 6.1b The rest of `generators-basic` (gradient corners checker noise transparent rect ellipse line)
+- [x] 6.1b The rest of `generators-basic` (gradient corners checker noise transparent rect ellipse line)
 - [ ] 6.1c `generators-test` (smpte timecode leader table window) with the sound and the table sorts
 - [ ] 6.1 Move the 14 non-title kinds into `generators-basic` and `generators-test`; the factory (`src/libs/kt-media/src/factory.rs`) asks the registry and raises a named placeholder for a missing id. Verify t469, t470, t471b, t504, t518, t560 and t973b (`src/libs/kt-media/src/factory.rs`) green
 - [ ] 6.2 The title into `generators-title` (kt-text dependency declared in t975's closed list) — or, if `text_anim_curves`/`migrate_gen_to_events` must stay in kt-model, keep `text` a core kind and record why here. Verify the title golden and t973 green; commit stage 6

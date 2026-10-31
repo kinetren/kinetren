@@ -1843,6 +1843,10 @@ fn t508_every_param_has_a_label() {
             if !matches!(spec.ty, kt_model::ParamType::Num) && covered.contains(&&*spec.name) {
                 continue;
             }
+            // a plugin kind's flag row is drawn by the flag row (checked below), not by the grid (D13)
+            if spec.ty == kt_model::ParamType::Flag && f.flag_specs().iter().any(|fl| fl.name == spec.name) {
+                continue;
+            }
             let label = crate::widgets::param_label_scoped(scope, &spec.name);
             // a caption equal to the field name — that is exactly “no key”
             if label == spec.name {
@@ -2015,7 +2019,7 @@ fn t669_generator_thumbs_follow_the_event_address() {
 
     // 1) the predicate “no frame will come” is honest
     assert!(crate::gen_ui::blank_default(&GeneratorKind::default_text()));
-    assert!(crate::gen_ui::blank_default(&GeneratorKind::Transparent));
+    assert!(crate::gen_ui::blank_default(&GeneratorKind::builtin("transparent")));
     assert!(!crate::gen_ui::blank_default(&GeneratorKind::solid(255, 136, 0)));
 
     // 2) the filmstrip and the coverage strip ask for the EVENT’S ADDRESS

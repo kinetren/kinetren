@@ -12006,7 +12006,7 @@ fn t666_generator_form_in_the_fx_window_reaches_the_model() {
 
     // ---- CURVE: “+ curve” → row -----------------------------------
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
-    h.state_mut().create_generator(GeneratorKind::NoiseField { amount: 0.5, mono: false });
+    h.state_mut().create_generator(GeneratorKind::plugin_with("noise", &[("amount", 0.5), ("mono", 0.0)]).unwrap());
     for _ in 0..3 {
         h.step();
     }

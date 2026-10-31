@@ -22,7 +22,7 @@ use std::borrow::Cow;
 
 use crate::{AudioBurst, MediaError, MediaInfo, MediaSource, Quality, VideoFrame};
 use kt_model::{GenState, GeneratorKind};
-use kt_plugin_api::generator::{coverage, isqrt, lowbias32};
+use kt_plugin_api::generator::isqrt;
 use kt_time::Tick;
 
 /// “Detail reserve” of a vector source: the generator draws sharply at any size,
@@ -126,7 +126,6 @@ fn depends_on_time(kind: &GeneratorKind) -> bool {
     }
     matches!(
         kind,
-        GeneratorKind::NoiseField { .. }
             | GeneratorKind::Timecode { .. }
             | GeneratorKind::Leader { .. }
     )
@@ -147,15 +146,7 @@ pub fn kind_has_alpha(kind: &GeneratorKind) -> bool {
         // a plugin kind declares it (D13); a missing one is drawn by its placeholder
         GeneratorKind::Plugin(_) => kind.kernel().is_some_and(|g| g.decl().alpha),
         GeneratorKind::Missing(_) => false,
-        GeneratorKind::Text { .. }
-        | GeneratorKind::Transparent
-        | GeneratorKind::Rect { .. }
-        | GeneratorKind::Ellipse { .. }
-        | GeneratorKind::Line { .. } => true,
-        GeneratorKind::Gradient { .. }
-        | GeneratorKind::Corners { .. }
-        | GeneratorKind::Checker { .. }
-        | GeneratorKind::NoiseField { .. }
+        GeneratorKind::Text { .. } => true,
         | GeneratorKind::SmpteBars { .. }
         | GeneratorKind::Timecode { .. }
         | GeneratorKind::Leader { .. }
@@ -177,121 +168,6 @@ fn render_at(kind: &GeneratorKind, pts: Tick, w: u32, h: u32) -> Box<[u8]> {
         // the factory opens a missing kind as a named placeholder; a source built by hand shows nothing
         GeneratorKind::Missing(_) => vec![0u8; n * 4].into_boxed_slice(),
         GeneratorKind::Text { .. } => kt_text::render_rgba(&text_params(kind, w, h), w, h),
-        GeneratorKind::Gradient { angle_deg, a_r, a_g, a_b, b_r, b_g, b_b } => {
-            // a projection of the normalised coordinates onto the direction of the angle,
-            // stretched over the whole frame: at any angle both colours are visible
-            let rad = angle_deg.to_radians();
-            let (dx, dy) = (rad.cos(), rad.sin());
-            let corners = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)]
-                .map(|(x, y): (f64, f64)| x * dx + y * dy);
-            let lo = corners.iter().cloned().fold(f64::INFINITY, f64::min);
-            let hi = corners.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let span = (hi - lo).max(1e-9);
-            let mut buf = vec![0u8; n * 4];
-            for y in 0..h as usize {
-                let ny = (y as f64 + 0.5) / h as f64;
-                for x in 0..w as usize {
-                    let nx = (x as f64 + 0.5) / w as f64;
-                    let t = ((nx * dx + ny * dy - lo) / span).clamp(0.0, 1.0);
-                    let mix = |a: u8, b: u8| {
-                        (a as f64 + (b as f64 - a as f64) * t).round().clamp(0.0, 255.0) as u8
-                    };
-                    let o = (y * w as usize + x) * 4;
-                    buf[o] = mix(*a_r, *b_r);
-                    buf[o + 1] = mix(*a_g, *b_g);
-                    buf[o + 2] = mix(*a_b, *b_b);
-                    buf[o + 3] = 255;
-                }
-            }
-            buf.into_boxed_slice()
-        }
-        GeneratorKind::Corners {
-            tl_r,
-            tl_g,
-            tl_b,
-            tr_r,
-            tr_g,
-            tr_b,
-            bl_r,
-            bl_g,
-            bl_b,
-            br_r,
-            br_g,
-            br_b,
-        } => {
-            let mut buf = vec![0u8; n * 4];
-            let bilerp = |tl: u8, tr: u8, bl: u8, br: u8, fx: f64, fy: f64| {
-                let top = tl as f64 + (tr as f64 - tl as f64) * fx;
-                let bot = bl as f64 + (br as f64 - bl as f64) * fx;
-                (top + (bot - top) * fy).round().clamp(0.0, 255.0) as u8
-            };
-            for y in 0..h as usize {
-                let fy = (y as f64 + 0.5) / h as f64;
-                for x in 0..w as usize {
-                    let fx = (x as f64 + 0.5) / w as f64;
-                    let o = (y * w as usize + x) * 4;
-                    buf[o] = bilerp(*tl_r, *tr_r, *bl_r, *br_r, fx, fy);
-                    buf[o + 1] = bilerp(*tl_g, *tr_g, *bl_g, *br_g, fx, fy);
-                    buf[o + 2] = bilerp(*tl_b, *tr_b, *bl_b, *br_b, fx, fy);
-                    buf[o + 3] = 255;
-                }
-            }
-            buf.into_boxed_slice()
-        }
-        GeneratorKind::Checker { cols, a_r, a_g, a_b, b_r, b_g, b_b } => {
-            // a cell is set by the COUNT of columns: the picture does not depend on
-            // Quality (or on the decode step): the cells are square in width
-            let cell = (w as f64 / (*cols).max(1) as f64).max(1.0);
-            let a = [*a_r, *a_g, *a_b, 255];
-            let b = [*b_r, *b_g, *b_b, 255];
-            let mut buf = vec![0u8; n * 4];
-            for y in 0..h as usize {
-                let cy = (y as f64 / cell) as u64;
-                for x in 0..w as usize {
-                    let cx = (x as f64 / cell) as u64;
-                    let o = (y * w as usize + x) * 4;
-                    buf[o..o + 4].copy_from_slice(if (cx + cy).is_multiple_of(2) {
-                        &a
-                    } else {
-                        &b
-                    });
-                }
-            }
-            buf.into_boxed_slice()
-        }
-        GeneratorKind::NoiseField { amount, mono } => {
-            // counter-based (the same lowbias32 as the Noise effect in
-            // kt-fx): grain = f(cell of the BASE grid 1920×1080, pts of the MATERIAL)
-            // — the picture is the same at any Quality/step, and a clip shift does not change
-            // the grain (invariant 11 in the generator’s edition).
-            // The full brightness range: “grey field”.
-            let frame_seed = lowbias32(pts.0 as u32 ^ 0x9e37_79b9);
-            let mut buf = vec![0u8; n * 4];
-            for y in 0..h as usize {
-                let ny = (y as u64 * 1080 / h.max(1) as u64) as u32;
-                let row_seed = lowbias32(ny ^ frame_seed.rotate_left(11));
-                for x in 0..w as usize {
-                    let nx = (x as u64 * 1920 / w.max(1) as u64) as u32;
-                    let s = lowbias32(nx ^ row_seed);
-                    let mixc = |v: u8| {
-                        (128.0 + (v as f64 - 128.0) * amount).round().clamp(0.0, 255.0) as u8
-                    };
-                    let o = (y * w as usize + x) * 4;
-                    if *mono {
-                        let v = mixc(s as u8);
-                        buf[o] = v;
-                        buf[o + 1] = v;
-                        buf[o + 2] = v;
-                    } else {
-                        buf[o] = mixc(s as u8);
-                        buf[o + 1] = mixc((s >> 8) as u8);
-                        buf[o + 2] = mixc((s >> 16) as u8);
-                    }
-                    buf[o + 3] = 255;
-                }
-            }
-            buf.into_boxed_slice()
-        }
         GeneratorKind::SmpteBars { .. } => {
             // a simplified table: the upper 2/3 are seven 75% bars,
             // the lower third are reference blocks (−I, white 100%, +Q, black, PLUGE);
@@ -340,102 +216,6 @@ fn render_at(kind: &GeneratorKind, pts: Tick, w: u32, h: u32) -> Box<[u8]> {
             c.buf.into_boxed_slice()
         }
         // --- R.53 (items 419-422): shapes, backdrop, countdown, tables ------
-        GeneratorKind::Transparent => vec![0u8; n * 4].into_boxed_slice(),
-        GeneratorKind::Rect { cx, cy, w: rw, h: rh, radius, feather, .. } => {
-            let (r, g, b, a) = shape_color(kind);
-            let (fw, fh) = (w.max(1) as i64, h.max(1) as i64);
-            // everything is in whole 1/256 px: float lives ONLY in the preamble
-            // of the frame (the kt-media/CLAUDE.md rule), the pixel loop is integer
-            let q = |v: f64| (v * 256.0).round() as i64;
-            let (ccx, ccy) = (q(cx * fw as f64), q(cy * fh as f64));
-            let (hx, hy) = (q(rw * fw as f64 / 2.0), q(rh * fh as f64 / 2.0));
-            let rad = q(radius * fh as f64).clamp(0, hx.min(hy));
-            let fe = q(feather * fh as f64).max(1);
-            let mut buf = vec![0u8; n * 4];
-            for y in 0..fh {
-                let py = (y * 256 + 128) - ccy;
-                for x in 0..fw {
-                    let px = (x * 256 + 128) - ccx;
-                    // signed distance to a rounded rectangle
-                    let dx = px.abs() - (hx - rad);
-                    let dy = py.abs() - (hy - rad);
-                    let d = if dx > 0 && dy > 0 {
-                        isqrt(dx * dx + dy * dy) - rad
-                    } else {
-                        dx.max(dy) - rad
-                    };
-                    let cov = coverage(d, fe);
-                    let o = ((y * fw + x) * 4) as usize;
-                    buf[o] = r;
-                    buf[o + 1] = g;
-                    buf[o + 2] = b;
-                    buf[o + 3] = ((a as i64 * cov) / 255) as u8;
-                }
-            }
-            buf.into_boxed_slice()
-        }
-        GeneratorKind::Ellipse { cx, cy, w: rw, h: rh, feather, .. } => {
-            let (r, g, b, a) = shape_color(kind);
-            let (fw, fh) = (w.max(1) as i64, h.max(1) as i64);
-            let q = |v: f64| (v * 256.0).round() as i64;
-            let (ccx, ccy) = (q(cx * fw as f64), q(cy * fh as f64));
-            let (hx, hy) = (q(rw * fw as f64 / 2.0).max(1), q(rh * fh as f64 / 2.0).max(1));
-            let fe = q(feather * fh as f64).max(1);
-            let mut buf = vec![0u8; n * 4];
-            for y in 0..fh {
-                let py = (y * 256 + 128) - ccy;
-                for x in 0..fw {
-                    let px = (x * 256 + 128) - ccx;
-                    // normalised distance ×min(hx,hy): an approximation of the
-                    // signed distance, exact on the circle
-                    let m = hx.min(hy);
-                    let ex = px * m / hx;
-                    let ey = py * m / hy;
-                    let d = isqrt(ex * ex + ey * ey) - m;
-                    let cov = coverage(d, fe);
-                    let o = ((y * fw + x) * 4) as usize;
-                    buf[o] = r;
-                    buf[o + 1] = g;
-                    buf[o + 2] = b;
-                    buf[o + 3] = ((a as i64 * cov) / 255) as u8;
-                }
-            }
-            buf.into_boxed_slice()
-        }
-        GeneratorKind::Line { x1, y1, x2, y2, thickness, feather, .. } => {
-            let (r, g, b, a) = shape_color(kind);
-            let (fw, fh) = (w.max(1) as i64, h.max(1) as i64);
-            let q = |v: f64| (v * 256.0).round() as i64;
-            let (ax, ay) = (q(x1 * fw as f64), q(y1 * fh as f64));
-            let (bx, by) = (q(x2 * fw as f64), q(y2 * fh as f64));
-            let half = q(thickness * fh as f64 / 2.0).max(1);
-            let fe = q(feather * fh as f64).max(1);
-            let (vx, vy) = (bx - ax, by - ay);
-            let len2 = vx * vx + vy * vy;
-            let mut buf = vec![0u8; n * 4];
-            for y in 0..fh {
-                let py = (y * 256 + 128) - ay;
-                for x in 0..fw {
-                    let px = (x * 256 + 128) - ax;
-                    // projection onto a segment with a clamp: a capsule
-                    let t = if len2 == 0 {
-                        0
-                    } else {
-                        ((px * vx + py * vy) * 256 / len2).clamp(0, 256)
-                    };
-                    let qx = px - vx * t / 256;
-                    let qy = py - vy * t / 256;
-                    let d = isqrt(qx * qx + qy * qy) - half;
-                    let cov = coverage(d, fe);
-                    let o = ((y * fw + x) * 4) as usize;
-                    buf[o] = r;
-                    buf[o + 1] = g;
-                    buf[o + 2] = b;
-                    buf[o + 3] = ((a as i64 * cov) / 255) as u8;
-                }
-            }
-            buf.into_boxed_slice()
-        }
         GeneratorKind::Leader { seconds, fps, .. } => {
             leader_frame(pts, *seconds, (*fps).max(1), w.max(1), h.max(1))
         }
@@ -488,19 +268,6 @@ fn tone_1k(idx: i64, db: f64, gate: impl Fn(i64) -> bool) -> AudioBurst {
 }
 
 
-
-/// The shape’s colour: in one place for the three kinds (all three fields are named
-/// the same way, but the enum variants differ).
-fn shape_color(kind: &GeneratorKind) -> (u8, u8, u8, u8) {
-    match kind {
-        GeneratorKind::Rect { color_r, color_g, color_b, color_a, .. }
-        | GeneratorKind::Ellipse { color_r, color_g, color_b, color_a, .. }
-        | GeneratorKind::Line { color_r, color_g, color_b, color_a, .. } => {
-            (*color_r, *color_g, *color_b, *color_a)
-        }
-        _ => (255, 255, 255, 255),
-    }
-}
 
 /// Engineering table (R.53, item 422). The numbers are frozen by test t531.
 ///
@@ -952,7 +719,7 @@ mod tests {
         assert_eq!(again.rgba, a.rgba);
 
         // the live view (noise) does not use the quality cache at all
-        let mut n = GeneratorSource::new(GeneratorKind::NoiseField { amount: 1.0, mono: true });
+        let mut n = GeneratorSource::new(GeneratorKind::builtin("noise"));
         let f1 = n.read_video_frame(Tick(0), Some(q1)).unwrap();
         let f2 = n.read_video_frame(Tick(3000), Some(q1)).unwrap();
         assert_ne!(f1.rgba, f2.rgba, "noise must depend on time");
@@ -964,7 +731,10 @@ mod tests {
     /// has the same cells (independence from Quality and the scale step).
     #[test]
     fn t491_noise_field_is_counter_based() {
-        let mk = |amount: f64, mono: bool| GeneratorKind::NoiseField { amount, mono };
+        kt_plugins_builtin::install();
+        let mk = |amount: f64, mono: bool| {
+            GeneratorKind::plugin_with("noise", &[("amount", amount), ("mono", if mono { 1.0 } else { 0.0 })]).unwrap()
+        };
         let q = Quality { width: 1920, height: 1080 };
         let mut s = GeneratorSource::new(mk(1.0, true));
         let a = s.read_video_frame(Tick(3000), Some(q)).unwrap();
@@ -1102,7 +872,7 @@ mod tests {
             assert_eq!(f.has_alpha, want, "{}: the frame and the alpha rule diverged", k.tag());
         }
         // backing — EXACTLY zeros: a placeholder paints nothing
-        let mut t = GeneratorSource::new(GeneratorKind::Transparent);
+        let mut t = GeneratorSource::new(GeneratorKind::builtin("transparent"));
         let f = t.read_video_frame(Tick(0), Some(q)).unwrap();
         assert!(f.rgba.iter().all(|v| *v == 0), "the backing must be empty");
         assert!(f.has_alpha);

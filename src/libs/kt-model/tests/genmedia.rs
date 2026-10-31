@@ -224,7 +224,7 @@ fn t475_set_media_path_command() {
     m.apply(Command::SetMediaPath { id: MediaId(1), path: "gen:gradient".into() }).unwrap();
     assert_eq!(m.project().media[0].path, "gen:gradient");
     assert!(
-        matches!(m.project().clips[0].r#gen, Some(kt_model::GeneratorKind::Gradient { .. })),
+        m.project().clips[0].r#gen.as_ref().is_some_and(|g| g.tag() == "gradient"),
         "an event must be updated together with the media"
     );
 
@@ -285,7 +285,7 @@ fn t510_generator_flags_are_complete_and_roundtrip() {
     // and the main consequence: “tone on” and “coloured noise” are expressible
     let tone = GeneratorKind::SmpteBars { tone: true, tone_db: -20.0 };
     assert_eq!(tone.get_flag("tone"), Some(true));
-    let colour = GeneratorKind::NoiseField { amount: 1.0, mono: false };
+    let colour = GeneratorKind::plugin_with("noise", &[("mono", 0.0)]).unwrap();
     assert_eq!(colour.get_flag("mono"), Some(false));
 }
 
@@ -311,8 +311,8 @@ fn t524_new_kinds_round_trip_through_the_path() {
         assert!(p.starts_with("gen:table"), "{p}");
         assert_eq!(parse_gen_path(&p), Some(k), "{p}");
     }
-    assert_eq!(format_gen_path(&GeneratorKind::Transparent), "gen:transparent");
-    assert_eq!(parse_gen_path("gen:transparent"), Some(GeneratorKind::Transparent));
+    assert_eq!(format_gen_path(&GeneratorKind::builtin("transparent")), "gen:transparent");
+    assert_eq!(parse_gen_path("gen:transparent"), Some(GeneratorKind::builtin("transparent")));
     assert_eq!(parse_gen_path("gen:transparent:c=ff0000"), None, "a backdrop has no parameters");
 
     // values outside the range — an error, not a silent clamp
@@ -325,10 +325,10 @@ fn t524_new_kinds_round_trip_through_the_path() {
 
     // a shape colour — WITH ALPHA (eight hex digits)
     let path = "gen:rect:c=ff8800c0";
-    let Some(GeneratorKind::Rect { color_r, color_a, .. }) = parse_gen_path(path) else {
+    let Some(rect) = parse_gen_path(path) else {
         panic!("{path} did not parse");
     };
-    assert_eq!((color_r, color_a), (0xff, 0xc0));
+    assert_eq!((rect.get_param("color_r"), rect.get_param("color_a")), (Some(255.0), Some(192.0)));
     assert_eq!(parse_gen_path("gen:rect:c=ff8800"), None, "six digits — this is the path without alpha");
 }
 

@@ -1163,7 +1163,7 @@ const FLAT: u64 = 5; // a STATIC view: the frame does not depend on time at all
 fn gen_kind() -> GeneratorKind {
     // counter-based noise: grain = f(tick of the material), so ANY shift of the tick changes the whole frame —
     // “jerks or not” is visible without thresholds
-    GeneratorKind::NoiseField { amount: 1.0, mono: true }
+    GeneratorKind::builtin("noise")
 }
 
 /// A flat fill: the frame does NOT depend on time, so the only source of motion in the fixture remains
