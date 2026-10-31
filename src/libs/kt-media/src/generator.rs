@@ -22,7 +22,6 @@ use std::borrow::Cow;
 
 use crate::{AudioBurst, MediaError, MediaInfo, MediaSource, Quality, VideoFrame};
 use kt_model::{GenState, GeneratorKind};
-use kt_plugin_api::generator::isqrt;
 use kt_time::Tick;
 
 /// “Detail reserve” of a vector source: the generator draws sharply at any size,
@@ -70,10 +69,7 @@ impl GeneratorSource {
     /// live source can be reconfigured: `retune` MUST not change `info()`.
     pub fn info_for(kind: &GeneratorKind) -> MediaInfo {
         // the only sounding kind: SMPTE with the tone enabled
-        let has_audio = matches!(
-            kind,
-            GeneratorKind::SmpteBars { tone: true, .. } | GeneratorKind::Leader { beep: true, .. }
-        ) || plugin_tone(kind).is_some();
+        let has_audio = plugin_tone(kind).is_some();
         MediaInfo {
             // “no duration”: when dropped, the UI substitutes its own default
             // (5 s), the trim is not limited, and there is no EOF.
@@ -121,14 +117,8 @@ impl GeneratorSource {
 /// included here: its animation became ordinary curves (R.59, stage 2), and the
 /// curves are seen by `GenState::animated`.
 fn depends_on_time(kind: &GeneratorKind) -> bool {
-    if let Some(g) = kind.kernel() {
-        return g.decl().live;
-    }
-    matches!(
-        kind,
-            | GeneratorKind::Timecode { .. }
-            | GeneratorKind::Leader { .. }
-    )
+    // a plugin kind declares it (D13); the title moves only by its curves
+    kind.kernel().is_some_and(|g| g.decl().live)
 }
 
 /// A plugin kind's level when it sounds with its values (D13): the host's one `tone_1k` plays it.
@@ -147,11 +137,6 @@ pub fn kind_has_alpha(kind: &GeneratorKind) -> bool {
         GeneratorKind::Plugin(_) => kind.kernel().is_some_and(|g| g.decl().alpha),
         GeneratorKind::Missing(_) => false,
         GeneratorKind::Text { .. } => true,
-        | GeneratorKind::SmpteBars { .. }
-        | GeneratorKind::Timecode { .. }
-        | GeneratorKind::Leader { .. }
-        | GeneratorKind::TestPattern { .. }
-        | GeneratorKind::WindowPattern { .. } => false,
     }
 }
 
@@ -168,81 +153,7 @@ fn render_at(kind: &GeneratorKind, pts: Tick, w: u32, h: u32) -> Box<[u8]> {
         // the factory opens a missing kind as a named placeholder; a source built by hand shows nothing
         GeneratorKind::Missing(_) => vec![0u8; n * 4].into_boxed_slice(),
         GeneratorKind::Text { .. } => kt_text::render_rgba(&text_params(kind, w, h), w, h),
-        GeneratorKind::SmpteBars { .. } => {
-            // a simplified table: the upper 2/3 are seven 75% bars,
-            // the lower third are reference blocks (−I, white 100%, +Q, black, PLUGE);
-            // the values are deterministic and frozen by the test
-            const TOP: [[u8; 3]; 7] = [
-                [191, 191, 191],
-                [191, 191, 0],
-                [0, 191, 191],
-                [0, 191, 0],
-                [191, 0, 191],
-                [191, 0, 0],
-                [0, 0, 191],
-            ];
-            const BOTTOM: [[u8; 3]; 5] =
-                [[0, 33, 76], [255, 255, 255], [50, 0, 106], [0, 0, 0], [16, 16, 16]];
-            let mut buf = vec![0u8; n * 4];
-            let split = (h as usize * 2) / 3;
-            for y in 0..h as usize {
-                let (bands, m): (&[[u8; 3]], usize) =
-                    if y < split { (&TOP, 7) } else { (&BOTTOM, 5) };
-                for x in 0..w as usize {
-                    let i = (x * m / w.max(1) as usize).min(m - 1);
-                    let c = bands[i];
-                    let o = (y * w as usize + x) * 4;
-                    buf[o] = c[0];
-                    buf[o + 1] = c[1];
-                    buf[o + 2] = c[2];
-                    buf[o + 3] = 255;
-                }
-            }
-            buf.into_boxed_slice()
-        }
-        GeneratorKind::Timecode { fps } => {
-            let fps = (*fps).max(1) as i64;
-            let t = pts.0.max(0);
-            let secs = t / 90_000;
-            let ff = (t % 90_000) * fps / 90_000;
-            let label =
-                format!("{:02}:{:02}:{:02}:{:02}", secs / 3600, secs % 3600 / 60, secs % 60, ff);
-            let mut c = crate::pixfont::Canvas::new(w.max(1), h.max(1), [0, 0, 0, 255]);
-            let chars = label.chars().count();
-            let s = ((c.w * 4 / 5) / crate::pixfont::text_width(chars, 1).max(1)).clamp(1, 40);
-            let tx = (c.w - crate::pixfont::text_width(chars, s)) / 2;
-            let ty = (c.h - 5 * s) / 2;
-            c.text(tx, ty, s, &label, [235, 235, 235, 255]);
-            c.buf.into_boxed_slice()
-        }
         // --- R.53 (items 419-422): shapes, backdrop, countdown, tables ------
-        GeneratorKind::Leader { seconds, fps, .. } => {
-            leader_frame(pts, *seconds, (*fps).max(1), w.max(1), h.max(1))
-        }
-        GeneratorKind::TestPattern { table } => table_frame(*table, w.max(1), h.max(1)),
-        GeneratorKind::WindowPattern { area, level } => {
-            let (fw, fh) = (w.max(1) as i64, h.max(1) as i64);
-            let lv = (level.clamp(0.0, 1.0) * 255.0).round() as u8;
-            // the share of AREA → the side in fractions of the frame: the window is similar to the frame
-            let side = area.clamp(0.0, 1.0).sqrt();
-            let (hw, hh) = (
-                ((side * fw as f64) / 2.0).round() as i64,
-                ((side * fh as f64) / 2.0).round() as i64,
-            );
-            let mut buf = vec![0u8; n * 4];
-            for y in 0..fh {
-                let inside_y = (y - fh / 2).abs() < hh;
-                for x in 0..fw {
-                    let v = if inside_y && (x - fw / 2).abs() < hw { lv } else { 0 };
-                    let o = ((y * fw + x) * 4) as usize;
-                    buf[o] = v;
-                    buf[o + 1] = v;
-                    buf[o + 2] = v;
-                    buf[o + 3] = 255;
-                }
-            }
-            buf.into_boxed_slice()
-        }
     }
 }
 
@@ -267,163 +178,6 @@ fn tone_1k(idx: i64, db: f64, gate: impl Fn(i64) -> bool) -> AudioBurst {
     b
 }
 
-
-
-/// Engineering table (R.53, item 422). The numbers are frozen by test t531.
-///
-/// 75% bars: eight vertical columns in descending order of brightness
-/// (white, yellow, cyan, green, magenta, red, blue, black);
-/// 75% of the 8-bit scale is 191. `[NOT VERIFIED]` against the paper
-/// EBU 3213: the original source is paid, so the values are taken from the common
-/// table and frozen here.
-fn table_frame(t: kt_model::TestTable, w: u32, h: u32) -> Box<[u8]> {
-    use kt_model::TestTable as T;
-    let (fw, fh) = (w as usize, h as usize);
-    let mut buf = vec![0u8; fw * fh * 4];
-    match t {
-        T::Ebu75 | T::Ebu100 => {
-            let v: u8 = if t == T::Ebu75 { 191 } else { 255 };
-            let bars: [[u8; 3]; 8] = [
-                [v, v, v],
-                [v, v, 0],
-                [0, v, v],
-                [0, v, 0],
-                [v, 0, v],
-                [v, 0, 0],
-                [0, 0, v],
-                [0, 0, 0],
-            ];
-            for y in 0..fh {
-                for x in 0..fw {
-                    let c = bars[(x * 8 / fw).min(7)];
-                    let o = (y * fw + x) * 4;
-                    buf[o..o + 3].copy_from_slice(&c);
-                    buf[o + 3] = 255;
-                }
-            }
-        }
-        T::Grayscale | T::Steps10 => {
-            for y in 0..fh {
-                for x in 0..fw {
-                    let g = if t == T::Grayscale {
-                        (x * 255 / (fw - 1).max(1)) as u8
-                    } else {
-                        let step = (x * 10 / fw).min(9);
-                        (step * 255 / 9) as u8
-                    };
-                    let o = (y * fw + x) * 4;
-                    buf[o] = g;
-                    buf[o + 1] = g;
-                    buf[o + 2] = g;
-                    buf[o + 3] = 255;
-                }
-            }
-        }
-        T::RampYcbcr => {
-            // the BT.709 chroma plane at constant luminance: Cb along X,
-            // Cr along Y. The coefficients are in the preamble (tables by columns and
-            // rows), the pixel loop is integer.
-            let cb: Vec<i32> =
-                (0..fw).map(|x| (16 + (x * 224 / (fw - 1).max(1))) as i32 - 128).collect();
-            let cr: Vec<i32> =
-                (0..fh).map(|y| (16 + (y * 224 / (fh - 1).max(1))) as i32 - 128).collect();
-            const Y: i32 = 128;
-            for (y, cr_y) in cr.iter().enumerate() {
-                let (r_cr, g_cr) = ((1_5748 * cr_y) / 1_0000, (-4681 * cr_y) / 1_0000);
-                for (x, cb_x) in cb.iter().enumerate() {
-                    let g_cb = (-1873 * cb_x) / 1_0000;
-                    let b_cb = (1_8556 * cb_x) / 1_0000;
-                    let o = (y * fw + x) * 4;
-                    buf[o] = (Y + r_cr).clamp(0, 255) as u8;
-                    buf[o + 1] = (Y + g_cb + g_cr).clamp(0, 255) as u8;
-                    buf[o + 2] = (Y + b_cb).clamp(0, 255) as u8;
-                    buf[o + 3] = 255;
-                }
-            }
-        }
-    }
-    buf.into_boxed_slice()
-}
-
-/// A countdown frame (R.53, item 421): a cross, a circle, a sweeping
-/// sector and the digit of the seconds. The time is the MATERIAL’s pts, as for timecode.
-///
-/// The last frame before zero is a “2-pop”: a white field EXACTLY `1/fps` long.
-fn leader_frame(pts: Tick, seconds: u32, fps: u32, w: u32, h: u32) -> Box<[u8]> {
-    let total = seconds.max(1) as i64 * 90_000;
-    let t = pts.0.clamp(0, total);
-    let left = total - t; // how much is left until zero, in ticks
-    let frame_ticks = 90_000 / fps as i64;
-    let (fw, fh) = (w as i64, h as i64);
-    let mut c = crate::pixfont::Canvas::new(w, h, [16, 16, 16, 255]);
-    // 2-pop: exactly one frame of the white field before zero
-    if left <= frame_ticks {
-        for px in c.buf.chunks_exact_mut(4) {
-            px.copy_from_slice(&[235, 235, 235, 255]);
-        }
-        return c.buf.into_boxed_slice();
-    }
-    let (cx, cy) = (fw / 2, fh / 2);
-    let radius = fw.min(fh) * 2 / 5;
-    let white = [220u8, 220, 220, 255];
-    // a cross across the whole frame: two bars 1/200 of the smaller side thick
-    let bar = (fw.min(fh) / 200).max(1);
-    for y in 0..fh {
-        for x in 0..fw {
-            let on_cross = (x - cx).abs() <= bar || (y - cy).abs() <= bar;
-            // circle: a ring of the same thickness
-            let d = isqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
-            let on_ring = (d - radius).abs() <= bar;
-            // sweeping sector: the sign of the vector product (no atan2)
-            let phase = ((left % 90_000) * 4) / 90_000; // a quarter, 0..3
-            let rem = (left % 90_000) * 4 - phase * 90_000; // 0..90_000
-            let (dx, dy) = (x - cx, y - cy);
-            let swept = d <= radius && sector_covers(dx, dy, phase, rem);
-            let o = ((y * fw + x) * 4) as usize;
-            if on_cross || on_ring {
-                c.buf[o..o + 4].copy_from_slice(&white);
-            } else if swept {
-                c.buf[o..o + 4].copy_from_slice(&[60, 60, 60, 255]);
-            }
-        }
-    }
-    // the seconds digit: how many FULL seconds are left, at least 1
-    let digit = ((left + 89_999) / 90_000).max(1).to_string();
-    let chars = digit.chars().count();
-    let s = ((c.h / 3) / 5).clamp(1, 60);
-    let tx = (c.w - crate::pixfont::text_width(chars, s)) / 2;
-    let ty = (c.h - 5 * s) / 2;
-    c.text(tx, ty, s, &digit, [245, 245, 245, 255]);
-    c.buf.into_boxed_slice()
-}
-
-/// Whether the ray (dx, dy) is covered by the sweeping sector. Integer signs of
-/// vector products instead of atan2 (the rule “float only in the preamble”):
-/// the sector grows clockwise from “12 o’clock”.
-fn sector_covers(dx: i64, dy: i64, phase: i64, rem: i64) -> bool {
-    // the quadrant of a point, counting from “12 o’clock” clockwise: 0 = right-up
-    let quad = match (dx >= 0, dy < 0) {
-        (true, true) => 0,
-        (true, false) => 1,
-        (false, false) => 2,
-        (false, true) => 3,
-    };
-    if quad < phase {
-        return true;
-    }
-    if quad > phase {
-        return false;
-    }
-    // inside the current quadrant: the share traversed along the chord: a comparison of
-    // |across| and |along| via a vector product with the boundary
-    let (a, b) = match quad {
-        0 => (dx, -dy),
-        1 => (dy, dx),
-        2 => (-dx, dy),
-        _ => (-dy, -dx),
-    };
-    a * 90_000 >= rem * (a + b).max(1)
-}
 
 
 /// The layout of a title in the pixels of a `w`×`h` frame, for the drag frame in the
@@ -548,27 +302,6 @@ impl MediaSource for GeneratorSource {
             let values = p.values.clone();
             return Ok(tone_1k(idx, db, |n| g.gate(&values, n)));
         }
-        if let GeneratorKind::SmpteBars { tone: true, tone_db } = &self.state.kind {
-            return Ok(tone_1k(idx, *tone_db, |_| true));
-        }
-        // The countdown beep (R.53, item 421): the SAME code as the SMPTE tone, only
-        // with a gate: it sounds exactly on whole seconds, 1/fps long, and
-        // is silent the rest of the time. The phase is taken from the GLOBAL sample
-        // number, so seek does not click (as with the tone).
-        if let GeneratorKind::Leader { seconds, fps, beep: true, beep_db } = &self.state.kind {
-            let total = (*seconds).max(1) as i64 * 90_000;
-            let step = 90_000 / (*fps).max(1) as i64;
-            return Ok(tone_1k(idx, *beep_db, |n| {
-                // sample number → material tick (48 kHz → 90 kHz, exact)
-                let t = n * 90_000 / 48_000;
-                if t < 0 || t > total {
-                    return false;
-                }
-                // a beep at the START of each second of the material, 1/fps long,
-                // and the same one on the “2-pop” (the end of the countdown is also a whole second)
-                t % 90_000 < step || total - t <= step
-            }));
-        }
         Ok(AudioBurst::silence(idx))
     }
 
@@ -681,10 +414,10 @@ mod tests {
 
         // refusals: broken path, foreign schema, passport change (SMPTE tone)
         let mut smpte =
-            GeneratorSource::new(GeneratorKind::SmpteBars { tone: false, tone_db: -20.0 });
+            GeneratorSource::new(GeneratorKind::plugin_with("smpte", &[("tone", 0.0), ("tone_db", -20.0)]).unwrap());
         let paspt = smpte.info().clone();
         let with_tone =
-            kt_model::format_gen_path(&GeneratorKind::SmpteBars { tone: true, tone_db: -20.0 });
+            kt_model::format_gen_path(&GeneratorKind::plugin_with("smpte", &[("tone", 1.0), ("tone_db", -20.0)]).unwrap());
         assert!(!smpte.retune(&with_tone), "enabling the tone changes the passport — only recreation");
         assert_eq!(smpte.info(), &paspt, "refusal changes nothing");
         assert!(!smpte.retune("gen:unknown"));
@@ -765,22 +498,22 @@ mod tests {
     /// 1 kHz tone is byte-for-byte and audible at its level; the top band is 75% gray.
     #[test]
     fn t492_smpte_tone_and_bars() {
-        let silent = GeneratorSource::new(GeneratorKind::SmpteBars { tone: false, tone_db: -20.0 });
+        let silent = GeneratorSource::new(GeneratorKind::plugin_with("smpte", &[("tone", 0.0), ("tone_db", -20.0)]).unwrap());
         assert!(!silent.info().has_audio, "without a tone no audio clip is created");
         let mut loud =
-            GeneratorSource::new(GeneratorKind::SmpteBars { tone: true, tone_db: -20.0 });
+            GeneratorSource::new(GeneratorKind::plugin_with("smpte", &[("tone", 1.0), ("tone_db", -20.0)]).unwrap());
         assert!(loud.info().has_audio);
         let a = loud.read_audio_burst(3).unwrap();
         let b = loud.read_audio_burst(3).unwrap();
         assert_eq!(a.data.as_slice(), b.data.as_slice(), "the tone is byte for byte");
         let peak = a.data.iter().fold(0f32, |m, v| m.max(v.abs()));
         assert!((peak - 0.1).abs() < 0.01, "−20 dBFS ≈ 0.1: {peak}");
-        let mut hot = GeneratorSource::new(GeneratorKind::SmpteBars { tone: true, tone_db: -6.0 });
+        let mut hot = GeneratorSource::new(GeneratorKind::plugin_with("smpte", &[("tone", 1.0), ("tone_db", -6.0)]).unwrap());
         let h = hot.read_audio_burst(3).unwrap();
         let hpeak = h.data.iter().fold(0f32, |m, v| m.max(v.abs()));
         assert!(hpeak > peak * 3.0, "the level obeys the parameter");
 
-        let f = GeneratorSource::new(GeneratorKind::SmpteBars { tone: false, tone_db: -20.0 })
+        let f = GeneratorSource::new(GeneratorKind::plugin_with("smpte", &[("tone", 0.0), ("tone_db", -20.0)]).unwrap())
             .read_video_frame(Tick(0), Some(Quality { width: 700, height: 300 }))
             .unwrap();
         assert_eq!(&f.rgba[..4], &[191, 191, 191, 255], "first bar — 75 % grey");
@@ -790,7 +523,7 @@ mod tests {
     #[test]
     fn t493_timecode_frames_follow_material() {
         let q = Quality { width: 640, height: 360 };
-        let mut s = GeneratorSource::new(GeneratorKind::Timecode { fps: 30 });
+        let mut s = GeneratorSource::new(GeneratorKind::plugin_with("timecode", &[("fps", 30.0)]).unwrap());
         let a = s.read_video_frame(Tick(0), Some(q)).unwrap();
         let a2 = s.read_video_frame(Tick(0), Some(q)).unwrap();
         assert_eq!(a.rgba, a2.rgba);
@@ -800,7 +533,7 @@ mod tests {
         let c = s.read_video_frame(Tick(90_000 + 2_999), Some(q)).unwrap();
         assert_eq!(b.rgba, c.rgba, "within a frame the timecode does not jitter");
         // fps is a parameter: same pts, different frame counter
-        let mut s60 = GeneratorSource::new(GeneratorKind::Timecode { fps: 60 });
+        let mut s60 = GeneratorSource::new(GeneratorKind::plugin_with("timecode", &[("fps", 60.0)]).unwrap());
         let d = s60.read_video_frame(Tick(90_000 + 2_999), Some(q)).unwrap();
         assert_ne!(c.rgba, d.rgba, "fps changes the FF field");
     }
@@ -942,31 +675,34 @@ mod tests {
     /// values is a picture, not a measurement signal.
     #[test]
     fn t531_table_numbers_are_frozen() {
-        use kt_model::TestTable;
+        kt_plugins_builtin::install();
+        // the five tables are the five creation-menu rows of `table`, in their order
+        let tables = GeneratorKind::menu_rows("table");
+        let (ebu75, ebu100, grey, steps) = (0, 1, 2, 3);
         let q = Quality { width: 160, height: 40 };
         // the middle of band number `i` of `n` is the pad center, not the edge
-        let band = |t: TestTable, i: u32, n: u32| {
-            let mut s = GeneratorSource::new(GeneratorKind::TestPattern { table: t });
+        let band = |t: usize, i: u32, n: u32| {
+            let mut s = GeneratorSource::new(tables[t].clone());
             let f = s.read_video_frame(Tick(0), Some(q)).unwrap();
             let x = (i * 2 + 1) * 160 / (n * 2);
             let o = ((20 * 160 + x) * 4) as usize;
             [f.rgba[o], f.rgba[o + 1], f.rgba[o + 2]]
         };
-        let bar = |t: TestTable, i: u32| band(t, i, 8);
+        let bar = |t: usize, i: u32| band(t, i, 8);
         // 75% of the 8-bit scale — 191; order of decreasing brightness
-        assert_eq!(bar(TestTable::Ebu75, 0), [191, 191, 191], "white bar 75 %");
-        assert_eq!(bar(TestTable::Ebu75, 1), [191, 191, 0], "yellow");
-        assert_eq!(bar(TestTable::Ebu75, 2), [0, 191, 191], "cyan");
-        assert_eq!(bar(TestTable::Ebu75, 7), [0, 0, 0], "black");
-        assert_eq!(bar(TestTable::Ebu100, 0), [255, 255, 255], "white bar 100 %");
-        assert_eq!(bar(TestTable::Ebu100, 6), [0, 0, 255], "blue at full");
+        assert_eq!(bar(ebu75, 0), [191, 191, 191], "white bar 75 %");
+        assert_eq!(bar(ebu75, 1), [191, 191, 0], "yellow");
+        assert_eq!(bar(ebu75, 2), [0, 191, 191], "cyan");
+        assert_eq!(bar(ebu75, 7), [0, 0, 0], "black");
+        assert_eq!(bar(ebu100, 0), [255, 255, 255], "white bar 100 %");
+        assert_eq!(bar(ebu100, 6), [0, 0, 255], "blue at full");
         // steps: ten even plateaus from 0 to 255
-        assert_eq!(band(TestTable::Steps10, 0, 10), [0, 0, 0]);
-        assert_eq!(band(TestTable::Steps10, 7, 10), [198, 198, 198], "seventh of ten steps");
-        assert_eq!(band(TestTable::Steps10, 9, 10), [255, 255, 255]);
+        assert_eq!(band(steps, 0, 10), [0, 0, 0]);
+        assert_eq!(band(steps, 7, 10), [198, 198, 198], "seventh of ten steps");
+        assert_eq!(band(steps, 9, 10), [255, 255, 255]);
         // the gray scale is continuous and monotonic along X
         let mut g =
-            GeneratorSource::new(GeneratorKind::TestPattern { table: TestTable::Grayscale });
+            GeneratorSource::new(tables[grey].clone());
         let f = g.read_video_frame(Tick(0), Some(q)).unwrap();
         let v = |x: u32| f.rgba[((20 * 160 + x) * 4) as usize];
         assert_eq!(v(0), 0);

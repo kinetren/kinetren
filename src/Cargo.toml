@@ -27,6 +27,7 @@ members = [
     "plugins/transitions-styled",
     "plugins/transitions-volume",
     "plugins/generators-basic",
+    "plugins/generators-test",
 ]
 
 [workspace.package]
@@ -59,6 +60,7 @@ transitions-basic = { path = "plugins/transitions-basic" }
 transitions-styled = { path = "plugins/transitions-styled" }
 transitions-volume = { path = "plugins/transitions-volume" }
 generators-basic = { path = "plugins/generators-basic" }
+generators-test = { path = "plugins/generators-test" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

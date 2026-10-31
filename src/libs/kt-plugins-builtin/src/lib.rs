@@ -17,6 +17,7 @@ pub const BUILTIN_IDS: &[&str] =
     "whip", "blur_dissolve", "pixelate", "glitch", "shake", "film_burn", "light_leaks", "zoom_blur",
     "swap", "flip", "cube", "door", "page_peel", "page_roll",
     "solid", "gradient", "corners", "checker", "noise", "transparent", "rect", "ellipse", "line",
+    "smpte", "timecode", "leader", "table", "window",
 ];
 
 /// The registry of the built-in set; panics on a refusal or when the families do not give exactly
@@ -33,6 +34,7 @@ pub fn builtin() -> Registry {
         transitions_styled::plugins(),
         transitions_volume::plugins(),
         generators_basic::plugins(),
+        generators_test::plugins(),
     ];
     for p in families.into_iter().flatten() {
         let id = p.manifest().id.to_string();

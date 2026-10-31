@@ -98,24 +98,23 @@ of a type means changing the format.
   recreating the source is the concern of the call-site, `sync_media_sources`).
 - The string values of tokens (the title text, C2) are escaped by
   `escape_gen_value`/`unescape_gen_value` — lossless for any string.
-- A new kind: a variant AT THE END of the enum + an arm in `parse/format/apply_token` +
-  the specs + a picker line ×5 catalogues + rendering in kt-media + a determinism test.
-  The serde representation (internally tagged `kind`) is carried by
-  kt-otio as a dictionary `parameters`; fields with `#[serde(default)]`.
-- **The rule of a kind (R.53, item 419): a kind = an enum variant WHEN it has ITS OWN numbers.**
-  `params_for!` distributes the specs by variant, and not by the value of a field,
-  therefore a rectangle, an ellipse and a line are three kinds (the corner rounding exists only in the first one; on the ellipse it would be a dead control — UI rule 9), while the five engineering tables are ONE kind with a
-  field `table` (they have no numbers of their own, and five enum variants would be
-  five copies of the code). In the registry `all()` there are five rows, however: the menu
-  shows each variety, and the name of the kind is a function of the VALUE.
+- A new kind (since D13): a plugin in a `src/plugins/generators-*` family — its passport rows,
+  its `GenDecl` (alpha, live, the path token table, address, menu, value names, eyedroppers), its
+  frame, an id in `BUILTIN_IDS` and in `all()`'s `ORDER`, a picker line ×5 catalogues and a row in
+  t1048. The serde representation (internally tagged `kind`) is carried by kt-otio as a
+  dictionary `parameters`.
+- **The rule of a kind (R.53, item 419): a kind = its own passport WHEN it has ITS OWN numbers.**
+  A rectangle, an ellipse and a line are three kinds (the corner rounding exists only in the first one; on the ellipse it would be a dead control — UI rule 9), while the five engineering tables are ONE kind with a
+  choice row `table` (they have no numbers of their own, and five kinds would be
+  five copies of the code). In the registry `all()` there are five rows, however — the kind's
+  declared `menu` (`menu_rows`): the menu shows each variety, and the name of the kind is a
+  function of the VALUE (`GenDecl.names`).
 - **A kind without numbers is a legitimate state, but it must be declared.** `t470`
   checks "the specs are empty" against a LIST of such kinds by name: a kind that
   lost its specs through oversight still fails the test.
-- **The serde tag MUST match `tag()`.** `rename_all = "snake_case"`
-  turns `TestPattern` into the string `test_pattern`, while `tag()` returns
-  `table` — the discrepancy is not caught by the compiler and surfaces as a broken
-  file. Put `#[serde(rename = "…")]` and check by eye (the lesson of R.52:
-  this is how `smpte_bars`/`smpte` and `noise_field`/`noise` came apart).
+- **The file tag, the path tag and the plugin id are ONE string** (the lesson of R.52:
+  `smpte_bars`/`smpte` and `noise_field`/`noise` came apart while they were an enum's serde
+  names and a hand-written `tag()`; a plugin slot writes its id, so they cannot any more).
 - **The animation of a title — FOUR NUMBERS** (`reveal`, `reveal_soft`,
   `offset_x`, `offset_y`), not a mode (R.59, stage 2). The five former
   hard-coded modes became PRESETS: `text_anim_curves` is the only
@@ -137,7 +136,8 @@ heading in the second issue" had physically nowhere to be written.
   skip_serializing_if)]` — files without generators are byte-for-byte as before.
 - `MediaRef.path` carries ONLY THE KIND (`gen_kind_path`: `gen:text`).
   There is one exception — the "sort" of a variant whose kind name is a function of its
-  VALUE (`TestPattern.table`, the rule of item 419): it is part of the address.
+  VALUE (the table's `table` row, the rule of item 419; `GenDecl.address`): it is part of the
+  address.
 - **The invariant is checked by `check_clip_gen`, and it is strict**: the values exist
   if and only if the media is a generator (`GenMissing`/
   `GenOnFile`), the kind matches the path (`GenKindMismatch`), an orphan curve

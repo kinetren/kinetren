@@ -294,9 +294,17 @@ once (English message, first line = the stage and what was done).
     codec reads the token table; the source, `info_for`, the factory (a named placeholder for a
     missing id) and the bin/menu by slot; move `solid` into `generators-basic`; t1048 green
 - [x] 6.1b The rest of `generators-basic` (gradient corners checker noise transparent rect ellipse line)
-- [ ] 6.1c `generators-test` (smpte timecode leader table window) with the sound and the table sorts
-- [ ] 6.1 Move the 14 non-title kinds into `generators-basic` and `generators-test`; the factory (`src/libs/kt-media/src/factory.rs`) asks the registry and raises a named placeholder for a missing id. Verify t469, t470, t471b, t504, t518, t560 and t973b (`src/libs/kt-media/src/factory.rs`) green
-- [ ] 6.2 The title into `generators-title` (kt-text dependency declared in t975's closed list) — or, if `text_anim_curves`/`migrate_gen_to_events` must stay in kt-model, keep `text` a core kind and record why here. Verify the title golden and t973 green; commit stage 6
+- [x] 6.1c `generators-test` (smpte timecode leader table window) with the sound and the table sorts
+- [x] 6.1 Move the 14 non-title kinds into `generators-basic` and `generators-test`; the factory (`src/libs/kt-media/src/factory.rs`) asks the registry and raises a named placeholder for a missing id. Verify t469, t470, t471b, t504, t518, t560 and t973b (`src/libs/kt-media/src/factory.rs`) green
+- [x] 6.2 The title into `generators-title` (kt-text dependency declared in t975's closed list) — or, if `text_anim_curves`/`migrate_gen_to_events` must stay in kt-model, keep `text` a core kind and record why here. Verify the title golden and t973 green; commit stage 6
+    — **Kept core (2026-10-31).** Three things tie it to the core, each named in D13: its rows are a
+    `String` (the text), a font family and a four-layer order, and a `PluginSlot` holds numbers; its
+    presets are `text_anim_curves`/`text_anim_values`, which write the title's fields, and its
+    migration (`migrate_gen_to_events`, `parse_gen_path_full`'s `am`/`ams`) reads files of R.53..R.58
+    into those fields — both are kt-model's, and moving them out would put a format migration in a
+    plugin; kt-media's `text_params` is the ONE bridge to kt-text (the drag frame's `title_layout`
+    reads it). Moving it waits for a slot that carries text rows and a migration door of its own
+    (`plugin-api-barriers` or later). The title golden (t485) and t1048's `text` row are green.
 
 ## 7. Acceptance and cleanup
 

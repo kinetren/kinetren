@@ -1867,6 +1867,9 @@ fn t508_every_param_has_a_label() {
         // the fourth component (the alpha of shapes, R.53 item 419) is covered by the same
         // eyedropper — the window passes it to `color_row` as a separate parameter.
         covered.extend(crate::gen_ui::color_alpha(&k));
+        // a plugin kind's address rows (the table's sort) are chosen by the kind menu, whose rows
+        // name them (`GenDecl.names`), not by the grid (D13)
+        covered.extend(k.kernel().map_or(&[][..], |g| g.decl().address).iter().copied());
         check(k.tag(), &k, &covered);
     }
     // for transitions the colour is drawn by its own eyedropper (the transition window, R.33 C4)

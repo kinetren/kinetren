@@ -52,13 +52,11 @@ pub fn generator_kind_menu(ui: &mut egui::Ui, label: &str) -> Option<GeneratorKi
             let gr = ui.menu_button(grp.name(), |ui| {
                 for kd in kinds {
                     let r = ui.button(kind_name(&kd));
-                    let probe = match &kd {
-                        // the tables have one tag for five kinds — we
-                        // tell them apart by variety (live scenarios)
-                        GeneratorKind::TestPattern { table } => {
-                            format!("gen.new.table.{}", table.token())
-                        }
-                        other => format!("gen.new.{}", other.tag()),
+                    // the tables have one tag for five kinds — we tell them apart by
+                    // variety, the path token of their address row (live scenarios)
+                    let probe = match kd.address_token() {
+                        Some(tok) => format!("gen.new.{}.{tok}", kd.tag()),
+                        None => format!("gen.new.{}", kd.tag()),
                     };
                     crate::widgets::field_probe::note(&probe, r.rect);
                     if r.clicked() {
@@ -92,19 +90,8 @@ pub fn kind_name(kind: &GeneratorKind) -> &'static str {
         // a kind this build lacks is named by its id (the placeholder frame says the same)
         GeneratorKind::Missing(m) => missing_name(m.id()),
         GeneratorKind::Text { .. } => tr(k::genkind::TEXT),
-        GeneratorKind::SmpteBars { .. } => tr(k::genkind::SMPTE),
-        GeneratorKind::Timecode { .. } => tr(k::genkind::TIMECODE),
-        GeneratorKind::Leader { .. } => tr(k::genkind::LEADER),
         // the table variety is part of the NAME: there are five of them in the menu, and “just a table”
         // would not say which one (UI rule 18)
-        GeneratorKind::TestPattern { table } => match table {
-            kt_model::TestTable::Ebu75 => tr(k::genkind::EBU75),
-            kt_model::TestTable::Ebu100 => tr(k::genkind::EBU100),
-            kt_model::TestTable::Grayscale => tr(k::genkind::GRAYSCALE),
-            kt_model::TestTable::Steps10 => tr(k::genkind::STEPS10),
-            kt_model::TestTable::RampYcbcr => tr(k::genkind::YCBCR),
-        },
-        GeneratorKind::WindowPattern { .. } => tr(k::genkind::WINDOW),
     }
 }
 
@@ -172,12 +159,7 @@ impl GenGroup {
                 GenGroup::ALL.into_iter().find(|g| Some(g.key()) == cat).unwrap_or(GenGroup::Background)
             }
             GeneratorKind::Missing(_) => GenGroup::Background,
-            GeneratorKind::Text { .. }
-            | GeneratorKind::Timecode { .. }
-            | GeneratorKind::Leader { .. } => GenGroup::Titles,
-            GeneratorKind::SmpteBars { .. }
-            | GeneratorKind::TestPattern { .. }
-            | GeneratorKind::WindowPattern { .. } => GenGroup::Check,
+            GeneratorKind::Text { .. } => GenGroup::Titles,
         }
     }
 }
@@ -191,12 +173,7 @@ pub(crate) fn color_groups(
     match kind {
         GeneratorKind::Plugin(p) => plugin_color_groups(p.manifest(), kind),
         GeneratorKind::Missing(_) => &[],
-        GeneratorKind::Text { .. }
-        | GeneratorKind::SmpteBars { .. }
-        | GeneratorKind::Timecode { .. }
-        | GeneratorKind::Leader { .. }
-        | GeneratorKind::TestPattern { .. }
-        | GeneratorKind::WindowPattern { .. } => &[],
+        GeneratorKind::Text { .. } => &[],
     }
 }
 
@@ -729,7 +706,7 @@ pub fn draw_gen_section(
     }
 
     // the timecode shows the time of the MATERIAL — say so directly
-    if matches!(kind, GeneratorKind::Timecode { .. }) {
+    if kind.tag() == "timecode" {
         ui.weak(tr(k::genw::TC_NOTE));
     }
     // the kind’s FLAGS — one widget for all forms (R.53, item 414)

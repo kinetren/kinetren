@@ -134,8 +134,8 @@ mod tests {
         let mut kinds: Vec<GeneratorKind> = GeneratorKind::all();
         // variations that change the passport and those that do not
         kinds.push(GeneratorKind::solid(1, 2, 3));
-        kinds.push(GeneratorKind::SmpteBars { tone: true, tone_db: -12.0 });
-        kinds.push(GeneratorKind::SmpteBars { tone: false, tone_db: -6.0 });
+        kinds.push(GeneratorKind::plugin_with("smpte", &[("tone", 1.0), ("tone_db", -12.0)]).unwrap());
+        kinds.push(GeneratorKind::plugin_with("smpte", &[("tone", 0.0), ("tone_db", -6.0)]).unwrap());
 
         for a in &kinds {
             for b in &kinds {
@@ -165,14 +165,9 @@ mod tests {
             GeneratorKind::all().into_iter().map(GenState::new).collect();
         // variations that change the passport and those that do not
         states.push(GenState::new(GeneratorKind::solid(1, 2, 3)));
-        states.push(GenState::new(GeneratorKind::SmpteBars { tone: true, tone_db: -12.0 }));
-        states.push(GenState::new(GeneratorKind::SmpteBars { tone: false, tone_db: -6.0 }));
-        states.push(GenState::new(GeneratorKind::Leader {
-            seconds: 3,
-            fps: 30,
-            beep: true,
-            beep_db: -20.0,
-        }));
+        states.push(GenState::new(GeneratorKind::plugin_with("smpte", &[("tone", 1.0), ("tone_db", -12.0)]).unwrap()));
+        states.push(GenState::new(GeneratorKind::plugin_with("smpte", &[("tone", 0.0), ("tone_db", -6.0)]).unwrap()));
+        states.push(GenState::new(GeneratorKind::plugin_with("leader", &[("seconds", 3.0), ("fps", 30.0), ("beep", 1.0), ("beep_db", -20.0)]).unwrap()));
         // and the state WITH CURVES: they do not touch the passport, so
         // the reconfiguration MUST accept them
         states.push(GenState {

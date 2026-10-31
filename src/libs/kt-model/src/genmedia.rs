@@ -127,54 +127,6 @@ pub enum GeneratorKind {
         #[serde(default)]
         offset_y: f64,
     },
-    /// SMPTE bars at 75% (+ reference marks in the bottom third); a 1 kHz tone — a parameter:
-    /// enabling it makes the media audible (level in dBFS).
-    #[serde(rename = "smpte")]
-    SmpteBars {
-        #[serde(default)]
-        tone: bool,
-        #[serde(default = "default_tone_db")]
-        tone_db: f64,
-    },
-    /// Timecode with RUNNING digits. Shows the time of the MATERIAL (the source
-    /// does not see the “timeline clock” by construction): a clip from zero with
-    /// source_in = 0 coincides with the timeline clock; trim/shift show the
-    /// material. Burn-in of the output is another future object (F-TXT-003).
-    Timecode {
-        #[serde(default = "default_tc_fps")]
-        fps: u32,
-    },
-    /// A countdown (item 421): a cross, a circle, a running sector and a
-    /// digit. Time is the pts of the MATERIAL, as for the timecode. The “2-pop” is
-    /// exactly `1/fps` long, and the 1 kHz beep is by the same code as the SMPTE tone.
-    Leader {
-        #[serde(default = "default_leader_secs")]
-        seconds: u32,
-        #[serde(default = "default_tc_fps")]
-        fps: u32,
-        #[serde(default)]
-        beep: bool,
-        #[serde(default = "default_tone_db")]
-        beep_db: f64,
-    },
-    /// An engineering table (item 422). Tables have no numbers of their own, so the kind is
-    /// ONE, and the variety is a field: five enum variants with an empty set of
-    /// parameters would be five copies of one code.
-    #[serde(rename = "table")]
-    TestPattern {
-        #[serde(default)]
-        table: TestTable,
-    },
-    /// A level window (item 422): a white window of a given SHARE OF THE FRAME AREA
-    /// on black — measurement of APL and panel warm-up. Its numbers are its own, hence the kind
-    /// is its own.
-    #[serde(rename = "window")]
-    WindowPattern {
-        #[serde(default = "default_window_area")]
-        area: f64,
-        #[serde(default = "default_one")]
-        level: f64,
-    },
     /// A plugin-backed kind (plugin-api-stage1, D13): `kind` is its id, the rows follow its
     /// passport. Untagged and LAST: a `kind` no variant above names is tried here, in the
     /// GENERATORS' family (the transition `checker` is another plugin).
@@ -282,47 +234,6 @@ pub fn text_anim_values(kind: &mut GeneratorKind, anim: TextAnim) {
     *offset_y = 0.0;
 }
 
-/// A variety of engineering table (R.53, item 422).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TestTable {
-    /// 75% color bars (eight, including black).
-    #[default]
-    Ebu75,
-    /// The same at full amplitude.
-    Ebu100,
-    /// A continuous horizontal gray scale 0..255.
-    Grayscale,
-    /// Ten gray steps.
-    Steps10,
-    /// The BT.709 chroma plane: Cb along X, Cr along Y at constant Y.
-    RampYcbcr,
-}
-
-impl TestTable {
-    pub const ALL: [TestTable; 5] = [
-        TestTable::Ebu75,
-        TestTable::Ebu100,
-        TestTable::Grayscale,
-        TestTable::Steps10,
-        TestTable::RampYcbcr,
-    ];
-
-    pub fn token(self) -> &'static str {
-        match self {
-            TestTable::Ebu75 => "ebu75",
-            TestTable::Ebu100 => "ebu100",
-            TestTable::Grayscale => "grey",
-            TestTable::Steps10 => "steps",
-            TestTable::RampYcbcr => "ycbcr",
-        }
-    }
-
-    pub fn from_token(s: &str) -> Option<TestTable> {
-        TestTable::ALL.into_iter().find(|t| t.token() == s)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TextAlign {
@@ -385,21 +296,8 @@ fn default_plate_px() -> f64 {
 fn default_plate_py() -> f64 {
     0.12
 }
-fn default_tone_db() -> f64 {
-    -20.0
-}
-fn default_tc_fps() -> u32 {
-    30
-}
 fn default_anim_secs() -> f64 {
     1.0
-}
-fn default_leader_secs() -> u32 {
-    8
-}
-/// The share of the frame area for the level window: the classic 10% APL.
-fn default_window_area() -> f64 {
-    0.1
 }
 fn default_order() -> [TextLayer; 4] {
     [TextLayer::Plate, TextLayer::Shadow, TextLayer::Stroke, TextLayer::Fill]
@@ -411,35 +309,53 @@ impl GeneratorKind {
     /// it drives the creation menu in the UI and the completeness of the specs in tests. A new kind
     /// is added AT THE END.
     pub fn all() -> Vec<GeneratorKind> {
-        vec![
-            GeneratorKind::builtin("solid"),
-            GeneratorKind::default_text(),
-            GeneratorKind::builtin("gradient"),
-            GeneratorKind::builtin("corners"),
-            GeneratorKind::builtin("checker"),
-            GeneratorKind::builtin("noise"),
-            GeneratorKind::SmpteBars { tone: false, tone_db: -20.0 },
-            GeneratorKind::Timecode { fps: 30 },
-            // R.53: new kinds — AT THE END of the registry. Engineering tables
-            // stand as FIVE rows of one kind: the menu shows each variety,
-            // and they share one code.
-            GeneratorKind::builtin("transparent"),
-            GeneratorKind::builtin("rect"),
-            GeneratorKind::builtin("ellipse"),
-            GeneratorKind::builtin("line"),
-            GeneratorKind::Leader {
-                seconds: default_leader_secs(),
-                fps: default_tc_fps(),
-                beep: false,
-                beep_db: default_tone_db(),
-            },
-            GeneratorKind::TestPattern { table: TestTable::Ebu75 },
-            GeneratorKind::TestPattern { table: TestTable::Ebu100 },
-            GeneratorKind::TestPattern { table: TestTable::Grayscale },
-            GeneratorKind::TestPattern { table: TestTable::Steps10 },
-            GeneratorKind::TestPattern { table: TestTable::RampYcbcr },
-            GeneratorKind::WindowPattern { area: default_window_area(), level: 1.0 },
-        ]
+        // R.53: new kinds — AT THE END of the registry. Engineering tables stand as FIVE rows of
+        // one kind (its declared menu): the menu shows each variety, and they share one code.
+        const ORDER: &[&str] = &[
+            "solid", "text", "gradient", "corners", "checker", "noise", "smpte", "timecode", "transparent", "rect",
+            "ellipse", "line", "leader", "table", "window",
+        ];
+        let mut v = Vec::new();
+        for id in ORDER {
+            if *id == "text" {
+                v.push(GeneratorKind::default_text());
+            } else {
+                v.extend(GeneratorKind::menu_rows(id));
+            }
+        }
+        v
+    }
+
+    /// The creation-menu rows of a built-in plugin kind: one row of defaults, or the values each
+    /// row of its declared menu sets (the five tables).
+    pub fn menu_rows(id: &str) -> Vec<GeneratorKind> {
+        let base = GeneratorKind::builtin(id);
+        let menu = base.kernel().map_or(&[][..], |g| g.decl().menu);
+        if menu.is_empty() {
+            return vec![base];
+        }
+        menu.iter()
+            .map(|sets| {
+                let mut k = base.clone();
+                for (n, v) in *sets {
+                    k.set_param(n, *v);
+                }
+                k
+            })
+            .collect()
+    }
+
+    /// The path token of a plugin kind's FIRST address row (the table's sort, `grey`): the creation
+    /// menu's probes tell the five tables apart by it.
+    pub fn address_token(&self) -> Option<&'static str> {
+        use kt_plugin_api::generator::PathVal;
+        let GeneratorKind::Plugin(p) = self else { return None };
+        let g = self.kernel()?;
+        let row = g.decl().address.first()?;
+        g.decl().path.iter().find_map(|t| match t.val {
+            PathVal::Choice(n, toks) if n == *row => toks.get(p.get(n)?.round().max(0.0) as usize).copied(),
+            _ => None,
+        })
     }
 
     /// A built-in plugin kind at its defaults; the set must be installed (the registry's kinds).
@@ -529,11 +445,6 @@ impl GeneratorKind {
             GeneratorKind::Plugin(p) => p.tag(),
             GeneratorKind::Missing(_) => "missing",
             GeneratorKind::Text { .. } => "text",
-            GeneratorKind::SmpteBars { .. } => "smpte",
-            GeneratorKind::Timecode { .. } => "timecode",
-            GeneratorKind::Leader { .. } => "leader",
-            GeneratorKind::TestPattern { .. } => "table",
-            GeneratorKind::WindowPattern { .. } => "window",
         }
     }
 
@@ -569,32 +480,15 @@ params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, gen_set_id
         offset_x: f64, -4.0, 4.0, 0.0, 0.001, Percent, Smooth;
         offset_y: f64, -4.0, 4.0, 0.0, 0.001, Percent, Smooth;
     },
-    SmpteBars {
-        tone_db: f64, -60.0, 0.0, -20.0, 0.5, Db, Smooth;
-    },
-    Timecode {
-        fps: u32, 1.0, 120.0, 30.0, 1.0, Count, Structural;
-    },
     // R.53 (item 419): fractions of ITS OWN axis for sizes and positions, fractions of the HEIGHT for
     // isotropic lengths — the backing survives a change of project format
-    Leader {
-        seconds: u32, 1.0, 60.0, 8.0, 1.0, Count, Structural;
-        fps: u32, 1.0, 120.0, 30.0, 1.0, Count, Structural;
-        beep_db: f64, -60.0, 0.0, -20.0, 0.5, Db, Smooth;
-    },
-    WindowPattern {
-        area: f64, 0.0, 1.0, 0.1, 0.005, Percent, Smooth;
-        level: f64, 0.0, 1.0, 1.0, 0.005, Percent, Smooth;
-    },
 }}
 
 flags_for! { GeneratorKind, gen_flag_specs, gen_set_flag, gen_get_flag, {
     // “yes/no” is not dragged by a slider and not automated by a curve, but it must not
     // be forgotten either: the 1 kHz tone and colored noise existed in the format since R.52, and
     // there was nothing to enable them with (R.53, item 414).
-    SmpteBars { tone: false },
     Text { bold: false },
-    Leader { beep: false },
 }}
 
 impl HasParams for GeneratorKind {
@@ -857,9 +751,6 @@ pub fn gen_kind_path(k: &GeneratorKind) -> String {
             out
         }
         GeneratorKind::Missing(m) => format!("gen:{}", m.id()),
-        GeneratorKind::TestPattern { table } if *table != TestTable::default() => {
-            format!("gen:table:tb={}", table.token())
-        }
         _ => format!("gen:{}", k.tag()),
     }
 }
@@ -1038,47 +929,7 @@ pub fn format_gen_path(k: &GeneratorKind) -> String {
                 push("oy", f(offset_y));
             }
         }
-        GeneratorKind::SmpteBars { tone, tone_db } => {
-            if *tone {
-                push("tone", "1".into());
-            }
-            if *tone_db != default_tone_db() {
-                push("db", format!("{tone_db}"));
-            }
-        }
-        GeneratorKind::Timecode { fps } => {
-            if *fps != default_tc_fps() {
-                push("fps", format!("{fps}"));
-            }
-        }
         // --- R.53 (items 419-422) -------------------------------------------
-        GeneratorKind::Leader { seconds, fps, beep, beep_db } => {
-            if *seconds != default_leader_secs() {
-                push("n", format!("{seconds}"));
-            }
-            if *fps != default_tc_fps() {
-                push("fps", format!("{fps}"));
-            }
-            if *beep {
-                push("beep", "1".into());
-            }
-            if *beep_db != default_tone_db() {
-                push("db", format!("{beep_db}"));
-            }
-        }
-        GeneratorKind::TestPattern { table } => {
-            if *table != TestTable::default() {
-                push("tb", table.token().into());
-            }
-        }
-        GeneratorKind::WindowPattern { area, level } => {
-            if *area != default_window_area() {
-                push("ar", format!("{area}"));
-            }
-            if *level != 1.0 {
-                push("lv", format!("{level}"));
-            }
-        }
     }
     out
 }
@@ -1241,47 +1092,7 @@ fn apply_token(k: &mut GeneratorKind, key: &str, val: &str) -> Option<()> {
             }
             Some(())
         }
-        GeneratorKind::SmpteBars { tone, tone_db } => {
-            match key {
-                "tone" => *tone = val == "1",
-                "db" => *tone_db = val.parse::<f64>().ok().filter(|v| v.is_finite())?,
-                _ => return None,
-            }
-            Some(())
-        }
-        GeneratorKind::Timecode { fps } => {
-            match key {
-                "fps" => *fps = val.parse::<u32>().ok().filter(|v| (1..=120).contains(v))?,
-                _ => return None,
-            }
-            Some(())
-        }
         // --- R.53 (items 421-422) -------------------------------------------
-        GeneratorKind::Leader { seconds, fps, beep, beep_db } => {
-            match key {
-                "n" => *seconds = val.parse::<u32>().ok().filter(|v| (1..=60).contains(v))?,
-                "fps" => *fps = val.parse::<u32>().ok().filter(|v| (1..=120).contains(v))?,
-                "beep" => *beep = val == "1",
-                "db" => *beep_db = val.parse::<f64>().ok().filter(|v| v.is_finite())?,
-                _ => return None,
-            }
-            Some(())
-        }
-        GeneratorKind::TestPattern { table } => {
-            match key {
-                "tb" => *table = TestTable::from_token(val)?,
-                _ => return None,
-            }
-            Some(())
-        }
-        GeneratorKind::WindowPattern { area, level } => {
-            match key {
-                "ar" => *area = unit(val)?,
-                "lv" => *level = unit(val)?,
-                _ => return None,
-            }
-            Some(())
-        }
     }
 }
 

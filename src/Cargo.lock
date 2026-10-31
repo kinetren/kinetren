@@ -1533,6 +1533,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "generators-test"
+version = "0.1.0"
+dependencies = [
+ "kt-plugin-api",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2287,6 +2294,7 @@ dependencies = [
  "fx-video-color",
  "fx-video-distort",
  "generators-basic",
+ "generators-test",
  "kt-plugin-api",
  "transitions-basic",
  "transitions-styled",

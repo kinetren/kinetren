@@ -1778,7 +1778,7 @@ fn t494_smpte_alias_import() {
     let mut p = rich_project();
     p.media.push(MediaRef::new(MediaId(7), "gen:smpte"));
     let mut g = clip(30, ClipKind::Video, 0, 200_000, 45_000, 7);
-    g.r#gen = Some(kt_model::GeneratorKind::SmpteBars { tone: false, tone_db: -20.0 });
+    g.r#gen = Some(kt_model::GeneratorKind::plugin_with("smpte", &[("tone", 0.0), ("tone_db", -20.0)]).unwrap());
     p.clips.push(g);
     p.validate().unwrap();
     let ours = save_project(&p, &Retained::default(), None);

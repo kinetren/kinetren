@@ -126,7 +126,9 @@ fn t470_generator_param_specs_are_complete() {
     // oversight still fails this test.
     const NO_PARAMS: &[&str] = &["transparent", "table"];
     for k in GeneratorKind::all() {
-        let specs = k.param_specs();
+        // the NUMBERS: a plugin kind's flag and choice rows (the table's sort) are passport rows
+        // too since D13, and they are t510's and the menu's, not numbers
+        let specs: Vec<_> = k.param_specs().iter().filter(|s| s.ty == kt_model::ParamType::Num).collect();
         assert_eq!(
             specs.is_empty(),
             NO_PARAMS.contains(&k.tag()),
@@ -283,7 +285,7 @@ fn t510_generator_flags_are_complete_and_roundtrip() {
     }
 
     // and the main consequence: “tone on” and “coloured noise” are expressible
-    let tone = GeneratorKind::SmpteBars { tone: true, tone_db: -20.0 };
+    let tone = GeneratorKind::plugin_with("smpte", &[("tone", 1.0), ("tone_db", -20.0)]).unwrap();
     assert_eq!(tone.get_flag("tone"), Some(true));
     let colour = GeneratorKind::plugin_with("noise", &[("mono", 0.0)]).unwrap();
     assert_eq!(colour.get_flag("mono"), Some(false));
@@ -297,7 +299,7 @@ fn t510_generator_flags_are_complete_and_roundtrip() {
 #[test]
 fn t524_new_kinds_round_trip_through_the_path() {
     kt_plugins_builtin::install();
-    use kt_model::{TestTable, format_gen_path, parse_gen_path};
+    use kt_model::{format_gen_path, parse_gen_path};
     // every registry kind: defaults give a BARE path without tokens
     for k in GeneratorKind::all() {
         let p = format_gen_path(&k);
@@ -305,8 +307,7 @@ fn t524_new_kinds_round_trip_through_the_path() {
         assert_eq!(format_gen_path(&parse_gen_path(&p).unwrap()), p, "{p}: canon is not canon");
     }
     // the table variety — ONE tag for five kinds
-    for t in TestTable::ALL {
-        let k = GeneratorKind::TestPattern { table: t };
+    for k in GeneratorKind::menu_rows("table") {
         let p = format_gen_path(&k);
         assert!(p.starts_with("gen:table"), "{p}");
         assert_eq!(parse_gen_path(&p), Some(k), "{p}");
@@ -351,8 +352,9 @@ fn t525_kinds_differ_by_their_numbers() {
     assert!(!names(&ell).contains("radius"), "on an ellipse rounding would be a dead control");
 
     // the tables have no numbers at all — therefore the kind is ONE, and the variety is a field
-    for t in kt_model::TestTable::ALL {
-        assert!(GeneratorKind::TestPattern { table: t }.param_specs().is_empty());
+    // (its one passport row is the sort, a choice)
+    for k in GeneratorKind::menu_rows("table") {
+        assert!(k.param_specs().iter().all(|s| s.ty != kt_model::ParamType::Num), "a table has a number");
     }
 }
 
@@ -369,7 +371,7 @@ fn t525_kinds_differ_by_their_numbers() {
 #[test]
 fn t656_generator_values_live_on_the_event() {
     kt_plugins_builtin::install();
-    use kt_model::{ClipEvent, ClipId, ClipKind, GeneratorKind, MediaId, TestTable, gen_kind_path};
+    use kt_model::{ClipEvent, ClipId, ClipKind, GeneratorKind, MediaId, gen_kind_path};
     use kt_time::Tick;
 
     // the path carries the kind; the values are wiped from it
@@ -384,9 +386,9 @@ fn t656_generator_values_live_on_the_event() {
 
     // The SORT of the variant is part of the address: five tables are five menu rows, and
     // the kind name for them is a function of the value
-    assert_eq!(gen_kind_path(&GeneratorKind::TestPattern { table: TestTable::Ebu75 }), "gen:table");
+    assert_eq!(gen_kind_path(&GeneratorKind::menu_rows("table")[0].clone()), "gen:table");
     assert_eq!(
-        gen_kind_path(&GeneratorKind::TestPattern { table: TestTable::Grayscale }),
+        gen_kind_path(&GeneratorKind::menu_rows("table")[2].clone()),
         "gen:table:tb=grey"
     );
     // and the kind path always parses back into the SAME kind
@@ -450,7 +452,7 @@ fn t657_generator_values_are_validated_against_the_media() {
     kt_plugins_builtin::install();
     use kt_model::{
         AutoKey, ClipEvent, ClipId, ClipKind, GeneratorKind, MediaId, MediaRef, ParamCurve,
-        Project, ProjectError, ProjectSettings, TestTable,
+        Project, ProjectError, ProjectSettings,
     };
     use kt_time::Tick;
 
@@ -509,12 +511,12 @@ fn t657_generator_values_are_validated_against_the_media() {
 
     // the value kind is not the one in the media path
     let mut p = mk();
-    p.clips[0].r#gen = Some(GeneratorKind::TestPattern { table: TestTable::Ebu75 });
+    p.clips[0].r#gen = Some(GeneratorKind::menu_rows("table")[0].clone());
     assert!(matches!(p.validate(), Err(ProjectError::GenKindMismatch(ClipId(1)))));
     // and the SORT is also part of the kind
     let mut p = mk();
     p.media[0].path = "gen:table".into();
-    p.clips[0].r#gen = Some(GeneratorKind::TestPattern { table: TestTable::Grayscale });
+    p.clips[0].r#gen = Some(GeneratorKind::menu_rows("table")[2].clone());
     assert!(matches!(p.validate(), Err(ProjectError::GenKindMismatch(ClipId(1)))));
 
     // an orphan curve is REJECTED: an event has exactly one kind, an orphan has nowhere to come from,
