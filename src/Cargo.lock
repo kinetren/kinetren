@@ -2225,9 +2225,11 @@ version = "0.1.0"
 dependencies = [
  "kt-ffmpeg",
  "kt-model",
+ "kt-plugins-builtin",
  "kt-text",
  "kt-time",
  "rusqlite",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.20",
  "xxhash-rust",

@@ -285,7 +285,7 @@ once (English message, first line = the stage and what was done).
 
 ## 6. Generators
 
-- [ ] 6.0 Freeze the kinds before any moves: t1048 (`src/libs/kt-media/tests/gen_plugin.rs`) prints,
+- [x] 6.0 Freeze the kinds before any moves: t1048 (`src/libs/kt-media/tests/gen_plugin.rs`) prints,
     per `GeneratorKind::all()` row and per kind at non-default values, the frame bytes at three
     sizes and four ticks, the first sound bursts, `format_gen_path`, `gen_kind_path` and the serde
     text; red with one byte of a frame changed

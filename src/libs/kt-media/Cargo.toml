@@ -24,3 +24,5 @@ kt-ffmpeg = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+kt-plugins-builtin = { workspace = true }
+serde_json = { workspace = true }
