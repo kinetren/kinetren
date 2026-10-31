@@ -3,7 +3,24 @@
 The program shows the section of its own version in the welcome window. One section per
 month, newest first.
 
+## kt26.11
+
+- **Changing an audio effect takes effect at once.** Put a filter where an equaliser stood
+  and you hear the filter right away — before, the old effect kept playing with the new
+  settings until you jumped in time.
+- **The strength slider in the effects gallery** no longer mixes the settings of two
+  different effects.
+- **Every effect, transition and generator is now a plugin inside** — blur, glow, VHS, noise,
+  the chroma key and the rest moved too. Your projects open and look exactly as before.
+
 ## kt26.10
+
+- **Windows.** A portable Windows build; FFmpeg is found on the computer or downloaded with
+  one click.
+- **FFmpeg 9** works, as do 6, 7 and 8.
+- **Under wine** the interface is dark everywhere and our own title row is back.
+- **A quiet reminder about updates.** Once a day the program checks whether a newer release is
+  out and says so in the bell — no pop-ups.
 
 - **A welcome window at start.** New projects from templates, the recent projects with a
   frame of each, the tour and this page. One tile is highlighted: **Enter** takes it. Switch

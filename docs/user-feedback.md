@@ -2130,6 +2130,78 @@ a calm tone with the detailed lists under a spoiler. Instances: every run alread
 own `$session_id`; the change adds what tells them apart in PostHog (activity, concurrent
 instances). Change `openspec/changes/telemetry-identify-activity`.
 
+## 2026-11-01 — the orchestrator round: the tour, windows, crashes, real effects
+
+Verbatim in [`docs/ktprompts/kkt-26.11.01.txt`](ktprompts/kkt-26.11.01.txt), with its registry. The
+owner (translated):
+
+> You manage a crowd of executors who will write the specs. While they do, they must not litter
+> the target folder much — there is no space on the disk. I write you various prompts
+> (requests): register them in docs, create opsx:propose and apply when we have discussed
+> everything, and orchestrate them and their order automatically. Their edits come in through a
+> merge; I forbid any agent to edit master directly without a merge from a branch. The agents of
+> these requests must also remember everything that was discussed a hundred times, the rules for
+> other agents — the same breaking changes, that caches are fine if needed, and so on.
+
+The requests:
+- **The tour and the welcome window (1–8, 13).**
+  - The welcome window is ugly ("the agents did not work"). It does not resize, its What's new
+    is narrow, and scrolling What's new scrolls everything.
+  - Lesson 1's "play a part in a loop" counted only after the text generator's window closed.
+  - "press + effect… and pick" runs together as plain text, though the docs have `<kbd>`.
+  - Lesson 1 highlighted File → Create a generator; no other lesson highlights anything. Why is
+    "create a generator" in File, not Edit or a track's right-click menu? Where are the audio
+    generators?
+  - "Show" in lessons does nothing; in lesson 4 it opened the morpher, which confuses: the person
+    still does not know where it is.
+  - Lesson 3's crossfade step did not react to dragging an event onto its neighbour, only to the
+    menu's "Transition with previous".
+  - Lesson 4 did not say anything changed after an effect was added.
+  - Lesson 5 could show (silly) jokes while rendering.
+  - The "welcome window at start" checkbox sits both in the window and in View. Time for a
+    Settings section in File: View is a mess.
+- **The crash (9):** a ~100 MB imported, unsaved project crashed during render. Recovery opened
+  it as `lesson-5` with synthetic sources (SMPTE, noise) except one real piece, which does not
+  play. The log looks left from an old run: no log rotation, no crash window.
+- **Automation (10):** a segment's shape (zigzag) has nowhere to set its parameters for one
+  segment; what about 100 segments?
+- **Plugins (11):** where are they — inside the binary in dist-out?
+- **Windows (12, 14):** the Guide's tables have a narrow first column. "I want to…" sections run
+  together. The Guide and other windows do not fill their area when enlarged ("looking through a
+  needle's eye" — "I am tired of reminding"). The FX window does not grow past a size; some
+  windows grow in width but not in height; the FX picker splits into two tiny panes. Move
+  Performance into Diagnostics, with three graphs.
+- **Pitch (15):** fifteen short events in a row sound right without pitch and torn with it.
+- **CI died:** `logs_111804447070.zip`.
+- **What's new:** update it, and oblige agents to write human-language updates into it when a
+  feature is merged.
+- **Real effects:**
+  - A REAL VHS filter that conveys the physics. Write the tape, read it back; drums of good
+    quality, with dirty heads, four heads instead of two (still frame), two with one chipped;
+    two drums (write, read) or one doing both. A real device-like interface ("as FL Studio
+    wraps its effects"), not dull sliders. Note for agents forever: an imitation of a physical
+    effect is not a simulation of it.
+  - A real camera ISP: RGB → Bayer (RGGB and other layouts, even +IR pixels) → calibrations,
+    conversions, denoisers → YUV.
+  - A real datamosh: a motion-compensated compression path broken carefully by parameters.
+- **Features:**
+  - a convenient multicam: the morpher already swaps sources, "but not through the morpher's UI
+    dumbly, and do not throw features anywhere, as agents usually do — I forbid it";
+  - a point tracker as in AE (and a property system good enough to link one thing to another —
+    "a separate story");
+  - convenient classic masks;
+  - magic-wand masks;
+  - new feature-request prompts drawn from ktprompts, docs/features and the web.
+
+**Taken as (2026-11-01):**
+- This session orchestrates. Requests are registered first (the verbatim file + its registry +
+  this round); proposals and applies come after the discussion; executors run in their own
+  worktrees and branches; `master` receives them only by merges.
+- The standing rules executors forget moved into the root `CLAUDE.md`, which every session reads:
+  merge-only `master`, the disk, What's new in the same merge, imitation ≠ simulation, caches.
+- What's new got the October items it lacked and a `kt26.11` section.
+- Everything else waits for the discussion.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
@@ -2140,6 +2212,8 @@ instances). Change `openspec/changes/telemetry-identify-activity`.
 | The look of the meters | 2 (r.13 twice) | the v1 layer order + strengthened alphas; a brightness measurement by pixels |
 | "Check what I launch" | 2 (r.12, r.13) | `finish.sh` + the version in the report; the check in the EXPANDED window |
 | Rules about UI convenience | 5+ (r.8–r.12) | a checklist of 15 items in apps/kt-app/CLAUDE.md |
+| **A window does not fill its area when enlarged ("a needle's eye")** | **"I am tired of reminding" (2026-11-01, and earlier rounds)** | open: the 2026-11-01 round makes it a guard over every window, not a fix of one |
+| **"The agents did not work"** — a look shipped without anyone looking at it | 2026-11-01 (welcome window, lesson texts, VHS) | open: the 2026-11-01 round |
 | **Dead ends: you can create it, you cannot control it** | **7 (r.33–r.40)** | the checklist did not work — the rules were written down and broken. The R.38 tests did not work either: they checked the REACHABILITY of what was made, not its consequence. R.40: a test asserts the observable consequence AND probes from the point where the person acts; for each item — a live scenario |
 | **"You did not check"** | **3 (r.12, r.13, r.40)** | the harness and the model prove nothing: `finish.sh`, a live scenario for each item, a check of the consequence |
 | **One claim sent twice (R.43)** | **2** | the first attempt fixed the symptoms: there was nothing to look at in the model. `kt-cli probe` appeared; for the complaint "sound from another event" it is run FIRST |

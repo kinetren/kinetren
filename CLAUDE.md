@@ -135,6 +135,34 @@ reasons and history are in the `design.md` next to it. Here — one line each, t
   prints their list after the version, and a report on UI work carries them. Runs use OUR
   fixtures, not the owner's projects ("item 1 but not on my projects", R.67).
 - **Commit every complex stage AUTOMATICALLY** (owner's requirement, 2026-09-22): a tasks.md section / round stage is finished and the check is green → commit at once, without being asked; the message in English (owner, 2026-10-21), the first line — the stage and what was done. Uncommitted work at the end of a session is a process defect.
+- **`master` changes only by a merge from a branch** (owner, 2026-11-01: "I forbid any agent to
+  make edits in master directly without a merge from a branch"). Every session works on its own
+  branch in its own worktree (`.claude/worktrees/<name>`); `master` receives that branch by a merge
+  (fast-forward when it can), and the merge itself is done or ordered by the orchestrating session
+  or the owner. A commit made on `master` itself is a process defect.
+- **The disk is short** (owner, 2026-10-30 and 2026-11-01). A worktree's `target` is ~20 GB fresh
+  and grows with every core edit. So:
+  - `scripts/target-prune.py` runs after every committed stage;
+  - a worktree whose branch is merged is removed (`git worktree remove`);
+  - no `--deep`-style rebuilds just to measure.
+- **A merged feature or visible fix writes its line into What's new in the same merge** (owner,
+  2026-11-01): `docs/guide/whats-new.md`, the section of the current month (`## ktYY.MM`, newest
+  first). The line is in human language: what a person can now do or no longer suffers from,
+  not a change name, not a test number. Internal work a person cannot notice gets no line.
+- **An IMITATION of a physical effect is not a SIMULATION of it** (owner, 2026-11-01).
+  - An imitation reproduces the LOOK by image operations (the current VHS: an RGB shift, scan
+    lines, jitter).
+  - A simulation models the PROCESS and its causes. The VHS one writes a signal to a tape and
+    reads it back with heads on a drum, so heads, wear and tracking are its parameters. The ISP
+    one goes from a sensor's mosaic to YUV.
+  - A request for a "real" effect is a simulation. Its note in `docs/features/` names the
+    physical chain step by step and which parameters are physical quantities. Its interface is
+    a device-like panel, not a column of sliders.
+  - An imitation is never offered as the answer to such a request, nor renamed into one.
+- **Caches are allowed where they pay** (owner, 2026-11-01): a memo or a disk tier is a normal
+  tool, not a last resort. It must be keyed by what determines the result (content hashes,
+  revisions — never a guess that can go stale silently), bounded in size, and invisible to
+  determinism (invariant 11: the same bytes with and without it).
 - **No co-authorship in commits** (owner, 2026-10-21): agents MUST NOT add `Co-Authored-By:` or any other AI/agent attribution lines to commit messages, tags or PR texts — "these are junk lines". Commits are authored as the repository's configured identity (`log <log@kinetren.com>`, set in the local git config); do not override it.
 - `cargo test` must be green on every commit; all tests named in the `TEST` lines of the specs (running tNNN numbering) are regression tests and must not be weakened/removed without an explicit decision of the user.
 - Do not add a dependency on FFmpeg/audio hardware to kt-time/kt-model/kt-fx/kt-cache/the kt-engine core. GPU (wgpu) lives ONLY in kt-gpu; kt-engine knows only the `VideoGpuExec` trait (the executor is injected from kt-app/kt-cli).
