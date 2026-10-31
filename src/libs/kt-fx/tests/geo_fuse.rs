@@ -482,21 +482,21 @@ fn bench_fx_1080p() {
             FxInstance::builtin("vignette"),
         ],
     );
-    bench("sharpen r=3", &[FxInstance::Sharpen { amount: 1.5, radius: 3 }]);
+    bench("sharpen r=3", &[FxInstance::plugin_with("sharpen", &[1.5, 3.0]).unwrap()]);
     bench("pixelate 12", &[FxInstance::plugin_with("pixelate", &[12.0]).unwrap()]);
     bench("chroma_ab 0.02", &[FxInstance::ChromaticAberration { amount: 0.02 }]);
     bench(
         "radial_blur zoom (16 taps)",
-        &[FxInstance::RadialBlur { amount: 0.5, center_x: 0.0, center_y: 0.0, spin: false }],
+        &[FxInstance::plugin_with("radial_blur", &[0.5, 0.0, 0.0, 0.0]).unwrap()],
     );
     bench(
         "radial_blur spin",
-        &[FxInstance::RadialBlur { amount: 0.5, center_x: 0.0, center_y: 0.0, spin: true }],
+        &[FxInstance::plugin_with("radial_blur", &[0.5, 0.0, 0.0, 1.0]).unwrap()],
     );
     bench("halftone 8/45", &[FxInstance::Halftone { size: 8, angle: 45.0 }]);
     bench(
         "greenscreen→drop_shadow (shadow with alpha)",
-        &[FxInstance::greenscreen([0, 255, 0], 70, 25), FxInstance::drop_shadow()],
+        &[FxInstance::greenscreen([0, 255, 0], 70, 25), FxInstance::builtin("drop_shadow")],
     );
     bench(
         "grid→lens→twirl→zoom (fused run, perpixel-SS)",
@@ -688,15 +688,15 @@ fn t303_barrier_kernels_res_invariant() {
         }
         // R.47 Kv3 (smooth): thresholds ×2 from the measurement (see printout)
         for (name, fx) in [
-            ("sharpen", FxInstance::Sharpen { amount: 2.0, radius: 4 }),
+            ("sharpen", FxInstance::plugin_with("sharpen", &[2.0, 4.0]).unwrap()),
             ("chroma", FxInstance::ChromaticAberration { amount: 0.03 }),
             (
                 "radial-zoom",
-                FxInstance::RadialBlur { amount: 0.5, center_x: 0.0, center_y: 0.0, spin: false },
+                FxInstance::plugin_with("radial_blur", &[0.5, 0.0, 0.0, 0.0]).unwrap(),
             ),
             (
                 "radial-spin",
-                FxInstance::RadialBlur { amount: 0.5, center_x: 0.2, center_y: 0.1, spin: true },
+                FxInstance::plugin_with("radial_blur", &[0.5, 0.2, 0.1, 1.0]).unwrap(),
             ),
         ] {
             let base = apply_barrier(&fx, test_frame(), &ctx(), &mut scratch, 1);
@@ -736,7 +736,7 @@ fn t303_barrier_kernels_res_invariant() {
                 }
                 f
             };
-            let fx = FxInstance::drop_shadow();
+            let fx = FxInstance::builtin("drop_shadow");
             let base = apply_barrier(&fx, alpha_frame(), &ctx(), &mut scratch, 1);
             let (kw, kh) = (W * k, H * k);
             let mut up = vec![0u8; (kw * kh * 4) as usize];
@@ -1144,7 +1144,7 @@ fn t332_barrier_semantics() {
     let mut scratch = FxScratch::default();
 
     // Sharpen: local contrast grows
-    let sharp = run(&[FxInstance::Sharpen { amount: 2.0, radius: 4 }]);
+    let sharp = run(&[FxInstance::plugin_with("sharpen", &[2.0, 4.0]).unwrap()]);
     assert!(
         contrast(&sharp) > contrast(&test_frame()) * 1.2,
         "sharpen must raise local contrast: {} vs {}",
@@ -1180,7 +1180,7 @@ fn t332_barrier_semantics() {
 
     // RadialBlur: the centre is the fixed point of the ray, the edge is smeared
     let rb =
-        run(&[FxInstance::RadialBlur { amount: 0.8, center_x: 0.0, center_y: 0.0, spin: false }]);
+        run(&[FxInstance::plugin_with("radial_blur", &[0.8, 0.0, 0.0, 0.0]).unwrap()]);
     let mut edge_moved = 0;
     for x in 0..W {
         let i = ((H / 4 * W + x) * 4) as usize;
@@ -1191,7 +1191,7 @@ fn t332_barrier_semantics() {
     assert!(edge_moved > (W / 4) as usize, "radial blur must smear off-center rows");
 
     // DropShadow on an opaque input — passthrough byte-for-byte
-    let ds = run(&[FxInstance::drop_shadow()]);
+    let ds = run(&[FxInstance::builtin("drop_shadow")]);
     assert_eq!(ds.rgba, src.rgba, "opaque input: drop shadow is a byte passthrough");
 
     // [greenscreen, drop_shadow]: in the cut-out zone at +offset from the opaque edge a SHADOW
@@ -1205,15 +1205,7 @@ fn t332_barrier_semantics() {
     );
     assert!(keyed.has_alpha);
     let shadowed = apply_barrier(
-        &FxInstance::DropShadow {
-            offset_x: 6,
-            offset_y: 6,
-            radius: 2,
-            opacity: 1.0,
-            tint_r: 0,
-            tint_g: 0,
-            tint_b: 0,
-        },
+        &FxInstance::plugin_with("drop_shadow", &[6.0, 6.0, 2.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
         keyed,
         &ctx(),
         &mut scratch,
@@ -1516,22 +1508,8 @@ fn t523_opaque_frames_are_byte_identical() {
     for fx in [
         FxInstance::blur(8),
         FxInstance::blur(24),
-        FxInstance::Glow {
-            strength: 1.0,
-            radius: 4,
-            threshold: 0,
-            tint_r: 255,
-            tint_g: 255,
-            tint_b: 255,
-        },
-        FxInstance::Glow {
-            strength: 0.7,
-            radius: 9,
-            threshold: 40,
-            tint_r: 200,
-            tint_g: 120,
-            tint_b: 255,
-        },
+        FxInstance::plugin_with("glow", &[1.0, 4.0, 0.0, 255.0, 255.0, 255.0]).unwrap(),
+        FxInstance::plugin_with("glow", &[0.7, 9.0, 40.0, 200.0, 120.0, 255.0]).unwrap(),
     ] {
         // the same frame, but declared with alpha: all pixels a == 255
         let mut with = test_frame();

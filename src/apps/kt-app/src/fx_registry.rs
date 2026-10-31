@@ -51,20 +51,15 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
     // and a shortened `use` would hide the usage.
     match name {
         "Geometry" => (k::fxreg::cat::MOTION, Some(k::fxreg::kw::GEOMETRY)),
-        "Blur" => (k::fxreg::cat::BLUR, Some(k::fxreg::kw::BLUR)),
         "Greenscreen" => (k::fxreg::cat::KEY, Some(k::fxreg::kw::GREENSCREEN)),
         "Edges" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::EDGES)),
         "Noise" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::NOISE)),
         "VHS" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::VHS)),
-        "Glow" => (k::fxreg::cat::GLOW, Some(k::fxreg::kw::GLOW)),
         // R.47 Q2: color/style/perspective
         // R.47 Q3: barriers
-        "Sharpen" => (k::fxreg::cat::BLUR, Some(k::fxreg::kw::SHARPEN)),
         "Chromatic Aberration" => {
             (k::fxreg::cat::DISTORT, Some(k::fxreg::kw::CHROMATIC_ABERRATION))
         }
-        "Radial Blur" => (k::fxreg::cat::BLUR, Some(k::fxreg::kw::RADIAL_BLUR)),
-        "Drop Shadow" => (k::fxreg::cat::KEY, Some(k::fxreg::kw::DROP_SHADOW)),
         "Halftone" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::HALFTONE)),
         _ => (k::fxreg::cat::VIDEO, None),
     }
@@ -103,12 +98,6 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
             var(tmpl, k::fxreg::var::CLOSEUP, &[("zoom", 1.25)]),
             var(tmpl, k::fxreg::var::PUNCH, &[("zoom", 2.0)]),
             var(tmpl, k::fxreg::var::OFFCENTER, &[("zoom", 1.4), ("pos_x", -0.12)]),
-        ],
-        "Blur" => vec![
-            var(tmpl, k::fxreg::var::SOFT, &[("radius", 3.0)]),
-            var(tmpl, k::fxreg::var::HEAVY, &[("radius", 24.0)]),
-            // blur along one axis: radius_y = 1 (not 0 — zero means “as X”)
-            var(tmpl, k::fxreg::var::HORIZONTAL, &[("radius", 28.0), ("radius_y", 1.0)]),
         ],
         "Greenscreen" => vec![
             var(tmpl, k::fxreg::var::TIGHT, &[("tolerance", 40.0), ("softness", 10.0)]),
@@ -156,34 +145,6 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
                 &[("rgb_shift", 10.0), ("bleed", 0.85), ("scan_step", 6.0), ("jitter", 0.45)],
             ),
         ],
-        "Glow" => vec![
-            var(
-                tmpl,
-                k::fxreg::var::SOFT,
-                &[("strength", 0.4), ("radius", 8.0), ("threshold", 128.0)],
-            ),
-            var(
-                tmpl,
-                k::fxreg::var::DREAM,
-                &[("strength", 1.1), ("radius", 16.0), ("threshold", 96.0)],
-            ),
-            var(
-                tmpl,
-                k::fxreg::var::GOLDEN,
-                &[
-                    ("strength", 0.9),
-                    ("radius", 12.0),
-                    ("threshold", 110.0),
-                    ("tint_g", 200.0),
-                    ("tint_b", 120.0),
-                ],
-            ),
-        ],
-        "Sharpen" => vec![
-            var(tmpl, k::fxreg::var::SOFT, &[("amount", 0.5), ("radius", 1.0)]),
-            var(tmpl, k::fxreg::var::STRONG, &[("amount", 2.0)]),
-            var(tmpl, k::fxreg::var::HEAVY, &[("amount", 3.2), ("radius", 4.0)]),
-        ],
         "Chromatic Aberration" => vec![
             var(tmpl, k::fxreg::var::SUBTLE, &[("amount", 0.004)]),
             var(tmpl, k::fxreg::var::STRONG, &[("amount", 0.028)]),
@@ -192,37 +153,6 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
             // the value ends up OUTSIDE the spec (found by t543).
             // A variant is a kind, not a limit check
             var(tmpl, k::fxreg::var::GLITCH, &[("amount", 0.045)]),
-        ],
-        "Radial Blur" => {
-            let mut v = vec![
-                var(tmpl, k::fxreg::var::ZOOM, &[("amount", 0.5)]),
-                var(tmpl, k::fxreg::var::HEAVY, &[("amount", 0.85)]),
-            ];
-            // rotation instead of zoom — the only non-numeric parameter among all variants:
-            // `spin` has no spec, it is a bool
-            let mut spin = var(tmpl, k::fxreg::var::SPIN, &[("amount", 0.4)]);
-            if let FxInstance::RadialBlur { spin: s, .. } = &mut spin.fx {
-                *s = true;
-            }
-            v.insert(1, spin);
-            v
-        }
-        "Drop Shadow" => vec![
-            var(
-                tmpl,
-                k::fxreg::var::SOFT,
-                &[("offset_x", 6.0), ("offset_y", 6.0), ("radius", 12.0), ("opacity", 0.45)],
-            ),
-            var(
-                tmpl,
-                k::fxreg::var::HARD,
-                &[("offset_x", 4.0), ("offset_y", 4.0), ("radius", 1.0), ("opacity", 0.8)],
-            ),
-            var(
-                tmpl,
-                k::fxreg::var::FAR,
-                &[("offset_x", 24.0), ("offset_y", 24.0), ("radius", 16.0), ("opacity", 0.5)],
-            ),
         ],
         "Halftone" => vec![
             var(tmpl, k::fxreg::var::FINE, &[("size", 3.0), ("angle", 0.0)]),
@@ -1234,12 +1164,8 @@ mod tests {
             let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
             for v in &e.variants {
                 // the SAME kind: a variant does not replace the effect with another
-                assert_eq!(
-                    std::mem::discriminant(&v.fx),
-                    std::mem::discriminant(&e.template),
-                    "{}: variant changes the effect kind",
-                    e.name
-                );
+                // the kind is the tag: every plugin slot shares one enum variant
+                assert_eq!(v.fx.tag(), e.template.tag(), "{}: variant changes the effect kind", e.name);
                 let repr = format!("{:?}", v.fx);
                 // differs from the template. For Pan/Pan 3D/Color
                 // Grade/Corner Pin/Drop Shadow this is also the condition

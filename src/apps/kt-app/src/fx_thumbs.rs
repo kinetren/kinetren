@@ -97,7 +97,8 @@ pub fn recipe_hash(
 /// passthrough is honest — for an opaque clip the shadow
 /// really changes nothing, and one must not lie about it in the picker.
 fn needs_alpha(fx: &[FxInstance]) -> bool {
-    fx.iter().any(|f| matches!(f, FxInstance::DropShadow { .. }))
+    // the manifest declares it (plugin-api-barriers): no kind is named here
+    fx.iter().any(|f| matches!(f, FxInstance::Plugin(p) if p.manifest().ui.alpha_sample))
 }
 
 /// A thumbnail request. The base frame arrives READY: the worker goes neither to foreign caches
@@ -553,6 +554,7 @@ mod tests {
     /// The recipe distinguishes exactly what the picture depends on.
     #[test]
     fn t546c_recipe_separates_what_changes_the_picture() {
+        crate::plugins::install();
         let a = vec![FxInstance::blur(8)];
         let b = vec![FxInstance::blur(9)];
         let base = recipe_hash(&a, 0.5, 90_000, None);
@@ -637,6 +639,7 @@ mod tests {
     /// by its caption and knows nothing about the picture inside.
     #[test]
     fn t546g_picker_ctx_requests_then_gets_a_texture() {
+        crate::plugins::install();
         let svc = FxThumbService::start();
         let ctx = egui::Context::default();
         let mut pv = PickerCtx::new(&svc, FxThumbBase::Pattern, None, vec![], 0.5, 90_000, None);

@@ -1347,16 +1347,11 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Geometry { lead: true, .. } => "• Geometry",
         FxInstance::Geometry { .. } => "Geometry",
         FxInstance::CamMotion { .. } => "CamMotion",
-        FxInstance::Blur { .. } => "Blur",
         FxInstance::Greenscreen { .. } => "Greenscreen",
         FxInstance::Edges { .. } => "Edges",
         FxInstance::Noise { .. } => "Noise",
         FxInstance::Vhs { .. } => "VHS",
-        FxInstance::Glow { .. } => "Glow",
-        FxInstance::Sharpen { .. } => "Sharpen",
         FxInstance::ChromaticAberration { .. } => "Chromatic Aberration",
-        FxInstance::RadialBlur { .. } => "Radial Blur",
-        FxInstance::DropShadow { .. } => "Drop Shadow",
         FxInstance::Halftone { .. } => "Halftone",
         // a plugin names itself in its manifest (plugin-api-stage1, D7)
         FxInstance::Plugin(p) => p.manifest().ui.name,
@@ -1373,18 +1368,13 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
         // one (the leading one is always present on an event and does not live in the catalog);
         // the former Pan is abolished
         ("Geometry", FxInstance::geometry_node()),
-        ("Blur", FxInstance::blur(8)),
         ("Greenscreen", FxInstance::greenscreen([0, 255, 0], 70, 25)),
         ("Edges", FxInstance::edges(48)),
         ("Noise", FxInstance::noise(0.08)),
         ("VHS", FxInstance::vhs(4, 0.4)),
-        ("Glow", FxInstance::glow(0.65)),
         // R.47: per-point color/style + the first honest perspective
         // R.47 Q3: barriers
-        ("Sharpen", FxInstance::sharpen()),
         ("Chromatic Aberration", FxInstance::chromatic_aberration()),
-        ("Radial Blur", FxInstance::radial_blur()),
-        ("Drop Shadow", FxInstance::drop_shadow()),
         ("Halftone", FxInstance::halftone()),
     ]
 }
@@ -1470,8 +1460,8 @@ pub(crate) fn draw_video_fx_params(
         FxInstance::Greenscreen { .. } => &["key_r", "key_g", "key_b"],
         // the outline line color and the glow tint — also with an eyedropper (R.33 S5)
         FxInstance::Edges { .. } => &["color_r", "color_g", "color_b"],
-        FxInstance::Glow { .. } => &["tint_r", "tint_g", "tint_b"],
-        FxInstance::DropShadow { .. } => &["tint_r", "tint_g", "tint_b"],
+        // the glow and shadow tints (plugin slots since plugin-api-barriers)
+        FxInstance::Plugin(p) if p.id == "glow" || p.id == "drop_shadow" => &["tint_r", "tint_g", "tint_b"],
         // both duotone colors — with eyedroppers (R.47 Q2)
         FxInstance::Plugin(p) if p.id == "duotone" => {
             &["shadow_r", "shadow_g", "shadow_b", "high_r", "high_g", "high_b"]
@@ -1618,19 +1608,6 @@ pub(crate) fn draw_video_fx_params(
                 }
             });
         }
-        FxInstance::Glow { tint_r, tint_g, tint_b, .. } => {
-            ui.horizontal(|ui| {
-                let mut col =
-                    [*tint_r as f32 / 255.0, *tint_g as f32 / 255.0, *tint_b as f32 / 255.0];
-                ui.label(tr(k::fx::TINT));
-                if ui.color_edit_button_rgb(&mut col).changed() {
-                    *tint_r = (col[0] * 255.0) as u8;
-                    *tint_g = (col[1] * 255.0) as u8;
-                    *tint_b = (col[2] * 255.0) as u8;
-                    ch.base = true;
-                }
-            });
-        }
         // the two duotone colors (a plugin slot since plugin-api-stage1, stage 4): its u8 rows
         FxInstance::Plugin(p) if p.id == "duotone" => {
             let rgb = |p: &kt_model::PluginSlot, n: [&str; 3]| -> [f32; 3] {
@@ -1658,22 +1635,28 @@ pub(crate) fn draw_video_fx_params(
                 }
             });
         }
-        FxInstance::DropShadow { tint_r, tint_g, tint_b, .. } => {
+        // the glow and shadow tints: three u8 rows of the plugin slot (plugin-api-barriers)
+        FxInstance::Plugin(p) if p.id == "glow" || p.id == "drop_shadow" => {
+            let tint = ["tint_r", "tint_g", "tint_b"];
             ui.horizontal(|ui| {
-                let mut col =
-                    [*tint_r as f32 / 255.0, *tint_g as f32 / 255.0, *tint_b as f32 / 255.0];
+                let mut col = tint.map(|n| p.get(n).unwrap_or(0.0) as f32 / 255.0);
                 ui.label(tr(k::fx::TINT));
                 if ui.color_edit_button_rgb(&mut col).changed() {
-                    *tint_r = (col[0] * 255.0) as u8;
-                    *tint_g = (col[1] * 255.0) as u8;
-                    *tint_b = (col[2] * 255.0) as u8;
+                    for (n, v) in tint.iter().zip(col) {
+                        p.set(n, (v * 255.0) as u8 as f64);
+                    }
                     ch.base = true;
                 }
             });
         }
-        FxInstance::RadialBlur { spin, .. } => {
+        // the radial blur's spin flag row (a plugin slot since plugin-api-barriers)
+        FxInstance::Plugin(p) if p.id == "radial_blur" => {
             ui.horizontal(|ui| {
-                ch.base |= ui.checkbox(spin, tr(k::fx::SPIN)).changed();
+                let mut on = p.get("spin") == Some(1.0);
+                if ui.checkbox(&mut on, tr(k::fx::SPIN)).changed() {
+                    p.set("spin", if on { 1.0 } else { 0.0 });
+                    ch.base = true;
+                }
             });
         }
         FxInstance::Plugin(p) if p.id == "pitch_shift" => {

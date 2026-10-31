@@ -3412,7 +3412,7 @@ fn t219_one_window_for_the_whole_link_group() {
         app.apply_coalesced(Command::SetFxOff { id, off }, g);
     }
     assert!(
-        matches!(app.model.clip(ClipId(1)).unwrap().fx.as_slice(), [FxInstance::Blur { .. }]),
+        matches!(app.model.clip(ClipId(1)).unwrap().fx.as_slice(), [FxInstance::Plugin(q)] if q.id == "blur"),
         "the video chain did not roll back"
     );
     assert!(
@@ -8958,7 +8958,7 @@ fn t346_preset_insert_appends_chain_with_curves() {
 
     let clip = h.state().model.clip(ClipId(1)).unwrap().clone();
     assert_eq!(clip.fx.len(), 2, "the preset is appended to the end, not replacing the chain");
-    assert!(matches!(clip.fx[1], FxInstance::Glow { .. }));
+    assert!(matches!(clip.fx[1], FxInstance::Plugin(ref q) if q.id == "glow"));
     assert_eq!(
         clip.fx_auto[1][0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
         vec![30_000, 120_000],
@@ -12908,7 +12908,7 @@ fn t700b_field_mapping_dialog_never_loses_a_curve_silently() {
 
     let (mut h, _g) = harness_three_clips();
     let id = h.state().model.project().clips[0].id;
-    let blur = kt_model::FxInstance::Blur { radius: 8, radius_y: 0 };
+    let blur = kt_model::FxInstance::plugin_with("blur", &[8.0, 0.0]).unwrap();
     assert!(h.state_mut().apply(kt_model::Command::SetFx { id, fx: vec![blur.clone()] }));
     h.step();
 
@@ -12965,6 +12965,7 @@ fn t700b_field_mapping_dialog_never_loses_a_curve_silently() {
 /// error, not a greyed-out button.
 #[test]
 fn t699_clipboard_is_read_on_press_and_explains_refusals() {
+    crate::plugins::install();
     use crate::envclip::ClipRead;
     use kt_model::{AutoKey, ParamCurve};
     use kt_time::Tick;
@@ -13001,7 +13002,7 @@ fn t699_clipboard_is_read_on_press_and_explains_refusals() {
     assert!(matches!(ClipRead::Empty, ClipRead::Empty));
 
     // --- the matching window opens ONLY when there is a remainder ------------
-    let blur = kt_model::FxInstance::Blur { radius: 8, radius_y: 0 };
+    let blur = kt_model::FxInstance::plugin_with("blur", &[8.0, 0.0]).unwrap();
     let own = kt_model::ops::fit_envelope(&block.curves, &blur);
     assert!(own.leftover.is_empty(), "own view produced a remainder — the window would show up for nothing");
     let alien = ParamCurve {
@@ -15148,7 +15149,7 @@ fn t755b_an_instance_knob_moves_its_preview_key() {
     h.step();
     assert!(h.state_mut().apply(Command::SetFx {
         id: s.inner,
-        fx: vec![FxInstance::radial_blur()],
+        fx: vec![FxInstance::builtin("radial_blur")],
     }));
     h.step();
     assert!(

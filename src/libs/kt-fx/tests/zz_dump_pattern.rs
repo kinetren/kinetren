@@ -28,7 +28,7 @@ fn dump() {
         ("pixelate", &p, FxInstance::builtin("pixelate")),
         ("halftone", &p, FxInstance::halftone()),
         ("glow", &p, FxInstance::glow(0.9)),
-        ("shadow", &pa, FxInstance::drop_shadow()),
+        ("shadow", &pa, FxInstance::builtin("drop_shadow")),
         ("twirl", &p, FxInstance::builtin("twirl")),
     ] {
         let f = render_fx_thumb(base, &[fx], 320, 180, 0.5, 90_000, None, &mut s);

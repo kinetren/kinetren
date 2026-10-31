@@ -701,7 +701,7 @@ fn t254_click_is_a_click() {
     // in place” is a selection, not a drag
     let fx = h.state().model.project().clips[0].fx.clone();
     assert_eq!(fx.len(), 2, "click does not change the chain’s composition");
-    assert!(matches!(fx[0], FxInstance::Blur { .. }), "and does not reorder the slots");
+    assert!(matches!(fx[0], FxInstance::Plugin(ref q) if q.id == "blur"), "and does not reorder the slots");
 
     // the slot’s cross is an ordinary button, but it stands IN THE SAME strip
     let crosses = h.get_all_by_label(crate::icons::CLEAR).count();
@@ -7086,7 +7086,7 @@ fn t884_real_ui_paths_move_the_counters() {
     h.step();
     h.step();
     let fx = &h.state().model.clip(video).unwrap().fx;
-    assert!(fx.iter().any(|f| matches!(f, kt_model::FxInstance::Blur { .. })), "{fx:?}");
+    assert!(fx.iter().any(|f| matches!(f, kt_model::FxInstance::Plugin(q) if q.id == "blur")), "{fx:?}");
     h.key_press(egui::Key::Escape);
     h.step();
     h.key_press(egui::Key::Escape);

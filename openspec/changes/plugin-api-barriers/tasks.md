@@ -1,6 +1,6 @@
 # Tasks
 
-Tests t1051–t1056 are reserved by this change. It starts after `plugin-api-stage1` is archived
+Tests t1051–t1057 are reserved by this change (t1057 for a defect found in stage 3). It starts after `plugin-api-stage1` is archived
 (the `plugins` spec exists). Every stage ends green and is committed at once (owner's rule); each
 moved kind's `FxOp`/`Pipe` arms, WGSL file, serde defaults and constructor are deleted in the
 stage that moves it.
@@ -89,9 +89,40 @@ stage that moves it.
 
 ## 3. The mip kinds
 
-- [ ] 3.1 Glow into `src/plugins/fx-video-blur` (new crate): premul around the mip on alpha (R.53 item 418), its AVX2 add twin behind `cx.simd`. Verify t1051, t198, t181, t329, t303, the glow mip tests
-- [ ] 3.2 Sharpen and drop_shadow into `fx-video-blur`, with the three-pass graphs. Verify t1051, t332, t181, t329, t303
-- [ ] 3.3 Blur and radial_blur into `fx-video-blur`. Verify t1051, t181, t329, t303, t302; commit stage 3
+- [x] 3.1 Glow into `src/plugins/fx-video-blur` (new crate): premul around the mip on alpha (R.53 item 418), its AVX2 add twin behind `cx.simd`. Verify t1051, t198, t181, t329, t303, the glow mip tests
+- [x] 3.2 Sharpen and drop_shadow into `fx-video-blur`, with the three-pass graphs. Verify t1051, t332, t181, t329, t303
+- [x] 3.3 Blur and radial_blur into `fx-video-blur`. Verify t1051, t181, t329, t303, t302; commit stage 3
+  - `src/plugins/fx-video-blur` holds the five kinds.
+    - Each CPU kernel is the kt-fx kernel verbatim; the mip and the samples go through
+      `RasterHost`, the same functions the core calls.
+    - Glow's AVX2 add twin moved into the crate's `simd.rs`, behind `cx.simd`; t198 reaches it
+      through `fx_video_blur::simd_testing`.
+    - The GPU graphs repeat the former `FxOp` arms node for node: blur is host nodes only;
+      drop_shadow's graph is empty when the fold KNOWS the frame is opaque.
+  - kt-gpu lost:
+    - `Pipe::{GlowAdd, SharpenAdd, RadialBlur, ShadowUnder}`, their WGSL (moved) and five
+      `FxOp`s;
+    - `FxOp::Premul`/`Unpremul`, now graph nodes.
+  - kt-model lost the five variants, their passports, tags and no-argument constructors, plus ten
+    serde defaults. `blur(r)` and `glow(s)` stay as parametric constructors over `plugin_with`.
+  - kt-app: the tints and the spin checkbox are drawn by plugin id. `UiDecl.alpha_sample` replaces
+    `needs_alpha`'s match on `DropShadow`, so the picker names no kind.
+  - Verified:
+    - t1051 (on the AVX2 path and with `KT_SIMD=0`), t973, t26, t328, t198
+      (`KT_REQUIRE_SIMD=1`), t302, t303, t332;
+    - kt-gpu 28/28 with `KT_REQUIRE_GPU=1` (t181, t329);
+    - workspace 1279/1283, the four reds (t815, t951, t952, t802) green alone.
+  - **Found and fixed, two defects plugin-api-stage1 left in "is this the same kind":**
+    - `FxInstance::lerp` (the picker's strength axis) compared the enum discriminant. Every
+      plugin slot shares it, so blur's `radius` blended into glow's (t550c went red when both
+      moved). It now compares the tag.
+    - `kt_fx::chain_fingerprint`, which decides whether `FxStateStore` keeps a clip's processor
+      (invariant 3), hashed the discriminant only. Since stage 3 of plugin-api-stage1 an EQ
+      replaced by a filter in the same slot kept the EQ's node, which received the filter's
+      values until a seek. It now hashes the tag; t1057 (`kt-fx/tests/chain_kind.rs`) was red on
+      the old code. The `audio-render` delta records it.
+    - kt-app's "a variant keeps its kind" check compared the discriminant too; it compares the
+      tag now.
 
 ## 4. The rest and the dual-position kinds
 

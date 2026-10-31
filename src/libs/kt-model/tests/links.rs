@@ -23,7 +23,7 @@ fn clip(id: u64, start: i64, dur: i64, src_in: i64) -> ClipEvent {
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
-        fx: vec![FxInstance::Blur { radius: 8, radius_y: 0 }],
+        fx: vec![FxInstance::plugin_with("blur", &[8.0, 0.0]).unwrap()],
         fx_bypass: vec![false],
         fx_auto: vec![Vec::new()],
         opacity: 1.0,
@@ -114,7 +114,7 @@ fn t702_a_link_reads_inside_the_event_and_across_events() {
 
     // --- INSIDE one event no conversion is needed: the domain is common ----------
     let mut solo = clip(4, 2 * SEC, 2 * SEC, SEC);
-    solo.fx = vec![FxInstance::Blur { radius: 8, radius_y: 0 }, FxInstance::gain(0.0)];
+    solo.fx = vec![FxInstance::plugin_with("blur", &[8.0, 0.0]).unwrap(), FxInstance::gain(0.0)];
     solo.fx_bypass = vec![false, false];
     solo.fx_auto = vec![vec![driver("radius", 4.0, 12.0, SEC, 3 * SEC)], Vec::new()];
     let mut r = base();

@@ -283,10 +283,10 @@ fn t228_new_fx_params_change_the_picture() {
     let plain = hash(run(FxInstance::blur(12)));
     assert_eq!(
         plain,
-        hash(run(FxInstance::Blur { radius: 12, radius_y: 0 })),
+        hash(run(FxInstance::plugin_with("blur", &[12.0, 0.0]).unwrap())),
         "radius_y = 0 must be an identity to the prior blur"
     );
-    let wide = run(FxInstance::Blur { radius: 12, radius_y: 1 });
+    let wide = run(FxInstance::plugin_with("blur", &[12.0, 1.0]).unwrap());
     assert_ne!(plain, hash(wide), "radius along Y must change the picture");
     // blur along X only: vertical neighbours differ MORE strongly than
     // with blur on both axes (along Y the frame stayed sharp)
@@ -303,8 +303,8 @@ fn t228_new_fx_params_change_the_picture() {
         }
         s
     };
-    let x_only = run(FxInstance::Blur { radius: 48, radius_y: 1 });
-    let both = run(FxInstance::Blur { radius: 48, radius_y: 0 });
+    let x_only = run(FxInstance::plugin_with("blur", &[48.0, 1.0]).unwrap());
+    let both = run(FxInstance::plugin_with("blur", &[48.0, 0.0]).unwrap());
     assert!(
         var_y(&x_only) > var_y(&both),
         "a smear along one axis must keep vertical contrast: {} vs {}",
@@ -386,47 +386,19 @@ fn t228_glow_vhs_greenscreen_params() {
     let plain = run(FxInstance::glow(1.0));
     assert_eq!(
         hash(&plain),
-        hash(&run(FxInstance::Glow {
-            strength: 1.0,
-            radius: 4,
-            threshold: 0,
-            tint_r: 255,
-            tint_g: 255,
-            tint_b: 255
-        })),
+        hash(&run(FxInstance::plugin_with("glow", &[1.0, 4.0, 0.0, 255.0, 255.0, 255.0]).unwrap())),
         "radius 4, threshold 0 and white tint — the prior glow"
     );
-    let wide = run(FxInstance::Glow {
-        strength: 1.0,
-        radius: 16,
-        threshold: 0,
-        tint_r: 255,
-        tint_g: 255,
-        tint_b: 255,
-    });
+    let wide = run(FxInstance::plugin_with("glow", &[1.0, 16.0, 0.0, 255.0, 255.0, 255.0]).unwrap());
     assert_ne!(hash(&plain), hash(&wide), "the glow radius must change the picture");
-    let gated = run(FxInstance::Glow {
-        strength: 1.0,
-        radius: 4,
-        threshold: 200,
-        tint_r: 255,
-        tint_g: 255,
-        tint_b: 255,
-    });
+    let gated = run(FxInstance::plugin_with("glow", &[1.0, 4.0, 200.0, 255.0, 255.0, 255.0]).unwrap());
     assert!(
         mean(&gated) < mean(&plain),
         "the threshold must remove glow from dark areas: {} vs {}",
         mean(&gated),
         mean(&plain)
     );
-    let tinted = run(FxInstance::Glow {
-        strength: 1.0,
-        radius: 4,
-        threshold: 0,
-        tint_r: 255,
-        tint_g: 0,
-        tint_b: 0,
-    });
+    let tinted = run(FxInstance::plugin_with("glow", &[1.0, 4.0, 0.0, 255.0, 0.0, 0.0]).unwrap());
     let src = test_frame();
     let (mut dr, mut dg) = (0i64, 0i64);
     for (p, s) in tinted.rgba.chunks_exact(4).zip(src.rgba.chunks_exact(4)) {

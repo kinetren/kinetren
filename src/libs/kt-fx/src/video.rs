@@ -338,7 +338,6 @@ pub fn apply_barrier(
         return b.frame(&b.cook(values), frame, &cx, scratch);
     }
     match f {
-        FxInstance::Blur { radius, radius_y } => blur(frame, *radius, *radius_y, scratch, rs),
         // greenscreen per-pixel — the resolution does not touch it
         FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness, spill } => {
             greenscreen(frame, [*key_r, *key_g, *key_b], *tolerance, *softness, *spill)
@@ -351,9 +350,6 @@ pub fn apply_barrier(
         }
         FxInstance::Vhs { rgb_shift, bleed, scan_step, jitter } => {
             vhs(frame, *rgb_shift, *bleed, *scan_step, *jitter, ctx.burst_index, scratch, rs)
-        }
-        FxInstance::Glow { strength, radius, threshold, tint_r, tint_g, tint_b } => {
-            glow(frame, *strength, *radius, *threshold, [*tint_r, *tint_g, *tint_b], scratch, rs)
         }
         // per-pixel R.47 effects in a BARRIER position (leading/trailing slot):
         // the same f64 text of the formula as the tap of the fused pass — one home
@@ -368,30 +364,8 @@ pub fn apply_barrier(
             frame
         }
         // R.47 barriers Kv3
-        FxInstance::Sharpen { amount, radius } => {
-            sharpen(frame, (*amount as f64).clamp(0.0, 4.0), *radius, scratch, rs)
-        }
         FxInstance::ChromaticAberration { amount } => {
             chroma_ab(frame, (*amount as f64).clamp(0.0, 0.05), scratch)
-        }
-        FxInstance::RadialBlur { amount, center_x, center_y, spin } => radial_blur(
-            frame,
-            (*amount as f64).clamp(0.0, 1.0),
-            *center_x as f64,
-            *center_y as f64,
-            *spin,
-            scratch,
-        ),
-        FxInstance::DropShadow { offset_x, offset_y, radius, opacity, tint_r, tint_g, tint_b } => {
-            drop_shadow(
-                frame,
-                (*offset_x, *offset_y),
-                *radius,
-                (*opacity as f64).clamp(0.0, 1.0),
-                [*tint_r, *tint_g, *tint_b],
-                scratch,
-                rs,
-            )
         }
         FxInstance::Halftone { size, angle } => halftone(frame, *size, *angle as f64, scratch, rs),
         _ => {
@@ -399,29 +373,6 @@ pub fn apply_barrier(
             frame
         }
     }
-}
-
-/// Unsharp masking (R.47): src + (src − mip base)·amount. The mip step
-/// = radius·K (radius ≥ 2: step 1 would give a base == the source and a zero
-/// effect — the bilinear 1:1 is exact). Alpha is untouched.
-fn sharpen(f: Frame, amount: f64, radius: u32, scratch: &mut FxScratch, res_scale: u32) -> Frame {
-    let step = radius.clamp(2, 16) * res_scale;
-    let (dw, dh) = ((f.w / step).max(1), (f.h / step).max(1));
-    let mut small = scratch.take((dw * dh * 4) as usize);
-    bilinear_into(&f, 0.0, 0.0, f.w as f64, f.h as f64, dw, dh, &mut small);
-    let small_f = Frame { w: dw, h: dh, rgba: small, has_alpha: f.has_alpha };
-    let mut base = scratch.take(f.rgba.len());
-    bilinear_into(&small_f, 0.0, 0.0, dw as f64, dh as f64, f.w, f.h, &mut base);
-    scratch.put(small_f.rgba);
-    let mut out = f;
-    for (px, bp) in out.rgba.chunks_exact_mut(4).zip(base.chunks_exact(4)) {
-        for c in 0..3 {
-            let s = px[c] as f64;
-            px[c] = (s + (s - bp[c] as f64) * amount).round().clamp(0.0, 255.0) as u8;
-        }
-    }
-    scratch.put(base);
-    out
 }
 
 /// Chromatic aberration (R.47): R is sampled closer to the centre (×(1−a)),
@@ -451,111 +402,6 @@ fn chroma_ab(f: Frame, amount: f64, scratch: &mut FxScratch) -> Frame {
         }
     }
     let res = Frame { w: f.w, h: f.h, rgba: out, has_alpha: f.has_alpha };
-    scratch.put(f.rgba);
-    res
-}
-
-/// Radial blur (R.47): the average over EXACTLY 16 taps along the zoom ray or
-/// the rotation arc — the tap count is a constant of both backends; the frame
-/// fractions scale by K× themselves.
-fn radial_blur(
-    f: Frame,
-    amount: f64,
-    center_x: f64,
-    center_y: f64,
-    spin: bool,
-    scratch: &mut FxScratch,
-) -> Frame {
-    const N: usize = 16;
-    let (cx, cy) = (
-        (0.5 + center_x.clamp(-1.0, 1.0) * 0.5) * f.w as f64,
-        (0.5 + center_y.clamp(-1.0, 1.0) * 0.5) * f.h as f64,
-    );
-    let mut out = scratch.take(f.rgba.len());
-    for y in 0..f.h {
-        for x in 0..f.w {
-            let d = ((y * f.w + x) * 4) as usize;
-            let (px, py) = (x as f64 + 0.5 - cx, y as f64 + 0.5 - cy);
-            let mut acc = [0f64; 4];
-            for i in 0..N {
-                let t = i as f64 / (N - 1) as f64;
-                let (sx, sy) = if spin {
-                    let a = 0.6 * amount * (t - 0.5);
-                    let (sa, ca) = a.sin_cos();
-                    (px * ca - py * sa, px * sa + py * ca)
-                } else {
-                    let k = 1.0 - 0.5 * amount * t;
-                    (px * k, py * k)
-                };
-                let s = crate::geom::sample_bilinear_f64(&f, cx + sx - 0.5, cy + sy - 0.5);
-                for (a, v) in acc.iter_mut().zip(s) {
-                    *a += v;
-                }
-            }
-            for (c, a) in acc.iter().enumerate() {
-                out[d + c] = (a / N as f64).round().clamp(0.0, 255.0) as u8;
-            }
-        }
-    }
-    let res = Frame { w: f.w, h: f.h, rgba: out, has_alpha: f.has_alpha };
-    scratch.put(f.rgba);
-    res
-}
-
-/// Shadow under the layer (R.47): the source alpha blurred (mip radius·K) and shifted
-/// by offset·K; the source OVER the shadow (straight alpha, f64,
-/// rounding once). An input without alpha — passthrough: the formula on an
-/// opaque input degenerates into identity, the early exit only
-/// saves work (the GPU side is consistent — see chain_ops).
-fn drop_shadow(
-    f: Frame,
-    offset: (i32, i32),
-    radius: u32,
-    opacity: f64,
-    tint: [u8; 3],
-    scratch: &mut FxScratch,
-    res_scale: u32,
-) -> Frame {
-    if !f.has_alpha {
-        return f;
-    }
-    let step = radius.clamp(1, 32) * res_scale;
-    let (dw, dh) = ((f.w / step).max(1), (f.h / step).max(1));
-    let mut small = scratch.take((dw * dh * 4) as usize);
-    bilinear_into(&f, 0.0, 0.0, f.w as f64, f.h as f64, dw, dh, &mut small);
-    let small_f = Frame { w: dw, h: dh, rgba: small, has_alpha: true };
-    let mut blurred = scratch.take(f.rgba.len());
-    bilinear_into(&small_f, 0.0, 0.0, dw as f64, dh as f64, f.w, f.h, &mut blurred);
-    scratch.put(small_f.rgba);
-    let (ox, oy) =
-        (offset.0.clamp(-64, 64) * res_scale as i32, offset.1.clamp(-64, 64) * res_scale as i32);
-    let mut out = scratch.take(f.rgba.len());
-    for y in 0..f.h as i64 {
-        for x in 0..f.w as i64 {
-            let d = ((y * f.w as i64 + x) * 4) as usize;
-            let (bx, by) = (x - ox as i64, y - oy as i64);
-            let ba = if bx >= 0 && by >= 0 && bx < f.w as i64 && by < f.h as i64 {
-                blurred[((by * f.w as i64 + bx) * 4 + 3) as usize] as f64 / 255.0
-            } else {
-                0.0
-            };
-            let ash = ba * opacity;
-            let asrc = f.rgba[d + 3] as f64 / 255.0;
-            let oa = asrc + ash * (1.0 - asrc);
-            if oa <= 0.0 {
-                out[d..d + 4].copy_from_slice(&[0, 0, 0, 0]);
-            } else {
-                for c in 0..3 {
-                    let v =
-                        (f.rgba[d + c] as f64 * asrc + tint[c] as f64 * ash * (1.0 - asrc)) / oa;
-                    out[d + c] = v.round().clamp(0.0, 255.0) as u8;
-                }
-                out[d + 3] = (oa * 255.0).round().clamp(0.0, 255.0) as u8;
-            }
-        }
-    }
-    scratch.put(blurred);
-    let res = Frame { w: f.w, h: f.h, rgba: out, has_alpha: true };
     scratch.put(f.rgba);
     res
 }
@@ -918,41 +764,6 @@ pub fn unpremultiply(rgba: &mut [u8]) {
     }
 }
 
-fn blur(
-    mut f: Frame,
-    radius: u32,
-    radius_y: u32,
-    scratch: &mut FxScratch,
-    res_scale: u32,
-) -> Frame {
-    let radius = radius.clamp(1, 48);
-    // R.45 (item 313): the K× execution scales the STEP — floor(K·w/(K·step))
-    // == floor(w/step), the mip is the same, the look is invariant exactly; K=1 — ×1
-    let step = ((radius / 3).max(1) + 1) * res_scale;
-    let step_y =
-        if radius_y == 0 { step } else { ((radius_y.clamp(1, 48) / 3).max(1) + 1) * res_scale };
-    let (dw, dh) = ((f.w / step).max(1), (f.h / step_y).max(1));
-    // ALPHA RULE (item 418): the premultiplied image is blurred, otherwise the colour
-    // of transparent pixels leaks into the visible ones — a dark halo along the edge of the
-    // title. On an opaque frame both conversions are identities, therefore the
-    // gate by `has_alpha` leaves all the goldens untouched.
-    let pm = f.has_alpha;
-    if pm {
-        premultiply(&mut f.rgba);
-    }
-    let mut small = scratch.take((dw * dh * 4) as usize);
-    bilinear_into(&f, 0.0, 0.0, f.w as f64, f.h as f64, dw, dh, &mut small);
-    let small_f = Frame { w: dw, h: dh, rgba: small, has_alpha: f.has_alpha };
-    let mut out = scratch.take(f.rgba.len());
-    bilinear_into(&small_f, 0.0, 0.0, dw as f64, dh as f64, f.w, f.h, &mut out);
-    if pm {
-        unpremultiply(&mut out);
-    }
-    scratch.put(small_f.rgba);
-    scratch.put(f.rgba);
-    Frame { w: f.w, h: f.h, rgba: out, has_alpha: f.has_alpha }
-}
-
 fn greenscreen(mut f: Frame, key: [u8; 3], tolerance: u32, softness: u32, spill: f64) -> Frame {
     let tol = tolerance.clamp(1, 200) as f64;
     let soft = softness.clamp(0, 100) as f64;
@@ -1284,75 +1095,6 @@ fn vhs(
         }
     }
     scratch.put(row);
-    f
-}
-
-/// Bloom: downscale ×1/4 → upscale, additive ×strength×0.35 (v1).
-fn glow(
-    mut f: Frame,
-    strength: f64,
-    radius: u32,
-    threshold: u32,
-    tint: [u8; 3],
-    scratch: &mut FxScratch,
-    res_scale: u32,
-) -> Frame {
-    let s = strength.clamp(0.0, 2.0) * 0.35;
-    if s <= 0.0 {
-        return f;
-    }
-    // radius 4, threshold 0 and white tint — the former path byte-for-byte
-    // R.45 (item 313): the mip divisor ×K — the mip is the same, the look is invariant
-    let r = radius.clamp(1, 32) * res_scale;
-    let th = threshold.min(255) as i32;
-    let plain = th == 0 && tint == [255, 255, 255];
-    let (dw, dh) = ((f.w / r).max(1), (f.h / r).max(1));
-    // ALPHA RULE (item 418): light does not come from transparent places. We mip
-    // a COPY of the premultiplied frame — and add it as is,
-    // without the reverse conversion: the premultiplied RGB IS the contribution of
-    // the light. The addition base stays straight. On an opaque frame the copy is
-    // byte-for-byte equal to the original — the former path is intact.
-    let pm = f.has_alpha;
-    let mut pmbuf = None;
-    if pm {
-        let mut b = scratch.take(f.rgba.len());
-        b.copy_from_slice(&f.rgba);
-        premultiply(&mut b);
-        pmbuf = Some(Frame { w: f.w, h: f.h, rgba: b, has_alpha: true });
-    }
-    let mip_src = pmbuf.as_ref().unwrap_or(&f);
-    let mut small = scratch.take((dw * dh * 4) as usize);
-    bilinear_into(mip_src, 0.0, 0.0, f.w as f64, f.h as f64, dw, dh, &mut small);
-    if let Some(fr) = pmbuf {
-        scratch.put(fr.rgba);
-    }
-    let small_f = Frame { w: dw, h: dh, rgba: small, has_alpha: false };
-    let mut up = scratch.take(f.rgba.len());
-    bilinear_into(&small_f, 0.0, 0.0, dw as f64, dh as f64, f.w, f.h, &mut up);
-    // in-place addition: only the pixel itself + up is read (item 2 of round 7)
-    let pixels = f.rgba.len().min(up.len()) / 4;
-    let mut done = 0usize;
-    #[cfg(target_arch = "x86_64")]
-    if plain && crate::simd::simd_level() == crate::simd::SimdLevel::Avx2 {
-        // SAFETY: the level is checked by the detector; pixels do not go past either buffer
-        unsafe { crate::video_simd::glow_add_avx2(&mut f.rgba, &up, s, pixels) };
-        done = pixels;
-    }
-    for (o, u) in f.rgba.chunks_exact_mut(4).zip(up.chunks_exact(4)).skip(done) {
-        // threshold by luma of the BLURRED frame: a soft knee of width th
-        let w = if th == 0 {
-            1.0
-        } else {
-            let luma = (77 * u[0] as i32 + 150 * u[1] as i32 + 29 * u[2] as i32) >> 8;
-            (((luma - th) as f64) / th as f64).clamp(0.0, 1.0)
-        };
-        for c in 0..3 {
-            let k = s * w * tint[c] as f64 / 255.0;
-            o[c] = (o[c] as f64 + u[c] as f64 * k).min(255.0) as u8;
-        }
-    }
-    scratch.put(small_f.rgba);
-    scratch.put(up);
     f
 }
 

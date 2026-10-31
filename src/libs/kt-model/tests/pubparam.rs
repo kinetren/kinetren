@@ -83,7 +83,7 @@ fn template() -> Project {
     s.clips.push(title);
     let mut plate = clip(PLATE.0, 2, Tick::ZERO, LEN);
     plate.lane = 1;
-    plate.fx = vec![FxInstance::Blur { radius: 8, radius_y: 0 }];
+    plate.fx = vec![FxInstance::plugin_with("blur", &[8.0, 0.0]).unwrap()];
     s.clips.push(plate);
     s.ensure_tracks(LaneKind::Video, 2);
     s.published = vec![
@@ -551,7 +551,7 @@ fn t694_addr_spec_answers_for_every_owner() {
     let fx = ParamAddr::new(PLATE, ParamOwner::FxSlot { slot: 0 }, "radius");
     let s = p.addr_spec(Some(SEQ), &fx).expect("slot passport");
     assert_eq!(Some(s.ty.clone()), p.addr_type(Some(SEQ), &fx), "type diverged from addr_type");
-    let native = FxInstance::Blur { radius: 8, radius_y: 0 }
+    let native = FxInstance::plugin_with("blur", &[8.0, 0.0]).unwrap()
         .param_spec("radius")
         .expect("Blur has a radius")
         .clone();

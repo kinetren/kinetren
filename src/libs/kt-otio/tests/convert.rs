@@ -2570,7 +2570,7 @@ fn t728_conform_geometry_and_reel_settings_round_trip_as_v11() {
         .expect("file with the old kt:pan is readable");
     let c = b.project.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
     assert_eq!(c.fx.len(), 2, "pan slot did not disappear or shift its neighbors");
-    assert!(matches!(c.fx[0], FxInstance::Blur { .. }));
+    assert!(matches!(c.fx[0], FxInstance::Plugin(ref q) if q.id == "blur"));
     match &c.fx[1] {
         FxInstance::Geometry { lead, pos_x, pos_y, zoom, .. } => {
             assert!(!lead, "migrated pan is an ordinary node, not a leading one");

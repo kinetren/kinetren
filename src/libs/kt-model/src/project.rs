@@ -1264,10 +1264,6 @@ fn default_scan_step() -> u32 {
     4
 }
 
-fn default_glow_radius() -> u32 {
-    4
-}
-
 fn is_four_u32(v: &u32) -> bool {
     *v == 4
 }
@@ -3618,28 +3614,8 @@ fn one_f32() -> f32 {
     1.0
 }
 
-fn default_two_u32() -> u32 {
-    2
-}
-
 fn default_chroma_amount() -> f32 {
     0.012
-}
-
-fn default_quarter_f32() -> f32 {
-    0.25
-}
-
-fn default_eight_i32() -> i32 {
-    8
-}
-
-fn default_four_u32() -> u32 {
-    4
-}
-
-fn default_shadow_opacity() -> f32 {
-    0.6
 }
 
 fn default_eight_u32() -> u32 {
@@ -3648,14 +3624,6 @@ fn default_eight_u32() -> u32 {
 
 fn default_halftone_angle() -> f32 {
     45.0
-}
-
-fn is_zero_u8(v: &u8) -> bool {
-    *v == 0
-}
-
-fn default_one_f32() -> f32 {
-    1.0
 }
 
 fn is_one_f32(v: &f32) -> bool {
@@ -4665,14 +4633,8 @@ pub enum FxInstance {
     // Posterize is a plugin since plugin-api-stage1 (src/plugins/fx-video-color): its file text is
     // the variant's (t973), its slot is `Plugin` below.
     // CornerPin is a plugin since plugin-api-stage1 (src/plugins/fx-video-distort, D11.2).
-    /// Unsharp masking by mip (R.47, F-FX-001): source +
-    /// (source − blurred base)·amount. Barrier.
-    Sharpen {
-        #[serde(default = "default_one_f32")]
-        amount: f32,
-        #[serde(default = "default_two_u32")]
-        radius: u32,
-    },
+    // Blur, Glow, Sharpen, RadialBlur and DropShadow are plugins since plugin-api-barriers
+    // (src/plugins/fx-video-blur): their file text is the variants' (t973).
     // Pixelate is a plugin since plugin-api-barriers (src/plugins/fx-video-stylize): its file text
     // is the variant's (t973).
     /// Chromatic aberration (R.47, F-FX-002): radial scale of
@@ -4680,36 +4642,6 @@ pub enum FxInstance {
     ChromaticAberration {
         #[serde(default = "default_chroma_amount")]
         amount: f32,
-    },
-    /// Radial blur (R.47, F-FX-003): zoom streak or rotation
-    /// around the centre, constant 16 taps on both backends. Barrier.
-    RadialBlur {
-        #[serde(default = "default_quarter_f32")]
-        amount: f32,
-        #[serde(default, skip_serializing_if = "is_zero")]
-        center_x: f32,
-        #[serde(default, skip_serializing_if = "is_zero")]
-        center_y: f32,
-        #[serde(default, skip_serializing_if = "is_false")]
-        spin: bool,
-    },
-    /// Shadow under the layer (R.47, F-FX-003): a blurred alpha with an offset,
-    /// the source OVER the shadow. Barrier; an input without alpha — passthrough.
-    DropShadow {
-        #[serde(default = "default_eight_i32")]
-        offset_x: i32,
-        #[serde(default = "default_eight_i32")]
-        offset_y: i32,
-        #[serde(default = "default_four_u32")]
-        radius: u32,
-        #[serde(default = "default_shadow_opacity")]
-        opacity: f32,
-        #[serde(default, skip_serializing_if = "is_zero_u8")]
-        tint_r: u8,
-        #[serde(default, skip_serializing_if = "is_zero_u8")]
-        tint_g: u8,
-        #[serde(default, skip_serializing_if = "is_zero_u8")]
-        tint_b: u8,
     },
     /// Halftone raster (R.47, F-FX-001): dots by luma on a rotated
     /// grid; the pattern lives in logical coordinates. Barrier.
@@ -4765,15 +4697,6 @@ pub enum FxInstance {
         keyframes: Vec<CamKeyframe>,
     },
     // Mirror and EventGrid are plugins since plugin-api-stage1 (src/plugins/fx-video-distort, D11.3).
-    Blur {
-        #[serde(default = "default_blur_radius")]
-        radius: u32,
-        /// Vertical radius (R.33 stage 5). `0` means “same as horizontal”: the default is not written
-        /// to the file and gives the previous blur byte for byte. Separate axes give
-        /// a smear along one axis.
-        #[serde(default, skip_serializing_if = "is_zero_u32")]
-        radius_y: u32,
-    },
     Greenscreen {
         #[serde(default)]
         key_r: u8,
@@ -4831,24 +4754,6 @@ pub enum FxInstance {
         /// steady frame.
         #[serde(default, skip_serializing_if = "is_zero_f64")]
         jitter: f64,
-    },
-    Glow {
-        #[serde(default = "default_glow_strength")]
-        strength: f64,
-        /// Glow radius = mip divisor (R.33, stage 5). 4 — the previous one.
-        #[serde(default = "default_glow_radius", skip_serializing_if = "is_four_u32")]
-        radius: u32,
-        /// Brightness threshold of the BLURRED frame: below it there is no glow. 0 —
-        /// no threshold (previous behaviour byte for byte).
-        #[serde(default, skip_serializing_if = "is_zero_u32")]
-        threshold: u32,
-        /// Glow tint; 255,255,255 — the previous neutral one.
-        #[serde(default = "default_255", skip_serializing_if = "is_255")]
-        tint_r: u8,
-        #[serde(default = "default_255", skip_serializing_if = "is_255")]
-        tint_g: u8,
-        #[serde(default = "default_255", skip_serializing_if = "is_255")]
-        tint_b: u8,
     },
     // ---- 3D effects (R.29: category Video3d; since R.44 both backends compute them) ----
     // Pan3d is a plugin since plugin-api-stage1 (src/plugins/fx-video-distort, 4.1c-4): its pinned
@@ -4918,19 +4823,14 @@ impl FxInstance {
     pub fn tag(&self) -> &'static str {
         match self {
             FxInstance::LayerMix { .. } => "layer_mix",
-            FxInstance::Sharpen { .. } => "sharpen",
             FxInstance::ChromaticAberration { .. } => "chromatic_aberration",
-            FxInstance::RadialBlur { .. } => "radial_blur",
-            FxInstance::DropShadow { .. } => "drop_shadow",
             FxInstance::Halftone { .. } => "halftone",
             FxInstance::Geometry { .. } => "geometry",
             FxInstance::CamMotion { .. } => "cam_motion",
-            FxInstance::Blur { .. } => "blur",
             FxInstance::Greenscreen { .. } => "greenscreen",
             FxInstance::Edges { .. } => "edges",
             FxInstance::Noise { .. } => "noise",
             FxInstance::Vhs { .. } => "vhs",
-            FxInstance::Glow { .. } => "glow",
             FxInstance::Plugin(p) => p.tag(),
             // the file's id is `MissingSlot::id`; the tag of a slot nothing can run is fixed
             FxInstance::Missing(_) => "missing",
@@ -4970,11 +4870,11 @@ impl FxInstance {
                 FxInstance::builtin("posterize"),
                 FxInstance::builtin("vignette"),
                 FxInstance::builtin("corner_pin"),
-                FxInstance::sharpen(),
+                FxInstance::builtin("sharpen"),
                 FxInstance::builtin("pixelate"),
                 FxInstance::chromatic_aberration(),
-                FxInstance::radial_blur(),
-                FxInstance::drop_shadow(),
+                FxInstance::builtin("radial_blur"),
+                FxInstance::builtin("drop_shadow"),
                 FxInstance::halftone(),
                 FxInstance::builtin("lens_distort"),
                 FxInstance::builtin("twirl"),
@@ -4984,12 +4884,12 @@ impl FxInstance {
                 FxInstance::geometry(),
                 FxInstance::cam_motion(),
                 FxInstance::builtin("mirror"),
-                FxInstance::blur(8),
+                FxInstance::builtin("blur"),
                 FxInstance::greenscreen([0, 255, 0], 70, 25),
                 FxInstance::edges(48),
                 FxInstance::noise(0.3),
                 FxInstance::vhs(4, 0.4),
-                FxInstance::glow(0.65),
+                FxInstance::builtin("glow"),
                 FxInstance::event_grid(),
                 FxInstance::builtin("pan3d"),
             ]
@@ -5103,7 +5003,13 @@ impl FxInstance {
     pub fn lerp(&self, other: &FxInstance, t: f64) -> FxInstance {
         let t = t.clamp(0.0, 1.0);
         let near = if t < 0.5 { self } else { other };
-        if std::mem::discriminant(self) != std::mem::discriminant(other) {
+        // the KIND, not the enum variant: two plugin slots share the `Plugin` discriminant, and
+        // comparing it alone blended blur's `radius` into glow's (found when both moved,
+        // plugin-api-barriers 3); a missing slot never blends
+        if std::mem::discriminant(self) != std::mem::discriminant(other)
+            || self.tag() != other.tag()
+            || matches!(self, FxInstance::Missing(_))
+        {
             return near.clone();
         }
         if t == 0.0 || t == 1.0 {
@@ -5130,26 +5036,8 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         amount: f64, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
     },
     // ---- video 2D --------------------------------------------------------
-    Sharpen {
-        amount: f32, 0.0, 4.0, 1.0, 0.01, Ratio, Smooth;
-        radius: u32, 1.0, 16.0, 2.0, 1.0, Px, Smooth;
-    },
     ChromaticAberration {
         amount: f32, 0.0, 0.05, 0.012, 0.001, Norm, Smooth;
-    },
-    RadialBlur {
-        amount: f32, 0.0, 1.0, 0.25, 0.01, Norm, Smooth;
-        center_x: f32, -1.0, 1.0, 0.0, 0.01, Norm, Smooth;
-        center_y: f32, -1.0, 1.0, 0.0, 0.01, Norm, Smooth;
-    },
-    DropShadow {
-        offset_x: i32, -64.0, 64.0, 8.0, 1.0, Px, Smooth;
-        offset_y: i32, -64.0, 64.0, 8.0, 1.0, Px, Smooth;
-        radius: u32, 1.0, 32.0, 4.0, 1.0, Px, Smooth;
-        opacity: f32, 0.0, 1.0, 0.6, 0.01, Norm, Smooth;
-        tint_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        tint_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
-        tint_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
     },
     Halftone {
         size: u32, 2.0, 64.0, 8.0, 1.0, Px, Smooth;
@@ -5169,10 +5057,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
     },
     CamMotion {
         time_scale: f64, 0.05, 8.0, 1.0, 0.01, Ratio, Smooth;
-    },
-    Blur {
-        radius: u32, 1.0, 48.0, 8.0, 1.0, Px, Smooth;
-        radius_y: u32, 0.0, 48.0, 0.0, 1.0, Px, Smooth;
     },
     Greenscreen {
         key_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
@@ -5198,14 +5082,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         bleed: f64, 0.0, 1.0, 0.4, 0.01, Norm, Smooth;
         scan_step: u32, 0.0, 32.0, 4.0, 1.0, Px, Smooth;
         jitter: f64, 0.0, 1.0, 0.0, 0.01, Norm, Smooth;
-    },
-    Glow {
-        strength: f64, 0.0, 2.0, 0.65, 0.01, Ratio, Smooth;
-        radius: u32, 1.0, 32.0, 4.0, 1.0, Px, Smooth;
-        threshold: u32, 0.0, 255.0, 0.0, 1.0, None, Smooth;
-        tint_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        tint_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
-        tint_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
     },
 }}
 
@@ -5642,9 +5518,6 @@ fn default_one_u32() -> u32 {
 fn default_255() -> u8 {
     255
 }
-fn default_blur_radius() -> u32 {
-    8
-}
 fn default_tolerance() -> u32 {
     70
 }
@@ -5663,10 +5536,6 @@ fn default_rgb_shift() -> u32 {
 fn default_bleed() -> f64 {
     0.4
 }
-fn default_glow_strength() -> f64 {
-    0.65
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SlowedKeyframe {
     pub t: f64,
@@ -5740,30 +5609,13 @@ impl FxInstance {
 
 
 
-    pub fn sharpen() -> FxInstance {
-        FxInstance::Sharpen { amount: 1.0, radius: 2 }
-    }
 
 
     pub fn chromatic_aberration() -> FxInstance {
         FxInstance::ChromaticAberration { amount: 0.012 }
     }
 
-    pub fn radial_blur() -> FxInstance {
-        FxInstance::RadialBlur { amount: 0.25, center_x: 0.0, center_y: 0.0, spin: false }
-    }
 
-    pub fn drop_shadow() -> FxInstance {
-        FxInstance::DropShadow {
-            offset_x: 8,
-            offset_y: 8,
-            radius: 4,
-            opacity: 0.6,
-            tint_r: 0,
-            tint_g: 0,
-            tint_b: 0,
-        }
-    }
 
     pub fn halftone() -> FxInstance {
         FxInstance::Halftone { size: 8, angle: 45.0 }
@@ -5880,8 +5732,10 @@ impl FxInstance {
         }
     }
 
+    /// A blur of `radius` on both axes — a plugin slot (plugin-api-barriers, stage 3).
     pub fn blur(radius: u32) -> FxInstance {
-        FxInstance::Blur { radius, radius_y: 0 }
+        FxInstance::plugin_with("blur", &[radius as f64, 0.0])
+            .expect("blur is not registered: install the built-in plugin set first")
     }
 
     pub fn edges(threshold: u32) -> FxInstance {
@@ -5898,15 +5752,10 @@ impl FxInstance {
         FxInstance::Vhs { rgb_shift, bleed, scan_step: 4, jitter: 0.0 }
     }
 
+    /// A glow of `strength` (radius 4, no threshold, white) — a plugin slot (plugin-api-barriers).
     pub fn glow(strength: f64) -> FxInstance {
-        FxInstance::Glow {
-            strength,
-            radius: 4,
-            threshold: 0,
-            tint_r: 255,
-            tint_g: 255,
-            tint_b: 255,
-        }
+        FxInstance::plugin_with("glow", &[strength, 4.0, 0.0, 255.0, 255.0, 255.0])
+            .expect("glow is not registered: install the built-in plugin set first")
     }
 
     pub fn greenscreen(key: [u8; 3], tolerance: u32, softness: u32) -> FxInstance {

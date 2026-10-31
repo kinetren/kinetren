@@ -184,16 +184,12 @@ enum Pipe {
     Greenscreen,
     Edges,
     Vhs,
-    GlowAdd,
     Composite,
     /// Layer blend strength (R.38 item 12): mixing of the dry and wet sides.
     LayerMix,
     // (the pointwise R.47 kinds — color_grade, duotone, posterize, vignette — are plugins)
     // R.47 barriers Kv3
-    SharpenAdd,
     ChromaAb,
-    RadialBlur,
-    ShadowUnder,
     Halftone,
     /// Embedding boundary (R.50): straight alpha from premultiplied.
     Unpremul,
@@ -203,7 +199,7 @@ enum Pipe {
     GridTile,
 }
 
-const PIPE_COUNT: usize = 17;
+const PIPE_COUNT: usize = 13;
 
 /// One chain step precomputed on the CPU (common maths: kt-fx:
 /// pan_frame/cam_at/noise_seed). The number of passes and the sizes are known in advance.
@@ -246,42 +242,10 @@ enum FxOp {
         seed: u32,
         res_scale: u32,
     },
-    /// Bloom: downscale dw×dh → upscale → additive ×s (3 passes).
-    Glow {
-        dw: u32,
-        dh: u32,
-        s: f32,
-        th: u32,
-        tint: [f32; 3],
-        /// Mipping of PREMULTIPLIED data (R.53, item 418).
-        pm: bool,
-    },
-    /// Premultiplication/reverse conversion around the mip (R.53, item 418).
-    Premul,
-    Unpremul,
     /// R.47 barriers Kv3. Sharpen/DropShadow take 3 passes (mip down/up +
     /// final), the others take one.
-    Sharpen {
-        dw: u32,
-        dh: u32,
-        amount: f32,
-    },
     ChromaAb {
         amount: f32,
-    },
-    RadialBlur {
-        amount: f32,
-        cx: f32,
-        cy: f32,
-        spin: u32,
-    },
-    DropShadow {
-        dw: u32,
-        dh: u32,
-        ox: i32,
-        oy: i32,
-        opacity: f32,
-        tint: [f32; 3],
     },
     Halftone {
         size: f32,
@@ -330,8 +294,6 @@ enum FxOp {
 impl FxOp {
     fn passes(&self) -> u32 {
         match self {
-            FxOp::Glow { .. } => 3,
-            FxOp::Sharpen { .. } | FxOp::DropShadow { .. } => 3,
             // every node is a pass but `Save` (the arena prediction stays exact)
             FxOp::PluginBarrier { nodes, .. } => {
                 nodes.iter().filter(|n| !matches!(n, kt_plugin_api::barrier::Node::Save(_))).count() as u32
@@ -503,38 +465,6 @@ fn chain_ops(
                 }
             },
             kt_fx::plan::PlanOp::Barrier { idx, res_scale } => match &fx[idx] {
-                FxInstance::Blur { radius, radius_y } => {
-                    // R.45 (item 313): steps ×K: the mip is the same, the view is invariant
-                    let radius = (*radius).clamp(1, 48);
-                    let step = ((radius / 3).max(1) + 1) * res_scale;
-                    let step_y = if *radius_y == 0 {
-                        step
-                    } else {
-                        (((*radius_y).clamp(1, 48) / 3).max(1) + 1) * res_scale
-                    };
-                    let (dw, dh) = ((w / step).max(1), (h / step_y).max(1));
-                    // ALPHA RULE (item 418): the mip runs over the
-                    // premultiplied data: a mirror of the gate in
-                    // `kt_fx::video::blur`. When a == 255 both conversions
-                    // are identities, so the passes are not set up at all.
-                    let pm = if has_alpha_known { has_alpha } else { src_has_alpha };
-                    if pm {
-                        ops.push(FxOp::Premul);
-                    }
-                    ops.push(FxOp::Resample {
-                        tw: dw,
-                        th: dh,
-                        frame: (0.0, 0.0, w as f64, h as f64),
-                    });
-                    ops.push(FxOp::Resample {
-                        tw: w,
-                        th: h,
-                        frame: (0.0, 0.0, dw as f64, dh as f64),
-                    });
-                    if pm {
-                        ops.push(FxOp::Unpremul);
-                    }
-                }
                 FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness, spill } => {
                     let tol = (*tolerance).clamp(1, 200);
                     let soft = (*softness).clamp(0, 100);
@@ -625,46 +555,8 @@ fn chain_ops(
                         positioned: t.positioned,
                     });
                 }
-                FxInstance::Sharpen { amount, radius } => {
-                    let step = (*radius).clamp(2, 16) * res_scale;
-                    let (dw, dh) = ((w / step).max(1), (h / step).max(1));
-                    ops.push(FxOp::Sharpen { dw, dh, amount: amount.clamp(0.0, 4.0) });
-                }
                 FxInstance::ChromaticAberration { amount } => {
                     ops.push(FxOp::ChromaAb { amount: amount.clamp(0.0, 0.05) });
-                }
-                FxInstance::RadialBlur { amount, center_x, center_y, spin } => {
-                    ops.push(FxOp::RadialBlur {
-                        amount: amount.clamp(0.0, 1.0),
-                        cx: 0.5 + center_x.clamp(-1.0, 1.0) * 0.5,
-                        cy: 0.5 + center_y.clamp(-1.0, 1.0) * 0.5,
-                        spin: *spin as u32,
-                    });
-                }
-                FxInstance::DropShadow {
-                    offset_x,
-                    offset_y,
-                    radius,
-                    opacity,
-                    tint_r,
-                    tint_g,
-                    tint_b,
-                } => {
-                    // opaque input: the CPU does a passthrough; the formula on
-                    // alpha 255 degenerates into an identity, so the skip is
-                    // an optimization, not a different result
-                    if !(has_alpha_known && !has_alpha) {
-                        let step = (*radius).clamp(1, 32) * res_scale;
-                        let (dw, dh) = ((w / step).max(1), (h / step).max(1));
-                        ops.push(FxOp::DropShadow {
-                            dw,
-                            dh,
-                            ox: (*offset_x).clamp(-64, 64) * res_scale as i32,
-                            oy: (*offset_y).clamp(-64, 64) * res_scale as i32,
-                            opacity: opacity.clamp(0.0, 1.0),
-                            tint: [*tint_r as f32, *tint_g as f32, *tint_b as f32],
-                        });
-                    }
                 }
                 FxInstance::Halftone { size, angle } => {
                     let a = (angle.clamp(-90.0, 90.0) as f64).to_radians();
@@ -688,24 +580,6 @@ fn chain_ops(
                         seed: kt_fx::video::noise_seed(t.0),
                         res_scale,
                     });
-                }
-                FxInstance::Glow { strength, radius, threshold, tint_r, tint_g, tint_b } => {
-                    let s = strength.clamp(0.0, 2.0) * 0.35;
-                    if s > 0.0 {
-                        // R.45 (item 313): mip divisor ×K — the mip is the same
-                        let r = (*radius).clamp(1, 32) * res_scale;
-                        ops.push(FxOp::Glow {
-                            dw: (w / r).max(1),
-                            dh: (h / r).max(1),
-                            s: s as f32,
-                            th: (*threshold).min(255),
-                            tint: [*tint_r as f32, *tint_g as f32, *tint_b as f32],
-                            // light from transparent places does not go (item 418):
-                            // the premultiplied copy is mipped, the base of the addition
-                            // stays straight
-                            pm: if has_alpha_known { has_alpha } else { src_has_alpha },
-                        });
-                    }
                 }
                 _ => debug_assert!(false, "barrier op on non-barrier fx"),
             },
@@ -848,13 +722,9 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("greenscreen", include_str!("shaders/greenscreen.wgsl")),
     ("edges", include_str!("shaders/edges.wgsl")),
     ("vhs", include_str!("shaders/vhs.wgsl")),
-    ("glow_add", include_str!("shaders/glow_add.wgsl")),
     ("composite", include_str!("shaders/composite.wgsl")),
     ("layer_mix", include_str!("shaders/layer_mix.wgsl")),
-    ("sharpen_add", include_str!("shaders/sharpen_add.wgsl")),
     ("chroma_ab", include_str!("shaders/chroma_ab.wgsl")),
-    ("radial_blur", include_str!("shaders/radial_blur.wgsl")),
-    ("shadow_under", include_str!("shaders/shadow_under.wgsl")),
     ("halftone", include_str!("shaders/halftone.wgsl")),
     ("unpremul", include_str!("shaders/unpremul.wgsl")),
     ("premul", include_str!("shaders/premul.wgsl")),
@@ -1933,35 +1803,6 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
-                FxOp::Sharpen { dw, dh, amount } => {
-                    let small = self.pool.acquire(&self.device, *dw, *dh);
-                    let u = UniformData {
-                        u: [*dw, *dh, w, h, 0, 0, 0, 0],
-                        f: [0.0, 0.0, w as f32, h as f32, 0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::Resample, &small.view, &view, &dummy, &dummy, u);
-                    let base = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        u: [w, h, *dw, *dh, 0, 0, 0, 0],
-                        f: [0.0, 0.0, *dw as f32, *dh as f32, 0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::Resample, &base.view, &small.view, &dummy, &dummy, u);
-                    self.pool.release(small);
-                    let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        f: [*amount, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::SharpenAdd, &dst.view, &view, &base.view, &dummy, u);
-                    self.pool.release(base);
-                    if let Some(t) = owned.take() {
-                        self.pool.release(t);
-                    }
-                    view = dst.view.clone();
-                    owned = Some(dst);
-                }
                 FxOp::ChromaAb { amount } => {
                     let dst = self.pool.acquire(&self.device, w, h);
                     let u = UniformData {
@@ -1976,50 +1817,6 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
-                FxOp::RadialBlur { amount, cx, cy, spin } => {
-                    let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        u: [w, h, *spin, 0, 0, 0, 0, 0],
-                        f: [*amount, *cx, *cy, 0.0, 0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::RadialBlur, &dst.view, &view, &dummy, &dummy, u);
-                    if let Some(t) = owned.take() {
-                        self.pool.release(t);
-                    }
-                    view = dst.view.clone();
-                    owned = Some(dst);
-                }
-                FxOp::DropShadow { dw, dh, ox, oy, opacity, tint } => {
-                    let small = self.pool.acquire(&self.device, *dw, *dh);
-                    let u = UniformData {
-                        u: [*dw, *dh, w, h, 0, 0, 0, 0],
-                        f: [0.0, 0.0, w as f32, h as f32, 0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::Resample, &small.view, &view, &dummy, &dummy, u);
-                    let blurred = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        u: [w, h, *dw, *dh, 0, 0, 0, 0],
-                        f: [0.0, 0.0, *dw as f32, *dh as f32, 0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::Resample, &blurred.view, &small.view, &dummy, &dummy, u);
-                    self.pool.release(small);
-                    let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        u: [w, h, *ox as u32, *oy as u32, 0, 0, 0, 0],
-                        f: [*opacity, tint[0], tint[1], tint[2], 0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::ShadowUnder, &dst.view, &view, &blurred.view, &dummy, u);
-                    self.pool.release(blurred);
-                    if let Some(t) = owned.take() {
-                        self.pool.release(t);
-                    }
-                    view = dst.view.clone();
-                    owned = Some(dst);
-                }
                 FxOp::Halftone { size, ca, sa, k } => {
                     let dst = self.pool.acquire(&self.device, w, h);
                     let u = UniformData {
@@ -2028,67 +1825,6 @@ impl Inner {
                         ..Default::default()
                     };
                     self.pass(enc, Pipe::Halftone, &dst.view, &view, &dummy, &dummy, u);
-                    if let Some(t) = owned.take() {
-                        self.pool.release(t);
-                    }
-                    view = dst.view.clone();
-                    owned = Some(dst);
-                }
-                FxOp::Premul | FxOp::Unpremul => {
-                    let dst = self.pool.acquire(&self.device, w, h);
-                    let pipe =
-                        if matches!(op, FxOp::Premul) { Pipe::Premul } else { Pipe::Unpremul };
-                    self.pass(enc, pipe, &dst.view, &view, &dummy, &dummy, UniformData::default());
-                    if let Some(t) = owned.take() {
-                        self.pool.release(t);
-                    }
-                    view = dst.view.clone();
-                    owned = Some(dst);
-                }
-                FxOp::Glow { dw, dh, s, th, tint, pm } => {
-                    // the mip is taken from the premultiplied COPY; the base of
-                    // the addition stays straight (a mirror of kt_fx::video::glow)
-                    let pm_tex = pm.then(|| {
-                        let t = self.pool.acquire(&self.device, w, h);
-                        self.pass(
-                            enc,
-                            Pipe::Premul,
-                            &t.view,
-                            &view,
-                            &dummy,
-                            &dummy,
-                            UniformData::default(),
-                        );
-                        t
-                    });
-                    let mip_src =
-                        pm_tex.as_ref().map(|t| t.view.clone()).unwrap_or_else(|| view.clone());
-                    let small = self.pool.acquire(&self.device, *dw, *dh);
-                    let u = UniformData {
-                        u: [*dw, *dh, w, h, 0, 0, 0, 0],
-                        f: [0.0, 0.0, w as f32, h as f32, 0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::Resample, &small.view, &mip_src, &dummy, &dummy, u);
-                    if let Some(t) = pm_tex {
-                        self.pool.release(t);
-                    }
-                    let up = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        u: [w, h, *dw, *dh, 0, 0, 0, 0],
-                        f: [0.0, 0.0, *dw as f32, *dh as f32, 0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::Resample, &up.view, &small.view, &dummy, &dummy, u);
-                    self.pool.release(small);
-                    let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        u: [*th, 0, 0, 0, 0, 0, 0, 0],
-                        f: [*s, tint[0], tint[1], tint[2], 0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::GlowAdd, &dst.view, &view, &up.view, &dummy, u);
-                    self.pool.release(up);
                     if let Some(t) = owned.take() {
                         self.pool.release(t);
                     }

@@ -91,6 +91,7 @@ fn compose(p: &Project, t: Tick, cache: &kt_cache::BurstCache) -> (Vec<u8>, bool
 
 #[test]
 fn t191_animated_equals_static_at_each_moment() {
+    kt_plugins_builtin::install();
     let base = vec![FxInstance::blur(8), FxInstance::glow(0.5)];
     let auto = vec![
         vec![ParamCurve {
@@ -129,6 +130,7 @@ fn t191_animated_equals_static_at_each_moment() {
 
 #[test]
 fn t191_postfx_cache_no_stale_across_time_and_curve_edits() {
+    kt_plugins_builtin::install();
     let base = vec![FxInstance::blur(8)];
     let curve = |v1: f64| {
         vec![vec![ParamCurve {

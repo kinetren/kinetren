@@ -88,14 +88,6 @@ pub mod simd_testing {
         unsafe { crate::video_simd::noise_avx2(rgba, w, h, seed, k) };
     }
 
-    /// AVX2 kernel of the glow additive.
-    #[cfg(target_arch = "x86_64")]
-    pub fn glow_add_avx2(dst: &mut [u8], up: &[u8], s: f64, pixels: usize) {
-        assert!(std::is_x86_feature_detected!("avx2"), "AVX2 is required");
-        // SAFETY: the feature is checked
-        unsafe { crate::video_simd::glow_add_avx2(dst, up, s, pixels) };
-    }
-
     /// Scalar references of noise/glow (copies of the bodies from video.rs).
     pub fn noise_scalar(rgba: &mut [u8], w: u32, seed: u32, k: i64) {
         for (p, px) in rgba.chunks_exact_mut(4).enumerate() {
@@ -171,13 +163,6 @@ pub mod simd_testing {
         }
     }
 
-    pub fn glow_add_scalar(dst: &mut [u8], up: &[u8], s: f64) {
-        for (o, u) in dst.chunks_exact_mut(4).zip(up.chunks_exact(4)) {
-            for c in 0..3 {
-                o[c] = (o[c] as f64 + u[c] as f64 * s).min(255.0) as u8;
-            }
-        }
-    }
 
     /// Rounding half-away-from-zero: 4 values via AVX2 emulation
     /// (a micro-proof against `f64::round`).

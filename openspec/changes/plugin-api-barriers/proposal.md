@@ -42,6 +42,9 @@ the leaf rebuild only for the moved kinds), and a third-party barrier effect is 
 <!-- none: the `plugins` capability is created by plugin-api-stage1; this change adds to it -->
 
 ### Modified Capabilities
+- `audio-render`: the structure fingerprint that decides whether an audio chain's state is kept
+  names each slot's kind by its plugin id (a defect found while moving the barriers: since
+  plugin-api-stage1 an EQ replaced by a filter in one slot kept the EQ's node).
 - `plugins`: a barrier kernel is a CPU kernel, an optional byte-equal SIMD twin and a declared GPU
   pass graph; the host gates the twin and refuses an inconsistent graph at registration.
 - `video-fx`: the K× barrier requirement now holds for barrier PLUGINS. The K rule, the invariance
@@ -62,7 +65,7 @@ the leaf rebuild only for the moved kinds), and a third-party barrier effect is 
 - **Tests:**
   - These stay green unchanged: t26, t328, t181, t329, t198, t302–t304, t308, t332, t303, t973
     (frozen file forms) and t977.
-  - New tests are reserved: t1051–t1056.
+  - New tests are reserved: t1051–t1057 (t1057 for the fingerprint defect found in stage 3).
 - **Depends on:** `plugin-api-stage1` archived first (the `plugins` spec exists).
 - **Risk:** the AVX2 twins (`video_simd.rs`) are the largest move. A twin that diverges by one
   byte is caught by t198 running over the registry, not over a list.

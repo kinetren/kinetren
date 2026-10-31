@@ -972,6 +972,9 @@ pub struct UiDecl {
     /// The catalog key of a TRANSLATED name (transitions, D12); empty — `name` is shown as is (an
     /// effect's industry term).
     pub name_key: &'static str,
+    /// The picker shows this kind on the sample with TRANSPARENT margins (R.54): an effect that
+    /// draws only under alpha (drop_shadow) is identical by construction on an opaque frame.
+    pub alpha_sample: bool,
 }
 
 /// One picker variant of a plugin (D7): its caption key and the values it sets.

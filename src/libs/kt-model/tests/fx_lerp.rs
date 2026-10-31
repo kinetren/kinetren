@@ -15,6 +15,7 @@ fn dbg(f: &FxInstance) -> String {
 
 #[test]
 fn t550_lerp_keeps_the_ends_and_moves_the_numbers() {
+    kt_plugins_builtin::install();
     let a = FxInstance::blur(4);
     let b = FxInstance::blur(24);
 
@@ -67,6 +68,7 @@ fn t550b_non_numeric_comes_from_the_nearer_end() {
 /// with foreign fields.
 #[test]
 fn t550c_different_kinds_do_not_blend() {
+    kt_plugins_builtin::install();
     let blur = FxInstance::blur(8);
     let glow = FxInstance::glow(0.9);
     assert_eq!(dbg(&blur.lerp(&glow, 0.2)), dbg(&blur));

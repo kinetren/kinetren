@@ -415,7 +415,7 @@ impl HostStep {
                 passport: vec![count("cols"), count("rows"), ParamSpec::flag_row("center", true)],
                 rows: vec![row(Store::U32, false), row(Store::U32, false), row(Store::Bool, false)],
                 decl: Decl { video_class: Some(VideoClass::Geometry), gpu: Gpu::Primitives, ..Decl::default() },
-                ui: UiDecl { name: "EventGrid", category_key: "fxreg.cat.style", keywords_key: "fxreg.kw.eventgrid", variants: EVENT_GRID_VARIANTS, template: &[("cols", 2.0), ("rows", 2.0)], name_key: "" },
+                ui: UiDecl { name: "EventGrid", category_key: "fxreg.cat.style", keywords_key: "fxreg.kw.eventgrid", variants: EVENT_GRID_VARIANTS, template: &[("cols", 2.0), ("rows", 2.0)], name_key: "", alpha_sample: false },
             },
             kind: HostKind::Grid,
         }

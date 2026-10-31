@@ -1706,7 +1706,7 @@ fn t631_every_instance_of_a_reel_renders() {
     // exactly what the morpher layer puts on an instance with an empty chain
     let chains: Vec<(&str, Vec<FxInstance>)> = vec![
         ("empty", vec![]),
-        ("blur", vec![FxInstance::Blur { radius: 2, radius_y: 2 }]),
+        ("blur", vec![FxInstance::plugin_with("blur", &[2.0, 2.0]).unwrap()]),
         ("leading mix", vec![pan(2.0), FxInstance::LayerMix { amount: 0.5, from: 0 }]),
     ];
     for (name, fx) in chains {
@@ -1806,7 +1806,7 @@ fn t631c_reel_stage_rides_in_the_postfx_key() {
             );
         }
     };
-    let fx = vec![FxInstance::Blur { radius: 2, radius_y: 2 }];
+    let fx = vec![FxInstance::plugin_with("blur", &[2.0, 2.0]).unwrap()];
     let flat = lone_reel(fx.clone());
     let mut v1 = VideoRenderer::new(&flat);
     warm(&flat, &v1, T_TWIN);

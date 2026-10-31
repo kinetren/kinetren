@@ -9,6 +9,7 @@ publish.workspace = true
 # depend on it (t975); the registry it builds is handed to the core at run time.
 [dependencies]
 kt-plugin-api = { workspace = true }
+fx-video-blur = { workspace = true }
 fx-video-color = { workspace = true }
 fx-video-stylize = { workspace = true }
 fx-audio-tone = { workspace = true }

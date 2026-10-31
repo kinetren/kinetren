@@ -196,7 +196,7 @@ fn gen_demo_concat() {
     // 07: barriers (R.47 Kv3) — sharpness/mosaic/aberration/rays/shadow/raster.
     let mut p = project();
     p.clips = vec![
-        clip(1, 0, 4, 1, vec![FxInstance::Sharpen { amount: 2.0, radius: 3 }]),
+        clip(1, 0, 4, 1, vec![FxInstance::plugin_with("sharpen", &[2.0, 3.0]).unwrap()]),
         clip(2, 4, 4, 1, vec![FxInstance::plugin_with("pixelate", &[16.0]).unwrap()]),
         clip(3, 8, 4, 1, vec![FxInstance::ChromaticAberration { amount: 0.02 }]),
         clip(
@@ -204,7 +204,7 @@ fn gen_demo_concat() {
             12,
             4,
             1,
-            vec![FxInstance::RadialBlur { amount: 0.5, center_x: 0.0, center_y: 0.0, spin: false }],
+            vec![FxInstance::plugin_with("radial_blur", &[0.5, 0.0, 0.0, 0.0]).unwrap()],
         ),
         // the shadow is visible on the cut-out key green.mp4
         clip(
@@ -214,15 +214,7 @@ fn gen_demo_concat() {
             2,
             vec![
                 FxInstance::greenscreen([0, 255, 0], 90, 20),
-                FxInstance::DropShadow {
-                    offset_x: 14,
-                    offset_y: 14,
-                    radius: 6,
-                    opacity: 0.7,
-                    tint_r: 0,
-                    tint_g: 0,
-                    tint_b: 0,
-                },
+                FxInstance::plugin_with("drop_shadow", &[14.0, 14.0, 6.0, 0.7, 0.0, 0.0, 0.0]).unwrap(),
             ],
         ),
         clip(6, 20, 4, 1, vec![FxInstance::Halftone { size: 10, angle: 45.0 }]),

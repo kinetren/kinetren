@@ -1512,6 +1512,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fx-video-blur"
+version = "0.1.0"
+dependencies = [
+ "kt-plugin-api",
+]
+
+[[package]]
 name = "fx-video-color"
 version = "0.1.0"
 dependencies = [
@@ -2215,6 +2222,7 @@ name = "kt-fx"
 version = "0.1.0"
 dependencies = [
  "fx-audio-tone",
+ "fx-video-blur",
  "kt-model",
  "kt-plugin-api",
  "kt-plugins-builtin",
@@ -2299,6 +2307,7 @@ dependencies = [
  "fx-audio-dynamics",
  "fx-audio-modulation",
  "fx-audio-tone",
+ "fx-video-blur",
  "fx-video-color",
  "fx-video-distort",
  "fx-video-stylize",

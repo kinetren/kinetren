@@ -414,7 +414,7 @@ fn t272b_video_curves_use_the_linear_axis() {
     let plan = vr.frame_plan(&cache, mid, kt_media::Quality { width: 64, height: 36 });
     let radius = plan.layers.iter().find_map(|l| match l {
         kt_engine::PlanLayer::One { src, .. } => src.fx.iter().find_map(|f| match f {
-            FxInstance::Blur { radius, .. } => Some(*radius),
+            FxInstance::Plugin(b) if b.id == "blur" => b.get("radius").map(|r| r as u32),
             _ => None,
         }),
         _ => None,

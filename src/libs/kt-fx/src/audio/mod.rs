@@ -190,12 +190,15 @@ pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
 }
 
 /// Fingerprint of the chain’s STRUCTURE (FX kinds in order). Matches → state
-/// is reused, parameters arrive via set_params (smoothed).
+/// is reused, parameters arrive via set_params (smoothed). The KIND is the variant AND its tag:
+/// every plugin slot is the one `Plugin` variant, and the variant alone let an EQ's node live on
+/// under a filter put in its slot (t1057).
 pub fn chain_fingerprint(fx: &[FxInstance]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     for f in fx {
         std::mem::discriminant(f).hash(&mut h);
+        f.tag().hash(&mut h);
     }
     h.finish()
 }

@@ -962,7 +962,7 @@ fn t700_envelope_fits_into_another_effect_kind() {
         keys: vec![AutoKey::at(Tick(0), 1.0), AutoKey::at(Tick(90_000), 8.0)],
         source: CurveSource::Keys,
     };
-    let blur = FxInstance::Blur { radius: 8, radius_y: 0 };
+    let blur = FxInstance::plugin_with("blur", &[8.0, 0.0]).unwrap();
     let names: Vec<String> = blur.param_specs().iter().map(|s| s.name.to_string()).collect();
     assert!(names.len() >= 2, "Blur has at least two parameters: {names:?}");
 
@@ -1004,7 +1004,7 @@ fn t700_envelope_fits_into_another_effect_kind() {
     assert_eq!(moved.keys, src.keys, "the matching touched keyframes or segment shapes");
 
     // --- insertion into the SAME kind still passes in full ------------------
-    let same = kt_model::ops::fit_envelope(&all, &FxInstance::Blur { radius: 2, radius_y: 2 });
+    let same = kt_model::ops::fit_envelope(&all, &FxInstance::plugin_with("blur", &[2.0, 2.0]).unwrap());
     assert!(same.leftover.is_empty(), "own kind left a remainder");
 }
 
@@ -1186,7 +1186,7 @@ fn t787c_layer_formula_over_keys_and_removal() {
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
-        fx: vec![FxInstance::Blur { radius: 8, radius_y: 0 }],
+        fx: vec![FxInstance::plugin_with("blur", &[8.0, 0.0]).unwrap()],
         fx_bypass: vec![],
         fx_auto: vec![vec![curve]],
         opacity: 1.0,

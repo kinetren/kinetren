@@ -796,7 +796,7 @@ fn t755_a_published_effect_knob_changes_the_instance_frame() {
         // a blur on the TITLE: the backdrop is synthetic and uniform, there is nothing to blur
         // in it — the test would be green on nothing
         let title = s.clips.iter_mut().find(|c| c.id == TITLE).expect("title");
-        title.fx = vec![FxInstance::radial_blur()];
+        title.fx = vec![FxInstance::builtin("radial_blur")];
         title.fx_bypass = vec![false];
         s.published.push(PublishedParam {
             id: AMOUNT,

@@ -197,36 +197,6 @@ pub(crate) unsafe fn noise_avx2(rgba: &mut [u8], w: u32, h: u32, seed: u32, k: i
     }
 }
 
-/// AVX2 twin of the additive finish of `glow`: `o + u*s` with a ceiling of 255 and
-/// TRUNCATION (the scalar does `as u8` without round). The lanes = 4 channels of a
-/// pixel; the alpha byte is taken back from the original (the scalar does not touch it).
-///
-/// # Safety
-/// Requires AVX2; `dst`/`up` of length >= `pixels*4`.
-#[target_feature(enable = "avx2")]
-pub(crate) unsafe fn glow_add_avx2(dst: &mut [u8], up: &[u8], s: f64, pixels: usize) {
-    unsafe {
-        let sv = _mm256_set1_pd(s);
-        let max255 = _mm256_set1_pd(255.0);
-        let (pd, pu) = (dst.as_mut_ptr(), up.as_ptr());
-        for p in 0..pixels {
-            let off = p * 4;
-            let orig = pd.add(off).cast::<u32>().read_unaligned();
-            let o = _mm256_cvtepi32_pd(_mm_cvtepu8_epi32(_mm_cvtsi32_si128(orig as i32)));
-            let u = _mm256_cvtepi32_pd(_mm_cvtepu8_epi32(_mm_cvtsi32_si128(
-                pu.add(off).cast::<u32>().read_unaligned() as i32,
-            )));
-            // scalar order: first u*s, then o + ...
-            let r = _mm256_min_pd(_mm256_add_pd(o, _mm256_mul_pd(u, sv)), max255);
-            let packed = pack_rgba(r);
-            // alpha — from the original
-            pd.add(off)
-                .cast::<u32>()
-                .write_unaligned((packed & 0x00FF_FFFF) | (orig & 0xFF00_0000));
-        }
-    }
-}
-
 /// Frame luma for `edges`: `(77R + 150G + 29B) >> 8`, 8 pixels per
 /// iteration. Integer — byte-for-byte with the scalar.
 ///

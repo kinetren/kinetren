@@ -144,7 +144,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         ("edges", vec![FxInstance::edges(48)], FrameTol::THRESHOLD),
         ("noise", vec![FxInstance::noise(0.3)], FrameTol::EXACT),
         // the new parameters of R.33 S5: the mirrors MUST converge on them too
-        ("blur-xy", vec![FxInstance::Blur { radius: 24, radius_y: 4 }], FrameTol::BILINEAR),
+        ("blur-xy", vec![FxInstance::plugin_with("blur", &[24.0, 4.0]).unwrap()], FrameTol::BILINEAR),
         (
             "edges-thick-color",
             vec![FxInstance::Edges {
@@ -178,26 +178,12 @@ fn t181_effect_parity_gpu_vs_cpu() {
         ),
         (
             "glow-radius-tint",
-            vec![FxInstance::Glow {
-                strength: 0.9,
-                radius: 8,
-                threshold: 0,
-                tint_r: 255,
-                tint_g: 120,
-                tint_b: 40,
-            }],
+            vec![FxInstance::plugin_with("glow", &[0.9, 8.0, 0.0, 255.0, 120.0, 40.0]).unwrap()],
             FrameTol::BILINEAR,
         ),
         (
             "glow-threshold",
-            vec![FxInstance::Glow {
-                strength: 1.2,
-                radius: 4,
-                threshold: 90,
-                tint_r: 255,
-                tint_g: 255,
-                tint_b: 255,
-            }],
+            vec![FxInstance::plugin_with("glow", &[1.2, 4.0, 90.0, 255.0, 255.0, 255.0]).unwrap()],
             FrameTol::BILINEAR,
         ),
         (
@@ -400,18 +386,11 @@ fn t181_effect_parity_gpu_vs_cpu() {
     // blur would look different on the GPU than in the CPU export.
     let alpha_cases: Vec<(&str, Vec<FxInstance>, FrameTol)> = vec![
         ("alpha-blur", vec![FxInstance::blur(8)], FrameTol::BILINEAR),
-        ("alpha-blur-xy", vec![FxInstance::Blur { radius: 24, radius_y: 4 }], FrameTol::BILINEAR),
+        ("alpha-blur-xy", vec![FxInstance::plugin_with("blur", &[24.0, 4.0]).unwrap()], FrameTol::BILINEAR),
         ("alpha-glow", vec![FxInstance::glow(1.2)], FrameTol::BILINEAR),
         (
             "alpha-glow-tinted",
-            vec![FxInstance::Glow {
-                strength: 0.8,
-                radius: 9,
-                threshold: 40,
-                tint_r: 200,
-                tint_g: 120,
-                tint_b: 255,
-            }],
+            vec![FxInstance::plugin_with("glow", &[0.8, 9.0, 40.0, 200.0, 120.0, 255.0]).unwrap()],
             FrameTol::BILINEAR,
         ),
         ("alpha-edges", vec![FxInstance::edges(48)], FrameTol::THRESHOLD),
@@ -1015,13 +994,13 @@ fn t329_parity_cycle_over_the_registry() {
     // R.47 Kv3: the spin branch of radial blur (an arc: f32 against f64 trigonometry)
     // and the shadow on REAL alpha (after greenscreen: THRESHOLD, the key’s threshold
     // breaks the bilinear smoothness)
-    let spin = FxInstance::RadialBlur { amount: 0.6, center_x: 0.2, center_y: -0.1, spin: true };
+    let spin = FxInstance::plugin_with("radial_blur", &[0.6, 0.2, -0.1, 1.0]).unwrap();
     let src = Src::new(9700, Some(frame(W, H, false, 0)), vec![spin.clone()]);
     let p = plan(90_000, vec![one(&src, 4096, false)]);
     let (cpu, gpu, ..) = run_both(engine.as_ref(), &p);
     assert_frames_close(&cpu, &gpu, W, H, FrameTol::THRESHOLD, "tuned-radial-spin");
     let shadow_chain =
-        vec![FxInstance::greenscreen([0, 255, 0], 70, 25), FxInstance::drop_shadow()];
+        vec![FxInstance::greenscreen([0, 255, 0], 70, 25), FxInstance::builtin("drop_shadow")];
     let src = Src::new(9702, Some(frame(W, H, false, 0)), shadow_chain.clone());
     let p = plan(90_000, vec![one(&src, 4096, false)]);
     let (cpu, gpu, ..) = run_both(engine.as_ref(), &p);

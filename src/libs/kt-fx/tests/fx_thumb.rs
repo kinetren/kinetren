@@ -71,7 +71,7 @@ fn t544b_pattern_feeds_every_class_of_effect() {
         "greenscreen: nothing was keyed out (pattern has no green patch?)"
     );
     // high frequencies: blur and outline change the frame
-    for fx in [FxInstance::blur(8), FxInstance::edges(48), FxInstance::sharpen()] {
+    for fx in [FxInstance::blur(8), FxInstance::edges(48), FxInstance::builtin("sharpen")] {
         let f = thumb(&p, std::slice::from_ref(&fx));
         assert_ne!(hash(&f), base, "{}: pattern has no detail to work on", fx.tag());
     }
@@ -115,7 +115,7 @@ fn t544d_drop_shadow_needs_the_alpha_pattern() {
     kt_plugins_builtin::install();
     let opaque = test_pattern(RW, RH, false);
     let alpha = test_pattern(RW, RH, true);
-    let fx = [FxInstance::drop_shadow()];
+    let fx = [FxInstance::builtin("drop_shadow")];
     assert_eq!(
         hash(&thumb(&opaque, &fx)),
         hash(&opaque),

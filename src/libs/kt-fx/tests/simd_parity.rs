@@ -205,13 +205,13 @@ fn bench_simd_1080p() {
     let mut gb = src.rgba.clone();
     let t = std::time::Instant::now();
     for _ in 0..iters {
-        st::glow_add_scalar(&mut gb, &up, 0.35);
+        fx_video_blur::simd_testing::glow_add_scalar(&mut gb, &up, 0.35);
     }
     let gs = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
     let mut gb2 = src.rgba.clone();
     let t = std::time::Instant::now();
     for _ in 0..iters {
-        st::glow_add_avx2(&mut gb2, &up, 0.35, pixels);
+        fx_video_blur::simd_testing::glow_add_avx2(&mut gb2, &up, 0.35, pixels);
     }
     let ga = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
     println!("glow-add 1080p: scalar {gs:.2} ms, avx2 {ga:.2} ms, ×{:.2}", gs / ga);
@@ -305,8 +305,8 @@ fn t198_glow_add_scalar_eq_avx2() {
                 let base = frame(pixels as u32, 1, kind).rgba;
                 let mut a = base.clone();
                 let mut b = base.clone();
-                st::glow_add_scalar(&mut a, &up, s);
-                st::glow_add_avx2(&mut b, &up, s, pixels);
+                fx_video_blur::simd_testing::glow_add_scalar(&mut a, &up, s);
+                fx_video_blur::simd_testing::glow_add_avx2(&mut b, &up, s, pixels);
                 assert_eq!(a, b, "glow kind={kind} pixels={pixels} s={s}");
             }
         }
