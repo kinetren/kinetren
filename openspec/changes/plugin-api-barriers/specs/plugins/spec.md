@@ -41,17 +41,17 @@ whole scalar reference (R.32).
 #### Scenario: A pass graph runs on the GPU within the tolerance class
 - **WHEN** every registered barrier runs on the GPU executor assembled from the registry: alone, between two geometry series and under a layer strength below one; and a test barrier plugin with a two-pass graph (a saved source, a half-size resample, a final pass reading both) that the host names nowhere runs the same chains
 - **THEN** each result is within its kind's existing tolerance class of the CPU, the uniform arena is consumed exactly as predicted from the graph, and the test plugin needs no host code
-- **TEST** t1052 (`src/libs/kt-gpu/tests/parity.rs`), t181, t329
+- **TEST** t1052 (`src/libs/kt-gpu/tests/barrier_graph.rs`), t181, t329
 
 #### Scenario: The SIMD twin is checked over the registry
 - **WHEN** every registered barrier that declares a twin runs on the parity frames with the twin and with the twin switched off
 - **THEN** the bytes are equal for every kind, the scalar goldens hold with the switch off, and a kind added with a twin is checked without editing the test
-- **TEST** t1053 (`src/libs/kt-fx/tests/simd_parity.rs`), t198
+- **TEST** t1053 (`src/libs/kt-fx/tests/barrier_plugin.rs`), t198
 
 #### Scenario: An inconsistent barrier is refused before any frame
 - **WHEN** test plugins are registered with: no CPU kernel; no pass graph as a built-in; a graph reading a saved output before saving it; a graph ending at a half-size resample or on a save; a size beyond the buffer ceiling at the largest K; a pass naming a shader the kernel lacks; an empty graph on a frame with alpha
 - **THEN** each registration is refused with the reason named, and the registry is unchanged
-- **TEST** t1054 (`src/libs/kt-plugin-api/tests/registry.rs`), t972
+- **TEST** t1054 (`src/libs/kt-plugin-api/tests/barrier_registry.rs`), t972
 
 #### Scenario: The core keeps no barrier
 - **WHEN** the effect enum's variants and the barrier position of the CPU executor are listed after the move

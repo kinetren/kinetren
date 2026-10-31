@@ -167,8 +167,23 @@ stage that moves it.
     - t824's "≥ 3 video FX kinds" in the showcase;
     - t550d's "the kind does not change along the strength axis".
     Both compare tags now. t974's tap list grows by greenscreen and noise.
-- [ ] 4.3 Write t1055 (`src/libs/kt-fx/tests/geo_fuse.rs`): a test barrier plugin the host does not name gets K=2 between a grid and a zoom and after S=2, as a built-in. Red with the planner reading K from a kind list
-- [ ] 4.4 Write t1052 (`src/libs/kt-gpu/tests/parity.rs`): every registered barrier on the GPU within its class, and a two-pass test plugin needing no host code. Red with the saved slot ignored. Write t1053 (`src/libs/kt-fx/tests/simd_parity.rs`): the twin parity over the registry. Red with one twin perturbed; commit stage 4
+- [x] 4.3 Write t1055 (`src/libs/kt-fx/tests/barrier_plugin.rs`): a test barrier plugin the host does not name gets K=2 between a grid and a zoom and after S=2, as a built-in. Red with the planner reading K from a kind list
+  - In `barrier_plugin.rs`: a test plugin must be in the binary's ONE installed set
+    (`install_with`), and `geo_fuse.rs`'s tests install the plain set. `k_probe` records the K its
+    kernel is handed. Between a 2×2 grid and a ×2 zoom, and before a zoom at a decode step of 2,
+    the planner gives it the K vhs gets (2), and the kernel receives it.
+  - There is no kind list in the planner to break. The red proof is the host handing a plugin
+    K = 1 (`apply_barrier`): red.
+- [x] 4.4 Write t1052 (`src/libs/kt-gpu/tests/barrier_graph.rs`): every registered barrier on the GPU within its class, and a two-pass test plugin needing no host code. Red with the saved slot ignored. Write t1053 (`src/libs/kt-fx/tests/barrier_plugin.rs`): the twin parity over the registry. Red with one twin perturbed; commit stage 4
+  - t1052, a binary of its own whose set holds `two_pass`:
+    - `two_pass` (a saved source, a mip down and up, one pass reading both) runs alone, between
+      geometry series and under a strength of 0.5, on opaque and alpha frames, within BILINEAR;
+    - every registered barrier runs under a strength of 0.5 in t329's sandwich class.
+    Red with the executor reading `Prev` for a saved slot (6 % of the pixels off by up to 48).
+    `KT_REQUIRE_GPU=1`.
+  - t1053 runs every registered barrier kernel with `simd` on and off: defaults, the passport's
+    top, each picker variant; K 1 and 2; opaque and alpha. Red with noise's AVX2 constant 16384
+    perturbed.
 
 ## 5. Cleanup and acceptance
 

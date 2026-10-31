@@ -47,4 +47,4 @@ that a barrier plugin unknown to the host is held to it by construction (plugin-
 #### Scenario: A barrier plugin unknown to the host is held to the K rule
 - **WHEN** a test barrier plugin, registered beside the built-ins and named nowhere in the host, stands between a 2×2 grid and a ×2 zoom, and then alone after a decode scale step S=2
 - **THEN** the planner gives it K=2 in both cases, the same K a built-in barrier gets at that place, and its kernel receives that K; the series around it is broken exactly as for a built-in
-- **TEST** t1055 (`src/libs/kt-fx/tests/geo_fuse.rs`)
+- **TEST** t1055 (`src/libs/kt-fx/tests/barrier_plugin.rs`)

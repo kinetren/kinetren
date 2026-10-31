@@ -222,7 +222,7 @@ fn ctx(s: u32) -> VideoFxCtx {
 
 #[test]
 fn t1051_barrier_bytes_are_frozen_before_the_move() {
-    kt_plugins_builtin::install();
+    install();
     let print = std::env::var_os("KT_PRINT_GOLDEN").is_some();
     let mut got = Vec::new();
     for (kind, forms) in RECIPES {
@@ -247,4 +247,152 @@ fn t1051_barrier_bytes_are_frozen_before_the_move() {
     for (g, w) in got.iter().zip(GOLDEN) {
         assert_eq!(g, w, "{} form {} K={} alpha={}: the bytes moved", g.0, g.1, g.2, g.3);
     }
+}
+
+// ---- t1055 / t1053: the host's rules over every registered barrier --------------------------------
+
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// The K the probe's CPU kernel last received.
+static PROBE_K: AtomicU32 = AtomicU32::new(0);
+
+/// A barrier plugin the host names nowhere: it records the K it is handed and passes the frame
+/// through. CPU only (a test plugin, not a built-in: no GPU side is required of it).
+struct KProbe {
+    m: kt_plugin_api::Manifest,
+}
+
+impl KProbe {
+    fn new() -> KProbe {
+        KProbe {
+            m: kt_plugin_api::Manifest {
+                id: "k_probe".into(),
+                media: kt_plugin_api::Media::VideoFx,
+                passport: Vec::new(),
+                rows: Vec::new(),
+                decl: kt_plugin_api::Decl {
+                    video_class: Some(kt_plugin_api::VideoClass::Barrier),
+                    gpu: kt_plugin_api::Gpu::None,
+                    builtin: false,
+                    ..kt_plugin_api::Decl::default()
+                },
+                ui: Default::default(),
+            },
+        }
+    }
+}
+
+impl kt_plugin_api::Plugin for KProbe {
+    fn manifest(&self) -> &kt_plugin_api::Manifest {
+        &self.m
+    }
+    fn barrier(&self) -> Option<&dyn kt_plugin_api::barrier::BarrierKernel> {
+        Some(self)
+    }
+}
+
+impl kt_plugin_api::barrier::BarrierKernel for KProbe {
+    fn frame(
+        &self,
+        _k: &kt_plugin_api::Cooked,
+        f: Frame,
+        cx: &kt_plugin_api::barrier::BarrierCtx,
+        _s: &mut dyn kt_plugin_api::barrier::Scratch,
+    ) -> Frame {
+        PROBE_K.store(cx.res_scale, Ordering::SeqCst);
+        f
+    }
+}
+
+/// The plugin set of this binary: the built-ins plus `k_probe`, installed once.
+fn install() {
+    kt_plugins_builtin::install_with(|reg| {
+        reg.register_for_test(std::sync::Arc::new(KProbe::new())).expect("k_probe registers");
+    });
+}
+
+/// t1055 (plugin-api-barriers 4.3; capability `video-fx`): a barrier plugin the host names nowhere is
+/// held to the K rule — between a 2×2 grid and a ×2 zoom, and alone before a zoom at a decode step
+/// of 2, the planner gives it the K a built-in barrier gets at that place, and its kernel receives it.
+#[test]
+fn t1055_an_unknown_barrier_is_held_to_the_k_rule() {
+    install();
+    use kt_fx::plan::{PlanOp, plan_chain};
+    let probe = FxInstance::plugin("k_probe").expect("the test plugin is installed");
+    let vhs = FxInstance::vhs(4, 0.4);
+    let grid = FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
+    let zoom2 = FxInstance::geometry_zoom(2.0);
+    let k_of = |fx: &[FxInstance], s: u32| -> Vec<u32> {
+        plan_chain(fx, 50 * s, 30 * s, s, 50, 30, 0.5, None, 90_000, &[])
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                PlanOp::Barrier { res_scale, .. } => Some(*res_scale),
+                _ => None,
+            })
+            .collect()
+    };
+    for (what, chain, s) in [
+        ("between a grid and a zoom", vec![grid.clone(), probe.clone(), zoom2.clone()], 1),
+        ("before a zoom at a decode step of 2", vec![probe.clone(), zoom2.clone()], 2),
+    ] {
+        let as_vhs: Vec<FxInstance> = chain.iter().map(|f| if f == &probe { vhs.clone() } else { f.clone() }).collect();
+        assert_eq!(k_of(&chain, s), vec![2], "{what}: the planner gave the plugin another K");
+        assert_eq!(k_of(&chain, s), k_of(&as_vhs, s), "{what}: the plugin and a built-in barrier get different K");
+        PROBE_K.store(0, Ordering::SeqCst);
+        let ctx = VideoFxCtx { in_scale: s, ..ctx(1) };
+        let _ = kt_fx::video::apply_video_chain(&chain, frame(s, false), &ctx);
+        assert_eq!(PROBE_K.load(Ordering::SeqCst), 2, "{what}: the kernel was handed another K");
+    }
+}
+
+/// t1053 (plugin-api-barriers 4.4; capability `plugins`): every registered barrier kernel that takes
+/// a SIMD path gives the scalar bytes — over the registry, not a list: a kind added with a twin is
+/// checked without editing the test. Defaults, the passport's top, the picker's variants; K 1 and 2;
+/// opaque and alpha frames off the AVX2 width.
+#[test]
+fn t1053_every_barrier_twin_gives_the_scalar_bytes() {
+    install();
+    if !std::is_x86_feature_detected!("avx2") {
+        assert!(std::env::var("KT_REQUIRE_SIMD").as_deref() != Ok("1"), "KT_REQUIRE_SIMD=1, but AVX2 is not on this CPU");
+        eprintln!("t1053 skipped: the CPU has no AVX2 — the SIMD path is unreachable");
+        return;
+    }
+    let reg = kt_plugin_api::installed().expect("installed");
+    let mut kinds = 0;
+    for p in reg.plugins().filter(|p| p.barrier().is_some() && p.manifest().media == kt_plugin_api::Media::VideoFx) {
+        let m = p.manifest();
+        let b = p.barrier().expect("filtered");
+        let mut forms: Vec<Vec<f64>> = vec![
+            kt_plugin_api::ParamValues::defaults(&m.passport).0,
+            kt_plugin_api::ParamValues::top(&m.passport).0,
+        ];
+        for v in m.ui.variants {
+            let mut vals = kt_plugin_api::ParamValues::defaults(&m.passport).0;
+            for (name, x) in v.sets {
+                let i = m.passport.iter().position(|s| s.name == *name).expect("a variant names a row");
+                vals[i] = *x;
+            }
+            forms.push(vals);
+        }
+        for vals in &forms {
+            let k = b.cook(vals);
+            for rs in [1u32, 2] {
+                for alpha in [false, true] {
+                    let run = |simd: bool| {
+                        let cx = kt_plugin_api::barrier::BarrierCtx {
+                            res_scale: rs,
+                            burst_index: 90_000,
+                            simd,
+                            raster: &kt_fx::video::Raster,
+                        };
+                        b.frame(&k, frame(rs, alpha), &cx, &mut FxScratch::default()).rgba
+                    };
+                    assert!(run(true) == run(false), "{} {vals:?} K={rs} alpha={alpha}: the SIMD path moved a byte", m.id);
+                }
+            }
+        }
+        kinds += 1;
+    }
+    assert!(kinds >= 12, "the registry holds {kinds} barrier kinds, the twelve moved ones at least");
 }
