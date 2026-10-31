@@ -139,6 +139,11 @@ def check_container(r):
             r.err(RELEASE_BUILD, "the tarball must carry `kinetren` and `kt-cli` (BINS)")
         if re.search(r"\bkt-app\b", rb.replace("-p kt-app", "")):
             r.err(RELEASE_BUILD, "names a `kt-app` binary: the GUI is `kinetren` on disk")
+        # the GUI compiles in files from outside src/ (docs/guide/*.md): the build container must
+        # see the repository root, or every release build fails (2026-10-31)
+        if '-v "$PWD/..:/work" -w /work/src' not in rb:
+            r.err(RELEASE_BUILD, "the build container must mount the repository root "
+                  "(`-v \"$PWD/..:/work\" -w /work/src`): kt-app compiles in docs/guide/*.md")
     return pinned
 
 

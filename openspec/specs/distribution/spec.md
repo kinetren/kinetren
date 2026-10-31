@@ -36,7 +36,9 @@ image a second way, would get a different result from the one the owner checks.
   differs from CI's, `release-build.sh` has a heredoc `FROM`, a Makefile target is missing,
   the CI workflow uploads an artifact without `retention-days`, the release workflow
   triggers on something other than `v*` tags, the README's install section lost `make install`, the desktop
-  entry starts `kt-app`, the tarball carries `kt-app`, or a second Dockerfile appears
+  entry starts `kt-app`, the tarball carries `kt-app`, a second Dockerfile appears, or the
+  build container mounts `src/` alone (the GUI compiles in `docs/guide/*.md` from the repository
+  root; with `src/` as `/work` every release build failed, 2026-10-31)
 - **THEN** exit non-zero, and each violation is reported with its file
 - **TEST** t835 (`src/apps/kt-cli/tests/dist_guard.rs`)
 

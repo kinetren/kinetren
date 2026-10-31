@@ -106,7 +106,7 @@ fn t835_guard_catches_each_class_of_drift() {
     let _ = std::fs::remove_dir_all(&dir);
 
     type Break = fn(&Path);
-    let cases: [(&str, Break, &str); 9] = [
+    let cases: [(&str, Break, &str); 10] = [
         (
             "toolchain",
             |d| edit(d, ".github/workflows/ci.yml", "RUST_TOOLCHAIN: \"", "RUST_TOOLCHAIN: \"9"),
@@ -151,6 +151,13 @@ fn t835_guard_catches_each_class_of_drift() {
             "second-dockerfile",
             |d| std::fs::write(d.join("Dockerfile"), "FROM ubuntu:24.04\n").unwrap(),
             "src/packaging/Dockerfile: exactly one build container",
+        ),
+        (
+            // the GUI compiles in docs/guide/*.md: a container that sees src/ alone fails every
+            // release build (2026-10-31)
+            "src-only-mount",
+            |d| edit(d, "src/scripts/release-build.sh", "-v \"$PWD/..:/work\" -w /work/src", "-v \"$PWD:/work\" -w /work"),
+            "src/scripts/release-build.sh: the build container must mount the repository root",
         ),
     ];
     for (tag, brk, want) in cases {

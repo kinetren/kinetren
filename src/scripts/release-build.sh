@@ -177,9 +177,23 @@ clean_out() {
 
 KINETREN_POSTHOG_KEY=$(tr -d '[:space:]' < packaging/posthog-key 2>/dev/null || true)
 
+# The REPOSITORY root is mounted, not src/ alone: the GUI compiles in `docs/guide/*.md` (the Guide
+# window, welcome-window-and-tour), and with src/ as /work every release build failed on the
+# missing files (2026-10-31). The two other container scripts (windows tests, FFmpeg 9 tests)
+# mount it the same way. A target dir built under the OLD mount is dropped once: a build script
+# keeps the `CARGO_MANIFEST_DIR` it was compiled with (/work/apps/…), cargo does not rebuild it
+# for the move, and it then looks for its catalogs in a directory that no longer exists.
+MOUNT_STAMP=target/dist-container/.mount
+if [ -d target/dist-container ] && [ "$(cat "$MOUNT_STAMP" 2> /dev/null)" != "repo-root" ]; then
+    echo "release-build.sh: target/dist-container was built under the old mount, rebuilding it"
+    rm -rf target/dist-container
+fi
+mkdir -p target/dist-container
+echo repo-root > "$MOUNT_STAMP"
+
 if ! docker run --rm --network=host -u "$UID_GID" \
-    -v "$PWD:/work" -w /work -v "$REGISTRY:/usr/local/cargo/registry" \
-    -e CARGO_TARGET_DIR=/work/target/dist-container \
+    -v "$PWD/..:/work" -w /work/src -v "$REGISTRY:/usr/local/cargo/registry" \
+    -e CARGO_TARGET_DIR=/work/src/target/dist-container \
     -e RUSTFLAGS= \
     -e KT_VERSION_FULL="$KT_VERSION_FULL" -e KT_VERSION_SHORT="$KT_VERSION_SHORT" \
     -e KINETREN_POSTHOG_KEY="$KINETREN_POSTHOG_KEY" \
