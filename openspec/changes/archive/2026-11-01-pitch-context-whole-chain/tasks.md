@@ -20,5 +20,9 @@ ends with a commit and `src/scripts/target-prune.py`.
 
 ## 2. Finish
 
-- [ ] 2.1 What's new line; `./scripts/finish.sh` with a fresh version stamp; version here
-- [ ] 2.2 Archive; the "why" into `openspec/specs/audio-fx/design.md`
+- [x] 2.1 What's new line; `./scripts/finish.sh` with a fresh version stamp; version here
+  - finish.sh → **kt26.11.01-010d6db5** (`touch libs/kt-version/build.rs` first: in a worktree the
+    stamp does not follow commits — the owner got `a04b201d` on a 2ba74ae7 build). Under load average
+    26–36: live `readme_shots`, `winshell` red twice (screenshots, window zoom — not audio); alone
+    2 of 2 green.
+- [x] 2.2 Archive; the "why" into `openspec/specs/audio-fx/design.md`
