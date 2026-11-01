@@ -188,7 +188,10 @@ other sessions, so these are upper bounds), the grid simulation plus the read-ou
 | PAL, worn tape, two decks | 91 |
 | NTSC, defaults | 65 |
 
-So the CPU path is an export path (≈ 10 frames/s), the GPU path is the preview's. The cost does
+So the CPU path is an export path (≈ 10 frames/s), the GPU path is the preview's. No SIMD twin
+yet: the barrier contract makes it optional, and the row bands already use every core. A twin is
+a straightforward follow-up — eight neighbouring OUTPUT samples per AVX2 register, each tap sum in
+the scalar order without FMA, so the bytes stay the scalar's (t1053 would hold it). The cost does
 not depend on the frame size beyond the read-out: the grid is the standard's.
 
 ### D11. The panel

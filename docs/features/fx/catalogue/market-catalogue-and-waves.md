@@ -58,9 +58,9 @@ listed.
   `stereo_width`, `tremolo`, `auto_pan`, `vibrato`, `chorus`, `flanger`, `phaser`, `delay`,
   `compressor`, `gate`, `limiter`, `pitch_shift`.
 - **Layer marker (1):** `layer_mix`.
-- **Video effects (27):** `color_grade`, `duotone`, `posterize`, `vignette`, `corner_pin`, `sharpen`,
+- **Video effects (28):** `color_grade`, `duotone`, `posterize`, `vignette`, `corner_pin`, `sharpen`,
   `pixelate`, `chromatic_aberration`, `radial_blur`, `drop_shadow`, `halftone`, `lens_distort`,
-  `twirl`, `ripple`, `kaleidoscope`, `cylinder3d`, `geometry`, `cam_motion`, `mirror`, `blur`,
+  `twirl`, `ripple`, `kaleidoscope`, `cylinder3d`, `vhs_tape`, `geometry`, `cam_motion`, `mirror`, `blur`,
   `greenscreen`, `edges`, `noise`, `vhs`, `glow`, `event_grid`, `pan3d`.
 - **Transitions (33):** `crossfade`, `wipe`, `iris`, `clock`, `barn`, `luma`, `push`, `slide`,
   `zoom`, `spin`, `whip`, `blur_dissolve`, `pixelate`, `glitch`, `flash`, `dip`, `blinds`,
@@ -80,7 +80,7 @@ that was opened live (`(src N)`) or carries `[NOT VERIFIED]`; the guard t980 che
 | Lens: fisheye corners, flares, dirt, drops | CapCut: lens flare sold as templates and overlays, a fisheye effect without a housing control (src 8); AE: Lens Flare, Optics Compensation; Resolve: Lens Flare, Lens Reflections, Aperture Diffraction `[NOT VERIFIED]` | `lens_distort` only; no housing/corner mask, no flare, no dirt, no drops (the owner's ktprompts item FX 1) | wave W1 |
 | Glitch | CapCut: RGB Split, digital glitch, VHS tabs (src 1); Resolve: Glitch, Analog Damage `[NOT VERIFIED]` | `chromatic_aberration`, `vhs`, `noise`; transition `glitch` | wave W2 |
 | Light leaks / flashes as an effect | CapCut: light-leak overlays and flash transitions `[NOT VERIFIED]` | transitions `light_leaks`, `film_burn`, `flash`; nothing as an effect on one clip | wave W2 |
-| Retro / film | CapCut: Movie Grain, Retro tab (src 1); Resolve: Film Look Creator, Film Damage `[NOT VERIFIED]` | `noise` (grain), `halftone`, `duotone` (sepia preset), `posterize`, `vhs`; no scratches, dust, gate weave, halation | wave W2 |
+| Retro / film | CapCut: Movie Grain, Retro tab (src 1); Resolve: Film Look Creator, Film Damage `[NOT VERIFIED]` | `noise` (grain), `halftone`, `duotone` (sepia preset), `posterize`, `vhs`, `vhs_tape` (a simulation, F-FX-009); no scratches, dust, gate weave, halation | wave W2 |
 | Shake / zoom punch | CapCut: Zoom Shake, camera shake presets (src 1) | transitions `shake`, `zoom`, `spin`; `geometry` with curves and segment shapes (a zigzag segment, R.61) — but no one-click shake or zoom-punch | wave W1 |
 | Blur / bokeh | CapCut: Blur tab, Soft Focus, Dreamy Glow (src 1); Premiere: Gaussian, Directional, Camera Blur `[NOT VERIFIED]` | `blur`, `radial_blur` (spin/zoom), `glow`; no lens (bokeh) blur, no directional blur | wave W2 (directional blur needs a Revision, see Verdict) |
 | Speed ramps | CapCut: speed curve with named presets; AE/Premiere: time remapping `[NOT VERIFIED]` | `slowed_reverb` rate curve, signed rate and freeze (R.57) — no presets | wave W4 |

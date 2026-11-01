@@ -341,4 +341,5 @@ change `openspec/changes/archive/2026-11-01-vhs-tape-simulation/design.md`. What
 - **One text per stage, mirrored**: `sim.rs`/`deck.rs`/`sig.rs` and `wgsl/*.wgsl` in the same
   commit; our own f32 sine/atan2 on both sides (WGSL's are vendor-accurate only); the fixed filters
   pasted into the WGSL from the CPU's f32 values. The GPU class is `FrameTol::SIGNAL` (t1186).
-- Deferred: the linear/HiFi audio tracks (an audio effect), nonlinear emphasis, S-VHS, SECAM.
+- Deferred: the linear/HiFi audio tracks (an audio effect), nonlinear emphasis, S-VHS, SECAM, the
+  AVX2 twin of the stage FIRs (optional by the contract; threads carry the CPU path now).
