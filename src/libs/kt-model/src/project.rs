@@ -4721,6 +4721,13 @@ impl FxInstance {
         matches!(self, FxInstance::LayerMix { .. })
     }
 
+    /// A STREAM source stage (datamosh-codec-path, D1/D2): the engine runs it on the event's source
+    /// in the plan's common code; the chain planner passes it through like an audio slot.
+    pub fn is_stream(&self) -> bool {
+        matches!(self, FxInstance::Plugin(p)
+            if p.manifest().decl.video_class == Some(kt_plugin_api::VideoClass::Stream))
+    }
+
     /// Stable variant tag (matches the serde `kind`). An EXHAUSTIVE
     /// match is the only compile-time lock of the registry (R.47, item 326): a new
     /// variant will not build until it is named, and the `all()` test checks the registry
