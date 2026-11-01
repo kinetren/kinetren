@@ -254,6 +254,7 @@ pub fn predict(rf: &Planes, mv: &[(i16, i16)], bs: usize) -> Planes {
     p
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sad(cur: &[u8], rf: &[u8], w: usize, h: usize, bx: usize, by: usize, bs: usize, vx: i32, vy: i32) -> u32 {
     let mut s = 0u32;
     for y in 0..bs {

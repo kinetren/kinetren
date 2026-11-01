@@ -124,7 +124,8 @@ whichever backend runs the plan. The layer's `content` and `fx_hash` carry the d
 key, so neither the GPU upload/readback caches nor the CPU post-FX memo return another mosh.
 
 Cost (encoded height 360, 640×368 padded, 920 macroblocks): a diamond search plus a ±1
-refinement is ~30 SADs per block; the DCT is 8×8 separable in f64. Measured in tasks 6.x.
+refinement is ~30 SADs per block; the DCT is 8×8 separable in f64. Measured (release, tasks 5.1):
+encode 7.6 ms and the broken decode 0.5 ms per frame; the worst cold seek (300 frames) ≈ 2.4 s.
 
 ### D5. The order: own frame in steady state, the history only when the memo lacks it
 

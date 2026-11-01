@@ -31,12 +31,20 @@ Tests t1235–t1259 are reserved by this change. Every stage ends green and is c
 
 ## 4. The editor
 
-- [ ] 4.1 Catalog keys (name, rows, presets) in every language; reach/layout/i18n tests green
+- [x] 4.1 Catalog keys (name, rows, presets) in every language; reach/layout/i18n tests green
+  - The numeric rows are in the shared grid; the encoded height, block and vector source are combos
+    and the vector swap a checkbox in the FX window. The picker's template is the intact codec, the
+    breakages are the presets (t543: a variant must differ from the template). The GOP strip was not
+    built (secondary per the owner's p.4): it would need the schedule's text a second time in kt-app.
 - [ ] 4.2 Live scenario `datamosh.py` with screenshots on our fixtures
 
 ## 5. Close
 
-- [ ] 5.1 Cost measured (release, one build); recorded here
+- [x] 5.1 Cost measured (release, one build); recorded here
+  - `cargo test --release -p fx-video-codec --test codec cost -- --ignored --nocapture`, 640×368
+    (360 lines), 16×16 blocks, ±16 search, under a machine load of ~40: encode 7.56 ms/frame, the
+    broken decode 0.52 ms/frame. Sequential playback pays one encode + one decode per frame (the memo
+    holds the rest); the worst cold seek, through a full 300-frame chain, ≈ 2.4 s.
 - [ ] 5.2 What's new line; registry D1 closed; F-FX-011 → done
 - [ ] 5.3 `cargo test --workspace`, `cargo clippy --all-targets`, `git merge master`, `./scripts/finish.sh` — version recorded
 - [ ] 5.4 Archive: specs merged into video-fx and plugins, the why into their designs
