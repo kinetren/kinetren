@@ -16,7 +16,7 @@ fn decode(c: u32, curve: u32) -> f32 {
             if (v < 0.081) {
                 return v * 0.22222222;
             }
-            return pow((v + 0.099) * 0.9099181, 2.2222222);
+            return pow((v + 0.099) * 0.9099181, 2.222222);
         }
         case 2u: {
             return pow(v, 2.2);

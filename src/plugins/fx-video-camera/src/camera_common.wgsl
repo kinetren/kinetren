@@ -96,9 +96,9 @@ fn at_frame(x: i32, y: i32) -> vec4<u32> {
 // the scene texel (cpu.rs unpack_scene): R, G 11 bits, B 10, each sqrt(v/2)
 fn unpack_scene(t: vec4<u32>) -> vec3<f32> {
     let p = t.r | (t.g << 8u) | (t.b << 16u) | (t.a << 24u);
-    let r = f32(p & 0x7FFu) * 4.8851978e-4;
-    let g = f32((p >> 11u) & 0x7FFu) * 4.8851978e-4;
-    let b = f32(p >> 22u) * 9.7751711e-4;
+    let r = f32(p & 0x7FFu) * 4.885198e-4;
+    let g = f32((p >> 11u) & 0x7FFu) * 4.885198e-4;
+    let b = f32(p >> 22u) * 9.775171e-4;
     return vec3<f32>(r * r * 2.0, g * g * 2.0, b * b * 2.0);
 }
 

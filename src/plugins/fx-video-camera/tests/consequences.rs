@@ -296,12 +296,8 @@ fn t1214_an_infrared_leak_tints_as_predicted() {
     }
     assert!(leak[0] > leak[1] + 10.0 && leak[2] > leak[1] + 10.0, "no magenta cast: {leak:?}");
     let cut = mid(&run(&values(&with(base.clone(), &[("ir_cut", 1.0)])), &f));
-    for c in 0..3 {
-        assert!(
-            (cut[c] - g0 * 255.0).abs() <= 1.5,
-            "the IR-cut filter in: channel {c} {:.1} is not grey",
-            cut[c]
-        );
+    for (c, v) in cut.iter().enumerate() {
+        assert!((v - g0 * 255.0).abs() <= 1.5, "the IR-cut filter in: channel {c} {v:.1} is not grey");
     }
     let rgbir =
         mid(&run(&values(&with(base, &[("ir_cut", 0.0), ("cfa", 7.0), ("ir_sub", 1.0)])), &f));
@@ -477,24 +473,6 @@ fn mean_diff(a: &[u8], b: &[u8], w: u32, h: u32, m: u32) -> f64 {
     s as f64 / n as f64
 }
 
-/// A test card: a colour checker of 12-px squares with 3-px light bars (a geometric defect moves
-/// them; two bilinear resamplings soften but do not move them).
-fn card(w: u32, h: u32) -> Frame {
-    frame_of(w, h, |x, y| {
-        if x % 24 < 3 || y % 24 < 3 {
-            return [230, 230, 230];
-        }
-        match (x / 12 + y / 12 * 3) % 6 {
-            0 => [200, 60, 50],
-            1 => [60, 170, 70],
-            2 => [50, 70, 190],
-            3 => [210, 200, 60],
-            4 => [120, 120, 120],
-            _ => [40, 40, 40],
-        }
-    })
-}
-
 /// t1220: every defect of the lens and the sensor has the ISP block that removes it. With the block
 /// calibrated the picture returns to the camera without the defect; with the block off the defect
 /// stays.
@@ -518,7 +496,8 @@ fn t1220_every_defect_has_its_correcting_block() {
     );
     let reference = run(&values(&base), &f);
     // (what, the defect, the block switched off)
-    let pairs: &[(&str, &[(&str, f64)], &str)] = &[
+    type Pair<'a> = (&'a str, &'a [(&'a str, f64)], &'a str);
+    let pairs: &[Pair] = &[
         ("distortion ↔ dewarp", &[("optics", 1.0), ("distortion", 0.2)], "dewarp"),
         ("lateral CA ↔ CA correction", &[("optics", 1.0), ("lateral_ca", 3.0)], "ca_corr"),
         ("vignetting ↔ lens shading", &[("optics", 1.0), ("vignetting", 1.5)], "lsc"),

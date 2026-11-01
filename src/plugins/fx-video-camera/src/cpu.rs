@@ -9,6 +9,7 @@
 //! the scene is continuous.
 
 use std::cell::RefCell;
+use std::f32::consts::FRAC_1_SQRT_2;
 
 use kt_plugin_api::barrier::{Frame, Scratch, noise_hash as h};
 use kt_plugin_api::math::FrozenMath;
@@ -91,7 +92,7 @@ pub fn decode(c: u32, curve: u32) -> f32 {
             if v < 0.081 {
                 v * 0.222_222_22
             } else {
-                ((v + 0.099) * 0.909_918_1).fpowf(2.222_222_2)
+                ((v + 0.099) * 0.909_918_1).fpowf(2.222_222)
             }
         }
         2 => v.fpowf(2.2),
@@ -174,7 +175,7 @@ fn unpack_scene(t: u32) -> [f32; 3] {
         let s = q as f32 * inv;
         s * s * 2.0
     };
-    [d(t & 0x7FF, 4.885_197_8e-4), d(t >> 11 & 0x7FF, 4.885_197_8e-4), d(t >> 22, 9.775_171_1e-4)]
+    [d(t & 0x7FF, 4.885_198e-4), d(t >> 11 & 0x7FF, 4.885_198e-4), d(t >> 22, 9.775_171e-4)]
 }
 
 // ---- the context of one pass --------------------------------------------------------------------
@@ -270,13 +271,13 @@ impl Ctx<'_> {
 /// The defocus disc's taps: the centre, eight at 0.6 r and eight at r, at multiples of 45°.
 const DISC: [(f32, f32); 8] = [
     (1.0, 0.0),
-    (0.707_106_78, 0.707_106_78),
+    (FRAC_1_SQRT_2, FRAC_1_SQRT_2),
     (0.0, 1.0),
-    (-0.707_106_78, 0.707_106_78),
+    (-FRAC_1_SQRT_2, FRAC_1_SQRT_2),
     (-1.0, 0.0),
-    (-0.707_106_78, -0.707_106_78),
+    (-FRAC_1_SQRT_2, -FRAC_1_SQRT_2),
     (0.0, -1.0),
-    (0.707_106_78, -0.707_106_78),
+    (FRAC_1_SQRT_2, -FRAC_1_SQRT_2),
 ];
 
 // ---- U: the unprocessing (frame pixels) ----------------------------------------------------------
