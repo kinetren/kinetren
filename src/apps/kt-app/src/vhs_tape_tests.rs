@@ -37,6 +37,7 @@ fn harness_with_tape() -> Harness<'static, KtApp> {
         fx_auto: vec![vec![]],
         opacity: 1.0,
         fx_off: false,
+        masks: Default::default(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);

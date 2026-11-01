@@ -254,6 +254,12 @@ pub enum Command {
         id: ClipId,
         auto: Vec<Vec<ParamCurve>>,
     },
+    /// The event's masks — of its picture and of each effect slot (shape-masks): a full
+    /// replacement; a gesture on the preview sends it coalesced (one history step per drag).
+    SetMasks {
+        id: ClipId,
+        masks: crate::mask::EventMasks,
+    },
     /// Generator values ON THE EVENT (R.59, stage 2).
     ///
     /// Does not touch the frame plan (`touches_render_plan() == false`): the source's address
@@ -346,6 +352,11 @@ pub enum Command {
     SetTrackFxOff {
         id: TrackId,
         off: bool,
+    },
+    /// The track's masks (shape-masks): static, canvas space, a full replacement.
+    SetTrackMasks {
+        id: TrackId,
+        masks: Vec<crate::mask::Mask>,
     },
     RemoveMedia {
         id: MediaId,
@@ -510,6 +521,7 @@ impl Command {
             | Command::SetFxBypass { id, .. }
             | Command::SetFx { id, .. }
             | Command::SetFxAuto { id, .. }
+            | Command::SetMasks { id, .. }
             | Command::SetClipGen { id, .. }
             | Command::SetClipGenAuto { id, .. }
             | Command::UnlinkClip { id }
@@ -561,6 +573,7 @@ impl Command {
             | Command::SetFxBypass { id, .. }
             | Command::SetFx { id, .. }
             | Command::SetFxAuto { id, .. }
+            | Command::SetMasks { id, .. }
             | Command::SetClipGen { id, .. }
             | Command::SetClipGenAuto { id, .. }
             | Command::UnlinkClip { id }
@@ -615,6 +628,7 @@ impl Command {
             | Command::InsertTrack { .. }
             | Command::SetTrackProps { .. }
             | Command::SetTrackFx { .. }
+            | Command::SetTrackMasks { .. }
             | Command::SetTrackFxOff { .. }
             | Command::SetLaneOrder { .. }
             | Command::AddArea(_)
@@ -660,6 +674,7 @@ impl Command {
             | Command::SetFxBypass { .. }
             | Command::SetFx { .. }
             | Command::SetFxAuto { .. }
+            | Command::SetMasks { .. }
             | Command::ApplyGenToAll { .. }
             | Command::LinkClips { .. }
             | Command::UnlinkClip { .. }
@@ -675,6 +690,7 @@ impl Command {
             | Command::RemoveTrack { .. }
             | Command::SetTrackProps { .. }
             | Command::SetTrackFx { .. }
+            | Command::SetTrackMasks { .. }
             | Command::SetTrackFxOff { .. }
             | Command::RemoveMedia { .. }
             | Command::SetSettings { .. }
@@ -900,6 +916,7 @@ impl Band {
                 | Command::SetFxBypass { .. }
                 | Command::SetFx { .. }
                 | Command::SetFxAuto { .. }
+                | Command::SetMasks { .. }
                 | Command::SetClipGen { .. }
                 | Command::SetClipGenAuto { .. }
                 | Command::ApplyGenToAll { .. }
@@ -926,6 +943,7 @@ impl Band {
                 | Command::SetAreaLanes { .. }
                 | Command::SetTrackProps { .. }
                 | Command::SetTrackFx { .. }
+                | Command::SetTrackMasks { .. }
                 | Command::SetTrackFxOff { .. }
                 | Command::AddCamera(_)
                 | Command::SetCamera(_)
@@ -1509,6 +1527,17 @@ impl TimelineModel {
                 if *pos > c.fx.len() {
                     return Err(CommandError::InvalidClip(ProjectError::BadGeometryPos(*id)));
                 }
+            }
+            Command::SetMasks { id, masks } => {
+                let c = find(*id)?;
+                crate::check_event_masks(*id, c.kind, c.fx.len(), masks)
+                    .map_err(CommandError::InvalidClip)?;
+            }
+            Command::SetTrackMasks { id, masks } => {
+                let Some(t) = p.track(*id) else {
+                    return Err(CommandError::TrackNotFound(*id));
+                };
+                crate::check_track_mask_list(*id, t.kind, masks).map_err(CommandError::InvalidClip)?;
             }
             Command::SetFxAuto { id, auto } => {
                 let c = find(*id)?;
@@ -2182,11 +2211,23 @@ impl TimelineModel {
                 // the editor itself handles the reordering of slots and sends SetFxAuto
                 // within the same gesture
                 c.fx_auto.truncate(fx.len());
+                // …and so do the masks of the extra slots (shape-masks)
+                c.masks.slots.truncate(fx.len());
+                c.masks.canonicalize();
                 // the leading “Geometry” node (R.62) stood behind the end of
                 // the shortened chain — it is pressed against its end
                 c.geometry_pos = c.geometry_pos.min(fx.len());
                 c.fx = fx;
                 sync_warp_to_link_group(p, id);
+            }
+            Command::SetMasks { id, mut masks } => {
+                masks.canonicalize();
+                Self::clip_mut_on(p, id).masks = masks;
+            }
+            Command::SetTrackMasks { id, masks } => {
+                if let Some(t) = p.track_mut(id) {
+                    t.masks = masks;
+                }
             }
             Command::SetFxAuto { id, auto } => {
                 Self::clip_mut_on(p, id).fx_auto = auto;

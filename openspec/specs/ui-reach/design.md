@@ -547,3 +547,15 @@ card tops aligned (`horizontal_wrapped` centres them).
   the finish and hid it. They stand at the far right.
 - A `ScrollArea`'s `inner_rect` can be taller than what it allocated (its default
   `min_scrolled_size` is 64): the body rect is the space it took (`ui.min_rect()` after it).
+
+### Masks where a person looks for them (shape-masks, 2026-11-01)
+
+The owner, kkt-26.11.01 line 55: "do not throw features anywhere". Three existing places, one widget
+(`masks.rs`): the Geometry node's form (the picture — AE's layer masks, Premiere's Opacity), under a
+slot's parameters (Premiere's per-effect masks), the track window (a Resolve window on a node), plus
+the preview's right-click menu — on the picture itself. The group is collapsed while it is empty, so
+the automation below it does not move out of view (t749/t750 caught it when it opened by default).
+
+Found while building: with the R.64 frame on (the default since R.67) the frame covered a full-frame
+picture and took the right click — the preview's menu never opened over an event. The menu body is
+one function attached to the picture, the frame and the mask editor.

@@ -18,6 +18,10 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   frame size or on a `Save`, a resample above `MAX_INTER_DIM`, a pass naming a missing shader, or an
   empty graph on a frame with alpha. The graph is checked on the defaults and the top, at K 1 and 4.
   A new declaration gets its refusal here too.
+- **A `Stream` class is a SOURCE STAGE, not video state** (datamosh-codec-path): its
+  `StreamKernel` names the HISTORY frame N reads and renders N as a pure function of it, keeping
+  results only in the host-owned `StreamMemo` (bounded, keyed by addresses). Refused (t1240): the
+  class without a stream kernel, a stream kernel on another class, any GPU side on a stream plugin.
 - **Helpers shared by kernels and the host live here so each has ONE text**: `geo::invert3` and
   `TRANSPARENT`, `trans::Img`, the generator helpers (`smooth`, `rgb`, `coverage`, `lowbias32`…),
   `pixfont` (moved from kt-media). A helper the host has its own SIMD twin of stays in the host and

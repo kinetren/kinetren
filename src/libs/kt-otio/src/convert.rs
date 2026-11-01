@@ -445,7 +445,11 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                         .flatten()
                         .any(kt_model::ParamCurve::needs_v13)
                 });
-            if has_v13 {
+            // v14 (shape-masks): masks on an event, a slot or a track
+            let has_v14 = p.has_masks();
+            if has_v14 {
+                crate::meta::KT_META_V14
+            } else if has_v13 {
                 crate::meta::KT_META_V13
             } else if has_v12 {
                 crate::meta::KT_META_V12
@@ -878,6 +882,7 @@ fn track_list(tracks: &[kt_model::Track]) -> Vec<crate::meta::KtTrack> {
                 opacity: t.opacity,
                 blend: t.blend,
                 fx_off: t.fx_off,
+                masks: t.masks.clone(),
             }
         })
         .collect()
@@ -1228,6 +1233,7 @@ fn nest_to_otio(
             geometry: (!c.geometry.is_default()).then_some(c.geometry),
             geometry_pos: c.geometry_pos,
             geometry_auto: c.geometry_auto.clone(),
+            masks: c.masks.clone(),
             extra: Map::new(),
         },
     );
@@ -1421,6 +1427,7 @@ fn clip_to_otio(
             geometry: (!c.geometry.is_default()).then_some(c.geometry),
             geometry_pos: c.geometry_pos,
             geometry_auto: c.geometry_auto.clone(),
+            masks: c.masks.clone(),
             extra: ex.kt_extra.clone(),
         },
     );
@@ -2401,6 +2408,7 @@ fn read_foreign_nest(
         geometry: Default::default(),
         geometry_pos: 0,
         geometry_auto: Vec::new(),
+        masks: Default::default(),
         id,
         link_group: group,
         kind,
@@ -2573,6 +2581,7 @@ fn build_tracks(
                 x.opacity = t.opacity;
                 x.blend = t.blend;
                 x.fx_off = t.fx_off;
+                x.masks = t.masks.clone();
                 x
             })
             .collect()
@@ -2760,6 +2769,7 @@ fn read_nest(
         geometry: meta.as_ref().and_then(|m| m.geometry).unwrap_or_default(),
         geometry_pos: meta.as_ref().map(|m| m.geometry_pos).unwrap_or(0),
         geometry_auto: meta.as_ref().map(|m| m.geometry_auto.clone()).unwrap_or_default(),
+        masks: meta.as_ref().map(|m| m.masks.clone()).unwrap_or_default(),
     })
 }
 
@@ -2985,6 +2995,7 @@ fn clip_from_otio(
         geometry: meta.as_ref().and_then(|m| m.geometry).unwrap_or_default(),
         geometry_pos: meta.as_ref().map(|m| m.geometry_pos).unwrap_or(0),
         geometry_auto: meta.as_ref().map(|m| m.geometry_auto.clone()).unwrap_or_default(),
+        masks: meta.as_ref().map(|m| m.masks.clone()).unwrap_or_default(),
         reversed,
         fx,
         fx_auto,

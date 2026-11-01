@@ -46,6 +46,7 @@ fn clip(id: u64, start_f: i64, dur_f: i64, src_in_f: i64, media: u64) -> ClipEve
         geometry: Default::default(),
         geometry_pos: 0,
         geometry_auto: Vec::new(),
+        masks: Default::default(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Audio,

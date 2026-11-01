@@ -343,3 +343,65 @@ change `openspec/changes/archive/2026-11-01-vhs-tape-simulation/design.md`. What
   pasted into the WGSL from the CPU's f32 values. The GPU class is `FrameTol::SIGNAL` (t1186).
 - Deferred: the linear/HiFi audio tracks (an audio effect), nonlinear emphasis, S-VHS, SECAM, the
   AVX2 twin of the stage FIRs (optional by the contract; threads carry the CPU path now).
+
+## The datamosh is a codec, not a look (datamosh-codec-path, archived 2026-11-01)
+
+The owner asked for "a real motion-compression path we can break carefully with parameters" and
+answered (p.4) that a real effect is first its physics. A datamosh is what a motion-compensated
+DECODER makes of a broken stream, so `datamosh` (`src/plugins/fx-video-codec`) runs its own block
+codec: Y'CbCr 4:2:0 planes at an encoded height of its own, 16×16/8×8 block matching (candidates,
+a diamond, a ±1 refinement, total tie order), a CLOSED prediction loop (the encoder predicts from
+its own reconstruction, so an intact stream errs by one quantisation step per frame, t1235), an
+8×8 DCT residual with the H.264 step law, a GOP with I-frames at the stream start, the cut and every
+`gop` frames (0 — only at the cut and on a reset). The breakages change what the decoder is told —
+drop I-frames, repeat a packet (bloom), freeze the reference, transform or transplant vectors, lose
+residual or whole blocks — and nothing else; they are GATES and quantities drawn by curves, so a
+person turns the mosh on and off and resets it with a key on the beat (the owner on the first build:
+"no curves … no way to reset … GOP limited to 60 for some reason"). Full text: the archived change's design.md D1–D8; the reconnaissance: F-FX-011.
+
+- **Why an effect on the incoming event, not a transition:** a transition sees two pictures at ONE
+  moment and needs an overlap; the classic mosh happens at a hard cut and needs both STREAMS. The
+  stream may start in the event before (`before`), and the cut is an I-frame — what a real encoder's
+  scene-cut detection puts there — so "drop the I-frame at the cut" is the Cut mosh preset.
+- **Why the stage runs on the CPU in the plan's common code (D4):** the codec is a serial loop with
+  data-dependent search, and a mosh AMPLIFIES a one-LSB difference frame after frame; a GPU twin
+  held to a tolerance would drift visibly. Both executors receive the decoded bytes as the layer's
+  pre-FX frame, like frame blending; t329 excludes the kind, t1241 holds the bytes.
+- **Why a replay with a memo, not a continued state (D3):** a renderer is rebuilt on every edit and
+  preview, prefetch and export each have their own; a continued decoder would make bytes depend on
+  what was rendered before. Frame N is the loop from its anchor; the memo (keyed by the source
+  ADDRESSES and the per-frame rows of the chain, bounded) only skips work. A sliding history window
+  was rejected: every frame would start its own chain and nothing could be reused. The intra refresh
+  is a fixed grid of 600 frames from the anchor for the same reason.
+- **Why the gates read curves per position, and the GOP does not:** a gate decides what the decoder
+  is told AT a frame, so its curve is sampled at that frame's material position (`rows_at`) and the
+  output stays a pure function of the curves. The GOP, the block, the search range, the encoded
+  height and the frames before the cut shape the stream's structure; a curve on them would make the
+  keyframe of N depend on its value at every earlier frame. A reset adds a keyframe without moving the
+  GOP grid for the same reason.
+- **A region of interest is a door, not a feature (design D9):** the stream contract carries a
+  per-frame coverage region; the datamosh shows its broken stream inside and the intact one outside.
+  A mask or an object detector (the owner: "faces, whole people") implements `region_ident` and
+  `with_region` on the engine's stream layout; nothing else changes.
+- **Measured (release, 360 lines):** encode 7.6 ms, broken decode 0.5 ms per frame; a cold seek
+  through a 300-frame chain ≈ 2.4 s (600 at most, the refresh).
+- **Not built:** a GOP strip in the panel (it would need the schedule's text a second time in
+  kt-app); the stage on a reel or a track stage (skipped); a region SOURCE (masks, a detector).
+
+## The mask rasterizer (shape-masks, 2026-11-01)
+
+`kt_fx::mask::rasterize`: the inside is the nonzero winding at sample centres (a scanline over
+crossings), the signed distance to the flattened outline is computed only in a band, the coverage is
+a ramp of the distance (one pixel without feather, the feather centred on the contour as in After
+Effects, the expansion moving the edge). A wide band is sampled on a coarser grid (step ≈ band/8)
+and the distance interpolated: the distance field is 1-Lipschitz, and the cost stays O(perimeter)
+instead of O(perimeter × feather²). Modes are the soft Boolean forms (OR, AND NOT, AND, XOR); AE's
+Lighten/Darken were not taken — on a hard mask they equal Add/Intersect (F-MSK-001).
+
+**One mask px is a project pixel of the reference frame's height** (`px_of`): the interface draws
+with the source view as its reference, the engine with the decode raster; a feather in raster or
+native pixels would differ between them, and between the preview at ¼ and the export.
+
+The bytes depend only on IEEE-exact operations and the frozen math (the rotation), frozen by t1269.
+The memo is keyed by the full Debug text of what decides the bytes (the owner's cache rule: keyed by
+content, bounded, invisible to the bytes).

@@ -76,6 +76,7 @@ fn ev(id: u64, kind: ClipKind, lane: u32, start: Tick, dur: Tick, media: u64) ->
         geometry: Default::default(),
         geometry_pos: 0,
         geometry_auto: Vec::new(),
+        masks: Default::default(),
         id: ClipId(id),
         link_group: None,
         kind,

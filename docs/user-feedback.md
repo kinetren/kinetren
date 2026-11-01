@@ -2290,6 +2290,90 @@ one place).
   numeric fields' widths (sized for their longest value), the welcome window's right column
   (its own change comes next).
 
+**The owner on the pitch question and the pace (2026-11-01, translated):**
+
+> from now on three at once, five is too many.
+> the pitch question is unclear, what does reverb have to do with pitch?!? well then make an option
+> so it can be done this way and that way.
+
+**Taken as:**
+- (8) revised: THREE executors at once, not 3–5. The five already running finish their work; no new one
+  starts until fewer than three are running.
+- The question was asked in the engine's words, not his. In his chain the event's own
+  Slowed+Reverb stands BEFORE the morpher's pitch, so the pitch shifts the reverb's echo too. To
+  join the pieces without dips the pitch reads sound past the event's end, and since
+  `pitch-context-whole-chain` the reverb's echo past the end is cut together with the event. The
+  owner wants both behaviours: a switch "the echo of the effects before the pitch is cut at the
+  event's end / rings on after it", the current behaviour the default (change `pitch-tail-choice`).
+
+## 2026-11-01 — the second list
+
+Verbatim: `docs/ktprompts/kkt-26.11.01b.txt`, registry `kkt-26.11.01b-index.md`. Translated in brief:
+a render that reaches 100 % and kills the program ("this is horror"); the chroma key without an
+eyedropper, poor, with an auto-analysis wanted; a professional keyer (shadows, hair, uneven screen,
+spill); speech to text as text one WALKS and searches, not a window that dumps it; Mirror without an
+angle, EventGrid and the other legacy effects without flexibility ("we reach neither AE nor even
+Vegas"); a repeat-texture effect to slide; no zooming the preview out or rotating in it to control an
+effect; copying the part of an event under the region copies the whole event.
+
+**Taken as:**
+- The render crash goes first, before everything queued. The tests write into the owner's own journal
+  (`~/.local/share/kinetren/kt-app.log` is full of t959 lines and rotated at 14:09), so his real records
+  are lost: fixed in the same change.
+- Copy (B10) against v26.10.18 item 4 ("one selected event → copy takes it, not the region"): both
+  hold if the region CROPS the selected event — a region over the selected event copies that event's
+  part under the region and nothing of the other tracks; a region that does not touch it leaves the
+  whole event. The earlier complaint was the region taking every track, not the cropping.
+- Speech to text joins the taken ★14 (subtitles and text-based editing): the transcript is text tied
+  to the time — the word under the playhead is lit, a click on a word moves the playhead, a search
+  steps through the hits and marks them on the timeline, a selection of words is a region. Recognition
+  runs locally (a Whisper-class model downloaded on a click, as FFmpeg on Windows), nothing goes to a
+  cloud.
+- The professional keyer (B4) is an algorithm, not a neural network, as the base: a screen-colour
+  model with screen balance, a clean plate for an uneven screen, a core and an edge matte for hair,
+  spill and bounce-light removal that restores the subject's colour, shadows kept as a ratio to the
+  clean plate. Reasons: invariant 11 (the same bytes on every machine) and no ML runtime or model
+  weights in the program. A neural matte may come later as an extra assist. Its note in
+  `docs/features/` comes first.
+- The existing chroma key (B2, B3) gets the eyedropper (the preview frame and any point of the
+  screen) and an auto-analysis that sets its values from the frame; its quality is fixed in the same
+  change.
+- Mirror, grid and repeat texture (B6–B8) are one change against Vegas and AE: Mirror with an angle and
+  a centre; a grid with per-row and per-column flips; a repeat texture with mirrored edges and a phase
+  to animate (AE Motion Tile). The owner's example — grid, a vertical mirror, its horizontal mirror, a
+  sliding "saw" from the top half — is its acceptance scenario. The other legacy effects get a
+  parameter audit against Vegas and AE in the same note.
+- The preview (B9): zoom and pan the preview canvas past the frame, a rotation handle on the on-screen
+  frame, and on-screen handles for effects that have a place on the frame.
+
+**D1 datamosh, the owner on the first build (2026-11-01, translated):**
+
+> I already noticed this effect has no curves.. and there is no way at all to reset the effect
+> (well, the GOP) — at least by keys on the curves, so I can place reset/inactivity marks by hand
+> on the beat; and that same GOP is limited to 60 for some reason, and probably the other
+> parameters are limited the same way
+
+> for the future I would also like to leave "programmatic handles (api)" so the effect can be
+> aimed at certain regions of interest — e.g. there will be an object detector and the user can
+> pick faces, or whole people — such a bridge is needed for the future, and say it in the docs
+
+**Taken as (`datamosh-codec-path`, before its merge):**
+- Every codec quantity that has a meaning per frame gets curves: the quantiser, the vector scale and
+  rotation, the residual kept, the block loss. The breakages become GATES drawn by curves, not frame
+  numbers: "mosh" (the I-frames are dropped while it is on — off is the inactivity), "reset" (a key
+  rising to on forces an intact I-frame there — the reset on the beat), "bloom" (the motion of the
+  gate's first P-frame repeats while on), "freeze" (the reference stops updating while on). Only what
+  shapes the stream's structure stays without curves: the encoded height, the block, the search
+  range, the GOP, the frames taken from the event before, the second input, the seed.
+- The caps were invented, not physical: GOP up to 600 frames and 0 = "only at the cut and on a
+  reset" (an endless GOP, as people mosh); the search range 64; the vector scale ±16; the frames
+  before the cut 300; 1080 lines. The quantiser keeps 0–51: that is the codec's own scale.
+- A region of interest is a contract now, not a feature: the stream stage takes a REGION per frame
+  (a coverage mask at the stream's size, with an identity for the memo); inside it the broken stream
+  is shown, outside the intact one. Today no host part gives a region (the whole frame moshes); a
+  detector (faces, people) or a mask will give it through this one door. Written down in the
+  `plugins` and `video-fx` designs.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

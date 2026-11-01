@@ -79,3 +79,20 @@ Each video effect was a separate rasterization into a buffer of output size, wit
 - Two clips of one file with different steps alternate spans of different qualities and recreate the sws context on every switch — accepted by the owner, amortized by the span length.
 - `FrameTol::WARP` is not introduced: hard warps are held by `GEOM`; a failure of warp-hard — an investigation and the introduction of WARP ×2 from a measurement, not a tweak of GEOM.
 - **R.62 B, tracks:** a CLIP-level blend mode — the event already has a level and transitions, and mixing two axes in one round would mean deciding for the owner. Track envelopes — see `audio-render/design.md`, the key is on another time axis. Skipping the decode of a muted track: mute excludes it from `build_plan`, but NOT from `wanted_frames` — the request and the read must match (invariant 4), otherwise unmuting gives a black frame until warm-up.
+
+## Shape masks in the plan (shape-masks, 2026-11-01)
+
+The owner asked for classic masks (kkt-26.11.01 S1). A mask enters the plan as an internal chain
+point, the way the leading Geometry node and the morpher's strength already do: the picture's masks
+as an ALPHA point right after the leading node (crop → mask → placement: the node reserved that
+place in R.62, and a mask there follows the event's move, zoom and rotation), a slot's masks as a MIX
+point (the morpher's wet/dry with a coverage instead of a scalar), a track's after its chain. The
+coverage is rasterized where it is applied — a slot before the node runs on the source raster, after
+it on the canvas, and only a rasterization at the point of use covers the same CONTENT in both.
+
+Rejected: one canvas mask applied at the composite (the slot before the node would be masked in the
+wrong space); a GPU rasterizer (no compute, no storage buffers, three textures — and a second
+rasterizer held to a threshold tolerance). The GPU applies the CPU's coverage bytes in an integer
+pass, so a mask adds no divergence of its own (t1274). A masked slot at index 0 is a leading stop
+and forbids the decode step, as a morpher stop does. A slot after the node follows only the LEADING
+node: a later Geometry node or a lens is not followed (said in the spec).

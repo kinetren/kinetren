@@ -100,3 +100,21 @@ The full text, alternatives and measurements are in the archived change
   chain's END alpha flag for both sides and left the fold untouched: under a strength the dry
   side was forced opaque and the mixed layer declared opaque (t1052, 86 % of samples off). The mix
   now carries the fold at its points and sets it to dry ∨ wet, as the CPU's two frames do.
+
+## The stream class (datamosh-codec-path, archived 2026-11-01)
+
+- **A temporal kind declares a HISTORY, not state.** F-FX-007 named the way through the purity rule —
+  read the past SOURCE, keep nothing — and `VideoClass::Stream` is that declaration: the
+  `StreamKernel` answers which stream positions frame N reads (`needs`, given the memo) and renders N
+  as a pure function of them and of its rows AT each position (`rows_at`, the curves applied by the
+  host). `state`, `tail` and `lookahead` stay refused for video.
+- **The region of interest is part of the contract** (`region_ident`, `with_region`; the owner's
+  "programmatic handles" for an object detector): the host names WHERE a stream kernel acts, the
+  kernel decides what that means. Today no host part gives a region.
+- **The memo is the host's (`StreamMemo`):** the preview shares one process memo so the prefetch's
+  "what is still needed" and the composer's results meet; each export owns a private one so a
+  preview cannot evict what the export reads next. Keys are addresses (media, pts, size, the source's
+  revision), so the needs are answered without reading a frame — two test streams that shared
+  addresses shared keys, which is why the engine's ident carries the source and its revision.
+- **Refused at registration (t1240):** the class without a stream kernel, a stream kernel on another
+  class, any GPU side on a stream plugin (D4 of the archived change).

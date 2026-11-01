@@ -391,6 +391,11 @@ impl KtApp {
         }
         let body = egui::Rect::from_points(&pts);
         let resp = ui.interact(body.expand(GRAB), id, egui::Sense::click_and_drag());
+        // the frame covers the picture: its right click is the PREVIEW's menu (one body)
+        let mut pick = crate::app::PreviewMenuPick::default();
+        let (detached, mode_now) = (self.preview_detached, self.geom_ctl);
+        resp.clone().context_menu(|ui| KtApp::preview_menu_ui(ui, detached, mode_now, &mut pick));
+        self.apply_preview_pick(pick);
         let pointer = resp.interact_pointer_pos().or_else(|| ui.ctx().pointer_latest_pos());
         let alt = ui.input(|i| i.modifiers.alt);
 

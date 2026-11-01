@@ -18,6 +18,11 @@ use kt_time::{FpsGrid, Tick};
 
 use crate::video_plan::{Cam3d, FramePlan, LayerSrc, PlanLayer};
 
+#[path = "video_stream.rs"]
+mod stream;
+pub use stream::stream_memo;
+use stream::StreamStage;
+
 /// VIDEO-TRACK STAGE (R.62, change B): a track with a chain, a level ≠ 1
 /// or a blend mode ≠ Normal enters the plan as ONE nested layer —
 /// the composite of its events (transitions, overlaps, fades, event levels
@@ -31,6 +36,8 @@ struct VideoTrackStage {
     fx: Vec<kt_model::FxInstance>,
     opacity: f64,
     blend: kt_model::BlendMode,
+    /// The track's masks (shape-masks): static, canvas space, after the track's chain.
+    masks: Vec<kt_model::Mask>,
     /// Revision of the stage: the track's contents, its chain and properties. The
     /// memoization key of the sub-composite — without it an edit inside would return
     /// a stale result (the same problem as with the reel, item 409).
@@ -137,6 +144,86 @@ struct VideoClip {
     /// (invariant 4): we ask for the last existing frame, not a non-existent one
     /// that the decoder would not return anyway.
     material_end: Option<Tick>,
+    /// A STREAM source stage (datamosh-codec-path): the slot's kernel runs on the source in
+    /// `layer_src`, and the order asks the stream it names. `None` — no stage (never on a reel).
+    stream: Option<Box<StreamStage>>,
+    /// The SOURCE'S revision for a stream's addresses: a generator's values live on the event,
+    /// not in its address, so an edit of them must reach the codec memo's keys. 0 for a file.
+    src_rev: u64,
+    /// The event's masks mapped onto the materialized chain (shape-masks). `None` — none.
+    masks: Option<Arc<ClipMaskPlan>>,
+}
+
+/// Where the masks of an event stand in its MATERIALIZED chain (shape-masks).
+#[derive(Debug)]
+struct ClipMaskPlan {
+    /// The picture's masks: an alpha point right after the leading Geometry node.
+    picture: Option<(usize, Vec<kt_model::Mask>)>,
+    /// The masks of an active slot: (its index — the dry snapshot; masks; after the node?).
+    slots: Vec<(usize, Vec<kt_model::Mask>, bool)>,
+}
+
+impl ClipMaskPlan {
+    /// The event's mask list at chain positions; `None` for an event without masks.
+    fn of(c: &kt_model::ClipEvent) -> Option<Arc<ClipMaskPlan>> {
+        if c.kind != ClipKind::Video || c.masks.is_empty() {
+            return None;
+        }
+        // the SAME counting as `materialize_lead`: active slots, then the node at `pos`
+        let active: Vec<usize> = if c.fx_off {
+            Vec::new()
+        } else {
+            (0..c.fx.len())
+                .filter(|&i| !c.fx_bypass.get(i).copied().unwrap_or(false) && !c.fx[i].is_missing())
+                .collect()
+        };
+        let want = c.geometry_pos.min(c.fx.len());
+        let pos = (0..want).filter(|&i| !c.fx_bypass.get(i).copied().unwrap_or(false)).count();
+        let pos = pos.min(active.len());
+        let mut slots = Vec::new();
+        for (a, &raw) in active.iter().enumerate() {
+            let list = c.masks.slot(raw);
+            if list.is_empty() {
+                continue;
+            }
+            let m = if a >= pos { a + 1 } else { a };
+            slots.push((m, list.to_vec(), m > pos));
+        }
+        let picture = (!c.masks.picture.is_empty()).then(|| (pos + 1, c.masks.picture.clone()));
+        if picture.is_none() && slots.is_empty() {
+            return None;
+        }
+        Some(Arc::new(ClipMaskPlan { picture, slots }))
+    }
+
+    /// The application points at the material tick `mat`.
+    fn ops(&self, mat: Tick, project_h: f64) -> Vec<kt_fx::mask::MaskOp> {
+        let mut out = Vec::new();
+        for (from, list, follow) in &self.slots {
+            out.push(kt_fx::mask::MaskOp {
+                at: from + 1,
+                kind: kt_fx::mask::MaskOpKind::Mix { from: *from },
+                masks: Arc::new(kt_model::masks_at(list, mat)),
+                follow_lead: *follow,
+                project_h,
+            });
+        }
+        if let Some((at, list)) = &self.picture {
+            out.push(kt_fx::mask::MaskOp {
+                at: *at,
+                kind: kt_fx::mask::MaskOpKind::Alpha,
+                masks: Arc::new(kt_model::masks_at(list, mat)),
+                follow_lead: true,
+                project_h,
+            });
+        }
+        out
+    }
+
+    /// A mask point at position 0 forbids a decode step (a leading stop, like the morpher's).
+    fn stops_at_zero(&self) -> bool {
+        self.slots.iter().any(|(from, _, _)| *from == 0)
+    }
 }
 
 // The clip's warp map moved to kt-model (R.39): one constructor for
@@ -389,6 +476,8 @@ pub struct VideoRenderer {
     nests: std::collections::HashMap<NestKey, VideoRenderer>,
     /// Video track stages (R.62). Empty — not a single extra branch in the plan.
     stages: Vec<VideoTrackStage>,
+    /// The memo of the stream stages (datamosh-codec-path, D3).
+    stream_memo: Arc<kt_plugin_api::stream::StreamMemo>,
 }
 
 /// Source frame(s) for moment `t`: the main one and, in “blend” mode,
@@ -454,7 +543,8 @@ fn clip_decode_scale(clip: &VideoClip, quality: Quality) -> u32 {
         return clip.nest_scale.min(cap).max(1);
     }
     let want = kt_fx::geom::ss_taps(clip.head_zoom);
-    if want <= 1 {
+    // a masked slot at the head of the chain is a leading stop (shape-masks)
+    if want <= 1 || clip.masks.as_ref().is_some_and(|m| m.stops_at_zero()) {
         return 1;
     }
     let Some((nw, nh)) = clip.native else { return 1 };
@@ -617,6 +707,15 @@ fn clip_base_quality(clip: &VideoClip, quality: Quality) -> Quality {
 /// what is warmed is not what is read (t247d along the size axis, t312).
 fn clip_decode_quality(clip: &VideoClip, quality: Quality) -> Quality {
     scaled(clip_base_quality(clip, quality), clip_decode_scale(clip, quality))
+}
+
+/// The quality the clip's frames are ORDERED at: its decode quality, or the stream's size when a
+/// stream stage replaces the source (datamosh-codec-path, D5) — the coverage bars ask this.
+fn clip_order_quality(clip: &VideoClip, quality: Quality) -> Quality {
+    match (&clip.stream, clip.nest) {
+        (Some(st), None) => stream::stream_quality(clip, st, quality),
+        _ => clip_decode_quality(clip, quality),
+    }
 }
 
 /// The leading “Geometry” node goes into the engine chain (R.62). The position —
@@ -924,12 +1023,18 @@ impl VideoRenderer {
                     h.update(format!("{:?}", t.active_fx()).as_bytes());
                     h.update(&t.opacity.to_le_bytes());
                     h.update(&[t.blend as u8]);
+                    // masks join the revision only when present: the keys of maskless
+                    // stages do not move
+                    if !t.masks.is_empty() {
+                        h.update(format!("{:?}", t.masks).as_bytes());
+                    }
                     out.push(VideoTrackStage {
                         id: t.id,
                         lane,
                         fx: t.active_fx(),
                         opacity: t.opacity,
                         blend: t.blend,
+                        masks: t.masks.clone(),
                         content: h.digest(),
                     });
                 }
@@ -952,6 +1057,7 @@ impl VideoRenderer {
                 // the model's slot indices do not move, and the engine's chain is
                 // one sequence, as in Vegas.
                 let (fx, auto) = materialize_lead(c, fx, auto);
+                let stream = StreamStage::of(&fx).map(Box::new);
                 let warp = kt_model::clip_warp_of(&fx, &auto, c.source_in, c.duration, c.reversed);
                 let nest = project
                     .sequence(c.media)
@@ -974,6 +1080,13 @@ impl VideoRenderer {
                 // The hash above is computed from RAW curves: cache keys do not
                 // move because of a change in the addressing method.
                 let auto_plan = kt_model::AutoPlan::compile(&fx, &auto);
+                // masks (shape-masks) join the key only when present: maskless keys stay
+                let masks = ClipMaskPlan::of(c);
+                let fx_hash = if masks.is_some() {
+                    xxhash_rust::xxh3::xxh3_64(format!("{fx_hash}|{:?}", c.masks).as_bytes())
+                } else {
+                    fx_hash
+                };
                 let addr = clip_source_addr_in(c, salt);
                 // conform context: the source kind and the event rule allowed by the project.
                 // The kind is ONE fact (`lead_view`): a reel's own raster (law E — without one
@@ -1040,6 +1153,14 @@ impl VideoRenderer {
                     material_end: (nest.is_none() && !procedural)
                         .then(|| facts.lengths.get(&addr).copied())
                         .flatten(),
+                    stream: if nest.is_none() { stream } else { None },
+                    src_rev: if procedural {
+                        xxhash_rust::xxh3::xxh3_64(format!("{:?}|{:?}", c.r#gen, c.gen_auto).as_bytes())
+                    } else {
+                        0
+                    },
+
+                    masks,
                 }
             })
             .collect();
@@ -1112,6 +1233,7 @@ impl VideoRenderer {
         // R.28; before that the v1 rule “on top is the one with the smaller start”
         // applied, and the timeline strip diverged with it). Test 162.
         clips.sort_by_key(|c| (std::cmp::Reverse(c.lane), c.start.0));
+        stream::link_stages(&mut clips);
         // Subtrees: one renderer for EACH reel in use.
         // The depth limit is held by the model (`validate`); here it is a safeguard
         // against a hostile file.
@@ -1143,6 +1265,31 @@ impl VideoRenderer {
             project_size: (project.settings.width, project.settings.height),
             nests,
             stages,
+            stream_memo: stream_memo().clone(),
+        }
+    }
+
+    /// The memo the stream stages of this renderer (and of its reels) keep their codec results
+    /// in (datamosh-codec-path, D3): the preview's shared one by default; an export gives its own.
+    pub fn set_stream_memo(&mut self, memo: Arc<kt_plugin_api::stream::StreamMemo>) {
+        for sub in self.nests.values_mut() {
+            sub.set_stream_memo(memo.clone());
+        }
+        self.stream_memo = memo;
+    }
+
+    /// Run every stream stage active at `t` as far as the cached frames allow (the export's
+    /// pre-roll, D6): the results stay in the memo, so the next `layers_at` names less.
+    pub fn stream_advance(&self, cache: &BurstCache, t: Tick, quality: Quality) {
+        for c in self.clips.iter().filter(|c| c.active_at(t)) {
+            match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
+                (Some(st), None) => {
+                    let cs = stream::ClipStream::new(c, st, &self.grid, quality, Some(cache));
+                    let _ = st.kernel().render(&st.values, &cs, cs.pos(t), &self.stream_memo, &mut Vec::new());
+                }
+                (_, Some(sub)) => sub.stream_advance(cache, clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality)),
+                _ => {}
+            }
         }
     }
 
@@ -1187,6 +1334,14 @@ impl VideoRenderer {
                     nest_blend(c, blend_footage),
                     out,
                 ),
+                // a STREAM stage replaces the source: the order is the stream frames its kernel
+                // still needs at the codec's size, and nothing at the ordinary quality (D5)
+                None if c.stream.is_some() => {
+                    let st = c.stream.as_deref().expect("checked");
+                    let cs = stream::ClipStream::new(c, st, &self.grid, quality, None);
+                    let needs = st.kernel().needs(&st.values, &cs, cs.pos(t), &self.stream_memo);
+                    cs.order(&needs, out);
+                }
                 None => {
                     let dq = clip_decode_quality(c, quality);
                     out.push((c.media, a, dq));
@@ -1221,7 +1376,7 @@ impl VideoRenderer {
     /// clip (a morpher layer could cut the source into pieces with different
     /// chains, and hence different scale steps).
     pub fn video_decode_qualities(&self, quality: Quality) -> Vec<(kt_model::ClipId, Quality)> {
-        self.clips.iter().map(|c| (c.id, clip_decode_quality(c, quality))).collect()
+        self.clips.iter().map(|c| (c.id, clip_order_quality(c, quality))).collect()
     }
 
     /// Maximum decode quality among the clips (R.46, item 318): the cache and lookahead
@@ -1231,6 +1386,7 @@ impl VideoRenderer {
         self.clips
             .iter()
             .map(|c| clip_decode_quality(c, quality))
+            .chain(self.clips.iter().filter(|c| c.stream.is_some()).map(|c| clip_order_quality(c, quality)))
             .chain(self.clips.iter().filter_map(|c| {
                 let sub = self.nests.get(&c.nest?)?;
                 Some(sub.max_decode_quality(clip_decode_quality(c, quality)))
@@ -1411,6 +1567,7 @@ impl VideoRenderer {
             project_size: self.project_size,
             nests: &self.nests,
             stages: &self.stages,
+            stream_memo: &self.stream_memo,
             memoize: true,
             blend_footage: false,
         };
@@ -1440,6 +1597,7 @@ impl VideoRenderer {
             project_size: self.project_size,
             nests: &self.nests,
             stages: &self.stages,
+            stream_memo: &self.stream_memo,
             memoize: false,
             blend_footage: false,
         };
@@ -1508,6 +1666,7 @@ impl VideoRenderer {
             project_size: self.project_size,
             nests: &self.nests,
             stages: &self.stages,
+            stream_memo: &self.stream_memo,
             memoize: true,
             blend_footage: false,
         };
@@ -1536,6 +1695,9 @@ struct PlanCtx<'a> {
     /// continuous time. At the root it is always `false` — the bytes of GOLDEN_VIDEO
     /// rest on this.
     blend_footage: bool,
+    /// The memo of the stream stages (datamosh-codec-path, D3): the root renderer's, inherited
+    /// downward, so an export's private memo serves its reels too.
+    stream_memo: &'a kt_plugin_api::stream::StreamMemo,
 }
 
 /// The chain's camera: pinned by id, otherwise the active one by `t`, otherwise the default
@@ -1619,8 +1781,17 @@ fn layer_src<'a>(
     // The frame is taken TOGETHER with the content serial number (R.53, item 409):
     // the address `(source, cache_idx, size)` of a new generator frame is the same
     // as that of the old one, and without the number the GPU would return the old texture.
+    // A STREAM stage (datamosh-codec-path, D1/D4) replaces the source: its kernel decodes the
+    // event's stream HERE, in the plan's common code, and both executors receive those bytes. The
+    // frame at the ordinary decode quality is not read — it is not ordered either (D5).
+    let streamed = match (&clip.stream, clip.nest) {
+        (Some(st), None) => Some(stream::run(clip, st, ctx.grid, cache, ctx.stream_memo, quality, dq, t, src_pts)),
+        _ => None,
+    };
     let (frame, content) = if clip.nest.is_some() {
         (None, 0) // the subtree's input is assembled below
+    } else if let Some((f, key)) = &streamed {
+        (f.clone(), *key)
     } else {
         match cache.get_video_stamped(source, Some(dq), cache_idx) {
             Some((f, serial)) => (Some(f), serial),
@@ -1642,6 +1813,8 @@ fn layer_src<'a>(
     );
     let (frame, blend) = match pair {
         None => (frame, None),
+        // a stream stage reads its own stream; frame blending does not apply to it
+        Some(_) if streamed.is_some() => (frame, None),
         Some((pts, k)) => {
             let idx = video_cache_idx(pts);
             let (nb, nb_content) = match cache.get_video_stamped(source, Some(dq), idx) {
@@ -1689,6 +1862,7 @@ fn layer_src<'a>(
                 project_size: sub.project_size,
                 nests: &sub.nests,
                 stages: &sub.stages,
+                stream_memo: ctx.stream_memo,
                 memoize: ctx.memoize,
                 blend_footage: blend,
             };
@@ -1722,12 +1896,22 @@ fn layer_src<'a>(
         src_scale,
         input,
         fx,
-        fx_hash: clip.fx_hash,
+        // the decoded stream's key joins the post-FX memo's: the same chain over another mosh is
+        // another picture (the stream reads frames of OTHER events, which `fx_hash` does not see)
+        fx_hash: match &streamed {
+            Some((_, key)) => kt_plugin_api::stream::mix(clip.fx_hash, *key),
+            None => clip.fx_hash,
+        },
         u,
         cam3d,
         blend,
         blend_mode: kt_model::BlendMode::Normal,
         lead: clip.lead,
+        masks: clip
+            .masks
+            .as_ref()
+            .map(|m| m.ops(mat, ctx.project_size.1.max(1) as f64))
+            .unwrap_or_default(),
     }
 }
 
@@ -1758,6 +1942,7 @@ fn track_stage_layer<'a>(
         blend_footage: ctx.blend_footage,
         // the stage does NOT assemble itself
         stages: &[],
+        stream_memo: ctx.stream_memo,
     };
     let plan = build_plan(clips, &sub_ctx, cache, t, quality, memoize);
     // revision of the sub-composite: the track's properties plus the contents of its events
@@ -1789,6 +1974,18 @@ fn track_stage_layer<'a>(
         blend: None,
         blend_mode: st.blend,
         lead: None,
+        // the track's masks cut its composite after the track's chain, in canvas space
+        masks: if st.masks.is_empty() {
+            Vec::new()
+        } else {
+            vec![kt_fx::mask::MaskOp {
+                at: st.fx.len(),
+                kind: kt_fx::mask::MaskOpKind::Alpha,
+                masks: Arc::new(st.masks.clone()),
+                follow_lead: false,
+                project_h: ctx.project_size.1.max(1) as f64,
+            }]
+        },
     };
     // track level — the composite alpha; mode — a separate axis
     let alpha_k = ((st.opacity.clamp(0.0, 1.0) * 4096.0).round() as u32).min(4096);
@@ -2334,7 +2531,8 @@ fn layer_frame_cpu(
     // would play at 6.8 fps even when warm); effects are deterministic by
     // (t, fx_hash) → byte identity is kept. The GPU executor does not touch this
     // memoization (it has its own ReadbackCache in kt-gpu).
-    let has_fx = kt_fx::video::has_video_fx_in(&src.fx, src.lead, q_key.0, q_key.1);
+    let has_fx = kt_fx::video::has_video_fx_in(&src.fx, src.lead, q_key.0, q_key.1)
+        || !src.masks.is_empty();
     // LAYER STRENGTH (R.38 item 12): the `LayerMix` slot mixes the state BEFORE the
     // layer's contribution with the state after it. The value is already resolved by
     // automation during plan building, and `fx_hash` hashes the whole chain —
@@ -2389,11 +2587,11 @@ fn layer_frame_cpu(
     rgba.copy_from_slice(&frame.rgba);
     let start =
         kt_fx::video::Frame { w: frame.width, h: frame.height, rgba, has_alpha: frame.has_alpha };
-    let f = if mixes.is_empty() {
+    let f = if mixes.is_empty() && src.masks.is_empty() {
         // the PREVIOUS path, byte for byte: GOLDEN_VIDEO rests on it
         kt_fx::video::apply_video_chain_pooled(&src.fx, start, &ctx, scratch)
     } else {
-        apply_chain_with_mixes(&src.fx, &mixes, start, &ctx, scratch)
+        apply_chain_with_mixes(&src.fx, &mixes, &src.masks, start, &ctx, scratch)
     };
     let frame = Arc::new(VideoFrame {
         pts: t,
@@ -2492,11 +2690,16 @@ fn layer_mixes(fx: &[kt_model::FxInstance]) -> Vec<(usize, usize, u32)> {
 fn apply_chain_with_mixes(
     fx: &[kt_model::FxInstance],
     mixes: &[(usize, usize, u32)],
+    masks: &[kt_fx::mask::MaskOp],
     start: kt_fx::video::Frame,
     ctx: &kt_fx::video::VideoFxCtx,
     scratch: &mut kt_fx::video::FxScratch,
 ) -> kt_fx::video::Frame {
     let mut frame = start;
+    // the chain INPUT's logical size — the masks' reference frame (shape-masks)
+    let s = ctx.in_scale.max(1);
+    let in_logical = (frame.w / s, frame.h / s);
+    let mut mask_snaps: Vec<Option<kt_fx::video::Frame>> = (0..masks.len()).map(|_| None).collect();
     // The step is a property of the INPUT frame, not of the chain (R.46, item 318):
     // the first slice gets the large frame, all later ones work with the raster already
     // brought to Quality (strength stops are always at 1×).
@@ -2508,10 +2711,19 @@ fn apply_chain_with_mixes(
     // not happen for clips with a layer strength. The GPU mirror cuts at the same place
     // (Snapshot points in chain_ops).
     let mut stops: Vec<usize> = mixes.iter().flat_map(|(at, from, _)| [*at, *from]).collect();
+    stops.extend(kt_fx::mask::mask_stops(masks));
     stops.sort_unstable();
     stops.dedup();
     let mut i = 0usize;
-    while i < fx.len() {
+    loop {
+        // MASK POINTS at position i (shape-masks): the slot mixes that end here, the alpha
+        // points, then the dry snapshots of the slots that start here
+        if !masks.is_empty() {
+            apply_mask_points(fx, masks, i, &mut frame, &mut mask_snaps, in_logical, ctx, scratch);
+        }
+        if i >= fx.len() {
+            break;
+        }
         if mixes.iter().any(|(_, from, _)| *from == i) {
             scratch.cost.snapshots += 1;
             snaps.insert(
@@ -2559,6 +2771,61 @@ fn apply_chain_with_mixes(
         }
     }
     frame
+}
+
+/// The mask actions at chain position `i` (shape-masks), CPU side. The coverage is the one
+/// kt-fx rasterizer's; the GPU executor uploads the same bytes (`chain_ops`).
+#[allow(clippy::too_many_arguments)]
+fn apply_mask_points(
+    fx: &[kt_model::FxInstance],
+    masks: &[kt_fx::mask::MaskOp],
+    i: usize,
+    frame: &mut kt_fx::video::Frame,
+    snaps: &mut [Option<kt_fx::video::Frame>],
+    in_logical: (u32, u32),
+    ctx: &kt_fx::video::VideoFxCtx,
+    scratch: &mut kt_fx::video::FxScratch,
+) {
+    use kt_fx::mask::MaskOpKind;
+    let space = |op: &kt_fx::mask::MaskOp, f: &kt_fx::video::Frame| {
+        kt_fx::mask::mask_space(op, fx, in_logical, (ctx.out_w, ctx.out_h), (f.w, f.h), ctx.lead)
+    };
+    for (k, op) in masks.iter().enumerate() {
+        if op.at == i
+            && let MaskOpKind::Mix { .. } = op.kind
+            && let Some(dry) = snaps[k].take()
+        {
+            scratch.cost.mixes += 1;
+            let dry = if (dry.w, dry.h) == (frame.w, frame.h) {
+                dry
+            } else {
+                let mut out = vec![0u8; frame.w as usize * frame.h as usize * 4];
+                kt_fx::video::fit_into(&dry, frame.w, frame.h, &mut out);
+                kt_fx::video::Frame { w: frame.w, h: frame.h, rgba: out, has_alpha: dry.has_alpha }
+            };
+            let cov = kt_fx::mask::rasterize_cached(&op.masks, &space(op, frame), frame.w, frame.h);
+            kt_fx::mask::apply_mix(&dry.rgba, &mut frame.rgba, &cov.cov, dry.has_alpha, frame.has_alpha);
+            frame.has_alpha |= dry.has_alpha;
+        }
+    }
+    for op in masks.iter().filter(|o| o.at == i && o.kind == MaskOpKind::Alpha) {
+        let cov = kt_fx::mask::rasterize_cached(&op.masks, &space(op, frame), frame.w, frame.h);
+        kt_fx::mask::apply_alpha(&mut frame.rgba, &cov.cov, frame.has_alpha);
+        frame.has_alpha = true;
+    }
+    for (k, op) in masks.iter().enumerate() {
+        if let MaskOpKind::Mix { from } = op.kind
+            && from == i
+        {
+            scratch.cost.snapshots += 1;
+            snaps[k] = Some(kt_fx::video::Frame {
+                w: frame.w,
+                h: frame.h,
+                rgba: frame.rgba.clone(),
+                has_alpha: frame.has_alpha,
+            });
+        }
+    }
 }
 
 /// The strength slot a slice starting at `i` ends in, when that strength is exactly 0 and the

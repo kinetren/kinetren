@@ -152,6 +152,7 @@ fn t1050_a_missing_generator_kind_is_kept_and_named() {
         geometry: Default::default(),
         geometry_pos: 0,
         geometry_auto: Vec::new(),
+        masks: Default::default(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,

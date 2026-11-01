@@ -122,6 +122,14 @@ pub enum ParamOwner {
     /// for exactly that reason.
     /// An audio event has no such node, and validation rejects the address.
     Geometry,
+    /// A MASK of the event (shape-masks): of its picture (`slot: None`) or of an effect
+    /// slot. The rows are the mask's passport (`Mask::specs`) — a vertex row `v<id>.x` keeps
+    /// its name for the vertex's life, so a link (a tracker, T1) stays attached.
+    Mask {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slot: Option<usize>,
+        mask: crate::mask::MaskId,
+    },
     /// A public parameter of a reel nested INSIDE this one (a template in a
     /// template). The outer reel patches `overrides` of the inner instance,
     /// and the rest is resolved by itself — recursion is free by construction.
@@ -206,6 +214,7 @@ pub fn owner_takes_curves(owner: &ParamOwner) -> bool {
         ParamOwner::FxSlot { .. }
             | ParamOwner::Generator
             | ParamOwner::Geometry
+            | ParamOwner::Mask { .. }
             | ParamOwner::Nested { .. }
     )
 }
@@ -339,6 +348,20 @@ fn apply_one(
                     ov.curves.iter().cloned().map(|x| retime_curve(x, c, frame_step)).collect();
                 put_curves(&mut c.geometry_auto, retimed);
             }
+        }
+        ParamOwner::Mask { slot, mask } => {
+            let Some(m) = c.masks.list_mut(*slot).iter_mut().find(|m| m.id == *mask) else { return };
+            if let ParamValue::Num(v) = value {
+                m.set(name, v);
+            }
+            if !ov.curves.is_empty() {
+                let retimed: Vec<ParamCurve> =
+                    ov.curves.iter().cloned().map(|x| retime_curve(x, c, frame_step)).collect();
+                if let Some(m) = c.masks.list_mut(*slot).iter_mut().find(|m| m.id == *mask) {
+                    put_curves(&mut m.auto, retimed);
+                }
+            }
+            c.masks.canonicalize();
         }
         ParamOwner::ClipAttr => set_clip_attr(c, name, &value, default_gen),
         ParamOwner::Nested { pub_id } => {

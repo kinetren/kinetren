@@ -11,6 +11,8 @@ publish.workspace = true
 kt-plugin-api = { workspace = true }
 fx-video-blur = { workspace = true }
 fx-video-tape = { workspace = true }
+
+fx-video-codec = { workspace = true }
 fx-video-color = { workspace = true }
 fx-video-stylize = { workspace = true }
 fx-audio-tone = { workspace = true }

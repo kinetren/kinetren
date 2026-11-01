@@ -34,6 +34,7 @@ fn clip(id: u64, start: i64, dur: i64, src_in: i64) -> ClipEvent {
         geometry: Default::default(),
         geometry_pos: 0,
         geometry_auto: Vec::new(),
+        masks: Default::default(),
     }
 }
 

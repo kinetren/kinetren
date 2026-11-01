@@ -27,6 +27,7 @@ pub const REGION_OUT: &str = "\u{E862}"; // brackets-angle
 pub const CLEAR: &str = "\u{E4F6}"; // x
 pub const LOOP: &str = "\u{E3F6}"; // repeat
 pub const SELECTION: &str = "\u{E69A}"; // selection (event selection outline)
+pub const TIMER: &str = "\u{E492}"; // timer: the stopwatch of a mask path (shape-masks)
 pub const AREA_SAVE: &str = "\u{E69C}"; // selection-plus (keep the region, R.35)
 pub const UNDO: &str = "\u{E08A}"; // arrow-u-up-left
 pub const REDO: &str = "\u{E08C}"; // arrow-u-up-right

@@ -489,6 +489,9 @@ fn t328_golden_cycle_over_the_registry() {
         ("cylinder3d", 0x9178d747ce3f9976),
         // vhs-tape-simulation: the tape written and read back, a good deck at its defaults
         ("vhs_tape", 0x507b641c842f40bc),
+        // datamosh-codec-path: a STREAM source stage runs before the chain (in the engine's
+        // plan); the chain passes its slot through, so its template is the identity here
+        ("datamosh", 0x05719cf53332c61a),
     ];
     let video: Vec<&FxInstance> =
         FxInstance::all().iter().filter(|f| !f.is_audio() && !f.is_layer_mix()).collect();
@@ -500,7 +503,7 @@ fn t328_golden_cycle_over_the_registry() {
         "GOLDEN_ALL and the video registry must cover each other"
     );
     for f in video {
-        if !is_geo(f) && !is_pointwise(f) && !f.warps_time() {
+        if !is_geo(f) && !is_pointwise(f) && !f.warps_time() && !f.is_stream() {
             let _ = kt_fx::video::apply_barrier(
                 f,
                 test_frame(),
