@@ -89,3 +89,14 @@ A separate subcommand, not a `demo` flag: `demo` is synthetic by contract (t388)
   pts/dts/size/flags stayed the same (compared packet by packet); only the track length is now
   exact. A behaviour removed without an API change is caught only by running the major (t33 in
   `make ffmpeg-test`).
+
+## The announced frame total is the loop's count (render-crash-and-recovery)
+
+The progress total was `(r1 − r0) / step`, floored, while the loop renders from the frame that
+CONTAINS `r0` (the frame the preview shows there, invariant 7) up to `r1`: on an off-grid region it
+rendered one or two frames more than announced, the window's fraction passed 1, the remaining time
+came out negative and `Duration::from_secs_f64` panicked on the UI thread — the owner's crash of
+2026-10-31. One function, `video_frames_in`, now gives both numbers; the loop itself did not move
+(starting at `align_ceil` would drop a frame the person sees). The window still clamps the fraction
+and builds display durations with `try_from_secs_f64`: a counter mismatch costs an estimate, never
+the program. The FFmpeg download ETA had the same class (a tiny rate overflows) and the same guard.

@@ -128,3 +128,33 @@ program's list decoration and must not appear in the person's folder. The welcom
 finished PNGs on a helper thread and uploads textures when they arrive (one repaint each, invariant
 12); a missing poster is a placeholder with the project's initials. Clearing the list deletes only
 poster files the list owns.
+
+## The crash window lives in a supervisor process; the journal is per run (render-crash-and-recovery)
+
+The owner's crash of 2026-10-31 (kkt-26.11.01 item 9) showed four gaps at once, and his answer of
+2026-11-01 set the shape: "I want the crash window right after the crash, not who knows when".
+
+- **Why a second process.** A dying process cannot draw reliably: the panic hook runs on the thread
+  that failed, inside the event loop that is unwinding, and a segfault, an abort or the OOM killer's
+  SIGKILL never reach a hook. `kinetren` therefore starts itself as a watched child and the first
+  process — which initialises nothing until the child ends — opens the window. Rejected: a window
+  from the hook (appears sometimes, which is worse than never), systemd-coredump/WER (a dump for a
+  developer, one OS each, no recovery), a separate `kinetren-crash` binary (a second file to ship
+  and version in every package, while the main binary already links the window's eframe, fonts and
+  catalogs). On Linux the child dies with the supervisor (`PR_SET_PDEATHSIG`); on Windows a killed
+  supervisor leaves the editor unwatched, nothing lost. SIGTERM/SIGINT/SIGHUP are requests to stop,
+  not crashes. The window marks the report `shown:`; the next start still takes it for telemetry but
+  does not ring the bell twice. The window never writes eframe's storage (it would overwrite the
+  editor's window geometry) and reads the language from `app.ron` as text.
+- **Why Recover builds a new editor.** Swapping only the model left the player with the previous
+  document's sources at the same media numbers — the first media sync after an open only snapshots
+  paths — so the restored edit played the lesson's generators under the lesson's name, lock and
+  save target. Recover now goes through `open_loaded` + `replace_with`, as an Open. The sandbox
+  had come back at start because `save()` stored it as `last_project` while the imported document
+  was unnamed; a sandbox is neither stored nor read back.
+- **Why the journal is per run.** The owner could not tell the crashed run's lines from the others:
+  the journal appended across runs in UTC without saying so. Each start moves the previous run into
+  a fan of four, opens with a header (version, OS, FFmpeg major, pid, local time with offset), and
+  every line carries local time with its offset (`localtime_r`/`GetTimeZoneInformation`, no chrono).
+  A live bench lesson: a NEW process replays the last bench command it finds (its counter starts at
+  zero) — a scenario that restarts the editor overwrites a `crash` with a `noop`.
