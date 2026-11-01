@@ -434,6 +434,15 @@ impl KtApp {
                 self.open_project_settings();
                 ui.close();
             }
+            // the program's preferences (welcome-window-and-settings): per machine, outside any
+            // project — next to the project's own settings, named by industry (rule 21)
+            let r = ui.button(tr(k::menu::file::PREFERENCES));
+            crate::widgets::field_probe::note("file.preferences", r.rect);
+            let r = self.hint(r, tr(k::hint::PREFERENCES));
+            if r.clicked() {
+                self.start.prefs_open = true;
+                ui.close();
+            }
             ui.separator();
             if ui.button(tr(k::menu::file::QUIT)).clicked() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -523,68 +532,9 @@ impl KtApp {
                     crate::app::preview_detached_next(self.preview_detached, true, false);
                 ui.close();
             }
-            // the one "Economy UI" switch (the perf box's copy is gone, diagnostics-three-graphs D4)
-            let r = ui.checkbox(&mut self.ui_economy, tr(k::menu::view::ECONOMY));
-            crate::widgets::field_probe::note("view.economy", r.rect);
-            self.hint(r, tr(k::hint::ECONOMY));
-            // The language lives in an ALREADY EXISTING menu (checklist rule 13:
-            // no new strip is made for it). The items are self-names:
-            // whoever picks Chinese has nothing to look for in the Russian list.
-            ui.menu_button(tr(k::menu::view::LANGUAGE), |ui| {
-                let items = std::iter::once((None, tr(k::menu::view::LANG_AUTO)))
-                    .chain(crate::i18n::Lang::ALL.into_iter().map(|l| (Some(l), l.endonym())));
-                for (choice, label) in items {
-                    let active = self.lang_choice == choice;
-                    let label = if active {
-                        format!("{label} {}", crate::icons::CHECK)
-                    } else {
-                        label.to_string()
-                    };
-                    if ui.button(label).clicked() {
-                        self.lang_choice = choice;
-                        crate::i18n::set_lang_ctx(ui.ctx(), crate::i18n::resolve(choice));
-                        ui.close();
-                    }
-                }
-            });
-            // Telemetry switch next to Language: a per-machine preference lives where the
-            // other one is (checklist rule 13). Disabled, with the reason in the hint, when
-            // this build cannot send (no key) or the environment forbids it.
-            if let Some(t) = self.telemetry.clone() {
-                let c = t.consent();
-                let mut on = c.on();
-                let r = ui.add_enabled(
-                    c.block.is_none(),
-                    egui::Checkbox::new(&mut on, tr(k::telemetry::CHECKBOX)),
-                );
-                let text = crate::telemetry::hint_text(c.block);
-                // a disabled widget is not `hovered()`: its reason is shown all the same
-                if c.block.is_some() && r.contains_pointer() {
-                    self.hover_hint = Some(text.clone());
-                }
-                let r = self.hint(r, &text);
-                if r.changed() {
-                    t.set_choice(on);
-                }
-            }
-            // the daily new-version check (update-check) right under it: the same kind of
-            // per-machine preference, the same disabled-with-a-reason form
-            if let Some(u) = self.update.clone() {
-                let c = u.consent();
-                let mut on = c.on();
-                let r = ui.add_enabled(c.block.is_none(), egui::Checkbox::new(&mut on, tr(k::update::CHECKBOX)));
-                let text = crate::update_check::hint_text(c.block);
-                if c.block.is_some() && r.contains_pointer() {
-                    self.hover_hint = Some(text.clone());
-                }
-                crate::widgets::field_probe::note("view.update_check", r.rect);
-                let r = self.hint(r, &text);
-                if r.changed() {
-                    // off hides the title word in this very frame (the title is rebuilt next)
-                    u.set_choice(on);
-                    self.title_outdated = self.title_outdated && on;
-                }
-            }
+            // View keeps only what changes what is viewed: the program's preferences (language,
+            // Economy UI, statistics, the update check, FFmpeg, the welcome switch) are in
+            // File › Preferences… (welcome-window-and-settings, kkt-26.11.01 item 13)
             ui.separator();
             let r = ui.button(tr(k::menu::view::DIAGNOSTICS));
             crate::widgets::field_probe::note("view.diagnostics", r.rect);
@@ -595,23 +545,6 @@ impl KtApp {
             if ui.button(tr(k::menu::view::NOTICES)).clicked() {
                 self.notices_open = true;
                 ui.close();
-            }
-            // where FFmpeg was found and how to get it (windows-build): a per-machine
-            // matter, next to the other per-machine items of this menu
-            let r = ui.button(tr(k::menu::view::FFMPEG));
-            crate::widgets::field_probe::note("view.ffmpeg", r.rect);
-            if r.clicked() {
-                self.ffmpeg_ui.open = true;
-                ui.close();
-            }
-            // the welcome window's switch, in the menu where the per-machine choices live
-            // (welcome-window-and-tour D11; UI rule 19 — said where to get it back)
-            let mut on = self.start.store.start.show_at_start;
-            let r = ui.checkbox(&mut on, tr(k::menu::view::WELCOME_AT_START));
-            crate::widgets::field_probe::note("view.welcome_at_start", r.rect);
-            let r = self.hint(r, tr(k::welcome::HINT_SHOW_AT_START));
-            if r.changed() {
-                self.start.store.set_show_at_start(on);
             }
         });
         crate::widgets::field_probe::note("menu.view", view_btn.response.rect);

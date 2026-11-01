@@ -397,6 +397,20 @@ pub fn whats_new(version: &str) -> (String, &'static [Block]) {
     (label.to_string(), &page.blocks[start + 1..end])
 }
 
+/// The What's new PAGE for the welcome window's pane (welcome-window-and-settings D2): the
+/// version's section as `whats_new` picks it, followed by every older section under its own `##`
+/// heading — the pane scrolls on its own, so it can hold the whole history.
+pub fn whats_new_from(version: &str) -> (String, &'static [Block]) {
+    let page = pages().iter().find(|p| p.file == "whats-new.md").expect("whats-new.md is compiled in");
+    let (label, section) = whats_new(version);
+    if section.is_empty() {
+        return (label, section);
+    }
+    // the section is a sub-slice of the page's blocks: its offset is where it starts
+    let start = (section.as_ptr() as usize - page.blocks.as_ptr() as usize) / std::mem::size_of::<Block>();
+    (label, &page.blocks[start..])
+}
+
 /// One entry of the index: the "I want to…" text, the "where" text, the page and anchor.
 pub struct Entry {
     pub want: &'static str,

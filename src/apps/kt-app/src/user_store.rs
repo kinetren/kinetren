@@ -673,11 +673,24 @@ pub struct StartChoice {
     pub seeded: bool,
     /// The program has started at least once with this store (the first start is the tour's).
     pub started_before: bool,
+    /// Economy UI (30 fps while playing) — a program preference (welcome-window-and-settings D8):
+    /// it lives here, not in the app File → New rebuilds.
+    pub economy_ui: bool,
+    /// The language choice code (`auto`, `ru`, …); `None` — never chosen through this record (the
+    /// start then takes the former eframe value once, D8).
+    pub lang: Option<String>,
 }
 
 impl Default for StartChoice {
     fn default() -> StartChoice {
-        StartChoice { show_at_start: true, last_template: None, seeded: false, started_before: false }
+        StartChoice {
+            show_at_start: true,
+            last_template: None,
+            seeded: false,
+            started_before: false,
+            economy_ui: false,
+            lang: None,
+        }
     }
 }
 
@@ -817,6 +830,8 @@ impl StartStore {
                 last_template: v.get("last_template").and_then(|x| x.as_str()).map(str::to_string),
                 seeded: v.get("seeded").and_then(|x| x.as_bool()).unwrap_or(false),
                 started_before: v.get("started_before").and_then(|x| x.as_bool()).unwrap_or(true),
+                economy_ui: v.get("economy_ui").and_then(|x| x.as_bool()).unwrap_or(false),
+                lang: v.get("lang").and_then(|x| x.as_str()).map(str::to_string),
             };
         }
         s
@@ -915,7 +930,11 @@ impl StartStore {
             "welcome_at_start": self.start.show_at_start,
             "seeded": self.start.seeded,
             "started_before": self.start.started_before,
+            "economy_ui": self.start.economy_ui,
         });
+        if let Some(l) = &self.start.lang {
+            v["lang"] = serde_json::json!(l);
+        }
         if let Some(t) = &self.start.last_template {
             v["last_template"] = serde_json::json!(t);
         }
@@ -1013,6 +1032,28 @@ impl StartStore {
             self.start.show_at_start = on;
             self.save_start();
         }
+    }
+
+    pub fn set_economy_ui(&mut self, on: bool) {
+        if self.start.economy_ui != on {
+            self.start.economy_ui = on;
+            self.save_start();
+        }
+    }
+
+    /// The language choice (`None` — Auto (system)).
+    pub fn set_lang(&mut self, choice: Option<crate::i18n::Lang>) {
+        let code = crate::i18n::choice_code(choice).to_string();
+        if self.start.lang.as_deref() != Some(code.as_str()) {
+            self.start.lang = Some(code);
+            self.save_start();
+        }
+    }
+
+    /// The language choice as the program resolves it: this record first, then the value an
+    /// earlier build kept in eframe storage (`former`), else Auto.
+    pub fn lang_choice(&self, former: Option<&str>) -> Option<crate::i18n::Lang> {
+        self.start.lang.as_deref().or(former).and_then(crate::i18n::choice_from_code)
     }
 
     /// A lesson step closed.

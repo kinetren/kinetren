@@ -61,6 +61,14 @@ in the menu of a track's empty space.
 | <kbd>Esc</kbd> | collapse the expanded reel; again — leave the reel you entered |
 | drag the edge of an expanded reel's window | resize the instance |
 
+## Windows
+
+| Keys | Action |
+|---|---|
+| <kbd>Enter</kbd> in the welcome window | take the highlighted tile (the tour, the last project or a template) |
+| <kbd>Esc</kbd> | close the window on top (the welcome window, Preferences, the Guide, an effects window) |
+| drag a window's corner | make it larger: what is inside takes the room |
+
 ## View and zoom
 
 | Keys | Action |

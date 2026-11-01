@@ -902,6 +902,18 @@ Where to look in the code: `track_window.rs` (the ducking section), `pubparam.rs
   i.e. when its app is replaced. The frame comes from `reel_preview::render_poster` (the offline
   path's one body with the reel strip, t602) into `<store>/posters/<xxh3>.png`, never next to
   the project. `on_exit` waits for it within 3 s.
+- **The start window is three panes, each its own `window_body`** (welcome-window-and-settings
+  D1): Start, Recent, What's new side by side, widths from `welcome::pane_widths`, the window
+  SIZED (`.size`), never fitted. Between the panes there is no `ui.separator()`: in a horizontal
+  row a `Separator` takes ALL the height left, pushed the action row down and grew the window by
+  itself (t918) — `pane_gap` reserves the width and the rule is painted over the row's height.
+  What's new is `guide::whats_new_from` (the running section down to the oldest) drawn by
+  `guide::render`. The window has no switch of its own.
+- **Program preferences live in `prefs_window.rs` and the user store** (D5, D8, D9): the start
+  switch, Language, Economy UI, statistics, the update check, FFmpeg. View keeps Detach/Dock,
+  Diagnostics…, Notices. `KtApp` has no `ui_economy`/`lang_choice` fields any more — they died
+  in `replace_with` (File → New forgot the language): read `self.start.store.start`. A new
+  preference gets its writer in `prefs_window.rs` only; t1294 counts the writers.
 - **An auto-sized window must not hold a right-to-left layout or an unwrapped label in a
   horizontal row**: the welcome window grew to 2010 points (off both screen edges) from the
   action row's `right_to_left` and from guide labels laid out with `TextWrapMode::Extend` inside

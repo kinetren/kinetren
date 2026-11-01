@@ -2702,6 +2702,7 @@ const WINDOWS: &[(&str, &str)] = &[
     ("kt_ffmpeg", "where FFmpeg was found and how to get it: per machine, outside any project, and reachable when nothing plays (windows-build)"),
     ("kt_welcome", "start: templates, recent projects with posters, the tour, what's new — the first second has no project yet (welcome-window-and-tour)"),
     ("kt_guide", "a searchable index “I want to… → where” and the guide pages — it lives beside the work (welcome-window-and-tour)"),
+    ("kt_prefs", "the program's preferences: per machine, outside any project, reachable with no project open — the View menu held them mixed with what is viewed (welcome-window-and-settings, kkt-26.11.01 item 13)"),
 ];
 
 /// Test 757 (R.63 item 12): EVERY window of the program is in the registry, and vice versa.
@@ -2979,6 +2980,7 @@ fn action_labels() -> Vec<String> {
         tr(k::ask::RECOVERY_LATER).to_string(),
         tr(k::ffmpeg::RESCAN).to_string(),
         tr(k::welcome::CLOSE).to_string(),
+        tr(k::prefs::CLOSE).to_string(),
     ]
 }
 
@@ -3012,6 +3014,7 @@ pub(crate) fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
         ("kt_recovery", OpenWin::By(|h| h.state_mut().recovery_open = true), Closes::Action),
         ("kt_ffmpeg", OpenWin::By(|h| h.state_mut().ffmpeg_ui.open = true), Closes::Action),
         ("kt_welcome", OpenWin::By(|h| h.state_mut().start.welcome.open = true), Closes::Action),
+        ("kt_prefs", OpenWin::By(|h| h.state_mut().start.prefs_open = true), Closes::Action),
         ("kt_guide", OpenWin::By(|h| h.state_mut().start.guide.open = true), Closes::Titlebar {
             title: || crate::i18n::tr(crate::i18n::k::guide::TITLE).to_string(),
             why: "the Guide is closed by the title cross: an index and pages with no action of their own",
@@ -4823,11 +4826,12 @@ fn t832_project_of_the_former_name_comes_in_through_the_import_door() {
 }
 
 /// Test 840 (telemetry-posthog, telemetry-identify-activity): the first-start entry lives in
-/// the bell only — one calm line naming the View item, the lists under a collapsed "Details" —
-/// is said once, and the switch is reachable in View next to Language; unchecking it is
-/// remembered and cancels the session's `app_closed`.
+/// the bell only — one calm line naming the Preferences item, the lists under a collapsed
+/// "Details" — is said once, and the switch is reachable in File › Preferences… under Language;
+/// unchecking it is remembered and cancels the session's `app_closed`. (It walked View until
+/// welcome-window-and-settings moved the program's preferences out of View, kkt-26.11.01 item 13.)
 #[test]
-fn t840_telemetry_notice_once_and_switch_in_view() {
+fn t840_telemetry_notice_once_and_switch_in_preferences() {
     use crate::i18n::{Lang, k, set_lang, tr};
     use crate::telemetry::testing::Recording;
     use crate::telemetry::{EnvView, Telemetry, new_uuid, resolve_consent};
@@ -4854,8 +4858,10 @@ fn t840_telemetry_notice_once_and_switch_in_view() {
                     .all(|w| summary.split_whitespace().any(|o| word(o) == word(w)))
         };
         assert!(
-            names(tr(k::menu::view::TITLE)) && names(tr(k::telemetry::CHECKBOX)),
-            "{lang:?}: the entry must name View and the checkbox: {summary}"
+            names(tr(k::menu::file::TITLE))
+                && names(tr(k::menu::file::PREFERENCES))
+                && names(tr(k::telemetry::CHECKBOX)),
+            "{lang:?}: the entry must name File › Preferences… and the checkbox: {summary}"
         );
     }
 
@@ -4896,13 +4902,10 @@ fn t840_telemetry_notice_once_and_switch_in_view() {
     h.state_mut().notices_open = false;
     h.step();
 
-    h.get_by_label(tr(k::menu::view::TITLE)).click();
-    h.step();
-    h.step();
-    let labels = crate::layout_tests::menu_labels(&mut h);
+    open_preferences(&mut h);
     assert!(
         h.query_by_label(tr(k::telemetry::CHECKBOX)).is_some(),
-        "the switch must be in View; seen: {labels:?}"
+        "the switch must be in File › Preferences…"
     );
     assert!(t.consent().on(), "on by default");
     h.get_by_label(tr(k::telemetry::CHECKBOX)).click();
@@ -4927,7 +4930,7 @@ fn t840_telemetry_notice_once_and_switch_in_view() {
     // File → New/Open rebuild KtApp in place: every constructor takes the process telemetry,
     // so a new document never sends a second app_started
     let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/app.rs")).unwrap();
-    let ctors = src.matches("            lang_choice: None,\n").count();
+    let ctors = src.matches("            preview_detached: std::env::var_os(\"KT_DETACH_PREVIEW\").is_some(),\n").count();
     assert!(ctors >= 2);
     assert_eq!(src.matches("            telemetry: crate::telemetry::global(),\n").count(), ctors);
 }
@@ -6299,6 +6302,20 @@ fn t976_a_test_door_plugin_reaches_the_picker_and_no_reference_list() {
     );
 }
 
+/// File › Preferences… the way a person opens it (welcome-window-and-settings).
+pub(crate) fn open_preferences(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>) {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    h.get_by_label(tr(k::menu::file::TITLE)).click();
+    h.step();
+    h.step();
+    h.get_by_label(tr(k::menu::file::PREFERENCES)).click();
+    for _ in 0..3 {
+        h.step();
+    }
+    assert!(h.state().start.prefs_open, "File › Preferences… did not open the window");
+}
+
 /// A store for the welcome tests in its own temporary directory.
 fn welcome_store(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("kt-welcome-{tag}-{}", std::process::id()));
@@ -6320,16 +6337,17 @@ fn welcome_project(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
 /// templates and the person's own, the recent rows (a poster and a placeholder) with names and
 /// folders, the tour tile, the Guide link and What's new; a template click makes an unnamed
 /// project of its size; Help → Welcome window… and a recent card open that project; with
-/// "Show at start" off the next start opens the last project and no window; nothing repaints
-/// while the mouse is still.
+/// "Open the welcome window at start" off (in File › Preferences… since welcome-window-and-settings:
+/// the window's own checkbox duplicated the View one, kkt-26.11.01 item 13) the next start opens
+/// the last project and no window; nothing repaints while the mouse is still.
 ///
-/// - **PATH** start Kinetren → the welcome window over an empty editor: template tiles
-///   "1080p25 · 1080p30 · 4K30 · 9:16 · 1:1 · Shorts 60", "Recent" with two cards (a frame of the
-///   project and a grey placeholder with initials), on the right "Start the tour", "Guide" and
-///   "What's new in kt26.10" → click "9:16" → the window closes, the project is 1080×1920 30 fps,
-///   untitled → Help → Welcome window… → click the first recent card → that project opens →
-///   Help → Welcome window… → uncheck "Show at start" → quit and start again → the last project
-///   opens directly, no window
+/// - **PATH** start Kinetren → the welcome window over an empty editor: "Start" with the template
+///   rows "1080p25 · 1080p30 · 4K30 · 9:16 · 1:1 · Shorts 60", "Recent" with two cards (a frame of
+///   the project and a grey placeholder with initials), "What's new in kt26.11" on the right, and
+///   Guide / Preferences… / Close below → click "9:16" → the window closes, the project is
+///   1080×1920 30 fps, untitled → Help → Welcome window… → click the first recent card → that
+///   project opens → File › Preferences… → uncheck "Open the welcome window at start" → quit and
+///   start again → the last project opens directly, no window
 #[test]
 fn t986_welcome_window_templates_recent_whats_new_and_the_switch() {
     // the lesson sandbox is built by kt_model::demo, which uses plugin effects (one test per process)
@@ -6382,9 +6400,14 @@ fn t986_welcome_window_templates_recent_whats_new_and_the_switch() {
     for label in ["1080p25", "1080p30", "4K30", "9:16", "1:1", "Shorts 60", "newest edit", "older edit"] {
         assert!(h.query_all_by_label_contains(label).count() > 0, "the welcome window has no “{label}”");
     }
-    for key in [k::welcome::TOUR, k::welcome::GUIDE, k::welcome::SHOW_AT_START] {
+    for key in [k::welcome::TOUR, k::welcome::GUIDE, k::menu::file::PREFERENCES] {
         assert!(h.query_all_by_label_contains(tr(key)).count() > 0, "the welcome window has no “{}”", tr(key));
     }
+    // one switch, one place: the window has no checkbox of its own (kkt-26.11.01 item 13)
+    assert!(
+        h.query_all_by_label_contains(tr(k::prefs::WELCOME_AT_START)).count() == 0,
+        "the welcome window carries the start switch again"
+    );
     // the folder as the card names it: canonical, as a person reads it — on Windows the temp
     // directory may be an 8.3 spelling (`RUNNER~1`) that canonicalisation expands, and the bare
     // `canonicalize` added the verbatim `\\?\` (CI of 94e36e9e on windows-latest)
@@ -6455,14 +6478,9 @@ fn t986_welcome_window_templates_recent_whats_new_and_the_switch() {
     );
     assert!(!h.state().start.welcome.open);
 
-    // ---- Help → Welcome window… → uncheck "Show at start" → the next start ----
-    h.get_by_label(tr(k::help::TITLE)).click();
-    h.step();
-    h.step();
-    h.get_by_label(tr(k::help::WELCOME)).click();
-    h.step();
-    h.step();
-    h.get_by_label(tr(k::welcome::SHOW_AT_START)).click();
+    // ---- File › Preferences… → uncheck "Open the welcome window at start" → the next start ----
+    open_preferences(&mut h);
+    h.get_by_label(tr(k::prefs::WELCOME_AT_START)).click();
     h.step();
     h.step();
     assert!(!h.state().start.store.start.show_at_start, "the switch did not turn off");
@@ -6977,7 +6995,7 @@ fn t875_newer_release_in_the_bell_and_the_title_never_a_window() {
     // File → New/Open: every constructor takes the process checker (global), so the word
     // stays and the notice is not said again
     let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/app.rs")).unwrap();
-    let ctors = src.matches("            lang_choice: None,\n").count();
+    let ctors = src.matches("            preview_detached: std::env::var_os(\"KT_DETACH_PREVIEW\").is_some(),\n").count();
     assert_eq!(src.matches("            update: crate::update_check::global(),\n").count(), ctors);
     *h.state_mut() = KtApp::new_empty(None);
     h.state_mut().update = Some(u.clone());
@@ -7006,11 +7024,12 @@ fn t875_newer_release_in_the_bell_and_the_title_never_a_window() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Test 878 (update-check, distribution): the switch sits in View right after the telemetry
-/// one, says what is asked and that nothing is downloaded; unchecking it takes the word out
-/// of the title and is remembered — the next start does not ask.
+/// Test 878 (update-check, distribution): the switch sits in File › Preferences… right after the
+/// telemetry one, says what is asked and that nothing is downloaded; unchecking it takes the word
+/// out of the title and is remembered — the next start does not ask. (It walked View until
+/// welcome-window-and-settings moved the program's preferences out of View, kkt-26.11.01 item 13.)
 #[test]
-fn t878_update_switch_in_view_next_to_telemetry() {
+fn t878_update_switch_in_preferences_next_to_telemetry() {
     use crate::i18n::{k, tr};
     use crate::telemetry::testing::Recording;
     use crate::telemetry::{EnvView, Telemetry, new_uuid, resolve_consent};
@@ -7042,14 +7061,14 @@ fn t878_update_switch_in_view_next_to_telemetry() {
     let word = tr(k::update::OUTDATED);
     assert!(h.state().last_title.ends_with(word), "the stored answer marks the title: {}", h.state().last_title);
 
-    h.get_by_label(tr(k::menu::view::TITLE)).click();
-    h.step();
-    h.step();
-    let labels = crate::layout_tests::menu_labels(&mut h);
-    let at = |s: &str| labels.iter().position(|l| l == s);
-    let (tel, upd) = (at(tr(k::telemetry::CHECKBOX)), at(tr(k::update::CHECKBOX)));
-    assert!(upd.is_some() && tel.is_some(), "both switches in View; seen: {labels:?}");
-    assert_eq!(upd, tel.map(|i| i + 1), "the update switch is right after the telemetry one: {labels:?}");
+    open_preferences(&mut h);
+    let tel = h.query_by_label(tr(k::telemetry::CHECKBOX)).map(|n| n.rect());
+    let upd = h.query_by_label(tr(k::update::CHECKBOX)).map(|n| n.rect());
+    let (Some(tel), Some(upd)) = (tel, upd) else { panic!("both switches in File › Preferences…") };
+    assert!(
+        (upd.left() - tel.left()).abs() < 2.0 && upd.top() >= tel.bottom() - 1.0 && upd.top() - tel.bottom() < 12.0,
+        "the update switch is right under the telemetry one: {tel:?} / {upd:?}"
+    );
     let cb = h.get_by_label(tr(k::update::CHECKBOX)).rect();
     h.hover_at(cb.center());
     h.step();

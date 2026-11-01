@@ -11,7 +11,9 @@ Its own process with its own store and XDG_DATA_HOME (the start itself is checke
 start shows the window with "Start the tour" primary → a template → Ctrl+S (the save path is
 the scenario's own file) → Help → Welcome window… → the recent card of that project, with its
 poster → Help → Guide… → search "loop" → Help → Start the tour → step 1 closes by adding a
-title through the File menu. A screenshot per step (`kt_live.step`); every verdict reads the
+title → Help → What's new: the start window in three panes, What's new scrolls alone, the window
+dragged large → File › Preferences…: the start switch and Economy UI reach the store
+(welcome-window-and-settings). A screenshot per step (`kt_live.step`); every verdict reads the
 program's own records (the store files, the probes), not pixels.
 """
 import json
@@ -20,7 +22,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, poll_step, require_tools  # noqa: E402
+from kt_live import Live, geometry, poll_step, require_tools  # noqa: E402
 
 # ITS OWN PROCESS (R.68): the scenario checks the program START — the welcome window opens
 # only at start, over an unnamed document, and from an empty store
@@ -33,6 +35,19 @@ def read_json(path):
             return json.load(f)
     except (OSError, ValueError):
         return None
+
+
+def rect(app, name):
+    return {f["param"]: f for f in app.geom().get("fields", [])}.get(name)
+
+
+def drag_corner(app, r, dx, dy):
+    """Drag a window's bottom-right corner by (dx, dy) as a person does."""
+    win = geometry()
+    x0 = win["x"] + int(r["x"] + r["w"]) - 3
+    y0 = win["y"] + int(r["y"] + r["h"]) - 3
+    app.drag(x0, y0, x0 + dx, y0 + dy)
+    app.settle()
 
 
 def wait_for(pred, timeout=30.0):
@@ -158,23 +173,55 @@ def main(out):
         app.click_probe("help.start_over", "Help → Start the tour over")
         app.expect(app.has_probe("lessons.panel"), "the lessons panel is open after Help → Start the tour over")
 
-        # --- 8. Help → What's new → the switch, Close ----------------------------------------
+        # --- 8. Help → What's new → the start window at its default and enlarged ---------
+        # (welcome-window-and-settings: three panes, each scrolls alone, the window grows)
         app.click_probe("menu.help", "the Help menu")
         app.click_probe("help.whats_new", "Help → What's new")
         app.expect(app.has_probe("welcome.window"), "Help → What's new opened the welcome window")
-        app.step("whats-new", "the welcome window at its What's new panel")
-        app.click_probe("welcome.show_at_start", "the Show at start checkbox")
-        on = wait_for(lambda: (read_json(os.path.join(store, "start.json")) or {}).get("welcome_at_start") is False or None)
-        app.expect(on is True, "unchecking Show at start reached the start record")
+        app.expect(app.has_probe("welcome.preferences"), "the window has the Preferences… door")
+        w0 = rect(app, "welcome.window")
+        app.step("whats-new", "the start window at its default size: Start | Recent | What's new")
+        app.hover_probe("welcome.lesson.1", "the first lesson row")
+        lesson = rect(app, "welcome.lesson.1")
+        if w0:
+            # What's new scrolls alone: the Start pane's lesson row stays where it is
+            news_x = w0["x"] + w0["w"] - 120
+            app.wheel(news_x, w0["y"] + w0["h"] / 2, ticks=6)
+            app.settle()
+            moved = rect(app, "welcome.lesson.1")
+            app.expect(lesson is not None and moved is not None and abs(moved["y"] - lesson["y"]) < 1,
+                       f"scrolling What's new left the Start pane in place: {lesson} → {moved}")
+            app.step("whats-new-scrolled", "only the What's new pane scrolled")
+            drag_corner(app, w0, 600, 400)
+            w1 = rect(app, "welcome.window")
+            app.expect(w1 is not None and w1["w"] > w0["w"] + 300,
+                       f"the start window followed its corner: {w0['w']:.0f} → {(w1 or w0)['w']:.0f} wide")
+            app.step("welcome-large", "the start window enlarged: the panes take the room")
         app.click_probe("welcome.close", "Close")
         app.expect(app.wait_gone("welcome.window"), "Close closed the welcome window")
-        # the same switch in the View menu, back on
-        app.click_probe("menu.view", "the View menu")
-        app.click_probe("view.welcome_at_start", "View → Welcome window at start")
+
+        # --- 9. File › Preferences… → the start switch, off and on again --------------------
+        app.click_probe("menu.file", "the File menu")
+        app.click_probe("file.preferences", "File → Preferences…")
+        app.expect(app.has_probe("prefs.window"), "File → Preferences… opened its window")
+        app.step("preferences", "Preferences: Start, Interface, Privacy and updates, FFmpeg")
+        app.hover_probe("prefs.telemetry", "Send anonymous usage statistics")
+        app.click_probe("prefs.language", "the Language list")
+        app.step("preferences-language", "the Language list: Auto (system) and five languages by their own names")
+        app.click_probe("prefs.language", "the Language list again (closes it)")
+        app.expect(app.has_probe("prefs.window"), "the list closed, Preferences stay")
+        app.click_probe("prefs.welcome_at_start", "Open the welcome window at start")
+        on = wait_for(lambda: (read_json(os.path.join(store, "start.json")) or {}).get("welcome_at_start") is False or None)
+        app.expect(on is True, "unchecking the start switch reached the start record")
+        app.click_probe("prefs.welcome_at_start", "Open the welcome window at start, again")
         on = wait_for(lambda: (read_json(os.path.join(store, "start.json")) or {}).get("welcome_at_start") is True or None)
-        app.expect(on is True, "the View checkbox turned the welcome window back on")
-        app.key("Escape")
-        app.step("switch-back", "View → Welcome window at start is on again")
+        app.expect(on is True, "the start switch is on again")
+        app.click_probe("prefs.economy", "Economy UI")
+        eco = wait_for(lambda: (read_json(os.path.join(store, "start.json")) or {}).get("economy_ui") is True or None)
+        app.expect(eco is True, "Economy UI reached the preferences record")
+        app.step("preferences-set", "Preferences: the start switch on, Economy UI on")
+        app.click_probe("prefs.close", "Close (Preferences)")
+        app.expect(app.wait_gone("prefs.window"), "Close closed Preferences")
         return app.done()
 
 

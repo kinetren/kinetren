@@ -5,6 +5,15 @@ month, newest first.
 
 ## kt26.11
 
+- **A real start window.** The welcome window has three columns — Start (the tour, templates
+  drawn in their frame's shape, the five lessons with your progress), Recent (your projects with
+  their pictures, as many per row as fit) and What's new, now readable in its own column. Each
+  column scrolls on its own, and the window can be made as large as the screen.
+- **File → Preferences… holds the program's settings.** Language, Economy UI, whether the welcome
+  window opens at start, the usage statistics, the daily update check and FFmpeg are in one
+  window, each switch in one place; the View menu keeps only what changes the view.
+- **The language you chose stays chosen.** Opening another project used to forget it, and the
+  next start came up in the system language; Economy UI was forgotten the same way.
 - **Composition previews no longer get rebuilt by chance when a project opens.** Opening a
   project sometimes found its own index file "busy" and drew the frames and waveform of every
   composition all over again; now the saved previews come back every time.

@@ -50,14 +50,21 @@ fitting sources of another size (fit with transparent borders, fill, stretch, or
 
 ## Help and the tour
 
-At start the welcome window offers a template, the recent projects and the tour; **Enter**
-takes the highlighted tile. **Help → Guide…** searches this guide from inside the program —
+At start the welcome window shows three columns: **Start** (the tour, the templates drawn in
+their frame's shape, the five lessons with your progress), **Recent** (your projects with a
+picture of each) and **What's new**. Each column scrolls on its own, and the window can be made
+as large as you like. **Enter** takes the highlighted tile. Whether the window opens at start
+is set in **File → Preferences…**; **Help → Welcome window…** opens it at any time. **Help → Guide…** searches this guide from inside the program —
 type what you want to do, or open a page. **Help → Start the tour** opens short lessons on a
 demo project. What changed in each version: [What's new](whats-new.md).
 
-## Language
+## Preferences and language
 
-**View → Language** switches between English, Spanish, Simplified Chinese, Russian
-and Arabic; *Auto* follows the system.
+**File → Preferences…** holds the program's own settings, the same for every project: whether
+the welcome window opens at start, the **Language** (English, Spanish, Simplified Chinese,
+Russian and Arabic; *Auto* follows the system), **Economy UI** for weak graphics cards, the
+anonymous usage statistics, the daily check for a new version, and where FFmpeg was found.
+Each switch lives there and nowhere else. The **View** menu keeps what changes the view: the
+detached preview, Diagnostics and the notices.
 
 Next: [The timeline](timeline.md).

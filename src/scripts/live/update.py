@@ -102,14 +102,28 @@ def main(out):
             app.expect(NEW in g.get("status", ""), f"the hint names {NEW}: {g.get('status')}")
             app.step("hover-word", "the status line says which version is out and where")
 
-            # View: the switch under the telemetry one; unchecked, the word leaves the title
-            app.click_probe("menu.view", "“View” menu")
+            # Help → What's new: the pane is headed by the newer release (no request of its own)
+            if app.has_probe("welcome.window", tries=2):
+                app.click_probe("welcome.close", "Close (the welcome window)")
+                app.wait_gone("welcome.window")
+            app.click_probe("menu.help", "the Help menu")
+            app.click_probe("help.whats_new", "Help → What's new")
+            app.hover_probe("welcome.update", "the newer-release line over What's new")
+            app.expect(len(Releases.requests) == 1, f"the window made no request of its own: {Releases.requests}")
+            app.step("whats-new-update", "What's new opens with “Kinetren … is out — Releases page”")
+            app.click_probe("welcome.close", "Close (the welcome window)")
+            app.expect(app.wait_gone("welcome.window"), "Close closed the welcome window")
+
+            # File › Preferences…: the switch under the telemetry one; unchecked, the word leaves
+            # the title (the program's preferences left View, welcome-window-and-settings)
+            app.click_probe("menu.file", "“File” menu")
+            app.click_probe("file.preferences", "File → Preferences…")
             app.settle()
-            app.hover_probe("view.update_check", "“Check for new versions daily”")
+            app.hover_probe("prefs.update_check", "“Check for new versions daily”")
             g = wait_for(app, lambda g: "GitHub" in g.get("status", ""), timeout=5.0)
             app.expect("GitHub" in g.get("status", ""), f"the switch says what it asks: {g.get('status')}")
-            app.step("view-menu", "View: “Check for new versions daily” is checked")
-            app.click_probe("view.update_check", "uncheck “Check for new versions daily”")
+            app.step("view-menu", "Preferences: “Check for new versions daily” is checked")
+            app.click_probe("prefs.update_check", "uncheck “Check for new versions daily”")
             app.key("Escape")
             g = wait_for(app, lambda g: "title.outdated" not in probes(g), timeout=5.0)
             app.expect("title.outdated" not in probes(g), "the word left the title")
