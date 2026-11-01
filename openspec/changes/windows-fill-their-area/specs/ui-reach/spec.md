@@ -100,10 +100,11 @@ halves.
 
 ### Requirement: The effect picker is one gallery that grows with its window
 The "+ effect" picker SHALL show its content in ONE scroll: the presets as a row of cells first, then
-the effects by category with their variant cells. Its width SHALL be the width of the window it opens
-from (never less than the width of one category row), so an enlarged effects window gives a wider
-gallery whose cells flow into more columns, and its height SHALL be the room the screen has below the
-button, never a fixed number. What a person types into the search SHALL NOT change the popup's width.
+the effects by category, each effect a card (its name and its variant cells) and the cards flowing
+into as many columns as the gallery is wide. Its width SHALL be the width of the window it opens
+from (never less than the gallery's floor), so an enlarged effects window gives a wider gallery with
+more cards per row, and its height SHALL be the room the screen has below the button, never a fixed
+number. What a person types into the search SHALL NOT change the popup's width.
 The same screen-bounded height SHALL apply to the media picker's list.
 Revision (R.54, `GALLERY_W` "fixed by the gallery of the longest content"): the width is no longer a
 constant; it follows the host window, which keeps the R.54 point — nothing jumps while typing.
@@ -116,10 +117,10 @@ picker was two scrolls of 160 and 450 points in a 520-point popup, whatever the 
   opened; then the window is enlarged to about 1400 points wide and the picker is opened again; a
   query is typed
 - **THEN** the picker has one scroll; its width is the host window's content width in both cases
-  (the second is wider) and does not change while typing; a variant row of an effect shows more
-  cells per line in the wide picker; the popup's bottom is within the screen and lower than 450
-  points below its top when the screen allows
+  (the second is wider) and does not change while typing; a row of the wide gallery shows more
+  effect cards than a row of the narrow one; the popup's bottom is within the screen and lower than
+  500 points below its top when the screen allows
 - **PATH** open the effects window of a video event → click "+ effect" → a gallery as wide as the
   window, presets then effects in one list → close it, drag the window's corner to make it wide →
-  click "+ effect" → the same gallery, wider, with more thumbnails per row, reaching down the screen
+  click "+ effect" → the same gallery, wider, with more effect cards per row, reaching down the screen
 - **TEST** t1131 (`src/apps/kt-app/src/window_fill_tests.rs`)

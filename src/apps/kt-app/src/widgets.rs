@@ -500,13 +500,12 @@ fn fill_scroll<R>(
         let room = (ui.ctx().content_rect().bottom() - top - tail - 48.0).max(avail);
         // `min_scrolled_height`: egui bounds a scroll by the window's CURRENT room, and a fresh
         // window starts at its minimum — the content could not raise it
-        let out = egui::ScrollArea::vertical()
+        egui::ScrollArea::vertical()
             .max_height(room)
             .min_scrolled_height(room)
             .auto_shrink([false, true])
             .stick_to_bottom(stick)
-            .show(ui, body);
-        out
+            .show(ui, body)
     } else {
         egui::ScrollArea::vertical()
             .max_height(avail)
@@ -554,6 +553,7 @@ pub(crate) mod fill_probe {
         });
     }
 
+    #[cfg(test)]
     pub fn get(ctx: &egui::Context, layer: egui::LayerId) -> Option<egui::Rect> {
         ctx.data(|d| d.get_temp::<(u64, egui::Rect)>(key(layer))).map(|(_, r)| r)
     }

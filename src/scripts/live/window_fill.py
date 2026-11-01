@@ -79,13 +79,16 @@ def main(out):
             # 4) the picker in the large window: one gallery as wide as the window
             app.click_probe("fxreg.add", "“+ effect”")
             app.expect(app.has_probe("fxreg.popup"), "the effect picker opened")
+            # the popup fades in and the thumbnails come a moment later (the mis-click guard, R.54)
+            app.settle()
+            app.settle()
             p = rect(app, "fxreg.popup")
             if p and r1:
                 app.expect(p["w"] >= r1["w"] * 0.85,
                            f"the gallery is as wide as its window: {p['w']:.0f} of {r1['w']:.0f}")
                 app.expect(p["h"] > 520, f"the gallery uses the screen below it: {p['h']:.0f} tall")
-            app.step("picker-large", "the gallery in the large window: presets, then effects, many "
-                                     "cells per row, down the screen")
+            app.step("picker-large", "the gallery in the large window: presets, then the effects as "
+                                     "cards, several per row, down the screen")
             app.key("Escape")
             app.settle()
         app.key("Escape")

@@ -471,27 +471,22 @@ fn t1130_the_guides_sides_grow_with_the_window() {
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
 }
 
-/// The open picker's frame and the number of cells on the first row of an effect's strip.
-fn picker_state(h: &Harness<'static, KtApp>) -> (egui::Rect, usize, usize) {
+/// The open picker's frame and the most effect cards one row of the gallery shows (the effects'
+/// name buttons inside the popup that share a top).
+fn picker_state(h: &Harness<'static, KtApp>) -> (egui::Rect, usize) {
     use egui_kittest::kittest::Queryable;
     let popup = h.ctx.data(|d| d.get_temp::<egui::Rect>(crate::fx_registry::popup_id())).expect("the picker is open");
-    // the most cells one row shows, over the effects whose cells are drawn (a cell below the
-    // fold publishes nothing, R.54), and the longest strip among them
-    let (mut row, mut longest) = (0, 0);
+    let mut tops: Vec<f32> = Vec::new();
     for e in crate::fx_registry::registry().iter().filter(|e| e.video) {
-        let tops: Vec<f32> = e
-            .variants
-            .iter()
-            .filter_map(|v| h.query_by_label(&format!("{} {}", e.name, crate::i18n::tr(v.name))).map(|n| n.rect().top()))
-            .collect();
-        if tops.is_empty() || tops.len() != e.variants.len() {
-            continue;
+        for n in h.query_all_by_label(e.name) {
+            let r = n.rect();
+            if popup.contains_rect(r) {
+                tops.push(r.top().round());
+            }
         }
-        let first = tops.iter().cloned().fold(f32::INFINITY, f32::min);
-        row = row.max(tops.iter().filter(|t| (**t - first).abs() < 2.0).count());
-        longest = longest.max(tops.len());
     }
-    (popup, row, longest)
+    let row = tops.iter().map(|t| tops.iter().filter(|u| (*u - t).abs() < 2.0).count()).max().unwrap_or(0);
+    (popup, row)
 }
 
 /// Test 1131 (windows-fill-their-area): the picker gallery follows the window and the screen.
@@ -514,7 +509,7 @@ fn t1131_the_picker_gallery_follows_its_window() {
     h.step();
     h.step();
     let win0 = window_rect(&h, layer);
-    let (p0, cells0, longest) = picker_state(&h);
+    let (p0, cells0) = picker_state(&h);
     assert!(p0.width() >= crate::fx_registry::GALLERY_W, "the picker is under its floor: {p0:?}");
     assert!(p0.bottom() <= h.ctx.content_rect().bottom() + 0.5, "the picker runs off the screen: {p0:?}");
     assert!(p0.height() > 500.0, "the picker does not use the screen below it: {p0:?} (it was 450 + 160 fixed)");
@@ -523,6 +518,8 @@ fn t1131_the_picker_gallery_follows_its_window() {
     h.step();
     let pt = h.ctx.data(|d| d.get_temp::<egui::Rect>(crate::fx_registry::popup_id())).expect("the picker is open");
     assert!((pt.width() - p0.width()).abs() <= 1.0, "typing changed the picker's width: {p0:?} → {pt:?}");
+    h.key_press(egui::Key::Backspace);
+    h.step();
     // the button closes its own popup (Esc would close the window on top — the effects window)
     h.get_by_label(&add).click();
     h.step();
@@ -532,13 +529,11 @@ fn t1131_the_picker_gallery_follows_its_window() {
     h.get_by_label(&add).click();
     h.step();
     h.step();
-    let (p1, cells1, _) = picker_state(&h);
+    let (p1, cells1) = picker_state(&h);
     assert!(p1.width() > p0.width() + 500.0, "the picker did not follow its window: {p0:?} → {p1:?}");
     assert!(p1.width() <= win1.width(), "the picker is wider than its window: {p1:?} vs {win1:?}");
-    assert!(cells0 > 0, "no effect's cells were found in the narrow picker");
-    if longest > cells0 {
-        assert!(cells1 > cells0, "the wide gallery shows no more cells per row: {cells0} → {cells1}");
-    }
+    assert!(cells0 > 0, "no effect card was found in the narrow picker");
+    assert!(cells1 > cells0, "the wide gallery shows no more effect cards per row: {cells0} → {cells1}");
 }
 
 /// Test 1132 (windows-fill-their-area): the bottom toolbar never cuts a button off.

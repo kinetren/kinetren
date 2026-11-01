@@ -408,6 +408,11 @@ pub enum Picked {
 /// nothing (rule 3 of the checklist). Revision of R.54: this was the FIXED width of the popup,
 /// with two scrolls of 450 and 160 points under it — "a needle's eye" (kkt-26.11.01 item 12).
 pub(crate) const GALLERY_W: f32 = 520.0;
+/// An effect's card in the gallery: its name and three variant cells per line; the cards flow
+/// into as many columns as the gallery is wide. Without pictures (the audio picker) a card is
+/// its name.
+const EFFECT_CARD_W: f32 = 3.0 * CELL_DRAW_W + 16.0;
+const EFFECT_NAME_W: f32 = 200.0;
 /// Drawn cell size (stored twice as large — hidpi).
 pub(crate) const CELL_DRAW_W: f32 = 80.0;
 const CELL_DRAW_H: f32 = 45.0;
@@ -700,7 +705,6 @@ pub fn fx_picker_with_head(
                 ui.weak(tr(k::fxreg::NOTHING));
             }
             let rows = gallery_rows(list);
-            let mut last_cat: Option<Key> = None;
             // ONE scroll for the whole gallery, as tall as the screen allows below the button
             // (kkt-26.11.01 item 12: the picker "splits into two sections, and there too it is a
             // needle's eye"). Presets come first — they are reached for first (R.53) — as a row of
@@ -779,122 +783,143 @@ pub fn fx_picker_with_head(
                         });
                         ui.separator();
                     }
+                    // the effects as CARDS that flow into as many columns as the gallery is wide
+                    // (kkt-26.11.01 item 12): one narrow column in a wide popup was the needle's
+                    // eye again. Categories are grouped at draw time (R.54), one heading each.
+                    let mut groups: Vec<(Key, Vec<&FxEntry>)> = Vec::new();
                     for e in rows {
-                        if last_cat != Some(e.category) {
-                            last_cat = Some(e.category);
-                            ui.label(egui::RichText::new(tr(e.category)).small().weak());
+                        match groups.last_mut() {
+                            Some((c, v)) if *c == e.category => v.push(e),
+                            _ => groups.push((e.category, vec![e])),
                         }
-                        // the name row: category glyph + name
-                        // (click = TEMPLATE, as it was before R.54)
-                        let mut hit_name = None;
-                        ui.horizontal(|ui| {
-                            ui.label(cat_glyph(e.category));
-                            let r = crate::app::hint_into(
-                                hover,
-                                ui.button(e.name),
-                                tr(k::fxreg::TEMPLATE_HINT),
-                            );
-                            // the TEMPLATE row also gives a rectangle: a
-                            // window without a base frame (a track chain)
-                            // has no variant gallery at all, and otherwise
-                            // the live scenario would have nothing to aim at
-                            crate::widgets::field_probe::note(
-                                &format!("fxreg.tpl.{}", e.template.tag()),
-                                r.rect,
-                            );
-                            if r.clicked() {
-                                hit_name = Some(e.template.clone());
+                    }
+                    let card_w = if preview.is_some() { EFFECT_CARD_W } else { EFFECT_NAME_W };
+                    for (cat, group) in groups {
+                        ui.label(egui::RichText::new(tr(cat)).small().weak());
+                        // cards of one row stand top-aligned (a wrapped row centres by default)
+                        let flow = egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true);
+                        ui.with_layout(flow, |ui| {
+                            for e in group {
+                                // the card's size is declared up front: a wrapped row wraps a
+                                // child only by the size it asks for (a bare `vertical` ran on
+                                // past the edge and widened the popup to the screen)
+                                let layout = egui::Layout::top_down(egui::Align::Min);
+                                ui.allocate_ui_with_layout(egui::vec2(card_w, 0.0), layout, |ui| {
+                                ui.set_width(card_w);
+                                // the name row: category glyph + name
+                                // (click = TEMPLATE, as it was before R.54)
+                                let mut hit_name = None;
+                                ui.horizontal(|ui| {
+                                    ui.label(cat_glyph(e.category));
+                                    let r = crate::app::hint_into(
+                                        hover,
+                                        ui.button(e.name),
+                                        tr(k::fxreg::TEMPLATE_HINT),
+                                    );
+                                    // the TEMPLATE row also gives a rectangle: a
+                                    // window without a base frame (a track chain)
+                                    // has no variant gallery at all, and otherwise
+                                    // the live scenario would have nothing to aim at
+                                    crate::widgets::field_probe::note(
+                                        &format!("fxreg.tpl.{}", e.template.tag()),
+                                        r.rect,
+                                    );
+                                    if r.clicked() {
+                                        hit_name = Some(e.template.clone());
+                                    }
+                                });
+                                if let Some(t) = hit_name {
+                                    picked = Some(Picked::Fx(t));
+                                    query.clear();
+                                    ui.close();
+                                }
+                                // the strip: built-in variants, then the user’s SINGLE-effect presets of the same kind —
+                                // they are about the same thing (“here is how
+                                // it is tuned”), and their place is there too
+                                // an audio kind has no picture: in the morpher's picker it stays a
+                                // named row under its own category heading
+                                if preview.is_some() && e.video && !e.variants.is_empty() {
+                                    let mut hit = None;
+                                    ui.horizontal_wrapped(|ui| {
+                                        for (vi, v) in e.variants.iter().enumerate() {
+                                            let (c, pick) = preview_cell(
+                                                ui,
+                                                &mut preview,
+                                                std::slice::from_ref(&v.fx),
+                                                e.name,
+                                                tr(v.name),
+                                                crate::theme::OUTLINE,
+                                                Some((e, vi)),
+                                            );
+                                            crate::widgets::field_probe::note(
+                                                &format!("fxreg.var.{}.{vi}", e.template.tag()),
+                                                c.rect,
+                                            );
+                                            // the hint goes to the status bar, like everything
+                                            // in the program (rule 10): while the axis
+                                            // is being dragged, it says BETWEEN
+                                            // WHAT the drag is and by how much
+                                            let axis_hint = pick.as_ref().map(|(j, t, _)| {
+                                                crate::tf!(
+                                                    k::fxreg::AXIS_HINT,
+                                                    axis_name(e, *j),
+                                                    axis_name(e, j + 1),
+                                                    (t * 100.0).round() as i64
+                                                )
+                                            });
+                                            let hint =
+                                                axis_hint.as_deref().unwrap_or(tr(k::fxreg::VAR_HINT));
+                                            let c = crate::app::hint_into(hover, c, hint);
+                                            // a click without movement — EXACTLY this variant
+                                            // (t254); the drag — what is
+                                            // shown on the frame of release
+                                            if c.clicked() {
+                                                hit = Some(Picked::Fx(v.fx.clone()));
+                                            } else if c.drag_stopped()
+                                                && let Some((_, _, fx)) = pick
+                                            {
+                                                hit = Some(Picked::Fx(fx));
+                                            }
+                                        }
+                                        for (i, r) in presets.iter().enumerate() {
+                                            let one = match r.block.slots.as_slice() {
+                                                [only] => only.fx.tag() == e.template.tag(),
+                                                _ => false,
+                                            };
+                                            if !one || !r.video_ok {
+                                                continue;
+                                            }
+                                            let mut fx = r.block.slots[0].fx.clone();
+                                            kt_model::apply_fx_auto(
+                                                &mut fx,
+                                                &r.block.slots[0].curves,
+                                                kt_time::Tick(0),
+                                            );
+                                            let (c, _) = preview_cell(
+                                                ui,
+                                                &mut preview,
+                                                std::slice::from_ref(&fx),
+                                                "",
+                                                &r.name,
+                                                crate::theme::MORPH_SLOT,
+                                                None,
+                                            );
+                                            if crate::app::hint_into(hover, c, tr(k::fxreg::VAR_HINT))
+                                                .clicked()
+                                            {
+                                                hit = Some(Picked::Preset(i));
+                                            }
+                                        }
+                                    });
+                                    if let Some(h) = hit {
+                                        picked = Some(h);
+                                        query.clear();
+                                        ui.close();
+                                    }
+                                }
+                                });
                             }
                         });
-                        if let Some(t) = hit_name {
-                            picked = Some(Picked::Fx(t));
-                            query.clear();
-                            ui.close();
-                        }
-                        // the strip: built-in variants, then the user’s SINGLE-effect presets of the same kind —
-                        // they are about the same thing (“here is how
-                        // it is tuned”), and their place is there too
-                        // an audio kind has no picture: in the morpher's picker it stays a
-                        // named row under its own category heading
-                        if preview.is_some() && e.video && !e.variants.is_empty() {
-                            let mut hit = None;
-                            ui.horizontal_wrapped(|ui| {
-                                for (vi, v) in e.variants.iter().enumerate() {
-                                    let (c, pick) = preview_cell(
-                                        ui,
-                                        &mut preview,
-                                        std::slice::from_ref(&v.fx),
-                                        e.name,
-                                        tr(v.name),
-                                        crate::theme::OUTLINE,
-                                        Some((e, vi)),
-                                    );
-                                    crate::widgets::field_probe::note(
-                                        &format!("fxreg.var.{}.{vi}", e.template.tag()),
-                                        c.rect,
-                                    );
-                                    // the hint goes to the status bar, like everything
-                                    // in the program (rule 10): while the axis
-                                    // is being dragged, it says BETWEEN
-                                    // WHAT the drag is and by how much
-                                    let axis_hint = pick.as_ref().map(|(j, t, _)| {
-                                        crate::tf!(
-                                            k::fxreg::AXIS_HINT,
-                                            axis_name(e, *j),
-                                            axis_name(e, j + 1),
-                                            (t * 100.0).round() as i64
-                                        )
-                                    });
-                                    let hint =
-                                        axis_hint.as_deref().unwrap_or(tr(k::fxreg::VAR_HINT));
-                                    let c = crate::app::hint_into(hover, c, hint);
-                                    // a click without movement — EXACTLY this variant
-                                    // (t254); the drag — what is
-                                    // shown on the frame of release
-                                    if c.clicked() {
-                                        hit = Some(Picked::Fx(v.fx.clone()));
-                                    } else if c.drag_stopped()
-                                        && let Some((_, _, fx)) = pick
-                                    {
-                                        hit = Some(Picked::Fx(fx));
-                                    }
-                                }
-                                for (i, r) in presets.iter().enumerate() {
-                                    let one = match r.block.slots.as_slice() {
-                                        [only] => only.fx.tag() == e.template.tag(),
-                                        _ => false,
-                                    };
-                                    if !one || !r.video_ok {
-                                        continue;
-                                    }
-                                    let mut fx = r.block.slots[0].fx.clone();
-                                    kt_model::apply_fx_auto(
-                                        &mut fx,
-                                        &r.block.slots[0].curves,
-                                        kt_time::Tick(0),
-                                    );
-                                    let (c, _) = preview_cell(
-                                        ui,
-                                        &mut preview,
-                                        std::slice::from_ref(&fx),
-                                        "",
-                                        &r.name,
-                                        crate::theme::MORPH_SLOT,
-                                        None,
-                                    );
-                                    if crate::app::hint_into(hover, c, tr(k::fxreg::VAR_HINT))
-                                        .clicked()
-                                    {
-                                        hit = Some(Picked::Preset(i));
-                                    }
-                                }
-                            });
-                            if let Some(h) = hit {
-                                picked = Some(h);
-                                query.clear();
-                                ui.close();
-                            }
-                        }
                     }
                 },
             );
