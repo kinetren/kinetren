@@ -16,5 +16,5 @@
 ## 3. Live and docs
 
 - [x] 3.1 Live scenario `src/scripts/live/segfields.py` (steps with screenshots, our fixture), registered in live-check
-- [ ] 3.2 `docs/guide/whats-new.md` line (kt26.11); registry row K10 closed (`python3 src/scripts/ktprompts-index.py --check`)
-- [ ] 3.3 `cargo test -p kt-app`, `cargo clippy --all-targets`, full `cargo test --workspace`; `git merge master`; `src/scripts/finish.sh` — version here
+- [x] 3.2 `docs/guide/whats-new.md` line (kt26.11); registry row K10 closed (`python3 src/scripts/ktprompts-index.py --check`)
+- [x] 3.3 `cargo test -p kt-app`, `cargo clippy --all-targets`, full `cargo test --workspace`; `git merge master` (master had not moved: `84e25ed8`); `src/scripts/finish.sh` — **kt26.11.01-74fdb7ed**. Under machine load (load average 30–50, other executors' builds) the workshop run had t640 red and five live scenarios red in the parallel pass; all five passed alone in finish.sh's own rerun, t640 passed alone (twice)
