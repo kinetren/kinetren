@@ -46,6 +46,7 @@ mod reach_tests;
 mod reel_preview;
 mod render_dialog;
 mod settings_window;
+mod supervisor;
 mod telemetry;
 mod track_window;
 mod theme;
@@ -62,5 +63,9 @@ mod window_frame;
 mod window_shell;
 
 fn main() -> eframe::Result {
+    // the first process watches the editor and shows the crash window (render-crash-and-recovery)
+    if let Some(code) = supervisor::run() {
+        std::process::exit(code);
+    }
     app::run()
 }

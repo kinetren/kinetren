@@ -71,6 +71,27 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 - `vertical_layout` takes TWO counters (clip rows and service rows): the weight of a service row is 1/3, therefore three morph tracks cost as much as one clip lane. The limits 30/84/16/120 are not to be touched — they were set at the user's request (R.6).
 - `KT_GEOM_DUMP` gives each row its own `"h"`; `lane_h` at the root of the dump is the BASE height. Live scenarios read `row.get("h", g["lane_h"])`.
 
+## Two processes: the supervisor and the crash window (render-crash-and-recovery)
+
+- **`kinetren` runs itself twice.** `main` asks `supervisor::run()` first: without `KT_SUPERVISED`
+  the process is the SUPERVISOR — it starts `current_exe()` with the same arguments as its child and
+  waits, initialising nothing (no eframe, GPU, FFmpeg, telemetry). The child is the editor. A crash of
+  the child (panic = code 101, abort, a fatal signal, a non-zero code, a Windows exception) opens the
+  crash window IN THE SUPERVISOR; code 0 and SIGTERM/SIGINT/SIGHUP open nothing. The owner: "the crash
+  window right after the crash, not who knows when" — a dying process cannot draw it.
+- **The child dies with the supervisor** (Linux, `PR_SET_PDEATHSIG`): live scenarios and the session
+  manager kill the process they started. On Windows a killed supervisor leaves the editor unwatched.
+- **The crash window is not a `KtApp` window**: no shell, no `WINDOWS` row; it never touches eframe's
+  storage (it would overwrite the editor's window geometry) and reads the language from `app.ron` as
+  text. Under `KT_GEOM_DUMP` it writes `<dump>.crash.json` (button rects, texts).
+- **A report the window showed carries `shown:`**: the next start takes it (telemetry) but does not
+  ring the bell again. "Restore the project" restarts the child with `KT_AFTER_CRASH=1`, and the
+  recovery offer is then not quiet.
+- `KT_NO_SUPERVISOR=1` — the editor in the first process (debuggers attach to it). The live bench's
+  `crash` command panics on the UI thread; nothing else crashes a run on purpose.
+- **The journal is per run** (`journal::start_run`, a fan of four previous runs, a header with the
+  version, OS, FFmpeg major, pid and local time with offset); `last_run_tail` is what the window shows.
+
 ## Debug env
 
 - `KT_AUTOPLAY=1` — play right after opening (performance measurements without input).

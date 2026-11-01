@@ -2136,6 +2136,7 @@ dependencies = [
  "kt-text",
  "kt-time",
  "kt-version",
+ "libc",
  "realfft",
  "rfd",
  "rtrb",

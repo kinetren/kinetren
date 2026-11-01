@@ -3128,16 +3128,38 @@ impl KtApp {
         let Some(c) = self.recovery_offer.get(i).cloned() else { return };
         match load_project_file(&c.path) {
             Ok((project, retained, notices)) => {
+                // THE EDITOR IS BUILT FROM THE RECOVERY, as an Open builds it (render-crash-and-
+                // recovery D6). Swapping only the model left the player with the previous
+                // document's sources at the same media numbers — the owner's restored edit played
+                // the lesson's SMPTE bars and noise — and kept that document's name, lock and
+                // save target (`lesson-5`).
+                // the media paths are absolute already (`load_project_file`); the index lives
+                // next to the project, or next to the unnamed recovery in the data directory —
+                // the same body as an Open, so placeholders, the watchdog and the bell work
                 crate::telemetry::signal(crate::telemetry::Signal::ProjectOpened(OpenHow::Recovery, &project));
-                self.model = kt_model::TimelineModel::new(project);
-                self.retained = retained;
-                self.model_rev += 1;
-                self.push_project_to_player();
-                self.sync_media_sources();
+                let home = c.for_project.clone().unwrap_or_else(|| c.path.clone());
+                let mut app = match Self::open_loaded(&home, project, retained, Vec::new()) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        self.warn(crate::tf!(k::msg::RECOVERY_FAILED, c.path.display(), e));
+                        return;
+                    }
+                };
+                app.project_path = c.for_project.clone();
+                // the drop barrier travels (off only in the harness and the live bench)
+                app.recovery_on_drop = self.recovery_on_drop;
+                // the document being replaced must not write ITS recovery over the one restored
+                if self.recovery_target() == c.path {
+                    self.recovery_on_drop = false;
+                }
+                self.replace_with(app);
+                if let Some(p) = c.for_project.clone() {
+                    // after the swap: the replaced editor's lock on the same file is gone
+                    self.claim_project(&p);
+                }
                 // the work is IN THE EDITOR and nowhere else: the asterisk stays lit until
                 // the user presses Ctrl+S
                 self.dirty_content = true;
-                self.recovery_open = false;
                 for n in notices {
                     self.warn(n);
                 }
@@ -8217,7 +8239,7 @@ pub struct SpeedEntry {
 
 /// Window icon (item 6, round 9): without it the taskbar showed a placeholder. The raster —
 /// the same silhouette that is drawn in the header and lies in packaging/.
-fn app_icon() -> egui::IconData {
+pub(crate) fn app_icon() -> egui::IconData {
     let img = image::load_from_memory_with_format(
         include_bytes!("../assets/kinetren-256.png"),
         image::ImageFormat::Png,
@@ -9180,6 +9202,7 @@ impl eframe::App for KtApp {
                 crate::bench::Cmd::Open(p) => self.bench_open(ui.ctx(), &p),
                 crate::bench::Cmd::Store(dir) => crate::bench::set_store(dir),
                 crate::bench::Cmd::Noop => {}
+                crate::bench::Cmd::Crash => panic!("live bench: a deliberate panic on the UI thread"),
             }
             crate::bench::finished(seq);
         }
@@ -9243,7 +9266,11 @@ impl eframe::App for KtApp {
         // Periodic saving is handled by our BACKGROUND autosave (draw_all), and the final
         // write on exit — on_exit below.
         storage.set_string("lang", crate::i18n::choice_code(self.lang_choice).to_string());
-        if let Some(p) = &self.project_path {
+        // a lesson sandbox is never the last project: the next start would reopen it
+        // (render-crash-and-recovery D6 — the owner's crash restored into `lesson-5`)
+        if let Some(p) = &self.project_path
+            && !crate::lessons::is_sandbox(p)
+        {
             storage.set_string("last_project", p.to_string_lossy().to_string());
         }
         if let Some(v) = self.telemetry.as_ref().and_then(|t| t.stored_value()) {
@@ -9329,6 +9356,8 @@ pub fn run() -> eframe::Result {
     crate::plugins::install();
     // the FFmpeg folder chosen with Locate… is the first step of the search (windows-build)
     crate::ffmpeg_setup::install_search_dirs();
+    // this run's journal: the previous run moves aside, the header names the build (D5)
+    crate::journal::start_run();
     // GPU: the egui-wgpu default is HighPerformance, i.e. the discrete card; on
     // hybrid graphics this is PRIME copying of every frame and a stutter of the WHOLE
     // system (item 1, v1.4). The UI load is modest — we take the power-efficient
@@ -9415,9 +9444,13 @@ pub fn run() -> eframe::Result {
             // scenario: open project A, press “New”, an hour of work, crash —
             // last_project pointed to A, and not a line was said about the hour.
             // the previous session crashed — the report lies there and waits (item 355)
-            if let Some(p) = crate::journal::take_crash_report() {
-                crate::telemetry::signal(crate::telemetry::Signal::CrashReport(&p));
-                app.warn(crate::tf!(k::msg::PREV_SESSION_CRASHED, p.display()));
+            // a report the supervisor's crash window showed is still taken (telemetry), but not
+            // announced a second time (render-crash-and-recovery D4)
+            if let Some(r) = crate::journal::take_crash_report() {
+                crate::telemetry::signal(crate::telemetry::Signal::CrashReport(&r.path));
+                if !r.shown {
+                    app.warn(crate::tf!(k::msg::PREV_SESSION_CRASHED, r.path.display()));
+                }
             }
             // without FFmpeg the FFmpeg window opens once, with one notice (windows-build)
             app.ffmpeg_startup_check();
@@ -9425,7 +9458,8 @@ pub fn run() -> eframe::Result {
             if kt_dirs::is_fallback() {
                 app.warn(crate::tf!(k::msg::DATA_DIR_TEMP, crate::journal::data_dir().display()));
             }
-            app.offer_recovery(true);
+            // "Restore the project" in the crash window: the person asked, an empty list is said
+            app.offer_recovery(!crate::supervisor::after_crash());
             match window {
                 Some(tile) if after_ffmpeg => {
                     app.start.welcome.primary = tile;

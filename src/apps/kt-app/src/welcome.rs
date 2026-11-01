@@ -166,6 +166,8 @@ pub fn plan_start(
     ffmpeg_missing: bool,
     recovery: impl Fn(Option<&std::path::Path>) -> bool,
 ) -> StartPlan {
+    // a sandbox stored by an older build is not a project to reopen (render-crash-and-recovery D6)
+    let last_project = last_project.filter(|p| !crate::lessons::is_sandbox(std::path::Path::new(p)));
     let first_start = store.begin_session(last_project);
     let last_path = store
         .recent

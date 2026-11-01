@@ -1406,6 +1406,23 @@ installed_into = "Installed into {0}"
 sha_matches = "SHA-256 {0} matches"
 open_folder = "Open folder"
 
+[crash]
+title = "Kinetren — crash report"
+headline = "Kinetren closed unexpectedly"
+panic = "The program stopped on an internal error:"
+signal = "The program was ended by the signal {0}."
+killed = "The system ended the program (SIGKILL), most often because memory ran out."
+exception = "Windows ended the program: {0}."
+code = "The program exited with code {0}."
+version = "Version: {0}"
+report = "Report: {0}"
+note = "Unsaved work is kept. Restore the project starts Kinetren again and offers it."
+log_tail = "The last lines of the log:"
+log_empty = "The log of this run is empty."
+restore = "Restore the project"
+logs = "Open the log folder"
+close = "Close"
+
 [desktop]
 generic_name = "Video Editor"
 comment = "Non-linear video editor"

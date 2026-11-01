@@ -1402,6 +1402,23 @@ installed_into = "Instalado en {0}"
 sha_matches = "SHA-256 {0} coincide"
 open_folder = "Abrir carpeta"
 
+[crash]
+title = "Kinetren — informe de cierre"
+headline = "Kinetren se cerró inesperadamente"
+panic = "El programa se detuvo por un error interno:"
+signal = "El programa terminó por la señal {0}."
+killed = "El sistema terminó el programa (SIGKILL), casi siempre por falta de memoria."
+exception = "Windows terminó el programa: {0}."
+code = "El programa salió con el código {0}."
+version = "Versión: {0}"
+report = "Informe: {0}"
+note = "El trabajo sin guardar se conserva. Restaurar el proyecto vuelve a abrir Kinetren y lo ofrece."
+log_tail = "Las últimas líneas del registro:"
+log_empty = "El registro de esta ejecución está vacío."
+restore = "Restaurar el proyecto"
+logs = "Abrir la carpeta del registro"
+close = "Cerrar"
+
 [desktop]
 generic_name = "Editor de vídeo"
 comment = "Editor de vídeo no lineal"

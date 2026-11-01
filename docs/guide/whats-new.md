@@ -5,6 +5,14 @@ month, newest first.
 
 ## kt26.11
 
+- **If Kinetren crashes, a window says so at once** — the error, the version and the last lines
+  of the log, with **Restore the project** and **Open the log folder**. Before, you learnt it only
+  at the next start, if at all.
+- **Restoring after a crash brings back your own footage.** The restored project no longer plays
+  a lesson's test patterns in place of your sources, and keeps its own name.
+- **Rendering a region that does not start on a frame** no longer closes the program.
+- **The log keeps one file per run** (the four previous runs next to it), each starting with the
+  version and the start time in your time zone.
 - **Changing an audio effect takes effect at once.** Put a filter where an equaliser stood
   and you hear the filter right away — before, the old effect kept playing with the new
   settings until you jumped in time.

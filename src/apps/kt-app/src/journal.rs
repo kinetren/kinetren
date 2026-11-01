@@ -12,9 +12,12 @@
 //! person would otherwise never see, plus warnings — so that the complaint
 //! “it said something and it vanished” has an address.
 //!
-//! Format — one line per record: `YYYY-MM-DD HH:MM:SS level text`. Rotation
-//! at 1 MiB into `kt-app.log.1` (one step, no fan of numbers): the journal is needed for
-//! analysis of the last session, not for history.
+//! Format — one line per record: `YYYY-MM-DD HH:MM:SS+HH:MM level text`, LOCAL time with its
+//! offset (render-crash-and-recovery D5: the journal said UTC without saying so). ONE FILE PER
+//! RUN: `start_run` moves the previous run to `kt-app.log.1` (a fan of four previous runs) and
+//! opens the new file with a header; past 1 MiB a run shifts the same fan. The owner's crash
+//! (kkt-26.11.01 item 9) came with a journal of several runs glued together: "it seems the log
+//! from an old run stayed".
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -22,6 +25,12 @@ use std::path::{Path, PathBuf};
 /// The rotation threshold. A megabyte is about ten thousand lines: more than the
 /// program produces in a day of work, and less than is noticeable on disk.
 pub const ROTATE_BYTES: u64 = 1024 * 1024;
+/// Previous runs kept next to the current journal (`kt-app.log.1` … `.4`).
+pub const KEEP_RUNS: usize = 4;
+/// The start of a run's header line — what `last_run_tail` cuts at.
+pub const RUN_HEADER: &str = "==== kinetren ";
+/// The line the supervisor appends to a crash report it showed in its window (D4).
+pub const SHOWN_MARK: &str = "shown: ";
 
 /// Name of the per-user data directory under `$XDG_DATA_HOME`.
 pub const DATA_DIR_NAME: &str = "kinetren";
@@ -173,19 +182,81 @@ pub(crate) fn crash_report_with(
     out
 }
 
-/// If the previous session left a report — return its path ONCE and
-/// set the report itself aside.
-pub fn take_crash_report() -> Option<PathBuf> {
-    let p = crash_path();
+/// A report taken at start: where it lies now, and whether the crash window already showed it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TakenReport {
+    pub path: PathBuf,
+    pub shown: bool,
+}
+
+/// If the previous session left a report — return it ONCE and set the report itself aside.
+pub fn take_crash_report() -> Option<TakenReport> {
+    take_crash_report_at(&crash_path(), &crash_seen_path())
+}
+
+pub(crate) fn take_crash_report_at(p: &Path, seen: &Path) -> Option<TakenReport> {
     if !p.exists() {
         return None;
     }
-    let seen = crash_seen_path();
-    match kt_otio::replace_file(&p, &seen) {
-        Ok(()) => Some(seen),
+    let shown = std::fs::read_to_string(p)
+        .map(|t| t.lines().any(|l| l.starts_with(SHOWN_MARK)))
+        .unwrap_or(false);
+    let path = match kt_otio::replace_file(p, seen) {
+        Ok(()) => seen.to_path_buf(),
         // renaming did not work — still must say so, the report is in place
-        Err(_) => Some(p),
+        Err(_) => p.to_path_buf(),
+    };
+    Some(TakenReport { path, shown })
+}
+
+/// The crash window showed this report (D4): the next start takes it without a second bell line.
+pub fn mark_shown(report: &Path) {
+    let _ = std::fs::OpenOptions::new()
+        .append(true)
+        .open(report)
+        .and_then(|mut f| f.write_all(format!("\n{SHOWN_MARK}{}\n", stamp()).as_bytes()));
+}
+
+/// Open this run's journal (D5): the previous run moves into the fan, the new file starts with
+/// the header. Called once, at the editor's start.
+pub fn start_run() {
+    let ffmpeg = match kt_ffmpeg::backend_info() {
+        Some(i) => format!("FFmpeg {}", i.major),
+        None => "FFmpeg missing".to_string(),
+    };
+    start_run_at(&path(), &ffmpeg);
+}
+
+pub(crate) fn start_run_at(path: &Path, ffmpeg: &str) {
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
     }
+    if std::fs::metadata(path).map(|m| m.len() > 0).unwrap_or(false) {
+        shift(path);
+    }
+    let header = format!(
+        "{RUN_HEADER}{} · run {} · pid {} · {} {} · {ffmpeg} ====\n",
+        kt_version::FULL,
+        stamp(),
+        std::process::id(),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    );
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut f| f.write_all(header.as_bytes()));
+}
+
+/// The last `n` lines of the LAST run in the journal (after its header) — what the crash window
+/// shows. A journal without a header (an older build) gives its last lines.
+pub fn last_run_tail(path: &Path, n: usize) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
+    let lines: Vec<&str> = text.lines().collect();
+    let from = lines.iter().rposition(|l| l.starts_with(RUN_HEADER)).unwrap_or(0);
+    let run = &lines[from..];
+    run[run.len().saturating_sub(n)..].iter().map(|l| l.to_string()).collect()
 }
 
 /// Append a line. Journal write errors are SWALLOWED on purpose: the journal is
@@ -211,9 +282,20 @@ pub(crate) fn write_to(path: &Path, level: &str, text: &str) {
 fn rotate(path: &Path) {
     let big = std::fs::metadata(path).map(|m| m.len() >= ROTATE_BYTES).unwrap_or(false);
     if big {
-        // the previous `.log.1` is replaced — on Windows a held one is retried (kt-otio)
-        let _ = kt_otio::replace_file(path, &path.with_extension("log.1"));
+        shift(path);
     }
+}
+
+/// Move the journal into the fan: `.3 → .4`, …, `kt-app.log → .1`; the oldest falls off. On
+/// Windows a held file is retried (kt-otio).
+fn shift(path: &Path) {
+    let nth = |i: usize| path.with_extension(format!("log.{i}"));
+    for i in (1..KEEP_RUNS).rev() {
+        if nth(i).exists() {
+            let _ = kt_otio::replace_file(&nth(i), &nth(i + 1));
+        }
+    }
+    let _ = kt_otio::replace_file(path, &nth(1));
 }
 
 /// Date and time without external dependencies: the program does not pull in chrono for the
@@ -222,13 +304,63 @@ fn stamp() -> String {
     stamp_of(std::time::SystemTime::now())
 }
 
-/// The same label for an arbitrary moment — the recovery dialog uses it to show the time
-/// of each candidate (item 353).
+/// The same label for an arbitrary moment, in local time with its offset — the recovery dialog
+/// uses it to show the time of each candidate (item 353; its first 16 characters are the
+/// minute).
 pub fn stamp_of(t: std::time::SystemTime) -> String {
-    let secs = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let (days, rem) = (secs / 86_400, secs % 86_400);
-    let (y, m, d) = civil_from_days(days as i64);
-    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}", rem / 3600, rem % 3600 / 60, rem % 60)
+    let secs = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    stamp_with(secs, local_offset(secs))
+}
+
+/// `YYYY-MM-DD HH:MM:SS±HH:MM` for a Unix second and an offset in seconds east of UTC.
+pub(crate) fn stamp_with(unix_secs: i64, offset_secs: i64) -> String {
+    let local = unix_secs + offset_secs;
+    let (days, rem) = (local.div_euclid(86_400), local.rem_euclid(86_400));
+    let (y, m, d) = civil_from_days(days);
+    let sign = if offset_secs < 0 { '-' } else { '+' };
+    let off = offset_secs.unsigned_abs() / 60;
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}{sign}{:02}:{:02}",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60,
+        off / 60,
+        off % 60
+    )
+}
+
+/// The local offset from UTC at that moment, in seconds east (D5): `localtime_r`'s `tm_gmtoff`.
+#[cfg(target_os = "linux")]
+fn local_offset(unix_secs: i64) -> i64 {
+    let t = unix_secs as libc::time_t;
+    // SAFETY: a zeroed plain-data `tm` filled by the reentrant call; `t` outlives the call
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
+        return 0;
+    }
+    tm.tm_gmtoff as i64
+}
+
+/// Windows: the zone's CURRENT bias (a moment across a daylight change is an hour off; the journal
+/// stamps "now", the recovery dialog a recent file).
+#[cfg(windows)]
+fn local_offset(_unix_secs: i64) -> i64 {
+    use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
+    const TIME_ZONE_ID_DAYLIGHT: u32 = 2;
+    const TIME_ZONE_ID_INVALID: u32 = u32::MAX;
+    // SAFETY: a zeroed plain-data struct filled by the call
+    let mut tz: TIME_ZONE_INFORMATION = unsafe { std::mem::zeroed() };
+    let r = unsafe { GetTimeZoneInformation(&mut tz) };
+    if r == TIME_ZONE_ID_INVALID {
+        return 0;
+    }
+    let bias = tz.Bias + if r == TIME_ZONE_ID_DAYLIGHT { tz.DaylightBias } else { tz.StandardBias };
+    -(bias as i64) * 60
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn local_offset(_unix_secs: i64) -> i64 {
+    0
 }
 
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
@@ -336,6 +468,86 @@ mod tests {
         assert_eq!(take(&crash, &seen), Some(seen.clone()), "the crash is not mentioned");
         assert_eq!(std::fs::read_to_string(&seen).unwrap(), "report", "report lost");
         assert_eq!(take(&crash, &seen), None, "one crash is reported twice");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// t1075 (render-crash-and-recovery D5): each run has its own journal with a header, the
+    /// previous runs live in a fan of four, and the tail is the last run's.
+    #[test]
+    fn t1075_journal_is_per_run_with_a_header() {
+        let p = tmp("runs");
+        start_run_at(&p, "FFmpeg 7");
+        write_to(&p, "INFO", "first run, line one");
+        write_to(&p, "WARN", "first run, line two");
+        start_run_at(&p, "FFmpeg 7");
+        write_to(&p, "INFO", "second run");
+        let cur = std::fs::read_to_string(&p).unwrap();
+        let first = cur.lines().next().unwrap();
+        assert!(first.starts_with(RUN_HEADER), "no header: {cur}");
+        for part in [kt_version::FULL, std::env::consts::OS, "FFmpeg 7", &format!("pid {}", std::process::id())] {
+            assert!(first.contains(part), "the header lacks {part}: {first}");
+        }
+        assert!(
+            first.split(" · ").nth(1).is_some_and(|r| r.len() == "run 2026-11-01 18:10:12+03:00".len()),
+            "the header's time has no offset: {first}"
+        );
+        assert_eq!(cur.lines().count(), 2, "the second run's journal holds another run: {cur}");
+        assert!(cur.contains("second run") && !cur.contains("first run"), "{cur}");
+        let prev = std::fs::read_to_string(p.with_extension("log.1")).unwrap();
+        assert!(prev.contains("first run, line one") && prev.contains("first run, line two"), "{prev}");
+
+        let tail = last_run_tail(&p, 10);
+        assert_eq!(tail.len(), 2, "{tail:?}");
+        assert!(tail[1].contains("second run"));
+        // a journal of glued runs (an older build's): the tail is the last run's only
+        std::fs::write(&p, format!("{prev}{cur}")).unwrap();
+        let tail = last_run_tail(&p, 10);
+        assert!(tail.iter().all(|l| !l.contains("first run")), "{tail:?}");
+
+        for _ in 0..5 {
+            start_run_at(&p, "FFmpeg missing");
+            write_to(&p, "INFO", "later");
+        }
+        assert!(p.with_extension(format!("log.{KEEP_RUNS}")).exists(), "the fan lost a run");
+        assert!(!p.with_extension(format!("log.{}", KEEP_RUNS + 1)).exists(), "the fan grows without bound");
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    /// t1079 (D5): the stamp is local wall-clock time followed by its offset.
+    #[test]
+    fn t1079_stamp_is_local_time_with_offset() {
+        // 2026-10-31 18:10:12 UTC
+        let t = 1_793_470_212;
+        assert_eq!(stamp_with(t, 3 * 3600), "2026-10-31 21:10:12+03:00");
+        assert_eq!(stamp_with(t, -(5 * 3600 + 1800)), "2026-10-31 12:40:12-05:30");
+        assert_eq!(stamp_with(t, 0), "2026-10-31 18:10:12+00:00");
+        // past midnight the date rolls over
+        assert_eq!(stamp_with(t, 6 * 3600), "2026-11-01 00:10:12+06:00");
+        // the journal's own lines carry an offset
+        let p = tmp("offset");
+        write_to(&p, "INFO", "x");
+        let line = std::fs::read_to_string(&p).unwrap();
+        let stamp = &line[..25];
+        assert!(matches!(stamp.as_bytes()[19], b'+' | b'-') && &stamp[22..23] == ":", "{line}");
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    /// t1078 (D4): a report the crash window showed is taken without a second announcement; an
+    /// unmarked one is announced. Both are taken (moved aside, handed to telemetry).
+    #[test]
+    fn t1078_shown_report_is_taken_but_not_announced() {
+        let dir = tmp("shown").parent().unwrap().to_path_buf();
+        let (crash, seen) = (dir.join("kt-app-crash.txt"), dir.join("kt-app-crash.seen.txt"));
+        std::fs::write(&crash, "kinetren x\npanic: boom\n").unwrap();
+        mark_shown(&crash);
+        let r = take_crash_report_at(&crash, &seen).expect("the shown report is not taken");
+        assert!(r.shown, "the shown mark is not seen");
+        assert_eq!(r.path, seen);
+        assert!(!crash.exists(), "the report was not moved aside");
+        std::fs::write(&crash, "kinetren x\npanic: boom\n").unwrap();
+        let r = take_crash_report_at(&crash, &seen).unwrap();
+        assert!(!r.shown, "an unshown report reads as shown");
+        assert_eq!(take_crash_report_at(&crash, &seen), None, "one crash is reported twice");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

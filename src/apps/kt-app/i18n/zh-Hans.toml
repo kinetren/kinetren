@@ -1402,6 +1402,23 @@ installed_into = "已安装到 {0}"
 sha_matches = "SHA-256 {0} 一致"
 open_folder = "打开文件夹"
 
+[crash]
+title = "Kinetren — 崩溃报告"
+headline = "Kinetren 异常关闭"
+panic = "程序因内部错误而停止："
+signal = "程序被信号 {0} 终止。"
+killed = "系统终止了程序 (SIGKILL)，通常是因为内存用完了。"
+exception = "Windows 终止了程序：{0}。"
+code = "程序退出，代码 {0}。"
+version = "版本：{0}"
+report = "报告：{0}"
+note = "未保存的工作仍在。“恢复项目”会重新启动 Kinetren 并提供它。"
+log_tail = "日志的最后几行："
+log_empty = "本次运行的日志为空。"
+restore = "恢复项目"
+logs = "打开日志文件夹"
+close = "关闭"
+
 [desktop]
 generic_name = "视频编辑器"
 comment = "非线性视频编辑器"

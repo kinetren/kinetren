@@ -5741,6 +5741,135 @@ fn t368_forget_removes_file_and_later_keeps_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A storage of eframe in memory: what `KtApp::save` would write.
+#[derive(Default)]
+struct MemStorage(std::collections::HashMap<String, String>);
+
+impl eframe::Storage for MemStorage {
+    fn get_string(&self, key: &str) -> Option<String> {
+        self.0.get(key).cloned()
+    }
+    fn set_string(&mut self, key: &str, value: String) {
+        self.0.insert(key.to_string(), value);
+    }
+    fn remove_string(&mut self, key: &str) {
+        self.0.remove(key);
+    }
+    fn flush(&mut self) {}
+}
+
+/// Test 1076 (render-crash-and-recovery D6): a lesson sandbox never becomes the last project.
+/// The owner's crash: `last_project` pointed at `lesson-5` (the import had left the document
+/// unnamed), the start reopened the lesson and restored the edit INTO it.
+#[test]
+fn t1076_sandbox_is_never_the_last_project() {
+    let dir = std::env::temp_dir().join(format!("kt-t1076-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("lessons")).unwrap();
+    let lesson = dir.join("lessons").join("lesson-5.kt");
+    std::fs::write(&lesson, "{}").unwrap();
+    assert!(crate::lessons::is_sandbox(&lesson), "the scene's path is not a sandbox");
+    let film = dir.join("film.kt");
+    std::fs::write(&film, "{}").unwrap();
+
+    let mut h = harness();
+    let app = h.state_mut();
+    app.project_path = Some(lesson.clone());
+    let mut st = MemStorage::default();
+    eframe::App::save(app, &mut st);
+    assert_eq!(st.0.get("last_project"), None, "the sandbox was stored as the last project");
+    // the guard of the scene: a person's project IS stored
+    app.project_path = Some(film.clone());
+    eframe::App::save(app, &mut st);
+    assert_eq!(st.0.get("last_project").map(String::as_str), Some(film.to_string_lossy().as_ref()));
+
+    // a sandbox an older build stored: the plan opens nothing from it, the recovery goes over an
+    // empty editor
+    let mut store = crate::user_store::StartStore::default();
+    let asked = std::cell::RefCell::new(Vec::new());
+    let plan = crate::welcome::plan_start(&mut store, Some(&lesson.to_string_lossy()), None, false, |p| {
+        asked.borrow_mut().push(p.map(|p| p.to_path_buf()));
+        true
+    });
+    assert_eq!(plan.open, None, "the start reopens the sandbox: {plan:?}");
+    assert!(
+        asked.borrow().iter().all(|p| p.as_deref() != Some(lesson.as_path())),
+        "recovery was looked up for the sandbox: {:?}",
+        asked.borrow()
+    );
+    assert!(store.recent.iter().all(|e| e.path != lesson), "the sandbox seeded the recent list");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 1077 (render-crash-and-recovery D6): "Recover" raises the restored document's OWN
+/// sources and takes its name. The owner's restore swapped the model only: the player kept the
+/// lesson's generators at the same media numbers (SMPTE bars and noise played), and the title,
+/// lock and save target stayed `lesson-5`.
+#[test]
+fn t1077_restore_raises_the_restored_sources() {
+    use kt_model::*;
+    let dir = std::env::temp_dir().join(format!("kt-t1077-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("lessons")).unwrap();
+    let settings = || ProjectSettings {
+        fps: 30,
+        width: 320,
+        height: 180,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    };
+    // the lesson: media 1 is a procedural source
+    let mut lesson = Project::new(settings());
+    lesson.media.push(MediaRef::new(MediaId(1), "synth:Ramp".to_string()));
+    // the unnamed recovery: media 1 is a FILE (gone, so it must come back as a placeholder)
+    let gone = dir.join("gone").join("2026-09-19 20-16-02.mkv");
+    let mut work = Project::new(settings());
+    work.media.push(MediaRef::new(MediaId(1), gone.to_string_lossy().to_string()));
+    let anon = dir.join("data").join("autosave-project.kt");
+    std::fs::create_dir_all(anon.parent().unwrap()).unwrap();
+    std::fs::write(&anon, crate::app::project_text_of(&work, &Default::default(), None)).unwrap();
+
+    let mut app = KtApp::new_with_project(None, lesson.clone());
+    app.recovery_on_drop = false;
+    app.project_path = Some(dir.join("lessons").join("lesson-5.kt"));
+    assert!(app.placeholder_media.is_empty(), "the scene: the lesson's source is a real one");
+    app.offer_recovery_list(crate::app::recovery_candidates_at(None, &anon), true);
+    assert_eq!(app.recovery_offer.len(), 1);
+    app.restore_recovery(0);
+    assert!(
+        app.placeholder_media.contains(&MediaId(1)),
+        "media 1 still answers with the lesson's source, not the restored file"
+    );
+    assert_eq!(app.model.document().media[0].path, gone.to_string_lossy());
+    assert_eq!(app.project_path, None, "the restored unnamed work kept the lesson's name");
+    assert!(app.dirty_content, "restored work must count as unsaved");
+    assert!(!app.recovery_open);
+    assert!(anon.exists(), "the recovery ate its own source");
+    assert!(!app.recovery_on_drop, "the harness's drop barrier was not carried over");
+
+    // a project's recovery restores under that project's name
+    let proj = dir.join("film.kt");
+    std::fs::write(&proj, "the user's file").unwrap();
+    let rec = crate::app::recovery_path_for(Some(&proj));
+    std::fs::write(&rec, crate::app::project_text_of(&work, &Default::default(), None)).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&proj)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(600))
+        .unwrap();
+    app.offer_recovery_list(crate::app::recovery_candidates_at(Some(&proj), &dir.join("none")), true);
+    app.restore_recovery(0);
+    assert_eq!(app.project_path.as_deref(), Some(proj.as_path()));
+    assert!(app.placeholder_media.contains(&MediaId(1)));
+    assert_eq!(std::fs::read_to_string(&proj).unwrap(), "the user's file", "the restore wrote the project");
+    drop(app);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Test 363 (R.49 A4, extends t150): two copies of the program that opened one
 /// project share neither the temp file nor the recovery file. A shared tmp
 /// would mean that `rename` of one copy replaces the project halfway with
@@ -19026,6 +19155,47 @@ fn t956_render_window_rows_come_from_the_run() {
         let r = label_rect(&low, tr(b)).unwrap_or_else(|| panic!("no “{}” button", tr(b)));
         assert!(screen.contains_rect(r), "“{}” left the screen of a low window: {r:?}", tr(b));
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 1071 (render-crash-and-recovery D1): frames past the total cost an estimate, not the
+/// program. The owner's render panicked here: `Duration::from_secs_f64` of a negative remaining
+/// time, the counter one frame past the floored total of an off-grid region.
+#[test]
+fn t1071_render_window_survives_frames_past_the_total() {
+    use kt_engine::export::ExportPhase;
+    let dir = render_scratch("t1071");
+    let mut h = harness_lang(Lang::En);
+    scripted_render(h.state_mut(), &dir);
+    render_step(h.state_mut(), 1.0, 30, 120, ExportPhase::Video);
+    render_step(h.state_mut(), 4.0, 121, 120, ExportPhase::Video);
+    h.step();
+    h.step();
+    let texts = shown_texts(&h);
+    assert!(texts.iter().any(|t| t == tr(k::render::ROW_REMAINING)), "no Remaining row: {texts:?}");
+    // elapsed and the length read 0:04: the only 0:00 is the remaining time
+    assert!(texts.iter().any(|t| t == "0:00"), "remaining past the total is not 0:00: {texts:?}");
+    // 121 frames written: the estimate is never below what is already on disk
+    let so_far = 121 * (250_000 + 24_000) / 30;
+    let want = crate::tf!(
+        k::render::SIZE_VALUE,
+        crate::render_dialog::size_text(so_far),
+        crate::render_dialog::size_text(so_far)
+    );
+    assert!(texts.contains(&want), "the size estimate shrank below the written bytes: {texts:?}");
+
+    // nothing done yet: no remaining row at all, still no panic
+    let mut h = harness_lang(Lang::En);
+    scripted_render(h.state_mut(), &dir);
+    render_step(h.state_mut(), 1.0, 0, 120, ExportPhase::Video);
+    h.step();
+    h.step();
+    assert!(!shown_texts(&h).iter().any(|t| t == tr(k::render::ROW_REMAINING)), "remaining before a frame");
+    // the display rows' guard itself
+    assert_eq!(crate::render_dialog::secs(-3.0), std::time::Duration::ZERO);
+    assert_eq!(crate::render_dialog::secs(f64::NAN), std::time::Duration::ZERO);
+    assert_eq!(crate::render_dialog::secs(f64::INFINITY), std::time::Duration::ZERO);
+    assert_eq!(crate::ffmpeg_setup::eta(0, Some(u64::MAX), Some(1e-300)), None);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

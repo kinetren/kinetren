@@ -93,6 +93,9 @@ pub(crate) enum Cmd {
     /// Do nothing — needed so that the harness can wait for a frame and
     /// make sure the program is alive and listening.
     Noop,
+    /// Panic on the UI thread — the crash window's live scenario (render-crash-and-recovery D7).
+    /// Only the bench can ask for it: no variable or menu item crashes a normal run.
+    Crash,
 }
 
 /// The store assigned by the bench (see `Cmd::Store`). `user_store::store_dir`
@@ -145,6 +148,7 @@ pub(crate) fn poll() -> Option<(u64, Cmd)> {
         "open" => Cmd::Open(PathBuf::from(it.next()?.trim())),
         "store" => Cmd::Store(PathBuf::from(it.next()?.trim())),
         "noop" => Cmd::Noop,
+        "crash" => Cmd::Crash,
         _ => return None,
     };
     Some((seq, cmd))
