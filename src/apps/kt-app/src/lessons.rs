@@ -59,6 +59,7 @@ pub enum Target {
 
 /// The named controls a lesson may point at. Each is marked by a `lesson_mark::control("<name>"`
 /// call in the program's sources (t1092): a renamed control cannot leave a dead step.
+#[cfg_attr(not(test), allow(dead_code))]
 pub const CONTROLS: &[&str] = &["fxreg.add", "fx.auto_add", "tb.loop", "tb.render", "tr.kind", "render.start"];
 
 /// When a step is done — a closed set, evaluated by one pure function (`done`).
@@ -300,6 +301,9 @@ impl Observed {
         OBSERVED_WINDOWS.iter().position(|w| *w == id).is_some_and(|i| self.open & (1 << i) != 0)
     }
 }
+
+/// A timeline row: its kind and track number.
+type Row = (kt_model::LaneKind, u32);
 
 /// The re-check key: everything a predicate reads that is not inside the model revision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -634,7 +638,7 @@ impl crate::app::KtApp {
     }
 
     /// The timeline span of a timeline target, and its row.
-    fn target_span(&self, t: Target) -> Option<(Tick, Tick, Option<(kt_model::LaneKind, u32)>)> {
+    fn target_span(&self, t: Target) -> Option<(Tick, Tick, Option<Row>)> {
         use kt_model::{ClipKind, LaneKind};
         let p = self.model.project();
         match t {
@@ -659,7 +663,7 @@ impl crate::app::KtApp {
     }
 
     /// Bring a timeline span and its row into view (the view's own arithmetic, `center_view_on`).
-    fn reveal_span(&mut self, a: Tick, b: Tick, row: Option<(kt_model::LaneKind, u32)>) {
+    fn reveal_span(&mut self, a: Tick, b: Tick, row: Option<Row>) {
         let visible = self.tl_geom.as_ref().is_some_and(|g| {
             let (x0, x1) = (g.tick_to_x(a.0), g.tick_to_x(b.0));
             x0 >= g.rect.left() && x1 <= g.rect.right()
@@ -879,6 +883,12 @@ impl crate::app::KtApp {
             self.start.lessons.open = false;
         }
         if let Some((n, fresh)) = go {
+            // "Next lesson" leaves the program's OWN copy: its edits are kept without a question
+            // (the live walk met "Unsaved work" about the sandbox there). "Start over" still
+            // asks — it discards them (t988)
+            if !fresh && self.project_path.as_deref().is_some_and(is_sandbox) && (self.dirty_content || self.dirty_ui) {
+                self.save();
+            }
             self.start_go(crate::welcome::StartGo::Lesson { lesson: n, fresh });
         }
     }

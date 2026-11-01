@@ -11,7 +11,10 @@ month, newest first.
 - **The tour no longer lags or misleads.** "Play a part in a loop" counts the moment the loop is
   on, even with a window open; the transitions lesson teaches **Transition with previous** (an
   overlap stays a cut); after an effect or a transition the lesson says what changed and moves
-  the playhead to where you can see it. And the render lesson tells silly jokes while it waits.
+  the playhead to where you can see it. "Next lesson" no longer asks to save the lesson's own
+  copy, the lessons panel no longer hides the right end of the toolbar, and the render lesson
+  tells silly jokes while it waits.
+- **Click a marker on the ruler** to put the playhead on it.
 - **Changing an audio effect takes effect at once.** Put a filter where an equaliser stood
   and you hear the filter right away — before, the old effect kept playing with the new
   settings until you jumped in time.

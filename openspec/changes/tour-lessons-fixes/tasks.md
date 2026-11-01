@@ -34,8 +34,10 @@
 
 ## 4. A person's walk and the records
 
-- [ ] 4.1 Live scenario `src/scripts/live/lessons.py`: all five lessons through the real gestures, a
-      screenshot per step; anything else of the same kind found is fixed and recorded as a scenario
+- [x] 4.1 Live scenario `src/scripts/live/lessons.py`: all five lessons through the real gestures, a
+      screenshot per step; anything else of the same kind found is fixed and recorded as a scenario.
+      Found and fixed: a click on a marker did nothing (t1093); the panel clipped the toolbar's Loop
+      button (t1094, D8); "Next lesson" asked to save the sandbox (t1095)
 - [x] 4.2 `docs/guide/whats-new.md` (kt26.11), the registry rows K2–K8 (`kkt-26.11.01-index.md`),
       F-HLP-028's verdict addendum (the jokes), `ktprompts-index.py --check`, `features-index.py --check`
 - [ ] 4.3 `cargo test -p kt-app`, `cargo test --workspace`, `cargo clippy --all-targets`

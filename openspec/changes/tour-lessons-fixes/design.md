@@ -95,6 +95,16 @@ invariant 11 is not touched) and calls `request_repaint_after` for the next swit
 already repaints; this only guarantees the switch). Rejected: random order — a test could not tell
 "changed" from "the same by chance".
 
+### D8. The panel is drawn after the timeline (found by the live walk)
+The first form drew the lessons panel BEFORE the timeline so it spanned the window's height. It then
+narrowed the timeline AND its bottom toolbar, a fixed left-to-right row clipped at the panel's
+edge: in a 1440 px window the Loop button lesson 1 names (and Undo, Redo, Render, Search) was not on
+screen. The lessons point at the timeline more than at anything else, so the timeline keeps the full
+width and the panel sits beside the preview — it still narrows the editor and still adds no layer.
+The harness missed it: a widget's recorded rect ignores the clip, so the guard (t1094) compares the
+outline with the timeline panel's visible width. Rejected: making the toolbar row fit beside the
+panel — a wider layout change of shared code, while the lessons need the timeline whole anyway.
+
 ## Risks / Trade-offs
 
 - **The CJK/Arabic font subsets** must be regenerated for the new catalog text
@@ -103,9 +113,9 @@ already repaints; this only guarantees the switch). Rejected: random order — a
 - **Shared files**: `toolbar.rs` (menu roots, two marks), `timeline.rs` (one mark), `fx_registry.rs`
   (one line), `render_dialog.rs` (one line) — other executors edit those files; hunks are kept to
   one or two lines.
-- **The bottom toolbar row is wider than 1440 px** (found by t1087 at 1440×860, with or without
-  the lessons panel): the Render button the export lesson names overflows the right edge there.
-  Not this change's layout: the lesson tests run at the owner's 1920×1080, and the overflow is
-  a follow-up for the window-layout work of this round (kkt-26.11.01 item 12).
+- **The bottom toolbar row is ~1460 px wide** (found by t1087 at 1440×860, with or without the
+  lessons panel): below that width the Render button at its right end is cut. Not this change's
+  layout: the lesson tests run at the owner's 1920×1080, t1094 holds the Loop button at 1440, and the
+  row's own width is a follow-up for the window-layout work of this round (kkt-26.11.01 item 12).
 - **Arabic run order** for wrapped lines stays as imperfect as every wrapped Arabic label today (the
   build-time limitation named at `MAX_VALUE_CHARS`).

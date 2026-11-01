@@ -538,10 +538,6 @@ pub(crate) mod lesson_mark {
         CUR.set(targets);
     }
 
-    pub(crate) fn current() -> &'static [Target] {
-        CUR.get()
-    }
-
     /// Record an outline drawn elsewhere (the timeline targets, drawn by `lessons.rs`).
     pub(crate) fn note(tag: &'static str, r: egui::Rect) {
         SEEN.with(|s| s.borrow_mut().push((tag, r)));

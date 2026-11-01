@@ -45,6 +45,7 @@ in the menu of a track's empty space.
 | <kbd>Shift</kbd>+<kbd>A</kbd> / <kbd>Shift</kbd>+<kbd>D</kbd> | jump back / forward and drag the left / right region edge along; with no region, select the stretch just jumped over |
 | <kbd>L</kbd> | loop the region on / off |
 | <kbd>M</kbd> | add a marker at the playhead, or remove the one next to it; with the playhead inside the region, add or remove a range marker over the region |
+| click a marker on the ruler | move the playhead onto it |
 | drag a marker | move it |
 | drag a region edge | move it |
 | double-click a range marker on the ruler | region over it, with its events selected |

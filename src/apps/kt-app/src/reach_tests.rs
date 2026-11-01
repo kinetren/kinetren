@@ -7708,3 +7708,93 @@ fn t1092_every_lesson_control_is_marked_by_its_widget() {
         assert!(corpus.contains(&call), "no widget marks the control “{name}” (`{call}`)");
     }
 }
+
+/// Test 1093 (tour-lessons-fixes, ui-reach, found by the live `lessons` walk): a click on a marker
+/// on the ruler puts the playhead on it — the marker's hit zone swallowed the click, and the cut
+/// lesson's "put the playhead on the marker" was a dead end.
+///
+/// - **PATH** lesson 1, step 2 → click the CUT HERE marker on the ruler → the playhead jumps to
+///   0:06 → press S → the first event is in two pieces at the marker and step 2 is checked
+#[test]
+fn t1093_a_click_on_a_marker_puts_the_playhead_on_it() {
+    let (mut h, dir) = lesson_at("t1093", 1, 2);
+    h.state().player.seek(Tick(52 * 90_000));
+    h.step();
+    let g = tl_geom(&h);
+    let at = Tick(6 * 90_000);
+    let pos = egui::pos2(g.tick_to_x(at.0), g.rect.top() + crate::timeline::RULER_H * 0.5);
+    h.hover_at(pos);
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        h.step();
+    }
+    h.step();
+    assert_eq!(playhead(&h), at, "a click on the marker did not move the playhead onto it");
+    let m = h.state().model.project().markers.iter().find(|m| m.name == crate::lessons::CUT_MARKER).map(|m| m.t);
+    assert_eq!(m, Some(at), "the click moved the marker");
+    h.hover_at(egui::pos2(g.tick_to_x(20 * 90_000), g.lane_y(kt_model::ClipKind::Video, 1, 0.5)));
+    h.step();
+    h.key_press(egui::Key::S);
+    h.step();
+    h.step();
+    assert!(h.state().start.store.tour.is_done(1, 2), "the cut at the marker did not close step 2");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 1094 (tour-lessons-fixes, ui-reach, found by the live `lessons` walk): the lessons panel
+/// leaves the timeline and its toolbar whole — drawn before the timeline it clipped the toolbar
+/// row, and the Loop button lesson 1 names was off screen in a 1440 px window.
+///
+/// - **PATH** open lesson 1 in a 1440-wide window, reach step 4 → the panel stands beside the
+///   preview, the timeline runs to the right edge under it → the Loop button in the toolbar is
+///   outlined and visible
+#[test]
+fn t1094_the_lessons_panel_leaves_the_toolbar_whole() {
+    crate::plugins::install();
+    let dir = welcome_store("t1094");
+    let mut h = crate::layout_tests::harness_sized(1440.0, 860.0);
+    h.state_mut().start.store = crate::user_store::StartStore::at(Some(dir.clone()));
+    h.state_mut().open_lesson(1, true);
+    for s in 1..4 {
+        h.state_mut().start.store.finish_step(1, s);
+    }
+    for _ in 0..4 {
+        h.step();
+    }
+    let screen = h.ctx.content_rect();
+    let tl = h.state().timeline_rect;
+    assert!(tl.right() >= screen.right() - 2.0, "the lessons panel narrowed the timeline: {tl:?} in {screen:?}");
+    let r = crate::widgets::lesson_mark::seen("tb.loop").expect("the loop button is outlined");
+    assert!(tl.contains_rect(r) && screen.contains_rect(r), "the loop button {r:?} is not visible in the timeline {tl:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 1095 (tour-lessons-fixes, ui-reach, found by the live `lessons` walk): "Next lesson" keeps
+/// the edited lesson copy without the unsaved-work question.
+///
+/// - **PATH** finish lesson 1 → the panel reads "Lesson done" → press Next lesson → lesson 2 opens
+///   at once, no "Unsaved work" window
+#[test]
+fn t1095_next_lesson_keeps_the_copy_without_a_question() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    let (mut h, dir) = lesson_at("t1095", 1, 4);
+    let path = h.state().project_path.clone().unwrap();
+    // the edit: a region with the loop — the step closes, the lesson is done, the copy is dirty
+    let r = kt_model::Region { start: Tick(20 * 90_000), end: Tick(30 * 90_000) };
+    h.state_mut().model.set_region(Some(r));
+    h.state_mut().toggle_loop();
+    h.step();
+    h.step();
+    assert!(h.state().start.store.tour.is_done(1, 4));
+    assert!(h.state().dirty_content || h.state().dirty_ui, "the scene has nothing to lose — the test proves nothing");
+    h.get_by_label(tr(k::lessons::NEXT)).click();
+    h.step();
+    h.step();
+    assert!(h.state().ask.is_none(), "Next lesson asked about the program's own lesson copy");
+    assert_eq!(h.state().start.lessons.lesson, 2, "lesson 2 did not open");
+    let kept = crate::app::KtApp::open(&path).expect("the lesson-1 copy reads").model.project().region;
+    assert_eq!(kept.map(|r| r.start), Some(r.start), "the lesson-1 copy lost its edits");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -151,6 +151,50 @@ closed the step and left the person not knowing where the morpher is.
   BATCH morpher block, outlined → double-click it → the morpher window opens and step 1 is checked
 - **TEST** t1088 (`src/apps/kt-app/src/reach_tests.rs`)
 
+### Requirement: The lessons panel leaves the timeline and its toolbar whole
+The lessons panel SHALL narrow only the area above the timeline: the timeline and its bottom toolbar
+keep the window's full width, so a control a lesson names in that toolbar stays on screen.
+Why: found by the live walk (tour-lessons-fixes): drawn before the timeline, the panel clipped the
+toolbar row at its edge, and in a 1440 px window the Loop button lesson 1 names was not visible.
+
+#### Scenario: The Loop button stays visible beside the lessons
+- **WHEN** lesson 1, step 4 is open in a 1440×860 window
+- **THEN** the timeline panel spans the window's width, and the Loop button's outline lies inside it
+- **PATH** open lesson 1 in a 1440-wide window, reach step 4 → the panel stands beside the preview,
+  the timeline runs to the right edge under it → the Loop button in the toolbar is outlined and
+  visible
+- **TEST** t1094 (`src/apps/kt-app/src/reach_tests.rs`)
+
+### Requirement: "Next lesson" keeps the lesson copy without a question
+"Next lesson" SHALL save the edited lesson copy (the program's own sandbox) and open the next lesson
+without the unsaved-work question; "Start over" SHALL still ask, since it discards the edits.
+Why: found by the live walk (tour-lessons-fixes): finishing lesson 1 and pressing "Next lesson"
+raised "Unsaved work — Save and continue / Discard / Stay here" about a file the person never chose.
+
+#### Scenario: Next lesson after an edited lesson
+- **WHEN** lesson 1 is finished with its copy edited and "Next lesson" is pressed
+- **THEN** no question is asked, lesson 2 opens, and the lesson-1 copy on disk holds the edits
+- **PATH** finish lesson 1 → the panel reads "Lesson done" → press Next lesson → lesson 2 opens at
+  once, no "Unsaved work" window
+- **TEST** t1095 (`src/apps/kt-app/src/reach_tests.rs`)
+
+### Requirement: A click on a marker puts the playhead on it
+A plain click (no drag) on a marker on the ruler SHALL move the playhead onto the marker, as a click
+on the ruler beside it does (it snaps there); a drag still moves the marker and a right click still
+offers its menu. The marker's hover hint SHALL name the click.
+Why: found by the live walk of the tour (tour-lessons-fixes): the cut lesson says "put the playhead
+on the marker", and the marker's hit zone swallowed the click — the playhead stayed where it was and
+S cut somewhere else.
+
+#### Scenario: Click the marker, then cut there
+- **WHEN** lesson 1, step 2 with the playhead at 0:52; the CUT HERE marker is clicked on the ruler;
+  S is pressed over the timeline
+- **THEN** the playhead stands at the marker (0:06) and the marker has not moved; the first event is
+  in two pieces at the marker and the step is checked
+- **PATH** lesson 1, step 2 → click the CUT HERE marker on the ruler → the playhead jumps to 0:06 →
+  press S → the first event is in two pieces at the marker and step 2 is checked
+- **TEST** t1093 (`src/apps/kt-app/src/reach_tests.rs`)
+
 ### Requirement: Lesson 3 teaches the transition the program makes
 The transitions lesson SHALL teach "Transition with previous" from an event's right-click menu and
 close its first step on a video transition between two events; the item SHALL be outlined in that

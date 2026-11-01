@@ -58,6 +58,11 @@ def main(out):
     def closed(lesson, step, timeout=20.0):
         return wait_for(lambda: step in done(lesson) or None, timeout) is True
 
+    # the system save dialog does not exist in Xvfb: the answer is substituted, the gesture is real
+    film = os.path.join(out, "lesson-5.mp4")
+    if os.path.exists(film):
+        os.remove(film)
+    os.environ["KT_FILE_PICK"] = film
     with Live("lessons", out, own_process=True) as app:
         def rect(name):
             return app._probe_rect(name)
@@ -68,6 +73,9 @@ def main(out):
             win = geometry()
             return win["x"] + int(f["x"] + f["w"] / 2), win["y"] + int(f["y"] + f["h"] / 2)
 
+        # the owner's working width: below ~1460 px the toolbar row cuts its Render button with or
+        # without the lessons (a follow-up of item 12); the Loop button at 1440 is t1094's
+        app.resize(1900, 1000)
         # --- lesson 1 ------------------------------------------------------------------------
         app.expect(app.has_probe("welcome.tour"), "the first start offers the tour")
         app.click_probe("welcome.tour", "Start the tour")
@@ -86,19 +94,17 @@ def main(out):
         app.expect(app.has_probe("win.fx"), "the title's window is open")
         app.step("l1-title", "a title event, step 1 checked; step 2 names the marker; the marker outlined")
         app.expect(app.has_probe("lesson.mark.marker"), "the CUT HERE marker is outlined")
-        # the cut: the playhead on the marker by a click on the ruler, then S over the timeline
+        # the cut: a click on the marker puts the playhead on it (it once did nothing — t1093)
         app.click(app.x_at(6 * S), app.ruler_y())
+        app.wait_playhead(lambda t: abs(t - 6 * S) < S // 30, "the click on the marker moved the playhead onto it")
         app.hover(app.x_at(20 * S), app.lane_y("video", 1, 0.5))
         app.key("s")
-        if not closed(1, 2, 8.0):
-            # the title's text field may hold the keys: a click on the timeline takes focus back
-            app.click(app.x_at(6 * S), app.ruler_y())
-            app.key("s")
         app.expect(closed(1, 2), "the cut at the marker closed step 2")
         app.expect(app.has_probe("lesson.mark.clip"), "the event under NIGHT CITY is outlined")
         app.step("l1-cut", "the event cut at the marker; the event under NIGHT CITY outlined")
         y = app.lane_y("video", 0, 0.7)
-        app.drag(app.x_at(57 * S), y, app.x_at(60 * S), y)
+        # grabbed clear of the title, which the generator menu laid over it at the playhead
+        app.drag(app.x_at(62 * S), y, app.x_at(60 * S), y)
         app.expect(closed(1, 3), "moving the event closed step 3")
         app.expect(app.has_probe("lesson.mark.ruler"), "the ruler is outlined")
         app.expect(app.has_probe("lesson.mark.tb.loop") and app.has_probe("tb.loop"), "the loop button is outlined")
@@ -206,7 +212,7 @@ def main(out):
         app.expect(closed(5, 1), "the render settings closed step 1")
         app.expect(app.has_probe("lesson.mark.render.start"), "Start is outlined")
         app.step("l5-settings", "the render settings, Start outlined")
-        app.click_probe("render.start", "Start")
+        app.click_probe("render.start", "Render…")
         app.expect(app.has_probe("lessons.joke"), "a joke shows while the render runs")
         app.step("l5-joke", "the render runs, the lessons panel jokes")
         first = rect("lessons.joke")

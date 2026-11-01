@@ -3082,6 +3082,13 @@ impl KtApp {
                     self.drag = Some(Drag::MarkerEdge { start, left: true, cur: start });
                 }
             } else if let Some(m) = marker_at(self, pos) {
+                if response.clicked() {
+                    // a click ON the marker puts the playhead on it, as a click on the ruler
+                    // beside it does (snap, item 29): the marker's hit zone swallowed the click,
+                    // and the cut lesson's "put the playhead on the marker" was a dead end
+                    // (tour-lessons-fixes, live `lessons`; t1093)
+                    self.player.seek(Tick(m.max(CURSOR_FLOOR)));
+                }
                 if response.drag_started() {
                     self.drag = Some(Drag::Marker { orig: m, cur: m });
                 }
