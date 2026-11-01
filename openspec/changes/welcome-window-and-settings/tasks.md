@@ -22,7 +22,7 @@
       its own `window_body` (Start: primary, templates with frame shape, tour tile, five lessons with progress;
       Recent: growing poster grid; What's new), action row Guide / Preferences… / Close; no checkbox —
       verify t986, t1290, t1292, t918, t1125, t1127
-- [ ] 2.3 live scenario `src/scripts/live/welcome.py`: the start window at default and enlarged, File ›
+- [x] 2.3 live scenario `src/scripts/live/welcome.py`: the start window at default and enlarged, File ›
       Preferences…; `update.py`, `diagnostics.py`, `ffmpeg_download.py` probes moved to `prefs.*` — run them
       with `KT_LIVE_DISPLAY=:285`, screenshots in `target/live-out`
 
@@ -35,6 +35,9 @@
 
 ## 4. Close
 
-- [ ] 4.1 `git merge master`, `cargo test --workspace --no-fail-fast`, `cargo clippy --all-targets` (no new warnings)
+- [x] 4.1 `git merge master`, `cargo test --workspace --no-fail-fast`, `cargo clippy --all-targets` (no new warnings)
+      — master e9b2155c merged (catalogs: `[prefs]` and `[masks]` both kept, CJK subset rebuilt); workspace
+      green except t640, t815, t20, t1171 under a full disk and load — all four green alone; clippy: no
+      warning in a touched file
 - [ ] 4.2 `src/scripts/finish.sh` — version recorded here and in the report
 - [ ] 4.3 archive: specs merged, the "why" appended to `openspec/specs/ui-reach/design.md`
