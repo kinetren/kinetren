@@ -80,6 +80,9 @@ pollster = "0.4"
 glam = "0.30"
 cpal = "0.16"
 rubato = "0.16"
+# the one math of the frozen paths (kt_plugin_api::math, ci-green-again): pure Rust, the same
+# bytes on every platform and CPU — the platform libm differs between glibc and mingw
+libm = "0.2.16"
 rusqlite = { version = "0.37", features = ["bundled"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 realfft = "3"

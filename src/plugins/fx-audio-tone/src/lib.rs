@@ -3,6 +3,7 @@
 //! passport repeats the enum variant's fields in their order, types and defaults (t973 holds the
 //! bytes of the file, GOLDEN_AUDIO the bytes of the sound).
 
+use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;
 
 use kt_plugin_api::dsp::{AUDIO_SAMPLE_RATE, Biquad, BiquadKind, CH, SmoothedParam, TUNE_STEP, Tick, apply_width, softclip};
@@ -325,12 +326,12 @@ impl AudioState for DistNode {
 
     fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
         for fr in buf.chunks_exact_mut(CH) {
-            let g = 10f32.powf(self.drive_db.tick() / 20.0);
+            let g = 10f32.fpowf(self.drive_db.tick() / 20.0);
             let comp = 1.0 / g.sqrt();
             let tone = self.tone.tick().clamp(0.0, 1.0);
             // tone: one-pole LP 500..12000 Hz (exp-map)
-            let f = 500.0 * (12_000.0f32 / 500.0).powf(tone);
-            let alpha = 1.0 - (-2.0 * std::f32::consts::PI * f / AUDIO_SAMPLE_RATE as f32).exp();
+            let f = 500.0 * (12_000.0f32 / 500.0).fpowf(tone);
+            let alpha = 1.0 - (-2.0 * std::f32::consts::PI * f / AUDIO_SAMPLE_RATE as f32).fexp();
             let k = self.mix.tick().clamp(0.0, 1.0);
             for (ch, s) in fr.iter_mut().enumerate() {
                 let dry = *s;
@@ -431,7 +432,7 @@ impl AudioState for CrushNode {
             let bits = self.bits.tick().clamp(1.0, 16.0);
             let rate = self.rate_hz.tick().clamp(500.0, 48_000.0) as f64;
             let k = self.mix.tick().clamp(0.0, 1.0);
-            let q = (2f32).powf(bits - 1.0);
+            let q = (2f32).fpowf(bits - 1.0);
             let p = pos + i as i64;
             // the hold grid is tied to the clip’s POSITION, not to a counter
             let cell = ((p as f64) * rate / AUDIO_SAMPLE_RATE as f64).floor() as i64;

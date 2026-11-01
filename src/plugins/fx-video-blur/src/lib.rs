@@ -3,6 +3,7 @@
 //! resample (`RasterHost::resample` on the CPU, the `Resample` node on the GPU) — one text with the
 //! core's own resample and its AVX2 twin; each kernel below is the former kt-fx kernel verbatim.
 
+use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;
 
 use kt_plugin_api::barrier::{BarrierCtx, BarrierKernel, Frame, GpuCtx, Node, Scratch, Slot};
@@ -403,7 +404,7 @@ impl BarrierKernel for RadialBlur {
                     let t = i as f64 / (N - 1) as f64;
                     let (sx, sy) = if spin {
                         let a = 0.6 * amount * (t - 0.5);
-                        let (sa, ca) = a.sin_cos();
+                        let (sa, ca) = a.fsin_cos();
                         (px * ca - py * sa, px * sa + py * ca)
                     } else {
                         let k = 1.0 - 0.5 * amount * t;

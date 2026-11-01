@@ -2,6 +2,7 @@
 //! They live in the main crate (not under #[cfg(test)]) so that downstream crates
 //! can use them in their tests.
 
+use kt_plugin_api::math::FrozenMath;
 use crate::{AudioBurst, MediaError, MediaInfo, MediaSource, Quality, VideoFrame};
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, Tick};
 
@@ -163,7 +164,7 @@ impl SyntheticSource {
 }
 
 fn sine(hz: f64, n: i64) -> f32 {
-    (0.5 * (2.0 * std::f64::consts::PI * hz * n as f64 / AUDIO_SAMPLE_RATE as f64).sin()) as f32
+    (0.5 * (2.0 * std::f64::consts::PI * hz * n as f64 / AUDIO_SAMPLE_RATE as f64).fsin()) as f32
 }
 
 fn ramp(n: i64, ch: usize) -> f32 {
@@ -181,7 +182,7 @@ fn clicks(n: i64, ch: usize) -> f32 {
 
 fn clicks_bed(n: i64, ch: usize) -> f32 {
     let bed = 0.02
-        * (2.0 * std::f64::consts::PI * 200.0 * n as f64 / AUDIO_SAMPLE_RATE as f64).sin() as f32;
+        * (2.0 * std::f64::consts::PI * 200.0 * n as f64 / AUDIO_SAMPLE_RATE as f64).fsin() as f32;
     clicks(n, ch) + bed
 }
 

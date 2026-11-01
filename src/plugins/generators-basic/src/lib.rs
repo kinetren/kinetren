@@ -3,6 +3,7 @@
 //! (the file text does not move — t973), the `gen:` path tokens of the former `format_gen_path` /
 //! `apply_token` arms, and the frame of the former `render_at` arm, verbatim (t1048).
 
+use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;
 
 use kt_plugin_api::generator::{
@@ -55,7 +56,7 @@ fn gradient(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
     // a projection of the normalised coordinates onto the direction of the angle,
     // stretched over the whole frame: at any angle both colours are visible
     let rad = angle_deg.to_radians();
-    let (dx, dy) = (rad.cos(), rad.sin());
+    let (dx, dy) = (rad.fcos(), rad.fsin());
     let corners = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)].map(|(x, y): (f64, f64)| x * dx + y * dy);
     let lo = corners.iter().cloned().fold(f64::INFINITY, f64::min);
     let hi = corners.iter().cloned().fold(f64::NEG_INFINITY, f64::max);

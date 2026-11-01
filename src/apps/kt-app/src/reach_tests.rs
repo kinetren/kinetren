@@ -6372,7 +6372,14 @@ fn t986_welcome_window_templates_recent_whats_new_and_the_switch() {
     // `canonicalize` added the verbatim `\\?\` (CI of 94e36e9e on windows-latest)
     let folder = kt_dirs::canonical(&projects).unwrap().display().to_string();
     assert!(h.query_all_by_label_contains(&folder).count() >= 2, "each card names its folder: {folder}");
-    assert_eq!(h.query_all_by_label_contains(r"\\?\").count(), 0, "a card shows the verbatim prefix");
+    // a CARD (a label naming the projects' folder) — What's new may quote the prefix in prose
+    use egui_kittest::kittest::NodeT;
+    let tag = projects.file_name().unwrap().to_string_lossy().to_string();
+    let cards: Vec<String> = h
+        .query_all_by_label_contains(&tag)
+        .filter_map(|n| n.accesskit_node().label().map(|l| l.to_string()))
+        .collect();
+    assert!(cards.iter().all(|l| !l.contains(r"\\?\")), "a card shows the verbatim prefix: {cards:?}");
     let (ver, _) = crate::guide::whats_new(kt_version::SHORT);
     let head = if ver == kt_version::SHORT {
         crate::tf!(k::welcome::WHATS_NEW, &ver)

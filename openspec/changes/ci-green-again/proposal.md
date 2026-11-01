@@ -41,10 +41,17 @@ Six causes, each read in the log and in the code:
 Item 1 gets a guard too: `dist-check.py` refuses a script that mounts the registry without
 `cargo-registry.sh`, or a `cargo-registry.sh` that does not hand the volume over (**t1064**).
 
-Not in scope: Windows t973c, t1019 and t1048 fail because their frozen hashes were printed on
-Linux and MinGW's `powf`/`tan` round differently (invariant 11). The owner was asked to choose
-between per-platform tables and our own deterministic kernel math; those three wait for that
-answer.
+7. **Windows t973c, t1019, t1048** — the frozen hashes were printed on Linux, and the kernels
+   called the platform's libm (`f32::sin`, `powf`, `tanf`, `atan2f`…), which rounds differently
+   on Windows; rubato built the warp's sinc table with it too, and picks its dot product by the
+   CPU. The owner's decision (01.11, in scope since then): "own math, close to Linux, where Linux
+   is the more accurate one". The kernels now call one module, `kt_plugin_api::math` (pure-Rust
+   libm; the `f32` functions are the `f64` ones rounded once, i.e. correctly rounded but for ~2⁻²⁸
+   of inputs), and the warp uses our own sinc interpolator on it. **t1065** holds the math within
+   one ulp of glibc on a sweep, **t1066** refuses a direct std call in the frozen crates, **t1067**
+   holds the warp's AVX path bit-equal to its portable one. Eight values of t973c are re-based —
+   and they are exactly the values windows-latest printed: on those inputs glibc was the one an
+   ulp off. No other reference moved.
 
 ## Capabilities
 
@@ -58,7 +65,8 @@ answer.
   (t1060), and every container that mounts a registry volume hands it to the user first (t1064).
 - `durability`: the live guards each run in their own output folder (t801, t802); a canonical
   path is shown and keyed without the Windows verbatim prefix (t1062, t986).
-- `export`: a forced encoder outside the system's cascade is an error naming it (t1063, t962).
+- `export`: a forced encoder outside the system's cascade is an error naming it (t1063, t962);
+  invariant 11 — no platform libm on a frozen path (t1065, t1066, t1067, t973c re-based).
 
 ## Impact
 
@@ -68,4 +76,8 @@ answer.
 - `src/scripts/dist-check.py` (`check_recommends`).
 - `src/libs/kt-ffmpeg/src/muxer_impl.rs`, `src/libs/kt-dirs/src/lib.rs`,
   `src/apps/kt-app/src/user_store.rs`.
-- Tests: t935, t801, t802, t962, t986 adjusted; t1060, t1062, t1063, t1064 new.
+- `src/libs/kt-plugin-api/src/math.rs` (new, depends on `libm`, already in the lock and the
+  Flatpak sources), every frozen-path call site in kt-model, kt-fx, kt-media, kt-engine,
+  kt-plugin-api and the plugin families; `src/libs/kt-fx/src/audio/sinc.rs` (new).
+- Tests: t935, t801, t802, t962, t986, t975 (the API's allowed deps gain `libm`), t973c (eight
+  values re-based) adjusted; t1060, t1062–t1067 new.

@@ -3,6 +3,7 @@
 //! composite.wgsl holds their WGSL mirrors (`samp`, `front_mask`, `t_hash`, `value_noise`, `box9`,
 //! `over_straight`). Every per-pixel helper is `#[inline]`: the release profile has no LTO, and a call
 //! across the crate boundary would not be inlined otherwise.
+use crate::math::FrozenMath;
 
 /// A frame as a sampling source. A frame without alpha is read as opaque —
 /// the same policy as `dissolve_into`. `Clear` — the EMPTY side of a
@@ -227,7 +228,7 @@ pub fn rot_sample(
     ox: f32,
     oy: f32,
 ) -> [f32; 4] {
-    let (s, c) = (ang.sin(), ang.cos());
+    let (s, c) = (ang.fsin(), ang.fcos());
     let (cx, cy) = ((u - ox) * aspect / zoom, (v - oy) / zoom);
     let rx = cx * c - cy * s;
     let ry = cx * s + cy * c;

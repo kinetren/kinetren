@@ -18,11 +18,18 @@
 - [x] 3.1 The muxer names a forced encoder this system's cascade never tries, with the cascade — t1063 (red on the old muxer: "last error: ")
 - [ ] 3.2 t962 expects that error where the cascade has no VAAPI — t962 under wine and on Linux
 
-## 4. Records and finish
+## 4. One math for the frozen paths (export, invariant 11)
 
-- [x] 4.1 What's new (`docs/guide/whats-new.md`, kt26.11): the welcome cards on Windows name the folder without `\\?\`
-- [x] 4.2 Registry row C1 of `docs/ktprompts/kkt-26.11.01-index.md` moves to done; `python3 src/scripts/ktprompts-index.py --check` green
-- [ ] 4.3 `cargo test --workspace` and `cargo clippy --all-targets` green; `src/scripts/finish.sh` — version recorded here
+- [x] 4.1 `kt_plugin_api::math` + `FrozenMath` on `libm` (`f32` through `f64`); every frozen call site converted — the workspace builds
+- [x] 4.2 t1065: within one ulp of glibc on a 200 000-point sweep per function (shares printed)
+- [x] 4.3 t1066: no `x.sin(`/`f64::powf(` kin in the frozen crates and the families; the scanner proven on probe lines
+- [x] 4.4 The warp's `FrozenSinc` (rubato's table on our math, AVX+FMA product as the rounding) — t1067
+- [x] 4.5 t973c: eight values re-based (= the windows-latest values of 94e36e9e); t1019, t1048 unchanged on Linux; t975 allows `libm`
+- [ ] 4.6 Under wine (`kinetren-build:windows`): t973c, t1019, t1048, t962, t986, t1062, t1063 green
 
-Not in this change, waiting for the owner: Windows t973c, t1019, t1048 — frozen hashes printed on
-Linux, MinGW's `powf`/`tan` round differently (invariant 11).
+## 5. Records and finish
+
+- [x] 5.1 What's new (`docs/guide/whats-new.md`, kt26.11): the welcome cards on Windows name the folder without `\\?\`
+- [x] 5.2 Registry row C1 of `docs/ktprompts/kkt-26.11.01-index.md` moves to done; `python3 src/scripts/ktprompts-index.py --check` green
+- [ ] 5.3 `cargo test --workspace` and `cargo clippy --all-targets` green; `src/scripts/finish.sh` — version recorded here
+

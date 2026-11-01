@@ -17,10 +17,17 @@ const CH: usize = AUDIO_CHANNELS;
 const DUR: i64 = 48_000;
 
 /// (tag, [default, at 70 %, a curve, reversed]) — printed on c53131f, before any audio kind moved.
+///
+/// RE-BASED once, by ci-green-again (invariant 11), not to follow a move: eight values were glibc's
+/// roundings, which windows-latest did not reproduce. The kernels now call `kt_plugin_api::math`
+/// (correctly rounded in `f32`) and the warp its own sinc table, the same bytes on every platform.
+/// The new values of `slowed_reverb` (all four), `phaser` (default, 70 %, reversed) and
+/// `pitch_shift` (70 %) are EXACTLY what windows-latest printed for them on 94e36e9e: there glibc
+/// was the one off by an ulp (`sinf`/`cosf` of the sinc table, `tanf`, `atan2f`). No other row moved.
 #[rustfmt::skip]
 const GOLDEN: &[(&str, [u64; 4])] = &[
     ("gain", [0x07c61de143e7dafd, 0x1264fdb960d2e3fe, 0xff13344c21147aa5, 0xd39bab6d08fb5c31]),
-    ("slowed_reverb", [0x87076ed5c8bf9885, 0xea8ef04081c0530f, 0xe19d6bb55d90baad, 0xa3e83ba9d9e9d689]),
+    ("slowed_reverb", [0x48d5ccc6cd957bdf, 0x7e4e47d28d9c1909, 0x91bd9f46224b0752, 0x485b11c00121f044]),
     ("filter", [0x10013f41744514a7, 0x62a077ae23644263, 0x1a8c50413048113a, 0xbd1c2e0c27356e9d]),
     ("eq", [0x07c61de143e7dafd, 0xdf0e8076d5a90a4a, 0x7c12aa6b75e05986, 0xd39bab6d08fb5c31]),
     ("distortion", [0xe5f2b4acb5363898, 0x5b1b12f49fd5e866, 0x68ff3b1bdb112389, 0x2dbb7834e4344924]),
@@ -31,12 +38,12 @@ const GOLDEN: &[(&str, [u64; 4])] = &[
     ("vibrato", [0xfe49463e1cef60a5, 0xae6466151b90747d, 0x9e815f292005b929, 0x38819855630d7f58]),
     ("chorus", [0x64539531afb6609c, 0xdefb33bf1e35f068, 0x4cbc8f5c7150a5b1, 0x522a2b51030f78ba]),
     ("flanger", [0x7378db87ef053eeb, 0xf1125c7f69a7ce19, 0x063bc67dafacf0f2, 0x4f4d7a3bb6333155]),
-    ("phaser", [0x73f747452688ebd5, 0x96e28bfa776a29f2, 0x61a128fa538dd933, 0x2ef4bde9df94b683]),
+    ("phaser", [0xdd6d53c3eeb1176f, 0xa966fedc62c4528a, 0x61a128fa538dd933, 0xc33084bd58ab2a5c]),
     ("delay", [0x3895709a9e1897a4, 0xa7d57e6d9253c226, 0x4b86d41b06b1ca90, 0xc459679f173981d3]),
     ("compressor", [0x07c61de143e7dafd, 0x300707b5ccfcaab7, 0xd1843793a101213b, 0xd39bab6d08fb5c31]),
     ("gate", [0x0937c0c533d469b7, 0xf64207d5b805d2b5, 0x6b363e06b1b945b0, 0x601abdfd08827c46]),
     ("limiter", [0xf6fa8c3ddee2e7cf, 0x195c41372d28dc06, 0xcd8f29215801aabc, 0x8bed456f023f3987]),
-    ("pitch_shift", [0x07c61de143e7dafd, 0x6a8e26e7182e4946, 0x2058048daf9756f7, 0xd39bab6d08fb5c31]),
+    ("pitch_shift", [0x07c61de143e7dafd, 0xcf5eeac6705fa16b, 0x2058048daf9756f7, 0xd39bab6d08fb5c31]),
 ];
 
 fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool, engine: PitchEngine) -> Project {

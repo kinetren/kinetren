@@ -6,7 +6,7 @@
 
 The plugin contract: a `Manifest` (id, passport rows, declarations, UI keys) plus pure kernels per
 family (`VideoKernel`/`GeoKernel`, `AudioKernel`, `TransKernel`, `GenKernel`), and the `Registry`
-keyed by `(Family, id)`. Depends on kt-time and serde ONLY: a plugin crate sees nothing of the core.
+keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate sees nothing of the core.
 
 - **A plugin id is the kind's file tag**, unique within its family (`Registry::get(family, id)`):
   the generator `checker` is not the transition `checker` (t1049). Changing an id changes files.
@@ -22,6 +22,12 @@ keyed by `(Family, id)`. Depends on kt-time and serde ONLY: a plugin crate sees 
   `TRANSPARENT`, `trans::Img`, the generator helpers (`smooth`, `rgb`, `coverage`, `lowbias32`…),
   `pixfont` (moved from kt-media). A helper the host has its own SIMD twin of stays in the host and
   is reached through a context (`barrier::RasterHost`, plugin-api-barriers).
+- **`math` is the ONE math of the frozen paths** (ci-green-again, invariant 11): a kernel, a
+  curve, a generator or the engine calls `x.fsin()`/`10f32.fpowf(…)` (`math::FrozenMath`), never
+  `x.sin()`/`powf` — those are the PLATFORM's libm, and glibc and the Windows one round
+  differently (t973c/t1019/t1048 failed on windows-latest). The `f32` functions are the `f64` ones
+  rounded once (correctly rounded but for ~2⁻²⁸ of inputs); t1065 holds them within one ulp of
+  glibc, t1066 refuses a direct std call in the frozen crates and every family.
 - The module is `generator`, not `gen`: `gen` is a reserved keyword in Rust 2024.
 - Mandatory tests: t972 (`tests/registry.rs`) and every family's frozen-form test (t973,
   t1048) when a row or a declaration changes.

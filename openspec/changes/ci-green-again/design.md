@@ -12,9 +12,8 @@ Linux (red on the old muxer: "last error: "), t801/t802 in parallel, t962/t986 u
 
 **Goals:** every cause fixed at its root, with a guard that turns red when the cause comes back.
 
-**Non-Goals:** Windows t973c, t1019, t1048 (frozen hashes printed on Linux; MinGW's `powf`/`tan`
-round differently — invariant 11). They wait for the owner's choice between per-platform tables
-and our own deterministic kernel math.
+**Non-Goals:** GPU bytes across machines (held by tolerances, not touched); the live output
+resampler of kt-app (`FftFixedInOut`, playback only, not frozen).
 
 ## Decisions
 
@@ -76,9 +75,61 @@ Existing Windows Recent records keep working: `StartStore` re-keys every row thr
 `project_key` on load. A poster made under the old key is rendered again the next time its
 project closes.
 
+### D6. One math for the frozen paths: pure-Rust libm, `f32` through `f64`
+
+The owner's choice (01.11) between per-platform reference tables and our own kernel math was the
+latter: "own math, close to Linux, where Linux is the more accurate one". `kt_plugin_api::math`
+is the one place; `FrozenMath` gives its functions as methods (`x.fsin()` for `x.sin()`), so ~150
+call sites in kt-model, kt-fx, kt-media, kt-engine, kt-plugin-api and the eleven families changed
+mechanically. It lives in kt-plugin-api because that is the one crate every kernel already sees.
+
+The implementation is the `libm` crate (pure Rust, FreeBSD's routines via musl; already in the
+lock and the Flatpak sources). Measured on t1065's sweep, its own `f32` functions were a ulp off
+glibc on ~10 % of `expf`/`powf` inputs: glibc's are ARM's near-correctly-rounded routines, libm's
+are older. So the `f32` functions evaluate the `f64` one and round once — correctly rounded but
+for ~2⁻²⁸ of inputs. Afterwards `expf`/`powf` differ from glibc on 0.05 %, and the larger shares
+left (`asinf` 7 %, `atan2f` 17 %, `tanf` 4 %, `sinf` at thousands of radians 1.3 %) are where
+glibc's routines are the less accurate ones. The `f64` functions are libm's, within one ulp of
+glibc (3–10 % of inputs differ); on the frozen paths their results are rounded to `f32` or to a
+pixel afterwards, which hides a last-bit difference but for ~2⁻²⁹ of values. A correctly rounded
+`f64` set (CORE-MATH) would close that too; rejected for now as a large port with no hash that
+needs it.
+
+Rejected: interposing `sinf`/`powf` symbols for the whole binary — it would also catch third-party
+code, but which definition the linker takes depends on archive order and the linker (mold, lld,
+ld), and it silently changes egui's and wgpu's math too. Per-platform tables — two references to
+keep, and a third CPU or CRT would need a third.
+
+### D7. The warp's sinc interpolator is ours
+
+rubato builds the 128 × 128 windowed-sinc table with `f32::sin`/`cos` and chooses AVX+FMA, SSE or
+scalar for the dot product at run time — three different roundings, so Slowed+Reverb depended on
+the OS AND the CPU. `FrozenSinc` (`kt-fx/src/audio/sinc.rs`, through rubato's
+`new_with_interpolator`) is rubato's `make_sincs` (BlackmanHarris2, periodic, normalised the same
+way, operations in its order) on our math, and the AVX+FMA product as the definition: eight lanes
+of fused multiply-adds and rubato's horizontal sum. A fused multiply-add is exact by IEEE 754, so
+the portable path (`fmaf`) and the AVX path give the same bits (t1067); the AVX path is taken only
+behind kt-fx's `simd_level()` (`KT_SIMD=0` forces the portable one).
+
+rustfft's twiddles (the pitch vocoder) are `f64` cosines rounded to `f32`: a platform difference
+would have to sit on an `f32` midpoint, ~2⁻²⁹ per twiddle. Left as is and named here.
+
+### D8. Eight values of t973c re-based, and why they are the Windows ones
+
+With D6 and D7 the Linux run of t973c moved on exactly eight values — slowed_reverb (all four
+cases), phaser (default, 70 %, reversed), pitch_shift (70 %) — and each new value equals what
+windows-latest printed for it on 94e36e9e. On those inputs glibc was the one off by an ulp
+(`sinf`/`cosf` of the sinc table, `tanf` in the phaser's all-pass, `atan2f` in the vocoder's
+phases) and Windows' CRT was correctly rounded; our correctly rounded math agrees with the more
+accurate side, which is the owner's rule. No other value of t973c, t1019 or t1048 moved. The test
+is not weakened: the table is now a reference both platforms must give, where before it was
+glibc's.
+
 ## Risks / Trade-offs
 
+- A future frozen call site that forgets `FrozenMath` is caught by t1066 only in the crates it
+  scans; a new crate on a frozen path must be added to its list.
 - The Dockerfile's base layer changes, so the `ffmpeg9` job rebuilds its cached image once
   (~4 min of FFmpeg) and local images rebuild on their next use.
-- The Windows half (t962, t986) is confirmed under wine, not on windows-latest; the next CI run
+- The Windows half (t962, t986, D6–D8) is confirmed under wine, not on windows-latest; the next CI run
   is the verdict.

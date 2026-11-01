@@ -16,6 +16,7 @@
 //! bracket — each with its own text and position in the string. A silent zero
 //! would show a person a picture they would believe.
 
+use kt_plugin_api::math::FrozenMath;
 use std::collections::BTreeMap;
 
 thread_local! {
@@ -273,8 +274,8 @@ fn eval(n: &Node, vars: &BTreeMap<String, f64>) -> Result<f64, FormulaError> {
                 Fun::Ceil => a[0].ceil(),
                 Fun::Round => a[0].round(),
                 Fun::Sqrt => a[0].sqrt(),
-                Fun::Sin => a[0].sin(),
-                Fun::Cos => a[0].cos(),
+                Fun::Sin => a[0].fsin(),
+                Fun::Cos => a[0].fcos(),
                 Fun::Lerp => a[0] + (a[1] - a[0]) * a[2],
                 // DETERMINISTIC noise: an integer seed into a hash, nothing from the
                 // environment. The same algorithm as the counter-based noise of the

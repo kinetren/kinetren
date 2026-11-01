@@ -1,5 +1,6 @@
 //! Types of the project format. The source of truth for the schema of `.ktproj` v1.
 
+use kt_plugin_api::math::FrozenMath;
 use kt_time::{Tick, TickRange};
 use serde::{Deserialize, Serialize};
 
@@ -3865,11 +3866,11 @@ impl SegShape {
             }
             SegShape::EaseIn { tension } => {
                 let k = tension.clamp(0.0, 4.0).max(f64::MIN_POSITIVE);
-                a + (b - a) * s.powf(1.0 + k)
+                a + (b - a) * s.fpowf(1.0 + k)
             }
             SegShape::EaseOut { tension } => {
                 let k = tension.clamp(0.0, 4.0).max(f64::MIN_POSITIVE);
-                a + (b - a) * (1.0 - (1.0 - s).powf(1.0 + k))
+                a + (b - a) * (1.0 - (1.0 - s).fpowf(1.0 + k))
             }
             SegShape::Formula { expr } => {
                 let mut vars = std::collections::BTreeMap::new();
@@ -3903,7 +3904,7 @@ impl SegShape {
                             -1.0
                         }
                     }
-                    ZigProfile::Sine => (2.0 * std::f64::consts::PI * ph).sin(),
+                    ZigProfile::Sine => (2.0 * std::f64::consts::PI * ph).fsin(),
                 };
                 base + amplitude * w * win
             }

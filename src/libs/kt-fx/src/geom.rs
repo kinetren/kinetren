@@ -16,6 +16,7 @@
 //! Multi-step series give NEW bytes (better: no losses) — this is
 //! sanctioned by the owner (docs/user-feedback.md R.44).
 
+use kt_plugin_api::math::FrozenMath;
 use crate::conform::{ConformRule, LeadCtx};
 use crate::video::{Frame, FxScratch};
 use kt_model::FxInstance;
@@ -165,7 +166,7 @@ impl Placement {
     /// “the picture did not shift” is about the rotated quad, not about the
     /// axis-aligned rectangle.
     pub fn corners(&self) -> [(f64, f64); 4] {
-        let (c, s) = (self.rot_deg.to_radians().cos(), self.rot_deg.to_radians().sin());
+        let (c, s) = (self.rot_deg.to_radians().fcos(), self.rot_deg.to_radians().fsin());
         let (ax, ay) = self.anchor;
         let raw = [
             (self.ox, self.oy),
@@ -396,7 +397,7 @@ pub fn rot_for_point(pl: &Placement, p: (f64, f64), step_deg: Option<f64>) -> f6
     let (ax, ay) = pl.anchor;
     // zero angle of the handle — “up” from the anchor in the NON-rotated frame
     let base = (-std::f64::consts::FRAC_PI_2).to_degrees();
-    let cur = (p.1 - ay).atan2(p.0 - ax).to_degrees();
+    let cur = (p.1 - ay).fatan2(p.0 - ax).to_degrees();
     let mut deg = cur - base;
     if let Some(st) = step_deg.filter(|s| *s > 0.0) {
         deg = (deg / st).round() * st;
@@ -415,7 +416,7 @@ pub fn crop_for_handle(
     crop: [f64; 4],
 ) -> Option<[f64; 4]> {
     // transform the point into the system of the NON-rotated frame
-    let (c, s) = ((-pl.rot_deg).to_radians().cos(), (-pl.rot_deg).to_radians().sin());
+    let (c, s) = ((-pl.rot_deg).to_radians().fcos(), (-pl.rot_deg).to_radians().fsin());
     let (ax, ay) = pl.anchor;
     let (dx, dy) = (p.0 - ax, p.1 - ay);
     let (lx, ly) = (ax + c * dx - s * dy, ay + s * dx + c * dy);
@@ -453,7 +454,7 @@ pub fn anchor_move(
     canvas: (f64, f64),
 ) -> ((f64, f64), (f64, f64)) {
     // point in the NON-rotated frame’s system → fractions of the frame
-    let (c, s) = ((-pl.rot_deg).to_radians().cos(), (-pl.rot_deg).to_radians().sin());
+    let (c, s) = ((-pl.rot_deg).to_radians().fcos(), (-pl.rot_deg).to_radians().fsin());
     let (ax, ay) = pl.anchor;
     let (dx, dy) = (p.0 - ax, p.1 - ay);
     let (lx, ly) = (ax + c * dx - s * dy, ay + s * dx + c * dy);
@@ -469,7 +470,7 @@ pub fn anchor_move(
     // the previous display gives `Δ = (R − I)·E`, that is exactly `(I − R)(A − A′)`
     // — without a second rotation. An extra `R⁻¹` here would be exactly the
     // “analytic compensation that goes wrong on rotation”.
-    let (cr, sr) = (pl.rot_deg.to_radians().cos(), pl.rot_deg.to_radians().sin());
+    let (cr, sr) = (pl.rot_deg.to_radians().fcos(), pl.rot_deg.to_radians().fsin());
     let (ddx, ddy) = (ex - (cr * ex - sr * ey), ey - (sr * ex + cr * ey));
     (na, pos_for_drag(pos, canvas, (ddx, ddy)))
 }
@@ -1034,7 +1035,7 @@ fn build_program(
                 };
                 // with rotation: output center-space p′ → uv of the full input,
                 // p = A + R(−rot)(p′ − A), q = (cx0 + (p − o)·c/d) / in
-                let (c, sn) = (rot.to_radians().cos(), rot.to_radians().sin());
+                let (c, sn) = (rot.to_radians().fcos(), rot.to_radians().fsin());
                 let (kx_, ky_) = (cw / (dw * iw), ch / (dh * ih));
                 let m = [
                     [c * kx_, sn * kx_, (axp - c * axp - sn * ayp - ox) * kx_ + cx0 / iw],

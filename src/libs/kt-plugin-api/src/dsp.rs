@@ -4,6 +4,7 @@
 //! there is one owner of the state (the audio-render thread, invariant 2).
 
 /// The engine's time unit, for a family's `tail` (a family has no kt-time of its own).
+use crate::math::FrozenMath;
 pub use kt_time::Tick;
 
 /// Smoothed parameter: one-pole toward the target, ~20 ms. It does not “teleport”
@@ -18,7 +19,7 @@ pub struct SmoothedParam {
 impl SmoothedParam {
     pub fn new(value: f32) -> SmoothedParam {
         // 1 - exp(-1 / (0.020 * 48000))
-        SmoothedParam { current: value, target: value, alpha: 1.0 - (-1.0f32 / 960.0).exp() }
+        SmoothedParam { current: value, target: value, alpha: 1.0 - (-1.0f32 / 960.0).fexp() }
     }
     #[inline]
     pub fn set_target(&mut self, t: f32) {
@@ -93,7 +94,7 @@ impl Allpass {
 
 pub fn tail_frames_for(max_comb_len: f32, feedback: f32) -> Tick {
     let fb = feedback.clamp(0.01, 0.98);
-    let db_per_pass = -20.0 * fb.log10();
+    let db_per_pass = -20.0 * fb.flog10();
     Tick::from_audio_frames((max_comb_len.max(8.0) * (60.0 / db_per_pass)) as i64)
 }
 
@@ -115,7 +116,7 @@ impl SmoothedParam {
     /// `new(v)` == `with_ms(v, 20.0)` verbatim.
     pub fn with_ms(value: f32, ms: f32) -> SmoothedParam {
         let frames = (ms.max(0.01) / 1000.0) * AUDIO_SAMPLE_RATE as f32;
-        SmoothedParam { current: value, target: value, alpha: 1.0 - (-1.0f32 / frames).exp() }
+        SmoothedParam { current: value, target: value, alpha: 1.0 - (-1.0f32 / frames).fexp() }
     }
 }
 
@@ -150,9 +151,9 @@ impl Biquad {
         let f = freq_hz.clamp(10.0, sr * 0.49);
         let q = q.max(0.05);
         let w0 = 2.0 * std::f32::consts::PI * f / sr;
-        let (sin, cos) = w0.sin_cos();
+        let (sin, cos) = w0.fsin_cos();
         let alpha = sin / (2.0 * q);
-        let a = 10f32.powf(gain_db / 40.0);
+        let a = 10f32.fpowf(gain_db / 40.0);
         let (b0, b1, b2, a0, a1, a2) = match kind {
             BiquadKind::Lowpass => {
                 let c = (1.0 - cos) * 0.5;
@@ -211,12 +212,12 @@ impl Biquad {
     /// and without dependencies.
     pub fn mag_db(&self, freq_hz: f32) -> f64 {
         let w = 2.0 * std::f64::consts::PI * freq_hz.max(0.0) as f64 / AUDIO_SAMPLE_RATE as f64;
-        let (c1, c2) = (w.cos(), (2.0 * w).cos());
+        let (c1, c2) = (w.fcos(), (2.0 * w).fcos());
         let (b0, b1, b2) = (self.b0 as f64, self.b1 as f64, self.b2 as f64);
         let (a1, a2) = (self.a1 as f64, self.a2 as f64);
         let num = b0 * b0 + b1 * b1 + b2 * b2 + 2.0 * (b0 * b1 + b1 * b2) * c1 + 2.0 * b0 * b2 * c2;
         let den = 1.0 + a1 * a1 + a2 * a2 + 2.0 * (a1 + a1 * a2) * c1 + 2.0 * a2 * c2;
-        10.0 * (num.max(1e-30) / den.max(1e-30)).log10()
+        10.0 * (num.max(1e-30) / den.max(1e-30)).flog10()
     }
 
     #[inline]
@@ -302,7 +303,7 @@ impl EnvFollower {
     pub fn new(attack_ms: f32, release_ms: f32) -> EnvFollower {
         let a = |ms: f32| {
             let frames = (ms.max(0.01) / 1000.0) * AUDIO_SAMPLE_RATE as f32;
-            1.0 - (-1.0f32 / frames).exp()
+            1.0 - (-1.0f32 / frames).fexp()
         };
         EnvFollower { value: 0.0, attack_alpha: a(attack_ms), release_alpha: a(release_ms) }
     }

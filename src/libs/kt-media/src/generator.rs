@@ -18,6 +18,7 @@
 //! - “no sound” = `has_audio: false` AND `Ok(AudioBurst::silence)`:
 //!   an `Err` piles up in the worker’s negative cache as false underruns.
 
+use kt_plugin_api::math::FrozenMath;
 use std::borrow::Cow;
 
 use crate::{AudioBurst, MediaError, MediaInfo, MediaSource, Quality, VideoFrame};
@@ -162,7 +163,7 @@ fn render_at(kind: &GeneratorKind, pts: Tick, w: u32, h: u32) -> Box<[u8]> {
 /// sounds: for SMPTE always, for the countdown by the gate.
 /// One code for both kinds: a second sine would diverge in phase.
 fn tone_1k(idx: i64, db: f64, gate: impl Fn(i64) -> bool) -> AudioBurst {
-    let amp = 10f64.powf(db / 20.0);
+    let amp = 10f64.fpowf(db / 20.0);
     let mut b = AudioBurst::silence(idx);
     let base = idx * kt_time::AUDIO_BURST_FRAMES as i64;
     for f in 0..kt_time::AUDIO_BURST_FRAMES as i64 {
@@ -170,7 +171,7 @@ fn tone_1k(idx: i64, db: f64, gate: impl Fn(i64) -> bool) -> AudioBurst {
         if !gate(n) {
             continue;
         }
-        let v = ((n as f64) * 1000.0 * std::f64::consts::TAU / 48_000.0).sin() * amp;
+        let v = ((n as f64) * 1000.0 * std::f64::consts::TAU / 48_000.0).fsin() * amp;
         let v = v as f32;
         b.data[(f * 2) as usize] = v;
         b.data[(f * 2 + 1) as usize] = v;
