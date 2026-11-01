@@ -20,7 +20,7 @@ stops at the baseband).
 
 - **A new barrier plugin `vhs_tape`** ("VHS tape (simulation)") in a new family crate
   `src/plugins/fx-video-tape`. It turns the frame into the VHS signal at a standard-definition grid
-  sampled at 4 fsc (PAL 1024×576, NTSC 832×480 samples), and runs the physical chain:
+  sampled at 4 fsc (PAL 1135×576, NTSC 910×480 samples), and runs the physical chain:
   luma pre-emphasis and clip → FM (3.8–4.8 / 3.4–4.4 MHz) → colour-under (626.953 / 629.371 kHz with
   the per-track phase rotation) → recording with tape saturation → helical scan geometry (track
   pitch per speed, head widths of a 2- or 4-head drum, tracking offset, scan-angle mismatch, still)

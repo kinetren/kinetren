@@ -220,13 +220,17 @@ enum FxOp {
         tile: kt_fx::geom::GeomProgram,
     },
     /// Snapshot of the state BEFORE a layer’s contribution (R.38 item 12): the dry side
-    /// of the future mix. A marker only; it spawns no passes.
-    Snapshot,
+    /// of the future mix. A marker only; it spawns no passes. `alpha` is the chain's alpha fold
+    /// at this point (`None`: silent, the source's) — the dry side's alpha flag.
+    Snapshot { alpha: Option<bool> },
     /// Mix the current result with the snapshot with weight `k` (0..4096).
     /// The sizes could have diverged (Pan/CamMotion resample), in which case the dry side is fitted
-    /// by THE SAME bilinear as on the CPU.
+    /// by THE SAME bilinear as on the CPU. `alpha` is the fold here — the wet side's flag. Each
+    /// side keeps its own flag, as the CPU's frames do (vhs-tape-simulation: a step that destroys
+    /// alpha between the two made the end-of-chain flag wrong for the dry side, t1052).
     Mix {
         k: u32,
+        alpha: Option<bool>,
     },
 }
 
@@ -239,7 +243,7 @@ impl FxOp {
             }
             // a snapshot spawns no passes; when the sizes have diverged, mixing is completed
             // by resampling the dry side
-            FxOp::Snapshot => 0,
+            FxOp::Snapshot { .. } => 0,
             FxOp::Mix { .. } => 2,
             FxOp::GeomTile { .. } => 2,
             _ => 1,
@@ -337,12 +341,13 @@ fn chain_ops(
         fx, src_w, src_h, src_scale, out_w, out_h, u, cam3d, t.0, &froms, lead,
     );
     // open snapshots: (op position, frame size there) — for the strength-0 skip below
-    let mut snaps: Vec<(usize, u32, u32)> = Vec::new();
+    // (op index, size, the alpha fold at the snapshot)
+    let mut snaps: Vec<(usize, u32, u32, Option<bool>)> = Vec::new();
     for op in plan.ops {
         match op {
             kt_fx::plan::PlanOp::Snapshot => {
-                snaps.push((ops.len(), w, h));
-                ops.push(FxOp::Snapshot)
+                snaps.push((ops.len(), w, h, has_alpha_known.then_some(has_alpha)));
+                ops.push(FxOp::Snapshot { alpha: has_alpha_known.then_some(has_alpha) })
             }
             kt_fx::plan::PlanOp::Mix { idx } => {
                 let single = snaps.len() == 1;
@@ -354,7 +359,8 @@ fn chain_ops(
                     // nothing, so the bytes are those of the full path. Only for a lone open
                     // snapshot whose frame size the slice did not change (no resample in the mix);
                     // the alpha fold keeps what the slice would have declared.
-                    if let Some((at, sw, sh)) = snap
+                    let dry_alpha = snap.and_then(|s| s.3);
+                    if let Some((at, sw, sh, _)) = snap
                         && k == 0
                         && single
                         && (sw, sh) == (w, h)
@@ -362,7 +368,16 @@ fn chain_ops(
                         ops.truncate(at + 1);
                     }
                     if k < 4096 {
-                        ops.push(FxOp::Mix { k });
+                        ops.push(FxOp::Mix { k, alpha: has_alpha_known.then_some(has_alpha) });
+                        // the mixed frame has alpha when either side has (the CPU's
+                        // `blend_frames_cpu`): a step that destroyed alpha after the snapshot does
+                        // not make the mix opaque (vhs-tape-simulation, t1052)
+                        if snap.is_some() {
+                            let wet = if has_alpha_known { has_alpha } else { src_has_alpha };
+                            let dry = dry_alpha.unwrap_or(src_has_alpha);
+                            has_alpha_known = true;
+                            has_alpha = dry || wet;
+                        }
                     }
                 }
             }
@@ -417,7 +432,7 @@ fn chain_ops(
                         burst_index: t.0,
                     };
                     let mut nodes = Vec::new();
-                    b.gpu(&b.cook(values), &g, &mut nodes);
+                    b.gpu_values(values, &g, &mut nodes);
                     debug_assert_eq!(
                         kt_plugin_api::barrier::check_graph(&nodes, b.shaders().len(), &g, kt_fx::plan::MAX_INTER_DIM),
                         Ok(()),
@@ -425,7 +440,9 @@ fn chain_ops(
                         slot.manifest().id
                     );
                     for n in &nodes {
-                        if let kt_plugin_api::barrier::Node::Resample { w: rw, h: rh } = n {
+                        if let kt_plugin_api::barrier::Node::Resample { w: rw, h: rh }
+                        | kt_plugin_api::barrier::Node::PassAt { w: rw, h: rh, .. } = n
+                        {
                             mw = mw.max(*rw);
                             mh = mh.max(*rh);
                         }
@@ -480,6 +497,9 @@ struct ChainSpec {
     src_w: u32,
     src_h: u32,
     has_alpha: bool, // after the chain
+    /// The chain INPUT's alpha (the source frame's, or a nested reel's composite): a silent fold
+    /// at a `Snapshot`/`Mix` means this.
+    src_has_alpha: bool,
 }
 
 impl ChainSpec {
@@ -524,7 +544,7 @@ impl ChainSpec {
                     c.add(kt_fx::video::FrameCost::geom(prog));
                     c.passes += 1;
                 }
-                FxOp::Snapshot => c.snapshots += 1,
+                FxOp::Snapshot { .. } => c.snapshots += 1,
                 FxOp::Mix { .. } => {
                     c.mixes += 1;
                     c.passes += op.passes();
@@ -1368,7 +1388,7 @@ impl Inner {
             // the sub-composite always has alpha: where there are no layers, it is transparent
             let has_alpha = if ha_known { ha } else { true };
             return Ok(Some((
-                ChainSpec { ops, src: ChainSrc::Nest(jobs), src_w: sw, src_h: sh, has_alpha },
+                ChainSpec { ops, src: ChainSrc::Nest(jobs), src_w: sw, src_h: sh, has_alpha, src_has_alpha: true },
                 (fw, fh) == (ow, oh),
                 sub_ok,
             )));
@@ -1406,6 +1426,7 @@ impl Inner {
                 src_w: frame.width,
                 src_h: frame.height,
                 has_alpha,
+                src_has_alpha: frame.has_alpha,
             },
             fits,
             true,
@@ -1450,21 +1471,23 @@ impl Inner {
         let dummy = self.dummy.view.clone();
         // the dry side of the mix (R.38 item 12): the snapshot of the state BEFORE the contribution
         // of the layer. The snapshot texture cannot go back to the pool before the mix itself.
-        let mut snap: Option<(wgpu::TextureView, u32, u32)> = None;
+        let mut snap: Option<(wgpu::TextureView, u32, u32, bool)> = None;
         for op in &chain.ops {
             match op {
-                FxOp::Snapshot => {
+                FxOp::Snapshot { alpha } => {
+                    let dry_alpha = alpha.unwrap_or(chain.src_has_alpha);
                     // the current result still lives in `owned` (or it is the source
                     // itself): we hold it until the end of the chain
                     if let Some(t) = owned.take() {
-                        snap = Some((t.view.clone(), w, h));
+                        snap = Some((t.view.clone(), w, h, dry_alpha));
                         retired.push(t);
                     } else {
-                        snap = Some((view.clone(), w, h));
+                        snap = Some((view.clone(), w, h, dry_alpha));
                     }
                 }
-                FxOp::Mix { k } => {
-                    let Some((dry_view, dw, dh)) = snap.clone() else { continue };
+                FxOp::Mix { k, alpha } => {
+                    let Some((dry_view, dw, dh, dry_alpha)) = snap.clone() else { continue };
+                    let wet_alpha = alpha.unwrap_or(chain.src_has_alpha);
                     // the sizes may have diverged: we fit the dry side in
                     // THE SAME bilinear as on the CPU (fit_into)
                     let dry_fit = if (dw, dh) == (w, h) {
@@ -1483,7 +1506,7 @@ impl Inner {
                     };
                     let dst = self.pool.acquire(&self.device, w, h);
                     let u = UniformData {
-                        u: [*k, chain.has_alpha as u32, chain.has_alpha as u32, 0, 0, 0, 0, 0],
+                        u: [*k, dry_alpha as u32, wet_alpha as u32, 0, 0, 0, 0, 0],
                         ..Default::default()
                     };
                     self.pass(enc, Pipe::LayerMix, &dst.view, &dry_fit, &view, &dummy, u);
@@ -1569,9 +1592,15 @@ impl Inner {
                                     ..Default::default()
                                 },
                             ),
-                            Node::Pass { shader, inputs, u, f } => (
-                                w,
-                                h,
+                            Node::Pass { shader, inputs, u, f } | Node::PassAt { shader, inputs, u, f, .. } => (
+                                match n {
+                                    Node::PassAt { w: tw, .. } => *tw,
+                                    _ => w,
+                                },
+                                match n {
+                                    Node::PassAt { h: th, .. } => *th,
+                                    _ => h,
+                                },
                                 Which::Plugin(*base + *shader as usize),
                                 pick(&inputs[0], &prev),
                                 pick(&inputs[1], &prev),

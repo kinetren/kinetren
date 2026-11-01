@@ -26,6 +26,8 @@ fn unit_suffix(u: ParamUnit) -> &'static str {
         ParamUnit::St => " st",
         ParamUnit::Sec => " s",
         ParamUnit::Percent => " %",
+        ParamUnit::Um => " µm",
+        ParamUnit::Us => " µs",
         ParamUnit::None
         | ParamUnit::Norm
         | ParamUnit::Ratio
@@ -451,6 +453,23 @@ pub fn param_label(name: &str) -> String {
         "curl" => tr(k::fxp::CURL),
         "shadow" => tr(k::fxp::SHADOW),
         "steps" => tr(k::fxp::STEPS),
+        // the VHS tape simulation's physical quantities (vhs-tape-simulation); a head's three
+        // rows share one caption each — the deck face names the head
+        "tracking_um" => tr(k::fxp::TRACKING_UM),
+        "skew_um" => tr(k::fxp::SKEW_UM),
+        "cn_db" => tr(k::fxp::CN_DB),
+        "dropouts_per_s" => tr(k::fxp::DROPOUTS_PER_S),
+        "dropout_us" => tr(k::fxp::DROPOUT_US),
+        "jitter_us" => tr(k::fxp::JITTER_US),
+        "switch_lines" => tr(k::fxp::SWITCH_LINES),
+        "switch_skew_us" => tr(k::fxp::SWITCH_SKEW_US),
+        "white_clip" => tr(k::fxp::WHITE_CLIP),
+        "dark_clip" => tr(k::fxp::DARK_CLIP),
+        "chroma_db" => tr(k::fxp::CHROMA_DB),
+        "tape_saturation" => tr(k::fxp::TAPE_SATURATION),
+        "rec_a_spacing" | "rec_b_spacing" | "play_a_spacing" | "play_b_spacing" => tr(k::fxp::SPACING),
+        "rec_a_gap" | "rec_b_gap" | "play_a_gap" | "play_b_gap" => tr(k::fxp::GAP),
+        "rec_a_output" | "rec_b_output" | "play_a_output" | "play_b_output" => tr(k::fxp::OUTPUT),
         // a parameter without a caption in the catalogue — visible at once, not silently
         other => return other.to_string(),
     };

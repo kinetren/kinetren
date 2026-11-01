@@ -3,7 +3,7 @@
 ### Requirement: The VHS tape simulation writes the signal onto a modelled tape and reads it back
 The kind `vhs_tape` SHALL compute its picture by the physical chain of a VHS recorder and player
 (`docs/features/fx/simulate/vhs-tape-simulation.md`), not by image operations:
-- the frame is resampled onto the standard's signal grid at 4 fsc (PAL 1024×576, NTSC 832×480);
+- the frame is resampled onto the standard's signal grid at 4 fsc (PAL 1135×576, NTSC 910×480);
 - the luma is pre-emphasised (τ 1.3 µs, ×5), clipped and frequency-modulated between the sync tip
   and white carriers (PAL 3.8–4.8 MHz, NTSC 3.4–4.4 MHz) by a phase accumulator;
 - the chroma is band-limited and recorded as colour-under (626.953 / 629.371 kHz) with the per-track
@@ -89,7 +89,7 @@ physical mechanics". The root rule: an imitation is not a simulation.
 
 #### Scenario: A defect of the recorder survives a clean player; a chipped head flickers
 - **WHEN** two decks play, the RECORD drum's head A clogged and the play drum clean; and one deck with
-  head B chipped (output −10 dB, a wide gap)
+  head B chipped (output −6 dB, a 0.6 µm gap)
 - **THEN** field A is noise in the first case although the playing heads are clean; in the second the
   odd rows are noisier than the even rows by at least 6 dB
 - **TEST** t1190 (`src/plugins/fx-video-tape/tests/physics.rs`)

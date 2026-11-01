@@ -4791,6 +4791,8 @@ impl FxInstance {
                 FxInstance::builtin("glow"),
                 FxInstance::event_grid(),
                 FxInstance::builtin("pan3d"),
+                // vhs-tape-simulation: new kinds at the end
+                FxInstance::builtin("vhs_tape"),
             ]
         })
     }

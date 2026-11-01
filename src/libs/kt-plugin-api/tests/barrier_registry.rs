@@ -22,6 +22,12 @@ enum Graph {
     /// a pass naming a shader the kernel does not have
     NoSuchShader,
     Empty,
+    /// a pass at a signal grid's own size, then a frame-size pass (vhs-tape-simulation, D6)
+    GridGood,
+    GridZero,
+    GridTooLarge,
+    /// the graph ends on the grid-size pass
+    EndsOnGrid,
 }
 
 struct B {
@@ -50,6 +56,7 @@ impl BarrierKernel for B {
     }
     fn gpu(&self, _k: &Cooked, g: &GpuCtx, out: &mut Vec<Node>) {
         let pass = |inputs| Node::Pass { shader: 0, inputs, u: [0; 8], f: [0.0; 8] };
+        let at = |w, h| Node::PassAt { shader: 0, inputs: [Slot::Prev, Slot::None, Slot::None], u: [0; 8], f: [0.0; 8], w, h };
         let half = Node::Resample { w: (g.w / 2).max(1), h: (g.h / 2).max(1) };
         match self.graph {
             Graph::Good => out.extend([Node::Save(0), half, pass([Slot::Saved(0), Slot::Prev, Slot::None])]),
@@ -60,6 +67,10 @@ impl BarrierKernel for B {
             Graph::EndsOnSave => out.extend([pass([Slot::Prev, Slot::None, Slot::None]), Node::Save(0)]),
             Graph::NoSuchShader => out.push(Node::Pass { shader: 3, inputs: [Slot::Prev, Slot::None, Slot::None], u: [0; 8], f: [0.0; 8] }),
             Graph::Empty => {}
+            Graph::GridGood => out.extend([at(1024, 576), pass([Slot::Prev, Slot::None, Slot::None])]),
+            Graph::GridZero => out.extend([at(0, 576), pass([Slot::Prev, Slot::None, Slot::None])]),
+            Graph::GridTooLarge => out.extend([at(5000, 576), pass([Slot::Prev, Slot::None, Slot::None])]),
+            Graph::EndsOnGrid => out.extend([pass([Slot::Prev, Slot::None, Slot::None]), at(1024, 576)]),
         }
     }
 }
@@ -105,4 +116,24 @@ fn t1054_an_inconsistent_barrier_is_refused_before_any_frame() {
         assert!(err.reason.contains(why), "{id}: the refusal names {:?}, expected {why:?}", err.reason);
     }
     assert_eq!(reg.ids(), vec!["good", "host_only"], "a refused barrier left a trace in the registry");
+}
+
+/// t1187 (vhs-tape-simulation, D6; capability `plugins`): a pass at its own size is checked like a
+/// resample — legal inside the graph, refused at zero or above the ceiling, and the graph must still
+/// end at the frame size.
+#[test]
+fn t1187_a_pass_at_its_own_size_is_checked_like_a_resample() {
+    let mut reg = Registry::new();
+    reg.register(barrier("grid", VideoClass::Barrier, Gpu::Barrier, true, Graph::GridGood))
+        .expect("a pass at the grid's size followed by a frame-size pass");
+    let cases: &[(&str, Graph, &str)] = &[
+        ("grid_zero", Graph::GridZero, "a pass at 0x576"),
+        ("grid_large", Graph::GridTooLarge, "a pass at 5000x576 (the ceiling is 4096)"),
+        ("ends_grid", Graph::EndsOnGrid, "ends at 1024x576, not at the frame size"),
+    ];
+    for (id, graph, why) in cases {
+        let err = reg.register(barrier(id, VideoClass::Barrier, Gpu::Barrier, true, *graph)).expect_err(id);
+        assert!(err.reason.contains(why), "{id}: the refusal names {:?}, expected {why:?}", err.reason);
+    }
+    assert_eq!(reg.ids(), vec!["grid"]);
 }

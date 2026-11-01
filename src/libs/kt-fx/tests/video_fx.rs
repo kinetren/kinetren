@@ -487,6 +487,8 @@ fn t328_golden_cycle_over_the_registry() {
         ("ripple", 0xaf7efc91f739ccf0),
         ("kaleidoscope", 0x9d601aeee14f4062),
         ("cylinder3d", 0x9178d747ce3f9976),
+        // vhs-tape-simulation: the tape written and read back, a good deck at its defaults
+        ("vhs_tape", 0x507b641c842f40bc),
     ];
     let video: Vec<&FxInstance> =
         FxInstance::all().iter().filter(|f| !f.is_audio() && !f.is_layer_mix()).collect();

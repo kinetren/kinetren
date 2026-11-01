@@ -29,16 +29,19 @@ The simulation runs on a fixed grid per standard, sampled at **4 fsc**:
 
 | | fs | samples per line W (active A + margins M) | lines H |
 |---|---|---|---|
-| PAL | 17.734475 MHz | 1024 = 922 (52 µs) + 2·51 | 576 |
-| NTSC | 14.318182 MHz | 832 = 754 (52.66 µs) + 2·39 | 480 |
+| PAL | 17.734475 MHz | 1135 = 184 (sync + back porch) + 922 (52 µs) + 29 (front porch) | 576 |
+| NTSC | 14.318182 MHz | 910 = 135 + 754 (52.66 µs) + 21 | 480 |
 
 4 fsc carries the FM carrier and its first sidebands (PAL 4.8 MHz white + ~3 MHz video < 8.87 MHz
 Nyquist), the colour-under and the chroma; it is the sample rate of digital composite (D2) and of
-the capture cards vhs-decode targets in its lower range. The margins hold the blanking level, so the
-FM has a real step at the line start (the left-edge smear) and the filters see blanking, not a wrap.
+the capture cards vhs-decode targets in its lower range. The grid is the WHOLE line: the blanking
+before the active part is as long as on a real line (10.4 µs PAL), because the de-emphasis reaches
+~7 µs back. A first version had 2.9 µs margins and the line-start transient of the demodulator
+smeared 4 % into the picture's left edge (t1180 caught it); a real deck never shows that, since its
+blanking is long. The blanking holds the black level (no sync pulse, D9).
 
 Why not the frame's pixels: the physics would depend on the preview size (a 640-wide preview would
-sample the 4.8 MHz carrier at 12 MHz), and preview ≠ export. Why not full lines with sync: the sync
+sample the 4.8 MHz carrier at 12 MHz), and preview ≠ export. Why no sync pulse in the blanking: it
 adds work and nothing visible once the time base is modelled per line (D8). Rows are FRAME lines;
 row parity is the field, so field A (even rows) is head A's track and field B head B's.
 
@@ -57,7 +60,7 @@ construction.
 | 1 | record luma: Y (BT.601) → LPF 3 MHz ∗ pre-emphasis (τ₁ 1.3 µs, ×5) → white/dark clip → instantaneous frequency → phase increment | R | u32 increment (DDS) |
 | 2 | block sums of 32 increments | 1 | u32 |
 | 3 | phase = prefix sum along the line, from a seeded start phase | 2 | u32 phase |
-| 4 | write: cos(phase) + colour-under (U/V LPF 0.5 MHz on the rotated 627/629 kHz carrier, PAL V switch) → tape saturation x/(1+k\|x\|) | 3, R, L | magnetisation m |
+| 4 | write: cos(phase) + colour-under (U/V LPF 0.5 MHz on the rotated 627/629 kHz carrier, PAL V switch), through the tape's saturation in its in-band form (D9) | 3, R | magnetisation m |
 | 5 | read: own-track and neighbour-track convolutions with the row's kernels × coverage × head efficiency × dropout envelope + Gaussian noise (+ the switching burst) | 4, L | RF r |
 | 6 | FM demodulation: Hilbert FIR → discriminator arg(z_n·z̄_{n−1}) → level; RF envelope | 5 | level, envelope (2×u16) |
 | 7 | dropout compensation (the line before in the same field when the envelope is low) → LPF ∗ de-emphasis | 6 | luma |
@@ -83,8 +86,12 @@ The read signal of a row is a convolution with two kernels the line table builds
   (g + w·tan 12°)/v, w the strip of the neighbour under the head: the azimuth loss
   sinc(π w tan12° f/v) is exactly the transfer of that box — the integration along the tilted gap.
 
-Each tap is the bin integral of Lorentzian ⊗ box, computed as a difference of arctangents in the
-stable form atan2(B·a, a² + t² − B²/4) over 4 sub-samples (no cancellation in f32). 81 taps (±40).
+Each tap is the EXACT bin integral of Lorentzian ⊗ box: a second difference of
+J(t) = (t·atan(t/a) − ½a·ln(a² + t²))/π, the antiderivative of the Lorentzian's CDF. 81 taps (±40).
+A first version sampled the integrand at 4 points per bin: a gap box narrower than a sample (0.3 µm
+is 1.1 samples) then held 2 of the 4 points and the own kernel's DC gain came out 1.35, which
+skewed every azimuth ratio by 2.7 dB (t1184 caught it). The second difference cancels in f32 far
+from the centre, but there the taps are ~1e-6 and the error is absolute.
 The gains are coverages: the overlap of the head [o − w_h/2, o + w_h/2] with the own track, the
 neighbours (±1, the other azimuth, the other field's row) and the next-but-one (±2, the same
 azimuth, the same row), divided by the SP pitch (the reference signal), times the head's efficiency.
@@ -156,14 +163,33 @@ The neighbour track's CONTENT is the other field of the same frame (a real tape 
   the colour-under is demodulated with the reference (the deck's APC locks to the played-back burst),
   so chroma keeps its phase under a jittering time base — the physical behaviour (note, trick 3).
 - Tape noise is white at RF (not shaped by the head kernel).
+- **The tape's saturation is applied in its IN-BAND form.** A memoryless transfer
+  x/(1 + k|x|) on the 4 fsc grid makes the carrier's third harmonic (≈ 13 MHz), which a real head
+  never reads, but which on the grid ALIASES back to ≈ 4.8 MHz, beats with the carrier and leaves a
+  deterministic error in the luma (measured: it hid the 2 dB LP noise difference, t1189). So the
+  stage applies what the transfer does in band: the carrier's first-harmonic gain
+  a₁ = (1/π)∮ f(cos φ) cos φ dφ, and the chroma's gain with the carrier as its AC bias
+  g = (1/2π)∮ f′(cos φ) dφ (the bias effect proper), the chroma compressed by its own level. Both
+  integrals are taken once per frame in f64.
 - PAL colour-under is taken as 40.125 fH continuous with the line count; SECAM is not modelled.
 
 ### D10. Cost and threads
 
-Per sample the CPU runs ~590 multiply-adds (stage taps 61 + 2·49 + 2·81 + 2·16 + 140 + 2·49). The
+Per sample the CPU runs ~650 multiply-adds (stage taps 61 + 2·65 + 2·81 + 2·16 + 140 + 2·65). The
 CPU kernel splits rows into bands over `std::thread::scope` (each sample is independent, so the
-bytes do not depend on the band split). Measured on a release build in task 5 (see the table
-there). The GPU runs 13 passes plus the resample.
+bytes do not depend on the band split). The GPU runs 14 passes plus the resample.
+
+Measured once on a release build (2026-11-01, 32 threads, the machine at load average ≈ 30 from the
+other sessions, so these are upper bounds), the grid simulation plus the read-out into 1920×1080:
+
+| | ms per frame |
+|---|---|
+| PAL, defaults (the first run, kernels designed) | 209 |
+| PAL, worn tape, two decks | 91 |
+| NTSC, defaults | 65 |
+
+So the CPU path is an export path (≈ 10 frames/s), the GPU path is the preview's. The cost does
+not depend on the frame size beyond the read-out: the grid is the standard's.
 
 ### D11. The panel
 
@@ -171,6 +197,17 @@ The FX window draws a deck face above the parameter grid: a drum circle with two
 coloured by condition (clean/dirty/clogged/chipped from spacing and efficiency), the speed switch,
 the tracking knob, the deck count; it is built from egui's painter and the shared widgets and edits
 the same passport values (no second store). Secondary: the parameter grid alone is complete.
+
+### D12. A defect the first "destroys" barrier found: the strength mix's alpha on the GPU
+
+No barrier before declared `AlphaRel::Destroys` (edges stopped in R.53). Under a layer strength
+the GPU's `FxOp::Mix` passed the chain's END flag as the alpha of both the dry and the wet side,
+and the mix did not touch the fold: after a destroying step the dry side was forced opaque and the
+mixed layer declared opaque, so the composite dropped its alpha-over (t1052: 86 % of the samples
+off). The CPU mixes two frames, each with its own flag, and the result has alpha when either
+has. Now `Snapshot` and `Mix` carry the fold at their points (`None` → the chain input's flag),
+and a mix sets the fold to dry ∨ wet. For every earlier kind the result is unchanged: without a
+destroying step between them the two flags were equal.
 
 ## Risks / Trade-offs
 

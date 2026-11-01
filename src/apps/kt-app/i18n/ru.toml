@@ -406,6 +406,21 @@ ceiling_db = "Потолок"
 lookahead_ms = "Упреждение"
 semitones = "Полутоны"
 cents = "Центы"
+tracking_um = "Трекинг:"
+skew_um = "Перекос развёртки:"
+cn_db = "С/Ш ленты:"
+dropouts_per_s = "Выпадений в секунду:"
+dropout_us = "Длина выпадения:"
+jitter_us = "Дрожание развёртки:"
+switch_lines = "Переключение головок, строк до кадрового синхроимпульса:"
+switch_skew_us = "Сдвиг при переключении:"
+white_clip = "Ограничение белого:"
+dark_clip = "Ограничение чёрного:"
+chroma_db = "Уровень переноса цвета:"
+tape_saturation = "Насыщение ленты:"
+spacing = "Зазор головка–лента:"
+gap = "Ширина рабочего зазора:"
+output = "Отдача головки:"
 
 [fxreg]
 add = "+ эффект…"
@@ -434,6 +449,7 @@ delay = "Эхо"
 dynamics = "Динамика"
 timestretch = "Тайм-стретч"
 color = "Цвет"
+simulate = "Симуляция"
 
 # Search keywords. NOT reordered for Arabic
 # (compared with the user’s input), written in lowercase.
@@ -482,6 +498,7 @@ kaleidoscope = "калейдоскоп зеркало сектора kaleidoscop
 cylinder3d = "цилиндр изгиб 3d cylinder"
 limiter = "лимитер потолок пик громкость limiter"
 pitch_shift = "высота питч полутон транспонирование pitch"
+vhs_tape = "vhs tape cassette vcr simulation кассета лента видеомагнитофон симуляция головки барабан трекинг"
 
 # Names of built-in VARIANTS of an effect (R.54): a preset state with
 # a name by look, not by parameter. The vocabulary is shared by all effects —
@@ -542,6 +559,13 @@ blue = "Синий"
 grid9 = "3×3"
 grid16 = "4×4"
 strip = "Полоса"
+good_deck = "Хороший аппарат"
+dirty_heads = "Грязные головки"
+clogged_head = "Забитая головка"
+chipped_head = "Сколотая головка"
+still_4head = "Стоп-кадр, 4 головки"
+worn_tape = "Затёртая прокатная кассета"
+lp = "LP"
 
 # FX editor of the clip.
 [fx]
@@ -1585,3 +1609,29 @@ joke_5 = "Уговариваем звук не убегать вперёд ка�
 joke_6 = "Рендерим быстрее, чем студент-монтажёр паникует перед дедлайном."
 joke_7 = "Полоска прогресса старается изо всех сил. Будьте к ней добры."
 joke_8 = "Факт: эту шутку писали дольше, чем рендерится этот кадр."
+
+# The deck face of the VHS tape simulation (vhs-tape-simulation, D11).
+[deck]
+one_deck = "Один аппарат: пишет и читает"
+rec_deck = "Записывающий аппарат"
+play_deck = "Воспроизводящий аппарат"
+one = "Один аппарат"
+two = "Два аппарата"
+heads2 = "2 головки"
+heads4 = "4 головки"
+play = "Воспроизведение"
+still = "Стоп-кадр"
+pal = "PAL"
+ntsc = "NTSC"
+sp = "SP"
+lp = "LP"
+ep = "EP"
+tbc = "TBC (корректор времени)"
+doc = "Компенсатор выпадений"
+comb = "Гребенчатый фильтр"
+head = "Головка {0}"
+clean = "Чистая"
+dirty = "Грязная"
+clogged = "Забитая"
+chipped = "Сколотая"
+pick_head = "Нажмите на головку на барабане, чтобы задать её состояние"

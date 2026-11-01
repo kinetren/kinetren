@@ -22,7 +22,23 @@ quantities (~30).
 - **TEST** t1187 (`src/libs/kt-plugin-api/tests/barrier_registry.rs`)
 
 #### Scenario: The value forms keep every barrier's bytes
-- **WHEN** every registered barrier runs through the host's value form and through its cooked form at
+- **WHEN** every registered barrier with at most eight passport rows runs through the host's value form and through its cooked form at
   its defaults and its top
 - **THEN** the frames are byte-equal and the graphs equal
-- **TEST** t1187 (`src/libs/kt-plugin-api/tests/barrier_registry.rs`), t1051, t1052
+- **TEST** t1187 (`src/libs/kt-fx/tests/barrier_plugin.rs`), t1051, t1052
+
+### Requirement: A layer strength over a step that destroys alpha keeps each side's alpha on both executors
+When a layer strength (a mix of the chain before a step with the chain after it) stands over a step
+whose relation to alpha is "destroys", the GPU executor SHALL mix the dry side with its OWN alpha
+(the chain's fold at the snapshot) and the wet side with its own, and the mixed frame SHALL have
+alpha when either side has it — as the CPU's frames do. The end-of-chain flag SHALL NOT stand for
+the dry side.
+Why: found by the VHS tape simulation (vhs-tape-simulation), the first barrier that declares
+"destroys": t1052 ran it under a strength of 0.5 on a frame with alpha, and the GPU forced the dry
+side opaque (it passed the chain's final flag for both sides) and then declared the mixed layer
+opaque, so the composite skipped the alpha-over — 86 % of the samples differed from the CPU.
+
+#### Scenario: A destroying barrier under a strength on a frame with alpha
+- **WHEN** every registered barrier runs under a layer strength of 0.5 on a frame with gradient alpha, on both executors
+- **THEN** the GPU result is within the kind's tolerance class of the CPU, the alpha channel included
+- **TEST** t1052 (`src/libs/kt-gpu/tests/barrier_graph.rs`)

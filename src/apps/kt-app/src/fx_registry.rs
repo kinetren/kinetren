@@ -339,6 +339,7 @@ const VIDEO_ORDER: &[&str] = &[
     "Ripple",
     "Kaleidoscope",
     "Cylinder 3D",
+    "VHS Tape",
 ];
 
 /// The gallery's row order. CATEGORIES ARE GROUPED WHEN DRAWN (R.54): the registry is sorted by

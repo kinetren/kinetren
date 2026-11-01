@@ -19,6 +19,7 @@ mod ctx_menu;
 #[cfg(test)]
 mod diag_tests;
 mod envclip;
+mod deck_face;
 mod eq_graph;
 mod ffmpeg_setup;
 #[cfg(test)]
