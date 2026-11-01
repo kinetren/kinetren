@@ -39,7 +39,7 @@ fn harness_lang(lang: crate::i18n::Lang) -> Harness<'static, KtApp> {
 /// turned red from the machine's load, not from a defect.
 const WAIT_BG: std::time::Duration = std::time::Duration::from_secs(60);
 
-fn harness_lang_dt(lang: crate::i18n::Lang, step_dt: Option<f32>) -> Harness<'static, KtApp> {
+pub(crate) fn harness_lang_dt(lang: crate::i18n::Lang, step_dt: Option<f32>) -> Harness<'static, KtApp> {
     crate::i18n::set_lang(lang);
     let mut app = KtApp::new_empty(None);
     // “Last line of defense” (item 354) is switched off in the harness: a thousand created and
@@ -1980,7 +1980,7 @@ fn t128_labels_fit_their_budget() {
             );
         }
 
-        let got = w(tr(k::perf::ECONOMY).to_string(), body.clone());
+        let got = w(tr(k::menu::view::ECONOMY).to_string(), body.clone());
         assert!(
             got <= CHECKBOX_BUDGET,
             "{code}: the checkbox of the economy UI takes {got:.0} px against the budget {CHECKBOX_BUDGET}"
@@ -5064,8 +5064,8 @@ fn t394_panel_objects_answer_right_click() {
         app.ctx_panel = None;
     }
     h.step();
-    // the bin’s rectangle is reported by the program itself: below it in the column lives
-    // the perf panel, and “roughly at the bottom of the column” would probe it
+    // the bin’s rectangle is reported by the program itself: “roughly at the bottom of the
+    // column” would probe whatever stands there, not the bin
     let bin = h.state().bin_rect;
     assert!(bin.is_positive(), "the bin did not report its rectangle");
     right_click_at(&mut h, egui::pos2(bin.center().x, bin.bottom() - 10.0));
@@ -8765,6 +8765,9 @@ fn t289_underrun_counters_are_labelled_and_silence_is_in_ms() {
         app.player.underruns.store(RENDER, Ordering::Relaxed);
         app.player.shared.callback_underruns.store(CALLBACK, Ordering::Relaxed);
     }
+    // the labelled pair is a line of the panel, which is a section of Diagnostics
+    // (diagnostics-three-graphs); the status line carries the short form
+    h.state_mut().perf.diag_open = true;
     h.step();
     h.step();
 
@@ -13688,6 +13691,10 @@ fn t720b_project_settings_window_validates_and_applies() {
     // focus given back: hotkeys are alive (rule 14)
     assert!(!h.ctx.memory(|m| m.focused().is_some()), "the field does not keep focus after closing");
     // the preview panel’s combo shows the same (one body)
+    // (the line lives in the Diagnostics window since diagnostics-three-graphs)
+    h.state_mut().perf.diag_open = true;
+    h.step();
+    h.step();
     assert!(
         h.query_by_label("1440×1080").is_some()
             || h.query_all_by_label_contains("1440").count() > 0
@@ -16086,6 +16093,9 @@ fn tr_for(lang: crate::i18n::Lang) -> &'static str {
 fn t947_perf_panel_shows_the_compose_cost() {
     use egui_kittest::kittest::{NodeT, Queryable};
     let (mut h, _clip) = harness_geom_ctl_file();
+    // the panel is a section of the Diagnostics window (diagnostics-three-graphs)
+    h.state_mut().perf.diag_open = true;
+    h.step();
     let label = tr(k::perf::COMPOSE).split("{0}").next().unwrap_or_default().trim().to_string();
     let shown = |h: &Harness<'_, KtApp>| -> Vec<String> {
         h.query_all_by_label_contains("")

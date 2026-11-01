@@ -261,6 +261,28 @@ rebuild.
   The button on the frame is registered AFTER the controls: the frame's body covers the whole frame and otherwise
   takes the click from it.
 
+## kkt-26.11.01 item 14: Performance lives in Diagnostics, with three graphs (diagnostics-three-graphs)
+
+- **The owner counted the graphs, he did not name them.** The perf box of the left column had two
+  (Quality, FFmpeg activity), the Diagnostics window one (Cache churn); moving the box makes three,
+  and they are kept because each answers a different cause of "it does not play smoothly": the
+  display (FPS, V-fps, hits), the decoder and disk (FFmpeg activity), the cache (churn, no-read
+  drops). A CPU/GPU load graph was rejected: it is what sends people to the wrong fix (F-UI-006).
+- **The always-visible layer is the status line** (vfps, cache, underruns in ms) — the industry's
+  light in the viewer; the detail is one window opened on purpose. The column belongs to the bin,
+  and the bin's frame reaches the column's bottom: the freed space is its background (drop, right
+  click), not a dead strip under a short frame.
+- **The window's body is one scroll; the graphs share its viewport.** A larger window gives larger
+  graphs; a lower screen scrolls the body. A fixed default of 720 points put the title and its
+  cross above a 420-point screen (t779): the default height follows the screen.
+- **A rolling graph is built once per sample** (`graphs.rs`: one mesh for the lines, galleys for
+  the labels, keyed by rectangle, generation and language). The auto-scale had stepped per DRAW —
+  its speed was a function of the UI frame rate and the picture of the frame count; it steps on
+  `push`, as v1's 500 ms timer did (t1149). The graph names its accessibility node with its title
+  in a closure (only with accessibility on): the render window's speed chart is found by it (t956).
+- **"Economy UI" is one switch, in View.** The box repeated it; the owner's item 13 is this class
+  ("the checkbox in the window AND duplicated in View"). Its hint moved onto the View item.
+
 ## Deferred
 
 - `lane_names` live in `Project.ui`, and `swap_reel` does not swap them — the full entry

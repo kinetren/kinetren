@@ -517,7 +517,10 @@ impl KtApp {
                     crate::app::preview_detached_next(self.preview_detached, true, false);
                 ui.close();
             }
-            ui.checkbox(&mut self.ui_economy, tr(k::menu::view::ECONOMY));
+            // the one "Economy UI" switch (the perf box's copy is gone, diagnostics-three-graphs D4)
+            let r = ui.checkbox(&mut self.ui_economy, tr(k::menu::view::ECONOMY));
+            crate::widgets::field_probe::note("view.economy", r.rect);
+            self.hint(r, tr(k::hint::ECONOMY));
             // The language lives in an ALREADY EXISTING menu (checklist rule 13:
             // no new strip is made for it). The items are self-names:
             // whoever picks Chinese has nothing to look for in the Russian list.
@@ -577,7 +580,9 @@ impl KtApp {
                 }
             }
             ui.separator();
-            if ui.button(tr(k::menu::view::DIAGNOSTICS)).clicked() {
+            let r = ui.button(tr(k::menu::view::DIAGNOSTICS));
+            crate::widgets::field_probe::note("view.diagnostics", r.rect);
+            if r.clicked() {
                 self.perf.diag_open = true;
                 ui.close();
             }

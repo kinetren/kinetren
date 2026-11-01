@@ -12,6 +12,7 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 - **Thousands of painter primitives = a mesh.** The waveform was 2 `line_segment` per PIXEL; the glow of the meters — ~310 tessellated ellipses per frame. Both are a single `Mesh` (t40).
 - **`cache.epoch()` changes on EVERY insertion** — during playback this is a storm. Any UI cache invalidated by epoch must be throttled during playback (coverage bars — no more often than 4 Hz; otherwise 60 polls/s under the cache mutex, contention with the decoders).
 - **Honest metrics before the fix**: V-fps (the NEW frames shown) and "V-skipped cells" in the performance panel. It is they that diagnosed the 24 fps quantum ceiling from the user's machine. "FPS" is the UI frames — it says NOTHING about the video.
+- **The performance panel is the "Performance" section of the Diagnostics window** (diagnostics-three-graphs, kkt-26.11.01 item 14), not a box of the left column; the column is the bin's. Its three graphs (`graphs::RollingGraph`) are BUILT once per sample (one mesh for the lines, cached galleys) and only re-painted on other frames: anything that changes the picture goes through `push`/`clear` (they bump the generation), never through `draw` — the auto-scale once stepped per draw and ran at the UI frame rate (t1149).
 
 ## Preview key on pause (R.53 item 415, R.62 t722b)
 

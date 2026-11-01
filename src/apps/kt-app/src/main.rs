@@ -16,6 +16,8 @@ mod bg;
 mod bin_panel;
 mod camera_editor;
 mod ctx_menu;
+#[cfg(test)]
+mod diag_tests;
 mod envclip;
 mod eq_graph;
 mod ffmpeg_setup;

@@ -950,7 +950,6 @@ save_project = "Сохранить проект"
 [perf]
 loading = "Загрузка…"
 smoothing = "Сглаживание"
-economy = "Экономный UI (30 fps при игре)"
 title = "Производительность"
 cache_mb = "Кэш {0}/{1} МБ"
 underruns = "Underruns {0} ренд / {1} вывод"

@@ -950,7 +950,6 @@ save_project = "Guardar proyecto"
 [perf]
 loading = "Cargando…"
 smoothing = "Suavizado"
-economy = "Interfaz económica (30 fps al reproducir)"
 title = "Rendimiento"
 cache_mb = "Caché {0}/{1} MB"
 underruns = "Underruns {0} rend / {1} salida"

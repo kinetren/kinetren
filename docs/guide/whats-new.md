@@ -8,6 +8,10 @@ month, newest first.
 - **Composition previews no longer get rebuilt by chance when a project opens.** Opening a
   project sometimes found its own index file "busy" and drew the frames and waveform of every
   composition all over again; now the saved previews come back every time.
+- **Diagnostics holds all of Performance, with three graphs.** The Performance box no longer
+  sits under the media bin — the bin gets the whole column. The gauge button (or View →
+  Diagnostics…) opens one window with every number the box had and three graphs side by side in
+  time: playback, FFmpeg activity and the cache. Make the window larger and the graphs grow.
 - **Zigzag and the other segment shapes on one piece of a curve, or on a hundred.** Right-click
   a segment, or <kbd>Ctrl</kbd>+click several, or drag across empty space in the curve graph:
   under "Shape of all segments" a row appears with the same fields for just those segments.
