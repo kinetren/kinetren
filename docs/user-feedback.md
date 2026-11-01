@@ -2306,6 +2306,46 @@ one place).
   owner wants both behaviours: a switch "the echo of the effects before the pitch is cut at the
   event's end / rings on after it", the current behaviour the default (change `pitch-tail-choice`).
 
+## 2026-11-01 — the second list
+
+Verbatim: `docs/ktprompts/kkt-26.11.01b.txt`, registry `kkt-26.11.01b-index.md`. Translated in brief:
+a render that reaches 100 % and kills the program ("this is horror"); the chroma key without an
+eyedropper, poor, with an auto-analysis wanted; a professional keyer (shadows, hair, uneven screen,
+spill); speech to text as text one WALKS and searches, not a window that dumps it; Mirror without an
+angle, EventGrid and the other legacy effects without flexibility ("we reach neither AE nor even
+Vegas"); a repeat-texture effect to slide; no zooming the preview out or rotating in it to control an
+effect; copying the part of an event under the region copies the whole event.
+
+**Taken as:**
+- The render crash goes first, before everything queued. The tests write into the owner's own journal
+  (`~/.local/share/kinetren/kt-app.log` is full of t959 lines and rotated at 14:09), so his real records
+  are lost: fixed in the same change.
+- Copy (B10) against v26.10.18 item 4 ("one selected event → copy takes it, not the region"): both
+  hold if the region CROPS the selected event — a region over the selected event copies that event's
+  part under the region and nothing of the other tracks; a region that does not touch it leaves the
+  whole event. The earlier complaint was the region taking every track, not the cropping.
+- Speech to text joins the taken ★14 (subtitles and text-based editing): the transcript is text tied
+  to the time — the word under the playhead is lit, a click on a word moves the playhead, a search
+  steps through the hits and marks them on the timeline, a selection of words is a region. Recognition
+  runs locally (a Whisper-class model downloaded on a click, as FFmpeg on Windows), nothing goes to a
+  cloud.
+- The professional keyer (B4) is an algorithm, not a neural network, as the base: a screen-colour
+  model with screen balance, a clean plate for an uneven screen, a core and an edge matte for hair,
+  spill and bounce-light removal that restores the subject's colour, shadows kept as a ratio to the
+  clean plate. Reasons: invariant 11 (the same bytes on every machine) and no ML runtime or model
+  weights in the program. A neural matte may come later as an extra assist. Its note in
+  `docs/features/` comes first.
+- The existing chroma key (B2, B3) gets the eyedropper (the preview frame and any point of the
+  screen) and an auto-analysis that sets its values from the frame; its quality is fixed in the same
+  change.
+- Mirror, grid and repeat texture (B6–B8) are one change against Vegas and AE: Mirror with an angle and
+  a centre; a grid with per-row and per-column flips; a repeat texture with mirrored edges and a phase
+  to animate (AE Motion Tile). The owner's example — grid, a vertical mirror, its horizontal mirror, a
+  sliding "saw" from the top half — is its acceptance scenario. The other legacy effects get a
+  parameter audit against Vegas and AE in the same note.
+- The preview (B9): zoom and pan the preview canvas past the frame, a rotation handle on the on-screen
+  frame, and on-screen handles for effects that have a place on the frame.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
