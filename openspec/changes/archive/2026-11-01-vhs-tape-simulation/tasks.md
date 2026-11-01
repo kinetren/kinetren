@@ -32,5 +32,9 @@
 
 - [x] 5.1 cost per 1080p frame on a release build (once), recorded in design D10
 - [x] 5.2 What's new line, registry V1 closed, note F-FX-009 frozen as done
-- [ ] 5.3 `cargo test --workspace`, `cargo clippy --all-targets`, `git merge master`,
-      `./scripts/finish.sh` — version recorded here
+- [x] 5.3 `cargo test --workspace`, `cargo clippy --all-targets`, `git merge master`,
+      `./scripts/finish.sh` — version recorded here: **kt26.11.01-171633fc** (master e9b2155c
+      merged: datamosh-codec-path + shape-masks). Workspace green with `--no-fail-fast` except
+      t888 under load (green alone); clippy: no warning in this change's files; finish.sh: 1416
+      workshop tests, SIMD, 65 live scenarios green (41 on the alone rerun under load ≈ 14–23,
+      `vhs_tape` among them)
