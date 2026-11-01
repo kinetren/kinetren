@@ -125,6 +125,11 @@ accurate side, which is the owner's rule. No other value of t973c, t1019 or t104
 is not weakened: the table is now a reference both platforms must give, where before it was
 glibc's.
 
+The export reference t11 tells the same: its Linux audio moved from glibc's 0x5a83eef245ab43f0
+to 0x0a9c8e22f9f1e8c2 — the value windows-latest had measured on 2026-10-25 and committed as the
+Windows row ("the C runtime's transcendentals are not glibc's"). The per-platform table keeps
+both rows (t859), now with one audio value; the video value did not move.
+
 ## Risks / Trade-offs
 
 - A future frozen call site that forgets `FrozenMath` is caught by t1066 only in the crates it

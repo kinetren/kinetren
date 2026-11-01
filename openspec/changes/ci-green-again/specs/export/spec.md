@@ -61,5 +61,8 @@ accurate one".
 - **THEN** both give the table's hashes; eight of them were re-based by this change and equal
   what windows-latest printed for them on 94e36e9e, no other value moved; t1019 and t1048 pass
   on both platforms unchanged
-- **TEST** t973c (`src/libs/kt-engine/tests/plugin_sound.rs`), t1019
+- **AND** the export reference t11 has one audio value for both platforms — the one windows-latest
+  had measured — and its video value did not move
+- **TEST** t973c (`src/libs/kt-engine/tests/plugin_sound.rs`), t11
+  (`src/libs/kt-engine/tests/golden_export.rs`), t1019
   (`src/libs/kt-engine/tests/trans_plugin.rs`), t1048 (`src/libs/kt-media/tests/gen_plugin.rs`)
