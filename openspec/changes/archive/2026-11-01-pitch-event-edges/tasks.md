@@ -41,5 +41,9 @@ message, the first line = the change, the stage and what was done) and `src/scri
 ## 4. Finish
 
 - [x] 4.1 What's new line (`docs/guide/whats-new.md`, `## kt26.11`); registry row K15 moved; `python3 src/scripts/ktprompts-index.py --check` green
-- [ ] 4.2 Run `./scripts/finish.sh` from `src/` (`KT_LIVE_DISPLAY=:233`). Verify green and record the version here; ask the owner to re-listen to his fifteen events on that build (and whether they are cut from one recording)
-- [ ] 4.3 Archive; append the "why" (edges read the event's own source, the content gate, one stream across a split, a fresh entry is a seek) to `openspec/specs/audio-fx/design.md` and `openspec/specs/audio-render/design.md`
+- [x] 4.2 Run `./scripts/finish.sh` from `src/` (`KT_LIVE_DISPLAY=:233`). Verify green and record the version here; ask the owner to re-listen to his fifteen events on that build (and whether they are cut from one recording)
+  - finish.sh → **kt26.11.01-2ba74ae7** (2026-11-01). Under three parallel sessions (load average
+    up to 19): live `analysis`, `conform`, `curves` red twice and workshop t640, t802 (the latter:
+    "workers share the display") — all video/UI, none touches audio FX; re-run alone: 3 of 3 live
+    scenarios green, t640 and t802 green. The owner is asked to re-listen in the report.
+- [x] 4.3 Archive; append the "why" (edges read the event's own source, the content gate, one stream across a split, a fresh entry is a seek) to `openspec/specs/audio-fx/design.md` and `openspec/specs/audio-render/design.md`

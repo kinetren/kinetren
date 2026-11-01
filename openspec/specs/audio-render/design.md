@@ -69,6 +69,18 @@ The third — "the music drowns out the voice" (the most frequent live complaint
   renderer sets the span for an event that covers the region end and folds a track stage's input
   window the same way (t911). Rejected: re-seating on the output jump and refilling the ring in
   place — the nodes before the look-ahead node would process that window twice.
+- **A split of a pitched event is one stream** (pitch-event-edges, 2026-11-01). Even with full rings,
+  two pitch streams have independent grain grids, WSOLA offsets and vocoder phases, so a cut between
+  them steps (0.46 against 0.004 inside the uncut event). `run_predecessors` marks the event a clip
+  continues (same track, abutting, the next material frame, same chain, both read across edges, no
+  reverse/overlap/transition, no tail); at its frame 0 on continuous play `FxStateStore::hand_on`
+  swaps the processors — the predecessor's warm one goes on, rebased. Ascending clip order in every
+  burst makes it slicing-independent; fifteen pieces equal the uncut event byte for byte (t1105). A
+  tail-less context chain entered at its first frame or after it ended is a seek, not a seam (its
+  ring holds where it stopped), and an event that starts inside a loop region does not fold its input
+  (it is not what sounds after the wrap). Rejected: one processor per run keyed by its first clip (an
+  edit that moves a cut would destroy states, invariant 3); cloning the state (two owners of one
+  stream).
 
 ## Deferred
 

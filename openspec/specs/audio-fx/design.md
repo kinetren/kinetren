@@ -204,6 +204,19 @@ The most frequent live complaint from reconnaissance was "the music drowns out t
   warm-up at every seam (it would push material twice through the nodes before), a crossfade
   from the dry signal (it plays the wrong pitch for 96 ms). The vocoder's level depends on the
   phase its synthesis starts from — not fixed there (algorithm out of scope).
+- **A window that reads around its moment reads across the event's edges** (pitch-event-edges,
+  2026-11-01, kkt-26.11.01 item 15: fifteen short pitched events tore). Every pitched event started
+  cold at its own edges: the seek pre-roll stopped at the in-point, the input gate cut at the
+  out-point, so the grains at the edges were half silence (measured: WSOLA +7 — 320 frames of total
+  silence before every join, −7 — 250 after it; the vocoder at 0.42 of its level). An event is a
+  window into its material and pitch is a time-scale operation: the pitched event is "the material
+  pitched, then cut", as other editors apply clip pitch to the source with handles. A kind declares
+  `Decl.reads_across_edges`; `chain_context` (one home) decides; a content gate after the last such
+  node cuts the result back. The limiter does not read across: it shapes what the event outputs and
+  must not duck before a peak that is never heard. Rejected: a grid anchored to source time (the rings
+  stay empty, two streams still differ), reflecting the event's tail (invents material, reverses the
+  phase), a crossfade at every join (both sides silent at the cut; two equal tones out of phase
+  cancel).
 
 ## Deferred
 
