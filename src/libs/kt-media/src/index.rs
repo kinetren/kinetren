@@ -88,6 +88,17 @@ fn remove_db_files(path: &Path) {
     }
 }
 
+/// One lock per sidecar path for the setup of an opening (see `MediaIndexDb::open`). Bounded by
+/// the sidecars a process ever opens — one per project, plus the tests' temporary ones.
+fn open_gate(path: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    static GATES: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+    let key = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut g = GATES.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner());
+    g.entry(key).or_default().clone()
+}
+
 impl MediaIndexDb {
     /// Open/create. A broken or foreign DB is silently recreated (rule 3 of
     /// docs/media-index.md) — this is a cache, it must not fail because of it.
@@ -100,7 +111,17 @@ impl MediaIndexDb {
     /// do not conflict) and truncated it, and a connection that still had it mapped died with
     /// SIGBUS in `walIndexRecover` (t640 under load). A transient error is returned to the
     /// caller — a cache miss, which every caller already tolerates.
+    ///
+    /// The SETUP of an opening is serialised per path inside the process (t1171): setting WAL
+    /// and creating the schema are writes, and the threads a project opening starts open the
+    /// sidecar at the same moment. `PRAGMA journal_mode=WAL` then came back `SQLITE_BUSY` in
+    /// 0.2 ms (SQLite skips the busy handler where waiting could deadlock), and on a new file a
+    /// dozen openers outwaited the busy timeout — the reel preview lost its disk tier (t640 red
+    /// on a quiet machine). Only the opening is serialised: the connection returned is the
+    /// thread's own, as before.
     pub fn open(path: &Path) -> Result<MediaIndexDb, IndexError> {
+        let gate = open_gate(path);
+        let _setup = gate.lock().unwrap_or_else(|p| p.into_inner());
         match Self::try_open(path) {
             Ok(db) => Ok(db),
             Err(e) if is_broken_db(&e) => {
@@ -117,7 +138,12 @@ impl MediaIndexDb {
         // sources) — short writes must not fail with SQLITE_BUSY. Set before any statement,
         // so every one of them waits rather than fails at once.
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
+        // WAL is a property of the FILE: once set it stays, and every later opening only reads
+        // it — a write here is what collided with the other threads' openings (t1171)
+        let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?;
+        if !mode.eq_ignore_ascii_case("wal") {
+            conn.pragma_update(None, "journal_mode", "WAL")?;
+        }
         let version: Option<i64> = conn
             .query_row("SELECT value FROM meta WHERE key='schema_version'", [], |r| r.get(0))
             .optional()
@@ -131,8 +157,10 @@ impl MediaIndexDb {
                 return Self::try_open(path);
             }
             None => {
+                // IMMEDIATE: the write lock is taken up front, under the busy handler — a
+                // deferred BEGIN reads first and then cannot upgrade without risking a deadlock
                 conn.execute_batch(
-                    "BEGIN;
+                    "BEGIN IMMEDIATE;
                      CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
                      CREATE TABLE IF NOT EXISTS media (
                        media_id   INTEGER PRIMARY KEY,
