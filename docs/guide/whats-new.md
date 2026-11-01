@@ -16,6 +16,23 @@ month, newest first.
   switched off or set wrong, "View" shows the picture after any stage, and the looks follow from
   it: "Phone at night", "Cheap webcam", "Security cam, IR", "Cinema raw", "Wrong CFA phase", "No
   IR-cut filter". The noise is the same on every play and render.
+- **A real start window.** The welcome window has three columns — Start (the tour, templates
+  drawn in their frame's shape, the five lessons with your progress), Recent (your projects with
+  their pictures, as many per row as fit) and What's new, now readable in its own column. Each
+  column scrolls on its own, and the window can be made as large as the screen.
+- **File → Preferences… holds the program's settings.** Language, Economy UI, whether the welcome
+  window opens at start, the usage statistics, the daily update check and FFmpeg are in one
+  window, each switch in one place; the View menu keeps only what changes the view.
+- **The language you chose stays chosen.** Opening another project used to forget it, and the
+  next start came up in the system language; Economy UI was forgotten the same way.
+
+- **A real VHS: the tape is written and read back.** The new **VHS Tape** effect does not paint
+  stripes on the picture — it records it as a VHS deck does (the brightness on an FM carrier, the
+  colour on a low "colour-under" carrier, two heads on a spinning drum writing slanted tracks) and
+  plays the tape back. Snow, colour smear, the noise bar, the tear at the bottom and wobbly lines
+  come out of the causes: click a head on the drawn drum and make it dirty, clogged or chipped,
+  turn the tracking, switch SP/LP, a TBC, four heads for a clean pause, or record on one deck and
+  play on another. The old **VHS** look is still there.
 
 - **Datamosh — a real one.** The new Datamosh effect runs its own little video codec over the
   clip — motion search, a prediction loop, quantised detail, keyframes — and lets you break it on

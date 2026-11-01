@@ -559,3 +559,45 @@ the automation below it does not move out of view (t749/t750 caught it when it o
 Found while building: with the R.64 frame on (the default since R.67) the frame covered a full-frame
 picture and took the right click — the preview's menu never opened over an event. The menu body is
 one function attached to the picture, the frame and the mask editor.
+
+## The start window in panes and File › Preferences… (welcome-window-and-settings, archived 2026-11-02)
+
+kkt-26.11.01 items 1 and 13 (registry rows K1, K13). The owner: the welcome window was "ugly", a
+needle's eye that did not use its area, and the start switch stood three times — in the window, in
+View, and as a different label for the same value; "it is time to form a settings section in File,
+View is a mess of everything".
+
+- **How others do it.** Resolve's Project Manager, Premiere's Home, Vegas's welcome dialog and
+  Blender's splash all lay the start out in COLUMNS by kind of action (create · reopen · learn/news),
+  each column scrolling alone; Premiere and Blender keep the "show at start" switch with the other
+  preferences, not in the window. Vegas and VS Code put it in both places — the duplication the owner
+  objected to.
+- **Three panes, each its own `window_body`.** Start (the tour, templates drawn with their frame
+  shape, the five lessons with progress), Recent (a poster grid whose column count follows the
+  width), What's new (the page from the running version down, `guide::whats_new_from`, drawn by the
+  Guide's renderer, headed by the newer-release line when the update state already knows one).
+  Rejected: tabs (the owner wants to SEE What's new beside the start actions), one column (the
+  needle's eye).
+- **Sized, never fitted; placed centred ONCE.** A fitted window once grew to 2010 points from its
+  own content (t986). `.size([1180,720],[820,460])`, bounded by the screen. An ANCHORED window is
+  re-centred by egui every frame: once it became resizable its corner ran half as far as the
+  pointer (the live step dragged 600, it grew 260) — `default_pos` instead; t1290 asserts the corner
+  lands at the pointer.
+- **No `ui.separator()` between the panes**: in a horizontal row it takes all the height left,
+  pushed the action row down and grew the window by itself (t918) — `pane_gap` reserves the width,
+  the rule is painted over the row's height.
+- **Preferences are named by the industry** (rule 21): Resolve, Premiere, Vegas, Blender and AE say
+  "Preferences"; "Settings…" next to "Project settings…" reads as the same window twice. Russian
+  keeps the owner's word: «Настройки программы…» beside «Настройки проекта…».
+- **One switch, one place (t1294).** Each preference has exactly one writer and it is in
+  `prefs_window.rs`; View and the welcome window hold none. Rejected: comparing checkbox labels —
+  the original defect had two DIFFERENT labels for one value. The welcome window keeps a
+  "Preferences…" door, whose hint says the start is switched there (rule 19).
+- **Revision of welcome-window-and-tour D1/D11** (the switch in the window AND in View, "said where to
+  get it back") — the owner's new request names exactly that duplication.
+- **Language and Economy UI moved into the user store** (`start.json`): as `KtApp` fields they died in
+  `replace_with`, so File → New forgot the chosen language (t1295). The former eframe `lang` is read
+  once when the store has none, so the first start of this build keeps the person's language.
+- **Not added:** a GPU/CPU preference and an autosave interval — neither is exposed today
+  (`KT_AUTOSAVE_SECS` is a test seam, the GPU fallback is automatic); adding them is a feature
+  without a request.

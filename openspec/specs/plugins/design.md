@@ -87,6 +87,20 @@ The full text, alternatives and measurements are in the archived change
 - The cost of the test build after a plugin edit (fewer test binaries per crate, or the
   registry-wide tests gathered where the set is needed).
 
+## A barrier with its own grid and a deck of numbers (vhs-tape-simulation, archived 2026-11-01)
+
+- `Node::PassAt` (a plugin pass at its own size) and the value forms `frame_values`/`gpu_values`
+  were added for the VHS tape simulation, whose signal grid is the standard's (a 640-wide preview
+  has fewer texels than the grid) and whose ~30 physical quantities do not fit eight cooked
+  numbers. Both are additive: a resample-like check for the size, and defaults that cook, so every
+  earlier barrier kept its bytes and graph (t1187). Rejected: packing the grid into frame-sized
+  textures (the layout would change with the preview size) and packing several quantities into one
+  f64 (a quantisation the passport does not show).
+- The first barrier declaring `AlphaRel::Destroys` found that the GPU's strength mix used the
+  chain's END alpha flag for both sides and left the fold untouched: under a strength the dry
+  side was forced opaque and the mixed layer declared opaque (t1052, 86 % of samples off). The mix
+  now carries the fold at its points and sets it to dry ∨ wet, as the CPU's two frames do.
+
 ## The stream class (datamosh-codec-path, archived 2026-11-01)
 
 - **A temporal kind declares a HISTORY, not state.** F-FX-007 named the way through the purity rule —

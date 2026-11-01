@@ -303,6 +303,10 @@ pub enum ParamUnit {
     /// to the user, “7.0 %” says everything.
     /// The conversion lives in ONE place (`widgets::param_value`).
     Percent,
+    /// Micrometre (vhs-tape-simulation): head-to-tape spacing, gap length, tracking offset.
+    Um,
+    /// Microsecond (vhs-tape-simulation): dropout length, switching skew, time-base jitter.
+    Us,
 }
 
 /// TYPE of a property (R.59, item 466). Until this round the only property was a

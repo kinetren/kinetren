@@ -244,7 +244,6 @@ const ALLOWED_FIXED: &[(&str, &str, &str)] = &[
     ("timeline.rs", "desired_width(140.0)", "an inline name field on the timeline itself (a marker, an area): a panel, not a window"),
     ("timeline.rs", "desired_width(120.0)", "an inline name field on the timeline itself (a track label): a panel, not a window"),
     ("track_window.rs", "desired_width(160.0)", "the track name in the properties grid: egui's Grid sizes a column by its widest cell"),
-    ("welcome.rs", "set_width(RIGHT_W)", "the welcome window's right column; its own layout is the next change (welcome-window-and-settings)"),
     ("widgets.rs", "desired_width(72.0)", "a number field of the shared row sized for its longest value (R.33, one widget per meaning)"),
     ("widgets.rs", "content_rect().height() * 0.62", "a modal's body (no resize) stays content-sized and capped by the screen so its buttons show"),
     ("widgets.rs", "desired_width(220.0)", "the media picker's search sets its popup's width: a popup has no window to fill"),

@@ -1554,6 +1554,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fx-video-tape"
+version = "0.1.0"
+dependencies = [
+ "kt-plugin-api",
+]
+
+[[package]]
 name = "generators-audio"
 version = "0.1.0"
 dependencies = [
@@ -2337,6 +2344,7 @@ dependencies = [
  "fx-video-color",
  "fx-video-distort",
  "fx-video-stylize",
+ "fx-video-tape",
  "generators-audio",
  "generators-basic",
  "generators-test",

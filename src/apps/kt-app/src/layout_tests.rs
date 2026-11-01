@@ -1985,7 +1985,7 @@ fn t128_labels_fit_their_budget() {
             );
         }
 
-        let got = w(tr(k::menu::view::ECONOMY).to_string(), body.clone());
+        let got = w(tr(k::prefs::ECONOMY).to_string(), body.clone());
         assert!(
             got <= CHECKBOX_BUDGET,
             "{code}: the checkbox of the economy UI takes {got:.0} px against the budget {CHECKBOX_BUDGET}"

@@ -489,6 +489,8 @@ fn t328_golden_cycle_over_the_registry() {
         ("cylinder3d", 0x9178d747ce3f9976),
         // camera-isp-simulation: the default camera films the test frame (seeded noise included)
         ("camera_isp", 0x0e0ed55da11f5e92),
+        // vhs-tape-simulation: the tape written and read back, a good deck at its defaults
+        ("vhs_tape", 0x507b641c842f40bc),
         // datamosh-codec-path: a STREAM source stage runs before the chain (in the engine's
         // plan); the chain passes its slot through, so its template is the identity here
         ("datamosh", 0x05719cf53332c61a),

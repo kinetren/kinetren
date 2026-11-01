@@ -2408,6 +2408,22 @@ effect; copying the part of an event under the region copies the whole event.
   detector (faces, people) or a mask will give it through this one door. Written down in the
   `plugins` and `video-fx` designs.
 
+**Items 1 and 13 taken as (welcome-window-and-settings, 2026-11-01):**
+- The start window is laid out in three columns by kind of action, as Premiere's Home and
+  Blender's splash are: Start (the tour, the templates drawn in their frame's shape, the five
+  lessons with progress), Recent (poster cards that wrap and grow), What's new (the Guide's
+  renderer over the whole notes page). Each column scrolls alone; the window is sized, resizable,
+  never larger than the screen.
+- "Settings" became **File › Preferences…** — the industry's word (Resolve, Premiere, Vegas,
+  Blender); in Russian "Настройки программы…", beside "Настройки проекта…". It holds every program
+  preference: the start switch, Language, Economy UI, statistics, the daily update check, FFmpeg.
+  View keeps Detach preview, Diagnostics…, Notices.
+- One switch, one place: the welcome window loses its checkbox too (Premiere and Blender keep that
+  switch with the preferences); its action row has a "Preferences…" door. A guard counts the
+  writers of each preference, not the labels — the two start checkboxes had different labels.
+- Found on the way: File → New forgot the chosen language and Economy UI (both were fields of the
+  app that a project open rebuilds); they live in the user store now.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

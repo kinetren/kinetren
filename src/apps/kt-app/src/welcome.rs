@@ -244,6 +244,9 @@ pub struct Start {
     pub pending: Option<StartGo>,
     /// The template the current unnamed project was made from (its recent row remembers it).
     pub made_from: Option<String>,
+    /// File › Preferences… is open (welcome-window-and-settings): here, so a project open from
+    /// the welcome window does not close it.
+    pub prefs_open: bool,
 }
 
 impl Default for Start {
@@ -258,6 +261,7 @@ impl Default for Start {
             after_ffmpeg: false,
             pending: None,
             made_from: None,
+            prefs_open: false,
         }
     }
 }
@@ -444,30 +448,109 @@ enum Act {
     Clear,
     DeleteTemplate(String),
     Guide,
-    ShowAtStart(bool),
+    /// A link inside What's new: the Guide at that page and heading.
+    GuideAt((String, String)),
+    Prefs,
     Close,
 }
 
-const TILE: egui::Vec2 = egui::vec2(96.0, 56.0);
-const CARD: egui::Vec2 = egui::vec2(160.0, 90.0);
-/// The welcome window's right column (the tour, the Guide, What's new): its own layout is the next
-/// change's (welcome-window-and-settings); the left column takes the rest of the window.
-const RIGHT_W: f32 = 220.0;
+/// The welcome window's default and smallest size (welcome-window-and-settings D1): a SIZED window
+/// — a fitted one measured its content and once grew to 2010 points. The minimum holds the three
+/// panes at their floors side by side.
+const WELCOME_SIZE: [f32; 2] = [1180.0, 720.0];
+const WELCOME_MIN: [f32; 2] = [820.0, 460.0];
+/// The panes' floors and ceilings: Start a quarter, What's new a third, Recent the rest.
+const START_W: (f32, f32) = (260.0, 340.0);
+const NEWS_W: (f32, f32) = (300.0, 560.0);
+const RECENT_MIN_W: f32 = 200.0;
+/// A recent card's floor: the pane holds as many per row as fit, then stretches them (D4).
+const CARD_MIN_W: f32 = 180.0;
+const CARD_GAP: f32 = 10.0;
+/// A start row (the tour, a template, a lesson): one click target across the pane.
+const ROW_H: f32 = 40.0;
 
-/// A tile: a framed button; the primary one is larger and outlined in the accent colour.
-fn tile(ui: &mut egui::Ui, text: &str, sub: &str, primary: bool, probe: &str) -> egui::Response {
-    let size = if primary { TILE + egui::vec2(16.0, 10.0) } else { TILE };
-    let job = format!("{text}\n{sub}");
-    let b = egui::Button::new(egui::RichText::new(job).size(if primary { 14.0 } else { 13.0 }))
-        .min_size(size)
-        .stroke(if primary {
-            egui::Stroke::new(2.0, crate::theme::ACCENT)
-        } else {
-            egui::Stroke::new(1.0, crate::theme::OUTLINE)
-        });
-    let r = ui.add(b);
-    crate::widgets::field_probe::note(probe, r.rect);
-    r
+/// The panes' widths for the window's inner width: exact, or the window would widen itself by the
+/// difference every frame (t918). Two separators sit between the three panes.
+pub(crate) fn pane_widths(inner: f32, gap: f32) -> (f32, f32, f32) {
+    let start = (inner * 0.25).clamp(START_W.0, START_W.1).floor();
+    let news = (inner * 0.34).clamp(NEWS_W.0, NEWS_W.1).floor();
+    let recent = (inner - start - news - 4.0 * gap - 12.0).max(RECENT_MIN_W).floor();
+    (start, recent, news)
+}
+
+/// How many recent cards a row holds, and their stretched width.
+pub(crate) fn card_columns(avail: f32) -> (usize, f32) {
+    let cols = ((avail + CARD_GAP) / (CARD_MIN_W + CARD_GAP)).floor().max(1.0) as usize;
+    let w = ((avail - CARD_GAP * (cols as f32 - 1.0)) / cols as f32).floor();
+    (cols, w)
+}
+
+/// The gap between two panes: a separator's width, no height; the rule is painted over the row's
+/// height once the row is laid out. Returns the rule's x.
+fn pane_gap(ui: &mut egui::Ui) -> f32 {
+    let (r, _) = ui.allocate_exact_size(egui::vec2(6.0, 0.0), egui::Sense::hover());
+    r.center().x
+}
+
+/// A pane's title: strong, a little larger, with a rule under it — outside the pane's scroll, so it
+/// stays when the pane scrolls.
+fn pane_title(ui: &mut egui::Ui, text: &str, extra: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(text).size(15.0).strong());
+        extra(ui);
+    });
+    ui.separator();
+}
+
+/// A row of the Start pane: a framed click target across the pane; the primary one has the accent
+/// stroke (D3). `paint` draws the row's content into its rectangle; the row is a button named
+/// `name` for screen readers and the harness.
+fn start_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    primary: bool,
+    probe: &str,
+    paint: impl FnOnce(&egui::Painter, egui::Rect, &egui::Style),
+) -> egui::Response {
+    let h = if primary { ROW_H + 8.0 } else { ROW_H };
+    let (rect, r) = ui.allocate_exact_size(egui::vec2(ui.available_width(), h), egui::Sense::click());
+    let painter = ui.painter_at(rect);
+    let fill = if r.hovered() { crate::theme::HOVER } else { ui.visuals().faint_bg_color };
+    let stroke = if primary {
+        egui::Stroke::new(2.0, crate::theme::ACCENT)
+    } else {
+        egui::Stroke::new(1.0, crate::theme::OUTLINE)
+    };
+    painter.rect(rect, 3.0, fill, stroke, egui::StrokeKind::Inside);
+    paint(&painter, rect.shrink2(egui::vec2(8.0, 4.0)), ui.style());
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name));
+    crate::widgets::field_probe::note(probe, rect);
+    ui.add_space(2.0);
+    r.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Two lines in a row's rectangle from `x`: the title strong, the subtitle weak, clipped.
+fn row_text(p: &egui::Painter, rect: egui::Rect, x: f32, title: &str, sub: &str, style: &egui::Style) {
+    let strong = style.visuals.strong_text_color();
+    let weak = style.visuals.weak_text_color();
+    let mid = rect.center().y;
+    if sub.is_empty() {
+        p.text(egui::pos2(x, mid), egui::Align2::LEFT_CENTER, title, egui::FontId::proportional(14.0), strong);
+    } else {
+        p.text(egui::pos2(x, mid - 1.0), egui::Align2::LEFT_BOTTOM, title, egui::FontId::proportional(14.0), strong);
+        p.text(egui::pos2(x, mid + 1.0), egui::Align2::LEFT_TOP, sub, egui::FontId::proportional(12.0), weak);
+    }
+}
+
+/// The frame of a template drawn in its aspect inside a 40×26 box (D3): the shape tells 16:9, 9:16
+/// and 1:1 apart before the numbers are read. Returns the drawn rectangle.
+pub(crate) fn frame_glyph(p: &egui::Painter, rect: egui::Rect, w: u32, h: u32, primary: bool) -> egui::Rect {
+    let boxr = egui::Rect::from_min_size(egui::pos2(rect.left(), rect.center().y - 13.0), egui::vec2(40.0, 26.0));
+    let k = (boxr.width() / w as f32).min(boxr.height() / h as f32);
+    let g = egui::Rect::from_center_size(boxr.center(), egui::vec2(w as f32 * k, h as f32 * k));
+    let c = if primary { crate::theme::ACCENT } else { crate::theme::AXIS_ZERO };
+    p.rect_stroke(g, 1.0, egui::Stroke::new(1.5, c), egui::StrokeKind::Inside);
+    g
 }
 
 impl crate::app::KtApp {
@@ -538,206 +621,270 @@ impl crate::app::KtApp {
         if enter {
             act = tile_go(&primary);
         }
-        let mut show = store.start.show_at_start;
+        // the update-check state already on disk (the window makes no request of its own)
+        let outdated = self.update.as_ref().and_then(|u| u.outdated());
+        // a sized window, never larger than the screen it opens on (D1)
+        let screen = ctx.content_rect().size();
+        let size = [WELCOME_SIZE[0].min(screen.x - 40.0), WELCOME_SIZE[1].min(screen.y - 60.0)];
         let win = crate::window_shell::Shell::new(
             egui::Id::new("kt_welcome"),
             tr(k::welcome::TITLE),
             crate::window_shell::Kind::Dialog,
         )
-        .width(820.0, [560.0, 360.0])
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .size(size, WELCOME_MIN)
+        // centred ONCE, not anchored: an anchored window is re-centred every frame, so its corner
+        // ran half as far as the pointer (the live `welcome` step: dragged 600, grew 260)
+        .default_pos(ctx.content_rect().center() - egui::vec2(size[0], size[1]) / 2.0)
         .probe("welcome.window")
         .show(ctx, |ui| {
-            crate::widgets::window_body(ui, |ui| {
-                // the left column takes what the right one and the separator leave: an enlarged
-                // window shows more templates and recent cards per row (windows-fill-their-area).
-                // Exact, or the window would widen itself by the difference every frame (t918)
-                let gap = ui.spacing().item_spacing.x;
-                let left_w = (ui.available_width() - RIGHT_W - 2.0 * gap - 6.0).max(300.0);
-                ui.horizontal_top(|ui| {
-                    // ---- left: templates and recent projects ----
-                    ui.vertical(|ui| {
-                        ui.set_width(left_w);
-                        ui.label(egui::RichText::new(tr(k::welcome::NEW_FROM_TEMPLATE)).strong());
-                        ui.horizontal_wrapped(|ui| {
-                            for t in BUILTIN {
-                                let is = primary == Tile::NewFromTemplate(t.id.to_string());
-                                let sub = format!("{}×{} {}", t.width, t.height, t.fps);
-                                let r = tile(ui, t.label, &sub, is, &format!("welcome.tpl.{}", t.id));
-                                if r.clicked() {
-                                    act = Some(Act::Go(StartGo::Template(t.id.to_string())));
+            // three panes side by side, each its own filling scroll down to the action row (D1):
+            // scrolling What's new no longer scrolls the templates and the cards with it
+            // (kkt-26.11.01 item 1)
+            let gap = ui.spacing().item_spacing.x;
+            let (start_w, recent_w, news_w) = pane_widths(ui.available_width(), gap);
+            let mut seps = [0.0f32; 2];
+            let row = ui.horizontal_top(|ui| {
+                // ---- Start: the tour, the templates, the lessons ----
+                ui.vertical(|ui| {
+                    ui.set_width(start_w);
+                    pane_title(ui, tr(k::welcome::START), |_| {});
+                    ui.push_id("welcome_start", |ui| {
+                        crate::widgets::window_body(ui, |ui| {
+                            let next = crate::lessons::next_step(&store.tour);
+                            let (text, is) = match (&primary, next) {
+                                (Tile::ContinueTour { lesson, step }, _) => {
+                                    (crate::tf!(k::welcome::CONTINUE, lesson, step), true)
                                 }
+                                (_, Some((l, s))) => (crate::tf!(k::welcome::CONTINUE, l, s), false),
+                                (other, None) => (tr(k::welcome::TOUR).to_string(), *other == Tile::Tour),
+                            };
+                            let sub = tr(k::welcome::TOUR_SUB);
+                            let r = start_row(ui, &text, is, "welcome.tour", |p, rect, st| {
+                                let icon = egui::pos2(rect.left() + 12.0, rect.center().y);
+                                p.text(icon, egui::Align2::CENTER_CENTER, crate::icons::PLAY, egui::FontId::proportional(18.0), crate::theme::ACCENT);
+                                row_text(p, rect, rect.left() + 32.0, &text, sub, st);
+                            });
+                            if r.clicked() {
+                                let lesson = next.map(|(l, _)| l).unwrap_or(1);
+                                act = Some(Act::Go(StartGo::Lesson { lesson, fresh: false }));
                             }
-                            for t in &store.templates {
-                                let id = user_template_id(&t.name);
+                            ui.add_space(10.0);
+                            ui.label(egui::RichText::new(tr(k::welcome::NEW_FROM_TEMPLATE)).strong());
+                            let builtin = BUILTIN.iter().map(|t| (t.id.to_string(), t.label.to_string(), t.width, t.height, t.fps, false));
+                            let own = store
+                                .templates
+                                .iter()
+                                .map(|t| (user_template_id(&t.name), t.name.clone(), t.width, t.height, t.fps, true));
+                            for (id, label, w, h, fps, mine) in builtin.chain(own).collect::<Vec<_>>() {
                                 let is = primary == Tile::NewFromTemplate(id.clone());
-                                let sub = format!("{}×{} {}", t.width, t.height, t.fps);
-                                let r = tile(ui, &t.name, &sub, is, &format!("welcome.tpl.{id}"));
+                                let sub = format!("{w}×{h} · {fps} fps");
+                                let name = format!("{label} {sub}");
+                                let r = start_row(ui, &name, is, &format!("welcome.tpl.{id}"), |p, rect, st| {
+                                    frame_glyph(p, rect, w, h, is);
+                                    row_text(p, rect, rect.left() + 52.0, &label, &sub, st);
+                                });
                                 if r.clicked() {
                                     act = Some(Act::Go(StartGo::Template(id.clone())));
                                 }
-                                // a right click is never silent: the template's own menu
-                                r.context_menu(|ui| {
-                                    if ui.button(tr(k::welcome::DELETE_TEMPLATE)).clicked() {
-                                        act = Some(Act::DeleteTemplate(t.name.clone()));
-                                        ui.close();
-                                    }
-                                });
-                            }
-                        });
-                        ui.add_space(10.0);
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(tr(k::welcome::RECENT)).strong());
-                            if !store.recent.is_empty() {
-                                let r = ui.small_button(tr(k::welcome::CLEAR));
-                                crate::widgets::hint(&r, tr(k::welcome::HINT_CLEAR));
-                                if r.clicked() {
-                                    act = Some(Act::Clear);
-                                }
-                            }
-                        });
-                        if store.recent.is_empty() {
-                            ui.weak(tr(k::welcome::NO_RECENT));
-                        }
-                        ui.horizontal_wrapped(|ui| {
-                            for (i, e) in store.recent.iter().enumerate() {
-                                let is = primary == Tile::Recent(i);
-                                let exists = e.path.exists();
-                                let folder = e
-                                    .path
-                                    .parent()
-                                    .map(|p| p.display().to_string())
-                                    .unwrap_or_default();
-                                let card = ui.vertical(|ui| {
-                                    ui.set_width(CARD.x + 8.0);
-                                    let (rect, r) = ui.allocate_exact_size(CARD, egui::Sense::click());
-                                    let painter = ui.painter_at(rect);
-                                    match posters.get(&e.path) {
-                                        Some(tex) => {
-                                            painter.image(
-                                                tex.id(),
-                                                rect,
-                                                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                                                egui::Color32::WHITE,
-                                            );
+                                if mine {
+                                    // a right click is never silent: the template's own menu
+                                    let tname = label.clone();
+                                    r.context_menu(|ui| {
+                                        if ui.button(tr(k::welcome::DELETE_TEMPLATE)).clicked() {
+                                            act = Some(Act::DeleteTemplate(tname.clone()));
+                                            ui.close();
                                         }
-                                        None => {
-                                            painter.rect_filled(rect, 2.0, crate::theme::HOVER);
-                                            painter.text(
-                                                rect.center(),
-                                                egui::Align2::CENTER_CENTER,
-                                                initials(&e.name),
-                                                egui::FontId::proportional(28.0),
-                                                crate::theme::AXIS_ZERO,
-                                            );
-                                        }
-                                    }
-                                    let stroke = if is {
-                                        egui::Stroke::new(2.0, crate::theme::ACCENT)
-                                    } else if r.hovered() {
-                                        egui::Stroke::new(1.0, crate::theme::SEAM)
-                                    } else {
-                                        egui::Stroke::new(1.0, crate::theme::OUTLINE)
-                                    };
-                                    painter.rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Inside);
-                                    let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
-                                    // the card is a button named by its project (screen readers, the harness)
-                                    r.widget_info(|| {
-                                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &e.name)
                                     });
-                                    crate::widgets::field_probe::note(&format!("welcome.recent.{i}"), r.rect);
-                                    ui.add(egui::Label::new(egui::RichText::new(&e.name).strong()).truncate());
-                                    if exists {
-                                        ui.add(egui::Label::new(egui::RichText::new(&folder).weak().small()).truncate());
-                                    } else {
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(crate::tf!(k::welcome::MISSING, &folder))
-                                                    .color(crate::app::HINT_ERROR)
-                                                    .small(),
-                                            )
-                                            .truncate(),
-                                        );
-                                        if ui.small_button(tr(k::welcome::LOCATE)).clicked() {
-                                            act = Some(Act::Locate(i));
-                                        }
-                                    }
-                                    r
-                                });
-                                let r = card.inner;
-                                if r.clicked() && exists {
-                                    act = Some(Act::Go(StartGo::Recent(e.path.clone())));
                                 }
-                                if r.clicked() && !exists {
-                                    act = Some(Act::Locate(i));
-                                }
-                                r.context_menu(|ui| {
-                                    if ui.button(tr(k::welcome::FORGET)).clicked() {
-                                        act = Some(Act::Forget(i));
-                                        ui.close();
-                                    }
+                            }
+                            ui.add_space(10.0);
+                            ui.label(egui::RichText::new(tr(k::welcome::LESSONS)).strong());
+                            for (li, l) in crate::lessons::LESSONS.iter().enumerate() {
+                                let n = li as u32 + 1;
+                                let steps = l.steps.len() as u32;
+                                let done = (1..=steps).filter(|s| store.tour.is_done(n, *s)).count() as u32;
+                                let title = format!("{n} · {}", tr(l.title));
+                                let mark = if done == steps {
+                                    crate::icons::CHECK.to_string()
+                                } else if done > 0 {
+                                    format!("{done}/{steps}")
+                                } else {
+                                    String::new()
+                                };
+                                let name = format!("{title} {mark}");
+                                let r = start_row(ui, &name, false, &format!("welcome.lesson.{n}"), |p, rect, st| {
+                                    row_text(p, rect, rect.left(), &title, "", st);
+                                    let c = if done == steps { crate::theme::AREA } else { st.visuals.weak_text_color() };
+                                    p.text(rect.right_center(), egui::Align2::RIGHT_CENTER, &mark, egui::FontId::proportional(13.0), c);
                                 });
+                                if r.clicked() {
+                                    act = Some(Act::Go(StartGo::Lesson { lesson: n, fresh: false }));
+                                }
                             }
                         });
                     });
-                    ui.separator();
-                    // ---- right: the tour, the Guide, What's new ----
-                    ui.vertical(|ui| {
-                        ui.set_width(RIGHT_W);
-                        let (text, is) = match &primary {
-                            Tile::ContinueTour { lesson, step } => {
-                                (crate::tf!(k::welcome::CONTINUE, lesson, step), true)
+                });
+                seps[0] = pane_gap(ui);
+                // ---- Recent: poster cards that wrap and grow with the pane (D4) ----
+                ui.vertical(|ui| {
+                    ui.set_width(recent_w);
+                    pane_title(ui, tr(k::welcome::RECENT), |ui| {
+                        if !store.recent.is_empty() {
+                            let r = ui.small_button(tr(k::welcome::CLEAR));
+                            crate::widgets::hint(&r, tr(k::welcome::HINT_CLEAR));
+                            if r.clicked() {
+                                act = Some(Act::Clear);
                             }
-                            other => {
-                                let next = crate::lessons::next_step(&store.tour);
-                                match next {
-                                    Some((l, s)) => (crate::tf!(k::welcome::CONTINUE, l, s), false),
-                                    None => (tr(k::welcome::TOUR).to_string(), *other == Tile::Tour),
-                                }
+                        }
+                    });
+                    ui.push_id("welcome_recent", |ui| {
+                        crate::widgets::window_body(ui, |ui| {
+                            if store.recent.is_empty() {
+                                ui.weak(tr(k::welcome::NO_RECENT));
                             }
-                        };
-                        let r = tile(ui, &text, tr(k::welcome::TOUR_SUB), is, "welcome.tour");
-                        if r.clicked() {
-                            let lesson = crate::lessons::next_step(&store.tour).map(|(l, _)| l).unwrap_or(1);
-                            act = Some(Act::Go(StartGo::Lesson { lesson, fresh: false }));
-                        }
-                        let r = ui.link(tr(k::welcome::GUIDE));
-                        crate::widgets::field_probe::note("welcome.guide", r.rect);
-                        if r.clicked() {
-                            act = Some(Act::Guide);
-                        }
-                        ui.add_space(8.0);
-                        let (label, blocks) = crate::guide::whats_new(kt_version::SHORT);
-                        let head = if label == kt_version::SHORT {
-                            crate::tf!(k::welcome::WHATS_NEW, &label)
-                        } else {
-                            crate::tf!(k::welcome::WHATS_NEW_OLDER, &label)
-                        };
-                        let r = ui.label(egui::RichText::new(head).strong());
-                        if scroll_news {
-                            r.scroll_to_me(Some(egui::Align::TOP));
-                        }
-                        ui.weak(tr(k::guide::ENGLISH));
-                        crate::guide::render(ui, blocks, None);
+                            let (cols, card_w) = card_columns(ui.available_width());
+                            let rows: Vec<_> = store.recent.iter().enumerate().collect();
+                            for chunk in rows.chunks(cols) {
+                                ui.horizontal_top(|ui| {
+                                    ui.spacing_mut().item_spacing.x = CARD_GAP;
+                                    for (i, e) in chunk {
+                                        let i = *i;
+                                        let is = primary == Tile::Recent(i);
+                                        let exists = e.path.exists();
+                                        let folder = e.path.parent().map(|p| p.display().to_string()).unwrap_or_default();
+                                        let card = ui.vertical(|ui| {
+                                            ui.set_width(card_w);
+                                            let size = egui::vec2(card_w, (card_w * 9.0 / 16.0).round());
+                                            let (rect, r) = ui.allocate_exact_size(size, egui::Sense::click());
+                                            let painter = ui.painter_at(rect);
+                                            match posters.get(&e.path) {
+                                                Some(tex) => {
+                                                    painter.image(
+                                                        tex.id(),
+                                                        rect,
+                                                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                                        egui::Color32::WHITE,
+                                                    );
+                                                }
+                                                None => {
+                                                    painter.rect_filled(rect, 3.0, crate::theme::HOVER);
+                                                    painter.text(
+                                                        rect.center(),
+                                                        egui::Align2::CENTER_CENTER,
+                                                        initials(&e.name),
+                                                        egui::FontId::proportional(28.0),
+                                                        crate::theme::AXIS_ZERO,
+                                                    );
+                                                }
+                                            }
+                                            let stroke = if is {
+                                                egui::Stroke::new(2.0, crate::theme::ACCENT)
+                                            } else if r.hovered() {
+                                                egui::Stroke::new(1.0, crate::theme::SEAM)
+                                            } else {
+                                                egui::Stroke::new(1.0, crate::theme::OUTLINE)
+                                            };
+                                            painter.rect_stroke(rect, 3.0, stroke, egui::StrokeKind::Inside);
+                                            let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+                                            // the card is a button named by its project (screen readers, the harness)
+                                            r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &e.name));
+                                            crate::widgets::field_probe::note(&format!("welcome.recent.{i}"), r.rect);
+                                            ui.add(egui::Label::new(egui::RichText::new(&e.name).strong()).truncate());
+                                            if exists {
+                                                ui.add(egui::Label::new(egui::RichText::new(&folder).weak().small()).truncate());
+                                            } else {
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(crate::tf!(k::welcome::MISSING, &folder))
+                                                            .color(crate::app::HINT_ERROR)
+                                                            .small(),
+                                                    )
+                                                    .truncate(),
+                                                );
+                                                if ui.small_button(tr(k::welcome::LOCATE)).clicked() {
+                                                    act = Some(Act::Locate(i));
+                                                }
+                                            }
+                                            r
+                                        });
+                                        let r = card.inner;
+                                        if r.clicked() {
+                                            act = Some(if exists { Act::Go(StartGo::Recent(e.path.clone())) } else { Act::Locate(i) });
+                                        }
+                                        r.context_menu(|ui| {
+                                            if ui.button(tr(k::welcome::FORGET)).clicked() {
+                                                act = Some(Act::Forget(i));
+                                                ui.close();
+                                            }
+                                        });
+                                    }
+                                });
+                                ui.add_space(CARD_GAP);
+                            }
+                        });
+                    });
+                });
+                seps[1] = pane_gap(ui);
+                // ---- What's new: the page from the running version down, the Guide's renderer (D2) ----
+                ui.vertical(|ui| {
+                    ui.set_width(news_w);
+                    let (label, blocks) = crate::guide::whats_new_from(kt_version::SHORT);
+                    let head = if label == kt_version::SHORT {
+                        crate::tf!(k::welcome::WHATS_NEW, &label)
+                    } else {
+                        crate::tf!(k::welcome::WHATS_NEW_OLDER, &label)
+                    };
+                    pane_title(ui, &head, |_| {});
+                    ui.push_id("welcome_news", |ui| {
+                        crate::widgets::window_body(ui, |ui| {
+                            let top = ui.allocate_response(egui::vec2(0.0, 0.0), egui::Sense::hover());
+                            if scroll_news {
+                                top.scroll_to_me(Some(egui::Align::TOP));
+                            }
+                            if let Some(new) = &outdated {
+                                let r = ui.add(
+                                    egui::Label::new(egui::RichText::new(crate::update_check::title_hint(new)).color(crate::theme::BADGE_ON))
+                                        .wrap(),
+                                );
+                                crate::widgets::field_probe::note("welcome.update", r.rect);
+                            }
+                            ui.weak(tr(k::guide::ENGLISH));
+                            if let Some(link) = crate::guide::render(ui, blocks, None) {
+                                act = Some(Act::GuideAt(link));
+                            }
+                        });
                     });
                 });
             });
+            // the rules between the panes, the row's height (a `Separator` in a horizontal row takes
+            // ALL the height left, which pushed the action row down and grew the window by itself)
+            let r = row.response.rect;
+            for x in seps {
+                ui.painter().vline(x, r.y_range(), ui.visuals().widgets.noninteractive.bg_stroke);
+            }
             crate::widgets::window_actions(ui, |ui| {
                 ui.horizontal(|ui| {
-                    let r = ui.checkbox(&mut show, tr(k::welcome::SHOW_AT_START));
-                    crate::widgets::field_probe::note("welcome.show_at_start", r.rect);
-                    crate::widgets::hint(&r, tr(k::welcome::HINT_SHOW_AT_START));
-                    if r.changed() {
-                        act = Some(Act::ShowAtStart(show));
-                    }
-                    // a right-to-left layout here would stretch the window to the screen's
-                    // maximum (an auto-sized window takes the widest content it is offered)
-                    ui.add_space(16.0);
-                    let r = ui.button(tr(k::welcome::CLOSE));
-                    crate::widgets::field_probe::note("welcome.close", r.rect);
+                    let r = ui.button(tr(k::welcome::GUIDE));
+                    crate::widgets::field_probe::note("welcome.guide", r.rect);
                     if r.clicked() {
-                        act = Some(Act::Close);
+                        act = Some(Act::Guide);
                     }
+                    // whether this window opens at start is a preference: one switch, in one place
+                    // (D6) — here only the door to it
+                    let r = ui.button(tr(k::menu::file::PREFERENCES));
+                    crate::widgets::field_probe::note("welcome.preferences", r.rect);
+                    crate::widgets::hint(&r, tr(k::welcome::HINT_PREFERENCES));
+                    if r.clicked() {
+                        act = Some(Act::Prefs);
+                    }
+                    // a sized window: the right-to-left tail takes the row's room, not more
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let r = ui.button(tr(k::welcome::CLOSE));
+                        crate::widgets::field_probe::note("welcome.close", r.rect);
+                        if r.clicked() {
+                            act = Some(Act::Close);
+                        }
+                    });
                 });
             });
         });
@@ -747,7 +894,11 @@ impl crate::app::KtApp {
         match act {
             None => {}
             Some(Act::Close) => self.start.welcome.open = false,
-            Some(Act::ShowAtStart(on)) => self.start.store.set_show_at_start(on),
+            Some(Act::Prefs) => self.start.prefs_open = true,
+            Some(Act::GuideAt((file, anchor))) => {
+                let file = if file.is_empty() { "whats-new.md".to_string() } else { file };
+                self.start.guide.open_at(&file, &anchor);
+            }
             Some(Act::Guide) => {
                 self.start.guide.open = true;
                 self.start.guide.focus = true;

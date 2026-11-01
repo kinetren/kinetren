@@ -129,7 +129,7 @@ fn t1145_left_column_is_the_bins_and_both_doors_open_diagnostics() {
 }
 
 /// Test 1146: nothing of the former box is lost — the three graphs and every line are in the
-/// window, the journal button too; "Economy UI" lives only in View, with its hint.
+/// window, the journal button too; "Economy UI" lives only in File › Preferences…, with its hint.
 #[test]
 fn t1146_diagnostics_carries_every_line_and_three_graphs() {
     let mut h = crate::layout_tests::harness();
@@ -167,24 +167,28 @@ fn t1146_diagnostics_carries_every_line_and_three_graphs() {
     assert!(has("FFmpeg: open"), "the window lacks the FFmpeg totals");
     assert!(h.query_by_label(tr(k::perf::FLIGHT_SAVE)).is_some(), "the journal button is lost");
     assert!(
-        h.query_by_label(tr(k::menu::view::ECONOMY)).is_none(),
+        h.query_by_label(tr(k::prefs::ECONOMY)).is_none(),
         "“Economy UI” is repeated in the window"
     );
 
-    // the one "Economy UI" switch: in View, and hovering it says what it does
+    // the one "Economy UI" switch: in File › Preferences… (welcome-window-and-settings moved the
+    // program's preferences out of View, kkt-26.11.01 item 13), and hovering it says what it does
     h.state_mut().perf.diag_open = false;
     h.step();
-    h.get_by_label(tr(k::menu::view::TITLE)).click();
+    h.get_by_label(tr(k::menu::file::TITLE)).click();
     h.step();
     h.step();
-    let item = h.get_by_label(tr(k::menu::view::ECONOMY)).rect();
+    h.get_by_label(tr(k::menu::file::PREFERENCES)).click();
+    h.step();
+    h.step();
+    let item = h.get_by_label(tr(k::prefs::ECONOMY)).rect();
     h.event(egui::Event::PointerMoved(item.center()));
     h.step();
     h.step();
     assert_eq!(
         h.state().status_line_shown.0,
         tr(k::hint::ECONOMY),
-        "hovering View → Economy UI does not say what it does"
+        "hovering Preferences › Economy UI does not say what it does"
     );
 }
 

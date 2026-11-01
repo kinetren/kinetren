@@ -296,6 +296,13 @@ widths and draws every group (clipped), which measures them. Guard t1132 (a ⋯ 
 reaches Render; none at 1700). Rejected: shrinking buttons or a second row (the owner set the row's
 look; a second row costs the timeline height, rule 13).
 
+## Economy UI moved to File › Preferences… (welcome-window-and-settings, archived 2026-11-02)
+
+The note above ("one switch, in View") is revised by the owner's kkt-26.11.01 item 13: the program's
+preferences leave View for one window, File › Preferences…; View keeps only what changes what is
+viewed (Detach/Dock, Diagnostics…, Notices). The switch is still ONE (t1294 counts its writers), and
+its value lives in the user store, so opening another project no longer resets it (t1295).
+
 ## Deferred
 
 - `lane_names` live in `Project.ui`, and `swap_reel` does not swap them — the full entry

@@ -33,6 +33,7 @@ members = [
     "plugins/generators-basic",
     "plugins/generators-test",
     "plugins/generators-audio",
+    "plugins/fx-video-tape",
 ]
 
 [workspace.package]
@@ -71,6 +72,7 @@ transitions-volume = { path = "plugins/transitions-volume" }
 generators-basic = { path = "plugins/generators-basic" }
 generators-test = { path = "plugins/generators-test" }
 generators-audio = { path = "plugins/generators-audio" }
+fx-video-tape = { path = "plugins/fx-video-tape" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

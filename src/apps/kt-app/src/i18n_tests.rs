@@ -741,14 +741,17 @@ fn t876_update_texts_in_every_language() {
         assert!(!notice.contains('{'), "{}: a placeholder left unfilled: {notice}", lang.code());
         let hint = crate::update_check::title_hint(new);
         assert!(hint.contains(new_day) && hint.contains(crate::update_check::RELEASES_PAGE), "{hint}");
-        // the notice names View and the checkbox (Arabic comes back with its words reordered)
+        // the notice names File › Preferences… and the checkbox (Arabic comes back with its words
+        // reordered); it named View until welcome-window-and-settings moved the switch there
         let word = |w: &str| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
         let names = |s: &str| {
             notice.contains(s)
                 || s.split_whitespace().all(|w| notice.split_whitespace().any(|o| word(o) == word(w)))
         };
         assert!(
-            names(i18n::tr(k::menu::view::TITLE)) && names(i18n::tr(k::update::CHECKBOX)),
+            names(i18n::tr(k::menu::file::TITLE))
+                && names(i18n::tr(k::menu::file::PREFERENCES))
+                && names(i18n::tr(k::update::CHECKBOX)),
             "{}: the notice must say where the check is switched off: {notice}",
             lang.code()
         );

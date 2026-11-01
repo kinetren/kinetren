@@ -269,12 +269,9 @@ pub struct KtApp {
     /// stored in the project’s UiState.
     /// The preview is split into its own window (item 7 v1.4, second monitor).
     pub preview_detached: bool,
-    /// Economical UI: 30 fps during playback (item 1 round 5, weak GPUs).
-    pub ui_economy: bool,
-    /// Selected interface language; `None` — “auto” (by OS locale, item 3 round 19).
-    /// This is a USER setting: it lives in the eframe Storage, not in
-    /// `.ktproj`, and it does not raise the unsaved-changes asterisk.
-    pub lang_choice: Option<crate::i18n::Lang>,
+    // Economy UI and the language choice are PROGRAM preferences: they live in the user store
+    // (`self.start.store.start`), which `replace_with` carries — as fields here File → New lost
+    // them (welcome-window-and-settings D8).
     /// Anonymous usage telemetry (change telemetry-posthog). One per PROCESS: File → New/Open
     /// rebuild `KtApp` in place and pick the same value up from `telemetry::global()`, so a
     /// new document never sends a second `app_started`. `None` in the harness.
@@ -844,8 +841,6 @@ impl KtApp {
             pending_double: None,
             // KT_DETACH_PREVIEW=1 — start with the preview detached (debugging)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
-            ui_economy: false,
-            lang_choice: None,
             telemetry: crate::telemetry::global(),
             update: crate::update_check::global(),
             paused_at: None,
@@ -1124,8 +1119,6 @@ impl KtApp {
             pending_double: None,
             // KT_DETACH_PREVIEW=1 — start with the preview detached (debugging)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
-            ui_economy: false,
-            lang_choice: None,
             telemetry: crate::telemetry::global(),
             update: crate::update_check::global(),
             paused_at: None,
@@ -1879,6 +1872,7 @@ impl KtApp {
         self.draw_paste_names(&ctx);
         self.draw_preset_save(&ctx);
         self.draw_settings_window(&ctx);
+        self.draw_prefs_window(&ctx);
         self.draw_track_window(&ctx);
         self.draw_seq_name(&ctx);
         // Public parameters of the composition (R.59, stage 3): name dialog,
@@ -2401,7 +2395,7 @@ impl KtApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
         let delay = if animating {
-            std::time::Duration::from_millis(if self.ui_economy { 33 } else { 16 })
+            std::time::Duration::from_millis(if self.start.store.start.economy_ui { 33 } else { 16 })
         } else if self.incomplete_since.is_some() {
             std::time::Duration::from_millis(100) // retries of an incomplete frame
         } else {
@@ -9327,7 +9321,8 @@ impl eframe::App for KtApp {
         // project was serialized and written ON THE UI THREAD even without edits.
         // Periodic saving is handled by our BACKGROUND autosave (draw_all), and the final
         // write on exit — on_exit below.
-        storage.set_string("lang", crate::i18n::choice_code(self.lang_choice).to_string());
+        // the language lives in the user store now (D8); the former `lang` stays only as the
+        // one-time fallback of a store that has none
         // a lesson sandbox is never the last project: the next start would reopen it
         // (render-crash-and-recovery D6 — the owner's crash restored into `lesson-5`)
         if let Some(p) = &self.project_path
@@ -9457,10 +9452,14 @@ pub fn run() -> eframe::Result {
             // The language is resolved BEFORE KtApp is built: the strings below (the restored
             // autosave, the prompt to open a project) are already translated.
             // KT_LANG — a debug override in the row with KT_AUTOPLAY/KT_DECORATIONS.
-            let lang_choice = std::env::var("KT_LANG")
-                .ok()
-                .or_else(|| cc.storage.and_then(|s| s.get_string("lang")))
-                .and_then(|v| crate::i18n::choice_from_code(&v));
+            // the program's preferences (the language among them) are in the user store, read
+            // before anything is drawn (welcome-window-and-settings D8)
+            let mut store = crate::user_store::StartStore::default();
+            let former = cc.storage.and_then(|s| s.get_string("lang"));
+            let lang_choice = match std::env::var("KT_LANG") {
+                Ok(v) => crate::i18n::choice_from_code(&v),
+                Err(_) => store.lang_choice(former.as_deref()),
+            };
             crate::theme::apply(&cc.egui_ctx);
             crate::theme::apply_debug_flags(&cc.egui_ctx); // item 23, round 6
             crate::i18n::set_lang_ctx(&cc.egui_ctx, crate::i18n::resolve(lang_choice));
@@ -9476,7 +9475,6 @@ pub fn run() -> eframe::Result {
             // THE START ORDER (welcome-window-and-tour D4): the facts first, then one pure
             // decision. The between-projects records live in the user store; the former single
             // `last_project` seeds the recent list once.
-            let mut store = crate::user_store::StartStore::default();
             let last = cc.storage.and_then(|s| s.get_string("last_project"));
             let plan = crate::welcome::plan_start(
                 &mut store,
@@ -9499,7 +9497,6 @@ pub fn run() -> eframe::Result {
             };
             app.start.store = store;
             app.note_recent();
-            app.lang_choice = lang_choice;
             // R.49 item 353: unsaved work no longer “replaces the project if
             // last_project was not found”, but is OFFERED — with the path and
             // time of each candidate. The former branch did not cover the main

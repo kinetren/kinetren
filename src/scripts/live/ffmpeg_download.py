@@ -64,8 +64,9 @@ def main(out):
     try:
         with Live("ffmpeg_download", out, project=proj, own_process=True) as app:
             # 1) before: what Download will do
-            app.click_probe("menu.view", "the View menu")
-            app.click_probe("view.ffmpeg", "View → FFmpeg…")
+            app.click_probe("menu.file", "the File menu")
+            app.click_probe("file.preferences", "File → Preferences…")
+            app.click_probe("prefs.ffmpeg", "Preferences → FFmpeg…")
             app.expect(app.has_probe("ffmpeg.what"), "the window says what Download does")
             app.expect(app.has_probe("ffmpeg.download"), "Download is offered (Windows rules)")
             app.step("before", "the FFmpeg window: what Download gets, from where, into which folder")

@@ -395,3 +395,35 @@ fn t1053_every_barrier_twin_gives_the_scalar_bytes() {
     }
     assert!(kinds >= 12, "the registry holds {kinds} barrier kinds, the twelve moved ones at least");
 }
+
+/// t1187 (vhs-tape-simulation, D7; capability `plugins`): the host's value forms keep every barrier
+/// with at most eight passport rows (one whose numbers fit the cooked form) byte for byte, and its
+/// graph node for node — the default forms cook. A kind with more rows reads its values itself.
+#[test]
+fn t1187_the_value_forms_keep_every_barrier() {
+    install();
+    let reg = kt_plugin_api::installed().expect("installed");
+    let mut kinds = 0;
+    for p in reg.plugins().filter(|p| p.barrier().is_some() && p.manifest().media == kt_plugin_api::Media::VideoFx) {
+        let m = p.manifest();
+        if m.passport.len() > 8 {
+            continue;
+        }
+        let b = p.barrier().expect("filtered");
+        for vals in [kt_plugin_api::ParamValues::defaults(&m.passport).0, kt_plugin_api::ParamValues::top(&m.passport).0] {
+            for alpha in [false, true] {
+                let cx = kt_plugin_api::barrier::BarrierCtx { res_scale: 1, burst_index: 90_000, simd: false, raster: &kt_fx::video::Raster };
+                let a = b.frame_values(&vals, frame(1, alpha), &cx, &mut FxScratch::default()).rgba;
+                let c = b.frame(&b.cook(&vals), frame(1, alpha), &cx, &mut FxScratch::default()).rgba;
+                assert!(a == c, "{}: the value form moved a byte", m.id);
+                let g = kt_plugin_api::barrier::GpuCtx { w: 64, h: 36, res_scale: 1, alpha: Some(alpha), src_has_alpha: alpha, burst_index: 0 };
+                let (mut na, mut nc) = (Vec::new(), Vec::new());
+                b.gpu_values(&vals, &g, &mut na);
+                b.gpu(&b.cook(&vals), &g, &mut nc);
+                assert_eq!(na, nc, "{}: the value form changed the graph", m.id);
+            }
+        }
+        kinds += 1;
+    }
+    assert!(kinds >= 12, "{kinds} barrier kinds checked, the twelve moved ones at least");
+}

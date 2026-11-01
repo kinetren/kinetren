@@ -315,6 +315,35 @@ W3 is ranked after them only because it starts with an investigation; it is the 
 ("the text generator is poor") and may be pulled forward on his word. W7 is cheap but audio was not
 the complaint. W4 waits for the analysis subsystem; W6 for an API extension.
 
+## The VHS tape simulation (vhs-tape-simulation, archived 2026-11-01)
+
+The owner (kkt-26.11.01 V1) asked for a REAL VHS — a tape written and read back — beside the
+imitation `vhs`, and then for the physics over the interface. The physical chain and its numbers
+are in `docs/features/fx/simulate/vhs-tape-simulation.md`; the full decision record is the archived
+change `openspec/changes/archive/2026-11-01-vhs-tape-simulation/design.md`. What a later editor of
+`src/plugins/fx-video-tape` must know:
+
+- **The grid is the STANDARD's, the whole line at 4 fsc** (PAL 1135×576, NTSC 910×480), never the
+  frame's: the frame enters by the host's resample and leaves by a bilinear read. Tying the grid to
+  the frame would make the physics depend on the preview size. The blanking before the active line
+  is as long as a real one (10.4 µs) because the de-emphasis reaches 7 µs back — a 2.9 µs margin
+  smeared the line-start transient 4 % into the picture (t1180).
+- **The look is a consequence, so the tests are consequences** (t1180–t1192): the FM round trip,
+  the colour-under bandwidth, a clogged head's every other field, the bar the tracking moves by the
+  geometry's amount, the azimuth sinc and the comb, LP noisier and not softer, the recorder's
+  defect surviving a clean player, the TBC, the DOC. A change that keeps the picture "looking VHS"
+  and breaks one of these is a regression.
+- **Saturation acts in band** (a₁ and the bias gain), never as a memoryless curve on the grid: the
+  carrier's harmonics alias at 4 fsc and leave a deterministic error that hid a 2 dB physical
+  difference (t1189).
+- **Channel taps are exact bin integrals** of Lorentzian ⊗ box; a sub-sampled quadrature gave a
+  gap narrower than a sample a DC gain of 1.35 (t1184).
+- **One text per stage, mirrored**: `sim.rs`/`deck.rs`/`sig.rs` and `wgsl/*.wgsl` in the same
+  commit; our own f32 sine/atan2 on both sides (WGSL's are vendor-accurate only); the fixed filters
+  pasted into the WGSL from the CPU's f32 values. The GPU class is `FrameTol::SIGNAL` (t1186).
+- Deferred: the linear/HiFi audio tracks (an audio effect), nonlinear emphasis, S-VHS, SECAM, the
+  AVX2 twin of the stage FIRs (optional by the contract; threads carry the CPU path now).
+
 ## The datamosh is a codec, not a look (datamosh-codec-path, archived 2026-11-01)
 
 The owner asked for "a real motion-compression path we can break carefully with parameters" and

@@ -68,3 +68,11 @@ of other editors and tools is in `docs/features/collab/depend/anonymous-usage-te
 - An opt-in dialog: the owner chose opt-out.
 - A disk marker / heartbeat for crashes: the pair of events already answers it.
 - Aptabase: 20k events a month free, against PostHog's 1M.
+
+## The checkbox moved to File › Preferences… (welcome-window-and-settings, archived 2026-11-02)
+
+The owner's rule of 2026-10-27 was "a per-machine preference lives next to the other ones", and View
+was where they were. His request of 2026-11-01 (kkt-26.11.01 item 13) moves the program's
+preferences out of View into one window; the rule is kept — the checkbox stands in Preferences next to
+Language, with the same disabled-with-a-reason form. The notice and the hint name the new path
+("File › Preferences…"). The stored value stays where the process-global object owns it.
