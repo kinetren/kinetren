@@ -25,6 +25,7 @@ members = [
     "plugins/fx-audio-dynamics",
     "plugins/fx-audio-modulation",
     "plugins/fx-video-distort",
+    "plugins/fx-video-camera",
     "plugins/transitions-basic",
     "plugins/transitions-styled",
     "plugins/transitions-volume",
@@ -57,6 +58,7 @@ kt-plugins-builtin = { path = "libs/kt-plugins-builtin" }
 fx-video-blur = { path = "plugins/fx-video-blur" }
 fx-video-color = { path = "plugins/fx-video-color" }
 fx-video-stylize = { path = "plugins/fx-video-stylize" }
+fx-video-camera = { path = "plugins/fx-video-camera" }
 fx-audio-tone = { path = "plugins/fx-audio-tone" }
 fx-audio-dynamics = { path = "plugins/fx-audio-dynamics" }
 fx-audio-modulation = { path = "plugins/fx-audio-modulation" }

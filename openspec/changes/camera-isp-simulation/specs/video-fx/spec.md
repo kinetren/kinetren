@@ -25,8 +25,9 @@ physical effect is not a simulation of it; the looks must be consequences of phy
 - **WHEN** a smooth colour frame passes `camera_isp` on every layout and demosaic, with no temporal
   noise, no fixed pattern, no defects, optics flat, exposure below clipping, the calibrated WB and
   CCM, the sRGB curve, no denoise or sharpening and 4:4:4
-- **THEN** the output is within 2 LSB of the input on average and within 8 LSB on every pixel away
-  from the frame border, and flat patches are within 1 LSB
+- **THEN** away from the frame border a 2×2 Bayer gives the input within 1 LSB on average and 3 on
+  every pixel, the other mosaics (a generic interpolation) within 2 on average and 12 on every
+  pixel; flat patches are within 1 LSB on every layout
 - **TEST** t1211 (`src/plugins/fx-video-camera/tests/consequences.rs`)
 
 #### Scenario: Shot noise variance grows with the signal
@@ -47,17 +48,17 @@ physical effect is not a simulation of it; the looks must be consequences of phy
 #### Scenario: An infrared leak tints as predicted
 - **WHEN** a mid-grey frame is filmed with scene NIR, the IR-cut filter out and the visible WB
   calibration, on an RGGB sensor; then on an RGB-IR sensor with the ISP's IR subtraction on
-- **THEN** the RGGB output's linear R, G and B exceed grey by `qe_ir·T_c·IR·gain_c` each — R and B
+- **THEN** the RGGB output's linear R, G and B are grey plus `qe_ir·T_c·IR/qe_c` each — R and B
   above G, the magenta cast — within 3 %; with the IR-cut filter in it is grey; the RGB-IR output
-  with subtraction is grey within 2 LSB
+  with subtraction is neutral (its channels within 3 LSB of each other)
 - **TEST** t1214 (`src/plugins/fx-video-camera/tests/consequences.rs`)
 
 #### Scenario: The demosaic zipper on a known edge
 - **WHEN** a vertical black/white edge is filmed by an RGGB sensor without noise and developed by
   the bilinear, Malvar–He–Cutler and edge-directed demosaics
 - **THEN** the bilinear output alternates colour along the edge with a two-row period (the zipper)
-  by more than 20 LSB between neighbouring rows, and the edge-directed output's alternation is at
-  most half of the bilinear one
+  by more than 20 LSB between neighbouring rows, and the edge-directed output (green by gradients,
+  red and blue by colour differences) alternates at most half as much
 - **TEST** t1215 (`src/plugins/fx-video-camera/tests/consequences.rs`)
 
 #### Scenario: The noise is deterministic, the fixed pattern is fixed
