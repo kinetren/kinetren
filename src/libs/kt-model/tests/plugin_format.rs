@@ -888,3 +888,31 @@ fn t1056_the_core_keeps_no_barrier() {
         }
     }
 }
+
+/// t1247 (datamosh-codec-path): the datamosh slot's file text. Every row is omitted at its default,
+/// a choice row writes its KEY, the flag a bool, the integer rows integers — and the text reads back
+/// to itself. Frozen literally: a moved default or store changes files.
+#[test]
+fn t1247_the_datamosh_keeps_its_text() {
+    kt_plugins_builtin::install();
+    let cases = [
+        (r#"{"kind":"datamosh"}"#, r#"{"kind":"datamosh"}"#),
+        (
+            r#"{"kind":"datamosh","gop":12,"qp":30,"lines":"720","block":"8","search":8,"before":12,"drop_at":3,"drop_count":2,"bloom_at":5,"bloom_len":20,"freeze_at":7,"freeze_len":9,"mv_scale":-1.5,"mv_rotate":30.0,"mv_swap":true,"vectors_from":"track_below","residual":0.25,"loss":0.1,"seed":42}"#,
+            r#"{"kind":"datamosh","gop":12,"qp":30,"lines":"720","block":"8","search":8,"before":12,"drop_at":3,"drop_count":2,"bloom_at":5,"bloom_len":20,"freeze_at":7,"freeze_len":9,"mv_scale":-1.5,"mv_rotate":30.0,"mv_swap":true,"vectors_from":"track_below","residual":0.25,"loss":0.1,"seed":42}"#,
+        ),
+        // the defaults written out read as the empty form
+        (
+            r#"{"kind":"datamosh","gop":24,"qp":24,"lines":"360","block":"16","mv_scale":1.0,"vectors_from":"own","residual":1.0}"#,
+            r#"{"kind":"datamosh"}"#,
+        ),
+    ];
+    for (input, want) in cases {
+        let f: FxInstance = serde_json::from_str(input).unwrap_or_else(|e| panic!("{input}: {e}"));
+        let out = serde_json::to_string(&f).unwrap();
+        assert_eq!(out, want, "{input}");
+        let again: FxInstance = serde_json::from_str(&out).unwrap();
+        assert_eq!(serde_json::to_string(&again).unwrap(), out);
+    }
+    assert!(FxInstance::all().iter().any(|f| f.tag() == "datamosh" && f.is_stream()), "the registry lists it as a stream stage");
+}

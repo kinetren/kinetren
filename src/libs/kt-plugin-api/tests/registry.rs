@@ -139,3 +139,76 @@ fn t1162_synth_and_tone_together_are_refused() {
     assert_eq!(buf, [0.25; 8]);
     assert!(g.decl().blank, "a sound kind's card frame is empty by meaning");
 }
+
+/// A stream kernel that renders nothing (only the declarations are under test).
+struct S(Manifest, bool);
+
+impl kt_plugin_api::stream::StreamKernel for S {
+    fn lines(&self, _p: &[f64]) -> u32 {
+        144
+    }
+    fn before(&self, _p: &[f64]) -> u32 {
+        0
+    }
+    fn second(&self, _p: &[f64]) -> kt_plugin_api::stream::SecondFrom {
+        kt_plugin_api::stream::SecondFrom::None
+    }
+    fn needs(
+        &self,
+        _p: &[f64],
+        _l: &dyn kt_plugin_api::stream::StreamLayout,
+        _n: i64,
+        _m: &kt_plugin_api::stream::StreamMemo,
+    ) -> Vec<(kt_plugin_api::stream::Side, i64)> {
+        vec![]
+    }
+    fn render(
+        &self,
+        _p: &[f64],
+        _i: &dyn kt_plugin_api::stream::StreamInput,
+        _n: i64,
+        _m: &kt_plugin_api::stream::StreamMemo,
+        _o: &mut Vec<u8>,
+    ) -> Option<kt_plugin_api::stream::StreamOut> {
+        None
+    }
+}
+
+impl Plugin for S {
+    fn manifest(&self) -> &Manifest {
+        &self.0
+    }
+    fn stream(&self) -> Option<&dyn kt_plugin_api::stream::StreamKernel> {
+        self.1.then_some(self as &dyn kt_plugin_api::stream::StreamKernel)
+    }
+}
+
+fn stream_plugin(id: &'static str, decl: Decl, kernel: bool) -> Arc<dyn Plugin> {
+    let m = Manifest { id: id.into(), media: Media::VideoFx, passport: vec![], rows: Vec::new(), decl, ui: Default::default() };
+    Arc::new(S(m, kernel))
+}
+
+/// t1240 (datamosh-codec-path, D2): a stream plugin is a source stage with a kernel and no GPU
+/// side; the registry refuses each malformed form by name and takes the well-formed one.
+#[test]
+fn t1240_stream_declarations_are_refused_by_name() {
+    let mut reg = Registry::new();
+    let cases: Vec<(Arc<dyn Plugin>, &str)> = vec![
+        (stream_plugin("s_no_kernel", video(VideoClass::Stream, Gpu::None), false), "without a stream kernel"),
+        (stream_plugin("s_wgsl", video(VideoClass::Stream, Gpu::Wgsl(TAP)), true), "offers a GPU side"),
+        (stream_plugin("s_barrier", video(VideoClass::Barrier, Gpu::Barrier), true), "not of the stream class"),
+        (stream_plugin("s_tap", video(VideoClass::PointWise, Gpu::Wgsl(TAP)), true), "not of the stream class"),
+        (
+            stream_plugin("s_state", Decl { state: true, ..video(VideoClass::Stream, Gpu::None) }, true),
+            "declares state",
+        ),
+    ];
+    for (p, why) in cases {
+        let id = p.manifest().id.to_string();
+        let e = reg.register(p).expect_err(&id);
+        assert_eq!(e.id, id);
+        assert!(e.reason.contains(why), "{id}: {}", e.reason);
+    }
+    reg.register(stream_plugin("s_ok", video(VideoClass::Stream, Gpu::None), true)).expect("a well-formed stream plugin");
+    assert!(reg.get(Family::Fx, "s_ok").is_some());
+}

@@ -59,8 +59,8 @@ whatever the start (`datamosh-codec-path` design D3–D6).
 - **TEST** t1241 (`src/libs/kt-engine/tests/stream_stage.rs`)
 
 #### Scenario: Export in chunks equals export in one go
-- **WHEN** a range containing a mosh is exported with one chunk, with chunks of three frames, and from a start inside the mosh
-- **THEN** the frame bytes are identical where the ranges overlap
+- **WHEN** a range containing a mosh is exported in one go, and again as three range exports — each with a fresh renderer, memo and cache, one starting inside the mosh (harder than a chunk boundary, which keeps the memo)
+- **THEN** the concatenated pieces are byte-identical to the whole
 - **TEST** t1242 (`src/libs/kt-engine/tests/stream_stage.rs`)
 
 #### Scenario: The order asks what the stage reads
