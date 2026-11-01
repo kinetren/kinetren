@@ -22,8 +22,9 @@ const DUR: i64 = 48_000;
 /// roundings, which windows-latest did not reproduce. The kernels now call `kt_plugin_api::math`
 /// (correctly rounded in `f32`) and the warp its own sinc table, the same bytes on every platform.
 /// The new values of `slowed_reverb` (all four), `phaser` (default, 70 %, reversed) and
-/// `pitch_shift` (70 %) are EXACTLY what windows-latest printed for them on 94e36e9e: there glibc
-/// was the one off by an ulp (`sinf`/`cosf` of the sinc table, `tanf`, `atan2f`). No other row moved.
+/// `pitch_shift` (70 %, then re-printed by pitch-event-edges) are what windows-latest printed for
+/// them on 94e36e9e: there glibc was the one off by an ulp (`sinf`/`cosf` of the sinc table,
+/// `tanf`, `atan2f`). No other row moved.
 #[rustfmt::skip]
 const GOLDEN: &[(&str, [u64; 4])] = &[
     ("gain", [0x07c61de143e7dafd, 0x1264fdb960d2e3fe, 0xff13344c21147aa5, 0xd39bab6d08fb5c31]),
@@ -43,7 +44,12 @@ const GOLDEN: &[(&str, [u64; 4])] = &[
     ("compressor", [0x07c61de143e7dafd, 0x300707b5ccfcaab7, 0xd1843793a101213b, 0xd39bab6d08fb5c31]),
     ("gate", [0x0937c0c533d469b7, 0xf64207d5b805d2b5, 0x6b363e06b1b945b0, 0x601abdfd08827c46]),
     ("limiter", [0xf6fa8c3ddee2e7cf, 0x195c41372d28dc06, 0xcd8f29215801aabc, 0x8bed456f023f3987]),
-    ("pitch_shift", [0x07c61de143e7dafd, 0xcf5eeac6705fa16b, 0x2058048daf9756f7, 0xd39bab6d08fb5c31]),
+    // "at 70 %" re-printed by pitch-event-edges (kkt-26.11.01 item 15, the owner's request): the
+    // event ends where the material goes on, and its last grains now read that material instead
+    // of silence — the sound change asked for; the other three cases did not move. Then
+    // ci-green-again's frozen math on top (glibc's `atan2f` in the vocoder was an ulp off; before
+    // the edge change this case gave windows-latest's 0xcf5eeac6705fa16b): 0x3c85… → 0xd77b…
+    ("pitch_shift", [0x07c61de143e7dafd, 0xd77b5f105aefa860, 0x2058048daf9756f7, 0xd39bab6d08fb5c31]),
 ];
 
 fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool, engine: PitchEngine) -> Project {

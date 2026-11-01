@@ -270,6 +270,20 @@ Rules of a lookahead node:
   of a lap read material PAST the region end — the limiter played them after the wrap (t909). The
   renderer sets the span for an event that covers the region end and folds a track stage's input
   window the same way (t911). With `la = 0` or no span nothing is split or folded.
+- **a window that reads around its moment reads ACROSS THE EVENT'S EDGES** (pitch-event-edges D1,
+  D2): such a kind declares `Decl.reads_across_edges` (pitch does, the limiter does NOT — it limits
+  what the event outputs, and that is cut). `chain_context` (the one home; the processor's `ctx` and
+  the window functions' `read_material` ask it) is true with such a node at a live look-ahead, no
+  warp and no tail before the last such node. Then `hard_seek` reads the pre-roll before the
+  in-point, the input gate stands at `gate_end + la`, and the CONTENT GATE right after the last such
+  node (and on a dry side still waiting for its marker) cuts everything outside
+  `[−head_ext, clip_len + tail_ext)`: "the material pitched, then cut". Cut first, the grains at the
+  edges were half silence — fifteen short pitched events tore (t1105–t1107);
+- **a split is one stream** (D3): `hand_on` rebases a processor that has just played its event to
+  the end so the next piece of the same material continues it (the engine decides who, D3 in
+  kt-engine); `fresh_entry` (D4) — a tail-less context chain entered at its first frame or after it
+  ended is a seek, not a seam: its ring holds where it stopped. `before_material` silences only a
+  FOLDED input; an unfolded one before the material is the context pre-roll.
 
 ## Video effects of R.47 (items 332-335): classes and checklist
 

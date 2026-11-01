@@ -67,12 +67,14 @@ message, the first line = the stage and what was done).
 
 ## 4. Finish
 
-- [ ] 4.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version `vYY.MM.DD-hash` here; ask the owner to repeat item 7 (a loop and a small loop with pitch) on that build and record his answer in `docs/user-feedback.md`
+- [x] 4.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version `vYY.MM.DD-hash` here; ask the owner to repeat item 7 (a loop and a small loop with pitch) on that build and record his answer in `docs/user-feedback.md`
   - finish.sh → **kt26.10.29-c3462989** (2026-10-29, on c346298). Cargo and SIMD green. Live: 49
     scenarios, `fade` red in the 4-worker run and green alone (a known timing flake), `nestdead` red twice
     — a race in the scenario, not the program: it read the probe dump right after the right-click,
     before the menu's frame (red about one run in two on the same binary, green with any extra wait).
     The scenario now waits for `nest.enter` before listing the items; 3 of 3 green alone.
-    OPEN: the owner's repeat of item 7 on this build (asked in the report of 2026-10-29); the task
-    stays open until his answer is in `docs/user-feedback.md`.
-- [ ] 4.2 After archiving: append the "why" (the empty ring at every seam, the input that read past the region end, D1 stream keys, D2 input-first wrap) to `openspec/specs/audio-fx/design.md` and `openspec/specs/audio-render/design.md`
+    The owner's next round (kkt-26.11.01 item 15, `docs/user-feedback.md` 2026-11-01) came after
+    this build: "pitch still sags" on fifteen short events in a row — a different case (every
+    event's node starts cold at its own edges, no loop). The loop complaint was not repeated; the
+    short-event case is the change `pitch-event-edges`, which reruns t906–t911 green.
+- [x] 4.2 After archiving: append the "why" (the empty ring at every seam, the input that read past the region end, D1 stream keys, D2 input-first wrap) to `openspec/specs/audio-fx/design.md` and `openspec/specs/audio-render/design.md`

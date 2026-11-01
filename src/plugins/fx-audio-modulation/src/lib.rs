@@ -735,7 +735,9 @@ impl PitchShift {
                 vec![RowDecl { store: Store::F32, omit_default: true }, RowDecl { store: Store::F32, omit_default: true }],
                 "Pitch Shift",
                 "fxreg.kw.pitch_shift",
-                Decl { state: true, lookahead: Some(pitch_lookahead), ..Decl::default() },
+                // a grain reads around its moment: at an event edge it needs the material the event was
+                // cut from (pitch-event-edges D1)
+                Decl { state: true, lookahead: Some(pitch_lookahead), reads_across_edges: true, ..Decl::default() },
             ), "fxreg.cat.timestretch"),
         }
     }
