@@ -40,5 +40,9 @@
       button (t1094, D8); "Next lesson" asked to save the sandbox (t1095)
 - [x] 4.2 `docs/guide/whats-new.md` (kt26.11), the registry rows K2–K8 (`kkt-26.11.01-index.md`),
       F-HLP-028's verdict addendum (the jokes), `ktprompts-index.py --check`, `features-index.py --check`
-- [ ] 4.3 `cargo test -p kt-app`, `cargo test --workspace`, `cargo clippy --all-targets`
-- [ ] 4.4 `src/scripts/finish.sh` — the version here and in the report; archive the change
+- [x] 4.3 `cargo test -p kt-app`, `cargo test --workspace`, `cargo clippy --all-targets`
+      (clippy clean for the change; t640 fails on a quiet machine with "sqlite: database is
+      locked" with or without this change — the reel sidecar tier, not touched here, follow-up)
+- [x] 4.4 `src/scripts/finish.sh` — the version here and in the report; archive the change.
+      Version **kt26.11.01-79bf50ab** (after the master merge); live: 57 scenarios, `lessons` green,
+      `loop` red twice under load and green alone on a quiet machine
