@@ -97,7 +97,11 @@ def main(out):
             return app.done()
         if not app.click_probe("fxreg.var.datamosh.0", "the Cut mosh cell is clickable"):
             return app.done()
-        app.step("picked", "Cut mosh added to the chain")
+        app.step("picked", "Cut mosh added to the chain: its rows in the FX window")
+        # the gates are rows of the shared grid, so they take curves like any number (the owner:
+        # "this effect has no curves … reset by keys on the curves, on the beat")
+        for row in ("lbl.mosh", "lbl.reset", "lbl.qp"):
+            app.expect(app.has_probe(row), f"the FX window shows the row {row[4:]} (a curve-taking number)")
         app.key("Escape")
         # the double click moved the playhead into the clip: back to the judged frame
         app.click(app.x_at(int(2.5 * SEC)), app.ruler_y())

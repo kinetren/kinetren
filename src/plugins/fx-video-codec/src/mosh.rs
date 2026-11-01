@@ -560,7 +560,7 @@ fn broken(s: &Sched, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Opti
     let lay: &dyn StreamLayout = input;
     let r = s.r;
     let chain = s.chain(n);
-    let mut keys = Keys::new(&s);
+    let mut keys = Keys::new(s);
     let dk = keys.decoded(&chain);
     let (w, h) = padded(lay);
     let mut start = 0;
