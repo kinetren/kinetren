@@ -314,3 +314,21 @@ transitions are half of the complaint, and the gap is short because R.51 already
 W3 is ranked after them only because it starts with an investigation; it is the owner's complaint F2
 ("the text generator is poor") and may be pulled forward on his word. W7 is cheap but audio was not
 the complaint. W4 waits for the analysis subsystem; W6 for an API extension.
+
+## The mask rasterizer (shape-masks, 2026-11-01)
+
+`kt_fx::mask::rasterize`: the inside is the nonzero winding at sample centres (a scanline over
+crossings), the signed distance to the flattened outline is computed only in a band, the coverage is
+a ramp of the distance (one pixel without feather, the feather centred on the contour as in After
+Effects, the expansion moving the edge). A wide band is sampled on a coarser grid (step ≈ band/8)
+and the distance interpolated: the distance field is 1-Lipschitz, and the cost stays O(perimeter)
+instead of O(perimeter × feather²). Modes are the soft Boolean forms (OR, AND NOT, AND, XOR); AE's
+Lighten/Darken were not taken — on a hard mask they equal Add/Intersect (F-MSK-001).
+
+**One mask px is a project pixel of the reference frame's height** (`px_of`): the interface draws
+with the source view as its reference, the engine with the decode raster; a feather in raster or
+native pixels would differ between them, and between the preview at ¼ and the export.
+
+The bytes depend only on IEEE-exact operations and the frozen math (the rotation), frozen by t1269.
+The memo is keyed by the full Debug text of what decides the bytes (the owner's cache rule: keyed by
+content, bounded, invisible to the bytes).

@@ -26,5 +26,5 @@
 ## 5. Live, docs, finish
 
 - [x] 5.1 Live scenario `src/scripts/live/masks.py` (auto-discovered by live-check)
-- [ ] 5.2 F-MSK-001/002 verdicts, What's new, registry S1, "What OTIO export loses" row, crate CLAUDE.md lines
-- [ ] 5.3 `cargo test --workspace`, clippy, `git merge master`, `finish.sh` — the version here
+- [x] 5.2 F-MSK-001/002 verdicts (done; the shared contour object replaced by links), What's new, registry S1, "What OTIO export loses" row, crate CLAUDE.md lines
+- [x] 5.3 `cargo test --workspace` (under the load of other executors: t815, t951/t952, t476, t411, t640 red in the parallel run, green alone; t749/t750 were a real regression — the Masks group pushed the formula field out of view; it is collapsed while empty now), clippy (the mask code clean; the remaining warnings are older), `git merge master` (already up to date), `src/scripts/finish.sh` — **kt26.11.01-92604900**: 1385 workshop tests, SIMD, 63 live scenarios green (`shapes` on the second try), coverage 80/80. Live runs on `KT_LIVE_DISPLAY=:297`: :284 carried other executors' windows
