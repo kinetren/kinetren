@@ -34,7 +34,7 @@ green and is committed at once (English message, first line "camera-isp-simulati
 
 - [x] 3.1 The pipeline panel (stage blocks with bypass, the shared row widgets) in the effect window
 - [x] 3.2 t1219 (`reach_tests.rs`, PATH), layout/i18n/font tests green; the CJK subset regenerated
-- [ ] 3.3 A live scenario with a screenshot per PATH step on our fixtures (`src/scripts/live/`)
+- [x] 3.3 A live scenario with a screenshot per PATH step on our fixtures (`src/scripts/live/`)
 
 ## 4. Cost and finish
 
