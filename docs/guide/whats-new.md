@@ -5,6 +5,11 @@ month, newest first.
 
 ## kt26.11
 
+- **Zigzag and the other segment shapes on one piece of a curve, or on a hundred.** Right-click
+  a segment, or <kbd>Ctrl</kbd>+click several, or drag across empty space in the curve graph:
+  under "Shape of all segments" a row appears with the same fields for just those segments.
+  Values that differ show "—"; a typed number sets all of them, dragging the field shifts
+  each by the same amount.
 - **Pitch no longer tears between short events.** Cut an event with pitch into many short
   pieces and they sound exactly like the uncut event; any pitched event starts and ends
   without a dip.
