@@ -5,6 +5,11 @@ month, newest first.
 
 ## kt26.11
 
+- **Rendering a region no longer closes the program at 100 %.** A render of a region that does not
+  start exactly on a frame — any region drawn by hand, even 0.2 s — used to reach 100 % and take the
+  whole program down, sometimes with the file half-written. It now finishes, shows its summary and
+  closes like any other.
+
 - **A real start window.** The welcome window has three columns — Start (the tour, templates
   drawn in their frame's shape, the five lessons with your progress), Recent (your projects with
   their pictures, as many per row as fit) and What's new, now readable in its own column. Each

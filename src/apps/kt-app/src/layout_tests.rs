@@ -19283,6 +19283,73 @@ fn t1071_render_window_survives_frames_past_the_total() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Test 1312 (render-finish-crash D1): the owner's case end to end — a REAL render of a 0.2 s
+/// region off the 24 fps grid, through the render window, to the finish and Close.
+///
+/// kkt-26.11.01b item 2: "it reaches 100 % and the program folds … even 0.2 s anywhere". His
+/// build (a04b201d) still announced the floored `(r1 − r0) / step` = 4 frames while the engine
+/// rendered the 6 frames from the one containing the start; the progress window's fraction went
+/// past 1 and `Duration::from_secs_f64` of the negative remaining time panicked on the UI thread
+/// during the audio phase — after the video was written, so the file was sometimes complete.
+/// Here the engine's own progress stream drives the window frame by frame; a panic fails the test.
+#[test]
+fn t1312_real_offgrid_region_render_finishes_and_closes() {
+    use egui_kittest::kittest::Queryable;
+    use kt_time::Tick;
+    let dir = render_scratch("t1312");
+    let mut h = harness_lang(Lang::En);
+    // 24 fps (step 3750 ticks), the region starts a third of a frame after 1 s and lasts 0.2 s
+    let (r0, r1) = (Tick(90_000 + 1_250), Tick(90_000 + 1_250 + 18_000));
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.settings.fps = 24;
+        p.settings.width = 64;
+        p.settings.height = 36;
+        p.region = Some(kt_model::Region { start: r0, end: r1 });
+        app.model = kt_model::TimelineModel::new(p);
+        app.render_setup.log_dir = dir.join("logs");
+        app.render_setup.test_pick = Some(dir.join("out.mp4"));
+        app.start_render();
+    }
+    h.step();
+    h.state_mut().launch_render();
+    assert!(h.state().render_job.is_some(), "the render did not start");
+    let total = kt_engine::export::video_frames_in(24, r0, r1);
+    assert_eq!(total, 6, "the frames from the one containing the start");
+    assert_eq!(((r1.0 - r0.0) / 3750) as u64, 4, "the owner's build announced the floored count");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+    while h.state().render_job.as_ref().is_some_and(|j| j.result.is_none()) {
+        assert!(std::time::Instant::now() < deadline, "the render did not finish");
+        h.step();
+        let p = h.state().render_job.as_ref().unwrap().progress;
+        assert!(
+            p.video_frames <= p.total_video_frames,
+            "progress {} past the announced {}",
+            p.video_frames,
+            p.total_video_frames
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    // the finished window draws (the summary, the estimates at 100 %)
+    for _ in 0..3 {
+        h.step();
+    }
+    let job = h.state().render_job.as_ref().unwrap();
+    let stats = job.result.clone().unwrap().unwrap_or_else(|e| panic!("the render failed: {e}"));
+    assert_eq!(stats.video_frames, total, "rendered {} frames, announced {total}", stats.video_frames);
+    assert_eq!(job.progress.total_video_frames, total);
+    // Close: the job, its window and its thread's leftovers are dropped; the program draws on
+    h.get_by_label(tr(k::render::CLOSE)).click();
+    for _ in 0..3 {
+        h.step();
+    }
+    assert!(h.state().render_job.is_none(), "Close did not close the render window");
+    let head = std::fs::read(dir.join("out.mp4")).unwrap();
+    assert_eq!(&head[4..8], b"ftyp", "the file is not an MP4");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Test 957 (render-window-v1-parity, D6/D7): the counters stop at the finish and the next actions
 /// appear away from where Cancel stood.
 ///

@@ -60,6 +60,10 @@ const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(10 * 60)
 
 /// Where downloads live: `<local>/ffmpeg` (Windows: `%LOCALAPPDATA%\kinetren\ffmpeg`).
 pub fn download_root() -> PathBuf {
+    // a test downloads into its own data folder, never the person's (render-finish-crash D3)
+    if cfg!(test) {
+        return crate::journal::data_dir().join("ffmpeg");
+    }
     kt_dirs::ffmpeg_download_root()
 }
 

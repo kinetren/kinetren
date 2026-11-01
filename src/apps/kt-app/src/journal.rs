@@ -43,7 +43,15 @@ pub const FORMER_DATA_DIR_NAME: &str = "kinotrain";
 /// Recovery, journal, locks, presets, workspace and eframe's own storage (`app.ron`,
 /// `NativeOptions::persistence_path`) all live here. The resolver is `kt-dirs`, shared with
 /// kt-cli; it never answers with the working directory (windows-build).
+///
+/// A TEST never reaches the person's directory (render-finish-crash D3): every path of the
+/// program's data hangs off this one function, and in a test build it answers with
+/// `test_data_dir`. The tests wrote into the owner's own journal, locks, recovery and workspace
+/// until 2026-11-01 — his real records rotated away under thousands of test lines.
 pub fn data_dir() -> PathBuf {
+    if cfg!(test) {
+        return test_data_dir();
+    }
     let dir = kt_dirs::data_dir();
     // The former name existed only on Linux, and only a REAL per-user root may hold it:
     // migrating inside a fallback (temp) directory would move someone else's folder.
@@ -75,6 +83,39 @@ pub fn data_dir_in(base: &Path) -> PathBuf {
         }
     }
     new
+}
+
+/// Prefix of a test process's data directory in the temp directory.
+pub const TEST_DATA_PREFIX: &str = "kt-test-data-";
+
+/// The data directory of a test process: `KINETREN_DATA_DIR` when the test that started this
+/// process set it (the supervisor's child), otherwise `<temp>/kt-test-data-<pid>`, made once.
+/// The folders of test processes that are gone are swept on the way (Linux: no `/proc/<pid>`).
+fn test_data_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("KINETREN_DATA_DIR").map(PathBuf::from).filter(|p| p.is_absolute()) {
+        return d;
+    }
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let tmp = std::env::temp_dir();
+        if cfg!(target_os = "linux")
+            && let Ok(rd) = std::fs::read_dir(&tmp)
+        {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if let Some(pid) = name.strip_prefix(TEST_DATA_PREFIX).and_then(|p| p.parse::<u32>().ok())
+                    && pid != std::process::id()
+                    && !Path::new(&format!("/proc/{pid}")).exists()
+                {
+                    let _ = std::fs::remove_dir_all(e.path());
+                }
+            }
+        }
+        let d = tmp.join(format!("{TEST_DATA_PREFIX}{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        d
+    })
+    .clone()
 }
 
 fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
@@ -603,8 +644,104 @@ mod tests {
     /// (`persistence_path`) is the one eframe picks by itself, so no settings move.
     #[test]
     fn eframe_settings_file_is_where_eframe_puts_it() {
-        let ours = data_dir().join(kt_dirs::EFRAME_SETTINGS_FILE);
+        // the resolver itself: a test's `data_dir()` is its own temp folder (D3)
+        let ours = kt_dirs::data_dir().join(kt_dirs::EFRAME_SETTINGS_FILE);
         let eframe = eframe::storage_dir("kinetren").map(|d| d.join(kt_dirs::EFRAME_SETTINGS_FILE));
         assert_eq!(Some(ours), eframe);
+    }
+
+    /// Test 1310 (render-finish-crash D3): a test process never reaches the person's data
+    /// directory. The owner's journal (`~/.local/share/kinetren/kt-app.log`) was full of t959
+    /// lines and rotated his own records away; the same directory held 7934 lock files, the
+    /// recovery and the workspace the tests had written.
+    #[test]
+    fn t1310_tests_write_into_their_own_data_dir() {
+        let ours = data_dir();
+        let real = kt_dirs::data_dir();
+        assert_ne!(ours, real, "a test resolved the person's data directory");
+        assert!(!ours.starts_with(&real) && !real.starts_with(&ours), "{ours:?} overlaps {real:?}");
+        if std::env::var_os("KINETREN_DATA_DIR").is_none() {
+            assert!(ours.starts_with(std::env::temp_dir()), "{ours:?} is not in the temp directory");
+            assert!(ours.is_dir(), "the test data directory is not made");
+        }
+        // every path of the program's data hangs off it
+        for p in [
+            path(),
+            crash_path(),
+            crash_seen_path(),
+            crate::app::autosave_path(),
+            crate::project_lock::lock_file_for(Path::new("/x/t1310.kt")),
+            crate::ffmpeg_setup::download_root(),
+            crate::render_dialog::RenderSetup::default().log_dir,
+        ] {
+            assert!(p.starts_with(&ours), "{p:?} is outside the test data directory {ours:?}");
+        }
+        if crate::bench::store_dir().is_none() && std::env::var_os("KT_USER_STORE_DIR").is_none() {
+            assert!(crate::user_store::store_dir().starts_with(&ours));
+        }
+        // a journal line of a test lands in the test's journal, not in the person's
+        let mark = format!("t1310 mark {}", std::process::id());
+        log("INFO", &mark);
+        let mine = std::fs::read_to_string(path()).unwrap_or_default();
+        assert!(mine.contains(&mark), "the test's journal did not get the line");
+        let theirs = std::fs::read_to_string(real.join("kt-app.log")).unwrap_or_default();
+        assert!(!theirs.contains(&mark), "the line went into the person's journal");
+    }
+
+    /// Test 1311 (render-finish-crash D3): the person's directories are resolved in ONE place.
+    /// A call that asks `kt-dirs` (or eframe) for them directly would bypass the test redirection
+    /// of `data_dir` and write into the home directory again.
+    #[test]
+    fn t1311_only_data_dir_resolves_the_persons_directories() {
+        const FORBIDDEN: &[&str] = &[
+            "kt_dirs::data_dir(",
+            "kt_dirs::local_dir(",
+            "kt_dirs::ffmpeg_download_root(",
+            "kt_dirs::ffmpeg_download_dir(",
+            "eframe::storage_dir(",
+            "home_dir(",
+            "var_os(\"HOME\")",
+            "var(\"HOME\")",
+            "var_os(\"APPDATA\")",
+            "var_os(\"XDG_DATA_HOME\")",
+        ];
+        // (file, token, how many uses are expected) — each with its reason
+        const ALLOWED: &[(&str, &str, usize)] = &[
+            // `data_dir` itself, and the eframe test comparing the resolver with eframe
+            ("journal.rs", "kt_dirs::data_dir(", 3),
+            ("journal.rs", "eframe::storage_dir(", 1),
+            // the download root outside a test build
+            ("ffmpeg_setup.rs", "kt_dirs::ffmpeg_download_root(", 1),
+        ];
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut bad = Vec::new();
+        let mut files = vec![dir.clone()];
+        while let Some(d) = files.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    files.push(p);
+                    continue;
+                }
+                if p.extension().is_none_or(|x| x != "rs") {
+                    continue;
+                }
+                let name = p.file_name().unwrap().to_string_lossy().into_owned();
+                let mut text = std::fs::read_to_string(&p).unwrap();
+                // this test's own lists name the tokens; they are not uses
+                if let Some(at) = text.find("fn t1311_only_data_dir") {
+                    text.truncate(at);
+                }
+                for tok in FORBIDDEN {
+                    let n = text.matches(tok).count();
+                    let allowed =
+                        ALLOWED.iter().find(|(f, t, _)| *f == name && t == tok).map(|a| a.2).unwrap_or(0);
+                    if n != allowed {
+                        bad.push(format!("{name}: `{tok}` used {n} times, allowed {allowed}"));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "go through `journal::data_dir()`: {bad:#?}");
     }
 }

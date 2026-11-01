@@ -406,12 +406,8 @@ impl Default for RenderSetup {
             resolution: None,
             open: false,
             missing: Vec::new(),
-            // a test never rotates the developer's own render.log
-            log_dir: if cfg!(test) {
-                std::env::temp_dir().join(format!("kt-render-log-{}", std::process::id()))
-            } else {
-                crate::journal::data_dir()
-            },
+            // a test's data directory is its own (render-finish-crash D3)
+            log_dir: crate::journal::data_dir(),
             test_open: None,
             test_pick: None,
             encoders: Vec::new(),

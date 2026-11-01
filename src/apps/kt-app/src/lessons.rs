@@ -777,7 +777,7 @@ impl crate::app::KtApp {
         let now = ui.input(|i| i.time);
         if rendering {
             let next = JOKE_SECS - now.rem_euclid(JOKE_SECS);
-            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(next));
+            ui.ctx().request_repaint_after(crate::render_dialog::secs(next));
         }
         let mut show: Option<&'static [Target]> = None;
         let mut go: Option<(u32, bool)> = None;

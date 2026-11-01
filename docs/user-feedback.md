@@ -2346,6 +2346,16 @@ effect; copying the part of an event under the region copies the whole event.
 - The preview (B9): zoom and pan the preview canvas past the frame, a rotation handle on the on-screen
   frame, and on-screen handles for effects that have a place on the frame.
 
+**B1 diagnosed (render-finish-crash, 2026-11-02):** the crash is the same panic as the one of
+2026-10-31 (`fails/26.10.31/kt-app-crash.seen.txt`: the remaining time of the render window went
+negative): a region off the frame grid — every region drawn by hand — rendered one or two frames
+more than announced, and the window died during the audio phase, after the video was written. The
+fix (`render-crash-and-recovery`) reached master AFTER his build `26.11.01-a04b201d`; his project's
+region `rend` renders to the end on master through the real window. A test now renders a 0.2 s
+off-grid region for real through the window to Close. His journal kept no trace because the tests
+had rotated it away: no test writes into his data folder any more (a guard holds it); the lost
+records cannot be brought back.
+
 **D1 datamosh, the owner on the first build (2026-11-01, translated):**
 
 > I already noticed this effect has no curves.. and there is no way at all to reset the effect
