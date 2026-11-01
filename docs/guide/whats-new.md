@@ -5,6 +5,14 @@ month, newest first.
 
 ## kt26.11
 
+- **Masks.** Right-click the picture → Mask → Rectangle, Ellipse or Pen, and draw right over the
+  preview: the pen makes a Bézier path (click — a corner, click and pull — a smooth point). Each mask
+  has feather (smooth or linear), expansion, opacity, invert and a mode — add, subtract, intersect,
+  difference — and several masks combine from the top down. A mask on the event's picture follows
+  the event when you move, scale or rotate it; an effect can be limited to its own masks (under its
+  parameters in the effects window) — a blur on a face, a colour only in a corner; a track can be
+  masked from its window. The stopwatch on a mask animates its whole shape: drag a point at another
+  moment and the shape is keyed there.
 - **Composition previews no longer get rebuilt by chance when a project opens.** Opening a
   project sometimes found its own index file "busy" and drew the frames and waveform of every
   composition all over again; now the saved previews come back every time.

@@ -6,9 +6,9 @@ group of the Geometry node's "Transform" form and from the preview's right-click
 Rectangle / Ellipse / Pen, for the selected event); an effect slot's masks in a "Masks" group under the
 slot's parameters in the effects window; a track's masks in a "Masks" section of the track window. All
 three SHALL be drawn by ONE widget: the tool buttons (Rectangle, Ellipse, Pen), and per mask a row with
-its name, mode, invert, opacity, feather with falloff, expansion, the path's stopwatch, an edit button
+its name, the mode as a row of four words, invert, opacity, feather with falloff, expansion, the path's stopwatch, an edit button
 that selects it on the preview, reorder arrows and a delete button; the selected mask's curves below,
-in the one automation widget (on a track — the refusal hint of track curves). Every number is a passport
+in the one automation widget (on a track — no stopwatch and no graph: its masks are static). Every number is a passport
 field (limits from the passport, keys only by gesture). The texts SHALL exist in all five catalogs.
 Why: kkt-26.11.01 line 55 — "do not throw features anywhere"; the places are those of AE (the layer's
 masks), Premiere (each effect's masks) and Resolve (a window on the node); rule 24 — one widget.
@@ -20,13 +20,26 @@ masks), Premiere (each effect's masks) and Resolve (a window on the node); rule 
 - **TEST** t1279 (`src/apps/kt-app/src/mask_tests.rs`)
 
 #### Scenario: The picture masks in the Geometry node and the track's masks
-- **WHEN** the Geometry node's form is opened and its Masks group used to add a rectangle and an ellipse, the second set to subtract and moved up; then the track window's Masks section adds a rectangle and a key is tried on its feather
-- **THEN** the event has two masks in the new order with the modes; the track has one mask; the key is refused with the track-curve reason in the status line and the model is untouched
-- **PATH** effects window → the Geometry slot → "Masks" → Rectangle, drag → Ellipse, drag → the ellipse's mode → Subtract → ↑ → the hole is cut first → track menu → Properties… → "Masks" → Rectangle, drag → the track is cut → the feather's curve button → the status line says track curves come later
+- **WHEN** the Geometry node's form is opened and its Masks group used to add a rectangle and an ellipse, the second set to subtract (scrolling the window's body down to it) and moved up; then the track window's Masks section adds a rectangle, and a curve on its feather is sent by command
+- **THEN** the event has two masks in the new order with the modes; the track has one mask, its row has no stopwatch and no curve graph; the curve is refused (`TrackCurvesUnsupported`) and the model is untouched
+- **PATH** effects window → the Geometry slot → "Masks" → Rectangle, drag → Ellipse, drag → in the ellipse's row the word "Subtract" → ↑ → the hole is cut first → track menu → Properties… → "Masks" → Rectangle, drag → the track is cut; its mask row has the numbers but no stopwatch
 - **TEST** t1281 (`src/apps/kt-app/src/mask_tests.rs`), t1280 (`src/apps/kt-app/src/mask_tests.rs`)
 
 #### Scenario: Mask texts in every catalog; the live path
 - **WHEN** the catalogs are checked for the mask keys; the live scenario runs on our fixture
-- **THEN** every key exists in all five catalogs and every glyph is in the fonts; the live scenario draws a Bézier mask, feathers it, keys it at two ticks, inverts it and limits an effect to a mask, with a screenshot per step
+- **THEN** every key exists in all five catalogs (the glyphs are held by t100 over every catalog value); the live scenario draws a Bézier mask, feathers it, keys it at two ticks, inverts it and limits an effect to a mask, with a screenshot per step
 - **PATH** right click on the picture → Mask → Pen → four points, close → Feather 40 → stopwatch, move the playhead, drag a point → Invert → effects window → the effect's Masks → Ellipse → drag → the effect only inside
 - **TEST** t1283 (`src/apps/kt-app/src/mask_tests.rs`), t1284 live scenario `src/scripts/live/masks.py`
+
+### Requirement: The preview's right-click menu opens over the transform frame too
+The preview's right-click menu (the frame's switch, Mask → Rectangle / Ellipse / Pen, detach) SHALL
+open wherever the person right-clicks the picture, including over the R.64 transform frame and over
+the masks being edited: one menu body, attached to the picture and to the controls that cover it.
+Why: with the frame on by default (R.67) the frame covered the whole picture and took the right click
+for itself — the menu, and with it the masks' entry, opened only on the letterbox around the picture.
+
+#### Scenario: Right click on the frame opens the preview menu
+- **WHEN** the frame is on over a full-frame event and the picture's centre is right-clicked
+- **THEN** the menu with the Mask item opens; Mask → Rectangle arms the tool
+- **PATH** select an event → right click in the middle of the picture (on the frame) → the menu shows "Mask" → Mask → Rectangle → the cursor is a cross over the picture
+- **TEST** t1276 (`src/apps/kt-app/src/mask_tests.rs`)

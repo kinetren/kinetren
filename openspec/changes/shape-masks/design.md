@@ -285,12 +285,21 @@ existing places:
 | an effect | Premiere: each effect's mask buttons; Resolve: the node's window | the effects window, a "Masks" group under the selected slot's parameters |
 | a track | Resolve: a window on the timeline node; AE: an adjustment layer's mask | the track window, a "Masks" section after the blend modes |
 
-A row of the list: the name (double-click renames), the mode, invert, opacity, feather + falloff,
+A row of the list: the name, the mode as a row of four words (one click, all visible — the
+conform row's precedent), invert, opacity, feather + falloff,
 expansion, the stopwatch of the path, "▸" to edit it on the preview, × to delete; the tool buttons
 "Rectangle", "Ellipse", "Pen" above the list arm the preview tool for this owner. Up/down arrows on
 a row reorder (the order is the order of the operations, so it goes through history). The curves of
 the selected mask are drawn below by `automation::draw` (rule: one widget for all carriers); on a
 track the widget shows the refusal hint instead, as the track's chain does.
+
+### D11. The preview's right-click menu over the frame (found while building)
+
+With the R.64 frame on — the default since R.67 — the frame's interactor covers the whole picture of
+a full-frame event and takes the right click: the preview's menu opened only on the letterbox. The
+masks' entry lives in that menu, so the defect would have hidden it. The menu body is one function
+(`KtApp::preview_menu_ui` + `apply_preview_pick`), attached to the picture, to the frame and to the
+mask editor — one body, three hosts, the same items everywhere (rule 17).
 
 ## Risks / Trade-offs
 

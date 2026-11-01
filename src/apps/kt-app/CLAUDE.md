@@ -932,3 +932,15 @@ Where to look in the code: `track_window.rs` (the ducking section), `pubparam.rs
 - **The Guide renders `docs/guide/*.md` compiled in** (`guide::PAGES`, guarded against the
   directory by t989). No font of ours has `→`/`←`: the pages get Phosphor arrows at parse time,
   and catalog text writes menu paths with `›` (Arabic `‹`).
+
+## Masks on the picture (shape-masks)
+
+- `maskctl.rs` edits masks over the preview; `masks.rs` is the ONE list widget, drawn in three
+  places: the Geometry node (the picture), under a slot's parameters (an effect) and the track
+  window. While `KtApp.mask_ctl` is set, `mask_controls` takes the picture and the R.64 frame is not
+  drawn — from the one call site in `draw_preview`.
+- **The preview's right-click menu has one body** (`KtApp::preview_menu_ui`), attached to the picture,
+  to the R.64 frame and to the mask editor: the frame covers the picture, and with only the picture
+  holding the menu a right click over an event opened nothing (found by t1276).
+- `font_tests::sources()` cuts every file at its FIRST `#[cfg(test)]`: UI code appended after a test
+  module is invisible to t100/t125 (the menu body was, and t125 called its keys unused).

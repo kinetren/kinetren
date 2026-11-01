@@ -680,6 +680,9 @@ impl HasParams for MaskParams<'_> {
     fn set_param(&mut self, name: &str, v: f64) -> bool {
         self.mask.set(name, v)
     }
+    fn params_scope(&self) -> kt_plugin_api::ParamScope {
+        kt_plugin_api::ParamScope::Mask
+    }
 }
 
 /// Why a mask list is not valid.
