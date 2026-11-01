@@ -2290,6 +2290,22 @@ one place).
   numeric fields' widths (sized for their longest value), the welcome window's right column
   (its own change comes next).
 
+**The owner on the pitch question and the pace (2026-11-01, translated):**
+
+> from now on three at once, five is too many.
+> the pitch question is unclear, what does reverb have to do with pitch?!? well then make an option
+> so it can be done this way and that way.
+
+**Taken as:**
+- (8) revised: THREE executors at once, not 3–5. The five already running finish their work; no new one
+  starts until fewer than three are running.
+- The question was asked in the engine's words, not his. In his chain the event's own
+  Slowed+Reverb stands BEFORE the morpher's pitch, so the pitch shifts the reverb's echo too. To
+  join the pieces without dips the pitch reads sound past the event's end, and since
+  `pitch-context-whole-chain` the reverb's echo past the end is cut together with the event. The
+  owner wants both behaviours: a switch "the echo of the effects before the pitch is cut at the
+  event's end / rings on after it", the current behaviour the default (change `pitch-tail-choice`).
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
