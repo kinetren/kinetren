@@ -1705,19 +1705,21 @@ impl KtApp {
                 // and ate the preview (regression of item 3 round 7.1). For height
                 // false — for the sake of item 27 (the frame does not outgrow the panel).
                 egui::ScrollArea::vertical().auto_shrink([true, false]).show(ui, |ui| {
-                    egui::Frame::group(ui.style())
+                    // the bin keeps the whole column (diagnostics-three-graphs): its frame reaches
+                    // the column's bottom, so the space under the cards is the bin's background
+                    // (drop, right click); `clip_rect` is the column's viewport (R.16)
+                    let frame = egui::Frame::group(ui.style());
+                    let margins = frame.total_margin().sum().y;
+                    let fill = (ui.clip_rect().bottom() - ui.cursor().top() - margins).max(0.0);
+                    frame
                         .fill(crate::theme::WINDOW)
                         .corner_radius(1.0)
                         .show(ui, |ui| {
+                            ui.set_min_height(fill);
                             self.draw_bin(ui);
                         });
-                    ui.add_space(8.0);
-                    egui::Frame::group(ui.style())
-                        .fill(crate::theme::WINDOW)
-                        .corner_radius(1.0)
-                        .show(ui, |ui| {
-                            self.draw_perf_box(ui);
-                        });
+                    // the perf box that stood here lives in the Diagnostics window
+                    // (diagnostics-three-graphs, kkt-26.11.01 item 14): the column is the bin's
                 });
             });
         // centre: preview + meters on the right, controls below them.
@@ -7068,8 +7070,10 @@ impl KtApp {
         });
     }
 
-    fn draw_perf_box(&mut self, ui: &mut egui::Ui) {
-        // long lines must not set the minimum width of the panel (item 18 of round 6)
+    /// The "Performance" section of the Diagnostics window — the former box of the left column
+    /// (diagnostics-three-graphs; its graphs are drawn by `draw_diagnostics` below the section).
+    fn draw_perf_section(&mut self, ui: &mut egui::Ui) {
+        // long lines must not set the minimum width of the window (item 18 of round 6)
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
         ui.label(egui::RichText::new(tr(k::perf::TITLE)).strong());
         ui.add_space(2.0);
@@ -7172,8 +7176,8 @@ impl KtApp {
             format!("{:.1}", self.perf.compose_ms_last),
             format!("{:.1}", self.perf.compose_ms_avg)
         ));
-        let r = ui.checkbox(&mut self.ui_economy, tr(k::perf::ECONOMY));
-        self.hint(r, tr(k::hint::ECONOMY));
+        // "Economy UI" is not repeated here: the one switch lives in View (D4 — the owner's
+        // item 13 forbids the same checkbox in two places)
         // “Black box” of playback (R.28, item 10): the ring of transport events
         // and counters lives always, the button dumps it to a file — floating bugs are
         // caught by it without making the user catch the moment. A sticking is visible
@@ -7203,10 +7207,6 @@ impl KtApp {
             self.player.decode_stats.video_decodes.load(ord),
             self.player.decode_stats.audio_decodes.load(ord)
         ));
-        ui.add_space(4.0);
-        self.perf.quality.draw(ui, 96.0);
-        ui.add_space(4.0);
-        self.perf.decode.draw(ui, 96.0);
     }
 
     fn draw_statusbar(&mut self, ui: &mut egui::Ui) {
@@ -9118,68 +9118,111 @@ impl KtApp {
             return;
         }
         let mut open = self.perf.diag_open;
+        let default_h = (ctx.content_rect().height() - 60.0).clamp(320.0, 720.0);
         let shown = crate::window_shell::Shell::new(
             egui::Id::new("kt_diag"),
             tr(k::win::DIAG_TITLE),
             crate::window_shell::Kind::Tool,
         )
-            .size([560.0, 460.0], [420.0, 300.0])
+            // the default height follows the screen: a 720-point window on a 420-point screen put
+            // its title (and the cross) above the top edge (t779)
+            .size([640.0, default_h], [460.0, 320.0])
             .show(ctx, |ui| {
-                // video cache occupancy from the REAL limit (in v1 the limit constant
-                // was duplicated by hand and was off by a factor of 384)
-                let used = self.player.cache.video_bytes() as f64;
-                let limit = self.player.cache.max_video_bytes() as f64;
-                let occ = if limit > 0.0 { (used / limit * 100.0).min(100.0) } else { 0.0 };
-                ui.horizontal(|ui| {
-                    ui.weak(crate::tf!(
-                        k::perf::CACHE_OCCUPANCY,
-                        format!("{occ:.0}"),
-                        format!("{:.0}", used / 1e6),
-                        format!("{:.0}", limit / 1e6)
-                    ));
-                    let cache = self.player.cache.stats();
-                    ui.weak(crate::tf!(k::perf::NO_READ_DROPS, cache.unused_evictions));
-                });
-                let (bar, _) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), 6.0),
-                    egui::Sense::hover(),
-                );
-                let pnt = ui.painter_at(bar);
-                pnt.rect_filled(bar, 3.0, egui::Color32::from_gray(30));
-                let fill_w = bar.width() * (occ as f32 / 100.0);
-                let col = if occ > 90.0 {
-                    egui::Color32::from_rgb(230, 120, 90)
-                } else {
-                    egui::Color32::from_rgb(95, 209, 155)
-                };
-                pnt.rect_filled(
-                    egui::Rect::from_min_size(bar.min, egui::vec2(fill_w, bar.height())),
-                    3.0,
-                    col,
-                );
-                ui.add_space(6.0);
-                self.perf.churn.draw(ui, 110.0);
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(tr(k::perf::LOG_TITLE)).strong());
-                    if ui.button(tr(k::perf::LOG_CLEAR)).clicked() {
-                        self.perf.log.clear();
-                        self.perf.last_msg = None;
+                // ONE scroll for the body (the shell's rule): on a screen lower than the floors the
+                // body scrolls instead of pushing the window past what the person gave it
+                let body_h = ui.available_height();
+                let body_h = if body_h.is_finite() { body_h } else { default_h };
+                egui::ScrollArea::vertical()
+                    .id_salt("kt_diag_body")
+                    .auto_shrink([false, false])
+                    .max_height(body_h)
+                    .show(ui, |ui| {
+                    let top = ui.cursor().top();
+                    // the former perf box of the left column (diagnostics-three-graphs D2)
+                    self.draw_perf_section(ui);
+                    ui.separator();
+                    // video cache occupancy from the REAL limit (in v1 the limit constant
+                    // was duplicated by hand and was off by a factor of 384)
+                    let used = self.player.cache.video_bytes() as f64;
+                    let limit = self.player.cache.max_video_bytes() as f64;
+                    let occ = if limit > 0.0 { (used / limit * 100.0).min(100.0) } else { 0.0 };
+                    ui.horizontal(|ui| {
+                        ui.weak(crate::tf!(
+                            k::perf::CACHE_OCCUPANCY,
+                            format!("{occ:.0}"),
+                            format!("{:.0}", used / 1e6),
+                            format!("{:.0}", limit / 1e6)
+                        ));
+                        let cache = self.player.cache.stats();
+                        ui.weak(crate::tf!(k::perf::NO_READ_DROPS, cache.unused_evictions));
+                    });
+                    let (bar, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 6.0),
+                        egui::Sense::hover(),
+                    );
+                    let pnt = ui.painter_at(bar);
+                    pnt.rect_filled(bar, 3.0, egui::Color32::from_gray(30));
+                    let fill_w = bar.width() * (occ as f32 / 100.0);
+                    let col = if occ > 90.0 {
+                        egui::Color32::from_rgb(230, 120, 90)
+                    } else {
+                        egui::Color32::from_rgb(95, 209, 155)
+                    };
+                    pnt.rect_filled(
+                        egui::Rect::from_min_size(bar.min, egui::vec2(fill_w, bar.height())),
+                        3.0,
+                        col,
+                    );
+                    ui.add_space(6.0);
+                    // the three graphs share what the window has left above the log: a larger
+                    // window shows larger graphs (D2); the floors fit the window's minimum size, so
+                    // the content never pushes the window past what the person gave it
+                    let gap = 4.0;
+                    let title_h = ui.text_style_height(&egui::TextStyle::Small) + 2.0;
+                    let per_graph = title_h + gap + ui.spacing().item_spacing.y;
+                    let log_head = ui.spacing().interact_size.y + 12.0;
+                    let used = ui.cursor().top() - top;
+                    let rest = body_h - used - 3.0 * per_graph - log_head;
+                    let log_h = (rest * 0.25).max(80.0);
+                    let graph_h = ((rest - log_h) / 3.0).max(64.0);
+                    for (g, probe) in [
+                        (&mut self.perf.quality, "diag.graph.quality"),
+                        (&mut self.perf.decode, "diag.graph.decode"),
+                        (&mut self.perf.churn, "diag.graph.churn"),
+                    ] {
+                        let r = g.draw(ui, graph_h);
+                        crate::widgets::field_probe::note(probe, r);
+                        ui.add_space(gap);
                     }
-                    if ui.button(tr(k::perf::GRAPH_RESET)).clicked() {
-                        self.perf.quality.clear();
-                        self.perf.decode.clear();
-                        self.perf.churn.clear();
-                    }
-                });
-                egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
-                    for line in &self.perf.log {
-                        ui.monospace(line);
-                    }
-                    if self.perf.log.is_empty() {
-                        ui.weak(tr(k::perf::LOG_EMPTY));
-                    }
-                });
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(tr(k::perf::LOG_TITLE)).strong());
+                        if ui.button(tr(k::perf::LOG_CLEAR)).clicked() {
+                            self.perf.log.clear();
+                            self.perf.last_msg = None;
+                        }
+                        if ui.button(tr(k::perf::GRAPH_RESET)).clicked() {
+                            self.perf.quality.clear();
+                            self.perf.decode.clear();
+                            self.perf.churn.clear();
+                        }
+                    });
+                    let log_rect = egui::ScrollArea::vertical()
+                        .id_salt("kt_diag_log")
+                        .stick_to_bottom(true)
+                        .auto_shrink([false, false])
+                        .max_height(log_h)
+                        .show(ui, |ui| {
+                            for line in &self.perf.log {
+                                ui.monospace(line);
+                            }
+                            if self.perf.log.is_empty() {
+                                ui.weak(tr(k::perf::LOG_EMPTY));
+                            }
+                        })
+                        .inner_rect;
+                    crate::widgets::field_probe::note("diag.log", log_rect);
+                    });
             });
         if shown.closed() {
             open = false;

@@ -950,7 +950,6 @@ save_project = "Save project"
 [perf]
 loading = "Loading…"
 smoothing = "Smoothing"
-economy = "Economy UI (30 fps while playing)"
 title = "Performance"
 cache_mb = "Cache {0}/{1} MB"
 underruns = "Underruns {0} rend / {1} out"

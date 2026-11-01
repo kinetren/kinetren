@@ -9,9 +9,9 @@ Test numbers t1145–t1154 are reserved by this change. Every stage ends with a 
 
 ## 2. The perf box moves into Diagnostics
 
-- [ ] 2.1 `app.rs`: the left column draws only the bin; `draw_perf_box` becomes the "Performance" section of `draw_diagnostics` (minus "Economy UI"); the three graphs share the height left by the log; default 640×720, min 460×560; probes `diag.graph.quality|decode|churn`. Verify: t1145, t1146, t1147, t1148 (`diag_tests.rs`).
-- [ ] 2.2 `toolbar.rs`: the View "Economy UI" item takes `hint::ECONOMY`; `perf.economy` removed from the five catalogs; t128 measures `menu.view.economy`. Verify: t128, t125, t131 (font/i18n tests), t1146.
-- [ ] 2.3 t947 opens the Diagnostics window before reading the "Compose" line (the assertion unchanged); t394 and `scripts/live/rmb.py` comments no longer say the perf panel lives under the bin. Verify: t947, t394.
+- [x] 2.1 `app.rs`: the left column draws only the bin, and the bin's frame reaches the column's bottom (its background takes the freed space); `draw_perf_box` becomes the "Performance" section of `draw_diagnostics` (minus "Economy UI"); the window body is one scroll, the three graphs share the viewport height left by the log; default 640 × min(720, screen − 60), min 460×320 (t779's 420-point screen); probes `diag.graph.quality|decode|churn`, `diag.log`, `view.diagnostics`, `view.economy`; the graph names its accessibility node (t956). Verify: t1145, t1146, t1147, t1148 (`diag_tests.rs`).
+- [x] 2.2 `toolbar.rs`: the View "Economy UI" item takes `hint::ECONOMY`; `perf.economy` removed from the five catalogs; t128 measures `menu.view.economy`. Verify: t128, t125, t131 (font/i18n tests), t1146.
+- [x] 2.3 t947, t289 and t720b open the Diagnostics window before reading their lines (the assertions unchanged — the lines moved there); t394 and `scripts/live/rmb.py` comments no longer say the perf panel lives under the bin. Verify: t947, t394.
 
 ## 3. Live scenario and documents
 

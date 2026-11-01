@@ -950,7 +950,6 @@ save_project = "حفظ المشروع"
 [perf]
 loading = "جارٍ التحميل…"
 smoothing = "تنعيم"
-economy = "واجهة موفرة (30 إطارًا في الثانية أثناء التشغيل)"
 title = "الأداء"
 cache_mb = "الذاكرة {0}/{1} MB"
 underruns = "Underruns {0} معالجة / {1} إخراج"

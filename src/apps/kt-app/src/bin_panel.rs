@@ -526,8 +526,8 @@ impl KtApp {
         // On the first frame it does not exist yet — the menu appears from the second, and this is
         // unnoticeable (a person does not manage to click within the window's first frame).
         // `ui.clip_rect()` does not work here: inside `ScrollArea` it equals the
-        // viewport of the COLUMN, and below the bin lives the performance panel — its right click
-        // would go to the bin's menu.
+        // viewport of the COLUMN, and a bin scrolled out of view would answer a right click on
+        // whatever stands there.
         let view = self.bin_rect.intersect(ui.clip_rect());
         if !view.is_positive() {
             return;

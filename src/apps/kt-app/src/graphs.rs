@@ -125,10 +125,16 @@ impl RollingGraph {
     /// changed — otherwise the last build is painted again.
     pub fn draw(&mut self, ui: &mut egui::Ui, height: f32) -> egui::Rect {
         let title_h = ui.text_style_height(&egui::TextStyle::Small);
-        let (outer, _) = ui.allocate_exact_size(
+        let (outer, resp) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), title_h + 2.0 + height),
             egui::Sense::hover(),
         );
+        // the title is a galley of the build, so the node is named here (the closure runs only
+        // with accessibility on — no string otherwise); the render window finds its chart by it
+        let title = self.title;
+        resp.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, crate::i18n::tr(title))
+        });
         let key = CacheKey {
             rect: outer,
             generation: self.generation,

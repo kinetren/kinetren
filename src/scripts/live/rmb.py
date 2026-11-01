@@ -93,8 +93,8 @@ def main(out):
 
         # ---- 3. the bin background and meters do not stay silent -------------------------------
         win = geometry()
-        # the program reports the bin rectangle itself (R.27): below it in the
-        # column lives the perf panel, and “roughly on the left” would probe it
+        # the program reports the bin rectangle itself (R.27): “roughly on the
+        # left” would probe whatever stands there, not the bin
         b = app.geom()["bin"]
         before = app.shot("before-bin-menu")
         app.right_click(

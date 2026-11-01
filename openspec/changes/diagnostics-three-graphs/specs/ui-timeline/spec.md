@@ -72,4 +72,7 @@ squeezed the bin all the time, and diagnosing a slow spot meant looking in two p
 - **THEN** the repeated draws reuse the built lines (no rebuild), the new sample rebuilds once,
   the larger rectangle rebuilds once; the auto-scale moves only on a sample, so ten draws of the
   same data paint the same scale
+- **PATH** open Diagnostics and press Space → the lines step on every half-second sample and hold
+  still between samples; the scale eases to a new peak over a few samples, as fast at the idle
+  tick as at 60 fps
 - **TEST** t1149 (`src/apps/kt-app/src/graphs.rs`)

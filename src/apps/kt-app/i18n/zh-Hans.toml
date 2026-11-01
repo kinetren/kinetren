@@ -950,7 +950,6 @@ save_project = "保存项目"
 [perf]
 loading = "加载中…"
 smoothing = "平滑"
-economy = "省电界面（播放时 30 fps）"
 title = "性能"
 cache_mb = "缓存 {0}/{1} MB"
 underruns = "Underruns 渲染 {0} / 输出 {1}"
