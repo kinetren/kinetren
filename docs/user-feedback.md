@@ -2255,6 +2255,15 @@ The requests:
   - 18 proxies.
   The other fifteen are not lost: they stay as a numbered backlog in `docs/ktprompts/kkt-26.11.01-candidates.md`, linked from the registry. The owner expected every request to get a proposal so nothing is lost: an offered list must not be left as a choice he has to make.
 
+**Item 14 taken as (2026-11-01, change `diagnostics-three-graphs`):** the owner's sentence counts
+the graphs without naming them — the perf box of the left column had two (Quality, FFmpeg activity)
+and the Diagnostics window one (Cache churn); moving the box into the window makes three. They stay
+the three, one per cause of "it does not play smoothly": the display, the decoder and disk, the
+cache. The box leaves the column (the bin gets all of it); every line it had is in the window's
+"Performance" section; the graphs share the window's height (item 12's "needle's eye"). The box's
+"Economy UI" checkbox is not carried over: the same switch is in View (item 13: one checkbox in
+one place).
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

@@ -46,11 +46,14 @@ Top to bottom: the "Performance" heading and the five two-column rows (the same 
 `Truncate`; the 190 px row budget of t128 still holds — at the window's minimum width a column is
 wider than that), the GPU/FX/compose/FFmpeg lines, the journal button with the stall count; the
 occupancy line and bar; the three graphs; the log heading with Clear / Reset the graphs; the log.
-The graphs take `(available − log share) / 3` each, with a floor of 64 points, and the log keeps the
-rest (at least 80 points, `ScrollArea` with `stick_to_bottom`), so a larger window gives larger
-graphs. Default size 640×720, minimum 460×560 — the minimum is where the floors still fit, so the
-content never pushes the window larger than the person made it (the shell's rule "no window grows
-by itself", t921–t923).
+The body is ONE vertical scroll (the shell's rule: no window-level scroll, the body scrolls) as
+tall as the window gives; the graphs take `(viewport − what the rows used − the log's share) / 3`
+each, with a floor of 64 points, and the log keeps a quarter of the rest (at least 80 points, its
+own `stick_to_bottom` scroll). A larger window gives larger graphs; a screen lower than the floors
+scrolls the body instead of pushing the window larger than the person made it (the shell's rule
+"no window grows by itself", t921–t923). Default size 640 × min(720, screen − 60), minimum
+460×320: a fixed 720 put the title and its cross above a 420-point screen's top edge (t779 — the
+first run of this change was red there).
 
 Rejected: the graphs side by side — the pinned legends need 86 points on the left of each, and
 three of them in a 640-point window would leave the lines a third of the width; collapsible
@@ -62,7 +65,10 @@ The box lived in the column since the I1 port of the v1 panel; rounds 6–7 fitt
 (item 18 of R.6 and item 15 of R.7: truncation, two columns). Those were rules for drawing it in a
 narrow column, not a decision that it must be there; the owner's new request moves it. The column
 keeps its limits (`max_size`, `min_size`, the 232 default — set at the owner's request, untouched)
-and now holds only the bin, whose `ScrollArea` stays.
+and now holds only the bin, whose `ScrollArea` stays. The bin's frame reaches the column's bottom
+(`set_min_height` from the column's viewport, `clip_rect` — R.16): the freed space is the bin's
+background — a file drops there, a right click there opens the bin's menu — not a dead strip under
+a short frame (the owner's item 12 class: an area that does not fill its place).
 
 ### D4. "Economy UI" is not carried over
 

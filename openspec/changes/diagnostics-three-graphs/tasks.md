@@ -15,8 +15,8 @@ Test numbers t1145–t1154 are reserved by this change. Every stage ends with a 
 
 ## 3. Live scenario and documents
 
-- [ ] 3.1 `src/scripts/live/diagnostics.py`: the column without the box, the gauge opens the window, playback runs the three graphs, the corner drag enlarges them, View → Diagnostics… opens it again; a `kt_live.step` screenshot per step. Verify: `KT_LIVE_DISPLAY=:272 ./scripts/live-check.sh diagnostics`.
-- [ ] 3.2 `docs/guide/whats-new.md` (## kt26.11) line; `docs/ktprompts/kkt-26.11.01-index.md` row K14 → done; `docs/features/ui/viewer/playback-performance-readout.md` status done; kt-app `CLAUDE.md` perf-panel mentions point at the Diagnostics window; `docs/user-feedback.md` gets the decision. Verify: `python3 src/scripts/ktprompts-index.py --check`, `python3 src/scripts/features-index.py --check`, `python3 src/scripts/specs-user-path.py --check`.
+- [x] 3.1 `src/scripts/live/diagnostics.py`: the column without the box, the gauge opens the window, playback runs the three graphs, the corner drag enlarges them, View → Diagnostics… opens it again; a `kt_live.step` screenshot per step (at 1900×1000: at 1440 the bottom row cuts the gauge off — a pre-existing toolbar-width defect, not this change). Verify: `KT_LIVE_DISPLAY=:272 ./scripts/live-check.sh diagnostics` — green, six steps; `rmb` (its comment changed) green alone.
+- [x] 3.2 `docs/guide/whats-new.md` (## kt26.11) line; `docs/ktprompts/kkt-26.11.01-index.md` row K14 → done; `docs/features/ui/viewer/playback-performance-readout.md` status done; kt-app `CLAUDE.md` perf-panel mentions point at the Diagnostics window; `docs/user-feedback.md` gets the decision. Verify: `python3 src/scripts/ktprompts-index.py --check`, `python3 src/scripts/features-index.py --check`, `python3 src/scripts/specs-user-path.py --check`.
 
 ## 4. Finish
 

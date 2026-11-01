@@ -20,12 +20,19 @@ def main(out):
     require_tools()
     proj = project_with_clips(os.path.join(out, "diagnostics.otio"), [(0.0, 8.0, "synth:Ramp")])
     with Live("diagnostics", out, project=proj) as app:
+        # the owner's working width: at 1440 the bottom row cuts the gauge button off at the right
+        # edge (the toolbar-width follow-up the lessons scenario names too)
+        app.resize(1900, 1000)
         win = geometry()
-        bin_ = app.geom()["bin"]
-        # --- 1. the left column is the bin's ------------------------------------------------
+        g = app.geom()
+        bin_ = g["bin"]
+        # --- 1. the left column is the bin's: its frame reaches the column's bottom, which is the
+        # timeline's top (the column stands above the timeline) -------------------------------
+        gap = g["timeline"]["top"] - bin_["bottom"]
         app.expect(
-            win["h"] - bin_["bottom"] < 80,
-            f"the bin reaches the bottom of the column (bin bottom {bin_['bottom']:.0}, window {win['h']})",
+            0 <= gap < 40,
+            f"the bin reaches the bottom of the column (bin bottom {bin_['bottom']:.0f}, "
+            f"timeline top {g['timeline']['top']:.0f})",
         )
         app.step("column", "the left column: only the media bin, down to the bottom")
 
