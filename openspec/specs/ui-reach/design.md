@@ -367,3 +367,13 @@ F-HLP-029 defect "eight nonexistent media" does not apply). Each lesson writes i
 calls the same builder (one body, UI rule 17). F-HLP-029's "a copy in the folder the user named"
 stays the rule for a future "Open demo project" — a lesson sandbox is not the person's project and
 is not listed in Recent.
+
+## Selecting segments is said where the person acts (segment-shape-fields, 2026-11-01)
+
+The segment selection has no button of its own, so it is said in three places: the graph's hover
+hint over a segment names Ctrl+click, Shift+click and the sweep; the row under "Shape of all
+segments" names the segment's bounds or the count; the segment menu's header names how many
+segments the choice touches. The row's probes are `shape_sel.*` — the prefix has no dot on purpose:
+the live-coverage guard reads every dotted literal as a place, and a bare prefix is not one. The
+graph takes the wheel for its own axis, so a live scenario scrolls the window body over "+ curve",
+never over the graph (`src/scripts/live/segfields.py`).

@@ -99,3 +99,34 @@ Further down the chain, it hurt too. The warp speed of the A/V pair was edited s
 - **Unification of the domains of transitions and cameras** — a marked debt, not a surprise.
 - **Physics** — a simulation from the start of the event at a fixed step, supplying numbers to the generator; the speed of the event must reach the generator as numbers.
 - **The command "edit in all places at once"** exists for a generator (`ApplyGenToAll`); a mode of transferring curves "to the length of the receiver" does not.
+
+## The shape of one segment and of a selection (segment-shape-fields, 2026-11-01)
+
+- **What hurt.** kkt-26.11.01 item 10, the owner: "I want to set the zigzag's parameters and there
+  is nowhere to write them; if I set the zigzag for the whole curve, then there is… and what if I
+  have 100 segments with parameters?" Numbers existed only in "Shape of all segments"; one segment
+  had the R.67 drag handle (no number, no profile); several segments could not be selected at all.
+- **One row, two scopes.** `widgets::shape_fields` (`src/apps/kt-app/src/widgets.rs`) is the row
+  for "all segments" and for the selection; `shape_all_control` is a thin call over every key. The
+  handle drag and the fields read the same bounds (`TENSION_BOUNDS`, `PERIODS_BOUNDS`,
+  `AMP_BOUNDS`). The "all" row now shows "—" when the segments differ — it used to show the FIRST
+  segment's shape as if it were everyone's.
+- **Mixed values: a typed number SETS, a drag SHIFTS.** Setting every segment to the first one's
+  value on a drag would destroy the differences the person built; shifting by one amount keeps
+  them (the behaviour of several selected keyframes in AE/Resolve), each clamped to its bounds.
+  A shape pick keeps the parameters of the segments already of that kind (`widgets::pick_shape`,
+  the same body for the row's list and the segment menu).
+- **Writes only from a gesture** (`clamp_existing_to_range(false)`, write on `dragged()` or
+  focus+`changed()`): the former "all" row clamped periods 500 (legal in the model, the field stops
+  at 256) and wrote 256 into every key on the first frame of the open window — the R.67 class "a key
+  only from a gesture" in a shape field. t1120 is red on the former row.
+- **The selection is keyed by the left key's TIME** (`automation::SegSel`), not by its index: an
+  index shifts when a key is inserted before the segment. A key dragged to a new time leaves the
+  selection — the person is then working on keys, not segments.
+- **A drag over empty space sweeps segments.** Before this change that drag did nothing; a plain
+  click still places a key (and clears the selection), so no former gesture changed meaning.
+  Ctrl+click toggles, Shift+click extends from the last clicked segment or from where the sweep
+  ended.
+- **Rejected:** a segment column in the table view (rows are moments, a segment is BETWEEN rows —
+  a second editor of the same thing); a selection across curves (the block belongs to one curve,
+  and a tension of one parameter has no meaning on another's axis).
