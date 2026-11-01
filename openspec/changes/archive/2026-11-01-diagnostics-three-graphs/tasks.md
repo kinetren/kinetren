@@ -20,5 +20,5 @@ Test numbers t1145–t1154 are reserved by this change. Every stage ends with a 
 
 ## 4. Finish
 
-- [x] 4.1 `git merge master` (master `5382edb6` already in); `cargo test --workspace --no-fail-fast` green (t815 and t640 red once under load, green alone); `cargo clippy --all-targets` — no warning in this change's lines; `./scripts/finish.sh` → **kt26.11.01-9d4fbc32** (the uncommitted part was the archive's docs), every check green; its live run shared a display with another session's run (a foreign `nestparam` window over ours on the screenshot) — the eight red ones rerun alone on `:291`.
+- [x] 4.1 `git merge master` (master `5382edb6` already in); `cargo test --workspace --no-fail-fast` green (t815 and t640 red once under load, green alone); `cargo clippy --all-targets` — no warning in this change's lines; `./scripts/finish.sh` → **kt26.11.01-9d4fbc32** (the uncommitted part was the archive's docs), every check green; its live run shared a display with another session's run (a foreign `nestparam` window over ours on the screenshot) — the eight red ones (curves, diagnostics, export_otio, fade, forms, formula, nestshare, rate) rerun alone on `:291`: 8 of 8 green.
 - [x] 4.2 Archive the change (specs merged into `ui-timeline`, the why into its `design.md`). Verify: `openspec validate --specs`.
