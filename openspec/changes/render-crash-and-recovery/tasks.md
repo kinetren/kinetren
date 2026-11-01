@@ -31,16 +31,16 @@ message, first line "render-crash-and-recovery <stage>: …", no attribution lin
 
 ## 4. The supervisor and the crash window
 
-- [ ] 4.1 `supervisor.rs`: `classify`, spawn of `current_exe` with `KT_SUPERVISED`, PDEATHSIG on Linux, the fresh-report rule, the supervisor's own report, the `shown:` mark, the restart loop with `KT_AFTER_CRASH`; `main.rs` calls it; `KT_NO_SUPERVISOR`
-- [ ] 4.2 The crash window (catalog section `[crash]` in five languages, theme, fonts, language from `KT_LANG`/`app.ron`, buttons outside the scroll, `<dump>.crash.json` under `KT_GEOM_DUMP`)
-- [ ] 4.3 t1072 (a child test process panics → detected), t1073 (abort/SIGKILL/SIGTERM/clean + Windows codes), t1074 (the window's content and buttons, kittest)
-- [ ] 4.4 Bench command `crash`; live scenario `src/scripts/live/crash.py` (edit → crash → the window → Restore → the recovery window → the edit is back), a screenshot per step; `recover.py` and the rest stay green
-- [ ] 4.5 Commit stage 4
+- [x] 4.1 `supervisor.rs`: `classify`, spawn of `current_exe` with `KT_SUPERVISED`, PDEATHSIG on Linux, the fresh-report rule, the supervisor's own report, the `shown:` mark, the restart loop with `KT_AFTER_CRASH`; `main.rs` calls it; `KT_NO_SUPERVISOR`
+- [x] 4.2 The crash window (catalog section `[crash]` in five languages, theme, fonts, language from `KT_LANG`/`app.ron`, buttons outside the scroll, `<dump>.crash.json` under `KT_GEOM_DUMP`)
+- [x] 4.3 t1072 (a child test process panics → detected), t1073 (abort/SIGKILL/SIGTERM/clean + Windows codes), t1074 (the window's content and buttons, kittest)
+- [x] 4.4 Bench command `crash`; live scenario `src/scripts/live/crash.py` (edit → crash → the window → Restore → the recovery window → the edit is back), a screenshot per step; `recover.py` and the rest stay green
+- [x] 4.5 Commit stage 4
 
 ## 5. Close
 
-- [ ] 5.1 `docs/guide/whats-new.md` (`## kt26.11`): the crash window, the restore that brings the right sources, the per-run log
-- [ ] 5.2 Registry row K9 in `docs/ktprompts/kkt-26.11.01-index.md` → done; `python3 src/scripts/ktprompts-index.py --check` green
-- [ ] 5.3 `apps/kt-app/CLAUDE.md`: the supervisor section (two processes, `KT_NO_SUPERVISOR`, PDEATHSIG, the window is not a `KtApp` window)
+- [x] 5.1 `docs/guide/whats-new.md` (`## kt26.11`): the crash window, the restore that brings the right sources, the per-run log
+- [x] 5.2 Registry row K9 in `docs/ktprompts/kkt-26.11.01-index.md` → done; `python3 src/scripts/ktprompts-index.py --check` green
+- [x] 5.3 `apps/kt-app/CLAUDE.md`: the supervisor section (two processes, `KT_NO_SUPERVISOR`, PDEATHSIG, the window is not a `KtApp` window)
 - [ ] 5.4 `cargo test --workspace`, `cargo clippy --all-targets`, `./scripts/finish.sh`; the version here
 - [ ] 5.5 Archive the change (specs merged), commit

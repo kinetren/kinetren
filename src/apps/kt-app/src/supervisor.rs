@@ -278,17 +278,15 @@ pub fn draw(ui: &mut egui::Ui, c: &Crash, rects: &mut Vec<(&'static str, egui::R
             if r.clicked() {
                 choice = Some(Choice::Restart);
             }
+            // only the button the live scenario presses is published (t804 counts the rest)
             let r = ui.button(tr(k::crash::LOGS));
-            rects.push(("crash.logs", r.rect));
             if r.clicked()
                 && let Some(dir) = c.report.parent()
                 && let Err(e) = crate::util::open_in_file_manager(dir)
             {
                 eprintln!("kinetren: {e}");
             }
-            let r = ui.button(tr(k::crash::CLOSE));
-            rects.push(("crash.close", r.rect));
-            if r.clicked() {
+            if ui.button(tr(k::crash::CLOSE)).clicked() {
                 choice = Some(Choice::Close);
             }
         });
@@ -321,6 +319,7 @@ struct CrashWindow {
     choice: std::rc::Rc<std::cell::Cell<Choice>>,
     marked: bool,
     dump: Option<PathBuf>,
+    frames: u64,
 }
 
 impl eframe::App for CrashWindow {
@@ -337,14 +336,15 @@ impl eframe::App for CrashWindow {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
         if let Some(p) = &self.dump {
-            write_dump(p, &self.crash, &rects);
+            self.frames += 1;
+            write_dump(p, &self.crash, &rects, self.frames);
         }
     }
 }
 
 /// The live scenario's view of the window (`<KT_GEOM_DUMP>.crash.json`): the button rectangles
 /// and the texts, the way the editor's dump gives `fields`.
-fn write_dump(path: &Path, c: &Crash, rects: &[(&'static str, egui::Rect)]) {
+fn write_dump(path: &Path, c: &Crash, rects: &[(&'static str, egui::Rect)], frame: u64) {
     let esc = |s: &str| s.replace('\\', "/").replace('"', "'").replace(['\n', '\r', '\t'], " ");
     let fields: Vec<String> = rects
         .iter()
@@ -359,7 +359,7 @@ fn write_dump(path: &Path, c: &Crash, rects: &[(&'static str, egui::Rect)]) {
         })
         .collect();
     let json = format!(
-        "{{\"crash\":true,\"what\":\"{}\",\"panic\":\"{}\",\"version\":\"{}\",\"report\":\"{}\",\"tail\":{},\"fields\":[{}]}}\n",
+        "{{\"crash\":true,\"frame\":{frame},\"what\":\"{}\",\"panic\":\"{}\",\"version\":\"{}\",\"report\":\"{}\",\"tail\":{},\"fields\":[{}]}}\n",
         esc(&death_words(c)),
         esc(c.panic.as_deref().unwrap_or("")),
         esc(&c.version),
@@ -414,7 +414,7 @@ fn show(crash: &Crash) -> Choice {
         p.push(".crash.json");
         PathBuf::from(p)
     });
-    let app = CrashWindow { crash: crash.clone(), choice: choice.clone(), marked: false, dump };
+    let app = CrashWindow { crash: crash.clone(), choice: choice.clone(), marked: false, dump, frames: 0 };
     let res = eframe::run_native(
         "kinetren-crash",
         options,

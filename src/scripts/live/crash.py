@@ -14,7 +14,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Failure, Live, geometry, import_project, poll_step, project_with_clips, require_tools  # noqa: E402
+from kt_live import Failure, Live, geometry, import_project, poll_step, probe, project_with_clips, require_tools  # noqa: E402
 
 # ITS OWN PROCESS (R.68): the scenario kills the editor and restarts it — the worker stand
 # cannot host that.
@@ -44,6 +44,11 @@ def main(out):
     rec = proj + ".recovery.kt"
     if os.path.exists(rec):
         os.remove(rec)
+    # a NEW editor process executes the last bench command it finds (its counter starts at zero):
+    # a `crash` left by the previous run would crash it at start
+    ctl = os.path.join(out, "ctl")
+    if os.path.exists(ctl):
+        os.remove(ctl)
     os.environ["KT_AUTOSAVE_SECS"] = "2"
     os.environ["KT_LANG"] = "en"
 
@@ -55,7 +60,13 @@ def main(out):
         x0 = app.x_at(src.mid())
         app.drag(x0, y, x0 + 160.0, y)
         app.step("edited", "the second event dragged right (unsaved)")
-        moved = max(c.start for c in app.project_now().clips)
+        before = max(c.start for c in p.clips)
+        deadline = time.time() + 15
+        moved = before
+        while moved == before and time.time() < deadline:
+            poll_step(0.2)
+            moved = max(start for start, _ in app.live_clips())
+        app.expect(moved > before, f"the drag moved the event ({before} -> {moved})")
         deadline = time.time() + 60
         while not (os.path.exists(rec) and os.path.getsize(rec) > 0):
             if time.time() > deadline:
@@ -67,8 +78,13 @@ def main(out):
             os.remove(crash_dump)
         app._ctl("crash")
         d = wait_json(crash_dump, lambda d: d.get("fields"), what="the crash window")
+        # ... and so would the restarted one: the last command becomes a harmless one
+        app._ctl("noop")
         # the editor's dump is stale from here: the next editor writes a fresh one
         os.remove(app.geom_path)
+        # the dump is written while the first frame is laid out, before it is on screen: give the
+        # software renderer a moment to present it (the window repaints only on input)
+        poll_step(2.0)
         app.step("crash-window", "the crash window, right after the crash")
         app.expect(app.proc.poll() is None, "the supervisor is alive and shows the window")
         app.expect("deliberate panic" in d["panic"], f"the window names the panic: {d['panic']!r}")
@@ -83,23 +99,31 @@ def main(out):
 
         f = next(f for f in d["fields"] if f["param"] == "crash.restore")
         win = geometry()
-        app.click(win["x"] + int(f["x"] + f["w"] / 2), win["y"] + int(f["y"] + f["h"] / 2))
+        # the window is another process's: the editor's input counters do not exist here, so the
+        # gesture is a plain hover, press and release with a frame between each
+        x, y = win["x"] + int(f["x"] + f["w"] / 2), win["y"] + int(f["y"] + f["h"] / 2)
+        probe.move(x, y, pause=0.4)
+        probe.button(True, pause=0.2)
+        probe.button(False, pause=0.2)
         # the editor starts again: wait for its own dump, then for the recovery window
+        poll_step(0.5)
+        app.shot("after-restore-click")
         wait_json(app.geom_path, lambda g: g.get("rows") and int(g.get("frame", 0)) >= 2,
-                  what="the restarted editor")
+                  timeout=180.0, what="the restarted editor")
         app.step("restarted", "the editor started again and offers the unsaved work")
         if not app.click_probe("ask.restore", "the recovery window offers the work"):
             raise Failure("no recovery window after Restore the project")
         app.settle()
         app.step("restored", "the edit is back in the editor")
-        got = [c.start for c in app.project_now().clips]
+        # the LIVE model: the restored edit is unsaved, the file on disk still holds the old one
+        got = [start for start, _ in app.live_clips()]
         app.expect(max(got) == moved, f"the dragged event is back where it was dragged ({got}, {moved})")
         g = app.geom()
         app.expect(
             not any("ended abnormally" in n for n in g.get("notices", [])),
             f"the shown crash is not announced again: {g.get('notices')}",
         )
-        app.expect(app.project_now() is not None and g.get("project", "").endswith("crash.kt"),
+        app.expect(g.get("project", "").endswith("crash.kt"),
                    f"the restored edit is under its project's name: {g.get('project')}")
         return app.done()
 

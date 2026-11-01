@@ -289,13 +289,20 @@ fn rotate(path: &Path) {
 /// Move the journal into the fan: `.3 → .4`, …, `kt-app.log → .1`; the oldest falls off. On
 /// Windows a held file is retried (kt-otio).
 fn shift(path: &Path) {
-    let nth = |i: usize| path.with_extension(format!("log.{i}"));
+    let nth = |i: usize| nth_run(path, i);
     for i in (1..KEEP_RUNS).rev() {
         if nth(i).exists() {
             let _ = kt_otio::replace_file(&nth(i), &nth(i + 1));
         }
     }
     let _ = kt_otio::replace_file(path, &nth(1));
+}
+
+/// The journal of the `i`-th previous run: `kt-app.log` → `kt-app.log.<i>`.
+pub(crate) fn nth_run(path: &Path, i: usize) -> PathBuf {
+    let mut s = path.as_os_str().to_owned();
+    s.push(format!(".{i}"));
+    PathBuf::from(s)
 }
 
 /// Date and time without external dependencies: the program does not pull in chrono for the
@@ -493,7 +500,7 @@ mod tests {
         );
         assert_eq!(cur.lines().count(), 2, "the second run's journal holds another run: {cur}");
         assert!(cur.contains("second run") && !cur.contains("first run"), "{cur}");
-        let prev = std::fs::read_to_string(p.with_extension("log.1")).unwrap();
+        let prev = std::fs::read_to_string(nth_run(&p, 1)).unwrap();
         assert!(prev.contains("first run, line one") && prev.contains("first run, line two"), "{prev}");
 
         let tail = last_run_tail(&p, 10);
@@ -508,8 +515,8 @@ mod tests {
             start_run_at(&p, "FFmpeg missing");
             write_to(&p, "INFO", "later");
         }
-        assert!(p.with_extension(format!("log.{KEEP_RUNS}")).exists(), "the fan lost a run");
-        assert!(!p.with_extension(format!("log.{}", KEEP_RUNS + 1)).exists(), "the fan grows without bound");
+        assert!(nth_run(&p, KEEP_RUNS).exists(), "the fan lost a run");
+        assert!(!nth_run(&p, KEEP_RUNS + 1).exists(), "the fan grows without bound");
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 
