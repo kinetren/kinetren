@@ -7,6 +7,9 @@ month, newest first.
 
 - **Windows: the welcome window names your project folders plainly** — `C:\Users\…`, not
   `\\?\C:\Users\…`.
+- **A project sounds and looks the same on Windows and Linux.** Slowed+Reverb, the phaser and
+  pitch shift gave slightly different bytes on Windows; every effect now uses the program's own
+  math, so a render is identical on both — and on any processor.
 - **Forcing an encoder this computer does not have** (VAAPI on Windows) now says so by name
   instead of an empty error.
 - **Changing an audio effect takes effect at once.** Put a filter where an equaliser stood

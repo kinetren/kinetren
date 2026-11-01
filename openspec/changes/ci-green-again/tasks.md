@@ -11,12 +11,12 @@
 
 - [x] 2.1 t801 and t802 each pass their own `KT_LIVE_OUT` (`target/live-guard-t801`, `-t802`) — t801, t802 green in one run
 - [x] 2.2 `kt_dirs::plain_path` + `kt_dirs::canonical` (the `dunce` rule, pure over `Os`) — t1062
-- [ ] 2.3 `user_store::project_key` uses `kt_dirs::canonical`; t986 compares the folder in its canonical spelling and refuses a `\\?\` label — t986 under wine (`scripts/windows-test.sh`) and on Linux
+- [x] 2.3 `user_store::project_key` uses `kt_dirs::canonical`; t986 compares the folder in its canonical spelling and refuses a `\\?\` label — t986 under wine (`scripts/windows-test.sh`) and on Linux
 
 ## 3. A forced encoder outside the cascade (export)
 
 - [x] 3.1 The muxer names a forced encoder this system's cascade never tries, with the cascade — t1063 (red on the old muxer: "last error: ")
-- [ ] 3.2 t962 expects that error where the cascade has no VAAPI — t962 under wine and on Linux
+- [x] 3.2 t962 expects that error where the cascade has no VAAPI — t962 under wine and on Linux
 
 ## 4. One math for the frozen paths (export, invariant 11)
 
@@ -25,7 +25,7 @@
 - [x] 4.3 t1066: no `x.sin(`/`f64::powf(` kin in the frozen crates and the families; the scanner proven on probe lines
 - [x] 4.4 The warp's `FrozenSinc` (rubato's table on our math, AVX+FMA product as the rounding) — t1067
 - [x] 4.5 t973c: eight values re-based (= the windows-latest values of 94e36e9e); t1019, t1048 unchanged on Linux; t975 allows `libm`
-- [ ] 4.6 Under wine (`kinetren-build:windows`): t973c, t1019, t1048, t962, t986, t1062, t1063 green
+- [x] 4.6 Under wine (`kinetren-build:windows`): t973c, t1019, t1048, t962, t986, t1062, t1063 green
 
 ## 5. Records and finish
 
