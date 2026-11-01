@@ -1,10 +1,17 @@
-// P2 the ISP's raw front (cpu.rs p2_row): black-level subtraction, defect-pixel correction, RGB-IR
-// subtraction, lens shading, white balance and digital gain → linear, 16-bit fixed (×16384).
-// u0 = the ISP's (phase-shifted) table; u1 = (flags, bits(dpc_thr), bits(ir_sub), bits(lsc_pow));
-// f0 = (b_isp, inv_range, vig_t2, 0); f1 = gains (R, G, B, W). T0 = P1.
+// P2a the raw front (cpu.rs raw_front_row): black-level subtraction, the optical-black row/column
+// correction, defect-pixel correction, green equalisation → normalised raw, 16-bit fixed.
+// u0 = the ISP's table; u1 = (flags, seed_t, seed_f, 0); f0 = (b_isp, inv_range, row_corr,
+// col_corr); f1 = (dpc_thr, geq, 0, 0). T0 = P1b.
 
 fn vb(sx: i32, sy: i32) -> f32 {
-    return (f32(v16(at(sx, sy))) - P.f0.x) * P.f0.y;
+    var v = (f32(v16(at(sx, sy))) - P.f0.x) * P.f0.y;
+    if (P.f0.z != 0.0) {
+        v = v - P.f0.z * gauss(hash2(0u, u32(sy), P.u1.y ^ 0x77777777u));
+    }
+    if (P.f0.w != 0.0) {
+        v = v - P.f0.w * gauss(hash2(u32(sx), 0u, P.u1.z ^ 0x33333333u));
+    }
+    return v;
 }
 
 @fragment
@@ -19,7 +26,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let code = cfa_code(sx, sy);
     var v = vb(sx, sy);
     if (((FL >> 14u) & 1u) == 1u) {
-        let thr = bitcast<f32>(P.u1.y);
+        let thr = P.f1.x;
         var mn = 3.4028235e38;
         var mx = -3.4028235e38;
         var found = false;
@@ -42,29 +49,24 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
             }
         }
     }
-    let irs = bitcast<f32>(P.u1.z);
-    if (irs > 0.0 && code != 4u) {
+    let geq = P.f1.y;
+    if (geq > 0.0 && code == 1u) {
         var sum = 0.0;
         var n = 0.0;
-        for (var dy = -1; dy <= 1; dy = dy + 1) {
-            for (var dx = -1; dx <= 1; dx = dx + 1) {
-                if (cfa_code(sx + dx, sy + dy) == 4u) {
-                    sum = sum + vb(wrap1(sx + dx, s.x), wrap1(sy + dy, s.y));
-                    n = n + 1.0;
-                }
+        for (var i = 0; i < 4; i = i + 1) {
+            let dx = select(-1, 1, (i & 1) == 1);
+            let dy = select(-1, 1, i >= 2);
+            if (cfa_code(sx + dx, sy + dy) == 1u) {
+                sum = sum + vb(wrap1(sx + dx, s.x), wrap1(sy + dy, s.y));
+                n = n + 1.0;
             }
         }
         if (n > 0.0) {
-            v = v - irs * (dye_nir(code) / dye_nir(4u)) * (sum / n);
+            let d = sum / n - v;
+            if (abs(d) < 0.05) {
+                v = v + geq * 0.5 * d;
+            }
         }
     }
-    let lp = bitcast<f32>(P.u1.w);
-    if (lp > 0.0) {
-        v = v * pow(1.0 + P.f0.z * r2_of(sx, sy), lp);
-    }
-    if (code < 4u) {
-        v = v * P.f1[code];
-    }
-    let q = fix16(max(v, 0.0));
-    return vec4<u32>(q >> 8u, q & 255u, 0u, 255u);
+    return t16(fix16(max(v, 0.0)));
 }

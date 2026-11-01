@@ -1,33 +1,23 @@
-// P0 optics and photons (cpu.rs p0_row): the scene through the lens at a sensor pixel, its mean
-// signal as a fraction of the full well, 16-bit fixed in R,G.
-// u0 = sensor table; u1 = (flags, bits(cir), bits(scene_ir), 0);
-// f0 = (vig_t2, ca px, olpf px, a_r); f1 = (a_g, a_b, crosstalk, 0). T0 = the source.
-
-fn lin(c: u32) -> f32 {
-    let v = f32(c) * 0.003921569;
-    if (v <= 0.04045) {
-        return v * 0.07739938;
-    }
-    return pow((v + 0.055) * 0.9478673, 2.4);
-}
+// P0 the lens and the photons (cpu.rs optics_row): distortion and lateral CA per channel, the
+// 4-spot OLPF, cos⁴ vignetting and colour shading over the unprocessed scene, then the mean signal
+// of each sensor pixel's filter as a fraction of the full well, 16-bit fixed.
+// u0 = sensor table; u1 = (flags, bits(cir), bits(scene_ir), bits(k_lens));
+// f0 = (vig_t2, ca px, olpf px, a_r); f1 = (a_g, a_b, crosstalk, colour shading). T0 = U.
 
 fn scene(px: f32, py: f32, c: u32) -> f32 {
     let k = f32(KK());
-    let d = fdims();
     let fx = px * k - 0.5;
     let fy = py * k - 0.5;
     let x0 = floor(fx);
     let y0 = floor(fy);
     let tx = fx - x0;
     let ty = fy - y0;
-    let xa = clamp(i32(x0), 0, d.x - 1);
-    let xb = clamp(i32(x0) + 1, 0, d.x - 1);
-    let ya = clamp(i32(y0), 0, d.y - 1);
-    let yb = clamp(i32(y0) + 1, 0, d.y - 1);
-    let saa = lin(textureLoad(T0, vec2<i32>(xa, ya), 0)[c]);
-    let sba = lin(textureLoad(T0, vec2<i32>(xb, ya), 0)[c]);
-    let sab = lin(textureLoad(T0, vec2<i32>(xa, yb), 0)[c]);
-    let sbb = lin(textureLoad(T0, vec2<i32>(xb, yb), 0)[c]);
+    let xa = i32(x0);
+    let ya = i32(y0);
+    let saa = unpack_scene(at_frame(xa, ya))[c];
+    let sba = unpack_scene(at_frame(xa + 1, ya))[c];
+    let sab = unpack_scene(at_frame(xa, ya + 1))[c];
+    let sbb = unpack_scene(at_frame(xa + 1, ya + 1))[c];
     let top = saa + (sba - saa) * tx;
     let bot = sab + (sbb - sab) * tx;
     return top + (bot - top) * ty;
@@ -44,11 +34,13 @@ fn optics(sx: i32, sy: i32) -> vec3<f32> {
     let hh = f32(s.y) * 0.5;
     let dx = px - hw;
     let dy = py - hh;
-    let ca = P.f0.y / sqrt(hw * hw + hh * hh);
+    let hd2 = hw * hw + hh * hh;
+    let dist = 1.0 + bitcast<f32>(P.u1.w) * ((dx * dx + dy * dy) / hd2);
+    let ca = P.f0.y / sqrt(hd2);
     let d = P.f0.z * 0.5;
     var out = vec3<f32>(0.0);
     for (var ch = 0u; ch < 3u; ch = ch + 1u) {
-        let sc = 1.0 + ca * (1.0 - f32(ch));
+        let sc = dist * (1.0 + ca * (1.0 - f32(ch)));
         let qx = hw + dx * sc;
         let qy = hh + dy * sc;
         if (d > 0.0) {
@@ -61,9 +53,11 @@ fn optics(sx: i32, sy: i32) -> vec3<f32> {
             out[ch] = scene(qx, qy, ch);
         }
     }
-    let t = 1.0 + P.f0.x * r2_of(sx, sy);
+    let r2 = r2_of(sx, sy);
+    let t = 1.0 + P.f0.x * r2;
     let e = 1.0 / (t * t);
-    return vec3<f32>(out.x * e, out.y * e, out.z * e);
+    let cs = P.f1.w;
+    return vec3<f32>(out.x * e * (1.0 - cs * r2), out.y * e, out.z * e * (1.0 + 0.5 * cs * r2));
 }
 
 fn photons(code: u32, s: vec3<f32>) -> f32 {
@@ -96,7 +90,5 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let k = KK();
     let sx = p.x / k;
     let sy = p.y / k;
-    let mu = photons(cfa_code(sx, sy), optics(sx, sy));
-    let q = fix16(mu);
-    return vec4<u32>(q >> 8u, q & 255u, 0u, 255u);
+    return t16(fix16(photons(cfa_code(sx, sy), optics(sx, sy))));
 }

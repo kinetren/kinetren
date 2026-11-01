@@ -1,5 +1,6 @@
 // camera_isp (camera-isp-simulation): the helpers every pass shares — the mirror of the shared
-// numerics of `cpu.rs` (hash2, gauss, unit, cfa code, the sensor grid). Prepended to each pass.
+// numerics of `cpu.rs` (hashes, gauss, unit, the cfa code, the sensor grid, the texel forms).
+// Prepended to each pass.
 
 var<private> FL: u32;
 var<private> TAB: vec4<u32>;
@@ -80,6 +81,62 @@ fn cfa_code(x: i32, y: i32) -> u32 {
 
 fn v16(t: vec4<u32>) -> u32 {
     return (t.r << 8u) | t.g;
+}
+
+fn t16(v: u32) -> vec4<u32> {
+    return vec4<u32>(v >> 8u, v & 255u, 0u, 255u);
+}
+
+// the previous pass at frame pixel (x, y), clamped
+fn at_frame(x: i32, y: i32) -> vec4<u32> {
+    let d = fdims();
+    return textureLoad(T0, vec2<i32>(clamp(x, 0, d.x - 1), clamp(y, 0, d.y - 1)), 0);
+}
+
+// the scene texel (cpu.rs unpack_scene): R, G 11 bits, B 10, each sqrt(v/2)
+fn unpack_scene(t: vec4<u32>) -> vec3<f32> {
+    let p = t.r | (t.g << 8u) | (t.b << 16u) | (t.a << 24u);
+    let r = f32(p & 0x7FFu) * 4.8851978e-4;
+    let g = f32((p >> 11u) & 0x7FFu) * 4.8851978e-4;
+    let b = f32(p >> 22u) * 9.7751711e-4;
+    return vec3<f32>(r * r * 2.0, g * g * 2.0, b * b * 2.0);
+}
+
+fn oetf(x: f32, curve: u32) -> f32 {
+    let v = clamp(x, 0.0, 1.0);
+    switch curve {
+        case 1u: {
+            if (v <= 0.0031308) {
+                return v * 12.92;
+            }
+            return 1.055 * pow(v, 0.41666666) - 0.055;
+        }
+        case 2u: {
+            if (v < 0.018) {
+                return v * 4.5;
+            }
+            return 1.099 * pow(v, 0.45) - 0.099;
+        }
+        case 3u: {
+            if (v > 0.0) {
+                return pow(v, 0.45454545);
+            }
+            return 0.0;
+        }
+        default: {
+            return v;
+        }
+    }
+}
+
+// a mosaic neighbour read through the period shift, as a 16-bit fixed fraction
+fn vfix(sx: i32, sy: i32) -> f32 {
+    let s = sdims();
+    return f32(v16(at(wrap1(sx, s.x), wrap1(sy, s.y)))) * 6.1035156e-5;
+}
+
+fn texel(r: u32, g: u32, b: u32, a: u32) -> vec4<u32> {
+    return vec4<u32>(r, g, b, a);
 }
 
 fn fix16(v: f32) -> u32 {

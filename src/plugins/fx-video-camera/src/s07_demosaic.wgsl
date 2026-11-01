@@ -1,11 +1,6 @@
-// P3 demosaic under the ISP's assumed layout, the CCM and the tone curve (cpu.rs p3_row) → RGB8 and
-// the source's alpha. u0 = the ISP's table; u1 = (flags, bits(ccm[8]), 0, 0); f0, f1 = ccm[0..8].
-// T0 = P2, T1 = the source.
-
-fn vfix(sx: i32, sy: i32) -> f32 {
-    let s = sdims();
-    return f32(v16(at(wrap1(sx, s.x), wrap1(sy, s.y)))) * 6.1035156e-5;
-}
+// P3 demosaic under the ISP's assumed layout, highlight handling, the CCM and the tone curve
+// (cpu.rs demosaic_row) → RGB8 and the source's alpha. u0 = the ISP's table;
+// u1 = (flags, bits(ccm[8]), bits(highlight), bits(clip)); f0, f1 = ccm[0..8]. T0 = P2b, T1 = the source.
 
 // (sum, count) of the neighbours of code `want` within r, self excluded
 fn near(sx: i32, sy: i32, want: u32, r: i32) -> vec2<f32> {
@@ -133,33 +128,6 @@ fn mhc_bayer(sx: i32, sy: i32, code: u32, want: u32) -> f32 {
     return (6.0 * v0 + 2.0 * diag - 1.5 * axial2) * 0.125;
 }
 
-fn oetf(x: f32, curve: u32) -> f32 {
-    let v = clamp(x, 0.0, 1.0);
-    switch curve {
-        case 1u: {
-            if (v <= 0.0031308) {
-                return v * 12.92;
-            }
-            return 1.055 * pow(v, 0.41666666) - 0.055;
-        }
-        case 2u: {
-            if (v < 0.018) {
-                return v * 4.5;
-            }
-            return 1.099 * pow(v, 0.45) - 0.099;
-        }
-        case 3u: {
-            if (v > 0.0) {
-                return pow(v, 0.45454545);
-            }
-            return 0.0;
-        }
-        default: {
-            return v;
-        }
-    }
-}
-
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     FL = P.u1.x;
@@ -198,6 +166,14 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
             e = directional(sx, sy, want, v0);
         }
         rgb[want] = e;
+    }
+    let hl = bitcast<f32>(P.u1.z);
+    if (hl > 0.0) {
+        let clip = bitcast<f32>(P.u1.w);
+        let m = max(max(rgb.x, rgb.y), rgb.z);
+        let t = clamp((m - 0.9 * clip) / (0.1 * clip), 0.0, 1.0) * hl;
+        let yy = 0.2126 * rgb.x + 0.7152 * rgb.y + 0.0722 * rgb.z;
+        rgb = vec3<f32>(rgb.x + (yy - rgb.x) * t, rgb.y + (yy - rgb.y) * t, rgb.z + (yy - rgb.z) * t);
     }
     let m8 = bitcast<f32>(P.u1.y);
     let r = P.f0.x * rgb.x + P.f0.y * rgb.y + P.f0.z * rgb.z;

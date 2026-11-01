@@ -7830,3 +7830,88 @@ fn t1095_next_lesson_keeps_the_copy_without_a_question() {
     assert_eq!(kept.map(|r| r.start), Some(r.start), "the lesson-1 copy lost its edits");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// t1219 (camera-isp-simulation 3.2; capability `video-fx`): the camera effect's window is its
+/// pipeline. A person adds "Camera ISP" from the picker by typing; the window shows the blocks of the
+/// chain in order (source, lens, sensor, the ISP's raw front, demosaic, lens correction, colour, YUV),
+/// each stage with its bypass and each correcting stage with the defect it removes; unticking
+/// "White balance" (after turning the wheel to it) turns that stage off in the model, inside the
+/// window's one undo step.
+#[test]
+fn t1219_the_camera_window_is_the_pipeline() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    use kt_model::FxInstance;
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+    let mut h = crate::layout_tests::harness_with_fx_window();
+    h.get_by_label(tr(k::fxreg::ADD)).click();
+    h.step();
+    h.step();
+    h.event(egui::Event::Text("camera".into()));
+    h.step();
+    h.step();
+    h.get_by_label("Camera ISP").click();
+    for _ in 0..4 {
+        h.step();
+    }
+    let fx = h.state().model.project().clips[0].fx.clone();
+    let at = fx.iter().position(|f| f.tag() == "camera_isp").expect("the click did not add the camera effect");
+    // the window shows the chain's blocks, in its order
+    let blocks = [
+        k::isp::block::SOURCE,
+        k::isp::block::LENS,
+        k::isp::block::SENSOR,
+        k::isp::block::RAW,
+        k::isp::block::DEMOSAIC,
+        k::isp::block::LENS_CORRECTION,
+        k::isp::block::COLOUR,
+        k::isp::block::YUV,
+    ];
+    let mut last_y = f32::MIN;
+    for b in blocks {
+        let node = h.query_by_label(tr(b)).unwrap_or_else(|| panic!("block “{}” is not in the window", tr(b)));
+        let y = node.rect().min.y;
+        assert!(y > last_y, "block “{}” is out of the chain's order", tr(b));
+        last_y = y;
+    }
+    // every row of the passport has its place in exactly one stage
+    let mut placed = crate::isp_panel::all_rows();
+    placed.sort();
+    let mut rows: Vec<String> = kt_model::HasParams::param_specs(&fx[at]).iter().map(|s| s.name.to_string()).collect();
+    rows.sort();
+    assert_eq!(placed, rows.iter().map(String::as_str).collect::<Vec<_>>(), "a row with no stage, or a stage row the kind lacks");
+    // untick White balance: the stage is off in the model, one undo step
+    let depth = h.state().model.undo_depth();
+    let wb = tr(k::isp::stage::WB);
+    // the pipeline is longer than the window: the person turns the wheel over it until the stage shows
+    let win = |h: &egui_kittest::Harness<'_, crate::app::KtApp>| {
+        h.ctx.memory(|m| m.area_rect(egui::Id::new(("fx", kt_model::ClipId(1))))).expect("the effects window")
+    };
+    h.hover_at(h.get_by_label(tr(k::isp::block::SENSOR)).rect().center());
+    for _ in 0..30 {
+        if win(&h).shrink(24.0).contains_rect(h.get_by_label(wb).rect()) {
+            break;
+        }
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -120.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        h.step();
+    }
+    // the wheel scrolls smoothly: let it come to rest before aiming
+    for _ in 0..12 {
+        h.step();
+    }
+    assert!(win(&h).contains_rect(h.get_by_label(wb).rect()), "the wheel did not bring “{wb}” into the window");
+    h.get_by_label(wb).click();
+    for _ in 0..3 {
+        h.step();
+    }
+    let f = &h.state().model.project().clips[0].fx[at];
+    let FxInstance::Plugin(p) = f else { panic!("not a plugin slot") };
+    assert_eq!(p.get("wb"), Some(0.0), "the bypass did not reach the model");
+    // the effects window's session is ONE undo step (fx_editor: apply_coalesced): the bypass joins it
+    assert_eq!(h.state().model.undo_depth(), depth, "the bypass opened an undo step of its own inside the window's session");
+}

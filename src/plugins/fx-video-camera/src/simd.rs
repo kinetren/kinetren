@@ -5,7 +5,10 @@
 
 #![cfg(target_arch = "x86_64")]
 
-use crate::cpu::{Ctx, p0_row, p1_row, p2_row, p3_row, p4_row, p5_row};
+use crate::cpu::{
+    Ctx, Row, chroma_row, demosaic_row, lens_correct_row, optics_row, pixel_row, raw_correct_row,
+    raw_front_row, raw_nr_row, readout_row, unprocess_row, view_row, yuv_row,
+};
 
 macro_rules! twin {
     ($safe:ident, $avx:ident, $row:ident) => {
@@ -20,12 +23,18 @@ macro_rules! twin {
     };
 }
 
-twin!(p0, p0_avx2, p0_row);
-twin!(p1, p1_avx2, p1_row);
-twin!(p2, p2_avx2, p2_row);
-twin!(p3, p3_avx2, p3_row);
-twin!(p4, p4_avx2, p4_row);
-twin!(p5, p5_avx2, p5_row);
+twin!(t00, a00, unprocess_row);
+twin!(t01, a01, optics_row);
+twin!(t02, a02, pixel_row);
+twin!(t03, a03, readout_row);
+twin!(t04, a04, raw_front_row);
+twin!(t05, a05, raw_nr_row);
+twin!(t06, a06, raw_correct_row);
+twin!(t07, a07, demosaic_row);
+twin!(t08, a08, lens_correct_row);
+twin!(t09, a09, yuv_row);
+twin!(t10, a10, chroma_row);
+twin!(t11, a11, view_row);
 
-/// The twins in pass order.
-pub(crate) const TWINS: [fn(&Ctx, u32, &mut [u32]); 6] = [p0, p1, p2, p3, p4, p5];
+/// The twins in pass order (`crate::pass`).
+pub(crate) const TWINS: [Row; 12] = [t00, t01, t02, t03, t04, t05, t06, t07, t08, t09, t10, t11];

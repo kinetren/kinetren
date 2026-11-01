@@ -2290,6 +2290,41 @@ one place).
   numeric fields' widths (sized for their longest value), the welcome window's right column
   (its own change comes next).
 
+**Request I1 reviewed while in work (2026-11-01, change `camera-isp-simulation`, the owner to the
+executor directly, translated):** "I peeked and I see the effect is essentially oriented purely on
+noise; but a camera can have trails from its denoiser? You added the noise, but not the denoiser
+block, and a denoiser can be temporal or spatial. Even in this one moment that was made the agents
+did not work the filter out at all… and so on — chroma trails, or whatever else cameras have; the
+effect is not finished, and there is no way to see what happens at each stage of the effect. Next,
+the optics — again small adjustments, not full ones, and the PAIRED block of optics compensation
+simply does not exist… and so in everything. ISP is about turning the picture into a 'raw' one and
+running the ISP again, imitating-simulating it."
+
+Taken as (the change is extended, not replaced):
+- **Every defect has its pair.** Each optical defect gets the ISP block that compensates it and
+  can be mis-tuned: geometric distortion ↔ distortion correction, lateral CA ↔ CA correction,
+  vignetting ↔ lens shading (existed), the lens/OLPF blur ↔ sharpening.
+- **The denoiser is a full block, spatial AND temporal** (3DNR): a recursive temporal filter with
+  its motion detector, whose mis-tuning leaves the classic ghost trails behind moving objects,
+  luma and chroma separately (chroma trails); the spatial NR on raw and on YUV.
+- **Look at any stage:** a "view" of the chain shows the picture after the chosen stage — the
+  unprocessed scene, the raw mosaic in its filter colours, the raw after each correction, the
+  demosaic, the colour, Y and chroma.
+- **The input is UNPROCESSED first:** the frame is a developed picture, so the effect undoes the
+  source camera's processing (its tone curve, its colour matrix and white balance) into an
+  estimated scene / raw, and only then the simulated sensor and ISP run.
+- Recorded in the repeated table: "the agents did not work" — again, on a physics effect.
+- His follow-up: "I told you only what I saw; what is hidden in real ISPs — all kinds of
+  distortions and the ways to remove them — I simply do not remember, YOU had to put them into the
+  fx." Taken as: the executor owns the inventory. Every defect of the optics and the sensor that
+  real ISPs correct is in the effect with its correcting block: distortion ↔ dewarp, lateral CA ↔
+  CA correction, vignetting ↔ LSC, colour shading ↔ colour LSC, crosstalk ↔ CCM, Gr/Gb imbalance ↔
+  green equalisation, blooming and clipping ↔ highlight/purple-fringe suppression, row/column
+  noise ↔ optical-black row/column correction, dark current ↔ BLC, hot/dead ↔ DPC, shot/read noise ↔
+  raw NR by the noise model + YUV NR + temporal NR, demosaic false colour ↔ false-colour
+  suppression, IR leak ↔ IR-cut/IR subtraction; the time-dependent ones (3DNR trails, rolling
+  shutter, mains flicker) need the frame history of the stream stage (datamosh-codec-path).
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
@@ -2301,7 +2336,7 @@ one place).
 | "Check what I launch" | 2 (r.12, r.13) | `finish.sh` + the version in the report; the check in the EXPANDED window |
 | Rules about UI convenience | 5+ (r.8–r.12) | a checklist of 15 items in apps/kt-app/CLAUDE.md |
 | **A window does not fill its area when enlarged ("a needle's eye")** | **"I am tired of reminding" (2026-11-01, and earlier rounds)** | `windows-fill-their-area`: one rule in the window shell (every window resizable, its body fills it, sizes remembered) and a guard over EVERY window that drags its corner (t1125); fixed sizes need a written reason (t1127) |
-| **"The agents did not work"** — a look shipped without anyone looking at it | 2026-11-01 (welcome window, lesson texts, VHS) | open: the 2026-11-01 round |
+| **"The agents did not work"** — a look shipped without anyone looking at it | 2026-11-01 (welcome window, lesson texts, VHS; the camera ISP: noise without its denoiser, defects without their compensation) | open: the 2026-11-01 round |
 | **Dead ends: you can create it, you cannot control it** | **7 (r.33–r.40)** | the checklist did not work — the rules were written down and broken. The R.38 tests did not work either: they checked the REACHABILITY of what was made, not its consequence. R.40: a test asserts the observable consequence AND probes from the point where the person acts; for each item — a live scenario |
 | **"You did not check"** | **3 (r.12, r.13, r.40)** | the harness and the model prove nothing: `finish.sh`, a live scenario for each item, a check of the consequence |
 | **One claim sent twice (R.43)** | **2** | the first attempt fixed the symptoms: there was nothing to look at in the model. `kt-cli probe` appeared; for the complaint "sound from another event" it is run FIRST |

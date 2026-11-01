@@ -1,4 +1,4 @@
-// P5 chroma subsampling and the decoder (cpu.rs p5_row) → RGB8 and the source's alpha.
+// P5 chroma subsampling and the decoder (cpu.rs chroma_row) → RGB8 and the source's alpha.
 // u0 = (flags, 0, 0, 0); f0 = (Kr, Kb, 1/Kg, 2(1−Kr)); f1 = (2(1−Kb), 0, 0, 0). T0 = P4, T1 = the source.
 
 @fragment

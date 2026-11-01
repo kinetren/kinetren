@@ -5,6 +5,17 @@ month, newest first.
 
 ## kt26.11
 
+- **A camera you can film your frame with: Camera ISP.** The new effect undoes the camera that
+  made your footage back into a scene, then films it again with a simulated camera: a lens
+  (defocus, distortion, chromatic aberration, vignetting, colour shading), a colour mosaic (RGGB
+  and its phases, Quad Bayer, X-Trans, RGBW, RGB-IR with infrared pixels), a sensor that counts
+  electrons with their real noise, blooming and banding, and the camera's processor with a block
+  for every one of those defects — black level, row/column correction, defect pixels, green
+  balance, raw denoise, lens shading, white balance, demosaic, distortion and colour-fringe
+  correction, colour matrix, tone curve, denoise, sharpening and YUV with 4:2:0. Every block can be
+  switched off or set wrong, "View" shows the picture after any stage, and the looks follow from
+  it: "Phone at night", "Cheap webcam", "Security cam, IR", "Cinema raw", "Wrong CFA phase", "No
+  IR-cut filter". The noise is the same on every play and render.
 - **Composition previews no longer get rebuilt by chance when a project opens.** Opening a
   project sometimes found its own index file "busy" and drew the frames and waveform of every
   composition all over again; now the saved previews come back every time.

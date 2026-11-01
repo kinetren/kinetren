@@ -1,10 +1,12 @@
-//! The CPU kernel: the byte reference (invariant 7). Six passes over u32 texels (RGBA8 packed
-//! little-endian, the GPU's Rgba8Uint), quantized at exactly the points the GPU textures quantize
-//! (design D1). Each pass is a row function over a pure per-pixel text in f32; `p*.wgsl` mirror it
-//! line by line — an edit here is an edit there, in the same commit (t1217).
+//! The CPU kernel: the byte reference (invariant 7). Up to twelve passes over u32 texels (RGBA8
+//! packed little-endian, the GPU's Rgba8Uint), quantized at exactly the points the GPU textures
+//! quantize (design D1). Each pass is a row function over a pure per-pixel text in f32; the
+//! `sNN_*.wgsl` passes mirror them line by line — an edit here is an edit there, in the same commit
+//! (t1217).
 //!
 //! The sensor works on its own pixel grid (D6): output pixel (x, y) is sensor pixel (x/K, y/K), and a
-//! neighbour is read at its block's top-left texel.
+//! neighbour is read at its block's top-left texel. The unprocessing alone works at frame pixels:
+//! the scene is continuous.
 
 use std::cell::RefCell;
 
@@ -12,7 +14,7 @@ use kt_plugin_api::barrier::{Frame, Scratch, noise_hash as h};
 use kt_plugin_api::math::FrozenMath;
 
 use crate::cfa::{self, IR};
-use crate::{DYE_NIR, IR_FROM_RGB, IR_VIS_LEAK, Plan};
+use crate::{DYE_NIR, IR_FROM_RGB, IR_VIS_LEAK, Plan, fmt, pass};
 
 /// 1/σ of Irwin–Hall(4) over 16-bit fields: σ = 65536·√(1/3) (design D4). The WGSL literal is the same.
 pub const IH_INV_SD: f32 = 2.642_896_6e-5;
@@ -24,6 +26,12 @@ const INV_255: f32 = 0.003_921_569;
 const CHROMA_GUIDE: f32 = 277.777_78;
 /// The edge-directed demosaic's floor of the gradient.
 const EDGE_EPS: f32 = 1.0 / 256.0;
+/// The hash streams (each a different XOR of a seed).
+const S_PRNU: u32 = 0x1111_1111;
+const S_DSNU: u32 = 0x2222_2222;
+const S_COLUMN: u32 = 0x3333_3333;
+const S_READ: u32 = 0x5555_5555;
+const S_ROW: u32 = 0x7777_7777;
 
 // ---- the shared numerics (mirrored by camera_common.wgsl) ----------------------------------------
 
@@ -67,11 +75,34 @@ pub fn poisson(lambda: f32, h1: u32) -> f32 {
     }
 }
 
-/// sRGB decode of a byte (the scene's linearisation, design step 1).
+/// The source's transfer undone (design step 1): 0 sRGB, 1 BT.709, 2 gamma 2.2, 3 linear.
+#[inline(always)]
+pub fn decode(c: u32, curve: u32) -> f32 {
+    let v = c as f32 * INV_255;
+    match curve {
+        0 => {
+            if v <= 0.04045 {
+                v * 0.077_399_38
+            } else {
+                ((v + 0.055) * 0.947_867_3).fpowf(2.4)
+            }
+        }
+        1 => {
+            if v < 0.081 {
+                v * 0.222_222_22
+            } else {
+                ((v + 0.099) * 0.909_918_1).fpowf(2.222_222_2)
+            }
+        }
+        2 => v.fpowf(2.2),
+        _ => v,
+    }
+}
+
+/// sRGB decode of a byte (the default source).
 #[inline(always)]
 pub fn srgb_lin(c: u32) -> f32 {
-    let v = c as f32 * INV_255;
-    if v <= 0.04045 { v * 0.077_399_38 } else { ((v + 0.055) * 0.947_867_3).fpowf(2.4) }
+    decode(c, 0)
 }
 
 /// The tone curve (design step 20): 0 linear, 1 sRGB, 2 BT.709, 3 gamma 2.2; clipped to [0, 1].
@@ -126,8 +157,24 @@ fn v16(t: u32) -> u32 {
 }
 
 #[inline(always)]
-fn hi_lo(v: u32) -> (u32, u32) {
-    (v >> 8, v & 0xFF)
+fn t16(v: u32) -> u32 {
+    texel(v >> 8, v & 0xFF, 0, 255)
+}
+
+/// The scene texel: R and G in 11 bits, B in 10, each `√(v/2)` of a linear value in [0, 2].
+#[inline(always)]
+fn pack_scene(rgb: [f32; 3]) -> u32 {
+    let q = |v: f32, max: f32| ((v.clamp(0.0, 2.0) * 0.5).sqrt() * max + 0.5).floor() as u32;
+    q(rgb[0], 2047.0) | q(rgb[1], 2047.0) << 11 | q(rgb[2], 1023.0) << 22
+}
+
+#[inline(always)]
+fn unpack_scene(t: u32) -> [f32; 3] {
+    let d = |q: u32, inv: f32| {
+        let s = q as f32 * inv;
+        s * s * 2.0
+    };
+    [d(t & 0x7FF, 4.885_197_8e-4), d(t >> 11 & 0x7FF, 4.885_197_8e-4), d(t >> 22, 9.775_171_1e-4)]
 }
 
 // ---- the context of one pass --------------------------------------------------------------------
@@ -143,7 +190,6 @@ pub struct Ctx<'a> {
     pub sh: i32,
     pub src: &'a [u8],
     pub inp: &'a [u32],
-    pub lut: &'a [f32; 256],
 }
 
 impl Ctx<'_> {
@@ -153,6 +199,14 @@ impl Ctx<'_> {
         let k = self.c.k as i32;
         let x = (sx.clamp(0, self.sw - 1) * k).min(self.w as i32 - 1) as usize;
         let y = (sy.clamp(0, self.sh - 1) * k).min(self.h as i32 - 1) as usize;
+        self.inp[y * self.w as usize + x]
+    }
+
+    /// The previous pass at FRAME pixel (x, y), clamped.
+    #[inline(always)]
+    fn at_frame(&self, x: i32, y: i32) -> u32 {
+        let x = x.clamp(0, self.w as i32 - 1) as usize;
+        let y = y.clamp(0, self.h as i32 - 1) as usize;
         self.inp[y * self.w as usize + x]
     }
 
@@ -179,6 +233,13 @@ impl Ctx<'_> {
         self.src[((y * self.w + x) * 4 + 3) as usize] as u32
     }
 
+    #[inline(always)]
+    fn src_byte(&self, x: i32, y: i32, c: usize) -> u32 {
+        let x = x.clamp(0, self.w as i32 - 1) as u32;
+        let y = y.clamp(0, self.h as i32 - 1) as u32;
+        self.src[((y * self.w + x) * 4) as usize + c] as u32
+    }
+
     /// The squared radius of a sensor pixel's centre over the squared half-diagonal.
     #[inline(always)]
     fn r2(&self, sx: i32, sy: i32) -> f32 {
@@ -188,7 +249,7 @@ impl Ctx<'_> {
         (cx * cx + cy * cy) / (hw * hw + hh * hh)
     }
 
-    /// One channel of the scene's linear RGB, bilinear at (px, py) in SENSOR pixel units.
+    /// One channel of the unprocessed scene, bilinear at (px, py) in SENSOR pixel units.
     #[inline(always)]
     fn scene(&self, px: f32, py: f32, c: usize) -> f32 {
         let k = self.c.k as f32;
@@ -198,21 +259,65 @@ impl Ctx<'_> {
         let y0 = fy.floor();
         let tx = fx - x0;
         let ty = fy - y0;
-        let (wm, hm) = (self.w as i32 - 1, self.h as i32 - 1);
-        let xa = (x0 as i32).clamp(0, wm) as u32;
-        let xb = (x0 as i32 + 1).clamp(0, wm) as u32;
-        let ya = (y0 as i32).clamp(0, hm) as u32;
-        let yb = (y0 as i32 + 1).clamp(0, hm) as u32;
-        let s = |x: u32, y: u32| self.lut[self.src[((y * self.w + x) * 4) as usize + c] as usize];
-        let top = s(xa, ya) + (s(xb, ya) - s(xa, ya)) * tx;
-        let bot = s(xa, yb) + (s(xb, yb) - s(xa, yb)) * tx;
+        let s = |x: i32, y: i32| unpack_scene(self.at_frame(x, y))[c];
+        let (xa, ya) = (x0 as i32, y0 as i32);
+        let top = s(xa, ya) + (s(xa + 1, ya) - s(xa, ya)) * tx;
+        let bot = s(xa, ya + 1) + (s(xa + 1, ya + 1) - s(xa, ya + 1)) * tx;
         top + (bot - top) * ty
     }
 }
 
-// ---- P0: optics and photons ---------------------------------------------------------------------
+/// The defocus disc's taps: the centre, eight at 0.6 r and eight at r, at multiples of 45°.
+const DISC: [(f32, f32); 8] = [
+    (1.0, 0.0),
+    (0.707_106_78, 0.707_106_78),
+    (0.0, 1.0),
+    (-0.707_106_78, 0.707_106_78),
+    (-1.0, 0.0),
+    (-0.707_106_78, -0.707_106_78),
+    (0.0, -1.0),
+    (0.707_106_78, -0.707_106_78),
+];
 
-/// The scene through the lens at a sensor pixel: CA per channel, the 4-spot OLPF, cos⁴ vignetting.
+// ---- U: the unprocessing (frame pixels) ----------------------------------------------------------
+
+#[inline(always)]
+pub(crate) fn unprocess_row(cx: &Ctx, y: u32, out: &mut [u32]) {
+    let c = cx.c;
+    let lin = |x: i32, y: i32| -> [f32; 3] {
+        [
+            decode(cx.src_byte(x, y, 0), c.src_curve),
+            decode(cx.src_byte(x, y, 1), c.src_curve),
+            decode(cx.src_byte(x, y, 2), c.src_curve),
+        ]
+    };
+    for (x, o) in out.iter_mut().enumerate() {
+        let (xi, yi) = (x as i32, y as i32);
+        let mut s = lin(xi, yi);
+        if c.blur > 0.0 {
+            for r in [0.6 * c.blur, c.blur] {
+                for (dx, dy) in DISC {
+                    let ox = (dx * r + 0.5).floor() as i32;
+                    let oy = (dy * r + 0.5).floor() as i32;
+                    let q = lin(xi + ox, yi + oy);
+                    s = [s[0] + q[0], s[1] + q[1], s[2] + q[2]];
+                }
+            }
+            let inv = 0.058_823_53;
+            s = [s[0] * inv, s[1] * inv, s[2] * inv];
+        }
+        let m = &c.src_m;
+        let r = (m[0] * s[0] + m[1] * s[1] + m[2] * s[2]) * c.src_wb_inv[0];
+        let g = m[3] * s[0] + m[4] * s[1] + m[5] * s[2];
+        let b = (m[6] * s[0] + m[7] * s[1] + m[8] * s[2]) * c.src_wb_inv[1];
+        *o = pack_scene([r, g, b]);
+    }
+}
+
+// ---- P0: the lens and the photons ----------------------------------------------------------------
+
+/// The scene through the lens at a sensor pixel: distortion and CA per channel, the 4-spot OLPF,
+/// cos⁴ vignetting and colour shading.
 #[inline(always)]
 fn optics(cx: &Ctx, sx: i32, sy: i32) -> [f32; 3] {
     let c = cx.c;
@@ -222,11 +327,13 @@ fn optics(cx: &Ctx, sx: i32, sy: i32) -> [f32; 3] {
     }
     let (hw, hh) = (cx.sw as f32 * 0.5, cx.sh as f32 * 0.5);
     let (dx, dy) = (px - hw, py - hh);
-    let ca = c.ca / (hw * hw + hh * hh).sqrt();
+    let hd2 = hw * hw + hh * hh;
+    let dist = 1.0 + c.k_lens * ((dx * dx + dy * dy) / hd2);
+    let ca = c.ca / hd2.sqrt();
     let d = c.olpf * 0.5;
     let mut out = [0.0f32; 3];
     for (ch, o) in out.iter_mut().enumerate() {
-        let s = 1.0 + ca * (1.0 - ch as f32);
+        let s = dist * (1.0 + ca * (1.0 - ch as f32));
         let (qx, qy) = (hw + dx * s, hh + dy * s);
         *o = if d > 0.0 {
             let a = cx.scene(qx - d, qy - d, ch);
@@ -238,9 +345,10 @@ fn optics(cx: &Ctx, sx: i32, sy: i32) -> [f32; 3] {
             cx.scene(qx, qy, ch)
         };
     }
-    let t = 1.0 + c.vig_t2 * cx.r2(sx, sy);
+    let r2 = cx.r2(sx, sy);
+    let t = 1.0 + c.vig_t2 * r2;
     let e = 1.0 / (t * t);
-    [out[0] * e, out[1] * e, out[2] * e]
+    [out[0] * e * (1.0 - c.cshade * r2), out[1] * e, out[2] * e * (1.0 + 0.5 * c.cshade * r2)]
 }
 
 /// The mean signal of a sensor pixel as a fraction of the full well (design steps 7–9).
@@ -262,22 +370,20 @@ fn photons(c: &Plan, code: u32, s: [f32; 3]) -> f32 {
 }
 
 #[inline(always)]
-pub(crate) fn p0_row(cx: &Ctx, y: u32, out: &mut [u32]) {
+pub(crate) fn optics_row(cx: &Ctx, y: u32, out: &mut [u32]) {
     let k = cx.c.k;
     let sy = (y / k) as i32;
     for (x, o) in out.iter_mut().enumerate() {
         let sx = (x as u32 / k) as i32;
         let code = cfa::code(&cx.c.sensor_tab, cx.c.period, sx, sy);
-        let mu = photons(cx.c, code, optics(cx, sx, sy));
-        let (hi, lo) = hi_lo(fix16(mu));
-        *o = texel(hi, lo, 0, 255);
+        *o = t16(fix16(photons(cx.c, code, optics(cx, sx, sy))));
     }
 }
 
-// ---- P1: the sensor's electronics ---------------------------------------------------------------
+// ---- P1a: the pixel — charge ----------------------------------------------------------------------
 
 #[inline(always)]
-pub(crate) fn p1_row(cx: &Ctx, y: u32, out: &mut [u32]) {
+pub(crate) fn pixel_row(cx: &Ctx, y: u32, out: &mut [u32]) {
     let c = cx.c;
     let w = cx.w as usize;
     let sy = y / c.k;
@@ -285,36 +391,83 @@ pub(crate) fn p1_row(cx: &Ctx, y: u32, out: &mut [u32]) {
         let sx = x as u32 / c.k;
         let lam_s = v16(cx.inp[y as usize * w + x]) as f32 * INV_FIX * c.fw;
         let hf = hash2(sx, sy, c.seed_f);
-        let dn = if hf < c.dead_thr {
-            c.black as f32
+        let n = if hf < c.dead_thr {
+            0.0
         } else {
-            let gpx = 1.0 + c.prnu * gauss(hash2(sx, sy, c.seed_f ^ 0x1111_1111));
-            let mut dk = (c.dark + c.dsnu * gauss(hash2(sx, sy, c.seed_f ^ 0x2222_2222))).max(0.0);
+            let mut gpx = 1.0 + c.prnu * gauss(hash2(sx, sy, c.seed_f ^ S_PRNU));
+            // Gr/Gb imbalance: a green pixel beside red differs from one beside blue
+            let code = cfa::code(&c.sensor_tab, c.period, sx as i32, sy as i32);
+            if code == cfa::G && c.gimb > 0.0 {
+                let side = cfa::code(&c.sensor_tab, c.period, sx as i32 + 1, sy as i32);
+                if side == cfa::R {
+                    gpx *= 1.0 + c.gimb;
+                } else if side == cfa::B {
+                    gpx *= 1.0 - c.gimb;
+                }
+            }
+            let mut dk = (c.dark + c.dsnu * gauss(hash2(sx, sy, c.seed_f ^ S_DSNU))).max(0.0);
             if hf - c.dead_thr < c.hot_thr {
                 dk += c.fw * (0.2 + 0.8 * unit(h(hf)));
             }
             let lam = lam_s * gpx + dk;
-            let n = if c.noise {
-                let n = poisson(lam, hash2(sx, sy, c.seed_t)).min(c.fw);
-                n + c.read * gauss(hash2(sx, sy, c.seed_t ^ 0x5555_5555))
-            } else {
-                lam.min(c.fw)
-            };
-            (c.black as f32 + n * c.cg + 0.5).floor().clamp(0.0, c.adc_max as f32)
+            if c.noise { poisson(lam, hash2(sx, sy, c.seed_t)) } else { lam }
         };
-        let (hi, lo) = hi_lo(dn as u32);
-        *o = texel(hi, lo, 0, 255);
+        *o = t16(fix16(n * c.inv_fw));
     }
 }
 
-// ---- P2: the raw front --------------------------------------------------------------------------
+// ---- P1b: the readout — blooming, the well, row/column noise, read noise, gain, ADC ---------------
 
 #[inline(always)]
-pub(crate) fn p2_row(cx: &Ctx, y: u32, out: &mut [u32]) {
+pub(crate) fn readout_row(cx: &Ctx, y: u32, out: &mut [u32]) {
+    let c = cx.c;
+    let sy = (y / c.k) as i32;
+    let n_at = |sx: i32, sy: i32| v16(cx.at(sx, sy)) as f32 * INV_FIX * c.fw;
+    let row =
+        if c.row_e > 0.0 { c.row_e * gauss(hash2(0, sy as u32, c.seed_t ^ S_ROW)) } else { 0.0 };
+    for (x, o) in out.iter_mut().enumerate() {
+        let sx = (x as u32 / c.k) as i32;
+        let mut n = n_at(sx, sy);
+        if c.bloom > 0.0 {
+            let spill = |q: f32| (q - c.fw).max(0.0);
+            let s = spill(n_at(sx - 1, sy))
+                + spill(n_at(sx + 1, sy))
+                + spill(n_at(sx, sy - 1))
+                + spill(n_at(sx, sy + 1));
+            n += s * (c.bloom * 0.25);
+        }
+        n = n.min(c.fw);
+        n += row;
+        if c.col_e > 0.0 {
+            n += c.col_e * gauss(hash2(sx as u32, 0, c.seed_f ^ S_COLUMN));
+        }
+        if c.noise {
+            n += c.read * gauss(hash2(sx as u32, sy as u32, c.seed_t ^ S_READ));
+        }
+        let dn = (c.black as f32 + n * c.cg + 0.5).floor().clamp(0.0, c.adc_max as f32);
+        *o = t16(dn as u32);
+    }
+}
+
+// ---- P2a: the raw front — BLC, optical-black row/column correction, DPC, green equalisation ------
+
+#[inline(always)]
+pub(crate) fn raw_front_row(cx: &Ctx, y: u32, out: &mut [u32]) {
     let c = cx.c;
     let sy = (y / c.k) as i32;
     let tab = &c.isp_tab;
-    let vb = |sx: i32, sy: i32| (v16(cx.at(sx, sy)) as f32 - c.b_isp) * c.inv_range;
+    // the black-level-subtracted raw of a sensor pixel, with the optical-black correction of its row
+    // and column
+    let vb = |sx: i32, sy: i32| {
+        let mut v = (v16(cx.at(sx, sy)) as f32 - c.b_isp) * c.inv_range;
+        if c.row_corr != 0.0 {
+            v -= c.row_corr * gauss(hash2(0, sy as u32, c.seed_t ^ S_ROW));
+        }
+        if c.col_corr != 0.0 {
+            v -= c.col_corr * gauss(hash2(sx as u32, 0, c.seed_f ^ S_COLUMN));
+        }
+        v
+    };
     for (x, o) in out.iter_mut().enumerate() {
         let sx = (x as u32 / c.k) as i32;
         let code = cfa::code(tab, c.period, sx, sy);
@@ -341,13 +494,79 @@ pub(crate) fn p2_row(cx: &Ctx, y: u32, out: &mut [u32]) {
                 }
             }
         }
+        if c.geq > 0.0 && code == cfa::G {
+            let (mut s, mut n) = (0.0f32, 0.0f32);
+            for (dx, dy) in [(-1, -1), (1, -1), (-1, 1), (1, 1)] {
+                if cfa::code(tab, c.period, sx + dx, sy + dy) == cfa::G {
+                    let (nx, ny) = cx.wrap(sx + dx, sy + dy);
+                    s += vb(nx, ny);
+                    n += 1.0;
+                }
+            }
+            if n > 0.0 {
+                let d = s / n - v;
+                if d.abs() < 0.05 {
+                    v += c.geq * 0.5 * d;
+                }
+            }
+        }
+        *o = t16(fix16(v.max(0.0)));
+    }
+}
+
+// ---- P2n: raw NR by the sensor's noise model -----------------------------------------------------
+
+#[inline(always)]
+fn vfix(cx: &Ctx, sx: i32, sy: i32) -> f32 {
+    let (nx, ny) = cx.wrap(sx, sy);
+    v16(cx.at(nx, ny)) as f32 * INV_FIX
+}
+
+#[inline(always)]
+pub(crate) fn raw_nr_row(cx: &Ctx, y: u32, out: &mut [u32]) {
+    let c = cx.c;
+    let sy = (y / c.k) as i32;
+    let k2 = 4.0 * c.raw_nr * c.raw_nr;
+    for (x, o) in out.iter_mut().enumerate() {
+        let sx = (x as u32 / c.k) as i32;
+        let code = cfa::code(&c.isp_tab, c.period, sx, sy);
+        let v0 = vfix(cx, sx, sy);
+        // the noise the sensor model predicts at this level: shot (∝ signal) and read
+        let h2 = k2 * (c.nr_a * v0.max(0.0) + c.nr_b) + 1.0e-12;
+        let (mut s, mut sw) = (0.0f32, 0.0f32);
+        for dy in -2..=2 {
+            for dx in -2..=2 {
+                if cfa::code(&c.isp_tab, c.period, sx + dx, sy + dy) != code {
+                    continue;
+                }
+                let q = vfix(cx, sx + dx, sy + dy);
+                let d = q - v0;
+                let wt = 1.0 / (1.0 + d * d / h2);
+                s += wt * q;
+                sw += wt;
+            }
+        }
+        *o = t16(fix16(s / sw));
+    }
+}
+
+// ---- P2b: IR subtraction, lens shading (luma and colour), white balance --------------------------
+
+#[inline(always)]
+pub(crate) fn raw_correct_row(cx: &Ctx, y: u32, out: &mut [u32]) {
+    let c = cx.c;
+    let sy = (y / c.k) as i32;
+    let tab = &c.isp_tab;
+    for (x, o) in out.iter_mut().enumerate() {
+        let sx = (x as u32 / c.k) as i32;
+        let code = cfa::code(tab, c.period, sx, sy);
+        let mut v = vfix(cx, sx, sy);
         if c.ir_sub > 0.0 && code != IR {
             let (mut s, mut n) = (0.0f32, 0.0f32);
             for dy in -1..=1 {
                 for dx in -1..=1 {
                     if cfa::code(tab, c.period, sx + dx, sy + dy) == IR {
-                        let (nx, ny) = cx.wrap(sx + dx, sy + dy);
-                        s += vb(nx, ny);
+                        s += vfix(cx, sx + dx, sy + dy);
                         n += 1.0;
                     }
                 }
@@ -356,24 +575,25 @@ pub(crate) fn p2_row(cx: &Ctx, y: u32, out: &mut [u32]) {
                 v -= c.ir_sub * (DYE_NIR[code as usize] / DYE_NIR[IR as usize]) * (s / n);
             }
         }
+        let r2 = cx.r2(sx, sy);
         if c.lsc_pow > 0.0 {
-            v *= (1.0 + c.vig_t2 * cx.r2(sx, sy)).fpowf(c.lsc_pow);
+            v *= (1.0 + c.vig_t2 * r2).fpowf(c.lsc_pow);
+        }
+        if c.clsc > 0.0 {
+            if code == cfa::R {
+                v *= (1.0 - c.cshade * r2).max(0.05).fpowf(-c.clsc);
+            } else if code == cfa::B {
+                v *= (1.0 + 0.5 * c.cshade * r2).max(0.05).fpowf(-c.clsc);
+            }
         }
         if code < 4 {
             v *= c.gains[code as usize];
         }
-        let (hi, lo) = hi_lo(fix16(v.max(0.0)));
-        *o = texel(hi, lo, 0, 255);
+        *o = t16(fix16(v.max(0.0)));
     }
 }
 
-// ---- P3: demosaic, CCM, tone --------------------------------------------------------------------
-
-#[inline(always)]
-fn vfix(cx: &Ctx, sx: i32, sy: i32) -> f32 {
-    let (nx, ny) = cx.wrap(sx, sy);
-    v16(cx.at(nx, ny)) as f32 * INV_FIX
-}
+// ---- P3: demosaic, highlights, CCM, tone --------------------------------------------------------------------
 
 /// The mean of the neighbours of code `want` within `r` (self excluded); (sum, count).
 #[inline(always)]
@@ -522,7 +742,7 @@ fn mhc_bayer(cx: &Ctx, sx: i32, sy: i32, code: u32, want: u32) -> f32 {
 }
 
 #[inline(always)]
-pub(crate) fn p3_row(cx: &Ctx, y: u32, out: &mut [u32]) {
+pub(crate) fn demosaic_row(cx: &Ctx, y: u32, out: &mut [u32]) {
     let c = cx.c;
     let sy = (y / c.k) as i32;
     for (x, o) in out.iter_mut().enumerate() {
@@ -552,6 +772,16 @@ pub(crate) fn p3_row(cx: &Ctx, y: u32, out: &mut [u32]) {
                 directional(cx, sx, sy, want, v0)
             };
         }
+        // highlight handling: near the level where the first channel clips, the channels stop
+        // tracking each other (a clipped channel tints the highlight); the ISP pulls them to luma
+        if c.hl > 0.0 {
+            let m = rgb[0].max(rgb[1]).max(rgb[2]);
+            let t = ((m - 0.9 * c.hl_clip) / (0.1 * c.hl_clip)).clamp(0.0, 1.0) * c.hl;
+            let yy = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+            for v in rgb.iter_mut() {
+                *v += (yy - *v) * t;
+            }
+        }
         let m = &c.ccm;
         let r = m[0] * rgb[0] + m[1] * rgb[1] + m[2] * rgb[2];
         let g = m[3] * rgb[0] + m[4] * rgb[1] + m[5] * rgb[2];
@@ -565,7 +795,53 @@ pub(crate) fn p3_row(cx: &Ctx, y: u32, out: &mut [u32]) {
     }
 }
 
-// ---- P4: YUV, denoise, sharpening ---------------------------------------------------------------
+// ---- P3b: lens correction — dewarp and lateral CA correction -------------------------------------
+
+/// The captured picture (RGB8 per sensor pixel) bilinear at (px, py) in sensor units, one channel.
+#[inline(always)]
+fn rgb_at(cx: &Ctx, px: f32, py: f32, ch: u32) -> f32 {
+    let fx = px - 0.5;
+    let fy = py - 0.5;
+    let x0 = fx.floor();
+    let y0 = fy.floor();
+    let tx = fx - x0;
+    let ty = fy - y0;
+    let s = |x: i32, y: i32| (cx.at(x, y) >> (8 * ch) & 0xFF) as f32;
+    let (xa, ya) = (x0 as i32, y0 as i32);
+    let top = s(xa, ya) + (s(xa + 1, ya) - s(xa, ya)) * tx;
+    let bot = s(xa, ya + 1) + (s(xa + 1, ya + 1) - s(xa, ya + 1)) * tx;
+    top + (bot - top) * ty
+}
+
+#[inline(always)]
+pub(crate) fn lens_correct_row(cx: &Ctx, y: u32, out: &mut [u32]) {
+    let c = cx.c;
+    let sy = (y / c.k) as i32;
+    let (hw, hh) = (cx.sw as f32 * 0.5, cx.sh as f32 * 0.5);
+    let hd2 = hw * hw + hh * hh;
+    let ca = c.ca_corr / hd2.sqrt();
+    for (x, o) in out.iter_mut().enumerate() {
+        let sx = (x as u32 / c.k) as i32;
+        let (dx, dy) = (sx as f32 + 0.5 - hw, sy as f32 + 0.5 - hh);
+        let ro = ((dx * dx + dy * dy) / hd2).sqrt();
+        let mut rgb = [0u32; 3];
+        for (ch, v) in rgb.iter_mut().enumerate() {
+            // the captured radius x with x(1 + k x²)(1 + ca_ch) = r_o, by Newton from r_o
+            let t = ro / (1.0 + ca * (1.0 - ch as f32));
+            let mut xr = t;
+            for _ in 0..3 {
+                let fx = xr * (1.0 + c.k_corr * xr * xr) - t;
+                xr -= fx / (1.0 + 3.0 * c.k_corr * xr * xr);
+            }
+            let sc = if ro > 0.0 { xr / ro } else { 1.0 };
+            *v = (rgb_at(cx, hw + dx * sc, hh + dy * sc, ch as u32) + 0.5).floor().clamp(0.0, 255.0)
+                as u32;
+        }
+        *o = texel(rgb[0], rgb[1], rgb[2], cx.src_alpha(x as u32, y));
+    }
+}
+
+// ---- P4: YUV, denoise, false colour and purple fringe, sharpening ---------------------------------
 
 #[inline(always)]
 fn yuv(cx: &Ctx, sx: i32, sy: i32) -> [f32; 3] {
@@ -588,7 +864,7 @@ fn rgb_of(d: &[f32; 5], yy: f32, u: f32, v: f32) -> [f32; 3] {
 }
 
 #[inline(always)]
-pub(crate) fn p4_row(cx: &Ctx, y: u32, out: &mut [u32]) {
+pub(crate) fn yuv_row(cx: &Ctx, y: u32, out: &mut [u32]) {
     let c = cx.c;
     let sy = (y / c.k) as i32;
     for (x, o) in out.iter_mut().enumerate() {
@@ -623,6 +899,27 @@ pub(crate) fn p4_row(cx: &Ctx, y: u32, out: &mut [u32]) {
             u += c.chroma_amt * (su / sw - u);
             v += c.chroma_amt * (sv / sw - v);
         }
+        // false-colour suppression: chroma at a luma edge is the demosaic's guess, not the scene's
+        if c.fcs > 0.0 {
+            let gx = (yuv(cx, sx + 1, sy)[0] - yuv(cx, sx - 1, sy)[0]).abs();
+            let gy = (yuv(cx, sx, sy + 1)[0] - yuv(cx, sx, sy - 1)[0]).abs();
+            let k = 1.0 - c.fcs * (gx.max(gy) * 4.0).clamp(0.0, 1.0);
+            u *= k;
+            v *= k;
+        }
+        // purple fringe: blue-and-red above luma next to a highlight (blooming, axial CA)
+        if c.purple > 0.0 && u > 0.0 && v > 0.0 {
+            let mut my = 0.0f32;
+            for dy in -2..=2 {
+                for dx in -2..=2 {
+                    my = my.max(yuv(cx, sx + dx, sy + dy)[0]);
+                }
+            }
+            let k = 1.0
+                - c.purple * ((my - 0.9) * 10.0).clamp(0.0, 1.0) * (u.min(v) * 8.0).clamp(0.0, 1.0);
+            u *= k;
+            v *= k;
+        }
         let mut yo = ynr;
         if c.sharpen > 0.0 {
             let mut s = 0.0f32;
@@ -646,7 +943,7 @@ pub(crate) fn p4_row(cx: &Ctx, y: u32, out: &mut [u32]) {
 // ---- P5: chroma subsampling and the decoder ------------------------------------------------------
 
 #[inline(always)]
-pub(crate) fn p5_row(cx: &Ctx, y: u32, out: &mut [u32]) {
+pub(crate) fn chroma_row(cx: &Ctx, y: u32, out: &mut [u32]) {
     let c = cx.c;
     let sy = (y / c.k) as i32;
     for (x, o) in out.iter_mut().enumerate() {
@@ -678,25 +975,85 @@ pub(crate) fn p5_row(cx: &Ctx, y: u32, out: &mut [u32]) {
     }
 }
 
+// ---- PV: the view of a stage --------------------------------------------------------------------
+
+/// A mosaic value shown in its filter's colour (W grey, IR magenta), sRGB-coded for the screen.
+#[inline(always)]
+fn tint(code: u32, v: f32) -> [u32; 3] {
+    let e = byte(oetf(v, 1));
+    match code {
+        0 => [e, 0, 0],
+        1 => [0, e, 0],
+        2 => [0, 0, e],
+        3 => [e, e, e],
+        _ => [e, 0, e],
+    }
+}
+
+#[inline(always)]
+pub(crate) fn view_row(cx: &Ctx, y: u32, out: &mut [u32]) {
+    let c = cx.c;
+    let f = c.view_fmt();
+    let tab = if f == fmt::NORM { &c.isp_tab } else { &c.sensor_tab };
+    let sy = (y / c.k) as i32;
+    for (x, o) in out.iter_mut().enumerate() {
+        let sx = (x as u32 / c.k) as i32;
+        let a = cx.src_alpha(x as u32, y);
+        let code = cfa::code(tab, c.period, sx, sy);
+        let rgb = match f {
+            fmt::SCENE => {
+                let s = unpack_scene(cx.at_frame(x as i32, y as i32));
+                [byte(oetf(s[0], 1)), byte(oetf(s[1], 1)), byte(oetf(s[2], 1))]
+            }
+            fmt::WELL | fmt::NORM => tint(code, v16(cx.at(sx, sy)) as f32 * INV_FIX),
+            fmt::DN => {
+                let dn = v16(cx.at(sx, sy)) as f32;
+                tint(code, (dn - c.black as f32) / (c.adc_max - c.black) as f32)
+            }
+            fmt::LUMA => {
+                let yy = cx.at(sx, sy) & 0xFF;
+                [yy, yy, yy]
+            }
+            _ => {
+                let t = cx.at(sx, sy);
+                let u = (t >> 8 & 0xFF) as f32 * INV_255 - 0.5;
+                let v = (t >> 16 & 0xFF) as f32 * INV_255 - 0.5;
+                let [r, g, b] = rgb_of(&c.dec_same, 0.5, u, v);
+                [byte(r), byte(g), byte(b)]
+            }
+        };
+        *o = texel(rgb[0], rgb[1], rgb[2], a);
+    }
+}
+
 // ---- the driver ---------------------------------------------------------------------------------
 
-type Row = fn(&Ctx, u32, &mut [u32]);
+pub(crate) type Row = fn(&Ctx, u32, &mut [u32]);
+
+/// The row functions by pass index (`crate::pass`).
+pub(crate) const ROWS: [Row; 12] = [
+    unprocess_row,
+    optics_row,
+    pixel_row,
+    readout_row,
+    raw_front_row,
+    raw_nr_row,
+    raw_correct_row,
+    demosaic_row,
+    lens_correct_row,
+    yuv_row,
+    chroma_row,
+    view_row,
+];
 
 thread_local! {
     /// The two ping-pong planes, reused per thread (invariant 12: no allocation per frame once warm).
     static PLANES: RefCell<(Vec<u32>, Vec<u32>)> = const { RefCell::new((Vec::new(), Vec::new())) };
 }
 
-/// The sRGB decode table, built once with the frozen pow (D5).
-fn lut() -> &'static [f32; 256] {
-    static LUT: std::sync::OnceLock<[f32; 256]> = std::sync::OnceLock::new();
-    LUT.get_or_init(|| std::array::from_fn(|i| srgb_lin(i as u32)))
-}
-
 /// One pass over all rows, split across scoped threads (rows are independent: no effect on bytes).
-fn pass(cx: &Ctx, out: &mut [u32], row: Row, twin: Option<Row>) {
+fn run_pass(cx: &Ctx, out: &mut [u32], f: Row) {
     let w = cx.w as usize;
-    let f = twin.unwrap_or(row);
     let threads = if cx.h < 32 {
         1
     } else {
@@ -720,7 +1077,17 @@ fn pass(cx: &Ctx, out: &mut [u32], row: Row, twin: Option<Row>) {
     });
 }
 
-/// The whole camera on the CPU: P0…P5, the frame handed back with the output bytes.
+fn row_fn(p: usize, simd: bool) -> Row {
+    #[cfg(target_arch = "x86_64")]
+    if simd {
+        return crate::simd::TWINS[p];
+    }
+    let _ = simd;
+    ROWS[p]
+}
+
+/// The whole camera on the CPU: the passes of `Plan::passes`, the frame handed back with the
+/// output bytes.
 pub fn run(plan: &Plan, mut f: Frame, simd: bool, _scratch: &mut dyn Scratch) -> Frame {
     let (w, h) = (f.w, f.h);
     if w == 0 || h == 0 {
@@ -729,41 +1096,28 @@ pub fn run(plan: &Plan, mut f: Frame, simd: bool, _scratch: &mut dyn Scratch) ->
     let n = (w * h) as usize;
     let k = plan.k;
     let (sw, sh) = (w.div_ceil(k) as i32, h.div_ceil(k) as i32);
-    #[cfg(target_arch = "x86_64")]
-    let twins: [Option<Row>; 6] = if simd { crate::simd::TWINS.map(Some) } else { [None; 6] };
-    #[cfg(not(target_arch = "x86_64"))]
-    let twins: [Option<Row>; 6] = {
-        let _ = simd;
-        [None; 6]
-    };
-    let rows: [Row; 6] = [p0_row, p1_row, p2_row, p3_row, p4_row, p5_row];
+    let passes = plan.passes();
     PLANES.with(|planes| {
         let mut planes = planes.borrow_mut();
         let (a, b) = &mut *planes;
         a.resize(n, 0);
         b.resize(n, 0);
-        let empty: [u32; 0] = [];
         let src = &f.rgba;
-        let lut = lut();
-        macro_rules! ctx {
-            ($inp:expr) => {
-                Ctx { c: plan, w, h, sw, sh, src, inp: $inp, lut }
+        // the passes ping-pong: the first reads only the source
+        let mut in_a = false;
+        for (i, p) in passes.iter().enumerate() {
+            let (inp, out): (&[u32], &mut [u32]) = if i == 0 {
+                (&[], &mut a[..])
+            } else if in_a {
+                (&a[..], &mut b[..])
+            } else {
+                (&b[..], &mut a[..])
             };
+            let cx = Ctx { c: plan, w, h, sw, sh, src, inp };
+            run_pass(&cx, out, row_fn(*p, simd));
+            in_a = i == 0 || !in_a;
         }
-        pass(&ctx!(&empty), a, rows[0], twins[0]);
-        pass(&ctx!(a), b, rows[1], twins[1]);
-        pass(&ctx!(b), a, rows[2], twins[2]);
-        pass(&ctx!(a), b, rows[3], twins[3]);
-        let mut last_is_b = true;
-        if plan.p4 {
-            pass(&ctx!(b), a, rows[4], twins[4]);
-            last_is_b = false;
-            if plan.yuv {
-                pass(&ctx!(a), b, rows[5], twins[5]);
-                last_is_b = true;
-            }
-        }
-        let last: &[u32] = if last_is_b { b } else { a };
+        let last: &[u32] = if in_a { a } else { b };
         for (px, t) in f.rgba.chunks_exact_mut(4).zip(last) {
             px.copy_from_slice(&t.to_le_bytes());
         }
@@ -771,20 +1125,24 @@ pub fn run(plan: &Plan, mut f: Frame, simd: bool, _scratch: &mut dyn Scratch) ->
     f
 }
 
-/// The plane after pass `upto` (0 = P0 … 5 = P5), for tests that read the raw (t1212). Allocates.
+/// The plane after the pass `upto` of the plan's list (for tests that read the raw, t1212). Allocates.
 pub fn plane_after(plan: &Plan, f: &Frame, upto: usize) -> Vec<u32> {
     let (w, h) = (f.w, f.h);
     let n = (w * h) as usize;
     let k = plan.k;
     let (sw, sh) = (w.div_ceil(k) as i32, h.div_ceil(k) as i32);
-    let rows: [Row; 6] = [p0_row, p1_row, p2_row, p3_row, p4_row, p5_row];
     let mut prev = vec![0u32; n];
-    for (i, row) in rows.iter().enumerate().take(upto + 1) {
+    for p in plan.passes() {
+        if p == pass::VIEW {
+            break;
+        }
         let mut out = vec![0u32; n];
-        let cx = Ctx { c: plan, w, h, sw, sh, src: &f.rgba, inp: &prev, lut: lut() };
-        pass(&cx, &mut out, *row, None);
+        let cx = Ctx { c: plan, w, h, sw, sh, src: &f.rgba, inp: &prev };
+        run_pass(&cx, &mut out, ROWS[p]);
         prev = out;
-        let _ = i;
+        if p == upto {
+            break;
+        }
     }
     prev
 }

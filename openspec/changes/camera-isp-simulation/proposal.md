@@ -35,6 +35,14 @@ finished frame (F-FX-010).
   barrier sees ALL its rows, not the eight cooked numbers; the host calls these forms.
 - Presets (picker variants): phone at night, cheap webcam, security camera at night (IR),
   cinema raw, wrong CFA phase, no IR-cut filter.
+- After the owner's review (2026-11-01): the input is UNPROCESSED into the scene first; every
+  defect of the lens and the sensor gets its correcting ISP block (distortion ↔ dewarp, lateral
+  CA ↔ CA correction, vignetting ↔ LSC, colour shading ↔ colour LSC, Gr/Gb imbalance ↔ green
+  equalisation, blooming/clipping ↔ highlight and purple-fringe suppression, row/column noise ↔
+  optical-black correction, shot/read noise ↔ raw NR by the noise model, demosaic false colour ↔
+  false-colour suppression); `view` shows the picture after any stage. The temporal NR (3DNR, the
+  owner's choice: the real recursive filter, GPU-accelerated) waits for the stream stage of
+  `datamosh-codec-path`.
 - The effect window draws the kind as its pipeline: one block per stage with its bypass and
   rows, using the shared parameter widgets.
 

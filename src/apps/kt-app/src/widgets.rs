@@ -451,8 +451,12 @@ pub fn param_label(name: &str) -> String {
         "curl" => tr(k::fxp::CURL),
         "shadow" => tr(k::fxp::SHADOW),
         "steps" => tr(k::fxp::STEPS),
-        // a parameter without a caption in the catalogue — visible at once, not silently
-        other => return other.to_string(),
+        // camera_isp's rows (camera-isp-simulation): its own catalog section
+        other => match crate::isp_panel::row_label(other) {
+            Some(s) => s,
+            // a parameter without a caption in the catalogue — visible at once, not silently
+            None => return other.to_string(),
+        },
     };
     s.to_string()
 }

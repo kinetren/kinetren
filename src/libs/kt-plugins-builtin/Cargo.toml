@@ -12,6 +12,7 @@ kt-plugin-api = { workspace = true }
 fx-video-blur = { workspace = true }
 fx-video-color = { workspace = true }
 fx-video-stylize = { workspace = true }
+fx-video-camera = { workspace = true }
 fx-audio-tone = { workspace = true }
 fx-audio-dynamics = { workspace = true }
 fx-audio-modulation = { workspace = true }

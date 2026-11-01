@@ -2,7 +2,7 @@
 //! reference, checked against what the physics and the ISP predict — not against its own output.
 
 use fx_video_camera::cpu::{plane_after, srgb_lin};
-use fx_video_camera::{CameraIsp, Plan, cfa, row};
+use fx_video_camera::{CameraIsp, Plan, cfa, ix, pass};
 use kt_plugin_api::barrier::{BarrierCtx, BarrierKernel, Frame, RasterHost, Scratch};
 use kt_plugin_api::{ParamValues, Plugin};
 
@@ -80,6 +80,11 @@ fn clean() -> Vec<(&'static str, f64)> {
         ("denoise", 0.0),
         ("sharpen", 0.0),
         ("chroma", 0.0),
+        ("row_noise", 0.0),
+        ("column_fpn", 0.0),
+        ("raw_nr", 0.0),
+        ("fcs", 0.0),
+        ("purple", 0.0),
     ]
 }
 
@@ -160,7 +165,7 @@ fn t1212_shot_noise_variance_grows_with_the_signal() {
         let f = frame_of(w, h, |_, _| [level, level, level]);
         let vals = values(&with(base.clone(), extra));
         let plan = Plan::new(&vals, 1, 90_000);
-        let raw = plane_after(&plan, &f, 1);
+        let raw = plane_after(&plan, &f, pass::READOUT);
         let mut xs = Vec::new();
         for y in 0..h as i32 {
             for x in 0..w as i32 {
@@ -360,20 +365,21 @@ fn t1216_the_noise_is_deterministic_and_the_pattern_is_fixed() {
     let mut still = sets.clone();
     still.push(("noise", 0.0));
     let sv = values(&still);
-    let r1 = plane_after(&Plan::new(&sv, 1, 90_000), &f, 1);
-    let r2 = plane_after(&Plan::new(&sv, 1, 93_000), &f, 1);
+    let r1 = plane_after(&Plan::new(&sv, 1, 90_000), &f, pass::READOUT);
+    let r2 = plane_after(&Plan::new(&sv, 1, 93_000), &f, pass::READOUT);
     assert_eq!(r1, r2, "the fixed pattern moved with time");
     let big = frame_of(200, 150, |_, _| [20, 20, 20]);
-    let hot = plane_after(&Plan::new(&sv, 1, 90_000), &big, 1)
+    let hot = plane_after(&Plan::new(&sv, 1, 90_000), &big, pass::READOUT)
         .iter()
         .filter(|t| ((*t & 0xFF) << 8 | (*t >> 8) & 0xFF) > 2000)
         .count();
     // 300 per million of 30 000 pixels: about nine
     assert!((2..=30).contains(&hot), "the warm sensor has {hot} hot pixels on 200×150");
-    // K=2: the 2× frame of the same picture gives the K=1 result magnified (olpf off: it samples
-    // between logical pixels, which a finer frame legitimately resolves)
+    // K=2: the 2× frame of the same picture gives the K=1 result magnified (the OLPF and the
+    // distortion off: they sample between logical pixels, which a finer frame legitimately resolves)
     let mut k_sets = sets.clone();
     k_sets.push(("olpf", 0.0));
+    k_sets.push(("distortion", 0.0));
     let kv = values(&k_sets);
     let one = run_with(&kv, &f, 1, 90_000, false);
     let f2 = frame_of(w * 2, h * 2, |x, y| {
@@ -433,30 +439,10 @@ fn t1218_each_layout_is_the_cameras_mosaic() {
 
     let cam = CameraIsp::new();
     let m = cam.manifest();
-    assert_eq!(m.passport.len(), row::COUNT);
-    for (i, name) in [
-        (row::OPTICS, "optics"),
-        (row::QE_IR, "qe_ir"),
-        (row::CFA, "cfa"),
-        (row::FULL_WELL, "full_well"),
-        (row::SENSOR_SEED, "sensor_seed"),
-        (row::DIGITAL_GAIN_EV, "digital_gain_ev"),
-        (row::DEMOSAIC, "demosaic"),
-        (row::CURVE, "curve"),
-        (row::SHARPEN_AMOUNT, "sharpen_amount"),
-        (row::DECODE_MATRIX, "decode_matrix"),
-    ] {
-        assert_eq!(m.passport[i].name, name, "row {i}");
+    // `ix` finds every row by its name, in passport order
+    for (i, s) in m.passport.iter().enumerate() {
+        assert_eq!(ix(&s.name), i, "row {}", s.name);
     }
-    let mut staged: Vec<&str> = Vec::new();
-    for st in fx_video_camera::STAGES {
-        staged.extend(st.bypass);
-        staged.extend(st.rows);
-    }
-    staged.sort();
-    let mut all: Vec<&str> = m.passport.iter().map(|s| &*s.name).collect();
-    all.sort();
-    assert_eq!(staged, all, "every row belongs to exactly one stage of the window");
     for v in m.ui.variants {
         for (n, x) in v.sets {
             let s = m
@@ -474,4 +460,241 @@ fn t1218_each_layout_is_the_cameras_mosaic() {
         }
     }
     assert_eq!(m.ui.variants.len(), 6);
+}
+
+/// The mean |Δ| over the RGB of two frames, away from a border of `m` pixels.
+fn mean_diff(a: &[u8], b: &[u8], w: u32, h: u32, m: u32) -> f64 {
+    let (mut s, mut n) = (0u64, 0u64);
+    for y in m..h - m {
+        for x in m..w - m {
+            for c in 0..3 {
+                let i = ((y * w + x) * 4 + c) as usize;
+                s += (a[i] as i32 - b[i] as i32).unsigned_abs() as u64;
+                n += 1;
+            }
+        }
+    }
+    s as f64 / n as f64
+}
+
+/// A test card: a colour checker of 12-px squares with 3-px light bars (a geometric defect moves
+/// them; two bilinear resamplings soften but do not move them).
+fn card(w: u32, h: u32) -> Frame {
+    frame_of(w, h, |x, y| {
+        if x % 24 < 3 || y % 24 < 3 {
+            return [230, 230, 230];
+        }
+        match (x / 12 + y / 12 * 3) % 6 {
+            0 => [200, 60, 50],
+            1 => [60, 170, 70],
+            2 => [50, 70, 190],
+            3 => [210, 200, 60],
+            4 => [120, 120, 120],
+            _ => [40, 40, 40],
+        }
+    })
+}
+
+/// t1220: every defect of the lens and the sensor has the ISP block that removes it. With the block
+/// calibrated the picture returns to the camera without the defect; with the block off the defect
+/// stays.
+#[test]
+fn t1220_every_defect_has_its_correcting_block() {
+    let (w, h) = (96u32, 64u32);
+    // a smooth pattern (period 24 px): a geometric defect moves it, a bilinear resampling barely
+    // softens it — so the comparison measures the defect, not the interpolation
+    let f = frame_of(w, h, |x, y| {
+        use kt_plugin_api::math::FrozenMath;
+        let a = (x as f64 * std::f64::consts::TAU / 24.0).fsin();
+        let b = (y as f64 * std::f64::consts::TAU / 24.0).fcos();
+        let q = |c: f64| (128.0 + 90.0 * c).round() as u8;
+        [q(a * b), q(0.8 * a), q(-0.8 * b)]
+    });
+    // the reference camera: the lens on but ideal (no OLPF, no shading), so a pair differs from it
+    // only by its defect
+    let base = with(
+        clean(),
+        &[("cfa", 0.0), ("demosaic", 2.0), ("vignetting", 0.0), ("optics", 1.0), ("olpf", 0.0)],
+    );
+    let reference = run(&values(&base), &f);
+    // (what, the defect, the block switched off)
+    let pairs: &[(&str, &[(&str, f64)], &str)] = &[
+        ("distortion ↔ dewarp", &[("optics", 1.0), ("distortion", 0.2)], "dewarp"),
+        ("lateral CA ↔ CA correction", &[("optics", 1.0), ("lateral_ca", 3.0)], "ca_corr"),
+        ("vignetting ↔ lens shading", &[("optics", 1.0), ("vignetting", 1.5)], "lsc"),
+        (
+            "colour shading ↔ colour lens shading",
+            &[("optics", 1.0), ("color_shading", 0.4)],
+            "color_lsc",
+        ),
+        ("Gr/Gb imbalance ↔ green equalisation", &[("green_imbalance", 0.06)], "geq"),
+        ("column fixed pattern ↔ optical-black correction", &[("column_fpn", 20.0)], "rowcol"),
+    ];
+    for (what, defect, block) in pairs {
+        let mut on = base.clone();
+        on.extend_from_slice(defect);
+        let corrected = mean_diff(&run(&values(&on), &f), &reference, w, h, 6);
+        on.push((block, 0.0));
+        let raw = mean_diff(&run(&values(&on), &f), &reference, w, h, 6);
+        eprintln!("{what}: with the block {corrected:.2}, without {raw:.2}");
+        assert!(raw > 0.8, "{what}: the defect is invisible without its block ({raw:.2})");
+        assert!(
+            corrected < raw * 0.5,
+            "{what}: the block removes too little ({corrected:.2} against {raw:.2})"
+        );
+    }
+    // hot pixels are points, not a mean: count the pixels a hot site lights up
+    let lit = |vals: &[(&'static str, f64)]| {
+        let out = run(&values(vals), &f);
+        (0..(w * h) as usize)
+            .filter(|i| {
+                (0..3).any(|c| (out[i * 4 + c] as i32 - reference[i * 4 + c] as i32).abs() > 40)
+            })
+            .count()
+    };
+    let hot = with(base.clone(), &[("hot_pixels", 2000.0)]);
+    let (with_dpc, without) = (lit(&hot), lit(&with(hot.clone(), &[("dpc", 0.0)])));
+    eprintln!(
+        "hot pixels ↔ defect-pixel correction: lit with the block {with_dpc}, without {without}"
+    );
+    assert!(
+        without >= 5 && with_dpc * 4 <= without,
+        "hot pixels: {with_dpc} lit with DPC, {without} without"
+    );
+}
+
+/// t1221: the view shows the picture after any stage: the scene of a clean source is the input, the
+/// raw is a mosaic in its filter colours, every other stage is a picture of its own.
+#[test]
+fn t1221_the_view_shows_any_stage() {
+    let (w, h) = (48u32, 32u32);
+    let f = frame_of(w, h, |_, _| [128, 128, 128]);
+    let vals = |view: usize| values(&with(clean(), &[("view", view as f64)]));
+    let scene = run(&vals(1), &f);
+    assert!(mean_diff(&scene, &f.rgba, w, h, 0) <= 1.0, "the scene of an sRGB source is the input");
+    let raw = run(&vals(4), &f);
+    // RGGB: the top-left pixel is red only, its right neighbour green only, the diagonal blue only
+    let px = |x: u32, y: u32| {
+        let i = ((y * w + x) * 4) as usize;
+        [raw[i], raw[i + 1], raw[i + 2]]
+    };
+    let (r, g, b) = (px(10, 10), px(11, 10), px(11, 11));
+    assert!(r[0] > 60 && r[1] == 0 && r[2] == 0, "a red site shows red: {r:?}");
+    assert!(g[1] > 60 && g[0] == 0 && g[2] == 0, "a green site shows green: {g:?}");
+    assert!(b[2] > 60 && b[0] == 0 && b[1] == 0, "a blue site shows blue: {b:?}");
+    let out = run(&vals(0), &f);
+    for view in 1..fx_video_camera::VIEWS.len() {
+        let v = run(&vals(view), &f);
+        assert_eq!(v.len(), out.len());
+        if (2..=7).contains(&view) {
+            assert!(
+                mean_diff(&v, &out, w, h, 0) > 5.0,
+                "view {} looks like the output",
+                fx_video_camera::VIEWS[view]
+            );
+        }
+    }
+}
+
+/// t1222: the frame is unprocessed first — a frame developed with more saturation and a warmer white
+/// balance, unprocessed with exactly those settings, films as the plain frame does.
+#[test]
+fn t1222_the_frame_is_unprocessed_into_the_scene() {
+    let (w, h) = (48u32, 32u32);
+    // muted colours: a developed picture that clipped has lost what no unprocessing can return
+    let plain = frame_of(w, h, |x, y| {
+        [(100 + x % 40) as u8, (110 + y % 30) as u8, (120 - (x + y) % 35) as u8]
+    });
+    let (s, wr, wb) = (1.4f32, 1.2f32, 0.85f32);
+    let wl = [0.2126f32, 0.7152, 0.0722];
+    let enc =
+        |v: f32| (fx_video_camera::cpu::oetf(v, 1) * 255.0 + 0.5).floor().clamp(0.0, 255.0) as u8;
+    // develop: linear → white balance → saturation s → sRGB
+    let developed = frame_of(w, h, |x, y| {
+        let i = ((y * w + x) * 4) as usize;
+        let l = [
+            srgb_lin(plain.rgba[i] as u32) * wr,
+            srgb_lin(plain.rgba[i + 1] as u32),
+            srgb_lin(plain.rgba[i + 2] as u32) * wb,
+        ];
+        let yy = wl[0] * l[0] + wl[1] * l[1] + wl[2] * l[2];
+        let sat = |c: f32| s * c + (1.0 - s) * yy;
+        [enc(sat(l[0])), enc(sat(l[1])), enc(sat(l[2]))]
+    });
+    let a = run(&values(&with(clean(), &[("view", 1.0)])), &plain);
+    let undone = values(&with(
+        clean(),
+        &[
+            ("view", 1.0),
+            ("src_saturation", s as f64),
+            ("src_wb_r", wr as f64),
+            ("src_wb_b", wb as f64),
+        ],
+    ));
+    let b = run(&undone, &developed);
+    let kept = run(&values(&with(clean(), &[("view", 1.0)])), &developed);
+    let (d_undone, d_kept) = (mean_diff(&a, &b, w, h, 0), mean_diff(&a, &kept, w, h, 0));
+    assert!(d_undone < 2.5, "the unprocessed scene differs from the plain one by {d_undone:.2}");
+    assert!(
+        d_kept > 3.0 * d_undone,
+        "without unprocessing the scene keeps the source's look ({d_kept:.2})"
+    );
+}
+
+/// t1223: raw NR follows the sensor's noise model — on a flat field it removes most of the noise, on
+/// an edge it keeps the edge; blooming spills the charge above the well into the neighbours.
+#[test]
+fn t1223_raw_nr_follows_the_noise_model_and_blooming_spills() {
+    let (w, h) = (64u32, 64u32);
+    let f = frame_of(w, h, |x, _| if x < 32 { [70, 70, 70] } else { [170, 170, 170] });
+    let noisy = with(
+        clean(),
+        &[("noise", 1.0), ("read_noise", 6.0), ("full_well", 3000.0), ("raw_nr", 0.0)],
+    );
+    let var_of = |out: &[u8], x0: u32| {
+        let xs: Vec<f64> = (8..56)
+            .flat_map(|y| (x0..x0 + 16).map(move |x| (y, x)))
+            .map(|(y, x)| out[((y * w + x) * 4 + 1) as usize] as f64)
+            .collect();
+        let m = xs.iter().sum::<f64>() / xs.len() as f64;
+        xs.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / xs.len() as f64
+    };
+    let off = run(&values(&noisy), &f);
+    let mut nr = noisy.clone();
+    nr.push(("raw_nr", 1.0));
+    nr.push(("raw_nr_strength", 2.0));
+    let on = run(&values(&nr), &f);
+    assert!(
+        var_of(&on, 8) < 0.5 * var_of(&off, 8),
+        "raw NR left the flat noise: {} → {}",
+        var_of(&off, 8),
+        var_of(&on, 8)
+    );
+    let step = |out: &[u8]| {
+        out[((32 * w + 40) * 4 + 1) as usize] as f64 - out[((32 * w + 24) * 4 + 1) as usize] as f64
+    };
+    assert!(
+        (step(&on) - step(&off)).abs() < 12.0,
+        "raw NR blurred the edge: {} → {}",
+        step(&off),
+        step(&on)
+    );
+
+    // blooming: one overexposed spot; the raw of its neighbours rises with the spill
+    let spot =
+        frame_of(32, 32, |x, y| if x == 16 && y == 16 { [255, 255, 255] } else { [20, 20, 20] });
+    let raw_at = |bloom: f64| {
+        let vals =
+            values(&with(clean(), &[("exposure_ev", 4.0), ("blooming", bloom), ("olpf", 0.0)]));
+        let plan = Plan::new(&vals, 1, 90_000);
+        let raw = plane_after(&plan, &spot, pass::READOUT);
+        let t = raw[(16 * 32 + 17) as usize];
+        ((t & 0xFF) << 8 | (t >> 8) & 0xFF) as i64
+    };
+    assert!(
+        raw_at(1.0) > raw_at(0.0) + 200,
+        "blooming did not spill: {} → {}",
+        raw_at(0.0),
+        raw_at(1.0)
+    );
 }

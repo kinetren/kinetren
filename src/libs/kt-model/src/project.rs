@@ -4791,6 +4791,7 @@ impl FxInstance {
                 FxInstance::builtin("glow"),
                 FxInstance::event_grid(),
                 FxInstance::builtin("pan3d"),
+                FxInstance::builtin("camera_isp"),
             ]
         })
     }

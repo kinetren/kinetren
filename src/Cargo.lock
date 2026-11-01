@@ -2325,6 +2325,7 @@ dependencies = [
  "fx-audio-modulation",
  "fx-audio-tone",
  "fx-video-blur",
+ "fx-video-camera",
  "fx-video-color",
  "fx-video-distort",
  "fx-video-stylize",

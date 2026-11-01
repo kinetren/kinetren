@@ -841,6 +841,9 @@ fn t329_parity_cycle_over_the_registry() {
         ("ripple", FrameTol::GEOM, FrameTol::GEOM),
         ("kaleidoscope", FrameTol::GEOM, FrameTol::GEOM),
         ("cylinder3d", FrameTol::GEOM, FrameTol::GEOM),
+        // camera-isp-simulation: the noise and the mosaic are byte mirrors; the device's f32
+        // pow/exp/division may move a rounding edge on a rare pixel (t1217)
+        ("camera_isp", FrameTol::THRESHOLD, FrameTol::THRESHOLD),
     ];
     let table: std::collections::BTreeMap<&str, (FrameTol, FrameTol)> =
         classes.iter().map(|(t, a, b)| (*t, (*a, *b))).collect();

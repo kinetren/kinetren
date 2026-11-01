@@ -487,6 +487,8 @@ fn t328_golden_cycle_over_the_registry() {
         ("ripple", 0xaf7efc91f739ccf0),
         ("kaleidoscope", 0x9d601aeee14f4062),
         ("cylinder3d", 0x9178d747ce3f9976),
+        // camera-isp-simulation: the default camera films the test frame (seeded noise included)
+        ("camera_isp", 0x0e0ed55da11f5e92),
     ];
     let video: Vec<&FxInstance> =
         FxInstance::all().iter().filter(|f| !f.is_audio() && !f.is_layer_mix()).collect();

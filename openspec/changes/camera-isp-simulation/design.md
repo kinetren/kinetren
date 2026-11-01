@@ -25,98 +25,131 @@ rolling shutter); a raw-file developer (that is Resolve's Camera Raw, F-FX-010);
 
 ## The chain (each line is one stage; parameters in brackets)
 
-SCENE
-1. Linearisation: the frame's straight RGBA8 is sRGB-decoded to linear light (the scene radiance,
-   relative: 1.0 = diffuse white). Alpha is carried from the source to the output untouched.
-2. Near infrared: a video frame has no IR band, so the NIR radiance is ESTIMATED:
-   `IR = scene_ir · (0.5 R + 0.35 G + 0.15 B)` — foliage and warm light reflect/emit NIR in
-   proportion to their red-weighted luminance. [scene_ir]
+The owner's review of 2026-11-01 (`docs/user-feedback.md`) set two rules for this chain: the input
+is a DEVELOPED picture, so it is unprocessed first ("ISP is about turning the picture into a raw and
+running the ISP again"); and every defect of the lens and the sensor has the ISP block that removes
+it ("the paired block … you had to put into the fx"). Each pair below is marked ↔.
 
-OPTICS [optics bypass]
-3. Natural vignetting, the cos⁴ law: at normalised radius r (1 = the half-diagonal),
-   `E(r) = 1/(1 + t²r²)²` with `t² = 2^(ev/2) − 1`, so the corner loses `ev` stops. [vignetting]
-4. Lateral chromatic aberration: R is sampled at radius ×(1+c), B at ×(1−c), c = px at the corner
-   / half-diagonal; G is the reference. [lateral_ca]
-5. The OLPF (a birefringent 4-spot filter): the average of four bilinear samples at (±d/2, ±d/2).
-   [olpf]
+SOURCE — the camera that developed the frame, undone (frame pixels)
+1. The source's transfer undone: sRGB, BT.709, gamma 2.2 or linear. [src_curve]
+2. The source's colour undone: its saturation matrix `S(s) = s·I + (1−s)·1·wᵀ` (w the BT.709 luma)
+   inverted, then its white-balance gains divided out → the scene radiance, 0…2. [src_saturation,
+   src_wb_r, src_wb_b]
+3. Near infrared: a video frame has no IR band, so the NIR radiance is ESTIMATED:
+   `IR = scene_ir · (0.5 R + 0.35 G + 0.15 B)`. [scene_ir]
 
-COLOUR FILTER ARRAY
-6. The layout table (codes R, G, B, W, IR) with its period: RGGB/BGGR/GRBG/GBRG (2), Quad Bayer
-   (4), RGBW (4, the Kodak CFA2.0 checkerboard), RGB-IR (4, the OmniVision 4×4: IR at odd/odd), X-Trans
-   (6, the Fujifilm 6×6 of dcraw). [cfa]
-7. Spectral crosstalk (dye overlap + electrical): a colour pixel sees `M · scene` with
-   `M_ii = 1 − x`, `M_ij = x/2` (rows sum to 1, so white stays white). [crosstalk]
-8. The IR-cut filter: in, no NIR reaches any pixel; out, every pixel adds `qe_ir · T_c · IR`,
-   with the dyes' NIR transmissions `T = (R 1.0, G 0.9, B 0.95, W 1.0, IR 1.0)` (the dyes are
-   transparent above ~700 nm — F-FX-010 trick 2). An IR pixel sees visible light only through a
-   3 % leak. [ir_cut, qe_ir]
+LENS [optics bypass]
+4. Defocus (the lens MTF): a 17-tap disc of radius b px. [lens_blur] ↔ sharpening (step 31)
+5. Geometric distortion: the sensor point at radius r sees the scene at `r(1 + k r²)` (k > 0
+   barrel). [distortion] ↔ dewarp (step 26)
+6. Lateral chromatic aberration: R at ×(1+c), B at ×(1−c). [lateral_ca] ↔ CA correction (step 27)
+7. The OLPF (a birefringent 4-spot filter). [olpf] ↔ sharpening (step 31)
+8. Natural vignetting, cos⁴: `E(r) = 1/(1 + t²r²)²`, `t² = 2^(ev/2) − 1`. [vignetting] ↔ lens
+   shading correction (step 22)
+9. Colour shading (the micro-lenses' chief ray angle): R × (1 − cs r²), B × (1 + cs r²/2).
+   [color_shading] ↔ colour lens shading correction (step 23)
 
-SENSOR (in electrons, then DN)
-9. Exposure: photons at scene white per pixel `= FW / qe_g · 2^ev` (ev 0: a white G pixel just
-   fills the well). Mean signal `μ_c = photons · qe_c · (M·scene)_c` (W: the sum of the three
-   bands). [exposure_ev, full_well, qe_r, qe_g, qe_b]
-10. Fixed pattern (seeded by the sensor seed, NOT by the frame): PRNU — a gain `1 + prnu·z`;
-    DSNU — dark current `max(0, dark + dsnu·z)`; hot pixels (a rate per million) add
-    0.2…1.0 FW of dark charge; dead pixels respond with nothing. [prnu, dark_current, dsnu,
-    hot_pixels, dead_pixels, sensor_seed]
-11. Temporal noise (seeded by the frame's burst index): shot noise `N ~ Poisson(μ + dark)` —
-    exact inverse-CDF below 12 e⁻, the normal approximation `round(λ + √λ·z)` above (variance λ
-    either way); the well clips at FW; read noise `σ_read · z` e⁻. Off: `N = λ` exactly. [noise,
-    read_noise]
-12. Analog gain and ADC: `DN = round(black + N · g · (2^bits − 1 − black)/FW)`, clipped to
-    `[0, 2^bits − 1]`. [iso, black_level, adc_bits]
+COLOUR FILTER ARRAY AND PIXEL
+10. The layout table (codes R, G, B, W, IR): RGGB/BGGR/GRBG/GBRG (2), Quad Bayer (4), RGBW (4, Kodak
+    CFA2.0), RGB-IR (4, OmniVision: IR at odd/odd), X-Trans (6, dcraw's). [cfa]
+11. Spectral crosstalk: a colour pixel sees `M · scene`, `M_ii = 1 − x`, `M_ij = x/2`. [crosstalk]
+    ↔ the CCM (step 29)
+12. The IR-cut filter: out, every pixel adds `qe_ir · T_c · IR`, `T = (R 1.0, G 0.9, B 0.95, W 1.0,
+    IR 1.0)`; an IR pixel sees visible light through a 3 % leak. [ir_cut, qe_ir] ↔ RGB-IR
+    subtraction (step 21)
+13. Exposure: photons at scene white `= FW / qe_g · 2^ev`; mean signal `μ_c = photons · qe_c ·
+    (M·scene)_c` (W: the sum). [exposure_ev, full_well, qe_r, qe_g, qe_b]
+14. Gr/Gb imbalance: a green beside red × (1 + δ), beside blue × (1 − δ). [green_imbalance] ↔
+    green equalisation (step 19)
+15. The fixed pattern (the sensor seed): PRNU, dark current with DSNU, hot pixels (0.2…1.0 FW of
+    dark charge), dead pixels (no charge). [prnu, dark_current, dsnu, hot_pixels, dead_pixels,
+    sensor_seed] ↔ BLC (the dark mean, step 17), DPC (step 18)
+16. Shot noise (the frame seed): `N ~ Poisson(λ)` — inverse CDF below 12 e⁻, `round(λ + √λ·z)`
+    above. [noise] ↔ raw NR (step 20), YUV NR (step 30)
+
+READOUT
+16a. Blooming: the charge above the well spills, a share b, into the four neighbours; the well
+    clips. [blooming] ↔ highlight handling (step 28), purple-fringe suppression (step 30)
+16b. Row noise (temporal, per row) and the column fixed pattern (per column), electrons. [row_noise,
+    column_fpn] ↔ the optical-black row/column correction (step 17)
+16c. Read noise, analog gain, the ADC: `DN = round(black + N·g·(2^bits − 1 − black)/FW)`, clipped.
+    [read_noise, analog_gain, black_level, adc_bits]
 
 ISP — raw front
-13. Black-level subtraction: the ISP's black = the pedestal + the dark-current mean in DN (what
-    the optical-black rows measure) + a tuning error; `v = (DN − b) / (2^bits − 1 − b)`. Bypass:
-    `v = DN / (2^bits − 1)` (lifted, tinted blacks). [blc, black_error]
-14. Defect-pixel correction: a pixel further than `thr` beyond the [min, max] of its same-colour
-    neighbours (5×5, under the ASSUMED layout) is clamped into that range. [dpc, dpc_threshold]
-15. IR subtraction (RGB-IR): the mean of the IR pixels in the 3×3 neighbourhood × `T_c/T_IR` ×
-    strength is subtracted from each colour pixel. [ir_sub, ir_sub_strength]
-16. Lens shading correction: `× (1 + t²r²)^(2s)` — s = 1 exactly undoes step 3. [lsc,
-    lsc_strength]
-17. White balance and digital gain: per CFA colour `qe_g/qe_c × error × 2^dg` (W: `qe_g/Σqe`); bypass
-    — unity gains (the green cast of a raw). [wb, wb_r_error, wb_b_error, digital_gain_ev]
+17. Black-level subtraction (the pedestal + the dark mean the optical-black rows measure + a tuning
+    error) and the row/column correction (the OB estimate of each row's and column's offset × a
+    strength). [blc, black_error, rowcol, rowcol_strength]
+18. Defect-pixel correction: clamped into the [min, max] of its same-colour neighbours (5×5, the
+    ASSUMED layout) when further than `thr`. [dpc, dpc_threshold]
+19. Green equalisation: a green pixel moves toward the mean of its diagonal greens (the other green
+    type) when they differ by less than 0.05. [geq, geq_strength]
+20. Raw NR by the noise model: a same-colour 5×5 range-weighted mean whose range is the noise the
+    sensor model predicts at the pixel's level, `σ² = cg·v/range + (cg·σ_read/range)²`. [raw_nr,
+    raw_nr_strength]
+21. IR subtraction (RGB-IR): the 3×3 IR mean × `T_c/T_IR` × strength; the IR pixel's own 3 %
+    visible leak goes with it, so a grey stays NEUTRAL but a little darker. [ir_sub, ir_sub_strength]
+22. Lens shading correction: `× (1 + t²r²)^(2s)`; the table is calibrated for the lens, so bypassing
+    the optics with LSC on over-corrects the corners. [lsc, lsc_strength]
+23. Colour lens shading correction: R × (1 − cs r²)^(−s), B × (1 + cs r²/2)^(−s). [color_lsc,
+    color_lsc_strength]
+24. White balance and digital gain. [wb, wb_r_error, wb_b_error, digital_gain_ev]
 
-ISP — demosaic and colour
-18. Demosaic under the ASSUMED layout: the sensor's table shifted by the CFA phase error (0/1 px in x
-    and y). Bilinear (the mean of same-colour neighbours in 3×3, else 5×5); Malvar–He–Cutler (the
-    exact 5×5 kernels on a 2×2 Bayer; on other layouts the same gradient correction generalised:
-    `c = mean_c + ½·(v − mean_own)`); edge-directed (each same-colour neighbour weighted by
-    `1/(ε + |v(p+s) − v(p−s)|)` along its direction s — Hamilton–Adams/PPG in spirit). IR sites
-    and, for colour, W sites are holes. [isp_phase, demosaic]
-19. Colour correction matrix: `I + s·(M⁻¹ − I)`, s = 1 the calibrated inverse of step 7, 0 none
-    (desaturated), > 1 oversaturated. [ccm, ccm_strength]
-20. Tone curve: clip to [0,1], then the sRGB, BT.709 or 2.2 OETF; bypass — linear. [tone, curve]
+ISP — demosaic, lens correction, colour
+25. Demosaic under the ASSUMED layout (the CFA phase error): bilinear; Malvar–He–Cutler (exact on a
+    2×2 Bayer, the gradient correction generalised elsewhere); edge-directed — on a Bayer
+    Hamilton–Adams (green by direction weights, red and blue by colour differences: t1215 238 → 4),
+    elsewhere the direction weights over the wanted colour. [isp_phase, demosaic]
+26. Dewarp: the captured radius x with `x(1 + k'x²) = r_o` by three Newton steps, k' = k × strength;
+    a bilinear resample. [dewarp, dewarp_strength]
+27. CA correction: the same solve per channel with `(1 + c'_ch)`. [ca_corr, ca_corr_strength]
+28. Highlight handling: within the top 10 % below the level where the first channel clips, the
+    channels are pulled to luma. [highlight, highlight_strength]
+29. The CCM: `I + s·(M⁻¹ − I)`. [ccm, ccm_strength]
+30. Tone curve: sRGB, BT.709 or 2.2. [tone, curve]
 
 ISP — YUV
-21. RGB → YUV with BT.601 or BT.709 coefficients (full range, 8-bit); luma NR (a 3×3 range-weighted
-    mean, weight `1/(1+(ΔY/σ)²)`), chroma NR (a 5×5 luma-guided mean of U,V); sharpening (unsharp
-    3×3 on Y). [denoise, luma_nr, chroma_nr, sharpen, sharpen_amount, yuv, matrix]
-22. Chroma subsampling: U,V averaged over 2×1 (4:2:2) or 2×2 (4:2:0) sensor blocks (integer mean,
-    rounded) and replicated; decoded back to RGB by the decoder's matrix, which may differ (the
-    601/709 mismatch). [chroma, decode_matrix]
+31. RGB → YUV (BT.601/709); luma NR (3×3 range-weighted); chroma NR (5×5 luma-guided);
+    false-colour suppression (chroma × (1 − s·|∇Y|·4) at luma edges); purple-fringe suppression
+    (blue-and-red above luma within 2 px of a highlight); sharpening (unsharp 3×3). [denoise,
+    luma_nr, chroma_nr, fcs, purple, sharpen, …]
+32. Chroma subsampling 4:2:2/4:2:0 (block mean) and the decoder (its matrix may differ). [yuv,
+    matrix, chroma, decode_matrix]
+
+VIEW
+33. `view` shows the picture after any stage: the scene, the light through the lens and the pixel
+    charge (in the sensor's filter colours), the raw, the raw after BLC/DPC, after raw NR, after
+    LSC/WB (in the ISP's filter colours), the demosaic, the lens correction, luma, chroma.
+
+NOT HERE — the temporal stages. A temporal NR (3DNR: the previous OUTPUT blended in where the motion
+detector sees no motion; its errors leave the trails behind moving objects, luma and chroma
+apart), the rolling-shutter skew and mains flicker need the frames before N. The owner chose the
+real recursive filter with GPU acceleration (2026-11-01); it is built on the stream stage of
+`datamosh-codec-path` (history, memo, anchor replay) once that is in master — a contracting filter
+(α < 1) lets the GPU run it, unlike a codec, whose differences grow.
 
 ## Decisions
 
-### D1. One barrier plugin, six passes; the quantization points are the GPU's texture points
+### D1. One barrier plugin, up to twelve passes; the quantization points are the GPU's texture points
 
 GPU intermediates are Rgba8Uint, so a pass boundary is a quantization point. They are placed where a
-real camera has a fixed-point bus, and the CPU kernel quantizes at exactly the same points:
+real camera has a bus, and the CPU kernel quantizes at exactly the same points:
 
 | pass | input | output texel | why there |
 |---|---|---|---|
-| P0 optics | Src | mean signal μ/FW, 16-bit fixed (×16384, 0…4 FW) in R,G | per-pixel samples of the scene |
-| P1 sensor | P0 | DN, 16-bit integer in R,G | the ADC's integer |
-| P2 raw front | P1 (neighbours) | normalised linear v, 16-bit fixed (×16384, 0…4) | DPC/IR need neighbours |
-| P3 demosaic | P2 (5×5), Src | gamma RGB8 + source alpha | demosaic needs neighbours; 8-bit after the OETF |
-| P4 YUV | P3 (5×5), Src | Y,U,V 8-bit (or RGB8 when YUV is bypassed) | NR and sharpening need neighbours |
-| P5 chroma | P4 (blocks), Src | RGB8 + alpha | the block mean needs the block |
+| U unprocess | Src (frame px) | the scene, R/G 11 bits, B 10, `√(v/2)` coded | the defocus disc needs the neighbours |
+| P0 lens and photons | U (bilinear) | μ/FW, 16-bit fixed | distortion/CA/OLPF sample anywhere |
+| P1a pixel | P0 | charge/FW, 16-bit fixed, unclipped | the readout spills the excess |
+| P1b readout | P1a (4 neighbours) | DN, 16-bit | blooming needs the neighbours; the ADC's integer |
+| P2a raw front | P1b (5×5) | normalised raw, 16-bit fixed | DPC, GEQ need neighbours |
+| P2n raw NR (if on) | P2a (5×5) | normalised raw | a denoiser needs neighbours |
+| P2b raw correct | P2a/P2n (3×3) | linear raw after LSC/WB | IR subtraction needs the IR neighbours |
+| P3 demosaic | P2b (5×5), Src | gamma RGB8 + alpha | the demosaic needs neighbours; 8 bits after the OETF |
+| P3b lens correct (if any) | P3 (bilinear) | RGB8 + alpha | a resample reads anywhere |
+| P4 YUV (if any) | P3/P3b (5×5) | Y,U,V 8-bit (or RGB8) | NR, FCS, purple, sharpening need neighbours |
+| P5 chroma (if YUV) | P4 (blocks) | RGB8 + alpha | the block mean needs the block |
+| PV view (if a raw stage is viewed) | the stage | RGB8 + alpha | the stage's texel made a picture |
 
-P4 runs only when denoise, sharpening or YUV is on; P5 only with YUV. The 16-bit fixed formats keep
-the raw at more than the ADC's 14 bits; the mean is quantized to 1/16384 FW (≤ 0.1 LSB of the
-output after the sRGB slope).
+`Plan::passes` is the one list both executors run; `Plan::uniforms` the one packing.
 
 ### D2. The barrier sees all its rows: `frame_values` / `gpu_values`
 
@@ -183,8 +216,13 @@ Recorded in tasks 6.x after the measurement: CPU scalar / AVX2 per frame, GPU pe
   spectral scene needs spectral input, which a video file is not.
 - Poisson by the normal approximation above 12 e⁻ (variance exact, skew lost — invisible at
   that count); read noise Irwin–Hall(4).
-- No temporal stages (3DNR, AE/AWB control loops), no rolling shutter, no row/column noise, no
-  highlight reconstruction: each is a separate effect of time or of the readout, not of a frame.
+- The temporal stages (3DNR, rolling shutter, mains flicker) wait for the stream stage (see "NOT
+  HERE"); the AE/AWB control loops are not simulated (the exposure and the gains are rows), and
+  highlight RECONSTRUCTION (inventing the clipped channel) is not done — the ISP desaturates.
+- The unprocessing undoes a saturation matrix and white-balance gains, not a source camera's full
+  CCM and local tone mapping: a picture's development is not invertible beyond what it kept.
+- Raw NR and YUV NR are range-weighted means, not BM3D-class denoisers; their trade-off (smearing
+  versus residual noise) is the one cheap ISPs make.
 - The demosaic methods are the classic three; AMaZE/LMMSE/Markesteijn are not ported (their point
   — fewer artifacts — is the opposite of this effect's).
 - 4:2:x chroma is replicated (nearest), the encoder's block mean; a bilinear chroma upsampler is a
@@ -192,6 +230,7 @@ Recorded in tasks 6.x after the measurement: CPU scalar / AVX2 per frame, GPU pe
 
 ## Risks / Trade-offs
 
-- A compressed video frame is already developed; this camera films a developed picture — said in
-  F-FX-010 Cons; the presets are tuned on our fixtures.
-- ~50 rows: the panel groups them by stage; presets carry the looks.
+- A compressed video frame is already developed; the unprocessing returns an ESTIMATE of the scene
+  (F-FX-010 Cons); the presets are tuned on our fixtures.
+- ~85 rows: the window draws the chain as blocks of stages, each correcting stage naming the defect
+  it removes; the presets carry the looks; `view` shows any stage.

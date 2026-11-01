@@ -1,5 +1,6 @@
-// P4 YUV, denoise and sharpening (cpu.rs p4_row) → Y,U,V 8-bit (or RGB8 when YUV is bypassed).
-// u0 = (flags, bits(dec Kr), bits(dec Kb), bits(1/Kg)); u1 = (bits(2(1−Kr)), bits(2(1−Kb)), 0, 0);
+// P4 YUV, denoise, false-colour and purple-fringe suppression, sharpening (cpu.rs yuv_row) → Y,U,V
+// 8-bit (or RGB8 when YUV is bypassed).
+// u0 = (flags, bits(dec Kr), bits(dec Kb), bits(1/Kg)); u1 = (bits(2(1−Kr)), bits(2(1−Kb)), bits(fcs), bits(purple));
 // f0 = (Kr, Kg, Kb, 0.5/(1−Kb)); f1 = (0.5/(1−Kr), luma 1/σ², chroma amount, sharpen).
 // T0 = P3, T1 = the source.
 
@@ -56,6 +57,26 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
         }
         u = u + amt * (su / sw - u);
         v = v + amt * (sv / sw - v);
+    }
+    let fcs = bitcast<f32>(P.u1.z);
+    if (fcs > 0.0) {
+        let gx = abs(yuv(sx + 1, sy).x - yuv(sx - 1, sy).x);
+        let gy = abs(yuv(sx, sy + 1).x - yuv(sx, sy - 1).x);
+        let kk = 1.0 - fcs * clamp(max(gx, gy) * 4.0, 0.0, 1.0);
+        u = u * kk;
+        v = v * kk;
+    }
+    let purple = bitcast<f32>(P.u1.w);
+    if (purple > 0.0 && u > 0.0 && v > 0.0) {
+        var my = 0.0;
+        for (var dy = -2; dy <= 2; dy = dy + 1) {
+            for (var dx = -2; dx <= 2; dx = dx + 1) {
+                my = max(my, yuv(sx + dx, sy + dy).x);
+            }
+        }
+        let kk = 1.0 - purple * clamp((my - 0.9) * 10.0, 0.0, 1.0) * clamp(min(u, v) * 8.0, 0.0, 1.0);
+        u = u * kk;
+        v = v * kk;
     }
     var yo = ynr;
     if (P.f1.w > 0.0) {

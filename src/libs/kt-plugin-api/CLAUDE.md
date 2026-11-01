@@ -28,6 +28,12 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   differently (t973c/t1019/t1048 failed on windows-latest). The `f32` functions are the `f64` ones
   rounded once (correctly rounded but for ~2⁻²⁸ of inputs); t1065 holds them within one ulp of
   glibc, t1066 refuses a direct std call in the frozen crates and every family.
+- **A barrier sees all its rows through the values door** (camera-isp-simulation, D2):
+  `BarrierKernel::frame_values`/`gpu_values` take the slot's values in passport order; their
+  defaults are `frame`/`gpu` over `cook`. The HOST calls only the values forms (kt-fx
+  `apply_barrier`, the kt-gpu barrier op, the registry's graph check — t1210); a barrier with more
+  rows than the eight cooked numbers (camera_isp: ~85) implements them and answers its defaults in
+  the cooked forms.
 - The module is `generator`, not `gen`: `gen` is a reserved keyword in Rust 2024.
 - Mandatory tests: t972 (`tests/registry.rs`) and every family's frozen-form test (t973,
   t1048) when a row or a declaration changes.

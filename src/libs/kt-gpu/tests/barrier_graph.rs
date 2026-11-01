@@ -173,7 +173,7 @@ fn t1052_a_barrier_graph_runs_on_the_gpu_within_its_class() {
         }
     }
     // every registered barrier under a strength of 0.5: the sandwich class of t329
-    let threshold = ["greenscreen", "edges", "noise", "halftone"];
+    let threshold = ["greenscreen", "edges", "noise", "halftone", "camera_isp"];
     let reg = kt_plugin_api::installed().expect("installed");
     let mut kinds = 0;
     for p in reg.plugins().filter(|p| p.barrier().is_some() && p.manifest().id != "two_pass") {

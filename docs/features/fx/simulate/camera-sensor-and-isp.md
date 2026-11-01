@@ -70,6 +70,17 @@ these programs neither the chain nor the meaning of its parameters can be descri
    green into magenta. Demosaic artifacts — the zipper on an edge with bilinear, the maze of Quad
    Bayer through a Bayer demosaic, the X-Trans "worms" — are the method's fingerprint.
 
+4. **An ISP is a list of INVERSES, one per defect.** Every block of a real pipeline exists because
+   the lens or the sensor did something to the light: BLC undoes the pedestal and the dark mean,
+   the optical-black rows undo row noise and the column pattern, DPC undoes hot and dead pixels,
+   green equalisation the Gr/Gb imbalance, LSC and colour LSC the vignetting and the colour
+   shading, dewarp the distortion, CA correction the lateral CA, the CCM the dye crosstalk,
+   sharpening the lens and OLPF blur, the denoisers the shot and read noise. A camera's "look" is
+   which inverses it has and how well they are tuned — so a simulation needs both halves of each
+   pair (the owner's review of 2026-11-01). And the input of an editor's effect is a picture
+   another camera already developed: it must be UNPROCESSED back into a scene first (the
+   "unprocessing" of learned raw denoising — Brooks et al., 2019).
+
 ## Pros
 
 - The looks are consequences of physical numbers: a phone at night is a small full well, high
@@ -146,3 +157,4 @@ physics first; looks come as presets of physical settings.
 - https://www.adimec.com/implementing-a-visible-camera-for-both-daylight-and-lowlight-vision/ (access date 2026-11-01)
 - https://git.libcamera.org/libcamera/libcamera.git/tree/src/ipa/rpi/controller (access date 2026-11-01)
 - H. S. Malvar, L. He, R. Cutler, "High-quality linear interpolation for demosaicing of Bayer-patterned color images", ICASSP 2004
+- T. Brooks et al., "Unprocessing Images for Learned Raw Denoising", CVPR 2019
