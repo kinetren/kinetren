@@ -104,14 +104,18 @@ is `clamp(0.3 × width, 240, 420)`; both scrolls are `window_fill`.
 ### D6. The picker gallery
 
 The popup is a `MenuButton` popup (R.54 `CloseOnClickOutside` stays). Its width = the HOST window's
-content width (read from the calling `ui.max_rect()` before the button is drawn), at least one
-category row (`CELL_DRAW_W × 4 + margins`); its height = the screen below the popup's top minus a
-margin. One `ScrollArea` holds: the head, the presets as a wrapped row of cells (a cell with its
-caption under it, the same `preview_cell`), the category headings and each effect's name row plus its
-`horizontal_wrapped` variant strip — which now wraps into as many cells as the wider popup fits. The
-search field takes the popup's width. The width depends only on the host window, so typing does not
-move it (the R.54 rule). The audio picker (no preview) keeps the list look, with the same width/height
-rule. The media picker list takes the same screen-bounded height (`widgets::popup_list_height`).
+body width (the calling scroll's viewport, `ui.clip_rect()`, minus the popup's own margins), never
+under `GALLERY_W`; its height = the screen below the popup's top minus a margin, stated with
+`min_scrolled_height` (egui bounds a scroll by the popup area's own room). One `ScrollArea` holds:
+the head, the presets as a wrapped row of cells (a cell with its caption under it, the same
+`preview_cell`), then per category one heading and the effects as CARDS — the name row and its
+variant strip, `EFFECT_CARD_W` = three cells wide — that flow, top-aligned, into as many columns as
+the popup is wide. A card is allocated with its width up front: a wrapped row wraps a child only by
+the size it asks for, and a bare `vertical` ran on past the edge and widened the popup to the
+screen. The search field takes the popup's width. The width depends only on the host window, so
+typing does not move it (the R.54 rule). The audio picker (no preview) flows its names the same way
+(`EFFECT_NAME_W`). The media picker list takes the same screen-bounded height
+(`widgets::popup_list_height`).
 
 ### D7. Toolbar overflow
 

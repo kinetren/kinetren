@@ -31,9 +31,9 @@
 
 ## 5. Live and docs
 
-- [ ] 5.1 live scenario `src/scripts/live/window_fill.py`: the effects window, the Guide and the picker
+- [x] 5.1 live scenario `src/scripts/live/window_fill.py`: the effects window, the Guide and the picker
       at a small and a large size, the toolbar at 1100 px — a screenshot per step
-- [ ] 5.2 `docs/guide/whats-new.md` (kt26.11) line; registry K12 → done; `docs/user-feedback.md` taken
+- [x] 5.2 `docs/guide/whats-new.md` (kt26.11) line; registry K12 → done; `docs/user-feedback.md` taken
       as; `src/apps/kt-app/CLAUDE.md` window rule; `ktprompts-index.py --check`, `specs-user-path.py --check`
 - [ ] 5.3 `cargo test --workspace`, `cargo clippy --all-targets`; `git merge master`;
       `src/scripts/finish.sh` — the version here and in the report
