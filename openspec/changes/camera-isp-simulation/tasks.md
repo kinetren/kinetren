@@ -38,8 +38,8 @@ green and is committed at once (English message, first line "camera-isp-simulati
 
 ## 4. Cost and finish
 
-- [ ] 4.1 The cost per 1080p frame (release, CPU scalar/AVX2, GPU) into design D9
-- [ ] 4.2 What's new line (kt26.11), registry row I1 closed, `ktprompts-index.py --check`
+- [x] 4.1 The cost per 1080p frame (release, CPU scalar/AVX2, GPU) into design D9
+- [x] 4.2 What's new line (kt26.11), registry row I1 closed, `ktprompts-index.py --check`
 - [ ] 4.3 `git merge master`; `cargo test --workspace` and `cargo clippy --all-targets` green; commit
 - [ ] 4.4 `./scripts/finish.sh` from `src/`; the version recorded here
 - [ ] 4.5 Archive: specs merged, the "why" into video-fx/plugins design; F-FX-010 `done`

@@ -102,3 +102,52 @@ fn t1217_the_gpu_graph_agrees_with_the_cpu_kernel() {
         }
     }
 }
+
+/// The cost of camera_isp's graph per 1080p frame on this machine's device (design D9). Not a
+/// regression test: `cargo test -p kt-gpu --test camera_isp -- --ignored --nocapture`. Each frame
+/// is a new plan (another content), so no memo answers it; the time includes the upload and the
+/// readback.
+#[test]
+#[ignore]
+fn camera_isp_gpu_cost_per_1080p_frame() {
+    kt_plugins_builtin::install();
+    let Some(engine) = test_engine() else { return };
+    let (w, h) = (1920u32, 1080u32);
+    let reg = kt_plugin_api::installed().expect("installed");
+    let m = reg.get(kt_plugin_api::Family::Fx, "camera_isp").expect("camera_isp").manifest();
+    let vals = kt_plugin_api::ParamValues::defaults(&m.passport).0;
+    let f = FxInstance::plugin_with("camera_isp", &vals).expect("the kind");
+    let run = |id: u64| {
+        let rgba: Vec<u8> = (0..w * h).flat_map(|i| [(i % w) as u8, (i / w) as u8, (i / 7 + id as u32) as u8, 255]).collect();
+        let fr = Arc::new(VideoFrame { pts: Tick(0), width: w, height: h, rgba: rgba.into_boxed_slice(), has_alpha: false });
+        let src = LayerSrc {
+            source: SourceId(id),
+            cache_idx: 0,
+            content: id,
+            src_scale: 1,
+            input: kt_engine::video_plan::LayerInput::Frame(Some(fr)),
+            fx: std::borrow::Cow::Owned(vec![f.clone()]),
+            fx_hash: id,
+            u: 0.5,
+            cam3d: None,
+            blend: None,
+            blend_mode: kt_model::BlendMode::Normal,
+            lead: None,
+        };
+        let p = FramePlan {
+            t: Tick(90_000 + id as i64),
+            out_w: w,
+            out_h: h,
+            layers: vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }],
+            memoize_postfx: false,
+        };
+        let mut out = Vec::new();
+        engine.execute_into(&p, &mut out).expect("GPU execute");
+    };
+    run(900_000);
+    let t = std::time::Instant::now();
+    for i in 1..=5 {
+        run(900_000 + i);
+    }
+    println!("camera_isp on the GPU: {:.0} ms/frame (1080p, defaults, with upload and readback)", t.elapsed().as_secs_f64() * 200.0);
+}

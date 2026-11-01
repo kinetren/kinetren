@@ -207,8 +207,15 @@ independent: no effect on bytes).
 
 ### D9. Cost (measured on the release build, 1920×1080, this machine)
 
-Recorded in tasks 6.x after the measurement: CPU scalar / AVX2 per frame, GPU per frame
-(lavapipe and the device). The GPU is the default executor; the CPU is the reference and fallback.
+Measured 2026-11-01 on this machine (32 threads, the load of four parallel executors around it,
+so an upper bound): `cargo test --release -p fx-video-camera --test cost -- --ignored`, the CPU
+kernel on 8 row threads — the defaults 386 ms scalar / 334 ms AVX2 twin; the presets 338–437 ms
+with the twin, "cheap webcam" 786 ms (its defocus disc reads 17 taps per frame pixel). The GPU
+graph (`cargo test -p kt-gpu --test camera_isp -- --ignored`): 135 ms per frame with the upload
+and the readback, the defaults (twelve passes at most; a memoized preview frame is not re-run).
+The GPU is the default executor; the CPU is the byte reference and the fallback — a
+fallback at 2–3 frames a second, which is why the twin and the row threads exist. Not a real-time
+effect on the CPU; on the GPU a preview at reduced quality plays.
 
 ## What is simplified, and why
 
