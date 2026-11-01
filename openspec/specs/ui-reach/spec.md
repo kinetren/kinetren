@@ -203,9 +203,10 @@ Why: the reference failure — the M gesture with a region made a range label, w
 a point one; two entries with two copies — the same "two tracks from one +M".
 
 #### Scenario: A generator is created from the main menu and from the bin with one list
-- **WHEN** the "Generator" submenu is opened from the main menu and from the bin's background menu
-- **THEN** the list of kinds is one for both entries, and creation puts the media and the clip in one history step
-- **TEST** t560 (`src/apps/kt-app/src/reach_tests.rs`)
+- **WHEN** the "Create a generator" submenu is opened from the Edit menu, from a clip track's right-click menu and from the bin's background menu; the File menu is opened
+- **THEN** the list of kinds is built by one body for all three entries (the track's filtered by its kind), creation puts the media and the clip in one history step, the track entry at the clicked track and time; File offers no generator item
+- **PATH** click "Edit" → "Create a generator" → the groups; right click on a track → "Create a generator" first; right click on the bin's background → "Create a generator"; click "File" → no such row
+- **TEST** t560 (`src/apps/kt-app/src/reach_tests.rs`), t1165 (`src/apps/kt-app/src/gen_audio_tests.rs`)
 
 #### Scenario: The publish door is one and reachable only from inside
 - **WHEN** a right click arrives at the parameter's caption inside the reel (full entry and strip), at the same caption outside the reel, and the instance's menu is opened
@@ -757,7 +758,7 @@ a crossfade the program never makes, an effect added with nothing said about it.
   the progress is intact; "Start over" clears it and makes a new demo copy
 - **PATH** start Kinetren for the first time → the welcome window, "Start the tour" focused → click
   it → the demo project opens and a panel on the right reads "Lesson 1 of 5 · The first edit" with
-  step 1 "Add a title" and a "Show" button → click "Show" → the File menu opens and "Create a
+  step 1 "Add a title" and a "Show" button → click "Show" → the Edit menu opens and "Create a
   generator…" carries an accent outline → Create a generator… → Titles and countdown → Text → a title
   event appears on the timeline and step 1 turns into a check mark, step 2 "Cut the event at the
   marker" appears → put the playhead on the marker and press S → the event is in two pieces and step 2
@@ -848,6 +849,7 @@ nobody can discover is the same "nowhere to write them" (rule 16: a control says
 - **THEN** the hover hint names Ctrl+click, Shift+click and the sweep; the row caption names the count; the menu header names the count; every new key exists in en, ru, es, zh-Hans and ar
 - **PATH** hover a segment → the status line explains how to select several → Ctrl+click a second segment → the row says "Selected segments: 2" → right click on one → the menu header says 2 segments
 - **TEST** t1122 (`src/apps/kt-app/src/segfield_tests.rs`), live scenario `src/scripts/live/segfields.py` (`./scripts/live-check.sh`)
+
 ### Requirement: A lesson step is re-checked when what it reads changes
 The re-check of the current step SHALL follow every input of its predicate, not only the model
 revision: a region drawn on the ruler and the loop switched on SHALL close "Play a part in a loop" in
