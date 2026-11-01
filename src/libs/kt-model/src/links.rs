@@ -47,6 +47,11 @@ impl LinkPath {
         let owner = match owner {
             "gen" => ParamOwner::Generator,
             "clip" => ParamOwner::ClipAttr,
+            o if o.starts_with("mask") => ParamOwner::Mask { slot: None, mask: o[4..].parse().ok()? },
+            o if o.starts_with("fx") && o.contains(".mask") => {
+                let (f, m) = o[2..].split_once(".mask")?;
+                ParamOwner::Mask { slot: Some(f.parse().ok()?), mask: m.parse().ok()? }
+            }
             o if o.starts_with("fx") => ParamOwner::FxSlot { slot: o[2..].parse().ok()? },
             _ => return None,
         };
@@ -62,6 +67,8 @@ impl LinkPath {
             ParamOwner::Generator => "gen".to_string(),
             ParamOwner::ClipAttr => "clip".to_string(),
             ParamOwner::FxSlot { slot } => format!("fx{slot}"),
+            ParamOwner::Mask { slot: None, mask } => format!("mask{mask}"),
+            ParamOwner::Mask { slot: Some(f), mask } => format!("fx{f}.mask{mask}"),
             _ => "?".to_string(),
         };
         format!("{who}/{owner}/{}", self.param)
@@ -122,11 +129,7 @@ fn read_at(reel: &dyn Reel, src: Option<&ClipEvent>, path: &LinkPath, mat: Tick)
         Some(c) => c,
         None => reel.clips().iter().find(|c| c.id == path.clip.unwrap_or(c.id))?,
     };
-    let curves: &[ParamCurve] = match &path.owner {
-        ParamOwner::FxSlot { slot } => c.fx_auto.get(*slot).map(|v| &v[..]).unwrap_or(&[]),
-        ParamOwner::Generator => &c.gen_auto,
-        _ => &[],
-    };
+    let curves: &[ParamCurve] = owner_curves(c, &path.owner);
     // the live curve of the leading property outranks the handle — the same semantics as
     // the rest of the program
     if let Some(cur) = curves.iter().find(|x| x.param == path.param)
@@ -143,6 +146,9 @@ fn read_at(reel: &dyn Reel, src: Option<&ClipEvent>, path: &LinkPath, mat: Tick)
             "gain_db" => Some(c.gain_db as f64),
             _ => None,
         },
+        ParamOwner::Mask { slot, mask } => {
+            c.masks.list(*slot).iter().find(|m| m.id == *mask)?.get(&path.param)
+        }
         _ => None,
     }
 }
@@ -186,6 +192,11 @@ pub fn check_links(reel: &dyn Reel) -> Result<(), LinkError> {
         }
         for cur in &c.gen_auto {
             collect(c, &ParamOwner::Generator, cur, clips, &mut edges)?;
+        }
+        for (slot, m) in c.masks.iter() {
+            for cur in &m.auto {
+                collect(c, &ParamOwner::Mask { slot, mask: m.id }, cur, clips, &mut edges)?;
+            }
         }
     }
     if let Some(path) = find_cycle(&edges) {
@@ -306,7 +317,10 @@ pub fn resolve_derived<'a>(
 ) -> std::borrow::Cow<'a, [ClipEvent]> {
     let any = clips
         .iter()
-        .any(|c| c.fx_auto.iter().flatten().chain(c.gen_auto.iter()).any(|x| x.needs_resolve()));
+        .any(|c| {
+            c.fx_auto.iter().flatten().chain(c.gen_auto.iter()).any(|x| x.needs_resolve())
+                || c.masks.iter().any(|(_, m)| m.auto.iter().any(|x| x.needs_resolve()))
+        });
     if !any {
         return std::borrow::Cow::Borrowed(clips);
     }
@@ -330,6 +344,14 @@ pub fn resolve_derived<'a>(
             for j in 0..out[i].gen_auto.len() {
                 if resolve_one(&snapshot, &mut out[i].gen_auto[j], &me, id, frame_step) {
                     moved = true;
+                }
+            }
+            let masks = &mut out[i].masks;
+            for m in masks.picture.iter_mut().chain(masks.slots.iter_mut().flatten()) {
+                for cur in &mut m.auto {
+                    if resolve_one(&snapshot, cur, &me, id, frame_step) {
+                        moved = true;
+                    }
                 }
             }
         }
@@ -489,6 +511,9 @@ fn read_link_in(clips: &[ClipEvent], me: &LinkCtx, path: &LinkPath, at: Tick) ->
         ParamOwner::Generator => {
             src.gen_auto.iter().any(|c| c.param == path.param && !c.source.is_keys())
         }
+        ParamOwner::Mask { .. } => owner_curves(src, &path.owner)
+            .iter()
+            .any(|c| c.param == path.param && !c.source.is_keys()),
         _ => false,
     };
     if pending {
@@ -504,11 +529,7 @@ fn read_link_in(clips: &[ClipEvent], me: &LinkCtx, path: &LinkPath, at: Tick) ->
 }
 
 fn read_at_clip(c: &ClipEvent, path: &LinkPath, mat: Tick) -> Option<f64> {
-    let curves: &[ParamCurve] = match &path.owner {
-        ParamOwner::FxSlot { slot } => c.fx_auto.get(*slot).map(|v| &v[..]).unwrap_or(&[]),
-        ParamOwner::Generator => &c.gen_auto,
-        _ => &[],
-    };
+    let curves: &[ParamCurve] = owner_curves(c, &path.owner);
     if let Some(cur) = curves.iter().find(|x| x.param == path.param)
         && !cur.keys.is_empty()
         && cur.source.is_keys()
@@ -523,6 +544,21 @@ fn read_at_clip(c: &ClipEvent, path: &LinkPath, mat: Tick) -> Option<f64> {
             "gain_db" => Some(c.gain_db as f64),
             _ => None,
         },
+        ParamOwner::Mask { slot, mask } => {
+            c.masks.list(*slot).iter().find(|m| m.id == *mask)?.get(&path.param)
+        }
         _ => None,
+    }
+}
+
+/// The curves an owner holds on an event (the mask's own, the slot's, the generator's).
+fn owner_curves<'a>(c: &'a ClipEvent, owner: &ParamOwner) -> &'a [ParamCurve] {
+    match owner {
+        ParamOwner::FxSlot { slot } => c.fx_auto.get(*slot).map(|v| &v[..]).unwrap_or(&[]),
+        ParamOwner::Generator => &c.gen_auto,
+        ParamOwner::Mask { slot, mask } => {
+            c.masks.list(*slot).iter().find(|m| m.id == *mask).map_or(&[][..], |m| &m.auto[..])
+        }
+        _ => &[],
     }
 }

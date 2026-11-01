@@ -35,6 +35,7 @@ fn event(id: u64, start: i64, len: i64, source_in: i64, fx: Vec<FxInstance>) -> 
         geometry: Default::default(),
         geometry_pos: 0,
         geometry_auto: Vec::new(),
+        masks: Default::default(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Audio,

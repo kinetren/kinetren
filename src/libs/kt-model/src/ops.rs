@@ -1014,6 +1014,9 @@ pub struct FxSlotBlock {
     pub bypass: bool,
     #[serde(default)]
     pub curves: Vec<ParamCurve>,
+    /// The slot's masks with their curves (shape-masks); absent in older clipboard text.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub masks: Vec<crate::mask::Mask>,
 }
 
 /// The whole chain or its envelopes. `src_in` is the entry point of the event from
@@ -1093,6 +1096,31 @@ pub fn append_chain_block(
         bypass.push(slot.bypass);
         auto.push(rebase_curves(&slot.curves, block.src_in, dst_src_in));
     }
+}
+
+/// The masks of the slots appended by `append_chain_block` (shape-masks): slot `first + i`
+/// gets the block's slot `i` masks, keys moved "entry to entry" by the same rule.
+pub fn append_chain_masks(
+    masks: &mut crate::mask::EventMasks,
+    first: usize,
+    block: &FxChainBlock,
+    dst_src_in: Tick,
+) {
+    for (i, slot) in block.slots.iter().enumerate() {
+        if slot.masks.is_empty() {
+            continue;
+        }
+        let list = masks.list_mut(Some(first + i));
+        *list = rebase_masks(&slot.masks, block.src_in, dst_src_in);
+    }
+    masks.canonicalize();
+}
+
+/// Masks moved to another event: their curves are re-hung like a slot's.
+pub fn rebase_masks(list: &[crate::mask::Mask], from: Tick, to: Tick) -> Vec<crate::mask::Mask> {
+    list.iter()
+        .map(|m| crate::mask::Mask { auto: rebase_curves(&m.auto, from, to), ..m.clone() })
+        .collect()
 }
 
 /// Align event `b` with event `a` by the found audio offset
@@ -1396,6 +1424,7 @@ pub fn collapse_into_sequence(
             geometry: Default::default(),
             geometry_pos: 0,
             geometry_auto: Vec::new(),
+            masks: Default::default(),
             id,
             link_group: group,
             kind: k,
@@ -1855,6 +1884,7 @@ pub fn import_as_sequences(
             geometry: Default::default(),
             geometry_pos: 0,
             geometry_auto: Vec::new(),
+            masks: Default::default(),
             id,
             link_group: group,
             kind: k,

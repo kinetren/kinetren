@@ -27,6 +27,7 @@ fn project_with(gain_db: f32, secs: f64) -> Project {
         geometry: Default::default(),
         geometry_pos: 0,
         geometry_auto: Vec::new(),
+        masks: Default::default(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,

@@ -34,6 +34,7 @@ fn slowed_project() -> Project {
         geometry: Default::default(),
         geometry_pos: 0,
         geometry_auto: Vec::new(),
+        masks: Default::default(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,

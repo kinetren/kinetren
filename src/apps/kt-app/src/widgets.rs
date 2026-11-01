@@ -2094,6 +2094,7 @@ pub fn chain_strip(
                         fx: f.clone(),
                         bypass: edit.bypass[i],
                         curves: edit.auto.get(i).cloned().unwrap_or_default(),
+                        masks: Vec::new(),
                     })
                     .collect(),
                 src_in,
@@ -2118,6 +2119,7 @@ pub fn chain_strip(
                         fx: f.clone(),
                         bypass: edit.bypass[i],
                         curves: edit.auto.get(i).cloned().unwrap_or_default(),
+                        masks: Vec::new(),
                     })
                     .collect(),
                 src_in,
