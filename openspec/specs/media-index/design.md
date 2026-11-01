@@ -290,6 +290,29 @@ composition, and the preview hung in "Loading" forever.
   cause. The busy timeout is also set before the `journal_mode` pragma (hygiene: no statement
   runs without a busy handler — not shown to be the cause).
 
+## Simultaneous openings of one sidecar (worktree-version-and-thumb-lock, 2026-11-01)
+
+The "open end" of the section above closed. t640 went red on a QUIET machine (load ~7) with
+`reel preview: sidecar open failed: sqlite: database is locked`.
+
+- **Cause, measured** (a debug line in `MediaIndexDb::open`, the whole kt-app suite and a 12-thread
+  test): every opening WROTE — `PRAGMA journal_mode=WAL` and the schema. The journal switch came back
+  `SQLITE_BUSY` (extended code 5) in 204 µs, without the busy handler (SQLite refuses to wait where a
+  wait could deadlock); on a NEW file twelve simultaneous openers had one to three fail after 5.7–6.2 s
+  — the writers starved each other past the busy timeout. A project opening starts exactly such a
+  crowd: the index worker, the thumbnail worker, the reel-preview job, the sources. The reel job's
+  failure is a silent re-render (t640's "second open rendered the reel again").
+- **The rule.** The SETUP of an opening is taken in turn per sidecar path inside the process
+  (`open_gate`); WAL is read before it is set (it is a property of the file, only the creator writes
+  it); the schema is created under `BEGIN IMMEDIATE` (the write lock up front, under the busy handler).
+  An opening of a ready sidecar writes nothing; the returned connection is still the thread's own.
+- **The lock is necessary:** with only read-before-set and IMMEDIATE, t1171 stayed red 4 of 4 — two
+  first openers of a new file both switch it to WAL. Another process (kt-cli on the same project)
+  is not covered by the lock and, on a ready sidecar, meets only reads.
+- **Rejected:** a longer busy timeout (the journal BUSY does not wait at all); retrying on BUSY (hides
+  the collision, still loses on a slow disk); one shared connection (rejected above — it serialises
+  every thread's DB work).
+
 ## The download tells everything (ffmpeg-download-window-info, 2026-10-29)
 
 The owner (kkt 2026-10-27): the download window showed too little — where from, how fast, how

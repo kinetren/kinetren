@@ -16,5 +16,5 @@
 
 ## 3. Close
 
-- [ ] 3.1 `cargo test --workspace`, `cargo clippy --all-targets`
+- [x] 3.1 `cargo test --workspace`, `cargo clippy --all-targets`
 - [ ] 3.2 `git merge master`, `src/scripts/finish.sh` — the version here and in the report; archive
