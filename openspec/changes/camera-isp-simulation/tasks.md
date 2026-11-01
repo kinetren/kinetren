@@ -28,7 +28,7 @@ green and is committed at once (English message, first line "camera-isp-simulati
 - [x] 2b.1 Remarks recorded in `docs/user-feedback.md`; the owner chose the real recursive 3DNR (GPU-accelerated) — it waits for `datamosh-codec-path` in master (the orchestrator told)
 - [x] 2b.2 Twelve passes (design D1): unprocessing, lens with distortion/defocus/colour shading, pixel and readout (blooming, row/column noise), raw front (BLC, OB row/column, DPC, GEQ), raw NR by the noise model, IR/LSC/colour LSC/WB, demosaic + highlight handling, dewarp + CA correction, YUV with FCS and purple-fringe suppression, chroma, view; CPU, AVX2 twin, WGSL
 - [x] 2b.3 t1220 (each defect ↔ its block), t1221 (view), t1222 (unprocessing), t1223 (raw NR, blooming)
-- [ ] 2b.4 3DNR with motion-detector trails (luma and chroma), rolling shutter, flicker — on the stream stage, after `datamosh-codec-path` is merged
+- [x] 2b.4 3DNR with motion-detector trails, rolling shutter, flicker: MOVED to the change `temporal-barrier-3dnr` (the orchestrator, 2026-11-01: the owner asked for the GPU; the stream class is a CPU-only source stage) — design "NOT HERE"
 
 ## 3. The window
 

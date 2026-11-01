@@ -130,3 +130,15 @@ Further down the chain, it hurt too. The warp speed of the A/V pair was edited s
 - **Rejected:** a segment column in the table view (rows are moments, a segment is BETWEEN rows —
   a second editor of the same thing); a selection across curves (the block belongs to one curve,
   and a tension of one parameter has no meaning on another's axis).
+
+## Mask rows and the path keyed as a whole (shape-masks, 2026-11-01)
+
+A mask's passport is built per mask; a vertex row is named by the vertex's STABLE id (`v3.x`), so
+deleting a point renames nothing — its curves and the links pointing at it survive. This is what the
+point tracker (T1) needs: it writes a track as a property, and a mask point LINKS to it; no second
+mechanism. A path is keyed as a whole (AE's "Mask Path" stopwatch): once animated, a gesture keys
+every shape row at that tick, so the shape interpolates point by point (F-MSK-001 trick 3:
+correspondence by vertex, accepted explicitly). Inserting a point keys it at every key of the path
+at the same curve parameter of the split segment — the shape at the keys does not change, which is
+what the editors that "forbid changing the number of points" could not offer. Track masks stay static
+(the track has no time domain yet).

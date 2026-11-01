@@ -120,12 +120,19 @@ VIEW
     charge (in the sensor's filter colours), the raw, the raw after BLC/DPC, after raw NR, after
     LSC/WB (in the ISP's filter colours), the demosaic, the lens correction, luma, chroma.
 
-NOT HERE — the temporal stages. A temporal NR (3DNR: the previous OUTPUT blended in where the motion
-detector sees no motion; its errors leave the trails behind moving objects, luma and chroma
-apart), the rolling-shutter skew and mains flicker need the frames before N. The owner chose the
-real recursive filter with GPU acceleration (2026-11-01); it is built on the stream stage of
-`datamosh-codec-path` (history, memo, anchor replay) once that is in master — a contracting filter
-(α < 1) lets the GPU run it, unlike a codec, whose differences grow.
+NOT HERE — the temporal stages, moved to their own change `temporal-barrier-3dnr`. A temporal NR
+(3DNR: the previous OUTPUT blended in where the motion detector sees no motion; its errors leave
+the trails behind moving objects, luma and chroma apart), the rolling-shutter skew and mains flicker
+need the frames before N. The owner chose the real recursive filter and asked for the GPU
+("п.1 … почему нельзя ускорить через GPU хоть что-то", 2026-11-01). The stream class of
+`datamosh-codec-path` does not carry it: it is CPU-only by a registry refusal and a SOURCE stage run
+before the chain, while 3DNR sits inside the ISP after demosaic. The options were (A) the whole camera
+as a CPU stream stage when 3DNR is on — faithful trails but ~3 fps at 1080p and no GPU; (B) a new
+core contract, a TEMPORAL BARRIER: the host hands a barrier its own slot's previous OUTPUT (N−1) on
+both executors, with a GPU texture memo and anchor replay on a fixed grid, the CPU the byte
+reference; (C) A now, B later. The orchestrator decided B as its own change (A would be a CPU path
+thrown away). A contracting filter (α < 1) lets the GPU run it, unlike a codec, whose differences
+grow.
 
 ## Decisions
 

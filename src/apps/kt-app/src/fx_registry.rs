@@ -320,6 +320,7 @@ const VIDEO_ORDER: &[&str] = &[
     "Edges",
     "Noise",
     "VHS",
+    "Datamosh",
     "Glow",
     "Pan 3D",
     "EventGrid",

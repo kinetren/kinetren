@@ -1,20 +1,20 @@
 ---
 id: F-MSK-001
 title: Mask shapes: Bézier contours and primitives
-status: candidate
+status: done
 priority: B
 cost: XL
 category: masks/shapes
 editors: [after-effects-26, premiere-26, resolve-21, fcp-12, vegas-pro-2026]
-we_have: no
+we_have: yes
 crates: [kt-model, kt-fx, kt-engine, kt-gpu, kt-otio, kt-app, kt-cache]
 invariants: [4, 7, 11, 12]
 ui_rules: [1, 2, 3, 5, 6, 13, 16, 17, 20]
-round: null
-point: null
-tests: []
+round: kkt-26.11.01
+point: S1
+tests: [t1260, t1261, t1266, t1267, t1268, t1269, t1270, t1274, t1275, t1276, t1277, t1278]
 depends_on: []
-checked: 2026-09-07
+checked: 2026-11-01
 ---
 
 # F-MSK-001 — Mask shapes: Bézier contours and primitives
@@ -109,48 +109,8 @@ And from the same place, from a long list of complaints about VEGAS Pro 2026 —
 > https://forum.borisfx.com/t/suggestions-for-boris-regarding-vegas-pro-2026-very-long-post/24911
 
 ## How it fits Kinotrain
-
-### What already exists
-
-There are no masks, but the mathematics of primitives with a soft edge is written in our code, mirrored on the GPU and covered by tests — under the name "transitions".
-
-- **Shape kernels with feathering.** `front_mask(s, k, soft)` — `src/libs/kt-engine/src/transitions.rs`, line 229: "coordinate → weight 0..1 with a soft front" on `smoothstep`. On it stand `MODE_IRIS` (line 317: circle, diamond, rectangle via distance from the center, with an honest `rmax` for the frame's aspect), `MODE_WIPE` (line 310: a linear gradient in an arbitrary direction), `MODE_BARN` (line 345: a band from the center), `MODE_CLOCK` (line 332: a sector by angle) and `MODE_LUMA` (line 350: a threshold on brightness with softness). These are ready-made ellipse, diamond, rectangle, gradient and sector — exactly the set of Power Windows, only the result goes not into a weight but into `mix4(a, b, w)` between two frames.
-- **GPU mirror.** `front_mask` and `trans()` — `src/libs/kt-gpu/src/shaders/composite.wgsl`, lines 73 and 128, line for line with the CPU. Conformance is held by t224 (transition kinds), t181/t182 (GPU against CPU) and t225 (parameter curves): that is, the threshold kernel with a soft edge is already proven identical on two backends in our code — the most expensive part of the work for a mask has been done.
-- **A rectangular frame with zoom and pan** — `pan_frame` (`src/libs/kt-fx/src/video.rs`, line 161): a crop window in the coordinates of the SOURCE with center, size and clamping, plus `bilinear_into_scalar` (line 251) and its AVX2 twin. The geometry of a rectangular mask is the same calculation, only without resampling.
-- **Keyframe machinery.** `ParamCurve` / `AutoKey { t: Tick, v: f64 }` (`src/libs/kt-model/src/project.rs`, lines 1621–1626), the key domain is the MATERIAL TICK, so trim/split/reverse do not spoil the animation (F-AUT-002). One widget: `src/apps/kt-app/src/automation.rs`. If a shape is decomposed into numbered scalars (the FCP path), it lands here WITHOUT a single new entity.
-- **Alpha in the frame and its blurring.** `Frame { w, h, rgba, has_alpha }` (`src/libs/kt-fx/src/video.rs`, line 21), `blur` (line 333) averages all four channels and preserves `has_alpha` — half of the choke already exists.
-- **Order of computation in our favor.** FX are computed PER LAYER, and the composite goes after (`src/libs/kt-engine/src/video_plan.rs`, execution — `apply_video_chain_pooled`, `src/libs/kt-fx/src/video.rs`, line 61). A mask at a chain slot fits here naturally and does not require a new composite stage.
-- **A place for "a mask on everything below"** — the morpher (`Project::effective_clips()`, `src/libs/kt-model/src/project.rs`), but with the caveat from F-MPH-007: it appends effects to the chain of EACH target, rather than working on a finished composite.
-
-### What is missing
-
-- **There is no geometry in the model at all.** Neither a point, nor a contour, nor a rectangle in the frame: `MorphTargets::Areas` (line 617) is time × tracks.
-- **There is no rasterizer.** There is nothing to convert a polygon or a Bezier into a 0..1 coverage buffer, neither on the CPU nor on the GPU; in `src/libs/kt-gpu/` all passes are a full-screen triangle with a per-pixel formula, and vertex geometry was never introduced into the engine.
-- **There is no notion of "area weight" in the plan.** An effect takes a `Frame` and returns a `Frame`; there is no separate matte signal that lives through the chain — and the alpha is silently destroyed by two effects out of ten: `edges` and `event_grid` return `has_alpha: false` (`src/libs/kt-fx/src/video.rs`, lines 453 and 737).
-- **There is not a single gesture ABOVE the frame.** The preview is a picture drawn by `painter.image` in `img_rect` (`src/apps/kt-app/src/app.rs`, around line 3310); there is no code converting a screen point into a frame pixel, and the only `ui.interact` over the preview (line 3205) is taken under `Sense::click()` and is already occupied: a single click is play/pause, a double click detaches the window (items 10-11 of R.7, implemented at the user's request).
-- **There is no opacity or inversion as concepts of an effect** — we have only the slot bypass and the chain master switch `fx_off`.
-
-### What gets in the way
-
-- **The parameter spec can hold ONLY a number, and this is not "not done yet" but a type.** `ParamSpec { name, min, max, default, step, unit, kind }` (`src/libs/kt-model/src/project.rs`, line 2203) and the macro `params_for!` (line 2261, applied to `FxInstance` at line 2308): `param_specs()` returns **`&'static [ParamSpec]`** — a static slice of fixed length. A contour of variable length cannot be expressed in this type at all. Hence the fork, and it must be named aloud rather than smeared over: **a primitive (ellipse/rectangle with center, semi-axes, angle, feathering, expansion and opacity) is 7–8 scalars that fit the existing machinery ENTIRELY** (they are drawn by `params_grid`, animated by `ParamCurve`, go into the GPU uniform, computed once in the plan), **but a Bezier contour fits nowhere.**
-- **The UI rule "a numeric parameter is drawn ONLY by `widgets::param_row` / `widgets::params_grid`" (`src/apps/kt-app/CLAUDE.md`, section "Effect windows and input fields") does not work here, and this must be admitted directly.** A contour is not a number, it has no min/max/step/unit, and it cannot be drawn as a grid row. So a THIRD kind of parameter editor is needed: handles of points over the preview. It must be introduced the same way the first two were introduced — as one shared widget for the whole program, declared in the rules, otherwise after two rounds every geometric effect will have its own, and the story of slowed/pan3d will repeat, which is exactly why the rule "curves are drawn by ONE widget `automation::draw`" appeared.
-- **The project has ALREADY once thrown out "its own Vec of keys inside an effect", and it must not be repeated.** `FxInstance::CamMotion { keyframes: Vec<CamKeyframe> }` (line 1958) survives only as legacy: `migrate_legacy_cammotion` (line 1833) converts it into `Pan` + `ParamCurve`, and the comment says why — "the conversion removes a duplicating animation mechanism rather than porting it" (R.34 K2). The same was done with `SlowedKeyframe` (`migrate_legacy_slowed`, line 1736). A mask with its own list of key shapes inside `FxInstance` is exactly the mechanism that was removed twice.
-- **GPU: one uniform for the whole engine, 64 bytes.** `struct Params { u0, u1, f0, f1: vec4, m: mat4x4 }` and one bind group layout for all passes (`src/libs/kt-gpu/src/shaders/common.wgsl`, lines 11–23; there are exactly three textures — T0/T1/T2, and in the composite they are occupied: acc_in, layer A, layer B). Eight generic slots are enough for an ellipse and not enough for any contour: either a storage buffer of points is needed (a new layout, that is, a revision of the very decision "one uniform for the whole engine"), or rasterization of the mask on the CPU into a texture plus a fourth binding. This is the main design obstacle, and it is architectural rather than volumetric.
-- **`front_mask` cannot be reused as it is — only as mathematics.** First, its threshold is the PROGRESS of a transition, and the front deliberately runs out beyond both edges by the blur width (`front = k * (1 + soft) - soft`, line 236), so that at k=0 and k=1 no visible edge remains; for a static mask this means the feathering width shifts the boundary — correct behavior for a transition and incorrect for a mask. Second, `MODE_IRIS` is rigidly centered: there is no offset, no rotation, no separate semi-axes, and all four `p0` slots of `MODE_WIPE` are already taken (dx, dy, softness). So this is not "take the function" but "write a neighbor modeled on its pattern" — and by the kt-fx rule the scalar code, the AVX2 kernel and the WGSL are edited in ONE commit, with byte-for-byte agreement between SIMD and scalar code.
-- **The path is entirely 8-bit**, and feathering is the first thing that runs into this: a soft gradient over 200 px on an 8-bit scale is steps every ~0.8 px. Banding will be visible on smooth vignettes, and this is not cured by parameters.
-- **The preview is computed at a DIFFERENT size than the export** (`preview_quality`, `src/libs/kt-engine/src/player.rs`; the fraction 1/16…1/1 in `src/apps/kt-app/src/app.rs`, line 3490). So the mask coordinates MUST be NORMALIZED (0..1), not in pixels, otherwise a mask placed on a 1/4 preview will drift on export. The decision is cheap, but it must be taken BEFORE the first saved project, not after.
-- **The post-FX cache key.** `fx_chain_hash` (`src/libs/kt-engine/src/video.rs`, line 153) hashes the Debug form of the chain and its geometry — the mask points will get into it by themselves, but a list of a hundred points in Debug form on every frame of every layer is no longer "cheap".
-- **Format.** `KT_META_VERSION` (`src/libs/kt-otio/src/meta.rs`, line 17) is now 4 → 5.
-
-### Which invariants it touches
-
-- **No. 7 "one composition code" — in our favor.** A mask is a WEIGHT, and the invariant names weights explicitly as what is computed once in `frame_plan` and merely executed by the backend. While the mask lives INSIDE a layer (FX per layer, before the composite), it does not introduce a new composite stage. As soon as a mask becomes "take the alpha of the neighboring layer" (track matte) — it will introduce one, and that is already a different note.
-- **No. 11 determinism.** A threshold kernel is the worst case for CPU↔GPU tolerances: a divergence in the lowest bit BEFORE the threshold gives a whole pixel of difference AFTER; the tolerance will have to be formulated by the FRACTION of diverging pixels, as was already necessary in t181/t182. Plus the kt-fx rule: the default of a new parameter = the previous behavior byte for byte, otherwise 26 golden references of t26 and t67 shift.
-- **No. 4 the cache is the single source of truth about coverage**: the mask parameters enter the post-FX key; the SHOW mode of the mask (silhouette instead of the picture) must NOT enter it, otherwise toggling the view would throw away warmed frames (pattern — t66).
-- **No. 12 the UI heats the system only during motion**: a point handle over the preview has no right either to allocate in the draw path or to keep repainting after release; a contour of a hundred points is drawn as a MESH, not as a hundred primitives (lesson of item 40).
-- Rules of `src/apps/kt-app/CLAUDE.md`: **1** (you cannot hit a 3 px point with the mouse — the grab zone is wider than the drawing), **2** (editing a mask must work DURING PLAYBACK), **3** (the panel does not jump when a mask is selected), **5** (selecting a mask does not cancel the clip selection), **6** (feathering and expansion have a min and a max), **13** (the "show mask" switch takes an already occupied place in the preview strip, not a new row), **16** (you cannot animate a shape with a different number of points — show an ERROR, not a grey hover), **17** (the gesture over the frame and the numbers in the inspector are paired ways of one action and must behave identically), **20** "nothing grows by itself" — and here is a direct collision: adding a point to the contour in the middle of an animation rewrites ALL the keys of the shape. Either this is forbidden, or it is one explicit action with one undo step and an explicit warning.
-
-Separately about the place of the gesture: the single and double click over the preview are ALREADY taken (play/pause and window detaching, `src/apps/kt-app/src/app.rs`, line 3205, implemented at the user's direct request in R.7). The mask editing mode must be an EXPLICIT state, not "a click on the frame", otherwise rule 5 is violated.
+CAPABILITY: openspec/specs/video-fx/ — the rasterizer's contract is in `spec.md` (with `video-plan` for the plan, `automation` for the path's rows and keys), the "why" and the paths in the code are in `design.md`.
+Shapes are a `kt_model::Mask`; one CPU rasterizer (`kt_fx::mask`) gives the coverage, the GPU applies the same bytes; the editor over the picture is `kt-app/src/maskctl.rs`.
 
 ## Estimate
 
@@ -170,6 +130,30 @@ Separately about the place of the gesture: the single and double click over the 
 The main question that the note answers, and which must be settled BEFORE the round: **where the mask lives.** There are three options, and they are not equivalent. On the CLIP — cheap, but then "two blurs of different strength in two places" is inexpressible (a minus for which Premiere users still pay). As a SEPARATE OBJECT with its own key input — that is a node graph, and it has already been rejected by an explicit decision in F-CLR-006. What remains is **at the CHAIN SLOT** — as in FCP: a mask belongs to a specific effect, several masks are combined by Boolean modes in the order of the list inside one slot, and slots do not interact with each other. This is the only option that breaks nothing: FX are already computed per layer, `chain_strip` already draws the list of slots, and the cache key already hashes the chain.
 
 And two admissions, spoken aloud, which cost more than any size estimate. First: the rule "a numeric parameter is drawn ONLY by `param_row`/`params_grid`" does not work on a contour and cannot work — a contour is not a number; a third kind of editor is needed, introduced as a shared widget and written into the rules BEFORE its first user, otherwise the slowed/pan3d divergence will repeat. Second: shape animation runs into point correspondence by index, and it is reasonable to accept the same restriction as everyone else ("the number of points is the same on all keys"), but to accept it EXPLICITLY and show a violation as an error under rule 16 — and not the way the neighbors do it, where the program silently rebuilds the animation and says nothing at all.
+
+### Verdict, revised by the owner's request (2026-11-01, kkt-26.11.01 S1 — change `shape-masks`)
+
+**Done, both parts at once — (a) and (b).** The owner asked for "a convenient mechanism of
+classic masks", and the orchestrator's brief named the Bézier pen on the preview. Two things this
+note called obstacles in September had gone away by then, and that is why (b) no longer needed a
+separate round:
+
+- **"`&'static [ParamSpec]` cannot hold a contour"** — the passport is built at run time since R.59.
+  A mask's passport (`Mask::specs`) has a row per vertex coordinate and tangent, named by the
+  vertex's stable id (`v3.x`), so a deletion never renames another point. The path animates with
+  the ONE curve mechanism, keyed as a whole (AE's "Mask Path"), and an inserted vertex is keyed at
+  every key so the shape at the keys does not change. This is trick 3 of this note, accepted
+  explicitly: the shape interpolates by point correspondence.
+- **"One 128-byte uniform, three textures — the contour fits nowhere on the GPU"** — the GPU does
+  not rasterize at all. One CPU rasterizer (`kt_fx::mask`: exact-area scanline inside, a signed
+  distance band for antialiasing, feather with falloff and expansion; on a coarser grid for a wide
+  band) produces an 8-bit coverage once per frame per application point; the GPU uploads THE SAME
+  bytes as a texture and applies them in one integer pass. A mask adds no divergence (t1274).
+
+Modes: add, subtract, intersect, difference as the soft Boolean forms; AE's Lighten/Darken/None
+were not taken (trick 1: they differ only on soft masks). Variable feather along the contour
+(trick 2) is the next step — the vertex is a struct, it has room. The editor over the frame is the
+R.64 machinery, one call site with the transform frame, one set of handles at a time.
 
 ## Sources
 

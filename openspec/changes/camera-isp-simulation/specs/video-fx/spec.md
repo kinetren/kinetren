@@ -30,8 +30,8 @@ Why: the owner's request I1 of kkt-26.11.01 and his rule of 2026-11-01 — an im
 physical effect is not a simulation of it; and his review of the same day: "you added the noise but
 not the denoiser … the PAIRED block of optics compensation simply does not exist … what is hidden
 in real ISPs, the distortions and the ways to remove them, you had to put into the fx" (F-FX-010).
-The temporal stages (3DNR with its trails, rolling shutter, mains flicker) need the frame history
-of a stream stage and are not part of this requirement.
+The temporal stages (3DNR with its trails, rolling shutter, mains flicker) need the slot's previous
+output and are the change `temporal-barrier-3dnr`, not part of this requirement.
 
 #### Scenario: A clean chain reproduces the input
 - **WHEN** a smooth colour frame passes `camera_isp` on every layout and demosaic, with no temporal

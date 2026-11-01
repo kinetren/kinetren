@@ -454,3 +454,133 @@ reasons that must be answered, not forgotten.
 - **THEN** each item is found in the note's table or its "owner's items" list with a verdict; an
   item removed from the note makes the guard red with the item's name
 - **TEST** t983 (`src/apps/kt-cli/tests/fx_catalogue.rs`)
+
+### Requirement: The datamosh is a motion-compensated codec run inside the effect and broken by its rows
+The kind `datamosh` SHALL be a SIMULATION of a broken inter-frame stream, never an image
+operation: it SHALL contain its own block codec — Y'CbCr 4:2:0 planes at its encoded height,
+block-matching motion estimation within a search range, a closed prediction loop over a
+reference buffer, a DCT residual quantised by QP and a GOP with I-frames at the stream start, at
+the cut and every `gop` frames (0 — only at the stream start, the cut and the resets). Its breakages SHALL be rows of
+its passport, and every quantity that may change from frame to frame SHALL take curves: the gates
+`mosh` (I-frames dropped while on), `reset` (a key rising to on forces an intact I-frame), `bloom`
+(the run's first P-frame repeats), `freeze` (the reference stops updating), the quantiser, the vector
+scale and rotation, the residual kept and the macroblock-loss probability. Only the structural rows
+take none: the GOP, the block, the search range, the encoded height, the frames from the event before,
+the second input (the event on the track above or below), the vector swap and the seed. No range is
+capped below what the quantity physically allows: GOP to 600, search to 64 px, 300 frames before the
+cut, 144–1080 lines, vector scale ±16; the quantiser keeps the codec's own 0–51.
+
+Why: the owner asked for "a real motion-compression path that we can break carefully with
+parameters", not the glitch imitations we have (F-FX-011; root rule imitation ≠ simulation); on the
+first build: "no curves … no way to reset the effect, at least by keys on the curves … on the beat …
+the GOP is limited to 60 for some reason, and probably the other parameters too".
+
+#### Scenario: An intact stream reproduces its input within the quantiser
+- **WHEN** a moving picture goes through the codec with no breakage at QP 10 and at QP 30
+- **THEN** every decoded plane differs from the source plane by no more than the quantiser's bound, the mean error grows with QP, and the error does not grow along the GOP (closed loop)
+- **TEST** t1235 (`src/plugins/fx-video-codec/tests/codec.rs`)
+
+#### Scenario: A dropped I-frame at the cut moves the previous shot with the new shot's motion
+- **WHEN** the stream starts in the event before (shot A, a still texture) and the `mosh` gate is on at the cut into shot B (another texture moving right), so the cut's I-frame is dropped
+- **THEN** after the cut the output keeps A's texture, displaced by B's motion, and does not show B; with the I-frame intact the output is B within the quantiser
+- **TEST** t1236 (`src/plugins/fx-video-codec/tests/codec.rs`)
+
+#### Scenario: Bloom repeats one vector field
+- **WHEN** the `bloom` gate is on over frames b … b+N
+- **THEN** each frame b+1 … b+N is the previous output predicted by packet b's vectors (plus its residual), so the moving region keeps travelling by the same displacement, and after b+N the stream continues with its own packets
+- **TEST** t1237 (`src/plugins/fx-video-codec/tests/codec.rs`)
+
+#### Scenario: A frame is the same bytes however it is reached
+- **WHEN** frame N inside a mosh — constant gates, a bloom run, a freeze run, a beat of mosh on / reset key / mosh off drawn by curves — is rendered after rendering 0 … N−1 in order, after a seek with an empty memo, with a memo of 1 byte, and twice on two threads
+- **THEN** the bytes are identical in every case
+- **TEST** t1238 (`src/plugins/fx-video-codec/tests/codec.rs`), t1239 (`src/plugins/fx-video-codec/tests/codec.rs`)
+
+#### Scenario: The other breakages change the stream they name
+- **WHEN** the `freeze` gate is on over a run, the vectors are taken from a second input, the vectors are scaled by 0 or swapped, and macroblocks are lost with probability 0 and 1
+- **THEN** a frozen run predicts every frame from its first picture and leaves its trace after it; transplanted vectors move the own picture by the second input's motion; scale 0 holds the picture; probability 0 equals the clean stream and probability 1 differs from it, deterministically per seed
+- **TEST** t1243 (`src/plugins/fx-video-codec/tests/codec.rs`)
+
+#### Scenario: The person resets the mosh on the beat with curve keys
+- **WHEN** the `mosh` gate is on and a `reset` key rises to on at frame 10; and, in another stream, `mosh` turns off at frame 5 with a GOP of 12
+- **THEN** frame 9 is the previous shot dragged, frame 10 is the new shot's intact keyframe and frame 14 is the new shot; in the other stream the cut's keyframe was dropped (frame 9 moshed) and the keyframe at 12 is intact; the curve values are part of the keys
+- **TEST** t1245 (`src/plugins/fx-video-codec/tests/codec.rs`)
+
+#### Scenario: A region of interest confines the mosh
+- **WHEN** the host gives a region covering the left half of the frame (a stand-in for a mask or an object detector)
+- **THEN** inside it the frame is the broken stream's, outside it the intact stream's, byte for byte; without a region the whole frame moshes; the region's identity is in the output key
+- **TEST** t1244 (`src/plugins/fx-video-codec/tests/codec.rs`)
+
+### Requirement: The engine runs a stream stage in the plan's common code with random access
+A layer whose chain holds a `Stream` slot SHALL take as its pre-FX frame the stage's output,
+computed in the plan's common code before either executor runs, fitted to the layer's decode size
+and opaque; the slot SHALL be removed from the chain the executors see. The order SHALL ask the
+stream's frames at the codec's size — the frame at N, and the history the memo does not cover —
+and no frame at the ordinary decode quality. The layer's content key SHALL carry the decoded
+frame's key. Export SHALL pre-roll the codec before a frame whose history the memo lacks, in
+batches bounded by its cache budget. A stream slot on a reel instance or a track stage SHALL be
+skipped.
+
+Why: invariants 4, 7 and 11 — the order equals the read, one composition code, the same bytes
+whatever the start (`datamosh-codec-path` design D3–D6).
+
+#### Scenario: A reset key on the event ends the mosh on the beat
+- **WHEN** the event carries a `reset` curve rising to on at a frame, with the `mosh` gate on
+- **THEN** the engine reads the slot's rows per frame with their curves: before the key the frame is far from the intact codec's, on and after it close to it; a seek to a frame after the key equals playing up to it
+- **TEST** t1246 (`src/libs/kt-engine/tests/stream_stage.rs`)
+
+#### Scenario: Seeking to a frame equals playing up to it
+- **WHEN** a project with a cut-mosh is composed at frame N after composing 0 … N−1, and by a fresh renderer with a fresh memo directly at N
+- **THEN** the frames are byte-identical, and differ from the same project without the slot
+- **TEST** t1241 (`src/libs/kt-engine/tests/stream_stage.rs`)
+
+#### Scenario: Export in chunks equals export in one go
+- **WHEN** a range containing a mosh is exported in one go, and again as three range exports — each with a fresh renderer, memo and cache, one starting inside the mosh (harder than a chunk boundary, which keeps the memo)
+- **THEN** the concatenated pieces are byte-identical to the whole
+- **TEST** t1242 (`src/libs/kt-engine/tests/stream_stage.rs`)
+
+#### Scenario: The order asks what the stage reads
+- **WHEN** `layers_at` is asked at a frame inside a mosh with an empty memo, and again after that frame was composed
+- **THEN** the first answer holds the history at the codec size (the event before included) and no frame at the layer's ordinary quality; the second holds only the next frame's own source
+- **TEST** t1248 (`src/libs/kt-engine/tests/stream_stage.rs`)
+
+#### Scenario: A person moshes a cut in the editor
+- **PATH** add two clips back to back on one track → select the second → FX → pick Datamosh "Cut mosh" → play across the cut → the first clip's picture keeps moving with the second clip's motion after the cut
+- **WHEN** the live scenario runs on our fixtures
+- **THEN** the frames after the cut differ from the same frames without the effect, and the screenshots of each step are saved
+- **TEST** live `datamosh.py` (`src/scripts/live/datamosh.py`, via `src/scripts/live-check.sh`)
+
+### Requirement: The mask rasterizer — shapes, antialiasing, feather with falloff, expansion, modes
+One kt-fx function SHALL turn an ordered mask list, an affine "reference-normalized → raster px" and a
+raster size into an 8-bit coverage: a rectangle (with corner roundness), an ellipse and a closed cubic
+Bézier path are flattened deterministically; the inside is the nonzero winding at pixel centres; a
+signed distance to the contour is computed in a band around it; one mask's coverage is a one-pixel
+ramp without feather and `falloff(clamp(0.5 + d/feather))` with it (centred on the contour; falloff
+linear or smoothstep), where `d` includes the expansion; then invert and opacity. Masks SHALL combine
+top to bottom by the soft Boolean forms: add `a+m−am`, subtract `a(1−m)`, intersect `am`, difference
+`a+m−2am`, starting from empty — or from the full frame when the first mask subtracts or intersects.
+Feather and expansion are in px of the reference frame and scale with the raster, so a mask covers the
+same region at every preview quality. Only exact IEEE operations and the frozen math are used, so the
+coverage is the same on every platform; a bounded memo keyed by the static masks, the affine and the
+size MUST be invisible to the bytes.
+Why: F-MSK-001 — feather and expansion are the classic controls; resolution invariance is why the
+coordinates are normalized; determinism is invariant 11.
+
+#### Scenario: Shapes cover their area with antialiased edges
+- **WHEN** a rectangle, a rotated rectangle, a rounded rectangle, an ellipse and a Bézier path approximating a circle are rasterized without feather
+- **THEN** the coverage sum equals the analytic area within 0.5 %; edge pixels take intermediate values, pixels a pixel away from the contour are 0 or 255; the Bézier circle matches the ellipse within one LSB on 99 % of pixels
+- **TEST** t1266 (`src/libs/kt-fx/tests/masks.rs`)
+
+#### Scenario: Feather, falloff, expansion and resolution
+- **WHEN** a disc is rasterized with feather 0/20/80 px, both falloffs, expansion −10/+10 px, and the same mask at 1/4 and at 1/1 of the raster
+- **THEN** the profile across the edge is monotonic, the 50 % level stays on the contour (moved by the expansion exactly), a wider feather is wider, smooth is steeper in the middle than linear; the 1/4 raster equals the 1/1 raster box-downsampled within 3 LSB
+- **TEST** t1267 (`src/libs/kt-fx/tests/masks.rs`)
+
+#### Scenario: Modes, invert and opacity
+- **WHEN** two overlapping hard rectangles are combined in each mode, in both orders, with the first one inverted, and at 50 % opacity
+- **THEN** the four regions (A only, B only, both, none) take the truth-table values of OR, AND NOT, AND, XOR; a first subtract/intersect starts from the full frame; invert swaps 0 and 255; opacity scales the mask's own contribution
+- **TEST** t1268 (`src/libs/kt-fx/tests/masks.rs`)
+
+#### Scenario: The coverage is deterministic and the memo is invisible
+- **WHEN** a fixed scene of masks is rasterized twice, with and without the memo
+- **THEN** the bytes equal a hash frozen in the test, and are equal with and without the memo
+- **TEST** t1269 (`src/libs/kt-fx/tests/masks.rs`)

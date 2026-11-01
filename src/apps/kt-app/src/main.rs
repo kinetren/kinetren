@@ -39,6 +39,10 @@ mod journal;
 #[cfg(test)]
 mod layout_tests;
 mod lessons;
+#[cfg(test)]
+mod mask_tests;
+mod maskctl;
+mod masks;
 mod meters;
 mod morpher_editor;
 mod project_lock;

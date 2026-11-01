@@ -118,6 +118,7 @@ fn project(fx: Vec<FxInstance>) -> Project {
         geometry: Default::default(),
         geometry_pos: 0,
         geometry_auto: Vec::new(),
+        masks: Default::default(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,

@@ -50,6 +50,7 @@ fn run(engine: &dyn VideoGpuExec, id: u64, fx: Vec<FxInstance>, alpha: bool) -> 
         blend: None,
         blend_mode: kt_model::BlendMode::Normal,
         lead: None,
+        masks: Vec::new(),
     };
     let p = FramePlan {
         t: Tick(90_000),
@@ -133,6 +134,7 @@ fn camera_isp_gpu_cost_per_1080p_frame() {
             blend: None,
             blend_mode: kt_model::BlendMode::Normal,
             lead: None,
+            masks: Vec::new(),
         };
         let p = FramePlan {
             t: Tick(90_000 + id as i64),

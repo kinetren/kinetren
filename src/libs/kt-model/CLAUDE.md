@@ -610,3 +610,22 @@ shift if a variant were inserted in the middle.
   are forbidden by the owner ("indexable in git").
 - **Passthrough (`otio`) is written AS IS** — its order belongs to the exchange file; the determinism of the `HashMap` fields is the responsibility of whoever builds this JSON (`Retained::to_json`).
 - Tests: t811 (the round trip), t810 (an instance — a reference, not a body), t812 (the version and the doors), t822 (git).
+
+## Shape masks (shape-masks, kkt-26.11.01 S1)
+
+- **One type, three owners**: `ClipEvent.masks: EventMasks { picture, slots }` (slot lists parallel
+  to `fx`, shorter = none — `SetFx` trims them like `fx_auto`) and `Track.masks`. Commands
+  `SetMasks` (the whole `EventMasks`) and `SetTrackMasks`; one validator `check_event_masks` /
+  `check_track_mask_list` for `validate` and `check_on`.
+- **Coordinates are normalized** to the owner's reference frame; shapes are generated in reference
+  PIXELS (`Mask::cubics`), so rotation and circles are aspect-correct. Feather and expansion are
+  mask px (see `kt_fx::mask::px_of`).
+- **The passport is built per mask** (`Mask::specs`): a vertex row is `v<id>.x` by its STABLE id — a
+  deletion never renames another vertex, so its curves and links stay. Curves live in `Mask.auto`
+  (the owner's material domain); `write_gesture` is the only writer of a gesture (an animated path
+  keys every shape row), `insert_vertex` keys the new vertex at every path key.
+- **Links**: `ParamOwner::Mask { slot, mask }`, text `mask<id>` / `fx<N>.mask<id>`; mask curves are
+  walked by `check_links`/`resolve_derived`/`read_at`. A track mask is static
+  (`TrackCurvesUnsupported`).
+- **The file version is set by content**: `project_file::version_for` writes 2 only when
+  `Project::has_masks()`; a maskless file is format 1 byte for byte. Tests t1260–t1265, t1275.

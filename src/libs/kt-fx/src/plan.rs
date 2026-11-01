@@ -84,7 +84,7 @@ fn run_window_end(
             }
             j += 1;
             end = j; // the window always ends with a geo step
-        } else if f.is_audio() || is_pointwise(f) || is_geo(f) {
+        } else if f.is_audio() || f.is_stream() || is_pointwise(f) || is_geo(f) {
             // audio, internal per-pixel ops and the IDENTITY “Geometry” node are
             // transparent: they enter the window only if more geo follows
             j += 1;
@@ -204,7 +204,7 @@ fn segment(
         }
         if f.is_layer_mix() {
             raw.push(RawKind::Mix { idx });
-        } else if !f.is_audio() && !is_geo(f) {
+        } else if !f.is_audio() && !f.is_stream() && !is_geo(f) {
             // barrier: a non-local effect or a leading/trailing per-pixel one
             raw.push(RawKind::Barrier { idx });
         } // audio FX and the identity “Geometry” node are transparent

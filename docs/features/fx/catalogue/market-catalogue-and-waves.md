@@ -58,10 +58,10 @@ listed.
   `stereo_width`, `tremolo`, `auto_pan`, `vibrato`, `chorus`, `flanger`, `phaser`, `delay`,
   `compressor`, `gate`, `limiter`, `pitch_shift`.
 - **Layer marker (1):** `layer_mix`.
-- **Video effects (28):** `color_grade`, `duotone`, `posterize`, `vignette`, `corner_pin`, `sharpen`,
+- **Video effects (29):** `color_grade`, `duotone`, `posterize`, `vignette`, `corner_pin`, `sharpen`,
   `pixelate`, `chromatic_aberration`, `radial_blur`, `drop_shadow`, `halftone`, `camera_isp`, `lens_distort`,
   `twirl`, `ripple`, `kaleidoscope`, `cylinder3d`, `geometry`, `cam_motion`, `mirror`, `blur`,
-  `greenscreen`, `edges`, `noise`, `vhs`, `glow`, `event_grid`, `pan3d`.
+  `greenscreen`, `edges`, `noise`, `datamosh`, `vhs`, `glow`, `event_grid`, `pan3d`.
 - **Transitions (33):** `crossfade`, `wipe`, `iris`, `clock`, `barn`, `luma`, `push`, `slide`,
   `zoom`, `spin`, `whip`, `blur_dissolve`, `pixelate`, `glitch`, `flash`, `dip`, `blinds`,
   `checker`, `blocks`, `spiral`, `split`, `squeeze`, `stretch`, `swap`, `shake`, `film_burn`,

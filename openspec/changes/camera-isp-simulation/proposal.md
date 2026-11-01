@@ -41,8 +41,8 @@ finished frame (F-FX-010).
   equalisation, blooming/clipping ↔ highlight and purple-fringe suppression, row/column noise ↔
   optical-black correction, shot/read noise ↔ raw NR by the noise model, demosaic false colour ↔
   false-colour suppression); `view` shows the picture after any stage. The temporal NR (3DNR, the
-  owner's choice: the real recursive filter, GPU-accelerated) waits for the stream stage of
-  `datamosh-codec-path`.
+  owner's choice: the real recursive filter, GPU-accelerated) is its own change,
+  `temporal-barrier-3dnr` (a temporal-barrier contract; the stream class is a CPU-only source stage).
 - The effect window draws the kind as its pipeline: one block per stage with its bypass and
   rows, using the shared parameter widgets.
 

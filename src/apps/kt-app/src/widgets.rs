@@ -40,6 +40,9 @@ fn unit_suffix(u: ParamUnit) -> &'static str {
 /// Noise effect and the FONT SIZE of a title. The global map lied about this, so
 /// the area is asked first, and only then the common table.
 pub fn param_label_scoped(scope: kt_model::ParamScope, name: &str) -> String {
+    if scope == kt_model::ParamScope::Mask {
+        return crate::masks::row_label(name);
+    }
     if scope == kt_model::ParamScope::Generator
         && let Some(s) = generator_param_label(name)
     {
@@ -394,6 +397,20 @@ pub fn param_label(name: &str) -> String {
         "turns" => tr(k::fxp::TURNS),
         "blur" => tr(k::fxp::BLUR),
         "rgb_shift" => tr(k::fx::RGB_SHIFT),
+        // the datamosh codec's rows (datamosh-codec-path): codec quantities, named as such
+        "gop" => tr(k::fxp::GOP),
+        "qp" => tr(k::fxp::QP),
+        "search" => tr(k::fxp::SEARCH),
+        "before" => tr(k::fxp::BEFORE),
+        "mosh" => tr(k::fxp::MOSH),
+        "reset" => tr(k::fxp::RESET),
+        "bloom" => tr(k::fxp::BLOOM),
+        "freeze" => tr(k::fxp::FREEZE),
+        "mv_scale" => tr(k::fxp::MV_SCALE),
+        "mv_rotate" => tr(k::fxp::MV_ROTATE),
+        "residual" => tr(k::fxp::RESIDUAL),
+        "loss" => tr(k::fxp::LOSS),
+        "seed" => tr(k::fxp::SEED),
         "bleed" => tr(k::fxp::BLEED),
         "strength" => tr(k::fx::STRENGTH),
         "cols" => tr(k::fx::COLUMNS),
@@ -1785,6 +1802,10 @@ pub struct ChainChanged {
     pub master: bool,
     /// The pinned slot was touched (the checkbox of the morph slot).
     pub head: bool,
+    /// A slot was moved / removed (strip indices) — for an owner keeping its own list parallel
+    /// to the chain (the slot masks, shape-masks).
+    pub moved: Option<(usize, usize)>,
+    pub removed: Option<usize>,
 }
 
 impl ChainChanged {
@@ -2098,6 +2119,7 @@ pub fn chain_strip(
                         fx: f.clone(),
                         bypass: edit.bypass[i],
                         curves: edit.auto.get(i).cloned().unwrap_or_default(),
+                        masks: Vec::new(),
                     })
                     .collect(),
                 src_in,
@@ -2122,6 +2144,7 @@ pub fn chain_strip(
                         fx: f.clone(),
                         bypass: edit.bypass[i],
                         curves: edit.auto.get(i).cloned().unwrap_or_default(),
+                        masks: Vec::new(),
                     })
                     .collect(),
                 src_in,
@@ -2166,8 +2189,10 @@ pub fn chain_strip(
         *edit.selected = ChainSel::Fx(to);
         ch.fx = true;
         ch.bypass = true;
+        ch.moved = Some((from, to));
     }
     if let Some(i) = remove {
+        ch.removed = Some(i);
         edit.fx.remove(i);
         edit.bypass.remove(i);
         if i < edit.auto.len() {

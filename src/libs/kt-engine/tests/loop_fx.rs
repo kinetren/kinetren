@@ -84,6 +84,7 @@ fn clip(id: u64, media: u64, lane: u32, start: i64, dur: i64, src_in: i64) -> Cl
         geometry: Default::default(),
         geometry_pos: 0,
         geometry_auto: Vec::new(),
+        masks: Default::default(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Audio,

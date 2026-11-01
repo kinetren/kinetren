@@ -14,7 +14,7 @@ pub const KT_NS: &str = "kt";
 /// are byte-stable and open in old builds.
 /// One Pan3d does NOT bump the version: an unknown effect
 /// degrades into foreign-passthrough.
-pub const KT_META_VERSION: u32 = 13;
+pub const KT_META_VERSION: u32 = 14;
 pub const KT_META_V1: u32 = 1;
 /// Cameras and camera tracks (R.29).
 pub const KT_META_V2: u32 = 2;
@@ -80,6 +80,10 @@ pub const KT_META_V12: u32 = 12;
 /// and would erase the layer together with its keys (“formula without keys”) — silently.
 /// Raised ONLY by content.
 pub const KT_META_V13: u32 = 13;
+/// shape-masks: masks of events, effect slots and tracks. An old build would open the file
+/// with every mask silently gone (the effect over the whole frame) — a refusal is more honest.
+/// Raised ONLY by content.
+pub const KT_META_V14: u32 = 14;
 
 // ---- typed metadata.kt envelopes (otio-types approach) -----------------
 // Structurally small things get OWN types (model evolution does not silently move the file schema);
@@ -204,6 +208,9 @@ pub struct KtTrack {
     pub blend: kt_model::BlendMode,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fx_off: bool,
+    /// The track's masks (shape-masks, v14).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub masks: Vec<kt_model::Mask>,
 }
 
 fn is_zero_u64(v: &u64) -> bool {
@@ -415,6 +422,9 @@ pub struct KtClipMeta {
     pub geometry_pos: usize,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub geometry_auto: Vec<kt_model::ParamCurve>,
+    /// Masks of the picture and of the effect slots (shape-masks, v14).
+    #[serde(default, skip_serializing_if = "kt_model::EventMasks::is_empty")]
+    pub masks: kt_model::EventMasks,
     /// Forward mercy (R.29): unknown kt fields of future versions.
     #[serde(default, flatten)]
     pub extra: Map<String, Value>,

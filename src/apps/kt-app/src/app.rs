@@ -631,6 +631,10 @@ pub struct KtApp {
     pub geom_ctl: crate::geomctl::GeomMode,
     /// The controls reached gesture parsing in this frame (the scene is not degenerate).
     pub geom_ctl_drawn: bool,
+    /// Mask editing on the preview (shape-masks); `None` — the R.64 frame rules the picture.
+    pub mask_ctl: Option<crate::maskctl::MaskEdit>,
+    /// The masks reached the overlay in this frame (a diagnostic, like `geom_ctl_drawn`).
+    pub mask_ctl_drawn: bool,
     /// Version of the CONTENT of the sources at the last composite
     /// (R.53, item 412): the preview key must account for it, otherwise an edit of
     /// parameters with a still cursor does not reach the screen.
@@ -988,6 +992,8 @@ impl KtApp {
             geom_drag: None,
             geom_ctl: Self::default_geom_mode(None),
             geom_ctl_drawn: false,
+            mask_ctl: None,
+            mask_ctl_drawn: false,
             preview_content: 0,
             preview_project: 0,
             incomplete_since: None,
@@ -1266,6 +1272,8 @@ impl KtApp {
             geom_drag: None,
             geom_ctl: Self::default_geom_mode(None),
             geom_ctl_drawn: false,
+            mask_ctl: None,
+            mask_ctl_drawn: false,
             preview_content: 0,
             preview_project: 0,
             incomplete_since: None,
@@ -6173,6 +6181,7 @@ impl KtApp {
                 geometry: Default::default(),
                 geometry_pos: 0,
                 geometry_auto: Vec::new(),
+                masks: Default::default(),
                 id,
                 link_group: group,
                 kind: k,
@@ -6342,6 +6351,7 @@ impl KtApp {
                 geometry: Default::default(),
                 geometry_pos: 0,
                 geometry_auto: Vec::new(),
+                masks: Default::default(),
                 id: ClipId(next_id),
                 link_group: group,
                 kind,
@@ -6511,47 +6521,12 @@ impl KtApp {
         // from a hint — the preview was silent on the right button. The item is exactly one
         // and exactly the one the gesture performs: zero new keys.
         {
-            let detached = self.preview_detached;
-            let mut toggle = false;
-            let mut picked = false;
-            let mut cycle = false;
-            let mode_now = self.geom_ctl;
-            resp.clone().context_menu(|ui| {
-                picked = true;
-                // FRAME CONTROLS (R.64) — as the first item: this is the thing
-                // for which people most often come to the preview with the right button.
-                // One item for all three states: exactly one set is active
-                // (the Resolve rule), and it has one switch.
-                let r = ui.button(crate::tf!(
-                    k::geomctl::TOGGLE,
-                    crate::geomctl::mode_name(mode_now.next())
-                ));
-                crate::widgets::field_probe::note("geom.toggle", r.rect);
-                if r.clicked() {
-                    cycle = true;
-                    ui.close();
-                }
-                ui.separator();
-                let label = if detached {
-                    tr(k::menu::view::ATTACH_PREVIEW)
-                } else {
-                    tr(k::menu::view::DETACH_PREVIEW)
-                };
-                if ui.button(label).clicked() {
-                    toggle = true;
-                    ui.close();
-                }
-            });
-            if cycle {
-                self.cycle_geom_mode();
-            }
-            if picked {
-                self.set_panel_target(crate::ctx_menu::PanelTarget::Preview);
-            }
-            if toggle {
-                self.preview_detached = !detached;
-                self.dirty_ui = true;
-            }
+            // ONE menu body for the picture and for the frame over it (`preview_menu_ui`):
+            // with the R.64 frame on, a right click over the picture lands on the frame
+            let mut pick = PreviewMenuPick::default();
+            let (detached, mode_now) = (self.preview_detached, self.geom_ctl);
+            resp.clone().context_menu(|ui| Self::preview_menu_ui(ui, detached, mode_now, &mut pick));
+            self.apply_preview_pick(pick);
         }
         // items 10–11 of round 7: a single click (deferred for the double-click window) =
         // play/pause; a double = detach/attach. It also works in the separate preview
@@ -6692,7 +6667,11 @@ impl KtApp {
             self.preview_img_rect = img_rect;
             // the picture itself — the README's before/after crops use it
             crate::widgets::field_probe::note("preview.frame", img_rect);
-            self.geometry_controls(ui, &painter, img_rect, (q.width, q.height));
+            // MASKS (shape-masks) take the picture while they are edited — one set of
+            // handles at a time; otherwise the frame, from this same single place
+            if !self.mask_controls(ui, &painter, img_rect, (q.width, q.height)) {
+                self.geometry_controls(ui, &painter, img_rect, (q.width, q.height));
+            }
             // the show button — AFTER the frame: egui gives the pointer to the last
             // registered interactor, and the frame body (moving) covers the whole frame —
             // register the button earlier, and a click on it would go to the move
@@ -7407,7 +7386,9 @@ impl KtApp {
         if space_up {
             self.on_space_released();
         }
-        let k = ctx.input(|i| Keys {
+        // MASK EDITING takes Enter, Backspace and Delete on the preview first (shape-masks)
+        let (mask_del, mask_enter) = self.mask_keys(ctx);
+        let mut k = ctx.input(|i| Keys {
             // not on Alt either: Alt+S is solo, and it used to split the event
             // under the playhead in the same frame (t868)
             cut: i.key_pressed(egui::Key::S) && !i.modifiers.ctrl && !i.modifiers.alt,
@@ -7476,6 +7457,12 @@ impl KtApp {
         if k.cut {
             self.cut_action();
         }
+        if mask_del {
+            k.del = false;
+        }
+        if mask_enter {
+            k.enter_nest = false;
+        }
         if k.del {
             self.delete_action();
         }
@@ -7510,7 +7497,7 @@ impl KtApp {
         if k.loop_toggle {
             self.toggle_loop();
         }
-        if k.esc {
+        if k.esc && !self.mask_escape() {
             self.escape_action();
         }
         // Enter — a CASCADE on the selected nested item (R.56, item 451): the first
@@ -9644,6 +9631,91 @@ pub(crate) fn safe_zone_rects(img: egui::Rect) -> [egui::Rect; 2] {
     [inset(0.05), inset(0.10)]
 }
 
+/// What the preview's right-click menu asked for (one body, two hosts: the picture and the R.64
+/// frame over it).
+#[derive(Default)]
+pub(crate) struct PreviewMenuPick {
+    picked: bool,
+    cycle: bool,
+    toggle: bool,
+    mask_tool: Option<crate::maskctl::MaskTool>,
+}
+
+impl KtApp {
+    /// The preview's right-click menu body.
+    pub(crate) fn preview_menu_ui(
+        ui: &mut egui::Ui,
+        detached: bool,
+        mode_now: crate::geomctl::GeomMode,
+        pick: &mut PreviewMenuPick,
+    ) {
+        pick.picked = true;
+        // FRAME CONTROLS (R.64) — as the first item: this is the thing
+        // for which people most often come to the preview with the right button.
+        // One item for all three states: exactly one set is active
+        // (the Resolve rule), and it has one switch.
+        let r = ui.button(crate::tf!(
+            k::geomctl::TOGGLE,
+            crate::geomctl::mode_name(mode_now.next())
+        ));
+        crate::widgets::field_probe::note("geom.toggle", r.rect);
+        if r.clicked() {
+            pick.cycle = true;
+            ui.close();
+        }
+        // MASKS of the selected event's picture (shape-masks): where a person
+        // looks for them — on the picture itself
+        let mr = ui.menu_button(tr(k::masks::MENU), |ui| {
+            for (tool, label, probe) in [
+                (crate::maskctl::MaskTool::Rect, tr(k::masks::RECT), None),
+                (crate::maskctl::MaskTool::Ellipse, tr(k::masks::ELLIPSE), None),
+                (crate::maskctl::MaskTool::Pen, tr(k::masks::PEN), Some("mask.menu.pen")),
+            ] {
+                let r = ui.button(label);
+                if let Some(probe) = probe {
+                    crate::widgets::field_probe::note(probe, r.rect);
+                }
+                if r.clicked() {
+                    pick.mask_tool = Some(tool);
+                    ui.close();
+                }
+            }
+        });
+        crate::widgets::field_probe::note("mask.menu", mr.response.rect);
+        crate::widgets::hint(&mr.response, tr(k::masks::MENU_HINT));
+        ui.separator();
+        let label = if detached {
+            tr(k::menu::view::ATTACH_PREVIEW)
+        } else {
+            tr(k::menu::view::DETACH_PREVIEW)
+        };
+        if ui.button(label).clicked() {
+            pick.toggle = true;
+            ui.close();
+        }
+    }
+
+    /// Apply what the preview's menu asked for.
+    pub(crate) fn apply_preview_pick(&mut self, pick: PreviewMenuPick) {
+        if pick.cycle {
+            self.cycle_geom_mode();
+        }
+        if let Some(tool) = pick.mask_tool {
+            match self.geom_target() {
+                Ok(id) => self.arm_mask_tool(crate::maskctl::MaskOwner::Picture(id), tool),
+                Err(why) => self.refuse(why.key()),
+            }
+        }
+        if pick.picked {
+            self.set_panel_target(crate::ctx_menu::PanelTarget::Preview);
+        }
+        if pick.toggle {
+            self.preview_detached = !self.preview_detached;
+            self.dirty_ui = true;
+        }
+    }
+}
+
 #[cfg(test)]
 mod repaint_tests {
     use super::repaint_delay;
@@ -10048,6 +10120,7 @@ mod repaint_tests {
             geometry: Default::default(),
             geometry_pos: 0,
             geometry_auto: Vec::new(),
+            masks: Default::default(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,
