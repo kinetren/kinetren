@@ -1658,6 +1658,36 @@ pub(crate) fn draw_video_fx_params(
             // in it — the pitch engine lives in the project settings
             ui.label(tr(k::fx::PITCH_ENGINE_NOTE));
         }
+        // the datamosh codec's choice and flag rows (datamosh-codec-path): the encoded height, the
+        // block size and the second input are combos, the vector swap a checkbox; the numeric rows
+        // stay in the shared grid
+        FxInstance::Plugin(p) if p.id == "datamosh" => {
+            let combo = |ui: &mut egui::Ui, p: &mut kt_model::PluginSlot, row: &str, label: &str, items: &[&str], ch: &mut crate::widgets::ParamsChanged| {
+                let mut v = p.get(row).unwrap_or(0.0) as usize;
+                ui.horizontal(|ui| {
+                    ui.label(label);
+                    egui::ComboBox::from_id_salt(("mosh", row)).selected_text(items[v.min(items.len() - 1)]).show_ui(ui, |ui| {
+                        for (i, l) in items.iter().enumerate() {
+                            if ui.selectable_value(&mut v, i, *l).changed() {
+                                p.set(row, i as f64);
+                                ch.base = true;
+                            }
+                        }
+                    });
+                });
+            };
+            combo(ui, p, "lines", tr(k::fx::MOSH_LINES), &["144", "240", "360", "480", "720", "1080"], &mut ch);
+            combo(ui, p, "block", tr(k::fx::MOSH_BLOCK), &["16×16", "8×8"], &mut ch);
+            let from = [tr(k::fx::MOSH_OWN), tr(k::fx::MOSH_ABOVE), tr(k::fx::MOSH_BELOW)];
+            combo(ui, p, "vectors_from", tr(k::fx::MOSH_FROM), &from, &mut ch);
+            ui.horizontal(|ui| {
+                let mut on = p.get("mv_swap") == Some(1.0);
+                if ui.checkbox(&mut on, tr(k::fx::MOSH_SWAP)).changed() {
+                    p.set("mv_swap", if on { 1.0 } else { 0.0 });
+                    ch.base = true;
+                }
+            });
+        }
         // noise's colour flag row (a plugin slot since plugin-api-barriers 4.2)
         FxInstance::Plugin(p) if p.id == "noise" => {
             ui.horizontal(|ui| {

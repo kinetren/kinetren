@@ -14,6 +14,7 @@ pub mod generator;
 pub mod geo;
 pub mod math;
 pub mod pixfont;
+pub mod stream;
 pub mod trans;
 
 use serde::{Deserialize, Serialize};
@@ -866,6 +867,10 @@ pub enum VideoClass {
     PointWise,
     /// Needs the neighbourhood — a pass of its own between the series.
     Barrier,
+    /// A SOURCE STAGE over a stream of frames (datamosh-codec-path, D2): the host runs its
+    /// `StreamKernel` in the plan's common code on the CPU and hands both executors the result as
+    /// the layer's pre-FX frame; the chain planner never sees the slot.
+    Stream,
 }
 
 /// Whether the kernel may be called from several threads at once (the preview, the export and
@@ -1402,6 +1407,10 @@ pub trait Plugin: Send + Sync {
     fn barrier(&self) -> Option<&dyn barrier::BarrierKernel> {
         None
     }
+    /// The stream kernel of a `VideoClass::Stream` plugin (datamosh-codec-path, D2).
+    fn stream(&self) -> Option<&dyn stream::StreamKernel> {
+        None
+    }
 }
 
 /// The tail of an audio plugin in frames — ONE home of the formula: the registry, the static
@@ -1480,6 +1489,18 @@ impl Registry {
                 }
                 if m.decl.lookahead.is_some() {
                     return refuse("a video kernel declares a look-ahead");
+                }
+                // a stream stage (datamosh-codec-path, D2/D4): a CPU source stage — its output
+                // reaches both executors as a pre-FX frame, so it has no GPU side of its own
+                if (m.decl.video_class == Some(VideoClass::Stream)) != p.stream().is_some() {
+                    return refuse(if p.stream().is_some() {
+                        "a stream kernel on a plugin that is not of the stream class"
+                    } else {
+                        "a stream plugin without a stream kernel"
+                    });
+                }
+                if m.decl.video_class == Some(VideoClass::Stream) && m.decl.gpu != Gpu::None {
+                    return refuse("a stream plugin offers a GPU side");
                 }
                 match (m.decl.video_class, m.decl.gpu) {
                     (None, _) => return refuse("a video effect without a planner class"),

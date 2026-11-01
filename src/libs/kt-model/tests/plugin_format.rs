@@ -888,3 +888,32 @@ fn t1056_the_core_keeps_no_barrier() {
         }
     }
 }
+
+/// t1247 (datamosh-codec-path): the datamosh slot's file text. Every row is omitted at its default,
+/// a choice row writes its KEY, the flag a bool, the structural integer rows integers, the rows that
+/// take curves (the quantiser, the gates, the vector ops, the residual, the loss) f64 — and the text
+/// reads back to itself. Frozen literally: a moved default or store changes files. The tops of the
+/// ranges are in the full form (GOP 0 = only at the cut and the resets, 64 px search, 300 frames
+/// before, 1080 lines, ±16 vector scale — the owner: "GOP is limited to 60 for some reason").
+#[test]
+fn t1247_the_datamosh_keeps_its_text() {
+    kt_plugins_builtin::install();
+    let full = r#"{"kind":"datamosh","gop":0,"qp":30.5,"lines":"1080","block":"8","search":64,"before":300,"mosh":1.0,"reset":1.0,"bloom":1.0,"freeze":1.0,"mv_scale":-12.5,"mv_rotate":30.0,"mv_swap":true,"vectors_from":"track_below","residual":0.25,"loss":0.1,"seed":42}"#;
+    let cases = [
+        (r#"{"kind":"datamosh"}"#, r#"{"kind":"datamosh"}"#),
+        (full, full),
+        // the defaults written out read as the empty form
+        (
+            r#"{"kind":"datamosh","gop":24,"qp":24.0,"lines":"360","block":"16","mosh":0.0,"mv_scale":1.0,"vectors_from":"own","residual":1.0}"#,
+            r#"{"kind":"datamosh"}"#,
+        ),
+    ];
+    for (input, want) in cases {
+        let f: FxInstance = serde_json::from_str(input).unwrap_or_else(|e| panic!("{input}: {e}"));
+        let out = serde_json::to_string(&f).unwrap();
+        assert_eq!(out, want, "{input}");
+        let again: FxInstance = serde_json::from_str(&out).unwrap();
+        assert_eq!(serde_json::to_string(&again).unwrap(), out);
+    }
+    assert!(FxInstance::all().iter().any(|f| f.tag() == "datamosh" && f.is_stream()), "the registry lists it as a stream stage");
+}

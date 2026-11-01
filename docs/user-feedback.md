@@ -2346,6 +2346,34 @@ effect; copying the part of an event under the region copies the whole event.
 - The preview (B9): zoom and pan the preview canvas past the frame, a rotation handle on the on-screen
   frame, and on-screen handles for effects that have a place on the frame.
 
+**D1 datamosh, the owner on the first build (2026-11-01, translated):**
+
+> I already noticed this effect has no curves.. and there is no way at all to reset the effect
+> (well, the GOP) — at least by keys on the curves, so I can place reset/inactivity marks by hand
+> on the beat; and that same GOP is limited to 60 for some reason, and probably the other
+> parameters are limited the same way
+
+> for the future I would also like to leave "programmatic handles (api)" so the effect can be
+> aimed at certain regions of interest — e.g. there will be an object detector and the user can
+> pick faces, or whole people — such a bridge is needed for the future, and say it in the docs
+
+**Taken as (`datamosh-codec-path`, before its merge):**
+- Every codec quantity that has a meaning per frame gets curves: the quantiser, the vector scale and
+  rotation, the residual kept, the block loss. The breakages become GATES drawn by curves, not frame
+  numbers: "mosh" (the I-frames are dropped while it is on — off is the inactivity), "reset" (a key
+  rising to on forces an intact I-frame there — the reset on the beat), "bloom" (the motion of the
+  gate's first P-frame repeats while on), "freeze" (the reference stops updating while on). Only what
+  shapes the stream's structure stays without curves: the encoded height, the block, the search
+  range, the GOP, the frames taken from the event before, the second input, the seed.
+- The caps were invented, not physical: GOP up to 600 frames and 0 = "only at the cut and on a
+  reset" (an endless GOP, as people mosh); the search range 64; the vector scale ±16; the frames
+  before the cut 300; 1080 lines. The quantiser keeps 0–51: that is the codec's own scale.
+- A region of interest is a contract now, not a feature: the stream stage takes a REGION per frame
+  (a coverage mask at the stream's size, with an identity for the memo); inside it the broken stream
+  is shown, outside the intact one. Today no host part gives a region (the whole frame moshes); a
+  detector (faces, people) or a mask will give it through this one door. Written down in the
+  `plugins` and `video-fx` designs.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

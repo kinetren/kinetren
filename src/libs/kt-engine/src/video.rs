@@ -18,6 +18,11 @@ use kt_time::{FpsGrid, Tick};
 
 use crate::video_plan::{Cam3d, FramePlan, LayerSrc, PlanLayer};
 
+#[path = "video_stream.rs"]
+mod stream;
+pub use stream::stream_memo;
+use stream::StreamStage;
+
 /// VIDEO-TRACK STAGE (R.62, change B): a track with a chain, a level ≠ 1
 /// or a blend mode ≠ Normal enters the plan as ONE nested layer —
 /// the composite of its events (transitions, overlaps, fades, event levels
@@ -137,6 +142,12 @@ struct VideoClip {
     /// (invariant 4): we ask for the last existing frame, not a non-existent one
     /// that the decoder would not return anyway.
     material_end: Option<Tick>,
+    /// A STREAM source stage (datamosh-codec-path): the slot's kernel runs on the source in
+    /// `layer_src`, and the order asks the stream it names. `None` — no stage (never on a reel).
+    stream: Option<Box<StreamStage>>,
+    /// The SOURCE'S revision for a stream's addresses: a generator's values live on the event,
+    /// not in its address, so an edit of them must reach the codec memo's keys. 0 for a file.
+    src_rev: u64,
 }
 
 // The clip's warp map moved to kt-model (R.39): one constructor for
@@ -389,6 +400,8 @@ pub struct VideoRenderer {
     nests: std::collections::HashMap<NestKey, VideoRenderer>,
     /// Video track stages (R.62). Empty — not a single extra branch in the plan.
     stages: Vec<VideoTrackStage>,
+    /// The memo of the stream stages (datamosh-codec-path, D3).
+    stream_memo: Arc<kt_plugin_api::stream::StreamMemo>,
 }
 
 /// Source frame(s) for moment `t`: the main one and, in “blend” mode,
@@ -617,6 +630,15 @@ fn clip_base_quality(clip: &VideoClip, quality: Quality) -> Quality {
 /// what is warmed is not what is read (t247d along the size axis, t312).
 fn clip_decode_quality(clip: &VideoClip, quality: Quality) -> Quality {
     scaled(clip_base_quality(clip, quality), clip_decode_scale(clip, quality))
+}
+
+/// The quality the clip's frames are ORDERED at: its decode quality, or the stream's size when a
+/// stream stage replaces the source (datamosh-codec-path, D5) — the coverage bars ask this.
+fn clip_order_quality(clip: &VideoClip, quality: Quality) -> Quality {
+    match (&clip.stream, clip.nest) {
+        (Some(st), None) => stream::stream_quality(clip, st, quality),
+        _ => clip_decode_quality(clip, quality),
+    }
 }
 
 /// The leading “Geometry” node goes into the engine chain (R.62). The position —
@@ -952,6 +974,7 @@ impl VideoRenderer {
                 // the model's slot indices do not move, and the engine's chain is
                 // one sequence, as in Vegas.
                 let (fx, auto) = materialize_lead(c, fx, auto);
+                let stream = StreamStage::of(&fx).map(Box::new);
                 let warp = kt_model::clip_warp_of(&fx, &auto, c.source_in, c.duration, c.reversed);
                 let nest = project
                     .sequence(c.media)
@@ -1040,6 +1063,12 @@ impl VideoRenderer {
                     material_end: (nest.is_none() && !procedural)
                         .then(|| facts.lengths.get(&addr).copied())
                         .flatten(),
+                    stream: if nest.is_none() { stream } else { None },
+                    src_rev: if procedural {
+                        xxhash_rust::xxh3::xxh3_64(format!("{:?}|{:?}", c.r#gen, c.gen_auto).as_bytes())
+                    } else {
+                        0
+                    },
                 }
             })
             .collect();
@@ -1112,6 +1141,7 @@ impl VideoRenderer {
         // R.28; before that the v1 rule “on top is the one with the smaller start”
         // applied, and the timeline strip diverged with it). Test 162.
         clips.sort_by_key(|c| (std::cmp::Reverse(c.lane), c.start.0));
+        stream::link_stages(&mut clips);
         // Subtrees: one renderer for EACH reel in use.
         // The depth limit is held by the model (`validate`); here it is a safeguard
         // against a hostile file.
@@ -1143,6 +1173,31 @@ impl VideoRenderer {
             project_size: (project.settings.width, project.settings.height),
             nests,
             stages,
+            stream_memo: stream_memo().clone(),
+        }
+    }
+
+    /// The memo the stream stages of this renderer (and of its reels) keep their codec results
+    /// in (datamosh-codec-path, D3): the preview's shared one by default; an export gives its own.
+    pub fn set_stream_memo(&mut self, memo: Arc<kt_plugin_api::stream::StreamMemo>) {
+        for sub in self.nests.values_mut() {
+            sub.set_stream_memo(memo.clone());
+        }
+        self.stream_memo = memo;
+    }
+
+    /// Run every stream stage active at `t` as far as the cached frames allow (the export's
+    /// pre-roll, D6): the results stay in the memo, so the next `layers_at` names less.
+    pub fn stream_advance(&self, cache: &BurstCache, t: Tick, quality: Quality) {
+        for c in self.clips.iter().filter(|c| c.active_at(t)) {
+            match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
+                (Some(st), None) => {
+                    let cs = stream::ClipStream::new(c, st, &self.grid, quality, Some(cache));
+                    let _ = st.kernel().render(&st.values, &cs, cs.pos(t), &self.stream_memo, &mut Vec::new());
+                }
+                (_, Some(sub)) => sub.stream_advance(cache, clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality)),
+                _ => {}
+            }
         }
     }
 
@@ -1187,6 +1242,14 @@ impl VideoRenderer {
                     nest_blend(c, blend_footage),
                     out,
                 ),
+                // a STREAM stage replaces the source: the order is the stream frames its kernel
+                // still needs at the codec's size, and nothing at the ordinary quality (D5)
+                None if c.stream.is_some() => {
+                    let st = c.stream.as_deref().expect("checked");
+                    let cs = stream::ClipStream::new(c, st, &self.grid, quality, None);
+                    let needs = st.kernel().needs(&st.values, &cs, cs.pos(t), &self.stream_memo);
+                    cs.order(&needs, out);
+                }
                 None => {
                     let dq = clip_decode_quality(c, quality);
                     out.push((c.media, a, dq));
@@ -1221,7 +1284,7 @@ impl VideoRenderer {
     /// clip (a morpher layer could cut the source into pieces with different
     /// chains, and hence different scale steps).
     pub fn video_decode_qualities(&self, quality: Quality) -> Vec<(kt_model::ClipId, Quality)> {
-        self.clips.iter().map(|c| (c.id, clip_decode_quality(c, quality))).collect()
+        self.clips.iter().map(|c| (c.id, clip_order_quality(c, quality))).collect()
     }
 
     /// Maximum decode quality among the clips (R.46, item 318): the cache and lookahead
@@ -1231,6 +1294,7 @@ impl VideoRenderer {
         self.clips
             .iter()
             .map(|c| clip_decode_quality(c, quality))
+            .chain(self.clips.iter().filter(|c| c.stream.is_some()).map(|c| clip_order_quality(c, quality)))
             .chain(self.clips.iter().filter_map(|c| {
                 let sub = self.nests.get(&c.nest?)?;
                 Some(sub.max_decode_quality(clip_decode_quality(c, quality)))
@@ -1411,6 +1475,7 @@ impl VideoRenderer {
             project_size: self.project_size,
             nests: &self.nests,
             stages: &self.stages,
+            stream_memo: &self.stream_memo,
             memoize: true,
             blend_footage: false,
         };
@@ -1440,6 +1505,7 @@ impl VideoRenderer {
             project_size: self.project_size,
             nests: &self.nests,
             stages: &self.stages,
+            stream_memo: &self.stream_memo,
             memoize: false,
             blend_footage: false,
         };
@@ -1508,6 +1574,7 @@ impl VideoRenderer {
             project_size: self.project_size,
             nests: &self.nests,
             stages: &self.stages,
+            stream_memo: &self.stream_memo,
             memoize: true,
             blend_footage: false,
         };
@@ -1536,6 +1603,9 @@ struct PlanCtx<'a> {
     /// continuous time. At the root it is always `false` — the bytes of GOLDEN_VIDEO
     /// rest on this.
     blend_footage: bool,
+    /// The memo of the stream stages (datamosh-codec-path, D3): the root renderer's, inherited
+    /// downward, so an export's private memo serves its reels too.
+    stream_memo: &'a kt_plugin_api::stream::StreamMemo,
 }
 
 /// The chain's camera: pinned by id, otherwise the active one by `t`, otherwise the default
@@ -1619,8 +1689,17 @@ fn layer_src<'a>(
     // The frame is taken TOGETHER with the content serial number (R.53, item 409):
     // the address `(source, cache_idx, size)` of a new generator frame is the same
     // as that of the old one, and without the number the GPU would return the old texture.
+    // A STREAM stage (datamosh-codec-path, D1/D4) replaces the source: its kernel decodes the
+    // event's stream HERE, in the plan's common code, and both executors receive those bytes. The
+    // frame at the ordinary decode quality is not read — it is not ordered either (D5).
+    let streamed = match (&clip.stream, clip.nest) {
+        (Some(st), None) => Some(stream::run(clip, st, ctx.grid, cache, ctx.stream_memo, quality, dq, t, src_pts)),
+        _ => None,
+    };
     let (frame, content) = if clip.nest.is_some() {
         (None, 0) // the subtree's input is assembled below
+    } else if let Some((f, key)) = &streamed {
+        (f.clone(), *key)
     } else {
         match cache.get_video_stamped(source, Some(dq), cache_idx) {
             Some((f, serial)) => (Some(f), serial),
@@ -1642,6 +1721,8 @@ fn layer_src<'a>(
     );
     let (frame, blend) = match pair {
         None => (frame, None),
+        // a stream stage reads its own stream; frame blending does not apply to it
+        Some(_) if streamed.is_some() => (frame, None),
         Some((pts, k)) => {
             let idx = video_cache_idx(pts);
             let (nb, nb_content) = match cache.get_video_stamped(source, Some(dq), idx) {
@@ -1689,6 +1770,7 @@ fn layer_src<'a>(
                 project_size: sub.project_size,
                 nests: &sub.nests,
                 stages: &sub.stages,
+                stream_memo: ctx.stream_memo,
                 memoize: ctx.memoize,
                 blend_footage: blend,
             };
@@ -1722,7 +1804,12 @@ fn layer_src<'a>(
         src_scale,
         input,
         fx,
-        fx_hash: clip.fx_hash,
+        // the decoded stream's key joins the post-FX memo's: the same chain over another mosh is
+        // another picture (the stream reads frames of OTHER events, which `fx_hash` does not see)
+        fx_hash: match &streamed {
+            Some((_, key)) => kt_plugin_api::stream::mix(clip.fx_hash, *key),
+            None => clip.fx_hash,
+        },
         u,
         cam3d,
         blend,
@@ -1758,6 +1845,7 @@ fn track_stage_layer<'a>(
         blend_footage: ctx.blend_footage,
         // the stage does NOT assemble itself
         stages: &[],
+        stream_memo: ctx.stream_memo,
     };
     let plan = build_plan(clips, &sub_ctx, cache, t, quality, memoize);
     // revision of the sub-composite: the track's properties plus the contents of its events

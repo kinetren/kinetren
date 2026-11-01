@@ -273,6 +273,9 @@ pub fn render_raw_video_range_with(
         max_video_bytes: EXPORT_VIDEO_CACHE_BYTES,
     });
     let mut video = VideoRenderer::new_with_facts(project, &facts);
+    // an export owns its stream memo (datamosh-codec-path, D3): a preview on another thread cannot
+    // evict what this export is about to read
+    video.set_stream_memo(std::sync::Arc::new(kt_plugin_api::stream::StreamMemo::new(64 << 20)));
     let (mut t, end) = match range {
         Some((a, b)) => (video.grid.align_floor(a), b),
         None => (Tick(0), project_range(project)),
@@ -341,6 +344,7 @@ pub fn render_raw_video_range_with(
                 return Err(std::io::Error::other("cancelled"));
             }
             progress(stats.video_frames);
+            stream_preroll(&video, &cache, &mut src, t, quality);
             let complete = match &backends.video_gpu {
                 Some(gpu) => {
                     let plan = video.frame_plan(&cache, t, quality);
@@ -358,6 +362,47 @@ pub fn render_raw_video_range_with(
         }
     }
     Ok(stats)
+}
+
+/// The stream stages' PRE-ROLL before frame `t` (datamosh-codec-path, D6): while the frame names
+/// source frames the cache lacks (a range starting inside a mosh, an evicted memo entry), decode the
+/// EARLIEST of them in a batch bounded by the export cache and advance the codecs over it. Every
+/// batch leaves its results in the memo, so the loop ends; a frame no source can give ends it too.
+fn stream_preroll(
+    video: &VideoRenderer,
+    cache: &BurstCache,
+    src: &mut std::collections::HashMap<MediaId, Box<dyn MediaSource>>,
+    t: Tick,
+    quality: Quality,
+) {
+    let mut last: Option<Vec<(MediaId, Tick, Quality)>> = None;
+    loop {
+        let missing: Vec<(MediaId, Tick, Quality)> = video
+            .layers_at(t, quality)
+            .into_iter()
+            .filter(|(m, pts, q)| cache.get_video(source_id(*m), Some(*q), video_cache_idx(*pts)).is_none())
+            .collect();
+        if missing.is_empty() || last.as_ref() == Some(&missing) {
+            return;
+        }
+        let frame_bytes = missing.iter().map(|(_, _, q)| q.width as usize * q.height as usize * 4).max().unwrap_or(1);
+        let batch = (EXPORT_VIDEO_CACHE_BYTES / 2 / frame_bytes.max(1)).max(1);
+        let mut per_src: std::collections::BTreeMap<(MediaId, Quality), Vec<Tick>> = Default::default();
+        for &(m, pts, q) in missing.iter().take(batch) {
+            per_src.entry((m, q)).or_default().push(pts);
+        }
+        for ((m, q), mut keys) in per_src {
+            let Some(s) = src.get_mut(&m) else { continue };
+            keys.sort();
+            keys.dedup();
+            let sid = source_id(m);
+            let _ = s.read_video_span(&keys, Some(q), &mut |k, frame| {
+                cache.insert_video(sid, Some(q), video_cache_idx(k), frame.into());
+            });
+        }
+        video.stream_advance(cache, t, quality);
+        last = Some(missing);
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

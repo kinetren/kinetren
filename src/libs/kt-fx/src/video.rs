@@ -411,6 +411,8 @@ pub fn has_video_fx_in(
     fx.iter().any(|f| {
         !f.is_audio()
             && !f.is_layer_mix()
+            // a stream stage ran on the source before the chain (datamosh-codec-path, D1)
+            && !f.is_stream()
             && !crate::geom::geometry_is_identity_in(f, lead, out_w, out_h)
     })
 }
