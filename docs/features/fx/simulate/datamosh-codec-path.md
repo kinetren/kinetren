@@ -1,18 +1,18 @@
 ---
 id: F-FX-011
 title: Datamosh: a motion-compensated codec broken on purpose
-status: accepted
+status: done
 priority: B
 cost: L
 category: fx/simulate
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, capcut-2026]
-we_have: no
+we_have: yes
 crates: [kt-plugin-api, kt-engine]
 invariants: [4, 7, 11]
 ui_rules: []
 round: kkt-26.11.01
 point: D1
-tests: []
+tests: [1235, 1236, 1237, 1238, 1239, 1240, 1241, 1242, 1243, 1244, 1245, 1246, 1247, 1248, 1249]
 depends_on: [F-EXT-003, F-FX-007]
 trackers: []
 services: []
@@ -148,7 +148,7 @@ sentences about previews or determinism.
 ## How it fits Kinotrain
 
 CAPABILITY: openspec/specs/video-fx/
-Accepted (owner 2026-11-01, request D1): an own block codec inside a stream-stage plugin, the breakages as its passport; the temporal state is a pure function of a bounded history (`datamosh-codec-path`).
+Done (owner 2026-11-01, request D1): an own block codec inside a stream-stage plugin, the breakages as its passport and curve-drawn gates; frame N is a pure function of a bounded history (`datamosh-codec-path`).
 
 ## Estimate
 

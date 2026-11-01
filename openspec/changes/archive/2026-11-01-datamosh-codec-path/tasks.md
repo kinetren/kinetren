@@ -56,6 +56,11 @@ Tests t1235–t1259 are reserved by this change. Every stage ends green and is c
     (360 lines), 16×16 blocks, ±16 search, under a machine load of ~40: encode 7.56 ms/frame, the
     broken decode 0.52 ms/frame. Sequential playback pays one encode + one decode per frame (the memo
     holds the rest); the worst cold seek, through a full 300-frame chain, ≈ 2.4 s.
-- [ ] 5.2 What's new line; registry D1 closed; F-FX-011 → done
-- [ ] 5.3 `cargo test --workspace`, `cargo clippy --all-targets`, `git merge master`, `./scripts/finish.sh` — version recorded
-- [ ] 5.4 Archive: specs merged into video-fx and plugins, the why into their designs
+- [x] 5.2 What's new line; registry D1 closed; F-FX-011 → done
+- [x] 5.3 `cargo test --workspace`, `cargo clippy --all-targets`, `git merge master`, `./scripts/finish.sh` — version recorded
+  - `./scripts/finish.sh` → **kt26.11.01-07393913** (master c9bb3fbe merged, up to date). Under a machine
+    load of ~20 three workspace tests (t795, t850, t1171) and 28 live scenarios were red on the
+    shared pass; all passed alone (the tests at once, `morphgrid` on a free display — :287 was
+    held by another stand). `datamosh` live green: timeline, plain, fxwin, gallery, picked, moshed, undone in `target/live-out/datamosh`. Clippy
+    clean in the change's crates (the kt-gpu barrier_graph and kt-cli warnings predate it).
+- [x] 5.4 Archive: specs merged into video-fx and plugins, the why into their designs
