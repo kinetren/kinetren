@@ -74,11 +74,12 @@ verdict "a start screen as a separate window — no" is revised by that request.
 - **THEN** the window at its default lies inside the screen and its panes are side by side in the
   order Start, Recent, What's new, each reaching the action row; the wheel over What's new moves only
   What's new (the Start and Recent contents stay where they were), the wheel over Recent moves only
-  Recent; after the drag the three panes are wider and taller, What's new is at least 300 points wide,
+  Recent; after the drag the window's corner is where the pointer let go (the window is placed
+  centred once, not anchored), the three panes are wider and taller, What's new is at least 300 points wide,
   and Recent holds more cards per row than before
 - **PATH** start Kinetren → the welcome window: "Start" on the left, "Recent" with poster cards in the
   middle, "What's new" on the right → turn the wheel over What's new → only the notes move → turn it
-  over Recent → only the cards move → drag the window's corner to the screen's corner → the cards take
+  over Recent → only the cards move → drag the window's corner to the screen's corner → the corner stays under the pointer, the cards take
   the width in more columns, the notes get a wider and taller column
 - **TEST** t1290 (`src/apps/kt-app/src/welcome_prefs_tests.rs`)
 

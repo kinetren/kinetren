@@ -39,7 +39,7 @@ without a request. Project settings stay a separate window (they belong to the p
 The body is a `horizontal_top` row of three `vertical` panes; each draws a title row and then its own
 `widgets::window_body` (the filling scroll that leaves the action row below; the fill probe unions the
 panes). Widths: Start `clamp(0.25 w, 260, 340)`, What's new `clamp(0.34 w, 300, 560)`, Recent takes the
-rest (floor 200). The window is `.size([1180, 720], [760, 440])` — not fitted: a fitted window measured
+rest (floor 200). The window is `.size([1180, 720], [820, 460])` — not fitted: a fitted window measured
 its content and once grew to 2010 points (t986's reason); a sized window cannot grow from its content.
 On a screen smaller than the default the window starts at the screen's size minus a margin (one
 `ALLOWED_FIXED` row: "the start window never opens larger than the screen"). Rejected: tabs (the owner
@@ -70,7 +70,7 @@ industry): Resolve, Premiere, Vegas, Blender and AE all say "Preferences"; in En
 to "Project settings…" reads as the same window twice. Sections: Start (welcome window at start),
 Interface (Language as a combo, Economy UI), Privacy and updates (statistics, the daily check — moved
 with their disabled-with-a-reason form), FFmpeg (the state line and "FFmpeg…" opening `kt_ffmpeg`).
-Kind `Tool`, `.width(560, [420, 240])`, body in `window_body`, Close in the action row. Registered in
+Kind `Tool`, `.width(560, [420, 200])`, body in `window_body`, Close in the action row. Registered in
 `WINDOWS`: "the program's preferences: per machine, outside any project, reachable with no project
 open — the View menu held them mixed with what is viewed (kkt-26.11.01 item 13)".
 
@@ -101,11 +101,19 @@ update `set_choice`) must each be called from exactly one non-test site, and tha
 preference labels. Rejected: comparing checkbox labels — the original defect had two DIFFERENT labels
 ("Show at start", "Welcome window at start") for one value.
 
+### Found while applying
+- An ANCHORED window is re-centred by egui every frame: once the start window became resizable, its
+  corner ran half as far as the pointer (the live `welcome` step dragged 600 points, the window grew
+  260). It is placed centred once (`default_pos`), so the corner stays under the hand and the window
+  can be moved; t1290 asserts the corner lands at the pointer.
+- `ui.separator()` inside a horizontal row takes all the height left: between the panes it pushed the
+  action row down and grew the window by itself (t918) — `pane_gap` and painted rules instead.
+
 ## Risks / Trade-offs
 
 - [Old paths in guards and live scenarios] → t840/t850/t878/t986/t1146 and the `view.*` probes are
   rewritten to the Preferences path in this change, each with the reason in its doc comment.
-- [Three panes on a narrow screen] → minimum 760 wide: Start 260 + Recent 200 + What's new 300 fits;
+- [Three panes on a narrow screen] → minimum 820 wide: Start 260 + Recent 200 + What's new 300, the four pane gaps and the frame fit;
   below it the window cannot shrink (the shell's min).
 - [Catalog churn in five languages] → keys move with their translations; the arrows rule (no `→`) holds;
   new CJK glyphs → `subset-fonts.py` if t100 asks.

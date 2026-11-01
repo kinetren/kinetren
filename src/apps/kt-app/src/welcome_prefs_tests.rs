@@ -76,7 +76,7 @@ fn cards_in_first_row(h: &Harness<'static, KtApp>) -> usize {
 /// - **PATH** start Kinetren → the welcome window: "Start" on the left, "Recent" with poster cards
 ///   in the middle, "What's new" on the right → turn the wheel over What's new → only the notes
 ///   move → turn it over Recent → only the cards move → drag the window's corner to the screen's
-///   corner → the cards take the width in more columns, the notes get a wider and taller column
+///   corner → the corner stays under the pointer, the cards take the width in more columns, the notes get a wider and taller column
 #[test]
 fn t1290_welcome_panes_scroll_apart_fit_and_grow() {
     crate::i18n::set_lang(crate::i18n::Lang::En);
@@ -134,6 +134,12 @@ fn t1290_welcome_panes_scroll_apart_fit_and_grow() {
         h2.step();
     }
     assert!(big.width() > r.width() + 200.0 && big.height() > r.height() + 150.0, "the window did not grow: {r:?} → {big:?}");
+    // the corner stays under the pointer: an anchored window re-centred itself every frame and
+    // its corner ran half as far as the hand (the live `welcome` step: dragged 600, grew 260)
+    let screen = h2.ctx.content_rect();
+    let to = egui::pos2((r.left() + 1900.0).min(screen.right() - 8.0), (r.top() + 1150.0).min(screen.bottom() - 8.0));
+    let off = big.right_bottom() - to;
+    assert!(off.x.abs() < 8.0 && off.y.abs() < 8.0, "the corner did not follow the pointer: {big:?}, the pointer at {to:?}");
     let body = crate::widgets::fill_probe::get(&h2.ctx, welcome_layer()).unwrap();
     assert!(body.bottom() > big.bottom() - 70.0, "the panes did not take the height: {body:?} in {big:?}");
     assert!(cards_in_first_row(&h2) > before, "Recent holds no more cards per row: {before}");

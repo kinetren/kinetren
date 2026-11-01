@@ -632,7 +632,9 @@ impl crate::app::KtApp {
             crate::window_shell::Kind::Dialog,
         )
         .size(size, WELCOME_MIN)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        // centred ONCE, not anchored: an anchored window is re-centred every frame, so its corner
+        // ran half as far as the pointer (the live `welcome` step: dragged 600, grew 260)
+        .default_pos(ctx.content_rect().center() - egui::vec2(size[0], size[1]) / 2.0)
         .probe("welcome.window")
         .show(ctx, |ui| {
             // three panes side by side, each its own filling scroll down to the action row (D1):

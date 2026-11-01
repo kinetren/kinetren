@@ -18,7 +18,7 @@
 ## 2. The start window
 
 - [x] 2.1 `guide::whats_new_from` (the running section down to the oldest) and the update line — verify t1291
-- [x] 2.2 `welcome.rs`: sized window `.size([1180,720],[760,440])` bounded by the screen, three panes each in
+- [x] 2.2 `welcome.rs`: sized window `.size([1180,720],[820,460])` bounded by the screen, three panes each in
       its own `window_body` (Start: primary, templates with frame shape, tour tile, five lessons with progress;
       Recent: growing poster grid; What's new), action row Guide / Preferences… / Close; no checkbox —
       verify t986, t1290, t1292, t918, t1125, t1127
