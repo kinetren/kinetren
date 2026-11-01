@@ -43,6 +43,8 @@ mod plugins;
 mod pubparam;
 #[cfg(test)]
 mod reach_tests;
+#[cfg(test)]
+mod segfield_tests;
 mod reel_preview;
 mod render_dialog;
 mod settings_window;

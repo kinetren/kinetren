@@ -24,7 +24,7 @@ window (t193: a window session is one history step — unchanged).
 `targets` are left-key indices. The "all" row passes every segment (and, as before, writes the last
 key too, so the curve stays uniform); the selection row passes the selection. One body — "paired
 ways of doing one action, one body" (ui-reach). The R.67 handle and the fields read the parameter
-bounds from ONE table (`shape_param_bounds`) instead of two literals.
+bounds from ONE table (`widgets::TENSION_BOUNDS`, `PERIODS_BOUNDS`, `AMP_BOUNDS`) instead of two literals.
 
 Revision (of the "all" row's display): it showed the first key's shape even when segments differed.
 It now shows the mixed mark. Its layout, width, label and hint are untouched (the look the owner saw).

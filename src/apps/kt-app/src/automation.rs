@@ -101,9 +101,13 @@ pub struct AutoView {
     pub formula: Option<(usize, String)>,
     /// TYPED formula text of the SEGMENT: (curve, key, text) — R.67.
     pub seg_formula: Option<(usize, usize, String)>,
-    /// The segment selected by a right click (curve, left key): its block shows the
-    /// segment formula field.
-    pub sel_seg: Option<(usize, usize)>,
+    /// The SELECTED SEGMENTS of the active curve (segment-shape-fields): a right click,
+    /// Ctrl/Shift+click and a sweep over empty space. Their block row edits their shape
+    /// parameters; exactly one selected formula segment shows its formula field (R.67).
+    pub seg_sel: SegSel,
+    /// A sweep over empty space in progress: where it started and what was selected
+    /// before it (with Ctrl the sweep ADDS to that).
+    pub sweep: Option<(f32, Vec<Tick>)>,
     /// The segment under the pointer — its shape-parameter handle is drawn.
     pub hover_seg: Option<(usize, usize)>,
     /// Drag of the shape-PARAMETER HANDLE of the segment (R.67): vertical — the main
@@ -112,6 +116,72 @@ pub struct AutoView {
     /// Screen midpoints of the segments of the active curve from the LAST draw:
     /// (key, point) — the probe of the handle by what is drawn, as for keys.
     pub seg_marks: Vec<(usize, egui::Pos2)>,
+}
+
+/// Selected segments of ONE curve (segment-shape-fields), each by the TIME of its left key:
+/// an index shifts when a key is inserted before it, the tick does not (design D4). A tick
+/// that lost its key or its right neighbour drops out by itself.
+#[derive(Debug, Clone, Default)]
+pub struct SegSel {
+    pub ci: usize,
+    /// Sorted, without repeats.
+    pub left: Vec<Tick>,
+    /// The last clicked segment — the start of a Shift+click run.
+    pub anchor: Option<Tick>,
+}
+
+impl SegSel {
+    /// Left-key indices of the selected segments of curve `ci`, in order.
+    pub fn indices(&self, ci: usize, c: &ParamCurve) -> Vec<usize> {
+        if ci != self.ci {
+            return Vec::new();
+        }
+        self.left
+            .iter()
+            .filter_map(|t| c.keys.iter().position(|k| k.t == *t))
+            .filter(|ki| ki + 1 < c.keys.len())
+            .collect()
+    }
+
+    pub fn contains(&self, ci: usize, t: Tick) -> bool {
+        self.ci == ci && self.left.binary_search(&t).is_ok()
+    }
+
+    pub fn clear(&mut self) {
+        self.left.clear();
+        self.anchor = None;
+    }
+
+    /// Exactly this segment.
+    pub fn set_one(&mut self, ci: usize, t: Tick) {
+        self.ci = ci;
+        self.left.clear();
+        self.left.push(t);
+        self.anchor = Some(t);
+    }
+
+    /// Ctrl+click: in or out; another curve starts the selection anew.
+    pub fn toggle(&mut self, ci: usize, t: Tick) {
+        if self.ci != ci {
+            self.left.clear();
+            self.ci = ci;
+        }
+        match self.left.binary_search(&t) {
+            Ok(i) => {
+                self.left.remove(i);
+            }
+            Err(i) => self.left.insert(i, t),
+        }
+        self.anchor = Some(t);
+    }
+
+    /// Replace by the given left-key ticks (a sweep, a Shift run).
+    pub fn set_many(&mut self, ci: usize, mut ticks: Vec<Tick>) {
+        ticks.sort_unstable();
+        ticks.dedup();
+        self.ci = ci;
+        self.left = ticks;
+    }
 }
 
 /// Drag of the shape-parameter handle (R.67).
@@ -136,6 +206,16 @@ pub struct LinkEvent {
 
 /// The grab of the shape-parameter handle — wider than the drawing (rule 1).
 const SEG_GRAB_PX: f32 = 14.0;
+
+/// Tint of a selected segment and of the sweep band — warm, so it is not mistaken for the
+/// blue of the segment under an open menu.
+const SEG_SEL_TINT: egui::Color32 = egui::Color32::from_rgba_premultiplied(30, 24, 8, 30);
+const SWEEP_TINT: egui::Color32 = egui::Color32::from_rgba_premultiplied(22, 22, 22, 22);
+
+/// The segment (its left key) under the curve-domain tick `t`.
+fn seg_index_at(c: &ParamCurve, t: i64) -> Option<usize> {
+    c.keys.windows(2).position(|w| t >= w[0].t.0 && t < w[1].t.0)
+}
 
 impl AutoView {
     /// The segment under the point — by the drawn midpoints of the active curve.
@@ -548,6 +628,8 @@ fn toolbar(
             {
                 view.active = ci;
                 view.sel = None;
+                // the selection belongs to one curve
+                view.seg_sel.clear();
             }
         }
         // the formula field, the link and “unlink” live in the CURVE BLOCK below the
@@ -852,6 +934,24 @@ fn graph(
                 egui::Color32::from_rgba_unmultiplied(120, 160, 255, 28),
             );
         }
+        // THE SELECTED SEGMENTS are tinted (segment-shape-fields): the person sees what the
+        // selection row under the graph edits. Read in place — no list per frame.
+        if ci == view.active && view.seg_sel.ci == ci {
+            for t in &view.seg_sel.left {
+                if let Some(ki) = c.keys.iter().position(|k| k.t == *t)
+                    && let Some(b) = c.keys.get(ki + 1)
+                {
+                    p.rect_filled(
+                        egui::Rect::from_min_max(
+                            egui::pos2(x_of(t.0).max(plot.left()), plot.top()),
+                            egui::pos2(x_of(b.t.0).min(plot.right()), plot.bottom()),
+                        ),
+                        0.0,
+                        SEG_SEL_TINT,
+                    );
+                }
+            }
+        }
         let col = curve_color(ci);
         // THE VALUE LINE — by sampling the same `curve_value` that the render computes, per pixel (R.67):
         // a zigzag is seen as a zigzag, a step as a step,
@@ -959,6 +1059,13 @@ fn graph(
                 format!("{:.0}", ctx.frac(key.t) * 100.0)
             ),
         );
+    } else if let Some(hp) = resp.hover_pos()
+        && hp.y >= plot.top()
+        && curves.get(view.active).and_then(|c| seg_index_at(c, t_of(hp.x))).is_some()
+    {
+        // over a SEGMENT (not a key) the hint names how to select segments
+        // (segment-shape-fields): the selection has no button of its own to explain it
+        crate::app::hint_into(hover, resp.clone(), tr(k::fx::SEG_SELECT_HINT));
     }
     // The key menu — BEFORE the early `return`s below (the ruler, double click): after
     // them a right click on a key would not reach the binding at all.
@@ -982,8 +1089,14 @@ fn graph(
                 });
             // the segment is remembered AFTER the menu too (R.67): its block of the curve shows
             // the segment formula field
-            if let Some(MenuTarget::Segment(ci, ki)) = view.menu_target {
-                view.sel_seg = Some((ci, ki));
+            // a segment of the selection keeps the selection: the menu then acts on all
+            // of it (segment-shape-fields); any other segment becomes the selection alone
+            if let Some(MenuTarget::Segment(ci, ki)) = view.menu_target
+                && let Some(t) = curves.get(ci).and_then(|c| c.keys.get(ki)).map(|k| k.t)
+            {
+                if !view.seg_sel.contains(ci, t) {
+                    view.seg_sel.set_one(ci, t);
+                }
                 view.seg_formula = None;
             }
         }
@@ -1000,7 +1113,17 @@ fn graph(
             Some(MenuTarget::Segment(ci, ki)) => Some((ci, ki)),
             _ => None,
         };
-        let mut set_shape: Option<(usize, usize, kt_model::SegShape)> = None;
+        // what the shape choice of the menu lands on: the whole selection when the segment
+        // belongs to it, otherwise this segment
+        let seg_targets: Vec<usize> = match seg_hit {
+            Some((ci, ki)) => match curves.get(ci).and_then(|c| c.keys.get(ki)) {
+                Some(k) if view.seg_sel.contains(ci, k.t) => view.seg_sel.indices(ci, &curves[ci]),
+                Some(_) => vec![ki],
+                None => Vec::new(),
+            },
+            None => Vec::new(),
+        };
+        let mut set_shape: Option<(usize, kt_model::SegShape)> = None;
         let mut shape_all: Option<(usize, kt_model::SegShape)> = None;
         let menu = resp.clone().context_menu(|ui| {
             let Some((ci, ki)) = menu_hit else {
@@ -1010,16 +1133,20 @@ fn graph(
                     // the header names both ends of the segment, and the segment itself is
                     // highlighted on the graph
                     let (a, b) = (curves[ci].keys[ki].t, curves[ci].keys[ki + 1].t);
-                    ui.label(
-                        egui::RichText::new(crate::tf!(
+                    // several segments — the header says how many the choice touches
+                    let header = if seg_targets.len() > 1 {
+                        crate::tf!(k::fx::SHAPE_SEGMENTS_N, seg_targets.len())
+                    } else {
+                        crate::tf!(
                             k::fx::SHAPE_SEGMENT_AT,
                             format!("{:.3}", secs(a)),
                             format!("{:.3}", secs(b)),
                             format!("{:.0}", ctx.frac(a) * 100.0),
                             format!("{:.0}", ctx.frac(b) * 100.0)
-                        ))
-                        .strong(),
-                    );
+                        )
+                    };
+                    let hr = ui.label(egui::RichText::new(header).strong());
+                    crate::widgets::field_probe::note("auto.shape.header", hr.rect);
                     // every shape, speed included: the warp map samples a shaped speed curve
                     // into its profile (slowed-reverb-is-an-event)
                     for (i, sh) in crate::widgets::all_shapes().into_iter().enumerate() {
@@ -1034,7 +1161,7 @@ fn graph(
                             );
                         }
                         if r.clicked() {
-                            set_shape = Some((ci, ki, sh));
+                            set_shape = Some((ci, sh));
                             ui.close();
                         }
                     }
@@ -1048,7 +1175,6 @@ fn graph(
                     if r.clicked() {
                         set_shape = Some((
                             ci,
-                            ki,
                             kt_model::SegShape::Formula {
                                 expr: kt_model::ExprId::intern("a + (b - a) * s"),
                             },
@@ -1093,11 +1219,12 @@ fn graph(
             view.menu_target = None;
         }
         out.key_menu = picked;
-        if let Some((ci, ki, sh)) = set_shape
-            && curves.get(ci).is_some_and(|c| ki < c.keys.len())
+        if let Some((ci, sh)) = set_shape
+            && let Some(c) = curves.get_mut(ci)
         {
-            curves[ci].keys[ki].shape = sh;
-            out.changed = true;
+            // one body with the row's shape list: a segment of the same kind keeps its
+            // parameters
+            out.changed |= crate::widgets::pick_shape(c, &seg_targets, sh);
         }
         if let Some((ci, sh)) = shape_all
             && let Some(c) = curves.get_mut(ci)
@@ -1223,6 +1350,60 @@ fn graph(
     if resp.drag_stopped() && view.shape_drag.take().is_some() {
         return;
     }
+    // ---- SEGMENT SELECTION (segment-shape-fields) ----
+    let (ctrl, shift) = ui.input(|i| (i.modifiers.ctrl || i.modifiers.command, i.modifiers.shift));
+    // Ctrl+click toggles a segment, Shift+click selects the run from the last clicked one;
+    // neither places a key
+    if resp.clicked()
+        && hit.is_none()
+        && (ctrl || shift)
+        && let Some(c) = curves.get(view.active)
+    {
+        if let Some(ki) = seg_index_at(c, t_of(pos.x)) {
+            let t = c.keys[ki].t;
+            let anchor = view.seg_sel.anchor.filter(|_| view.seg_sel.ci == view.active);
+            match (shift, anchor) {
+                (true, Some(a)) => {
+                    let (lo, hi) = (a.min(t), a.max(t));
+                    let run =
+                        c.keys.windows(2).filter(|w| w[0].t >= lo && w[0].t <= hi).map(|w| w[0].t).collect();
+                    view.seg_sel.set_many(view.active, run);
+                }
+                (true, None) => view.seg_sel.set_one(view.active, t),
+                (false, _) => view.seg_sel.toggle(view.active, t),
+            }
+            view.seg_formula = None;
+        }
+        return;
+    }
+    // a drag over EMPTY space sweeps the segments it covers (Ctrl — adds to the selection);
+    // before this round such a drag did nothing
+    if resp.drag_started() && hit.is_none() && view.shape_drag.is_none() && view.seg_at(press).is_none() {
+        let base = if ctrl && view.seg_sel.ci == view.active { view.seg_sel.left.clone() } else { Vec::new() };
+        view.sweep = Some((press.x, base));
+    }
+    if resp.dragged()
+        && let Some((x0, base)) = &view.sweep
+        && let Some(c) = curves.get(view.active)
+    {
+        let (xa, xb) = (x0.min(pos.x), x0.max(pos.x));
+        let (ta, tb) = (t_of(xa), t_of(xb));
+        let mut ticks = base.clone();
+        ticks.extend(c.keys.windows(2).filter(|w| w[0].t.0 < tb && w[1].t.0 > ta).map(|w| w[0].t));
+        view.seg_sel.set_many(view.active, ticks);
+        // the run of a later Shift+click starts where the sweep ENDED
+        view.seg_sel.anchor = seg_index_at(c, t_of(pos.x)).map(|ki| c.keys[ki].t);
+        view.seg_formula = None;
+        p.rect_filled(
+            egui::Rect::from_min_max(egui::pos2(xa, plot.top()), egui::pos2(xb, plot.bottom())),
+            0.0,
+            SWEEP_TINT,
+        );
+        return;
+    }
+    if resp.drag_stopped() && view.sweep.take().is_some() {
+        return;
+    }
     if resp.drag_started() || resp.clicked() {
         if let Some((ci, ki)) = hit {
             view.sel = Some((ci, ki));
@@ -1233,7 +1414,9 @@ fn graph(
                 view.drag_win = Some((ci, lo, hi));
             }
         } else if resp.clicked() && view.seg_at(pos).is_none() {
-            // a click on an empty spot — a new key on the active curve
+            // a click on an empty spot — a new key on the active curve; it also drops the
+            // segment selection (a plain click elsewhere deselects)
+            view.seg_sel.clear();
             if let Some(spec) = curves.get(view.active).and_then(|c| ctx.spec(&c.param)).cloned() {
                 let (lo, hi) = win_of(&curves[view.active], &spec, view, view.active);
                 let c = &mut curves[view.active];
@@ -1425,15 +1608,22 @@ fn shape_dragged(
     units_per_px: f64,
 ) -> kt_model::SegShape {
     use kt_model::SegShape as S;
+    // the bounds — the same table as the shape row's fields
+    let (t0, t1) = crate::widgets::TENSION_BOUNDS;
+    let (p0, p1) = crate::widgets::PERIODS_BOUNDS;
     match s0 {
-        S::Smooth { tension } => S::Smooth { tension: (tension + dy * 0.02).clamp(0.0, 4.0) },
-        S::EaseIn { tension } => S::EaseIn { tension: (tension + dy * 0.02).clamp(0.0, 4.0) },
-        S::EaseOut { tension } => S::EaseOut { tension: (tension + dy * 0.02).clamp(0.0, 4.0) },
+        S::Smooth { tension } => S::Smooth { tension: (tension + dy * 0.02).clamp(t0, t1) },
+        S::EaseIn { tension } => S::EaseIn { tension: (tension + dy * 0.02).clamp(t0, t1) },
+        S::EaseOut { tension } => S::EaseOut { tension: (tension + dy * 0.02).clamp(t0, t1) },
         S::Zigzag { periods, amplitude, profile } => {
             if shift {
-                S::Zigzag { periods: (periods + dx * 0.05).clamp(0.25, 256.0), amplitude, profile }
+                S::Zigzag { periods: (periods + dx * 0.05).clamp(p0, p1), amplitude, profile }
             } else {
-                S::Zigzag { periods, amplitude: (amplitude + dy * units_per_px).max(0.0), profile }
+                S::Zigzag {
+                    periods,
+                    amplitude: (amplitude + dy * units_per_px).max(crate::widgets::AMP_BOUNDS.0),
+                    profile,
+                }
             }
         }
         other => other,
@@ -1634,11 +1824,38 @@ fn curve_block(
         out.changed |= crate::widgets::shape_all_control(ui, &mut curves[ci], hover);
     });
 
-    // 2. the formula of the SELECTED segment — only if it has a formula shape
-    if let Some((sc, sk)) = view.sel_seg
-        && sc == ci
+    // 1b. the SELECTED segments (segment-shape-fields): the same row over the selection,
+    // their own values, “—” where they differ; the edit lands on all of them as one command
+    let sel = view.seg_sel.indices(ci, &curves[ci]);
+    if !sel.is_empty() {
+        ui.horizontal(|ui| {
+            let caption = if let [ki] = sel[..] {
+                let (a, b) = (curves[ci].keys[ki].t, curves[ci].keys[ki + 1].t);
+                crate::tf!(k::fx::SHAPE_SEL_ONE, format!("{:.3}", secs(a)), format!("{:.3}", secs(b)))
+            } else {
+                crate::tf!(k::fx::SHAPE_SEL_MANY, sel.len())
+            };
+            let row = crate::widgets::ShapeRow {
+                salt: "shape_sel",
+                probe: "shape_sel",
+                label: &caption,
+                hint: tr(k::fx::SHAPE_SEL_HINT),
+            };
+            out.changed |= crate::widgets::shape_fields(ui, &row, &mut curves[ci], &sel, &sel, hover);
+            let x = ui.small_button(crate::icons::CLEAR);
+            crate::widgets::field_probe::note("shape_sel.clear", x.rect);
+            if crate::app::hint_into(hover, x, tr(k::fx::SHAPE_SEL_CLEAR_HINT)).clicked() {
+                view.seg_sel.clear();
+                view.seg_formula = None;
+            }
+        });
+    }
+
+    // 2. the formula of the ONE selected segment — only if it has a formula shape
+    if let [sk] = sel[..]
         && let Some(kt_model::SegShape::Formula { expr }) = curves[ci].keys.get(sk).map(|k| k.shape)
     {
+        let sc = ci;
         ui.horizontal(|ui| {
             ui.label(tr(k::fx::SEG_FORMULA));
             let mut live = view.seg_formula.take().filter(|(c, k, _)| (*c, *k) == (sc, sk)).map(|(_, _, t)| t);
@@ -1774,7 +1991,7 @@ fn curve_block(
             curves.remove(ci);
             view.active = 0;
             view.sel = None;
-            view.sel_seg = None;
+            view.seg_sel.clear();
             out.changed = true;
         }
     });

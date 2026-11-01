@@ -845,17 +845,119 @@ pub fn all_shapes() -> [kt_model::SegShape; 6] {
     ]
 }
 
-/// “Shape of all segments of the curve” is a command over the curve, not a machine setting
-/// (R.61): a machine setting would give “one file, two behaviors”. Speed takes every shape too:
-/// the warp map samples it into its profile (slowed-reverb-is-an-event).
-pub fn shape_all_control(
+/// Bounds of the shape parameters — ONE table for the fields and the R.67 handle
+/// (`automation::shape_dragged`): the same numbers typed twice would drift apart.
+pub const TENSION_BOUNDS: (f64, f64) = (0.0, 4.0);
+pub const PERIODS_BOUNDS: (f64, f64) = (0.25, 256.0);
+/// The amplitude is in units of the parameter and is clamped by the target's passport at
+/// evaluation; the field only refuses a negative one (it would be a phase flip).
+pub const AMP_BOUNDS: (f64, f64) = (0.0, f64::INFINITY);
+
+/// The mark of a field whose values differ across the edited segments
+/// (segment-shape-fields): the person sees “these are not equal”, not the first one's value.
+pub const MIXED: &str = "—";
+
+/// What a shape row is called and where its probes live.
+pub struct ShapeRow<'a> {
+    /// The id salt of the row's lists: two rows of one curve must not share an id.
+    pub salt: &'static str,
+    /// Prefix of the probe names: `<probe>.kind`, `.item.<i>`, `.tension`, `.periods`, `.amp`,
+    /// `.profile`. Without a dot: it is a prefix, not a place a scenario aims at.
+    pub probe: &'static str,
+    pub label: &'a str,
+    pub hint: &'a str,
+}
+
+/// Put the shape `s` on the keys `targets` of the curve: a key of ANOTHER kind takes `s`
+/// whole, a key of the SAME kind keeps its parameters — picking “Zigzag” on a selection
+/// must not reset the zigzags already tuned in it (segment-shape-fields, D2). One body
+/// for the row's list and the segment menu.
+pub fn pick_shape(curve: &mut kt_model::ParamCurve, targets: &[usize], s: kt_model::SegShape) -> bool {
+    let mut changed = false;
+    for &i in targets {
+        if let Some(k) = curve.keys.get_mut(i)
+            && std::mem::discriminant(&k.shape) != std::mem::discriminant(&s)
+        {
+            k.shape = s;
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// An edit of one shape parameter over several segments.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FieldEdit {
+    /// A typed number — the same value on every segment.
+    Set(f64),
+    /// A drag — the same AMOUNT on every segment, their differences survive.
+    Shift(f64),
+}
+
+impl FieldEdit {
+    fn on(self, v: f64, (lo, hi): (f64, f64)) -> f64 {
+        match self {
+            FieldEdit::Set(x) => x.clamp(lo, hi),
+            FieldEdit::Shift(d) => (v + d).clamp(lo, hi),
+        }
+    }
+}
+
+/// One number of a shape row over the values `vals`. Writes ONLY from a gesture (R.67, rule
+/// 25): `clamp_existing_to_range(false)` — a value from the file beyond the bounds is shown
+/// as it is, and a frame of drawing does not write it back clamped. Returns the edit and the
+/// field's rectangle (the caller publishes it under its own probe name).
+fn shape_num(
     ui: &mut egui::Ui,
+    label: &str,
+    vals: &[f64],
+    bounds: (f64, f64),
+    speed: f64,
+) -> (Option<FieldEdit>, egui::Rect) {
+    ui.label(label);
+    let first = vals.first().copied().unwrap_or(0.0);
+    let mixed = vals.iter().any(|v| *v != first);
+    let mut v = first;
+    let mut dv = egui::DragValue::new(&mut v)
+        .range(bounds.0..=bounds.1)
+        .clamp_existing_to_range(false)
+        .speed(speed);
+    if mixed {
+        dv = dv.custom_formatter(|_, _| MIXED.to_string());
+    }
+    let r = ui.add(dv);
+    let edit = if v == first || !r.changed() {
+        None
+    } else if r.dragged() {
+        Some(FieldEdit::Shift(v - first))
+    } else if r.has_focus() || r.lost_focus() {
+        Some(FieldEdit::Set(v))
+    } else {
+        None
+    };
+    (edit, r.rect)
+}
+
+/// THE shape row (segment-shape-fields): the shape of the segments `shown` and its
+/// parameters, an edit lands on the keys `targets`. One control for “all segments” and
+/// for the selection — the paired ways of one action have one body. Values that differ
+/// show [`MIXED`]; with different KINDS there are no parameter fields (a tension and a
+/// number of periods have no common meaning). Returns “the curve changed” — one edit, one
+/// command for every segment it touched.
+pub fn shape_fields(
+    ui: &mut egui::Ui,
+    row: &ShapeRow<'_>,
     curve: &mut kt_model::ParamCurve,
+    targets: &[usize],
+    shown: &[usize],
     hover: &mut Option<String>,
 ) -> bool {
+    use kt_model::SegShape as S;
     let mut changed = false;
-    let cur = curve.keys.first().map(|k| k.shape).unwrap_or_default();
-    ui.label(tr(k::fx::SHAPE_ALL));
+    let shapes: Vec<S> = shown.iter().filter_map(|i| curve.keys.get(*i).map(|k| k.shape)).collect();
+    let cur = shapes.first().copied().unwrap_or_default();
+    let same_kind = shapes.iter().all(|s| std::mem::discriminant(s) == std::mem::discriminant(&cur));
+    ui.label(row.label);
     // width — measured by the LONGEST shape name (rule 3): the field
     // does not grow past the window and does not jump when the shape changes.
     let widest = all_shapes()
@@ -871,74 +973,135 @@ pub fn shape_all_control(
                 .x
         })
         .fold(0.0_f32, f32::max);
-    let r = egui::ComboBox::from_id_salt(("shape_all", curve.param.clone()))
+    let mut pick: Option<S> = None;
+    let r = egui::ComboBox::from_id_salt((row.salt, curve.param.clone()))
         .width(widest + 28.0)
-        .selected_text(shape_label(cur))
+        .selected_text(if same_kind { shape_label(cur) } else { MIXED })
         .show_ui(ui, |ui| {
-            for s in all_shapes() {
-                if ui.selectable_label(s == cur, shape_label(s)).clicked() {
-                    for k in &mut curve.keys {
-                        k.shape = s;
-                    }
-                    changed = true;
+            for (i, s) in all_shapes().into_iter().enumerate() {
+                let on = same_kind && std::mem::discriminant(&s) == std::mem::discriminant(&cur);
+                let item = ui.selectable_label(on, shape_label(s));
+                if field_probe::on() {
+                    field_probe::note(&format!("{}.item.{i}", row.probe), item.rect);
+                }
+                if item.clicked() {
+                    pick = Some(s);
                 }
             }
         });
-    crate::app::hint_into(hover, r.response, tr(k::fx::SHAPE_ALL_HINT));
+    field_probe::note(&format!("{}.kind", row.probe), r.response.rect);
+    crate::app::hint_into(hover, r.response, row.hint);
+    if let Some(s) = pick {
+        changed |= pick_shape(curve, targets, s);
+    }
+    if !same_kind || shapes.is_empty() {
+        return changed;
+    }
     // PARAMETERS of the shape — next to it: each kind has its own, and there is no common
-    // “stiffness” number here (R.61, D2). The edit lands on all segments —
-    // that is what “all segments of the shape” means.
-    let mut next = cur;
-    match &mut next {
-        kt_model::SegShape::Smooth { tension }
-        | kt_model::SegShape::EaseIn { tension }
-        | kt_model::SegShape::EaseOut { tension } => {
-            ui.label(tr(k::fx::SHAPE_TENSION));
-            if ui.add(egui::DragValue::new(tension).range(0.0..=4.0).speed(0.02)).changed() {
-                changed = true;
+    // “stiffness” number here (R.61, D2). The edit lands on every target of this kind.
+    match cur {
+        S::Smooth { .. } | S::EaseIn { .. } | S::EaseOut { .. } => {
+            let vals: Vec<f64> = shapes
+                .iter()
+                .filter_map(|s| match s {
+                    S::Smooth { tension } | S::EaseIn { tension } | S::EaseOut { tension } => Some(*tension),
+                    _ => None,
+                })
+                .collect();
+            let (te, rect) = shape_num(ui, tr(k::fx::SHAPE_TENSION), &vals, TENSION_BOUNDS, 0.02);
+            field_probe::note(&format!("{}.tension", row.probe), rect);
+            if let Some(e) = te {
+                for &i in targets {
+                    let Some(key) = curve.keys.get_mut(i) else { continue };
+                    if let S::Smooth { tension } | S::EaseIn { tension } | S::EaseOut { tension } = &mut key.shape {
+                        *tension = e.on(*tension, TENSION_BOUNDS);
+                        changed = true;
+                    }
+                }
             }
         }
-        kt_model::SegShape::Zigzag { periods, amplitude, profile } => {
-            ui.label(tr(k::fx::SHAPE_PERIODS));
-            if ui.add(egui::DragValue::new(periods).range(0.25..=256.0).speed(0.1)).changed() {
-                changed = true;
-            }
-            ui.label(tr(k::fx::SHAPE_AMP));
+        S::Zigzag { profile, .. } => {
+            let zig = |f: fn(f64, f64) -> f64| -> Vec<f64> {
+                shapes
+                    .iter()
+                    .filter_map(|s| match s {
+                        S::Zigzag { periods, amplitude, .. } => Some(f(*periods, *amplitude)),
+                        _ => None,
+                    })
+                    .collect()
+            };
+            let (pe, rect) = shape_num(ui, tr(k::fx::SHAPE_PERIODS), &zig(|p, _| p), PERIODS_BOUNDS, 0.1);
+            field_probe::note(&format!("{}.periods", row.probe), rect);
             // amplitude in UNITS OF THE PARAMETER: a zigzag around a constant
             // value is the most frequent — and a fraction of the swing would collapse it.
-            if ui.add(egui::DragValue::new(amplitude).speed(0.01)).changed() {
-                changed = true;
-            }
+            let (ae, rect) = shape_num(ui, tr(k::fx::SHAPE_AMP), &zig(|_, a| a), AMP_BOUNDS, 0.01);
+            field_probe::note(&format!("{}.amp", row.probe), rect);
             ui.label(tr(k::fx::SHAPE_PROFILE));
             let name = |p: kt_model::ZigProfile| match p {
                 kt_model::ZigProfile::Triangle => tr(k::fx::ZIG_TRIANGLE),
                 kt_model::ZigProfile::Square => tr(k::fx::ZIG_SQUARE),
                 kt_model::ZigProfile::Sine => tr(k::fx::ZIG_SINE),
             };
-            egui::ComboBox::from_id_salt(("zig_profile", curve.param.clone()))
-                .selected_text(name(*profile))
+            let same_profile = shapes.iter().all(|s| matches!(s, S::Zigzag { profile: p, .. } if *p == profile));
+            let mut new_profile = None;
+            let pr = egui::ComboBox::from_id_salt((row.salt, "zig_profile", curve.param.clone()))
+                .selected_text(if same_profile { name(profile) } else { MIXED })
                 .show_ui(ui, |ui| {
-                    for pr in [
-                        kt_model::ZigProfile::Triangle,
-                        kt_model::ZigProfile::Square,
-                        kt_model::ZigProfile::Sine,
-                    ] {
-                        if ui.selectable_label(*profile == pr, name(pr)).clicked() {
-                            *profile = pr;
-                            changed = true;
+                    for p in
+                        [kt_model::ZigProfile::Triangle, kt_model::ZigProfile::Square, kt_model::ZigProfile::Sine]
+                    {
+                        if ui.selectable_label(same_profile && profile == p, name(p)).clicked() {
+                            new_profile = Some(p);
                         }
                     }
                 });
+            field_probe::note(&format!("{}.profile", row.probe), pr.response.rect);
+            for &i in targets {
+                let Some(key) = curve.keys.get_mut(i) else { continue };
+                if let S::Zigzag { periods, amplitude, profile } = &mut key.shape {
+                    if let Some(e) = pe {
+                        *periods = e.on(*periods, PERIODS_BOUNDS);
+                        changed = true;
+                    }
+                    if let Some(e) = ae {
+                        *amplitude = e.on(*amplitude, AMP_BOUNDS);
+                        changed = true;
+                    }
+                    if let Some(p) = new_profile
+                        && *profile != p
+                    {
+                        *profile = p;
+                        changed = true;
+                    }
+                }
+            }
         }
-        // text of the segment formula is edited in the segment’s menu (R.67), not here
-        kt_model::SegShape::Linear | kt_model::SegShape::Hold | kt_model::SegShape::Formula { .. } => {}
-    }
-    if next != cur {
-        for k in &mut curve.keys {
-            k.shape = next;
-        }
+        // text of the segment formula is edited in the curve block (R.67), not here
+        S::Linear | S::Hold | S::Formula { .. } => {}
     }
     changed
+}
+
+/// “Shape of all segments of the curve” is a command over the curve, not a machine setting
+/// (R.61): a machine setting would give “one file, two behaviors”. Speed takes every shape too:
+/// the warp map samples it into its profile (slowed-reverb-is-an-event). It is the shape row over
+/// every segment; the edit lands on every key (the last one too — the curve stays uniform).
+pub fn shape_all_control(
+    ui: &mut egui::Ui,
+    curve: &mut kt_model::ParamCurve,
+    hover: &mut Option<String>,
+) -> bool {
+    let n = curve.keys.len();
+    let targets: Vec<usize> = (0..n).collect();
+    // the shape of the last key does not apply: it is not a segment
+    let shown = &targets[..if n > 1 { n - 1 } else { n }];
+    let row = ShapeRow {
+        salt: "shape_all",
+        probe: "shape_all",
+        label: tr(k::fx::SHAPE_ALL),
+        hint: tr(k::fx::SHAPE_ALL_HINT),
+    };
+    shape_fields(ui, &row, curve, &targets, shown, hover)
 }
 
 /// Hint for a widget drawn inside a closure.
