@@ -1128,6 +1128,12 @@ corner_br = "右下"
 tc_note = "显示素材时间：从零开始且素材起点为 0 的片段与时间线时钟一致"
 
 [genkind]
+group_audio = "音频"
+tone = "正弦音"
+audio_noise = "音频噪声"
+sweep = "正弦扫频"
+beep = "提示音串"
+silence = "静音"
 group_check = "信号检查"
 group_titles = "字幕与倒计时"
 group_shapes = "图形"
@@ -1184,6 +1190,17 @@ align_r = "右对齐"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+freq = "频率"
+freq_start = "起始频率"
+freq_end = "结束频率"
+duration = "扫频时长"
+period = "周期"
+length = "提示音长度"
+seed = "种子"
+channels = "声道"
+color = "颜色"
+curve = "曲线"
+stereo = "立体声"
 text = "文本"
 reveal = "显现"
 reveal_soft = "显现边缘"
@@ -1220,6 +1237,17 @@ tone_db = "测试音电平："
 fps = "每秒帧数："
 mono = "灰度"
 tone = "1 kHz 测试音"
+
+# Choice-row variants of the generators (generators-placement-and-audio).
+[genc]
+both = "双声道"
+left = "左"
+right = "右"
+white = "白"
+pink = "粉红"
+brown = "布朗"
+log = "对数"
+linear = "线性"
 
 # 合成的公开参数（R.59，阶段 3）。
 [pubp]
@@ -1474,7 +1502,7 @@ loop_how = "在标尺上拖动，然后按 L"
 cut = "把事件切成两段"
 cut_how = "播放头移到该处，然后按 S"
 title = "添加字幕"
-title_how = "文件 › 新建生成器… › 文本"
+title_how = "编辑 › 新建生成器… › 文本"
 effect = "添加特效"
 effect_how = "双击事件，然后点 + 特效…"
 curve = "为参数制作动画"

@@ -1128,6 +1128,12 @@ corner_br = "Inferior derecha"
 tc_note = "Muestra el tiempo del MATERIAL: un clip desde cero con inicio 0 coincide con el reloj de la línea de tiempo"
 
 [genkind]
+group_audio = "Audio"
+tone = "Tono"
+audio_noise = "Ruido de audio"
+sweep = "Barrido senoidal"
+beep = "Tren de pitidos"
+silence = "Silencio"
 group_check = "Comprobación de señal"
 group_titles = "Rótulos y cuenta atrás"
 group_shapes = "Formas"
@@ -1184,6 +1190,17 @@ align_r = "Derecha"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+freq = "Frecuencia"
+freq_start = "Frecuencia inicial"
+freq_end = "Frecuencia final"
+duration = "Duración del barrido"
+period = "Periodo"
+length = "Duración del pitido"
+seed = "Semilla"
+channels = "Canales"
+color = "Color"
+curve = "Curva"
+stereo = "Estéreo"
 text = "Texto"
 reveal = "Aparición"
 reveal_soft = "Borde de aparición"
@@ -1220,6 +1237,17 @@ tone_db = "Nivel del tono:"
 fps = "Cuadros por segundo:"
 mono = "Gris"
 tone = "Tono de 1 kHz"
+
+# Choice-row variants of the generators (generators-placement-and-audio).
+[genc]
+both = "Ambos"
+left = "Izquierdo"
+right = "Derecho"
+white = "Blanco"
+pink = "Rosa"
+brown = "Marrón"
+log = "Logarítmica"
+linear = "Lineal"
 
 # Parámetros públicos de la composición (R.59, etapa 3).
 [pubp]
@@ -1474,7 +1502,7 @@ loop_how = "arrastrar en la regla, luego L"
 cut = "Cortar un evento en dos"
 cut_how = "cursor en el punto, luego S"
 title = "Añadir un título"
-title_how = "Archivo › Crear un generador… › Texto"
+title_how = "Editar › Crear un generador… › Texto"
 effect = "Añadir un efecto"
 effect_how = "doble clic en el evento, luego + efecto…"
 curve = "Animar un parámetro"

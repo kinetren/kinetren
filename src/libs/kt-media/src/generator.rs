@@ -18,7 +18,6 @@
 //! - “no sound” = `has_audio: false` AND `Ok(AudioBurst::silence)`:
 //!   an `Err` piles up in the worker’s negative cache as false underruns.
 
-use kt_plugin_api::math::FrozenMath;
 use std::borrow::Cow;
 
 use crate::{AudioBurst, MediaError, MediaInfo, MediaSource, Quality, VideoFrame};
@@ -69,13 +68,15 @@ impl GeneratorSource {
     /// (R.53, item 410). The factory also decides by it whether a
     /// live source can be reconfigured: `retune` MUST not change `info()`.
     pub fn info_for(kind: &GeneratorKind) -> MediaInfo {
-        // the only sounding kind: SMPTE with the tone enabled
-        let has_audio = plugin_tone(kind).is_some();
+        // a kind sounds by the host's tone (SMPTE with the tone on, the leader's beep) or by its
+        // own synthesizer; a sound kind has no picture, so creation makes an audio clip only
+        let synth = kind.kernel().and_then(|g| g.synth()).is_some();
+        let has_audio = synth || plugin_tone(kind).is_some();
         MediaInfo {
             // “no duration”: when dropped, the UI substitutes its own default
             // (5 s), the trim is not limited, and there is no EOF.
             duration: Tick(0),
-            has_video: true,
+            has_video: !synth,
             // The source gives silence anyway (see the header), but the
             // audio CLIP is created by place_media_at only on this flag.
             has_audio,
@@ -162,8 +163,10 @@ fn render_at(kind: &GeneratorKind, pts: Tick, w: u32, h: u32) -> Box<[u8]> {
 /// (byte for byte, as `AudioPattern::Sine`). `gate` decides whether a given sample
 /// sounds: for SMPTE always, for the countdown by the gate.
 /// One code for both kinds: a second sine would diverge in phase.
+/// The sine and the level are the API's one text (`generator::sine`/`db_amp`), shared with the
+/// sound kinds' kernels (generators-placement-and-audio D4): the bytes did not move (t1048).
 fn tone_1k(idx: i64, db: f64, gate: impl Fn(i64) -> bool) -> AudioBurst {
-    let amp = 10f64.fpowf(db / 20.0);
+    let amp = kt_plugin_api::generator::db_amp(db);
     let mut b = AudioBurst::silence(idx);
     let base = idx * kt_time::AUDIO_BURST_FRAMES as i64;
     for f in 0..kt_time::AUDIO_BURST_FRAMES as i64 {
@@ -171,7 +174,7 @@ fn tone_1k(idx: i64, db: f64, gate: impl Fn(i64) -> bool) -> AudioBurst {
         if !gate(n) {
             continue;
         }
-        let v = ((n as f64) * 1000.0 * std::f64::consts::TAU / 48_000.0).fsin() * amp;
+        let v = kt_plugin_api::generator::sine(n, 1000.0) * amp;
         let v = v as f32;
         b.data[(f * 2) as usize] = v;
         b.data[(f * 2 + 1) as usize] = v;
@@ -294,6 +297,17 @@ impl MediaSource for GeneratorSource {
     }
 
     fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError> {
+        // a sound kind fills the burst itself from the GLOBAL sample number, with the values its
+        // curves give at the burst's first tick (the frame's rule: the source resolves them)
+        if let Some(synth) = self.state.kind.kernel().and_then(|g| g.synth()) {
+            let base = idx * kt_time::AUDIO_BURST_FRAMES as i64;
+            let kind = self.state.kind_at(Tick(idx * kt_time::AUDIO_BURST_TICKS));
+            let mut b = AudioBurst::silence(idx);
+            if let GeneratorKind::Plugin(p) = kind.as_ref() {
+                synth(&p.values, base, &mut b.data[..]);
+            }
+            return Ok(b);
+        }
         // SMPTE tone: a 1 kHz sine at the level tone_db, sample-accurate from the
         // global sample number (byte for byte, as AudioPattern::Sine)
         // a plugin kind's sound: the same tone with the kind's gate (D13)

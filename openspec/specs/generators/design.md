@@ -60,6 +60,23 @@ two titles on one media could not carry different text. The single entry "Create
   the owner wants to see the source next to everything else that is edited on the event.
 - **One list of kinds for all entries** (main menu, bin, picker): a new kind
   cannot appear in one menu and not in another.
+- **Revision of R.55 — "Create a generator" lives in Edit and on the track, not in File**
+  (generators-placement-and-audio; the owner, kkt-26.11.01 item 4 and answer p.2: "WHY THE HELL
+  LEAVE IT IN FILE?!"). R.55's reason stays — a person could not find the only entry — and the
+  place changed: a verb that makes something on the timeline is looked for in Edit and on the
+  track a person clicked. Edit creates at the cursor; a clip track's right-click menu creates at
+  the clicked track and time (`KtApp::ctx_at`; a header click has no time and takes the cursor) and
+  lists only the kinds that land on that track's kind — a picture kind offered on an audio track
+  would put its clip somewhere other than the click. One body (`gen_ui::generator_kind_menu_keyed`
+  with a stream filter) builds all three lists (t560).
+- **A sound kind fills its burst itself and has no picture** (`generator::Synth`,
+  generators-placement-and-audio D3). A level and an on/off (`tone`/`gate`) cannot say a
+  frequency, a noise colour or a sweep; a separate media family would need a twin of every host
+  path that already knows a generator (factory, `gen:` codec, card, retune, the event's values).
+  `info_for` reports `has_video: !synth`, so creation makes an audio clip only; the registry refuses
+  a kind with both a synth and a tone (t1162). The menu's former 19 rows keep their order and the
+  registry's other generators follow them (`GeneratorKind::all`), so a new family reaches the
+  menu by itself.
 
 ## Rejected and why
 
@@ -143,6 +160,16 @@ two titles on one media could not carry different text. The single entry "Create
 - Noise: the same `lowbias32` as the Noise effect of kt-fx, but the grain is a cell of the base
   grid 1920×1080 and the pts of the material (`src/libs/kt-media/src/generator.rs`);
   the tone and the beep are one `tone_1k` with gates, the phase from the global sample number.
+  Since generators-placement-and-audio the sine and the dBFS conversion are the API's
+  (`kt_plugin_api::generator::sine`/`db_amp`, the same operations in the same order — t1048 did
+  not move), and the sound kinds call them too: a 1 kHz `tone` equals SMPTE's byte for byte (t1155).
+- Sound kinds (`src/plugins/generators-audio`): a burst is a pure function of (values, first
+  sample), so the noise has no filter state — white is a splitmix64 hash per sample, pink is
+  Voss–McCartney rows held 2^k samples (rows 0…11), brown weighs row k by 2^(k/2) (rows 0…9, flat
+  below ~47 Hz so it does not wander as DC); t1158 measures the density slope per octave rather
+  than trusting the formula. A sweep's phase is the integral of its frequency (the naive
+  `sin(2π·f(t)·t)` sweeps twice as far); levels are AES17 dBFS — a sine's peak, a noise's RMS
+  read on the sine's scale, so both read alike on a meter.
 - Shapes: distance fields in integer 1/256 px (`isqrt`, `coverage`), the chroma plane of the tables — by columns and rows before the loop; float only in the preamble
   (`src/libs/kt-media/src/generator.rs`). A loop with `sqrt`/`atan2` is a different rounding profile and speed.
 - Tables: the origin of the bars is marked "NOT VERIFIED" (EBU 3213 is paid,

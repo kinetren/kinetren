@@ -1128,6 +1128,12 @@ corner_br = "أسفل يمين"
 tc_note = "يعرض زمن المادة: مقطع من الصفر ببداية مادة 0 يطابق ساعة الخط الزمني"
 
 [genkind]
+group_audio = "الصوت"
+tone = "نغمة"
+audio_noise = "ضجيج صوتي"
+sweep = "مسح جيبي"
+beep = "سلسلة صفارات"
+silence = "صمت"
 group_check = "فحص المسار"
 group_titles = "العناوين والعد التنازلي"
 group_shapes = "أشكال"
@@ -1184,6 +1190,17 @@ align_r = "يمين"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+freq = "التردد"
+freq_start = "تردد البداية"
+freq_end = "تردد النهاية"
+duration = "مدة المسح"
+period = "الدورة"
+length = "طول الصفارة"
+seed = "البذرة"
+channels = "القنوات"
+color = "اللون"
+curve = "المنحنى"
+stereo = "ستيريو"
 text = "نص"
 reveal = "الظهور"
 reveal_soft = "حافة الظهور"
@@ -1220,6 +1237,17 @@ tone_db = "مستوى النغمة:"
 fps = "إطارات في الثانية:"
 mono = "رمادي"
 tone = "نغمة 1 كيلوهرتز"
+
+# Choice-row variants of the generators (generators-placement-and-audio).
+[genc]
+both = "كلاهما"
+left = "يسار"
+right = "يمين"
+white = "أبيض"
+pink = "وردي"
+brown = "بني"
+log = "لوغاريتمي"
+linear = "خطي"
 
 # المعاملات العامة للتركيب (R.59، المرحلة 3).
 [pubp]
@@ -1474,7 +1502,7 @@ loop_how = "اسحب على المسطرة ثم L"
 cut = "قص حدث إلى قسمين"
 cut_how = "المؤشر على الموضع ثم S"
 title = "إضافة عنوان"
-title_how = "ملف ‹ إنشاء مولّد… ‹ نص"
+title_how = "تحرير ‹ إنشاء مولّد… ‹ نص"
 effect = "إضافة مؤثر"
 effect_how = "انقر مرتين على الحدث ثم + مؤثر…"
 curve = "تحريك معامل"

@@ -12,6 +12,14 @@ month, newest first.
   sits under the media bin — the bin gets the whole column. The gauge button (or View →
   Diagnostics…) opens one window with every number the box had and three graphs side by side in
   time: playback, FFmpeg activity and the cache. Make the window larger and the graphs grow.
+- **Sound generators: tone, noise, sweep, beeps and silence.** Edit → Create a generator → Audio
+  puts a line-up tone, white/pink/brown noise, a sine sweep, a train of sync beeps or a stretch of
+  silence on an audio track. Levels are in dBFS (−20 dBFS of tone and of noise read the same on
+  the meters), a tone or a beep can go to one channel, and the sound is the same on every play,
+  seek and render.
+- **"Create a generator" left the File menu.** It is in **Edit** now, and in a track's right-click
+  menu, which puts the generator exactly where you clicked — a video track offers the picture
+  kinds, an audio track the sound kinds. The media bin keeps its item.
 - **Zigzag and the other segment shapes on one piece of a curve, or on a hundred.** Right-click
   a segment, or <kbd>Ctrl</kbd>+click several, or drag across empty space in the curve graph:
   under "Shape of all segments" a row appears with the same fields for just those segments.

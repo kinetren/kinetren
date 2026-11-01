@@ -88,6 +88,17 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
         "reveal_soft" => tr(k::genp::REVEAL_SOFT),
         "offset_x" => tr(k::genp::OFFSET_X),
         "offset_y" => tr(k::genp::OFFSET_Y),
+        // generators-placement-and-audio: the sound kinds
+        "freq" => tr(k::genp::FREQ),
+        "freq_start" => tr(k::genp::FREQ_START),
+        "freq_end" => tr(k::genp::FREQ_END),
+        "duration" => tr(k::genp::DURATION),
+        "period" => tr(k::genp::PERIOD),
+        "length" => tr(k::genp::LENGTH),
+        "seed" => tr(k::genp::SEED),
+        "channels" => tr(k::genp::CHANNELS),
+        "color" => tr(k::genp::COLOR),
+        "curve" => tr(k::genp::CURVE),
         _ => return None,
     })
 }
@@ -276,6 +287,7 @@ pub fn flag_label(name: &str) -> String {
         "mono" => tr(k::genp::MONO),
         "tone" => tr(k::genp::TONE),
         "beep" => tr(k::genp::BEEP),
+        "stereo" => tr(k::genp::STEREO),
         "bold" => tr(k::titlew::BOLD),
         "reverse" => tr(k::trn::REVERSE),
         "vertical" => tr(k::trn::VERTICAL),

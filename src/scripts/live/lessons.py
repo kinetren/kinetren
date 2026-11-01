@@ -85,7 +85,7 @@ def main(out):
         app.click_probe("lessons.show", "Show")
         app.expect(app.has_probe("lesson.mark.menu"), "Show opened the menu and the generator item is outlined")
         app.expect(not done(1), "Show did not perform the step")
-        app.step("l1-show", "the File menu open, Create a generator… and its group outlined")
+        app.step("l1-show", "the Edit menu open, Create a generator… and its group outlined")
         app.hover_probe("gen.new", "Create a generator…")
         app.hover_probe("gen.new.group.titles", "Titles and countdown")
         app.click_probe("gen.new.text", "Text")

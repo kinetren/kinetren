@@ -88,6 +88,13 @@ const GOLDEN: &[(&str, u64)] = &[
     ("table.steps", 0xcc8933f8c1dc86b2),
     ("table.ycbcr", 0x2f7ce50c358f4d84),
     ("window", 0x9febc6db00122de9),
+    // the sound kinds (generators-placement-and-audio): new rows, printed when they were added;
+    // their own contracts are t1155–t1160
+    ("tone", 0xa231678fe739f1c9),
+    ("audio_noise", 0xe8af9eea194539fe),
+    ("sweep", 0x78346342d043aba9),
+    ("beep", 0x4855b68097998df8),
+    ("silence", 0xcf6786937dbeddd9),
 ];
 
 #[test]

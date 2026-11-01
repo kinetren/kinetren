@@ -8,6 +8,12 @@
 //!
 //! The rule of the frames stays the kernels': **float only in the preamble** — distance fields in
 //! integer 1/256 px (`isqrt`, `coverage`), tables computed before the pixel loop.
+//!
+//! A SOUND kind (generators-placement-and-audio) has no picture: it fills its burst itself
+//! (`Synth`) from the global sample number. Every sine of the generators — the host's `tone_1k`
+//! and the kernels' — is the one `sine` below, so the phase rule and the bytes have one text.
+
+use crate::math::FrozenMath;
 
 /// The material tick a frame is drawn at (re-exported: a family crate depends on the API only, t975).
 pub use kt_time::Tick;
@@ -18,6 +24,24 @@ pub type Frame = fn(&[f64], Tick, u32, u32) -> Box<[u8]>;
 pub type Tone = fn(&[f64]) -> Option<f64>;
 /// Whether global sample `n` (48 kHz) sounds; the default is every sample.
 pub type Gate = fn(&[f64], i64) -> bool;
+/// A sound kind's burst: the values, the GLOBAL sample number of the burst's first frame (48 kHz)
+/// and an interleaved stereo buffer of `AUDIO_BURST_FRAMES` frames, zeroed by the host. A pure
+/// function of its arguments: a burst never depends on the bursts read before it (seek, invariant 11).
+pub type Synth = fn(&[f64], i64, &mut [f32]);
+
+/// The one sine of the generators at global sample `n` (48 kHz): the phase is a function of the
+/// sample number, so seek does not click. The host's 1 kHz tone is this with `hz = 1000.0` — the
+/// same operations in the same order as before it moved here (t1048, t1155).
+#[inline]
+pub fn sine(n: i64, hz: f64) -> f64 {
+    ((n as f64) * hz * std::f64::consts::TAU / 48_000.0).fsin()
+}
+
+/// A level in dBFS as a linear amplitude (AES17: a full-scale sine is 0 dBFS).
+#[inline]
+pub fn db_amp(db: f64) -> f64 {
+    10f64.fpowf(db / 20.0)
+}
 
 /// A generator's kernel (D13).
 pub trait GenKernel: Send + Sync {
@@ -25,6 +49,14 @@ pub trait GenKernel: Send + Sync {
     fn tone(&self, p: &[f64]) -> Option<f64>;
     fn gate(&self, p: &[f64], n: i64) -> bool;
     fn decl(&self) -> &GenDecl;
+    /// Whether the kind declares a host tone at all (with some values).
+    fn has_tone(&self) -> bool {
+        false
+    }
+    /// A sound kind's synthesizer; such a kind has no picture.
+    fn synth(&self) -> Option<Synth> {
+        None
+    }
 }
 
 /// What the host's generator machinery reads — DATA (D13).
@@ -88,6 +120,7 @@ pub struct Kind {
     frame: Frame,
     tone: Option<Tone>,
     gate: Option<Gate>,
+    synth: Option<Synth>,
 }
 
 impl Kind {
@@ -97,6 +130,26 @@ impl Kind {
         self.gate = gate;
         self
     }
+
+    /// The kind synthesizes its sound (a sound kind; see `sound`).
+    pub fn with_synth(mut self, synth: Synth) -> Kind {
+        self.synth = Some(synth);
+        self
+    }
+}
+
+/// A sound kind: no picture (its frame is a transparent fill nobody composites, the bin card writes
+/// its name over it), the `gen:` path tokens and the synthesizer.
+pub fn sound(
+    id: &'static str,
+    name_key: &'static str,
+    category: &'static str,
+    rows: Vec<Row>,
+    path: &'static [PathTok],
+    synth: Synth,
+) -> Kind {
+    let g = GenDecl { alpha: false, live: false, blank: true, path, address: &[], menu: &[], names: None, colors: &[] };
+    kind(id, name_key, category, rows, g, |_, _, w, h| fill(w, h, [0, 0, 0, 0])).with_synth(synth)
 }
 
 impl crate::Plugin for Kind {
@@ -120,6 +173,12 @@ impl GenKernel for Kind {
     }
     fn decl(&self) -> &GenDecl {
         &self.g
+    }
+    fn has_tone(&self) -> bool {
+        self.tone.is_some()
+    }
+    fn synth(&self) -> Option<Synth> {
+        self.synth
     }
 }
 
@@ -189,6 +248,7 @@ pub fn kind(
         frame,
         tone: None,
         gate: None,
+        synth: None,
     }
 }
 

@@ -112,3 +112,30 @@ fn t972_incompatible_declarations_are_refused_by_name() {
     assert_eq!(tail_frames(&m, &at), 9600, "the tail is read from the manifest");
     assert_eq!(lookahead_frames(&m, &at), 400, "the look-ahead is read from the manifest");
 }
+
+/// t1162 (generators-placement-and-audio, D3): a generator kind with both a synthesizer and a host
+/// tone gives two answers to "what does it sound like" — refused by id; a synthesizer alone passes.
+#[test]
+fn t1162_synth_and_tone_together_are_refused() {
+    use kt_plugin_api::generator::{PathTok, sound};
+    fn hum(_: &[f64], _: i64, out: &mut [f32]) {
+        out.fill(0.25);
+    }
+    fn level(_: &[f64]) -> Option<f64> {
+        Some(-20.0)
+    }
+    const NO_PATH: &[PathTok] = &[];
+    let mut reg = Registry::new();
+    let both = sound("hum_tone", "genkind.hum", "genkind.group_audio", vec![], NO_PATH, hum).with_tone(level, None);
+    let err = reg.register(Arc::new(both)).expect_err("a synth with a tone must be refused");
+    assert_eq!(err.id, "hum_tone", "the refusal names the plugin");
+    assert!(err.reason.contains("both a synthesizer and a tone"), "the refusal does not name the conflict: {err}");
+    reg.register(Arc::new(sound("hum", "genkind.hum", "genkind.group_audio", vec![], NO_PATH, hum)))
+        .expect("a synth-only sound kind is registered");
+    let g = reg.get(Family::Generator, "hum").unwrap().generator().expect("a generator kernel");
+    let synth = g.synth().expect("the kernel reports its synthesizer");
+    let mut buf = [0f32; 8];
+    synth(&[], 0, &mut buf);
+    assert_eq!(buf, [0.25; 8]);
+    assert!(g.decl().blank, "a sound kind's card frame is empty by meaning");
+}

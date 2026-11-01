@@ -4486,7 +4486,19 @@ impl KtApp {
     /// of parameters opened, but there was nothing in the preview — a title had to be typed
     /// blind, then go to the bin and place the card by hand.
     /// Ctrl+Z returns everything at once, because the batch is one.
+    /// Create a generator at the cursor — the bin's entry (one body with Edit and the track menu).
     pub fn create_generator(&mut self, kind: kt_model::GeneratorKind) {
+        self.create_generator_at(kind, self.player.transport.playhead(), None);
+    }
+
+    /// Create a generator at `at` (generators-placement-and-audio D1): Edit and the bin pass the
+    /// cursor and no track (track 1 of each stream), a track's right-click menu the clicked place.
+    pub fn create_generator_at(
+        &mut self,
+        kind: kt_model::GeneratorKind,
+        at: Tick,
+        lane: Option<(ClipKind, u32)>,
+    ) {
         // R.59, stage 2: in the media path — the KIND; values travel to the EVENT.
         let path = kt_model::gen_kind_path(&kind);
         let id = MediaId(self.next_media_id());
@@ -4501,9 +4513,8 @@ impl KtApp {
         };
         let info = src.info().clone();
         self.media_paths.insert(id, path.clone());
-        let at = self.player.transport.playhead();
         let mut cmds = vec![Command::AddMedia { id, path: path.clone() }];
-        cmds.extend(self.clip_cmds_for(id, &info, at, None));
+        cmds.extend(self.clip_cmds_for(id, &info, at, lane));
         // the values chosen in the menu — onto the events of this same batch: in one
         // history step, like all the rest of the creation (R.53, item 416)
         for c in cmds.iter_mut() {
