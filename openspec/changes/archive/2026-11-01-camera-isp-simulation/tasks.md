@@ -41,5 +41,5 @@ green and is committed at once (English message, first line "camera-isp-simulati
 - [x] 4.1 The cost per 1080p frame (release, CPU scalar/AVX2, GPU) into design D9
 - [x] 4.2 What's new line (kt26.11), registry row I1 closed, `ktprompts-index.py --check`
 - [x] 4.3 `git merge master`; `cargo test --workspace` and `cargo clippy --all-targets` green; commit
-- [ ] 4.4 `./scripts/finish.sh` from `src/`; the version recorded here
+- [x] 4.4 `./scripts/finish.sh` from `src/`: kt26.11.01-85b5afd8. Reds of the parallel run reran alone: t640, t815 and the live `camera` green; t1171 (kt-media index_db, untouched by this branch, from master) red alone too — reported to the orchestrator
 - [x] 4.5 Archive: specs merged, the "why" into video-fx/plugins design; F-FX-010 `done`
