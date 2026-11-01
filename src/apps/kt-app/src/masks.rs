@@ -42,6 +42,18 @@ fn mode_name(m: MaskMode) -> &'static str {
     }
 }
 
+/// The "Masks" group of a form: collapsed while there are no masks (one header line — the
+/// automation below stays where it was), open as soon as there are. The header is the live
+/// scenarios' target (`grp.masks`, as `widgets::group`'s).
+pub fn section<R>(ui: &mut egui::Ui, has_masks: bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
+    let r = egui::CollapsingHeader::new(tr(k::masks::GROUP))
+        .id_salt(("form_group", "masks", has_masks))
+        .default_open(has_masks)
+        .show(ui, body);
+    crate::widgets::field_probe::note("grp.masks", r.header_response.rect);
+    r.body_returned
+}
+
 /// What the list is drawn for.
 pub struct ListCtx<'a> {
     pub owner: MaskOwner,
@@ -116,7 +128,7 @@ pub fn mask_list(
                 // the mode — a row of four words, not a drop-down: one click, all visible (as
                 // the conform rule of the Geometry node)
                 let mut mode = m.mode;
-                for (j, md) in MaskMode::ALL.into_iter().enumerate() {
+                for md in MaskMode::ALL {
                     let r = ui.selectable_value(&mut mode, md, mode_name(md));
                     crate::app::hint_into(hover, r, tr(k::masks::MODE_HINT));
                 }

@@ -239,6 +239,31 @@ fn t1282_the_preview_click_and_playback_around_masks() {
     assert_eq!(picture(&h, clip), before, "a handle was dragged during playback");
 }
 
+/// The mouse wheel over a window's body, as a person scrolls to what is below its fold.
+fn wheel_down(h: &mut Harness<'_, KtApp>, at: egui::Pos2) {
+    h.hover_at(at);
+    h.step();
+    for _ in 0..6 {
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -120.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        h.step();
+    }
+    h.step();
+}
+
+/// Open the collapsed "Masks" group of a form (it is collapsed while there are no masks).
+fn open_masks(h: &mut Harness<'_, KtApp>) {
+    h.get_by_label(crate::i18n::tr(crate::i18n::k::masks::GROUP)).click();
+    // the group opens with an animation: its body is clipped until it settles
+    for _ in 0..15 {
+        h.step();
+    }
+}
+
 fn harness_with_slot() -> (Harness<'static, KtApp>, kt_model::ClipId) {
     let (mut h, clip) = crate::layout_tests::harness_geom_ctl();
     let fx = vec![kt_model::FxInstance::plugin("duotone").unwrap()];
@@ -256,6 +281,7 @@ fn harness_with_slot() -> (Harness<'static, KtApp>, kt_model::ClipId) {
 #[test]
 fn t1279_an_effect_is_limited_to_a_mask_from_the_effects_window() {
     let (mut h, clip) = harness_with_slot();
+    open_masks(&mut h);
     h.get_by_label(crate::i18n::tr(crate::i18n::k::masks::ELLIPSE)).click();
     h.step();
     let owner = MaskOwner::Slot(clip, 0);
@@ -295,6 +321,7 @@ fn t1281_the_picture_masks_live_in_the_geometry_node() {
         h.step();
         h.step();
     };
+    open_masks(&mut h);
     for (tool, a, b) in [
         (crate::i18n::k::masks::RECT, (0.2, 0.2), (0.8, 0.8)),
         (crate::i18n::k::masks::ELLIPSE, (0.4, 0.4), (0.6, 0.6)),
@@ -314,13 +341,7 @@ fn t1281_the_picture_masks_live_in_the_geometry_node() {
     assert_eq!(words, 2, "each mask row has its mode words");
     // a person scrolls the window's body down to the masks
     let r = h.get_all_by_label(crate::i18n::tr(crate::i18n::k::masks::MODE_SUBTRACT)).nth(1).expect("the row").rect();
-    h.hover_at(r.center() - egui::vec2(0.0, 120.0));
-    h.step();
-    for _ in 0..6 {
-        h.event(egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: egui::vec2(0.0, -120.0), modifiers: egui::Modifiers::NONE, phase: egui::TouchPhase::Move });
-        h.step();
-    }
-    h.step();
+    wheel_down(&mut h, r.center() - egui::vec2(0.0, 120.0));
     h.get_all_by_label(crate::i18n::tr(crate::i18n::k::masks::MODE_SUBTRACT)).nth(1).expect("the second row's mode").click();
     h.step();
     h.step();
@@ -349,8 +370,18 @@ fn t1280_the_track_window_has_its_masks_and_refuses_curves() {
     h.step();
     h.step();
     assert_eq!(h.query_all_by_label(crate::icons::TIMER).count(), 0, "a track's mask offers a stopwatch");
+    open_masks(&mut h);
+    // the opened group grew the window's body: a person scrolls to its tools
+    let r = h.get_by_label(crate::i18n::tr(crate::i18n::k::masks::RECT)).rect();
+    wheel_down(&mut h, r.center() - egui::vec2(0.0, 120.0));
     h.get_by_label(crate::i18n::tr(crate::i18n::k::masks::RECT)).click();
     h.step();
+    h.step();
+    assert_eq!(
+        h.state().mask_ctl.as_ref().map(|e| e.tool),
+        Some(MaskTool::Rect),
+        "the track window's Rectangle did not arm the tool"
+    );
     // the window floats over the picture in the harness: close it, the tool stays armed
     h.state_mut().track_win = None;
     h.step();

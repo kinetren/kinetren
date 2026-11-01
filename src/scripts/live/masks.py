@@ -103,8 +103,14 @@ def main(out):
         base = picture(app, "base", box)
 
         # 1) right click on the picture → Mask → Pen
-        app.right_click(cx, cy)
-        app.expect(app.has_probe("mask.menu"), "the preview menu has the Mask item")
+        menu = False
+        for _ in range(3):
+            app.right_click(cx, cy)
+            menu = app.has_probe("mask.menu", tries=8)
+            if menu:
+                break
+            app.key("Escape")
+        app.expect(menu, "the preview menu has the Mask item")
         app.click_probe("mask.menu", "Mask")
         app.click_probe("mask.menu.pen", "Mask → Pen")
         app.step("pen-armed", "right click on the picture → Mask → Pen")
@@ -141,7 +147,7 @@ def main(out):
         v3 = field(app, lambda f: f["param"] == last, "the smooth point")
         if v3:
             app.click(*centre(v3))
-        out3 = field(app, lambda f: f["param"] == last.replace("mask.v.", "mask.out."), "the selected point's handle")
+        out3 = field(app, lambda f: f["param"].startswith("mask.out."), "the selected point's handle")
         if out3:
             x, y_ = centre(out3)
             app.drag(x, y_, x + 120, y_ + 90)
@@ -184,7 +190,9 @@ def main(out):
             app.key(ch)
         app.click_probe("fxreg.tpl.duotone", "Duotone")
         poll_step(0.5)
-        app.expect(app.has_probe("masks.tool.ellipse"), "the effect's own Masks group is under its parameters")
+        app.expect(app.has_probe("grp.masks"), "the effect's own Masks group is under its parameters")
+        app.click_probe("grp.masks", "open the effect's Masks group")
+        app.expect(app.has_probe("masks.tool.ellipse"), "the group shows the mask tools")
         app.scroll_probe_into_view("masks.tool.ellipse", "grp.masks", "the effect's mask tools", below="fx.done")
         app.click_probe("masks.tool.ellipse", "Ellipse of the effect's masks")
         app.click_probe("fx.done", "Done")

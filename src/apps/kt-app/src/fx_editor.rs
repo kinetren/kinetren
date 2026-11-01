@@ -974,7 +974,7 @@ impl KtApp {
                                         _ => usize::MAX,
                                     };
                                     let view = ed.mask_views.entry((*id, vkey)).or_default();
-                                    let out = crate::widgets::group(ui, "masks", tr(k::masks::GROUP), |ui| {
+                                    let out = crate::masks::section(ui, !list.is_empty(), |ui| {
                                         crate::masks::mask_list(ui, ("fxmasks", id.0, vkey), &mut list, &lcx, view, &mut hover_out)
                                     });
                                     if let Some(out) = out {

@@ -48,6 +48,9 @@ fn masks() -> Vec<Mask> {
     vec![a, b]
 }
 
+/// (name, chain, masks, alpha source, the class of the chain itself)
+type Case = (&'static str, Vec<FxInstance>, Vec<MaskOp>, bool, FrameTol);
+
 fn op(at: usize, kind: MaskOpKind, follow_lead: bool) -> MaskOp {
     MaskOp { at, kind, masks: Arc::new(masks()), follow_lead, project_h: H as f64 }
 }
@@ -62,7 +65,7 @@ fn t1274_masked_frames_agree_exactly_on_both_backends() {
     let duo = FxInstance::plugin("duotone").unwrap();
     // (name, chain, masks, alpha source, the class of the chain itself)
     let (exact, bil) = (FrameTol::EXACT, FrameTol::BILINEAR);
-    let cases: Vec<(&str, Vec<FxInstance>, Vec<MaskOp>, bool, FrameTol)> = vec![
+    let cases: Vec<Case> = vec![
         ("picture after the node", vec![node.clone()], vec![op(1, MaskOpKind::Alpha, true)], false, exact),
         ("picture, alpha source", vec![node.clone()], vec![op(1, MaskOpKind::Alpha, true)], true, exact),
         ("track, masks only", vec![], vec![op(0, MaskOpKind::Alpha, false)], true, exact),

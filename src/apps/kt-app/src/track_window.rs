@@ -302,7 +302,7 @@ impl KtApp {
                         playhead: self.player.transport.playhead(),
                     };
                     let mut view = crate::automation::AutoView::default();
-                    let out = crate::widgets::group(ui, "masks", tr(k::masks::GROUP), |ui| {
+                    let out = crate::masks::section(ui, !list.is_empty(), |ui| {
                         crate::masks::mask_list(ui, ("trackmasks", w.id.0), &mut list, &lcx, &mut view, &mut hover)
                     });
                     if let Some(out) = out {
