@@ -39,5 +39,9 @@
       — master e9b2155c merged (catalogs: `[prefs]` and `[masks]` both kept, CJK subset rebuilt); workspace
       green except t640, t815, t20, t1171 under a full disk and load — all four green alone; clippy: no
       warning in a touched file
-- [ ] 4.2 `src/scripts/finish.sh` — version recorded here and in the report
+- [x] 4.2 `src/scripts/finish.sh` — **kt26.11.01-c62e1314**; live: `telemetry` still expected the View path
+      and `welcome` asked a 1440-wide program window for +300 points — both scenarios fixed (the corner
+      now must land under the pointer, as in t1290) and green alone; the other first-try reds passed on
+      the second try; workspace reds t640/t1171/t815 are the machine's known sidecar-lock/timing flakes
+      (green alone)
 - [ ] 4.3 archive: specs merged, the "why" appended to `openspec/specs/ui-reach/design.md`

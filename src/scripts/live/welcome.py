@@ -192,10 +192,20 @@ def main(out):
             app.expect(lesson is not None and moved is not None and abs(moved["y"] - lesson["y"]) < 1,
                        f"scrolling What's new left the Start pane in place: {lesson} → {moved}")
             app.step("whats-new-scrolled", "only the What's new pane scrolled")
-            drag_corner(app, w0, 600, 400)
+            # to the program window's corner: an egui window cannot outgrow its viewport, and at
+            # the default the start window already takes most of it (1180 of 1440 here)
+            win = geometry()
+            dx = int(win["w"] - 8 - (w0["x"] + w0["w"]))
+            dy = int(win["h"] - 8 - (w0["y"] + w0["h"]))
+            drag_corner(app, w0, dx, dy)
             w1 = rect(app, "welcome.window")
-            app.expect(w1 is not None and w1["w"] > w0["w"] + 300,
-                       f"the start window followed its corner: {w0['w']:.0f} → {(w1 or w0)['w']:.0f} wide")
+            # the corner stays under the hand (an anchored window re-centred itself and its corner
+            # ran half as far as the pointer — t1290)
+            off = None if w1 is None else (w1["x"] + w1["w"] - (w0["x"] + w0["w"] + dx - 3),
+                                           w1["y"] + w1["h"] - (w0["y"] + w0["h"] + dy - 3))
+            app.expect(w1 is not None and w1["w"] > w0["w"] and w1["h"] > w0["h"]
+                       and abs(off[0]) < 8 and abs(off[1]) < 8,
+                       f"the start window's corner followed the pointer: {w0} → {w1}, off by {off}")
             app.step("welcome-large", "the start window enlarged: the panes take the room")
         app.click_probe("welcome.close", "Close")
         app.expect(app.wait_gone("welcome.window"), "Close closed the welcome window")

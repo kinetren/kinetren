@@ -111,7 +111,7 @@ def main(out):
             notes = [n for n in g.get("notices", []) if "anonymous usage statistics" in n]
             app.expect(len(notes) == 1, f"one calm entry in the bell: {g.get('notices')}")
             app.expect(
-                all("View / Send anonymous usage statistics" in n for n in notes),
+                all("File / Preferences… / Send anonymous usage statistics" in n for n in notes),
                 f"the entry names where it is switched off: {notes}",
             )
             app.expect(all("NOT sent" not in n for n in notes), f"the lists are not in the line: {notes}")
