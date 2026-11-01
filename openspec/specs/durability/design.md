@@ -168,3 +168,20 @@ The owner's crash of 2026-10-31 (kkt-26.11.01 item 9) showed four gaps at once, 
   every line carries local time with its offset (`localtime_r`/`GetTimeZoneInformation`, no chrono).
   A live bench lesson: a NEW process replays the last bench command it finds (its counter starts at
   zero) — a scenario that restarts the editor overwrites a `crash` with a `noop`.
+
+### Tests never reach the person's data directory (render-finish-crash, 2026-11-02)
+
+Until 2026-11-01 the tests wrote into the owner's real `~/.local/share/kinetren`: the journal was full
+of `RENDER render log not written (/tmp/kt-t959-…)` lines and rotated his records away (the record of
+his render crash among them), next to 7934 lock files, a recovery file and a workspace written by
+tests. The earlier guards were per site (`recovery_on_drop = false`, a temp `workspace_file`, a
+`cfg!(test)` render log dir, `KT_USER_STORE_DIR`) and every new site missed. The redirection now sits
+at the root: with `cfg!(test)` `journal::data_dir()` answers the absolute `KINETREN_DATA_DIR` if set
+(the supervisor tests start the test binary as a child with their own folder) or
+`<temp>/kt-test-data-<pid>`, made once per process; folders of dead test processes are swept on the
+first call (Linux). The FFmpeg download root follows it in a test build. Rejected: `set_var` of
+`KINETREN_DATA_DIR` at the first call (races every `getenv` of the parallel tests; `unsafe` in edition
+2024 for that reason), and test detection inside kt-dirs (`cfg(test)` is per crate; a runtime guess
+goes stale silently). t1310 checks the outcome (a unique journal line lands in the test's journal, not
+the person's); t1311 forbids direct requests of the person's directories in kt-app outside the
+resolver. kt-cli only reads the data directory, and its tests that touch it give the process its own.

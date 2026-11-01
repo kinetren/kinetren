@@ -17,4 +17,4 @@
 
 - [x] 3.1 What's new line in `docs/guide/whats-new.md` `## kt26.11`; registry row B1 → done with t1312, t1310, t1311; `docs/user-feedback.md` round note on the diagnosis
 - [x] 3.2 `cargo test --workspace` and `cargo clippy --all-targets` green; commit; `src/scripts/target-prune.py` — the load-sensitive t815, t411, t476, t640, t795, t951, t952 went red under load 40–50 and pass alone; clippy adds no warning in the touched files
-- [ ] 3.3 Merge master; `src/scripts/finish.sh` green, version in the report; archive the change (specs merged into export and durability, the why into their design.md)
+- [x] 3.3 Merge master; `src/scripts/finish.sh` green, version in the report; archive the change (specs merged into export and durability, the why into their design.md)

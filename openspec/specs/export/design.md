@@ -122,3 +122,17 @@ came out negative and `Duration::from_secs_f64` panicked on the UI thread — th
 (starting at `align_ceil` would drop a frame the person sees). The window still clamps the fraction
 and builds display durations with `try_from_secs_f64`: a counter mismatch costs an estimate, never
 the program. The FFmpeg download ETA had the same class (a tiny rate overflows) and the same guard.
+
+### The same crash a second time: the owner's build predated the fix (render-finish-crash, 2026-11-02)
+
+The owner's report of 2026-11-01 (kkt-26.11.01b item 2, build 26.11.01-a04b201d: "it reaches 100 %
+and the program folds … even 0.2 s anywhere") came with no crash text — the tests had rotated his
+journal away (durability). Reproduced instead: his build predates e72ea7a8, the fix above; his region
+`rend` starts at frame 195.51 of the 24 fps grid (477 announced, 478 rendered), and any 0.2 s region
+off the grid announces 4 frames and renders 5 or 6. The fraction passes 1 when the audio phase
+reports the rendered count, so the UI thread died after the video was written — "it may even save the
+file". On master his project renders to the end through the real window. t1070/t1071 held the two
+halves separately with scripted numbers; t1312 drives a REAL export of the owner's case through the
+window frame by frame to Close (red on the old code with his panic text), and the live scenario
+`renderregion.py` checks that the supervisor opened no crash window — with the supervisor a UI panic
+no longer ends the process a scenario started, so "the process is alive" alone would pass a crash.

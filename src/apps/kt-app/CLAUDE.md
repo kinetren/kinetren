@@ -93,6 +93,14 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 - **The journal is per run** (`journal::start_run`, a fan of four previous runs, a header with the
   version, OS, FFmpeg major, pid and local time with offset); `last_run_tail` is what the window shows.
 
+## Tests and the person's data directory (render-finish-crash)
+
+- **Every path of the program's data hangs off `journal::data_dir()`**, and in a test build it answers
+  `<temp>/kt-test-data-<pid>` (or the test's own `KINETREN_DATA_DIR`). Never ask `kt_dirs::data_dir()`,
+  `local_dir()`, the FFmpeg download roots, `eframe::storage_dir`, `HOME`/`APPDATA`/`XDG_DATA_HOME`
+  directly: t1311 counts those calls, and a site that resolves on its own writes into the owner's
+  home from the tests again (his journal was rotated away by test lines until 2026-11-01).
+
 ## Debug env
 
 - `KT_AUTOPLAY=1` — play right after opening (performance measurements without input).
