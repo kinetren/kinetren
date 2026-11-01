@@ -60,6 +60,20 @@ pub const FORMER_MARKER: &str = "kinotrain";
 /// only by the import.
 pub const PROJECT_FILE_VERSION: u32 = 1;
 
+/// The version a file is written with WHEN it has masks (shape-masks). The version is set BY
+/// CONTENT: a project without masks stays format 1 byte for byte, and a build that reads only
+/// format 1 refuses a file with masks ("written by a newer Kinetren") instead of opening it with
+/// the masks silently gone.
+pub const PROJECT_FILE_VERSION_MASKS: u32 = 2;
+
+/// The highest version this build reads.
+pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_MASKS;
+
+/// The version this project needs — by its content.
+pub fn version_for(project: &Project) -> u32 {
+    if project.has_masks() { PROJECT_FILE_VERSION_MASKS } else { PROJECT_FILE_VERSION }
+}
+
 /// Extension of the project file. `.ktproj` is NOT reused: two different
 /// formats under one suffix is a trap for people and scripts, and the
 /// legacy `.ktproj` lives on in the import.
@@ -86,7 +100,7 @@ pub enum ProjectFileError {
     NotOurs { looks_like: Option<FileKind> },
     /// The file was written by a newer program. A partial read is forbidden.
     #[error(
-        "project written by a newer Kinetren (format {version}, this build reads up to {PROJECT_FILE_VERSION})"
+        "project written by a newer Kinetren (format {version}, this build reads up to {PROJECT_FILE_READS})"
     )]
     TooNew { version: u32 },
     #[error("invalid json: {0}")]
@@ -138,7 +152,7 @@ struct Envelope {
 /// newline (so the file plays well with `git diff` and `cat`).
 pub fn to_text(project: &Project, otio: Option<&Value>) -> String {
     let env = Envelope {
-        version: PROJECT_FILE_VERSION,
+        version: version_for(project),
         // as is: the order of foreign keys is a promise to the exchange file (t154)
         otio: otio.cloned(),
         project: project.clone(),
@@ -163,11 +177,12 @@ pub fn from_text(text: &str) -> Result<ProjectFile, ProjectFileError> {
     let version = version
         .as_u64()
         .ok_or_else(|| ProjectFileError::Json(format!("`{MARKER}` is not a version number")))?;
-    if version > u64::from(PROJECT_FILE_VERSION) {
+    if version > u64::from(PROJECT_FILE_READS) {
         return Err(ProjectFileError::TooNew { version: version as u32 });
     }
-    // versions BELOW the current one are read by migration on read, one-way; while
-    // there is one version, there is nothing to migrate — the place for future repairs is here
+    // versions BELOW the current one are read by migration on read, one-way; format 2 only
+    // ADDS the masks (format 1 has none), so there is nothing to migrate — the place for
+    // future repairs is here
     let env: Envelope =
         serde_json::from_value(peek).map_err(|e| ProjectFileError::Json(e.to_string()))?;
     let mut project = env.project;

@@ -21,6 +21,15 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   - **A procedural source under a warp follows the CONTINUOUS tick** (R.56, item 448): the generator and the title have no frame grid of their own, and the floor gave the slowed title steps of two frames — at the root just as in a reel.
   - `u` (the progress of the event) and `burst_index` (the noise seed) remain by the OUTPUT time: otherwise the Ken Burns motion would be squeezed into the first third of the slowed clip, and the grain would freeze on repeated frames.
   - `fx_chain_hash` already hashes `fx` and `auto`, therefore a change of speed by itself invalidates the post-FX memo.
+- **A STREAM stage (datamosh-codec-path) runs in `layer_src`, like frame blending** (`video_stream.rs`): the clip's
+  pre-FX frame is what the stage's kernel decodes from the event's stream (the event before on the lane, the event on
+  the lane above/below as a second input), fitted to the decode size and opaque; the slot stays in the chain, which
+  passes it through (`is_stream`). The order (`layers_at`) asks ONLY what `needs` names at the codec size — the frame
+  at N in steady state, the history after a seek — never the ordinary decode quality; `video_decode_qualities` says
+  the same to the coverage bars. The layer's `content` and `fx_hash` carry the decoded key. The preview shares
+  `stream_memo()`; an export sets its own (`set_stream_memo`) and pre-rolls before each frame (`stream_preroll` in
+  export.rs: decode the earliest missing frames in budget-bounded batches, `stream_advance`, until nothing is missing).
+  Tests t1241/t1242/t1248.
 - **Frame blending (R.37 C5, "Frames: blending")** is done in the COMMON code of the plan (`layer_src` → `blend_frames`), not in the executors: both backends receive an already blended pre-FX frame, and the same arithmetic does not have to be kept in sync in the CPU kernel and in WGSL (invariant No. 7 — "the composition code is one, the backend is a parameter of execution"). The kernel is the ready `dissolve_into` (byte-frozen, with an AVX2 twin); nothing new is introduced.
   - A PAIR is decided by ONE function `clip_frame_keys`; `layers_at` MUST return BOTH pts, otherwise prefetch warms one frame while the plan asks for two — an eternal miss. With R.56 it also has a second entry — `blend_footage`, inherited from the attachment above (item 448): the reel itself has no pairs, its leaves blend.
   - Weight `k == 0` (a position on the grid, integer speeds, rate = 1) gives no pair: the path is the former byte-for-byte, and GOLDEN_VIDEO stands on this.
@@ -238,3 +247,12 @@ holds), and the frame would come back a FOREIGN one. Therefore:
 from the Debug representation: all the hashes of the revisions moved ONCE, and the
 sidecar previews of reels in old projects will be recomputed once on
 opening. This is not a regression — the key is a function of the model, not of the file.
+
+## Shape masks in the plan (shape-masks)
+
+- `ClipMaskPlan::of` maps the event's masks onto the MATERIALIZED chain (the same active-slot
+  counting as `materialize_lead`): the picture → an alpha point right after the leading Geometry
+  node, a slot → a mix point (dry snapshot at the slot, mix after it). `LayerSrc.masks` carries them
+  evaluated at the frame's material tick; `apply_chain_with_mixes` cuts the chain at their stops. A
+  masked slot at index 0 is a leading stop: no decode step. Masks join `fx_hash` only when present;
+  a track with masks is a track stage. Tests t1270–t1273.

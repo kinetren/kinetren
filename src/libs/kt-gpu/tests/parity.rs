@@ -96,6 +96,7 @@ impl Src {
             blend: None,
             blend_mode: kt_model::BlendMode::Normal,
             lead: self.lead,
+            masks: Vec::new(),
         }
     }
 }
@@ -847,7 +848,10 @@ fn t329_parity_cycle_over_the_registry() {
     let video: Vec<&FxInstance> = FxInstance::all()
         .iter()
         .filter(|f| {
-            !f.is_audio() && !f.is_layer_mix() && !f.warps_time()
+            // a STREAM source stage (datamosh-codec-path, D4) runs on the CPU in the plan's common
+            // code, and both executors receive its bytes as the layer's pre-FX frame: there is no
+            // GPU text of it to hold to a tolerance (t1241 holds the bytes)
+            !f.is_audio() && !f.is_layer_mix() && !f.warps_time() && !f.is_stream()
         })
         .collect();
     let tags: std::collections::BTreeSet<&str> = video.iter().map(|f| f.tag()).collect();

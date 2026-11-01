@@ -1,20 +1,20 @@
 ---
 id: F-MSK-002
 title: Where a mask lives — on the layer, on the effect or as a separate object
-status: candidate
+status: done
 priority: B
 cost: L
 category: masks/shapes
 editors: [premiere-26, after-effects-26, resolve-21, fcp-12, vegas-pro-2026]
-we_have: no
+we_have: yes
 crates: [kt-model, kt-fx, kt-engine, kt-gpu, kt-cache, kt-otio, kt-app]
 invariants: [3, 4, 7, 11]
 ui_rules: [1, 8, 13, 17, 20]
-round: null
-point: null
-tests: []
+round: kkt-26.11.01
+point: S1
+tests: [t1262, t1263, t1270, t1271, t1272, t1273, t1279, t1280, t1281]
 depends_on: [F-MSK-001, F-CLR-006, F-MPH-006]
-checked: 2026-09-07
+checked: 2026-11-01
 ---
 
 # F-MSK-002 — Where a mask lives — on the layer, on the effect or as a separate object
@@ -163,41 +163,8 @@ That a copy of the contour is NOT a shared contour (FCP, but the diagnosis is ge
 This should be read as follows. There is not a single complaint of the kind "a per-effect mask is a bad idea"; people complain about two things. The first — that it is NOT FOUND: in AE the mechanism has existed since 2014, in Premiere and Resolve for as long as anyone remembers, and the threads of 2026 are titled "after 20 years i finally figured out". The second — the seams around it: assigning the owner by a separate gesture, copies of the contour drifting apart, and editing modes spread across three panels. So what is expensive is not the design but its presentation.
 
 ## How it fits Kinotrain
-
-### What already exists
-
-- **The clip's effect chain** — `ClipEvent.fx: Vec<FxInstance>` (`src/libs/kt-model/src/project.rs:1522`) plus the parallel `fx_bypass`, `fx_auto` and the master switch `fx_off`; the engine receives it via `active_fx()` (same file, 1569). A morpher layer appends its slots to THE SAME chain, and `Project::effective_clips()` (`project.rs:3013`) is the single point of delivering clips to the engine, export and drawing.
-- **Two byte-matching chain executors**: `apply_video_chain_pooled` (`src/libs/kt-fx/src/video.rs:61`) — a `for f in fx` loop over one live frame, and its mirror `chain_ops` (`src/libs/kt-gpu/src/engine.rs:124`), which builds a `Vec<FxOp>`.
-- **Alpha as a channel already exists**: `greenscreen` (`src/libs/kt-fx/src/video.rs:348`) writes it into `px[3]`, after which it goes into the composite's `alpha_over` (`src/libs/kt-engine/src/video.rs`). The key physically exists, but it has neither a name nor an address (diagnosis of F-CLR-006).
-- **A non-numeric reference field in an effect — there is a precedent**: `Pan3d.camera: Option<CameraId>` (`project.rs:2097`). Numeric parameters are drawn by a unified grid over `ParamSpec`, while the reference is drawn as a combo box in the non-numeric tail of `draw_video_fx_params` (`src/apps/kt-app/src/fx_editor.rs:557` and onward).
-- **A reference by NAME with a surviving dead reference — also a precedent**: `MorphTargets::Areas` looks up `MarkedArea` (`project.rs:1163`) by name; a deleted area is not forgotten and is drawn in an error style (rule 20).
-- **The parameter passport of a struct** — `params_for_struct!` (which describes `CameraParams`, `project.rs:2394`): a shape-contour with numeric fields will get both the common field grid and the common curve widget without a single new line in the UI.
-- **Automation** — `ParamCurve` is attached only to `ParamKind::Smooth` (`project.rs:2150`, 2174), the key domain is the MATERIAL TICK, so trim/split/reverse do not touch the curves.
-- **Cache** — `fx_chain_hash` (`src/libs/kt-engine/src/video.rs:153`) hashes the Debug form of the WHOLE chain plus the clip's geometry; the post-FX frame is memoized in `layer_frame_cpu` (same file, 721).
-- **Copy-paste of a slot** — `ops::FxSlotBlock` (`src/libs/kt-model/src/ops.rs:851`) and `FxChainBlock`: JSON in the system clipboard, survives a restart and moves between windows (t205/t215/t217).
-- **Format** — `FxInstance` travels as a serde envelope in the effect's `metadata.kt` (`src/libs/kt-otio/src/convert.rs:548`), and the envelope version is set BY CONTENT (`src/libs/kt-otio/src/meta.rs:17`, currently `KT_META_VERSION = 4`).
-
-### What is missing
-
-There are no masks at all: a grep for `mask|matte|rotoscop` over `src/` finds only `front_mask` inside `transitions.rs` and the timecode-input mask in `util.rs`. There is no contour geometry, no rasterizer, no notion of a "frame region" — and this should be emphasized: our `MarkedArea` is TIME × TRACKS, we do not yet have any spatial meaning for the word "area" at all, and the name is already taken (the namespace of areas and marks is shared). There is also no on-screen editing: today the preview supports exactly one gesture — a click for play/pause (`src/apps/kt-app/src/app.rs:3205`, t74); not a single gizmo over the frame exists.
-
-### What gets in the way
-
-1. **Different rasters live inside the chain.** `Pan`, `CamMotion`, `EventGrid` and `Pan3d` resample the frame to the project size (visible from `chain_ops`), while the other seven video FX preserve the size. A mask on a resampling slot is undefined: the "original" and the "result" lie in different coordinate systems — exactly the restriction that Fusion documents by name for Resize/Scale/Crop.
-2. **The frame arrives at QUALITY resolution.** The decoder delivers a frame already at `Quality { width, height }`, and the same chain is computed on different rasters in the preview and in the export (`q_key` in `layer_frame_cpu`). So the coordinates of a contour MUST be normalized; "pixels" are not suitable here.
-3. **`params_for!` knows only numbers.** `ParamSpec` is min/max/default/step/unit/kind, and a mask reference does not fit into it: it is drawn by hand in the tail of `draw_video_fx_params`, like `Pan3d.camera`. The numeric fields of the shape itself (center, size, rotation, feathering) fit into the macro perfectly — and automation comes along with them for free. The Bezier path does not fit: keys on points are not a `ParamCurve`, and it would become a SECOND exception after `CamMotion.keyframes`, which already has its own mini-editor in `fx_editor.rs`, in violation of the rule "curves are drawn by one widget".
-4. **The post-FX cache key.** `fx_chain_hash` hashes the Debug form of the chain. It will catch an inline contour by itself; a REFERENCE appears in Debug, but the geometry does not, and editing a shared contour would not invalidate post-FX frames (invariant No. 4). This is cured by the morpher's technique: resolve the reference in `effective_clips()` BEFORE the plan is built (`VideoRenderer::new` already calls it first thing) — the engine will see the inline geometry, and the hash will be correct again without a single edit in the cache.
-5. **Copy-paste between projects.** `FxSlotBlock` is a serializable block in the system clipboard; a reference by name in another project would be dangling. There is a precedent for the solution: `ClipBlock` carries `areas`/`markers` along, and `paste_block` counts `PasteSkipped` instead of "fixing up" the paste.
-6. **Format.** A new field will travel into `metadata.kt` by itself, but an old build (v4) will silently ignore it and render the effect over the WHOLE FRAME — this is exactly the case of "silent corruption" for which the refusal `KtMetaTooNew` was introduced. So v5, by the same rule "version by content" by which v3 (key domain) and v4 (morpher layer) were raised.
-7. **The rasterizer is written twice.** The mixer "original ↔ result by mask" and the shape itself are needed both in the scalar kernel with AVX2 and in WGSL, and SIMD must match the scalar code byte for byte. An analytic shape (ellipse/rectangle via signed distance with feathering) is suitable for this; a polygonal scanline fill with antialiasing is the main risk of CPU↔GPU divergence.
-
-### Which invariants it touches
-
-- **No. 7 (one composition code).** The mask must be part of the same frame plan, not a second path: the mixer lives in the chain and is repeated in both executors. It costs exactly twice as much as an ordinary effect, but in form it is the same `FxOp`, not a new interpreter (unlike the graph, F-CLR-006).
-- **No. 11 (determinism) and the rule of the kt-fx crate.** The default "no mask" must give the previous bytes — then GOLDEN_VIDEO and the golden references of the video FX are not regenerated. The schema `#[serde(default, skip_serializing_if …)]` is already configured for this in our code.
-- **No. 4 (the cache is the single source of truth about coverage).** The geometry must get into the post-FX key; on the other hand, a shared mask changed once invalidates the post-FX frames of all consumer clips — this is the correct behavior, but it is a black and must be waited out.
-- **No. 3 (editing the model does not destroy FX state).** The mask field is meaningful only for video variants; its appearance on a slot must not count as a change of the chain for the audio state in the diff by clip id.
-- **UI rules.** 13 — the mask does not get its own panel: the numbers go into the same grid of the effect card, the reference goes into its non-numeric tail, and the shape is edited by a gizmo over the ALREADY existing preview. 17 — "a mask-effect in the chain" and "a mask field on a slot" describe the same action, so EXACTLY ONE of the models goes into the product. 20 — a dead reference to a deleted contour does not delete itself (the precedent of morpher areas). 1 — the points of the contour must have a grab zone wider than the drawing, and the gizmo must not break the play/pause click over the preview (t74) and the double clicks (t206/t207). 8 — the gizmo is drawn in the frame, not as a "standard widget".
+CAPABILITY: openspec/specs/video-plan/ — where each mask is applied is in `spec.md`, the "why" (and what was rejected) in `design.md`.
+Three owners — the event's picture (in the Geometry node), an effect slot, a track — each with its own list, one widget `kt-app/src/masks.rs`.
 
 ## Estimate
 
@@ -221,6 +188,28 @@ Three supports on which the recommendation rests are already in place in OUR cod
 Coordination with F-MSK-001. It arrives at "a mask at the slot" from the other side — from geometry — and this is a confirmation, not a coincidence; we diverge in one place, and it should be recorded. There it is said "at the chain slot — as in FCP", but in live FCP everything is more complicated: its seven mask-effects cut the WHOLE layer (the quote about Draw Mask and Color Board above), and a per-effect region there exists only as built-in masks inside the effects themselves, and only they have Boolean modes. The reference for us is not FCP but Premiere for ownership and AE for addressing: the owner is the slot, the contour is a shared object which the slot references. The shape of the contour, the number of points and the modes of combining masks inside a slot are described by F-MSK-001, and a foreign alpha as the source of a key — by F-MSK-003; this note decides nothing about them.
 
 Boundaries of the decision that should be fixed at once: a mask is allowed only on slots that do not change the raster (Fusion lists the same set of prohibitions); the first stage is parametric shapes (ellipse, rectangle, linear gradient), as F-MSK-001 established, because keys on the points of an arbitrary contour do not fit into our single curve widget. And an honest caveat: the user has not yet asked for masks (`docs/user-feedback.md` is silent about them) — this note closes the architectural fork in advance, so that the first mask does not arrive as "an effect in the chain", from which it would later be impossible to escape without a format change.
+
+### Verdict, revised (2026-11-01, change `shape-masks`)
+
+**Taken: the owner of a mask is the place a person looks for it, and there are three such places**
+— the event's picture, an effect slot and a track — each with its own ordered list of the same
+`Mask` type, drawn by one widget:
+
+- the picture's masks live in the Geometry node, in the order the node already reserved — crop →
+  mask → placement — so a mask follows the event's move, zoom and rotation (AE's layer masks);
+- a slot's masks are the slot's own (Premiere): the slot's result inside, its input outside,
+  through the morpher's wet/dry mechanism with a coverage instead of a scalar. "The second of five
+  effects" is expressible; "two blurs of different strength in two places" is two slots;
+- a track's masks cut its composite after its chain (Resolve's window on a node, over everything on
+  the track); static, as every track property is until the track has a time domain.
+
+The shared contour object this note recommended was NOT made: the point a shared object addressed —
+two consumers of one contour drifting apart — is covered by LINKS (R.61), which needed no new
+concept: a mask row is a link target and a link source (`self/mask1/v0.x`), so one mask can drive
+another, and the point tracker (T1) drives a mask the same way. The positional model (a mask as an
+effect in the chain) was rejected as here. The boundary "a mask only on raster-preserving slots"
+was not needed: a slot after the Geometry node runs on the canvas, the dry side is fitted as the
+morpher's is, and the path is mapped through the leading node's placement.
 
 ## Sources
 

@@ -346,3 +346,16 @@ when the useful first click differs from the file's default, a `template`), its 
 constructor in kt-model if callers build it, `param_label` + catalogues ×5 (+ subset-fonts for new
 glyphs). t328's GOLDEN_ALL line (the completeness lock), a tolerance class in t329 and t973's
 frozen form follow from `FxInstance::all()` (a barrier: a row in t1051 too); the semantic test — in geo_fuse (t330/t332/t333).
+
+## Shape masks (shape-masks)
+
+- `mask.rs` is the ONE rasterizer: an ordered mask list + `MaskSpace` (reference px → raster px,
+  `MaskSpace::placed` over a Geometry node's `Placement`) → an 8-bit `Coverage`. Exact IEEE ops and
+  the frozen math only; the bytes are frozen by t1269. A wide band is sampled on a coarser grid
+  (the distance field is 1-Lipschitz) — keep the cost O(perimeter).
+- **One mask px** is a project pixel of the reference frame's height on the raster (`px_of`) — not a
+  raster or a native pixel: the interface and the engine use different reference sizes and must
+  feather alike.
+- `apply_alpha`/`apply_mix` are integer and mirrored by `kt-gpu` (`mask.wgsl`, the coverage branch of
+  `layer_mix.wgsl`): edit them as a pair. `MaskOp`/`mask_space`/`mask_stops` are the plan's door: both
+  executors call them. The memo is keyed by the full Debug text, bounded to 16.
