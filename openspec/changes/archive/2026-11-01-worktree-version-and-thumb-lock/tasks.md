@@ -17,4 +17,7 @@
 ## 3. Close
 
 - [x] 3.1 `cargo test --workspace`, `cargo clippy --all-targets`
-- [ ] 3.2 `git merge master`, `src/scripts/finish.sh` — the version here and in the report; archive
+- [x] 3.2 `git merge master`, `src/scripts/finish.sh` — the version here and in the report; archive
+      (finish.sh VERSION kt26.11.01-885b71cd; at load ~22 nine live scenarios red twice — formula
+      geomctl morphgrid nestparam readme_shots select shapes stills title — all 9 green alone
+      at load ~6, `KT_LIVE_WORKERS=1`)
