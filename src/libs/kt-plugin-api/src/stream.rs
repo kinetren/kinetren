@@ -49,6 +49,18 @@ pub trait StreamLayout {
     /// source's revision. 0 — there is no frame at `k` on this side. A memo key is built from
     /// addresses alone, so "what is still needed" is answered without reading a frame.
     fn ident(&self, side: Side, k: i64) -> u64;
+    /// The slot's rows AT position `k`, its curves applied (positions before the cut read the
+    /// event's start); `None` — the rows have no curves and the static values hold everywhere.
+    /// A kernel reads every per-frame quantity here, so frame N stays a pure function of the curves.
+    fn rows_at(&self, _k: i64) -> Option<Vec<f64>> {
+        None
+    }
+    /// The identity of the REGION OF INTEREST at `k` (0 — no region: the whole frame). The bridge
+    /// for a mask or a detector (faces, people): the host names WHERE the effect acts, the kernel
+    /// decides what that means (the datamosh shows its broken stream inside, the intact one outside).
+    fn region_ident(&self, _k: i64) -> u64 {
+        0
+    }
 }
 
 /// One RGBA frame at the stream's size.
@@ -62,6 +74,12 @@ pub struct Rgba<'a> {
 pub trait StreamInput: StreamLayout {
     /// Calls `f` with the frame at `k` when the host has it; `false` — it is missing (starvation).
     fn with_frame(&self, side: Side, k: i64, f: &mut dyn FnMut(Rgba<'_>)) -> bool;
+    /// The region of interest at `k` as a coverage plane at the stream's size (0 — outside, 255 —
+    /// inside), when `region_ident(k) != 0`; `false` — no region (the whole frame). No host part
+    /// gives one yet: masks and object detection will, through this one door.
+    fn with_region(&self, _k: i64, _f: &mut dyn FnMut(&[u8])) -> bool {
+        false
+    }
 }
 
 /// What a render produced: the size of `out` and the identity of the bytes (the host puts it into

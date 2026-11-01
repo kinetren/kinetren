@@ -27,7 +27,7 @@
   sequential playback and export.
 - Non-goal: a bit-exact model of a standard codec (H.264, MPEG-4). We model the MECHANISM —
   the same quantities, a simpler syntax (no entropy coding, no B-frames, integer-pel vectors).
-- Non-goal: GPU execution of the codec; curves on the codec rows; the stage on a reel or a track.
+- Non-goal: GPU execution of the codec; the stage on a reel or a track; a region SOURCE (D9 is the door).
 
 ## Decisions
 
@@ -69,27 +69,33 @@
 ### D3. Temporal state: replay from the anchor, with a content-keyed memo
 
 **How frame N is computed.** The stream positions are the project grid's frame indices. The
-I-frame SCHEDULE is content-free: an I-frame at the stream start, at the cut (when the stream
-starts in the event before) and every `gop` frames from the cut. The breakages mark some of
-them not intact (dropped, swallowed by a bloom). The ANCHOR of N is the last intact I-frame at or
-before N. Frame N is the decoder's loop run from the anchor to N over the packets the encoder
-produced, with the breakages applied — a pure function of the rows and of the source frames in
-[anchor, N] (and of the second input's frames from its own GOP starts).
+I-frame SCHEDULE: an I-frame at the stream start, at the cut (when the stream starts in the event
+before), on the GOP grid counted from the cut (`gop` 0 — only `KEYINT_MAX` = 600, x264's `keyint`),
+and wherever a `reset` key rises to on. A reset adds a keyframe; it does not move the grid (a grid
+restarted by every reset would need the whole history to place the next keyframe). The GATES, read
+per position from the rows WITH their curves (`StreamLayout::rows_at`), mark the decoder's packets:
+while `mosh` is on every I-frame but the stream's first and a reset is dropped (the decoder shows its
+reference again); while `bloom` is on the run's first P-frame packet repeats; while `freeze` is on
+every P-frame predicts from the run's first picture. The ANCHOR of N is the last self-contained node
+of N's dependency chain. Frame N is the decoder's loop from the anchor to N — a pure function of the
+rows and curves and of the source frames in [anchor, N] (and of the second input's frames from its
+own GOP starts).
 
-**The bound.** The rows are bounded (gop ≤ 60, drops ≤ 4, bloom ≤ 60), and the decoder has an
-INTRA REFRESH: a broken chain longer than `MAX_CHAIN` = 300 frames meets a forced intact I-frame
-every 300 frames counted from its anchor. It is a fixed grid, not a sliding window — a sliding
-"N − 300" would give every frame a different chain, so consecutive frames would not continue each
-other and no memo entry would ever be reused. The cold cost of a frame is therefore at most 300
-encodes + decodes at the encoded height.
+**The bound.** The decoder has an INTRA REFRESH: a broken chain longer than `MAX_CHAIN` = 600 frames
+meets a forced intact I-frame every 600 frames counted from its anchor. It is a fixed grid, not a
+sliding window — a sliding "N − 600" would give every frame a different chain, so consecutive frames
+would not continue each other and no memo entry would ever be reused. A person's own `reset` keys
+normally end a mosh long before it. The cold cost of a frame is at most the chain's encodes and
+decodes at the encoded height (D7: 7.6 + 0.5 ms per frame at 360 lines).
 
 **The memo.** `StreamMemo` is a bounded LRU of opaque entries keyed by `u64`, defined in the API
 and owned by the HOST. The codec keeps two kinds of entries:
 - CLEAN (the encoder): the closed-loop reconstruction and the packet (vectors, residual) of
-  position k, keyed by a chain hash of the encoder rows and the source ADDRESSES (media, pts,
-  codec size, the source's revision) from k's clean GOP start to k;
-- DECODED (the broken decoder): the picture at k, keyed by the clean key, the breakage rows and
-  the decoder's own chain hash from the anchor.
+  position k, keyed by a chain hash of the structural rows and, per position from k's clean GOP
+  start to k, the source ADDRESS (media, pts, codec size, the source's revision) and the quantiser;
+- DECODED (the broken decoder): the picture at k, keyed by the decoder's chain hash from the anchor,
+  the clean keys of its packets and the per-frame rows a P-frame reads (vector scale and rotation,
+  residual, loss). Two curves that give the same chain and the same values share entries — rightly.
 
 A key is computed from addresses alone, so the walk "what is still needed" reads no frame. The
 address is stable for a file; a procedural source (generator, title) adds its revision, which
@@ -174,15 +180,29 @@ The decoded picture is converted to RGBA at the codec size and fitted to the lay
 with the shared bilinear (`kt_fx::video::fit_into`); the chain sees the size it saw before. A
 codec has no alpha: the stage's output is opaque, as the codecs it models.
 
+### D9. A region of interest is a door of the contract
+
+The owner (2026-11-01): "programmatic handles … so the effect can be aimed at regions of interest —
+an object detector, the user picks faces or whole people — a bridge for the future, said in the
+docs". The stream contract carries it now: `StreamLayout::region_ident(k)` (0 — no region) and
+`StreamInput::with_region(k)` (a coverage plane at the stream's size, 0 outside, 255 inside). The
+kernel decides what a region means; the datamosh shows its broken stream inside and the intact one
+outside, blended per pixel by the coverage (`clean + (broken − clean) × c`, floor division), and the
+region's identity joins the output key. The broken loop itself is untouched — the region chooses what
+is SHOWN, so a region that moves does not re-seed the decoder. No host part gives a region today
+(the engine's `ClipStream` returns none): a mask (F-MSK) or a detector will implement these two
+methods, and every stream kernel gets it at once. t1244 holds the meaning on a half-frame region.
+
 ## Risks / Trade-offs
 
-- Cold seek cost: up to 300 encodes and decodes at the encoded height. Mitigation: the memo,
-  the bound, the encoded height row (144–720).
+- Cold seek cost: up to 600 encodes and decodes at the encoded height in a long unbroken mosh.
+  Mitigation: the memo, a reset key, the encoded height row (144–1080).
 - Memory: the shared memo is 256 MB at most; an entry at 360 lines is about 1.4 MB.
 - A procedural source's revision must reach the key, or an edit of a generator under a mosh
-  would show the old picture: the renderer hashes the media item into the address.
-- The rows are not automatable (Structural): a curve on `gop` would make the anchor of N depend
-  on the curve at every earlier frame. Deferred, not forgotten.
+  would show the old picture: the renderer hashes the event's generator values into the address.
+- The GOP, the block, the search range, the encoded height and the frames from the event before
+  take no curve: they shape the stream's structure (the grid, the planes), and a curve on them would
+  make the keyframe of N depend on its value at every earlier frame.
 
 ## Migration Plan
 

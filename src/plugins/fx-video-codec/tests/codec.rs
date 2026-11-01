@@ -46,13 +46,19 @@ struct Mock {
     second: Option<(i64, HashMap<i64, Vec<u8>>)>,
     /// The stream's identity in the addresses: two mocks never share a memo key.
     tag: u64,
+    /// The rows per position (curves), over the static ones; `None` — no curves.
+    curve: Option<Curve>,
+    /// A region of interest: its identity and its coverage plane (W×H).
+    region: Option<(u64, Vec<u8>)>,
 }
+
+type Curve = std::sync::Arc<dyn Fn(i64) -> Vec<f64> + Send + Sync>;
 
 static TAGS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl Mock {
     fn new(first: i64, cut: i64, end: i64, f: impl Fn(i64) -> Vec<u8>) -> Mock {
-        Mock { first, cut, end, main: (first..end).map(|k| (k, f(k))).collect(), second: None, tag: TAGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) }
+        Mock { first, cut, end, main: (first..end).map(|k| (k, f(k))).collect(), second: None, tag: TAGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed), curve: None, region: None }
     }
 }
 
@@ -79,6 +85,12 @@ impl StreamLayout for Mock {
         };
         if has { mix(mix(self.tag, side as u64), k as u64) } else { 0 }
     }
+    fn rows_at(&self, k: i64) -> Option<Vec<f64>> {
+        self.curve.as_ref().map(|c| c(k))
+    }
+    fn region_ident(&self, _k: i64) -> u64 {
+        self.region.as_ref().map_or(0, |r| r.0)
+    }
 }
 
 impl StreamInput for Mock {
@@ -95,6 +107,24 @@ impl StreamInput for Mock {
             None => false,
         }
     }
+    fn with_region(&self, _k: i64, f: &mut dyn FnMut(&[u8])) -> bool {
+        match &self.region {
+            Some((_, c)) => {
+                f(c);
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// Rows per position: the static `base` with `gate` set to 1 where `on(k)`.
+fn curve(base: Vec<f64>, gate: usize, on: impl Fn(i64) -> bool + Send + Sync + 'static) -> Curve {
+    std::sync::Arc::new(move |k| {
+        let mut v = base.clone();
+        v[gate] = if on(k) { 1.0 } else { 0.0 };
+        v
+    })
 }
 
 fn params(sets: &[(usize, f64)]) -> Vec<f64> {
@@ -168,7 +198,7 @@ fn cut_stream() -> Mock {
 #[test]
 fn t1236_dropped_i_frame_moves_the_previous_shot_with_the_new_motion() {
     let s = cut_stream();
-    let moshed = params(&[(rows::BEFORE, 12.0), (rows::DROP_COUNT, 1.0), (rows::QP, 12.0)]);
+    let moshed = params(&[(rows::BEFORE, 12.0), (rows::MOSH, 1.0), (rows::QP, 12.0)]);
     let intact = params(&[(rows::BEFORE, 12.0), (rows::QP, 12.0)]);
     let memo = StreamMemo::new(64 << 20);
     for n in [3i64, 6, 9] {
@@ -193,9 +223,11 @@ fn t1236_dropped_i_frame_moves_the_previous_shot_with_the_new_motion() {
 /// t1237: a bloom applies packet b's vector field again on every frame of (b, b+N].
 #[test]
 fn t1237_bloom_repeats_one_vector_field() {
-    let s = Mock::new(0, 0, 30, |k| tex(3, 2 * k as i32, (k / 3) as i32));
+    let mut s = Mock::new(0, 0, 30, |k| tex(3, 2 * k as i32, (k / 3) as i32));
     let (b, len) = (6i64, 5i64);
-    let p = params(&[(rows::BLOOM_AT, b as f64), (rows::BLOOM_LEN, len as f64)]);
+    // the bloom gate is on over [b, b+len]: frame b decodes its own packet, then repeats it
+    let p = params(&[]);
+    s.curve = Some(curve(p.clone(), rows::BLOOM, move |k| (b..=b + len).contains(&k)));
     let cfg = Rows::from(&p).cfg;
     // the clean encoder, by hand
     let mut cl: Vec<codec::Clean> = vec![];
@@ -217,7 +249,7 @@ fn t1237_bloom_repeats_one_vector_field() {
     let pk = &cl[j as usize].pkt;
     let want = codec::reconstruct(&codec::predict(&dec(&p, &s, j - 1, &memo), &pk.mv, cfg.bs), &pk.res, 256);
     assert_eq!(*dec(&p, &s, j, &memo), want);
-    let plain = dec(&params(&[]), &s, b + len, &memo);
+    let plain = dec(&params(&[]), &Mock::new(0, 0, 30, |k| tex(3, 2 * k as i32, (k / 3) as i32)), b + len, &memo);
     assert_ne!(*plain, *dec(&p, &s, b + len, &memo), "the bloom changes the picture");
 }
 
@@ -230,12 +262,34 @@ fn rgba(p: &[f64], s: &Mock, n: i64, memo: &StreamMemo) -> Vec<u8> {
 /// t1238: frame N is the same bytes however it is reached; the needs answer what the memo lacks.
 #[test]
 fn t1238_seek_equals_play() {
-    let s = cut_stream();
-    for p in [
-        params(&[(rows::BEFORE, 12.0), (rows::DROP_COUNT, 2.0), (rows::GOP, 8.0)]),
-        params(&[(rows::BEFORE, 12.0), (rows::DROP_COUNT, 1.0), (rows::BLOOM_AT, 4.0), (rows::BLOOM_LEN, 6.0)]),
-        params(&[(rows::FREEZE_AT, 3.0), (rows::FREEZE_LEN, 12.0), (rows::LOSS, 0.2), (rows::SEED, 7.0)]),
-    ] {
+    let cases: Vec<(Vec<f64>, Option<Curve>)> = vec![
+        (params(&[(rows::BEFORE, 12.0), (rows::MOSH, 1.0), (rows::GOP, 8.0)]), None),
+        {
+            let p = params(&[(rows::BEFORE, 12.0), (rows::MOSH, 1.0)]);
+            let c = curve(p.clone(), rows::BLOOM, |k| (4..10).contains(&k));
+            (p, Some(c))
+        },
+        {
+            let p = params(&[(rows::LOSS, 0.2), (rows::SEED, 7.0)]);
+            let c = curve(p.clone(), rows::FREEZE, |k| (3..15).contains(&k));
+            (p, Some(c))
+        },
+        {
+            // the person's beat: mosh on, a reset key at 9, mosh off after 16
+            let p = params(&[(rows::BEFORE, 12.0), (rows::GOP, 6.0)]);
+            let base = p.clone();
+            let c: Curve = std::sync::Arc::new(move |k| {
+                let mut v = base.clone();
+                v[rows::MOSH] = if k < 16 { 1.0 } else { 0.0 };
+                v[rows::RESET] = if k >= 9 { 1.0 } else { 0.0 };
+                v
+            });
+            (p, Some(c))
+        },
+    ];
+    for (p, c) in cases {
+        let mut s = cut_stream();
+        s.curve = c;
         let n = 21;
         let played = StreamMemo::new(256 << 20);
         let mut last = vec![];
@@ -260,7 +314,7 @@ fn t1238_seek_equals_play() {
 /// Linux must agree — the frozen DCT basis and integer planes make it so).
 #[test]
 fn t1239_determinism() {
-    let p = params(&[(rows::BEFORE, 12.0), (rows::DROP_COUNT, 1.0), (rows::MV_ROTATE, 30.0), (rows::LOSS, 0.1)]);
+    let p = params(&[(rows::BEFORE, 12.0), (rows::MOSH, 1.0), (rows::MV_ROTATE, 30.0), (rows::LOSS, 0.1)]);
     let run = move || {
         let s = cut_stream();
         let memo = StreamMemo::new(256 << 20);
@@ -282,19 +336,24 @@ fn t1243_freeze_transplant_vector_ops_and_loss() {
     let memo = StreamMemo::new(256 << 20);
     // freeze: every P-frame in [5, 15) predicts from the picture at 4
     let s = Mock::new(0, 0, 30, |k| tex(4, 2 * k as i32, 0));
-    let p = params(&[(rows::FREEZE_AT, 5.0), (rows::FREEZE_LEN, 10.0)]);
+    let mut sf = Mock::new(0, 0, 30, |k| tex(4, 2 * k as i32, 0));
+    let p = params(&[]);
+    // the freeze gate on over [4, 15): frame 4 decodes, 5 … 14 predict from it
+    sf.curve = Some(curve(p.clone(), rows::FREEZE, |k| (4..15).contains(&k)));
     let cfg = Rows::from(&p).cfg;
     let mut cl: Vec<codec::Clean> = vec![];
     for k in 0..=12 {
-        let c = codec::encode(&planes(&s.main[&k]), cl.last().map(|c| &c.recon), &cfg);
+        let c = codec::encode(&planes(&sf.main[&k]), cl.last().map(|c| &c.recon), &cfg);
         cl.push(c);
     }
-    let rf = dec(&p, &s, 4, &memo);
+    let rf = dec(&p, &sf, 4, &memo);
     for j in [5i64, 9, 12] {
         let pk = &cl[j as usize].pkt;
         let want = codec::reconstruct(&codec::predict(&rf, &pk.mv, cfg.bs), &pk.res, 256);
-        assert_eq!(*dec(&p, &s, j, &memo), want, "frozen frame {j}");
+        assert_eq!(*dec(&p, &sf, j, &memo), want, "frozen frame {j}");
     }
+    // after the gate the reference updates again
+    assert_ne!(*dec(&p, &sf, 16, &memo), *dec(&p, &s, 16, &memo), "the frozen run left its trace");
     // scale 0 with no residual holds the picture
     let hold = params(&[(rows::MV_SCALE, 0.0), (rows::RESIDUAL, 0.0)]);
     assert_eq!(*dec(&hold, &s, 7, &memo), *dec(&hold, &s, 6, &memo));
@@ -330,6 +389,79 @@ fn t1243_freeze_transplant_vector_ops_and_loss() {
     assert_ne!(*l1, *l2);
 }
 
+
+/// t1244 (the owner, 2026-11-01: "aim the effect at regions of interest — faces, whole people"):
+/// the REGION input. Inside the region the broken stream shows, outside it the intact one, byte
+/// for byte; no region is the whole frame.
+#[test]
+fn t1244_a_region_of_interest_confines_the_mosh() {
+    let memo = StreamMemo::new(256 << 20);
+    let moshed = params(&[(rows::BEFORE, 12.0), (rows::MOSH, 1.0), (rows::QP, 12.0)]);
+    let intact = params(&[(rows::BEFORE, 12.0), (rows::QP, 12.0)]);
+    let mut s = cut_stream();
+    let half = W as usize / 2;
+    let cov: Vec<u8> = (0..(W * H) as usize).map(|i| if i % W as usize >= half { 0 } else { 255 }).collect();
+    s.region = Some((7, cov));
+    let plain = cut_stream();
+    let n = 6;
+    let got = dec(&moshed, &s, n, &memo);
+    let whole = dec(&moshed, &plain, n, &memo);
+    let clean = dec(&intact, &plain, n, &memo);
+    let w = got.w;
+    for y in 0..H as usize {
+        for x in 0..W as usize {
+            let (g, want) = (got.y[y * w + x], if x < half { whole.y[y * w + x] } else { clean.y[y * w + x] });
+            assert_eq!(g, want, "({x},{y}): inside the region the mosh, outside the intact stream");
+        }
+    }
+    assert_ne!(*whole, *clean, "the scene moshes at all");
+    // the region's identity is in the key: the same frame without it is another picture
+    let mut out_a = vec![];
+    let mut out_b = vec![];
+    let a = Datamosh::new().render(&moshed, &s, n, &memo, &mut out_a).unwrap();
+    let b = Datamosh::new().render(&moshed, &plain, n, &memo, &mut out_b).unwrap();
+    assert_ne!(a.key, b.key);
+}
+
+/// t1245 (the owner, 2026-11-01: "reset/inactivity marks by hand on the beat"): the gates are
+/// curves. A `reset` key rising to on forces an intact I-frame at that frame — the mosh ends on the
+/// beat; `mosh` off keeps the next keyframe intact (inactivity).
+#[test]
+fn t1245_reset_and_inactivity_follow_the_curves() {
+    let memo = StreamMemo::new(256 << 20);
+    let base = params(&[(rows::BEFORE, 12.0), (rows::QP, 12.0), (rows::GOP, 0.0)]);
+    let b = |n: i64| planes(&tex(2, 2 * n as i32, 0));
+    let a_moved = |n: i64| planes(&tex(1, 2 * n as i32, 0));
+    let err_to = |p: &Planes, q: &Planes| err(p, q, (2 * 12 + 16).min(W as usize - 16), W as usize).0;
+    // mosh on everywhere, a reset key at 10
+    let mut s = cut_stream();
+    let bb = base.clone();
+    s.curve = Some(std::sync::Arc::new(move |k| {
+        let mut v = bb.clone();
+        v[rows::MOSH] = 1.0;
+        v[rows::RESET] = if k >= 10 { 1.0 } else { 0.0 };
+        v
+    }));
+    let before_beat = dec(&base, &s, 9, &memo);
+    assert!(err_to(&before_beat, &a_moved(9)) < 4.0, "before the beat: the mosh");
+    let at_beat = dec(&base, &s, 10, &memo);
+    assert!(err(&at_beat, &b(10), 0, W as usize).0 < 4.0, "on the beat: an intact keyframe of B");
+    let after = dec(&base, &s, 14, &memo);
+    assert!(err(&after, &b(14), 0, W as usize).0 < 4.0, "after it the stream is B again");
+    // mosh off from frame 5 on, GOP 12: the keyframe at 12 is intact, the mosh before it holds
+    let mut t = cut_stream();
+    let bb = params(&[(rows::BEFORE, 12.0), (rows::QP, 12.0), (rows::GOP, 12.0)]);
+    let bc = bb.clone();
+    t.curve = Some(std::sync::Arc::new(move |k| {
+        let mut v = bc.clone();
+        v[rows::MOSH] = if k < 5 { 1.0 } else { 0.0 };
+        v
+    }));
+    assert!(err_to(&dec(&bb, &t, 9, &memo), &a_moved(9)) < 4.0, "the cut's keyframe was dropped while on");
+    assert!(err(&dec(&bb, &t, 12, &memo), &b(12), 0, W as usize).0 < 4.0, "off: the next keyframe is intact");
+    // the curve values are in the keys: the same frame under another curve is not reused
+    assert_ne!(*dec(&bb, &t, 9, &memo), *dec(&bb, &cut_stream(), 9, &memo));
+}
 
 /// The cost (datamosh-codec-path, task 5.1) — a measurement, not a check: run on a RELEASE build
 /// with `cargo test --release -p fx-video-codec --test codec cost -- --ignored --nocapture`.

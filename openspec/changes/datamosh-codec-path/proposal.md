@@ -22,11 +22,18 @@ frame N depends on every frame since its last intact I-frame.
   block-matching motion estimation with a search range; a closed prediction loop over a
   reference buffer; an 8×8 DCT residual quantised by QP; a GOP with I-frames at the stream
   start, at the cut and every N frames. Frozen math only (invariant 11).
-- **The breakages are its passport:** drop I-frames from a frame on (the reference survives the
-  cut), bloom (one P-frame repeated N times), freeze the reference, scale / rotate / swap the
-  vectors, take the vectors from the track above or below (a second input), quantiser, residual
-  loss, macroblock-loss probability with a seed, GOP length, block size, search range, encoded
-  height, and how many frames of the event before the stream starts in.
+- **The breakages are its passport, drawn by curves** (the owner on the first build, 2026-11-01:
+  "no curves … no way to reset the effect, at least by keys on the curves, on the beat … the GOP is
+  limited to 60 for some reason"): the GATES `mosh` (I-frames dropped while on — off is the
+  inactivity), `reset` (a key rising to on forces an intact I-frame — the reset on the beat), `bloom`
+  (the run's first P-frame repeats), `freeze` (the reference stops updating); the per-frame codec
+  quantities take curves too (quantiser, vector scale and rotation, residual kept, block loss).
+  Structural rows keep no curve: GOP (up to 600, 0 = only at the cut and the resets), block, search
+  range (64), encoded height (144–1080), frames from the event before (300), second input, seed.
+- **A region of interest** (the owner: "programmatic handles … aim the effect at regions — an
+  object detector, faces, whole people — a bridge for the future"): the stream contract takes a
+  per-frame coverage region with an identity; the datamosh shows its broken stream inside it and
+  the intact one outside. No host part gives a region yet; masks and detectors will.
 - **A new planner class `VideoClass::Stream` with a `StreamKernel`** in `kt-plugin-api`: a
   SOURCE STAGE. It is not state: its output at frame N is a pure function of its rows and of the
   source frames of a bounded HISTORY the kernel declares. The registry refuses a stream plugin
@@ -43,8 +50,8 @@ frame N depends on every frame since its last intact I-frame.
   full export.
 - **Presets:** classic cut mosh (I-frame dropped at the cut), bloom, vector transplant, melt.
 - **Not in scope:** a GPU codec (decision D4 of the design); a mosh on a reel instance or a track
-  stage (the stage is skipped there, documented); curves on the stream rows (deferred — rows are
-  Structural); a GOP strip in the panel (the panel is the shared parameter grid).
+  stage (the stage is skipped there, documented); a host part that GIVES a region (masks, a
+  detector); a GOP strip in the panel (the panel is the shared parameter grid).
 
 ## Capabilities
 

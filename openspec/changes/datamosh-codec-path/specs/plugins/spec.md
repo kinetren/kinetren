@@ -5,7 +5,10 @@
 ### Requirement: A stream kind is a source stage with a declared history, not video state
 A video plugin MAY declare the planner class `Stream` and provide a `StreamKernel`. Such a kernel
 SHALL declare no state, tail or look-ahead; its output at frame N SHALL be a pure function of its
-rows and of the source frames of the HISTORY it names for N through the stream's layout. The host
+rows — read per position WITH their curves through the layout (`rows_at`) — and of the source frames
+of the HISTORY it names for N through the stream's layout. The layout SHALL also carry a REGION OF
+INTEREST per frame (`region_ident`, `with_region`: a coverage plane at the stream's size with an
+identity), the bridge for masks and object detectors; no region means the whole frame. The host
 SHALL own the memo the kernel keeps results in (`StreamMemo`, bounded, keyed by what determines
 the result) and SHALL hand it to the kernel; the bytes MUST NOT depend on what the memo holds.
 The registry SHALL refuse: a `Stream` class without a stream kernel, a stream kernel on another

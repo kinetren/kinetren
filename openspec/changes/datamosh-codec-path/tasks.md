@@ -40,6 +40,15 @@ Tests t1235–t1259 are reserved by this change. Every stage ends green and is c
   - Green on :287 (:283 gave an X BadMatch on SetInputFocus — a display another run was using). The
     Cut mosh preset got `gop` 60: with 24 the next intact I-frame ended the mosh 0.8 s after the cut.
 
+## 4b. The owner on the first build (2026-11-01): curves, reset on the beat, no caps, a region door
+
+- [x] 4b.1 The rows per position with their curves (`StreamLayout::rows_at`; the engine applies the event's compiled automation at the frame's material position); the gates `mosh`, `reset`, `bloom`, `freeze` replace the frame-number rows; the per-frame quantities are Smooth
+- [x] 4b.2 Ranges to the physics: GOP 0–600 (0 = only at the stream start, the cut and the resets; the encoder's keyint 600), search 64, before 300, 1080 lines, vector scale ±16; the decoder's refresh 600
+- [x] 4b.3 The region of interest in the contract (`region_ident`, `with_region`), the datamosh's meaning (broken inside, intact outside, per-pixel), the docs (design D9, the capability designs)
+- [x] 4b.4 Tests: t1244 (region), t1245 (reset and inactivity by curves), t1246 (engine: a reset key on the event, seek = play), t1238 extended with curve cases, t1247's form re-frozen
+  - Found by t1244: the region blend's truncating division put a fully covered pixel one level off
+    the broken picture for a negative difference — `div_euclid`.
+
 ## 5. Close
 
 - [x] 5.1 Cost measured (release, one build); recorded here

@@ -106,6 +106,12 @@ fn clip(id: u64, media: u64, start: i64, dur: i64, fx: Vec<FxInstance>) -> ClipE
 
 /// `mosh` — whether the second shot carries the datamosh slot.
 fn project(mosh: bool) -> Project {
+    project_with(mosh, None, 1.0)
+}
+
+/// The same scene; `reset_at` — a `reset` curve on the slot rising to on at that TIMELINE frame
+/// (a Hold key on the beat), the mosh gate on everywhere.
+fn project_with(mosh: bool, reset_at: Option<i64>, gate: f64) -> Project {
     kt_plugins_builtin::install();
     let mut p = Project::new(ProjectSettings {
         fps: 30,
@@ -122,13 +128,27 @@ fn project(mosh: bool) -> Project {
     let mut fx = vec![];
     if mosh {
         let mut f = FxInstance::plugin("datamosh").expect("datamosh is built in");
-        for (name, v) in [("lines", 0.0), ("before", 12.0), ("drop_count", 1.0), ("gop", 12.0), ("qp", 14.0)] {
+        for (name, v) in [("lines", 0.0), ("before", 12.0), ("mosh", gate), ("gop", 12.0), ("qp", 14.0)] {
             assert!(f.set_param(name, v), "{name}");
         }
         fx.push(f);
     }
     p.clips.push(clip(1, 1, 0, 30 * STEP, vec![]));
-    p.clips.push(clip(2, 2, 30 * STEP, 30 * STEP, fx));
+    let mut b = clip(2, 2, 30 * STEP, 30 * STEP, fx);
+    if let Some(at) = reset_at {
+        // the key's tick is the clip's MATERIAL: it starts at 1 s with `source_in` 0
+        let m = (at - 30) * STEP;
+        b.fx_auto = vec![vec![ParamCurve {
+            param: "reset".into(),
+            keys: vec![
+                AutoKey::shaped(Tick(0), 0.0, SegShape::Hold),
+                AutoKey::shaped(Tick(m), 1.0, SegShape::Hold),
+                AutoKey::shaped(Tick(29 * STEP), 1.0, SegShape::Hold),
+            ],
+            source: CurveSource::Keys,
+        }]];
+    }
+    p.clips.push(b);
     p.validate().unwrap();
     p
 }
@@ -236,4 +256,41 @@ fn t1248_the_order_asks_what_the_stage_reads() {
     let pts = Tick(next.0 - 30 * STEP);
     assert_eq!(vr.layers_at(next, Q), vec![(MediaId(2), pts, cq)], "steady state: the next frame only");
     assert_eq!(vr.video_decode_qualities(Q).iter().find(|(id, _)| *id == ClipId(2)).unwrap().1, cq);
+}
+
+/// The mean absolute difference of two RGBA frames.
+fn mad(a: &[u8], b: &[u8]) -> f64 {
+    a.iter().zip(b).map(|(x, y)| (*x as i32 - *y as i32).abs() as f64).sum::<f64>() / a.len().max(1) as f64
+}
+
+/// t1246 (the owner, 2026-11-01: "reset … by keys on the curves … on the beat"): a `reset` curve key
+/// on the event ends the mosh at that frame — the engine reads the slot's rows per frame with its
+/// curves; a seek still equals playing.
+#[test]
+fn t1246_a_reset_key_ends_the_mosh_on_the_beat() {
+    let beat = 44;
+    let p = project_with(true, Some(beat), 1.0);
+    // the same slot with the mosh gate off: the intact codec (the source draws its texture in output
+    // pixels, so a frame at another size is another picture — compare at the same stream size)
+    let plain = project_with(true, None, 0.0);
+    let frame = |proj: &Project, k: i64| {
+        let (mut vr, c) = (renderer(proj), big_cache());
+        warm(&vr, &c, Tick(k * STEP));
+        let (f, complete) = vr.compose_from_cache(&c, Tick(k * STEP), Q);
+        assert!(complete, "frame {k} is complete after one warm-up");
+        f
+    };
+    let before = mad(&frame(&p, beat - 2), &frame(&plain, beat - 2));
+    let on = mad(&frame(&p, beat), &frame(&plain, beat));
+    let after = mad(&frame(&p, beat + 3), &frame(&plain, beat + 3));
+    assert!(before > 3.0 * on.max(1.0), "before the beat the mosh ({before:.1}), on it shot B ({on:.1})");
+    assert!(after < 12.0, "after the beat the stream is shot B again ({after:.1})");
+    // seek == play with the curve
+    let (mut played, cache) = (renderer(&p), big_cache());
+    let mut last = vec![];
+    for k in 28..=beat + 2 {
+        warm(&played, &cache, Tick(k * STEP));
+        last = played.compose_from_cache(&cache, Tick(k * STEP), Q).0;
+    }
+    assert_eq!(frame(&p, beat + 2), last);
 }

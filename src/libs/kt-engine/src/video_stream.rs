@@ -30,6 +30,8 @@ pub fn stream_memo() -> &'static Arc<StreamMemo> {
 #[derive(Clone)]
 pub(super) struct StreamStage {
     pub plugin: &'static Arc<dyn kt_plugin_api::Plugin>,
+    /// The slot's index in the clip's chain (its curves are applied there, `rows_at`).
+    pub slot: usize,
     pub values: Vec<f64>,
     pub before: Option<Box<VideoClip>>,
     pub second: Vec<VideoClip>,
@@ -49,10 +51,10 @@ impl std::fmt::Debug for StreamStage {
 impl StreamStage {
     /// The stage of a chain: the first active `Stream` slot whose plugin is registered.
     pub fn of(fx: &[kt_model::FxInstance]) -> Option<StreamStage> {
-        fx.iter().find_map(|f| match f {
-            kt_model::FxInstance::Plugin(p) if f.is_stream() => {
-                p.plugin().map(|plugin| StreamStage { plugin, values: p.values.clone(), before: None, second: vec![] })
-            }
+        fx.iter().enumerate().find_map(|(slot, f)| match f {
+            kt_model::FxInstance::Plugin(p) if f.is_stream() => p
+                .plugin()
+                .map(|plugin| StreamStage { plugin, slot, values: p.values.clone(), before: None, second: vec![] }),
             _ => None,
         })
     }
@@ -172,6 +174,27 @@ impl StreamLayout for ClipStream<'_> {
         let t = Tick(k * self.step);
         let o = self.st.second.iter().find(|o| o.start <= t && t < o.end)?;
         Some(ceil_div(o.start.0, self.step))
+    }
+    /// The slot's rows at `k` with its curves (the owner, 2026-11-01: "this effect has no curves"):
+    /// the curves are sampled at the material position of the frame, as every curve of the chain
+    /// is (`layer_src`); a position before the cut reads the event's start.
+    fn rows_at(&self, k: i64) -> Option<Vec<f64>> {
+        let plan = self.clip.auto_plan.as_ref()?;
+        let t = Tick((k * self.step).max(self.clip.start.0));
+        let mat = kt_model::clip_material_at(
+            self.clip.source_in,
+            self.clip.start,
+            self.clip.end - self.clip.start,
+            self.clip.reversed,
+            self.step,
+            t,
+        );
+        let mut chain = self.clip.fx.clone();
+        plan.apply(&mut chain, mat);
+        match chain.get(self.st.slot) {
+            Some(kt_model::FxInstance::Plugin(p)) => Some(p.values.clone()),
+            _ => None,
+        }
     }
     fn ident(&self, side: Side, k: i64) -> u64 {
         let Some((c, pts)) = self.at(side, k) else { return 0 };

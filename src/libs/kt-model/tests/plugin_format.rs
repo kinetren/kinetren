@@ -890,20 +890,21 @@ fn t1056_the_core_keeps_no_barrier() {
 }
 
 /// t1247 (datamosh-codec-path): the datamosh slot's file text. Every row is omitted at its default,
-/// a choice row writes its KEY, the flag a bool, the integer rows integers — and the text reads back
-/// to itself. Frozen literally: a moved default or store changes files.
+/// a choice row writes its KEY, the flag a bool, the structural integer rows integers, the rows that
+/// take curves (the quantiser, the gates, the vector ops, the residual, the loss) f64 — and the text
+/// reads back to itself. Frozen literally: a moved default or store changes files. The tops of the
+/// ranges are in the full form (GOP 0 = only at the cut and the resets, 64 px search, 300 frames
+/// before, 1080 lines, ±16 vector scale — the owner: "GOP is limited to 60 for some reason").
 #[test]
 fn t1247_the_datamosh_keeps_its_text() {
     kt_plugins_builtin::install();
+    let full = r#"{"kind":"datamosh","gop":0,"qp":30.5,"lines":"1080","block":"8","search":64,"before":300,"mosh":1.0,"reset":1.0,"bloom":1.0,"freeze":1.0,"mv_scale":-12.5,"mv_rotate":30.0,"mv_swap":true,"vectors_from":"track_below","residual":0.25,"loss":0.1,"seed":42}"#;
     let cases = [
         (r#"{"kind":"datamosh"}"#, r#"{"kind":"datamosh"}"#),
-        (
-            r#"{"kind":"datamosh","gop":12,"qp":30,"lines":"720","block":"8","search":8,"before":12,"drop_at":3,"drop_count":2,"bloom_at":5,"bloom_len":20,"freeze_at":7,"freeze_len":9,"mv_scale":-1.5,"mv_rotate":30.0,"mv_swap":true,"vectors_from":"track_below","residual":0.25,"loss":0.1,"seed":42}"#,
-            r#"{"kind":"datamosh","gop":12,"qp":30,"lines":"720","block":"8","search":8,"before":12,"drop_at":3,"drop_count":2,"bloom_at":5,"bloom_len":20,"freeze_at":7,"freeze_len":9,"mv_scale":-1.5,"mv_rotate":30.0,"mv_swap":true,"vectors_from":"track_below","residual":0.25,"loss":0.1,"seed":42}"#,
-        ),
+        (full, full),
         // the defaults written out read as the empty form
         (
-            r#"{"kind":"datamosh","gop":24,"qp":24,"lines":"360","block":"16","mv_scale":1.0,"vectors_from":"own","residual":1.0}"#,
+            r#"{"kind":"datamosh","gop":24,"qp":24.0,"lines":"360","block":"16","mosh":0.0,"mv_scale":1.0,"vectors_from":"own","residual":1.0}"#,
             r#"{"kind":"datamosh"}"#,
         ),
     ];

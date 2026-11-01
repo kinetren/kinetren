@@ -115,8 +115,8 @@ def main(out):
         if slots:
             s = slots[0]
             app.expect(
-                s.get("before") == 12 and s.get("drop_count") == 1,
-                f"the slot carries the cut-mosh rows (before={s.get('before')}, drop_count={s.get('drop_count')})",
+                s.get("before") == 12 and s.get("mosh") == 1.0,
+                f"the slot carries the cut-mosh rows (before={s.get('before')}, mosh={s.get('mosh')})",
             )
 
         # undo brings shot B back

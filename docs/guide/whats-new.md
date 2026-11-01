@@ -6,12 +6,13 @@ month, newest first.
 ## kt26.11
 
 - **Datamosh — a real one.** The new Datamosh effect runs its own little video codec over the
-  clip — motion search, a prediction loop, quantised detail, keyframes every N frames — and lets
-  you break it on purpose: drop the keyframe at a cut so the previous shot gets dragged by the
-  new shot's motion, repeat one frame's motion until it blooms, freeze the reference, scale,
-  turn or swap the motion vectors, borrow the motion of the clip on the track above or below,
-  lose detail or whole blocks. Presets: Cut mosh, Bloom, Transplant, Melt. Any frame looks the
-  same when you play up to it, jump to it or render it.
+  clip — motion search, a prediction loop, quantised detail, keyframes — and lets you break it on
+  purpose: drop the keyframes so the previous shot gets dragged by the new shot's motion, repeat one
+  frame's motion until it blooms, freeze the reference, scale, turn or swap the motion vectors,
+  borrow the motion of the clip on the track above or below, lose detail or whole blocks. The
+  breakages take curves: switch the mosh on and off, or put a Reset key on the beat to start clean
+  from that frame. Presets: Cut mosh, Bloom, Transplant, Melt. Any frame looks the same when you
+  play up to it, jump to it or render it.
 - **Composition previews no longer get rebuilt by chance when a project opens.** Opening a
   project sometimes found its own index file "busy" and drew the frames and waveform of every
   composition all over again; now the saved previews come back every time.

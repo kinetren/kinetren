@@ -1676,7 +1676,7 @@ pub(crate) fn draw_video_fx_params(
                     });
                 });
             };
-            combo(ui, p, "lines", tr(k::fx::MOSH_LINES), &["144", "240", "360", "480", "720"], &mut ch);
+            combo(ui, p, "lines", tr(k::fx::MOSH_LINES), &["144", "240", "360", "480", "720", "1080"], &mut ch);
             combo(ui, p, "block", tr(k::fx::MOSH_BLOCK), &["16×16", "8×8"], &mut ch);
             let from = [tr(k::fx::MOSH_OWN), tr(k::fx::MOSH_ABOVE), tr(k::fx::MOSH_BELOW)];
             combo(ui, p, "vectors_from", tr(k::fx::MOSH_FROM), &from, &mut ch);
