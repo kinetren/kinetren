@@ -175,7 +175,7 @@ pub mod audio;
 
 pub use audio::{
     AddrKnot, WARP_SOURCE_MARGIN_FRAMES, chain_addr_knots, chain_consumption_window_ext,
-    chain_fingerprint, chain_lookahead, chain_source_used, chain_source_window,
+    chain_context, chain_fingerprint, chain_lookahead, chain_source_used, chain_source_window,
     chain_source_window_ext, chain_tail,
 };
 pub use audio::{

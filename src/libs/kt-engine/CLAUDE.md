@@ -39,6 +39,14 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   The search itself gave 11.5× on the user's project (889 → 77 ms); on top stands the flag `overlaps` — for an event that overlaps nobody, the weight is identically 1.0, and the path is closed by one `bool`. It is free and helps where many events are active at once; on a real edit it is about 1 %. **Do not compare the share of total time between benches** — it has a different denominator (item 305).
 - **In the tail of FX the warp is not computed** (R.43, item 304): beyond `gate_end` the dry signal is zeroed by the gate anyway, so a chunk lying entirely beyond it is skipped — byte-identical by construction, but without the resampler and without reading the source. Tests 294/295.
 - Seek: reset FX + pre-roll max(tail, 100 ms) into garbage (test 7).
+- **A split of a pitched event is ONE stream** (pitch-event-edges D3): `run_predecessors` marks for an
+  event the one it continues (same track, abutting, the next material frame, both chains read across
+  edges with the same structure and look-ahead, no reverse/overlap/transition at the join, no tail
+  on the predecessor). `render_fx_clip` asks `FxStateStore::hand_on` at the event's frame 0: when the
+  predecessor has just played to its end, the two processors are SWAPPED and both re-synced. It
+  relies on clips being rendered in ascending order in every burst (A before B) — that is what makes
+  it slicing-independent; do not reorder the clip loop. An event that reads across edges and starts
+  inside a loop region gets no loop span (D5): it is not what sounds after the wrap (t1105–t1112).
 - Prefetch is idempotent: wanted − coverage() → submit; keys strictly on the playback grid (defect i); the head of a loop region — a pin in the cache (test 14).
 
 ## Law P: the media path is a property of the SOURCE, not of the plan (R.53, item 412)

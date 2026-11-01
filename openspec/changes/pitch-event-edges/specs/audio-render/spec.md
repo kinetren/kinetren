@@ -22,8 +22,8 @@ since it stopped holds a ring of where it stopped.
 - **TEST** t1105 (`src/libs/kt-engine/tests/pitch_edges.rs`)
 
 #### Scenario: No hand-off where the run breaks
-- **WHEN** the run of t1105 has a 1-frame gap at one join, a source that skips a frame at another, a different chain kind at a third, a crossfade transition at a fourth, an echo with a tail on a fifth event
-- **THEN** exactly those joins start the next event fresh (its own context pre-roll; no dip as in t1106), every other join is byte-for-byte the uncut render's samples, and the render is the same in one piece and in pieces
+- **WHEN** the run of t1105 has an 8-frame gap on the timeline at join 3, a source that skips 8 frames on the 7th event (joins 6 and 7), a different chain structure on the 10th event (joins 9 and 10) and an echo with a tail on the 13th (joins 12 and 13)
+- **THEN** exactly those joins start the next event fresh (its own context pre-roll), every other join hands the processor on; no join dips below half the steady level; the render is the same in one piece and in pieces
 - **TEST** t1111 (`src/libs/kt-engine/tests/pitch_edges.rs`)
 
 #### Scenario: A seek into the run equals a cold start there

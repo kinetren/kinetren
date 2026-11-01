@@ -5,6 +5,9 @@ month, newest first.
 
 ## kt26.11
 
+- **Pitch no longer tears between short events.** Cut an event with pitch into many short
+  pieces and they sound exactly like the uncut event; any pitched event starts and ends
+  without a dip.
 - **Changing an audio effect takes effect at once.** Put a filter where an equaliser stood
   and you hear the filter right away — before, the old effect kept playing with the new
   settings until you jumped in time.
