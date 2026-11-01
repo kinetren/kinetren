@@ -1296,6 +1296,7 @@ pub(crate) fn draw_auto_for(
                 }
             });
             crate::widgets::field_probe::note("auto.add", add.response.rect);
+            crate::widgets::lesson_mark::control(ui, "fx.auto_add", &add.response);
         }
         // the choice of the active curve, the key buttons and the CURVE BLOCK (the form of all segments,
         // formula, link, delete) — IN THE WIDGET ITSELF

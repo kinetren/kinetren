@@ -327,6 +327,24 @@ pub fn plain(runs: &[Inline]) -> String {
         .collect()
 }
 
+/// The plain text of blocks, one line each, list items with a bullet (a lesson's checked step).
+pub fn plain_blocks(blocks: &[Block]) -> String {
+    let mut out = String::new();
+    for b in blocks {
+        let line = match b {
+            Block::Para(runs) => plain(runs),
+            Block::Item { text, .. } => format!("\u{2022} {}", plain(text)),
+            Block::Heading { text, .. } | Block::Code(text) | Block::Caption(text) => text.clone(),
+            Block::Table(_) => continue,
+        };
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&line);
+    }
+    out
+}
+
 /// A parsed page.
 pub struct Page {
     pub file: &'static str,

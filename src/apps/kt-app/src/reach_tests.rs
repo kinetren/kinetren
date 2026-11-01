@@ -6489,7 +6489,7 @@ fn t988_a_lesson_step_closes_on_the_project_state() {
     );
     let head = crate::tf!(k::lessons::HEAD, 1, crate::lessons::LESSONS.len(), tr(k::lessons::L1));
     assert!(h.query_all_by_label_contains(&head).count() > 0, "no lessons panel “{head}”");
-    assert!(h.query_all_by_label_contains(tr(k::lessons::L1_S1)).count() > 0, "step 1 is not shown");
+    assert!(h.query_all_by_label_contains(&lesson_line(k::lessons::L1_S1)).count() > 0, "step 1 is not shown");
 
     // "Show": the File menu opens by code, the item is outlined (by the menu itself)
     h.get_by_label(tr(k::lessons::SHOW)).click();
@@ -6523,7 +6523,7 @@ fn t988_a_lesson_step_closes_on_the_project_state() {
     h.step();
     h.step();
     assert!(h.state().start.store.tour.is_done(1, 1), "the title step did not close by itself");
-    assert!(h.query_all_by_label_contains(tr(k::lessons::L1_S2)).count() > 0, "step 2 is not shown");
+    assert!(h.query_all_by_label_contains(&lesson_line(k::lessons::L1_S2)).count() > 0, "step 2 is not shown");
 
     // step 2: the playhead on the marker, S
     let at = h
@@ -6578,6 +6578,11 @@ fn t988_a_lesson_step_closes_on_the_project_state() {
     let _ = std::fs::remove_dir_all(&store_dir);
 }
 
+/// A lesson line as the panel shows it: the plain text of its runs (markup gone).
+fn lesson_line(key: crate::i18n::Key) -> String {
+    crate::guide::plain(&crate::guide::inlines(crate::i18n::tr(key)).expect("a lesson line parses"))
+}
+
 /// Test 988, second scenario (`no_teaching_layer_over_the_ui`): every lesson target exists in the
 /// registry, the observed windows or the menu catalog, every paragraph fits the catalog budget,
 /// and the layers above `Order::Middle` are a CLOSED named list — none belongs to a lesson.
@@ -6586,23 +6591,35 @@ fn t988_a_lesson_step_closes_on_the_project_state() {
 ///   any lesson never sees a callout, a dimmed screen or a frame drawn over the editor
 #[test]
 fn no_teaching_layer_over_the_ui() {
-    use crate::lessons::{LESSONS, OBSERVED_WINDOWS, Target};
-    // (1) every target exists
+    use crate::lessons::{CONTROLS, LESSONS, OBSERVED_WINDOWS, Target};
+    crate::plugins::install();
+    // (1) every step has a target, and every target exists (tour-lessons-fixes: a step that
+    // points nowhere teaches nothing, kkt-26.11.01 item 4)
     for (li, l) in LESSONS.iter().enumerate() {
         assert!(!crate::i18n::tr(l.title).is_empty());
         for (si, st) in l.steps.iter().enumerate() {
             let at = format!("lesson {} step {}", li + 1, si + 1);
-            match st.show {
-                Some(Target::Window(id)) => {
-                    assert!(WINDOWS.iter().any(|(w, _)| *w == id), "{at}: window “{id}” is not in WINDOWS");
-                }
-                Some(Target::Menu(path)) => {
-                    assert!(path.len() >= 2, "{at}: a menu path names its root and its item");
-                    for key in path {
-                        assert!(!crate::i18n::tr(*key).is_empty(), "{at}: an empty menu key");
+            assert!(!st.targets.is_empty(), "{at}: the step points nowhere");
+            for t in st.targets {
+                match *t {
+                    Target::Menu(path) => {
+                        assert!(path.len() >= 2, "{at}: a menu path names its root and its item");
+                        for key in path {
+                            assert!(!crate::i18n::tr(*key).is_empty(), "{at}: an empty menu key");
+                        }
                     }
+                    Target::Control(name) => assert!(CONTROLS.contains(&name), "{at}: “{name}” is not in CONTROLS"),
+                    Target::Clip(id) | Target::ClipMenu { clip: id, .. } => assert!(
+                        crate::lessons::lesson_project().clips.iter().any(|c| c.id.0 == id),
+                        "{at}: event {id} is not in the lesson copy"
+                    ),
+                    Target::Marker(name) => assert!(
+                        crate::lessons::lesson_project().markers.iter().any(|m| m.name == name),
+                        "{at}: marker “{name}” is not in the lesson copy"
+                    ),
+                    Target::Morpher => assert!(!crate::lessons::lesson_project().morphers.is_empty()),
+                    Target::Ruler | Target::Transition => {}
                 }
-                Some(Target::Panel(_)) | None => {}
             }
             if let crate::lessons::Predicate::WindowOpen(id) = st.done {
                 assert!(OBSERVED_WINDOWS.contains(&id), "{at}: “{id}” is not observed — the step could never close");
@@ -6610,8 +6627,11 @@ fn no_teaching_layer_over_the_ui() {
             }
             for lang in crate::i18n::Lang::ALL {
                 crate::i18n::set_lang(lang);
-                let t = crate::i18n::tr(st.text);
-                assert!(!t.is_empty() && t.chars().count() <= 160, "{at}: {lang:?} paragraph over the budget");
+                for key in st.text {
+                    let t = crate::i18n::tr(*key);
+                    assert!(!t.is_empty() && t.chars().count() <= 160, "{at}: {lang:?} line over the budget");
+                }
+                assert!(crate::lessons::step_blocks(st).is_ok(), "{at}: {lang:?} text outside the Guide subset");
             }
         }
     }
@@ -7184,4 +7204,507 @@ fn t888_harness_app_speaks_valid_posthog() {
     };
     one("distinct_id", &|e| e["distinct_id"].clone());
     one("$session_id", &|e| e["properties"]["$session_id"].clone());
+}
+
+// ---- tour-lessons-fixes (kkt-26.11.01 items 2–8): t1085–t1092 -------------------------------
+
+use kt_time::Tick;
+type AppHarness = egui_kittest::Harness<'static, crate::app::KtApp>;
+
+/// A lesson copy opened through the program's own door, at step `step` (the earlier ones
+/// recorded as done in the store), in the owner's 1920×1080: at 1440 the bottom toolbar row
+/// overflows the right edge with or without the lessons (a follow-up, design "Risks").
+fn lesson_at(name: &str, lesson: u32, step: u32) -> (AppHarness, PathBuf) {
+    crate::plugins::install();
+    let dir = welcome_store(name);
+    let mut h = crate::layout_tests::harness_sized(1920.0, 1080.0);
+    h.state_mut().start.store = crate::user_store::StartStore::at(Some(dir.clone()));
+    h.state_mut().open_lesson(lesson, true);
+    for s in 1..step {
+        h.state_mut().start.store.finish_step(lesson, s);
+    }
+    for _ in 0..3 {
+        h.step();
+    }
+    assert!(crate::lessons::is_sandbox(h.state().project_path.as_ref().expect("the lesson copy is open")));
+    assert_eq!(crate::lessons::current_step(&h.state().start.store.tour, lesson), Some(step));
+    (h, dir)
+}
+
+fn tl_geom(h: &AppHarness) -> crate::timeline::TlGeom {
+    h.state().tl_geom.clone().expect("the timeline was drawn")
+}
+
+/// A person's drag: press, the threshold, the way, the release.
+fn drag_between(h: &mut AppHarness, a: egui::Pos2, b: egui::Pos2) {
+    h.hover_at(a);
+    h.step();
+    h.drag_at(a);
+    h.step();
+    h.hover_at(a + egui::vec2(if b.x < a.x { -8.0 } else { 8.0 }, 0.0));
+    h.step();
+    h.hover_at(egui::pos2((a.x + b.x) / 2.0, b.y));
+    h.step();
+    h.hover_at(b);
+    h.step();
+    h.drop_at(b);
+    h.step();
+    h.step();
+}
+
+fn clip_rect(h: &AppHarness, id: u64) -> egui::Rect {
+    let g = tl_geom(h);
+    let c = h.state().model.project().clips.iter().find(|c| c.id.0 == id).cloned().expect("the lesson event");
+    let top = g.lane_top(c.kind, c.lane);
+    egui::Rect::from_min_max(
+        egui::pos2(g.tick_to_x(c.start.0), top),
+        egui::pos2(g.tick_to_x((c.start + c.duration).0), top + g.lane_h_of(c.kind, c.lane)),
+    )
+}
+
+fn add_blur(h: &mut AppHarness, id: u64) {
+    let c = h.state().model.project().clips.iter().find(|c| c.id.0 == id).cloned().unwrap();
+    let mut fx = c.fx.clone();
+    fx.push(kt_model::FxInstance::blur(8));
+    assert!(h.state_mut().apply(kt_model::Command::SetFx { id: c.id, fx }));
+}
+
+fn add_crossfade(h: &mut AppHarness) -> kt_model::TransitionId {
+    let id = kt_model::TransitionId(77);
+    let t = kt_model::TransitionEvent {
+        id,
+        a: Some(kt_model::ClipId(1)),
+        b: Some(kt_model::ClipId(3)),
+        in_offset: Tick(45_000),
+        out_offset: Tick(45_000),
+        kind: kt_model::TransitionKind::Crossfade,
+        audio: Default::default(),
+        auto: vec![],
+        invert: false,
+    };
+    assert!(h.state_mut().apply(kt_model::Command::AddTransition(t)));
+    id
+}
+
+fn add_morpher_fx(h: &mut AppHarness) {
+    let mut m = h.state().model.project().morphers[0].clone();
+    m.patch.video_fx.push(kt_model::FxInstance::blur(12));
+    assert!(h.state_mut().apply(kt_model::Command::SetMorpher(m)));
+}
+
+fn playhead(h: &AppHarness) -> Tick {
+    h.state().player.transport.playhead()
+}
+
+/// Test 1085 (tour-lessons-fixes, ui-reach): "Play a part in a loop" closes in the frame the
+/// region and the loop are set, with the title's window still open.
+///
+/// - **PATH** lesson 1, step 4, the title's window still open → drag on the ruler from 0:20 to
+///   0:30 → a region appears → press the loop button → it lights up and step 4 turns into a check
+///   mark at once, the title window stays open
+#[test]
+fn t1085_the_loop_step_closes_while_a_window_stays_open() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    let (mut h, dir) = lesson_at("t1085", 1, 4);
+    let first = h.state().model.project().clips.iter().find(|c| c.kind == kt_model::ClipKind::Video).unwrap().id;
+    h.state_mut().open_fx_editor(first);
+    h.step();
+    h.step();
+    assert!(!h.state().fx_editors.is_empty(), "the window the owner had open");
+    let g = tl_geom(&h);
+    let y = g.rect.top() + crate::timeline::RULER_H - 4.0;
+    drag_between(&mut h, egui::pos2(g.tick_to_x(20 * 90_000), y), egui::pos2(g.tick_to_x(30 * 90_000), y));
+    assert!(h.state().model.project().region.is_some(), "the ruler drag drew no region");
+    assert!(!h.state().start.store.tour.is_done(1, 4), "a region alone is not the loop");
+    // the person clicks the outlined loop button (its outline is the program's own record)
+    let r = crate::widgets::lesson_mark::seen("tb.loop").expect("the loop button is outlined");
+    h.hover_at(r.center());
+    h.step();
+    h.drag_at(r.center());
+    h.step();
+    h.drop_at(r.center());
+    h.step();
+    h.step();
+    assert!(h.state().model.project().loop_enabled, "the loop button did not switch the loop on");
+    assert!(
+        h.state().start.store.tour.is_done(1, 4),
+        "the loop step did not close while the window stayed open (kkt-26.11.01 item 2)"
+    );
+    assert!(!h.state().fx_editors.is_empty(), "the window was closed — the test proves nothing");
+    // the re-check key is a plain value (invariant 12: no allocation per frame)
+    assert!(!std::mem::needs_drop::<crate::lessons::Observed>());
+    assert!(h.query_all_by_label_contains(&lesson_line(k::lessons::L1_S4_DONE)).count() > 0, "no result line");
+    let _ = tr(k::lessons::L1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 1086 (tour-lessons-fixes, ui-reach): every step's text is lines with keycaps, the same
+/// shape in five languages, the control's label in its keycap; the panel draws separate lines.
+///
+/// - **PATH** open lesson 2, step 2 → the panel reads "Add a blur in the effects window:" and
+///   under it a list: "press [+ effect…]" and "pick **Blur**", the button name in a keycap
+#[test]
+fn t1086_lesson_text_has_lines_lists_and_keycaps() {
+    use crate::guide::{Block, Inline};
+    use crate::i18n::{Lang, k, set_lang, tr};
+    use crate::lessons::{LESSONS, step_blocks};
+    use egui_kittest::kittest::Queryable;
+    crate::plugins::install();
+    let shape = |b: &[Block]| -> Vec<(bool, usize)> {
+        b.iter()
+            .map(|b| {
+                let runs: &[Inline] = match b {
+                    Block::Para(r) => r,
+                    Block::Item { text, .. } => text,
+                    _ => panic!("a lesson line is a paragraph or an item: {b:?}"),
+                };
+                (matches!(b, Block::Item { .. }), runs.iter().filter(|r| matches!(r, Inline::Kbd(_))).count())
+            })
+            .collect()
+    };
+    for (li, l) in LESSONS.iter().enumerate() {
+        for (si, st) in l.steps.iter().enumerate() {
+            let at = format!("lesson {} step {}", li + 1, si + 1);
+            set_lang(Lang::En);
+            let en = step_blocks(st).unwrap_or_else(|e| panic!("{at}: {e}"));
+            let en_shape = shape(&en);
+            // the English text names keys and buttons: each is a keycap
+            let plain = crate::guide::plain_blocks(&en);
+            for word in [" press ", "Press ", " choose ", " pick "] {
+                if plain.contains(word) && (word.contains("press") || st.args.iter().any(|a| matches!(a, crate::lessons::Arg::Label(_)))) {
+                    assert!(en_shape.iter().any(|(_, n)| *n > 0), "{at}: “{word}” without a keycap: {plain}");
+                }
+            }
+            for lang in Lang::ALL {
+                set_lang(lang);
+                let b = step_blocks(st).unwrap_or_else(|e| panic!("{at} {lang:?}: {e}"));
+                assert_eq!(shape(&b), en_shape, "{at}: {lang:?} has another shape than English");
+                // a control's label in its keycap is the control's own catalog text
+                for a in st.args {
+                    if let crate::lessons::Arg::Label(key) = a {
+                        let want = tr(*key).trim_end_matches(':').trim_start_matches(':');
+                        let found = b.iter().any(|b| match b {
+                            Block::Para(r) | Block::Item { text: r, .. } => {
+                                r.iter().any(|r| matches!(r, Inline::Kbd(t) if t.trim_matches(':') == want.trim_matches(':')))
+                            }
+                            _ => false,
+                        });
+                        assert!(found, "{at} {lang:?}: no keycap “{want}”: {b:?}");
+                    }
+                }
+            }
+        }
+    }
+    set_lang(Lang::En);
+    let (mut h, dir) = lesson_at("t1086", 2, 2);
+    h.step();
+    assert!(h.query_all_by_label_contains(&lesson_line(k::lessons::L2_S2)).count() > 0, "the lead line is missing");
+    // the list item as drawn in the harness language
+    let st = &crate::lessons::LESSONS[1].steps[1];
+    let item = match &step_blocks(st).unwrap()[1] {
+        Block::Item { text, .. } => crate::guide::plain(text),
+        b => panic!("the second line is a list item: {b:?}"),
+    };
+    assert!(h.query_all_by_label(&item).count() > 0, "the list item “{item}” is not its own line");
+    assert!(
+        h.query_all_by_label_contains(&format!("{}{}", lesson_line(k::lessons::L2_S2), item)).count() == 0,
+        "the lines run together"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// What every step needs on screen for its target (the effects window for "+ effect…", …).
+fn stage_step(h: &mut AppHarness, lesson: u32, step: u32) -> Vec<&'static str> {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    match (lesson, step) {
+        (1, 1) => {
+            h.get_by_label(tr(k::lessons::SHOW)).click();
+            h.step();
+            h.step();
+            vec!["menu"]
+        }
+        (1, 2) => vec!["marker"],
+        (1, 3) | (2, 1) => vec!["clip"],
+        (1, 4) => vec!["ruler", "tb.loop"],
+        (2, 2) => {
+            h.state_mut().open_fx_editor(kt_model::ClipId(1));
+            vec!["fxreg.add", "clip"]
+        }
+        (2, 3) => {
+            add_blur(h, 1);
+            h.state_mut().open_fx_editor(kt_model::ClipId(1));
+            vec!["fx.auto_add", "clip"]
+        }
+        (3, 1) => {
+            h.step();
+            let r = clip_rect(h, 3);
+            right_click(h, egui::pos2(r.center().x, r.top() + r.height() * 0.7));
+            vec!["menu"]
+        }
+        (3, 2) => {
+            let id = add_crossfade(h);
+            h.state_mut().open_transition_editor(id);
+            vec!["transition", "tr.kind"]
+        }
+        (4, 1) => vec!["morpher"],
+        (4, 2) => {
+            let id = h.state().model.project().morphers[0].id;
+            h.state_mut().open_morph_editor(id);
+            vec!["fxreg.add", "morpher"]
+        }
+        (5, 1) => vec!["tb.render"],
+        (5, 2) => {
+            h.state_mut().start_render();
+            vec!["render.start", "tb.render"]
+        }
+        _ => unreachable!(),
+    }
+}
+
+/// Test 1087 (tour-lessons-fixes, ui-reach): every step of every lesson outlines where the
+/// person acts, over the element it names.
+///
+/// - **PATH** open lesson 2 → the first video event on the timeline is outlined → double-click
+///   it → the effects window opens, step 1 is checked and "+ effect…" in the window is outlined →
+///   pick Blur → the step is checked and "+ curve" is outlined
+#[test]
+fn t1087_every_step_outlines_its_target() {
+    use crate::lessons::LESSONS;
+    for (li, l) in LESSONS.iter().enumerate() {
+        for si in 0..l.steps.len() {
+            let (lesson, step) = (li as u32 + 1, si as u32 + 1);
+            let (mut h, dir) = lesson_at(&format!("t1087-{lesson}-{step}"), lesson, step);
+            let tags = stage_step(&mut h, lesson, step);
+            for _ in 0..4 {
+                h.step();
+            }
+            let screen = h.ctx.content_rect();
+            let g = tl_geom(&h);
+            for tag in tags {
+                let r = crate::widgets::lesson_mark::seen(tag)
+                    .unwrap_or_else(|| panic!("lesson {lesson} step {step}: “{tag}” is not outlined"));
+                assert!(r.is_positive() && screen.contains_rect(r), "lesson {lesson} step {step}: “{tag}” outline {r:?} off screen");
+                match tag {
+                    "clip" => {
+                        let id = if lesson == 1 { 7 } else if lesson == 3 { 3 } else { 1 };
+                        assert!(r.intersects(clip_rect(&h, id)), "lesson {lesson} step {step}: the outline misses event {id}");
+                    }
+                    "ruler" | "marker" => assert!(r.top() < g.rect.top() + crate::timeline::RULER_H + 1.0),
+                    "transition" | "morpher" => assert!(g.rect.contains_rect(r)),
+                    _ => {}
+                }
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+}
+
+/// Test 1088 (tour-lessons-fixes, ui-reach): "Show" on every step leaves the step open, opens no
+/// window, and brings the target into view.
+///
+/// - **PATH** lesson 4 → the timeline scrolled to the end → press Show → the timeline scrolls to
+///   the BATCH morpher block, outlined → double-click it → the morpher window opens and step 1 is
+///   checked
+#[test]
+fn t1088_show_points_and_never_performs_the_step() {
+    use crate::i18n::{k, tr};
+    use crate::lessons::LESSONS;
+    use egui_kittest::kittest::Queryable;
+    for (li, l) in LESSONS.iter().enumerate() {
+        for si in 0..l.steps.len() {
+            let (lesson, step) = (li as u32 + 1, si as u32 + 1);
+            let (mut h, dir) = lesson_at(&format!("t1088-{lesson}-{step}"), lesson, step);
+            if (lesson, step) == (3, 2) {
+                add_crossfade(&mut h);
+            }
+            // far away from every target
+            h.state_mut().view_start = 400.0 * 90_000.0;
+            for _ in 0..3 {
+                h.step();
+            }
+            let tag = match (lesson, step) {
+                (1, 1) | (5, 1) => "menu",
+                (1, 2) => "marker",
+                (1, 3) | (2, 1) | (2, 2) | (2, 3) | (3, 1) => "clip",
+                (1, 4) => "ruler",
+                (3, 2) => "transition",
+                (4, 1) | (4, 2) => "morpher",
+                (5, 2) => "tb.render",
+                _ => unreachable!(),
+            };
+            if !matches!(tag, "ruler" | "tb.render") {
+                assert!(crate::widgets::lesson_mark::seen(tag).is_none(), "lesson {lesson} step {step}: “{tag}” in view before Show");
+            }
+            let windows = (h.state().fx_editors.len(), h.state().morph_editors.len(), h.state().render_setup.open, h.state().transition_editors.len());
+            h.get_by_label(tr(k::lessons::SHOW)).click();
+            for _ in 0..4 {
+                h.step();
+            }
+            let at = format!("lesson {lesson} step {step}");
+            assert!(!h.state().start.store.tour.is_done(lesson, step), "{at}: Show performed the step");
+            assert_eq!(
+                (h.state().fx_editors.len(), h.state().morph_editors.len(), h.state().render_setup.open, h.state().transition_editors.len()),
+                windows,
+                "{at}: Show opened a window"
+            );
+            let r = crate::widgets::lesson_mark::seen(tag).unwrap_or_else(|| panic!("{at}: Show left “{tag}” out of view"));
+            assert!(h.ctx.content_rect().contains_rect(r), "{at}: “{tag}” {r:?} off screen");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+}
+
+/// Test 1089 (tour-lessons-fixes, ui-reach): lesson 3 — an overlap made by a drag does not close
+/// the step (it stays a cut, t163/t464); "Transition with previous" does, and it is outlined.
+///
+/// - **PATH** lesson 3 → drag the second event left over the first → the step stays, the events
+///   meet as a cut → right-click the second event → "Transition with previous" is outlined →
+///   hover it → Crossfade → a transition appears between them and step 1 is checked
+#[test]
+fn t1089_lesson_three_teaches_transition_with_previous() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::{NodeT, Queryable};
+    let (mut h, dir) = lesson_at("t1089", 3, 1);
+    let r = clip_rect(&h, 3);
+    let g = tl_geom(&h);
+    let y = r.top() + r.height() * 0.7;
+    let from = egui::pos2(r.center().x, y);
+    let shift = (3 * 90_000) as f32 / g.tpp as f32;
+    drag_between(&mut h, from, from - egui::vec2(shift, 0.0));
+    let p = h.state().model.project();
+    let moved = p.clips.iter().find(|c| c.id.0 == 3).unwrap().start;
+    assert!(moved.0 < 12 * 90_000, "the drag did not overlap the neighbour: {moved:?}");
+    assert!(p.transitions.iter().all(|t| t.b != Some(kt_model::ClipId(3))), "an overlap made a transition");
+    assert!(!h.state().start.store.tour.is_done(3, 1), "an overlap closed the transition step (it is a cut)");
+
+    let r = clip_rect(&h, 3);
+    right_click(&mut h, egui::pos2(r.center().x + r.width() * 0.2, r.top() + r.height() * 0.7));
+    let item = tr(k::tl::menu::TRANSITION_PREV);
+    assert!(h.query_all_by_label_contains(item).count() > 0, "the right-click menu has no “{item}”");
+    let outlined = crate::widgets::lesson_mark::seen("menu").expect("the item is not outlined");
+    {
+        let node = h
+            .query_all_by_label_contains(item)
+            .find(|n| n.accesskit_node().label().is_some_and(|l| l.starts_with(item)))
+            .expect("the item");
+        assert!(outlined.intersects(node.rect()), "the outline {outlined:?} misses the item {:?}", node.rect());
+        node.hover();
+    }
+    h.step();
+    h.step();
+    h.get_by_label(tr(k::trn::kind::CROSSFADE)).click();
+    h.step();
+    h.step();
+    assert!(h.state().start.store.tour.is_done(3, 1), "Transition with previous did not close the step");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 1090 (tour-lessons-fixes, ui-reach): a step whose result shows in the preview says what
+/// changed and moves the playhead there, once.
+///
+/// - **PATH** lesson 4 → double-click BATCH → "+ effect…" → pick any effect → step 2 is checked,
+///   the line "The effect now works on every event under the BATCH block…" appears and the
+///   playhead jumps to 0:52, the preview shows the effect
+#[test]
+fn t1090_a_result_is_announced_and_the_playhead_goes_there() {
+    use crate::i18n::k;
+    use egui_kittest::kittest::Queryable;
+    // lesson 4: the morpher's batch
+    let (mut h, dir) = lesson_at("t1090-4", 4, 2);
+    h.state().player.seek(Tick::ZERO);
+    h.step();
+    add_morpher_fx(&mut h);
+    h.step();
+    h.step();
+    assert!(h.state().start.store.tour.is_done(4, 2));
+    let m = h.state().model.project().morphers[0].clone();
+    let at = playhead(&h);
+    assert!(at >= m.start && at < m.start + m.duration, "the playhead {at:?} is not in the morpher's span");
+    assert!(h.query_all_by_label_contains(&lesson_line(k::lessons::L4_S2_DONE)).count() > 0, "no result line");
+    // once: the person moves away, the program does not pull them back
+    h.state().player.seek(Tick::ZERO);
+    for _ in 0..3 {
+        h.step();
+    }
+    assert_eq!(playhead(&h), Tick::ZERO, "the playhead was pulled back on a later frame");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // lesson 2: the blur
+    let (mut h, dir) = lesson_at("t1090-2", 2, 2);
+    h.state().player.seek(Tick(80 * 90_000));
+    h.step();
+    add_blur(&mut h, 1);
+    h.step();
+    h.step();
+    assert!(h.state().start.store.tour.is_done(2, 2));
+    assert!(playhead(&h) < Tick(12 * 90_000), "the playhead {:?} is not in the blurred event", playhead(&h));
+    assert!(h.query_all_by_label_contains(&lesson_line(k::lessons::L2_S2_DONE)).count() > 0);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // lesson 3: the transition
+    let (mut h, dir) = lesson_at("t1090-3", 3, 1);
+    h.state().player.seek(Tick(80 * 90_000));
+    h.step();
+    add_crossfade(&mut h);
+    h.step();
+    h.step();
+    assert!(h.state().start.store.tour.is_done(3, 1));
+    let at = playhead(&h);
+    assert!(at > Tick(11 * 90_000) && at < Tick(13 * 90_000), "the playhead {at:?} is not in the transition");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 1091 (tour-lessons-fixes, ui-reach): jokes while lesson 5 renders.
+///
+/// - **PATH** lesson 5 → File › Render to MP4… → Start → while the progress runs the lessons panel
+///   shows a line like "Teaching the pixels to stand in line…", a few seconds later another → the
+///   render ends, the joke goes and the step is checked
+#[test]
+fn t1091_jokes_while_the_render_runs() {
+    use crate::i18n::{Lang, set_lang, tr};
+    use crate::lessons::JOKES;
+    use egui_kittest::kittest::Queryable;
+    for lang in Lang::ALL {
+        set_lang(lang);
+        for j in JOKES {
+            assert!(!tr(*j).is_empty() && tr(*j).chars().count() <= 120, "{lang:?}: a joke is empty or long");
+        }
+    }
+    set_lang(Lang::En);
+    let (mut h, dir) = lesson_at("t1091", 5, 2);
+    let none = |h: &AppHarness| JOKES.iter().all(|j| h.query_all_by_label(tr(*j)).count() == 0);
+    assert!(none(&h), "a joke without a render");
+    crate::layout_tests::scripted_render(h.state_mut(), &dir);
+    let mut seen: Vec<&str> = Vec::new();
+    for _ in 0..60 {
+        h.step();
+        for j in JOKES {
+            if h.query_all_by_label(tr(*j)).count() > 0 && !seen.contains(&tr(*j)) {
+                seen.push(tr(*j));
+            }
+        }
+    }
+    assert!(seen.len() >= 2, "the joke did not change while the render ran: {seen:?}");
+    h.state_mut().render_job.as_mut().unwrap().result = Some(Ok(Default::default()));
+    h.step();
+    h.step();
+    assert!(h.state().start.store.tour.is_done(5, 2), "the finished render did not close the step");
+    assert!(none(&h), "a joke after the render");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 1092 (tour-lessons-fixes, ui-reach): every named control a lesson may point at is marked
+/// by the program's own drawing code — a renamed button cannot leave a dead step.
+///
+/// - **PATH** there is no gesture: the guard reads the sources; a person on any step sees the
+///   control the step names outlined where it is drawn
+#[test]
+fn t1092_every_lesson_control_is_marked_by_its_widget() {
+    let corpus: String = production_corpus().into_iter().map(|(_, s)| s).collect();
+    for name in crate::lessons::CONTROLS {
+        let call = format!("lesson_mark::control(ui, \"{name}\"");
+        assert!(corpus.contains(&call), "no widget marks the control “{name}” (`{call}`)");
+    }
 }

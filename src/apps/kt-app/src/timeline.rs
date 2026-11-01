@@ -6077,7 +6077,7 @@ impl KtApp {
                             // then redo it” — the claim of item 1 R.33.
                             // A submenu: dissolve comes first (the former
                             // one-click path stays short).
-                            ui.menu_button(label, |ui| {
+                            let mb = ui.menu_button(label, |ui| {
                                 let mut pick: Option<TransitionKind> = None;
                                 let mut cat: Option<crate::i18n::Key> = None;
                                 for kind in TransitionKind::all() {
@@ -6088,10 +6088,9 @@ impl KtApp {
                                         }
                                         cat = Some(c);
                                     }
-                                    if ui
-                                        .button(crate::transition_editor::kind_name(kind))
-                                        .clicked()
-                                    {
+                                    let r = ui.button(crate::transition_editor::kind_name(kind));
+                                    crate::widgets::field_probe::note(&format!("tl.trans.{}", kind.tag()), r.rect);
+                                    if r.clicked() {
                                         pick = Some(kind.clone());
                                     }
                                 }
@@ -6128,6 +6127,10 @@ impl KtApp {
                                 }
                                 ui.close();
                             });
+                            // the tour's transitions lesson points at this item
+                            // (tour-lessons-fixes D5)
+                            let key = if next { k::tl::menu::TRANSITION_NEXT } else { k::tl::menu::TRANSITION_PREV };
+                            crate::widgets::lesson_mark::item(ui, key, mb.response.rect);
                         }
                         for incoming in fades {
                             let label = if incoming {

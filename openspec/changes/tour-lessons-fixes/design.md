@@ -103,5 +103,9 @@ already repaints; this only guarantees the switch). Rejected: random order — a
 - **Shared files**: `toolbar.rs` (menu roots, two marks), `timeline.rs` (one mark), `fx_registry.rs`
   (one line), `render_dialog.rs` (one line) — other executors edit those files; hunks are kept to
   one or two lines.
+- **The bottom toolbar row is wider than 1440 px** (found by t1087 at 1440×860, with or without
+  the lessons panel): the Render button the export lesson names overflows the right edge there.
+  Not this change's layout: the lesson tests run at the owner's 1920×1080, and the overflow is
+  a follow-up for the window-layout work of this round (kkt-26.11.01 item 12).
 - **Arabic run order** for wrapped lines stays as imperfect as every wrapped Arabic label today (the
   build-time limitation named at `MAX_VALUE_CHARS`).

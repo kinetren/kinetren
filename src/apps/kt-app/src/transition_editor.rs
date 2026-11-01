@@ -127,7 +127,7 @@ impl KtApp {
                 if !audio_only {
                     ui.horizontal(|ui| {
                         ui.label(tr(k::trn::KIND));
-                        egui::ComboBox::from_id_salt(("trkind", ed.id))
+                        let kind = egui::ComboBox::from_id_salt(("trkind", ed.id))
                             .selected_text(kind_name(&t.kind))
                             .show_ui(ui, |ui| {
                                 let mut cat: Option<Key> = None;
@@ -141,7 +141,9 @@ impl KtApp {
                                         cat = Some(c);
                                     }
                                     let same = k.tag() == t.kind.tag();
-                                    if ui.selectable_label(same, kind_name(k)).clicked() && !same {
+                                    let r = ui.selectable_label(same, kind_name(k));
+                                    crate::widgets::field_probe::note(&format!("trkind.{}", k.tag()), r.rect);
+                                    if r.clicked() && !same {
                                         // changing the kind = its DEFAULTS: the parameters differ
                                         // between kinds, there is nothing to carry over
                                         t.kind = k.clone();
@@ -149,6 +151,7 @@ impl KtApp {
                                     }
                                 }
                             });
+                        crate::widgets::lesson_mark::control(ui, "tr.kind", &kind.response);
                     });
                     // ---- kind parameters: the same grid as for effects -------
                     let color = matches!(&t.kind, TransitionKind::Plugin(p) if p.get("color_r").is_some());

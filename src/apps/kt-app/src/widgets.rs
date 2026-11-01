@@ -502,6 +502,100 @@ pub fn lesson_outline(ui: &egui::Ui, rect: egui::Rect) {
     );
 }
 
+/// The tour step's targets mark THEMSELVES (tour-lessons-fixes D3). A menu item or a window's
+/// control is drawn deep inside a closure that has no `&mut KtApp` (the generator menu, the
+/// effect picker, the curve menu), so the panel publishes the current step's targets here once a
+/// frame, and the widget asks "am I one of them?". The outlined rects are recorded for "Show" (is
+/// the control on screen?) and for the tests; the buffers are reused, nothing allocates per frame
+/// after the first (invariant 12).
+pub(crate) mod lesson_mark {
+    use crate::i18n::Key;
+    use crate::lessons::Target;
+    use eframe::egui;
+    use std::cell::{Cell, RefCell};
+
+    thread_local! {
+        static CUR: Cell<&'static [Target]> = const { Cell::new(&[]) };
+        static SEEN: RefCell<Vec<(&'static str, egui::Rect)>> = const { RefCell::new(Vec::new()) };
+        static LAST: RefCell<Vec<(&'static str, egui::Rect)>> = const { RefCell::new(Vec::new()) };
+        static SCROLL: Cell<Option<&'static str>> = const { Cell::new(None) };
+    }
+
+    /// A new frame of the panel: what was outlined since the last call becomes "last frame".
+    pub(crate) fn begin(targets: &'static [Target]) {
+        SEEN.with(|s| {
+            LAST.with(|l| {
+                let (mut s, mut l) = (s.borrow_mut(), l.borrow_mut());
+                l.clear();
+                std::mem::swap(&mut *s, &mut *l);
+            })
+        });
+        CUR.set(targets);
+    }
+
+    /// The targets changed inside the frame (a step closed): no new frame of records.
+    pub(crate) fn set(targets: &'static [Target]) {
+        CUR.set(targets);
+    }
+
+    pub(crate) fn current() -> &'static [Target] {
+        CUR.get()
+    }
+
+    /// Record an outline drawn elsewhere (the timeline targets, drawn by `lessons.rs`).
+    pub(crate) fn note(tag: &'static str, r: egui::Rect) {
+        SEEN.with(|s| s.borrow_mut().push((tag, r)));
+        // the live scenario reads the outline from the program's own record (R.27)
+        if super::field_probe::on() {
+            super::field_probe::note(&format!("lesson.mark.{tag}"), r);
+        }
+    }
+
+    /// The rect a target's outline had in this or the previous frame.
+    pub(crate) fn seen(tag: &str) -> Option<egui::Rect> {
+        let find = |v: &RefCell<Vec<(&'static str, egui::Rect)>>| v.borrow().iter().rev().find(|(t, _)| *t == tag).map(|(_, r)| *r);
+        SEEN.with(find).or_else(|| LAST.with(find))
+    }
+
+    /// "Show" on a control: it scrolls itself into view when it is drawn next.
+    pub(crate) fn request_scroll(name: &'static str) {
+        SCROLL.set(Some(name));
+    }
+
+    fn outline(ui: &egui::Ui, rect: egui::Rect) {
+        super::lesson_outline(ui, rect);
+    }
+
+    /// A named control (`lessons::CONTROLS`): outlined while its step is current.
+    pub(crate) fn control(ui: &egui::Ui, name: &'static str, r: &egui::Response) {
+        if !CUR.get().iter().any(|t| matches!(t, Target::Control(n) if *n == name)) {
+            return;
+        }
+        outline(ui, r.rect);
+        note(name, r.rect);
+        // and under its own name: the live scenario clicks the control the step names
+        super::field_probe::note(name, r.rect);
+        if SCROLL.get() == Some(name) {
+            SCROLL.set(None);
+            r.scroll_to_me(None);
+        }
+    }
+
+    /// A menu item of catalog key `key`: outlined when a current target's menu path holds it past
+    /// its root, or when it is the item of an event's right-click target.
+    pub(crate) fn item(ui: &egui::Ui, key: Key, rect: egui::Rect) {
+        let hit = CUR.get().iter().any(|t| match t {
+            Target::Menu(path) => path.iter().skip(1).any(|k| *k == key),
+            Target::ClipMenu { item, .. } => *item == key,
+            _ => false,
+        });
+        if hit {
+            outline(ui, rect);
+            note("menu", rect);
+        }
+    }
+}
+
 /// ACTIONS row of the window — BELOW the scrolling body. A separate call, not
 /// a second closure: both closures would hold the same borrow
 /// (the hint accumulator), and the borrow checker is right.

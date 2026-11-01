@@ -874,11 +874,25 @@ Where to look in the code: `track_window.rs` (the ducking section), `pubparam.rs
   action row's `right_to_left` and from guide labels laid out with `TextWrapMode::Extend` inside
   `horizontal_top`. t986 checks that the window fits the screen.
 - **Lessons close on state, not gestures** (`lessons::done`, a closed `Predicate` enum), and are
-  re-evaluated only when `(model_rev, open windows, render result)` changes. A step's target is
-  a registry window, a File-menu path (opened by code: the File button's response id lives in
-  egui temp data `kt_menu_root_file`, probe 1.1) or the timeline; the target draws a STATIC
-  outline itself (`widgets::lesson_outline`). `no_teaching_layer_over_the_ui` keeps the layers
-  above `Order::Middle` a closed named list — a lesson is a panel, never a layer.
+  re-evaluated when ANY input of a predicate changes: the key is a `Copy` value of
+  `(model_rev, region, loop, open-window bits, render result)` (tour-lessons-fixes D1). The region
+  and the loop do not bump `model_rev` (R.43 item 296), so keying on the revision closed "Play a
+  part in a loop" only when a window closed (kkt-26.11.01 item 2). A new predicate input goes INTO
+  the key.
+- **Every step names where to act** (`Step::targets`: a menu path, an event, a marker, the ruler,
+  a transition, the morpher block, an event's right-click item, a named control of `CONTROLS`).
+  Targets draw their STATIC outline themselves: menu items and window controls through
+  `widgets::lesson_mark::{item, control}` (a thread-local of the current targets — the closures
+  have no `&mut KtApp`), timeline targets in `draw_lesson_outline` from `tl_geom`. A renamed
+  control must keep its `lesson_mark::control(ui, "<name>"` call — t1092. "Show" POINTS (scrolls,
+  opens a menu root by `("kt_menu_root", key)`) and never performs the step: it once opened the
+  morpher window, which closed the step and taught nothing (kkt-26.11.01 item 5).
+- **Lesson text is catalog LINES** (`Step::text`: a paragraph or a `- ` item, ≤ 160 chars) in the
+  Guide's inline markup — `<kbd>` for what is pressed, `**` for names — drawn by `guide::render`;
+  control labels are `{n}` arguments from the control's own key (`Arg`). Arabic is parsed from
+  `ar_logical` and reordered per run: the build's visual table mirrors the tags. The parse is
+  memoized per (language, lesson). `no_teaching_layer_over_the_ui` keeps the layers above
+  `Order::Middle` a closed named list — a lesson is a panel, never a layer.
 - **The lesson sandbox** is `<store>/lessons/lesson-<n>.kt`, built by `kt_model::demo` from
   generators (kt-cli `demo` calls the same builder); `lessons::is_sandbox` keeps it out of Recent
   and out of posters.

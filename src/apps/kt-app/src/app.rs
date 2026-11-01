@@ -3332,7 +3332,7 @@ impl KtApp {
 
     /// Bring the moment into view (a crumb of common arithmetic: we do not create
     /// our own scroll formula at the call sites).
-    fn center_view_on(&mut self, t: Tick) {
+    pub(crate) fn center_view_on(&mut self, t: Tick) {
         let half = self.timeline_rect.width().max(1.0) as f64 * self.ticks_per_px / 2.0;
         self.view_start = (t.0 as f64 - half).max(self.view_floor(self.ticks_per_px));
     }
