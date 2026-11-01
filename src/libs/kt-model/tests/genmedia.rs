@@ -124,7 +124,8 @@ fn t470_generator_param_specs_are_complete() {
     // Kinds WITHOUT numbers are declared here by name (R.53, items 420/422): “specs are empty”
     // is a legitimate state for exactly them, and a new kind that lost its specs through
     // oversight still fails this test.
-    const NO_PARAMS: &[&str] = &["transparent", "table"];
+    // `silence` (generators-placement-and-audio) is a sound kind with nothing to set
+    const NO_PARAMS: &[&str] = &["transparent", "table", "silence"];
     for k in GeneratorKind::all() {
         // the NUMBERS: a plugin kind's flag and choice rows (the table's sort) are passport rows
         // too since D13, and they are t510's and the menu's, not numbers
