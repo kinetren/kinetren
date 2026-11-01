@@ -1,18 +1,18 @@
 ---
 id: F-FX-010
 title: Camera sensor and ISP — a simulated mosaic, its noise and the processor that develops it
-status: in-progress
+status: done
 priority: B
 cost: L
 category: fx/simulate
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: no
+we_have: yes
 crates: [kt-plugin-api, kt-fx, kt-gpu, kt-app]
 invariants: [7, 11, 12]
 ui_rules: []
 round: kkt-26.11.01
 point: I1
-tests: []
+tests: [t1210, t1211, t1212, t1213, t1214, t1215, t1216, t1217, t1218, t1219, t1220, t1221, t1222, t1223]
 depends_on: [F-FX-007]
 trackers: []
 services: []
@@ -107,30 +107,8 @@ these programs neither the chain nor the meaning of its parameters can be descri
 
 ## How it fits Kinotrain
 
-CAPABILITY: openspec/specs/video-fx/ — planned in `openspec/changes/camera-isp-simulation/`.
-
-### What already exists
-
-The barrier contract `src/libs/kt-plugin-api/src/barrier.rs` (a CPU kernel as the byte reference,
-an optional AVX2 twin behind the host's switch, a GPU pass graph over Rgba8Uint textures) and the
-frozen math `src/libs/kt-plugin-api/src/math.rs` for transcendental functions on frozen paths. The
-counter hash `noise_hash` seeds the grain of `noise` and `vhs` (`src/plugins/fx-video-stylize`).
-
-### What is missing
-
-A kernel that holds a mosaic, a sensor model in electrons and an ISP chain; a barrier whose
-parameters exceed the eight cooked numbers of `Cooked`.
-
-### What hinders
-
-GPU intermediates are Rgba8Uint (invariant 7's determinism rule): a 14-bit raw must be packed into
-two bytes between passes, and the CPU must quantize at the same points to stay within `FrameTol`.
-
-### Which invariants it touches
-
-7 (one composition path, CPU reference and GPU within tolerance), 11 (determinism: the noise is a
-counter hash of position and frame, transcendental functions from `kt_plugin_api::math`), 12 (no
-allocation per frame: the kernel's work buffers are reused).
+CAPABILITY: openspec/specs/video-fx/
+Done as `camera_isp` (camera-isp-simulation, archived 2026-11-01): unprocessing, lens, eight CFA layouts, a sensor in electrons and an ISP with a correcting block per defect, twelve passes CPU/AVX2/GPU, `view` of any stage; 3DNR is the change `temporal-barrier-3dnr`.
 
 ## Estimate
 

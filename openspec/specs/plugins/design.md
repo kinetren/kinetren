@@ -104,3 +104,13 @@ The full text, alternatives and measurements are in the archived change
   addresses shared keys, which is why the engine's ident carries the source and its revision.
 - **Refused at registration (t1240):** the class without a stream kernel, a stream kernel on another
   class, any GPU side on a stream plugin (D4 of the archived change).
+
+## The values door (camera-isp-simulation and vhs-tape-simulation, 2026-11-01)
+
+`Cooked` is eight numbers; a simulation has dozens of rows (camera_isp ~85). Packing them into bit
+fields would quantize every automated row, so `BarrierKernel::frame_values`/`gpu_values` receive the
+slot's values in passport order, defaulting to `frame`/`gpu` over `cook` (a cooked barrier keeps its
+bytes — t1187). The host calls only these forms: kt-fx `apply_barrier`, the kt-gpu barrier op, the
+registry's graph check (which therefore sees a graph broken only at a ninth row's top — t1210). The
+two branches that needed it at once wrote the same text (`ebc58282`, `831cccf5`), so it merged
+without a conflict.
