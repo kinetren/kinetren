@@ -13,6 +13,9 @@ month, newest first.
 - **Rendering a region that does not start on a frame** no longer closes the program.
 - **The log keeps one file per run** (the four previous runs next to it), each starting with the
   version and the start time in your time zone.
+- **Pitch no longer tears between short events.** Cut an event with pitch into many short
+  pieces and they sound exactly like the uncut event; any pitched event starts and ends
+  without a dip.
 - **Changing an audio effect takes effect at once.** Put a filter where an equaliser stood
   and you hear the filter right away — before, the old effect kept playing with the new
   settings until you jumped in time.

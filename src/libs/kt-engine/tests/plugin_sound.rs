@@ -36,7 +36,10 @@ const GOLDEN: &[(&str, [u64; 4])] = &[
     ("compressor", [0x07c61de143e7dafd, 0x300707b5ccfcaab7, 0xd1843793a101213b, 0xd39bab6d08fb5c31]),
     ("gate", [0x0937c0c533d469b7, 0xf64207d5b805d2b5, 0x6b363e06b1b945b0, 0x601abdfd08827c46]),
     ("limiter", [0xf6fa8c3ddee2e7cf, 0x195c41372d28dc06, 0xcd8f29215801aabc, 0x8bed456f023f3987]),
-    ("pitch_shift", [0x07c61de143e7dafd, 0x6a8e26e7182e4946, 0x2058048daf9756f7, 0xd39bab6d08fb5c31]),
+    // "at 70 %" re-printed by pitch-event-edges (kkt-26.11.01 item 15, the owner's request): the
+    // event ends where the material goes on, and its last grains now read that material instead
+    // of silence — the sound change asked for; the other three cases did not move
+    ("pitch_shift", [0x07c61de143e7dafd, 0x3c85d210d0eb2c6d, 0x2058048daf9756f7, 0xd39bab6d08fb5c31]),
 ];
 
 fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool, engine: PitchEngine) -> Project {
