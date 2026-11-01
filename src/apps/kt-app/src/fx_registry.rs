@@ -915,6 +915,7 @@ pub fn fx_picker_with_head(
     // and a scenario must not guess offsets inside the window (R.27).
     // The branch costs one OnceLock check without KT_GEOM_DUMP.
     crate::widgets::field_probe::note("fxreg.add", btn.rect);
+    crate::widgets::lesson_mark::control(ui, "fxreg.add", &btn);
     // the window of a linked pair has two pickers and the last one drawn
     // (audio) wins the shared name; the README shot needs the VIDEO gallery
     if kinds != PickKinds::Audio {

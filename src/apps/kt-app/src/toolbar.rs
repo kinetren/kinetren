@@ -391,13 +391,8 @@ impl KtApp {
             // THE SAME BODY as in the bin’s empty-space menu (rule 17).
             // Until R.55 a generator was created ONLY from there, and a person could not
             // find this entry — the 8th round claim, verbatim.
-            let top = ui.cursor().min;
+            // (the tour step's target outlines itself inside, wherever the menu is drawn)
             let picked = crate::gen_ui::generator_menu(ui);
-            // the tour step's target outlines itself (welcome-window-and-tour: static, no layer)
-            if self.lesson_marks_menu(k::bin::menu::NEW_GENERATOR) {
-                let r = egui::Rect::from_min_max(top, egui::pos2(ui.max_rect().right(), ui.cursor().min.y));
-                crate::widgets::lesson_outline(ui, r);
-            }
             if let Some(kd) = picked {
                 self.create_generator(kd);
                 ui.close();
@@ -430,9 +425,7 @@ impl KtApp {
             ui.separator();
             let r = ui.button(tr(k::menu::file::RENDER));
             crate::widgets::field_probe::note("file.render", r.rect);
-            if self.lesson_marks_menu(k::menu::file::RENDER) {
-                crate::widgets::lesson_outline(ui, r.rect);
-            }
+            crate::widgets::lesson_mark::item(ui, k::menu::file::RENDER, r.rect);
             if r.clicked() {
                 self.start_render();
                 ui.close();
@@ -451,7 +444,8 @@ impl KtApp {
             }
         });
         crate::widgets::field_probe::note("menu.file", file_btn.response.rect);
-        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("kt_menu_root_file"), file_btn.response.id));
+        // the menu roots by catalog key: a lesson's "Show" opens the root of its target's path
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(("kt_menu_root", k::menu::file::TITLE.0)), file_btn.response.id));
         let edit_btn = ui.menu_button(tr(k::menu::edit::TITLE), |ui| {
             if Self::menu_btn(ui, tr(k::menu::edit::UNDO), "Ctrl+Z") {
                 self.undo();
@@ -511,6 +505,7 @@ impl KtApp {
             }
         });
         crate::widgets::field_probe::note("menu.edit", edit_btn.response.rect);
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(("kt_menu_root", k::menu::edit::TITLE.0)), edit_btn.response.id));
         let view_btn = ui.menu_button(tr(k::menu::view::TITLE), |ui| {
             let detach_label = if self.preview_detached {
                 tr(k::menu::view::ATTACH_PREVIEW)
@@ -934,6 +929,7 @@ impl KtApp {
         };
         let hint = if armed { tr(k::tb::LOOP_ARMED) } else { tr(k::tb::LOOP) };
         let r = ui.add_sized([30.0, 26.0], egui::Button::selectable(loop_on, label));
+        crate::widgets::lesson_mark::control(ui, "tb.loop", &r);
         if self.hint(r, hint).clicked() {
             self.toggle_loop();
         }
@@ -945,7 +941,9 @@ impl KtApp {
             self.redo();
         }
         ui.separator();
-        if self.tb(ui, crate::icons::RENDER, tr(k::tb::RENDER)) {
+        let r = ui.add_sized([30.0, 26.0], egui::Button::new(crate::icons::RENDER).frame(false));
+        crate::widgets::lesson_mark::control(ui, "tb.render", &r);
+        if self.hint(r, tr(k::tb::RENDER)).clicked() {
             self.start_render();
         }
         if self.tb(ui, crate::icons::SEARCH, tr(k::tb::SEARCH)) {

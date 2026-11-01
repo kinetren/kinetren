@@ -847,6 +847,7 @@ impl KtApp {
                 ui.horizontal(|ui| {
                     let start = ui.button(tr(k::render::START));
                     crate::widgets::field_probe::note("render.start", start.rect);
+                    crate::widgets::lesson_mark::control(ui, "render.start", &start);
                     if start.clicked() {
                         launch = true;
                     }

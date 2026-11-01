@@ -35,12 +35,18 @@ use kt_model::{GeneratorKind, HasParams, TextAlign, TextAnchor};
 /// it in the UI is unclear”. Now the same list hangs in the
 /// main menu too, and no second list of kinds was created for it.
 pub fn generator_menu(ui: &mut egui::Ui) -> Option<GeneratorKind> {
-    generator_kind_menu(ui, tr(k::bin::menu::NEW_GENERATOR))
+    generator_kind_menu_keyed(ui, tr(k::bin::menu::NEW_GENERATOR), Some(k::bin::menu::NEW_GENERATOR))
 }
 
 /// The same menu under another caption: “create” and “change kind” — ONE list of kinds (rule 17),
 /// and a new kind reaches both entries by itself.
 pub fn generator_kind_menu(ui: &mut egui::Ui, label: &str) -> Option<GeneratorKind> {
+    generator_kind_menu_keyed(ui, label, None)
+}
+
+/// `key` — the catalog key of the caption: the item outlines itself when a tour step points at
+/// it (tour-lessons-fixes D3), wherever the menu is drawn.
+fn generator_kind_menu_keyed(ui: &mut egui::Ui, label: &str, key: Option<crate::i18n::Key>) -> Option<GeneratorKind> {
     let mut picked = None;
     let mr = ui.menu_button(label, |ui| {
         for grp in GenGroup::ALL {
@@ -69,9 +75,15 @@ pub fn generator_kind_menu(ui: &mut egui::Ui, label: &str) -> Option<GeneratorKi
                 &format!("gen.new.group.{}", grp.probe()),
                 gr.response.rect,
             );
+            if key.is_some() {
+                crate::widgets::lesson_mark::item(ui, grp.key(), gr.response.rect);
+            }
         }
     });
     crate::widgets::field_probe::note("gen.new", mr.response.rect);
+    if let Some(key) = key {
+        crate::widgets::lesson_mark::item(ui, key, mr.response.rect);
+    }
     picked
 }
 

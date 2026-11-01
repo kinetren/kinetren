@@ -160,6 +160,15 @@ stands in the other, by an explicit revision rather than a silent flip:
 - **The addressee objection** (the complaints came mid-work, not at first launch) is answered by the
   Guide window of the same change, which serves the middle of work; the lessons serve the first start.
 
+**Refined after the owner's walk, 2026-11-01 (change `tour-lessons-fixes`, kkt-26.11.01 items
+2–8).** The first form taught nothing past lesson 1: "Show" did the step itself, only one target
+was outlined, a step closed late. Now every step names where the person acts and each target
+outlines itself (still static, still no layer); "Show" brings the target into view and never
+performs the step; a step that changes the picture says what changed and moves the playhead there.
+The wait of the render lesson gets rotating silly lines at the owner's request — the old practice of
+long waits in games and installers (loading-screen lines), not a tip system: they explain nothing
+and ask for no attention.
+
 TEST: t988 (`src/apps/kt-app/src/reach_tests.rs`) — a lesson step closes on the project's state after a title is added through File → Create a generator…, and the layers above `Order::Middle` stay the closed named list with no lesson among them.
 
 ## Sources

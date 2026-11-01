@@ -1643,9 +1643,6 @@ impl KtApp {
             .show(ui, |ui| {
                 self.draw_statusbar(ui);
             });
-        // The tour's lessons (welcome-window-and-tour D2): a docked panel on the right, drawn
-        // before the timeline so it spans the window's height and narrows the editor
-        self.draw_lessons_panel(ui);
         // Timeline (bottom, full width) + floating toolbar on top
         // Item 10 round 9: the timeline needs a CEILING, otherwise at small height it
         // takes everything and pushes out the header with the logo/menu and the window buttons (they
@@ -1678,6 +1675,11 @@ impl KtApp {
                     },
                 );
             });
+        // The tour's lessons (welcome-window-and-tour D2): a docked panel on the right, drawn
+        // AFTER the timeline (tour-lessons-fixes D8): drawn before it, the panel narrowed the
+        // timeline's toolbar row, which clipped at the panel's edge — the Loop button lesson 1
+        // names was not on screen in a 1440 px window (live `lessons`, t1094)
+        self.draw_lessons_panel(ui);
         // Time strip above the timeline (port of the Timeline time strip)
         // left column: media bin + performance box (port of widget_3)
         // LIMIT SET ON COMPLAINT of item 4 round 13 — do not squeeze without a new
@@ -3354,7 +3356,7 @@ impl KtApp {
 
     /// Bring the moment into view (a crumb of common arithmetic: we do not create
     /// our own scroll formula at the call sites).
-    fn center_view_on(&mut self, t: Tick) {
+    pub(crate) fn center_view_on(&mut self, t: Tick) {
         let half = self.timeline_rect.width().max(1.0) as f64 * self.ticks_per_px / 2.0;
         self.view_start = (t.0 as f64 - half).max(self.view_floor(self.ticks_per_px));
     }
