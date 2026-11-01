@@ -155,6 +155,16 @@ pub trait BarrierKernel: Send + Sync {
     }
     /// The GPU graph for this frame; an empty graph is a passthrough (drop_shadow on an opaque frame).
     fn gpu(&self, _k: &Cooked, _g: &GpuCtx, _out: &mut Vec<Node>) {}
+    /// The values door (camera-isp-simulation, D2): the whole frame from the slot's values in
+    /// passport order, for a barrier whose rows do not fit the eight cooked numbers. The host calls
+    /// THIS form; the default is `frame` over `cook`, so a cooked barrier keeps its bytes.
+    fn frame_values(&self, p: &[f64], f: Frame, cx: &BarrierCtx, scratch: &mut dyn Scratch) -> Frame {
+        self.frame(&self.cook(p), f, cx, scratch)
+    }
+    /// The GPU graph from the slot's values (the host's form, as `frame_values`).
+    fn gpu_values(&self, p: &[f64], g: &GpuCtx, out: &mut Vec<Node>) {
+        self.gpu(&self.cook(p), g, out)
+    }
 }
 
 /// Check a graph's shape (D5): every `Saved(n)` read after its `Save(n)`, every pass a shader the

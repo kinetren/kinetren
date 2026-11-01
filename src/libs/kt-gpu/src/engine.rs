@@ -417,7 +417,7 @@ fn chain_ops(
                         burst_index: t.0,
                     };
                     let mut nodes = Vec::new();
-                    b.gpu(&b.cook(values), &g, &mut nodes);
+                    b.gpu_values(values, &g, &mut nodes);
                     debug_assert_eq!(
                         kt_plugin_api::barrier::check_graph(&nodes, b.shaders().len(), &g, kt_fx::plan::MAX_INTER_DIM),
                         Ok(()),

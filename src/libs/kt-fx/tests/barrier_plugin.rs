@@ -376,7 +376,6 @@ fn t1053_every_barrier_twin_gives_the_scalar_bytes() {
             forms.push(vals);
         }
         for vals in &forms {
-            let k = b.cook(vals);
             for rs in [1u32, 2] {
                 for alpha in [false, true] {
                     let run = |simd: bool| {
@@ -386,7 +385,7 @@ fn t1053_every_barrier_twin_gives_the_scalar_bytes() {
                             simd,
                             raster: &kt_fx::video::Raster,
                         };
-                        b.frame(&k, frame(rs, alpha), &cx, &mut FxScratch::default()).rgba
+                        b.frame_values(vals, frame(rs, alpha), &cx, &mut FxScratch::default()).rgba
                     };
                     assert!(run(true) == run(false), "{} {vals:?} K={rs} alpha={alpha}: the SIMD path moved a byte", m.id);
                 }
