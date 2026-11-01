@@ -42,5 +42,5 @@ message, first line "render-crash-and-recovery <stage>: …", no attribution lin
 - [x] 5.1 `docs/guide/whats-new.md` (`## kt26.11`): the crash window, the restore that brings the right sources, the per-run log
 - [x] 5.2 Registry row K9 in `docs/ktprompts/kkt-26.11.01-index.md` → done; `python3 src/scripts/ktprompts-index.py --check` green
 - [x] 5.3 `apps/kt-app/CLAUDE.md`: the supervisor section (two processes, `KT_NO_SUPERVISOR`, PDEATHSIG, the window is not a `KtApp` window)
-- [ ] 5.4 `cargo test --workspace`, `cargo clippy --all-targets`, `./scripts/finish.sh`; the version here
-- [ ] 5.5 Archive the change (specs merged), commit
+- [x] 5.4 `cargo test --workspace`, `cargo clippy --all-targets`, `./scripts/finish.sh`; the version here: **kt26.11.01-b6c8f121** (after the master merge). Reds of the batch run at load 25–36 / I/O pressure ~50 %: t815 (the restore-record write stalled 21 s on fsync; 0.06 s alone), live `nestparam`, `readme_shots`, `recover` — all three green alone (`KT_LIVE_WORKERS=1 ./scripts/live-check.sh recover nestparam readme_shots`: 3 of 3)
+- [x] 5.5 Archive the change (specs merged), commit
