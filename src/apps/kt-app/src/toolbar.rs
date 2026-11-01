@@ -7,6 +7,11 @@ use crate::i18n::{k, tr};
 use eframe::egui;
 use kt_model::ClipKind;
 
+/// The bottom row's button groups (transport, timecode, tracks, edit, zoom, region, history,
+/// output) and how many of them never move into the "more" menu (transport and timecode).
+pub(crate) const TB_GROUPS: usize = 8;
+const TB_KEEP: usize = 2;
+
 pub fn gradient_rect(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -692,280 +697,338 @@ impl KtApp {
         );
         ui.advance_cursor_after_rect(strip);
         let ui = &mut child;
-        let playing = self.player.transport.is_playing();
-        if self.tb(
-            ui,
-            if playing { crate::icons::PAUSE } else { crate::icons::PLAY },
-            tr(k::tb::PLAY_PAUSE),
-        ) {
-            self.on_transport_toggle();
-        }
-        // Shift here is “drag the region” (like Shift+A/D, item 2 round 16); “to
-        // the very start/end” remains on Shift+Home/End
-        if self.tb(ui, crate::icons::SKIP_BACK, tr(k::tb::BACK)) {
-            let shift = ui.input(|i| i.modifiers.shift);
-            self.nav_jump(false, false, shift);
-        }
-        if self.tb(ui, crate::icons::SKIP_FWD, tr(k::tb::FORWARD)) {
-            let shift = ui.input(|i| i.modifiers.shift);
-            self.nav_jump(true, false, shift);
-        }
-        ui.separator();
-        // ---- timecode and input mask (item 4 round 10, redone item 9 round 11) ----
-        // The input is drawn IN THE SAME RECTANGLE and WITH THE SAME FONT as
-        // the timecode itself: the width is taken from the full format, so the
-        // toolbar layout does not jump when the mask opens (there was a
-        // TextEdit of 96 px against 150 px of text). It works during playback too —
-        // the player can seek on the fly.
-        {
-            let fps = self.model.project().settings.fps;
-            // the DISPLAY position: the raw playhead during play jumps in quanta
-            // of the audio callback (item 12 of the root CLAUDE.md)
-            let live = self.player.video_playhead();
-            let font = egui::FontId::monospace(15.0);
-            let bright = egui::Color32::from_rgb(235, 235, 240);
-            let dim = egui::Color32::from_gray(120);
-            let full = crate::util::format_timecode(live, fps);
-            let size = ui.painter().layout_no_wrap(full.clone(), font.clone(), bright).size()
-                + egui::vec2(6.0, 0.0);
-            let (rect, r) = ui.allocate_exact_size(size, egui::Sense::click());
-            let editing = self.tc_edit.is_some();
-            let r =
-                self.hint(r, if editing { tr(k::tb::TIMECODE_EDIT) } else { tr(k::tb::TIMECODE) });
-            if r.double_clicked() && !editing {
-                self.tc_edit = Some(String::new());
-                self.tc_edit_focus = true;
+        // Groups that do not fit move, whole and from the end, into a "more" menu at the row's
+        // right end (windows-fill-their-area: the row needs ~1460 points, and a narrower window cut
+        // Render, Search, Diagnostics and Save off with no way to reach them). The widths come from
+        // the last frame each group was drawn IN the row; the first frame draws all and measures.
+        let gap = ui.spacing().item_spacing.x;
+        let avail = ui.max_rect().width();
+        let need = |from: usize, to: usize, w: &[f32; TB_GROUPS]| -> f32 { w[from..to].iter().sum() };
+        let w = self.tb_group_w;
+        let measured = w.iter().all(|x| *x > 0.0);
+        let more_w = 30.0 + 2.0 * gap + 6.0;
+        let keep = if !measured || need(0, TB_GROUPS, &w) <= avail {
+            TB_GROUPS
+        } else {
+            (TB_KEEP..TB_GROUPS).rev().find(|k| need(0, *k, &w) + more_w <= avail).unwrap_or(TB_KEEP)
+        };
+        for g in 0..keep {
+            let x0 = ui.cursor().left();
+            if g > 0 {
+                ui.separator();
             }
-            if let Some(input) = self.tc_edit.clone() {
-                if self.tc_edit_focus {
-                    r.request_focus();
-                    self.tc_edit_focus = false;
-                }
-                // arrows/Tab must not take the focus out of the mask
-                ui.memory_mut(|m| {
-                    m.set_focus_lock_filter(
-                        r.id,
-                        egui::EventFilter {
-                            tab: true,
-                            horizontal_arrows: true,
-                            vertical_arrows: true,
-                            escape: false,
-                        },
-                    )
-                });
-                // the events are CONSUMED: otherwise the digits and Enter would leak into the hotkeys
-                let mut input = input;
-                let mut apply = false;
-                let mut cancel = false;
-                ui.input_mut(|i| {
-                    i.events.retain(|e| match e {
-                        egui::Event::Text(t) if t.chars().all(|c| c.is_ascii_digit()) => {
-                            input.push_str(t);
-                            false
+            self.tb_group(ui, g);
+            self.tb_group_w[g] = ui.cursor().left() - x0;
+        }
+        if keep < TB_GROUPS {
+            ui.separator();
+            let (btn, _) = egui::containers::menu::MenuButton::new(
+                egui::RichText::new(crate::icons::MORE),
+            )
+            .ui(ui, |ui| {
+                ui.horizontal(|ui| {
+                    for g in keep..TB_GROUPS {
+                        if g > keep {
+                            ui.separator();
                         }
-                        // pasting a ready timecode (“1:02:03”) — we parse it
-                        // and lay it out into the mask's digit positions
-                        egui::Event::Text(t) => match crate::util::parse_timecode(t, fps) {
-                            Some(at) => {
-                                input = crate::util::tick_to_mask(at);
-                                false
-                            }
-                            None => true,
-                        },
-                        egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. } => {
-                            input.pop();
-                            false
-                        }
-                        egui::Event::Key { key: egui::Key::Enter, pressed: true, .. } => {
-                            apply = true;
-                            false
-                        }
-                        egui::Event::Key { key: egui::Key::Escape, pressed: true, .. } => {
-                            cancel = true;
-                            false
-                        }
-                        _ => true,
-                    })
-                });
-                let painter = ui.painter_at(rect);
-                painter.rect_filled(rect, 1.0, egui::Color32::from_rgb(22, 24, 28));
-                painter.line_segment(
-                    [
-                        egui::pos2(rect.left() + 2.0, rect.bottom() - 1.0),
-                        egui::pos2(rect.right() - 2.0, rect.bottom() - 1.0),
-                    ],
-                    egui::Stroke::new(1.0, crate::theme::ACCENT),
-                );
-                let (live_part, typed_part) = crate::util::mask_text(&input);
-                let mut x = rect.left() + 3.0;
-                for (txt, col) in [(live_part, dim), (typed_part, bright)] {
-                    if txt.is_empty() {
-                        continue;
+                        self.tb_group(ui, g);
                     }
-                    let g = painter.layout_no_wrap(txt, font.clone(), col);
-                    let w = g.size().x;
-                    painter.galley(egui::pos2(x, rect.center().y - g.size().y * 0.5), g, col);
-                    x += w;
+                });
+            });
+            crate::widgets::field_probe::note("tb.more", btn.rect);
+            self.hint(btn, tr(k::tb::MORE));
+        }
+    }
+
+    /// One group of the bottom row, drawn in the row or in its "more" menu by the same body
+    /// (checklist rule 17: one action, one body).
+    fn tb_group(&mut self, ui: &mut egui::Ui, g: usize) {
+        match g {
+            0 => {
+                let playing = self.player.transport.is_playing();
+                if self.tb(
+                    ui,
+                    if playing { crate::icons::PAUSE } else { crate::icons::PLAY },
+                    tr(k::tb::PLAY_PAUSE),
+                ) {
+                    self.on_transport_toggle();
                 }
-                if apply {
-                    let t = crate::util::mask_to_tick(&input, fps);
-                    self.player.seek(t);
-                    self.pending_reveal = Some(t.0);
-                    self.tc_edit = None;
-                } else if cancel || (r.lost_focus() && !r.has_focus()) {
-                    self.tc_edit = None;
-                } else {
-                    self.tc_edit = Some(input);
+                // Shift here is “drag the region” (like Shift+A/D, item 2 round 16); “to
+                // the very start/end” remains on Shift+Home/End
+                if self.tb(ui, crate::icons::SKIP_BACK, tr(k::tb::BACK)) {
+                    let shift = ui.input(|i| i.modifiers.shift);
+                    self.nav_jump(false, false, shift);
                 }
-                // FOCUS MUST RETURN (item 8 round 12): the widget lives each frame with the same id,
-                // so “just close it” is not enough —
-                // egui went on counting it as focused, and
-                // handle_keys is gated by egui_wants_keyboard_input(), and
-                // Ctrl+L fired exactly once, until a mouse click.
-                if self.tc_edit.is_none() {
-                    ui.memory_mut(|m| m.surrender_focus(r.id));
+                if self.tb(ui, crate::icons::SKIP_FWD, tr(k::tb::FORWARD)) {
+                    let shift = ui.input(|i| i.modifiers.shift);
+                    self.nav_jump(true, false, shift);
                 }
-            } else {
-                ui.painter_at(rect).text(
-                    egui::pos2(rect.left() + 3.0, rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    full,
-                    font,
-                    bright,
-                );
             }
-        }
-        self.draw_speed_control(ui);
-        ui.separator();
-        if self.tb(ui, crate::icons::FLAG, tr(k::tb::MARKER)) {
-            self.marker_toggle_at_cursor();
-        }
-        if self.tb(ui, "+V", tr(k::tb::ADD_VIDEO_LANE)) {
-            self.add_track(ClipKind::Video);
-        }
-        if self.tb(ui, "+A", tr(k::tb::ADD_AUDIO_LANE)) {
-            self.add_track(ClipKind::Audio);
-        }
-        // the morpher layer (R.35 item 5): the track is created ON TOP of all —
-        // otherwise “everything below” would be empty
-        if self.tb(ui, "+M", tr(k::tb::ADD_MORPHER)) {
-            self.add_morph_layer();
-        }
-        // camera (R.40 item 5): until this round the camera track could not be
-        // created or filled with anything, except via RMB on the 34-pixel
-        // header of a FOREIGN row — “what is it for?????”
-        if self.tb(ui, "+C", tr(k::tb::ADD_CAMERA)) {
-            self.add_camera_layer();
-        }
-        // a named area from the last selection frame (R.35 item 2)
-        if self.tb(ui, crate::icons::AREA_SAVE, tr(k::tb::SAVE_AREA)) {
-            self.save_marked_area();
-        }
-        ui.separator();
-        if self.tb(ui, crate::icons::SCISSORS, tr(k::tb::CUT)) {
-            self.cut_action();
-        }
-        if self.tb(ui, crate::icons::COPY, tr(k::tb::COPY)) {
-            self.copy_selection();
-        }
-        if self.tb(ui, crate::icons::CLIPBOARD, tr(k::tb::PASTE)) {
-            self.paste_at_cursor();
-        }
-        if self.tb(ui, crate::icons::TRASH, tr(k::tb::DELETE)) {
-            self.delete_action();
-        }
-        if self.tb(ui, crate::icons::TRIM_START, tr(k::tb::TRIM_START)) {
-            self.trim_selected_start_to_cursor();
-        }
-        if self.tb(ui, crate::icons::TRIM_END, tr(k::tb::TRIM_END)) {
-            self.trim_selected_end_to_cursor();
-        }
-        if self.tb(ui, crate::icons::LANE_UP, tr(k::tb::LANE_UP)) {
-            self.move_selected_lane(-1);
-        }
-        if self.tb(ui, crate::icons::LANE_DOWN, tr(k::tb::LANE_DOWN)) {
-            self.move_selected_lane(1);
-        }
-        ui.separator();
-        if self.tb(ui, crate::icons::MINUS, tr(k::tb::ZOOM_OUT)) {
-            self.zoom_at_playhead(1.25);
-        }
-        if self.tb(ui, crate::icons::PLUS, tr(k::tb::ZOOM_IN)) {
-            self.zoom_at_playhead(0.8);
-        }
-        ui.separator();
-        if self.tb(ui, crate::icons::REGION_IN, tr(k::tb::REGION_IN)) {
-            self.set_region_edge_from_cursor(true);
-        }
-        if self.tb(ui, crate::icons::REGION_OUT, tr(k::tb::REGION_OUT)) {
-            self.set_region_edge_from_cursor(false);
-        }
-        if self.tb(ui, crate::icons::CLEAR, tr(k::tb::REGION_CLEAR)) {
-            self.clear_region();
-        }
-        // the selection tool mode (R.33 item 7, “as in Vegas —
-        // toggle button”): in it an ordinary drag over empty space draws a frame
-        // instead of a region. Ctrl+drag draws it without the mode too.
-        let sel_tool = self.sel_tool;
-        let r = ui.add_sized(
-            [30.0, 26.0],
-            egui::Button::selectable(sel_tool, egui::RichText::new(crate::icons::SELECTION)),
-        );
-        if self.hint(r, tr(k::tb::SELECT_TOOL)).clicked() {
-            self.sel_tool = !sel_tool;
-        }
-        // three states (item 3 round 11): off / on with a region /
-        // ARMED without a region (Esc removed the region, the intent stayed) —
-        // a muted icon, the hint explains what is missing
-        let (loop_on, has_region) = {
-            let p = self.model.project();
-            (p.loop_enabled, p.region.is_some())
-        };
-        let armed = loop_on && !has_region;
-        let label = if armed {
-            egui::RichText::new(crate::icons::LOOP).color(egui::Color32::from_gray(120))
-        } else {
-            egui::RichText::new(crate::icons::LOOP)
-        };
-        let hint = if armed { tr(k::tb::LOOP_ARMED) } else { tr(k::tb::LOOP) };
-        let r = ui.add_sized([30.0, 26.0], egui::Button::selectable(loop_on, label));
-        crate::widgets::lesson_mark::control(ui, "tb.loop", &r);
-        if self.hint(r, hint).clicked() {
-            self.toggle_loop();
-        }
-        ui.separator();
-        if self.tb(ui, crate::icons::UNDO, tr(k::tb::UNDO)) {
-            self.undo();
-        }
-        if self.tb(ui, crate::icons::REDO, tr(k::tb::REDO)) {
-            self.redo();
-        }
-        ui.separator();
-        let r = ui.add_sized([30.0, 26.0], egui::Button::new(crate::icons::RENDER).frame(false));
-        crate::widgets::lesson_mark::control(ui, "tb.render", &r);
-        if self.hint(r, tr(k::tb::RENDER)).clicked() {
-            self.start_render();
-        }
-        if self.tb(ui, crate::icons::SEARCH, tr(k::tb::SEARCH)) {
-            self.search_open = true;
-            self.search_focus = true;
-        }
-        // the gauge button publishes its rectangle: the README screenshots
-        // (src/scripts/live/readme_shots.py) open the diagnostics through it
-        let diag = ui.add_sized([30.0, 26.0], egui::Button::new(crate::icons::GAUGE).frame(false));
-        crate::widgets::field_probe::note("tb.diag", diag.rect);
-        if self.hint(diag, tr(k::tb::DIAG)).clicked() {
-            self.perf.diag_open = true;
-        }
-        // item 6 round 10: “●” is in none of the Proportional family fonts —
-        // a placeholder square was drawn. The asterisk is present everywhere.
-        let save_label = if self.dirty_content {
-            format!("{} *", crate::icons::SAVE)
-        } else {
-            crate::icons::SAVE.to_string()
-        };
-        if self.tb(ui, &save_label, tr(k::tb::SAVE)) {
-            self.save();
+            1 => {
+                // ---- timecode and input mask (item 4 round 10, redone item 9 round 11) ----
+                // The input is drawn IN THE SAME RECTANGLE and WITH THE SAME FONT as
+                // the timecode itself: the width is taken from the full format, so the
+                // toolbar layout does not jump when the mask opens (there was a
+                // TextEdit of 96 px against 150 px of text). It works during playback too —
+                // the player can seek on the fly.
+                {
+                    let fps = self.model.project().settings.fps;
+                    // the DISPLAY position: the raw playhead during play jumps in quanta
+                    // of the audio callback (item 12 of the root CLAUDE.md)
+                    let live = self.player.video_playhead();
+                    let font = egui::FontId::monospace(15.0);
+                    let bright = egui::Color32::from_rgb(235, 235, 240);
+                    let dim = egui::Color32::from_gray(120);
+                    let full = crate::util::format_timecode(live, fps);
+                    let size = ui.painter().layout_no_wrap(full.clone(), font.clone(), bright).size()
+                        + egui::vec2(6.0, 0.0);
+                    let (rect, r) = ui.allocate_exact_size(size, egui::Sense::click());
+                    let editing = self.tc_edit.is_some();
+                    let r =
+                        self.hint(r, if editing { tr(k::tb::TIMECODE_EDIT) } else { tr(k::tb::TIMECODE) });
+                    if r.double_clicked() && !editing {
+                        self.tc_edit = Some(String::new());
+                        self.tc_edit_focus = true;
+                    }
+                    if let Some(input) = self.tc_edit.clone() {
+                        if self.tc_edit_focus {
+                            r.request_focus();
+                            self.tc_edit_focus = false;
+                        }
+                        // arrows/Tab must not take the focus out of the mask
+                        ui.memory_mut(|m| {
+                            m.set_focus_lock_filter(
+                                r.id,
+                                egui::EventFilter {
+                                    tab: true,
+                                    horizontal_arrows: true,
+                                    vertical_arrows: true,
+                                    escape: false,
+                                },
+                            )
+                        });
+                        // the events are CONSUMED: otherwise the digits and Enter would leak into the hotkeys
+                        let mut input = input;
+                        let mut apply = false;
+                        let mut cancel = false;
+                        ui.input_mut(|i| {
+                            i.events.retain(|e| match e {
+                                egui::Event::Text(t) if t.chars().all(|c| c.is_ascii_digit()) => {
+                                    input.push_str(t);
+                                    false
+                                }
+                                // pasting a ready timecode (“1:02:03”) — we parse it
+                                // and lay it out into the mask's digit positions
+                                egui::Event::Text(t) => match crate::util::parse_timecode(t, fps) {
+                                    Some(at) => {
+                                        input = crate::util::tick_to_mask(at);
+                                        false
+                                    }
+                                    None => true,
+                                },
+                                egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. } => {
+                                    input.pop();
+                                    false
+                                }
+                                egui::Event::Key { key: egui::Key::Enter, pressed: true, .. } => {
+                                    apply = true;
+                                    false
+                                }
+                                egui::Event::Key { key: egui::Key::Escape, pressed: true, .. } => {
+                                    cancel = true;
+                                    false
+                                }
+                                _ => true,
+                            })
+                        });
+                        let painter = ui.painter_at(rect);
+                        painter.rect_filled(rect, 1.0, egui::Color32::from_rgb(22, 24, 28));
+                        painter.line_segment(
+                            [
+                                egui::pos2(rect.left() + 2.0, rect.bottom() - 1.0),
+                                egui::pos2(rect.right() - 2.0, rect.bottom() - 1.0),
+                            ],
+                            egui::Stroke::new(1.0, crate::theme::ACCENT),
+                        );
+                        let (live_part, typed_part) = crate::util::mask_text(&input);
+                        let mut x = rect.left() + 3.0;
+                        for (txt, col) in [(live_part, dim), (typed_part, bright)] {
+                            if txt.is_empty() {
+                                continue;
+                            }
+                            let g = painter.layout_no_wrap(txt, font.clone(), col);
+                            let w = g.size().x;
+                            painter.galley(egui::pos2(x, rect.center().y - g.size().y * 0.5), g, col);
+                            x += w;
+                        }
+                        if apply {
+                            let t = crate::util::mask_to_tick(&input, fps);
+                            self.player.seek(t);
+                            self.pending_reveal = Some(t.0);
+                            self.tc_edit = None;
+                        } else if cancel || (r.lost_focus() && !r.has_focus()) {
+                            self.tc_edit = None;
+                        } else {
+                            self.tc_edit = Some(input);
+                        }
+                        // FOCUS MUST RETURN (item 8 round 12): the widget lives each frame with the same id,
+                        // so “just close it” is not enough —
+                        // egui went on counting it as focused, and
+                        // handle_keys is gated by egui_wants_keyboard_input(), and
+                        // Ctrl+L fired exactly once, until a mouse click.
+                        if self.tc_edit.is_none() {
+                            ui.memory_mut(|m| m.surrender_focus(r.id));
+                        }
+                    } else {
+                        ui.painter_at(rect).text(
+                            egui::pos2(rect.left() + 3.0, rect.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            full,
+                            font,
+                            bright,
+                        );
+                    }
+                }
+                self.draw_speed_control(ui);
+            }
+            2 => {
+                if self.tb(ui, crate::icons::FLAG, tr(k::tb::MARKER)) {
+                    self.marker_toggle_at_cursor();
+                }
+                if self.tb(ui, "+V", tr(k::tb::ADD_VIDEO_LANE)) {
+                    self.add_track(ClipKind::Video);
+                }
+                if self.tb(ui, "+A", tr(k::tb::ADD_AUDIO_LANE)) {
+                    self.add_track(ClipKind::Audio);
+                }
+                // the morpher layer (R.35 item 5): the track is created ON TOP of all —
+                // otherwise “everything below” would be empty
+                if self.tb(ui, "+M", tr(k::tb::ADD_MORPHER)) {
+                    self.add_morph_layer();
+                }
+                // camera (R.40 item 5): until this round the camera track could not be
+                // created or filled with anything, except via RMB on the 34-pixel
+                // header of a FOREIGN row — “what is it for?????”
+                if self.tb(ui, "+C", tr(k::tb::ADD_CAMERA)) {
+                    self.add_camera_layer();
+                }
+                // a named area from the last selection frame (R.35 item 2)
+                if self.tb(ui, crate::icons::AREA_SAVE, tr(k::tb::SAVE_AREA)) {
+                    self.save_marked_area();
+                }
+            }
+            3 => {
+                if self.tb(ui, crate::icons::SCISSORS, tr(k::tb::CUT)) {
+                    self.cut_action();
+                }
+                if self.tb(ui, crate::icons::COPY, tr(k::tb::COPY)) {
+                    self.copy_selection();
+                }
+                if self.tb(ui, crate::icons::CLIPBOARD, tr(k::tb::PASTE)) {
+                    self.paste_at_cursor();
+                }
+                if self.tb(ui, crate::icons::TRASH, tr(k::tb::DELETE)) {
+                    self.delete_action();
+                }
+                if self.tb(ui, crate::icons::TRIM_START, tr(k::tb::TRIM_START)) {
+                    self.trim_selected_start_to_cursor();
+                }
+                if self.tb(ui, crate::icons::TRIM_END, tr(k::tb::TRIM_END)) {
+                    self.trim_selected_end_to_cursor();
+                }
+                if self.tb(ui, crate::icons::LANE_UP, tr(k::tb::LANE_UP)) {
+                    self.move_selected_lane(-1);
+                }
+                if self.tb(ui, crate::icons::LANE_DOWN, tr(k::tb::LANE_DOWN)) {
+                    self.move_selected_lane(1);
+                }
+            }
+            4 => {
+                if self.tb(ui, crate::icons::MINUS, tr(k::tb::ZOOM_OUT)) {
+                    self.zoom_at_playhead(1.25);
+                }
+                if self.tb(ui, crate::icons::PLUS, tr(k::tb::ZOOM_IN)) {
+                    self.zoom_at_playhead(0.8);
+                }
+            }
+            5 => {
+                if self.tb(ui, crate::icons::REGION_IN, tr(k::tb::REGION_IN)) {
+                    self.set_region_edge_from_cursor(true);
+                }
+                if self.tb(ui, crate::icons::REGION_OUT, tr(k::tb::REGION_OUT)) {
+                    self.set_region_edge_from_cursor(false);
+                }
+                if self.tb(ui, crate::icons::CLEAR, tr(k::tb::REGION_CLEAR)) {
+                    self.clear_region();
+                }
+                // the selection tool mode (R.33 item 7, “as in Vegas —
+                // toggle button”): in it an ordinary drag over empty space draws a frame
+                // instead of a region. Ctrl+drag draws it without the mode too.
+                let sel_tool = self.sel_tool;
+                let r = ui.add_sized(
+                    [30.0, 26.0],
+                    egui::Button::selectable(sel_tool, egui::RichText::new(crate::icons::SELECTION)),
+                );
+                if self.hint(r, tr(k::tb::SELECT_TOOL)).clicked() {
+                    self.sel_tool = !sel_tool;
+                }
+                // three states (item 3 round 11): off / on with a region /
+                // ARMED without a region (Esc removed the region, the intent stayed) —
+                // a muted icon, the hint explains what is missing
+                let (loop_on, has_region) = {
+                    let p = self.model.project();
+                    (p.loop_enabled, p.region.is_some())
+                };
+                let armed = loop_on && !has_region;
+                let label = if armed {
+                    egui::RichText::new(crate::icons::LOOP).color(egui::Color32::from_gray(120))
+                } else {
+                    egui::RichText::new(crate::icons::LOOP)
+                };
+                let hint = if armed { tr(k::tb::LOOP_ARMED) } else { tr(k::tb::LOOP) };
+                let r = ui.add_sized([30.0, 26.0], egui::Button::selectable(loop_on, label));
+                crate::widgets::lesson_mark::control(ui, "tb.loop", &r);
+                if self.hint(r, hint).clicked() {
+                    self.toggle_loop();
+                }
+            }
+            6 => {
+                if self.tb(ui, crate::icons::UNDO, tr(k::tb::UNDO)) {
+                    self.undo();
+                }
+                if self.tb(ui, crate::icons::REDO, tr(k::tb::REDO)) {
+                    self.redo();
+                }
+            }
+            7 => {
+                let r = ui.add_sized([30.0, 26.0], egui::Button::new(crate::icons::RENDER).frame(false));
+                crate::widgets::lesson_mark::control(ui, "tb.render", &r);
+                if self.hint(r, tr(k::tb::RENDER)).clicked() {
+                    self.start_render();
+                }
+                if self.tb(ui, crate::icons::SEARCH, tr(k::tb::SEARCH)) {
+                    self.search_open = true;
+                    self.search_focus = true;
+                }
+                // the gauge button publishes its rectangle: the README screenshots
+                // (src/scripts/live/readme_shots.py) open the diagnostics through it
+                let diag = ui.add_sized([30.0, 26.0], egui::Button::new(crate::icons::GAUGE).frame(false));
+                crate::widgets::field_probe::note("tb.diag", diag.rect);
+                if self.hint(diag, tr(k::tb::DIAG)).clicked() {
+                    self.perf.diag_open = true;
+                }
+                // item 6 round 10: “●” is in none of the Proportional family fonts —
+                // a placeholder square was drawn. The asterisk is present everywhere.
+                let save_label = if self.dirty_content {
+                    format!("{} *", crate::icons::SAVE)
+                } else {
+                    crate::icons::SAVE.to_string()
+                };
+                if self.tb(ui, &save_label, tr(k::tb::SAVE)) {
+                    self.save();
+                }
+            }
+            _ => {}
         }
     }
 }

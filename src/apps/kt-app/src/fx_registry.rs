@@ -402,16 +402,20 @@ pub enum Picked {
     Fx(FxInstance),
 }
 
-/// Gallery width (R.54). Fixed by the gallery of the
-/// longest variant content: rule 3 of the checklist —
-/// nothing jumps when typing in the search row and when the number of cells changes.
+/// The gallery's NARROWEST width (R.54; windows-fill-their-area). The gallery is as wide as the
+/// window it opens from — an enlarged effects window gives more cells per row — and never
+/// narrower than this. It depends on the host window only, so typing in the search row moves
+/// nothing (rule 3 of the checklist). Revision of R.54: this was the FIXED width of the popup,
+/// with two scrolls of 450 and 160 points under it — "a needle's eye" (kkt-26.11.01 item 12).
 pub(crate) const GALLERY_W: f32 = 520.0;
-/// Scroll height of the effects list and the presets section.
-const GALLERY_H: f32 = 450.0;
-const PRESETS_H: f32 = 160.0;
 /// Drawn cell size (stored twice as large — hidpi).
 pub(crate) const CELL_DRAW_W: f32 = 80.0;
 const CELL_DRAW_H: f32 = 45.0;
+
+/// Where the open picker's frame is kept for the harness.
+pub(crate) fn popup_id() -> egui::Id {
+    egui::Id::new("kt_fx_popup")
+}
 
 /// The category icon for an effect row. Exhaustive
 /// over the registry categories: a new category
@@ -644,12 +648,18 @@ pub fn fx_picker_with_head(
     // Esc works as before.
     let cfg = egui::containers::menu::MenuConfig::new()
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+    // the host window's body width: the viewport of the scroll the picker stands in
+    let host_w = ui.clip_rect().width();
     let (btn, popup) =
         egui::containers::menu::MenuButton::new(tr(k::fxreg::ADD)).config(cfg).ui(ui, |ui| {
-            ui.set_min_width(if preview.is_some() { GALLERY_W } else { 230.0 });
+            // the popup's own frame adds its margins: the gallery stays inside its window
+            let margins = ui.spacing().menu_margin.sum().x + 4.0;
+            let w = (host_w - margins).max(if preview.is_some() { GALLERY_W } else { 230.0 }).floor();
+            ui.set_min_width(w);
+            ui.set_max_width(w);
             let edit = egui::TextEdit::singleline(query)
                 .hint_text(tr(k::fxreg::SEARCH))
-                .desired_width(210.0);
+                .desired_width(f32::INFINITY);
             let resp = ui.add(edit);
             // focus in the search row when the menu opens
             if ui.input(|i| i.events.is_empty()) && !resp.has_focus() {
@@ -685,111 +695,90 @@ pub fn fx_picker_with_head(
                         })
                 })
                 .collect();
-            if !shown.is_empty() {
-                ui.label(egui::RichText::new(tr(k::fx::PRESETS)).small().weak());
-                // Presets live ABOVE the scroll of the effects (the R.53 rule: they are reached for first),
-                // but they need their own scroll — otherwise
-                // thirty saved chains would push the list of effects
-                // past the edge of the screen.
-                egui::ScrollArea::vertical().id_salt("fxpreset-rows").max_height(PRESETS_H).show(
-                    ui,
-                    |ui| {
-                        for (i, r) in shown {
-                            let resp = if preview.is_some() && r.video_ok {
-                                // thumbnail of the WHOLE block: the curves are taken at the entry point of the preset
-                                // (keys in the block are rebased to zero)
-                                let chain: Vec<FxInstance> = r
-                                    .block
-                                    .slots
-                                    .iter()
-                                    .filter(|sl| !sl.bypass)
-                                    .map(|sl| {
-                                        let mut fx = sl.fx.clone();
-                                        kt_model::apply_fx_auto(
-                                            &mut fx,
-                                            &sl.curves,
-                                            kt_time::Tick(0),
-                                        );
-                                        fx
-                                    })
-                                    .collect();
-                                ui.horizontal(|ui| {
-                                    // the caption is NOT duplicated: the name
-                                    // stands as a button right next to the thumbnail
-                                    // (rule 13). A preset has no axis
-                                    // — blending CHAINS makes no sense.
-                                    let (c, _) = preview_cell(
-                                        ui,
-                                        &mut preview,
-                                        &chain,
-                                        &r.name,
-                                        "",
-                                        crate::theme::MORPH_SLOT,
-                                        None,
-                                    );
-                                    let lbl = crate::widgets::elided_name(
-                                        ui,
-                                        &r.name,
-                                        ui.visuals().text_color(),
-                                        false,
-                                    );
-                                    let b = ui.button(lbl);
-                                    if c.clicked() { c } else { b }
-                                })
-                                .inner
-                            } else {
-                                let label = crate::widgets::elided_name(
-                                    ui,
-                                    &r.name,
-                                    ui.visuals().text_color(),
-                                    false,
-                                );
-                                ui.button(label)
-                            };
-                            if resp.clicked() {
-                                picked = Some(Picked::Preset(i));
-                                query.clear();
-                                ui.close();
-                            }
-                            // factory presets are not renamed or deleted — and this is visible: they have no menu,
-                            // and the hint says why
-                            if r.factory {
-                                resp.on_hover_text(tr(k::msg::PRESET_FACTORY));
-                            } else {
-                                let name = r.name.clone();
-                                resp.context_menu(|ui| {
-                                    if ui.button(tr(k::fx::RENAME_PRESET)).clicked() {
-                                        picked = Some(Picked::PresetAction(
-                                            crate::widgets::PresetAction::Rename(name.clone()),
-                                        ));
-                                        ui.close();
-                                    }
-                                    if ui
-                                        .button(tr(k::fx::DELETE_PRESET))
-                                        .on_hover_text(tr(k::fx::DELETE_PRESET_HINT))
-                                        .clicked()
-                                    {
-                                        picked = Some(Picked::PresetAction(
-                                            crate::widgets::PresetAction::Delete(name.clone()),
-                                        ));
-                                        ui.close();
-                                    }
-                                });
-                            }
-                        }
-                    },
-                );
-                ui.separator();
-            }
             let list = filter_entries(registry(), kinds, query);
             if list.is_empty() && head.is_none() {
                 ui.weak(tr(k::fxreg::NOTHING));
             }
             let rows = gallery_rows(list);
             let mut last_cat: Option<Key> = None;
-            egui::ScrollArea::vertical().id_salt("fxreg-rows").max_height(GALLERY_H).show(
+            // ONE scroll for the whole gallery, as tall as the screen allows below the button
+            // (kkt-26.11.01 item 12: the picker "splits into two sections, and there too it is a
+            // needle's eye"). Presets come first — they are reached for first (R.53) — as a row of
+            // cells; thirty of them wrap into rows instead of pushing the effects off a fixed pane.
+            let gallery_h = crate::widgets::popup_list_height(ui);
+            // `min_scrolled_height`: egui bounds a scroll by the popup area's own room, which is
+            // not the screen's — without it the gallery stopped at 400 points
+            egui::ScrollArea::vertical()
+                .id_salt("fxreg-rows")
+                .max_height(gallery_h)
+                .min_scrolled_height(gallery_h)
+                .show(
                 ui,
                 |ui| {
+                    if !shown.is_empty() {
+                        ui.label(egui::RichText::new(tr(k::fx::PRESETS)).small().weak());
+                        ui.horizontal_wrapped(|ui| {
+                            for (i, r) in &shown {
+                                let (i, r) = (*i, *r);
+                                let resp = if preview.is_some() && r.video_ok {
+                                    // thumbnail of the WHOLE block: the curves are taken at the entry point of the preset
+                                    // (keys in the block are rebased to zero). A preset has no axis
+                                    // — blending CHAINS makes no sense.
+                                    let chain: Vec<FxInstance> = r
+                                        .block
+                                        .slots
+                                        .iter()
+                                        .filter(|sl| !sl.bypass)
+                                        .map(|sl| {
+                                            let mut fx = sl.fx.clone();
+                                            kt_model::apply_fx_auto(&mut fx, &sl.curves, kt_time::Tick(0));
+                                            fx
+                                        })
+                                        .collect();
+                                    preview_cell(ui, &mut preview, &chain, "", &r.name, crate::theme::MORPH_SLOT, None).0
+                                } else {
+                                    let label = crate::widgets::elided_name(
+                                        ui,
+                                        &r.name,
+                                        ui.visuals().text_color(),
+                                        false,
+                                    );
+                                    ui.button(label)
+                                };
+                                if resp.clicked() {
+                                    picked = Some(Picked::Preset(i));
+                                    query.clear();
+                                    ui.close();
+                                }
+                                // factory presets are not renamed or deleted — and this is visible: they have no menu,
+                                // and the hint says why
+                                if r.factory {
+                                    resp.on_hover_text(tr(k::msg::PRESET_FACTORY));
+                                } else {
+                                    let name = r.name.clone();
+                                    resp.context_menu(|ui| {
+                                        if ui.button(tr(k::fx::RENAME_PRESET)).clicked() {
+                                            picked = Some(Picked::PresetAction(
+                                                crate::widgets::PresetAction::Rename(name.clone()),
+                                            ));
+                                            ui.close();
+                                        }
+                                        if ui
+                                            .button(tr(k::fx::DELETE_PRESET))
+                                            .on_hover_text(tr(k::fx::DELETE_PRESET_HINT))
+                                            .clicked()
+                                        {
+                                            picked = Some(Picked::PresetAction(
+                                                crate::widgets::PresetAction::Delete(name.clone()),
+                                            ));
+                                            ui.close();
+                                        }
+                                    });
+                                }
+                            }
+                        });
+                        ui.separator();
+                    }
                     for e in rows {
                         if last_cat != Some(e.category) {
                             last_cat = Some(e.category);
@@ -925,6 +914,9 @@ pub fn fx_picker_with_head(
     // crops by the union of the frames (site/screenshots.py)
     if let Some(p) = &popup {
         crate::widgets::field_probe::note("fxreg.popup", p.response.rect);
+        // the same frame for the harness (t548, t1131): a `Copy` value, no allocation per frame
+        let rect = p.response.rect;
+        ui.ctx().data_mut(|d| *d.get_temp_mut_or_insert_with(popup_id(), || rect) = rect);
     }
     picked
 }

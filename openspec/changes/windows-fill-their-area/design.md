@@ -134,6 +134,34 @@ measured width, so the decision is stable (no flicker: widths do not change with
   probes/accessibility, not constants; the fill only adds room at the bottom.
 - **The diagnostics executor edits `kt_diag`**: this change touches only its shell line, if at all.
 
+## Found while applying
+
+- **egui sizes a `Window` by its content** (`Resize::end`: a window's frame is `last_content_size`;
+  `desired_size` is only the room offered). A resizable window whose content does not fill cannot
+  be made taller at all — the paste-prefix and preset-name dialogs grew in width only (t1125
+  found it). So the filling body is not a look, it is what makes a window resizable; the short
+  dialogs got it too (the blank room sits above their buttons).
+- **A `ScrollArea`'s `inner_rect` can be taller than what it took** (its `min_scrolled_size`
+  default is 64): the body's bottom was measured below the action row and the tail read zero. The
+  body rect is the space the scroll allocated (`ui.min_rect().bottom()` after it).
+- **A scroll is bounded by its parent's current room.** A fresh window starts at its minimum and a
+  popup area at egui's own guess, so a fit body and the picker gallery could not grow past them
+  (the gallery stopped at 400 points); `min_scrolled_height` states the height they may take.
+- **Fit and fill must agree to the point**, or the window moves by itself right after opening
+  (t918): the body subtracts the action row height MEASURED last frame (not a constant), the fit is
+  not padded to the window's minimum, a fitted window's minimum height stays under its content, and
+  an empty body has no floor. egui's sizing pass runs a window twice in its first frame, so the fit
+  is counted in frames, not passes.
+- **Two windows of one family open at once** (creating a generator opens its effects window) wrote
+  the family size every frame, each its own: a window writes the family only when ITS size
+  changed, and never in its first two frames (the sizing pass).
+- **A resizable window's edge catches the pointer a few points outside its frame**: the message log,
+  auto-placed in the top-right corner, covered the program's own window buttons (t129) — it opens
+  below the title row.
+- **The render window's finished actions stood where Cancel was** (t957, trick 3). The old window
+  grew at the finish and moved the row down, which hid it; a window that keeps its size shows it.
+  The finished actions stand at the far right.
+
 ## Migration Plan
 
 None: no format, no setting. Sizes remembered by egui before this change keep working; family

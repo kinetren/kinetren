@@ -536,6 +536,159 @@ fn runs_job(ui: &egui::Ui, runs: &[Inline], size: f32) -> egui::text::LayoutJob 
     job
 }
 
+/// The cell padding of a guide table.
+const CELL_PAD: egui::Vec2 = egui::vec2(8.0, 4.0);
+
+/// The widest run of text in `runs` that cannot wrap: words split at spaces, while key caps and
+/// code are whole and glue to their neighbours ("<kbd>Ctrl</kbd>+<kbd>S</kbd>" is one word).
+fn min_word_width(ui: &egui::Ui, runs: &[Inline], size: f32) -> f32 {
+    let body = egui::FontId::proportional(size);
+    let mono = egui::FontId::monospace(size - 1.0);
+    let measure =
+        |t: &str, f: &egui::FontId| ui.painter().layout_no_wrap(t.to_string(), f.clone(), egui::Color32::WHITE).size().x;
+    let (mut best, mut cur) = (0.0f32, 0.0f32);
+    for r in runs {
+        match r {
+            Inline::Kbd(t) | Inline::Code(t) => cur += measure(t, &mono),
+            Inline::Text(t) | Inline::Bold(t) | Inline::Italic(t) | Inline::Link(t, _) => {
+                for (i, part) in t.split(' ').enumerate() {
+                    if i > 0 {
+                        best = best.max(cur);
+                        cur = 0.0;
+                    }
+                    if !part.is_empty() {
+                        cur += measure(part, &body);
+                    }
+                }
+            }
+        }
+    }
+    best.max(cur)
+}
+
+/// The column widths of a table in `avail` points (design D4): a column is never narrower than its
+/// longest word; when the natural widths fit, the rest is shared in proportion to them, otherwise
+/// each column gets its minimum plus a share of the rest in proportion to how much it would still
+/// grow — the long-text columns take the room, a keys column keeps its caps unwrapped.
+pub(crate) fn column_widths(min: &[f32], nat: &[f32], avail: f32) -> Vec<f32> {
+    let sum_nat: f32 = nat.iter().sum();
+    if sum_nat <= avail {
+        let extra = avail - sum_nat;
+        return nat.iter().map(|n| n + extra * n / sum_nat.max(1.0)).collect();
+    }
+    // water-filling: a column that needs less than an even share of the rest gets its whole
+    // natural width (a keys column stays unwrapped), the others share what is left in
+    // proportion to how much they would still grow
+    let mut w = min.to_vec();
+    let mut rest = (avail - min.iter().sum::<f32>()).max(0.0);
+    let mut open: Vec<usize> = (0..w.len()).filter(|&c| nat[c] > min[c]).collect();
+    while !open.is_empty() && rest > 0.0 {
+        let share = rest / open.len() as f32;
+        let (small, big): (Vec<usize>, Vec<usize>) = open.iter().partition(|&&c| nat[c] - w[c] <= share);
+        if small.is_empty() {
+            let need: f32 = big.iter().map(|&c| nat[c] - w[c]).sum();
+            for &c in &big {
+                w[c] += rest * (nat[c] - w[c]) / need;
+            }
+            break;
+        }
+        for &c in &small {
+            rest -= nat[c] - w[c];
+            w[c] = nat[c];
+        }
+        open = big;
+    }
+    w
+}
+
+/// A guide table as a GRID TABLE (kkt-26.11.01 item 12: "all the tables are crooked, their first
+/// column is narrow and it looks cheap"): a header row in its own shade, rules between the columns
+/// and the rows, row stripes, and column widths from the content. Returns the table's response
+/// and the (row, column) of a clicked cell.
+fn table(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, rows: &[Vec<Vec<Inline>>]) -> (egui::Response, Option<(usize, usize)>) {
+    let id = ui.id().with(id);
+    let ncols = rows.iter().map(|r| r.len()).max().unwrap_or(0).max(1);
+    let size = 13.0;
+    let header = |ui: &egui::Ui, cell: &[Inline]| {
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            plain(cell),
+            egui::FontId::proportional(size),
+            ui.visuals().strong_text_color(),
+        );
+        job.wrap.max_width = f32::INFINITY;
+        job
+    };
+    let job_of = |ui: &egui::Ui, ri: usize, cell: &[Inline]| if ri == 0 { header(ui, cell) } else { runs_job(ui, cell, size) };
+    let mut min = vec![0.0f32; ncols];
+    let mut nat = vec![0.0f32; ncols];
+    for (ri, row) in rows.iter().enumerate() {
+        for (ci, cell) in row.iter().enumerate() {
+            let mut job = job_of(ui, ri, cell);
+            job.wrap.max_width = f32::INFINITY;
+            let w = ui.painter().layout_job(job).size().x;
+            nat[ci] = nat[ci].max(w + 2.0 * CELL_PAD.x);
+            min[ci] = min[ci].max(min_word_width(ui, cell, size) + 2.0 * CELL_PAD.x);
+        }
+    }
+    for c in 0..ncols {
+        nat[c] = nat[c].max(min[c]);
+    }
+    // whole points: a sum a hair over the room would widen the window by it every frame (t918)
+    let widths: Vec<f32> = column_widths(&min, &nat, ui.available_width()).iter().map(|w| w.floor()).collect();
+    let total: f32 = widths.iter().sum();
+    let rule = egui::Stroke::new(1.0, crate::theme::OUTLINE);
+    let mut hit = None;
+    let mut whole = egui::Rect::NOTHING;
+    // rows touch: the rules are the separation, not the layout's spacing
+    let gap = std::mem::replace(&mut ui.spacing_mut().item_spacing.y, 0.0);
+    for (ri, row) in rows.iter().enumerate() {
+        let galleys: Vec<std::sync::Arc<egui::Galley>> = (0..ncols)
+            .map(|ci| {
+                let mut job = row.get(ci).map(|c| job_of(ui, ri, c)).unwrap_or_default();
+                job.wrap.max_width = (widths[ci] - 2.0 * CELL_PAD.x).max(1.0);
+                ui.painter().layout_job(job)
+            })
+            .collect();
+        let h = galleys.iter().map(|g| g.size().y).fold(0.0, f32::max) + 2.0 * CELL_PAD.y;
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(total, h), egui::Sense::hover());
+        whole = whole.union(rect);
+        let fill = if ri == 0 {
+            Some(crate::theme::HOVER)
+        } else if ri % 2 == 0 {
+            Some(ui.visuals().faint_bg_color)
+        } else {
+            None
+        };
+        if let Some(f) = fill {
+            ui.painter().rect_filled(rect, 0.0, f);
+        }
+        let mut x = rect.left();
+        for (ci, g) in galleys.into_iter().enumerate() {
+            let cell = egui::Rect::from_min_size(egui::pos2(x, rect.top()), egui::vec2(widths[ci], h));
+            let text = ui.visuals().text_color();
+            ui.painter().galley(cell.min + CELL_PAD, g, text);
+            // each cell is a node for screen readers (and the harness): the text is painted, not
+            // a label; the closure runs only while accessibility is on (no per-frame allocation)
+            let r = ui.interact(cell, id.with((ri, ci)), egui::Sense::click());
+            let label = row.get(ci).map(|c| c.as_slice()).unwrap_or(&[]);
+            r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, plain(label)));
+            if r.clicked() {
+                hit = Some((ri, ci));
+            }
+            if ci > 0 {
+                ui.painter().vline(x, rect.y_range(), rule);
+            }
+            x += widths[ci];
+        }
+        ui.painter().hline(rect.x_range(), rect.bottom(), rule);
+    }
+    ui.spacing_mut().item_spacing.y = gap;
+    ui.painter().rect_stroke(whole, 0.0, rule, egui::StrokeKind::Inside);
+    #[cfg(test)]
+    table_probe::note(id, TableProbe { min: min.clone(), nat: nat.clone(), widths: widths.clone(), rect: whole, room: ui.max_rect().width() });
+    (ui.interact(whole, id.with("table"), egui::Sense::hover()), hit)
+}
+
 /// Render blocks. A link to a guide page comes back as `(file, anchor)`.
 pub fn render(ui: &mut egui::Ui, blocks: &[Block], scroll_to: Option<usize>) -> Option<(String, String)> {
     let mut go: Option<(String, String)> = None;
@@ -582,20 +735,13 @@ pub fn render(ui: &mut egui::Ui, blocks: &[Block], scroll_to: Option<usize>) -> 
                 .response
             }
             Block::Table(rows) => {
-                egui::Grid::new(("guide_table", bi)).striped(true).num_columns(2).show(ui, |ui| {
-                    for (ri, row) in rows.iter().enumerate() {
-                        for cell in row {
-                            let job = runs_job(ui, cell, 13.0);
-                            if ri == 0 {
-                                ui.label(egui::RichText::new(plain(cell)).strong());
-                            } else {
-                                ui.add(egui::Label::new(job).wrap());
-                            }
-                        }
-                        ui.end_row();
-                    }
-                })
-                .response
+                let (r, hit) = table(ui, ("guide_table", bi), rows);
+                if let Some((ri, ci)) = hit
+                    && go.is_none()
+                {
+                    go = link_of(&rows[ri][ci]);
+                }
+                r
             }
             Block::Code(t) => egui::Frame::new()
                 .fill(crate::theme::EXTREME)
@@ -609,6 +755,37 @@ pub fn render(ui: &mut egui::Ui, blocks: &[Block], scroll_to: Option<usize>) -> 
         }
     }
     go
+}
+
+/// The index side's width: a share of the Guide window between these two.
+const INDEX_MIN_W: f32 = 240.0;
+const INDEX_MAX_W: f32 = 420.0;
+
+/// One "I want to…" entry as a CARD (kkt-26.11.01 item 12: the entries "visually run together,
+/// though they are separate sections"): the "what" on the first line, the "where" under it in a
+/// weaker style, a frame, a gap below; the whole card is the click target (checklist rule 1).
+fn card(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, what: &str, how: Option<&str>) -> egui::Response {
+    let id = ui.id().with(id);
+    let hovered = ui.ctx().read_response(id).is_some_and(|r| r.hovered());
+    let inner = egui::Frame::new()
+        .fill(if hovered { crate::theme::HOVER } else { ui.visuals().faint_bg_color })
+        .stroke(egui::Stroke::new(1.0, crate::theme::OUTLINE))
+        .corner_radius(3.0)
+        .inner_margin(egui::Margin::symmetric(8, 5))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.add(egui::Label::new(egui::RichText::new(what).strong()).wrap());
+            if let Some(how) = how {
+                ui.add(
+                    egui::Label::new(egui::RichText::new(format!("{} {how}", crate::icons::ARROW_RIGHT)).weak())
+                        .wrap(),
+                );
+            }
+        });
+    ui.add_space(2.0);
+    let r = ui.interact(inner.response.rect, id, egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, what));
+    r
 }
 
 impl crate::app::KtApp {
@@ -640,29 +817,26 @@ impl crate::app::KtApp {
             ui.add_space(4.0);
             let (entries, heads) = search(&g.query);
             let idx = index();
-            // the visible part of the window, not the room the content asks for: the lists
-            // scroll inside the window instead of running past its bottom edge
-            let h = (ui.ctx().content_rect().height() * 0.55).clamp(160.0, ui.available_height().max(160.0));
+            // the two sides SHARE the window (kkt-26.11.01 item 12): the index a proportion with a
+            // floor and a ceiling, the page the rest; both lists reach the window's bottom
+            let gap = ui.spacing().item_spacing.x;
+            let left_w = (ui.available_width() * 0.3).clamp(INDEX_MIN_W, INDEX_MAX_W).floor();
+            let page_w = (ui.available_width() - left_w - 2.0 * gap - 6.0).max(200.0).floor();
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
-                    ui.set_width(260.0);
-                    egui::ScrollArea::vertical().id_salt("guide_left").max_height(h).show(ui, |ui| {
+                    ui.set_width(left_w);
+                    crate::widgets::window_fill(ui, |ui| {
                         ui.label(egui::RichText::new(tr(k::guide::WANT)).strong());
                         for i in &entries {
                             let e = &idx[*i];
-                            let r = ui.add(
-                                egui::Button::new(format!("{} {} {}", e.want, crate::icons::ARROW_RIGHT, e.how))
-                                    .frame(false)
-                                    .wrap(),
-                            );
-                            if r.clicked() {
+                            if card(ui, ("guide_want", *i), e.want, Some(e.how)).clicked() {
                                 go = Some((e.file.to_string(), e.anchor.to_string()));
                             }
                         }
                         for (pi, bi) in &heads {
                             let p = &pages()[*pi];
                             if let Block::Heading { text, slug, .. } = &p.blocks[*bi]
-                                && ui.add(egui::Button::new(text.as_str()).frame(false)).clicked()
+                                && card(ui, ("guide_head", *pi, *bi), text, None).clicked()
                             {
                                 go = Some((p.file.to_string(), slug.clone()));
                             }
@@ -671,7 +845,9 @@ impl crate::app::KtApp {
                         ui.label(egui::RichText::new(tr(k::guide::PAGES)).strong());
                         ui.weak(tr(k::guide::ENGLISH));
                         for (pi, p) in pages().iter().enumerate() {
-                            if ui.selectable_label(g.page == pi, p.title.as_str()).clicked() {
+                            let r = ui.selectable_label(g.page == pi, p.title.as_str());
+                            crate::widgets::field_probe::note(&format!("guide.page.{pi}"), r.rect);
+                            if r.clicked() {
                                 g.page = pi;
                                 g.scroll_to = Some(0);
                             }
@@ -680,17 +856,16 @@ impl crate::app::KtApp {
                 });
                 ui.separator();
                 ui.vertical(|ui| {
+                    ui.set_width(page_w);
                     let page = &pages()[g.page.min(pages().len() - 1)];
                     let scroll = g.scroll_to.take();
-                    egui::ScrollArea::vertical()
-                        .id_salt(("guide_page", g.page))
-                        .max_height(h)
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
+                    ui.push_id(("guide_page", g.page), |ui| {
+                        crate::widgets::window_fill(ui, |ui| {
                             if let Some(l) = render(ui, &page.blocks, scroll) {
                                 go = Some(l);
                             }
                         });
+                    });
                 });
             });
         });
@@ -701,5 +876,39 @@ impl crate::app::KtApp {
             let file = if file.is_empty() { pages()[self.start.guide.page].file.to_string() } else { file };
             self.start.guide.open_at(&file, &anchor);
         }
+    }
+}
+
+/// What a drawn table measured and decided (t1128): the harness cannot see painted text widths.
+#[cfg(test)]
+#[derive(Clone, Debug)]
+pub(crate) struct TableProbe {
+    pub min: Vec<f32>,
+    pub nat: Vec<f32>,
+    pub widths: Vec<f32>,
+    pub rect: egui::Rect,
+    pub room: f32,
+}
+
+#[cfg(test)]
+pub(crate) mod table_probe {
+    use super::TableProbe;
+    use eframe::egui;
+    use std::cell::RefCell;
+    thread_local! {
+        static T: RefCell<Vec<(egui::Id, TableProbe)>> = const { RefCell::new(Vec::new()) };
+    }
+    pub fn note(id: egui::Id, t: TableProbe) {
+        T.with(|v| {
+            let mut v = v.borrow_mut();
+            v.retain(|(i, _)| *i != id);
+            v.push((id, t));
+        });
+    }
+    pub fn clear() {
+        T.with(|v| v.borrow_mut().clear());
+    }
+    pub fn all() -> Vec<TableProbe> {
+        T.with(|v| v.borrow().iter().map(|(_, t)| t.clone()).collect())
     }
 }

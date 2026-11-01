@@ -734,7 +734,7 @@ impl crate::app::KtApp {
             tr(k::ffmpeg::TITLE),
             crate::window_shell::Kind::Tool,
         )
-            .default_width(560.0)
+            .width(560.0, [400.0, 120.0])
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
                     match &info {

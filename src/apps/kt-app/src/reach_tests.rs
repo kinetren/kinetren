@@ -1243,11 +1243,24 @@ fn t548_gallery_layout_is_stable_and_elided() {
     };
     let wide = content_box(&h2);
     let narrow = content_box(&h);
+    // the declared width is the popup's own (windows-fill-their-area: it follows the host
+    // window, never narrower than GALLERY_W) — and typing must not change it
+    let popup = |h: &egui_kittest::Harness<'_, crate::app::KtApp>| -> egui::Rect {
+        h.ctx.data(|d| d.get_temp::<egui::Rect>(crate::fx_registry::popup_id())).expect("the picker is open")
+    };
+    let (pw, pn) = (popup(&h2), popup(&h));
+    assert!(pw.width() >= crate::fx_registry::GALLERY_W, "the picker is narrower than its floor: {pw:?}");
     assert!(
-        wide.width() <= crate::fx_registry::GALLERY_W,
+        (pw.width() - pn.width()).abs() <= 1.0,
+        "typing changed the picker's width: {} versus {}",
+        pw.width(),
+        pn.width()
+    );
+    assert!(
+        wide.width() <= pw.width(),
         "gallery content is wider than the declared width: {} px versus {}",
         wide.width(),
-        crate::fx_registry::GALLERY_W
+        pw.width()
     );
     assert!(
         (wide.left() - narrow.left()).abs() <= 1.0,

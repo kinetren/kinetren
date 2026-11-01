@@ -98,6 +98,7 @@ redo = "إعادة (Ctrl+Shift+Z)"
 render = "التصدير إلى MP4 (المنطقة أو المشروع كله)"
 search = "البحث في المشروع (Ctrl+F)"
 diag = "التشخيص"
+more = "أزرار أخرى: التي لا تتسع لها النافذة الضيقة"
 save = "حفظ (Ctrl+S)"
 
 # Timeline: track context menu.

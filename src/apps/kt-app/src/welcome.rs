@@ -450,6 +450,9 @@ enum Act {
 
 const TILE: egui::Vec2 = egui::vec2(96.0, 56.0);
 const CARD: egui::Vec2 = egui::vec2(160.0, 90.0);
+/// The welcome window's right column (the tour, the Guide, What's new): its own layout is the next
+/// change's (welcome-window-and-settings); the left column takes the rest of the window.
+const RIGHT_W: f32 = 220.0;
 
 /// A tile: a framed button; the primary one is larger and outlined in the accent colour.
 fn tile(ui: &mut egui::Ui, text: &str, sub: &str, primary: bool, probe: &str) -> egui::Response {
@@ -541,17 +544,20 @@ impl crate::app::KtApp {
             tr(k::welcome::TITLE),
             crate::window_shell::Kind::Dialog,
         )
-        .default_width(820.0)
+        .width(820.0, [560.0, 360.0])
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .probe("welcome.window")
         .show(ctx, |ui| {
-            // the window's width is its columns', never the screen's
-            ui.set_max_width(800.0);
             crate::widgets::window_body(ui, |ui| {
+                // the left column takes what the right one and the separator leave: an enlarged
+                // window shows more templates and recent cards per row (windows-fill-their-area).
+                // Exact, or the window would widen itself by the difference every frame (t918)
+                let gap = ui.spacing().item_spacing.x;
+                let left_w = (ui.available_width() - RIGHT_W - 2.0 * gap - 6.0).max(300.0);
                 ui.horizontal_top(|ui| {
                     // ---- left: templates and recent projects ----
                     ui.vertical(|ui| {
-                        ui.set_width(540.0);
+                        ui.set_width(left_w);
                         ui.label(egui::RichText::new(tr(k::welcome::NEW_FROM_TEMPLATE)).strong());
                         ui.horizontal_wrapped(|ui| {
                             for t in BUILTIN {
@@ -677,7 +683,7 @@ impl crate::app::KtApp {
                     ui.separator();
                     // ---- right: the tour, the Guide, What's new ----
                     ui.vertical(|ui| {
-                        ui.set_width(220.0);
+                        ui.set_width(RIGHT_W);
                         let (text, is) = match &primary {
                             Tile::ContinueTour { lesson, step } => {
                                 (crate::tf!(k::welcome::CONTINUE, lesson, step), true)

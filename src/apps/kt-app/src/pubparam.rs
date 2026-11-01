@@ -305,9 +305,11 @@ impl KtApp {
             crate::window_shell::Kind::Dialog,
         )
             .show(ctx, |ui| {
+                // the body fills the window; the buttons stay at its bottom (windows-fill-their-area)
+                crate::widgets::window_body(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(tr(k::pubp::DIALOG_NAME));
-                    let resp = ui.add(egui::TextEdit::singleline(&mut d.name).desired_width(220.0));
+                    let resp = ui.add(egui::TextEdit::singleline(&mut d.name).desired_width(f32::INFINITY));
                     crate::widgets::field_probe::note("pub.dialog.name", resp.rect);
                     if d.focus {
                         resp.request_focus();
@@ -318,6 +320,7 @@ impl KtApp {
                     }
                 });
                 ui.label(egui::RichText::new(crate::tf!(k::pubp::TEMPLATE, &shown)).weak().small());
+                });
                 ui.horizontal(|ui| {
                     let r = ui.button(tr(k::pubp::DIALOG_DO));
                     crate::widgets::field_probe::note("pub.dialog.ok", r.rect);
@@ -396,8 +399,8 @@ impl KtApp {
             title,
             crate::window_shell::Kind::Tool,
         )
-            .resizable()
-            .default_width(460.0)
+            .width(460.0, [320.0, 100.0])
+            .remember("published_win")
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
                 if list.is_empty() {
@@ -555,10 +558,13 @@ impl KtApp {
                 crate::window_shell::Kind::Dialog,
             )
                 .show(ctx, |ui| {
+                    // the body fills the window; the buttons stay at its bottom (windows-fill-their-area)
+                    crate::widgets::window_body(ui, |ui| {
                     // THE NUMBER IS NAMED ALOUD: removal kills the overrides
                     // in all places of the tree, and learning about it after the fact
                     // would be a loss of work.
                     ui.label(crate::tf!(k::pubp::UNPUBLISH_ASK, &name, n));
+                    });
                     ui.horizontal(|ui| {
                         let r = ui.button(tr(k::pubp::UNPUBLISH));
                         crate::widgets::field_probe::note("pub.unpublish.ok", r.rect);

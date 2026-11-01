@@ -16803,19 +16803,39 @@ fn settled_text_rect(
 /// (see `reveal_curve_block`).
 pub(crate) fn reveal_until(h: &mut Harness<'_, KtApp>, sentinel: &str) {
     let anchor_label = tr(k::fx::AUTO_ADD).to_string();
+    // the FX window's body (windows-fill-their-area): a text drawn half under the action row is
+    // "drawn" too, and a click at its centre pressed Done — so the sentinel must be INSIDE it
+    let body = |h: &Harness<'_, KtApp>| {
+        h.state().fx_editors.first().and_then(|e| {
+            crate::widgets::fill_probe::get(
+                &h.ctx,
+                egui::LayerId::new(egui::Order::Middle, egui::Id::new(("fx", e.clip))),
+            )
+        })
+    };
     for _ in 0..16 {
         let texts = crate::reach_tests::painted_texts(h);
-        if texts.iter().any(|t| t.src == sentinel) {
-            h.step();
-            return;
+        let mut delta = -240.0;
+        if let Some(r) = texts.iter().find(|t| t.src == sentinel).map(|t| t.rect) {
+            match body(h) {
+                Some(b) if r.bottom() > b.bottom() - 2.0 => delta = -120.0,
+                _ => {
+                    h.step();
+                    return;
+                }
+            }
         }
-        let anchor = texts.iter().find(|t| t.src == anchor_label).map(|t| t.rect.center());
+        let anchor = texts
+            .iter()
+            .find(|t| t.src == anchor_label)
+            .map(|t| t.rect.center())
+            .or_else(|| body(h).map(|b| b.center()));
         let Some(a) = anchor else { break };
         h.hover_at(a);
         h.step();
         h.event(egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Point,
-            delta: egui::vec2(0.0, -240.0),
+            delta: egui::vec2(0.0, delta),
             modifiers: egui::Modifiers::NONE,
             phase: egui::TouchPhase::Move,
         });

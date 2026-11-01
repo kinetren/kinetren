@@ -124,6 +124,8 @@ impl KtApp {
             title,
             crate::window_shell::Kind::Tool,
         )
+            .width(520.0, [380.0, 220.0])
+            .remember("track_window")
             .show(ctx, |ui| {
                 // THE BODY — IN A SCROLL, the buttons BELOW it (rule 1: to hit
                 // with a mouse on the first try). With two ducking compressors the window

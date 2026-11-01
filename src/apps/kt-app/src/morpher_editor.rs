@@ -315,7 +315,8 @@ impl KtApp {
             title,
             crate::window_shell::Kind::Tool,
         )
-            .size(if is_batch { [560.0, 480.0] } else { [420.0, 260.0] }, [380.0, 200.0])
+            .width(if is_batch { 560.0 } else { 440.0 }, [380.0, 140.0])
+            .remember("morph")
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
                 // --- on whom and when it acts (R.35) ------------------------

@@ -146,6 +146,7 @@ impl KtApp {
             title,
             crate::window_shell::Kind::Dialog,
         )
+            .width(560.0, [420.0, 240.0])
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
                 // GROUPS modeled on “Transform” (R.66): frame, audio,
