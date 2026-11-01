@@ -2,7 +2,7 @@
 
 ## 1. The version in a worktree (distribution)
 
-- [ ] 1.1 `kt-version/git_watch.rs`: the watched paths from `rev-parse --git-dir`/`--git-common-dir`
+- [x] 1.1 `kt-version/git_watch.rs`: the watched paths from `rev-parse --git-dir`/`--git-common-dir`
       (HEAD, the branch file or its directory when packed, `packed-refs`; existing only); `build.rs`
       prints them — t1170
 - [ ] 1.2 Check on this worktree: the build script's output names `.git/worktrees/<name>/HEAD` and

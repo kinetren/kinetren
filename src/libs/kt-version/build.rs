@@ -10,7 +10,11 @@
 //!   2. git in the working tree;
 //!   3. the fallback “v00.00.00-nogit” — so the build does not fail anywhere.
 
+use std::path::Path;
 use std::process::Command;
+
+#[path = "git_watch.rs"]
+mod git_watch;
 
 fn git(args: &[&str]) -> Option<String> {
     let out = Command::new("git").args(args).output().ok()?;
@@ -25,10 +29,10 @@ fn main() {
     // rebuild on a change of commit and on an external substitution of the version
     println!("cargo:rerun-if-env-changed=KT_VERSION_FULL");
     println!("cargo:rerun-if-env-changed=KT_VERSION_SHORT");
-    for p in ["../../../.git/HEAD", "../../../.git/refs/heads"] {
-        if std::path::Path::new(p).exists() {
-            println!("cargo:rerun-if-changed={p}");
-        }
+    // the HEAD of THIS checkout, its branch ref and packed-refs — in a worktree too, where
+    // `.git` is a file (git_watch.rs); a build without git watches nothing
+    for p in git_watch::watch_paths(Path::new(".")) {
+        println!("cargo:rerun-if-changed={}", p.display());
     }
 
     let full = std::env::var("KT_VERSION_FULL").ok().or_else(|| {
