@@ -129,11 +129,11 @@ finished PNGs on a helper thread and uploads textures when they arrive (one repa
 12); a missing poster is a placeholder with the project's initials. Clearing the list deletes only
 poster files the list owns.
 
-## ci-green-again (2026-11-01): live guards apart, canonical paths without `\\?\\`
+## ci-green-again (2026-11-01): live guards apart, canonical paths without `\\?\`
 
 t801 and t802 ran in parallel against one `target/live-guard`, and `live-check.sh` deletes
 `verdicts/` at its start — right for a run, wrong for two runs sharing a folder; each guard now
-owns `target/live-guard-<test>`. On Windows `std::fs::canonicalize` spells `\\?\\C:\\…`, which the
+owns `target/live-guard-<test>`. On Windows `std::fs::canonicalize` spells `\\?\C:\…`, which the
 welcome card showed (t986 on windows-latest). `kt_dirs::canonical` drops the verbatim prefix only
 where the plain spelling names the same file (drive/UNC, shorter than `MAX_PATH` — the `dunce`
 rule, written out instead of a dependency); `plain_path` is pure over `Os`, so t1062 holds it on
