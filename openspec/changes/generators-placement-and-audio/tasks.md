@@ -25,4 +25,8 @@
 
 - [x] 4.1 `docs/guide/whats-new.md` (`## kt26.11`) line; the K4 row of `docs/ktprompts/kkt-26.11.01-index.md` → done (`ktprompts-index.py --check`)
 - [x] 4.2 The F-AUD-014 note → done with `CAPABILITY:`; the "why" into `openspec/specs/generators/design.md` (Revision of R.55's File entry; D3/D4/D7)
-- [ ] 4.3 `git merge master`, `cargo test --workspace`, `cargo clippy --all-targets`, `src/scripts/finish.sh` — the version recorded here
+- [x] 4.3 `git merge master`, `cargo test --workspace`, `cargo clippy --all-targets`, `src/scripts/finish.sh` — the version recorded here
+  - finish.sh **kt26.11.01-638b6bb1**: workshop 1344/1344, SIMD ok, guards green; live 60 scenarios — the
+    load reds re-ran alone green; `conform`, `corner`, `export_otio` red twice on display :273 shared
+    with another session's program (its window, build 5382edb6, is in the screenshot), green alone on
+    :291. `cargo test --workspace --no-fail-fast` green; clippy: no warning in this change's files.
