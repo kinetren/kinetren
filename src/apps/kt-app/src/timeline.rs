@@ -1143,7 +1143,7 @@ impl KtApp {
             .map(|p| p.to_string_lossy().replace('\\', "/").replace('"', "'"))
             .unwrap_or_default();
         let json = format!(
-            "{{\"frame\":{},\"input\":{},\"bench_done\":{},\"windows\":{},\"project\":\"{}\",\
+            "{{\"frame\":{},\"meter_db\":[{:.1},{:.1}],\"input\":{},\"bench_done\":{},\"windows\":{},\"project\":\"{}\",\
              \"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\
              \"nest\":{},\"clipboard\":{},\"status\":\"{}\",\
              \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"morphers\":{},\
@@ -1154,6 +1154,10 @@ impl KtApp {
              \"timeline\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
              \"lane_h\":{:.1},\"ticks_per_px\":{:.3},\"view_start\":{:.1},\"rows\":[{}]}}\n",
             crate::bench::frames(),
+            // the meters' bars (generators-placement-and-audio): "the meters move" is a number a
+            // scenario asserts, not a picture it guesses
+            self.meter.bar_db[0],
+            self.meter.bar_db[1],
             crate::bench::inputs(),
             crate::bench::done(),
             windows,
@@ -1692,6 +1696,14 @@ impl KtApp {
                 ClipKind::Audio => format!("A{}", lane + 1),
             };
             ui.label(egui::RichText::new(crate::tf!(k::tl::lane::TITLE, name)).strong());
+            // generators-placement-and-audio D1: the kinds that land on THIS track, created at the
+            // clicked track and time (a header click has no time — the cursor); one body with Edit
+            // and the bin (rule 17)
+            if let Some(kd) = crate::gen_ui::generator_menu_for(ui, kind) {
+                let at = self.ctx_at.unwrap_or_else(|| self.player.transport.playhead());
+                self.create_generator_at(kd, at, Some((kind, lane)));
+                ui.close();
+            }
             let del_label = if n > 0 {
                 crate::tf!(k::tl::lane::DELETE_N, n)
             } else {
@@ -2542,6 +2554,9 @@ impl KtApp {
                 && let Some(pos) = gutter_resp.interact_pointer_pos()
             {
                 self.ctx_panel = None; // targets cancel each other out (item 363)
+                // a header has no time: "Paste" and "Create a generator" take the cursor, not
+                // the time of an earlier click on the track body
+                self.ctx_at = None;
                 match geom.key_at_y(pos.y) {
                     Some((LaneKind::Video, lane)) => {
                         self.ctx_target = Some(CtxTarget::Lane { kind: ClipKind::Video, lane });

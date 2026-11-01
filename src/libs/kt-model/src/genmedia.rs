@@ -323,6 +323,17 @@ impl GeneratorKind {
                 v.extend(GeneratorKind::menu_rows(id));
             }
         }
+        // every other built-in generator plugin, in the registry's order, after the former rows
+        // (generators-placement-and-audio: the sound kinds) — a new family reaches the menu by
+        // itself, and the order of the former rows does not move (t973, t1048)
+        if let Some(reg) = kt_plugin_api::installed() {
+            for p in reg.plugins() {
+                let m = p.manifest();
+                if m.media == kt_plugin_api::Media::Generator && !ORDER.contains(&&*m.id) && !reg.is_test_only(&m.id) {
+                    v.extend(GeneratorKind::menu_rows(&m.id));
+                }
+            }
+        }
         v
     }
 

@@ -388,15 +388,6 @@ impl KtApp {
                 self.import_older_dialog();
                 ui.close();
             }
-            // THE SAME BODY as in the bin’s empty-space menu (rule 17).
-            // Until R.55 a generator was created ONLY from there, and a person could not
-            // find this entry — the 8th round claim, verbatim.
-            // (the tour step's target outlines itself inside, wherever the menu is drawn)
-            let picked = crate::gen_ui::generator_menu(ui);
-            if let Some(kd) = picked {
-                self.create_generator(kd);
-                ui.close();
-            }
             ui.separator();
             if Self::menu_btn(ui, tr(k::menu::file::SAVE), "Ctrl+S") {
                 self.save();
@@ -476,6 +467,16 @@ impl KtApp {
                 self.collapse_selection();
                 ui.close();
             }
+            // THE SAME BODY as the bin’s empty-space menu and a track's right-click menu
+            // (rule 17). R.55 put it in File; the owner moved it here (kkt-26.11.01 item 4:
+            // "WHY THE HELL LEAVE IT IN FILE?!"). Created at the cursor; the tour step's target
+            // outlines itself inside, wherever the menu is drawn.
+            ui.separator();
+            if let Some(kd) = crate::gen_ui::generator_menu(ui) {
+                self.create_generator_at(kd, self.player.transport.playhead(), None);
+                ui.close();
+            }
+            ui.separator();
             if ui.button(tr(k::menu::edit::REMOVE_UNUSED_SEQS)).clicked() {
                 self.remove_unused_seqs();
                 ui.close();

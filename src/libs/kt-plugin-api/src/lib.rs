@@ -1564,6 +1564,9 @@ impl Registry {
             }
             Media::Generator => {
                 let Some(g) = p.generator() else { return refuse("a generator without a kernel") };
+                if g.synth().is_some() && g.has_tone() {
+                    return refuse("a generator with both a synthesizer and a tone");
+                }
                 let row = |n: &str| m.passport.iter().any(|s| s.name == n);
                 let named = |n: &str, what: &str| -> Result<(), Refusal> {
                     if row(n) { Ok(()) } else { refuse(&format!("{what} names a row it lacks: {n}")) }

@@ -1129,6 +1129,12 @@ corner_br = "Bottom right"
 tc_note = "Shows MATERIAL time: a clip from zero with source start 0 matches the timeline clock"
 
 [genkind]
+group_audio = "Audio"
+tone = "Tone"
+audio_noise = "Audio noise"
+sweep = "Sine sweep"
+beep = "Beep train"
+silence = "Silence"
 group_check = "Signal check"
 group_titles = "Titles and countdown"
 group_shapes = "Shapes"
@@ -1185,6 +1191,17 @@ align_r = "Right"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+freq = "Frequency"
+freq_start = "Start frequency"
+freq_end = "End frequency"
+duration = "Sweep duration"
+period = "Period"
+length = "Beep length"
+seed = "Seed"
+channels = "Channels"
+color = "Colour"
+curve = "Curve"
+stereo = "Stereo"
 text = "Text"
 reveal = "Reveal"
 reveal_soft = "Reveal edge"
@@ -1221,6 +1238,17 @@ tone_db = "Tone level:"
 fps = "Frames per second:"
 mono = "Grey"
 tone = "1 kHz tone"
+
+# Choice-row variants of the generators (generators-placement-and-audio).
+[genc]
+both = "Both"
+left = "Left"
+right = "Right"
+white = "White"
+pink = "Pink"
+brown = "Brown"
+log = "Logarithmic"
+linear = "Linear"
 
 # Public parameters of the composition (R.59, stage 3). The HANDLE NAME never
 # goes here: the project author invents it, it is document content,
@@ -1479,7 +1507,7 @@ loop_how = "drag on the ruler, then L"
 cut = "Cut an event in two"
 cut_how = "playhead on the spot, then S"
 title = "Add a title"
-title_how = "File › Create a generator… › Text"
+title_how = "Edit › Create a generator… › Text"
 effect = "Add an effect"
 effect_how = "double-click the event, then + effect…"
 curve = "Animate a parameter"

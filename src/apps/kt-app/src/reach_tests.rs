@@ -1590,31 +1590,36 @@ fn t554_only_one_place_decides_what_plays() {
     );
 }
 
-/// Test 560 (R.55, C6): the generator is created NOT ONLY from the bin.
+/// Test 560 (R.55, C4 claim 8; rewritten by generators-placement-and-audio — the owner's decision,
+/// kkt-26.11.01 item 4 and answer p.2: "WHY THE HELL LEAVE IT IN FILE?!").
 ///
-/// **The owner’s complaint, verbatim:** “I do not know how to create a generator
-/// media, we have the code but how to create it in the UI is not clear.. probably a lot
-/// more things are unavailable from the UI.”
-///
-/// And indeed: there was exactly one entrance — a right-click on the EMPTY background of the bin.
-/// Neither the main menu, nor a key, nor the timeline menu. t253 did not catch this:
-/// it asks whether the verb is REACHABLE, not how many entrances there are
-/// and how visible they are.
-///
-/// The test asserts two things at once: the item exists in the main menu AND the list of kinds
-/// at both entrances is ONE (rule 17) — no second list has come into being.
+/// "Create a generator" lives in Edit, in a clip track's right-click menu and in the bin's
+/// background menu — and NOT in File. All three entries call the one menu body: no entry builds
+/// its own list of kinds (rule 17), so a new kind reaches every entry by itself.
 #[test]
 fn t560_generator_is_reachable_from_the_main_menu() {
     let root = workspace_root();
-    let toolbar =
-        std::fs::read_to_string(root.join("apps/kt-app/src/toolbar.rs")).expect("no toolbar.rs");
+    let read = |f: &str| std::fs::read_to_string(root.join(f)).unwrap_or_else(|_| panic!("no {f}"));
+    let toolbar = read("apps/kt-app/src/toolbar.rs");
+    // the bodies of the two root menus, cut by their titles
+    let body = |title: &str, next: &str| -> String {
+        let a = toolbar.find(title).unwrap_or_else(|| panic!("no {title} menu"));
+        let b = toolbar[a..].find(next).map_or(toolbar.len(), |n| a + n);
+        toolbar[a..b].to_string()
+    };
+    let file = body("tr(k::menu::file::TITLE)", "tr(k::menu::edit::TITLE)");
+    let edit = body("tr(k::menu::edit::TITLE)", "tr(k::menu::view::TITLE)");
     assert!(
-        toolbar.contains("gen_ui::generator_menu(ui)"),
-        "the main menu has no “Create generator…” item — the only entry \
-         left is the right click on the empty bin background, which the person did not find"
+        !file.contains("gen_ui::generator_menu"),
+        "File offers “Create a generator” again — the owner moved it out (kkt-26.11.01 item 4)"
     );
-    let bin = std::fs::read_to_string(root.join("apps/kt-app/src/bin_panel.rs"))
-        .expect("no bin_panel.rs");
+    assert!(edit.contains("gen_ui::generator_menu(ui)"), "the Edit menu has no “Create a generator…” item");
+    let timeline = read("apps/kt-app/src/timeline.rs");
+    assert!(
+        timeline.contains("gen_ui::generator_menu_for(ui, kind)"),
+        "a clip track's right-click menu has no “Create a generator…” item"
+    );
+    let bin = read("apps/kt-app/src/bin_panel.rs");
     assert!(
         bin.contains("gen_ui::generator_menu(ui)"),
         "the bin menu builds its own list of kinds — if they diverged, a new kind would appear \
@@ -1624,7 +1629,7 @@ fn t560_generator_is_reachable_from_the_main_menu() {
     // their own enumeration: a new kind would land in one menu and miss the
     // other (`GeneratorKind::all()` legitimately also lives in the generator window —
     // there it is the kind picker and width measurement, not a menu).
-    for (name, src) in [("toolbar.rs", &toolbar), ("bin_panel.rs", &bin)] {
+    for (name, src) in [("toolbar.rs", &toolbar), ("bin_panel.rs", &bin), ("timeline.rs", &timeline)] {
         assert!(
             !src.contains("GeneratorKind::all()"),
             "{name} enumerates the generator kinds on its own — the list of kinds must be \
@@ -6465,7 +6470,7 @@ fn t986_welcome_window_templates_recent_whats_new_and_the_switch() {
 ///
 /// - **PATH** start Kinetren for the first time → the welcome window, "Start the tour" focused →
 ///   click it → the demo project opens and a panel on the right reads "Lesson 1 of 5 · The first
-///   edit" with step 1 "Add a title" and a "Show" button → click "Show" → the File menu opens and
+///   edit" with step 1 "Add a title" and a "Show" button → click "Show" → the Edit menu opens and
 ///   "Create a generator…" carries an accent outline → Create a generator… → Titles and countdown
 ///   → Text → a title event appears and step 1 turns into a check mark, step 2 "Cut the event at
 ///   the marker" appears → put the playhead on the marker and press S → the event is in two pieces
@@ -6505,12 +6510,12 @@ fn t988_a_lesson_step_closes_on_the_project_state() {
     assert!(h.query_all_by_label_contains(&head).count() > 0, "no lessons panel “{head}”");
     assert!(h.query_all_by_label_contains(&lesson_line(k::lessons::L1_S1)).count() > 0, "step 1 is not shown");
 
-    // "Show": the File menu opens by code, the item is outlined (by the menu itself)
+    // "Show": the Edit menu opens by code, the item is outlined (by the menu itself)
     h.get_by_label(tr(k::lessons::SHOW)).click();
     h.step();
     h.step();
     let gen_item = tr(k::bin::menu::NEW_GENERATOR);
-    assert!(h.query_all_by_label_contains(gen_item).count() > 1, "Show did not open the File menu");
+    assert!(h.query_all_by_label_contains(gen_item).count() > 1, "Show did not open the Edit menu");
     assert!(h.state().lesson_marks_menu(k::bin::menu::NEW_GENERATOR), "the item is not the outlined target");
     // the person's own gesture: Create a generator… → Titles and countdown → Text
     // the lesson paragraph names the same item; the menu's own node STARTS with it
@@ -6518,7 +6523,7 @@ fn t988_a_lesson_step_closes_on_the_project_state() {
         use egui_kittest::kittest::NodeT;
         h.query_all_by_label_contains(gen_item)
             .find(|n| n.accesskit_node().label().is_some_and(|l| l.starts_with(gen_item)))
-            .expect("the File menu item")
+            .expect("the Edit menu item")
             .hover();
     }
     h.step();

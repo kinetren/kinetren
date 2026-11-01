@@ -1129,6 +1129,12 @@ corner_br = "Нижний правый"
 tc_note = "Показывает время МАТЕРИАЛА: клип от нуля с началом материала 0 совпадает с часами таймлайна"
 
 [genkind]
+group_audio = "Звук"
+tone = "Тон"
+audio_noise = "Звуковой шум"
+sweep = "Свип-тон"
+beep = "Серия бипов"
+silence = "Тишина"
 group_check = "Проверка тракта"
 group_titles = "Титры и отсчёт"
 group_shapes = "Фигуры"
@@ -1185,6 +1191,17 @@ align_r = "Справа"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+freq = "Частота"
+freq_start = "Начальная частота"
+freq_end = "Конечная частота"
+duration = "Длительность свипа"
+period = "Период"
+length = "Длина бипа"
+seed = "Зерно"
+channels = "Каналы"
+color = "Цвет"
+curve = "Кривая"
+stereo = "Стерео"
 text = "Текст"
 reveal = "Раскрытие"
 reveal_soft = "Мягкость фронта"
@@ -1221,6 +1238,17 @@ tone_db = "Уровень тона:"
 fps = "Кадров в секунду:"
 mono = "Серый"
 tone = "Тон 1 кГц"
+
+# Choice-row variants of the generators (generators-placement-and-audio).
+[genc]
+both = "Оба"
+left = "Левый"
+right = "Правый"
+white = "Белый"
+pink = "Розовый"
+brown = "Коричневый"
+log = "Логарифмическая"
+linear = "Линейная"
 
 # Public parameters of the composition (R.59, stage 3).
 [pubp]
@@ -1475,7 +1503,7 @@ loop_how = "протянуть по линейке, затем L"
 cut = "Разрезать событие надвое"
 cut_how = "курсор на место, затем S"
 title = "Добавить титр"
-title_how = "Файл › Создать генератор… › Текст"
+title_how = "Правка › Создать генератор… › Текст"
 effect = "Добавить эффект"
 effect_how = "двойной щелчок по событию, затем + эффект…"
 curve = "Анимировать параметр"

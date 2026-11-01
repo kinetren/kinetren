@@ -21,3 +21,4 @@ transitions-styled = { workspace = true }
 transitions-volume = { workspace = true }
 generators-basic = { workspace = true }
 generators-test = { workspace = true }
+generators-audio = { workspace = true }

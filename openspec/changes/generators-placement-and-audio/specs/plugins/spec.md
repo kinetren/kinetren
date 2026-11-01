@@ -21,4 +21,4 @@ machines (t1066).
 #### Scenario: The host's tone and the tone kind share the sine
 - **WHEN** the SMPTE tone (host `tone_1k`) and the `tone` kind at 1 kHz read the same bursts at the same level
 - **THEN** the bytes are equal
-- **TEST** t1155 (`src/plugins/generators-audio/tests/sound.rs`)
+- **TEST** t1155 (`src/libs/kt-media/tests/gen_sound.rs`)

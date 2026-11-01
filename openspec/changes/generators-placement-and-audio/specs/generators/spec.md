@@ -23,7 +23,7 @@ far and clicks.
 #### Scenario: One sine for the tone and SMPTE
 - **WHEN** a `tone` at 1000 Hz, −20 dBFS, both channels and an SMPTE source with the tone on at −20 dBFS read bursts 0, 7 and 9000
 - **THEN** the bytes are equal; SMPTE's and the leader's bursts equal their pre-change references
-- **TEST** t1155 (`src/plugins/generators-audio/tests/sound.rs`)
+- **TEST** t1155 (`src/libs/kt-media/tests/gen_sound.rs`)
 
 #### Scenario: A sound kind has no picture and is seek-stable
 - **WHEN** each sound kind's source is opened with non-default values; bursts 0…63 are read in order, then in reverse and at random through a fresh source
@@ -36,13 +36,13 @@ far and clicks.
 - **TEST** t1157 (`src/plugins/generators-audio/tests/sound.rs`)
 
 #### Scenario: Noise colour, level and seed
-- **WHEN** white, pink and brown `audio_noise` at −20 dBFS is read for 8 seconds, octave-band power is measured from 125 Hz to 8 kHz; the seed and the stereo flag are changed
-- **THEN** the RMS is −20 dBFS AES17 within 0.3 dB; the per-octave slope is 0 ± 1 dB (white), −3 ± 1 dB (pink), −6 ± 1.5 dB (brown); another seed gives other bytes; stereo off gives L = R, on gives a correlation below 0.05
+- **WHEN** white, pink and brown `audio_noise` at −20 dBFS is read for 8 seconds, the power density is measured in octave bands from 125 Hz to 8 kHz; the seed and the stereo flag are changed
+- **THEN** the RMS is −20 dBFS AES17 within 0.3 dB; the density falls 0 ± 1 dB per octave (white), −3 ± 1 dB (pink), −6 ± 1.5 dB (brown); another seed gives other bytes; stereo off gives L = R, on gives a correlation below 0.05
 - **TEST** t1158 (`src/plugins/generators-audio/tests/sound.rs`)
 
 #### Scenario: A sweep follows its curve without phase jumps
 - **WHEN** a log and a linear `sweep` 100 Hz → 6400 Hz over 6 s is read
-- **THEN** the frequency counted in 50 ms windows follows `f₀·k^(t/T)` (log) and `f₀+(f₁−f₀)t/T` (linear) within 3 %; no sample step inside a sweep exceeds `2π·f(t)/48000·amp` by more than 1 %; the sweep repeats after 6 s
+- **THEN** the zero crossings of every 100 ms window equal, within 2, twice the cycles the curve integrates — `f₀·k^(t/T)` (log), `f₀+(f₁−f₀)t/T` (linear); no sample step inside a sweep exceeds `2π·f(t)/48000·amp` by more than 2 %; the sweep repeats after 6 s
 - **TEST** t1159 (`src/plugins/generators-audio/tests/sound.rs`)
 
 #### Scenario: Beep is the gated tone, silence is zeros

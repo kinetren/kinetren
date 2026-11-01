@@ -136,9 +136,9 @@ pub struct Lesson {
 /// The marker the cut step aims at (the lesson copy adds it in the middle of the first event).
 pub const CUT_MARKER: &str = "CUT HERE";
 
-/// Where "Create a generator…" lives. ONE constant: `generators-placement-and-audio` moves the
-/// item out of File by editing this path; the lesson's text and "Show" follow it.
-pub const GENERATOR_MENU: &[Key] = &[k::menu::file::TITLE, k::bin::menu::NEW_GENERATOR, k::genkind::GROUP_TITLES];
+/// Where "Create a generator…" lives. ONE constant: `generators-placement-and-audio` moved the
+/// item out of File into Edit by editing this path; the lesson's text and "Show" follow it.
+pub const GENERATOR_MENU: &[Key] = &[k::menu::edit::TITLE, k::bin::menu::NEW_GENERATOR, k::genkind::GROUP_TITLES];
 const FILE_RENDER: &[Key] = &[k::menu::file::TITLE, k::menu::file::RENDER];
 
 const fn step(text: &'static [Key], targets: &'static [Target], done: Predicate) -> Step {

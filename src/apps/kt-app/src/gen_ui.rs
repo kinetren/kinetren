@@ -35,23 +35,49 @@ use kt_model::{GeneratorKind, HasParams, TextAlign, TextAnchor};
 /// it in the UI is unclear”. Now the same list hangs in the
 /// main menu too, and no second list of kinds was created for it.
 pub fn generator_menu(ui: &mut egui::Ui) -> Option<GeneratorKind> {
-    generator_kind_menu_keyed(ui, tr(k::bin::menu::NEW_GENERATOR), Some(k::bin::menu::NEW_GENERATOR))
+    generator_kind_menu_keyed(ui, tr(k::bin::menu::NEW_GENERATOR), Some(k::bin::menu::NEW_GENERATOR), None)
+}
+
+/// The same "Create a generator…" for a clip track's right-click menu
+/// (generators-placement-and-audio D1): only the kinds that land on a track of `stream` — picture
+/// kinds on a video track, sound kinds on an audio track — so the clip lands where the click was.
+pub fn generator_menu_for(ui: &mut egui::Ui, stream: kt_model::ClipKind) -> Option<GeneratorKind> {
+    generator_kind_menu_keyed(ui, tr(k::bin::menu::NEW_GENERATOR), Some(k::bin::menu::NEW_GENERATOR), Some(stream))
 }
 
 /// The same menu under another caption: “create” and “change kind” — ONE list of kinds (rule 17),
 /// and a new kind reaches both entries by itself.
 pub fn generator_kind_menu(ui: &mut egui::Ui, label: &str) -> Option<GeneratorKind> {
-    generator_kind_menu_keyed(ui, label, None)
+    generator_kind_menu_keyed(ui, label, None, None)
+}
+
+/// Whether the kind is a SOUND kind: it synthesizes its burst and has no picture.
+pub fn is_sound(kind: &GeneratorKind) -> bool {
+    kind.kernel().is_some_and(|g| g.synth().is_some())
+}
+
+/// Whether a kind's clip lands on a track of `stream` (a sound kind has no picture; a picture kind
+/// lands on a video track — its tone, when switched on, follows on audio track 1).
+pub(crate) fn lands_on(kind: &GeneratorKind, stream: kt_model::ClipKind) -> bool {
+    is_sound(kind) == (stream == kt_model::ClipKind::Audio)
 }
 
 /// `key` — the catalog key of the caption: the item outlines itself when a tour step points at
-/// it (tour-lessons-fixes D3), wherever the menu is drawn.
-fn generator_kind_menu_keyed(ui: &mut egui::Ui, label: &str, key: Option<crate::i18n::Key>) -> Option<GeneratorKind> {
+/// it (tour-lessons-fixes D3), wherever the menu is drawn. `stream` — the track's kind, when the
+/// menu hangs on a track.
+fn generator_kind_menu_keyed(
+    ui: &mut egui::Ui,
+    label: &str,
+    key: Option<crate::i18n::Key>,
+    stream: Option<kt_model::ClipKind>,
+) -> Option<GeneratorKind> {
     let mut picked = None;
     let mr = ui.menu_button(label, |ui| {
         for grp in GenGroup::ALL {
-            let kinds: Vec<_> =
-                GeneratorKind::all().into_iter().filter(|k| GenGroup::of(k) == grp).collect();
+            let kinds: Vec<_> = GeneratorKind::all()
+                .into_iter()
+                .filter(|k| GenGroup::of(k) == grp && stream.is_none_or(|s| lands_on(k, s)))
+                .collect();
             if kinds.is_empty() {
                 continue;
             }
@@ -132,11 +158,13 @@ pub(crate) enum GenGroup {
     Shapes,
     Titles,
     Check,
+    /// The sound kinds (generators-placement-and-audio).
+    Audio,
 }
 
 impl GenGroup {
-    pub(crate) const ALL: [GenGroup; 4] =
-        [GenGroup::Background, GenGroup::Shapes, GenGroup::Titles, GenGroup::Check];
+    pub(crate) const ALL: [GenGroup; 5] =
+        [GenGroup::Background, GenGroup::Shapes, GenGroup::Titles, GenGroup::Check, GenGroup::Audio];
 
     pub(crate) fn name(self) -> &'static str {
         tr(self.key())
@@ -149,6 +177,7 @@ impl GenGroup {
             GenGroup::Shapes => k::genkind::GROUP_SHAPES,
             GenGroup::Titles => k::genkind::GROUP_TITLES,
             GenGroup::Check => k::genkind::GROUP_CHECK,
+            GenGroup::Audio => k::genkind::GROUP_AUDIO,
         }
     }
 
@@ -160,6 +189,7 @@ impl GenGroup {
             GenGroup::Shapes => "shapes",
             GenGroup::Titles => "titles",
             GenGroup::Check => "check",
+            GenGroup::Audio => "audio",
         }
     }
 
@@ -725,6 +755,10 @@ pub fn draw_gen_section(
     if widgets::flags_row(ui, ("genf", clip.id.0), kind) {
         out.changed.base = true;
     }
+    // the kind's CHOICE rows (a noise's colour, a tone's channels, a sweep's curve)
+    if choice_rows(ui, kind) {
+        out.changed.base = true;
+    }
 
     // ---- numbers: the SAME grid as the effects, and with the link to curves -----
     // (R.59: each numeric row of the generator gets both a field and a curve)
@@ -773,6 +807,52 @@ pub fn draw_gen_section(
     out.seek = r.seek;
     out.axis = out.axis.merge(&r);
     out
+}
+
+/// A choice row's variant caption (generators-placement-and-audio). `None` — no caption: t1163
+/// refuses a choice row of a menu kind whose variant has none.
+pub(crate) fn choice_label(row: &str, key: &str) -> Option<&'static str> {
+    Some(match (row, key) {
+        ("channels", "both") => tr(k::genc::BOTH),
+        ("channels", "left") => tr(k::genc::LEFT),
+        ("channels", "right") => tr(k::genc::RIGHT),
+        ("color", "white") => tr(k::genc::WHITE),
+        ("color", "pink") => tr(k::genc::PINK),
+        ("color", "brown") => tr(k::genc::BROWN),
+        ("curve", "log") => tr(k::genc::LOG),
+        ("curve", "linear") => tr(k::genc::LINEAR),
+        _ => return None,
+    })
+}
+
+/// The kind's choice rows as rows of buttons, one per variant (rule 9: a mode is a visible
+/// button, not a hidden list). The address row (the tables' sort) is chosen by the kind menu.
+fn choice_rows(ui: &mut egui::Ui, kind: &mut GeneratorKind) -> bool {
+    let address = kind.kernel().map_or(&[][..], |g| g.decl().address);
+    let GeneratorKind::Plugin(p) = kind else { return false };
+    let mut changed = false;
+    for spec in p.specs() {
+        let kt_model::ParamType::Choice { variants } = &spec.ty else { continue };
+        if address.contains(&&*spec.name) {
+            continue;
+        }
+        let cur = p.get(&spec.name).unwrap_or(0.0).round() as usize;
+        ui.horizontal(|ui| {
+            ui.label(widgets::param_label_scoped(kt_model::ParamScope::Generator, &spec.name));
+            for (i, key) in variants.iter().enumerate() {
+                let r = ui.add(
+                    egui::Button::selectable(i == cur, choice_label(&spec.name, key).unwrap_or(key))
+                        .frame_when_inactive(true),
+                );
+                crate::widgets::field_probe::note(&format!("genc.{}.{key}", spec.name), r.rect);
+                if r.clicked() && i != cur {
+                    p.set(&spec.name, i as f64);
+                    changed = true;
+                }
+            }
+        });
+    }
+    changed
 }
 
 /// The parts of the title form that are not expressed by

@@ -18,7 +18,9 @@ how many places use it.
 
 ## Generators
 
-**File → Create a generator…** adds media that has no file. A generator is placed and
+**Edit → Create a generator…** adds media that has no file, at the playhead. Right-click a
+track and pick **Create a generator…** there to put it exactly where you clicked: a video
+track lists the picture kinds, an audio track the sound kinds. A generator is placed and
 edited like a clip. Its settings live on the event, and they open as the first slot of
 the event's effects window.
 
@@ -30,6 +32,15 @@ the event's effects window.
 - **Titles and countdown:** Text, Timecode, Countdown leader.
 - **Signal check:** Checkerboard, SMPTE bars, Colour bars 75%, Colour bars 100%, Grey
   ramp, Grey steps, Chroma plane, Level window.
+- **Audio:** Tone, Audio noise (white, pink, brown), Sine sweep, Beep train, Silence. They
+  have no picture and land on an audio track.
+
+**Sound generators.** A level is in dBFS: a tone's level is its peak, a noise's level is
+its RMS, so −20 dBFS of either reads the same on a meter. A sweep runs from its start to
+its end frequency over its duration, logarithmic or linear, and repeats. A beep train
+sounds the tone for its length once every period — the countdown's sync pip. A tone, a
+sweep or a beep can go to the left or right channel only. The sound does not change when
+you seek: playback, a render and a repeat give the same samples.
 
 **Titles.** You set the text, font, size, tracking, line spacing, alignment and anchor,
 plus fill, stroke, shadow and backing, and the order they are drawn in. The presets

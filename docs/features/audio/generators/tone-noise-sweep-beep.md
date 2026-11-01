@@ -1,18 +1,18 @@
 ---
 id: F-AUD-014
 title: Sound generators — tone, coloured noise, sweep, beep train, silence
-status: candidate
+status: done
 priority: B
 cost: M
 category: audio/generators
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, audition-26, logic-pro-12]
-we_have: partial
+we_have: yes
 crates: [kt-plugin-api, kt-media, kt-app]
 invariants: [1, 11]
 ui_rules: [17, 18]
 round: kkt-26.11.01
 point: 4
-tests: []
+tests: [t560, t1155, t1156, t1157, t1158, t1159, t1160, t1162, t1163, t1164, t1165, t1166, t1167]
 depends_on: [F-TXT-003]
 trackers: []
 services: []
@@ -87,24 +87,7 @@ sound generator looks like when it is taken seriously.
 ## How it fits Kinotrain
 
 CAPABILITY: openspec/specs/generators/
-
-### What already exists
-
-The generator contract `src/libs/kt-plugin-api/src/generator.rs` (`GenKernel::tone`/`gate`), the
-host's one sine `tone_1k` in `src/libs/kt-media/src/generator.rs`, the SMPTE tone and the leader's
-beep in `src/plugins/generators-test/src/lib.rs`, the frozen math `kt_plugin_api::math`.
-
-### What is missing
-
-A kind that has no picture (`MediaInfo.has_video` is `true` for every generator), a kernel that
-fills a burst itself (a frequency, a noise colour, a sweep), and an Audio group in the creation
-menu (`src/apps/kt-app/src/gen_ui.rs`).
-
-### What hinders
-
-Nothing structural: an audio event already reads its generator through `clip_source_addr_in`
-(`src/libs/kt-engine/src/audio.rs`), as the SMPTE tone does. Invariant 1 (48 kHz/2ch) and
-invariant 11 (bytes) are the contract the kernel is written to.
+Done in `generators-placement-and-audio`: five sound kinds as the `generators-audio` plugins (a burst from the global sample number, one sine with SMPTE, AES17 levels), created from Edit, a track's right-click menu at the clicked place, or the bin.
 
 ## Estimate
 
@@ -119,8 +102,9 @@ invariant 11 (bytes) are the contract the kernel is written to.
 
 ## Verdict
 
-Take: tone, white/pink/brown noise, log/linear sweep, beep train and silence as generator kinds on
-an audio track, each a plugin; partials, waveforms and DTMF stay out until asked for.
+Taken and done (generators-placement-and-audio, 2026-11-01): tone, white/pink/brown noise,
+log/linear sweep, beep train and silence as generator kinds on an audio track, each a plugin;
+partials, waveforms and DTMF stay out until asked for.
 
 ## Sources
 
