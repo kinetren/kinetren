@@ -42,7 +42,8 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
 - **A split of a pitched event is ONE stream** (pitch-event-edges D3): `run_predecessors` marks for an
   event the one it continues (same track, abutting, the next material frame, both chains read across
   edges with the same structure and look-ahead, no reverse/overlap/transition at the join, no tail
-  on the predecessor). `render_fx_clip` asks `FxStateStore::hand_on` at the event's frame 0: when the
+  on the predecessor, no warp: under a warp `source_in + len` is not where the material goes on).
+  `render_fx_clip` asks `FxStateStore::hand_on` at the event's frame 0: when the
   predecessor has just played to its end, the two processors are SWAPPED and both re-synced. It
   relies on clips being rendered in ascending order in every burst (A before B) — that is what makes
   it slicing-independent; do not reorder the clip loop. An event that reads across edges and starts

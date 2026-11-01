@@ -45,7 +45,7 @@ level at every join.
 
 #### Scenario: Copies of a reel piece with Slowed+Reverb and a morpher's pitch do not tear
 - **WHEN** five abutting copies of the same 0.72 s piece (the same in-point) carry Slowed+Reverb (rate 1, mix 0.1, a rate curve that turns negative far past the events) and a pitch +5 — in the event's chain and appended by a morpher — over a 440 Hz sine and over a reel holding it, with each engine
-- **THEN** no 64-frame window within 2 048 frames of a join falls below half of the steady level (before: 0.034); the render is the same in one piece and in pieces of 1 024 and 333 frames
+- **THEN** no 64-frame window within 1 024 frames of a join falls below half of the steady level (before: 0.034); the render is the same in one piece and in pieces of 1 024 and 333 frames
 - **TEST** t1113 (`src/libs/kt-engine/tests/pitch_edges.rs`)
 
 #### Scenario: A node before the pitch processes the material, and its tail ends with the event
