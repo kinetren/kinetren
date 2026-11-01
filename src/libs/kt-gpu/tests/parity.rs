@@ -842,6 +842,8 @@ fn t329_parity_cycle_over_the_registry() {
         ("ripple", FrameTol::GEOM, FrameTol::GEOM),
         ("kaleidoscope", FrameTol::GEOM, FrameTol::GEOM),
         ("cylinder3d", FrameTol::GEOM, FrameTol::GEOM),
+        // vhs-tape-simulation: a signal chain on the standard's grid (t1186 measures the class)
+        ("vhs_tape", FrameTol::SIGNAL, FrameTol::SIGNAL),
     ];
     let table: std::collections::BTreeMap<&str, (FrameTol, FrameTol)> =
         classes.iter().map(|(t, a, b)| (*t, (*a, *b))).collect();

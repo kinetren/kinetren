@@ -15,6 +15,14 @@ month, newest first.
 - **The language you chose stays chosen.** Opening another project used to forget it, and the
   next start came up in the system language; Economy UI was forgotten the same way.
 
+- **A real VHS: the tape is written and read back.** The new **VHS Tape** effect does not paint
+  stripes on the picture — it records it as a VHS deck does (the brightness on an FM carrier, the
+  colour on a low "colour-under" carrier, two heads on a spinning drum writing slanted tracks) and
+  plays the tape back. Snow, colour smear, the noise bar, the tear at the bottom and wobbly lines
+  come out of the causes: click a head on the drawn drum and make it dirty, clogged or chipped,
+  turn the tracking, switch SP/LP, a TBC, four heads for a clean pause, or record on one deck and
+  play on another. The old **VHS** look is still there.
+
 - **Datamosh — a real one.** The new Datamosh effect runs its own little video codec over the
   clip — motion search, a prediction loop, quantised detail, keyframes — and lets you break it on
   purpose: drop the keyframes so the previous shot gets dragged by the new shot's motion, repeat one

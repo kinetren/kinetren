@@ -4820,6 +4820,8 @@ impl FxInstance {
                 // the chain passes its slot through
                 FxInstance::builtin("datamosh"),
                 FxInstance::builtin("pan3d"),
+                // vhs-tape-simulation: new kinds at the end
+                FxInstance::builtin("vhs_tape"),
             ]
         })
     }

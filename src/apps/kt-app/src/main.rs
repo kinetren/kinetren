@@ -19,6 +19,7 @@ mod ctx_menu;
 #[cfg(test)]
 mod diag_tests;
 mod envclip;
+mod deck_face;
 mod eq_graph;
 mod ffmpeg_setup;
 #[cfg(test)]
@@ -57,6 +58,8 @@ mod segfield_tests;
 mod window_fill_tests;
 #[cfg(test)]
 mod welcome_prefs_tests;
+#[cfg(test)]
+mod vhs_tape_tests;
 mod reel_preview;
 mod render_dialog;
 mod settings_window;
