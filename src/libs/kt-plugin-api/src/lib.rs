@@ -905,6 +905,13 @@ pub struct Decl {
     pub state: bool,
     pub tail: Option<FramesFn>,
     pub lookahead: Option<FramesFn>,
+    /// The look-ahead window READS ACROSS THE EVENT'S EDGES (pitch-event-edges D2): the node's output
+    /// at a moment is built from the input around it (a grain, an FFT frame), so at an event edge it
+    /// must see the material the event was cut from, not silence. The host then feeds the chain the
+    /// event's own source around its edges and cuts the result back to the event right after the
+    /// last such node. `false` for a node that shapes what the event OUTPUTS (the limiter): it must
+    /// not react to material that is never heard.
+    pub reads_across_edges: bool,
     pub threads: Threads,
     /// The planner class; required for a video effect.
     pub video_class: Option<VideoClass>,
@@ -944,6 +951,7 @@ impl Default for Decl {
             state: false,
             tail: None,
             lookahead: None,
+            reads_across_edges: false,
             threads: Threads::Concurrent,
             video_class: None,
             gpu: Gpu::None,

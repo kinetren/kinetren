@@ -119,6 +119,19 @@ Why: the tail and the warm-up used to be one number; a limiter with an analysis 
 An effect with an analysis window SHALL read the source ahead of the output position and deliver its output aligned: for the rest of the engine the delay is zero, the playhead and crossfades do not move. The source window SHALL be extended forward by the look-ahead in ONE function, which both the render and the prefetch ask. Changing the look-ahead window (and the pitch engine) is structural: the processor is rebuilt. The total look-ahead MUST be less than the minimum seek pre-roll (4800 frames).
 Why: the output delay would drift against the master clock and neighboring tracks; a window extended only for the render would produce a silent cache miss — beyond the window the source would return silence without an underrun.
 
+At a wrap of the loop region the look-ahead SHALL read the NEXT LAP: the chain's input crosses the
+region end `La` frames before the output does and continues from the region start, so the frames a
+look-ahead node holds at the moment the output wraps are the head of the region — the material that
+will actually sound. A look-ahead node's rings and grids SHALL survive every seam (a loop wrap, a
+clip shifted during playback, a re-anchored material): they are keyed by the continuous position of
+the stream since the last real seek, while the node's curves are read at the clip position of the
+grain. A loop wrap MUST NOT produce a silent run or material from beyond the region end, for any
+region length, including a region shorter than the look-ahead window.
+Why: the pitch node re-initialised its rings on every position jump and the source was re-seated only
+when the output wrapped, so the first `La` = 4 608 frames (96 ms) after each wrap were synthesised from
+an empty ring — "on a loop a piece of silence is always heard, and on a small loop total silence"
+(ktprompts v26.10.18 item 7); the limiter's ring meanwhile emitted material from past the region end.
+
 #### Scenario: Look-ahead does not shift the output
 - **WHEN** a limiter with a 5 ms window sits in linear mode (threshold and ceiling at 0 dB)
 - **THEN** the output equals the chain without the limiter, sample for sample
@@ -133,6 +146,26 @@ Why: the output delay would drift against the master clock and neighboring track
 - **WHEN** a chain with a look-ahead node is rendered
 - **THEN** everything read from the source enters the prefetch request (`wanted ⊇ read`)
 - **TEST** t336 (`src/libs/kt-engine/tests/audio_lookahead.rs`)
+
+#### Scenario: A loop with pitch has no silent run
+- **WHEN** a clip of a 440 Hz sine carries a pitch shift of +7 semitones (WSOLA, then the vocoder), a loop region of 1 s that is aligned neither to a burst nor to the pitch hop plays four laps through the looped render in bursts of 1 024 frames
+- **THEN** after the first output frame there is no run of 64 or more frames below −80 dBFS anywhere, in particular none after a wrap (both engines); with WSOLA the RMS of every lap is within 1 dB of the first lap (the vocoder's level depends on the phase its synthesis starts from — 0.56 or 0.25 RMS by cold-start position, with no loop at all — its own defect, left for its own change); the same render before this change showed a run of 4 136 (WSOLA) and 2 839 (vocoder) frames after each wrap (the red proof)
+- **TEST** t906 (`src/libs/kt-engine/tests/loop_fx.rs`)
+
+#### Scenario: A short loop with pitch still sounds
+- **WHEN** the same pitched clip plays loop regions of 700 frames (shorter than a burst), 3 000 frames (shorter than the look-ahead) and 6 000 frames (just longer than it), twenty bursts each
+- **THEN** every burst carries signal (RMS at least half the dry RMS of the same tone), no burst is all zeros; there are no repeated warm-ups and no underruns (as t167)
+- **TEST** t907 (`src/libs/kt-engine/tests/loop_fx.rs`)
+
+#### Scenario: The looped pitch is deterministic, sliced or not, and reads only what was ordered
+- **WHEN** the four-lap looped render of t906 is run twice, once in bursts of 1 024 and once in pieces of 333 frames; and the source reads during it are compared with the prefetch request for the same looped window
+- **THEN** both runs and both slicings are byte-for-byte equal; the first lap up to `region end − La` equals the plain (non-looped) render of the same range; everything read from the source is in the prefetch request (`wanted ⊇ read`)
+- **TEST** t908 (`src/libs/kt-engine/tests/loop_fx.rs`)
+
+#### Scenario: A real seek and a moved clip with pitch
+- **WHEN** a pitched clip is sought cold to a position and rendered; the same position is reached by continuous playback; then the clip is shifted on the timeline during playback (a seam that is not a loop wrap); and a neutral pitch (zero semitones, no curve) plays a loop
+- **THEN** the seek equals the cold render of that position; the shifted clip continues without a silent run of 64 frames or more; the neutral pitch leaves the looped buffer byte-for-byte equal to the dry loop and asks for no look-ahead
+- **TEST** t910 (`src/libs/kt-engine/tests/audio_pitch.rs`)
 
 ### Requirement: A neutral effect — byte-for-byte identity
 An effect with neutral parameters and no curves SHALL NOT touch the buffer and SHALL NOT require look-ahead: zero semitones for pitch, zero gains for EQ, width 1.0 for stereo width. The default of a new parameter SHALL be the previous behavior byte for byte; the committed audio reference MUST NOT be regenerated when a kind is added.
@@ -266,3 +299,42 @@ the harness and the catalogs for sounds the chain already makes.
 - **THEN** the list equals the registry (18 ids today); W7 names its presets by the existing ids
   they chain and names exactly the nodes it adds, each with the family crate it lives in
 - **TEST** t978 (`src/apps/kt-cli/tests/fx_catalogue.rs`), t982 (`src/apps/kt-cli/tests/fx_catalogue.rs`)
+
+### Requirement: A look-ahead window that reads across the event's edges
+A kind whose output at a moment is built from the input around that moment (pitch: a grain, an FFT
+frame) SHALL declare that its look-ahead window reads across the event's edges
+(`Decl.reads_across_edges`); a kind that shapes what the event outputs (the limiter) SHALL NOT. When a
+chain has such a node with a non-zero look-ahead, no time warp and no node with a tail before the last
+such node ("the context applies", one function `chain_context` for the processor and the window
+functions), the chain's input around the event's edges SHALL be the event's own source: the seek
+pre-roll reads before the in-point and the input continues past the out-point by the look-ahead. A
+content gate right after the last such node SHALL cut the result back to the event (and the dry side
+of a layer mix waiting for its marker with it), so nothing outside the event is heard and nodes after
+it see the event as cut. The render and the prefetch SHALL extend the source window in the same
+function. A chain where the context does not apply SHALL be byte for byte as before.
+Why: an event is a window into its material, and pitch is a time-scale operation — the pitched event
+is "the material pitched, then cut", as clip pitch is applied to the source media in other editors.
+Cut first and pitched after, its grains at the edges were half silence: fifteen short pitched events in
+a row tore (kkt-26.11.01 item 15) — WSOLA +7 had 320 frames of total silence before every join, −7
+250 frames after it, and the vocoder dropped to 0.42 of its level. A limiter that saw past the
+out-point would duck before a peak that is never heard, so it does not read across.
+
+#### Scenario: Pitched events of other material have no dip at their edges
+- **WHEN** fifteen 100 ms events, each from a different place of a 440 Hz sine (no event continues another), carry a pitch shift of ±7 semitones, with each engine
+- **THEN** no 64-frame window within 1 024 frames of a join falls below half of the steady level of its event (before: total silence with WSOLA); the render is the same in one piece and in pieces of 1 024 and 333 frames
+- **TEST** t1106 (`src/libs/kt-engine/tests/pitch_edges.rs`)
+
+#### Scenario: Nothing outside the event is heard; a reverb after pitch rings only on the event
+- **WHEN** one pitched event (+7) stands in the middle of a timeline over a source that is loud before and after it; then the same event with an echo AFTER the pitch; then with an echo BEFORE it
+- **THEN** the output before the event's start and (without a tail) after its end is exactly zero; with the echo after the pitch the tail equals the echo of the gated pitched event; with the echo before it the context does not apply (`chain_context` is false) and the render equals the former edges
+- **TEST** t1107 (`src/libs/kt-engine/tests/pitch_edges.rs`)
+
+#### Scenario: The prefetch orders the context
+- **WHEN** pitched events (forward and reversed) are rendered with a recording fetcher from a cold seek and through their edges
+- **THEN** every source frame read is inside the prefetch request for the same range (`wanted ⊇ read`), including the pre-roll before the in-point and the look-ahead past the out-point
+- **TEST** t1108 (`src/libs/kt-engine/tests/pitch_edges.rs`)
+
+#### Scenario: Who reads across edges
+- **WHEN** the static `chain_context` and the processor's own decision are compared over chains: pitch alone, a limiter alone, neutral pitch, limiter + pitch, pitch + echo, echo + pitch, Slowed+Reverb + pitch
+- **THEN** they agree; only the chains with an active pitch and no tail or warp before it read across; the limiter alone renders an event cut from a longer material byte for byte as the same event with silence around it
+- **TEST** t1109 (`src/libs/kt-engine/tests/pitch_edges.rs`)

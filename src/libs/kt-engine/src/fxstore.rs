@@ -187,6 +187,26 @@ impl FxStateStore {
         }
     }
 
+    /// Hand the processor of `from` (a run predecessor of `len` frames that has just played to its
+    /// end) on to `to`, which is about to be entered fresh at its first frame (pitch-event-edges D3).
+    /// The two are SWAPPED: `to` gets the warm one rebased by `len`, `from` gets `to`'s, reset. The
+    /// caller re-syncs both to their own clips. `false` — not ready, nothing moved.
+    pub fn hand_on(&mut self, from: ClipId, len: i64, to: ClipId) -> bool {
+        let ready = self.map.get(&from).is_some_and(|p| p.next_local() == Some(len))
+            && self.map.get(&to).is_some_and(|p| p.fresh_entry(0));
+        if !ready {
+            return false;
+        }
+        let (Some(mut warm), Some(mut other)) = (self.map.remove(&from), self.map.remove(&to)) else {
+            return false;
+        };
+        warm.hand_on(len);
+        other.reset();
+        self.map.insert(to, warm);
+        self.map.insert(from, other);
+        true
+    }
+
     /// Synchronize the TRACK's processor with the model — by the same rule
     /// as for an event: the chain structure is the same → the state lives on, values
     /// arrive smoothly; changed (including the lookahead window or the
