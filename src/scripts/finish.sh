@@ -33,6 +33,27 @@ for a in "$@"; do
     esac
 done
 
+# One finish.sh at a time on the machine (the owner, 2026-11-01: "only one at a time, the others
+# wait, whoever takes it first runs it"): three parallel runs of the full test set and the live
+# scenarios made each of them several times slower and collided on the live display. The lock is
+# machine-wide (one file for every worktree) and is held by a `flock -o` process around the whole
+# run: `-o` keeps the lock out of the children, so a leaked Xvfb or kt-app cannot hold it after the
+# run ends, and a killed run releases it together with its flock. The wait is not a stage and is
+# not counted in the budget. KT_FINISH_NO_LOCK=1 skips it (a CI runner has one job anyway).
+if [ -z "${KT_FINISH_NO_LOCK:-}${KT_FINISH_LOCKED:-}" ] && command -v flock > /dev/null; then
+    FINISH_LOCK="${KT_FINISH_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/kinetren-finish.lock}"
+    if ! flock -n "$FINISH_LOCK" true; then
+        echo "finish.sh: another run holds the machine lock — $(cat "$FINISH_LOCK.who" 2>/dev/null || echo unknown); waiting"
+    fi
+    exec env KT_FINISH_LOCKED="$FINISH_LOCK" KT_FINISH_WAIT_FROM="$(date +%s)" \
+        flock -o "$FINISH_LOCK" "$(pwd)/scripts/finish.sh" "$@"
+fi
+if [ -n "${KT_FINISH_LOCKED:-}" ]; then
+    echo "$(pwd) pid $$ since $(date '+%H:%M:%S')" > "$KT_FINISH_LOCKED.who"
+    WAITED=$(($(date +%s) - ${KT_FINISH_WAIT_FROM:-$(date +%s)}))
+    [ "$WAITED" -gt 1 ] && echo "finish.sh: machine lock taken after $WAITED s"
+fi
+
 VER=$(git log -1 --format=%cd --date=format:%y.%m.%d 2>/dev/null || echo 00.00.00)
 HASH=$(git rev-parse --short=8 HEAD 2>/dev/null || echo nogit)
 FULL="kt$VER-$HASH"
