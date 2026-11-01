@@ -98,6 +98,7 @@ redo = "Вернуть (Ctrl+Shift+Z)"
 render = "Рендер в MP4 (регион или весь проект)"
 search = "Поиск по проекту (Ctrl+F)"
 diag = "Диагностика"
+more = "Ещё кнопки: те, что не поместились в узкое окно"
 save = "Сохранить (Ctrl+S)"
 
 # Timeline: track context menu.

@@ -471,6 +471,8 @@ impl KtApp {
             crate::window_shell::Kind::Tool,
         )
             .size([580.0, 520.0], [460.0, 320.0])
+            .remember("fx")
+            .probe("win.fx")
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
                 for (n, id) in members.iter().enumerate() {

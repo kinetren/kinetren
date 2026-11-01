@@ -654,6 +654,7 @@ impl KtApp {
             tr(k::render::SETTINGS_TITLE),
             crate::window_shell::Kind::Dialog,
         )
+            .width(600.0, [440.0, 260.0])
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
@@ -991,7 +992,6 @@ impl KtApp {
                 why: "an export runs for minutes; an Esc meant for the timeline must not kill it, and the window has its own Cancel",
             },
         )
-            .resizable()
             .default_size([2.0 * FORM_W + 40.0, 520.0])
             .default_pos(ctx.content_rect().center() - egui::vec2(FORM_W + 20.0, 260.0))
             .show(ctx, |ui| {
@@ -1091,7 +1091,7 @@ impl KtApp {
                             } else {
                                 ui.weak(crate::tf!(k::render::LOG_PATH, job.log_file.path.display()));
                             }
-                            egui::ScrollArea::vertical().max_height(160.0).stick_to_bottom(true).show(ui, |ui| {
+                            egui::ScrollArea::vertical().max_height((ui.clip_rect().height() * 0.4).max(160.0)).stick_to_bottom(true).show(ui, |ui| {
                                 for (stamp, line) in &job.log {
                                     ui.monospace(format!("[{}] {}", clock_text(*stamp), line.shown()));
                                 }
@@ -1125,30 +1125,32 @@ impl KtApp {
                                 act = Some(Act::Cancel);
                             }
                         } else {
-                            if matches!(job.result, Some(Ok(_))) {
-                                let r = ui.button(tr(k::render::OPEN_FILE));
-                                crate::widgets::field_probe::note("render.open_file", r.rect);
-                                if r.clicked() {
-                                    act = Some(Act::OpenFile);
-                                }
-                                let r = ui.button(tr(k::render::OPEN_FOLDER));
-                                crate::widgets::field_probe::note("render.open_folder", r.rect);
-                                if r.clicked() {
-                                    act = Some(Act::OpenFolder);
-                                }
-                            } else {
-                                let r = ui.button(tr(k::render::OPEN_LOG));
-                                crate::widgets::field_probe::note("render.open_log", r.rect);
-                                if r.clicked() {
-                                    act = Some(Act::OpenLog);
-                                }
-                            }
-                            // Close at the far right, away from where Cancel stood (trick 3)
+                            // the finished actions stand at the FAR RIGHT, Close the farthest: the
+                            // place where Cancel stood stays empty (trick 3), now that the window
+                            // keeps its size and the row no longer moves down at the finish
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let r = ui.button(tr(k::render::CLOSE));
                                 crate::widgets::field_probe::note("render.close", r.rect);
                                 if r.clicked() {
                                     act = Some(Act::Close);
+                                }
+                                if matches!(job.result, Some(Ok(_))) {
+                                    let r = ui.button(tr(k::render::OPEN_FOLDER));
+                                    crate::widgets::field_probe::note("render.open_folder", r.rect);
+                                    if r.clicked() {
+                                        act = Some(Act::OpenFolder);
+                                    }
+                                    let r = ui.button(tr(k::render::OPEN_FILE));
+                                    crate::widgets::field_probe::note("render.open_file", r.rect);
+                                    if r.clicked() {
+                                        act = Some(Act::OpenFile);
+                                    }
+                                } else {
+                                    let r = ui.button(tr(k::render::OPEN_LOG));
+                                    crate::widgets::field_probe::note("render.open_log", r.rect);
+                                    if r.clicked() {
+                                        act = Some(Act::OpenLog);
+                                    }
                                 }
                             });
                         }

@@ -98,6 +98,7 @@ redo = "重做（Ctrl+Shift+Z）"
 render = "导出为 MP4（区间或整个项目）"
 search = "在项目中搜索（Ctrl+F）"
 diag = "诊断"
+more = "更多按钮：窗口太窄时放不下的按钮"
 save = "保存（Ctrl+S）"
 
 # Timeline: track context menu.

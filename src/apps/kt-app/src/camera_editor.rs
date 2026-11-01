@@ -81,6 +81,7 @@ impl KtApp {
             crate::window_shell::Kind::Tool,
         )
             .size([560.0, 480.0], [420.0, 320.0])
+            .remember("camera")
             .probe("win.camera")
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {

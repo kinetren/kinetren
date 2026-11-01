@@ -20,6 +20,18 @@ month, newest first.
 - **"Create a generator" left the File menu.** It is in **Edit** now, and in a track's right-click
   menu, which puts the generator exactly where you clicked — a video track offers the picture
   kinds, an audio track the sound kinds. The media bin keeps its item.
+- **Every window can be made bigger, and what is inside grows with it.** Drag a window's corner:
+  the effects chain, the curve graph, the lists, the Guide and the render log take the new room
+  instead of leaving an empty frame around a small box. Each window remembers the size you gave
+  it — an effects window opens as large as the last one you enlarged.
+- **The Guide reads like a manual.** Its tables are real tables, with a shaded header, lines
+  between the cells and a key column as wide as its keys; every "I want to…" entry is its own
+  card, the place to act written under it.
+- **Adding an effect shows one big gallery.** The "+ effect" picker is as wide as its window and
+  as tall as the screen allows — presets first, then the effects — with more thumbnails per row
+  in a wider window.
+- **No button is cut off at the end of the toolbar.** In a narrow window the buttons that do not
+  fit (Render, Search, Diagnostics, Save…) move into a **⋯** menu at the end of the row.
 - **Zigzag and the other segment shapes on one piece of a curve, or on a hundred.** Right-click
   a segment, or <kbd>Ctrl</kbd>+click several, or drag across empty space in the curve graph:
   under "Shape of all segments" a row appears with the same fields for just those segments.

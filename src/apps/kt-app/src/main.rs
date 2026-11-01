@@ -49,6 +49,8 @@ mod reach_tests;
 mod gen_audio_tests;
 #[cfg(test)]
 mod segfield_tests;
+#[cfg(test)]
+mod window_fill_tests;
 mod reel_preview;
 mod render_dialog;
 mod settings_window;

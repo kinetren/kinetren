@@ -125,6 +125,17 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 - **The contents of a `TextEdit` are never reordered** — only the catalog strings. Otherwise the cursor and the selection would diverge from what is shown.
 - **The window title ≠ its id.** `Window::new(title)` derives the `Id` from the title, and the window position lives under it: every window must have an explicit `.id()`, otherwise changing the language will reset the position of the dialog (test 129).
 - **A window is made only by the shell; its kind decides Esc, cross, scroll and width** (shared-window-shell). `window_shell::Shell::new(id, title, Kind)` (and `window_shell::modal`) is the only way to a window; the site gives its kind (`Tool` — close and keep edits, `Dialog` — cancel, `Progress { why }` — no cross, Esc does not touch it) and, where the kind allows, its size and place. The cross and Esc come back as one `Closed`, so the site runs one action for both. Esc closes the window ON TOP: `begin_frame` lists the previous frame's windows in layer order, `escape_action` picks the last, `arm_esc` hands it back. There is no window-level scroll — the body scrolls in `widgets::window_body` (the morpher window's `.vscroll(true)` widened it one physical pixel per frame at the owner's zoom 1.1). The guard is t921; the width — t918/t923; Esc — t919/t920/t922.
+- **Every window is resizable and its body FILLS it** (windows-fill-their-area, kkt-26.11.01 item 12 —
+  "a needle's eye … I am tired of reminding"). egui sizes a `Window` by its CONTENT, so only a body
+  that fills makes a window taller: every window draws its content through `widgets::window_body`
+  (with an action row) or `window_fill`/`window_log` (without). A site gives `.size(default, min)`
+  or `.width(w, min)`; with `.width` the window FITS its content for two frames, then fills — and
+  its minimum height must stay UNDER its content, or it opens fitted and jumps to the minimum (t918).
+  A window opened per object adds `.remember("<family>")`. A fixed size in window code (a screen
+  fraction, `max_height(<n>)`, `set_width(<n>)`, `desired_width(<n>)`) needs a row with its reason in
+  `ALLOWED_FIXED` (t1127); t1125 drags the corner of every registry window and checks the body
+  took the room. `ScrollArea` is bounded by its parent's CURRENT room: a scroll that must reach a
+  height (a popup gallery, a fresh window's fit) says so with `min_scrolled_height`.
 - **A frameless button in a row that sets a window's width grows on hover.** egui adds the frame's stroke (1 point per side) to a `selectable_label`/frameless button only while it is hovered; the window keeps the widest content it ever had (`Resize` only grows), so one hover widened the project settings window by two points for good. In such a row draw `Button::selectable(..).frame_when_inactive(true)` (t918).
 - **Strings assembled in a background thread must not be translated** — the language lives in the TLS of the UI thread. DATA travels over the channel, and the string is concatenated at display time (this is how the render result summary is done).
 - New text → `i18n/en.toml` + `ru.toml` + three translations; the rules for the translator are in `i18n/README.md`. New hieroglyphs → rebuild the subsets with `python3 scripts/subset-fonts.py` (otherwise t100 turns red, and correctly so).

@@ -2278,6 +2278,18 @@ cache. The box leaves the column (the bin gets all of it); every line it had is 
 "Economy UI" checkbox is not carried over: the same switch is in View (item 13: one checkbox in
 one place).
 
+**Item 12 taken as (windows-fill-their-area, 2026-11-01):**
+- One rule for all windows instead of a fix of one: the window shell makes every window
+  resizable, the body fills the window (the 0.62× screen cap is gone), a window opened per object
+  (effects, morpher, transition, camera, track) opens at the size its kind was last given. A
+  guard drags the corner of every window of the registry and checks the body took the room.
+- The Guide: grid tables with column widths from their content; each "I want to…" entry is a card.
+- The picker: one gallery, as wide as its window, as tall as the screen allows.
+- The toolbar (found by the lessons executor): what does not fit moves into a "⋯" menu.
+- Not changed: the media bin's width limit (R.13, "squeezed for the third time"), the
+  numeric fields' widths (sized for their longest value), the welcome window's right column
+  (its own change comes next).
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
@@ -2288,7 +2300,7 @@ one place).
 | The look of the meters | 2 (r.13 twice) | the v1 layer order + strengthened alphas; a brightness measurement by pixels |
 | "Check what I launch" | 2 (r.12, r.13) | `finish.sh` + the version in the report; the check in the EXPANDED window |
 | Rules about UI convenience | 5+ (r.8–r.12) | a checklist of 15 items in apps/kt-app/CLAUDE.md |
-| **A window does not fill its area when enlarged ("a needle's eye")** | **"I am tired of reminding" (2026-11-01, and earlier rounds)** | open: the 2026-11-01 round makes it a guard over every window, not a fix of one |
+| **A window does not fill its area when enlarged ("a needle's eye")** | **"I am tired of reminding" (2026-11-01, and earlier rounds)** | `windows-fill-their-area`: one rule in the window shell (every window resizable, its body fills it, sizes remembered) and a guard over EVERY window that drags its corner (t1125); fixed sizes need a written reason (t1127) |
 | **"The agents did not work"** — a look shipped without anyone looking at it | 2026-11-01 (welcome window, lesson texts, VHS) | open: the 2026-11-01 round |
 | **Dead ends: you can create it, you cannot control it** | **7 (r.33–r.40)** | the checklist did not work — the rules were written down and broken. The R.38 tests did not work either: they checked the REACHABILITY of what was made, not its consequence. R.40: a test asserts the observable consequence AND probes from the point where the person acts; for each item — a live scenario |
 | **"You did not check"** | **3 (r.12, r.13, r.40)** | the harness and the model prove nothing: `finish.sh`, a live scenario for each item, a check of the consequence |

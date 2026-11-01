@@ -314,6 +314,8 @@ pub struct KtApp {
     pub lane_edit_focus: bool,
     /// Timecode input in the toolbar (item 4 round 10): Some — the field is open.
     pub tc_edit: Option<String>,
+    /// The bottom row's group widths as last drawn in the row (`toolbar::draw_toolbar_strip`).
+    pub(crate) tb_group_w: [f32; crate::toolbar::TB_GROUPS],
     pub tc_edit_focus: bool,
     /// Project search palette (item 3 round 10).
     pub search_open: bool,
@@ -856,6 +858,7 @@ impl KtApp {
             area_edit_focus: false,
             lane_edit_focus: false,
             tc_edit: None,
+            tb_group_w: [0.0; crate::toolbar::TB_GROUPS],
             tc_edit_focus: false,
             search_open: false,
             search_focus: false,
@@ -1132,6 +1135,7 @@ impl KtApp {
             area_edit: None,
             area_edit_focus: false,
             lane_edit_focus: false,
+            tb_group_w: [0.0; crate::toolbar::TB_GROUPS],
             tc_edit: None,
             tc_edit_focus: false,
             search_open: false,
@@ -2187,11 +2191,15 @@ impl KtApp {
                 },
             )
                 .anchor(egui::Align2::RIGHT_BOTTOM, [-16.0, -16.0])
+                .width(260.0, [200.0, 60.0])
                 .show(ui.ctx(), |ui| {
-                    ui.add(egui::ProgressBar::new(self.analysis.progress()).desired_width(220.0));
-                    if self.analysis.queued() > 0 {
-                        ui.weak(crate::tf!(k::win::ANALYSIS_QUEUED, self.analysis.queued()));
-                    }
+                    // the bar spans its window: pulled wider, the progress reads finer
+                    crate::widgets::window_body(ui, |ui| {
+                        ui.add(egui::ProgressBar::new(self.analysis.progress()));
+                        if self.analysis.queued() > 0 {
+                            ui.weak(crate::tf!(k::win::ANALYSIS_QUEUED, self.analysis.queued()));
+                        }
+                    });
                     if ui.button(tr(k::win::ANALYSIS_CANCEL)).clicked() {
                         cancel = true;
                     }
@@ -2217,7 +2225,10 @@ impl KtApp {
                 crate::window_shell::Kind::Tool,
             )
                 .size([460.0, 340.0], [320.0, 200.0])
-                .show(ui.ctx(), |ui| {
+                // below the title row: placed by egui in the top-right corner, its resize edge
+                // (every window is resizable) covered the program's own window buttons (t129)
+                .default_pos(egui::pos2(ui.ctx().content_rect().right() - 484.0, 44.0))
+                .show(ui.ctx(), |ui| crate::widgets::window_fill(ui, |ui| {
                     if self.notices.is_empty() {
                         ui.weak(tr(k::win::NOTICES_EMPTY));
                     }
@@ -2246,7 +2257,7 @@ impl KtApp {
                             }
                         }
                     }
-                });
+                }));
             if win.closed() {
                 open = false;
             }
@@ -2496,12 +2507,12 @@ impl KtApp {
             crate::window_shell::Kind::Tool,
         )
             .anchor(egui::Align2::CENTER_CENTER, [0.0, -80.0])
-            .default_width(420.0)
+            .width(460.0, [320.0, 60.0])
             .show(ctx, |ui| {
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.search_query)
                         .hint_text(tr(k::search::FIELD))
-                        .desired_width(400.0),
+                        .desired_width(f32::INFINITY),
                 );
                 if !r.has_focus() && self.search_focus {
                     r.request_focus();
@@ -2521,7 +2532,8 @@ impl KtApp {
                     self.search_sel = self.search_sel.saturating_sub(1);
                 }
                 ui.separator();
-                egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                // the finds fill the window: an enlarged search shows more of them (item 12)
+                crate::widgets::window_fill(ui, |ui| {
                     for (i, h) in hits.iter().enumerate() {
                         let tag = match h.kind {
                             HitKind::Marker => tr(k::search::MARKER),
@@ -3669,9 +3681,11 @@ impl KtApp {
             crate::window_shell::Kind::Dialog,
         )
             .show(ctx, |ui| {
+                // the body fills the window; the buttons stay at its bottom (windows-fill-their-area)
+                crate::widgets::window_body(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(tr(k::msg::NEST_NAME_LABEL));
-                    let resp = ui.add(egui::TextEdit::singleline(&mut d.name).desired_width(200.0));
+                    let resp = ui.add(egui::TextEdit::singleline(&mut d.name).desired_width(f32::INFINITY));
                     if d.focus {
                         resp.request_focus();
                         d.focus = false;
@@ -3687,6 +3701,7 @@ impl KtApp {
                         .weak()
                         .small(),
                 );
+                });
                 ui.horizontal(|ui| {
                     if ui.button(tr(k::msg::NEST_RENAME_DO)).clicked() {
                         go = true;
@@ -4812,6 +4827,8 @@ impl KtApp {
             crate::window_shell::Kind::Dialog,
         )
             .show(ctx, |ui| {
+                // the body fills the window; the buttons stay at its bottom (windows-fill-their-area)
+                crate::widgets::window_body(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(tr(k::msg::PASTE_PREFIX_LABEL));
                     let resp = ui.add(
@@ -4865,6 +4882,7 @@ impl KtApp {
                     );
                 }
                 ui.label(egui::RichText::new(tr(k::msg::PASTE_PREFIX_NOTE)).weak().small());
+                });
                 ui.horizontal(|ui| {
                     if ui.button(tr(k::msg::PASTE_DO)).clicked() {
                         go = true;
@@ -4905,11 +4923,13 @@ impl KtApp {
             crate::window_shell::Kind::Dialog,
         )
             .show(ctx, |ui| {
+                // the body fills the window; the buttons stay at its bottom (windows-fill-their-area)
+                crate::widgets::window_body(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(tr(k::msg::PRESET_NAME_LABEL));
                     let resp = ui.add(
                         egui::TextEdit::singleline(&mut d.name)
-                            .desired_width(200.0)
+                            .desired_width(f32::INFINITY)
                             .hint_text(tr(k::msg::PRESET_NAME_HINT)),
                     );
                     if d.focus {
@@ -4933,6 +4953,7 @@ impl KtApp {
                     ui.label(egui::RichText::new(shown).strong());
                 }
                 ui.label(egui::RichText::new(tr(k::msg::PRESET_SAVE_NOTE)).weak().small());
+                });
                 ui.horizontal(|ui| {
                     if ui.button(tr(k::msg::PRESET_SAVE_DO)).clicked() {
                         go = true;
@@ -9218,20 +9239,18 @@ impl KtApp {
                             self.perf.churn.clear();
                         }
                     });
-                    let log_rect = egui::ScrollArea::vertical()
-                        .id_salt("kt_diag_log")
-                        .stick_to_bottom(true)
-                        .auto_shrink([false, false])
-                        .max_height(log_h)
-                        .show(ui, |ui| {
-                            for line in &self.perf.log {
-                                ui.monospace(line);
-                            }
-                            if self.perf.log.is_empty() {
-                                ui.weak(tr(k::perf::LOG_EMPTY));
-                            }
-                        })
-                        .inner_rect;
+                    // the log is the window's filling tail (windows-fill-their-area: t1125 drags
+                    // the corner and expects the body to take the room); the graphs above left it
+                    // `log_h` of the body, so the two layouts agree
+                    let log_rect = crate::widgets::window_log(ui, |ui| {
+                        for line in &self.perf.log {
+                            ui.monospace(line);
+                        }
+                        if self.perf.log.is_empty() {
+                            ui.weak(tr(k::perf::LOG_EMPTY));
+                        }
+                        ui.clip_rect()
+                    });
                     crate::widgets::field_probe::note("diag.log", log_rect);
                     });
             });

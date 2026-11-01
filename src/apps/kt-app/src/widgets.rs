@@ -457,25 +457,140 @@ pub fn param_label(name: &str) -> String {
     s.to_string()
 }
 
-/// THE WINDOW BODY IN A SCROLL, the buttons — below it (R.66, form contract).
+/// THE WINDOW BODY IN A SCROLL, the buttons — below it (R.66, form contract), and the body FILLS
+/// the window (windows-fill-their-area).
 ///
 /// A window that has outgrown the screen has no right to hide its actions: in R.65
 /// this is exactly how the track window’s “Close” and “Cancel” went past the edge, and
-/// a test caught it, not the eye. The scroll height is a fraction of the screen, so that on
-/// any laptop the buttons remain visible.
+/// a test caught it, not the eye. Every window is resizable and has a size bounded by the screen
+/// (`window_shell`), so the scroll takes the window’s height minus the action row and its whole
+/// width. The former cap — 0.62 of the SCREEN, with the scroll shrunk to its content — left an
+/// enlarged window an empty frame around a fixed body: “you look through a needle’s eye on a big
+/// window” (kkt-26.11.01 item 12).
 pub fn window_body<R>(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    // The screen fraction is the ceiling; a window with a SET height, in addition,
-    // leaves room for the buttons below it (R.67): otherwise the window scrolled
-    // itself too, and “Done” went past the bottom edge — the curve block had nothing
-    // to close it with (live scenario `curves`).
-    let screen = (ui.ctx().content_rect().height() * 0.62).max(240.0);
-    let in_window = ui.available_height() - ACTIONS_H;
-    let max_h = if in_window.is_finite() { screen.min(in_window).max(160.0) } else { screen };
-    egui::ScrollArea::vertical()
-        .max_height(max_h)
-        .auto_shrink([true, true])
-        .show(ui, body)
-        .inner
+    fill_scroll(ui, ACTIONS_H, false, body)
+}
+
+/// The same filling body for a window WITHOUT an action row (the message log, the search, the
+/// Guide's lists): the scroll reaches the window's bottom edge.
+pub fn window_fill<R>(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    fill_scroll(ui, 0.0, false, body)
+}
+
+/// A filling log at the window's bottom: it follows its newest line (the diagnostics log).
+pub fn window_log<R>(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    fill_scroll(ui, 0.0, true, body)
+}
+
+fn fill_scroll<R>(
+    ui: &mut egui::Ui,
+    below: f32,
+    stick: bool,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    if crate::window_shell::in_modal() {
+        // a modal cannot be resized: a filling body would take the whole screen. It keeps the
+        // content-sized body capped by the screen, so its buttons stay visible (R.66)
+        let screen = (ui.ctx().content_rect().height() * 0.62).max(240.0);
+        return egui::ScrollArea::vertical()
+            .max_height(screen)
+            .auto_shrink([true, true])
+            .show(ui, body)
+            .inner;
+    }
+    // what the window draws below the body (the action row), as measured last frame by the
+    // shell: the body is then EXACTLY the window minus it, so fitting and filling agree to the
+    // point and nothing grows by itself (t918). The constant is only the first frame's guess.
+    let tail = fill_probe::tail(ui).unwrap_or(below);
+    let avail = (ui.available_height() - tail).max(MIN_BODY_H);
+    let top = ui.cursor().top();
+    let out = if crate::window_shell::fitting() {
+        // a fresh window opens at its content's height, down to the screen's bottom edge. Not
+        // padded up to the window's minimum: a fitted window's minimum is set under its content
+        // (`Shell::width`), so fitting and filling agree and the window never moves by itself
+        // once shown (t918)
+        let room = (ui.ctx().content_rect().bottom() - top - tail - 48.0).max(avail);
+        // `min_scrolled_height`: egui bounds a scroll by the window's CURRENT room, and a fresh
+        // window starts at its minimum — the content could not raise it
+        egui::ScrollArea::vertical()
+            .max_height(room)
+            .min_scrolled_height(room)
+            .auto_shrink([false, true])
+            .stick_to_bottom(stick)
+            .show(ui, body)
+    } else {
+        egui::ScrollArea::vertical()
+            .max_height(avail)
+            .min_scrolled_height(avail)
+            .auto_shrink([false, false])
+            .stick_to_bottom(stick)
+            .show(ui, body)
+    };
+    // the body is what the scroll TOOK (its `inner_rect` can be taller than the space it
+    // allocated: then the "tail" read zero and the action row was left out of the fit)
+    let r = egui::Rect::from_min_max(
+        egui::pos2(out.inner_rect.left(), top),
+        egui::pos2(out.inner_rect.right(), ui.min_rect().bottom()),
+    );
+    fill_probe::note(ui, r);
+    out.inner
+}
+
+/// The lowest a window body gets: none of its own — the window's minimum size is the floor, and
+/// an empty body (a search with no finds yet) must not raise a fitted window by a floor (t918).
+const MIN_BODY_H: f32 = 0.0;
+
+/// The rectangle each window's filling body took, by the window's layer — what t1125 reads (the
+/// accessibility tree cannot see a scroll area) — and the height the window drew below it, which
+/// the shell measures after the window's content and the body reads the next frame. `Copy`
+/// values in egui's temp memory per window: no allocation per frame after the first.
+pub(crate) mod fill_probe {
+    use eframe::egui;
+
+    fn key(layer: egui::LayerId) -> egui::Id {
+        egui::Id::new(("kt_fill_probe", layer))
+    }
+
+    fn tail_key(layer: egui::LayerId) -> egui::Id {
+        egui::Id::new(("kt_fill_tail", layer))
+    }
+
+    /// Several bodies in one window (the Guide's two sides) make one: the union of this pass's.
+    pub fn note(ui: &egui::Ui, rect: egui::Rect) {
+        let id = key(ui.layer_id());
+        let pass = ui.ctx().cumulative_pass_nr();
+        ui.ctx().data_mut(|d| {
+            let v = d.get_temp_mut_or_insert_with::<(u64, egui::Rect)>(id, || (pass, rect));
+            *v = if v.0 == pass { (pass, v.1.union(rect)) } else { (pass, rect) };
+        });
+    }
+
+    #[cfg(test)]
+    pub fn get(ctx: &egui::Context, layer: egui::LayerId) -> Option<egui::Rect> {
+        ctx.data(|d| d.get_temp::<(u64, egui::Rect)>(key(layer))).map(|(_, r)| r)
+    }
+
+    /// The shell, after the window's content: how much it drew below the body.
+    pub fn measure_tail(ui: &egui::Ui) {
+        let layer = ui.layer_id();
+        let pass = ui.ctx().cumulative_pass_nr();
+        let Some((p, body)) = ui.ctx().data(|d| d.get_temp::<(u64, egui::Rect)>(key(layer))) else { return };
+        if p != pass {
+            return;
+        }
+        let tail = (ui.min_rect().bottom() - body.bottom()).max(0.0);
+        ui.ctx().data_mut(|d| *d.get_temp_mut_or_insert_with::<f32>(tail_key(layer), || tail) = tail);
+    }
+
+    pub fn tail(ui: &egui::Ui) -> Option<f32> {
+        ui.ctx().data(|d| d.get_temp::<f32>(tail_key(ui.layer_id())))
+    }
+}
+
+/// How tall a popup list may be: the room the screen has below the current position, minus a
+/// margin — never a fixed number (the picker was 160 + 450 points on any screen, item 12).
+pub fn popup_list_height(ui: &egui::Ui) -> f32 {
+    (ui.ctx().content_rect().bottom() - ui.cursor().top() - 24.0).max(160.0)
 }
 
 /// How much of the window height the action button row keeps for itself: a
@@ -2097,7 +2212,8 @@ pub fn media_picker(
             ui.close();
         }
         let q = query.to_lowercase();
-        egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+        let list_h = popup_list_height(ui);
+        egui::ScrollArea::vertical().max_height(list_h).min_scrolled_height(list_h).show(ui, |ui| {
             for (mid, path) in media {
                 if !q.is_empty() && !path.to_lowercase().contains(&q) {
                     continue;
@@ -2139,7 +2255,8 @@ pub fn media_picker_raw(
         }
         ui.separator();
         let q = query.to_lowercase();
-        egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+        let list_h = popup_list_height(ui);
+        egui::ScrollArea::vertical().max_height(list_h).min_scrolled_height(list_h).show(ui, |ui| {
             for (i, name) in items {
                 if !q.is_empty() && !name.to_lowercase().contains(&q) {
                     continue;

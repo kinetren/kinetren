@@ -118,7 +118,8 @@ impl KtApp {
             crate::tf!(k::trn::TITLE, ed.id.0),
             crate::window_shell::Kind::Tool,
         )
-            .size([420.0, 260.0], [340.0, 200.0])
+            .width(440.0, [340.0, 120.0])
+            .remember("transition")
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
                 let mut t = cur.clone();

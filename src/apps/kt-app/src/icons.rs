@@ -37,6 +37,7 @@ pub const WARN: &str = "\u{E4E0}"; // warning (E4DE was a voicemail — item 1 o
 pub const SEARCH: &str = "\u{E30C}"; // magnifying-glass (item 3 of round 10)
 pub const GAUGE: &str = "\u{E000}"; // pulse (the gauge E628 was read as a Reddit robot — item 5 of round 10)
 pub const SQUARES_FOUR: &str = "\u{E464}"; // grid (bin mode)
+pub const MORE: &str = "\u{E1FE}"; // dots-three: the toolbar's overflow menu (windows-fill-their-area)
 pub const LIST: &str = "\u{E2F0}"; // list; it is also the “hamburger” of the narrow toolbar
 pub const CHECK: &str = "\u{E182}"; // check mark in menu items (≡/✓ from Unicode — tofu, test t100)
 #[allow(dead_code)] // used by the bin groups (item 13 of round 11)

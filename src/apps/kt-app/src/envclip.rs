@@ -173,6 +173,7 @@ impl crate::app::KtApp {
             tr(k::fx::FIT_TITLE),
             crate::window_shell::Kind::Dialog,
         )
+            .width(460.0, [320.0, 60.0])
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
                 ui.label(egui::RichText::new(tr(k::fx::FIT_HINT)).weak().small());

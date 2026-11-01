@@ -98,6 +98,7 @@ redo = "Rehacer (Ctrl+Mayús+Z)"
 render = "Renderizar a MP4 (región o proyecto)"
 search = "Buscar en el proyecto (Ctrl+F)"
 diag = "Diagnóstico"
+more = "Más botones: los que no caben en una ventana estrecha"
 save = "Guardar (Ctrl+S)"
 
 # Timeline: track context menu.
