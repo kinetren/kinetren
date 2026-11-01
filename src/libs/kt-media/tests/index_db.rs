@@ -476,3 +476,37 @@ fn t795b_reel_frames_and_peaks_are_written_separately() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// t1171 (worktree-version-and-thumb-lock): concurrent openings of one sidecar all succeed.
+///
+/// A project opening starts several threads at once that each open `<project>.ktindex.db`
+/// (index worker, thumbnails, reel preview, sources). `PRAGMA journal_mode=WAL` came back
+/// `SQLITE_BUSY` after 0.2 ms — SQLite does not call the busy handler where waiting could
+/// deadlock — and the reel preview lost its disk tier and rendered again (t640 red on a
+/// quiet machine). Asserted: on a NEW file and on an existing one whose last connection has
+/// closed (the second opening of t640), every one of the simultaneous openings succeeds.
+#[test]
+fn t1171_concurrent_openings_never_get_busy() {
+    let dir = tempfile::tempdir().unwrap();
+    const THREADS: usize = 12;
+    for round in 0..20 {
+        let db_path = dir.path().join(format!("p{round}.ktindex.db"));
+        // phase 0 — the file does not exist yet; phase 1 — it exists, nobody holds it
+        for phase in 0..2 {
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(THREADS));
+            let errs: Vec<String> = (0..THREADS)
+                .map(|_| {
+                    let (p, b) = (db_path.clone(), barrier.clone());
+                    std::thread::spawn(move || {
+                        b.wait();
+                        MediaIndexDb::open(&p).map(drop).err().map(|e| format!("{e:?}"))
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .filter_map(|h| h.join().unwrap())
+                .collect();
+            assert!(errs.is_empty(), "round {round} phase {phase}: {} openings failed: {errs:?}", errs.len());
+        }
+    }
+}

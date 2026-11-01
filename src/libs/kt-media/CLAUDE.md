@@ -72,6 +72,13 @@ Media sources: the trait `MediaSource`, `SyntheticSource` (tests), `FfmpegSource
   locked or I/O error is a cache miss returned to the caller: several threads of one process
   hold the sidecar at once, and deleting it under them made SQLite truncate a `-shm` another
   connection still had mapped — SIGBUS (t640 under load; media-index design).
+- **The SETUP of an opening is taken in turn per sidecar path** (`open_gate`, t1171): the threads
+  of a project opening open the sidecar at the same moment, and an opening that WRITES (the WAL
+  switch, the schema) collided — `PRAGMA journal_mode=WAL` returns `SQLITE_BUSY` in 0.2 ms without the
+  busy handler, and a new file's openers outwaited the timeout (t640 red on a quiet machine). WAL is
+  read before it is set, the schema is created under `BEGIN IMMEDIATE`; an opening of a ready sidecar
+  writes nothing. A new step of `try_open` that writes stays inside the gate and runs only when the
+  file needs it. The returned connection is still the thread's own — no shared connection.
 - The pixel font 3×5 and `Canvas` — the common module `pixfont` (a placeholder + a future timecode generator). This is NOT the rasterization of the user's title text: that lives in kt-text with its own determinism discipline.
 
 ## FfmpegSource (src/ffmpeg.rs) — how it is built

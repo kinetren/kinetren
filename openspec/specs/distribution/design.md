@@ -196,3 +196,20 @@ while the container runs as the caller; `release-build.sh` handed it over, the t
 their own copy without the chown. `scripts/cargo-registry.sh` is now the one body (t1064). Rejected:
 `mkdir -p ~/.cargo/registry` on the host — it leaves an older root-owned volume broken. Details:
 `openspec/changes/archive/2026-11-01-ci-green-again/design.md` (D1, D2).
+
+## The version follows the commit in a worktree too (worktree-version-and-thumb-lock, 2026-11-01)
+
+- **What hurt.** `libs/kt-version/build.rs` watched `../../../.git/HEAD` and `.git/refs/heads`. In a
+  git worktree `.git` is a FILE (`gitdir: …/.git/worktrees/<name>`), neither path existed, cargo was
+  told nothing about git and never reran the script after a commit. The crash window of an executor
+  said `kt26.11.01-a498ecfe` while `finish.sh` printed `b6c8f121` — the "stale program" class
+  `finish.sh` exists against, in every worktree of the round.
+- **The rule.** git names the directories (`rev-parse --git-dir`, `--git-common-dir`); watched are
+  this checkout's HEAD, the loose file of its branch (a packed-only branch: the directory under
+  `refs` the next commit writes it into), `packed-refs` — and only paths that exist: cargo reruns a
+  script on every build for a missing one, and a rerun of this one relinks every binary. One file,
+  `git_watch.rs`, included by `build.rs` and its test t1170. Checked on the worktree itself: a commit
+  moved the embedded version of `target/debug/kinetren` from `4c65c355` to `2fe66bb2`.
+- **Rejected:** the whole `refs/heads` — shared by every parallel session's worktree, each of their
+  commits would relink this tree; parsing the `.git` file by hand — git is already needed for the
+  version string, and `rev-parse` also handles `GIT_DIR`, submodules and relative `gitdir:`.
