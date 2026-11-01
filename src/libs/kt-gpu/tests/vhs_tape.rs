@@ -11,7 +11,6 @@ use kt_engine::{FramePlan, LayerSrc, PlanLayer, VideoGpuExec, compose_plan_cpu};
 use kt_gpu::{FrameTol, assert_frames_close, test_engine};
 use kt_media::VideoFrame;
 use kt_model::FxInstance;
-use kt_plugin_api::Plugin;
 use kt_time::Tick;
 
 const W: u32 = 192;

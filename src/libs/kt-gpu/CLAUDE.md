@@ -147,6 +147,16 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
   function of the registry (`MODE_PLUGIN + index`), they get neither into the project files (the
   tag travels) nor into cache keys (the id does).
 
+## Signal grids and the strength mix (vhs-tape-simulation)
+
+- A barrier's `Node::PassAt` renders at its own size: the VHS tape runs 14 passes on the standard's
+  4 fsc grid (1135×576 PAL), its numbers carried as f32 bits or u16 halves in the Rgba8Uint texels,
+  its per-frame parameters uploaded by three 16-word passes. `FrameTol::SIGNAL` is its class (an
+  FM discriminator flips a click on one ULP at a carrier drowned in noise) — t1186.
+- `FxOp::Snapshot`/`Mix` carry the alpha fold AT their points, and a mix sets the fold to
+  dry ∨ wet, as the CPU's two frames do. The end-of-chain flag for both sides was wrong as soon as
+  a step destroying alpha stood between them (t1052).
+
 ## Windows / D3D12 (windows-build)
 - FXC (the D3D12 shader compiler wgpu uses) rejects a write through a dynamic VECTOR index
   (`v[i] = …`) when it cannot unroll the loop: write vectors with `select` or whole-vector

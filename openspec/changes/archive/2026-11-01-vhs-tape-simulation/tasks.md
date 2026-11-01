@@ -26,11 +26,11 @@
 
 - [x] 4.1 the deck face in the effects window (D11); t1193 with its PATH; reach/layout/i18n/font
       tests green
-- [ ] 4.2 a live scenario with screenshots on our fixtures
+- [x] 4.2 a live scenario with screenshots on our fixtures
 
 ## 5. Close
 
 - [x] 5.1 cost per 1080p frame on a release build (once), recorded in design D10
-- [ ] 5.2 What's new line, registry V1 closed, note F-FX-009 frozen as done
+- [x] 5.2 What's new line, registry V1 closed, note F-FX-009 frozen as done
 - [ ] 5.3 `cargo test --workspace`, `cargo clippy --all-targets`, `git merge master`,
       `./scripts/finish.sh` — version recorded here

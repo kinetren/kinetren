@@ -28,6 +28,11 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   differently (t973c/t1019/t1048 failed on windows-latest). The `f32` functions are the `f64` ones
   rounded once (correctly rounded but for ~2⁻²⁸ of inputs); t1065 holds them within one ulp of
   glibc, t1066 refuses a direct std call in the frozen crates and every family.
+- **A barrier may own a grid and many numbers** (vhs-tape-simulation): `Node::PassAt` renders a
+  pass at its own size (checked like a resample, the graph still ends at the frame size), and
+  `frame_values`/`gpu_values` give a kernel its passport values when eight cooked numbers do not
+  fit. The hosts call ONLY the value forms; their defaults cook, so a kind with ≤ 8 rows keeps its
+  bytes (t1187). A kernel overriding them keeps `frame`/`gpu` as the cooked shim.
 - The module is `generator`, not `gen`: `gen` is a reserved keyword in Rust 2024.
 - Mandatory tests: t972 (`tests/registry.rs`) and every family's frozen-form test (t973,
   t1048) when a row or a declaration changes.

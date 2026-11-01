@@ -1,18 +1,18 @@
 ---
 id: F-FX-009
 title: VHS as a simulation — write the tape, read it back
-status: in-progress
+status: done
 priority: B
 cost: L
 category: fx/simulate
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: partial
+we_have: yes
 crates: [kt-plugin-api, kt-gpu, kt-fx, kt-app]
 invariants: [4, 7, 11]
 ui_rules: []
 round: kkt-26.11.01
 point: V1
-tests: []
+tests: [t1180, t1181, t1182, t1183, t1184, t1185, t1186, t1187, t1188, t1189, t1190, t1191, t1192, t1193]
 depends_on: [F-FX-007]
 trackers: []
 services: []
@@ -180,15 +180,8 @@ here. The demand is the owner's own (`docs/ktprompts/kkt-26.11.01.txt` line 40).
 
 ## How it fits Kinotrain
 
-CAPABILITY: openspec/specs/video-fx/ — change `openspec/changes/vhs-tape-simulation/`.
-
-- The imitation `vhs`: `src/plugins/fx-video-stylize/src/lib.rs` (stays).
-- The barrier contract: `src/libs/kt-plugin-api/src/barrier.rs` — a CPU frame kernel and a GPU graph
-  of fragment passes at the frame size over Rgba8Uint textures (`src/libs/kt-gpu/src/engine.rs`);
-  a signal grid of standard definition needs a pass at its own size, and a deck's worth of
-  parameters does not fit the eight cooked numbers.
-- Determinism: the grain is pinned to `burst_index` (`kt_plugin_api::barrier::noise_seed`), the math
-  is `kt_plugin_api::math`.
+CAPABILITY: openspec/specs/video-fx/
+Done as the barrier plugin `vhs_tape` (`src/plugins/fx-video-tape`, change `vhs-tape-simulation`): the chain above on the standard's 4 fsc grid, CPU reference and GPU graph; the imitation `vhs` stays.
 
 ## Estimate
 
@@ -203,9 +196,10 @@ CAPABILITY: openspec/specs/video-fx/ — change `openspec/changes/vhs-tape-simul
 
 ## Verdict
 
-**Take** (round kkt-26.11.01, V1): a new barrier plugin `vhs_tape` beside the imitation, its
-parameters physical quantities, its look the result of the chain above. Change
-`vhs-tape-simulation`.
+**Done** (round kkt-26.11.01, V1, 2026-11-01): the barrier plugin `vhs_tape` beside the
+imitation, its parameters physical quantities, its look the result of the chain above (change
+`vhs-tape-simulation`, tests t1180–t1193). Left for later: the linear and HiFi audio tracks as an
+audio effect, nonlinear emphasis, SECAM and S-VHS.
 
 ## Sources
 
