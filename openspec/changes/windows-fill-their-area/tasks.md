@@ -35,5 +35,9 @@
       at a small and a large size, the toolbar at 1100 px — a screenshot per step
 - [x] 5.2 `docs/guide/whats-new.md` (kt26.11) line; registry K12 → done; `docs/user-feedback.md` taken
       as; `src/apps/kt-app/CLAUDE.md` window rule; `ktprompts-index.py --check`, `specs-user-path.py --check`
-- [ ] 5.3 `cargo test --workspace`, `cargo clippy --all-targets`; `git merge master`;
+- [x] 5.3 `cargo test --workspace`, `cargo clippy --all-targets`; `git merge master`;
       `src/scripts/finish.sh` — the version here and in the report
+      — `cargo test --workspace` green (finish.sh: 1340 passed, 14 skipped), clippy: no new warnings;
+      `git merge master` already up to date; finish.sh **kt26.11.01-ae184f46**, live scenarios green
+      (the parallel pass lost its X displays under load; every red passed alone on the second try,
+      `window_fill` included)
