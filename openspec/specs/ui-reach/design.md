@@ -483,3 +483,67 @@ panel — a wider layout change of shared code, while the lessons need the timel
   row's own width is a follow-up for the window-layout work of this round (kkt-26.11.01 item 12).
 - **Arabic run order** for wrapped lines stays as imperfect as every wrapped Arabic label today (the
   build-time limitation named at `MAX_VALUE_CHARS`).
+
+## Windows that fill their area (windows-fill-their-area, archived 2026-11-01)
+
+The owner, kkt-26.11.01 item 12 (row K12): "a needle's eye … and so everywhere … I am tired of
+reminding". The body was capped at 0.62× the screen and shrunk to its content, half of the windows
+were not resizable, and every earlier fix was of one window. One rule in the shell and one guard
+over all windows (t1125–t1131); the full decision record is the archived change's `design.md`.
+
+### Why the body must FILL, not only be allowed to
+egui 0.36 sizes a `Window` by its content (`Resize::end`: the frame is `last_content_size`;
+`desired_size` is only the room offered). A resizable window whose body shrinks to its content cannot
+be made taller at all — the paste-prefix and preset-name dialogs grew in width only. So every window
+draws its content through `widgets::window_body` (action row below) / `window_fill` / `window_log`,
+and the body's height is the window's room minus the action row MEASURED last frame
+(`fill_probe::measure_tail`), not a constant: a constant that differs from the real row by a point
+moves the window by itself right after opening (t918).
+
+### Fit then fill
+A window opened with `.width(w, min)` has no stated height: for its first two FRAMES (counted with
+`cumulative_frame_nr` — egui's sizing pass runs a window twice in one frame) the body fits its
+content (`min_scrolled_height` = the room, `auto_shrink` on height), then fills. A fitted window's
+minimum height must stay UNDER its content, or it opens fitted and jumps to the minimum. Rejected:
+"fit until the size is stable" — it grew the welcome window frame by frame.
+
+### Size memory per family
+Per-object windows (effects, morpher, transition, camera, track) have per-object ids, so egui's
+persisted resize state remembers only one object's window. `.remember(family)` keeps a persisted
+`("kt_win_size", family)` (egui memory, eframe persistence — no new store), the window's OUTER rect
+size from `AreaState` (it is what `default_size` takes). It is written only when THIS window's size
+changed and never during its first two frames: two windows of one family open at once (creating a
+generator opens its effects window) otherwise overwrote each other every frame. Rejected:
+`user_store` (two truths about one size egui already persists).
+
+### Fixed sizes need a reason (t1127)
+A screen fraction, `max_height(<n>)`, `set_width(<n>)`, `set_min/max_width(<n>)`,
+`desired_width(<n>)` in kt-app window code fails t1127 unless `ALLOWED_FIXED` names it with a reason
+(a numeric field sized for its longest value, a thumbnail cell). The table may not hold an entry the
+code no longer has.
+
+### Guide tables and cards
+Column widths come from the content: a column's minimum is its longest unbreakable word (a `<kbd>`
+cap or `code` span glued to its neighbours), its natural width the unwrapped cell; the room left
+over is shared by water-filling in proportion to `natural − minimum`, so the keys column keeps its
+caps unwrapped and the action column takes the rest. Rejected: `egui_extras::TableBuilder` (a new
+dependency, and its widths are declared, not measured). "I want to…" entries are framed cards, the
+whole card clickable (rule 1); the index side is `clamp(0.3 × width, 240, 420)`.
+
+### The picker gallery
+One scroll; width = the host window's clip width minus the menu margins (floor `GALLERY_W`), so it
+depends only on the host and typing cannot move it (the R.54 rule kept, its constant revised);
+height = the screen below the button, stated with `min_scrolled_height` (a popup area's own room
+stopped the gallery at 400 points). Effects are cards of `EFFECT_CARD_W` allocated with their width
+up front (`allocate_ui_with_layout`): a wrapped layout wraps a child only by the size it asks for,
+and a bare `vertical` ran past the edge and widened the popup to the screen; `Align::Min` keeps the
+card tops aligned (`horizontal_wrapped` centres them).
+
+### Found while applying
+- A resizable window's edge catches the pointer a few points outside its frame: the message log,
+  auto-placed in the top-right corner, covered the program's own window buttons (t129) — it opens
+  below the title row.
+- The render window's finished actions stood where Cancel was (t957, trick 3); the old window grew at
+  the finish and hid it. They stand at the far right.
+- A `ScrollArea`'s `inner_rect` can be taller than what it allocated (its default
+  `min_scrolled_size` is 64): the body rect is the space it took (`ui.min_rect()` after it).

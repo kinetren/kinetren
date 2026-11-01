@@ -261,6 +261,19 @@ rebuild.
   The button on the frame is registered AFTER the controls: the frame's body covers the whole frame and otherwise
   takes the click from it.
 
+## The toolbar overflow (windows-fill-their-area, archived 2026-11-01)
+
+Below ~1460 points the bottom toolbar row cut off Render at its right end (kkt-26.11.01 item 12; noted
+as deferred by tour-lessons-fixes). The row is 8 groups (transport, timecode+speed, tracks, edit,
+zoom, region, undo/redo, output); each group's width is measured when it is drawn in the row and
+kept in `KtApp::tb_group_w` (a fixed array — no per-frame allocation). Next frame the groups are
+laid from the left while they fit with the `⋯` button; the rest are drawn inside the `⋯` menu by
+the SAME `tb_group` function (one body, rule 17). The first two groups never move. A group in the
+menu keeps its last measured row width, so the decision does not flicker. The first frame has no
+widths and draws every group (clipped), which measures them. Guard t1132 (a ⋯ at 1100 points that
+reaches Render; none at 1700). Rejected: shrinking buttons or a second row (the owner set the row's
+look; a second row costs the timeline height, rule 13).
+
 ## Deferred
 
 - `lane_names` live in `Project.ui`, and `swap_reel` does not swap them — the full entry
