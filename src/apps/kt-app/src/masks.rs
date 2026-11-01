@@ -175,7 +175,7 @@ pub fn mask_list(
                 let mut auto = std::mem::take(&mut m.auto);
                 for name in ["opacity", "feather", "expansion"] {
                     let Some(spec) = specs.iter().find(|s| s.name == name) else { continue };
-                    let mut bind = (!tracked).then(|| crate::widgets::CurveBind { curves: &mut auto, sel: None, at: cx.at });
+                    let mut bind = (!tracked).then_some(crate::widgets::CurveBind { curves: &mut auto, sel: None, at: cx.at });
                     let ch = crate::widgets::param_row_bound_ex(ui, &mut m.params(), spec, bind.as_mut(), None, None);
                     if ch.any() {
                         out.changed = true;

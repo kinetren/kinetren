@@ -122,7 +122,7 @@ impl View {
             self.img.top() + (q.1 / self.canvas.1) as f32 * self.img.height(),
         )
     }
-    fn from_screen(&self, s: egui::Pos2) -> (f64, f64) {
+    fn screen_to_ref(&self, s: egui::Pos2) -> (f64, f64) {
         let q = (
             ((s.x - self.img.left()) / self.img.width().max(1.0)) as f64 * self.canvas.0,
             ((s.y - self.img.top()) / self.img.height().max(1.0)) as f64 * self.canvas.1,
@@ -203,8 +203,11 @@ fn inside(pts: &[egui::Pos2], p: egui::Pos2) -> bool {
     w
 }
 
-/// The local box of a primitive in reference px: centre, half sizes, rotation (degrees).
-fn prim_box(m: &Mask, rw: f64, rh: f64) -> Option<((f64, f64), (f64, f64), f64)> {
+/// A primitive's local box: centre, half sizes (reference px), rotation (degrees).
+type PrimBox = ((f64, f64), (f64, f64), f64);
+
+/// The local box of a primitive in reference px.
+fn prim_box(m: &Mask, rw: f64, rh: f64) -> Option<PrimBox> {
     match m.shape {
         MaskShape::Rect { cx, cy, w, h, rot, .. } | MaskShape::Ellipse { cx, cy, w, h, rot } => {
             Some(((cx * rw, cy * rh), ((w * rw / 2.0).abs(), (h * rh / 2.0).abs()), rot))
@@ -666,7 +669,7 @@ impl KtApp {
                     if edit.pen.len() >= 3 && first.is_some_and(|f| f.distance(p) <= GRAB) {
                         self.finish_pen();
                     } else {
-                        let q = v.norm(v.from_screen(p));
+                        let q = v.norm(v.screen_to_ref(p));
                         let id = edit.pen.len() as u32;
                         if let Some(e) = self.mask_ctl.as_mut() {
                             e.pen.push(Vertex::corner(id, q.0, q.1));
@@ -744,14 +747,14 @@ impl KtApp {
                 if grab == Some(Grab::PenSmooth)
                     && let Some(e) = self.mask_ctl.as_mut()
                 {
-                    let q = v.norm(v.from_screen(o));
+                    let q = v.norm(v.screen_to_ref(o));
                     let id = e.pen.len() as u32;
                     e.pen.push(Vertex::corner(id, q.0, q.1));
                 }
                 if let Some(e) = self.mask_ctl.as_mut() {
                     e.drag = grab.map(|grab| MaskDrag {
                         gesture: self.gesture_counter,
-                        press: v.from_screen(o),
+                        press: v.screen_to_ref(o),
                         press_c: oc,
                         grab,
                         start: if grab == Grab::Draw { None } else { start },
@@ -773,7 +776,7 @@ impl KtApp {
         }
         let Some(drag) = self.mask_ctl.as_ref().and_then(|e| e.drag.clone()) else { return true };
         let Some(ptr) = pointer else { return true };
-        let p = v.from_screen(ptr);
+        let p = v.screen_to_ref(ptr);
         let d = (p.0 - drag.press.0, p.1 - drag.press.1);
         let (rw, rh) = (v.sp.ref_w, v.sp.ref_h);
         match drag.grab {
