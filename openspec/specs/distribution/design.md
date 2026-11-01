@@ -213,3 +213,11 @@ their own copy without the chown. `scripts/cargo-registry.sh` is now the one bod
 - **Rejected:** the whole `refs/heads` — shared by every parallel session's worktree, each of their
   commits would relink this tree; parsing the `.git` file by hand — git is already needed for the
   version string, and `rev-parse` also handles `GIT_DIR`, submodules and relative `gitdir:`.
+
+## The off switch moved to File › Preferences… (welcome-window-and-settings, archived 2026-11-02)
+
+The owner decision "an off switch in View next to the telemetry checkbox" is revised by his own
+request of 2026-11-01 (kkt-26.11.01 item 13): both checkboxes moved together into File ›
+Preferences…, the update check right after statistics (t878 checks the adjacency). The how-to-switch-
+off text names the new path. When the state already says a newer release is out, the start window's
+What's new pane is headed by the same line (no request of its own).

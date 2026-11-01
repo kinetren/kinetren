@@ -44,4 +44,4 @@
       now must land under the pointer, as in t1290) and green alone; the other first-try reds passed on
       the second try; workspace reds t640/t1171/t815 are the machine's known sidecar-lock/timing flakes
       (green alone)
-- [ ] 4.3 archive: specs merged, the "why" appended to `openspec/specs/ui-reach/design.md`
+- [x] 4.3 archive: specs merged, the "why" appended to `openspec/specs/ui-reach/design.md`

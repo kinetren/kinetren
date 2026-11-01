@@ -314,8 +314,8 @@ day of silence; being wrong in the other direction teaches the person to ignore 
 When the day's check (or the stored answer of today's check) says a newer release is out, the
 program SHALL post exactly ONE info notice to the notices window — on the start whose check
 found it, not on later starts the same day — naming the running version, the new version, the
-address `github.com/kinetren/kinetren/releases` and the View menu item that switches the check
-off. The window title SHALL end with the running version followed by a short translated word —
+address `github.com/kinetren/kinetren/releases` and the File › Preferences… item that switches the
+check off. The window title SHALL end with the running version followed by a short translated word —
 `kt26.10 (outdated)` in a release build — both in the OS window title and in the program's own
 title row, where the word SHALL be painted in the warning colour right after the version, and
 hovering it SHALL show in the status-bar hint the new version and the releases address. The
@@ -335,7 +335,7 @@ occupied by the version, so the mark costs no space.
   pointer is moved over the title word; then the app is rebuilt with File → New; then a
   second start the same day reads the stored answer
 - **THEN** after the first start the notices list holds exactly one update notice (info
-  severity) with both versions, the releases address and the View item name; the title ends
+  severity) with both versions, the releases address and the Preferences item name; the title ends
   with the version and the translated "outdated" word; no window from the `WINDOWS` registry
   and no `Ask` is open; hovering the word puts the new version and the address into the
   status-bar hint; after File → New the title is still marked and there is no second notice;
@@ -355,11 +355,11 @@ occupied by the version, so the mark costs no space.
   and no glyph falls back to the placeholder box (CJK and Arabic subsets included)
 - **TEST** t876 (`src/apps/kt-app/src/i18n_tests.rs`, `src/apps/kt-app/src/font_tests.rs`)
 
-### Requirement: The check is switched off in View; development builds never ask
+### Requirement: The check is switched off in Preferences; development builds never ask
 The check SHALL be on unless any of these holds: the build is a debug build and `KT_UPDATE_URL`
 is not set; the environment has `KINETREN_UPDATE_CHECK=0` (or `off`/`false`); the person turned
-it off. The choice SHALL be stored in eframe storage under `update_check` (`on`/`off`). The View
-menu SHALL carry a checkbox "Check for new versions daily" right after the telemetry checkbox;
+it off. The choice SHALL be stored in eframe storage under `update_check` (`on`/`off`). The File ›
+Preferences… window SHALL carry a checkbox "Check for new versions daily" right after the telemetry checkbox;
 its hover text SHALL say what is asked (the latest release, from GitHub, once a day), what is
 sent (nothing but the program version) and that nothing is downloaded. Turning it off SHALL
 remove the title word on the next frame; turning it on SHALL make the check due on the next start (not
@@ -370,7 +370,8 @@ release build SHALL ignore `KT_UPDATE_URL`, so a shipped binary cannot be pointe
 Why: the owner chose a View checkbox like the telemetry one (2026-10-27); a per-machine
 preference lives next to the other ones (checklist rule 13). The owner's live scenarios and
 tests start the real `kinetren` dozens of times a day — none of them may reach GitHub
-(the same reason telemetry keys only release builds).
+(the same reason telemetry keys only release builds). On 2026-11-01 (kkt-26.11.01 item 13) the
+program's preferences left View for File › Preferences…, the two checkboxes staying neighbours.
 
 #### Scenario: Consent resolution
 - **WHEN** the consent is resolved over the table: debug build, no `KT_UPDATE_URL`; debug +
@@ -382,13 +383,13 @@ tests start the real `kinetren` dozens of times a day — none of them may reach
 - **TEST** t877 (`src/apps/kt-app/src/update_check.rs`)
 
 #### Scenario: The checkbox is next to telemetry and its choice holds
-- **WHEN** the harness app with the check on and a stored "newer" answer opens View, unchecks
+- **WHEN** the harness app with the check on and a stored "newer" answer opens File › Preferences…, unchecks
   "Check for new versions daily", draws a frame, then restarts with the stored state
-- **THEN** View holds the checkbox right after the telemetry checkbox, checked, and its hover
+- **THEN** the Preferences window holds the checkbox right after the telemetry checkbox, checked, and its hover
   text names GitHub and says nothing is downloaded; after unchecking, the title has no
   "outdated" word on the next frame and the word is no longer painted, the stored value is `off`, and after the restart the
   checker spawns no thread and the title stays unmarked
-- **PATH** open View → "Check for new versions daily" is checked under "Send anonymous usage
+- **PATH** File › Preferences… → "Check for new versions daily" is checked under "Send anonymous usage
   statistics" → hover it → the status bar says it asks GitHub once a day and downloads nothing
   → uncheck it → the "(outdated)" word leaves the title → restart → the checkbox is
   still unchecked and the title is plain

@@ -572,10 +572,10 @@ squeezed the bin all the time, and diagnosing a slow spot meant looking in two p
 - **THEN** it paints the three graph titles (Quality, FFmpeg activity, Cache churn) and every
   line the box had — cache MB, underruns render/out, preview size, clips and media, latency and
   callback, V-shown and V-skip/back, the FX backend, the compose cost, the FFmpeg totals — and the
-  "Save the playback journal" button; the "Economy UI" switch lives only in View, with its hint
+  "Save the playback journal" button; the "Economy UI" switch lives only in File › Preferences…, with its hint
 - **PATH** open View → Diagnostics… → the window shows, top to bottom: the "Performance" rows in
   two columns, the GPU/FX/compose/FFmpeg lines and "Save the playback journal", the cache
-  occupancy bar, the three graphs one under another, the problem log; hover View → "Economy UI"
+  occupancy bar, the three graphs one under another, the problem log; File › Preferences… → hover "Economy UI"
   → the status line says what the switch does
 - **TEST** t1146 (`src/apps/kt-app/src/diag_tests.rs`)
 
