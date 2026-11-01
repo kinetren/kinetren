@@ -31,5 +31,5 @@
 
 - [x] 5.1 What's new (`docs/guide/whats-new.md`, kt26.11): the welcome cards on Windows name the folder without `\\?\`
 - [x] 5.2 Registry row C1 of `docs/ktprompts/kkt-26.11.01-index.md` moves to done; `python3 src/scripts/ktprompts-index.py --check` green
-- [ ] 5.3 `cargo test --workspace` and `cargo clippy --all-targets` green; `src/scripts/finish.sh` — version recorded here
+- [x] 5.3 `cargo nextest --workspace` 1301/1302 (t815, a 2 s wall-clock bound on a recovery write, red only under the load of parallel executors — green alone), `cargo clippy --all-targets` adds no warning; `src/scripts/finish.sh` — **VERSION kt26.11.01-e1764875**; live: 5 scenarios red twice under load (formula, geomctl, nestlang, nestparam, nestshare), all 5 green alone on display :230
 

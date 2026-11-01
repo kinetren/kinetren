@@ -183,3 +183,16 @@ paging), comparing with the tag or a build date (see above), a local-time day (a
 dependency), a "Check now" item and a check that re-runs past midnight (not asked for),
 downloading or installing a release (F-RES-008: a self-updating binary is a separate class of
 defects).
+
+## ci-green-again (2026-11-01): what a check needs is named, and a registry volume is handed over
+
+The CI run on 94e36e9e lost three jobs to the runner, not to the code under test. `--no-install-recommends`
+is right (small runner, small image) and is what dropped `eu-strip` (elfutils, a Recommends of
+flatpak-builder) and `mimetype` (libfile-mimeinfo-perl, a Recommends of xdg-utils — without it
+xdg-mime asks libmagic, which called our project JSON). Instead of two one-line fixes,
+`dist-check.py` keeps the pairs in `RECOMMENDS_NEEDED` and reads every `apt-get install` of the
+workflows and Dockerfiles (t1060). The ffmpeg9 job died because a fresh named volume belongs to root
+while the container runs as the caller; `release-build.sh` handed it over, the two test scripts had
+their own copy without the chown. `scripts/cargo-registry.sh` is now the one body (t1064). Rejected:
+`mkdir -p ~/.cargo/registry` on the host — it leaves an older root-owned volume broken. Details:
+`openspec/changes/archive/2026-11-01-ci-green-again/design.md` (D1, D2).
