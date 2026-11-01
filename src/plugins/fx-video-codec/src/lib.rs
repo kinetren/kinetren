@@ -117,9 +117,9 @@ impl Datamosh {
                     name: "Datamosh",
                     category_key: "fxreg.cat.style",
                     keywords_key: "fxreg.kw.datamosh",
+                    // the template is the intact codec (its look: the encoded height and the
+                    // quantiser); every breakage is a named variant, the classic cut first
                     variants: VARIANTS,
-                    // the first click is the classic: the I-frame at the cut is gone
-                    template: &[("before", 12.0), ("drop_count", 1.0)],
                     ..UiDecl::default()
                 },
             },

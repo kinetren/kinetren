@@ -1662,7 +1662,7 @@ pub(crate) fn draw_video_fx_params(
         // block size and the second input are combos, the vector swap a checkbox; the numeric rows
         // stay in the shared grid
         FxInstance::Plugin(p) if p.id == "datamosh" => {
-            let combo = |ui: &mut egui::Ui, p: &mut kt_model::PluginSlot, row: &str, label: &str, items: &[&str], ch: &mut ParamsChanged| {
+            let combo = |ui: &mut egui::Ui, p: &mut kt_model::PluginSlot, row: &str, label: &str, items: &[&str], ch: &mut crate::widgets::ParamsChanged| {
                 let mut v = p.get(row).unwrap_or(0.0) as usize;
                 ui.horizontal(|ui| {
                     ui.label(label);

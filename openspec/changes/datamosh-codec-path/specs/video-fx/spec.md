@@ -72,4 +72,4 @@ whatever the start (`datamosh-codec-path` design D3–D6).
 - **PATH** add two clips back to back on one track → select the second → FX → pick Datamosh "Cut mosh" → play across the cut → the first clip's picture keeps moving with the second clip's motion after the cut
 - **WHEN** the live scenario runs on our fixtures
 - **THEN** the frames after the cut differ from the same frames without the effect, and the screenshots of each step are saved
-- **TEST** t1249 (`src/apps/kt-app/tests/live/datamosh_cut.rs`)
+- **TEST** live `datamosh.py` (`src/scripts/live/datamosh.py`, via `src/scripts/live-check.sh`)

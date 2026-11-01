@@ -198,6 +198,7 @@ impl StreamInput for ClipStream<'_> {
 
 /// Run the stage for frame time `t`: the decoded picture fitted to `dq` (opaque) and its key;
 /// `(None, 0)` — a frame of the history is missing (starvation; the order asks for it).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn run(
     clip: &VideoClip,
     st: &StreamStage,
