@@ -10,6 +10,13 @@ month, newest first.
   under "Shape of all segments" a row appears with the same fields for just those segments.
   Values that differ show "—"; a typed number sets all of them, dragging the field shifts
   each by the same amount.
+- **Windows: the welcome window names your project folders plainly** — `C:\Users\…`, not
+  `\\?\C:\Users\…`.
+- **A project sounds and looks the same on Windows and Linux.** Slowed+Reverb, the phaser and
+  pitch shift gave slightly different bytes on Windows; every effect now uses the program's own
+  math, so a render is identical on both — and on any processor.
+- **Forcing an encoder this computer does not have** (VAAPI on Windows) now says so by name
+  instead of an empty error.
 - **Pitch no longer tears between short events.** Cut an event with pitch into many short
   pieces and they sound exactly like the uncut event; any pitched event starts and ends
   without a dip.

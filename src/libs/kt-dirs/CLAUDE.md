@@ -16,3 +16,8 @@ Capability: `durability` (requirement "Per-user data lives in `kinetren`").
 - The migration of the former name is NOT here: it lives in kt-app (`journal.rs`), Linux
   only, and runs only on a resolved (non-fallback) root.
 - `resolve` is pure over `Env`, so the Windows rules are tested on Linux (t851).
+- **A canonical path for display or as a key is `kt_dirs::canonical`, never the bare
+  `std::fs::canonicalize`** (ci-green-again): on Windows the bare call spells `\\?\C:\…`, which
+  a welcome card showed (t986 on windows-latest). `plain_path` drops the verbatim prefix only
+  where the plain spelling names the same file (drive/UNC, shorter than `MAX_PATH`); pure over
+  `Os`, held by t1062 on Linux. `locks::key` keeps its own strip: it also folds case.

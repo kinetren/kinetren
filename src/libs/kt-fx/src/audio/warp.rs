@@ -2,9 +2,7 @@
 //! chain: it holds the monopoly on consuming the source (chain_source_*).
 
 use crate::{CH, PullKind};
-use rubato::{
-    Resampler, SincFixedOut, SincInterpolationParameters, SincInterpolationType, WindowFunction,
-};
+use rubato::{Resampler, SincFixedOut, SincInterpolationType};
 
 // ---------------------------------------------------------------------------
 // Warp (varispeed via rubato)
@@ -61,16 +59,20 @@ impl Warp {
         } else {
             (rate.clamp(0.25, 32.0), WARP_RATIO_REL_LEGACY)
         };
-        let params = SincInterpolationParameters {
-            sinc_len: 128,
-            f_cutoff: 0.95,
-            interpolation: SincInterpolationType::Linear,
-            oversampling_factor: 128,
-            window: WindowFunction::BlackmanHarris2,
-        };
-        // ratio = f_out / f_in = 1 / rate (rate 0.5 → twice as much output)
-        let mut rs = SincFixedOut::<f32>::new(1.0 / anchor, rel, params, WARP_CHUNK_OUT, CH)
-            .expect("rubato init");
+        // ratio = f_out / f_in = 1 / rate (rate 0.5 → twice as much output). The interpolator is
+        // ours (`sinc.rs`): rubato's table on the platform libm and its CPU-picked product gave
+        // other bytes on Windows (ci-green-again); its parameters stay rubato's former ones —
+        // sinc_len 128, cutoff 0.95, oversampling 128, BlackmanHarris2, linear between sincs
+        let sinc = super::sinc::FrozenSinc::new(128, 1.0 / anchor, 0.95, 128);
+        let mut rs = SincFixedOut::<f32>::new_with_interpolator(
+            1.0 / anchor,
+            rel,
+            SincInterpolationType::Linear,
+            Box::new(sinc),
+            WARP_CHUNK_OUT,
+            CH,
+        )
+        .expect("rubato init");
         let mut rejected = 0;
         if anchor != rate && rs.set_resample_ratio(1.0 / rate, false).is_err() {
             rejected += 1;

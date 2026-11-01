@@ -105,7 +105,7 @@ reasons and history are in the `design.md` next to it. Here — one line each, t
 8. **Timeline scroll/zoom produces no decode requests.** Waveforms come from the peak pyramid, thumbnails from the sidecar, reel previews from the cache keyed by `content_hash` with a disk tier — `media-index`, `compositions`.
 9. **Export is fully in-process.** libavformat/libavcodec of the system FFmpeg, an encoder cascade with a real open check; no temporary files, no external binary — `export`.
 10. **The binary does not link against libav*.** FFmpeg loaded at run time, the major version from `avcodec_version()`, one binary for FFmpeg 6/7/8/9: Linux by SONAME (`ldd … | grep -c libav` == 0), Windows from ONE folder found by the search plan or downloaded on a click (the PE imports name no av*/sw* DLL and no mingw runtime) — `media-index`.
-11. **Determinism.** Audio — byte for byte, always; video on the CPU — against the committed reference; on the GPU — byte for byte between runs on one device, across machines — within tolerances of the CPU; no wall clock in offline paths — `video-plan`, `export`.
+11. **Determinism.** Audio — byte for byte, always; video on the CPU — against the committed reference; on the GPU — byte for byte between runs on one device, across machines — within tolerances of the CPU; no wall clock in offline paths; no platform libm on a frozen path — `kt_plugin_api::math` (t1066) — `video-plan`, `export`.
 12. **Video display is not quantized by the audio callback, the UI does not heat the system.** The display position is interpolated (`video_playhead()`), repaint only while something moves, no allocations in draw paths — `transport`, `ui-timeline`.
 
 ## Rules for agents

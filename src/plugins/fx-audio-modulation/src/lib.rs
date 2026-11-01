@@ -5,6 +5,7 @@
 //! the manifests' declarations — the static `chain_tail` reads them, t322 compares them with the
 //! built states.
 
+use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;
 
 use kt_plugin_api::dsp::{AUDIO_SAMPLE_RATE, CH, DelayLine, Freeverb, SmoothedParam, Tick, lfo_phase, tail_frames_for};
@@ -163,7 +164,7 @@ impl AudioState for TremoloNode {
     fn process(&mut self, buf: &mut [f32], pos: i64, _key: Option<&[f32]>) {
         for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
             let d = self.depth.tick().clamp(0.0, 1.0);
-            let g = 1.0 - d * (0.5 + 0.5 * self.lfo.phase(pos + i as i64).sin() as f32);
+            let g = 1.0 - d * (0.5 + 0.5 * self.lfo.phase(pos + i as i64).fsin() as f32);
             for s in fr.iter_mut() {
                 *s *= g;
             }
@@ -231,7 +232,7 @@ impl AudioState for AutoPanNode {
     fn process(&mut self, buf: &mut [f32], pos: i64, _key: Option<&[f32]>) {
         for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
             let d = self.depth.tick().clamp(0.0, 1.0);
-            let p = d * self.lfo.phase(pos + i as i64).sin() as f32;
+            let p = d * self.lfo.phase(pos + i as i64).fsin() as f32;
             fr[0] *= (1.0 - p).min(1.0);
             if CH > 1 {
                 fr[1] *= (1.0 + p).min(1.0);
@@ -313,7 +314,7 @@ impl AudioState for VibratoNode {
         let sr = AUDIO_SAMPLE_RATE as f32;
         for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
             let d = self.depth_ms.tick().clamp(0.05, 5.0);
-            let ph = self.lfo.phase(pos + i as i64).sin() as f32;
+            let ph = self.lfo.phase(pos + i as i64).fsin() as f32;
             let delay = (1.0 + d * (0.5 + 0.5 * ph)) * sr / 1000.0;
             for (ch, s) in fr.iter_mut().enumerate() {
                 self.lines[ch].write(*s);
@@ -427,7 +428,7 @@ impl AudioState for ChorusNode {
                     let ph = phi
                         + v as f64 * std::f64::consts::TAU / nv as f64
                         + if ch == 1 { std::f64::consts::FRAC_PI_2 } else { 0.0 };
-                    let delay = (CHORUS_BASE_MS + d * (0.5 + 0.5 * ph.sin() as f32)) * sr / 1000.0;
+                    let delay = (CHORUS_BASE_MS + d * (0.5 + 0.5 * ph.fsin() as f32)) * sr / 1000.0;
                     wet += self.lines[ch].read_frac(delay);
                 }
                 wet /= nv as f32;
@@ -533,7 +534,7 @@ impl AudioState for FlangerNode {
             let d = self.depth_ms.tick().clamp(0.1, 8.0);
             let fb = self.feedback.tick().clamp(-0.9, 0.9);
             let k = self.mix.tick().clamp(0.0, 1.0);
-            let ph = self.lfo.phase(pos + i as i64).sin() as f32;
+            let ph = self.lfo.phase(pos + i as i64).fsin() as f32;
             let delay = (FLANGER_BASE_MS + d * (0.5 + 0.5 * ph)) * sr / 1000.0;
             for (ch, s) in fr.iter_mut().enumerate() {
                 let dry = *s;
@@ -643,10 +644,10 @@ impl AudioState for PhaserNode {
             let d = self.depth.tick().clamp(0.0, 1.0);
             let fb = self.feedback.tick().clamp(0.0, 0.9);
             let k = self.mix.tick().clamp(0.0, 1.0);
-            let ph = 0.5 + 0.5 * self.lfo.phase(pos + i as i64).sin() as f32;
+            let ph = 0.5 + 0.5 * self.lfo.phase(pos + i as i64).fsin() as f32;
             // center sweep: 200..2000 Hz exp, depth compresses the range
-            let f = 200.0 * (10.0f32).powf(ph * d);
-            let t = (std::f32::consts::PI * f / sr).tan();
+            let f = 200.0 * (10.0f32).fpowf(ph * d);
+            let t = (std::f32::consts::PI * f / sr).ftan();
             let ap = (t - 1.0) / (t + 1.0);
             for (ch, s) in fr.iter_mut().enumerate() {
                 let dry = *s;
@@ -794,7 +795,7 @@ impl PvState {
             window: (0..PV_N)
                 .map(|i| {
                     let x = std::f32::consts::TAU * i as f32 / PV_N as f32;
-                    0.5 - 0.5 * x.cos()
+                    0.5 - 0.5 * x.fcos()
                 })
                 .collect(),
             prev_phase: std::array::from_fn(|_| vec![0.0; bins]),
@@ -884,7 +885,7 @@ impl PitchNode {
         let read = |c: &Option<Box<dyn CurveRead>>, base: f32| c.as_ref().map_or(base as f64, |c| c.value(base as f64, tau));
         let st = read(&self.st_curve, self.semitones);
         let ct = read(&self.ct_curve, self.cents);
-        (2f64).powf((st + ct / 100.0) / 12.0).clamp(0.25, 4.0)
+        (2f64).fpowf((st + ct / 100.0) / 12.0).clamp(0.25, 4.0)
     }
 
     #[inline]
@@ -1006,7 +1007,7 @@ impl PitchNode {
             for k in 0..bins {
                 let c = pv.spec[k];
                 let m = (c.re * c.re + c.im * c.im).sqrt();
-                let phase = c.im.atan2(c.re);
+                let phase = c.im.fatan2(c.re);
                 let mut dp = phase - pv.prev_phase[ch][k] - k as f32 * expected;
                 dp -= std::f32::consts::TAU * (dp / std::f32::consts::TAU).round();
                 pv.prev_phase[ch][k] = phase;
@@ -1029,7 +1030,7 @@ impl PitchNode {
                 let m = pv.mag[k0] * (1.0 - f) + pv.mag[k0 + 1] * f;
                 let w = (pv.freq[k0] * (1.0 - f) + pv.freq[k0 + 1] * f) * r;
                 pv.synth_phase[ch][j] += w;
-                let (sn, cs) = pv.synth_phase[ch][j].sin_cos();
+                let (sn, cs) = pv.synth_phase[ch][j].fsin_cos();
                 pv.out_spec[j] = realfft::num_complex::Complex::new(m * cs, m * sn);
             }
             // DC and Nyquist of a real signal are real — realfft checks this and otherwise
@@ -1148,7 +1149,7 @@ impl AudioState for PitchNode {
 #[inline]
 fn hann(i: usize, n: usize) -> f32 {
     let x = std::f32::consts::TAU * i as f32 / n as f32;
-    0.5 - 0.5 * x.cos()
+    0.5 - 0.5 * x.fcos()
 }
 
 // ---------------------------------------------------------------------------
@@ -1242,7 +1243,7 @@ impl AudioState for DelayNode {
     fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
         let sr = AUDIO_SAMPLE_RATE as f32;
         // loop filter ~4 kHz: the repeats darken
-        let alpha = 1.0 - (-2.0 * std::f32::consts::PI * 4000.0 / sr).exp();
+        let alpha = 1.0 - (-2.0 * std::f32::consts::PI * 4000.0 / sr).fexp();
         for fr in buf.chunks_exact_mut(CH) {
             let d = self.time_ms.tick().clamp(1.0, DELAY_MAX_MS) * sr / 1000.0;
             let fb = self.feedback.tick().clamp(0.0, 0.9);

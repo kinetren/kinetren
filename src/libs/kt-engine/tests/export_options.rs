@@ -403,6 +403,16 @@ fn t962_without_a_device_vaapi_falls_through_or_errs_never_crashes() {
     }
     assert_eq!(chosen[0], chosen[1], "the cascade is not deterministic");
 
+    // forced, on a system whose cascade has no VAAPI (Windows): an error naming that, no file —
+    // the device half cannot apply there (CI of 94e36e9e: "last error: " with nothing after it)
+    if !kt_media::muxer::encoder_cascade().iter().any(|n| n == "h264_vaapi") {
+        let out = dir.path().join("forced-elsewhere.mp4");
+        let (_, r) = export_seamed(&project, &out.to_string_lossy(), Some("h264_vaapi"), no_device);
+        let err = r.expect_err("a forced encoder outside the cascade must not export");
+        assert!(err.contains("h264_vaapi: not an encoder this system tries"), "the error does not name the cause: {err}");
+        assert!(!out.exists(), "a file was left behind");
+        return;
+    }
     // forced: an error naming the part, no file — first without a device, then without the table
     for (tag, seam, want) in [
         ("device", no_device.clone(), "no VAAPI device"),
@@ -422,6 +432,26 @@ fn t962_without_a_device_vaapi_falls_through_or_errs_never_crashes() {
         assert!(err.contains(want), "{tag}: the error does not name “{want}”: {err}");
         assert!(!out.exists(), "{tag}: a file was left behind");
     }
+}
+
+/// Test 1063 (ci-green-again): an encoder forced from OUTSIDE this system's cascade is an export
+/// error that names it and the cascade — never "last error: " with nothing after it.
+///
+/// The Windows CI run of 94e36e9e forced `h264_vaapi`, which only the Linux cascade tries: the
+/// loop skipped every candidate and the error said nothing. Each system forces the OTHER
+/// system's own encoder, so the Linux job proves the same path the Windows job hit.
+#[test]
+fn t1063_a_forced_encoder_outside_the_cascade_names_itself() {
+    let foreign = if cfg!(windows) { "h264_vaapi" } else { "h264_mf" };
+    let cascade = kt_media::muxer::encoder_cascade();
+    assert!(!cascade.iter().any(|n| n == foreign), "the scene degenerated: {foreign} is in {cascade:?}");
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("forced-foreign.mp4");
+    let (_, r) = export_seamed(&tiny_project(), &out.to_string_lossy(), Some(foreign), Default::default());
+    let err = r.expect_err("a forced encoder outside the cascade must not export");
+    assert!(err.contains(&format!("{foreign}: not an encoder this system tries")), "{err}");
+    assert!(err.contains(&cascade[0]), "the error does not list the cascade: {err}");
+    assert!(!out.exists(), "a file was left behind");
 }
 
 /// Test 963 (hw-encode-context D8): sixty frames through VAAPI decode — proven on hardware only.

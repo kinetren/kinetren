@@ -158,6 +158,15 @@ Tests: t519 (the fold), t520 (pixels), t521 (the composite, independently of kt-
 - The skirt threshold in test 4: the Hann window smears a non-bin-centred tone to ~−59 dB over ±7 bins — hence the exclusion of ±16 bins; the artifacts of the old engine (±47 Hz = ±64 bins) are still caught.
 - The sinc resampler has a group delay of ~3k source frames — accounted for in the tolerance of the consumption test.
 - rubato ratio = 1/rate (rate 0.5 → the output is twice the input, the pitch drops — the desired slowed aesthetic).
+- **The warp's sinc interpolator is OURS** (`audio/sinc.rs`, ci-green-again): rubato built its
+  128×128 table with the platform's `sinf`/`cosf` and picked its dot product by the CPU (AVX+FMA,
+  SSE, scalar — three roundings), so Slowed+Reverb sounded different on Windows and on a CPU
+  without FMA. `FrozenSinc` is rubato's `make_sincs` on `kt_plugin_api::math` and its AVX+FMA
+  product as THE rounding: the portable path does the same eight lanes with `fmaf`, the AVX path
+  is taken only behind `simd_level()`; t1067 holds them bit-equal. FMA is the DEFINITION here, not
+  an optimisation — the "no FMA" rule of the video SIMD section is about a SIMD twin rounding
+  differently from its scalar text, which cannot happen when both fuse. rubato itself still does
+  the ratio, the buffering and the linear blend of two sincs.
 
 ## New effect parameters (R.33 C5, item 228)
 

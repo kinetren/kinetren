@@ -12,6 +12,7 @@
 //! Everything is in the 48 kHz sample domain (frames): clip boundaries are rounded to a sample
 //! by floor once, after that the arithmetic is exact (invariant 10 — determinism).
 
+use kt_plugin_api::math::FrozenMath;
 use crate::fetch::AudioFetcher;
 use kt_media::AudioBurst;
 use kt_model::{ClipEvent, ClipKind, Project};
@@ -1755,7 +1756,7 @@ fn merge_burst_ranges(
 }
 
 pub fn db_to_linear(db: f32) -> f32 {
-    10f32.powf(db / 20.0)
+    10f32.fpowf(db / 20.0)
 }
 
 /// Source window in which the event lives (frames from the file's zero).

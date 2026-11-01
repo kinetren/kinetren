@@ -297,16 +297,18 @@ pub const DELIVERED: [(&str, &str); 2] = [("linux", "x86_64"), ("windows", "x86_
 /// video, where they were taken). libm differs between platforms and may move the last bit;
 /// a platform's row changes only by a deliberate decision, like the values themselves.
 const GOLDEN: &[(&str, &str, u64, u64, &str)] = &[
-    ("linux", "x86_64", GOLDEN_AUDIO, GOLDEN_VIDEO, "linux/x86_64 workshop, 2026-09-07 (R.37)"),
+    ("linux", "x86_64", GOLDEN_AUDIO, GOLDEN_VIDEO, "linux/x86_64 workshop, 2026-09-07 (R.37); audio re-based 2026-11-01 (ci-green-again)"),
     (
         "windows",
         "x86_64",
-        // the audio mix differs in the last bits: the C runtime's transcendentals (sin/exp
-        // from msvcrt) are not glibc's
-        0x0a9c_8e22_f9f1_e8c2,
+        // ONE audio reference since ci-green-again: the kernels no longer call the C runtime's
+        // transcendentals, and the value is the one windows-latest measured before (CI logs
+        // 108933450618, 2026-10-25) — there msvcrt was correctly rounded, glibc an ulp off
+        GOLDEN_AUDIO,
         GOLDEN_VIDEO,
-        "audio measured on windows-latest (CI logs 108933450618, 2026-10-25); video equal to \
-         linux, confirmed on windows-latest (CI logs 108938035781, 2026-10-25)",
+        "audio = linux since ci-green-again (2026-11-01), first measured on windows-latest \
+         (CI logs 108933450618, 2026-10-25); video equal to linux, confirmed on windows-latest \
+         (CI logs 108938035781, 2026-10-25)",
     ),
 ];
 
@@ -360,7 +362,12 @@ fn t859_every_delivered_platform_has_references() {
 //
 // The video reference did NOT change and must not: the project's video clips have `fx: vec![]`,
 // and the warp branch is enabled only with slowed in the chain.
-const GOLDEN_AUDIO: u64 = 0x5a83eef245ab43f0;
+//
+// RE-BASED by ci-green-again (2026-11-01, invariant 11): the kernels call `kt_plugin_api::math`
+// (correctly rounded in f32) instead of the platform libm, and the audio moved from glibc's
+// 0x5a83eef245ab43f0 to 0x0a9c8e22f9f1e8c2 — EXACTLY the value windows-latest had measured with
+// msvcrt (the Windows row before). glibc was the side an ulp off; both platforms now give this.
+const GOLDEN_AUDIO: u64 = 0x0a9c_8e22_f9f1_e8c2;
 const GOLDEN_VIDEO: u64 = 0x95b790352d74f586;
 
 #[test]

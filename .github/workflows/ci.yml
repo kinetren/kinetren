@@ -55,13 +55,15 @@ jobs:
         # explicitly instead of depending on what the runner image carries;
         # x11-utils, x11-apps, imagemagick: xdpyinfo, xwd and convert, which t809 calls
         # to read the screen it compares against; shared-mime-info, xdg-utils:
-        # update-mime-database and xdg-mime, which t935 runs to tell our `.kt` from Kotlin
+        # update-mime-database and xdg-mime, which t935 runs to tell our `.kt` from Kotlin;
+        # libfile-mimeinfo-perl: `mimetype`, which xdg-mime asks without a desktop (a Recommends
+        # of xdg-utils — without it libmagic called our project JSON; dist-check, t1060)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang libclang-dev pkg-config libasound2-dev ffmpeg \
             xvfb openbox python3-xlib x11-utils x11-apps imagemagick \
-            shared-mime-info xdg-utils
+            shared-mime-info xdg-utils libfile-mimeinfo-perl
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -125,9 +127,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: flatpak, flatpak-builder, appstream
+        # elfutils: flatpak-builder strips with eu-strip, a Recommends that
+        # --no-install-recommends drops (dist-check, t1060)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream elfutils
 
       - name: The flatpak-builder cache
         uses: actions/cache@v4

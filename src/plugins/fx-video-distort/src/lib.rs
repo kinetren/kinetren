@@ -6,6 +6,7 @@
 //! kt-gpu pastes into both primitive loops of the fused pass. The steps, the clamps and the
 //! "neutral values skip the step" rule are the former builder's, verbatim (t328's goldens, t330).
 
+use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;
 
 mod pan3d;
@@ -184,7 +185,7 @@ impl GeoKernel for Warp {
                 if curv >= 1e-3 {
                     let a = curv * std::f64::consts::FRAC_PI_2 * 0.999;
                     // the cylinder is normalized by X on w/2
-                    return vec![GeoStep::Warp { k: [a.sin(), 1.0 / a, 0.0, 0.0, 0.0, 0.0, 0.0], norm: WarpNorm::HalfWidth }];
+                    return vec![GeoStep::Warp { k: [a.fsin(), 1.0 / a, 0.0, 0.0, 0.0, 0.0, 0.0], norm: WarpNorm::HalfWidth }];
                 }
             }
         }
@@ -209,7 +210,7 @@ impl GeoKernel for Warp {
                     return (x, y);
                 }
                 let t = 1.0 - r / p[1];
-                let (sn, cs) = (p[0] * t * t).sin_cos();
+                let (sn, cs) = (p[0] * t * t).fsin_cos();
                 (x * cs - y * sn, x * sn + y * cs)
             }
             Map::Ripple => {
@@ -218,22 +219,22 @@ impl GeoKernel for Warp {
                 if r <= 1e-9 {
                     return (x, y);
                 }
-                let k = (r + p[0] * (p[1] * r - p[2]).sin()) / r;
+                let k = (r + p[0] * (p[1] * r - p[2]).fsin()) / r;
                 (x * k, y * k)
             }
             Map::Kaleidoscope => {
                 // kaleidoscope: triangle wave over the sector (mirror
                 // repetition without int modulo — floor is the same in both texts)
                 let r = (x * x + y * y).sqrt();
-                let q = (y.atan2(x) - p[1]) / p[0];
+                let q = (y.fatan2(x) - p[1]) / p[0];
                 let h = q / 2.0 - (q / 2.0).floor();
                 let m = 1.0 - (2.0 * h - 1.0).abs();
-                let (sn, cs) = (p[1] + m * p[0]).sin_cos();
+                let (sn, cs) = (p[1] + m * p[0]).fsin_cos();
                 (r * cs, r * sn)
             }
             Map::Cylinder => {
                 // cylinder: u' = asin(u·sin a)/a along X, edges → edges
-                let u = (x * p[0]).clamp(-1.0, 1.0).asin() * p[1];
+                let u = (x * p[0]).clamp(-1.0, 1.0).fasin() * p[1];
                 (u, y)
             }
         }

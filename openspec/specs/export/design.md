@@ -89,3 +89,26 @@ A separate subcommand, not a `demo` flag: `demo` is synthetic by contract (t388)
   pts/dts/size/flags stayed the same (compared packet by packet); only the track length is now
   exact. A behaviour removed without an API change is caught only by running the major (t33 in
   `make ffmpeg-test`).
+
+## ci-green-again (2026-11-01): one math for the frozen paths, and a named foreign encoder
+
+**Frozen math (invariant 11 across platforms).** The references were printed with glibc, and the
+kernels called the platform libm, which rounds some inputs differently on Windows (t973c, t1019,
+t1048 red on windows-latest). The owner chose our own math over per-platform tables: "own math,
+close to Linux, where Linux is the more accurate one". `kt_plugin_api::math` (`FrozenMath`) is the
+one place, on the pure-Rust `libm` crate; the `f32` functions are the `f64` ones rounded once —
+correctly rounded but for ~2⁻²⁸ of inputs — because libm's own `f32` routines were a ulp off glibc
+on a tenth of `expf`/`powf` inputs (t1065 measures every function against glibc on a sweep;
+t1066 refuses a std call in the frozen crates). The warp's sinc table and dot product are ours too:
+rubato built the table on the platform's `sinf`/`cosf` and chose AVX+FMA, SSE or scalar at run
+time, so Slowed+Reverb depended on the OS and the CPU (t1067 holds the AVX path bit-equal to the
+portable `fmaf` one). Eight t973c values and t11's audio moved — each to EXACTLY the value
+windows-latest had printed: on those inputs glibc was the one an ulp off and msvcrt correctly
+rounded; nothing else moved. Rejected: interposing `sinf`/`powf` for the whole binary (link order
+decides, and egui's and wgpu's math would change silently); per-platform tables (a third CRT would
+need a third). Residual: rustfft's twiddles are `f64` cosines rounded to `f32` (~2⁻²⁹ per twiddle).
+
+**A forced encoder outside the cascade** (`h264_vaapi` on Windows) ended with "last error: " and
+nothing after it: the loop skipped every candidate. The muxer now names it with the cascade before
+the loop (t1063 forces the other system's encoder, so the Linux job proves the path; t962 expects
+that error where VAAPI is not in the cascade). Details: `openspec/changes/archive/2026-11-01-ci-green-again/design.md` (D4, D6–D8).

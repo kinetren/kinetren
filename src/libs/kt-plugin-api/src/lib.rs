@@ -2,7 +2,8 @@
 //! effect, transition and generator describes itself with, and — from stage 2 on — the manifest,
 //! the kernel traits and the registry.
 //!
-//! This crate is LOW on purpose (design D1): it depends on kt-time and serde only, so a plugin
+//! This crate is LOW on purpose (design D1): it depends on kt-time, serde and libm (the leaf the
+//! frozen math is built on, `math`) only, so a plugin
 //! crate does not depend on kt-model and an edit of one effect does not cascade through the core.
 //! kt-model re-exports everything here under its former names.
 
@@ -11,6 +12,7 @@ pub mod curves;
 pub mod dsp;
 pub mod generator;
 pub mod geo;
+pub mod math;
 pub mod pixfont;
 pub mod trans;
 

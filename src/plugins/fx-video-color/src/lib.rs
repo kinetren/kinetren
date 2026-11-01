@@ -2,6 +2,7 @@
 //! Posterize is the pilot (D9): the smallest kernel that crosses all four executor positions — the
 //! CPU barrier, the CPU tap of the fused pass, its own GPU pass and the GPU tap arm.
 
+use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;
 
 use kt_plugin_api::barrier::{AlphaRel, BarrierCtx, BarrierKernel, Frame, GpuCtx, Node, Scratch, Slot};
@@ -169,7 +170,7 @@ impl ColorGrade {
     fn numbers(p: &[f64]) -> [f64; 5] {
         let g = |i: usize| p.get(i).copied().unwrap_or(0.0);
         let h = g(3).to_radians();
-        [g(0), g(1), p.get(2).copied().unwrap_or(1.0), h.cos(), h.sin()]
+        [g(0), g(1), p.get(2).copied().unwrap_or(1.0), h.fcos(), h.fsin()]
     }
 }
 

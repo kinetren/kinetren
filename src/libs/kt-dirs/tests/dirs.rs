@@ -100,3 +100,31 @@ fn t970_the_sandbox_seam() {
     assert_eq!(sandbox_of(&linux(&[]), true), Sandbox::Flatpak, "the info file alone");
     assert_eq!(sandbox_of(&linux(&[("FLATPAK_ID", "")]), false), Sandbox::None, "an empty id is no sandbox");
 }
+
+/// t1062 (ci-green-again): a canonical path is shown and keyed without the Windows verbatim
+/// prefix where the plain spelling names the same file, and kept where it would not.
+///
+/// windows-latest ran t986 red: `std::fs::canonicalize` gave `\\?\C:\…`, and the welcome card
+/// named a folder nobody had typed. The rule is pure over `Os`, so it is held on Linux too.
+#[test]
+fn t1062_the_verbatim_prefix_is_dropped_where_it_means_nothing() {
+    use kt_dirs::{Os, plain_path};
+    let w = |s: &str| plain_path(s, Os::Windows).into_owned();
+    assert_eq!(w(r"\\?\C:\Users\me\film.kt"), r"C:\Users\me\film.kt");
+    assert_eq!(w(r"\\?\UNC\host\share\film.kt"), r"\\host\share\film.kt");
+    assert_eq!(w(r"C:\Users\me\film.kt"), r"C:\Users\me\film.kt", "a plain path stays");
+    // kept: not a drive path, or too long for the plain spelling to open
+    assert_eq!(w(r"\\?\Volume{1234}\film.kt"), r"\\?\Volume{1234}\film.kt");
+    let long = format!(r"\\?\C:\{}\film.kt", "d".repeat(300));
+    assert_eq!(w(&long), long, "a path past MAX_PATH keeps its prefix");
+    // Linux paths are never touched, even a file literally named so
+    assert_eq!(plain_path(r"\\?\C:\x", Os::Linux), r"\\?\C:\x");
+    // the native call is canonical: an existing file resolves to an absolute path without it
+    let dir = std::env::temp_dir().join(format!("kt-t1062-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let c = kt_dirs::canonical(&dir).unwrap();
+    assert!(c.is_absolute(), "{}", c.display());
+    assert!(!c.to_string_lossy().starts_with(r"\\?\"), "{}", c.display());
+    assert_eq!(std::fs::canonicalize(&c).unwrap(), std::fs::canonicalize(&dir).unwrap());
+    let _ = std::fs::remove_dir_all(&dir);
+}

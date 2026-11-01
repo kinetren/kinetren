@@ -4,6 +4,7 @@
 //! `trans()` arm of composite.wgsl. t1019 holds the pixels against the enum, t224 the GPU against
 //! the CPU, t973 the file text.
 
+use kt_plugin_api::math::FrozenMath;
 use std::f32::consts::PI;
 use std::sync::Arc;
 
@@ -56,7 +57,7 @@ pub fn whip() -> Kind {
             // a flyover like push, but with blur along the motion; the blur strength is
             // maximal in the middle of the gesture
             let (dx, dy) = (p[0], p[1]);
-            let blur = p[2] * (PI * k).sin();
+            let blur = p[2] * (PI * k).fsin();
             let mut acc = [0.0f32; 4];
             for i in 0..TAPS {
                 let o = (i as f32 / (TAPS - 1) as f32 - 0.5) * blur * 0.25;
@@ -93,7 +94,7 @@ pub fn blur_dissolve() -> Kind {
         direct,
         |a, b, u, v, k, p, cx, _| {
             // the radius grows toward the middle of the transition and goes out there
-            let r = p[0] * (PI * k).sin();
+            let r = p[0] * (PI * k).fsin();
             let sa = box9(a, u, v, r / cx.w, r / cx.h);
             let sb = box9(b, u, v, r / cx.w, r / cx.h);
             mix4(sa, sb, k)
@@ -113,7 +114,7 @@ pub fn pixelate() -> Kind {
         include_str!("pixelate.wgsl"),
         direct,
         |a, b, u, v, k, p, cx, _| {
-            let s = (p[0] * (PI * k).sin()).max(1.0);
+            let s = (p[0] * (PI * k).fsin()).max(1.0);
             let (bu, bv) = (quant(u, s / cx.w), quant(v, s / cx.h));
             mix4(a.sample(bu, bv), b.sample(bu, bv), k)
         },
@@ -132,7 +133,7 @@ pub fn glitch() -> Kind {
         include_str!("glitch.wgsl"),
         direct,
         |a, b, u, v, k, p, cx, _| {
-            let amt = p[0] * (PI * k).sin();
+            let amt = p[0] * (PI * k).fsin();
             // the bands of rows travel horizontally, the channels diverge
             let band = (v * 24.0).floor() as u32;
             let shift = (hash01(band.wrapping_mul(1973)) - 0.5) * amt * 0.25;
@@ -164,7 +165,7 @@ pub fn shake() -> Kind {
             // frame jerks: the step index by progress, the frame is a cut at 0.5
             let steps = p[1].max(1.0);
             let i = ((k * steps) as u32).min(steps as u32 - 1);
-            let amp = p[0] * 0.2 * (PI * k).sin();
+            let amp = p[0] * 0.2 * (PI * k).fsin();
             let ox = (hash01(i.wrapping_mul(2).wrapping_add(1)) - 0.5) * amp;
             let oy = (hash01(i.wrapping_mul(2).wrapping_add(2)) - 0.5) * amp;
             let img = if k < 0.5 { a } else { b };
@@ -223,7 +224,7 @@ pub fn light_leaks() -> Kind {
             // two coloured spots fly along the diagonals over the dissolve
             let aspect = cx.aspect;
             let base = mix4(a.sample(u, v), b.sample(u, v), k);
-            let wave = (PI * k).sin();
+            let wave = (PI * k).fsin();
             let blob = |bx: f32, by: f32| -> f32 {
                 let dx = (u - bx) * aspect;
                 let dy = v - by;
@@ -258,7 +259,7 @@ pub fn zoom_blur() -> Kind {
         |a, b, u, v, k, p, _, _| {
             // rays from the centre: 7 taps along the ray, the side — a cut at 0.5
             let (ox, oy) = (p[1], p[2]);
-            let amt = p[0] * (PI * k).sin();
+            let amt = p[0] * (PI * k).fsin();
             let img = if k < 0.5 { a } else { b };
             let mut acc = [0.0f32; 4];
             for i in 0..TAPS {

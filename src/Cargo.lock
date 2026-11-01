@@ -2298,6 +2298,7 @@ name = "kt-plugin-api"
 version = "0.1.0"
 dependencies = [
  "kt-time",
+ "libm",
  "serde",
 ]
 

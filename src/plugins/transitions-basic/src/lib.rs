@@ -7,6 +7,7 @@
 //! The passport lists the rows in the former variant's FIELD order (the file writes them in that
 //! order); the number rows keep the former specs, so the window's grid is the same.
 
+use kt_plugin_api::math::FrozenMath;
 use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
 
@@ -63,7 +64,7 @@ pub fn wipe() -> Kind {
             let mut p = [0.0f32; 8];
             let (dx, dy) = dir_vec(v[0]);
             let a = (v[1] as f32).to_radians();
-            let (s, c) = (a.sin(), a.cos());
+            let (s, c) = (a.fsin(), a.fcos());
             // the angle turns the direction — the diagonal is obtained by it
             p[0] = dx * c - dy * s;
             p[1] = dx * s + dy * c;
@@ -133,7 +134,7 @@ pub fn clock() -> Kind {
         |a, b, u, v, k, p, _, _| {
             let (cx, cy) = (u - p[2], v - p[3]);
             // 0 at the top, clockwise; reverse — counter-clockwise
-            let mut ang = cx.atan2(-cy);
+            let mut ang = cx.fatan2(-cy);
             if ang < 0.0 {
                 ang += TAU;
             }
@@ -289,7 +290,7 @@ pub fn flash() -> Kind {
         direct,
         |a, b, u, v, k, p, _, _| {
             let base = mix4(a.sample(u, v), b.sample(u, v), k);
-            let w = (p[3] * (PI * k).sin()).clamp(0.0, 1.0);
+            let w = (p[3] * (PI * k).fsin()).clamp(0.0, 1.0);
             [
                 base[0] + (p[0] - base[0]) * w,
                 base[1] + (p[1] - base[1]) * w,
@@ -337,7 +338,7 @@ pub fn blinds() -> Kind {
             // the angle rotates the axis of the stripes — the same scheme as wipe
             let mut p = [0.0f32; 8];
             let a = (v[1] as f32).to_radians();
-            let (sn, cs) = (a.sin(), a.cos());
+            let (sn, cs) = (a.fsin(), a.fcos());
             p[0] = cs;
             p[1] = sn;
             p[2] = v[0] as f32;
@@ -418,7 +419,7 @@ pub fn spiral() -> Kind {
             // Archimedean front: the angle (as clock) + turns along the radius
             let aspect = cx.aspect;
             let (cx, cy) = (u - p[2], v - p[3]);
-            let mut ang = cx.atan2(-cy);
+            let mut ang = cx.fatan2(-cy);
             if ang < 0.0 {
                 ang += TAU;
             }

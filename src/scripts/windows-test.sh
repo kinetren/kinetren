@@ -26,8 +26,8 @@ if [ ! -d fixtures/out ] && command -v ffmpeg > /dev/null; then
 fi
 
 UID_GID="$(id -u):$(id -g)"
-REGISTRY="$HOME/.cargo/registry"
-[ -d "$REGISTRY" ] || { REGISTRY=kinetren-cargo-registry; docker volume create "$REGISTRY" > /dev/null; }
+# the crates.io registry cache: the host's, or a volume handed to this user (cargo-registry.sh)
+REGISTRY="$(scripts/cargo-registry.sh "$IMAGE")"
 # The REPOSITORY is mounted at /kt and the build runs in /kt/src: compile-time paths
 # (env!("CARGO_MANIFEST_DIR")) become /kt/src/…, so tests reaching the repository root
 # (../../..) find it, and on the Windows CI runner a junction D:\kt → the checkout makes the

@@ -7,6 +7,7 @@
 //! (`Store::Ref(RowRole::SidechainKey)`) — the slot holds the track id's number, the engine
 //! routes the key signal by the row's role, and the kernel only receives the signal.
 
+use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;
 
 use kt_plugin_api::dsp::{AUDIO_SAMPLE_RATE, CH, EnvFollower, SmoothedParam};
@@ -117,7 +118,7 @@ impl AudioState for GainNode {
         let (db, pan) = (k[0] as f32, k[1] as f32);
         self.base_db = db as f64;
         self.base_pan = pan as f64;
-        self.static_gain = 10f32.powf(db / 20.0);
+        self.static_gain = 10f32.fpowf(db / 20.0);
         // balance: linear law, at zero both multipliers are exactly 1.0 —
         // the previous path byte-for-byte
         let p = pan.clamp(-1.0, 1.0);
@@ -135,7 +136,7 @@ impl AudioState for GainNode {
     fn set_targets(&mut self, c: &dyn SlotCurves, s: f64) {
         if self.gain_auto {
             let db = c.value("db", self.base_db, s);
-            self.auto_gain.set_target(10f32.powf(db as f32 / 20.0));
+            self.auto_gain.set_target(10f32.fpowf(db as f32 / 20.0));
         }
         if self.pan_auto {
             let p = c.value("pan", self.base_pan, s).clamp(-1.0, 1.0) as f32;
@@ -264,9 +265,9 @@ impl AudioState for GateNode {
         let rel_step = 1.0 / (self.release_ms / 1000.0 * sr).max(1.0);
         for fr in buf.chunks_exact_mut(CH) {
             let thr_db = self.threshold_db.tick();
-            let open_thr = 10f32.powf(thr_db / 20.0);
+            let open_thr = 10f32.fpowf(thr_db / 20.0);
             // hysteresis: closing at 6 dB below opening
-            let close_thr = 10f32.powf((thr_db - 6.0) / 20.0);
+            let close_thr = 10f32.fpowf((thr_db - 6.0) / 20.0);
             let peak = fr.iter().fold(0f32, |m, s| m.max(s.abs()));
             let env = self.env.tick(peak);
             if env >= open_thr {
@@ -404,10 +405,10 @@ impl AudioState for LimiterNode {
         if self.la <= 0 {
             return;
         }
-        let rel_coef = 1.0 - (-1.0 / (self.release_ms / 1000.0 * 48_000.0)).exp();
+        let rel_coef = 1.0 - (-1.0 / (self.release_ms / 1000.0 * 48_000.0)).fexp();
         for fr in buf.chunks_exact_mut(CH) {
-            let thr = 10f32.powf(self.threshold_db.tick() / 20.0);
-            let ceil = 10f32.powf(self.ceiling_db.tick() / 20.0);
+            let thr = 10f32.fpowf(self.threshold_db.tick() / 20.0);
+            let ceil = 10f32.fpowf(self.ceiling_db.tick() / 20.0);
             // the INCOMING frame goes into the window (position t + La)
             let peak = fr.iter().fold(0f32, |m, v| m.max(v.abs()));
             while let Some(&(_, v)) = self.win.back() {
@@ -558,7 +559,7 @@ impl AudioState for CompNode {
         for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
             let thr = self.threshold_db.tick();
             let ratio = self.ratio.tick().max(1.0);
-            let makeup = 10f32.powf(self.makeup_db.tick() / 20.0);
+            let makeup = 10f32.fpowf(self.makeup_db.tick() / 20.0);
             let peak = match key {
                 None => fr.iter().fold(0f32, |m, s| m.max(s.abs())),
                 Some(k) => k
@@ -566,10 +567,10 @@ impl AudioState for CompNode {
                     .map_or(0.0, |kf| kf.iter().fold(0f32, |m, s| m.max(s.abs()))),
             };
             let env = self.env.tick(peak).max(1e-6);
-            let env_db = 20.0 * env.log10();
+            let env_db = 20.0 * env.flog10();
             let over = (env_db - thr).max(0.0);
             let gr_db = over * (1.0 - 1.0 / ratio);
-            let g = 10f32.powf(-gr_db / 20.0) * makeup;
+            let g = 10f32.fpowf(-gr_db / 20.0) * makeup;
             for s in fr.iter_mut() {
                 *s *= g;
             }

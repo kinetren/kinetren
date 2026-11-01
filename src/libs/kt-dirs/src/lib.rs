@@ -202,6 +202,44 @@ pub fn is_fallback() -> bool {
     system().fallback
 }
 
+/// A Windows path without the verbatim prefix `\\?\` that `std::fs::canonicalize` adds:
+/// `\\?\C:\x` → `C:\x`, `\\?\UNC\h\s\x` → `\\h\s\x` (the `dunce` rule). The prefix is kept
+/// when the plain spelling would mean something else or not open: longer than `MAX_PATH`, or not
+/// a drive / UNC path (`\\?\Volume{…}`). Linux paths come back as they are. Pure over `os`, so
+/// the Windows rule is tested on Linux (t1062).
+pub fn plain_path(s: &str, os: Os) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+    if os == Os::Linux {
+        return Cow::Borrowed(s);
+    }
+    const MAX_PATH: usize = 260;
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        let plain = format!(r"\\{rest}");
+        if plain.len() < MAX_PATH {
+            return Cow::Owned(plain);
+        }
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        let b = rest.as_bytes();
+        let drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\';
+        if drive && rest.len() < MAX_PATH {
+            return Cow::Borrowed(rest);
+        }
+    }
+    Cow::Borrowed(s)
+}
+
+/// `std::fs::canonicalize` as a person reads the path: the verbatim prefix removed where the
+/// plain spelling names the same file (`plain_path`). A path shown in the interface or used as a
+/// key next to `std::path::absolute` spellings goes through this, never through the bare call:
+/// on Windows the bare one gave `\\?\C:\…` and a welcome card named a folder nobody had typed
+/// (t986 on windows-latest, change ci-green-again).
+pub fn canonical(p: &std::path::Path) -> std::io::Result<PathBuf> {
+    let c = std::fs::canonicalize(p)?;
+    // a path that is not UTF-8 is left as the system gave it: a lossy copy would name another file
+    let plain = c.to_str().map(|s| plain_path(s, Os::NATIVE).into_owned());
+    Ok(plain.map(PathBuf::from).unwrap_or(c))
+}
+
 /// Project locks (capability `durability`): the lock of a project is a file in
 /// `<data>/locks` named after the project's absolute path, shared by kt-app (which takes it)
 /// and kt-cli (which reports its holder).

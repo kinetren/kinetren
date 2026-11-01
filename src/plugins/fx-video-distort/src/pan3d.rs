@@ -2,6 +2,7 @@
 //! 4.1c-4): the world/camera semantics are frozen by the file format, the identity at the defaults
 //! is byte for byte (t298), and t187 runs it on both executors every time.
 
+use kt_plugin_api::math::FrozenMath;
 use kt_plugin_api::geo::Camera3d;
 
 // ---- Pan3d: homography (R.44) ----------------------------------------------
@@ -34,17 +35,17 @@ fn dot(a: &V3, b: &V3) -> f64 {
 }
 
 fn rot_z(a: f64) -> M3 {
-    let (s, c) = a.sin_cos();
+    let (s, c) = a.fsin_cos();
     [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
 }
 
 fn rot_x(a: f64) -> M3 {
-    let (s, c) = a.sin_cos();
+    let (s, c) = a.fsin_cos();
     [[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]]
 }
 
 fn rot_y(a: f64) -> M3 {
-    let (s, c) = a.sin_cos();
+    let (s, c) = a.fsin_cos();
     [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]]
 }
 
@@ -83,7 +84,7 @@ pub(crate) fn pan3d_forward(
 
     // camera: auto-distance “50 mm” — the layer at z=0 renders 1:1
     let fov = cam.fov_deg.clamp(1.0, 179.0).to_radians();
-    let f = 1.0 / (fov * 0.5).tan();
+    let f = 1.0 / (fov * 0.5).ftan();
     let auto_z = -(oh * 0.5) * f;
     let eye: V3 =
         [cam.pos_x * s, cam.pos_y * s, if cam.pos_z == 0.0 { auto_z } else { cam.pos_z * s }];

@@ -2,6 +2,7 @@
 //! chromatic_aberration, vhs, noise. Pixelate is the pilot (D7): one pass, no SIMD twin, no neighbours read —
 //! the pass graph's simplest form. Edges carries the family's AVX2 twins (`simd.rs`).
 
+use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;
 
 use kt_plugin_api::barrier::{noise_hash, noise_seed, BarrierCtx, BarrierKernel, Frame, GpuCtx, Node, Scratch, Slot};
@@ -303,7 +304,7 @@ impl BarrierKernel for Halftone {
     fn frame(&self, k: &Cooked, f: Frame, cx: &BarrierCtx, scratch: &mut dyn Scratch) -> Frame {
         let s = k[0];
         let kk = cx.res_scale as f64;
-        let (sa, ca) = k[1].clamp(-90.0, 90.0).to_radians().sin_cos();
+        let (sa, ca) = k[1].clamp(-90.0, 90.0).to_radians().fsin_cos();
         let mut out = scratch.take(f.rgba.len());
         for y in 0..f.h {
             for x in 0..f.w {
@@ -342,7 +343,7 @@ impl BarrierKernel for Halftone {
             shader: 0,
             inputs: [Slot::Prev, Slot::None, Slot::None],
             u: [g.w, g.h, 0, 0, 0, 0, 0, 0],
-            f: [k[0] as f32, a.cos() as f32, a.sin() as f32, g.res_scale as f32, 0.0, 0.0, 0.0, 0.0],
+            f: [k[0] as f32, a.fcos() as f32, a.fsin() as f32, g.res_scale as f32, 0.0, 0.0, 0.0, 0.0],
         });
     }
 }

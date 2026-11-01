@@ -28,6 +28,7 @@
 //! (polyphase FIR) catches this overshoot — otherwise “a −0.1 dBFS peak” turns into
 //! clipping after the codec.
 
+use kt_plugin_api::math::FrozenMath;
 use kt_time::AUDIO_CHANNELS;
 
 /// Double-precision biquad — for measurements (see the module comment).
@@ -247,7 +248,7 @@ impl LoudnessMeter {
         if self.step_frames > 0 {
             self.close_step();
         }
-        let dbtp = if self.peak > 0.0 { 20.0 * self.peak.log10() } else { -f64::INFINITY };
+        let dbtp = if self.peak > 0.0 { 20.0 * self.peak.flog10() } else { -f64::INFINITY };
         let lufs = gated_lufs(&self.blocks);
         let lra = loudness_range(&self.short_blocks);
         Loudness { lufs, lra, dbtp }
@@ -264,7 +265,7 @@ fn block_power(steps: &std::collections::VecDeque<[f64; AUDIO_CHANNELS]>) -> f64
 }
 
 fn power_to_lufs(p: f64) -> f64 {
-    if p <= 0.0 { -f64::INFINITY } else { -0.691 + 10.0 * p.log10() }
+    if p <= 0.0 { -f64::INFINITY } else { -0.691 + 10.0 * p.flog10() }
 }
 
 /// BS.1770 two-pass gate: absolute −70 LUFS, then relative
@@ -319,12 +320,12 @@ fn tp_kernel(tap: usize, phase: usize) -> f64 {
                 let s = if x.abs() < 1e-12 {
                     1.0
                 } else {
-                    (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x)
+                    (std::f64::consts::PI * x).fsin() / (std::f64::consts::PI * x)
                 };
                 // Hann window over the kernel length — without it the side lobes
                 // add to the peak something that is not in the signal
                 let w = 0.5
-                    - 0.5 * (2.0 * std::f64::consts::PI * (i as f64 + 0.5) / TP_TAPS as f64).cos();
+                    - 0.5 * (2.0 * std::f64::consts::PI * (i as f64 + 0.5) / TP_TAPS as f64).fcos();
                 *v = s * w;
             }
         }

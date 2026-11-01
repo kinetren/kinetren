@@ -72,7 +72,13 @@ fn t975_the_crate_graph_keeps_plugins_at_the_leaves() {
     let api = deps("libs/kt-plugin-api");
     let mut api_normal = api.get("normal").cloned().unwrap_or_default();
     api_normal.sort();
-    assert_eq!(api_normal, vec!["kt-time", "serde"], "the plugin API must depend on kt-time and serde only");
+    // libm (ci-green-again): the one math of the frozen paths, a leaf crate of pure Rust with no
+    // dependencies — it brings nothing of the core with it, which is what D1 guards against
+    assert_eq!(
+        api_normal,
+        vec!["kt-time", "libm", "serde"],
+        "the plugin API must depend on kt-time, libm and serde only"
+    );
 
     for (name, path) in &members {
         let d = deps(path);

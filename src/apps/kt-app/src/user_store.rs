@@ -712,9 +712,11 @@ pub fn now_secs() -> u64 {
 }
 
 /// The project's path as the key of its list row and poster: canonical when the file exists,
-/// absolute otherwise (a deleted project keeps its row and its key).
+/// absolute otherwise (a deleted project keeps its row and its key). Canonical WITHOUT the
+/// Windows verbatim prefix (`kt_dirs::canonical`): the key is also what a welcome card shows,
+/// and `\\?\C:\…` is neither what a person typed nor equal to the `absolute` spelling (t986).
 pub fn project_key(p: &std::path::Path) -> PathBuf {
-    std::fs::canonicalize(p)
+    kt_dirs::canonical(p)
         .or_else(|_| std::path::absolute(p))
         .unwrap_or_else(|_| p.to_path_buf())
 }

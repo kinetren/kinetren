@@ -5,6 +5,7 @@
 //! verbatim; its WGSL is the former `trans()` arm of composite.wgsl. t1019 holds the pixels against
 //! the enum, t224 the GPU against the CPU (FrameTol::GEOM for the panels), t973 the file text.
 
+use kt_plugin_api::math::FrozenMath;
 use std::f32::consts::PI;
 use std::sync::Arc;
 
@@ -81,7 +82,7 @@ pub fn swap() -> Kind {
             // switches at the midpoint — occlusion is analytic, without
             // depth (there is no depth buffer in the pipeline and none is needed)
             let vert = p[0] > 0.5;
-            let wave = (PI * k).sin();
+            let wave = (PI * k).fsin();
             let off = 0.3 * wave;
             let scale = (1.0 - p[1] * wave).max(0.05);
             let quad = |img: &Img<'_>, side: f32| -> [f32; 4] {
@@ -147,7 +148,7 @@ pub fn flip() -> Kind {
         if (th - std::f64::consts::FRAC_PI_2).abs() < 1e-4 {
             th += 1e-3;
         }
-        let (sn, cs) = th.sin_cos();
+        let (sn, cs) = th.fsin_cos();
         let d = dist(p[1]);
         if let Some(h) = face_h_inv(0.5 - 0.5 * cs, cs, -0.5 * sn, sn, d) {
             e[..8].copy_from_slice(&h);
@@ -172,7 +173,7 @@ pub fn cube() -> Kind {
         |a, b, u, v, k, p, _, ext| {
             let vert = p[1].abs() > 0.5;
             let (sx, sy) = if vert { (v, u) } else { (u, v) };
-            let sh = 1.0 - p[3] * (PI * k).sin() * 0.5;
+            let sh = 1.0 - p[3] * (PI * k).fsin() * 0.5;
             let pick = |h: &[f32], img: &Img<'_>| -> Option<[f32; 4]> {
                 match hpanel(h, sx, sy) {
                     Some((sp, t)) if (0.0..=1.0).contains(&sp) && (0.0..=1.0).contains(&t) => {
@@ -193,7 +194,7 @@ pub fn cube() -> Kind {
         let sgn = if p[0].abs() > 0.5 { -p[0] as f64 } else { -p[1] as f64 };
         let d = dist(p[2]);
         let face = |phi: f64| {
-            let (sn, cs) = phi.sin_cos();
+            let (sn, cs) = phi.fsin_cos();
             face_h_inv(0.5 - 0.5 * cs - 0.5 * sn, cs, 0.5 + 0.5 * sn - 0.5 * cs, -sn, d)
         };
         let phi_a = sgn * kf * std::f64::consts::FRAC_PI_2;
@@ -240,7 +241,7 @@ pub fn door() -> Kind {
         let mut e = [0.0f32; 16];
         let kf = k as f64 / 4096.0;
         let th = kf * (std::f64::consts::FRAC_PI_2 - 1e-3);
-        let (sn, cs) = th.sin_cos();
+        let (sn, cs) = th.fsin_cos();
         let d = dist(p[1]);
         // left leaf: hinge at the edge, it swings open inward;
         // the right one — its mirror, computed in the core
@@ -281,7 +282,7 @@ pub fn page_peel() -> Kind {
             // 2. the cylinder over [f, f+r]
             let dc = c - f;
             if (0.0..=r).contains(&dc) {
-                let th1 = dc.atan2((r * r - dc * dc).max(0.0).sqrt());
+                let th1 = dc.fatan2((r * r - dc * dc).max(0.0).sqrt());
                 let th2 = PI - th1;
                 let m2 = f + r * th2;
                 if m2 <= 1.0 {
@@ -289,7 +290,7 @@ pub fn page_peel() -> Kind {
                 }
                 let m1 = f + r * th1;
                 if m1 <= 1.0 {
-                    let sh = 1.0 - shadow * 0.3 * th1.sin();
+                    let sh = 1.0 - shadow * 0.3 * th1.fsin();
                     return shade3(axis_sample(a, u, v, dx, dy, m1), sh);
                 }
             }
@@ -328,11 +329,11 @@ pub fn page_roll() -> Kind {
                 // front (c < f): the top point of the turn θ₂ = π − asin;
                 // back (c > f): continuation of the turn θ₃ = π + asin
                 let ad = dc.abs();
-                let th1 = ad.atan2((r * r - ad * ad).max(0.0).sqrt());
+                let th1 = ad.fatan2((r * r - ad * ad).max(0.0).sqrt());
                 let th = if dc >= 0.0 { PI - th1 } else { PI + th1 };
                 let mw = f + r * th;
                 if mw <= 1.0 {
-                    let sh = back * (1.0 - 0.2 * (1.0 - th.sin().abs()));
+                    let sh = back * (1.0 - 0.2 * (1.0 - th.fsin().abs()));
                     return shade3(axis_sample(a, u, v, dx, dy, mw), sh);
                 }
                 let m1 = f + r * th1;

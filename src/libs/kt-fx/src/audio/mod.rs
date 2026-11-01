@@ -5,6 +5,7 @@
 pub mod loudness;
 mod nodes;
 pub mod primitives;
+mod sinc;
 mod warp;
 
 pub use nodes::{AudioNode, Freeverb};
