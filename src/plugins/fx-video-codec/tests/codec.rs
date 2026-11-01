@@ -330,3 +330,42 @@ fn t1243_freeze_transplant_vector_ops_and_loss() {
     assert_ne!(*l1, *l2);
 }
 
+
+/// The cost (datamosh-codec-path, task 5.1) — a measurement, not a check: run on a RELEASE build
+/// with `cargo test --release -p fx-video-codec --test codec cost -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn cost_per_frame_at_360_lines() {
+    let (w, h) = (640u32, 360u32);
+    let frames: Vec<Vec<u8>> = (0..61)
+        .map(|k| {
+            let t = tex(9, 2 * k, k / 2);
+            // the 128×96 texture tiled to 640×360
+            let mut out = vec![255u8; (w * h * 4) as usize];
+            for y in 0..h {
+                for x in 0..w {
+                    let s = (((y % H) * W + (x % W)) * 4) as usize;
+                    let d = ((y * w + x) * 4) as usize;
+                    out[d..d + 3].copy_from_slice(&t[s..s + 3]);
+                }
+            }
+            out
+        })
+        .collect();
+    let cfg = Cfg { bs: 16, search: 16, qp: 24.0 };
+    let (pw, ph) = (codec::pad16(w), codec::pad16(h));
+    let planes: Vec<Planes> = frames.iter().map(|f| Planes::from_rgba(f, w, h, pw, ph)).collect();
+    let t0 = std::time::Instant::now();
+    let mut prev: Option<codec::Clean> = None;
+    for p in &planes {
+        prev = Some(codec::encode(p, prev.as_ref().map(|c| &c.recon), &cfg));
+    }
+    let enc = t0.elapsed().as_secs_f64() * 1000.0 / planes.len() as f64;
+    let c = prev.unwrap();
+    let t1 = std::time::Instant::now();
+    for _ in 0..planes.len() {
+        let _ = codec::reconstruct(&codec::predict(&c.recon, &c.pkt.mv, 16), &c.pkt.res, 200);
+    }
+    let dec = t1.elapsed().as_secs_f64() * 1000.0 / planes.len() as f64;
+    eprintln!("640x368: encode {enc:.2} ms/frame, broken decode {dec:.2} ms/frame; a cold seek through a 300-frame chain ≈ {:.0} ms", 300.0 * (enc + dec));
+}

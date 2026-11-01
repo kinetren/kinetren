@@ -4797,6 +4797,9 @@ impl FxInstance {
                 FxInstance::builtin("vhs"),
                 FxInstance::builtin("glow"),
                 FxInstance::event_grid(),
+                // a STREAM source stage (datamosh-codec-path): the engine runs it on the source,
+                // the chain passes its slot through
+                FxInstance::builtin("datamosh"),
                 FxInstance::builtin("pan3d"),
             ]
         })
