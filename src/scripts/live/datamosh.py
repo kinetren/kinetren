@@ -75,10 +75,11 @@ def main(out):
         plain = app.pixel_settled(center)
         plain_shot = app.step("plain", "the frame after the cut without the effect: shot B")
 
-        before = app.shot("pre-fxwin")
         app.double_click(app.x_at(int(3.0 * SEC)), y)
         app.step("fxwin", "double click on the second clip: its FX window")
-        app.expect(app.screen_diff(before) > 0.01, "the FX window opened")
+        # the window is judged by its picker button, which it publishes once drawn (a screen diff
+        # taken right after the gesture can precede the window's first frame)
+        app.expect(app.has_probe("fxreg.add"), "the FX window opened (its picker button is there)")
 
         if not app.click_probe("fxreg.add", "the program gave the rectangle of the picker button"):
             return app.done()
@@ -98,6 +99,8 @@ def main(out):
             return app.done()
         app.step("picked", "Cut mosh added to the chain")
         app.key("Escape")
+        # the double click moved the playhead into the clip: back to the judged frame
+        app.click(app.x_at(int(2.5 * SEC)), app.ruler_y())
 
         # the preview after the cut is now the decoded mosh (the history warms first)
         moshed = app.pixel_settled(center, differs_from=plain, tries=60)
@@ -119,6 +122,7 @@ def main(out):
         # undo brings shot B back
         app.key("ctrl+z")
         back = app.pixel_settled(center, differs_from=moshed, tries=60)
+        app.expect(back == plain, f"undo shows shot B's frame again ({back} vs {plain})")
         app.step("undone", "Ctrl+Z: shot B again")
         app.expect(back is not None, "undo changed the frame back")
         app.expect(app.screen_diff(mosh_shot) > 0.01, "the undone frame differs from the moshed one")

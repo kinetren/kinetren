@@ -36,7 +36,9 @@ Tests t1235–t1259 are reserved by this change. Every stage ends green and is c
     and the vector swap a checkbox in the FX window. The picker's template is the intact codec, the
     breakages are the presets (t543: a variant must differ from the template). The GOP strip was not
     built (secondary per the owner's p.4): it would need the schedule's text a second time in kt-app.
-- [ ] 4.2 Live scenario `datamosh.py` with screenshots on our fixtures
+- [x] 4.2 Live scenario `datamosh.py` with screenshots on our fixtures
+  - Green on :287 (:283 gave an X BadMatch on SetInputFocus — a display another run was using). The
+    Cut mosh preset got `gop` 60: with 24 the next intact I-frame ended the mosh 0.8 s after the cut.
 
 ## 5. Close
 

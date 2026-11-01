@@ -129,7 +129,7 @@ impl Datamosh {
 
 /// The presets (task 2.3): the classic cut mosh, bloom, a vector transplant, a melt.
 pub const VARIANTS: &[UiVariant] = &[
-    UiVariant { name_key: "fxreg.var.mosh_cut", sets: &[("before", 12.0), ("drop_count", 1.0)] },
+    UiVariant { name_key: "fxreg.var.mosh_cut", sets: &[("before", 12.0), ("drop_count", 1.0), ("gop", 60.0)] },
     UiVariant { name_key: "fxreg.var.mosh_bloom", sets: &[("bloom_at", 12.0), ("bloom_len", 24.0)] },
     UiVariant {
         name_key: "fxreg.var.mosh_transplant",
