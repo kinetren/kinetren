@@ -24,7 +24,7 @@
 
 ## 4. The panel
 
-- [ ] 4.1 the deck face in the effects window (D11); t1193 with its PATH; reach/layout/i18n/font
+- [x] 4.1 the deck face in the effects window (D11); t1193 with its PATH; reach/layout/i18n/font
       tests green
 - [ ] 4.2 a live scenario with screenshots on our fixtures
 

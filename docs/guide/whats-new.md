@@ -5,6 +5,13 @@ month, newest first.
 
 ## kt26.11
 
+- **A real VHS: the tape is written and read back.** The new **VHS Tape** effect does not paint
+  stripes on the picture — it records it as a VHS deck does (the brightness on an FM carrier, the
+  colour on a low "colour-under" carrier, two heads on a spinning drum writing slanted tracks) and
+  plays the tape back. Snow, colour smear, the noise bar, the tear at the bottom and wobbly lines
+  come out of the causes: click a head on the drawn drum and make it dirty, clogged or chipped,
+  turn the tracking, switch SP/LP, a TBC, four heads for a clean pause, or record on one deck and
+  play on another. The old **VHS** look is still there.
 - **Composition previews no longer get rebuilt by chance when a project opens.** Opening a
   project sometimes found its own index file "busy" and drew the frames and waveform of every
   composition all over again; now the saved previews come back every time.

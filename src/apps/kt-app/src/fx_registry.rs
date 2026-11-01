@@ -1069,7 +1069,8 @@ mod tests {
         assert_eq!(filter_entries(reg, false, "reverb").len(), 1, "warp is also searched in the video picker");
         assert_eq!(filter_entries(reg, true, "ReVerb").len(), 1, "Cyrillic keyword");
         assert_eq!(filter_entries(reg, false, "vish").len(), 0);
-        assert_eq!(filter_entries(reg, false, "vhs").len(), 1);
+        // “vhs” finds the VHS look AND the VHS Tape simulation (vhs-tape-simulation)
+        assert_eq!(filter_entries(reg, false, "vhs").len(), 2);
         // R.47 Q3: “blur” finds Blur AND Radial Blur
         assert_eq!(filter_entries(reg, false, "blur").len(), 2);
         assert_eq!(filter_entries(reg, true, "gain").len(), 1);
@@ -1079,7 +1080,7 @@ mod tests {
         for lang in crate::i18n::Lang::ALL {
             crate::i18n::set_lang(lang);
             assert_eq!(filter_entries(reg, false, "blur").len(), 2, "blur in {}", lang.code());
-            assert_eq!(filter_entries(reg, false, "vhs").len(), 1, "vhs in {}", lang.code());
+            assert_eq!(filter_entries(reg, false, "vhs").len(), 2, "vhs in {}", lang.code());
             assert_eq!(filter_entries(reg, true, "reverb").len(), 1, "reverb in {}", lang.code());
         }
         crate::i18n::set_lang(crate::i18n::Lang::Ru);

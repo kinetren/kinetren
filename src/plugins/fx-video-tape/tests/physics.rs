@@ -528,3 +528,51 @@ fn cost_per_1080p_frame() {
         eprintln!("{name}: {:.1} ms per 1080p frame ({} threads)", t0.elapsed().as_secs_f64() * 1000.0 / n as f64, std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
     }
 }
+
+/// Pictures of the presets on our test card, for the report (not a check): set
+/// `KT_TAPE_GALLERY=<dir>`; writes `<preset>.ppm` at the grid's resolution.
+#[test]
+#[ignore]
+fn gallery_of_the_presets() {
+    let Ok(dir) = std::env::var("KT_TAPE_GALLERY") else { return };
+    let st = Standard::get(Std::Pal);
+    let card = picture(st, |x, y| {
+        let (fx, fy) = (x as f64 / st.a as f64, y as f64 / st.h as f64);
+        let bars = [[191, 191, 191], [191, 191, 0], [0, 191, 191], [0, 191, 0], [191, 0, 191], [191, 0, 0], [0, 0, 191], [16, 16, 16]];
+        if fy < 0.45 {
+            let c = bars[(fx * 8.0) as usize];
+            [c[0], c[1], c[2]]
+        } else if fy < 0.6 {
+            // a frequency burst: 0.5, 1, 2, 3, 4 MHz
+            let f = [0.5e6, 1.0e6, 2.0e6, 3.0e6, 4.0e6][((fx * 5.0) as usize).min(4)];
+            let v = 0.5 + 0.4 * (std::f64::consts::TAU * f / st.fs * (x + st.m) as f64).fsin();
+            grey(v)
+        } else if fy < 0.75 {
+            grey(fx)
+        } else {
+            // a white box on black, a black box on white: the edges' streaks
+            let w = (fx > 0.1 && fx < 0.4) != (fx > 0.55 && fx < 0.9);
+            if fx < 0.5 { if w { [235, 235, 235] } else { [16, 16, 16] } } else if w { [16, 16, 16] } else { [235, 235, 235] }
+        }
+    });
+    let p = fx_video_tape::VhsTape::new();
+    let mut sets: Vec<(String, Vec<(&str, f64)>)> = vec![("defaults".into(), vec![])];
+    for v in p.manifest().ui.variants {
+        sets.push((v.name_key.trim_start_matches("fxreg.var.").to_string(), v.sets.to_vec()));
+    }
+    sets.push(("tracking".into(), vec![("decks", 1.0), ("skew_um", 50.0), ("tracking_um", 22.0)]));
+    let write = |name: &str, rgba: &[u8], w: u32, h: u32| {
+        let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
+        for px in rgba.chunks_exact(4) {
+            out.extend_from_slice(&px[..3]);
+        }
+        std::fs::write(format!("{dir}/{name}.ppm"), out).unwrap();
+    };
+    write("input", &card, st.a, st.h);
+    for (name, s) in sets {
+        let r = run(&values(&s), &card, 90_000);
+        let mut o = vec![0u8; (st.a * st.h * 4) as usize];
+        sim::read_out(&r, st.a, st.h, &mut o);
+        write(&name, &o, st.a, st.h);
+    }
+}

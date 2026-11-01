@@ -184,7 +184,7 @@ pub fn draw(
 ) -> crate::widgets::ParamsChanged {
     let mut ch = crate::widgets::ParamsChanged::default();
     let sel_id = ui.id().with("deck_sel");
-    let mut sel: Option<(usize, usize)> = ui.data(|d| d.get_temp(sel_id));
+    let mut sel: Option<(usize, usize)> = ui.data(|d| d.get_temp::<Option<(usize, usize)>>(sel_id)).flatten();
     let two = get(f, "decks") >= 0.5;
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.horizontal(|ui| {
@@ -226,7 +226,7 @@ pub fn draw(
                     ui.label(crate::tf!(k::deck::HEAD, if h == 0 { "A" } else { "B" }));
                     for c in Cond::ALL {
                         let r = ui.add(egui::Button::selectable(c == cur, c.label()).frame_when_inactive(true));
-                        crate::widgets::field_probe::note(&format!("deck.cond.{}", c.label()), r.rect);
+                        crate::widgets::field_probe::note(&format!("deck.cond.{c:?}"), r.rect);
                         if r.clicked() && c != cur {
                             for (row, v) in head_rows(d, h).iter().zip(c.values()) {
                                 f.set_param(row, v);
