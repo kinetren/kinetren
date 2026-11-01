@@ -15,8 +15,9 @@ content hash. The planner SHALL treat a mix slot as a strength stop and an alpha
 neither MAY split a geometry series that has no mask in it. A slot before the leading node is masked
 in the source raster, a slot after it in the canvas raster through the placement; a later Geometry
 node or a distortion is not followed. The coverage SHALL be computed by the one kt-fx rasterizer once
-per frame per application point; the GPU SHALL apply THE SAME coverage bytes in an integer pass, so its
-conformance class is EXACT. An event, a slot and a track without masks MUST get no slot: the plan, the
+per frame per application point; the GPU SHALL apply THE SAME coverage bytes in an integer pass, so a
+mask adds no divergence of its own: masks and the exact Geometry node agree byte for byte, a masked effect
+within that effect's own tolerance class. An event, a slot and a track without masks MUST get no slot: the plan, the
 bytes and the cost are the earlier ones.
 Why: the owner's S1 ("classic masks") within invariant 7; a canvas mask applied at the composite would
 cover different content than a slot that runs before the Geometry node, and a GPU rasterizer would be a
@@ -24,7 +25,7 @@ second implementation held to a threshold tolerance (F-MSK-001).
 
 #### Scenario: The picture mask cuts the event and follows its geometry
 - **WHEN** an opaque event over a coloured lower track gets a rectangle mask on its left half; then the event's Geometry node moves it right by a quarter of the canvas; then the mask is inverted
-- **THEN** inside the mask the event's colour, outside it the lower track's; after the move the visible region moved with the event by exactly the shift; inverted — the halves swap; preview == export
+- **THEN** inside the mask the event's colour, outside it the lower track's; after the move the visible region moved with the event by exactly the shift; inverted — the halves swap
 - **TEST** t1270 (`src/libs/kt-engine/tests/masks.rs`)
 
 #### Scenario: A slot mask limits an effect to the region
@@ -42,7 +43,7 @@ second implementation held to a threshold tolerance (F-MSK-001).
 - **THEN** without masks the chain has no mask slot and the frame equals the earlier path byte for byte (goldens untouched); each mask edit changes the post-FX key, the repeat is read from the cache
 - **TEST** t1273 (`src/libs/kt-engine/tests/masks.rs`)
 
-#### Scenario: GPU and CPU agree exactly on masked frames
-- **WHEN** a picture mask, a slot mask (an effect of another raster size), a feathered path mask and a track mask are composed on both backends
-- **THEN** the frames agree within `FrameTol::EXACT`
+#### Scenario: A mask adds no GPU divergence
+- **WHEN** a picture mask after a rotated, zoomed Geometry node (opaque and alpha sources), masks alone on a track's chain, a slot mask before and after the node (a blur, a duotone) and a feathered Difference path are composed on both backends
+- **THEN** the mask-only cases agree within `FrameTol::EXACT`; a masked effect within that effect's own class (`BILINEAR`, t181); and every case differs from the same plan without its masks
 - **TEST** t1274 (`src/libs/kt-gpu/tests/masks.rs`)

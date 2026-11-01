@@ -70,8 +70,9 @@ pub enum MaskShape {
 pub struct Vertex { pub id: u32, pub x, y, ix, iy, ox, oy }   // tangents RELATIVE to the vertex
 ```
 
-Owners: `ClipEvent.masks` (the picture), `ClipEvent.fx_masks: Vec<Vec<Mask>>` (parallel to `fx`,
-shorter = no masks, the same convention as `fx_bypass`/`fx_auto`), `Track.masks`. All fields are
+Owners: `ClipEvent.masks: EventMasks { picture: Vec<Mask>, slots: Vec<Vec<Mask>> }` (the slot lists
+parallel to `fx`, shorter = no masks, the same convention as `fx_bypass`/`fx_auto`; ONE field on the
+event, so the 180 struct literals of the tests gained one line), `Track.masks`. All fields are
 `#[serde(default, skip_serializing_if = …)]`: a project without masks serializes byte for byte as
 before (t148 golden, t811/t822).
 
@@ -173,8 +174,9 @@ platform (invariant 11) and are frozen by a hash (t1269).
 `c' = (dry·(255 − m) + wet·m + 127) / 255` per channel (alpha included), the dry side fitted by
 `fit_into` first when the sizes differ, as `blend_frames_cpu` does. The GPU gets the coverage as
 an `Rgba8Uint` texture (the byte in `.r`) in T2 of the existing `layer_mix` layout (`m` unused) and a
-new `mask.wgsl` for the alpha form; the inputs are the same bytes, the arithmetic is integer, so the
-conformance class is `FrameTol::EXACT` (t1274). Rejected — rasterizing on the GPU: no compute, no
+new `mask.wgsl` for the alpha form; the inputs are the same bytes, the arithmetic is integer, so a mask
+adds no divergence: mask-only chains agree with `FrameTol::EXACT`, a masked effect within its own
+class (t1274). Rejected — rasterizing on the GPU: no compute, no
 storage buffers, three textures; a GPU fill would be a second rasterizer held to a threshold
 tolerance (F-MSK-001 "a threshold kernel is the worst case"), while the CPU raster is a few
 milliseconds per 1080p frame.
@@ -218,8 +220,8 @@ first's.
 
 ### D7. Commands, validation, clipboard
 
-- `SetMasks { id, masks }`, `SetFxMasks { id, masks: Vec<Vec<Mask>> }`, `SetTrackMasks { id,
-  masks }` — full replacements (as `SetFxAuto`); a gesture sends them through `apply_coalesced`
+- `SetMasks { id, masks: EventMasks }` (the picture and every slot list of the event in one value)
+  and `SetTrackMasks { id, masks }` — full replacements (as `SetFxAuto`); a gesture sends them through `apply_coalesced`
   (one history step per drag). `SetFx` trims `fx_masks` to the new chain length (as it trims
   `fx_auto`); the editor's reorder moves the masks with their slots under the window's gesture.
 - `validate`/`check_on`: unique ids and names in a list, a path has ≥ 3 vertices with unique ids,

@@ -173,9 +173,11 @@ enum Pipe {
     Premul,
     /// One tile, copied (morpher-event-grid-cost, D2): the replicate half.
     GridTile,
+    /// Mask alpha (shape-masks): the frame's alpha × the uploaded coverage.
+    MaskAlpha,
 }
 
-const PIPE_COUNT: usize = 7;
+const PIPE_COUNT: usize = 8;
 
 /// One chain step precomputed on the CPU (common maths: kt-fx:
 /// pan_frame/cam_at/noise_seed). The number of passes and the sizes are known in advance.
@@ -228,6 +230,43 @@ enum FxOp {
     Mix {
         k: u32,
     },
+    /// The dry side of an effect slot's masks (shape-masks): a marker, like `Snapshot`, kept
+    /// apart so a morpher snapshot and a mask snapshot never share the slot.
+    MaskSnapshot,
+    /// An effect slot's masks: the current result mixed with the mask snapshot per pixel by
+    /// the coverage (the CPU rasterizer's bytes as a texture, `cov`).
+    MaskMix {
+        cov: Arc<kt_media::VideoFrame>,
+        key: u64,
+        /// Whether each side carries alpha (without it the byte reads as 255, as on the CPU).
+        dry_alpha: bool,
+        wet_alpha: bool,
+    },
+    /// The picture's or the track's masks: the alpha × the coverage.
+    MaskAlpha {
+        cov: Arc<kt_media::VideoFrame>,
+        key: u64,
+        has_alpha: bool,
+    },
+}
+
+/// The coverage as an uploadable frame (the byte in `.r`) and its upload key: a hash of the
+/// bytes with the top bit set, so it never meets a frame serial.
+fn coverage_frame(c: &kt_fx::mask::Coverage) -> (Arc<kt_media::VideoFrame>, u64) {
+    let mut rgba = vec![0u8; c.cov.len() * 4];
+    for (px, &m) in rgba.chunks_exact_mut(4).zip(&c.cov) {
+        px[0] = m;
+        px[3] = 255;
+    }
+    let key = xxhash_rust::xxh3::xxh3_64(&c.cov) | (1u64 << 63);
+    let f = kt_media::VideoFrame {
+        pts: Tick::ZERO,
+        width: c.w,
+        height: c.h,
+        rgba: rgba.into_boxed_slice(),
+        has_alpha: false,
+    };
+    (Arc::new(f), key)
 }
 
 impl FxOp {
@@ -239,8 +278,8 @@ impl FxOp {
             }
             // a snapshot spawns no passes; when the sizes have diverged, mixing is completed
             // by resampling the dry side
-            FxOp::Snapshot => 0,
-            FxOp::Mix { .. } => 2,
+            FxOp::Snapshot | FxOp::MaskSnapshot => 0,
+            FxOp::Mix { .. } | FxOp::MaskMix { .. } => 2,
             FxOp::GeomTile { .. } => 2,
             _ => 1,
         }
@@ -311,6 +350,8 @@ fn chain_ops(
     // otherwise the CPU (which has
     // `Frame.has_alpha`) and the GPU would diverge on titles.
     src_has_alpha: bool,
+    // mask application points (shape-masks), at the chain positions of the CPU path
+    masks: &[kt_fx::mask::MaskOp],
 ) -> ChainOps {
     let (mut w, mut h) = (src_w, src_h);
     // the maximum of INTERMEDIATE sizes (K×-segments, item 314): resolve_chain
@@ -333,12 +374,64 @@ fn chain_ops(
         .collect();
     // The chain plan is built by kt-fx (R.45, item 311): the SHARED code of both backends
     // (invariant 7); here the ops are only translated into FxOp.
+    // mask points cut the chain too: the same slices as `apply_chain_with_mixes` on the CPU
+    let mut stops = froms.clone();
+    stops.extend(kt_fx::mask::mask_stops(masks));
+    stops.sort_unstable();
+    stops.dedup();
     let plan = kt_fx::plan::plan_chain_in(
-        fx, src_w, src_h, src_scale, out_w, out_h, u, cam3d, t.0, &froms, lead,
+        fx, src_w, src_h, src_scale, out_w, out_h, u, cam3d, t.0, &stops, lead,
     );
+    let s = src_scale.max(1);
+    let in_logical = (src_w / s, src_h / s);
+    // the chain position the next plan op starts at (mask points are emitted at positions)
+    let mut pos = 0usize;
+    // the alpha at the mask snapshot (the dry side's flag of the mix)
+    let mut snap_alpha = false;
+    let mask_points = |at: usize, ops: &mut Vec<FxOp>, w: u32, h: u32, cur_alpha: bool, snap_alpha: &mut bool| -> bool {
+        use kt_fx::mask::MaskOpKind;
+        let mut produced = false;
+        for op in masks.iter().filter(|o| o.at == at && matches!(o.kind, MaskOpKind::Mix { .. })) {
+            let sp = kt_fx::mask::mask_space(op, fx, in_logical, (out_w, out_h), (w, h), lead);
+            let (cov, key) = coverage_frame(&kt_fx::mask::rasterize_cached(&op.masks, &sp, w, h));
+            ops.push(FxOp::MaskMix { cov, key, dry_alpha: *snap_alpha, wet_alpha: cur_alpha });
+            produced |= *snap_alpha;
+        }
+        for op in masks.iter().filter(|o| o.at == at && o.kind == MaskOpKind::Alpha) {
+            let sp = kt_fx::mask::mask_space(op, fx, in_logical, (out_w, out_h), (w, h), lead);
+            let (cov, key) = coverage_frame(&kt_fx::mask::rasterize_cached(&op.masks, &sp, w, h));
+            ops.push(FxOp::MaskAlpha { cov, key, has_alpha: cur_alpha || produced });
+            produced = true;
+        }
+        if masks.iter().any(|o| matches!(o.kind, MaskOpKind::Mix { from } if from == at)) {
+            ops.push(FxOp::MaskSnapshot);
+            *snap_alpha = cur_alpha || produced;
+        }
+        produced
+    };
     // open snapshots: (op position, frame size there) — for the strength-0 skip below
     let mut snaps: Vec<(usize, u32, u32)> = Vec::new();
     for op in plan.ops {
+        // where this op starts in the chain; the mask points standing there come first
+        let span = match &op {
+            kt_fx::plan::PlanOp::Run { i, j, .. } => Some((*i, *j)),
+            kt_fx::plan::PlanOp::Barrier { idx, .. } | kt_fx::plan::PlanOp::Mix { idx } => {
+                Some((*idx, *idx + 1))
+            }
+            kt_fx::plan::PlanOp::Snapshot => None,
+        };
+        let start = span.map(|(i, _)| i);
+        if let Some(st) = start {
+            while pos <= st {
+                let cur = if has_alpha_known { has_alpha } else { src_has_alpha };
+                if !masks.is_empty() && mask_points(pos, &mut ops, w, h, cur, &mut snap_alpha) {
+                    // the alpha rule (R.53): a mask PRODUCES transparency
+                    has_alpha_known = true;
+                    has_alpha = true;
+                }
+                pos += 1;
+            }
+        }
         match op {
             kt_fx::plan::PlanOp::Snapshot => {
                 snaps.push((ops.len(), w, h));
@@ -459,6 +552,22 @@ fn chain_ops(
                 _ => debug_assert!(false, "barrier op on non-barrier fx"),
             },
         }
+        // the op consumed the chain up to its end (a run never spans a stop: no mask point
+        // lies inside it)
+        if let Some((_, end)) = span {
+            pos = pos.max(end);
+        }
+    }
+    // the points after the last op, the chain's end included (a track's masks)
+    if !masks.is_empty() {
+        while pos <= fx.len() {
+            let cur = if has_alpha_known { has_alpha } else { src_has_alpha };
+            if mask_points(pos, &mut ops, w, h, cur, &mut snap_alpha) {
+                has_alpha_known = true;
+                has_alpha = true;
+            }
+            pos += 1;
+        }
     }
     (ops, (w, h), has_alpha, has_alpha_known, (mw, mh))
 }
@@ -524,8 +633,8 @@ impl ChainSpec {
                     c.add(kt_fx::video::FrameCost::geom(prog));
                     c.passes += 1;
                 }
-                FxOp::Snapshot => c.snapshots += 1,
-                FxOp::Mix { .. } => {
+                FxOp::Snapshot | FxOp::MaskSnapshot => c.snapshots += 1,
+                FxOp::Mix { .. } | FxOp::MaskMix { .. } => {
                     c.mixes += 1;
                     c.passes += op.passes();
                 }
@@ -598,6 +707,7 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("unpremul", include_str!("shaders/unpremul.wgsl")),
     ("premul", include_str!("shaders/premul.wgsl")),
     ("grid_tile", include_str!("shaders/grid_tile.wgsl")),
+    ("mask", include_str!("shaders/mask.wgsl")),
 ];
 
 const COMMON: &str = include_str!("shaders/common.wgsl");
@@ -1355,7 +1465,7 @@ impl Inner {
             let (cw, ch) = fit.unwrap_or((sw, sh));
             let (mut ops, (fw, fh), ha, ha_known, (mw, mh)) =
                 // the sub-composite always has alpha (see below)
-                chain_ops(&src.fx, cw, ch, src.src_scale, ow, oh, src.u, t, src.cam3d, src.lead, true);
+                chain_ops(&src.fx, cw, ch, src.src_scale, ow, oh, src.u, t, src.cam3d, src.lead, true, &src.masks);
             if fit.is_some() {
                 ops.insert(
                     0,
@@ -1389,6 +1499,7 @@ impl Inner {
             src.cam3d,
             src.lead,
             frame.has_alpha,
+            &src.masks,
         );
         // The K×-gaps of the plan (item 314) MUST fit within the device texture limit;
         // if they do not, a clean TooLarge (the whole plan goes to the
@@ -1451,6 +1562,8 @@ impl Inner {
         // the dry side of the mix (R.38 item 12): the snapshot of the state BEFORE the contribution
         // of the layer. The snapshot texture cannot go back to the pool before the mix itself.
         let mut snap: Option<(wgpu::TextureView, u32, u32)> = None;
+        // the dry side of an effect slot's masks (shape-masks), kept apart from the morpher's
+        let mut msnap: Option<(wgpu::TextureView, u32, u32)> = None;
         for op in &chain.ops {
             match op {
                 FxOp::Snapshot => {
@@ -1462,6 +1575,54 @@ impl Inner {
                     } else {
                         snap = Some((view.clone(), w, h));
                     }
+                }
+                FxOp::MaskSnapshot => {
+                    if let Some(t) = owned.take() {
+                        msnap = Some((t.view.clone(), w, h));
+                        retired.push(t);
+                    } else {
+                        msnap = Some((view.clone(), w, h));
+                    }
+                }
+                FxOp::MaskAlpha { cov, key, has_alpha } => {
+                    let cov_view = self.upload.get_or_upload(&self.device, &self.queue, *key, cov);
+                    let dst = self.pool.acquire(&self.device, w, h);
+                    let u = UniformData { u: [*has_alpha as u32, 0, 0, 0, 0, 0, 0, 0], ..Default::default() };
+                    self.pass(enc, Pipe::MaskAlpha, &dst.view, &view, &cov_view, &dummy, u);
+                    if let Some(t) = owned.take() {
+                        retired.push(t);
+                    }
+                    view = dst.view.clone();
+                    owned = Some(dst);
+                }
+                FxOp::MaskMix { cov, key, dry_alpha, wet_alpha } => {
+                    let Some((dry_view, dw, dh)) = msnap.take() else { continue };
+                    let dry_fit = if (dw, dh) == (w, h) {
+                        dry_view
+                    } else {
+                        let fit = self.pool.acquire(&self.device, w, h);
+                        let u = UniformData {
+                            u: [w, h, dw, dh, 0, 0, 0, 0],
+                            f: [0.0, 0.0, dw as f32, dh as f32, 0.0, 0.0, 0.0, 0.0],
+                            ..Default::default()
+                        };
+                        self.pass(enc, Pipe::Resample, &fit.view, &dry_view, &dummy, &dummy, u);
+                        let v = fit.view.clone();
+                        retired.push(fit);
+                        v
+                    };
+                    let cov_view = self.upload.get_or_upload(&self.device, &self.queue, *key, cov);
+                    let dst = self.pool.acquire(&self.device, w, h);
+                    let u = UniformData {
+                        u: [0, *dry_alpha as u32, *wet_alpha as u32, 1, 0, 0, 0, 0],
+                        ..Default::default()
+                    };
+                    self.pass(enc, Pipe::LayerMix, &dst.view, &dry_fit, &view, &cov_view, u);
+                    if let Some(t) = owned.take() {
+                        retired.push(t);
+                    }
+                    view = dst.view.clone();
+                    owned = Some(dst);
                 }
                 FxOp::Mix { k } => {
                     let Some((dry_view, dw, dh)) = snap.clone() else { continue };
@@ -1839,6 +2000,11 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
             }
         }
         h.update(&s.fx_hash.to_le_bytes());
+        // the masks evaluated at THIS frame (shape-masks): an animated mask on a still frame
+        // must not return another frame's composite; maskless layers add nothing
+        if !s.masks.is_empty() {
+            h.update(format!("{:?}", s.masks).as_bytes());
+        }
         // decode scale step (R.46, item 318): a frame of the same key in another
         // size gives another picture; the plan MUST differ
         h.update(&s.src_scale.to_le_bytes());
