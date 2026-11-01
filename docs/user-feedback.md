@@ -2254,6 +2254,20 @@ The requests:
   - 15 one project in several frame formats;
   - 18 proxies.
   The other fifteen are not lost: they stay as a numbered backlog in `docs/ktprompts/kkt-26.11.01-candidates.md`, linked from the registry. The owner expected every request to get a proposal so nothing is lost: an offered list must not be left as a choice he has to make.
+**Pitch (15), the owner after pitch-event-edges (2026-11-01, translated):**
+
+> I did not find build 2ba in your folder, only a04b201d, and the problem stays in it. Region
+> broken_silents_steps, ../fails/26.11.01/untitled__26.11.01_broken_silents_steps.kt. They are
+> cut from one composition with pitching inside it, and pitching outside it done by a morpher.
+
+**Taken as:**
+- The binary in the worktree WAS built from 2ba74ae7 but stamped `a04b201d`: in a worktree `.git`
+  is a file, the version script watched `.git/HEAD` that does not exist there, and the stamp
+  froze at the first build. A report's version must be the program's real one.
+- His events are COPIES of one piece of a reel (the same in-point, not a split), each with
+  Slowed+Reverb and a morpher's pitch after it. The fix left exactly this chain cold at its edges
+  (a node with a tail and a time warp before the pitch): a dip to 3 % at every join. The pitch
+  reads the material across the edges whatever stands before it.
 
 ## What the user repeated more than once
 

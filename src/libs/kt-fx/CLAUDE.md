@@ -273,8 +273,10 @@ Rules of a lookahead node:
 - **a window that reads around its moment reads ACROSS THE EVENT'S EDGES** (pitch-event-edges D1,
   D2): such a kind declares `Decl.reads_across_edges` (pitch does, the limiter does NOT — it limits
   what the event outputs, and that is cut). `chain_context` (the one home; the processor's `ctx` and
-  the window functions' `read_material` ask it) is true with such a node at a live look-ahead, no
-  warp and no tail before the last such node. Then `hard_seek` reads the pre-roll before the
+  the window functions' `read_material` ask it) is true with such a node at a live look-ahead and a
+  warp, if any, moving forward at the event's start. The nodes BEFORE it process the material too
+  and their tail ends with the event (pitch-context-whole-chain: excluding them left the owner's
+  morpher pitch after Slowed+Reverb at 3 % at every join). Then `hard_seek` reads the pre-roll before the
   in-point, the input gate stands at `gate_end + la`, and the CONTENT GATE right after the last such
   node (and on a dry side still waiting for its marker) cuts everything outside
   `[−head_ext, clip_len + tail_ext)`: "the material pitched, then cut". Cut first, the grains at the

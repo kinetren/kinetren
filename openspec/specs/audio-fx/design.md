@@ -217,6 +217,18 @@ The most frequent live complaint from reconnaissance was "the music drowns out t
   stay empty, two streams still differ), reflecting the event's tail (invents material, reverses the
   phase), a crossfade at every join (both sides silent at the cut; two equal tones out of phase
   cancel).
+- **What stands before the pitch processes the material too** (pitch-context-whole-chain,
+  2026-11-01, the owner's second report on item 15). The first fix excluded chains with a tail or a
+  time warp before the pitch — exactly the owner's case: copies of a reel piece with Slowed+Reverb on
+  the event and a morpher's pitch appended after it (dip to 0.034 at every join). The warp map is
+  defined outside the event (the first speed extrapolates backwards, the curve runs on past the end),
+  and every node before the pitch is causal, so feeding it the material changes its output only
+  outside the event, where the content gate cuts. Cost: a reverb or echo BEFORE the pitch starts with
+  the reverb of the material before the in-point and its tail ends with the event. Rejected: resetting
+  those nodes at the in-point (the end still needs the material, the two edges would follow different
+  rules); feeding the material only for the look-ahead and letting their tail ring (the pitched
+  material is heard for ≈ 40 ms after the event, or the tail gets a 96 ms hole). A warp starting in
+  hold or backwards keeps the cold edges: there is no "before" for it.
 
 ## Deferred
 

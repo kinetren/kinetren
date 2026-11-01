@@ -170,26 +170,29 @@ pub fn chain_lookahead(fx: &[FxInstance], auto: &AutoProfiles) -> i64 {
 /// Whether the chain READS ACROSS THE EVENT'S EDGES (pitch-event-edges D1, D2) — the one home, asked
 /// by the processor and by the window functions (if they diverged, render and prefetch would read
 /// different frames: item 13, t17). True when a node that declares `reads_across_edges` has a
-/// non-zero look-ahead, the chain has no time warp (the source beyond a warped event's edges is a
-/// function of a rate curve that does not exist there), and no node BEFORE the last such node has a
-/// tail (a reverb before pitch would carry the material outside the event into its tail).
+/// non-zero look-ahead and a time warp, if any, moves forward at the event's start. The nodes BEFORE
+/// it process the material too, and a tail of theirs ends with the event (pitch-context-whole-chain
+/// D1: the owner's morpher pitch after Slowed+Reverb tore at every join while they were excluded).
 ///
 /// Then the chain's input around the event's edges is the event's own source — the seek pre-roll
 /// reads before the in-point, the input runs `La` past the out-point — and a content gate right after
 /// the last such node cuts the result back to the event: "the material pitched, then cut".
 pub fn chain_context(fx: &[FxInstance], auto: &AutoProfiles) -> bool {
-    if fx.iter().any(FxInstance::warps_time) {
-        return false;
-    }
-    let reads = |slot: usize, f: &FxInstance| {
-        nodes::plugin_audio(f).is_some_and(|(m, _)| m.decl.reads_across_edges)
-            && slot_lookahead(fx, auto, slot) > 0
-    };
-    let Some(last) = fx.iter().enumerate().rev().find(|(slot, f)| reads(*slot, f)).map(|(s, _)| s)
-    else {
-        return false;
-    };
-    (0..last).all(|slot| slot_tail(fx, auto, slot) == 0)
+    warp_forward(fx, auto)
+        && fx.iter().enumerate().any(|(slot, f)| {
+            nodes::plugin_audio(f).is_some_and(|(m, _)| m.decl.reads_across_edges)
+                && slot_lookahead(fx, auto, slot) > 0
+        })
+}
+
+/// A time warp lets the context through only when the speed at the event's start moves forward
+/// (pitch-context-whole-chain D2): the pre-roll consumes the material before the in-point at that
+/// speed, as `consumed_abs` and the address map extrapolate it. No warp — nothing to ask.
+fn warp_forward(fx: &[FxInstance], auto: &AutoProfiles) -> bool {
+    fx.iter().find_map(FxInstance::warp_rate).is_none_or(|rate| {
+        let rate = rate.clamp(kt_model::RATE_CLAMP.0, kt_model::RATE_CLAMP.1);
+        eff_rate(rate, auto.rate_points(fx), 0.0) >= kt_model::RATE_AUDIO_FLOOR
+    })
 }
 
 /// The look-ahead of one slot: the manifest's formula (D2a; t322g).
@@ -197,20 +200,6 @@ fn slot_lookahead(fx: &[FxInstance], auto: &AutoProfiles, slot: usize) -> i64 {
     match &fx[slot] {
         f @ FxInstance::Plugin(p) => nodes::plugin_audio(f).map_or(0, |(m, _)| {
             kt_plugin_api::lookahead_frames_with(
-                m,
-                &kt_plugin_api::ParamValues(p.values.clone()),
-                &nodes::SlotView { auto, slot },
-            )
-        }),
-        _ => 0,
-    }
-}
-
-/// The tail of one slot in frames: the manifest's formula (D2a; t322f).
-fn slot_tail(fx: &[FxInstance], auto: &AutoProfiles, slot: usize) -> i64 {
-    match &fx[slot] {
-        f @ FxInstance::Plugin(p) => nodes::plugin_audio(f).map_or(0, |(m, _)| {
-            kt_plugin_api::tail_frames_with(
                 m,
                 &kt_plugin_api::ParamValues(p.values.clone()),
                 &nodes::SlotView { auto, slot },
@@ -452,8 +441,8 @@ pub struct ClipProcessor {
     in_next: Option<i64>,
     /// Per node: its kind declares `reads_across_edges` (pitch-event-edges D2).
     across: Vec<bool>,
-    /// The chain has a time warp (no context then: `chain_context`).
-    time_warp: bool,
+    /// The chain's time warp starts in hold or backwards (no context then: `chain_context`).
+    warp_back: bool,
     /// The context applies (`chain_context`): the index of the LAST node that reads across the
     /// event's edges — the content gate stands right after it. `None` — the former edges.
     ctx: Option<usize>,
@@ -534,7 +523,7 @@ impl ClipProcessor {
             loop_span: None,
             in_next: None,
             across: Vec::new(),
-            time_warp: false,
+            warp_back: false,
             ctx: None,
         };
         p.apply_params(fx, true);
@@ -596,11 +585,9 @@ impl ClipProcessor {
         self.mix_ahead = mix_ahead;
         self.dry_ring = (dry_delta > 0).then(|| DryRing::new(dry_delta));
         // the context — the same decision as the static `chain_context` (t1109): the last node that
-        // reads across the edges with a live look-ahead, no warp, no tail before it
+        // reads across the edges with a live look-ahead, unless a warp starts in hold or backwards
         let last = (0..n).rev().find(|&i| self.across[i] && self.nodes[i].1.lookahead() > 0);
-        self.ctx = last.filter(|&l| {
-            !self.time_warp && self.nodes[..l].iter().all(|(_, nd)| nd.tail() == Tick::ZERO)
-        });
+        self.ctx = last.filter(|_| !self.warp_back);
     }
 
     /// Chain lookahead in frames — the same value as given by the
@@ -655,7 +642,7 @@ impl ClipProcessor {
                 })
                 .collect();
         }
-        self.time_warp = fx.iter().any(FxInstance::warps_time);
+        self.warp_back = !warp_forward(fx, &self.auto);
         debug_assert_eq!(
             self.nodes.len(),
             fx.iter().filter(|f| AudioNode::has_node(f)).count(),

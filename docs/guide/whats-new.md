@@ -37,7 +37,7 @@ month, newest first.
 - **Click a marker on the ruler** to put the playhead on it.
 - **Pitch no longer tears between short events.** Cut an event with pitch into many short
   pieces and they sound exactly like the uncut event; any pitched event starts and ends
-  without a dip.
+  without a dip — also when the pitch comes after Slowed+Reverb or an echo, or from a morpher.
 - **Changing an audio effect takes effect at once.** Put a filter where an equaliser stood
   and you hear the filter right away — before, the old effect kept playing with the new
   settings until you jumped in time.

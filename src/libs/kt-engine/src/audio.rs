@@ -123,6 +123,9 @@ fn run_predecessors(clips: &[AudioClip], overlaps: &[bool]) -> Vec<Option<usize>
                 && a.source_in + (a.end - a.start) == b.source_in
                 && a.ctx
                 && b.ctx
+                // under a warp `source_in + len` is not where the next piece's material continues
+                // (pitch-context-whole-chain D3)
+                && !a.fx.iter().any(kt_model::FxInstance::warps_time)
                 && !a.reversed
                 && !b.reversed
                 && !overlaps[*ai]

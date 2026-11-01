@@ -313,8 +313,9 @@ fn t1109_who_reads_across_edges() {
         ("neutral pitch", pitch(0.0), false),
         ("limiter + pitch", vec![limiter(), p7()], true),
         ("pitch + echo", vec![p7(), echo()], true),
-        ("echo + pitch", vec![echo(), p7()], false),
-        ("slowed + pitch", vec![FxInstance::builtin("slowed_reverb"), p7()], false),
+        ("echo + pitch", vec![echo(), p7()], true),
+        ("slowed + pitch", vec![FxInstance::builtin("slowed_reverb"), p7()], true),
+        ("slowed backwards + pitch", vec![slowed(-1.0), p7()], false),
     ];
     let (start, len, src) = (24_000i64, 9_600i64, 96_000i64);
     for (name, chain, expect) in chains {
@@ -456,6 +457,119 @@ fn t1112_a_loop_over_the_run() {
             }
             let lap = |k: i64| &out[(k * span) as usize * CH..((k + 1) * span) as usize * CH];
             assert!(lap(2) == lap(1) && lap(3) == lap(1), "{engine:?} {region:?}: the laps differ");
+        }
+    }
+}
+
+/// Slowed+Reverb as the owner has it on his copies: rate 1, a little reverb.
+fn slowed(rate: f64) -> FxInstance {
+    fx("slowed_reverb", &[rate, 0.1, 85.0, 0.2, 0.84, 1.0, 0.0, 0.0, 1.0])
+}
+
+/// A rate curve that stays 1 over the events and turns negative ten seconds of material past them
+/// (the owner's curve does): a signed profile whose read range is forward.
+fn signed_far_curve(src: i64) -> Vec<Vec<ParamCurve>> {
+    let at = |f: i64, v: f64| AutoKey::at(Tick::from_audio_frames(f), v);
+    let far = src + 480_000;
+    vec![vec![ParamCurve {
+        param: "rate".into(),
+        keys: AutoKey::linear(vec![at(0, 1.0), at(far, 1.0), at(far + 24_000, -2.0), at(far + 48_000, 1.0)]),
+        source: Default::default(),
+    }]]
+}
+
+const COPY: i64 = 34_762; // the owner's 65 179 ticks
+const COPY_SRC: i64 = 432_000;
+const COPY_AT: i64 = 48_000;
+
+/// t1113: the owner's `broken_silents_steps` on a sine — five abutting COPIES of one piece (the same
+/// in-point), Slowed+Reverb on each and a pitch +5 after it, in the chain and by a morpher, over the
+/// file and over a reel holding it. Before: 0.034 of the level at every join.
+#[test]
+fn t1113_copies_with_slowed_and_a_morpher_pitch_do_not_tear() {
+    let evs: Vec<(i64, i64, i64)> = (0..5).map(|i| (COPY_AT + i * COPY, COPY, COPY_SRC)).collect();
+    let total = 2 * COPY_AT + 5 * COPY;
+    for engine in ENGINES {
+        for (how, morph, reel) in [("chain", false, false), ("morpher", true, false), ("reel", true, true)] {
+            let chain = if morph { vec![slowed(1.0)] } else { vec![slowed(1.0), pitch(5.0).remove(0)] };
+            let mut p = events_project(engine, &evs, chain);
+            for c in &mut p.clips {
+                c.fx_auto = signed_far_curve(COPY_SRC);
+            }
+            if morph {
+                p.morphers.push(MorpherEvent {
+                    id: MorphId(1),
+                    lane: 0,
+                    start: Tick::from_audio_frames(COPY_AT),
+                    duration: Tick::from_audio_frames(5 * COPY),
+                    targets: MorphTargets::Clips { ids: (1..=5).map(ClipId).collect() },
+                    patch: MorphPatch { audio_fx: pitch(5.0), ..Default::default() },
+                    timed: false,
+                    strength: 1.0,
+                    fade_in: Tick::ZERO,
+                    fade_out: Tick::ZERO,
+                    enabled: true,
+                });
+                p.ensure_tracks(LaneKind::Morph, 1);
+            }
+            if reel {
+                let mut s = Sequence::new(MediaId(100), "Piece");
+                s.clips.push(event(50, 0, 48_000 * 60, 0, vec![]));
+                p.sequences.push(s);
+                for c in &mut p.clips {
+                    c.media = MediaId(100);
+                }
+            }
+            p.validate().unwrap();
+            let out = render(&p, total);
+            let (dip, _) = worst_join(&out, &evs);
+            assert!(dip >= 0.5, "{engine:?} {how}: a join dips to {dip:.3} of the steady level");
+            for piece in SLICES {
+                assert!(render_sliced(&p, 0, total, piece) == out, "{engine:?} {how}: pieces of {piece}");
+            }
+        }
+    }
+}
+
+/// t1114: a node BEFORE the pitch processes the material too; its tail ends with the event, nothing
+/// outside the event is heard, and the prefetch orders what the render reads — with a warp too,
+/// forward and reversed.
+#[test]
+fn t1114_a_node_before_the_pitch_reads_the_material() {
+    let (start, len, src) = (24_000i64, 9_600i64, 96_000i64);
+    let total = 48_000i64;
+    let p7 = || pitch(7.0).remove(0);
+    for (name, chain) in [("echo + pitch", vec![echo(), p7()]), ("slowed 0.8 + pitch", vec![slowed(0.8), p7()])] {
+        for reversed in [false, true] {
+            let mut p = events_project(PitchEngine::Wsola, &[(start, len, src)], chain.clone());
+            p.clips[0].reversed = reversed;
+            let out = render(&p, total);
+            assert!(
+                (0..start).chain(start + len..total).all(|i| out[i as usize * CH] == 0.0 && out[i as usize * CH + 1] == 0.0),
+                "{name} reversed {reversed}: sound outside the event"
+            );
+            assert!(
+                rms(&out, start, 256) > 0.1 && rms(&out, start + len - 256, 256) > 0.1,
+                "{name} reversed {reversed}: an edge dips ({:.3} / {:.3})",
+                rms(&out, start, 256),
+                rms(&out, start + len - 256, 256)
+            );
+            let r = AudioRenderer::new(&p);
+            let mut store = FxStateStore::new();
+            r.sync_fx(&mut store);
+            for &(pos, frames) in &[(start - 4_096, 8_192i64), (start, 4_096), (start + len - 1_000, 2_048)] {
+                store.reset_all();
+                let mut f = Recording { inner: source(), log: Vec::new() };
+                let mut buf = vec![0f32; frames as usize * CH];
+                r.render_frames_with(&mut f, &mut store, pos, &mut buf);
+                let wanted = r.wanted_audio_bursts(pos..pos + frames);
+                for &(media, idx) in &f.log {
+                    assert!(
+                        wanted.iter().any(|(m, rg)| *m == media && rg.contains(&idx)),
+                        "{name} reversed {reversed}: burst {idx} read at {pos} is not in the prefetch request"
+                    );
+                }
+            }
         }
     }
 }
