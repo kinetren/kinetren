@@ -5,7 +5,7 @@ Test numbers t1145–t1154 are reserved by this change. Every stage ends with a 
 
 ## 1. The graph draws from its last sample's build
 
-- [ ] 1.1 `graphs.rs`: the auto-scale steps in `push`; a draw cache keyed by (rect, generation) with the lines as one `Arc<Mesh>` and the labels as galleys; a build counter for tests. Verify: t1149 (`graphs.rs`) — repeated draws do not rebuild, a sample and a larger rect rebuild once each, ten draws paint the same scale; on the old code (per-draw scale) the scale assertion is red.
+- [x] 1.1 `graphs.rs`: the auto-scale steps in `push`; a draw cache keyed by (rect, generation) with the lines as one `Arc<Mesh>` and the labels as galleys; a build counter for tests. Verify: t1149 (`graphs.rs`) — repeated draws do not rebuild, a sample and a larger rect rebuild once each, ten draws paint the same scale; on the old code (per-draw scale) the scale assertion is red.
 
 ## 2. The perf box moves into Diagnostics
 
