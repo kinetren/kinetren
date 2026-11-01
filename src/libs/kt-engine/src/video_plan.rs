@@ -77,6 +77,9 @@ pub struct LayerSrc<'a> {
     /// allowed conform rule. Both executors pass it to
     /// the chain planner — the frame is computed by one code.
     pub lead: Option<kt_fx::conform::LeadCtx>,
+    /// Mask application points of the chain (shape-masks), the masks already evaluated at this
+    /// frame. Empty — no masks: the chain, the plan and the bytes are the earlier ones.
+    pub masks: Vec<kt_fx::mask::MaskOp>,
 }
 
 /// Layer input: a frame or a sub-composite of a nested reel (R.50, wave B).

@@ -280,6 +280,7 @@ mod tests {
                     ]),
                     source: Default::default(),
                 }],
+                masks: Vec::new(),
             }],
             src_in: kt_time::Tick(45_000),
             fx_off: false,
@@ -371,7 +372,7 @@ mod tests {
         let block = |fx: Vec<kt_model::FxInstance>| kt_model::ops::FxChainBlock {
             slots: fx
                 .into_iter()
-                .map(|f| kt_model::ops::FxSlotBlock { fx: f, bypass: false, curves: vec![] })
+                .map(|f| kt_model::ops::FxSlotBlock { fx: f, bypass: false, curves: vec![], masks: vec![] })
                 .collect(),
             src_in: kt_time::Tick(0),
             fx_off: false,

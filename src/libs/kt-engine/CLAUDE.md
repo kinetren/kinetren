@@ -247,3 +247,12 @@ holds), and the frame would come back a FOREIGN one. Therefore:
 from the Debug representation: all the hashes of the revisions moved ONCE, and the
 sidecar previews of reels in old projects will be recomputed once on
 opening. This is not a regression — the key is a function of the model, not of the file.
+
+## Shape masks in the plan (shape-masks)
+
+- `ClipMaskPlan::of` maps the event's masks onto the MATERIALIZED chain (the same active-slot
+  counting as `materialize_lead`): the picture → an alpha point right after the leading Geometry
+  node, a slot → a mix point (dry snapshot at the slot, mix after it). `LayerSrc.masks` carries them
+  evaluated at the frame's material tick; `apply_chain_with_mixes` cuts the chain at their stops. A
+  masked slot at index 0 is a leading stop: no decode step. Masks join `fx_hash` only when present;
+  a track with masks is a track stage. Tests t1270–t1273.

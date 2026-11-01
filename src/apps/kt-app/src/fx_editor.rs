@@ -41,6 +41,11 @@ pub struct FxEditor {
     /// “Cancel” must return them too — otherwise the window would roll back half
     /// of its own session (the same argument as for the generator and the geometry).
     pub ov_backup: Vec<(ClipId, Vec<kt_model::Override>)>,
+    /// The event's masks at the moment of opening (shape-masks): the picture's live in the
+    /// Geometry node, a slot's under its parameters — "Cancel" returns them too.
+    pub mask_backup: Vec<(ClipId, kt_model::EventMasks)>,
+    /// The curve views of the mask lists, per (chain, owner slot; `usize::MAX` — the picture).
+    pub mask_views: std::collections::HashMap<(ClipId, usize), crate::automation::AutoView>,
     pub gesture: u64,
     /// What is selected in each chain: an effect slot or the pinned head.
     pub selected: std::collections::HashMap<ClipId, crate::widgets::ChainSel>,
@@ -150,6 +155,11 @@ impl KtApp {
             .filter_map(|id| self.model.clip(*id))
             .map(|m| (m.id, m.overrides.clone()))
             .collect();
+        let mask_backup = members
+            .iter()
+            .filter_map(|id| self.model.clip(*id))
+            .map(|m| (m.id, m.masks.clone()))
+            .collect();
         // an event-generator with an empty chain has nothing to choose but
         // the head: `Fx(0)` on an empty chain would show emptiness. For a reel
         // INSTANCE the head is “Composition parameters” (R.63 item 12), and
@@ -177,6 +187,8 @@ impl KtApp {
             gen_backup,
             geo_backup,
             ov_backup,
+            mask_backup,
+            mask_views: std::collections::HashMap::new(),
             gesture: self.gesture_counter,
             selected,
             auto_views: std::collections::HashMap::new(),
@@ -324,6 +336,12 @@ impl KtApp {
         let mut edits: Vec<Edited> = Vec::new();
         let mut revert = false;
         let mut lead_refused = false;
+        // the mask lists' requests (shape-masks): applied after the window, under its gesture
+        let mut mask_ops: Vec<(crate::maskctl::MaskOwner, Option<Vec<kt_model::Mask>>, crate::masks::ListOut)> =
+            Vec::new();
+        // the slot masks after a reorder / removal in the strip: they move with their slots
+        let mut slot_masks: Vec<(ClipId, Vec<Vec<kt_model::Mask>>)> = Vec::new();
+        let mask_editing = self.mask_ctl.as_ref().map(|e| (e.owner, e.mask));
         // the mini-timeline of the automation widget moves the MAIN cursor
         let mut seek: Option<kt_time::Tick> = None;
         let frame_step = 90_000 / self.model.project().settings.fps.max(1) as i64;
@@ -637,6 +655,33 @@ impl KtApp {
                                 if clip.kind == ClipKind::Audio { None } else { Some(&mut pv) },
                             );
                             ed.picker_query = query;
+                            // the SLOT MASKS follow their slots (shape-masks): the same move /
+                            // removal in the strip's own indices (the lead spliced in, empty)
+                            if (ch.moved.is_some() || ch.removed.is_some()) && !clip.masks.slots.is_empty() {
+                                let mut ms: Vec<Vec<kt_model::Mask>> =
+                                    (0..fx.len()).map(|i| clip.masks.slot(i).to_vec()).collect();
+                                if let Some(lp) = lead_pos0 {
+                                    ms.insert(lp.min(ms.len()), Vec::new());
+                                }
+                                if let Some((a, b)) = ch.moved
+                                    && a < ms.len()
+                                {
+                                    let x = ms.remove(a);
+                                    ms.insert(b.min(ms.len()), x);
+                                }
+                                if let Some(i) = ch.removed
+                                    && i < ms.len()
+                                {
+                                    ms.remove(i);
+                                }
+                                ms.resize(fx_s.len(), Vec::new());
+                                if let Some(li) = fx_s.iter().position(|f| f.is_lead_geometry())
+                                    && li < ms.len()
+                                {
+                                    ms.remove(li);
+                                }
+                                slot_masks.push((*id, ms));
+                            }
                             // the leading node is UNSTUCK back: the
                             // model gets the raw chain and, separately,
                             // the node with its position and curves. The cross on it is a refusal (rule 16):
@@ -872,6 +917,73 @@ impl KtApp {
                                     },
                                 ) {
                                     params_changed |= ch;
+                                }
+                                // MASKS (shape-masks): the picture's in the Geometry node (crop →
+                                // mask → placement), a VIDEO slot's under its parameters
+                                let mask_owner = if clip.kind != ClipKind::Video {
+                                    None
+                                } else if lead_sel {
+                                    Some(crate::maskctl::MaskOwner::Picture(*id))
+                                } else {
+                                    sel_slot
+                                        .fx()
+                                        .filter(|i| clip.fx.get(*i).is_some_and(|f| !f.is_audio() && !f.is_layer_mix()))
+                                        .map(|i| crate::maskctl::MaskOwner::Slot(*id, i))
+                                };
+                                if let Some(owner) = mask_owner {
+                                    let mut list = match owner {
+                                        crate::maskctl::MaskOwner::Slot(_, i) => clip.masks.slot(i).to_vec(),
+                                        _ => clip.masks.picture.clone(),
+                                    };
+                                    let at = kt_model::clip_material_at(
+                                        clip.source_in,
+                                        clip.start,
+                                        clip.duration,
+                                        clip.reversed,
+                                        frame_step,
+                                        playhead,
+                                    );
+                                    let to_tl = |t: kt_time::Tick| {
+                                        kt_model::clip_timeline_at(clip.source_in, clip.start, clip.duration, clip.reversed, frame_step, t)
+                                    };
+                                    let to_mat = |t: kt_time::Tick| {
+                                        kt_model::clip_material_at(clip.source_in, clip.start, clip.duration, clip.reversed, frame_step, t)
+                                    };
+                                    let actx = crate::automation::AutoCtx {
+                                        specs: &[],
+                                        range: (clip.source_in, kt_time::Tick(clip.source_in.0 + clip.duration.0.max(1))),
+                                        view: crate::automation::view_in_curve(&to_mat, tl_view),
+                                        linked: axis_linked,
+                                        default_shape: dflt_shape,
+                                        to_timeline: &to_tl,
+                                        to_curve: &to_mat,
+                                        frame_step,
+                                        links: None,
+                                    };
+                                    let editing = mask_editing.filter(|(o, _)| *o == owner).and_then(|(_, m)| m);
+                                    let lcx = crate::masks::ListCtx {
+                                        owner,
+                                        at,
+                                        default_shape: dflt_shape,
+                                        editing,
+                                        auto: Some(&actx),
+                                        playhead,
+                                    };
+                                    let vkey = match owner {
+                                        crate::maskctl::MaskOwner::Slot(_, i) => i,
+                                        _ => usize::MAX,
+                                    };
+                                    let view = ed.mask_views.entry((*id, vkey)).or_default();
+                                    let out = crate::masks::section(ui, !list.is_empty(), |ui| {
+                                        crate::masks::mask_list(ui, ("fxmasks", id.0, vkey), &mut list, &lcx, view, &mut hover_out)
+                                    });
+                                    if let Some(out) = out {
+                                        if let Some(t) = out.seek {
+                                            seek = Some(t);
+                                        }
+                                        let changed = out.changed;
+                                        mask_ops.push((owner, changed.then_some(list), out));
+                                    }
                                 }
                                 let mut auto_ch = false;
                                 if let Some(curves) = auto.get_mut(sel) {
@@ -1117,6 +1229,13 @@ impl KtApp {
                 }
                 self.apply_coalesced(Command::SetGeometry { id, geometry, pos, auto }, ed.gesture);
             }
+            // ...and the MASKS of the picture and the slots (shape-masks)
+            for (id, was) in ed.mask_backup.clone() {
+                if self.model.clip(id).is_none_or(|c| c.masks == was) {
+                    continue;
+                }
+                self.apply_coalesced(Command::SetMasks { id, masks: was }, ed.gesture);
+            }
             // ...and the COMPOSITION HANDLES from the head of the strip (R.63 item 12)
             for (id, was) in ed.ov_backup.clone() {
                 let now = self.model.clip(id).map(|c| c.overrides.clone()).unwrap_or_default();
@@ -1221,6 +1340,31 @@ impl KtApp {
                     Command::ApplyGenToAll { media: c.media, kind, auto: c.gen_auto.clone() },
                     g,
                 );
+            }
+        }
+        // the slot masks moved with their slots (after `SetFx`, which trimmed them)
+        for (id, ms) in slot_masks {
+            let Some(c) = self.model.clip(id) else { continue };
+            let mut m = c.masks.clone();
+            m.slots = ms;
+            m.canonicalize();
+            if m != c.masks {
+                self.apply_coalesced(Command::SetMasks { id, masks: m }, ed.gesture);
+            }
+        }
+        // the mask lists' requests: one window session — one history step
+        for (owner, list, out) in mask_ops {
+            if let Some(list) = list {
+                self.commit_masks(owner, list, ed.gesture);
+            }
+            if let Some(e) = out.refused {
+                self.refuse(e);
+            }
+            if let Some(tool) = out.tool {
+                self.arm_mask_tool(owner, tool);
+            }
+            if let Some(m) = out.edit {
+                self.edit_mask(owner, Some(m));
             }
         }
     }

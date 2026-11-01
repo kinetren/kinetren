@@ -153,6 +153,7 @@ fn vclip(id: u64, lane: u32) -> ClipEvent {
         geometry: Default::default(),
         geometry_pos: 0,
         geometry_auto: Vec::new(),
+        masks: Default::default(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,

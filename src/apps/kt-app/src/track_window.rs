@@ -27,6 +27,8 @@ pub struct TrackWindow {
     /// a snapshot of the KEY track’s chain at the moment of opening: its compressor
     /// is edited from this same window, so “Cancel” must restore it too.
     pub key_backup: Option<(TrackId, Vec<kt_model::FxInstance>, Vec<bool>)>,
+    /// The track's masks at opening (shape-masks) — "Cancel" returns them too.
+    pub mask_backup: Vec<kt_model::Mask>,
     pub selected: crate::widgets::ChainSel,
     pub focus: bool,
     pub open: bool,
@@ -75,6 +77,7 @@ impl KtApp {
             id,
             backup: t.props(),
             fx_backup: (t.fx.clone(), t.fx_bypass.clone(), t.fx_off),
+            mask_backup: t.masks.clone(),
             gesture: self.gesture_counter,
             picker_query: String::new(),
             selected: crate::widgets::ChainSel::Fx(0),
@@ -113,6 +116,7 @@ impl KtApp {
         // pasting a chain may bring envelopes; a track has nowhere to put them —
         // we say so ALOUD (rule 16)
         let mut curves_dropped = false;
+        let mut mask_out: Option<(crate::maskctl::MaskOwner, Option<Vec<kt_model::Mask>>, crate::masks::ListOut)> = None;
         let mut changed_fx = false;
         let mut hover: Option<String> = None;
         // edits of the KEY track’s compressor are collected here and sent
@@ -283,6 +287,28 @@ impl KtApp {
                 ui.label(
                     egui::RichText::new(tr(k::track::NO_CURVES_HINT)).weak().small(),
                 );
+                // MASKS of the track's composite (shape-masks): the same list as an event's
+                // and a slot's; static — a track has no curves yet
+                if track.kind == LaneKind::Video {
+                    let owner = crate::maskctl::MaskOwner::Track(w.id);
+                    let mut list = track.masks.clone();
+                    let editing = self.mask_ctl.as_ref().filter(|e| e.owner == owner).and_then(|e| e.mask);
+                    let lcx = crate::masks::ListCtx {
+                        owner,
+                        at: self.player.transport.playhead(),
+                        default_shape: self.model.project().settings.default_shape,
+                        editing,
+                        auto: None,
+                        playhead: self.player.transport.playhead(),
+                    };
+                    let mut view = crate::automation::AutoView::default();
+                    let out = crate::masks::section(ui, !list.is_empty(), |ui| {
+                        crate::masks::mask_list(ui, ("trackmasks", w.id.0), &mut list, &lcx, &mut view, &mut hover)
+                    });
+                    if let Some(out) = out {
+                        mask_out = Some((owner, out.changed.then_some(list), out));
+                    }
+                }
                 // DUCKING IS TWO COMPRESSORS (R.65). The owner: “as ducking one can show the same
                 // duplicated audio compressor widget… i.e. a compressor on the background
                 // object and a compressor on the foreground object”. On the left —
@@ -459,6 +485,19 @@ impl KtApp {
         if curves_dropped {
             self.refuse(tr(k::track::CURVES_DROPPED));
         }
+        if let Some((owner, list, out)) = mask_out.take() {
+            if let Some(list) = list
+                && !cancel
+            {
+                self.commit_masks(owner, list, w.gesture);
+            }
+            if let Some(tool) = out.tool {
+                self.arm_mask_tool(owner, tool);
+            }
+            if let Some(m) = out.edit {
+                self.edit_mask(owner, Some(m));
+            }
+        }
         if let Some(h) = hover {
             self.hover_hint = Some(h);
         }
@@ -471,6 +510,12 @@ impl KtApp {
                 w.gesture,
             );
             self.apply_coalesced(Command::SetTrackFxOff { id: w.id, off: boff }, w.gesture);
+            if self.model.project().track(w.id).is_some_and(|t| t.masks != w.mask_backup) {
+                self.apply_coalesced(
+                    Command::SetTrackMasks { id: w.id, masks: w.mask_backup.clone() },
+                    w.gesture,
+                );
+            }
             if let Some((kid, kfx, kby)) = w.key_backup.clone() {
                 self.apply_coalesced(
                     Command::SetTrackFx { id: kid, fx: kfx, bypass: kby },

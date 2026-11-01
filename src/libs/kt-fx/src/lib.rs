@@ -32,6 +32,7 @@ pub enum PullKind {
 
 pub mod conform;
 pub mod geom;
+pub mod mask;
 pub mod plan;
 pub mod simd;
 pub mod video;

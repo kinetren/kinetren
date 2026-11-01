@@ -50,6 +50,8 @@ pub struct FlagSpec {
 pub enum ParamScope {
     Fx,
     Generator,
+    /// A shape mask's rows (shape-masks): `feather`, `v3.x` — labels of their own.
+    Mask,
 }
 
 pub trait HasParams {

@@ -157,3 +157,11 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
   GPU-less Windows CI runner the passes ran for minutes and died inside it. The CPU path is the
   full fallback; `KT_GPU_ALLOW_WARP=1` lets it through for experiments, and the GPU tests skip
   on it as they do without an adapter.
+
+## Shape masks (shape-masks)
+
+- The GPU never rasterizes a mask: `chain_ops` asks the kt-fx rasterizer at the same chain positions
+  as the CPU (`mask_stops` join the plan's stops) and uploads the coverage (`coverage_frame`, the
+  byte in `.r`, keyed by its hash with the top bit set) into `FxOp::MaskAlpha` (`mask.wgsl`,
+  PIPE_COUNT 8) or `FxOp::MaskMix` (the coverage branch of `layer_mix.wgsl`, T2). A mask adds no
+  divergence: masks alone agree EXACT (t1274).

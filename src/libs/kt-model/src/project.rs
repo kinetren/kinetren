@@ -2363,6 +2363,14 @@ pub fn clip_slice(c: &ClipEvent, w: TickRange, id: ClipId) -> ClipEvent {
                 k.t = k.t + shift;
             }
         }
+        // mask curves (shape-masks) — the same domain, the same delta
+        for m in s.masks.picture.iter_mut().chain(s.masks.slots.iter_mut().flatten()) {
+            for cur in &mut m.auto {
+                for k in &mut cur.keys {
+                    k.t = k.t + shift;
+                }
+            }
+        }
     }
     s
 }
@@ -2768,6 +2776,9 @@ pub struct Track {
     pub fx_off: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub fx_auto: Vec<Vec<ParamCurve>>,
+    /// Masks of the track's composite, canvas space, static (shape-masks).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub masks: Vec<crate::mask::Mask>,
 }
 
 impl Default for Track {
@@ -2807,6 +2818,7 @@ impl Track {
             fx_bypass: Vec::new(),
             fx_off: false,
             fx_auto: Vec::new(),
+            masks: Vec::new(),
         }
     }
 
@@ -2867,7 +2879,8 @@ impl Track {
         self.kind == LaneKind::Video
             && (self.opacity != 1.0
                 || self.blend != BlendMode::Normal
-                || !self.active_fx().is_empty())
+                || !self.active_fx().is_empty()
+                || !self.masks.is_empty())
     }
 
     /// R.62 NOVELTY on the track: what earlier builds did not know at all and
@@ -2884,6 +2897,7 @@ impl Track {
             || self.blend != BlendMode::Normal
             || !self.fx.is_empty()
             || self.fx_off
+            || !self.masks.is_empty()
     }
 
     /// Nothing except kind and id is set — only the envelope is written to the file.
@@ -2899,6 +2913,7 @@ impl Track {
             && self.fx.is_empty()
             && self.fx_auto.iter().all(|a| a.is_empty())
             && !self.fx_off
+            && self.masks.is_empty()
     }
 }
 
@@ -3589,6 +3604,10 @@ pub struct ClipEvent {
     /// `fx_auto`). The engine puts them into the node's slot on materialization.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub geometry_auto: Vec<ParamCurve>,
+    /// Masks of the picture and of each effect slot (shape-masks). Empty — not serialized:
+    /// a maskless event is byte for byte as before.
+    #[serde(default, skip_serializing_if = "crate::mask::EventMasks::is_empty")]
+    pub masks: crate::mask::EventMasks,
 }
 
 fn is_zero_usize(v: &usize) -> bool {
@@ -5727,6 +5746,17 @@ pub enum ProjectError {
     TrackMissing(Option<MediaId>, LaneKind, u32),
     #[error("track {0:?}: curves on a track are not supported yet (timeline-time domain)")]
     TrackCurvesUnsupported(TrackId),
+    // --- shape masks (shape-masks) ---
+    #[error("clip {0:?}: {1}")]
+    BadMasks(ClipId, crate::mask::MaskError),
+    #[error("clip {0:?}: masks belong to video events")]
+    MasksOnAudio(ClipId),
+    #[error("clip {0:?}: masks name an effect slot past the end of the chain")]
+    MasksPastChain(ClipId),
+    #[error("track {0:?}: {1}")]
+    BadTrackMasks(TrackId, crate::mask::MaskError),
+    #[error("track {0:?}: masks belong to video tracks")]
+    TrackMasksOnAudio(TrackId),
     // --- source of curve values (R.59, item 466) ---
     #[error(
         "clip {0:?}: this curve is driven by a formula or a link, and nothing evaluates those yet"
@@ -5876,6 +5906,16 @@ pub fn check_transition_full(
 }
 
 impl Project {
+    /// Does any event or track of the project (its reels included) carry a mask
+    /// (shape-masks)? The file version depends on this predicate.
+    pub fn has_masks(&self) -> bool {
+        self.clips.iter().any(|c| !c.masks.is_empty())
+            || self.tracks.iter().any(|t| !t.masks.is_empty())
+            || self.sequences.iter().any(|s| {
+                s.clips.iter().any(|c| !c.masks.is_empty()) || s.tracks.iter().any(|t| !t.masks.is_empty())
+            })
+    }
+
     pub fn new(settings: ProjectSettings) -> Project {
         Project {
             format_version: FORMAT_VERSION,
@@ -6480,6 +6520,13 @@ impl Project {
                     ParamOwner::Geometry => {
                         (c.kind == ClipKind::Video).then(|| c.geometry.get_value(name))?
                     }
+                    ParamOwner::Mask { slot, mask } => c
+                        .masks
+                        .list(*slot)
+                        .iter()
+                        .find(|m| m.id == *mask)?
+                        .get(name)
+                        .map(ParamValue::Num),
                     ParamOwner::Transition { .. } | ParamOwner::Camera { .. } => None,
                 }
             }
@@ -6512,6 +6559,10 @@ impl Project {
                     }
                     ParamOwner::Geometry => {
                         (c.kind == ClipKind::Video).then(|| c.geometry.value_type(name))?
+                    }
+                    ParamOwner::Mask { slot, mask } => {
+                        let m = c.masks.list(*slot).iter().find(|m| m.id == *mask)?;
+                        m.get(name).map(|_| ParamType::Num)
                     }
                     ParamOwner::Transition { .. } | ParamOwner::Camera { .. } => None,
                 }
@@ -6564,6 +6615,10 @@ impl Project {
                     }
                     ParamOwner::Geometry => {
                         (c.kind == ClipKind::Video).then(|| c.geometry.value_spec(name))?
+                    }
+                    ParamOwner::Mask { slot, mask } => {
+                        let m = c.masks.list(*slot).iter().find(|m| m.id == *mask)?;
+                        m.specs().into_iter().find(|s| s.name == name)
                     }
                     ParamOwner::Transition { .. } | ParamOwner::Camera { .. } => None,
                 }
@@ -6865,6 +6920,10 @@ impl Project {
                 if t.fx_auto.iter().any(|a| !a.is_empty()) {
                     return Err(ProjectError::TrackCurvesUnsupported(t.id));
                 }
+                check_track_masks(t)?;
+            }
+            for c in reel.clips() {
+                check_clip_masks(c)?;
             }
             self.validate_reel(reel, seq, &sources, &media_ids, &mut clip_ids)?;
             // Links of ONE reel (R.61): the address is resolvable, does not cross the reel boundary,
@@ -7404,4 +7463,56 @@ impl Project {
         p.validate()?;
         Ok(p)
     }
+}
+
+/// The masks of an event: video only, slot lists within the chain, each list valid
+/// (shape-masks). ONE check for `validate` and for `SetMasks`.
+pub fn check_clip_masks(c: &ClipEvent) -> Result<(), ProjectError> {
+    check_event_masks(c.id, c.kind, c.fx.len(), &c.masks)
+}
+
+pub fn check_event_masks(
+    id: ClipId,
+    kind: ClipKind,
+    chain_len: usize,
+    m: &crate::mask::EventMasks,
+) -> Result<(), ProjectError> {
+    if m.is_empty() {
+        return Ok(());
+    }
+    if kind != ClipKind::Video {
+        return Err(ProjectError::MasksOnAudio(id));
+    }
+    if m.slots.len() > chain_len {
+        return Err(ProjectError::MasksPastChain(id));
+    }
+    crate::mask::check_masks(&m.picture).map_err(|e| ProjectError::BadMasks(id, e))?;
+    for l in &m.slots {
+        crate::mask::check_masks(l).map_err(|e| ProjectError::BadMasks(id, e))?;
+    }
+    Ok(())
+}
+
+/// The masks of a track: a video track only, valid, and STATIC — a curve on a track is the
+/// next piece of work (the timeline-time domain) and is refused loudly, as on its chain.
+pub fn check_track_masks(t: &Track) -> Result<(), ProjectError> {
+    check_track_mask_list(t.id, t.kind, &t.masks)
+}
+
+pub fn check_track_mask_list(
+    id: TrackId,
+    kind: LaneKind,
+    masks: &[crate::mask::Mask],
+) -> Result<(), ProjectError> {
+    if masks.is_empty() {
+        return Ok(());
+    }
+    if kind != LaneKind::Video {
+        return Err(ProjectError::TrackMasksOnAudio(id));
+    }
+    crate::mask::check_masks(masks).map_err(|e| ProjectError::BadTrackMasks(id, e))?;
+    if masks.iter().any(|m| m.is_animated()) {
+        return Err(ProjectError::TrackCurvesUnsupported(id));
+    }
+    Ok(())
 }

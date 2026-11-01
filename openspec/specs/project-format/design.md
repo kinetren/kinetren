@@ -113,3 +113,11 @@ and the verbatim prefix are ignored on Windows. "Absolute" on reading is the uni
 `/home/u/a.mp4` read on Windows (or `D:\x.mp4` on Linux) is never joined to the project folder —
 it becomes a placeholder showing that path and is written back unchanged. Resolve-style path
 mapping (F-PRJ-003) stays deferred: this only stops paths from turning into wrong ones.
+
+## Masks and the version by content (shape-masks, 2026-11-01)
+
+A file that has masks is written as format 2; a file without masks stays format 1 byte for byte. A
+build that reads only format 1 then refuses the file as "written by a newer Kinetren" instead of
+opening it with every mask gone and the masked effect over the whole frame — the silent corruption
+the version refusal exists for. The OTIO envelope does the same (v14 by content); a foreign editor
+sees the event unmasked (the "What OTIO export loses" row).
