@@ -29,7 +29,7 @@ masks), Premiere (each effect's masks) and Resolve (a window on the node); rule 
 - **WHEN** the catalogs are checked for the mask keys; the live scenario runs on our fixture
 - **THEN** every key exists in all five catalogs (the glyphs are held by t100 over every catalog value); the live scenario draws a Bézier mask, feathers it, keys it at two ticks, inverts it and limits an effect to a mask, with a screenshot per step
 - **PATH** right click on the picture → Mask → Pen → four points, close → Feather 40 → stopwatch, move the playhead, drag a point → Invert → effects window → the effect's Masks → Ellipse → drag → the effect only inside
-- **TEST** t1283 (`src/apps/kt-app/src/mask_tests.rs`), t1284 live scenario `src/scripts/live/masks.py`
+- **TEST** t1283 (`src/apps/kt-app/src/mask_tests.rs`), live scenario `src/scripts/live/masks.py`
 
 ### Requirement: The preview's right-click menu opens over the transform frame too
 The preview's right-click menu (the frame's switch, Mask → Rectangle / Ellipse / Pen, detach) SHALL

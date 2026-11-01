@@ -25,6 +25,6 @@
 
 ## 5. Live, docs, finish
 
-- [ ] 5.1 Live scenario `src/scripts/live/masks.py` — t1284
+- [x] 5.1 Live scenario `src/scripts/live/masks.py` (auto-discovered by live-check)
 - [ ] 5.2 F-MSK-001/002 verdicts, What's new, registry S1, "What OTIO export loses" row, crate CLAUDE.md lines
 - [ ] 5.3 `cargo test --workspace`, clippy, `git merge master`, `finish.sh` — the version here

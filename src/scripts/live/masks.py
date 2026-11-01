@@ -79,6 +79,16 @@ def frame_point(app, fx, fy):
     return win["x"] + int(f["x"] + f["w"] * fx), win["y"] + int(f["y"] + f["h"] * fy)
 
 
+def open_effects(app, x, y):
+    """Double click on the event opens its effects window; under load the second click can fall
+    out of the double-click window — then the person clicks again."""
+    for _ in range(3):
+        app.double_click(x, y)
+        if app.has_probe("fx.slot.0", tries=8):
+            return True
+    return False
+
+
 def main(out):
     require_tools()
     bars = pattern_media(out, "bars", seconds=8)
@@ -100,9 +110,12 @@ def main(out):
         app.step("pen-armed", "right click on the picture → Mask → Pen")
 
         # 2) four points, the last one pulled smooth; a click on the first closes the path
-        for fx_, fy_ in ((0.30, 0.25), (0.70, 0.25), (0.75, 0.70)):
-            app.click(*frame_point(app, fx_, fy_))
-            poll_step(0.35)
+        for n, (fx_, fy_) in enumerate(((0.30, 0.25), (0.70, 0.25), (0.75, 0.70))):
+            # under load a click can be lost: the person sees no dot and clicks again
+            for _ in range(3):
+                app.click(*frame_point(app, fx_, fy_))
+                if app.has_probe(f"mask.pen.{n}", tries=6):
+                    break
         x0, y0 = frame_point(app, 0.30, 0.75)
         app.drag(x0, y0, x0 - 60, y0 - 30)
         app.step("pen-points", "four points, the last one smooth with its handles")
@@ -122,10 +135,13 @@ def main(out):
         app.step("feather", "the dashed outer edge — the feather")
 
         # the smooth point's handle bends the curve
-        v3 = field(app, lambda f: f["param"] == "mask.v.3", "the smooth point")
+        # the smooth point is the last one drawn: the vertex with the largest id
+        vs = sorted(f["param"] for f in app.geom().get("fields", []) if f["param"].startswith("mask.v."))
+        last = vs[-1] if vs else "mask.v.3"
+        v3 = field(app, lambda f: f["param"] == last, "the smooth point")
         if v3:
             app.click(*centre(v3))
-        out3 = field(app, lambda f: f["param"] == "mask.out.3", "the selected point's handle")
+        out3 = field(app, lambda f: f["param"] == last.replace("mask.v.", "mask.out."), "the selected point's handle")
         if out3:
             x, y_ = centre(out3)
             app.drag(x, y_, x + 120, y_ + 90)
@@ -133,8 +149,7 @@ def main(out):
         app.step("tangent", "the handle of the smooth point pulled")
 
         # 4) the path's stopwatch in the Geometry node's Masks group, then a point at another tick
-        app.double_click(app.x_at(2 * SEC), y)
-        app.expect(app.has_probe("fx.slot.0"), "the effects window opened")
+        app.expect(open_effects(app, app.x_at(2 * SEC), y), "the effects window opened")
         app.click_probe("fx.slot.0", "the Geometry node")
         app.expect(app.has_probe("grp.masks"), "the Geometry node has its Masks group")
         app.expect(app.has_probe("masks.row.0.key"), "the Masks group lists the path")
@@ -156,7 +171,7 @@ def main(out):
         app.step("two-keys", "the path keyed at the first tick and at this one")
 
         # 5) Invert
-        app.double_click(app.x_at(5 * SEC), y)
+        app.expect(open_effects(app, app.x_at(5 * SEC), y), "the effects window opened again")
         app.click_probe("fx.slot.0", "the Geometry node")
         app.scroll_probe_into_view("masks.row.0.invert", "grp.masks", "the path's row", below="fx.done")
         app.click_probe("masks.row.0.invert", "Invert")
@@ -170,21 +185,25 @@ def main(out):
         app.click_probe("fxreg.tpl.duotone", "Duotone")
         poll_step(0.5)
         app.expect(app.has_probe("masks.tool.ellipse"), "the effect's own Masks group is under its parameters")
+        app.scroll_probe_into_view("masks.tool.ellipse", "grp.masks", "the effect's mask tools", below="fx.done")
         app.click_probe("masks.tool.ellipse", "Ellipse of the effect's masks")
         app.click_probe("fx.done", "Done")
         before_slot = picture(app, "before-slot", box)
-        x0, y0 = frame_point(app, 0.40, 0.40)
-        x1, y1 = frame_point(app, 0.65, 0.65)
+        # a long ellipse: its turn must show in the picture (a circle would turn unseen)
+        x0, y0 = frame_point(app, 0.25, 0.45)
+        x1, y1 = frame_point(app, 0.75, 0.58)
         app.drag(x0, y0, x1, y1)
-        slotted = wait_change(app, box, before_slot, "the effect shows inside the ellipse")
+        wait_change(app, box, before_slot, "the effect shows inside the ellipse")
         rot = field(app, lambda f: f["param"] == "mask.rot", "the ellipse's rotation handle")
         if rot:
             rx, ry = centre(rot)
-            app.drag(rx, ry, rx + 80, ry + 30)
-            wait_change(app, box, slotted, "the ellipse turned")
+            app.drag(rx, ry, rx + 160, ry + 120)
+            poll_step(0.5)
         m = masks_in(app.saved_text())
         slots = m.get("slots") or []
         app.expect(any(len(s) == 1 for s in slots), f"the effect's mask is in the file: {slots}")
+        rots = [m.get("rot", 0.0) for s in slots for m in s]
+        app.expect(any(abs(r) > 5.0 for r in rots), f"the rotation handle turned the ellipse: {rots}")
         app.step("slot-mask", "the duotone only inside the ellipse")
         return app.done()
 
