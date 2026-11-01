@@ -1,18 +1,18 @@
 ---
 id: F-UI-006
 title: Playback performance readout — a light in the viewer, the detail on demand
-status: accepted
+status: done
 priority: B
 cost: S
 category: ui/viewer
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: partial
+we_have: yes
 crates: [kt-app]
 invariants: [4, 6, 12]
 ui_rules: [9, 13, 22]
 round: diagnostics-three-graphs
 point: "kkt-26.11.01 item 14 (registry K14)"
-tests: []
+tests: [1145, 1146, 1147, 1148, 1149]
 depends_on: []
 trackers: []
 services: []
@@ -99,7 +99,7 @@ The always-visible layer stays the status line (`src/apps/kt-app/src/app.rs`, `d
 
 ## Verdict
 
-Take the split the industry converged on: a sign always in view (our status line already has
+Done in change `diagnostics-three-graphs` (2026-11-01, capability `ui-timeline`). It takes the split the industry converged on: a sign always in view (our status line already has
 vfps, underruns in ms, cache — it stays), the detail in one window opened on purpose (the owner's
 request: the perf box goes into Diagnostics). Our detail keeps what the five do not have — three
 graphs by CAUSE (display, FFmpeg, cache churn). Do not take stop-on-drop.
