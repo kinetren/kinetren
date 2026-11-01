@@ -203,6 +203,19 @@ pub fn render_raw_video(
     )
 }
 
+/// How many frames an export of `[r0, r1)` renders at `fps`: the grid frames from the one that
+/// CONTAINS `r0` (the frame the preview shows there, invariant 7) up to, not including, `r1`.
+/// The progress total and the render loop both follow this rule (render-crash-and-recovery D1).
+pub fn video_frames_in(fps: u32, r0: Tick, r1: Tick) -> u64 {
+    let grid = kt_time::FpsGrid::new(fps);
+    let step = grid.frame_step();
+    let first = grid.align_floor(r0).0;
+    if r1.0 <= first {
+        return 0;
+    }
+    ((r1.0 - first + step - 1) / step) as u64
+}
+
 /// The full variant: range, cancel, progress. CPU executor.
 pub fn render_raw_video_range(
     project: &Project,
@@ -481,7 +494,10 @@ pub fn export_mp4_with_backends(
         None => (Tick(0), project_range(project)),
     };
     let total_audio = (r1.to_audio_frames() - r0.to_audio_frames()).max(0) as u64;
-    let total_video = ((r1.0 - r0.0) / (kt_time::TICK_HZ / fps as i64)).max(0) as u64;
+    // the SAME count the loop of `render_raw_video_range_with` renders (render-crash-and-recovery
+    // D1): the floored `(r1 - r0) / step` was one frame short on an off-grid region, and the
+    // progress window's fraction went past 1
+    let total_video = video_frames_in(fps, r0, r1);
 
     // In-process muxer: codecs are taken from the SYSTEM FFmpeg,
     // so its hardware encoders are available. An external ffmpeg binary
@@ -639,4 +655,61 @@ pub fn export_mp4_with_backends(
         // buffer and without the master gain (item 371)
         loudness: astats.loudness,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kt_model::ProjectSettings;
+
+    /// Test 1070 (render-crash-and-recovery D1): the frames the raw render delivers equal the
+    /// announced total on any region, and the progress never reports more. The owner's render
+    /// crashed on an off-grid region: the floored total was one frame short.
+    #[test]
+    fn t1070_announced_total_is_the_rendered_frames() {
+        let p = Project::new(ProjectSettings {
+            fps: 30,
+            width: 32,
+            height: 18,
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+            default_shape: Default::default(),
+            conform: Default::default(),
+            settings_explicit: false,
+        });
+        let step = 3000; // 90000 / 30
+        let regions = [
+            (Tick(10 * step + step / 2), Tick(40 * step + step / 3)), // both edges off the grid
+            (Tick(10 * step), Tick(40 * step)),                       // on the grid
+            (Tick(5 * step), Tick(5 * step)),                         // empty
+            (Tick(7 * step + 100), Tick(7 * step + 900)),             // shorter than a frame
+            (Tick(7 * step + 2900), Tick(8 * step + 100)),            // across one grid line
+        ];
+        for (r0, r1) in regions {
+            let total = video_frames_in(30, r0, r1);
+            let mut emitted = 0u64;
+            let mut max_progress = 0u64;
+            let stats = render_raw_video_range(
+                &p,
+                Vec::new(),
+                Quality { width: 32, height: 18 },
+                Some((r0, r1)),
+                &AtomicBool::new(false).into(),
+                |done| max_progress = max_progress.max(done),
+                |_| {
+                    emitted += 1;
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(emitted, total, "{r0:?}..{r1:?}: rendered {emitted}, announced {total}");
+            assert_eq!(stats.video_frames, total, "{r0:?}..{r1:?}");
+            assert!(max_progress <= total, "{r0:?}..{r1:?}: progress {max_progress} > {total}");
+        }
+        // the owner's case in numbers: the former floored count is short of what is rendered
+        // (29 announced, 31 rendered here) — the fraction went past 1
+        let (r0, r1) = regions[0];
+        assert_eq!(((r1.0 - r0.0) / step) as u64, 29);
+        assert_eq!(video_frames_in(30, r0, r1), 31);
+    }
 }

@@ -366,6 +366,12 @@ impl RenderJob {
     }
 }
 
+/// A duration for a display row: a negative, NaN or overflowing number of seconds is zero, never a
+/// panic (render-crash-and-recovery D1).
+pub(crate) fn secs(s: f64) -> std::time::Duration {
+    std::time::Duration::try_from_secs_f64(s.max(0.0)).unwrap_or_default()
+}
+
 /// Render SETTINGS dialog (item 5): codec, quality, bitrate, resolution.
 pub struct RenderSetup {
     pub encoder: Option<String>, // None = Auto
@@ -921,9 +927,13 @@ impl KtApp {
             (tr(k::render::ROW_FILE), job.out_path.clone()),
         ];
         let p = job.progress;
+        // CLAMPED (render-crash-and-recovery D1): a counter past its total once made the
+        // remaining time negative, and `Duration::from_secs_f64` panicked on the UI thread
         let frac = match &job.result {
             Some(Ok(_)) => 1.0,
-            _ if p.total_video_frames > 0 => p.video_frames as f64 / p.total_video_frames as f64,
+            _ if p.total_video_frames > 0 => {
+                (p.video_frames as f64 / p.total_video_frames as f64).clamp(0.0, 1.0)
+            }
             _ => 0.0,
         };
         let elapsed = job.elapsed();
@@ -936,19 +946,23 @@ impl KtApp {
         ];
         if running && frac > 0.01 {
             let left = elapsed.as_secs_f64() / frac * (1.0 - frac);
-            run_rows.push((tr(k::render::ROW_REMAINING), clock_text(std::time::Duration::from_secs_f64(left))));
+            run_rows.push((tr(k::render::ROW_REMAINING), clock_text(secs(left))));
         }
         run_rows.push((
             tr(k::render::ROW_LENGTH),
             format!(
                 "{} / {}",
-                clock_text(std::time::Duration::from_secs_f64(done_s)),
-                clock_text(std::time::Duration::from_secs_f64(total_s))
+                clock_text(secs(done_s)),
+                clock_text(secs(total_s))
             ),
         ));
         let size = match (job.final_size, running && frac >= 0.02) {
             (Some(f), _) => size_text(f),
-            (None, true) => crate::tf!(k::render::SIZE_VALUE, size_text(so_far), size_text((so_far as f64 / frac) as u64)),
+            (None, true) => crate::tf!(
+                k::render::SIZE_VALUE,
+                size_text(so_far),
+                size_text(((so_far as f64 / frac) as u64).max(so_far))
+            ),
             (None, false) => size_text(so_far),
         };
         run_rows.push((tr(k::render::ROW_SIZE), size));

@@ -187,7 +187,8 @@ impl Samples {
 /// The time left at `rate` bytes per second; `None` without a rate or a total.
 pub fn eta(done: u64, total: Option<u64>, rate: Option<f64>) -> Option<std::time::Duration> {
     let (total, rate) = (total?, rate.filter(|r| *r > 0.0)?);
-    Some(std::time::Duration::from_secs_f64(total.saturating_sub(done) as f64 / rate))
+    // a tiny positive rate overflows a `Duration`: `try_` — the row goes away, the program stays
+    std::time::Duration::try_from_secs_f64(total.saturating_sub(done) as f64 / rate).ok()
 }
 
 /// A finished download: where it went and what was verified.

@@ -17,6 +17,14 @@ month, newest first.
   math, so a render is identical on both — and on any processor.
 - **Forcing an encoder this computer does not have** (VAAPI on Windows) now says so by name
   instead of an empty error.
+- **If Kinetren crashes, a window says so at once** — the error, the version and the last lines
+  of the log, with **Restore the project** and **Open the log folder**. Before, you learnt it only
+  at the next start, if at all.
+- **Restoring after a crash brings back your own footage.** The restored project no longer plays
+  a lesson's test patterns in place of your sources, and keeps its own name.
+- **Rendering a region that does not start on a frame** no longer closes the program.
+- **The log keeps one file per run** (the four previous runs next to it), each starting with the
+  version and the start time in your time zone.
 - **Pitch no longer tears between short events.** Cut an event with pitch into many short
   pieces and they sound exactly like the uncut event; any pitched event starts and ends
   without a dip.

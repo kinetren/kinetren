@@ -112,3 +112,13 @@ need a third). Residual: rustfft's twiddles are `f64` cosines rounded to `f32` (
 nothing after it: the loop skipped every candidate. The muxer now names it with the cascade before
 the loop (t1063 forces the other system's encoder, so the Linux job proves the path; t962 expects
 that error where VAAPI is not in the cascade). Details: `openspec/changes/archive/2026-11-01-ci-green-again/design.md` (D4, D6–D8).
+## The announced frame total is the loop's count (render-crash-and-recovery)
+
+The progress total was `(r1 − r0) / step`, floored, while the loop renders from the frame that
+CONTAINS `r0` (the frame the preview shows there, invariant 7) up to `r1`: on an off-grid region it
+rendered one or two frames more than announced, the window's fraction passed 1, the remaining time
+came out negative and `Duration::from_secs_f64` panicked on the UI thread — the owner's crash of
+2026-10-31. One function, `video_frames_in`, now gives both numbers; the loop itself did not move
+(starting at `align_ceil` would drop a frame the person sees). The window still clamps the fraction
+and builds display durations with `try_from_secs_f64`: a counter mismatch costs an estimate, never
+the program. The FFmpeg download ETA had the same class (a tiny rate overflows) and the same guard.
