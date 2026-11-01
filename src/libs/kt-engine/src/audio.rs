@@ -91,6 +91,51 @@ struct AudioClip {
     /// sampled into tens of thousands of points (slowed-reverb-is-an-event), and computing
     /// them per burst made a 10-minute zigzag-speed event cost 20× a straight one.
     src_ends: std::cell::Cell<Option<(i64, i64)>>,
+    /// The chain reads the event's own source across its edges (`kt_fx::chain_context`,
+    /// pitch-event-edges D1) — computed once with the clip.
+    ctx: bool,
+    /// The RUN PREDECESSOR (pitch-event-edges D3): the event this one continues as a split of one
+    /// material — its processor is handed on at the join (`run_predecessors`).
+    run_prev: Option<usize>,
+}
+
+/// The run predecessor of every clip (pitch-event-edges D3): the clip on the same track that ends
+/// exactly where this one starts and whose material this one continues frame for frame — a split
+/// of one event. Both chains read across the edges (`ctx`) with the same structure and look-ahead,
+/// neither is reversed or overlapped, no transition window lies at the join, and the predecessor has
+/// no tail (it is silent after its end, so its processor is free to go on). Then the two are ONE
+/// stream: the predecessor's processor is handed on at the join instead of starting cold.
+fn run_predecessors(clips: &[AudioClip], overlaps: &[bool]) -> Vec<Option<usize>> {
+    let mut by_end: std::collections::HashMap<(u32, i64), Vec<usize>> = Default::default();
+    for (i, c) in clips.iter().enumerate() {
+        by_end.entry((c.lane, c.end)).or_default().push(i);
+    }
+    clips
+        .iter()
+        .enumerate()
+        .map(|(bi, b)| {
+            let cands = by_end.get(&(b.lane, b.start))?;
+            let [ai] = cands.as_slice() else { return None };
+            let a = &clips[*ai];
+            let continues = a.media == b.media
+                && a.nest == b.nest
+                && a.source_in + (a.end - a.start) == b.source_in
+                && a.ctx
+                && b.ctx
+                && !a.reversed
+                && !b.reversed
+                && !overlaps[*ai]
+                && !overlaps[bi]
+                && a.ext_end == a.end
+                && a.tail_ext == 0
+                && b.head_ext == 0
+                && a.fade_out.is_none()
+                && b.fade_in.is_none()
+                && kt_fx::chain_fingerprint(&a.fx) == kt_fx::chain_fingerprint(&b.fx)
+                && kt_fx::chain_lookahead(&a.fx, &a.auto) == kt_fx::chain_lookahead(&b.fx, &b.auto);
+            continues.then_some(*ai)
+        })
+        .collect()
 }
 
 /// The crossfade weight over the transition windows of the clip. It does not know the
@@ -665,6 +710,8 @@ impl AudioRenderer {
                         (c.media, crate::instance_content(project, c.media, &c.overrides))
                     }),
                     src_ends: std::cell::Cell::new(None),
+                    ctx: false,
+                    run_prev: None,
                 }
             })
             .collect();
@@ -746,6 +793,13 @@ impl AudioRenderer {
         };
         let covers = if overlap_layers { build_lane_covers(&clips) } else { OverlapMap::new() };
         let overlaps = overlapping_clips(&clips, &covers);
+        for c in &mut clips {
+            c.ctx = kt_fx::chain_context(&c.fx, &c.auto);
+        }
+        let runs = run_predecessors(&clips, &overlaps);
+        for (c, r) in clips.iter_mut().zip(runs) {
+            c.run_prev = r;
+        }
         let mut nests = std::collections::HashMap::new();
         if depth < kt_model::MAX_NEST_DEPTH {
             for c in effective.iter().filter(|c| c.kind == ClipKind::Audio) {
@@ -1428,13 +1482,31 @@ impl AudioRenderer {
         let media = clip.media;
         let mut pull_underruns = 0u64;
         let mut warmup_misses = 0u64;
+        let local = from - clip.start;
+        // ONE STREAM ACROSS A SPLIT (pitch-event-edges D3): the event is entered fresh at its first
+        // frame while its run predecessor has just played to its end — the predecessor's processor
+        // goes on, rebased, and the predecessor gets this one's, reset. Clips are rendered in
+        // ascending order in every burst, so this holds exactly on continuous play, whatever the
+        // slicing.
+        if let Some(pi) = clip.run_prev
+            && local == 0
+        {
+            let prev = &self.clips[pi];
+            let prev_len = prev.end - prev.start;
+            if store.hand_on(prev.id, prev_len, clip.id) {
+                store.sync_clip(prev.id, &prev.fx, &prev.auto, prev.source_in, prev_len, self.opts);
+                store.sync_clip(clip.id, &clip.fx, &clip.auto, clip.source_in, clip_len, self.opts);
+            }
+        }
         let Some(proc) = store.get_mut(clip.id) else { return };
         proc.set_material_ext(clip.head_ext, clip.tail_ext);
-        // the loop span in clip-local frames, for an event that covers the region end
+        // the loop span in clip-local frames, for an event that covers the region end; an event
+        // that reads across its edges and starts INSIDE the region is not what sounds after the
+        // wrap — its input continues into its own material (pitch-event-edges D5)
         proc.set_loop_span(self.loop_region.get().and_then(|(rs, re)| {
-            (clip.start < re && clip.end >= re).then_some((rs - clip.start, re - clip.start))
+            (clip.start < re && clip.end >= re && (!clip.ctx || clip.start <= rs))
+                .then_some((rs - clip.start, re - clip.start))
         }));
-        let local = from - clip.start;
         let count = (to - from) as usize;
         let mut buf = vec![0f32; count * AUDIO_CHANNELS];
         {

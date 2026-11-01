@@ -52,6 +52,8 @@ pub fn chain_source_window_ext(
 ) -> std::ops::Range<i64> {
     let len = clip_len_frames.max(1);
     let preroll = chain_tail(fx, auto).to_audio_frames().max(MIN_PREROLL_FRAMES);
+    // across the event's edges when the chain reads there (pitch-event-edges D1)
+    let material = read_material(fx, auto, material);
     let l0 = (local.start - preroll).max(material.start).min(material.end);
     // FORWARD — for the chain’s lookahead (R.48, item 337): exactly how much of the source
     // the chain actually reads while giving the same output. The fix lives in
@@ -96,6 +98,7 @@ pub fn chain_consumption_window_ext(
     local: std::ops::Range<i64>,
 ) -> std::ops::Range<i64> {
     let len = clip_len_frames.max(1);
+    let material = read_material(fx, auto, material);
     let l0 = (local.start - chain_lookahead(fx, auto)).clamp(material.start, material.end);
     let l1 = (local.end + chain_lookahead(fx, auto)).clamp(material.start, material.end);
     let Some(rate) = fx.iter().find_map(FxInstance::warp_rate) else {
@@ -161,6 +164,73 @@ pub fn chain_lookahead(fx: &[FxInstance], auto: &AutoProfiles) -> i64 {
             _ => 0i64,
         })
         .sum()
+}
+
+/// Whether the chain READS ACROSS THE EVENT'S EDGES (pitch-event-edges D1, D2) — the one home, asked
+/// by the processor and by the window functions (if they diverged, render and prefetch would read
+/// different frames: item 13, t17). True when a node that declares `reads_across_edges` has a
+/// non-zero look-ahead, the chain has no time warp (the source beyond a warped event's edges is a
+/// function of a rate curve that does not exist there), and no node BEFORE the last such node has a
+/// tail (a reverb before pitch would carry the material outside the event into its tail).
+///
+/// Then the chain's input around the event's edges is the event's own source — the seek pre-roll
+/// reads before the in-point, the input runs `La` past the out-point — and a content gate right after
+/// the last such node cuts the result back to the event: "the material pitched, then cut".
+pub fn chain_context(fx: &[FxInstance], auto: &AutoProfiles) -> bool {
+    if fx.iter().any(FxInstance::warps_time) {
+        return false;
+    }
+    let reads = |slot: usize, f: &FxInstance| {
+        nodes::plugin_audio(f).is_some_and(|(m, _)| m.decl.reads_across_edges)
+            && slot_lookahead(fx, auto, slot) > 0
+    };
+    let Some(last) = fx.iter().enumerate().rev().find(|(slot, f)| reads(*slot, f)).map(|(s, _)| s)
+    else {
+        return false;
+    };
+    (0..last).all(|slot| slot_tail(fx, auto, slot) == 0)
+}
+
+/// The look-ahead of one slot: the manifest's formula (D2a; t322g).
+fn slot_lookahead(fx: &[FxInstance], auto: &AutoProfiles, slot: usize) -> i64 {
+    match &fx[slot] {
+        f @ FxInstance::Plugin(p) => nodes::plugin_audio(f).map_or(0, |(m, _)| {
+            kt_plugin_api::lookahead_frames_with(
+                m,
+                &kt_plugin_api::ParamValues(p.values.clone()),
+                &nodes::SlotView { auto, slot },
+            )
+        }),
+        _ => 0,
+    }
+}
+
+/// The tail of one slot in frames: the manifest's formula (D2a; t322f).
+fn slot_tail(fx: &[FxInstance], auto: &AutoProfiles, slot: usize) -> i64 {
+    match &fx[slot] {
+        f @ FxInstance::Plugin(p) => nodes::plugin_audio(f).map_or(0, |(m, _)| {
+            kt_plugin_api::tail_frames_with(
+                m,
+                &kt_plugin_api::ParamValues(p.values.clone()),
+                &nodes::SlotView { auto, slot },
+            )
+        }),
+        _ => 0,
+    }
+}
+
+/// The material a chain READS: with the context (`chain_context`) it reaches the seek pre-roll
+/// before the event's material and the look-ahead past it; otherwise the material itself.
+fn read_material(
+    fx: &[FxInstance],
+    auto: &AutoProfiles,
+    material: std::ops::Range<i64>,
+) -> std::ops::Range<i64> {
+    if !chain_context(fx, auto) {
+        return material;
+    }
+    let preroll = chain_tail(fx, auto).to_audio_frames().max(MIN_PREROLL_FRAMES);
+    (material.start - preroll)..(material.end + chain_lookahead(fx, auto))
 }
 
 /// PROJECT settings that affect the execution of the chain (R.48): the pitch
@@ -379,6 +449,13 @@ pub struct ClipProcessor {
     /// The chain input position the next chunk is expected at (with a loop span): a folded
     /// input that differs from it re-seats the source. `Some(i64::MIN)` forces a re-seat.
     in_next: Option<i64>,
+    /// Per node: its kind declares `reads_across_edges` (pitch-event-edges D2).
+    across: Vec<bool>,
+    /// The chain has a time warp (no context then: `chain_context`).
+    time_warp: bool,
+    /// The context applies (`chain_context`): the index of the LAST node that reads across the
+    /// event's edges — the content gate stands right after it. `None` — the former edges.
+    ctx: Option<usize>,
 }
 
 /// Delay of the dry side by a whole number of frames (R.48): between the snapshot of the dry
@@ -455,6 +532,9 @@ impl ClipProcessor {
             dry_ring: None,
             loop_span: None,
             in_next: None,
+            across: Vec::new(),
+            time_warp: false,
+            ctx: None,
         };
         p.apply_params(fx, true);
         p
@@ -514,6 +594,12 @@ impl ClipProcessor {
         };
         self.mix_ahead = mix_ahead;
         self.dry_ring = (dry_delta > 0).then(|| DryRing::new(dry_delta));
+        // the context — the same decision as the static `chain_context` (t1109): the last node that
+        // reads across the edges with a live look-ahead, no warp, no tail before it
+        let last = (0..n).rev().find(|&i| self.across[i] && self.nodes[i].1.lookahead() > 0);
+        self.ctx = last.filter(|&l| {
+            !self.time_warp && self.nodes[..l].iter().all(|(_, nd)| nd.tail() == Tick::ZERO)
+        });
     }
 
     /// Chain lookahead in frames — the same value as given by the
@@ -560,7 +646,15 @@ impl ClipProcessor {
                 .enumerate()
                 .filter_map(|(slot, f)| AudioNode::build(f, self.opts.pitch_engine).map(|n| (slot, n)))
                 .collect();
+            self.across = self
+                .nodes
+                .iter()
+                .map(|(slot, _)| {
+                    nodes::plugin_audio(&fx[*slot]).is_some_and(|(m, _)| m.decl.reads_across_edges)
+                })
+                .collect();
         }
+        self.time_warp = fx.iter().any(FxInstance::warps_time);
         debug_assert_eq!(
             self.nodes.len(),
             fx.iter().filter(|f| AudioNode::has_node(f)).count(),
@@ -724,6 +818,12 @@ impl ClipProcessor {
             } else if self.folding() && Some(self.fold(local + self.la)) == self.in_next {
                 // The output wraps to the loop start, and the INPUT already did, `la` frames
                 // ago (pitch-loop-silence, D2): the chain is continuous, nothing to re-seat.
+            } else if self.fresh_entry(local) {
+                // A FRESH ENTRY (pitch-event-edges D4): the event had stopped and is read again
+                // from its first frame (a loop lap over several events) — its output was silent in
+                // between, so there is nothing to ring through, and a seam would reuse a look-ahead
+                // ring holding the material from where it stopped.
+                self.hard_seek(local, pull);
             } else {
                 // SEAM: the position jumped, but the OUTPUT is continuous (wrap of a
                 // loop region, a clip shifted by the mouse during playback). The reverb
@@ -738,6 +838,44 @@ impl ClipProcessor {
         self.produce(PullKind::Output, local, out, pull);
         self.next_local = local + (out.len() / CH) as i64;
         self.warp.as_ref().map(|w| w.underruns()).unwrap_or(0) - before
+    }
+
+    /// The context applies: the chain reads the event's own source across its edges
+    /// (`chain_context`, pitch-event-edges D1).
+    pub fn reads_across_edges(&self) -> bool {
+        self.ctx.is_some()
+    }
+
+    /// The clip-local frame the processor gives next; `None` — cold (after a reset or a seek).
+    pub fn next_local(&self) -> Option<i64> {
+        (self.next_local != i64::MIN).then_some(self.next_local)
+    }
+
+    /// Reading `local` would be a FRESH ENTRY (pitch-event-edges D4): the context applies, the chain
+    /// has no tail, and the event is entered at its first frame or after it had played to its end —
+    /// not continuously, and not as the expected input-first loop wrap. A cold processor is one too.
+    pub fn fresh_entry(&self, local: i64) -> bool {
+        if self.next_local == i64::MIN {
+            return true;
+        }
+        self.ctx.is_some()
+            && self.tail_frames() == 0
+            && self.next_local != local
+            && (local == -self.head_ext || self.next_local >= self.clip_len + self.tail_ext)
+            && !(self.folding() && Some(self.fold(local + self.la)) == self.in_next)
+    }
+
+    /// Hand this processor on to the NEXT event of a split (pitch-event-edges D3): it has just
+    /// played its event to the end (`shift` = its length), and the next event's frame 0 is that end.
+    /// The clip-local position moves back by `shift`; the caller then gives it the next event's
+    /// anchor, length and parameters (`FxStateStore::sync_clip`) — the anchor moves through a seam,
+    /// and the nodes continue their streams (a pitch node sees a seam, pitch-loop-silence D1).
+    pub fn hand_on(&mut self, shift: i64) {
+        if self.next_local != i64::MIN {
+            self.next_local -= shift;
+        }
+        self.in_next = None;
+        self.loop_span = None;
     }
 
     /// How much material the CHAIN has EATEN up to the clip-local position — the
@@ -768,8 +906,13 @@ impl ClipProcessor {
         }
         // pre-roll may reach into the left “handle”, but not before the start of the
         // material (−head_ext)
-        let preroll =
-            self.tail_frames().max(MIN_PREROLL_FRAMES).min((local + self.head_ext).max(0));
+        // with the context (pitch-event-edges D1) it reads the source before the in-point too:
+        // a pitch grain at the event's first frame needs the material the event was cut from
+        let preroll = if self.ctx.is_some() {
+            self.tail_frames().max(MIN_PREROLL_FRAMES)
+        } else {
+            self.tail_frames().max(MIN_PREROLL_FRAMES).min((local + self.head_ext).max(0))
+        };
         let start = local - preroll;
         // source position for local=start (the integral of the automation).
         // The formula does NOT change: `start` is the first INPUT position of the warm-up,
@@ -908,13 +1051,20 @@ impl ClipProcessor {
             // gets deterministic silence FORWARD, and the rings of the lookahead nodes
             // push the body out exactly to the end of the event.
             let gate_end = self.clip_len + self.tail_ext;
-            // an input folded to before the event's material (the event starts inside the
-            // region): the chain gets silence there, as on the first lap before its start
-            let before_material = self.folding() && chunk_in + (n as i64) <= -self.head_ext;
+            // the event's own content ends at `gate_end`; with the context (pitch-event-edges D1)
+            // the INPUT runs `la` past it — the content gate after the last edge-reading node cuts
+            // the result back to the event
+            let gate_in = if self.ctx.is_some() { gate_end + self.la } else { gate_end };
+            // an input FOLDED to before the event's material (the event starts inside the
+            // region): the chain gets silence there, as on the first lap before its start. An
+            // unfolded input before it is the pre-roll of the context.
+            let folded = chunk_in != chunk_local + self.la;
+            let before_material =
+                self.folding() && folded && chunk_in + (n as i64) <= -self.head_ext;
             if before_material {
                 sub.fill(0.0);
                 self.in_next = Some(i64::MIN);
-            } else if chunk_in >= gate_end {
+            } else if chunk_in >= gate_in {
                 // A WHOLE CHUNK IN THE TAIL (R.43, item 304): whatever the warp produces,
                 // the gate below zeroes it COMPLETELY — so there is nothing to compute.
                 // Skipping is byte-identical BY CONSTRUCTION: the result is the same
@@ -945,8 +1095,8 @@ impl ClipProcessor {
                         self.plain_cursor += n as i64;
                     }
                 }
-                if chunk_in + (n as i64) > gate_end {
-                    let cut = (gate_end - chunk_in).clamp(0, n as i64) as usize;
+                if chunk_in + (n as i64) > gate_in {
+                    let cut = (gate_in - chunk_in).clamp(0, n as i64) as usize;
                     sub[cut * CH..].fill(0.0);
                 }
             }
@@ -964,6 +1114,8 @@ impl ClipProcessor {
                 _ => p,
             };
             let dry_ring = &mut self.dry_ring;
+            let ctx = self.ctx;
+            let (head_ext, nodes_len) = (self.head_ext, self.nodes.len());
             for (i, (slot, node)) in self.nodes.iter_mut().enumerate() {
                 if let Some(m) = &self.mix
                     && *slot >= m.from
@@ -990,9 +1142,34 @@ impl ClipProcessor {
                     // (the owner’s decision, R.65)
                     node.process(sub, fold(chunk_local + ahead[i]), None);
                 }
+                // THE CONTENT GATE (pitch-event-edges D1): right after the last node that reads
+                // across the edges, everything outside the event is cut — the content position
+                // there runs ahead of the output by what the later nodes still read
+                if ctx == Some(i) {
+                    let p0 = fold(chunk_local + if i + 1 < nodes_len { ahead[i + 1] } else { 0 });
+                    content_gate(sub, p0, -head_ext, gate_end);
+                    // a dry side still waiting for its marker: it is aligned to the marker's
+                    // content position
+                    if let Some(d) = dry.as_mut() {
+                        content_gate(d, fold(chunk_local + mix_ahead), -head_ext, gate_end);
+                    }
+                }
             }
             done += n;
         }
+    }
+}
+
+/// Zero the frames of `buf` (content positions from `p0`) outside `[lo, hi)`.
+fn content_gate(buf: &mut [f32], p0: i64, lo: i64, hi: i64) {
+    let n = (buf.len() / CH) as i64;
+    let a = (lo - p0).clamp(0, n) as usize;
+    let b = (hi - p0).clamp(0, n) as usize;
+    buf[..a * CH].fill(0.0);
+    if b >= a {
+        buf[b * CH..].fill(0.0);
+    } else {
+        buf.fill(0.0);
     }
 }
 
