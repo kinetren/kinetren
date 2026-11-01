@@ -135,6 +135,10 @@ pub enum Node {
     /// The plugin's fragment pass `shaders()[shader]` at the frame size, reading up to three slots
     /// as `T0..T2`; `u`/`f` are the pass's `P.u0..u1`/`P.f0..f1`.
     Pass { shader: u8, inputs: [Slot; 3], u: [u32; 8], f: [f32; 8] },
+    /// The same pass rendered at `w×h` instead of the frame size (vhs-tape-simulation, D6): a
+    /// signal grid of its own resolution (the VHS standard's 4 fsc grid). Its output is the next
+    /// `Prev` at that size; the graph must still end at the frame size.
+    PassAt { shader: u8, inputs: [Slot; 3], u: [u32; 8], f: [f32; 8], w: u32, h: u32 },
 }
 
 /// The kernel of a barrier plugin.
@@ -155,6 +159,16 @@ pub trait BarrierKernel: Send + Sync {
     }
     /// The GPU graph for this frame; an empty graph is a passthrough (drop_shadow on an opaque frame).
     fn gpu(&self, _k: &Cooked, _g: &GpuCtx, _out: &mut Vec<Node>) {}
+    /// The whole frame from the passport values (vhs-tape-simulation, D7): a kernel whose
+    /// parameters do not fit the eight cooked numbers overrides it. The host calls this form; the
+    /// default cooks the values, so every other barrier keeps its bytes.
+    fn frame_values(&self, values: &[f64], f: Frame, cx: &BarrierCtx, scratch: &mut dyn Scratch) -> Frame {
+        self.frame(&self.cook(values), f, cx, scratch)
+    }
+    /// The GPU graph from the passport values; the default cooks them (as `frame_values`).
+    fn gpu_values(&self, values: &[f64], g: &GpuCtx, out: &mut Vec<Node>) {
+        self.gpu(&self.cook(values), g, out)
+    }
 }
 
 /// Check a graph's shape (D5): every `Saved(n)` read after its `Save(n)`, every pass a shader the
@@ -174,7 +188,7 @@ pub fn check_graph(nodes: &[Node], shaders: usize, g: &GpuCtx, max_dim: u32) -> 
                 }
                 size = (*w, *h);
             }
-            Node::Pass { shader, inputs, .. } => {
+            Node::Pass { shader, inputs, .. } | Node::PassAt { shader, inputs, .. } => {
                 if *shader as usize >= shaders {
                     return Err(format!("a pass names shader {shader} of {shaders}"));
                 }
@@ -185,7 +199,15 @@ pub fn check_graph(nodes: &[Node], shaders: usize, g: &GpuCtx, max_dim: u32) -> 
                         return Err(format!("a pass reads Saved({i}) before it is saved"));
                     }
                 }
-                size = (g.w, g.h);
+                size = match n {
+                    Node::PassAt { w, h, .. } => {
+                        if *w == 0 || *h == 0 || *w > max_dim || *h > max_dim {
+                            return Err(format!("a pass at {w}x{h} (the ceiling is {max_dim})"));
+                        }
+                        (*w, *h)
+                    }
+                    _ => (g.w, g.h),
+                };
             }
         }
     }

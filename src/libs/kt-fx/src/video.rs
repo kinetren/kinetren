@@ -335,7 +335,7 @@ pub fn apply_barrier(
             simd: crate::simd::simd_level() == crate::simd::SimdLevel::Avx2,
             raster: &Raster,
         };
-        return b.frame(&b.cook(values), frame, &cx, scratch);
+        return b.frame_values(values, frame, &cx, scratch);
     }
     match f {
         // per-pixel R.47 effects in a BARRIER position (leading/trailing slot):

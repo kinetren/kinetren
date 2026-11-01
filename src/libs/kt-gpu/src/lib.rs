@@ -43,6 +43,13 @@ impl FrameTol {
     /// item 308): contour pixels there flip by the full amount.
     pub const GEOM: FrameTol =
         FrameTol { max_lsb: 2, outlier_frac: 0.002, outlier_max: 255, mean_lsb: 0.5 };
+    /// A signal simulation (vhs-tape-simulation, t1186): f32 filters of hundreds of taps against
+    /// the same f32 text, and an FM discriminator whose impulsive "clicks" at a carrier drowned in
+    /// noise flip on one ULP. Measured (lavapipe, 2026-11-01, 192×108, every preset): a clean
+    /// deck |Δ| ≤ 1, mean ≤ 0.002; the clogged head (field A is snow) 1.61 % of the samples above
+    /// 2, up to 153, mean 0.324. Set at ×2 of the clogged head.
+    pub const SIGNAL: FrameTol =
+        FrameTol { max_lsb: 2, outlier_frac: 0.033, outlier_max: 255, mean_lsb: 0.65 };
 }
 
 /// A post-mortem of the divergence: where, how many, a histogram. It panics on

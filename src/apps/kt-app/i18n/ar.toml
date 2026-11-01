@@ -415,6 +415,21 @@ ceiling_db = "السقف"
 lookahead_ms = "الاستباق"
 semitones = "أنصاف النغمات"
 cents = "السنتات"
+tracking_um = "التتبع:"
+skew_um = "انحراف المسح:"
+cn_db = "نسبة الإشارة للضجيج في الشريط:"
+dropouts_per_s = "الانقطاعات في الثانية:"
+dropout_us = "طول الانقطاع:"
+jitter_us = "ارتعاش القاعدة الزمنية:"
+switch_lines = "تبديل الرؤوس، أسطر قبل التزامن الرأسي:"
+switch_skew_us = "انزياح التبديل:"
+white_clip = "قص الأبيض:"
+dark_clip = "قص الأسود:"
+chroma_db = "مستوى اللون المنقول:"
+tape_saturation = "تشبع الشريط:"
+spacing = "المسافة بين الرأس والشريط:"
+gap = "طول الفجوة:"
+output = "خرج الرأس:"
 
 [fxreg]
 add = "+ مؤثر…"
@@ -443,6 +458,7 @@ delay = "صدى"
 dynamics = "ديناميكا"
 timestretch = "تمديد زمني"
 color = "اللون"
+simulate = "محاكاة"
 
 # Search keywords. NOT reordered for Arabic
 # (compared with the user’s input), written in lowercase.
@@ -492,6 +508,7 @@ kaleidoscope = "مشكال مرايا kaleidoscope"
 cylinder3d = "أسطوانة انحناء cylinder"
 limiter = "محدد ذروة سقف limiter"
 pitch_shift = "تغيير النغمة درجة الصوت pitch"
+vhs_tape = "vhs tape cassette vcr simulation شريط كاسيت فيديو محاكاة رؤوس أسطوانة تتبع"
 
 # Names of built-in VARIANTS of an effect (R.54): a preset state with
 # a name by look, not by parameter. The vocabulary is shared by all effects —
@@ -556,6 +573,13 @@ blue = "أزرق"
 grid9 = "3×3"
 grid16 = "4×4"
 strip = "شريط"
+good_deck = "جهاز جيد"
+dirty_heads = "رؤوس متسخة"
+clogged_head = "رأس مسدود"
+chipped_head = "رأس مكسور"
+still_4head = "إيقاف بأربعة رؤوس"
+worn_tape = "شريط إيجار مستهلك"
+lp = "LP"
 
 # FX editor of the clip.
 [fx]
@@ -1624,6 +1648,32 @@ ffmpeg_missing = "غير موجود — تُعرض الوسائط كعناصر �
 ffmpeg_open = "FFmpeg…"
 hint_ffmpeg = "أين عُثر على FFmpeg وكيف تحصل عليه"
 close = "إغلاق"
+
+# The deck face of the VHS tape simulation (vhs-tape-simulation, D11).
+[deck]
+one_deck = "جهاز واحد: يسجل ويشغل"
+rec_deck = "جهاز التسجيل"
+play_deck = "جهاز التشغيل"
+one = "جهاز واحد"
+two = "جهازان"
+heads2 = "رأسان"
+heads4 = "4 رؤوس"
+play = "تشغيل"
+still = "إيقاف"
+pal = "PAL"
+ntsc = "NTSC"
+sp = "SP"
+lp = "LP"
+ep = "EP"
+tbc = "مصحح القاعدة الزمنية"
+doc = "معوض الانقطاعات"
+comb = "مرشح مشطي"
+head = "الرأس {0}"
+clean = "نظيف"
+dirty = "متسخ"
+clogged = "مسدود"
+chipped = "مكسور"
+pick_head = "انقر رأسًا على الأسطوانة لتحديد حالته"
 
 [masks]
 group = "الأقنعة"

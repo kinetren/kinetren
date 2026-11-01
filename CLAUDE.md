@@ -69,7 +69,7 @@ src/libs/kt-plugin-api  the plugin contract (plugin-api-stage1): manifest + para
 src/libs/kt-plugins-builtin  the assembler: the closed list of built-in plugin ids and `install()`;
                      a normal dependency of kt-app and kt-cli only, a dev-dependency of core tests
 src/plugins/*       the effects a person picks, one crate per family: fx-audio-{dynamics,modulation,
-                     tone}, fx-video-{color,distort,stylize,blur}, transitions-{basic,styled,volume},
+                     tone}, fx-video-{color,distort,stylize,blur,tape}, transitions-{basic,styled,volume},
                      generators-{basic,test}; a plugin's id is its file tag. An edit here rebuilds
                      the family, the assembler and the binaries, no core crate (t977)
 ```

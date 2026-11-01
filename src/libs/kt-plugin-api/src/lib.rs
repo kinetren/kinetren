@@ -303,6 +303,10 @@ pub enum ParamUnit {
     /// to the user, “7.0 %” says everything.
     /// The conversion lives in ONE place (`widgets::param_value`).
     Percent,
+    /// Micrometre (vhs-tape-simulation): head-to-tape spacing, gap length, tracking offset.
+    Um,
+    /// Microsecond (vhs-tape-simulation): dropout length, switching skew, time-base jitter.
+    Us,
 }
 
 /// TYPE of a property (R.59, item 466). Until this round the only property was a
@@ -1534,7 +1538,6 @@ impl Registry {
                     // the graph's shape is checked on the passport's defaults and its top, at K=1
                     // and the largest K, with alpha in the frame (drop_shadow draws only then)
                     for vals in [ParamValues::defaults(&m.passport), ParamValues::top(&m.passport)] {
-                        let k = b.cook(&vals.0);
                         for rs in [1, barrier::MAX_RES_SCALE] {
                             let g = barrier::GpuCtx {
                                 w: 64 * rs,
@@ -1545,7 +1548,7 @@ impl Registry {
                                 burst_index: 0,
                             };
                             let mut nodes = Vec::new();
-                            b.gpu(&k, &g, &mut nodes);
+                            b.gpu_values(&vals.0, &g, &mut nodes);
                             if nodes.is_empty() {
                                 return refuse("a barrier's GPU graph is empty on a frame with alpha");
                             }
