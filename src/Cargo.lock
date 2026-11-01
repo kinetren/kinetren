@@ -1519,6 +1519,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fx-video-camera"
+version = "0.1.0"
+dependencies = [
+ "kt-plugin-api",
+]
+
+[[package]]
 name = "fx-video-codec"
 version = "0.1.0"
 dependencies = [
@@ -2332,6 +2339,7 @@ dependencies = [
  "fx-audio-modulation",
  "fx-audio-tone",
  "fx-video-blur",
+ "fx-video-camera",
  "fx-video-codec",
  "fx-video-color",
  "fx-video-distort",

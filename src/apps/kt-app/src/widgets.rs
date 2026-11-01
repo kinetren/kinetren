@@ -487,8 +487,12 @@ pub fn param_label(name: &str) -> String {
         "rec_a_spacing" | "rec_b_spacing" | "play_a_spacing" | "play_b_spacing" => tr(k::fxp::SPACING),
         "rec_a_gap" | "rec_b_gap" | "play_a_gap" | "play_b_gap" => tr(k::fxp::GAP),
         "rec_a_output" | "rec_b_output" | "play_a_output" | "play_b_output" => tr(k::fxp::OUTPUT),
-        // a parameter without a caption in the catalogue — visible at once, not silently
-        other => return other.to_string(),
+        // camera_isp's rows (camera-isp-simulation): its own catalog section
+        other => match crate::isp_panel::row_label(other) {
+            Some(s) => s,
+            // a parameter without a caption in the catalogue — visible at once, not silently
+            None => return other.to_string(),
+        },
     };
     s.to_string()
 }

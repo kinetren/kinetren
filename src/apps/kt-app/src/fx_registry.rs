@@ -340,6 +340,7 @@ const VIDEO_ORDER: &[&str] = &[
     "Ripple",
     "Kaleidoscope",
     "Cylinder 3D",
+    "Camera ISP",
     "VHS Tape",
 ];
 

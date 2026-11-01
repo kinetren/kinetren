@@ -35,6 +35,7 @@ mod i18n;
 #[cfg(test)]
 mod i18n_tests;
 mod icons;
+mod isp_panel;
 mod journal;
 #[cfg(test)]
 mod layout_tests;

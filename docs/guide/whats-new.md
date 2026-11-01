@@ -10,6 +10,17 @@ month, newest first.
   whole program down, sometimes with the file half-written. It now finishes, shows its summary and
   closes like any other.
 
+- **A camera you can film your frame with: Camera ISP.** The new effect undoes the camera that
+  made your footage back into a scene, then films it again with a simulated camera: a lens
+  (defocus, distortion, chromatic aberration, vignetting, colour shading), a colour mosaic (RGGB
+  and its phases, Quad Bayer, X-Trans, RGBW, RGB-IR with infrared pixels), a sensor that counts
+  electrons with their real noise, blooming and banding, and the camera's processor with a block
+  for every one of those defects — black level, row/column correction, defect pixels, green
+  balance, raw denoise, lens shading, white balance, demosaic, distortion and colour-fringe
+  correction, colour matrix, tone curve, denoise, sharpening and YUV with 4:2:0. Every block can be
+  switched off or set wrong, "View" shows the picture after any stage, and the looks follow from
+  it: "Phone at night", "Cheap webcam", "Security cam, IR", "Cinema raw", "Wrong CFA phase", "No
+  IR-cut filter". The noise is the same on every play and render.
 - **A real start window.** The welcome window has three columns — Start (the tour, templates
   drawn in their frame's shape, the five lessons with your progress), Recent (your projects with
   their pictures, as many per row as fit) and What's new, now readable in its own column. Each

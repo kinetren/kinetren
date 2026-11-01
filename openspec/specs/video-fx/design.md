@@ -405,3 +405,29 @@ native pixels would differ between them, and between the preview at ¼ and the e
 The bytes depend only on IEEE-exact operations and the frozen math (the rotation), frozen by t1269.
 The memo is keyed by the full Debug text of what decides the bytes (the owner's cache rule: keyed by
 content, bounded, invisible to the bytes).
+
+## The camera simulation (camera-isp-simulation, 2026-11-01)
+
+`camera_isp` (`src/plugins/fx-video-camera`, F-FX-010) is a SIMULATION, not an imitation (the root
+rule of 2026-11-01): the frame is unprocessed into a scene, a simulated lens and sensor film it, a
+simulated ISP develops it. The archived change's design holds the chain step by step; what binds the
+next editor:
+- **Every defect has its correcting block** (the owner's review: "the paired block … you had to put
+  into the fx"): distortion ↔ dewarp, lateral CA ↔ CA correction, vignetting ↔ LSC, colour shading ↔
+  colour LSC, crosstalk ↔ CCM, Gr/Gb ↔ GEQ, blooming/clipping ↔ highlight and purple-fringe
+  suppression, row/column noise ↔ the optical-black correction, dark current ↔ BLC, hot/dead ↔ DPC,
+  shot/read ↔ raw NR by the noise model and YUV NR, demosaic false colour ↔ FCS, IR leak ↔ IR-cut and
+  RGB-IR subtraction. A new defect comes with its block, or is not added (t1220 measures each pair).
+- **The quantization points are the GPU's texture points** (Rgba8Uint): up to twelve passes,
+  `Plan::passes` the one list and `Plan::uniforms` the one packing; the CPU (`cpu.rs`, f32) and the
+  WGSL (`sNN_*.wgsl`) are edited as a pair, held by t1217 within `FrameTol::THRESHOLD`. Constants
+  are literals that parse to the same f32 on both sides; a division the WGSL would round loosely is
+  a multiply by a reciprocal the CPU computed.
+- **Noise is integer hashes of the SENSOR pixel** (Irwin–Hall(4), the Poisson inverse CDF below 12
+  e⁻): the same bits on every device; the fixed pattern is seeded by the sensor seed, the temporal
+  noise by the timeline position (t1216).
+- **K× magnifies the sensor**: the sensor has the logical frame's grid; a sub-pixel sample (OLPF,
+  distortion, CA) legitimately resolves a finer K× frame.
+- **Not here — the temporal stages**: 3DNR with its trails, rolling shutter and flicker need the
+  slot's previous OUTPUT; the stream class is a CPU-only source stage, so they are the change
+  `temporal-barrier-3dnr` (a temporal-barrier contract, GPU and CPU).

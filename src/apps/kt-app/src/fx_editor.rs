@@ -1869,6 +1869,11 @@ pub(crate) fn draw_video_fx_params(
         ch |= crate::geomctl::transform_form(ui, f, bind, hover, pubc);
         return ch;
     }
+    // camera_isp is drawn as its pipeline (camera-isp-simulation 3.1): stage blocks with bypasses
+    if f.tag() == "camera_isp" {
+        ch |= crate::isp_panel::draw(ui, f, bind, pubc);
+        return ch;
+    }
     ch |= crate::widgets::params_grid_bound(ui, ("fxp", fx_display_name(f)), f, skip, bind, pubc);
 
     // --- tail: Pan3d camera and CamMotion keyframes ------------------------
