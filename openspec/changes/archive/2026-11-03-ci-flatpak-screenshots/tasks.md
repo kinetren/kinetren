@@ -27,9 +27,25 @@ Test numbers t1410–t1419 are reserved by this change.
 
 ## 2. Close
 
-- [ ] 2.1 The distribution spec's scenarios and the design's "why" (archive); `cargo test
+- [x] 2.1 The distribution spec's scenarios and the design's "why" (archive); `cargo test
   --workspace`, clippy, `dist-check.py --check`
-- [ ] 2.2 One real local run of `src/scripts/flatpak-build.sh` in a privileged `ubuntu:24.04`
+  - Done. clippy is green, with no warning in the touched files. `dist-check.py --check` is green
+- [x] 2.2 One real local run of `src/scripts/flatpak-build.sh` in a privileged `ubuntu:24.04`
   container with the CI job's steps (the PPA, the packages), ending green: the pre-flight, the
   build, the install, both linter runs, `appstreamcli validate --strict`, `flatpak-check.sh`
-- [ ] 2.3 `src/scripts/finish.sh`, the version in the report
+  - Done. flatpak-builder 1.4.8, Flatpak 1.18.4. The pre-flight: "composes, 4 screenshots
+    mirrored". The build: "Committed screenshot ref: screenshots/x86_64". Both
+    `flatpak-builder-lint` runs: no errors, only the warning
+    `runtime-update-available-to-org.freedesktop.Platform-26.08`. `appstreamcli validate --strict`
+    passed. `flatpak-check.sh`: FFmpeg 7 of runtime 25.08, a libx264 + AAC export decoded to its
+    last frame. Took 14 m 50 s. The first try ended red after the linter (both runs already clean),
+    in `flatpak-check.sh`, because the container ran as root with HOME=/root, which
+    `--filesystem=host` does not expose to the sandbox. The runner's HOME is /home/runner, and the
+    rerun with that HOME is the green one. The first try, with an unpatched version parse, was
+    refused at once: `flatpak-builder --version` prints `flatpak-builder-1.4.8`
+- [x] 2.3 `src/scripts/finish.sh`, the version in the report
+  - Done. finish.sh: `kt26.11.03-0ecbc723`, 67 of 67 live scenarios green. The workspace tests
+    were 1443 of 1446 green. t476, t411 and t986 (kt-app) timed out under the machine's load,
+    which this change's Flatpak build in a container made heavier; each took 45–150 s there. Rerun
+    alone, all three pass in under 0.2 s. So does t850, the one test this change touched. A
+    `fixtures/gen.sh` temp-name race also hit t850's first try; it is known from ci-red-again

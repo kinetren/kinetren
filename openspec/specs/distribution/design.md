@@ -219,6 +219,25 @@ with flatpak-builder's arguments BEFORE the ten-minute build (t1381; reproduced 
 loader); they do not fail compose, which stores no media under flatpak-builder. Details:
 `openspec/changes/archive/2026-11-02-ci-red-again/design.md` (D1–D3, the measured table).
 
+## ci-flatpak-screenshots (2026-11-03): the screenshots are mirrored as Flathub's linter wants
+
+The run of 21505ad2 got past compose, the build and the install. Then `flatpak-builder-lint repo`
+refused it: `appstream-missing-screenshots` and `appstream-screenshots-not-mirrored-in-ostree`.
+ci-red-again had seen the `screenshot-save-error` hints and judged them harmless, because compose
+still said `Success!`. But compose had dropped all four WebP screenshots: Ubuntu's gdk-pixbuf has no
+WebP loader (`webp-pixbuf-loader`, now a `RECOMMENDS_NEEDED` row). And flatpak-builder ran without
+`--mirror-screenshots-url`, so no `screenshots/<arch>` ref. The linter also refuses partial media
+URLs, and full ones need `--compose-url-policy=full`, which is flatpak-builder 1.4.6+. Ubuntu 24.04
+has 1.4.2, so CI and the release take 1.4.8 from `ppa:flatpak/stable`. `flatpak-build.sh` refuses
+an older flatpak-builder at once and builds with Flathub's own `flathub-build` arguments. The
+compose pre-flight checks every screenshot too, and fails in about a second. Flathub's linter page
+says these checks are "never granted" an exception, so none was added. Rejected: building with the
+`org.flatpak.Builder` flatpak (nested bwrap and a session bus on the runner, not reproducible
+here), a hand `ostree commit` on 1.4.2 (the URLs stay partial), PNG screenshots (a new tag, and the
+silent drop would stay). A whole local run in a privileged `ubuntu:24.04` container is green. Run
+it with HOME outside `/root`: `--filesystem=host` does not expose `/root`, and `flatpak-check.sh`
+works in `$HOME`. Details: `openspec/changes/archive/2026-11-03-ci-flatpak-screenshots/design.md`.
+
 ## The version follows the commit in a worktree too (worktree-version-and-thumb-lock, 2026-11-01)
 
 - **What hurt.** `libs/kt-version/build.rs` watched `../../../.git/HEAD` and `.git/refs/heads`. In a
