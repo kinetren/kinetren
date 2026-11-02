@@ -31,7 +31,7 @@ With the loop on, it starts from the region start when the playhead is outside t
 | <kbd>Ctrl</kbd>+<kbd>S</kbd> | save |
 | <kbd>Alt</kbd>+<kbd>M</kbd> / <kbd>Alt</kbd>+<kbd>S</kbd> | mute / solo the track of the selected event, or the track under the mouse |
 | <kbd>Ctrl</kbd>+<kbd>F</kbd> | search events, markers, tracks, media and bin groups by name: <kbd>↑</kbd> / <kbd>↓</kbd> choose, <kbd>Enter</kbd> jumps, <kbd>Esc</kbd> closes |
-| <kbd>Esc</kbd> | step back, one thing per press: close the speed field, search or the top window, cancel a drag, clear the region and the selection (the loop stays on), then collapse an expanded reel, then leave the reel |
+| <kbd>Esc</kbd> | step back, one thing per press: while a mask is edited on the preview, drop the unfinished pen path, then leave the drawing tool, then stop editing the mask; otherwise close the speed field, search or the top window, cancel a drag, clear the region and the selection (the loop stays on), then collapse an expanded reel, then leave the reel |
 
 Pasting events that have names first asks for a name prefix: <kbd>Enter</kbd> pastes,
 <kbd>Esc</kbd> cancels. Cutting the region's interior out of the events is **Cut out the region interior**
@@ -45,8 +45,9 @@ in the menu of a track's empty space.
 | <kbd>Shift</kbd>+<kbd>A</kbd> / <kbd>Shift</kbd>+<kbd>D</kbd> | jump back / forward and drag the left / right region edge along; with no region, select the stretch just jumped over |
 | <kbd>L</kbd> | loop the region on / off |
 | <kbd>M</kbd> | add a marker at the playhead, or remove the one next to it; with the playhead inside the region, add or remove a range marker over the region |
-| click a marker on the ruler | move the playhead onto it |
+| click a marker on the ruler | move the playhead onto it (a range marker's flags only drag) |
 | drag a marker | move it |
+| drag the start / end flag of a range marker | move that edge; the other one stays |
 | drag a region edge | move it |
 | double-click a range marker on the ruler | region over it, with its events selected |
 | triple-click an event | region over the event and its linked partners |
@@ -102,7 +103,6 @@ in the menu of a track's empty space.
 | double-click a transition | transition properties |
 | drag a morpher or a camera, or its edges | move / resize |
 | double-click a morpher / a camera | morpher editor / camera properties |
-| drag an area's edge | resize the area |
 | click a track badge M / S / lock / FX | mute / solo / lock / track window |
 | double-click a track header | rename the track |
 | drag a track header / its bottom edge | reorder / change its height |
@@ -111,6 +111,27 @@ in the menu of a track's empty space.
 
 With the **Selection tool** button on, a plain drag on empty space selects events, and
 <kbd>Ctrl</kbd>+drag adds to the selection.
+
+## Masks on the preview
+
+Masks are drawn after right-click on the preview → **Mask**, or from a **Masks** group in a
+window; see [Masks](effects-and-automation.md#masks).
+
+| Keys | Action |
+|---|---|
+| drag on the picture with **Rectangle** / **Ellipse** | draw the mask; <kbd>Shift</kbd> — a square / a circle, <kbd>Alt</kbd> — from the centre |
+| click / click and drag with **Pen** | add a corner point / a smooth point |
+| click the first point / <kbd>Enter</kbd> | close the pen path (it needs three points) |
+| <kbd>Backspace</kbd> / <kbd>Delete</kbd> while drawing with **Pen** | remove the last point |
+| drag a point / a handle / the body | move the point / bend the curve / move the mask |
+| <kbd>Alt</kbd>+click a point | switch it between corner and smooth |
+| <kbd>Alt</kbd> while dragging a handle | move this handle without its pair |
+| double-click the outline | add a point there |
+| <kbd>Delete</kbd> / <kbd>Backspace</kbd> | remove the selected point (a path keeps at least three) |
+| drag a corner of a rectangle or an ellipse / its rotate handle | resize / rotate; <kbd>Shift</kbd> keeps the proportions / turns in 15° steps |
+| drag the feather handle | widen or narrow the feather |
+
+The mask keys work only while nothing else has the keyboard focus.
 
 ## Windows and panels
 
@@ -127,11 +148,11 @@ With the **Selection tool** button on, a plain drag on empty space selects event
 | <kbd>Shift</kbd> while dragging the speed strip | fine adjustment |
 | double-click the speed strip | back to 1× |
 | right-click or <kbd>Ctrl</kbd>+click the speed strip | type a speed from 0.01 to 8, a minus plays backwards; <kbd>Enter</kbd> applies, <kbd>Esc</kbd> cancels |
-| drag the fader or turn the wheel over it | preview volume, 1 dB per wheel step |
-| <kbd>Shift</kbd>+wheel over the fader | 0.2 dB per step |
+| drag or click the fader, or turn the wheel over it | preview volume; the wheel moves it in 1 dB steps |
 | double-click the fader | 0 dB |
 | click the M button at the bottom of the meters | mute / unmute the preview |
 | click a card in the media bin | place it at the playhead |
+| click the frame of a bin group | select the whole group |
 | <kbd>Ctrl</kbd>+click / <kbd>Shift</kbd>+click a card | add it to the bin selection or take it out |
 | drag a card | onto the timeline, or to another spot in the bin |
 | drag across the bin background | select cards with a frame; <kbd>Ctrl</kbd> or <kbd>Shift</kbd> adds to the selection |
@@ -154,7 +175,9 @@ With the **Selection tool** button on, a plain drag on empty space selects event
 | drag the picture / a corner / the rotate handle / the anchor dot / a crop side in the transform frame | move / scale / rotate / move the anchor / crop |
 | <kbd>Shift</kbd> while rotating | 15° steps |
 | <kbd>Alt</kbd> while grabbing in the transform frame | a wider grab zone for the anchor dot |
-| <kbd>Enter</kbd> / <kbd>Esc</kbd> while renaming a track, marker, area, card or published parameter | save / cancel the name |
+| <kbd>Enter</kbd> / <kbd>Esc</kbd> while renaming a track, marker, area, bin group or published parameter | save / cancel the name |
+| click a head on the VHS Tape drum, then **Clean** / **Dirty** / **Clogged** / **Chipped** | set the condition of that head |
+| drag a title on the preview while its window is open | move the title |
 | drag / double-click the title bar | move the window / maximize or restore it |
 
 The status line always shows what the thing under the mouse does.

@@ -74,8 +74,9 @@ detached preview, Diagnostics and the notices.
 
 When playback stutters, **View → Diagnostics…** (or the gauge button on the toolbar) shows
 the Performance numbers — cache, underruns, shown video frames, decoding, the backend
-(GPU or CPU) — and three graphs side by side in time: **Quality (FPS / hit%)**, **FFmpeg
-activity (/s)** and **Cache churn (/s)**. The **Problem log** under them notes stalls,
+(GPU or CPU) — and three graphs on one time axis: **Quality (FPS / hit%)**, **FFmpeg
+activity (/s)** and **Cache churn (/s)**. **Save the playback journal** writes the recent
+playback events and counters to a file, for a bug report. The **Problem log** under them notes stalls,
 underruns and cache trouble as they happen. Enlarge the window and the graphs grow.
 
 Next: [The timeline](timeline.md).
