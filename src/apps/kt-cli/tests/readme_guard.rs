@@ -113,6 +113,49 @@ fn t827_guard_catches_each_class_of_defect() {
     }
 }
 
+/// t1390 (effect-shots-and-update-strip): a shot that waits for the owner's run on the showcase
+/// footage (`AWAITING_FOOTAGE`) may be absent while nothing shows it; once its image is written it
+/// is an ordinary shot, and a waiting name that `SHOTS` lacks is red.
+#[test]
+fn t1390_awaiting_shots_wait_honestly() {
+    if cfg!(windows) {
+        eprintln!("t1390 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    let waiting = |d: &Path, awaiting: &str| {
+        let p = d.join("src/scripts/live/readme_shots.py");
+        let s = std::fs::read_to_string(&p).unwrap();
+        let s = s.replace("]\n", "    (\"masks\", \"a mask\"),\n]\n");
+        std::fs::write(p, format!("{s}AWAITING_FOOTAGE = [{awaiting}]\n")).unwrap();
+    };
+    // absent and unreferenced: green
+    let dir = clean_tree("await-absent");
+    waiting(&dir, "\"masks\"");
+    let (ok, text) = guard(&dir);
+    assert!(ok, "an absent waiting shot must pass:\n{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+    // shown while absent: the image class catches the broken picture
+    let dir = clean_tree("await-shown");
+    waiting(&dir, "\"masks\"");
+    append(&dir, "README.md", "\n![m](docs/images/masks.webp)\n");
+    let (ok, text) = guard(&dir);
+    assert!(!ok && text.contains("image"), "a waiting shot shown before it exists must be red:\n{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+    // written but not shown: an ordinary declared shot the docs do not show
+    let dir = clean_tree("await-written");
+    waiting(&dir, "\"masks\"");
+    std::fs::write(dir.join("docs/images/masks.webp"), [0u8; 64]).unwrap();
+    let (ok, text) = guard(&dir);
+    assert!(!ok && text.contains("declared shot “masks”"), "a written waiting shot must be shown:\n{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+    // a waiting name the pipeline does not take
+    let dir = clean_tree("await-unknown");
+    waiting(&dir, "\"masks\", \"ghost\"");
+    let (ok, text) = guard(&dir);
+    assert!(!ok && text.contains("awaiting shot “ghost” is not in SHOTS"), "an unknown waiting name must be red:\n{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn append(dir: &Path, file: &str, text: &str) {
     let p = dir.join(file);
     let s = std::fs::read_to_string(&p).unwrap();

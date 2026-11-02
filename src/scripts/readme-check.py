@@ -15,7 +15,12 @@ Checks README.md, CONTRIBUTING.md and docs/guide/**/*.md:
   * size       — each image ≤ 900 KB, docs/images/ in total ≤ 8 MB;
   * shots      — the referenced images are exactly the set declared in
                  `SHOTS` of src/scripts/live/readme_shots.py: an image added
-                 by hand, or a declared shot the docs do not show, is red;
+                 by hand, or a declared shot the docs do not show, is red.
+                 A shot named in `AWAITING_FOOTAGE` (the pipeline takes it,
+                 but only the showcase footage gives its picture, and the
+                 owner fetches that himself) may be absent while nothing
+                 references it; once its image is written it is an ordinary
+                 shot. A name there that `SHOTS` lacks is red;
   * markup     — docs/guide/ only: the Markdown the site (kinetren.github.io)
                  renders, anything else fails its build. No HTML but
                  `<kbd>…</kbd>`, no `>` quotes, no setext underlines or rules,
@@ -118,18 +123,24 @@ def anchors(path, cache={}):
     return cache[path]
 
 
-def declared_shots(root):
-    """Names in `SHOTS = [...]` of the pipeline, without importing it (it
-    pulls in the X11 live framework)."""
+def pipeline_literal(root, var):
+    """The literal `var = [...]` of the pipeline, without importing it (it
+    pulls in the X11 live framework); None when the file or the name is absent."""
     src = root / "src" / "scripts" / "live" / "readme_shots.py"
     if not src.exists():
         return None
     tree = ast.parse(src.read_text(encoding="utf-8"))
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(
-                isinstance(t, ast.Name) and t.id == "SHOTS" for t in node.targets):
-            return {name for name, _ in ast.literal_eval(node.value)}
+                isinstance(t, ast.Name) and t.id == var for t in node.targets):
+            return ast.literal_eval(node.value)
     return None
+
+
+def declared_shots(root):
+    """Names in `SHOTS` of the pipeline."""
+    shots = pipeline_literal(root, "SHOTS")
+    return None if shots is None else {name for name, _ in shots}
 
 
 def is_key_chord(text):
@@ -249,6 +260,12 @@ def check(root):
     shots = declared_shots(root)
     if shots is not None:
         shown = {Path(r).stem for r in referenced}
+        awaiting = set(pipeline_literal(root, "AWAITING_FOOTAGE") or [])
+        for name in sorted(awaiting - shots):
+            bad(images_dir, 0, "shots", f"awaiting shot “{name}” is not in SHOTS")
+        # absent and unreferenced: it waits for the owner's run on the footage
+        shots = {n for n in shots
+                 if n not in awaiting or n in shown or (images_dir / f"{n}.webp").exists()}
         for name in sorted(shots - shown):
             bad(images_dir, 0, "shots", f"declared shot “{name}” is not shown in the docs")
         for name in sorted(shown - shots):

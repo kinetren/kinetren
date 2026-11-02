@@ -97,9 +97,11 @@ pub fn mask_list(
             (MaskTool::Pen, tr(k::masks::PEN), tr(k::masks::PEN_HINT)),
         ] {
             let r = ui.button(label);
-            // the live scenario draws an effect's mask with the ellipse
-            if tool == MaskTool::Ellipse {
-                crate::widgets::field_probe::note("masks.tool.ellipse", r.rect);
+            // the live scenario draws an effect's mask with the ellipse, the README shot with the pen
+            match tool {
+                MaskTool::Ellipse => crate::widgets::field_probe::note("masks.tool.ellipse", r.rect),
+                MaskTool::Pen => crate::widgets::field_probe::note("masks.tool.pen", r.rect),
+                _ => {}
             }
             if crate::app::hint_into(hover, r, hint).clicked() {
                 out.tool = Some(tool);

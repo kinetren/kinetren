@@ -65,6 +65,16 @@ slowed-reverb automation curves", "nested reels belong on the timeline screensho
 - **THEN** the hero is shot during playback after widening the bin; for the timeline shot the mid-edit reel instance (the one with overrides) is selected, Enter expands it — more timeline rows than before, all fitting the panel — and the view is zoomed and scrolled until the instance is centred and at least 300 px wide; the morpher before/after is the same frame from the project and from a copy with the morpher disabled
 - **TEST** live `src/scripts/live/readme_shots.py`
 
+#### Scenario: The effect shots show the effect, not its absence
+- **WHEN** the pipeline takes `fx-datamosh` (a main-track event right after a cut between two sources, a few frames after the cut, gallery cell Cut mosh), `fx-camera-isp` (a main-track event alone on screen, the night clip when the footage has one, gallery cell Phone at night), `fx-vhs-tape` (VHS Tape from the gallery, head A of the drawn drum clicked and set Clogged) and `masks` (Duotone from the gallery, its Masks group → Pen, a five-point path with two smooth points closed on the first point, the feather pulled)
+- **THEN** each before/after image is two 900 px halves of the same moment 12 px apart with no text, the "after" half taken only once the preview differs from the "before" and with the selection cleared (no transform frame over the picture); the VHS image is the effects window with the deck face beside the frame it gives; the masks image is the preview with the closed path, its points and its feather edge
+- **TEST** live `src/scripts/live/readme_shots.py`
+
+#### Scenario: A shot that waits for the owner's footage is honest about it
+- **WHEN** a shot is in `SHOTS` and in `AWAITING_FOOTAGE` of the pipeline (its picture needs the showcase footage, which the owner fetches himself — 2026-10-21) and its image is absent; the docs show it while it is absent; its image is written but the docs do not show it; or `AWAITING_FOOTAGE` names a shot `SHOTS` lacks
+- **THEN** the first passes the guard; the second fails as a broken `image`; the third fails as a declared shot the docs do not show; the fourth fails naming the unknown waiting shot. No placeholder image is ever committed under a waiting name
+- **TEST** t1390 (`src/apps/kt-cli/tests/readme_guard.rs`)
+
 ### Requirement: Screenshots are re-taken by one command, without pixel coordinates
 `src/scripts/readme-shots.py --sources <dir>` SHALL build the showcase project with
 `kt-cli showcase`, launch the freshly built `kt-app` in a virtual screen with the English

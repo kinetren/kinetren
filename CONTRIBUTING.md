@@ -163,4 +163,6 @@ music and a morpher) and `readme-shots.py` drives the real editor in a virtual s
 The same pipeline runs on the test fixtures in every `finish.sh`.
 `src/scripts/readme-check.py --check` (run by `cargo test` and `finish.sh`) keeps the
 README and the guide English, their links and images valid, and the image set equal to
-what the pipeline declares.
+what the pipeline declares. A shot listed in `AWAITING_FOOTAGE` of the pipeline is taken
+on the fixtures but has no committed image until the run on the footage: once that run has
+written it, show it in the docs and drop it from the list (the guard is red until then).

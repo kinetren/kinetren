@@ -46,7 +46,16 @@ SHOTS = [
     ("morpher", "the morpher batch editor"),
     ("render-dialog", "the render dialog"),
     ("perf-panel", "the diagnostics panel during playback"),
+    ("fx-datamosh", "the same frame after a cut without and with Datamosh (Cut mosh)"),
+    ("fx-camera-isp", "the same frame without and with Camera ISP (Phone at night)"),
+    ("fx-vhs-tape", "the VHS Tape deck face with a clogged head, and the frame it gives"),
+    ("masks", "a Pen mask drawn on the preview, a Duotone limited to it"),
 ]
+
+# Shots the pipeline takes whose images wait for the owner's run on the showcase footage (he
+# fetches it himself, 2026-10-21): `readme-check.py` lets one be absent while nothing references
+# it. Once `readme-shots.py` has written it, reference it in the docs and drop it from here.
+AWAITING_FOOTAGE = ["fx-datamosh", "fx-camera-isp", "fx-vhs-tape", "masks"]
 
 RUST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 FIXTURES = os.path.join(RUST, "fixtures")
@@ -115,8 +124,33 @@ def targets(project):
     # the instance that sets its own values (the one mid-edit)
     reel = first("reel instance with overrides",
                  lambda c: c["media"] == reel_id and c.get("overrides"))
+    # full-frame cuts for the effect shots: a main-track video event nothing else covers (no
+    # other video track at its time, no transition, not a reel or a generator)
+    reels = {q["id"] for q in doc["sequences"]}
+    paths = {m["id"]: m.get("path", "") for m in doc.get("media", [])}
+    videos = [c for c in clips if c["kind"] == "video"]
+
+    def alone(c):
+        end = c["start"] + c["duration"]
+        return (c["kind"] == "video" and c["lane"] == 1 and c["duration"] >= 72000
+                and c["id"] not in joined and c["media"] not in reels and not c.get("gen")
+                and not any(o["lane"] != c["lane"] and o["start"] < end
+                            and o["start"] + o["duration"] > c["start"] for o in videos))
+
+    plain = [c for c in clips if alone(c)]
+    if not plain:
+        raise StepError("showcase project: no main-track event alone on screen")
+    after_cut = [c for c in plain
+                 if any(o["lane"] == c["lane"] and o["kind"] == "video"
+                        and o["start"] + o["duration"] == c["start"] and o["media"] != c["media"]
+                        for o in clips)]
+    if not after_cut:
+        raise StepError("showcase project: no main-track cut between two sources")
+    # a dark clip shows the night phone best (the Charlotte night drone shot of the footage)
+    night = next((c for c in plain if "charlotte" in paths.get(c["media"], "").lower()), plain[0])
     return {"reel": reel, "music": music, "video": video, "title": title,
-            "transition": (trans, by_id[trans["b"]]), "morph": doc["morphers"][0]}
+            "transition": (trans, by_id[trans["b"]]), "morph": doc["morphers"][0],
+            "cut": after_cut[len(after_cut) // 2], "night": night, "plain": plain[len(plain) // 2]}
 
 
 class Shooter:
@@ -426,6 +460,176 @@ class Shooter:
         out.save(path)
         self.crops["morpher-before-after"] = (path, (0, 0, out.width, out.height))
 
+    # ---- the effect shots (effect-shots-and-update-strip, the site's request) ----
+
+    def seek(self, app, t):
+        app.click(app.x_at(t), app.ruler_y())
+
+    def frame_image(self, app, step, tag, differs_from=None, tries=40):
+        """The preview frame as an image once it settled; with `differs_from`, first wait for
+        the picture to change (after a seek the preview holds the last frame until the new
+        one is decoded)."""
+        from PIL import Image, ImageChops
+
+        fr = self.probe(app, step, "preview.frame", app.has_probe("preview.frame"))
+        box = self.abs((fr["x"], fr["y"], fr["w"], fr["h"]))
+
+        def grab(name):
+            with Image.open(app.shot(name)) as im:
+                return im.convert("RGB").crop((box[0], box[1], box[0] + box[2], box[1] + box[3]))
+
+        if differs_from is not None:
+            for _ in range(tries):
+                img = grab(f"{tag}-wait")
+                if img.size == differs_from.size and ImageChops.difference(img, differs_from).getbbox():
+                    break
+                self.kt.poll_step(0.5)
+            else:
+                self.require(step, False, f"the {tag} frame differs from the frame before")
+        self.still(app, step, f"the {tag} frame settled")
+        return grab(tag)
+
+    def add_effect(self, app, step, clip, typed, cell):
+        """The person's way: the event's effects window, “+ effect…”, type, click the cell."""
+        self.open_event(app, step, clip)
+        self.require(step, app.click_probe("fxreg.add.video"), "click on “+ effect…” (video)")
+        for ch in typed:
+            app.key("space" if ch == " " else ch)
+        self.require(step, app.has_probe(cell, tries=40), f"the gallery shows “{cell}”")
+        self.require(step, app.click_probe(cell), f"click on “{cell}”")
+        app.wait_frame(2, what="the effect added to the chain", soft=True)
+
+    def side_by_side(self, name, left, right):
+        """Two frames, 900 px each, 12 px apart on the window's background; no text: the site
+        captions the halves in its own five languages."""
+        from PIL import Image
+
+        w, gap = 900, 12
+        h = round(left.height * w / left.width)
+        out = Image.new("RGB", (2 * w + gap, h), (24, 24, 28))
+        for i, img in enumerate((left, right)):
+            out.paste(img.resize((w, h), Image.LANCZOS), (i * (w + gap), 0))
+        path = os.path.join(self.raw, f"{name}.png")
+        out.save(path)
+        self.crops[name] = (path, (0, 0, out.width, out.height))
+
+    def effect_before_after(self, name, clip, at, typed, cell):
+        app = self.fresh(name)
+        try:
+            self.seek(app, at)
+            self.still(app, name, "the frame without the effect settled")
+            before = self.frame_image(app, name, "before")
+            self.add_effect(app, name, clip, typed, cell)
+            app.key("Escape")
+            self.require(name, not app.has_probe("win.fx", tries=4), "the effects window closed")
+            # the next Esc clears the selection: the selected event's transform frame is off
+            # the picture, as in the frame before
+            app.key("Escape")
+            self.seek(app, at)
+            after = self.frame_image(app, name, "after", differs_from=before)
+            self.side_by_side(name, before, after)
+            app.step(name, dict(SHOTS)[name])
+        finally:
+            self.close(app)
+
+    def datamosh(self):
+        c = self.tg["cut"]
+        # a few frames after the cut: the new shot's motion drags the old shot's picture
+        self.effect_before_after("fx-datamosh", c, c["start"] + 21600, "datamosh",
+                                 "fxreg.var.datamosh.0")
+
+    def camera_isp(self):
+        c = self.tg["night"]
+        self.effect_before_after("fx-camera-isp", c, c["start"] + c["duration"] // 2, "camera isp",
+                                 "fxreg.var.camera_isp.0")
+
+    def vhs_tape(self):
+        """The deck face beside the frame it gives: head A clogged by the person's gesture."""
+        from PIL import Image
+
+        step = "fx-vhs-tape"
+        c = self.tg["plain"]
+        at = c["start"] + c["duration"] // 2
+        app = self.fresh(step)
+        try:
+            self.seek(app, at)
+            self.still(app, step, "the frame without the effect settled")
+            before = self.frame_image(app, step, "before")
+            self.add_effect(app, step, c, "vhs tape", "fxreg.tpl.vhs_tape")
+            self.require(step, app.has_probe("deck.head.0.0", tries=40), "the deck face drawn")
+            self.require(step, app.click_probe("deck.head.0.0"), "click on head A of the drum")
+            self.require(step, app.has_probe("deck.cond.Clogged", tries=20), "the condition row of head A")
+            self.require(step, app.click_probe("deck.cond.Clogged"), "click on “Clogged”")
+            # the panel first (the window covers part of the preview), then the frame without it
+            win = self.probe(app, step, "win.fx", app.has_probe("win.fx"))
+            png = self.still(app, step, "the deck face settled")
+            box = self.abs((win["x"], win["y"], win["w"], win["h"]))
+            with Image.open(png) as im:
+                panel = im.convert("RGB").crop((box[0], box[1], box[0] + box[2], box[1] + box[3]))
+            app.key("Escape")
+            self.require(step, not app.has_probe("win.fx", tries=4), "the effects window closed")
+            app.key("Escape")
+            self.seek(app, at)
+            frame = self.frame_image(app, step, "tape", differs_from=before)
+            fw = 960
+            fh = round(frame.height * fw / frame.width)
+            gap = 12
+            h = max(panel.height, fh)
+            out = Image.new("RGB", (panel.width + gap + fw, h), (24, 24, 28))
+            out.paste(panel, (0, (h - panel.height) // 2))
+            out.paste(frame.resize((fw, fh), Image.LANCZOS), (panel.width + gap, (h - fh) // 2))
+            path = os.path.join(self.raw, f"{step}.png")
+            out.save(path)
+            self.crops[step] = (path, (0, 0, out.width, out.height))
+            app.step(step, dict(SHOTS)[step])
+        finally:
+            self.close(app)
+
+    def masks(self):
+        """A Duotone limited to a Pen mask drawn around the middle of the frame, feathered."""
+        step = "masks"
+        c = self.tg["plain"]
+        at = c["start"] + c["duration"] // 2
+        app = self.fresh(step)
+        try:
+            self.seek(app, at)
+            self.add_effect(app, step, c, "duotone", "fxreg.tpl.duotone")
+            self.require(step, app.has_probe("grp.masks", tries=20), "the effect's Masks group")
+            app.click_probe("grp.masks", "open the effect's Masks group")
+            self.require(step, app.has_probe("masks.tool.pen", tries=20), "the group's mask tools")
+            app.scroll_probe_into_view("masks.tool.pen", "grp.masks", "the Pen tool", below="fx.done")
+            self.require(step, app.click_probe("masks.tool.pen"), "click on “Pen”")
+            self.require(step, app.click_probe("fx.done"), "click on “Done”")
+            g = self.kt.geometry()
+
+            def point(fx, fy):
+                pic = self.probe(app, step, "mask.picture", app.has_probe("mask.picture"))
+                return g["x"] + int(pic["x"] + pic["w"] * fx), g["y"] + int(pic["y"] + pic["h"] * fy)
+
+            # corners by a click, smooth points by a click and a pull
+            path = [((0.36, 0.22), None), ((0.60, 0.20), (50, 10)), ((0.68, 0.55), None),
+                    ((0.55, 0.82), (-60, 20)), ((0.33, 0.66), None)]
+            for n, ((fx, fy), pull) in enumerate(path):
+                for _ in range(3):
+                    x, y = point(fx, fy)
+                    if pull:
+                        app.drag(x, y, x + pull[0], y + pull[1])
+                    else:
+                        app.click(x, y)
+                    if app.has_probe(f"mask.pen.{n}", tries=6):
+                        break
+                self.require(step, app.has_probe(f"mask.pen.{n}"), f"pen point {n + 1} placed")
+            self.require(step, app.click_probe("mask.pen.0"), "click on the first point: close")
+            self.require(step, app.has_probe("mask.contour.0", tries=12), "the path closed into a mask")
+            if app.has_probe("mask.feather", tries=8):
+                fe = self.probe(app, step, "mask.feather", True)
+                x, y = g["x"] + int(fe["x"] + fe["w"] / 2), g["y"] + int(fe["y"] + fe["h"] / 2)
+                app.drag(x, y, x, y - 30)
+            fr = self.probe(app, step, "preview.frame", app.has_probe("preview.frame"))
+            self.capture(app, step, "masks", fr)
+        finally:
+            self.close(app)
+
     def event_window(self, name, clip, picker=False):
         app = self.fresh(name)
         try:
@@ -507,6 +711,10 @@ class Shooter:
         self.morpher()
         self.render()
         self.perf()
+        self.datamosh()
+        self.camera_isp()
+        self.vhs_tape()
+        self.masks()
         missing = [n for n, _ in SHOTS if n not in self.crops]
         if missing:
             raise StepError(f"no shot for: {', '.join(missing)}")
