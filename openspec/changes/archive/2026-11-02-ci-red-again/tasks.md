@@ -37,4 +37,11 @@ Test numbers t1380–t1389 are reserved by this change.
 
 - [x] 3.1 The distribution spec's scenarios and the design's "why" (archive); `cargo test -p kt-cli
   --test dist_guard`, `dist-check.py --check`, clippy
-- [ ] 3.2 `git merge master`, `src/scripts/finish.sh`, the version in the report
+- [x] 3.2 `git merge master`, `src/scripts/finish.sh`, the version in the report
+  - Done. master had not moved (9e1f1a45). finish.sh: `kt26.11.02-70b8c241`. The workspace tests ran
+    1442 of 1443 green. t796c (kt-app) failed once in `fixtures/gen.sh`: `mv: cannot stat
+    'out/.tmp.sine44k_mono.m4a'`, two parallel fixture generations sharing one temp name. It passes
+    alone and has nothing to do with this change. The live `welcome` scenario passed on its second
+    try: ui-probe hit an X `BadWindow` while walking a window that closed. Not done: the whole
+    Flatpak job in a container. The local docker daemon stopped creating containers after a
+    `--privileged` run hung, and a shared system service was not restarted
