@@ -131,14 +131,18 @@ Breaking any of them is a regression, and each has a test; the full text is in
 8. Scrolling and zooming the timeline never trigger decoding.
 9. Export is fully in-process.
 10. The binary never links libav*: FFmpeg 6/7/8/9 is loaded at runtime.
-11. Renders are deterministic.
+11. Renders are deterministic: audio byte for byte everywhere, with the program's own math
+    instead of the platform's libm on every frozen path.
 12. The video display is not quantised by the audio callback, and an idle UI does not repaint.
 
 The workspace: `apps/kt-app` (GUI), `apps/kt-cli` (headless), and `libs/` — `kt-time`
 (90 kHz ticks), `kt-model` (timeline model, undo, the `.kt` format), `kt-otio`
-(OpenTimelineIO), `kt-ffmpeg` (dlopen of FFmpeg), `kt-media` (sources, generators,
-sidecar index), `kt-text` (titles), `kt-cache`, `kt-fx` (effects), `kt-gpu` (wgpu),
-`kt-engine` (render graph, transport, export). Overview: `docs/architecture.md`.
+(OpenTimelineIO), `kt-ffmpeg` (dlopen of FFmpeg), `kt-media` (sources, sidecar index),
+`kt-text` (titles), `kt-cache`, `kt-fx` (the effect host, masks), `kt-gpu` (wgpu),
+`kt-engine` (render graph, transport, export), `kt-plugin-api` (the plugin contract) and
+`kt-plugins-builtin` (the list of built-in plugins). Every effect, transition and
+generator a person picks is a plugin in `plugins/`, one crate per family
+(`fx-video-tape`, `generators-audio`, …). Overview: `docs/architecture.md`.
 
 ## Screenshots and the README
 
