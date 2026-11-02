@@ -48,4 +48,4 @@ Test numbers t1410–t1419 are reserved by this change.
     were 1443 of 1446 green. t476, t411 and t986 (kt-app) timed out under the machine's load,
     which this change's Flatpak build in a container made heavier; each took 45–150 s there. Rerun
     alone, all three pass in under 0.2 s. So does t850, the one test this change touched. A
-    `fixtures/gen.sh` temp-name race also hit t850's first try; it is known from ci-red-again
+    `fixtures/gen.sh` temp-name race also hit t850's first try; it is known from ci-red-again. A full `cargo nextest run --workspace` afterwards, at a low load: 1446 of 1446 green
