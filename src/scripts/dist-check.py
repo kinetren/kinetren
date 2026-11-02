@@ -572,6 +572,7 @@ def check_metainfo(r, app_id):
 
 
 FLATPAK_BUILD = "src/scripts/flatpak-build.sh"
+COMPOSE_CHECK = "src/scripts/appstream-compose-check.sh"
 
 
 def check_flatpak_ci(r):
@@ -600,6 +601,12 @@ def check_flatpak_ci(r):
     ]:
         if piece not in build:
             r.err(FLATPAK_BUILD, f"{what} is missing (`{piece}`)")
+    # the metadata compose runs in seconds BEFORE the ten-minute build (ci-red-again, t1380): CI of
+    # 9e1f1a45 learnt of a host without the SVG loader only after the build
+    pre, full = build.find(f"{COMPOSE_CHECK}\n"), build.find("flatpak-builder --user")
+    if pre < 0 or (full >= 0 and pre > full):
+        r.err(FLATPAK_BUILD, f"the compose pre-flight `{COMPOSE_CHECK}` must run before flatpak-builder")
+    r.read(COMPOSE_CHECK)  # "missing" when it is gone
     rel = r.read(RELEASE) or ""
     if "flatpak-build.sh --bundle" not in rel or ".flatpak.sha256" not in rel or "linux-x86_64.flatpak " not in rel:
         r.err(RELEASE, "the release must build and attach kinetren-<version>-linux-x86_64.flatpak and its .sha256")
@@ -612,10 +619,15 @@ def check_flatpak_ci(r):
 # one of them, it is named on the same line (change ci-green-again, t1060). Each row is a CI
 # failure of 94e36e9e: flatpak-builder strips with `eu-strip` (elfutils), and xdg-mime without a
 # desktop answers through `mimetype` (libfile-mimeinfo-perl) — without it libmagic's `file`
-# called our project JSON, or nothing answered at all (t935).
+# called our project JSON, or nothing answered at all (t935). CI of 9e1f1a45 added two (change
+# ci-red-again, t1380): flatpak-builder's `appstreamcli compose` reads the SVG icon through
+# gdk-pixbuf, whose SVG loader is librsvg2-common (a Recommends of librsvg2-2), and t935 asks GIO,
+# because perl's `mimetype` takes the first of two equal-weight globs without reading the file.
 RECOMMENDS_NEEDED = [
     ("flatpak-builder", "elfutils", "flatpak-builder strips with eu-strip"),
+    ("flatpak-builder", "librsvg2-common", "appstreamcli compose reads the SVG icon through gdk-pixbuf's SVG loader"),
     ("xdg-utils", "libfile-mimeinfo-perl", "xdg-mime without a desktop asks `mimetype` (t935)"),
+    ("shared-mime-info", "libglib2.0-bin", "t935 asks `gio`, as a file manager does"),
 ]
 
 

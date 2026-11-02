@@ -17,6 +17,9 @@ BUILD=src/target/flatpak-build
 for tool in flatpak flatpak-builder appstreamcli; do
     command -v "$tool" > /dev/null || { echo "flatpak-build.sh: $tool is required" >&2; exit 1; }
 done
+# the AppStream compose flatpak-builder runs after the build, in seconds and first: a host without
+# gdk-pixbuf's SVG loader failed there after ten minutes (change ci-red-again, t1381)
+src/scripts/appstream-compose-check.sh
 flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 
 flatpak-builder --user --install-deps-from=flathub --force-clean --repo="$REPO" --install "$BUILD" "$MANIFEST"

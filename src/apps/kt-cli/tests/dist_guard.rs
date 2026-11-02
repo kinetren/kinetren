@@ -77,6 +77,8 @@ const FILES: &[&str] = &[
     "LICENSE",
     "docs/flatpak.md",
     "src/scripts/flatpak-build.sh",
+    // the AppStream compose before the build (ci-red-again, t1380, t1381)
+    "src/scripts/appstream-compose-check.sh",
     "src/scripts/ui-probe.py",
 ];
 
@@ -377,13 +379,18 @@ fn t931_mime_names_our_files_and_only_ours() {
     }
 }
 
-/// Test 935 (i18n-gaps, D2): the system's MIME database tells our project from Kotlin.
+/// Test 935 (i18n-gaps, D2; ci-red-again, D1): the system's MIME database tells our project from
+/// Kotlin, asked as a file manager asks it.
 ///
 /// In a temporary `XDG_DATA_HOME` the MIME file is installed next to the system's own database
-/// (which declares `text/x-kotlin` with `*.kt`), `update-mime-database` builds it, and the type of
-/// three files is asked: a project written by `project_file::to_text`, a Kotlin source and the
-/// legacy fixture. Without `update-mime-database` or `mimetype` on the machine the test says why it
-/// did not run; CI and the build container install both, held by t1060.
+/// (which declares `text/x-kotlin` with `*.kt`), `update-mime-database` builds it, and GIO — what
+/// Nautilus, Nemo, Caja and Thunar ask, and xdg-mime on those desktops — is asked the type of
+/// three files: a project written by `project_file::to_text`, a Kotlin source and the legacy
+/// fixture. Where perl's `mimetype` exists (xdg-mime without a desktop, so `xdg-open` under a bare
+/// window manager), it is asked about our two files only: it takes the first of two equal-weight
+/// globs without reading the file, and that order differs between shared-mime-info versions (CI of
+/// 9e1f1a45 got our type for `Main.kt`). Without `update-mime-database` or `gio` the test says why
+/// it did not run; CI and the build container install both, held by t1380.
 #[test]
 fn t935_the_mime_database_tells_our_project_from_kotlin() {
     let have = |tool: &str| {
@@ -392,15 +399,12 @@ fn t935_the_mime_database_tells_our_project_from_kotlin() {
             .output()
             .is_ok_and(|o| o.status.success())
     };
-    if cfg!(windows) || !have("update-mime-database") || !have("xdg-mime") {
-        eprintln!("t935 not run: update-mime-database / xdg-mime are not on this machine");
+    if cfg!(windows) || !have("update-mime-database") {
+        eprintln!("t935 not run: update-mime-database (shared-mime-info) is not on this machine");
         return;
     }
-    // without a desktop xdg-mime asks `mimetype`, and without THAT libmagic's `file`, which reads
-    // the content and calls our project JSON — the database is never asked (CI of 94e36e9e).
-    // CI and the container install it (dist-check, t1060)
-    if !have("mimetype") {
-        eprintln!("t935 not run: no `mimetype` (libfile-mimeinfo-perl) — xdg-mime would not ask the database");
+    if !have("gio") {
+        eprintln!("t935 not run: no `gio` (libglib2.0-bin) — the oracle a file manager asks");
         return;
     }
     let dir = std::env::temp_dir().join(format!("kt-mime-{}", std::process::id()));
@@ -438,21 +442,42 @@ fn t935_the_mime_database_tells_our_project_from_kotlin() {
     std::fs::write(files.join("Main.kt"), "package demo\n\nfun main() {\n    println(\"hi\")\n}\n")
         .unwrap();
     std::fs::copy(repo().join("src/fixtures/demo.ktproj"), files.join("demo.ktproj")).unwrap();
-    let ask = |f: &str| -> String {
-        let out = std::process::Command::new("xdg-mime")
-            .args(["query", "filetype"])
+    let gio = |f: &str| -> String {
+        let out = std::process::Command::new("gio")
+            .args(["info", "-a", "standard::content-type"])
             .arg(files.join(f))
             .env("XDG_DATA_HOME", &data)
             .env("XDG_DATA_DIRS", &data)
+            // the local file, not a gvfs daemon of the desktop the test may run under
+            .env("GIO_USE_VFS", "local")
             .output()
             .unwrap();
-        String::from_utf8_lossy(&out.stdout).trim().to_string()
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        text.lines()
+            .find_map(|l| l.trim().strip_prefix("standard::content-type:"))
+            .map(|t| t.trim().to_string())
+            .unwrap_or_else(|| format!("(no answer: {text:?} {:?})", String::from_utf8_lossy(&out.stderr)))
     };
-    assert_eq!(ask("film.kt"), "application/x-kinetren-project", "our project");
+    assert_eq!(gio("film.kt"), "application/x-kinetren-project", "GIO: our project");
     if freedesktop.exists() {
-        assert_eq!(ask("Main.kt"), "text/x-kotlin", "a Kotlin source is not ours");
+        assert_eq!(gio("Main.kt"), "text/x-kotlin", "GIO: a Kotlin source is not ours");
     }
-    assert_eq!(ask("demo.ktproj"), "application/x-kinotrain-legacy-project", "the older format");
+    assert_eq!(gio("demo.ktproj"), "application/x-kinotrain-legacy-project", "GIO: the older format");
+    // perl's File::MimeInfo reads the priority-80 magic before the globs: our files stay ours
+    if have("mimetype") {
+        let perl = |f: &str| -> String {
+            let out = std::process::Command::new("mimetype")
+                .args(["--brief", "--dereference"])
+                .arg(files.join(f))
+                .env("XDG_DATA_HOME", &data)
+                .env("XDG_DATA_DIRS", &data)
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        assert_eq!(perl("film.kt"), "application/x-kinetren-project", "mimetype: our project");
+        assert_eq!(perl("demo.ktproj"), "application/x-kinotrain-legacy-project", "mimetype: the older format");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -492,6 +517,89 @@ fn t1060_packages_without_recommends_name_what_the_checks_need() {
         ),
     ];
     expect_red(&cases);
+}
+
+/// t1380 (ci-red-again): the SVG loader compose needs, the MIME oracle t935 asks and the compose
+/// pre-flight are named.
+///
+/// CI of 9e1f1a45: flatpak-builder's `appstreamcli compose` could not read our SVG icon (gdk-pixbuf's
+/// SVG loader is librsvg2-common, a Recommends of librsvg2-2), and t935's xdg-mime asked perl's
+/// `mimetype`, which called a Kotlin source ours; t935 asks `gio` now (libglib2.0-bin). The compose
+/// learnt of the loader only after a ten-minute build, so `flatpak-build.sh` runs it first.
+#[test]
+fn t1380_the_svg_loader_the_mime_oracle_and_the_compose_preflight_are_named() {
+    if cfg!(windows) {
+        eprintln!("t1380 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    let cases: [Break; 6] = [
+        (
+            "ci-rsvg",
+            |d| edit(d, ".github/workflows/ci.yml", "elfutils librsvg2-common", "elfutils"),
+            "ci.yml: `flatpak-builder` without recommends must install `librsvg2-common`",
+        ),
+        (
+            "release-rsvg",
+            |d| edit(d, ".github/workflows/release.yml", "elfutils librsvg2-common", "elfutils"),
+            "release.yml: `flatpak-builder` without recommends must install `librsvg2-common`",
+        ),
+        (
+            "ci-gio",
+            |d| edit(d, ".github/workflows/ci.yml", "shared-mime-info libglib2.0-bin", "shared-mime-info"),
+            "ci.yml: `shared-mime-info` without recommends must install `libglib2.0-bin`",
+        ),
+        (
+            "container-gio",
+            |d| edit(d, "src/packaging/Dockerfile", "shared-mime-info libglib2.0-bin", "shared-mime-info"),
+            "Dockerfile: `shared-mime-info` without recommends must install `libglib2.0-bin`",
+        ),
+        (
+            "no-preflight",
+            |d| edit(d, "src/scripts/flatpak-build.sh", "src/scripts/appstream-compose-check.sh\n", "\n"),
+            "the compose pre-flight `src/scripts/appstream-compose-check.sh` must run before flatpak-builder",
+        ),
+        (
+            "no-script",
+            |d| std::fs::remove_file(d.join("src/scripts/appstream-compose-check.sh")).unwrap(),
+            "src/scripts/appstream-compose-check.sh: missing",
+        ),
+    ];
+    expect_red(&cases);
+}
+
+/// t1381 (ci-red-again, D3): the AppStream listing composes as flatpak-builder composes it, and a
+/// broken icon is caught by the pre-flight, not after the build.
+///
+/// `appstream-compose-check.sh` installs the manifest's own `/app/share` lines into a temporary
+/// folder and runs `appstreamcli compose` with flatpak-builder 1.4's arguments. Where compose is
+/// not installed (the package appstream-compose; flatpak-builder depends on it) the test says why
+/// it did not run; the Flatpak CI job runs the script through `flatpak-build.sh`.
+#[test]
+fn t1381_the_appstream_listing_composes_before_the_flatpak_build() {
+    let compose = Command::new("appstreamcli").args(["compose", "--help"]).output();
+    if cfg!(windows) || !compose.is_ok_and(|o| o.status.success()) {
+        eprintln!("t1381 not run: no `appstreamcli compose` (appstream-compose) on this machine");
+        return;
+    }
+    let run = |root: &Path| {
+        let out = Command::new("bash")
+            .arg(repo().join("src/scripts/appstream-compose-check.sh"))
+            .arg(root)
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+        (out.status.success(), text)
+    };
+    let (ok, text) = run(&repo());
+    assert!(ok, "the listing must compose:\n{text}");
+    assert!(text.contains("com.kinetren.Kinetren composes"), "{text}");
+    let dir = copy_tree("compose-icon");
+    std::fs::write(dir.join("src/packaging/com.kinetren.Kinetren.svg"), "not an image\n").unwrap();
+    let (ok, text) = run(&dir);
+    assert!(!ok, "a broken icon must fail the pre-flight:\n{text}");
+    assert!(text.contains("file-read-error"), "{text}");
+    assert!(text.contains("com.kinetren.Kinetren.svg"), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// t1064 (ci-green-again): every script that mounts the crates.io registry into a container takes
