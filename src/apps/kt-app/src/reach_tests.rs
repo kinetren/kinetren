@@ -5020,6 +5020,9 @@ fn t850_ffmpeg_window_from_not_found_to_playing() {
             let n = kt_ffmpeg::search::file_name(kt_ffmpeg::search::Os::Linux, l, ffmpeg);
             std::os::unix::fs::symlink(sys.join(&n), full.join(&n)).unwrap();
         }
+        // this branch only runs on Linux, but it compiles for Windows too, where the loop is gone
+        #[cfg(not(unix))]
+        let _ = ffmpeg;
         full
     };
     unsafe {

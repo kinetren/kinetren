@@ -567,38 +567,146 @@ fn t1380_the_svg_loader_the_mime_oracle_and_the_compose_preflight_are_named() {
     expect_red(&cases);
 }
 
+/// `appstream-compose-check.sh` on a tree, its exit and its output.
+fn compose_check(root: &Path) -> (bool, String) {
+    let out = Command::new("bash")
+        .arg(repo().join("src/scripts/appstream-compose-check.sh"))
+        .arg(root)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    (out.status.success(), text)
+}
+
+/// Whether the compose pre-flight can run here: `appstreamcli compose` is installed and the
+/// listing's first screenshot is reachable (compose fetches them); if not, `test` says why it did
+/// not run. The Flatpak CI job runs the script through `flatpak-build.sh` either way.
+fn compose_can_run(test: &str) -> bool {
+    let compose = Command::new("appstreamcli").args(["compose", "--help"]).output();
+    if cfg!(windows) || !compose.is_ok_and(|o| o.status.success()) {
+        eprintln!("{test} not run: no `appstreamcli compose` (appstream-compose) on this machine");
+        return false;
+    }
+    let metainfo = std::fs::read_to_string(repo().join("src/packaging/com.kinetren.Kinetren.metainfo.xml")).unwrap();
+    let url = metainfo.split("<image>").nth(1).and_then(|t| t.split("</image>").next()).unwrap();
+    let head = Command::new("curl").args(["-sfIL", "--max-time", "20", "-o", "/dev/null", url]).status();
+    if !head.is_ok_and(|s| s.success()) {
+        eprintln!("{test} not run: the screenshot {url} is not reachable from here (compose fetches it)");
+        return false;
+    }
+    true
+}
+
 /// t1381 (ci-red-again, D3): the AppStream listing composes as flatpak-builder composes it, and a
 /// broken icon is caught by the pre-flight, not after the build.
 ///
 /// `appstream-compose-check.sh` installs the manifest's own `/app/share` lines into a temporary
-/// folder and runs `appstreamcli compose` with flatpak-builder 1.4's arguments. Where compose is
-/// not installed (the package appstream-compose; flatpak-builder depends on it) the test says why
-/// it did not run; the Flatpak CI job runs the script through `flatpak-build.sh`.
+/// folder and runs `appstreamcli compose` with flatpak-builder's arguments. Where compose is
+/// not installed (the package appstream-compose; flatpak-builder depends on it) or the screenshots
+/// cannot be fetched, the test says why it did not run.
 #[test]
 fn t1381_the_appstream_listing_composes_before_the_flatpak_build() {
-    let compose = Command::new("appstreamcli").args(["compose", "--help"]).output();
-    if cfg!(windows) || !compose.is_ok_and(|o| o.status.success()) {
-        eprintln!("t1381 not run: no `appstreamcli compose` (appstream-compose) on this machine");
+    if !compose_can_run("t1381") {
         return;
     }
-    let run = |root: &Path| {
-        let out = Command::new("bash")
-            .arg(repo().join("src/scripts/appstream-compose-check.sh"))
-            .arg(root)
-            .output()
-            .unwrap();
-        let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
-        (out.status.success(), text)
-    };
-    let (ok, text) = run(&repo());
+    let (ok, text) = compose_check(&repo());
     assert!(ok, "the listing must compose:\n{text}");
     assert!(text.contains("com.kinetren.Kinetren composes"), "{text}");
     let dir = copy_tree("compose-icon");
     std::fs::write(dir.join("src/packaging/com.kinetren.Kinetren.svg"), "not an image\n").unwrap();
-    let (ok, text) = run(&dir);
+    let (ok, text) = compose_check(&dir);
     assert!(!ok, "a broken icon must fail the pre-flight:\n{text}");
     assert!(text.contains("file-read-error"), "{text}");
     assert!(text.contains("com.kinetren.Kinetren.svg"), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// t1410 (ci-flatpak-screenshots, D1–D2): the screenshots are mirrored as Flathub's linter wants.
+///
+/// CI of 21505ad2 built and installed the Flatpak, then `flatpak-builder-lint repo` refused it:
+/// `appstream-missing-screenshots` (compose had dropped all four WebP screenshots: gdk-pixbuf had no
+/// WebP loader) and `appstream-screenshots-not-mirrored-in-ostree` (flatpak-builder ran without
+/// `--mirror-screenshots-url`, so no `screenshots/<arch>` ref). The linter also wants the URLs
+/// under `https://dl.flathub.org/media` in full, which `--compose-url-policy=full` gives, and that
+/// needs flatpak-builder 1.4.6+ from `ppa:flatpak/stable` (Ubuntu 24.04 ships 1.4.2).
+#[test]
+fn t1410_the_screenshots_are_mirrored_as_flathubs_linter_wants() {
+    if cfg!(windows) {
+        eprintln!("t1410 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    let cases: [Break; 8] = [
+        (
+            "ci-webp",
+            |d| edit(d, ".github/workflows/ci.yml", "librsvg2-common webp-pixbuf-loader", "librsvg2-common"),
+            "ci.yml: `flatpak-builder` without recommends must install `webp-pixbuf-loader`",
+        ),
+        (
+            "release-webp",
+            |d| edit(d, ".github/workflows/release.yml", "librsvg2-common webp-pixbuf-loader", "librsvg2-common"),
+            "release.yml: `flatpak-builder` without recommends must install `webp-pixbuf-loader`",
+        ),
+        (
+            "ci-ppa",
+            |d| edit(d, ".github/workflows/ci.yml", "sudo add-apt-repository -y ppa:flatpak/stable\n", ""),
+            "ci.yml: flatpak-builder comes from `ppa:flatpak/stable`",
+        ),
+        (
+            "release-ppa",
+            |d| edit(d, ".github/workflows/release.yml", "sudo add-apt-repository -y ppa:flatpak/stable\n", ""),
+            "release.yml: flatpak-builder comes from `ppa:flatpak/stable`",
+        ),
+        (
+            "no-mirror",
+            |d| edit(d, "src/scripts/flatpak-build.sh", "--mirror-screenshots-url=\"$MEDIA_URL\" ", ""),
+            "flatpak-build.sh: the screenshots must be mirrored as Flathub's linter wants (`--mirror-screenshots-url",
+        ),
+        (
+            "partial-urls",
+            |d| edit(d, "src/scripts/flatpak-build.sh", " --compose-url-policy=full", ""),
+            "flatpak-build.sh: the screenshots must be mirrored as Flathub's linter wants (`--compose-url-policy=full`)",
+        ),
+        (
+            "preflight-no-mirror",
+            |d| edit(d, "src/scripts/appstream-compose-check.sh", "--media-baseurl=\"$MEDIA_URL\" ", ""),
+            "appstream-compose-check.sh: the screenshots must be mirrored as Flathub's linter wants (`--media-baseurl",
+        ),
+        (
+            "preflight-partial-urls",
+            |d| edit(d, "src/scripts/appstream-compose-check.sh", " --no-partial-urls", ""),
+            "appstream-compose-check.sh: the screenshots must be mirrored as Flathub's linter wants (`--no-partial-urls`)",
+        ),
+    ];
+    expect_red(&cases);
+}
+
+/// t1411 (ci-flatpak-screenshots, D3): the pre-flight composes every screenshot of the listing into
+/// the catalogue under Flathub's media URL, and a screenshot compose cannot read fails it in
+/// seconds, not after the build and the linter.
+///
+/// On the runner of 21505ad2 compose said `Success!` and dropped all four screenshots with a
+/// `screenshot-save-error` hint ("Unrecognized image file format": no WebP loader). The red copy
+/// points one screenshot at a text file of the same release tag, which fails the same way on any
+/// machine.
+#[test]
+fn t1411_the_preflight_keeps_every_screenshot() {
+    if !compose_can_run("t1411") {
+        return;
+    }
+    let (ok, text) = compose_check(&repo());
+    assert!(ok, "every screenshot must reach the catalogue:\n{text}");
+    assert!(text.contains("4 screenshots mirrored"), "{text}");
+    let dir = copy_tree("compose-shots");
+    edit(
+        &dir,
+        "src/packaging/com.kinetren.Kinetren.metainfo.xml",
+        "docs/images/morpher.webp",
+        "README.md",
+    );
+    let (ok, text) = compose_check(&dir);
+    assert!(!ok, "a screenshot compose cannot read must fail the pre-flight:\n{text}");
+    assert!(text.contains("3 of 4 screenshots reached the catalogue"), "{text}");
+    assert!(text.contains("screenshot-save-error"), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

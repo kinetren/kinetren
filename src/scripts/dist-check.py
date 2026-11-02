@@ -573,6 +573,9 @@ def check_metainfo(r, app_id):
 
 FLATPAK_BUILD = "src/scripts/flatpak-build.sh"
 COMPOSE_CHECK = "src/scripts/appstream-compose-check.sh"
+# Flathub's screenshot mirror, named once in each of the two scripts (ci-flatpak-screenshots, t1410)
+MEDIA_LINE = "MEDIA_URL=https://dl.flathub.org/media\n"
+FLATPAK_PPA = "ppa:flatpak/stable"
 
 
 def check_flatpak_ci(r):
@@ -606,7 +609,27 @@ def check_flatpak_ci(r):
     pre, full = build.find(f"{COMPOSE_CHECK}\n"), build.find("flatpak-builder --user")
     if pre < 0 or (full >= 0 and pre > full):
         r.err(FLATPAK_BUILD, f"the compose pre-flight `{COMPOSE_CHECK}` must run before flatpak-builder")
-    r.read(COMPOSE_CHECK)  # "missing" when it is gone
+    compose = r.read(COMPOSE_CHECK)  # "missing" when it is gone
+    # the screenshots are mirrored to Flathub's media URL and committed as `screenshots/<arch>`, or
+    # flatpak-builder-lint refuses the repository after the whole build; the pre-flight composes
+    # them the same way, so a missing WebP loader fails in seconds (change ci-flatpak-screenshots,
+    # t1410). flatpak-builder 1.4.6+ has the URL policy; Ubuntu 24.04 ships 1.4.2.
+    for text, rel, pieces in [
+        (build, FLATPAK_BUILD, [MEDIA_LINE, '--mirror-screenshots-url="$MEDIA_URL"', "--compose-url-policy=full"]),
+        (compose or "", COMPOSE_CHECK, [MEDIA_LINE, '--media-baseurl="$MEDIA_URL"', "--no-partial-urls"]),
+    ]:
+        if compose is None and rel == COMPOSE_CHECK:
+            continue
+        for piece in pieces:
+            if piece not in text:
+                r.err(rel, f"the screenshots must be mirrored as Flathub's linter wants (`{piece.strip()}`)")
+    for rel in [CI, RELEASE]:
+        text = r.read(rel) or ""
+        install = next((m.start() for m in re.finditer(r"apt-get install[^\n]*flatpak-builder", text)), -1)
+        ppa = text.find(f"add-apt-repository -y {FLATPAK_PPA}")
+        if install >= 0 and (ppa < 0 or ppa > install):
+            r.err(rel, f"flatpak-builder comes from `{FLATPAK_PPA}`, added before its install: Ubuntu's "
+                  "1.4.2 cannot mirror the screenshots with full URLs (--compose-url-policy, 1.4.6)")
     rel = r.read(RELEASE) or ""
     if "flatpak-build.sh --bundle" not in rel or ".flatpak.sha256" not in rel or "linux-x86_64.flatpak " not in rel:
         r.err(RELEASE, "the release must build and attach kinetren-<version>-linux-x86_64.flatpak and its .sha256")
@@ -623,9 +646,13 @@ def check_flatpak_ci(r):
 # ci-red-again, t1380): flatpak-builder's `appstreamcli compose` reads the SVG icon through
 # gdk-pixbuf, whose SVG loader is librsvg2-common (a Recommends of librsvg2-2), and t935 asks GIO,
 # because perl's `mimetype` takes the first of two equal-weight globs without reading the file.
+# CI of 21505ad2 added one more (change ci-flatpak-screenshots, t1410): compose reads the WebP
+# screenshots through gdk-pixbuf too, whose WebP loader is a package of its own that nothing pulls;
+# without it compose dropped all four and Flathub's linter found none.
 RECOMMENDS_NEEDED = [
     ("flatpak-builder", "elfutils", "flatpak-builder strips with eu-strip"),
     ("flatpak-builder", "librsvg2-common", "appstreamcli compose reads the SVG icon through gdk-pixbuf's SVG loader"),
+    ("flatpak-builder", "webp-pixbuf-loader", "appstreamcli compose reads the WebP screenshots through gdk-pixbuf's WebP loader"),
     ("xdg-utils", "libfile-mimeinfo-perl", "xdg-mime without a desktop asks `mimetype` (t935)"),
     ("shared-mime-info", "libglib2.0-bin", "t935 asks `gio`, as a file manager does"),
 ]

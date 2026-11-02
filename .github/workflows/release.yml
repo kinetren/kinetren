@@ -48,10 +48,13 @@ jobs:
       - name: Build the Flatpak bundle
         # the same build, lint and sandbox check as the CI job `flatpak` (change flatpak-flathub,
         # D9); the bundle lets people try a release before Flathub has it. elfutils and
-        # librsvg2-common: eu-strip and compose's SVG loader, dropped Recommends (t1060, t1380)
+        # librsvg2-common: eu-strip and compose's SVG loader, dropped Recommends (t1060, t1380);
+        # webp-pixbuf-loader: compose reads the WebP screenshots; ppa:flatpak/stable: flatpak-builder
+        # 1.4.6+, which mirrors them as Flathub's linter wants (Ubuntu 24.04 has 1.4.2; t1410)
         run: |
+          sudo add-apt-repository -y ppa:flatpak/stable
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream elfutils librsvg2-common
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream elfutils librsvg2-common webp-pixbuf-loader
           src/scripts/flatpak-build.sh --bundle
 
       - name: Create the release

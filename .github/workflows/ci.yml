@@ -131,10 +131,13 @@ jobs:
       - name: flatpak, flatpak-builder, appstream
         # elfutils: flatpak-builder strips with eu-strip, a Recommends that
         # --no-install-recommends drops (dist-check, t1060); librsvg2-common: gdk-pixbuf's SVG
-        # loader, which appstreamcli compose needs to read our icon (a Recommends of librsvg2-2; t1380)
+        # loader, which appstreamcli compose needs to read our icon (a Recommends of librsvg2-2; t1380);
+        # webp-pixbuf-loader: its WebP loader, for the screenshots; ppa:flatpak/stable: flatpak-builder
+        # 1.4.6+, which mirrors the screenshots as Flathub's linter wants (Ubuntu 24.04 has 1.4.2; t1410)
         run: |
+          sudo add-apt-repository -y ppa:flatpak/stable
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream elfutils librsvg2-common
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream elfutils librsvg2-common webp-pixbuf-loader
 
       - name: The flatpak-builder cache
         uses: actions/cache@v4
