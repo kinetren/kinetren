@@ -2434,6 +2434,21 @@ records cannot be brought back.
 - Found on the way: File → New forgot the chosen language and Economy UI (both were fields of the
   app that a project open rebuilds); they live in the user store now.
 
+## 2026-11-02 — CI of master 9e1f1a45 red again
+
+The owner pushed master `9e1f1a45` and sent the GitHub CI logs (`logs_112101614406.zip`). Windows
+build and tests are green; two items are red: t935 in the `test` and `ffmpeg9` jobs ("a Kotlin
+source is not ours": `xdg-mime` called `Main.kt` our project) and the `flatpak` job's
+`appstreamcli compose` (`filters-but-no-output`, `file-read-error`).
+
+**Taken as (change `ci-red-again`):** both are defects of the tree, as in `ci-green-again`. t935's
+oracle was the wrong program: without a desktop xdg-mime asks perl's `mimetype`, which takes the
+first of two equal-weight globs without reading the file; file managers ask GIO or Qt, which sniff.
+The MIME file stays. The compose step could not read our SVG icon: gdk-pixbuf's SVG loader
+(`librsvg2-common`) is a Recommends that `--no-install-recommends` drops. Both packages are named
+in the workflows, a guard holds them, and the metadata compose runs in seconds before the long
+Flatpak build.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
