@@ -23,6 +23,11 @@ Rendering runs inside the editor through the system's libavcodec and libavformat
 are no temporary files and no external `ffmpeg`. It uses the same composition code as
 the preview, so the file contains what you saw. It can be paused.
 
+While it runs, the render window names the encoder it opened, shows the frames, elapsed
+and remaining time, the size and bitrate so far and a speed graph, and keeps a log. At the
+end it gives the loudness of the result (LUFS, true peak) and buttons to open the file, its
+folder or the log. If the file already exists, it asks before replacing it.
+
 ## kt-cli
 
 `kt-cli` is the same engine without a window:
@@ -35,6 +40,7 @@ cargo run -p kt-cli -- <command> …
 | Command | What it does |
 |---|---|
 | `version` | print the version |
+| `ffmpeg [--probe-encoders]` | which FFmpeg was loaded and which folders were rejected and why; `--probe-encoders` opens every hardware encoder to see which work |
 | `new <out.kt>` | an empty project |
 | `demo <out.kt> [--files \| --generators]` | a demo project on synthetic sources (renders with no media at all); `--generators` draws every picture with generators, as the tour does |
 | `showcase <out.kt> --sources <dir>` | a dense montage cut from every video in a directory — the README project |

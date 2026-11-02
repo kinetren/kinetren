@@ -5,9 +5,12 @@
 ## Tracks
 
 Video tracks are layers: the top track is drawn over the ones below it. Audio tracks
-are mixed. Morph tracks hold [morphers](morpher.md). Every track has a name (right-click
-the header → **Rename track…**), mute, solo and lock, its own effects, opacity and blend
-mode (the track window, from the same menu). Drag a header to reorder tracks; drag its bottom edge to
+are mixed. Morph tracks hold [morphers](morpher.md). Camera tracks hold cameras that view
+the Pan 3D layers on the tracks below; right-click the track for **Add
+camera at the playhead**, double-click a camera for its properties. Every track has a name
+(right-click the header → **Rename track…**), mute, solo and lock, its own effects,
+opacity, blend mode and [masks](effects-and-automation.md#masks) (**Track properties…**
+in the same menu). Drag a header to reorder tracks; drag its bottom edge to
 change its height, right-click the edge to reset it. **Shift+wheel** scrolls tracks,
 **Ctrl+Shift+wheel** changes all track heights.
 

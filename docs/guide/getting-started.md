@@ -16,7 +16,8 @@ This page takes you from an empty window to an exported MP4. For installation se
   first, then audio, then morph tracks. Track headers carry mute (M), solo (S) and lock.
 - **Toolbar** (under the timeline): transport, timecode, speed, and the editing buttons
   — markers, adding tracks, split, copy/paste, delete, trims, zoom, region, loop, undo,
-  render, search and diagnostics.
+  render, search, diagnostics and save. In a narrow window the buttons that do not fit
+  move into the **⋯** menu at the end of the row.
 - **Status line** (bottom): zoom, region, cache, underruns, shown video fps, and on the
   right the hint for whatever is under the mouse.
 
@@ -37,7 +38,9 @@ This page takes you from an empty window to an exported MP4. For installation se
 5. **Mark a region.** Drag on the ruler, or press **I** and **O** at the start and end.
    **L** loops it.
 6. **Save.** **Ctrl+S** writes a `.kt` project file. Autosave keeps a recovery copy in
-   the background; **File → Recover unsaved work…** brings it back after a crash.
+   the background. If the program crashes, a window says so at once, with the error and
+   the last lines of the log: **Restore the project** starts it again and offers the
+   unsaved work; **File → Recover unsaved work…** does the same later.
 7. **Render.** **File → Render to MP4…** — see [Export and kt-cli](export.md).
 
 ## Projects
@@ -66,5 +69,13 @@ Russian and Arabic; *Auto* follows the system), **Economy UI** for weak graphics
 anonymous usage statistics, the daily check for a new version, and where FFmpeg was found.
 Each switch lives there and nowhere else. The **View** menu keeps what changes the view: the
 detached preview, Diagnostics and the notices.
+
+## Diagnostics
+
+When playback stutters, **View → Diagnostics…** (or the gauge button on the toolbar) shows
+the Performance numbers — cache, underruns, shown video frames, decoding, the backend
+(GPU or CPU) — and three graphs side by side in time: **Quality (FPS / hit%)**, **FFmpeg
+activity (/s)** and **Cache churn (/s)**. The **Problem log** under them notes stalls,
+underruns and cache trouble as they happen. Enlarge the window and the graphs grow.
 
 Next: [The timeline](timeline.md).
