@@ -35,6 +35,6 @@ Test numbers t1380–t1389 are reserved by this change.
 
 ## 3. Close
 
-- [ ] 3.1 The distribution spec's scenarios and the design's "why" (archive); `cargo test -p kt-cli
+- [x] 3.1 The distribution spec's scenarios and the design's "why" (archive); `cargo test -p kt-cli
   --test dist_guard`, `dist-check.py --check`, clippy
 - [ ] 3.2 `git merge master`, `src/scripts/finish.sh`, the version in the report
