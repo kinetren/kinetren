@@ -20,10 +20,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 # binutils: the delivery checks (ldd, objdump -T) run inside this container,
 # so the host needs nothing but Docker; shared-mime-info, xdg-utils: t935 builds a MIME
 # database and asks it for the type of our `.kt` (change i18n-gaps); libfile-mimeinfo-perl:
-# the `mimetype` xdg-mime asks without a desktop (a Recommends of xdg-utils; t1060)
+# the `mimetype` xdg-mime asks without a desktop (a Recommends of xdg-utils; t1060);
+# libglib2.0-bin: `gio`, the oracle t935 asks as a file manager does (t1380)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates build-essential pkg-config clang libclang-dev \
-    libasound2-dev binutils shared-mime-info xdg-utils libfile-mimeinfo-perl \
+    libasound2-dev binutils shared-mime-info libglib2.0-bin xdg-utils libfile-mimeinfo-perl \
     && rm -rf /var/lib/apt/lists/*
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH

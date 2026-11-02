@@ -197,6 +197,28 @@ their own copy without the chown. `scripts/cargo-registry.sh` is now the one bod
 `mkdir -p ~/.cargo/registry` on the host — it leaves an older root-owned volume broken. Details:
 `openspec/changes/archive/2026-11-01-ci-green-again/design.md` (D1, D2).
 
+## ci-red-again (2026-11-02): t935 asks GIO, compose has its SVG loader and runs first
+
+The CI run on 9e1f1a45 reached two steps no run had reached. **t935** asked `xdg-mime`, which
+without a desktop asks perl's `mimetype` (File::MimeInfo). Perl reads the priority-80 magic, then
+keeps only the FIRST type `globs2` lists for an extension, so with our and Kotlin's equal `*.kt`
+globs it called `Main.kt` ours. The order of those lines differs between shared-mime-info versions:
+ours first on Ubuntu 2.1/2.4, Kotlin first on Fedora 2.3. The owner's Cinnamon asks GIO, so the
+test was green there. GIO (2.72, 2.80, 2.82) and Qt 5/6 (`kmimetypefinder`) sniff and name all
+three files right. t935 asks `gio info` (`libglib2.0-bin`) and asks perl only about our own files.
+**The MIME file stays.** A lower glob weight was measured too: every content-based oracle,
+perl included, then answers right. But every guess from the name alone (GIO's
+`fast-content-type`, gvfs listings of network shares) would call our projects Kotlin everywhere,
+where today it follows the `globs2` order. That is a user-visible trade, left to the owner.
+**Compose:** flatpak-builder runs `appstreamcli compose` on the host. Compose renders the SVG icon
+through gdk-pixbuf, whose SVG loader `librsvg2-common` is a Recommends of `librsvg2-2` and was
+dropped (`file-read-error`, then `filters-but-no-output`). Both packages are rows of
+`RECOMMENDS_NEEDED` (t1380). `appstream-compose-check.sh` composes the manifest's own install lines
+with flatpak-builder's arguments BEFORE the ten-minute build (t1381; reproduced red and green in
+`ubuntu:24.04`). The webp screenshots still give `screenshot-save-error` warnings (no WebP pixbuf
+loader); they do not fail compose, which stores no media under flatpak-builder. Details:
+`openspec/changes/archive/2026-11-02-ci-red-again/design.md` (D1–D3, the measured table).
+
 ## The version follows the commit in a worktree too (worktree-version-and-thumb-lock, 2026-11-01)
 
 - **What hurt.** `libs/kt-version/build.rs` watched `../../../.git/HEAD` and `.git/refs/heads`. In a

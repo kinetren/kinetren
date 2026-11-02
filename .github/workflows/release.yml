@@ -47,10 +47,11 @@ jobs:
 
       - name: Build the Flatpak bundle
         # the same build, lint and sandbox check as the CI job `flatpak` (change flatpak-flathub,
-        # D9); the bundle lets people try a release before Flathub has it
+        # D9); the bundle lets people try a release before Flathub has it. elfutils and
+        # librsvg2-common: eu-strip and compose's SVG loader, dropped Recommends (t1060, t1380)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream elfutils
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream elfutils librsvg2-common
           src/scripts/flatpak-build.sh --bundle
 
       - name: Create the release

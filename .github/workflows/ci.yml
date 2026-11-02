@@ -57,13 +57,15 @@ jobs:
         # to read the screen it compares against; shared-mime-info, xdg-utils:
         # update-mime-database and xdg-mime, which t935 runs to tell our `.kt` from Kotlin;
         # libfile-mimeinfo-perl: `mimetype`, which xdg-mime asks without a desktop (a Recommends
-        # of xdg-utils — without it libmagic called our project JSON; dist-check, t1060)
+        # of xdg-utils — without it libmagic called our project JSON; dist-check, t1060);
+        # libglib2.0-bin: `gio`, the oracle t935 asks as a file manager does (perl's `mimetype`
+        # takes the first of two equal-weight globs unread; t1380)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang libclang-dev pkg-config libasound2-dev ffmpeg \
             xvfb openbox python3-xlib x11-utils x11-apps imagemagick \
-            shared-mime-info xdg-utils libfile-mimeinfo-perl
+            shared-mime-info libglib2.0-bin xdg-utils libfile-mimeinfo-perl
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -128,10 +130,11 @@ jobs:
 
       - name: flatpak, flatpak-builder, appstream
         # elfutils: flatpak-builder strips with eu-strip, a Recommends that
-        # --no-install-recommends drops (dist-check, t1060)
+        # --no-install-recommends drops (dist-check, t1060); librsvg2-common: gdk-pixbuf's SVG
+        # loader, which appstreamcli compose needs to read our icon (a Recommends of librsvg2-2; t1380)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream elfutils
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream elfutils librsvg2-common
 
       - name: The flatpak-builder cache
         uses: actions/cache@v4
