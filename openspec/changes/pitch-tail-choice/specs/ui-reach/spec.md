@@ -11,7 +11,7 @@ repeat the unanswerable question.
 #### Scenario: The switch is found in the pitch panel and changes the slot
 - **WHEN** the FX window of an event with a pitch is drawn, the echo choice is set to "rings on", then undone
 - **THEN** the panel shows the label, both options and the hint in every catalog; the slot's row becomes "ring" in one undo step and returns to "cut" on undo
-- **PATH** double-click the event → the FX window → click the Pitch Shift slot → under the semitones the line "Echo of the effects before the pitch: cut at the event's end"; hovering it puts the hint in the status line → open it, pick "rings on after the event" → the line shows the new choice → Ctrl+Z → back to "cut"
+- **PATH** double-click the event → the FX window → click the Pitch Shift slot → above the semitones the line "Echo of the effects before the pitch: cut at the event's end"; hovering it puts the hint in the status line → open it, pick "rings on after the event" → the line shows the new choice → Ctrl+Z → back to "cut"
 - **TEST** t1337 (`src/apps/kt-app/src/pitch_tail_tests.rs`)
 
 #### Scenario: Live — the switch in the real program

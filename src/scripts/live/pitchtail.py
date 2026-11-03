@@ -60,13 +60,15 @@ def main(out):
         json.dump(doc, f, indent=4)
 
     with Live("pitchtail", out, project=proj) as app:
-        y = app.lane_y("audio", 0, frac=0.5)
-        app.double_click(app.x_at(3 * SEC), y)
+        # the first audio event of the demo project lies on A1 from about 0:12 to 0:44; its middle
+        # is the level line (0 dB), so the double click goes below it
+        y = app.lane_y("audio", 0, frac=0.85)
+        app.double_click(app.x_at(20 * SEC), y)
         app.step("fxwin", "double click on the audio event → its effects: Delay, Pitch Shift")
         if not app.click_probe("fx.slot.1", "the Pitch Shift slot on the strip"):
             return app.done()
         app.wait_frame(2, what="the pitch panel", soft=True)
-        app.step("pitch", "the Pitch Shift slot → under the semitones: “Echo of the effects before the pitch: cut at the event's end”")
+        app.step("pitch", "the Pitch Shift slot → above the semitones: “Echo of the effects before the pitch: cut at the event's end”")
         if not app.click_probe("fx.echo_before", "the echo line"):
             return app.done()
         app.wait_frame(2, what="the choice list", soft=True)

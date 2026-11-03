@@ -20,7 +20,7 @@
 ## 4. The interface
 
 - [x] 4.1 `fx_editor.rs`: the pitch panel's echo line (combo + the two-part hint through the status line), one base edit; catalogs ×5 in the owner's words (the hint split in two keys under the 160-char limit); `python3 scripts/subset-fonts.py`; t1337 (PATH), t100, t125, t131 green
-- [ ] 4.2 Live scenario `src/scripts/live/pitchtail.py` on our fixture (a step screenshot per action, the saved `.kt` checked); t1338 run with `KT_LIVE_DISPLAY=:230` if :99 is busy
+- [x] 4.2 Live scenario `src/scripts/live/pitchtail.py` on our fixture (a step screenshot per action, the saved `.kt` checked): t1338 green on `KT_LIVE_DISPLAY=:257` (:231 was another session's), four steps
 
 ## 5. Docs and wrap-up
 
