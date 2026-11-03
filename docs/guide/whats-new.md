@@ -15,6 +15,10 @@ month, newest first.
   "Echo of the effects before the pitch": **cut at the event's end** (as before — the joins stay
   seamless) or **rings on after the event** (the echo goes on past the event's end, pitched, as
   without the pitch). Projects that use "rings on" open only in this version and newer.
+- **A loop over an echo before a pitch no longer dips at every lap.** When the loop region started
+  at an event with an echo or reverb before its pitch, each pass began with a short hole (with
+  "rings on") or a sudden drop with a bit of foreign sound (with "cut"). Every pass now starts as
+  playing from that point does, and the echo of the pass before still rings on over it.
 
 - **Ctrl+F shows what it finds again.** The search window kept the height of its empty field, so
   the media, events and markers it found were hidden under its bottom edge until you dragged the

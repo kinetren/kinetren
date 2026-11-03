@@ -20,3 +20,9 @@ will sound; the previous lap's echo rings on as two copies of the event one afte
 - **WHEN** the region ends 50 ms past the out-point (the echo, without and with 0.6 feedback, still rings at the wrap), seven laps, each engine, both choices, in pieces of 1 024 and 333
 - **THEN** every lap is the play from the region start plus the play continued past the region end of each of the last four laps, summed oldest first, byte for byte; with "cut" the lap is the play from there alone; no lap starts below half of the play from there; both slicings are equal
 - **TEST** t1441 (`src/libs/kt-engine/tests/pitch_tail.rs`)
+
+#### Scenario: Live — loop and play over such an event
+- **WHEN** the real program opens our fixture (a 440 Hz event at 1.0 s with an echo and a +7 pitch at "rings on"), a region is dragged on the ruler from the event's start to 0.4 s past its end, L turns the loop on and Space plays three laps; then the same region is played on repeat by the engine (`kt-cli probe --time`)
+- **THEN** a screenshot per step; the cursor wraps three times to the event's start and stays in the region, the program still plays; the engine's four looped laps have no miss
+- **PATH** open the project → drag on the ruler 1.0 s → 2.0 s: the region → L: the loop button lights → Space: the cursor runs to the region end and back to the event's start, three times → Space stops
+- **TEST** t1442 (`src/scripts/live/looptail.py`)

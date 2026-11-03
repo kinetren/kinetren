@@ -57,6 +57,13 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   relies on clips being rendered in ascending order in every burst (A before B) — that is what makes
   it slicing-independent; do not reorder the clip loop. An event that reads across edges and starts
   inside a loop region gets no loop span (D5): it is not what sounds after the wrap (t1105–t1112).
+- **A loop lap of a context chain with a tail is a seek plus the earlier laps** (loop-pitch-tail-dip):
+  `render_fx_clip` asks `FxStateStore::start_lap` before the read; on a lap entry the processor that
+  stands in its tail moves to the event's ringing laps and the event gets the spare (or a new one),
+  cold. The ringing laps are read for the SAME output frames, each continuing its own clip-local
+  stream, and summed at the tail zone's weight (1.0 × gain) until the tail-zone end; `MAX_LAPS` = 4,
+  `reset_all` drops them (a seek), `retain_clips` drops a removed event's. Without a loop no lap entry
+  happens — the path is byte for byte the former one (t1440, t1441).
 - Prefetch is idempotent: wanted − coverage() → submit; keys strictly on the playback grid (defect i); the head of a loop region — a pin in the cache (test 14).
 
 ## Law P: the media path is a property of the SOURCE, not of the plan (R.53, item 412)
