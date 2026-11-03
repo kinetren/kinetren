@@ -384,6 +384,9 @@ fn t1264_the_file_version_is_set_by_content() {
     let t2 = project_file::to_text(&q, None);
     assert!(t2.contains("\"kinetren\": 2"), "a file with masks is not format 2");
     assert_eq!(project_file::from_text(&t2).unwrap().project.clips[0].masks, q.clips[0].masks);
-    let t3 = t2.replace("\"kinetren\": 2", "\"kinetren\": 3");
-    assert!(matches!(project_file::from_text(&t3), Err(project_file::ProjectFileError::TooNew { version: 3 })));
+    // a version above what this build reads is refused (pitch-tail-choice made 3 readable: the
+    // version of a ringing pitch echo, t1336)
+    let above = project_file::PROJECT_FILE_READS + 1;
+    let t3 = t2.replace("\"kinetren\": 2", &format!("\"kinetren\": {above}"));
+    assert!(matches!(project_file::from_text(&t3), Err(project_file::ProjectFileError::TooNew { version }) if version == above));
 }

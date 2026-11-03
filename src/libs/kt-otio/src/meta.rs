@@ -14,7 +14,7 @@ pub const KT_NS: &str = "kt";
 /// are byte-stable and open in old builds.
 /// One Pan3d does NOT bump the version: an unknown effect
 /// degrades into foreign-passthrough.
-pub const KT_META_VERSION: u32 = 14;
+pub const KT_META_VERSION: u32 = 15;
 pub const KT_META_V1: u32 = 1;
 /// Cameras and camera tracks (R.29).
 pub const KT_META_V2: u32 = 2;
@@ -84,6 +84,10 @@ pub const KT_META_V13: u32 = 13;
 /// with every mask silently gone (the effect over the whole frame) — a refusal is more honest.
 /// Raised ONLY by content.
 pub const KT_META_V14: u32 = 14;
+/// pitch-tail-choice: a pitch slot whose echo of the effects before it rings on (`echo_before`).
+/// An old build ignores a slot row its passport does not name and would cut that echo silently.
+/// Raised ONLY by content.
+pub const KT_META_V15: u32 = 15;
 
 // ---- typed metadata.kt envelopes (otio-types approach) -----------------
 // Structurally small things get OWN types (model evolution does not silently move the file schema);

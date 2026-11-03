@@ -114,6 +114,13 @@ and the verbatim prefix are ignored on Windows. "Absolute" on reading is the uni
 it becomes a placeholder showing that path and is written back unchanged. Resolve-style path
 mapping (F-PRJ-003) stays deferred: this only stops paths from turning into wrong ones.
 
+## The pitch's ringing echo and format 3 (pitch-tail-choice, 2026-11-03)
+
+A plugin slot's reader ignores a row its passport does not name, so an older build would open a
+project whose pitch lets the echo before it ring on and silently cut that echo. The file is therefore
+format 3 by content (`Project::has_ringing_echo`, over every reel's events, tracks and morpher
+patches), and the OTIO envelope v15; a project without it keeps its former format byte for byte.
+
 ## Masks and the version by content (shape-masks, 2026-11-01)
 
 A file that has masks is written as format 2; a file without masks stays format 1 byte for byte. A

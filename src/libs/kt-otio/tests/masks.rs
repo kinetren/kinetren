@@ -74,3 +74,23 @@ fn t1265_masks_through_the_otio_door() {
     assert_eq!(back.clips[0].masks, p.clips[0].masks);
     assert_eq!(back.tracks[vt].masks, p.tracks[vt].masks);
 }
+
+/// Test 1336 (the OTIO half): a pitch whose echo rings on goes through the `.otio` door and back;
+/// the envelope is v15 only then.
+#[test]
+fn t1336_the_echo_choice_through_the_otio_door() {
+    let mut p = project();
+    p.clips[0].kind = ClipKind::Audio;
+    p.clips[0].fx = vec![FxInstance::plugin_with("pitch_shift", &[5.0, 0.0]).unwrap()];
+    p.validate().unwrap();
+    let text0 = kt_otio::save_project(&p, &Default::default(), None);
+    assert!(!text0.contains("echo_before"));
+    assert_ne!(kt_otio::kt_version(&kt_otio::parse_document(&text0).unwrap()), Some(15));
+    if let FxInstance::Plugin(s) = &mut p.clips[0].fx[0] {
+        assert!(s.set("echo_before", 1.0));
+    }
+    let text = kt_otio::save_project(&p, &Default::default(), None);
+    assert_eq!(kt_otio::kt_version(&kt_otio::parse_document(&text).unwrap()), Some(15));
+    let back = kt_otio::load_project(&text, None).unwrap().project;
+    assert_eq!(back.clips[0].fx, p.clips[0].fx);
+}

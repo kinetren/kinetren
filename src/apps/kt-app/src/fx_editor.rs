@@ -1501,6 +1501,33 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
     }
 }
 
+/// The pitch's echo line (pitch-tail-choice D1): "Echo of the effects before the pitch: cut at the
+/// event's end / rings on after the event", in the owner's words; the hint says what each does.
+/// Returns whether the slot's row changed (one base edit).
+pub(crate) fn pitch_echo_row(ui: &mut egui::Ui, p: &mut kt_model::PluginSlot) -> bool {
+    use crate::i18n::{k, tr};
+    let labels = [tr(k::fx::ECHO_CUT), tr(k::fx::ECHO_RING)];
+    let hint = format!("{} {}", tr(k::fx::ECHO_HINT_CUT), tr(k::fx::ECHO_HINT_RING));
+    let mut v = (p.get("echo_before").unwrap_or(0.0) as usize).min(1);
+    let before = v;
+    ui.horizontal(|ui| {
+        let l = ui.label(tr(k::fx::ECHO_BEFORE));
+        crate::widgets::hint(&l, &hint);
+        let r = egui::ComboBox::from_id_salt("pitchecho").selected_text(labels[v]).show_ui(ui, |ui| {
+            for (i, l) in labels.iter().enumerate() {
+                let item = ui.selectable_value(&mut v, i, *l);
+                crate::widgets::field_probe::note(&format!("fx.echo_before.{i}"), item.rect);
+            }
+        });
+        crate::widgets::hint(&r.response, &hint);
+        crate::widgets::field_probe::note("fx.echo_before", r.response.rect);
+    });
+    if v != before {
+        p.set("echo_before", v as f64);
+    }
+    v != before
+}
+
 /// Video FX templates with the v1 defaults (the “+ video FX…” button).
 pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
     vec![
@@ -1636,6 +1663,13 @@ pub(crate) fn draw_video_fx_params(
                     ch.base = true;
                 }
             });
+        }
+        // the echo of the effects before the pitch (pitch-tail-choice): the owner's two answers, the
+        // slot's choice row holds the index of the file key (`fx_audio_modulation::ECHO_BEFORE`)
+        FxInstance::Plugin(p) if p.id == "pitch_shift" => {
+            if pitch_echo_row(ui, p) {
+                ch.base = true;
+            }
         }
         // the cut kind (R.47): captions from the catalog; the slot's choice row holds the index of
         // the file key (`fx_audio_tone::FILTER_MODES`: lowpass, highpass, bandpass)

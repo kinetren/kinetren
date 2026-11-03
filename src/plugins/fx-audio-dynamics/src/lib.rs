@@ -100,6 +100,7 @@ impl AudioKernel for Gain {
 /// code (GOLDEN_AUDIO relies on them); with curves — a SmoothedParam with targets at the
 /// chunk midpoint, a tick on every frame (the same loop order: first
 /// volume per frame, then balance per frame).
+#[derive(Clone)]
 struct GainNode {
     static_gain: f32,
     static_pan_l: f32,
@@ -114,6 +115,9 @@ struct GainNode {
 }
 
 impl AudioState for GainNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], _structural: bool) {
         let (db, pan) = (k[0] as f32, k[1] as f32);
         self.base_db = db as f64;
@@ -231,6 +235,7 @@ impl AudioKernel for Gate {
 
 /// Gate: a fast detector (~0.5 ms) + hysteresis −6 dB + hold counter
 /// (frames — survives the seam) + attack/release ramps.
+#[derive(Clone)]
 struct GateNode {
     threshold_db: SmoothedParam,
     attack_ms: f32,
@@ -243,6 +248,9 @@ struct GateNode {
 }
 
 impl AudioState for GateNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], _structural: bool) {
         let (thr, att, hold, rel) = (k[0] as f32, k[1] as f32, k[2] as f32, k[3] as f32);
         self.threshold_db.set_target(thr.clamp(-80.0, 0.0));
@@ -361,6 +369,7 @@ impl AudioKernel for Limiter {
 /// frame itself, so the reduction gets ahead of the peak and the attack is instant —
 /// there is no distortion artifact. The output is aligned with the chain input: the ring
 /// delays the signal by exactly La, which the processor subtracted from the position.
+#[derive(Clone)]
 struct LimiterNode {
     threshold_db: SmoothedParam,
     ceiling_db: SmoothedParam,
@@ -380,6 +389,9 @@ struct LimiterNode {
 }
 
 impl AudioState for LimiterNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], structural: bool) {
         let (thr, ceil, lookahead_ms, release) = (k[0] as f32, k[1] as f32, k[2] as f32, k[3] as f32);
         self.threshold_db.set_target(thr.clamp(-60.0, 0.0));
@@ -522,6 +534,7 @@ impl AudioKernel for Compressor {
 }
 
 /// The R.47 node, verbatim (t973c holds its sound).
+#[derive(Clone)]
 struct CompNode {
     threshold_db: SmoothedParam,
     ratio: SmoothedParam,
@@ -530,6 +543,9 @@ struct CompNode {
 }
 
 impl AudioState for CompNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], _structural: bool) {
         // k[5] is the key's track id: an address the kernel never reads
         let (thr, ratio, att, rel, makeup) = (k[0] as f32, k[1] as f32, k[2] as f32, k[3] as f32, k[4] as f32);

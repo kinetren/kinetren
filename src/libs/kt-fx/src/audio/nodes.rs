@@ -51,6 +51,7 @@ impl kt_plugin_api::SlotCurves for SlotView<'_> {
 }
 
 /// A copy of one curve a plugin state keeps for reads by position.
+#[derive(Clone)]
 struct OwnedCurve {
     points: Vec<(f64, f64)>,
     shapes: Vec<kt_model::SegShape>,
@@ -59,6 +60,9 @@ struct OwnedCurve {
 impl kt_plugin_api::CurveRead for OwnedCurve {
     fn value(&self, base: f64, s: f64) -> f64 {
         kt_model::param_at(base, &self.points, s, &self.shapes)
+    }
+    fn clone_box(&self) -> Box<dyn kt_plugin_api::CurveRead> {
+        Box::new(self.clone())
     }
 }
 
@@ -169,6 +173,26 @@ impl AudioNode {
             AudioNode::LayerMix => {}
             AudioNode::Plugin(n) => n.reset(),
         }
+    }
+
+    /// A copy that continues exactly as this node (pitch-tail-choice D4); `None` — its state
+    /// cannot be copied.
+    pub(crate) fn fork(&self) -> Option<AudioNode> {
+        match self {
+            AudioNode::LayerMix => Some(AudioNode::LayerMix),
+            AudioNode::Plugin(n) => n.fork().map(AudioNode::Plugin),
+        }
+    }
+}
+
+/// The echo row of an edge-reading slot is on (pitch-tail-choice D1): its kind declares
+/// `Decl.echo_row` and the slot's value there is non-zero.
+pub(crate) fn echo_rings(fx: &FxInstance) -> bool {
+    match (fx, plugin_audio(fx)) {
+        (FxInstance::Plugin(p), Some((m, _))) => {
+            m.decl.reads_across_edges && m.decl.echo_row.is_some_and(|row| p.get(row).is_some_and(|v| v != 0.0))
+        }
+        _ => false,
     }
 }
 

@@ -68,11 +68,15 @@ impl AudioKernel for StereoWidth {
 
 /// Stereo m/s width. width == 1.0 — an EXPLICIT pass-through (m/s repacking is
 /// not byte-identical).
+#[derive(Clone)]
 struct WidthNode {
     width: SmoothedParam,
 }
 
 impl AudioState for WidthNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], _structural: bool) {
         let width = k[0] as f32;
         self.width.set_target(width.clamp(0.0, 2.0));
@@ -184,6 +188,7 @@ impl AudioKernel for Eq {
     }
 }
 
+#[derive(Clone)]
 struct EqNode {
     /// The seven smoothed EQ parameters (low_g, low_f, mid_g, mid_f, mid_q, high_g, high_f).
     params: [SmoothedParam; 7],
@@ -197,6 +202,9 @@ impl EqNode {
 }
 
 impl AudioState for EqNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], _structural: bool) {
         for (p, v) in self.params.iter_mut().zip(k) {
             p.set_target(*v as f32);
@@ -303,6 +311,7 @@ impl AudioKernel for Distortion {
 }
 
 /// Soft saturation with level compensation and tone.
+#[derive(Clone)]
 struct DistNode {
     drive_db: SmoothedParam,
     tone: SmoothedParam,
@@ -311,6 +320,9 @@ struct DistNode {
 }
 
 impl AudioState for DistNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], _structural: bool) {
         let (drive_db, tone, mix) = (k[0] as f32, k[1] as f32, k[2] as f32);
         self.drive_db.set_target(drive_db);
@@ -405,6 +417,7 @@ impl AudioKernel for Bitcrusher {
 /// Lo-fi: bit-depth quantization + sample hold on the POSITION GRID
 /// (floor(pos·rate/sr) — determinism: two renders of one clip give the same
 /// artifacts, precedent — the seed of video noise).
+#[derive(Clone)]
 struct CrushNode {
     bits: SmoothedParam,
     rate_hz: SmoothedParam,
@@ -414,6 +427,9 @@ struct CrushNode {
 }
 
 impl AudioState for CrushNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], _structural: bool) {
         let (bits, rate_hz, mix) = (k[0] as f32, k[1] as f32, k[2] as f32);
         self.bits.set_target(bits.clamp(1.0, 16.0));
@@ -523,6 +539,7 @@ impl AudioKernel for Filter {
 }
 
 /// Resonant cut LP/HP/BP: RBJ biquad per channel.
+#[derive(Clone)]
 struct FilterNode {
     /// The index into `FILTER_MODES`.
     mode: usize,
@@ -542,6 +559,9 @@ impl FilterNode {
 }
 
 impl AudioState for FilterNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], _structural: bool) {
         let (mode, cutoff_hz, resonance) = (k[0] as usize, k[1] as f32, k[2] as f32);
         // changing the kind does NOT re-create the state (2 f32 per channel): the transient

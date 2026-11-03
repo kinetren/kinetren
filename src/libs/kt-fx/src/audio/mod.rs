@@ -446,12 +446,35 @@ pub struct ClipProcessor {
     /// The context applies (`chain_context`): the index of the LAST node that reads across the
     /// event's edges — the content gate stands right after it. `None` — the former edges.
     ctx: Option<usize>,
+    /// Per node: an edge-reading slot whose echo row is on (pitch-tail-choice D1).
+    echo_on: Vec<bool>,
+    /// "Rings on" is in force (pitch-tail-choice): the context applies, the slot at `ctx` rings the
+    /// echo of the nodes before it, one of them rings, and the engine has not said that the next
+    /// piece of a split carries this echo (`set_ring_end`). `false` — the cut, byte for byte.
+    ring: bool,
+    /// The engine's word (pitch-tail-choice D5): the next event continues this one's material as a
+    /// split, so its context carries the echo — this one does not ring.
+    ring_off: bool,
+    /// The tail twin (D3): nodes `0..=ctx` split off where the input reached the out-point, fed
+    /// silence from there; it gives the output from the out-point on until it replaces them.
+    twin: Option<Twin>,
+    /// The twin has replaced nodes `0..=ctx` (D3): the gate does not cut past the out-point and the
+    /// input stops at it, until the stream is back inside the event.
+    ringing: bool,
+}
+
+/// The nodes `0..=ctx` split off at the out-point and the dry ring of a layer mix with them
+/// (pitch-tail-choice D3).
+struct Twin {
+    nodes: Vec<(usize, AudioNode)>,
+    dry_ring: Option<DryRing>,
 }
 
 /// Delay of the dry side by a whole number of frames (R.48): between the snapshot of the dry
 /// side and the LayerMix marker node a lookahead node may stand,
 /// having “eaten” part of the lookahead — without alignment the blend would mix different
 /// moments of the material. With a zero delta the ring is not created at all.
+#[derive(Clone)]
 struct DryRing {
     buf: Vec<f32>,
     pos: usize,
@@ -525,6 +548,11 @@ impl ClipProcessor {
             across: Vec::new(),
             warp_back: false,
             ctx: None,
+            echo_on: Vec::new(),
+            ring: false,
+            ring_off: false,
+            twin: None,
+            ringing: false,
         };
         p.apply_params(fx, true);
         p
@@ -588,6 +616,21 @@ impl ClipProcessor {
         // reads across the edges with a live look-ahead, unless a warp starts in hold or backwards
         let last = (0..n).rev().find(|&i| self.across[i] && self.nodes[i].1.lookahead() > 0);
         self.ctx = last.filter(|_| !self.warp_back);
+        self.recompute_ring();
+    }
+
+    /// "Rings on" (pitch-tail-choice): only when something before the edge-reader rings — otherwise
+    /// the choice changes nothing, and the cut path runs byte for byte.
+    fn recompute_ring(&mut self) {
+        self.ring = !self.ring_off
+            && self.ctx.is_some_and(|c| {
+                self.echo_on.get(c).copied().unwrap_or(false)
+                    && self.nodes[..c].iter().any(|(_, node)| node.tail() > Tick::ZERO)
+            });
+        if !self.ring {
+            self.twin = None;
+            self.ringing = false;
+        }
     }
 
     /// Chain lookahead in frames — the same value as given by the
@@ -601,6 +644,16 @@ impl ClipProcessor {
     /// model — the processor is rebuilt (`FxStateStore`).
     pub fn opts(&self) -> ChainOpts {
         self.opts
+    }
+
+    /// The next event continues this one's material as a split (pitch-tail-choice D5): its context
+    /// already carries the echo of this one's last moments, as the uncut event would, so this one does
+    /// not ring it on as well. Without a state reset.
+    pub fn set_ring_end(&mut self, off: bool) {
+        if self.ring_off != off {
+            self.ring_off = off;
+            self.recompute_ring();
+        }
     }
 
     /// Update the clip length (trim) without resetting the state.
@@ -643,6 +696,7 @@ impl ClipProcessor {
                 .collect();
         }
         self.warp_back = !warp_forward(fx, &self.auto);
+        self.echo_on = self.nodes.iter().map(|(slot, _)| nodes::echo_rings(&fx[*slot])).collect();
         debug_assert_eq!(
             self.nodes.len(),
             fx.iter().filter(|f| AudioNode::has_node(f)).count(),
@@ -715,6 +769,8 @@ impl ClipProcessor {
         }
         self.next_local = i64::MIN;
         self.in_next = None;
+        self.twin = None;
+        self.ringing = false;
     }
 
     /// The armed loop region in CLIP-LOCAL frames, or `None` (pitch-loop-silence, D2). The
@@ -864,6 +920,8 @@ impl ClipProcessor {
         }
         self.in_next = None;
         self.loop_span = None;
+        self.twin = None;
+        self.ringing = false;
     }
 
     /// How much material the CHAIN has EATEN up to the clip-local position — the
@@ -885,6 +943,8 @@ impl ClipProcessor {
         // lookahead (R.48, item 337). The lookahead nodes’ rings live on in this case —
         // the seam rings out, like reverb (invariant 3).
         let input = self.fold(local + self.la);
+        // a twin split off before the jump belongs to the stream that stopped (pitch-tail-choice D3)
+        self.twin = None;
         self.reseat_source(input);
     }
 
@@ -892,6 +952,8 @@ impl ClipProcessor {
         for (_, n) in &mut self.nodes {
             n.reset();
         }
+        self.twin = None;
+        self.ringing = false;
         // pre-roll may reach into the left “handle”, but not before the start of the
         // material (−head_ext)
         // with the context (pitch-event-edges D1) it reads the source before the in-point too:
@@ -985,8 +1047,27 @@ impl ClipProcessor {
                 // silent before the event's material (an event starting inside the region)
                 if self.in_next.is_some_and(|p| p != chunk_in) {
                     self.reseat_source(chunk_in);
+                    self.twin = None;
                 }
                 self.in_next = Some(chunk_in + n as i64);
+            }
+            // THE TAIL TWIN TAKES OVER (pitch-tail-choice D3): once the gate's content position is
+            // past the out-point for the whole chunk, the twin replaces nodes 0..=ctx — the main ones
+            // hold the echo of the material past the out-point, which is never heard; back inside
+            // the event (a seam, a fold) the gate cuts at the out-point again
+            if let Some(c) = self.ctx.filter(|_| self.ring) {
+                let p0 = self.fold(chunk_local + self.ahead.get(c + 1).copied().unwrap_or(0));
+                if p0 >= self.clip_len + self.tail_ext {
+                    if let Some(t) = self.twin.take() {
+                        for (m, tn) in self.nodes[..=c].iter_mut().zip(t.nodes) {
+                            *m = tn;
+                        }
+                        self.dry_ring = t.dry_ring;
+                        self.ringing = true;
+                    }
+                } else {
+                    self.ringing = false;
+                }
             }
             // automation: targets at the chunk midpoint; rubato/one-pole smooth
             if !self.auto.is_empty() {
@@ -1019,6 +1100,13 @@ impl ClipProcessor {
                     let s = fold(chunk_local + ahead[i]) as f64 + n as f64 * 0.5;
                     node.set_targets(&self.auto, *slot, s / self.clip_len as f64);
                 }
+                // the twin follows the same targets: it is the same stream fed silence
+                if let Some(t) = self.twin.as_mut() {
+                    for (i, (slot, node)) in t.nodes.iter_mut().enumerate() {
+                        let s = fold(chunk_local + ahead[i]) as f64 + n as f64 * 0.5;
+                        node.set_targets(&self.auto, *slot, s / self.clip_len as f64);
+                    }
+                }
             }
             // layer-strength target at the chunk midpoint — by the same rule as the
             // other parameters (R.38 item 12: the fades are its curve)
@@ -1042,7 +1130,9 @@ impl ClipProcessor {
             // the event's own content ends at `gate_end`; with the context (pitch-event-edges D1)
             // the INPUT runs `la` past it — the content gate after the last edge-reading node cuts
             // the result back to the event
-            let gate_in = if self.ctx.is_some() { gate_end + self.la } else { gate_end };
+            // a ringing stream (pitch-tail-choice D3) hears nothing past the out-point: the twin it
+            // came from was fed silence there
+            let gate_in = if self.ctx.is_some() && !self.ringing { gate_end + self.la } else { gate_end };
             // an input FOLDED to before the event's material (the event starts inside the
             // region): the chain gets silence there, as on the first lap before its start. An
             // unfolded input before it is the pre-roll of the context.
@@ -1088,59 +1178,72 @@ impl ClipProcessor {
                     sub[cut * CH..].fill(0.0);
                 }
             }
+            // THE TAIL TWIN SPLITS OFF (pitch-tail-choice D3) where the input reaches the out-point:
+            // a copy of nodes 0..=ctx from exactly this state, fed the chunk with its frames from
+            // the out-point on zeroed and silence after — the echo of the event's own sound
+            let mut twin_sub: Vec<f32> = Vec::new();
+            if let Some(c) = self.ctx.filter(|_| self.ring && !self.ringing) {
+                if self.twin.is_none() && !before_material && chunk_in <= gate_end && gate_end < chunk_in + n as i64 {
+                    let forked: Option<Vec<(usize, AudioNode)>> =
+                        self.nodes[..=c].iter().map(|(slot, node)| node.fork().map(|f| (*slot, f))).collect();
+                    if let Some(nodes) = forked {
+                        self.twin = Some(Twin { nodes, dry_ring: self.dry_ring.clone() });
+                    }
+                }
+                if self.twin.is_some() {
+                    twin_sub = sub.to_vec();
+                    let cut = (gate_end - chunk_in).clamp(0, n as i64) as usize;
+                    twin_sub[cut * CH..].fill(0.0);
+                }
+            }
             // HONEST SLOT ORDER (R.47, item 325): the nodes are executed by their
             // position in the chain. The dry side of the layer strength — the snapshot BEFORE the
             // first node with a slot >= from (reverb/volume of the event
             // stand earlier — they fall into the dry; the layer’s nodes — only into the
             // wet: the former reverb_is_layer/layer_gain became consequences of
             // position, not flags).
-            let mut dry: Option<Vec<f32>> = None;
-            let ahead = &self.ahead;
             let span = if self.la > 0 { self.loop_span } else { None };
             let fold = move |p: i64| match span {
                 Some((a, b)) if p >= b => a + (p - a).rem_euclid(b - a),
                 _ => p,
             };
-            let dry_ring = &mut self.dry_ring;
-            let ctx = self.ctx;
-            let (head_ext, nodes_len) = (self.head_ext, self.nodes.len());
-            for (i, (slot, node)) in self.nodes.iter_mut().enumerate() {
-                if let Some(m) = &self.mix
-                    && *slot >= m.from
-                    && dry.is_none()
-                {
-                    let mut d = sub.to_vec();
-                    // between the snapshot and the marker stands a lookahead node:
-                    // the dry side must be delayed by the window it has eaten,
-                    // otherwise the blend would mix different moments of the material
-                    if let Some(r) = dry_ring.as_mut() {
-                        r.run(&mut d);
-                    }
-                    dry = Some(d);
-                }
-                if matches!(node, AudioNode::LayerMix) {
-                    if let (Some(k), Some(d)) = (mix_k, &dry) {
-                        let ik = 1.0 - k;
-                        for (v, dv) in sub.iter_mut().zip(d.iter()) {
-                            *v = dv * ik + *v * k;
-                        }
-                    }
-                } else {
-                    // an event has no key: the sidechain lives only in the TRACK chain
-                    // (the owner’s decision, R.65)
-                    node.process(sub, fold(chunk_local + ahead[i]), None);
-                }
-                // THE CONTENT GATE (pitch-event-edges D1): right after the last node that reads
-                // across the edges, everything outside the event is cut — the content position
-                // there runs ahead of the output by what the later nodes still read
-                if ctx == Some(i) {
-                    let p0 = fold(chunk_local + if i + 1 < nodes_len { ahead[i + 1] } else { 0 });
-                    content_gate(sub, p0, -head_ext, gate_end);
+            let ahead = &self.ahead;
+            let pos = |i: usize| fold(chunk_local + ahead[i]);
+            let pass = Pass { mix: self.mix.as_ref(), mix_k, pos: &pos };
+            let mut dry: Option<Vec<f32>> = None;
+            let nodes_len = self.nodes.len();
+            match self.ctx {
+                None => pass.run(&mut self.nodes, 0..nodes_len, sub, &mut dry, &mut self.dry_ring),
+                Some(c) => {
+                    pass.run(&mut self.nodes, 0..c + 1, sub, &mut dry, &mut self.dry_ring);
+                    // THE CONTENT GATE (pitch-event-edges D1): right after the last node that reads
+                    // across the edges, everything outside the event is cut — the content position
+                    // there runs ahead of the output by what the later nodes still read
+                    let p0 = fold(chunk_local + if c + 1 < nodes_len { self.ahead[c + 1] } else { 0 });
+                    let hi = if self.ringing { i64::MAX } else { gate_end };
+                    content_gate(sub, p0, -self.head_ext, hi);
                     // a dry side still waiting for its marker: it is aligned to the marker's
                     // content position
+                    let pd = fold(chunk_local + mix_ahead);
                     if let Some(d) = dry.as_mut() {
-                        content_gate(d, fold(chunk_local + mix_ahead), -head_ext, gate_end);
+                        content_gate(d, pd, -self.head_ext, hi);
                     }
+                    // the twin gives the frames from the out-point on (pitch-tail-choice D3)
+                    if let Some(t) = self.twin.as_mut() {
+                        let mut tdry: Option<Vec<f32>> = None;
+                        pass.run(&mut t.nodes, 0..c + 1, &mut twin_sub[..], &mut tdry, &mut t.dry_ring);
+                        content_gate(&mut twin_sub[..], p0, gate_end, i64::MAX);
+                        for (v, tv) in sub.iter_mut().zip(twin_sub.iter()) {
+                            *v += tv;
+                        }
+                        if let (Some(d), Some(mut td)) = (dry.as_mut(), tdry) {
+                            content_gate(&mut td, pd, gate_end, i64::MAX);
+                            for (v, tv) in d.iter_mut().zip(td.iter()) {
+                                *v += tv;
+                            }
+                        }
+                    }
+                    pass.run(&mut self.nodes, c + 1..nodes_len, sub, &mut dry, &mut self.dry_ring);
                 }
             }
             done += n;
@@ -1148,11 +1251,60 @@ impl ClipProcessor {
     }
 }
 
+/// One pass of a run of nodes over a chunk: the main stream and the tail twin run THIS code
+/// (pitch-tail-choice D3), so the twin is the same stream fed silence.
+struct Pass<'a> {
+    mix: Option<&'a MixCfg>,
+    mix_k: Option<f32>,
+    /// The content position node `i` sees at the chunk's first frame.
+    pos: &'a dyn Fn(usize) -> i64,
+}
+
+impl Pass<'_> {
+    fn run(
+        &self,
+        nodes: &mut [(usize, AudioNode)],
+        range: std::ops::Range<usize>,
+        sub: &mut [f32],
+        dry: &mut Option<Vec<f32>>,
+        dry_ring: &mut Option<DryRing>,
+    ) {
+        for i in range {
+            let (slot, node) = &mut nodes[i];
+            if let Some(m) = self.mix
+                && *slot >= m.from
+                && dry.is_none()
+            {
+                let mut d = sub.to_vec();
+                // between the snapshot and the marker stands a lookahead node:
+                // the dry side must be delayed by the window it has eaten,
+                // otherwise the blend would mix different moments of the material
+                if let Some(r) = dry_ring.as_mut() {
+                    r.run(&mut d);
+                }
+                *dry = Some(d);
+            }
+            if matches!(node, AudioNode::LayerMix) {
+                if let (Some(k), Some(d)) = (self.mix_k, dry.as_ref()) {
+                    let ik = 1.0 - k;
+                    for (v, dv) in sub.iter_mut().zip(d.iter()) {
+                        *v = dv * ik + *v * k;
+                    }
+                }
+                continue;
+            }
+            // an event has no key: the sidechain lives only in the TRACK chain
+            // (the owner’s decision, R.65)
+            node.process(sub, (self.pos)(i), None);
+        }
+    }
+}
+
 /// Zero the frames of `buf` (content positions from `p0`) outside `[lo, hi)`.
 fn content_gate(buf: &mut [f32], p0: i64, lo: i64, hi: i64) {
     let n = (buf.len() / CH) as i64;
-    let a = (lo - p0).clamp(0, n) as usize;
-    let b = (hi - p0).clamp(0, n) as usize;
+    let a = lo.saturating_sub(p0).clamp(0, n) as usize;
+    let b = hi.saturating_sub(p0).clamp(0, n) as usize;
     buf[..a * CH].fill(0.0);
     if b >= a {
         buf[b * CH..].fill(0.0);
