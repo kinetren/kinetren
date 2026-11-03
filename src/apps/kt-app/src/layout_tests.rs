@@ -19652,3 +19652,44 @@ fn t1413_reel_preview_does_not_mark_the_project_edited() {
     assert!(!rec.exists(), "an untouched project left a recovery file: {}", rec.display());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Test 1414 (readme-shots-showcase): the search window shows what it finds.
+///
+/// Found by the README pipeline: Ctrl+F, "char", and the window stayed 71 points tall — the
+/// field alone. Since windows-fill-their-area the window FITTED its content when it opened (an
+/// empty field, no finds) and then filled that size; the finds arrived later and were laid out
+/// below its bottom edge, clipped. What is asserted is what the person sees: after typing, the
+/// window is tall enough to hold the first find, and that find lies inside it.
+#[test]
+fn t1414_search_window_shows_its_finds() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    use kt_model::Command;
+    use kt_time::Tick;
+    let mut h = harness_lang(Lang::En);
+    for (i, name) in ["DROP", "DRONE", "DRUMS"].iter().enumerate() {
+        let at = Tick(90_000 * (i as i64 + 1));
+        h.state_mut().apply(Command::AddMarker { at, duration: Tick::ZERO });
+        h.state_mut().apply(Command::SetMarkerName { at, name: (*name).into() });
+    }
+    h.state_mut().search_open = true;
+    for _ in 0..4 {
+        h.step();
+    }
+    h.state_mut().search_query = "dr".into();
+    for _ in 0..4 {
+        h.step();
+    }
+    let win = h.ctx.memory(|m| m.area_rect(egui::Id::new("kt_search"))).expect("the search window");
+    let rows: Vec<egui::Rect> = h
+        .query_all_by_label_contains("DRO")
+        .map(|n| {
+            let b = n.accesskit_node().bounding_box().expect("a row's bounds");
+            egui::Rect::from_min_max(egui::pos2(b.x0 as f32, b.y0 as f32), egui::pos2(b.x1 as f32, b.y1 as f32))
+        })
+        .collect();
+    assert!(!rows.is_empty(), "the finds are not laid out at all");
+    assert!(
+        rows.iter().any(|r| win.contains_rect(*r)),
+        "no find lies inside the search window {win:?}: the finds {rows:?} are clipped below it"
+    );
+}

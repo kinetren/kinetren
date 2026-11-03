@@ -15,6 +15,11 @@ Test numbers t1412–t1419 are reserved by this change.
     old build asked "save your changes?" with `dirty_content` false and left
     `probe.kt.recovery.kt`, so the next start offered a restore; the fixed build asks nothing and
     leaves no file. t1413 red on the old line, green after; kt-app 513 tests green
+- [x] 1.4 The project search shows its finds: the window is sized, not fitted (`app.rs`
+  `draw_search`); t1414; the ui-reach scenario; a What's new line
+  - Done. Found by the search step on the footage (a 71-point crop with "char" typed). t1414 red
+    before (the finds at y 383–422 under the window's bottom edge at 390), green after, with
+    t918/t921/t1125/t1127; kt-app 514 tests green
 
 ## 2. The footage run
 

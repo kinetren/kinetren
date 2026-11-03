@@ -2512,7 +2512,10 @@ impl KtApp {
             crate::window_shell::Kind::Tool,
         )
             .anchor(egui::Align2::CENTER_CENTER, [0.0, -80.0])
-            .width(460.0, [320.0, 60.0])
+            // SIZED, not fitted: a fitted window measures its content when it opens — the empty
+            // field — and then fills that height, so the finds that arrive with the typing were
+            // laid out below its edge and never seen (readme-shots-showcase, t1414)
+            .size([460.0, 320.0], [320.0, 120.0])
             .show(ctx, |ui| {
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.search_query)
