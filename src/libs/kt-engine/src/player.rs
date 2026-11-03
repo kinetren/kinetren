@@ -16,7 +16,7 @@
 use crate::audio::AudioRenderer;
 use crate::fetch::CacheFetcher;
 use crate::fxstore::FxStateStore;
-use crate::prefetch::prefetch_audio_pass;
+use crate::prefetch::{prefetch_audio_pass, video_prefetch_pass};
 use crate::transport::Transport;
 use crate::video::{VideoRenderer, video_cache_idx};
 use crate::video_plan::{GpuBackendInfo, GpuExecError, VideoGpuExec};
@@ -42,7 +42,6 @@ pub const ENGINE_RATE_MAX: f32 = 8.0;
 pub const MASTER_GAIN_MAX: f32 = 16.0;
 const PLAYBACK_AUDIO_LOOKAHEAD_FRAMES: i64 = AUDIO_SAMPLE_RATE as i64 / 5; // 200 ms
 const PREFETCH_AUDIO_LOOKAHEAD_FRAMES: i64 = 2 * AUDIO_SAMPLE_RATE as i64; // 2 c
-const PREFETCH_VIDEO_LOOKAHEAD_TICKS: i64 = 2 * kt_time::TICK_HZ;
 
 /// The part shared with the audio callback: ring + consumption counter + flush.
 pub struct AudioShared {
@@ -1330,14 +1329,6 @@ fn audio_render_loop(ctx: RenderCtx) {
     }
 }
 
-/// Video lookahead of the prefetch: min(2 s, half the video budget) — otherwise
-/// prefetch insertions of high qualities evict their own window (item 19b).
-fn video_lookahead_ticks(q: Quality, frame_step: i64, max_video_bytes: usize) -> i64 {
-    let frame_bytes = (q.width as usize * q.height as usize * 4).max(1);
-    let frames = ((max_video_bytes / 2) / frame_bytes).max(2) as i64;
-    (frames * frame_step).min(PREFETCH_VIDEO_LOOKAHEAD_TICKS)
-}
-
 /// Frame (48k) for display at a given output latency. A pure function —
 /// tests 22-sync and 44. Inside the loop region the subtraction is wrapped over the region.
 /// `dir` — the transport direction (J4): in reverse what is audible now
@@ -1641,25 +1632,30 @@ fn prefetch_loop(
                 false,
             );
         }
-        // video lookahead: 2 s, but not more than half the cache budget (item 19b:
-        // 4K frames were evicting their own window)
         let t0 = transport.playhead();
         let q = *preview_quality.lock().unwrap();
         let step = video.grid.frame_step();
-        // the window budget — by the LARGEST decode quality (R.46, item 318):
-        // at Quality the window would overflow the cache by exactly S^2 times
-        let ahead =
-            video_lookahead_ticks(video.max_decode_quality(q), step, cache.max_video_bytes());
         let region_ticks =
             region.map(|(s, e)| (Tick::from_audio_frames(s).0, Tick::from_audio_frames(e).0));
-        let ranges: Vec<TickRange> = lookahead_windows(t0.0, ahead, region_ticks)
-            .into_iter()
-            .map(|r| TickRange::new(Tick(r.start), Tick(r.end)))
-            .collect();
-        for (media, src_pts, dq) in ranges.iter().flat_map(|r| video.wanted_frames(*r, q)) {
-            if !cache.contains_video(source_id(media), Some(dq), video_cache_idx(src_pts))
-                && let Some(w) = workers.read().unwrap().get(&media)
-            {
+        let missing = video_prefetch_pass(video, &cache, t0, q, region_ticks);
+        let workers = workers.read().unwrap();
+        // what the playhead has passed is no longer asked for: a request left in the queue
+        // would be decoded behind the playhead into an entry nobody reads, in the time the
+        // frames ahead need (video-prefetch-thrash). The look-ahead requests are this
+        // loop's alone — Playback ones (the frame on screen) are not touched.
+        type Keys = std::collections::HashSet<(i64, (u32, u32))>;
+        let mut keep: HashMap<MediaId, Keys> = HashMap::new();
+        for (media, src_pts, dq) in &missing {
+            keep.entry(*media).or_default().insert((src_pts.0, (dq.width, dq.height)));
+        }
+        for (media, w) in workers.iter() {
+            let k = keep.get(media);
+            w.withdraw_video(Priority::NearPrefetch, |pts, q| {
+                k.is_some_and(|k| q.is_some_and(|q| k.contains(&(pts, q))))
+            });
+        }
+        for (media, src_pts, dq) in missing {
+            if let Some(w) = workers.get(&media) {
                 w.submit(DecodeRequest {
                     kind: RequestKind::video_on_grid(src_pts, Some(dq), step),
                     prio: Priority::NearPrefetch,

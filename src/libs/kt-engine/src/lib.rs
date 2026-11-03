@@ -135,7 +135,10 @@ pub use player::{
     AudioShared, Player, VideoBackendStatus, VideoCost, callback_step, lookahead_windows,
     reverse_frames, varispeed_fill,
 };
-pub use prefetch::prefetch_audio_pass;
+pub use prefetch::{
+    PREFETCH_VIDEO_LOOKAHEAD_TICKS, prefetch_audio_pass, simulate_video_playback,
+    video_prefetch_pass, video_prefetch_wants,
+};
 pub use transitions::TransMix;
 pub use transport::Transport;
 pub use video::{

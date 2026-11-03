@@ -5,6 +5,13 @@ month, newest first.
 
 ## kt26.11
 
+- **Playing layered 4K footage keeps its frames ready.** Where several layers play at once —
+  a shot over its blurred backdrop, a picture-in-picture, a composition — the preview used to
+  ask for more frames ahead than its memory holds and threw away the ones it needed next, so
+  the picture stalled and Diagnostics filled with "dropped before the first read". The
+  look-ahead now fits the memory, and frames the playhead has already passed are no longer
+  decoded.
+
 - **Ctrl+F shows what it finds again.** The search window kept the height of its empty field, so
   the media, events and markers it found were hidden under its bottom edge until you dragged the
   window larger.

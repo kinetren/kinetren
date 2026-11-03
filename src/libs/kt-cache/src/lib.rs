@@ -275,6 +275,27 @@ impl BurstCache {
         self.contains(BurstKey { source, kind: BurstKind::video(quality), idx })
     }
 
+    /// Mark the entries that are STILL WANTED as recent, in the given order: the last key
+    /// ends up the most recent (video-prefetch-thrash). The prefetch passes its look-ahead
+    /// window from the furthest frame to the nearest, so the eviction takes what was read
+    /// or is no longer wanted first, and among the window the frame furthest ahead —
+    /// never one the playhead reaches sooner. Unlike a read it does not set `had_hit`,
+    /// counts no hit or miss and does not move the epoch; absent keys are skipped.
+    /// (A plain `contains` probe must not do this: in ascending order it inverted the LRU,
+    /// item 19.)
+    pub fn refresh(&self, keys: impl IntoIterator<Item = BurstKey>) {
+        let mut inner = self.inner.lock().unwrap();
+        for key in keys {
+            inner.recency_counter += 1;
+            let counter = inner.recency_counter;
+            let Some(entry) = inner.map.get_mut(&key) else { continue };
+            let old = entry.recency;
+            entry.recency = counter;
+            inner.lru.remove(&old);
+            inner.lru.insert(counter, key);
+        }
+    }
+
     /// The video budget (for the budget-aware lookahead of prefetch).
     pub fn max_video_bytes(&self) -> usize {
         self.config.max_video_bytes
@@ -794,6 +815,50 @@ mod perf_counter_tests {
         // “dropped by LRU or overwritten before any read”)
         cache.insert_video(src, None, 3, frame(bytes));
         assert_eq!(cache.stats().unused_evictions, 2, "overwrite before read — thrash");
+    }
+
+    /// Test 1417 (video-prefetch-thrash): `refresh` keeps the look-ahead window ahead of
+    /// what was read. Plain LRU ranks a prefetched frame by its INSERTION, so the nearest
+    /// frame of the window — decoded first — is the oldest and goes first; refreshed from
+    /// the furthest to the nearest, the window outlives the read frame, and among the
+    /// window the furthest frame goes first. A refresh is not a read: no `had_hit`, no
+    /// hit counted, the epoch stays.
+    #[test]
+    fn t1417_refresh_keeps_the_window_ahead_of_the_read() {
+        let bytes = 1000usize;
+        let cache =
+            BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: bytes * 3 });
+        let src = SourceId(1);
+        // the window 0..3 is decoded in order, the playhead reads 0
+        for i in 0..3 {
+            cache.insert_video(src, None, i, frame(bytes));
+        }
+        let _ = cache.get_video(src, None, 0);
+        let (stats, epoch) = (cache.stats(), cache.epoch());
+        // the next pass wants 1..4: refreshed far → near, then 3 arrives
+        let key = |idx| BurstKey { source: src, kind: BurstKind::video(None), idx };
+        cache.refresh([2, 1].map(key));
+        cache.refresh([key(99)]); // an absent key is skipped
+        assert_eq!(cache.epoch(), epoch, "a refresh does not move the epoch");
+        assert_eq!(cache.stats().video_hits, stats.video_hits, "a refresh is not a read");
+        cache.insert_video(src, None, 3, frame(bytes));
+        assert!(!cache.contains_video(src, None, 0), "the frame already shown goes");
+        assert!(cache.contains_video(src, None, 1) && cache.contains_video(src, None, 2));
+        assert_eq!(cache.stats().unused_evictions, 0, "nothing unread was dropped");
+        // without the refresh the same sequence dropped the window's nearest frame
+        let lru =
+            BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: bytes * 3 });
+        for i in 0..3 {
+            lru.insert_video(src, None, i, frame(bytes));
+        }
+        let _ = lru.get_video(src, None, 0);
+        lru.insert_video(src, None, 3, frame(bytes));
+        assert!(!lru.contains_video(src, None, 1), "plain LRU: the nearest unread frame goes");
+        // among the window the furthest goes first; a refreshed entry is still unread
+        cache.refresh([3, 2, 1].map(key));
+        cache.insert_video(src, None, 4, frame(bytes));
+        assert!(!cache.contains_video(src, None, 3), "the furthest of the window goes first");
+        assert_eq!(cache.stats().unused_evictions, 1, "a refresh does not count as a read");
     }
 
     /// Test 497 (R.53, item 409): `invalidate_source` goes by the index of ITS
