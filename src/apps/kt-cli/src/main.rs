@@ -464,6 +464,8 @@ fn probe_range(
         }
     }
 
+    probe_prefetch(project, &facts, t0, t1);
+
     // --time: DOES THE ENGINE KEEP UP rendering this place (R.43, item 301).
     // After item 294 the starvation of the ring (“right underrun”) no longer stalls
     // the clock — it is heard as silence, and without a number there is nothing to compare it with. Here
@@ -566,6 +568,55 @@ fn probe_range(
         }
     }
     0
+}
+
+/// THE VIDEO PREFETCH WINDOW against the cache (video-prefetch-thrash): what one pass asks
+/// for (frames × decode size, every layer) and what an infinitely fast decoder plus
+/// playback do to a cache of the program's size. No file is decoded: a key is filled with
+/// a frame of its decode size, the read is the plan's own `frame_plan`. "Dropped before
+/// the first read" here is the performance panel's prefetch thrash, without the timing of
+/// a live run — the first thing to look at when the panel reports it.
+fn probe_prefetch(project: &Project, facts: &kt_engine::SourceFacts, t0: Tick, t1: Tick) {
+    let video = kt_engine::VideoRenderer::new_with_facts(project, facts);
+    let budget = kt_cache::CacheConfig::default().max_video_bytes;
+    let step = video.grid.frame_step();
+    let (pw, ph) = (project.settings.width.max(2), project.settings.height.max(2));
+    println!("\n-- video prefetch window (cache {} MB, no decoding) --", budget >> 20);
+    // the player's starting preview, then the preview menu's 1/2 and 1/1
+    for q in [
+        kt_media::Quality { width: 640, height: 360 },
+        kt_media::Quality { width: (pw / 2) & !1, height: (ph / 2) & !1 },
+        kt_media::Quality { width: pw & !1, height: ph & !1 },
+    ] {
+        let (mut worst_bytes, mut worst_frames, mut worst_t) = (0usize, 0, t0);
+        let mut t = video.grid.align_floor(t0);
+        while t < t1 {
+            let wants = kt_engine::video_prefetch_wants(&video, t, q, None, budget);
+            let bytes: usize =
+                wants.iter().map(|(_, _, dq)| dq.width as usize * dq.height as usize * 4).sum();
+            if bytes > worst_bytes {
+                (worst_bytes, worst_frames, worst_t) = (bytes, wants.len(), t);
+            }
+            t = Tick(t.0 + step);
+        }
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+        kt_engine::simulate_video_playback(&video, &cache, t0, t1, q);
+        let s = cache.stats();
+        let lookups = (s.video_hits + s.video_misses).max(1);
+        println!(
+            "  preview {}x{}: worst pass at {:.2} s asks {} frames = {} MB (budget {} MB); \
+             played: dropped before the first read {} (abandoned {}), video hit {:.0}%",
+            q.width,
+            q.height,
+            worst_t.0 as f64 / kt_time::TICK_HZ as f64,
+            worst_frames,
+            worst_bytes >> 20,
+            budget >> 20,
+            s.unused_evictions,
+            s.abandoned_evictions,
+            s.video_hits as f64 / lookups as f64 * 100.0
+        );
+    }
 }
 
 /// `probe --time`, the VIDEO half (morpher-event-grid-cost, D1): what composing each frame of
@@ -712,8 +763,10 @@ fn decode_all(path: &str) -> Result<(usize, kt_time::Tick), String> {
     let count = (info.duration.0 / step.max(1)).max(1);
     let keys: Vec<kt_time::Tick> = (0..count).map(|i| kt_time::Tick(i * step)).collect();
     let mut seen = 0usize;
-    src.read_video_span(&keys, Some(kt_media::Quality { width: 64, height: 36 }), &mut |_, _| seen += 1)
-        .map_err(|e| e.to_string())?;
+    src.read_video_span(&keys, Some(kt_media::Quality { width: 64, height: 36 }), &mut |_, _| {
+        seen += 1
+    })
+    .map_err(|e| e.to_string())?;
     if seen != keys.len() {
         return Err(format!("{seen} of {} grid frames decoded", keys.len()));
     }
@@ -768,7 +821,9 @@ fn export_log_line(l: &kt_engine::export::ExportLog) -> String {
         ExportLog::Placeholder { label } => format!("placeholder rendered for {label}"),
         ExportLog::Phase(ExportPhase::Video) => "phase: video".into(),
         ExportLog::Phase(ExportPhase::Audio) => "phase: audio".into(),
-        ExportLog::Phase(ExportPhase::Finalize) | ExportLog::Finalizing => "finalizing the file".into(),
+        ExportLog::Phase(ExportPhase::Finalize) | ExportLog::Finalizing => {
+            "finalizing the file".into()
+        }
         ExportLog::Phase(ExportPhase::Done) => "done".into(),
         ExportLog::Error(e) => format!("error: {e}"),
     }
@@ -919,7 +974,9 @@ fn load_project_file(input: &str) -> Result<(Project, Retained), i32> {
                 FileKind::LegacyKtproj => "a legacy .ktproj",
                 FileKind::FormerName => "a project of Kinotrain (the former name of Kinetren)",
             };
-            eprintln!("{input}: {what}, not a project — run `kt-cli import {input} <out.kt>` first");
+            eprintln!(
+                "{input}: {what}, not a project — run `kt-cli import {input} <out.kt>` first"
+            );
             Err(1)
         }
         Err(e) => {
@@ -953,7 +1010,8 @@ fn run(args: &[String]) -> i32 {
     // the FFmpeg folder the person chose in the app (View → FFmpeg… → Locate folder…)
     // is the first step of the search here too (windows-build)
     // the download ROOT: every version folder in it is searched, newest first (ffmpeg-9)
-    let download = cfg!(windows).then(|| kt_dirs::ffmpeg_download_root().to_string_lossy().into_owned());
+    let download =
+        cfg!(windows).then(|| kt_dirs::ffmpeg_download_root().to_string_lossy().into_owned());
     kt_ffmpeg::set_search_dirs(ffmpeg_user_choice(), download);
     // the built-in plugin set, before any project is read (plugin-api-stage1, D6)
     kt_plugins_builtin::install();
@@ -1303,7 +1361,10 @@ fn run(args: &[String]) -> i32 {
             };
             match decode_all(input) {
                 Ok((frames, last)) => {
-                    println!("decoded {frames} video frames, the last at {:.3} s", last.0 as f64 / kt_time::TICK_HZ as f64);
+                    println!(
+                        "decoded {frames} video frames, the last at {:.3} s",
+                        last.0 as f64 / kt_time::TICK_HZ as f64
+                    );
                     0
                 }
                 Err(e) => {
@@ -1390,4 +1451,3 @@ fn kt_lock_holder(project: &str) -> Option<u32> {
     }
     None
 }
-

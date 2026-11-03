@@ -193,6 +193,15 @@ impl MediaWorker {
         self.shared.cond.notify_one();
     }
 
+    /// Withdraw the queued VIDEO requests of priority `prio` that `keep(pts, quality)`
+    /// rejects (video-prefetch-thrash): the look-ahead the prefetch no longer asks for —
+    /// the playhead has passed it — is not decoded into an entry nobody reads. A span
+    /// already taken by the decoder is not interrupted.
+    pub fn withdraw_video(&self, prio: Priority, keep: impl Fn(i64, Option<(u32, u32)>) -> bool) {
+        let mut q = self.shared.queue.lock().unwrap();
+        q.video.retain(|&(p, pts, quality), _| p != prio || keep(pts, quality));
+    }
+
     /// Cancel all requests of generations < `min_generation` (transport seek).
     pub fn cancel_generations_below(&self, min_generation: u64) {
         self.shared.min_generation.store(min_generation, Ordering::Release);

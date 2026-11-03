@@ -16,7 +16,7 @@
 use crate::audio::AudioRenderer;
 use crate::fetch::CacheFetcher;
 use crate::fxstore::FxStateStore;
-use crate::prefetch::prefetch_audio_pass;
+use crate::prefetch::{prefetch_audio_pass, video_prefetch_pass};
 use crate::transport::Transport;
 use crate::video::{VideoRenderer, video_cache_idx};
 use crate::video_plan::{GpuBackendInfo, GpuExecError, VideoGpuExec};
@@ -42,7 +42,6 @@ pub const ENGINE_RATE_MAX: f32 = 8.0;
 pub const MASTER_GAIN_MAX: f32 = 16.0;
 const PLAYBACK_AUDIO_LOOKAHEAD_FRAMES: i64 = AUDIO_SAMPLE_RATE as i64 / 5; // 200 ms
 const PREFETCH_AUDIO_LOOKAHEAD_FRAMES: i64 = 2 * AUDIO_SAMPLE_RATE as i64; // 2 c
-const PREFETCH_VIDEO_LOOKAHEAD_TICKS: i64 = 2 * kt_time::TICK_HZ;
 
 /// The part shared with the audio callback: ring + consumption counter + flush.
 pub struct AudioShared {
@@ -306,12 +305,13 @@ impl Player {
             let stop = stop.clone();
             let quality = preview_quality.clone();
             let region_p = loop_region.clone();
+            let shared_p = shared.clone();
             std::thread::Builder::new()
                 .name("prefetch".into())
                 .spawn(move || {
                     prefetch_loop(
                         cache, transport, workers, natives_p, project, quality, stop, wake_p,
-                        stats_p, version_p, content_p, region_p,
+                        stats_p, version_p, content_p, region_p, shared_p,
                     )
                 })
                 .expect("spawn prefetch")
@@ -719,6 +719,9 @@ impl Player {
     /// path as `compose_preview_into`, but without composite — needed by
     /// diagnostics and harness tests that check “the edit has reached
     /// the picture”.
+    /// A Playback request is the frame on screen: the next preview composite
+    /// withdraws it unless it is a layer of that frame (video-prefetch-thrash), so a
+    /// caller that waits for the frame re-submits in its loop.
     pub fn request_video(&self, media: kt_model::MediaId, pts: Tick, q: Quality) {
         let step = self.video.lock().unwrap().grid.frame_step();
         if let Some(w) = self.workers.read().unwrap().get(&media) {
@@ -902,7 +905,19 @@ impl Player {
         let step = video.grid.frame_step();
         // the decode quality comes FROM THE REQUEST (R.46, item 318): a clip with a zooming
         // chain is warmed larger than Quality, and exactly that must be asked for
-        for (media, src_pts, dq) in video.layers_at(aligned, q) {
+        let layers = video.layers_at(aligned, q);
+        // Playback is THE FRAME ON SCREEN: a request for a frame the picture has left is
+        // withdrawn (video-prefetch-thrash). It outranks the look-ahead, so when decoding
+        // lagged, every frame shown queued one more, and the decoder spent itself on frames
+        // nobody would read while the window ahead starved.
+        for (media, w) in self.workers.read().unwrap().iter() {
+            w.withdraw_video(Priority::Playback, |pts, wq| {
+                layers
+                    .iter()
+                    .any(|(m, p, dq)| m == media && p.0 == pts && wq == Some((dq.width, dq.height)))
+            });
+        }
+        for (media, src_pts, dq) in layers {
             let idx = video_cache_idx(src_pts);
             // contains, not get: the probe must not refresh the LRU (item 19)
             if !self.cache.contains_video(source_id(media), Some(dq), idx)
@@ -1330,14 +1345,6 @@ fn audio_render_loop(ctx: RenderCtx) {
     }
 }
 
-/// Video lookahead of the prefetch: min(2 s, half the video budget) — otherwise
-/// prefetch insertions of high qualities evict their own window (item 19b).
-fn video_lookahead_ticks(q: Quality, frame_step: i64, max_video_bytes: usize) -> i64 {
-    let frame_bytes = (q.width as usize * q.height as usize * 4).max(1);
-    let frames = ((max_video_bytes / 2) / frame_bytes).max(2) as i64;
-    (frames * frame_step).min(PREFETCH_VIDEO_LOOKAHEAD_TICKS)
-}
-
 /// Frame (48k) for display at a given output latency. A pure function —
 /// tests 22-sync and 44. Inside the loop region the subtraction is wrapped over the region.
 /// `dir` — the transport direction (J4): in reverse what is audible now
@@ -1583,6 +1590,7 @@ fn prefetch_loop(
     project_version: Arc<AtomicU64>,
     content_version: Arc<AtomicU64>,
     loop_region: Arc<Mutex<Option<(i64, i64)>>>,
+    shared: Arc<AudioShared>,
 ) {
     // renderers are cached until the project version changes: cloning the Project and
     // rebuilding the graphs every 100 ms was expensive even at idle (item 1)
@@ -1641,25 +1649,41 @@ fn prefetch_loop(
                 false,
             );
         }
-        // video lookahead: 2 s, but not more than half the cache budget (item 19b:
-        // 4K frames were evicting their own window)
-        let t0 = transport.playhead();
+        // the window starts at the frame ON SCREEN, not at the audio playhead: under an
+        // output latency the picture is `latency` behind (`video_display_frame`), and a
+        // window from the playhead would leave those frames out — and withdraw their
+        // requests below (video-prefetch-thrash). The reverse window stays as it was.
+        let rate = f32::from_bits(shared.playback_rate.load(Ordering::Acquire));
+        let shown = if rate > 0.0 {
+            let latency = shared.latency_smooth.load(Ordering::Acquire);
+            video_display_frame(head, latency, region, 1, rate)
+        } else {
+            head
+        };
+        let t0 = Tick::from_audio_frames(shown);
         let q = *preview_quality.lock().unwrap();
         let step = video.grid.frame_step();
-        // the window budget — by the LARGEST decode quality (R.46, item 318):
-        // at Quality the window would overflow the cache by exactly S^2 times
-        let ahead =
-            video_lookahead_ticks(video.max_decode_quality(q), step, cache.max_video_bytes());
         let region_ticks =
             region.map(|(s, e)| (Tick::from_audio_frames(s).0, Tick::from_audio_frames(e).0));
-        let ranges: Vec<TickRange> = lookahead_windows(t0.0, ahead, region_ticks)
-            .into_iter()
-            .map(|r| TickRange::new(Tick(r.start), Tick(r.end)))
-            .collect();
-        for (media, src_pts, dq) in ranges.iter().flat_map(|r| video.wanted_frames(*r, q)) {
-            if !cache.contains_video(source_id(media), Some(dq), video_cache_idx(src_pts))
-                && let Some(w) = workers.read().unwrap().get(&media)
-            {
+        let missing = video_prefetch_pass(video, &cache, t0, q, region_ticks);
+        let workers = workers.read().unwrap();
+        // what the playhead has passed is no longer asked for: a request left in the queue
+        // would be decoded behind the playhead into an entry nobody reads, in the time the
+        // frames ahead need (video-prefetch-thrash). The look-ahead requests are this
+        // loop's alone — Playback ones (the frame on screen) are not touched.
+        type Keys = std::collections::HashSet<(i64, (u32, u32))>;
+        let mut keep: HashMap<MediaId, Keys> = HashMap::new();
+        for (media, src_pts, dq) in &missing {
+            keep.entry(*media).or_default().insert((src_pts.0, (dq.width, dq.height)));
+        }
+        for (media, w) in workers.iter() {
+            let k = keep.get(media);
+            w.withdraw_video(Priority::NearPrefetch, |pts, q| {
+                k.is_some_and(|k| q.is_some_and(|q| k.contains(&(pts, q))))
+            });
+        }
+        for (media, src_pts, dq) in missing {
+            if let Some(w) = workers.get(&media) {
                 w.submit(DecodeRequest {
                     kind: RequestKind::video_on_grid(src_pts, Some(dq), step),
                     prio: Priority::NearPrefetch,

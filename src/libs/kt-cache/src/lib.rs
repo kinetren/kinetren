@@ -91,6 +91,11 @@ struct Entry {
     /// Was there at least one get after the insertion — eviction of an unread entry
     /// is prefetch-thrash (the performance panel: “no-read drops”, port of v1 hadHit).
     had_hit: bool,
+    /// The last prefetch pass (`refresh`) that still wanted this entry — or the one current at
+    /// its insertion. Evicted unread while it equals the current pass, the entry is thrash;
+    /// older, the prefetch had stopped asking for it (a seek left it, the picture skipped its
+    /// frame), and the drop is "abandoned" (video-prefetch-thrash).
+    wanted: u64,
     /// The width of an entry’s coverage in idx units (audio = 1 burst; video = the step of
     /// the frame grid in ticks — coverage is merged into honest bars, item 20).
     span: i64,
@@ -186,6 +191,8 @@ struct Inner {
     audio_bytes: usize,
     video_bytes: usize,
     recency_counter: u64,
+    /// The number of the last prefetch pass, one per `refresh` call (video-prefetch-thrash).
+    want_pass: u64,
 }
 
 /// Counters for the performance panel (cumulative; the UI computes the deltas).
@@ -201,6 +208,10 @@ pub struct CacheStats {
     /// How many keys `invalidate_source` has viewed (item 409): a guard that
     /// it goes by the source index, and not by the whole cache.
     pub invalidate_scan_steps: u64,
+    /// Entries evicted or overwritten unread AFTER the prefetch had stopped asking for them
+    /// (a seek left the window, the picture skipped the frame): waste, not thrash — they are
+    /// NOT in `unused_evictions` (video-prefetch-thrash).
+    pub abandoned_evictions: u64,
 }
 
 #[derive(Default)]
@@ -212,6 +223,7 @@ struct StatCounters {
     evictions: AtomicU64,
     unused_evictions: AtomicU64,
     invalidate_scan_steps: AtomicU64,
+    abandoned_evictions: AtomicU64,
 }
 
 /// A thread-safe burst cache with LRU over separate byte budgets for
@@ -237,6 +249,7 @@ impl BurstCache {
                 audio_bytes: 0,
                 video_bytes: 0,
                 recency_counter: 0,
+                want_pass: 0,
             }),
             epoch: AtomicU64::new(0),
             stats: StatCounters::default(),
@@ -252,6 +265,7 @@ impl BurstCache {
             evictions: self.stats.evictions.load(Ordering::Relaxed),
             unused_evictions: self.stats.unused_evictions.load(Ordering::Relaxed),
             invalidate_scan_steps: self.stats.invalidate_scan_steps.load(Ordering::Relaxed),
+            abandoned_evictions: self.stats.abandoned_evictions.load(Ordering::Relaxed),
         }
     }
 
@@ -273,6 +287,30 @@ impl BurstCache {
 
     pub fn contains_video(&self, source: SourceId, quality: Option<Quality>, idx: i64) -> bool {
         self.contains(BurstKey { source, kind: BurstKind::video(quality), idx })
+    }
+
+    /// Mark the entries that are STILL WANTED as recent, in the given order: the last key
+    /// ends up the most recent (video-prefetch-thrash). The prefetch passes its look-ahead
+    /// window from the furthest frame to the nearest, so the eviction takes what was read
+    /// or is no longer wanted first, and among the window the frame furthest ahead —
+    /// never one the playhead reaches sooner. Unlike a read it does not set `had_hit`,
+    /// counts no hit or miss and does not move the epoch; absent keys are skipped.
+    /// (A plain `contains` probe must not do this: in ascending order it inverted the LRU,
+    /// item 19.)
+    pub fn refresh(&self, keys: impl IntoIterator<Item = BurstKey>) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.want_pass += 1;
+        let pass = inner.want_pass;
+        for key in keys {
+            inner.recency_counter += 1;
+            let counter = inner.recency_counter;
+            let Some(entry) = inner.map.get_mut(&key) else { continue };
+            entry.wanted = pass;
+            let old = entry.recency;
+            entry.recency = counter;
+            inner.lru.remove(&old);
+            inner.lru.insert(counter, key);
+        }
     }
 
     /// The video budget (for the budget-aware lookahead of prefetch).
@@ -424,7 +462,7 @@ impl BurstCache {
         if let Some(old) = inner.map.remove(&key) {
             if !old.had_hit {
                 // overwriting an unread entry is also thrash (v1)
-                self.stats.unused_evictions.fetch_add(1, Ordering::Relaxed);
+                self.count_unread_drop(&old, inner.want_pass);
             }
             inner.lru.remove(&old.recency);
             let ob = old.payload.bytes();
@@ -441,14 +479,16 @@ impl BurstCache {
 
         inner.recency_counter += 1;
         let recency = inner.recency_counter;
+        let wanted = inner.want_pass;
         // the serial number of the content is taken from the same monotonic
         // counter: it is not reused, therefore “the same address — other
         // bytes” is always distinguishable (item 409)
         inner.recency_counter += 1;
         let serial = inner.recency_counter;
-        inner
-            .map
-            .insert(key, Entry { payload, serial, recency, pinned: false, had_hit: false, span });
+        inner.map.insert(
+            key,
+            Entry { payload, serial, recency, pinned: false, had_hit: false, wanted, span },
+        );
         inner.lru.insert(recency, key);
         inner.by_source.entry(key.source).or_default().insert(key);
         if is_audio {
@@ -464,6 +504,18 @@ impl BurstCache {
 
         self.evict_over_budget(&mut inner);
         self.epoch.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// An entry dropped before its first read: thrash while the latest prefetch pass still
+    /// wanted it (or it is audio, or nothing ever refreshed — export, the tests of t37), otherwise
+    /// abandoned.
+    fn count_unread_drop(&self, entry: &Entry, want_pass: u64) {
+        // only the video look-ahead is refreshed: an audio burst keeps the old rule
+        if entry.wanted == want_pass || entry.payload.is_audio() {
+            self.stats.unused_evictions.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.stats.abandoned_evictions.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     fn evict_over_budget(&self, inner: &mut Inner) {
@@ -504,7 +556,7 @@ impl BurstCache {
             }
             self.stats.evictions.fetch_add(1, Ordering::Relaxed);
             if !entry.had_hit {
-                self.stats.unused_evictions.fetch_add(1, Ordering::Relaxed);
+                self.count_unread_drop(&entry, inner.want_pass);
             }
         }
     }
@@ -794,6 +846,89 @@ mod perf_counter_tests {
         // “dropped by LRU or overwritten before any read”)
         cache.insert_video(src, None, 3, frame(bytes));
         assert_eq!(cache.stats().unused_evictions, 2, "overwrite before read — thrash");
+    }
+
+    /// Test 1417 (video-prefetch-thrash): `refresh` keeps the look-ahead window ahead of
+    /// what was read. Plain LRU ranks a prefetched frame by its INSERTION, so the nearest
+    /// frame of the window — decoded first — is the oldest and goes first; refreshed from
+    /// the furthest to the nearest, the window outlives the read frame, and among the
+    /// window the furthest frame goes first. A refresh is not a read: no `had_hit`, no
+    /// hit counted, the epoch stays.
+    #[test]
+    fn t1417_refresh_keeps_the_window_ahead_of_the_read() {
+        let bytes = 1000usize;
+        let cache =
+            BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: bytes * 3 });
+        let src = SourceId(1);
+        // the window 0..3 is decoded in order, the playhead reads 0
+        for i in 0..3 {
+            cache.insert_video(src, None, i, frame(bytes));
+        }
+        let _ = cache.get_video(src, None, 0);
+        let (stats, epoch) = (cache.stats(), cache.epoch());
+        // the next pass wants 1..4: refreshed far → near, then 3 arrives
+        let key = |idx| BurstKey { source: src, kind: BurstKind::video(None), idx };
+        cache.refresh([2, 1].map(key));
+        cache.refresh([key(99)]); // an absent key is skipped
+        assert_eq!(cache.epoch(), epoch, "a refresh does not move the epoch");
+        assert_eq!(cache.stats().video_hits, stats.video_hits, "a refresh is not a read");
+        cache.insert_video(src, None, 3, frame(bytes));
+        assert!(!cache.contains_video(src, None, 0), "the frame already shown goes");
+        assert!(cache.contains_video(src, None, 1) && cache.contains_video(src, None, 2));
+        assert_eq!(cache.stats().unused_evictions, 0, "nothing unread was dropped");
+        // without the refresh the same sequence dropped the window's nearest frame
+        let lru =
+            BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: bytes * 3 });
+        for i in 0..3 {
+            lru.insert_video(src, None, i, frame(bytes));
+        }
+        let _ = lru.get_video(src, None, 0);
+        lru.insert_video(src, None, 3, frame(bytes));
+        assert!(!lru.contains_video(src, None, 1), "plain LRU: the nearest unread frame goes");
+        // among the window the furthest goes first; a refreshed entry is still unread
+        cache.refresh([3, 2, 1].map(key));
+        cache.insert_video(src, None, 4, frame(bytes));
+        assert!(!cache.contains_video(src, None, 3), "the furthest of the window goes first");
+        assert_eq!(cache.stats().unused_evictions, 1, "a refresh does not count as a read");
+    }
+
+    /// Test 1417b (video-prefetch-thrash): an entry dropped unread is THRASH only while the
+    /// latest prefetch pass still wanted it. One the prefetch had stopped asking for — the
+    /// window a seek left, a frame the picture skipped — is counted as abandoned, and the
+    /// performance panel's "prefetch thrash" no longer reports it. Audio is never refreshed
+    /// and keeps the old rule; so does a cache nobody refreshes (t37).
+    #[test]
+    fn t1417b_abandoned_is_not_thrash() {
+        let bytes = 1000usize;
+        let cache =
+            BurstCache::new(CacheConfig { max_audio_bytes: 8192, max_video_bytes: bytes * 2 });
+        let src = SourceId(1);
+        let key = |idx| BurstKey { source: src, kind: BurstKind::video(None), idx };
+        // a window 0..2 is decoded and wanted; then a seek: the next pass wants 10..12
+        cache.insert_video(src, None, 0, frame(bytes));
+        cache.insert_video(src, None, 1, frame(bytes));
+        cache.refresh([1, 0].map(key));
+        cache.refresh([11, 10].map(key));
+        cache.insert_video(src, None, 10, frame(bytes));
+        cache.insert_video(src, None, 11, frame(bytes));
+        let s = cache.stats();
+        assert_eq!(s.evictions, 2, "the left window went");
+        assert_eq!(s.unused_evictions, 0, "a window the seek left is not thrash");
+        assert_eq!(s.abandoned_evictions, 2);
+        // the window still wanted IS thrash when it is dropped unread
+        cache.refresh([11, 10].map(key));
+        cache.insert_video(src, None, 12, frame(bytes));
+        let s = cache.stats();
+        assert_eq!((s.unused_evictions, s.abandoned_evictions), (1, 2), "wanted and dropped");
+        // so is an entry inserted after the pass that asked for it
+        cache.insert_video(src, None, 13, frame(bytes));
+        assert_eq!(cache.stats().unused_evictions, 2, "inserted since the pass: still wanted");
+        // audio keeps the old rule whatever the passes
+        cache.insert_audio(src, Arc::new(kt_media::AudioBurst::silence(0)));
+        cache.refresh([key(13)]);
+        cache.insert_audio(src, Arc::new(kt_media::AudioBurst::silence(1)));
+        let s = cache.stats();
+        assert_eq!((s.unused_evictions, s.abandoned_evictions), (3, 2), "audio unread is thrash");
     }
 
     /// Test 497 (R.53, item 409): `invalidate_source` goes by the index of ITS
