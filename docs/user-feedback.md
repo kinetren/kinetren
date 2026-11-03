@@ -2494,6 +2494,25 @@ twin, WGSL). A reconnaissance note (Nuke BlinkScript, Halide, ISPC, CubeCL, rust
 Premiere, Blender pick a backend) and a one-effect prototype come first; migrating every effect is
 the owner's decision on the measured prototype.
 
+## 2026-11-03 — paired audio for the simulation effects
+
+The owner, verbatim (registry `docs/ktprompts/kkt-26.11.03b-index.md`): "запрос: парные эффекты
+к симуляционным. вот это опять агенты не работали и не подумали что к тому же vhs tape должен быть
+парный audio-фильтр, к datamosh тоже" (request: paired effects for the simulation ones. Again the
+agents did not work and did not think that VHS Tape must have a paired audio filter, Datamosh
+too.)
+
+**Taken as (change `sim-audio-pairs`):** every simulation effect of a device that records sound
+gets its audio half, a simulation too (not a hiss-and-wobble imitation): VHS Tape — the linear
+audio track and Hi-Fi FM audio of the same tape and deck (head gap, bias, wow and flutter of the
+same capstan, dropouts of the same oxide, head-switch and tracking noise); Datamosh — a real audio
+codec stream damaged the way the video stream is (lost and repeated frames, broken coefficients,
+concealment); Camera ISP — the phone's microphone chain (capsule, AGC, noise suppression, the
+codec). The pair is driven by the same device state as the picture, so a defect is seen and heard
+at the same moment; adding the video effect to an event with linked audio adds its pair there,
+visible and switchable off. The rule is written into CLAUDE.md next to "imitation is not
+simulation", so the next simulation effect is not done without its pair.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
