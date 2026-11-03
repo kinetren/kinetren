@@ -2529,6 +2529,19 @@ working, so the two notes waited for his next message while two of three slots w
   from a check made in the same turn with its time, an executor's question carried to the owner at
   once, a freed slot filled in the same turn.
 
+## 2026-11-04 — what the agents find and leave is not collected
+
+> Еще претензия - а ты вообще читаешь что там агенты находят какие-то баги которые не трогают? Как
+> бы нам это надо собирать и обдумывать тоже..
+
+The reports were read, but what they left stayed in the orchestrator's session memory and on
+proposal cards, with no list and no verdict.
+
+- Taken as: `docs/found-defects.md`, harvested from the executors' transcripts since 2026-11-01; a
+  mandatory "Найдено, не исправлено" section in every report; the list updated with every merge;
+  a verdict on every open row at the end of each stage (`docs/orchestrator.md`, "What executors
+  find and leave").
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

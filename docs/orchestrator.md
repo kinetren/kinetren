@@ -62,7 +62,8 @@ Every brief carries the standing rules, because executors start fresh:
 - an old file that stopped loading is fixed in the import door; a model change OTIO cannot express
   goes into "What OTIO export loses";
 - do not merge into `master`; report ONCE, in Russian, when done (no interim notes); a question
-  for the owner goes into that report, addressed to the orchestrator, which carries it.
+  for the owner goes into that report, addressed to the orchestrator, which carries it; the report
+  ends with "Найдено, не исправлено" (see "What executors find and leave").
 
 ## Never let a stopped executor stand
 
@@ -90,6 +91,22 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
   for. On every turn the owner writes, free slots are filled first, from the stage's list; when
   the current stage's work no longer fills three slots, the next stage's work that touches other
   files starts early.
+
+## What executors find and leave
+
+2026-11-04: "а ты вообще читаешь что там агенты находят какие-то баги которые не трогают? Как бы нам
+это надо собирать и обдумывать тоже.."
+
+- **`docs/found-defects.md` is the one list** of what any agent saw and did not fix: what a person
+  suffers, where, the evidence, the state, the verdict. A remark in a report, in a session's memory
+  or on a proposal card does not count as recorded.
+- **Every executor's report ends with "Найдено, не исправлено"**, or the word "ничего". A report
+  without the section goes back to the executor before the merge.
+- **The merge is not finished until the list is updated**: each item gets a row in the turn its
+  branch is merged, or the row of an item the merge fixed moves to `fixed`.
+- **Thought over, not only collected.** At the end of each stage the orchestrator gives every open
+  row a verdict (fix in the coming stage, fix later, not a defect) and reports to the owner what it
+  decided; a person-visible defect goes into the next stage's plan unless he says otherwise.
 
 ## Disk
 
