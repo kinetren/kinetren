@@ -32,6 +32,9 @@ by its insertion: the window's nearest frames, decoded first, were the first evi
 - The preview's Playback request means the frame on screen: composing a frame withdraws the
   Playback requests for frames the picture has left. The look-ahead window starts at the frame
   on screen (the playhead minus the output latency).
+- "Prefetch thrash" means an entry dropped unread while the prefetch still wanted it. Entries
+  it had stopped asking for (the window a seek left, frames the picture skipped) are counted
+  apart as abandoned and printed by the probe, not reported by the panel as thrash.
 - `kt-cli probe` prints the window against the cache at three preview sizes and plays the
   range with an infinitely fast decoder (`simulate_video_playback`), reporting entries dropped
   before the first read and the video hit rate.
@@ -46,4 +49,4 @@ by its insertion: the window's nearest frames, decoded first, were the first evi
 
 `kt-cache` (`refresh`), `kt-engine` (`prefetch.rs`: `video_prefetch_wants`,
 `video_prefetch_pass`, `simulate_video_playback`; `player.rs` prefetch loop; `worker.rs`
-`withdraw_video`), `kt-cli` probe. No format, no UI text. Tests t1416, t1416b, t1417, t1418, t1418b.
+`withdraw_video`), `kt-cli` probe. No format, no UI text. Tests t1416, t1416b, t1417, t1417b, t1418, t1418b.

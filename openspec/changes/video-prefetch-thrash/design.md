@@ -92,6 +92,30 @@ withdraw their requests — on a device with 40–100 ms of latency, the very fr
 shown. The prefetch loop now starts the forward window at `video_display_frame(head,
 latency_smooth, region, 1, rate)`; the reverse window stays as it was (forward from the head).
 
+### D4d. Thrash is an entry dropped while it is still wanted
+
+The second re-shoot (D4b and D4c in) still printed 1–3 "dropped before the first read" a second
+and 164 in all. A temporary log of every unread eviction during the shot answered what they
+were: all 52 evicted during it were entries the prefetch had STOPPED asking for — 42 the window
+warmed where the project opened and the seek to the plain cut left behind, the rest single frames of
+display cells the picture skipped (V-fps 20–24 on a 25 fps grid). Not one was still wanted.
+The counter is v1's `hadHit` port, and it counts every unread drop; the panel calls it prefetch
+thrash, which is a claim about the prefetch evicting what it will need.
+
+`refresh` gives the cache the missing fact: it numbers the passes, and an entry carries the
+last pass that wanted it (or the pass current at its insertion — it was inserted because a pass
+asked for it). An unread entry dropped while its number is the current pass is thrash
+(`unused_evictions`, the panel's number, unchanged in meaning for everything else); an older one
+is `abandoned_evictions` — waste the person already sees as V-skip or as a seek, reported by
+`kt-cli probe`, not by the panel. Audio is never refreshed and keeps the old rule; a cache
+nobody refreshes (export, the reel preview, t37) counts exactly as before. With this the shot
+reads "no-read drops total: 0"; the problem log keeps "video hit 73 % — decoding cannot keep
+up", which is true of 4K at decode ×2 on llvmpipe at load 11, and stays in the picture.
+
+Rejected: hiding the counter or the note. The panel is a diagnostic; what it calls thrash must
+be thrash, and what is merely waste must not disappear — it moved to the probe, which already
+prints the window and the simulated playback.
+
 ### D4. One wiring for the player, the probe and the tests
 
 `video_prefetch_pass` (refresh + missing keys) is what the player submits, and

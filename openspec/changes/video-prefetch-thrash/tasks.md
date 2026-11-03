@@ -1,6 +1,6 @@
 # Tasks: video-prefetch-thrash
 
-Test numbers t1416–t1418 (with t1416b, t1418b) are used by this change (t1419 is left to the other reservations).
+Test numbers t1416–t1418 (with t1416b, t1417b, t1418b) are used by this change (t1419 is left to the other reservations).
 
 ## 1. Measure
 
@@ -21,6 +21,10 @@ Test numbers t1416–t1418 (with t1416b, t1418b) are used by this change (t1419 
   - Done. Found by the first re-shoot (task 3.2): 59 no-read drops and "decoding cannot keep up"
     left on the fixed build. t1418b red with the withdrawal off (all eight frames between
     decoded), green after
+
+- [x] 2.5 Thrash = dropped while still wanted: the pass number on the entry, `abandoned_evictions`; t1417b
+  - Done. Found by the second re-shoot: 164 drops left. A temporary eviction log during the shot:
+    0 still wanted, 52 abandoned (42 of the window the seek left). t1417b red under the old rule
 
 ## 3. Close
 

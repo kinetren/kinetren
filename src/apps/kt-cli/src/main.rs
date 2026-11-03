@@ -605,7 +605,7 @@ fn probe_prefetch(project: &Project, facts: &kt_engine::SourceFacts, t0: Tick, t
         let lookups = (s.video_hits + s.video_misses).max(1);
         println!(
             "  preview {}x{}: worst pass at {:.2} s asks {} frames = {} MB (budget {} MB); \
-             played: dropped before the first read {}, video hit {:.0}%",
+             played: dropped before the first read {} (abandoned {}), video hit {:.0}%",
             q.width,
             q.height,
             worst_t.0 as f64 / kt_time::TICK_HZ as f64,
@@ -613,6 +613,7 @@ fn probe_prefetch(project: &Project, facts: &kt_engine::SourceFacts, t0: Tick, t
             worst_bytes >> 20,
             budget >> 20,
             s.unused_evictions,
+            s.abandoned_evictions,
             s.video_hits as f64 / lookups as f64 * 100.0
         );
     }
