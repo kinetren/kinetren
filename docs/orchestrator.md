@@ -76,8 +76,10 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
   orchestrator cannot see it.
 - **Subscribe right after every start**: `SendMessage` with `notify_when_idle: true` and no message,
   addressed by the name and ref `ListAgents` prints (the short handle does not resolve). It is
-  one-shot: subscribe again after a notice that did not end the executor's work, and after sending
-  it a follow-up. The tool's reply must say "Subscribed"; a failure is fixed before the turn ends.
+  one-shot: subscribe again after sending it a follow-up, or once it is busy again; a subscription
+  on a session already idle fires at once. A session id does not take a subscription, and a session
+  still starting is not listed yet. The tool's reply must say "Subscribed"; a failure is fixed
+  before the turn ends. Between notices, `list_sessions` is checked on every turn.
 - **"Working" is a measured claim.** Any statement of who works comes from
   `mcp__ccd_session_mgmt__list_sessions` in the same turn and carries its time. An `isRunning: false`
   session is said to have stopped, with what it waits for. An earlier statement is never repeated.
@@ -127,11 +129,12 @@ the sidecar fix are merged). Then, in the owner's order:
 
 1. **Performance**: the preview and the final render, and "the math" (AVX, Vulkan…):
    `compute-backends` (the owner answers its memo), `preview-throughput` (started 2026-11-04 from
-   the merged export work: the frame path at full quality, 4K decode speed, one decoder per file).
+   the merged export work: the frame path at full quality, 4K decode speed, one decoder per file),
+   `hw-encode-context` (Intel and AMD encode in hardware).
 2. **Build and CI speed** ("все что больше 10мин+ это ужас"): the local build/test loop, the
    cost of a plugin edit, CI wall time (21 min on 2026-11-02: windows-build 13 min → windows-test
    7 min in series); the proposed-only change `ci-speedup` is the starting point.
-3. **Usability**: control layouts like other editors (v26.10 L1/L2 — "Layout & Controls style",
+3. **Usability**: first `r72-timeline-transport-defects` (19 tasks, none done), then control layouts like other editors (v26.10 L1/L2 — "Layout & Controls style",
    a customize button and a settings code), `preview-canvas-and-gizmos`, the small defects
    (`region-copy-of-selected`, `fader-wheel-and-region-edges`, the transparent tail at widths not
    divisible by 8, the vocoder level at start phase).
