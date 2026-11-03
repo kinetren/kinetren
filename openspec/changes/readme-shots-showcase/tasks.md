@@ -23,10 +23,15 @@ Test numbers t1412–t1419 are reserved by this change.
 
 ## 2. The footage run
 
-- [ ] 2.1 Run `readme-shots.py --sources /media/e/developer/kt.9/sources/showcase-media`; look at every image at its
+- [x] 2.1 Run `readme-shots.py --sources /media/e/developer/kt.9/sources/showcase-media`; look at every image at its
   native size; re-take weak frames
-- [ ] 2.2 README and guide: the four effect shots and the welcome window referenced with alt
+  - Done in five runs, each image looked at; what each run taught is design D8. Scratch drivers
+    surveyed the styled cuts, the Datamosh offsets (0.24–3.3 s) and the VHS head conditions on
+    three clips before the choices were fixed in the pipeline. The fourth run found the search
+    defect (task 1.4), the fifth is the committed set: 18 images, 10–252 KB, 1.6 MB in all
+- [x] 2.2 README and guide: the four effect shots and the welcome window referenced with alt
   text, alt text of the changed shots updated; `AWAITING_FOOTAGE = []`; `readme-check.py --check`
+  - Done. `docs/images/CREDITS.md` already names all nine clips of the footage
 
 ## 3. Close
 

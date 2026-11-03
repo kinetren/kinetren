@@ -17,7 +17,7 @@ effects, shape masks, curve automation on every parameter, Slowed+Reverb for pic
 sound, titles, and picture and sound generators. Export to MP4 renders exactly what the
 preview shows.
 
-![kinetren during playback: the media bin in free layout, a vertical clip over its blurred backdrop in the preview, live level meters, the timeline with titles, montage, music and a morpher](docs/images/hero.webp)
+![kinetren during playback: the media bin in free layout, a reel's title and tilted picture over a shot with chromatic aberration and glow in the preview, live level meters, the timeline with titles, montage, music and a morpher](docs/images/hero.webp)
 
 ## Features
 
@@ -47,7 +47,7 @@ every effect, transition and title can be animated the same way.
 
 ### Video effects
 
-![The effect gallery: every effect previewed on the event's own frame](docs/images/video-fx.webp)
+![The effect gallery scrolled to its colour, distortion, Camera ISP and VHS Tape presets, each previewed on the event's own frame](docs/images/video-fx.webp)
 
 Geometry, Mirror, Corner Pin, Blur, Sharpen, Radial Blur, Greenscreen, Drop Shadow,
 Edges, Noise, VHS, EventGrid, Vignette, Pixelate, Halftone, Glow, Pan 3D, Cylinder 3D,
@@ -66,6 +66,8 @@ opacity, invert, and add / subtract / intersect / difference between masks. A ma
 the event's picture, limits one effect (a blur on a face only) or cuts a whole track; its
 shape can be keyed over time.
 
+![A Pen mask drawn on the preview with its points and feather; a Duotone tints only the skyline inside it](docs/images/masks.webp)
+
 ### Simulations
 
 Three effects model the real process instead of painting its look:
@@ -80,6 +82,12 @@ Three effects model the real process instead of painting its look:
 - **Datamosh** runs its own video codec over the clip and breaks it on purpose: dropped
   keyframes, blooming motion, borrowed motion vectors, with curves and Reset keys on the
   beat.
+
+![The same frame after a cut without and with Datamosh: the night city's motion drags the previous shot's hillside](docs/images/fx-datamosh.webp)
+
+![The same night frame without and with Camera ISP, Phone at night: sensor noise, the denoiser's smear and the phone's tone curve](docs/images/fx-camera-isp.webp)
+
+![The VHS Tape deck face with head A chipped, beside the frame the tape plays back](docs/images/fx-vhs-tape.webp)
 
 ### Titles and generators
 
@@ -98,11 +106,11 @@ peel, glitch, film burn, light leaks and more.
 
 ### Morpher
 
-![The same frame without the morpher and with it: the vertical clip is replaced by another source and gets a VHS look with glow](docs/images/morpher-before-after.webp)
+![The same frame without the morpher and with it: the clip is replaced by another source played back from a worn VHS tape](docs/images/morpher-before-after.webp)
 
 A morpher changes everything under it for as long as it lasts, like an adjustment layer
-that can also swap the source. Above, the clips under it take another source and get a VHS
-look with glow. Fade it, set its strength, or bake it into the events.
+that can also swap the source. Above, the clips under it take another source, played back
+from a worn VHS tape. Fade it, set its strength, or bake it into the events.
 
 ![The morpher editor: targets, the effect batch, strength, fades and the new source](docs/images/morpher.webp)
 
@@ -129,7 +137,7 @@ result.
 
 ### Diagnostics
 
-![The diagnostics window during playback](docs/images/perf-panel.webp)
+![The Diagnostics window during playback: live numbers and three graphs — quality, FFmpeg activity and cache churn](docs/images/perf-panel.webp)
 
 Live numbers and three graphs (playback, FFmpeg activity, cache) for when something is
 slow. If the program crashes, a window says so at once with the error and the log, and
@@ -177,6 +185,8 @@ code-signed yet, so SmartScreen may warn: *More info → Run anyway*. `make wind
 the same zip from source.
 
 ## First steps
+
+![The welcome window: the tour, templates, five lessons, a recent project with its picture, and What's new](docs/images/welcome.webp)
 
 The welcome window offers a five-lesson tour, templates and your recent projects. Drop
 video files on the window and they land on the timeline. **Space** plays, **S** splits,

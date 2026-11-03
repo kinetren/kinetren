@@ -49,14 +49,14 @@ SHOTS = [
     ("perf-panel", "the diagnostics panel during playback"),
     ("fx-datamosh", "the same frame after a cut without and with Datamosh (Cut mosh)"),
     ("fx-camera-isp", "the same frame without and with Camera ISP (Phone at night)"),
-    ("fx-vhs-tape", "the VHS Tape deck face with a clogged head, and the frame it gives"),
+    ("fx-vhs-tape", "the VHS Tape deck face with a chipped head, and the frame it gives"),
     ("masks", "a Pen mask drawn on the preview, a Duotone limited to it"),
 ]
 
 # Shots the pipeline takes whose images wait for the owner's run on the showcase footage (he
 # fetches it himself, 2026-10-21): `readme-check.py` lets one be absent while nothing references
 # it. Once `readme-shots.py` has written it, reference it in the docs and drop it from here.
-AWAITING_FOOTAGE = ["fx-datamosh", "fx-camera-isp", "fx-vhs-tape", "masks", "welcome"]
+AWAITING_FOOTAGE = []
 
 RUST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 FIXTURES = os.path.join(RUST, "fixtures")
@@ -106,11 +106,22 @@ def targets(project):
     # a double click inside a transition window opens the transition, not
     # the event: the styled cut must have none on either side
     joined = {t[k] for t in doc["transitions"] for k in ("a", "b") if t.get(k)}
-    styled = [c for c in clips if c["kind"] == "video" and c["lane"] == 1 and c.get("fx")
-              and c["id"] not in joined]
-    if not styled:
-        raise StepError("showcase project: no styled montage cut without transitions")
-    video = max(styled, key=lambda c: (c["duration"], -c["start"]))
+    paths = {m["id"]: m.get("path", "") for m in doc.get("media", [])}
+
+    def named(word, cands):
+        """The first candidate cut from the footage file whose name has `word`; otherwise the
+        middle one (the fixtures have no such names)."""
+        return next((c for c in cands if word in paths.get(c["media"], "").lower()),
+                    cands[len(cands) // 2])
+
+    # the gallery previews every effect on the event's own frame AS IT IS NOW: a plain cut, or
+    # every cell would show the event's look on top of its own; the Lake Bled drone shot is
+    # bright and colourful
+    unstyled = [c for c in clips if c["kind"] == "video" and c["lane"] == 1 and not c.get("fx")
+                and c["id"] not in joined and c["duration"] >= 72000]
+    if not unstyled:
+        raise StepError("showcase project: no plain montage cut without transitions")
+    video = named("lake", sorted(unstyled, key=lambda c: (-c["duration"], c["start"])))
     title = first("title", lambda c: (c.get("gen") or {}).get("kind") == "text")
     trans = next((t for t in doc["transitions"]
                   if t["kind"].get("kind") != "crossfade"
@@ -129,7 +140,6 @@ def targets(project):
     # other video track at its time, no transition, not a reel or a generator) and with no look
     # of its own — the "before" half is the plain frame
     reels = {q["id"] for q in doc["sequences"]}
-    paths = {m["id"]: m.get("path", "") for m in doc.get("media", [])}
     videos = [c for c in clips if c["kind"] == "video"]
 
     def alone(c):
@@ -137,8 +147,12 @@ def targets(project):
         return (c["kind"] == "video" and c["lane"] == 1 and c["duration"] >= 72000
                 and c["id"] not in joined and c["media"] not in reels and not c.get("gen")
                 and not c.get("fx")
+                # its own blurred backdrop (the same clip under a slightly wider frame) is part
+                # of its picture; anything else on screen is not
                 and not any(o["lane"] != c["lane"] and o["start"] < end
-                            and o["start"] + o["duration"] > c["start"] for o in videos))
+                            and o["start"] + o["duration"] > c["start"]
+                            and not (o["media"] == c["media"] and o["start"] == c["start"])
+                            for o in videos))
 
     plain = [c for c in clips if alone(c)]
     if not plain:
@@ -149,11 +163,32 @@ def targets(project):
                         for o in clips)]
     if not after_cut:
         raise StepError("showcase project: no main-track cut between two sources")
-    # a dark clip shows the night phone best (the Charlotte night drone shot of the footage)
-    night = next((c for c in plain if "charlotte" in paths.get(c["media"], "").lower()), plain[0])
-    return {"reel": reel, "music": music, "video": video, "title": title,
-            "transition": (trans, by_id[trans["b"]]), "morph": doc["morphers"][0],
-            "cut": after_cut[len(after_cut) // 2], "night": night, "plain": plain[len(plain) // 2]}
+    # a dark clip shows the night phone best (the Charlotte night drone shot of the footage); the
+    # night city cut right after another drone shot moshes best: its lights bleed into the old
+    # picture. The tape needs a bright picture: a clogged head over a night city is
+    # snow and nothing else; the bright cartoon of Coffee Run shows the tape's bleed and dropouts
+    # best. The mask is drawn on the longest night shot (the skyline)
+    night = named("charlotte", plain)
+    longest = sorted(plain, key=lambda c: (-c["duration"], c["start"]))
+    # the morpher's frame: the middle of its longest plain target from another source than the
+    # one it swaps in (or "before" and "after" show the same film)
+    m = doc["morphers"][0]
+    swap = m.get("patch", {}).get("media")
+    ids = set(m.get("targets", {}).get("ids", []))
+    under = [c for c in clips if c["id"] in ids and not c.get("fx") and c["media"] != swap]
+    span = (m["start"], m["start"] + m["duration"])
+    under = [c for c in under if c["start"] >= span[0] and c["start"] + c["duration"] <= span[1]]
+    morph_at = (max(under, key=lambda c: (c["duration"], -c["start"])) if under else None)
+    morph_at = (morph_at["start"] + morph_at["duration"] // 2 if morph_at
+                else m["start"] + m["duration"] // 2)
+    # the lightest stretch to play under Diagnostics: the NASA vertical clip and the square one
+    # after it are small files; the start of the edit has the 4K Charge under the intro reel
+    first_plain = named("webb", sorted(unstyled, key=lambda c: c["start"]))
+    return {"reel": reel, "music": music, "video": video, "title": title, "first_plain": first_plain,
+            "transition": (trans, by_id[trans["b"]]), "morph": m, "morph_at": morph_at,
+            "cut": named("charlotte", sorted(after_cut, key=lambda c: (-c["duration"], c["start"]))),
+            "night": night,
+            "bright": named("coffee", longest), "mask": named("charlotte", longest)}
 
 
 class Shooter:
@@ -321,10 +356,21 @@ class Shooter:
         try:
             self.widen_bin(app, step)
             self.still(app, step, "screen settled with the wide bin")
-            # playback: the meters show live levels, the preview moves
+            # playback from the project's cursor, a moment before the mid-edit reel instance: the
+            # shot waits for the playhead to be well inside it (the stinger over a styled cut; the
+            # preview of a debug build lags the first second or two behind a 4K decode)
             app.key("space")
             self.kt.pause(3.0, "meters and preview need a moment of playback to show levels")
             self.require(step, app.playing(), "playback running")
+            reel = self.tg["reel"]
+            region = json.load(open(self.project))["project"].get("region") or {}
+            lo = reel["start"] + min(180000, reel["duration"] * 2 // 5)
+            hi = min(reel["start"] + reel["duration"], region.get("end", 1 << 62))
+            deadline = time.time() + 30.0
+            while not lo <= app.geom().get("playhead", 0) < hi:
+                self.require(step, time.time() < deadline,
+                             f"the playhead inside the mid-edit reel ({lo}..{hi} ticks)")
+                self.kt.poll_step(0.1)
             g = app.geom()
             ww, wh = self.kt.geometry()["w"], self.kt.geometry()["h"]
             tl, bin_ = g["timeline"], g["bin"]
@@ -399,7 +445,11 @@ class Shooter:
             app.key("ctrl+f")
             self.require(step, app.has_probe("win.search"), "the search window opened")
             app.type_text("char")
+            # the window grows with its results a frame or two after the typing: its rectangle
+            # is read once the screen settled, or the crop holds the field alone
+            self.still(app, step, "the search results listed")
             r = self.probe(app, step, "win.search", app.has_probe("win.search"))
+            self.require(step, r["h"] > 120, f"the search window lists results (height {r['h']})")
             self.capture(app, step, "search", r)
         finally:
             self.close(app)
@@ -419,8 +469,7 @@ class Shooter:
         from PIL import Image, ImageDraw, ImageFont
 
         step = "morpher-before-after"
-        m = self.tg["morph"]
-        at = m["start"] + m["duration"] // 2
+        at = self.tg["morph_at"]
         doc = json.load(open(self.project))
         doc["project"]["morphers"][0]["enabled"] = False
         before_project = self.project.replace(".kt", "-no-morpher.kt")
@@ -456,7 +505,7 @@ class Shooter:
             font = ImageFont.truetype("DejaVuSans-Bold.ttf", 24)
         except OSError:
             font = ImageFont.load_default()
-        for i, (img, label) in enumerate(zip(frames, ("Without the morpher", "With the morpher: another source, a security camera at night"))):
+        for i, (img, label) in enumerate(zip(frames, ("Without the morpher", "With the morpher: another source from a worn VHS tape"))):
             out.paste(img.resize((w, h)), (i * (w + gap), label_h))
             draw.text((i * (w + gap) + 12, 10), label, fill=(230, 230, 230), font=font)
         path = os.path.join(self.raw, "morpher-before-after.png")
@@ -537,8 +586,9 @@ class Shooter:
 
     def datamosh(self):
         c = self.tg["cut"]
-        # a few frames after the cut: the new shot's motion drags the old shot's picture
-        self.effect_before_after("fx-datamosh", c, c["start"] + 21600, "datamosh",
+        # 20 frames after the cut: the new shot's motion has dragged the old shot's picture far
+        # enough to see, and both shots are still recognisable
+        self.effect_before_after("fx-datamosh", c, c["start"] + 72000, "datamosh",
                                  "fxreg.var.datamosh.0")
 
     def camera_isp(self):
@@ -551,7 +601,7 @@ class Shooter:
         from PIL import Image
 
         step = "fx-vhs-tape"
-        c = self.tg["plain"]
+        c = self.tg["bright"]
         at = c["start"] + c["duration"] // 2
         app = self.fresh(step)
         try:
@@ -561,8 +611,10 @@ class Shooter:
             self.add_effect(app, step, c, "vhs tape", "fxreg.tpl.vhs_tape")
             self.require(step, app.has_probe("deck.head.0.0", tries=40), "the deck face drawn")
             self.require(step, app.click_probe("deck.head.0.0"), "click on head A of the drum")
-            self.require(step, app.has_probe("deck.cond.Clogged", tries=20), "the condition row of head A")
-            self.require(step, app.click_probe("deck.cond.Clogged"), "click on “Clogged”")
+            # Chipped: the picture stays, with the dropouts and noise of a damaged head. A dirty or
+            # clogged head loses the FM carrier altogether — honest snow, but nothing to look at
+            self.require(step, app.has_probe("deck.cond.Chipped", tries=20), "the condition row of head A")
+            self.require(step, app.click_probe("deck.cond.Chipped"), "click on “Chipped”")
             # the panel first (the window covers part of the preview), then the frame without it
             win = self.probe(app, step, "win.fx", app.has_probe("win.fx"))
             png = self.still(app, step, "the deck face settled")
@@ -591,7 +643,7 @@ class Shooter:
     def masks(self):
         """A Duotone limited to a Pen mask drawn around the middle of the frame, feathered."""
         step = "masks"
-        c = self.tg["plain"]
+        c = self.tg["mask"]
         at = c["start"] + c["duration"] // 2
         app = self.fresh(step)
         try:
@@ -747,6 +799,15 @@ class Shooter:
         step = "perf-panel"
         app = self.fresh(step)
         try:
+            # a stretch a person plays, not the heaviest one: the loop off (L) and the playhead
+            # on the edit's lightest plain cut. Inside the loop the debug build decodes 4K
+            # footage under a reel and two effects, and the problem log fills with underruns
+            # that describe the build, not the program. Seek first: the open window's graphs
+            # redraw on their own, and the screen never settles under them
+            app.key("l")
+            first = self.tg["first_plain"]
+            self.seek(app, first["start"])
+            self.still(app, step, "the playhead on the lightest plain cut")
             self.require(step, app.click_probe("tb.diag"), "click on the diagnostics button")
             self.probe(app, step, "win.diag", app.has_probe("win.diag"))
             app.key("space")
