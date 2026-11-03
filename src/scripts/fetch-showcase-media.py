@@ -21,6 +21,7 @@ Total download ≈ 0.9 GB.
 """
 import argparse
 import hashlib
+from http.client import HTTPException
 import json
 import os
 import shutil
@@ -118,27 +119,40 @@ def sha1_of(path):
     return h.hexdigest()
 
 
-def download(url, path, size):
+def download(url, path, size, tries=20):
+    """Fetches into `path`.part until it holds `size` bytes. A connection the server closes early
+    (a short read with no error) or one that breaks mid-read is resumed from where it stopped:
+    checking the SHA-1 of a short file and deleting it threw 109 of 213 MB away (2026-11-03)."""
     part = path + ".part"
-    have = os.path.getsize(part) if os.path.exists(part) else 0
-    if have >= size:
-        return part
-    headers = {"Range": f"bytes={have}-"} if have else {}
-    with http(url, headers) as r, open(part, "ab" if have else "wb") as out:
-        if have and getattr(r, "status", 200) != 206:
-            out.truncate(0)  # the server ignored the range: start over
-            have = 0
-        done, last = have, time.time()
-        while True:
-            chunk = r.read(1 << 20)
-            if not chunk:
-                break
-            out.write(chunk)
-            done += len(chunk)
-            if time.time() - last > 2:
-                print(f"    {done / size:6.1%}  {done >> 20} / {size >> 20} MB", flush=True)
-                last = time.time()
-    return part
+    for attempt in range(tries):
+        have = os.path.getsize(part) if os.path.exists(part) else 0
+        if have >= size:
+            return part
+        if attempt:
+            print(f"    resume at {have >> 20} / {size >> 20} MB", flush=True)
+            time.sleep(min(2.0 * attempt, 30.0))
+        headers = {"Range": f"bytes={have}-"} if have else {}
+        try:
+            with http(url, headers) as r, open(part, "ab" if have else "wb") as out:
+                if have and getattr(r, "status", 200) != 206:
+                    out.truncate(0)  # the server ignored the range: start over
+                    have = 0
+                done, last = have, time.time()
+                while True:
+                    chunk = r.read(1 << 20)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    done += len(chunk)
+                    if time.time() - last > 2:
+                        print(f"    {done / size:6.1%}  {done >> 20} / {size >> 20} MB", flush=True)
+                        last = time.time()
+        except urllib.error.HTTPError:
+            raise  # http() already retried what is worth retrying
+        except (OSError, HTTPException) as e:  # reset, timeout, IncompleteRead
+            print(f"    connection lost: {e}", flush=True)
+    raise SystemExit(f"{os.path.basename(path)}: still short after {tries} attempts; run again "
+                     "to resume")
 
 
 def mute(src, dst):
