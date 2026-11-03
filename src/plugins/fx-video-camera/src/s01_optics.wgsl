@@ -1,4 +1,5 @@
-// P0 the lens and the photons (cpu.rs optics_row): distortion and lateral CA per channel, the
+// P0 the lens and the photons (cpu.rs optics_row): distortion and lateral CA per channel (the field
+// fitted to the scene, lens_fit), the
 // 4-spot OLPF, cos⁴ vignetting and colour shading over the unprocessed scene, then the mean signal
 // of each sensor pixel's filter as a fraction of the full well, 16-bit fixed.
 // u0 = sensor table; u1 = (flags, bits(cir), bits(scene_ir), bits(k_lens));
@@ -37,10 +38,11 @@ fn optics(sx: i32, sy: i32) -> vec3<f32> {
     let hd2 = hw * hw + hh * hh;
     let dist = 1.0 + bitcast<f32>(P.u1.w) * ((dx * dx + dy * dy) / hd2);
     let ca = P.f0.y / sqrt(hd2);
+    let fit = lens_fit(bitcast<f32>(P.u1.w), ca, border_r2_min(hw, hh, hd2));
     let d = P.f0.z * 0.5;
     var out = vec3<f32>(0.0);
     for (var ch = 0u; ch < 3u; ch = ch + 1u) {
-        let sc = dist * (1.0 + ca * (1.0 - f32(ch)));
+        let sc = dist * (1.0 + ca * (1.0 - f32(ch))) / fit;
         let qx = hw + dx * sc;
         let qy = hh + dy * sc;
         if (d > 0.0) {

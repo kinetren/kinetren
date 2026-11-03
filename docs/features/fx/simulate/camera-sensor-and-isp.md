@@ -81,6 +81,14 @@ these programs neither the chain nor the meaning of its parameters can be descri
    another camera already developed: it must be UNPROCESSED back into a scene first (the
    "unprocessing" of learned raw denoising — Brooks et al., 2019).
 
+5. **A distortion correction costs field.** The ISP's dewarp maps each output pixel to where the
+   lens put it on the sensor; past the sensor's edge there is nothing, so a real ISP crops its
+   output to the region the corrected sensor image fills (a phone's video is narrower than its
+   raw). Likewise a lens only sees what is in front of it: in the simulation the world is the
+   recorded frame, so the simulated lens is framed to see the largest field inside it. Clamping
+   either to the edge texel draws streaks along the frame's edges (the README footage run,
+   2026-11-03; camera-isp-edges).
+
 ## Pros
 
 - The looks are consequences of physical numbers: a phone at night is a small full well, high

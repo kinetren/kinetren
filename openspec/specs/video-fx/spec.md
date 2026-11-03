@@ -727,13 +727,18 @@ chroma and a decoder matrix. A `view` row SHALL show the picture after any stage
 light through the lens, the pixel charge, the raw, the raw after each correction, the demosaic,
 the lens correction, luma, chroma). The picker SHALL offer the presets phone at night, cheap
 webcam, security camera at night (IR), cinema raw, wrong CFA phase and no IR-cut filter, each only
-a set of the passport's rows.
+a set of the passport's rows. The camera SHALL film only the scene it has and its ISP SHALL read
+only the sensor: the lens's focal length is fitted so that every ray of the sensor's border, in
+every channel, lands inside the recorded frame, and the ISP's lens correction crops its output to
+the region the sensor covers — no stage repeats an edge texel into a band.
 Why: the owner's request I1 of kkt-26.11.01 and his rule of 2026-11-01 — an imitation of a
 physical effect is not a simulation of it; and his review of the same day: "you added the noise but
 not the denoiser … the PAIRED block of optics compensation simply does not exist … what is hidden
 in real ISPs, the distortions and the ways to remove them, you had to put into the fx" (F-FX-010).
 The temporal stages (3DNR with its trails, rolling shutter, mains flicker) need the slot's previous
-output and are the change `temporal-barrier-3dnr`, not part of this requirement.
+output and are the change `temporal-barrier-3dnr`, not part of this requirement. The field rule:
+the README footage (2026-11-03) showed "Phone at night" with a 30 px smear along the edges — the
+dewarp read past the sensor, and a barrel lens past the frame (camera-isp-edges).
 
 #### Scenario: A clean chain reproduces the input
 - **WHEN** a smooth colour frame passes `camera_isp` on every layout and demosaic, with no temporal
@@ -811,7 +816,10 @@ output and are the change `temporal-barrier-3dnr`, not part of this requirement.
   — distortion, lateral CA, vignetting, colour shading, Gr/Gb imbalance, a column fixed pattern, hot
   pixels — once with its ISP block calibrated and once with the block off
 - **THEN** without the block the picture differs visibly from the ideal camera's; with the block the
-  difference falls below half (for hot pixels: at most a quarter of the lit pixels remain)
+  difference falls below half (for hot pixels: at most a quarter of the lit pixels remain); a
+  geometric pair is compared with the ideal camera at the output's own paraxial magnification
+  (crop/fit with the block, 1/fit without), since correcting distortion on a sensor no larger than
+  the output costs field
 - **TEST** t1220 (`src/plugins/fx-video-camera/tests/consequences.rs`)
 
 #### Scenario: The view shows any stage
@@ -833,4 +841,12 @@ output and are the change `temporal-barrier-3dnr`, not part of this requirement.
   filmed with blooming 0 and 1
 - **THEN** raw NR at least halves the noise variance of the flat part and keeps the edge step within
   12 LSB; with blooming the raw of the spot's neighbour rises by more than 200 DN
-- **TEST** t1223 (`src/plugins/fx-video-camera/tests/consequences.rs`)
+
+#### Scenario: The frame's edges are picture, not smears
+- **WHEN** a frame whose brightness is a sawtooth along each axis (rising from every edge inward)
+  is filmed by every preset, the defaults and strong distortion and lateral CA with corrections
+  off, weak, calibrated and doubled, on the CPU and on the GPU
+- **THEN** the mean along the middle third of each edge changes by at least 1.5 LSB within every
+  4 px of depth from 1 to 28 px — no band repeats the edge texel; with distortion and CA 0 the
+  bytes are the old ones
+- **TEST** t1430 (`src/libs/kt-gpu/tests/camera_isp.rs`), t328

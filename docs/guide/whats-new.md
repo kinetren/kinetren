@@ -5,6 +5,12 @@ month, newest first.
 
 ## kt26.11
 
+- **Camera ISP no longer smears the edges of the frame.** "Phone at night" and the looks with a
+  distorting lens filled a band along the edges — about 30 px on a 1080p frame — with streaks of
+  the edge pixels. The simulated lens is now framed on what your footage recorded, and the
+  camera's processor crops its distortion correction to what its sensor saw, as a phone does:
+  the edges are picture, and a corrected lens frames slightly tighter.
+
 - **Ctrl+F shows what it finds again.** The search window kept the height of its empty field, so
   the media, events and markers it found were hidden under its bottom edge until you dragged the
   window larger.
