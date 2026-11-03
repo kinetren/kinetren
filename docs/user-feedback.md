@@ -2513,6 +2513,35 @@ at the same moment; adding the video effect to an event with linked audio adds i
 visible and switchable off. The rule is written into CLAUDE.md next to "imitation is not
 simulation", so the next simulation effect is not done without its pair.
 
+## 2026-11-04 — "three are working" while two had stopped
+
+> Ты врешь. Трое не работали двое тупо меня ждали пока я не отвечу и мы потеряли из-за тебя время.
+> Запомни на будущее для оркестраторов.
+
+The owner is right. The transcripts: `compute-backends` ended its turn at 21:21 with questions for
+him and stood 69 minutes until he answered it himself; `export-throughput` ended at 21:41 and stood
+50 minutes unmerged. "Three are working" was written at 20:44 and nobody corrected it. The cause:
+the app wakes the orchestrator only when NONE of its sessions still works, and `sim-audio-pairs` was
+working, so the two notes waited for his next message while two of three slots were empty.
+
+- Taken as: the section "Never let a stopped executor stand" in `docs/orchestrator.md`, the same
+  turn: a subscription to each executor's idle notice right after its start, a status claim only
+  from a check made in the same turn with its time, an executor's question carried to the owner at
+  once, a freed slot filled in the same turn.
+
+## 2026-11-04 — what the agents find and leave is not collected
+
+> Еще претензия - а ты вообще читаешь что там агенты находят какие-то баги которые не трогают? Как
+> бы нам это надо собирать и обдумывать тоже..
+
+The reports were read, but what they left stayed in the orchestrator's session memory and on
+proposal cards, with no list and no verdict.
+
+- Taken as: `docs/found-defects.md`, harvested from the executors' transcripts since 2026-11-01; a
+  mandatory "Найдено, не исправлено" section in every report; the list updated with every merge;
+  a verdict on every open row at the end of each stage (`docs/orchestrator.md`, "What executors
+  find and leave").
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

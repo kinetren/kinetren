@@ -85,10 +85,21 @@ The third — "the music drowns out the voice" (the most frequent live complaint
   predecessor hands nothing on (it still sounds when the next piece starts), and the next piece's
   context already carries the echo of the join's material — so `split_continued` (the run relation
   with the tail allowed) tells the left piece not to ring (`ClipProcessor::set_ring_end`); the split
-  is the "cut" split up to its last piece's end (t1332). Known and left: a loop that re-enters a chain
-  with a tail through a seam starts the lap with the pitch's ring where it stopped (≈ 75 ms of silence
-  with "rings on", a partial dip with some past-the-end material with "cut") — pitch-event-edges D4
-  keeps tail chains on the seam.
+  is the "cut" split up to its last piece's end (t1332).
+- **A loop lap of a chain with a tail before the pitch starts as a seek there** (loop-pitch-tail-dip,
+  2026-11-03). pitch-event-edges D4 kept tail chains on the seam at a re-entry (R.28: a reverb rings
+  through the circle), and the pitch's look-ahead ring then held where the previous lap stopped:
+  0.000 of the play from there for ≈ 75 ms with "rings on", ≈ 0.45 with past-the-end material with
+  "cut". For a chain without the context the seam is exact (a linear tail plus the new input); with an
+  edge-reading pitch the ring is the window it reads AHEAD, not storage of the past. So a lap entry
+  (`ClipProcessor::lap_entry`, the re-entry rule of `fresh_entry` with a tail) seeks, and the processor
+  that played the previous lap, standing in its tail, moves to `FxStateStore`'s ringing laps
+  (`start_lap`) and is read on for the same output frames, summed at the tail zone's weight — as two
+  copies of the event one after another sound. At most `MAX_LAPS` = 4 ring at once; a retired lap is
+  the spare the next one starts with (no allocation in a steady loop); a seek drops them. Rejected: the
+  input-first fold for an event whose TAIL covers the region end (the new lap's first grains would
+  read the old tail instead of the material before the in-point, and nothing happens when the tail
+  rang out before the wrap); a seek alone (cuts a ringing feedback echo at every wrap). t1440, t1441.
 
 ## Deferred
 

@@ -44,14 +44,25 @@ impl GpuContext {
         GpuContext { device, queue, adapter_info }
     }
 
-    /// Headless device (export, kt-cli, tests). PowerPreference is
+    /// Headless device (kt-cli probes, tests, previews). PowerPreference is
     /// the same as in the GUI: WGPU_POWER_PREF or LowPower (PRIME, item 39).
     pub fn new_headless() -> Result<GpuContext, GpuInitError> {
+        Self::headless_with(wgpu::PowerPreference::LowPower)
+    }
+
+    /// The EXPORT's headless device (export-throughput D5): WGPU_POWER_PREF or HighPerformance.
+    /// LowPower keeps the UI from heating the machine (invariant 12, PRIME item 39) — a cost paid
+    /// every frame a person looks at. An export is a finite job the person WAITS for, on its own
+    /// device; on a hybrid laptop the discrete card is the one built for it.
+    pub fn new_headless_for_export() -> Result<GpuContext, GpuInitError> {
+        Self::headless_with(wgpu::PowerPreference::HighPerformance)
+    }
+
+    fn headless_with(default: wgpu::PowerPreference) -> Result<GpuContext, GpuInitError> {
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference:
-                wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower),
+            power_preference: wgpu::PowerPreference::from_env().unwrap_or(default),
             ..Default::default()
         }))
         .map_err(|e| GpuInitError::NoAdapter(e.to_string()))?;

@@ -57,6 +57,13 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   relies on clips being rendered in ascending order in every burst (A before B) — that is what makes
   it slicing-independent; do not reorder the clip loop. An event that reads across edges and starts
   inside a loop region gets no loop span (D5): it is not what sounds after the wrap (t1105–t1112).
+- **A loop lap of a context chain with a tail is a seek plus the earlier laps** (loop-pitch-tail-dip):
+  `render_fx_clip` asks `FxStateStore::start_lap` before the read; on a lap entry the processor that
+  stands in its tail moves to the event's ringing laps and the event gets the spare (or a new one),
+  cold. The ringing laps are read for the SAME output frames, each continuing its own clip-local
+  stream, and summed at the tail zone's weight (1.0 × gain) until the tail-zone end; `MAX_LAPS` = 4,
+  `reset_all` drops them (a seek), `retain_clips` drops a removed event's. Without a loop no lap entry
+  happens — the path is byte for byte the former one (t1440, t1441).
 - Prefetch is idempotent: wanted − coverage() → submit; keys strictly on the playback grid (defect i); the head of a loop region — a pin in the cache (test 14).
 - **The video look-ahead fits the cache until it is read** (video-prefetch-thrash). `video_prefetch_wants` walks the window frame by frame, nearest first, and cuts it at a WHOLE frame within half the video budget, counting every layer at its own decode size; dividing the budget by one frame of the largest quality ignored the stack of layers, and the showcase's pass wanted 604 MB of 512. `video_prefetch_pass` then `refresh`es the window far → near (LRU ranks a prefetched frame by its INSERTION, so the nearest went first), and the prefetch loop withdraws the NearPrefetch video requests its window no longer asks for — the loop is their only producer; the window starts at the frame ON SCREEN (`video_display_frame`), or that withdrawal would drop the frames the latency still has to show. A Playback video request is THE FRAME ON SCREEN: `compose_preview_measured` withdraws the Playback requests that are not a layer of its frame (Playback outranks the look-ahead, and a lagging decoder spent itself on frames already left, t1418b). `kt-cli probe` and t1416 drive the same pass through `simulate_video_playback`.
 
@@ -111,6 +118,20 @@ in the source's state and arrive through the retune lane.
 - **Only the FULL sub-composite is memoised** (`nest_frame_cpu`). A starved
   frame is a function not of the reel's revision but of what the worker managed to put in; written under the revision's key, it gave a BLACK reel forever: the key does not move from the warm-up, and outside the composite is declared complete. The live player
   fell into this on every cold start.
+
+## The export is a pipeline inside one file (export-throughput)
+
+- `export_pipeline::run` is the product's export; `ExportOptions.serial` (= the former one-thread
+  export, `render_raw_video_range_with` + `render_raw_audio_range`) is its REFERENCE: t1451 holds
+  the pipelined frames and samples equal to it. A change to what a frame is goes into the shared
+  code (`build_plan`, `chunk_requests`/`decode_requests`), never into one of the two paths.
+- **Nothing the writer emits may depend on timing**: the audio is interleaved by the fixed rule
+  (after frame `i`, the audio up to its end), and the progress counts are the WRITER's (frames and
+  audio frames written) — t955 compares two exports' event streams element by element.
+- **The look-ahead is bytes, not chunks** (`LOOKAHEAD_BYTES` under `PIPE_CACHE_BYTES`): a chunk
+  being composed must never be evicted (R.15 item 1), and at 4K decode sizes a chunk is one frame.
+- A stream stage (datamosh) keeps the serial export: its pre-roll decodes on the compose thread.
+- The clock is read only into `ExportProfile` (`kt-cli export --time`), never to steer.
 
 ## Tests
 1–3 (concatenation/crossfade/gain), 7 (seek determinism), 9 (scheduler), 11 (golden export), 13 (viewport black), 14 (loop).

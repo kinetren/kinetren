@@ -255,6 +255,23 @@ pub trait VideoGpuExec: Send + Sync {
     /// so a layer without a pre-FX frame is always starvation for it.
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError>;
     fn info(&self) -> &GpuBackendInfo;
+    /// How many frames this executor can hold in flight between `submit` and `collect`
+    /// (export-throughput D5): 0 — it cannot, and the caller uses `execute_into`. An export
+    /// submits frame N+1 before it collects frame N, so the readback of one overlaps the work on
+    /// the next; the bytes are those of `execute_into` (the same plan, the same passes).
+    fn readback_depth(&self) -> usize {
+        0
+    }
+    /// Hand a plan to the device without waiting for it; the ticket names it to `collect`. The
+    /// plan's inputs are taken (uploaded) before this returns — the plan may be dropped.
+    fn submit(&self, _plan: &FramePlan<'_>) -> Result<u64, GpuExecError> {
+        Err(GpuExecError::Unsupported("no pipelined readback"))
+    }
+    /// Wait for a submitted frame and copy it into `out`: Ok(complete) as `execute_into`.
+    /// Tickets are collected in the order they were submitted.
+    fn collect(&self, _ticket: u64, _out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+        Err(GpuExecError::Unsupported("no pipelined readback"))
+    }
     /// What the last `execute_into` ran (morpher-event-grid-cost, D1): passes, sub-samples,
     /// snapshots and mixes of its op list; zero for a frame served from its readback memo.
     fn last_cost(&self) -> kt_fx::video::FrameCost {

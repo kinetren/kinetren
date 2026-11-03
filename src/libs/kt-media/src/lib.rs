@@ -137,12 +137,32 @@ pub trait MediaSource: Send {
         }
         Ok(())
     }
+
+    /// A span at SEVERAL decode qualities (export-throughput D7): `keys` are (key, quality),
+    /// ordered by key, every (key, quality) once. The frame for each pair is the one
+    /// `read_video_span` gives at that quality. A file decodes each picture once and converts it
+    /// to every quality asked at it; the default runs a span per quality.
+    fn read_video_span_qualities(
+        &mut self,
+        keys: &[(Tick, Quality)],
+        emit: &mut dyn FnMut(Tick, Quality, VideoFrame),
+    ) -> Result<(), MediaError> {
+        let mut by_q: std::collections::BTreeMap<Quality, Vec<Tick>> = Default::default();
+        for &(k, q) in keys {
+            by_q.entry(q).or_default().push(k);
+        }
+        for (q, ks) in by_q {
+            self.read_video_span(&ks, Some(q), &mut |k, f| emit(k, q, f))?;
+        }
+        Ok(())
+    }
 }
 
 /// Frames in a level-0 block of the peak pyramid (docs/media-index.md).
 pub const PEAK_BLOCK_FRAMES: usize = 256;
 
 pub mod factory;
+pub mod frame_alloc;
 pub mod ffmpeg;
 pub mod generator;
 pub mod index;

@@ -313,6 +313,39 @@ The "open end" of the section above closed. t640 went red on a QUIET machine (lo
   the collision, still loses on a slow disk); one shared connection (rejected above — it serialises
   every thread's DB work).
 
+## No sidecar lock across an fsync (sidecar-fsync-stall, 2026-11-03)
+
+t1171, t640, t411 and t1413 went red only in the whole-workspace `finish.sh` run, and were green
+alone in seconds.
+
+- **Cause, measured.** The build machine's disks are rotational, and `/tmp` is on one of them.
+  Under fsync write load, one opening round of a new sidecar took 137 s. Gate waiters do not fail;
+  a SQLite lock held across the fsync does. Two such locks:
+  - a WAL commit synced under the write lock (`synchronous=FULL`);
+  - the LAST close checkpointed and synced under the EXCLUSIVE database lock every opening needs.
+
+  The connection returned by `open` is dropped outside `open_gate`, so the next opener met the
+  previous one's close. The waiters outwaited the 5 s busy timeout, and the cache missed:
+  - t1171 `DatabaseBusy`;
+  - t640 a re-rendered reel;
+  - t411 a loudness measured again, unrounded, instead of read back at 1/100.
+- **The rule.** Every opening sets `synchronous=NORMAL` and `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE`.
+  The passive auto-checkpoint, which blocks nobody, folds the WAL in, and `-wal`/`-shm` stay after
+  exit. What still syncs under a lock:
+  - a new sidecar's first WAL header, inside the gate, so in-process openers wait, not fail;
+  - the header of a WAL restarted after a full checkpoint, roughly once per 4 MB of writes. Only
+    another writer waits on it, and a lost write is a cache miss.
+- **The check (t1460).** A VFS shim stalls every fsync. Two threads open, write, read and close a
+  ready sidecar. Results:
+  - old code: the finish.sh `DatabaseBusy`;
+  - either setting alone: red;
+  - both: green with zero stalled syncs.
+- **Rejected:**
+  - a longer busy timeout (it does not outlast a 137 s fsync);
+  - `synchronous=OFF` (checkpoints unsynced, so an OS crash can corrupt the file, and corruption
+    found later than the opening would mean lasting misses);
+  - moving the tests' temp files to tmpfs (it hides a stall a person's spinning disk has too).
+
 ## The download tells everything (ffmpeg-download-window-info, 2026-10-29)
 
 The owner (kkt 2026-10-27): the download window showed too little — where from, how fast, how
@@ -353,3 +386,32 @@ is the archived change `2026-11-03-video-prefetch-thrash`):
 `kt-cli probe` plays the range with an infinitely fast decoder (`simulate_video_playback`, the same
 pass the player runs) and prints the window against the cache: the first thing to run when the
 panel reports thrash again.
+
+## The decoder reads what it is asked, once (export-throughput, 2026-11-03)
+
+Found by measuring the slow final render (export design, "The final render is pipelined"); the
+showcase project reads seven VP8/VP9 files up to 3840×2160.
+
+- **The RGBA conversion overruns the frame.** `sws_scale` of a 1080×1080 YUV420P picture to RGBA
+  at its size wrote 32 bytes past the exact-size `Vec` — FFmpeg 6.1's x86 yuv2rgb converts in pixel
+  blocks and its stride guard holds for every row but the last — into the next heap chunk's header:
+  the showcase export died in three seconds with `malloc(): corrupted top size`, and any width off
+  the block could corrupt the preview's heap the same way. The conversion now writes into
+  `RGBA_TAIL_PAD` (256) spare bytes, cut off after it (`sws_to_rgba`); t1450 sweeps the widths
+  (worst 56 bytes). Rejected: an aligned stride and a copy — a second pass over every frame.
+- **A far forward read was decoded linearly.** `prepare_for` returned "the answer is already held"
+  when the held frame was before the target and a deferred frame existed — without asking whether
+  the target was before THAT frame. Past it, nothing sought: a two-minute jump in 4K decoded 3,733
+  pictures for one event, and the preview did the same after a click far ahead. The exit now needs
+  `target < pending_pts`, and every key of a span is decided (two events of one file can stand
+  minutes apart in one span). t1453.
+- **A span at several qualities decodes once** (`read_video_span_qualities`/`read_video_span_sizes`,
+  a few `SwsContext`s per size): the showcase's sharp layer and its blurred backdrop read the same
+  footage at two decode sizes. t1454.
+- **One file read at two places gets two decoders in the export** (`FfmpegSource` cursors, at most
+  two): a picture-in-picture of the same footage 7 s earlier, a reel 47 s apart — one decoder sought
+  back and decoded a GOP of 4K for every frame (238 reopens). A run of keys (keys more than 2 s
+  apart start a new one) goes to the decoder that reaches it by decoding on, else a fresh one, else
+  the least recently used — a function of the requests. Decoded pictures for the showcase: 101,009
+  → 9,190 (for 5,644 used). t1455. Not done: the preview's `MediaWorker` keeps one decoder per media
+  and has the same ping-pong on such a project (a follow-up; its queue is its own design).

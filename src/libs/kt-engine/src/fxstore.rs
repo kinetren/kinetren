@@ -30,6 +30,11 @@ pub struct FxStateStore {
     /// `ClipId` is unique across the whole document and survives trim, cut and
     /// move (invariant 3) — exactly the same key as `map`.
     nests: HashMap<ClipId, NestStream>,
+    /// Earlier LOOP LAPS of an event still ringing on (loop-pitch-tail-dip): a chain that reads
+    /// across its edges and has a tail starts every lap as a seek there does (its own context
+    /// pre-roll), so what the previous lap still rings — its echo past the out-point — goes on in the
+    /// processor that played it, moved here. As two copies of the event on the timeline sound.
+    laps: HashMap<ClipId, Laps>,
     /// SIDECHAIN KEY BRANCHES (R.65): each TARGET track has its own
     /// sub-store in which its key stream lives — the states of the events of the
     /// key track and its chain.
@@ -51,6 +56,18 @@ pub struct FxStateStore {
 /// mix — just as on the samples of a file. The reverse (“render the reel backwards”)
 /// would give a third, nobody's result: the internal reverb must sound
 /// forward INSIDE the reel, and a mirror from outside gives a reversed reverb.
+/// The ringing earlier laps of one event, oldest first, and a spare processor that rang out — the
+/// next lap starts with it, so a steady loop allocates nothing (loop-pitch-tail-dip).
+#[derive(Default)]
+pub struct Laps {
+    ringing: Vec<ClipProcessor>,
+    spare: Option<ClipProcessor>,
+}
+
+/// At most this many earlier laps ring at once; a region shorter than the tail drops the oldest —
+/// MAX_LAPS laps into its decay.
+pub const MAX_LAPS: usize = 4;
+
 pub struct NestStream {
     /// Which reel AND which of its REVISIONS (R.59, stage 3). The instance could have been
     /// re-pointed to another reel (`SetClipMedia`) or had its overrides changed —
@@ -217,6 +234,64 @@ impl FxStateStore {
     /// as for an event: the chain structure is the same → the state lives on, values
     /// arrive smoothly; changed (including the lookahead window or the
     /// pitch engine) → rebuild; the chain is empty → no processor needed.
+    /// A NEW LOOP LAP of `id` is about to read `local` (`ClipProcessor::lap_entry`,
+    /// loop-pitch-tail-dip): the processor that played the previous lap moves to the ringing laps
+    /// when it stands in its tail short of `ext_len` (the clip-local end of the event's tail zone),
+    /// and the event gets the spare (or a new processor) synced to its clip — cold, so the read seeks
+    /// with the context pre-roll. A lap cut by the wrap before its out-point is not heard any more:
+    /// the processor itself starts the lap (its read seeks). `true` — the processor was replaced.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_lap(
+        &mut self,
+        id: ClipId,
+        local: i64,
+        ext_len: i64,
+        fx: &[FxInstance],
+        auto: &kt_fx::AutoProfiles,
+        src_in_frames: i64,
+        start_frames: i64,
+        clip_len_frames: i64,
+        opts: kt_fx::ChainOpts,
+    ) -> bool {
+        let Some(p) = self.map.get(&id) else { return false };
+        if !(p.lap_entry(local) && p.past_out_point() && p.next_local().is_some_and(|n| n < ext_len)) {
+            return false;
+        }
+        let laps = self.laps.entry(id).or_default();
+        let mut old = match laps.spare.take() {
+            Some(spare) => self.map.insert(id, spare),
+            None => self.map.remove(&id),
+        }
+        .expect("the processor is there");
+        old.set_loop_span(None);
+        if laps.ringing.len() == MAX_LAPS {
+            laps.ringing.remove(0);
+        }
+        laps.ringing.push(old);
+        // the spare carries the parameters of when it rang out; a new one is built by `sync_clip`
+        self.sync_clip(id, fx, auto, src_in_frames, start_frames, clip_len_frames, opts);
+        if let Some(p) = self.map.get_mut(&id) {
+            p.reset();
+        }
+        true
+    }
+
+    /// The ringing earlier laps of `id` (loop-pitch-tail-dip), oldest first.
+    pub fn laps_mut(&mut self, id: ClipId) -> Option<&mut Vec<ClipProcessor>> {
+        self.laps.get_mut(&id).map(|l| &mut l.ringing).filter(|r| !r.is_empty())
+    }
+
+    /// Drop the earlier laps of `id` that have rung out to `ext_len`; the last one stays as the spare.
+    pub fn retire_laps(&mut self, id: ClipId, ext_len: i64) {
+        if let Some(l) = self.laps.get_mut(&id) {
+            while let Some(i) = l.ringing.iter().position(|p| p.next_local().is_none_or(|n| n >= ext_len)) {
+                let mut p = l.ringing.remove(i);
+                p.reset();
+                l.spare = Some(p);
+            }
+        }
+    }
+
     pub fn sync_track(&mut self, id: TrackId, fx: &[FxInstance], opts: kt_fx::ChainOpts) {
         if fx.is_empty() {
             self.tracks.remove(&id);
@@ -257,6 +332,7 @@ impl FxStateStore {
     /// Remove the state of clips that no longer exist in the model.
     pub fn retain_clips(&mut self, alive: &dyn Fn(ClipId) -> bool) {
         self.map.retain(|id, _| alive(*id));
+        self.laps.retain(|id, _| alive(*id));
     }
 
     /// Remove the state of tracks that no longer exist in the model.
@@ -315,6 +391,14 @@ impl FxStateStore {
         }
         for p in self.map.values_mut() {
             p.reset();
+        }
+        // a seek: no earlier lap rings on into it
+        for l in self.laps.values_mut() {
+            if let Some(mut p) = l.ringing.pop() {
+                p.reset();
+                l.spare = Some(p);
+            }
+            l.ringing.clear();
         }
         // a TRACK's chain — the same streaming automaton (R.62)
         for p in self.tracks.values_mut() {

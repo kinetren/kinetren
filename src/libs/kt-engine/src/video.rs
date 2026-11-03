@@ -1606,6 +1606,40 @@ impl VideoRenderer {
         execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
     }
 
+    /// `compose_export_into` with the scratch owned by the caller (export-throughput D2): the
+    /// pipelined export composes several frames at once, one `ExportScratch` per worker, over a
+    /// SHARED renderer. The plan and the executor are the same calls — a frame is a function of
+    /// (cache, t, quality), so which worker composed it does not show in its bytes.
+    pub fn compose_export_with(
+        &self,
+        cache: &BurstCache,
+        t: Tick,
+        quality: Quality,
+        scratch: &mut ExportScratch,
+        out: &mut Vec<u8>,
+    ) -> bool {
+        let ctx = PlanCtx {
+            grid: &self.grid,
+            cameras: &self.cameras,
+            project_size: self.project_size,
+            nests: &self.nests,
+            stages: &self.stages,
+            stream_memo: &self.stream_memo,
+            memoize: false,
+            blend_footage: false,
+        };
+        let plan = build_plan(&self.clips, &ctx, cache, t, quality, false);
+        scratch.fx.cost = Default::default();
+        execute_plan_cpu(&plan, cache, &mut scratch.fx, &mut scratch.blend, out)
+    }
+
+    /// Whether a stream stage (datamosh-codec-path) runs anywhere in this renderer's tree: its
+    /// export pre-roll decodes on the compose thread, so the pipelined export keeps the serial
+    /// composite for such a project (export-throughput D2).
+    pub fn has_stream_stages(&self) -> bool {
+        self.clips.iter().any(|c| c.stream.is_some()) || self.nests.values().any(|n| n.has_stream_stages())
+    }
+
     /// How many SUB-RENDERERS this reel holds (R.59, stage 3).
     ///
     /// A guard for the t442/t443 gain: two instances of one reel WITHOUT
@@ -1672,6 +1706,13 @@ impl VideoRenderer {
         };
         build_plan(&self.clips, &ctx, cache, t, quality, true)
     }
+}
+
+/// A CPU composite's working buffers, one per export worker (export-throughput D2).
+#[derive(Default)]
+pub struct ExportScratch {
+    fx: kt_fx::video::FxScratch,
+    blend: Vec<u8>,
 }
 
 /// Plan-building context: the grid, cameras and the project's world size.
