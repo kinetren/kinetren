@@ -41,4 +41,4 @@ Test numbers t1416–t1418 (with t1416b, t1417b, t1418b) are used by this change
     stalls at load 15–20 that the next take at load 6.7 did not repeat. The committed take:
     "no-read drops total: 0", no thrash in the problem log; it keeps one callback underrun and
     "video hit 78 % — decoding cannot keep up" (4K at decode ×2 on llvmpipe), which are true
-- [ ] 3.3 Archive (spec merged), `./scripts/finish.sh`, the version in the report
+- [x] 3.3 Archive (spec merged), `./scripts/finish.sh`, the version in the report — `kt26.11.03-6e21b83b`; live scenarios green. Two runs each had sidecar tests red only in the full parallel run (t1413/t640/t1171 at load 24, then t411/t640); all green alone, repeatedly, and this change touches neither kt-app nor kt-media
