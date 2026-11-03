@@ -5,6 +5,9 @@ month, newest first.
 
 ## kt26.11
 
+- **A busy disk no longer makes the program forget its previews.** On a spinning disk under heavy
+  writing, opening a project could rebuild the previews of its compositions, and the waveforms and
+  loudness of its media, as if seen for the first time. The program now keeps using what it stored.
 - **Camera ISP no longer smears the edges of the frame.** "Phone at night" and the looks with a
   distorting lens filled a band along the edges — about 30 px on a 1080p frame — with streaks of
   the edge pixels. The simulated lens is now framed on what your footage recorded, and the

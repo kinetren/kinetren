@@ -79,6 +79,13 @@ Media sources: the trait `MediaSource`, `SyntheticSource` (tests), `FfmpegSource
   read before it is set, the schema is created under `BEGIN IMMEDIATE`; an opening of a ready sidecar
   writes nothing. A new step of `try_open` that writes stays inside the gate and runs only when the
   file needs it. The returned connection is still the thread's own — no shared connection.
+- **No lock of the sidecar is held across an fsync** (t1460): every opening sets
+  `synchronous=NORMAL` and `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE`. On a loaded spinning disk one fsync
+  took 137 s; a commit synced the WAL under the write lock (FULL) and the last close checkpointed and
+  synced under the EXCLUSIVE lock every opening needs — the others outwaited the busy timeout, and the
+  cache missed (t1171/t640/t411 red only in the whole-workspace run). The `-wal`/`-shm` files stay
+  after the last close; the passive auto-checkpoint folds the WAL in. A new setting or statement that
+  syncs under a lock brings the stall back — t1460 stalls every fsync to catch it.
 - The pixel font 3×5 and `Canvas` — the common module `pixfont` (a placeholder + a future timecode generator). This is NOT the rasterization of the user's title text: that lives in kt-text with its own determinism discipline.
 
 ## FfmpegSource (src/ffmpeg.rs) — how it is built
