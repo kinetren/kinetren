@@ -386,6 +386,7 @@ is the archived change `2026-11-03-video-prefetch-thrash`):
 `kt-cli probe` plays the range with an infinitely fast decoder (`simulate_video_playback`, the same
 pass the player runs) and prints the window against the cache: the first thing to run when the
 panel reports thrash again.
+
 ## The decoder reads what it is asked, once (export-throughput, 2026-11-03)
 
 Found by measuring the slow final render (export design, "The final render is pipelined"); the

@@ -649,6 +649,7 @@ stall happens next to a person's project on a spinning disk.
 - **TEST** t1460 (`src/libs/kt-media/tests/sidecar_stall.rs`); its consequences in the
   whole-workspace run: t1171 (`src/libs/kt-media/tests/index_db.rs`), t640 and t1413
   (`src/apps/kt-app/src/layout_tests.rs`), t411 (`src/apps/kt-app/src/util.rs`)
+
 ### Requirement: The decoder reads what it is asked, once, without corrupting memory
 The RGBA conversion of a decoded picture SHALL write into a frame buffer with
 `kt_ffmpeg::RGBA_TAIL_PAD` spare bytes after the frame, cut off after the conversion — libswscale's
