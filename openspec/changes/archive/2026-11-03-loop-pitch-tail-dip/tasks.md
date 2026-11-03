@@ -14,4 +14,4 @@ camera-isp-edges' reserve.
 
 - [x] 2.1 Live scenario: loop + play over an event with an echo before a pitch on our fixture — the cursor wraps, playback keeps going without starvation (the harness hears nothing: the sound is proven by t1440/t1441) — green alone on `KT_LIVE_DISPLAY=:241`, four steps
 - [x] 2.2 `docs/guide/whats-new.md` line; kt-fx and kt-engine CLAUDE.md rules; the K15 row of `docs/ktprompts/kkt-26.11.01-index.md`
-- [ ] 2.3 `cargo clippy --all-targets`, `cargo test --workspace`; archive; `./scripts/finish.sh` and the version
+- [x] 2.3 `cargo clippy --all-targets`, `cargo test --workspace`; archive; `./scripts/finish.sh` and the version
