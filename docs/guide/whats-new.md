@@ -15,6 +15,10 @@ month, newest first.
   "Echo of the effects before the pitch": **cut at the event's end** (as before — the joins stay
   seamless) or **rings on after the event** (the echo goes on past the event's end, pitched, as
   without the pitch). Projects that use "rings on" open only in this version and newer.
+- **A loop over an echo before a pitch no longer dips at every lap.** When the loop region started
+  at an event with an echo or reverb before its pitch, each pass began with a short hole (with
+  "rings on") or a sudden drop with a bit of foreign sound (with "cut"). Every pass now starts as
+  playing from that point does, and the echo of the pass before still rings on over it.
 - **Playing layered 4K footage keeps its frames ready.** Where several layers play at once —
   a shot over its blurred backdrop, a picture-in-picture, a composition — the preview used to
   ask for more frames ahead than its memory holds and threw away the ones it needed next, so

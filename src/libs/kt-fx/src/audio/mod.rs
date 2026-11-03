@@ -862,11 +862,13 @@ impl ClipProcessor {
             } else if self.folding() && Some(self.fold(local + self.la)) == self.in_next {
                 // The output wraps to the loop start, and the INPUT already did, `la` frames
                 // ago (pitch-loop-silence, D2): the chain is continuous, nothing to re-seat.
-            } else if self.fresh_entry(local) {
+            } else if self.fresh_entry(local) || self.lap_entry(local) {
                 // A FRESH ENTRY (pitch-event-edges D4): the event had stopped and is read again
                 // from its first frame (a loop lap over several events) — its output was silent in
                 // between, so there is nothing to ring through, and a seam would reuse a look-ahead
-                // ring holding the material from where it stopped.
+                // ring holding the material from where it stopped. A NEW LAP of a chain with a tail
+                // starts the same way (loop-pitch-tail-dip): the engine has moved what still rings
+                // of the previous lap to a stream of its own (`FxStateStore::start_lap`).
                 self.hard_seek(local, pull);
             } else {
                 // SEAM: the position jumped, but the OUTPUT is continuous (wrap of a
@@ -902,11 +904,33 @@ impl ClipProcessor {
         if self.next_local == i64::MIN {
             return true;
         }
+        self.tail_frames() == 0 && self.reentry(local)
+    }
+
+    /// Reading `local` starts a NEW LAP of a chain with a tail (loop-pitch-tail-dip): the context
+    /// applies, and the event is entered again at its first frame or after its out-point, not
+    /// continuously and not as the expected input-first wrap. The look-ahead ring holds where the
+    /// previous lap stopped, so a seam would start the lap with that (≈ 75 ms of silence with "rings
+    /// on"); the lap starts as a seek there does, and what still rings of the previous lap is the
+    /// engine's to keep (`past_out_point`).
+    pub fn lap_entry(&self, local: i64) -> bool {
+        self.next_local != i64::MIN && self.tail_frames() > 0 && self.reentry(local)
+    }
+
+    /// The context applies and `local` re-enters the event (the rule shared by `fresh_entry` and
+    /// `lap_entry`).
+    fn reentry(&self, local: i64) -> bool {
         self.ctx.is_some()
-            && self.tail_frames() == 0
             && self.next_local != local
             && (local == -self.head_ext || self.next_local >= self.clip_len + self.tail_ext)
             && !(self.folding() && Some(self.fold(local + self.la)) == self.in_next)
+    }
+
+    /// The processor stands in its tail: its next frame is at or past the material's end, so what it
+    /// gives from here on is the echo of the lap it played (loop-pitch-tail-dip). Before the end — a
+    /// lap cut by the wrap — nothing of it is heard any more.
+    pub fn past_out_point(&self) -> bool {
+        self.next_local != i64::MIN && self.next_local >= self.clip_len + self.tail_ext
     }
 
     /// Hand this processor on to the NEXT event of a split (pitch-event-edges D3): it has just
