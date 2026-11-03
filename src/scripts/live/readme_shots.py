@@ -183,7 +183,11 @@ def targets(project):
                 else m["start"] + m["duration"] // 2)
     # the lightest stretch to play under Diagnostics: the NASA vertical clip and the square one
     # after it are small files; the start of the edit has the 4K Charge under the intro reel
-    first_plain = named("webb", sorted(unstyled, key=lambda c: c["start"]))
+    # (the fixtures have no such file: the earliest plain cut, so the 6 s of playback with the
+    # loop off do not run past the end of their short edit)
+    by_start = sorted(unstyled, key=lambda c: c["start"])
+    first_plain = next((c for c in by_start if "webb" in paths.get(c["media"], "").lower()),
+                       by_start[0])
     return {"reel": reel, "music": music, "video": video, "title": title, "first_plain": first_plain,
             "transition": (trans, by_id[trans["b"]]), "morph": m, "morph_at": morph_at,
             "cut": named("charlotte", sorted(after_cut, key=lambda c: (-c["duration"], c["start"]))),
@@ -366,10 +370,17 @@ class Shooter:
             region = json.load(open(self.project))["project"].get("region") or {}
             lo = reel["start"] + min(180000, reel["duration"] * 2 // 5)
             hi = min(reel["start"] + reel["duration"], region.get("end", 1 << 62))
-            deadline = time.time() + 30.0
-            while not lo <= app.geom().get("playhead", 0) < hi:
+            # ... and for a decoded picture: the "Loading…" scrim over a frame still being
+            # composed is published by the program, and the same dump must not have it
+            deadline = time.time() + 60.0
+            while True:
+                g = app.geom()
+                loading = any(f["param"] == "preview.loading" for f in g.get("fields", []))
+                if lo <= g.get("playhead", 0) < hi and not loading:
+                    break
                 self.require(step, time.time() < deadline,
-                             f"the playhead inside the mid-edit reel ({lo}..{hi} ticks)")
+                             f"the playhead inside the mid-edit reel ({lo}..{hi} ticks) "
+                             "with a decoded picture (no “preview.loading”)")
                 self.kt.poll_step(0.1)
             g = app.geom()
             ww, wh = self.kt.geometry()["w"], self.kt.geometry()["h"]
@@ -588,7 +599,8 @@ class Shooter:
         c = self.tg["cut"]
         # 20 frames after the cut: the new shot's motion has dragged the old shot's picture far
         # enough to see, and both shots are still recognisable
-        self.effect_before_after("fx-datamosh", c, c["start"] + 72000, "datamosh",
+        # (half the cut when it is shorter: the fixtures' cuts are)
+        self.effect_before_after("fx-datamosh", c, c["start"] + min(72000, c["duration"] // 2), "datamosh",
                                  "fxreg.var.datamosh.0")
 
     def camera_isp(self):
@@ -799,12 +811,13 @@ class Shooter:
         step = "perf-panel"
         app = self.fresh(step)
         try:
-            # a stretch a person plays, not the heaviest one: the loop off (L) and the playhead
-            # on the edit's lightest plain cut. Inside the loop the debug build decodes 4K
-            # footage under a reel and two effects, and the problem log fills with underruns
-            # that describe the build, not the program. Seek first: the open window's graphs
-            # redraw on their own, and the screen never settles under them
-            app.key("l")
+            # a stretch a person plays, not the heaviest one: the region cleared (Esc — with the
+            # loop merely off, playback stops at the region's end) and the playhead on the edit's
+            # lightest plain cut. Inside the loop the debug build decodes 4K footage under a reel
+            # and two effects, and the problem log fills with underruns that describe the build,
+            # not the program. Seek first: the open window's graphs redraw on their own, and the
+            # screen never settles under them
+            app.key("Escape")
             first = self.tg["first_plain"]
             self.seek(app, first["start"])
             self.still(app, step, "the playhead on the lightest plain cut")

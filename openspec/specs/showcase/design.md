@@ -86,13 +86,16 @@ BEFORE/AFTER. Decisions and what the footage taught:
 - **The hero waits for a playhead position, not a time.** A debug build's preview runs a second or
   two behind a 4K decode under a reel and two effects: "3 s after Space" showed "Loading…". The
   project's cursor sits a moment before the mid-edit reel instance, the looped region reaches past
-  it, and the shot waits for the playhead inside it.
+  it, and the shot waits for the playhead inside it AND for a frame without the "Loading…" scrim:
+  one run caught it mid-load, so the program publishes the scrim as `preview.loading` where it
+  paints it, and the step takes the first dump with the playhead in place and no scrim.
 - **The gallery opens on a plain cut**: its cells preview each effect on the event's output, so a
   styled event showed its own look in every cell. It is wheeled to its end, where the colour,
   distortion, camera and tape cells are; a cell's rectangle is published below the fold too, so
   "on screen" is its bottom inside the popup, and "settled" ignores the search field's caret.
-- **Diagnostics plays the lightest stretch with the loop off**: inside the loop the debug build
-  filled the problem log with underruns that describe the build, not the program.
+- **Diagnostics plays the lightest stretch with the region cleared** (Esc): inside the loop the
+  debug build filled the problem log with underruns that describe the build, not the program; with
+  the loop merely off, playback stops at the region's end (the fixtures' short edit reached it).
 - **A clip's own blurred backdrop does not disqualify it** for the effect shots: it is part of its
   picture.
 - **The pipeline found two program defects on the way** — an untouched project with a reel asked

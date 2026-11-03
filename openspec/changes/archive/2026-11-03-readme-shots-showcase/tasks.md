@@ -35,5 +35,6 @@ Test numbers t1412–t1419 are reserved by this change.
 
 ## 3. Close
 
-- [ ] 3.1 The showcase spec's scenarios (archive); `cargo test --workspace`, clippy
+- [x] 3.1 The showcase spec's scenarios (archive); `cargo test --workspace`, clippy
+  - Done. Workspace 1449 passed, 0 failed (t815 timed out once under disk load at 23.9 s, alone 0.4 s)
 - [ ] 3.2 `./scripts/finish.sh`, the version in the report

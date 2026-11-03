@@ -6684,6 +6684,8 @@ impl KtApp {
                 .map(|t0| t0.elapsed() > std::time::Duration::from_millis(180))
                 .unwrap_or(false);
             if show_overlay {
+                // the README's hero waits for a frame without it (a picture mid-load is not one)
+                crate::widgets::field_probe::note("preview.loading", img_rect);
                 painter.rect_filled(img_rect, 2.0, egui::Color32::from_black_alpha(140));
                 painter.text(
                     img_rect.center(),
