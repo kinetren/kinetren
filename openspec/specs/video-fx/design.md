@@ -428,6 +428,18 @@ next editor:
   noise by the timeline position (t1216).
 - **K× magnifies the sensor**: the sensor has the logical frame's grid; a sub-pixel sample (OLPF,
   distortion, CA) legitimately resolves a finer K× frame.
+- **The camera films only the scene it has; its ISP reads only the sensor** (camera-isp-edges,
+  2026-11-03). The frame is the whole recorded world: the lens's focal length is fitted so that its
+  field, after distortion and lateral CA in every channel, is the largest inside the frame
+  (`lens_fit` = (1 + max(k m², k))(1 + |ca|), m² the long edges' midpoint); the ISP's dewarp/CA
+  correction crops its output to what the sensor covers (`isp_crop` = (1 + min(k m², k))(1 − |ca|)),
+  as a phone crops the margin its correction cannot fill. Before, both read past the edge and
+  clamped: "Phone at night"'s calibrated pincushion dewarp smeared ≈ 44 px of edge texel along a
+  1080p frame's long edges, a barrel lens smeared the corners at the optics stage. Correcting
+  distortion therefore costs field (crop/fit; t1220 compares at that magnification). Rejected:
+  clamping, black, a mirror (each invents a world), the "diagonal preserved" normalisation (a
+  pincushion still overshoots the long edges), a sensor margin (frame-sized planes in both
+  executors). The archived change's design holds the derivation; t1430 guards it.
 - **Not here — the temporal stages**: 3DNR with its trails, rolling shutter and flicker need the
   slot's previous OUTPUT; the stream class is a CPU-only source stage, so they are the change
   `temporal-barrier-3dnr` (a temporal-barrier contract, GPU and CPU).

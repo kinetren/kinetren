@@ -147,6 +147,22 @@ fn byte(v: f32) -> u32 {
     return u32(clamp(floor(v * 255.0 + 0.5), 0.0, 255.0));
 }
 
+// the smallest r² on the frame's border (cpu.rs border_r2_min)
+fn border_r2_min(hw: f32, hh: f32, hd2: f32) -> f32 {
+    let m = min(hw, hh);
+    return m * m / hd2;
+}
+
+// the lens's field fitted to the scene (cpu.rs lens_fit)
+fn lens_fit(k: f32, ca: f32, m2: f32) -> f32 {
+    return (1.0 + max(k * m2, k)) * (1.0 + abs(ca));
+}
+
+// the ISP's crop after its lens correction (cpu.rs isp_crop)
+fn isp_crop(k: f32, ca: f32, m2: f32) -> f32 {
+    return max((1.0 + min(k * m2, k)) * (1.0 - abs(ca)), 0.05);
+}
+
 fn r2_of(sx: i32, sy: i32) -> f32 {
     let s = sdims();
     let hw = f32(s.x) * 0.5;

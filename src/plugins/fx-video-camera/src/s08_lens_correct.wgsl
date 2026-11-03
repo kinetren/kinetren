@@ -1,6 +1,7 @@
 // P3b lens correction (cpu.rs lens_correct_row): dewarp and lateral CA correction — per channel, the
-// captured radius x with x(1 + k x²)(1 + ca_ch) = r_o by three Newton steps, then the captured
-// picture bilinear there (in sensor units). u0 = (flags, 0, 0, 0); f0 = (k_corr, ca_corr px, 0, 0).
+// captured radius x with x(1 + k x²)(1 + ca_ch) = r_o·crop by three Newton steps (isp_crop: the
+// output keeps only the field the sensor covers), then the captured picture bilinear there (in
+// sensor units). u0 = (flags, 0, 0, 0); f0 = (k_corr, ca_corr px, 0, 0).
 // T0 = P3, T1 = the source.
 
 fn rgb_at(px: f32, py: f32, ch: u32) -> f32 {
@@ -37,9 +38,10 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let dx = f32(sx) + 0.5 - hw;
     let dy = f32(sy) + 0.5 - hh;
     let ro = sqrt((dx * dx + dy * dy) / hd2);
+    let crop = isp_crop(kc, ca, border_r2_min(hw, hh, hd2));
     var rgb = vec3<u32>(0u);
     for (var ch = 0u; ch < 3u; ch = ch + 1u) {
-        let t = ro / (1.0 + ca * (1.0 - f32(ch)));
+        let t = ro * crop / (1.0 + ca * (1.0 - f32(ch)));
         var xr = t;
         for (var i = 0; i < 3; i = i + 1) {
             let fx = xr * (1.0 + kc * xr * xr) - t;

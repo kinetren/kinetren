@@ -317,8 +317,35 @@ pub(crate) fn unprocess_row(cx: &Ctx, y: u32, out: &mut [u32]) {
 
 // ---- P0: the lens and the photons ----------------------------------------------------------------
 
-/// The scene through the lens at a sensor pixel: distortion and CA per channel, the 4-spot OLPF,
-/// cos⁴ vignetting and colour shading.
+/// The squared half of the frame's SHORT side over the squared half-diagonal: the smallest r² on
+/// the frame's border (the midpoints of its long edges).
+#[inline(always)]
+fn border_r2_min(hw: f32, hh: f32, hd2: f32) -> f32 {
+    let m = hw.min(hh);
+    m * m / hd2
+}
+
+/// The lens's field fitted to the scene (design: the edges of the frame): the largest field whose
+/// every ray, in every channel, lands inside the recorded frame. A ray at sensor radius r reaches
+/// the scene at r·(1 + k r²)(1 + ca_ch); over the sensor's border r² runs from `border_r2_min` to 1,
+/// so the widest reach is (1 + max(k·m², k))·(1 + |ca|). The focal length is chosen so that it is
+/// exactly the frame: the scene beyond the frame was never recorded. 1 for an ideal lens.
+#[inline(always)]
+pub fn lens_fit(k: f32, ca: f32, m2: f32) -> f32 {
+    (1.0 + (k * m2).max(k)) * (1.0 + ca.abs())
+}
+
+/// The ISP's crop after its lens correction: the widest output whose every pixel, in every channel,
+/// maps inside the sensor. Output radius r reads the captured radius x with
+/// x(1 + k x²)(1 + ca_ch) = r·crop; over the border that stays inside while
+/// crop ≤ (1 + min(k·m², k))·(1 − |ca|). A folded (over-strong) correction keeps a 5 % field.
+#[inline(always)]
+pub fn isp_crop(k: f32, ca: f32, m2: f32) -> f32 {
+    ((1.0 + (k * m2).min(k)) * (1.0 - ca.abs())).max(0.05)
+}
+
+/// The scene through the lens at a sensor pixel: distortion and CA per channel (the field fitted to
+/// the scene, `lens_fit`), the 4-spot OLPF, cos⁴ vignetting and colour shading.
 #[inline(always)]
 fn optics(cx: &Ctx, sx: i32, sy: i32) -> [f32; 3] {
     let c = cx.c;
@@ -331,10 +358,11 @@ fn optics(cx: &Ctx, sx: i32, sy: i32) -> [f32; 3] {
     let hd2 = hw * hw + hh * hh;
     let dist = 1.0 + c.k_lens * ((dx * dx + dy * dy) / hd2);
     let ca = c.ca / hd2.sqrt();
+    let fit = lens_fit(c.k_lens, ca, border_r2_min(hw, hh, hd2));
     let d = c.olpf * 0.5;
     let mut out = [0.0f32; 3];
     for (ch, o) in out.iter_mut().enumerate() {
-        let s = dist * (1.0 + ca * (1.0 - ch as f32));
+        let s = dist * (1.0 + ca * (1.0 - ch as f32)) / fit;
         let (qx, qy) = (hw + dx * s, hh + dy * s);
         *o = if d > 0.0 {
             let a = cx.scene(qx - d, qy - d, ch);
@@ -821,14 +849,15 @@ pub(crate) fn lens_correct_row(cx: &Ctx, y: u32, out: &mut [u32]) {
     let (hw, hh) = (cx.sw as f32 * 0.5, cx.sh as f32 * 0.5);
     let hd2 = hw * hw + hh * hh;
     let ca = c.ca_corr / hd2.sqrt();
+    let crop = isp_crop(c.k_corr, ca, border_r2_min(hw, hh, hd2));
     for (x, o) in out.iter_mut().enumerate() {
         let sx = (x as u32 / c.k) as i32;
         let (dx, dy) = (sx as f32 + 0.5 - hw, sy as f32 + 0.5 - hh);
         let ro = ((dx * dx + dy * dy) / hd2).sqrt();
         let mut rgb = [0u32; 3];
         for (ch, v) in rgb.iter_mut().enumerate() {
-            // the captured radius x with x(1 + k x²)(1 + ca_ch) = r_o, by Newton from r_o
-            let t = ro / (1.0 + ca * (1.0 - ch as f32));
+            // the captured radius x with x(1 + k x²)(1 + ca_ch) = r_o·crop, by Newton
+            let t = ro * crop / (1.0 + ca * (1.0 - ch as f32));
             let mut xr = t;
             for _ in 0..3 {
                 let fx = xr * (1.0 + c.k_corr * xr * xr) - t;

@@ -480,14 +480,20 @@ fn mean_diff(a: &[u8], b: &[u8], w: u32, h: u32, m: u32) -> f64 {
 fn t1220_every_defect_has_its_correcting_block() {
     let (w, h) = (96u32, 64u32);
     // a smooth pattern (period 24 px): a geometric defect moves it, a bilinear resampling barely
-    // softens it — so the comparison measures the defect, not the interpolation
-    let f = frame_of(w, h, |x, y| {
-        use kt_plugin_api::math::FrozenMath;
-        let a = (x as f64 * std::f64::consts::TAU / 24.0).fsin();
-        let b = (y as f64 * std::f64::consts::TAU / 24.0).fcos();
-        let q = |c: f64| (128.0 + 90.0 * c).round() as u8;
-        [q(a * b), q(0.8 * a), q(-0.8 * b)]
-    });
+    // softens it — so the comparison measures the defect, not the interpolation. `z` films the same
+    // scene magnified by 1/z about the centre (exactly: the pattern is analytic).
+    let scene = |z: f64| {
+        frame_of(w, h, move |x, y| {
+            use kt_plugin_api::math::FrozenMath;
+            let (cx, cy) = (w as f64 * 0.5, h as f64 * 0.5);
+            let (px, py) = (cx + (x as f64 + 0.5 - cx) * z - 0.5, cy + (y as f64 + 0.5 - cy) * z - 0.5);
+            let a = (px * std::f64::consts::TAU / 24.0).fsin();
+            let b = (py * std::f64::consts::TAU / 24.0).fcos();
+            let q = |c: f64| (128.0 + 90.0 * c).round() as u8;
+            [q(a * b), q(0.8 * a), q(-0.8 * b)]
+        })
+    };
+    let f = scene(1.0);
     // the reference camera: the lens on but ideal (no OLPF, no shading), so a pair differs from it
     // only by its defect
     let base = with(
@@ -495,6 +501,20 @@ fn t1220_every_defect_has_its_correcting_block() {
         &[("cfa", 0.0), ("demosaic", 2.0), ("vignetting", 0.0), ("optics", 1.0), ("olpf", 0.0)],
     );
     let reference = run(&values(&base), &f);
+    // A geometric defect changes the FIELD too (t1430): the lens is fitted to the recorded scene
+    // and the ISP crops its correction to what the sensor covers. Each output is compared with the
+    // ideal camera at its own paraxial magnification — the corrected one at crop/fit, the
+    // uncorrected one at 1/fit — so the pair measures the warp, not the framing.
+    let (hw, hh) = (w as f32 * 0.5, h as f32 * 0.5);
+    let hd2 = hw * hw + hh * hh;
+    let m2 = hw.min(hh) * hw.min(hh) / hd2;
+    let field = |defect: &[(&str, f64)], corrected: bool| -> f64 {
+        let get = |n: &str| defect.iter().find(|(k, _)| *k == n).map_or(0.0, |d| d.1) as f32;
+        let (k, ca) = (get("distortion"), get("lateral_ca") / hd2.sqrt());
+        let fit = fx_video_camera::cpu::lens_fit(k, ca, m2);
+        let crop = if corrected { fx_video_camera::cpu::isp_crop(k, ca, m2) } else { 1.0 };
+        (crop / fit) as f64
+    };
     // (what, the defect, the block switched off)
     type Pair<'a> = (&'a str, &'a [(&'a str, f64)], &'a str);
     let pairs: &[Pair] = &[
@@ -509,12 +529,16 @@ fn t1220_every_defect_has_its_correcting_block() {
         ("Gr/Gb imbalance ↔ green equalisation", &[("green_imbalance", 0.06)], "geq"),
         ("column fixed pattern ↔ optical-black correction", &[("column_fpn", 20.0)], "rowcol"),
     ];
+    let base_vals = values(&base);
+    let reference_at = |z: f64| {
+        if z == 1.0 { reference.clone() } else { run(&base_vals, &scene(z)) }
+    };
     for (what, defect, block) in pairs {
         let mut on = base.clone();
         on.extend_from_slice(defect);
-        let corrected = mean_diff(&run(&values(&on), &f), &reference, w, h, 6);
+        let corrected = mean_diff(&run(&values(&on), &f), &reference_at(field(defect, true)), w, h, 6);
         on.push((block, 0.0));
-        let raw = mean_diff(&run(&values(&on), &f), &reference, w, h, 6);
+        let raw = mean_diff(&run(&values(&on), &f), &reference_at(field(defect, false)), w, h, 6);
         eprintln!("{what}: with the block {corrected:.2}, without {raw:.2}");
         assert!(raw > 0.8, "{what}: the defect is invisible without its block ({raw:.2})");
         assert!(
