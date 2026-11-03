@@ -15,7 +15,23 @@ pub struct FfmpegSource {
     src_size: (u32, u32),
     /// The stream format has alpha (R.67): the frame goes into the composite with it.
     has_alpha: bool,
+    /// The file's path, for a second decoder (export-throughput D9).
+    path: String,
+    /// More decoders of this file, opened by a multi-quality span when one file is read at two
+    /// places at once (a picture-in-picture of the same footage, a reel): one decoder
+    /// ping-ponged between them, seeking and decoding a GOP for every frame. Owned like `inner`.
+    cursors: Vec<kt_ffmpeg::Source>,
+    /// When each decoder last read a run (a counter of runs, not a clock).
+    cursor_used: [u64; MAX_CURSORS],
+    runs: u64,
 }
+
+/// Decoders per file at most (D9): each 4K decoder holds its threads' frame pools.
+const MAX_CURSORS: usize = 2;
+/// Keys of one span further apart than this are separate runs, each given the nearest decoder.
+const RUN_GAP: i64 = 2 * kt_time::TICK_HZ;
+/// How far ahead a decoder decodes on instead of seeking (kt-ffmpeg's own forward bound).
+const FORWARD: i64 = 4 * kt_time::TICK_HZ;
 
 impl From<kt_ffmpeg::FfError> for MediaError {
     fn from(e: kt_ffmpeg::FfError) -> MediaError {
@@ -28,7 +44,7 @@ impl From<kt_ffmpeg::FfError> for MediaError {
 
 impl FfmpegSource {
     pub fn open(path: &str) -> Result<FfmpegSource, MediaError> {
-        Self::from_inner(kt_ffmpeg::Source::open(path)?)
+        Self::from_inner(path, kt_ffmpeg::Source::open(path)?)
     }
 
     /// Opening through the sidecar index DB: the packet index (the pts of audio packets
@@ -49,7 +65,7 @@ impl FfmpegSource {
                 (db.packet_index(mid, "audio"), db.packet_index(mid, "video"))
         {
             let prebuilt = kt_ffmpeg::PrebuiltIndex { audio_pts: audio, video_keyframes: video };
-            return Self::from_inner(kt_ffmpeg::Source::open_with_index(path, Some(prebuilt))?);
+            return Self::from_inner(path, kt_ffmpeg::Source::open_with_index(path, Some(prebuilt))?);
         }
         let src = Self::open(path)?;
         let (audio, video) = src.inner.packet_index();
@@ -68,7 +84,7 @@ impl FfmpegSource {
         self.inner.packet_index()
     }
 
-    fn from_inner(inner: kt_ffmpeg::Source) -> Result<FfmpegSource, MediaError> {
+    fn from_inner(path: &str, inner: kt_ffmpeg::Source) -> Result<FfmpegSource, MediaError> {
         let p = inner.probe();
         let info = MediaInfo {
             duration: p.duration,
@@ -82,14 +98,45 @@ impl FfmpegSource {
         };
         let src_size = (p.width.max(2), p.height.max(2));
         let has_alpha = p.has_alpha;
-        Ok(FfmpegSource { inner, info, src_size, has_alpha })
+        Ok(FfmpegSource { inner, info, src_size, has_alpha, path: path.to_string(), cursors: Vec::new(), cursor_used: [0; MAX_CURSORS], runs: 0 })
+    }
+
+    /// The decoder for a run of keys starting at `start` (D9): the one that reaches it by
+    /// decoding on (the nearest behind it, within the forward bound); else a fresh one while the
+    /// file has fewer than `MAX_CURSORS`; else the one standing longest unused. Ties go to the
+    /// lower index — the choice is a function of the requests, never of timing.
+    fn cursor_for(&mut self, start: Tick) -> usize {
+        let all = 1 + self.cursors.len();
+        let at = |i: usize| if i == 0 { self.inner.video_cursor() } else { self.cursors[i - 1].video_cursor() };
+        let near = (0..all)
+            .filter_map(|i| at(i).filter(|p| p.0 <= start.0 && start.0 - p.0 < FORWARD).map(|p| (start.0 - p.0, i)))
+            .min();
+        if let Some((_, i)) = near {
+            return i;
+        }
+        if let Some(i) = (0..all).find(|&i| at(i).is_none()) {
+            return i;
+        }
+        if all < MAX_CURSORS {
+            let (a, v) = self.inner.packet_index();
+            let prebuilt = kt_ffmpeg::PrebuiltIndex { audio_pts: a.to_vec(), video_keyframes: v.to_vec() };
+            if let Ok(s) = kt_ffmpeg::Source::open_with_index(&self.path, Some(prebuilt)) {
+                self.cursors.push(s);
+                return all;
+            }
+        }
+        (0..all).min_by_key(|&i| (self.cursor_used[i], i)).unwrap_or(0)
     }
 }
 
 impl FfmpegSource {
     /// (backward_reopens, frames_decoded): diagnostics of test 21.
+    /// All decoders of the file together (export-throughput D9).
     pub fn decode_debug_stats(&self) -> (u64, u64) {
-        self.inner.video_debug_stats()
+        self.cursors.iter().fold(self.inner.video_debug_stats(), |(r, d), c| {
+            let (r2, d2) = c.video_debug_stats();
+            (r + r2, d + d2)
+        })
     }
 }
 
@@ -180,6 +227,36 @@ impl MediaSource for FfmpegSource {
                 )
             })
             .map_err(MediaError::from)
+    }
+
+    fn read_video_span_qualities(
+        &mut self,
+        keys: &[(Tick, Quality)],
+        emit: &mut dyn FnMut(Tick, Quality, VideoFrame),
+    ) -> Result<(), MediaError> {
+        let sized: Vec<(Tick, u32, u32)> = keys.iter().map(|(k, q)| (*k, q.width, q.height)).collect();
+        let has_alpha = self.has_alpha;
+        // runs of nearby keys, each to its own decoder (D9)
+        let mut i = 0;
+        while i < sized.len() {
+            let mut j = i + 1;
+            while j < sized.len() && sized[j].0.0 - sized[j - 1].0.0 <= RUN_GAP {
+                j += 1;
+            }
+            self.runs += 1;
+            let c = self.cursor_for(sized[i].0);
+            self.cursor_used[c] = self.runs;
+            let src = if c == 0 { &mut self.inner } else { &mut self.cursors[c - 1] };
+            src.read_video_span_sizes(&sized[i..j], &mut |k, (w, h), f| {
+                emit(
+                    k,
+                    Quality { width: w, height: h },
+                    VideoFrame { pts: f.pts, width: f.width, height: f.height, rgba: f.rgba.into_boxed_slice(), has_alpha },
+                )
+            })?;
+            i = j;
+        }
+        Ok(())
     }
 }
 

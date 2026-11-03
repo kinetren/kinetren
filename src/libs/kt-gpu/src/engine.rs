@@ -25,6 +25,27 @@ const GEOM_SLOT_UNITS: u32 = (GEOM_UNIFORM_BYTES as u64 / SLOT) as u32;
 const UPLOAD_BUDGET: u64 = 256 * 1024 * 1024;
 const TRANSIENT_BUDGET: u64 = 128 * 1024 * 1024;
 const READBACK_BUDGET: u64 = 64 * 1024 * 1024;
+/// Frames in flight between `submit` and `collect` (export-throughput D5): one being read back,
+/// one being rendered, one being built — more only adds staging memory.
+const RING: usize = 3;
+
+/// A staging buffer of the readback ring and the map callback's verdict.
+struct RingSlot {
+    buf: wgpu::Buffer,
+    bpr: u32,
+    w: u32,
+    h: u32,
+    mapped: Arc<std::sync::Mutex<Option<bool>>>,
+}
+
+/// A submitted frame: on the device (with its submission) or ready without one (an empty plan).
+struct InFlight {
+    ticket: u64,
+    complete: bool,
+    gpu: Option<wgpu::SubmissionIndex>,
+    out_w: u32,
+    out_h: u32,
+}
 
 /// Uniform of all passes: 2×vec4<u32> + 2×vec4<f32> + mat4 (see common.wgsl).
 #[derive(Default, Clone, Copy)]
@@ -710,6 +731,12 @@ struct Inner {
     /// What the last `execute` ran (morpher-event-grid-cost, D1).
     last_cost: kt_fx::video::FrameCost,
     staging: Option<(wgpu::Buffer, u32, u32, u32)>, // (buf, padded_bpr, w, h)
+    /// The export's readback ring (export-throughput D5): a frame submitted, its copy in flight,
+    /// while the caller builds and submits the next; slot = ticket % `RING`.
+    ring: Vec<Option<RingSlot>>,
+    /// Submitted, not yet collected, in submission order.
+    in_flight: std::collections::VecDeque<InFlight>,
+    next_ticket: u64,
     dummy: Tex,
     max_dim: u32,
 }
@@ -1105,6 +1132,9 @@ impl GpuFxEngine {
                 readback: ReadbackCache::new(READBACK_BUDGET),
                 last_cost: Default::default(),
                 staging: None,
+                ring: (0..RING).map(|_| None).collect(),
+                in_flight: Default::default(),
+                next_ticket: 0,
                 dummy,
                 max_dim,
             }),
@@ -1137,9 +1167,141 @@ impl VideoGpuExec for GpuFxEngine {
     fn last_cost(&self) -> kt_fx::video::FrameCost {
         self.inner.lock().unwrap().last_cost
     }
+
+    fn readback_depth(&self) -> usize {
+        RING
+    }
+
+    fn submit(&self, plan: &FramePlan<'_>) -> Result<u64, GpuExecError> {
+        self.inner.lock().unwrap().submit(plan)
+    }
+
+    fn collect(&self, ticket: u64, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+        self.inner.lock().unwrap().collect(ticket, out)
+    }
 }
 
 impl Inner {
+    /// `execute` without the wait (export-throughput D5): the same resolve, the same passes, the
+    /// copy into the ring's staging buffer, the map requested — and back to the caller. The
+    /// readback memo is neither asked nor filled: an export composes every moment once, and the
+    /// memo's copy of each 1080p frame (8 MB) was pure cost.
+    fn submit(&mut self, plan: &FramePlan<'_>) -> Result<u64, GpuExecError> {
+        let (ow, oh) = (plan.out_w, plan.out_h);
+        if ow > self.max_dim || oh > self.max_dim {
+            return Err(GpuExecError::TooLarge { w: ow, h: oh });
+        }
+        if self.in_flight.len() >= RING {
+            return Err(GpuExecError::Validation("readback ring full: collect before submitting".into()));
+        }
+        let ticket = self.next_ticket;
+        self.next_ticket += 1;
+        self.last_cost = Default::default();
+        let (jobs, complete) = self.resolve_plan(plan)?;
+        for j in &jobs {
+            self.last_cost.add(j.cost());
+        }
+        if jobs.is_empty() {
+            self.in_flight.push_back(InFlight { ticket, complete, gpu: None, out_w: ow, out_h: oh });
+            return Ok(ticket);
+        }
+        let total: u32 = jobs.iter().map(|j| j.slot_units()).sum();
+        if total > self.arena_slots {
+            let slots = total.next_power_of_two();
+            self.arena = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("kt-gpu uniforms"),
+                size: SLOT * slots as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.arena_slots = slots;
+        }
+        self.slot = 0;
+        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
+        let result = self.encode_jobs(&mut enc, &jobs, ow, oh);
+        let padded_bpr = (ow * 4).next_multiple_of(256);
+        let i = (ticket % RING as u64) as usize;
+        let fits = matches!(&self.ring[i], Some(r) if r.bpr == padded_bpr && r.w == ow && r.h == oh);
+        if !fits {
+            self.ring[i] = Some(RingSlot {
+                buf: self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("kt-gpu readback ring"),
+                    size: padded_bpr as u64 * oh as u64,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                }),
+                bpr: padded_bpr,
+                w: ow,
+                h: oh,
+                mapped: Default::default(),
+            });
+        }
+        let slot = self.ring[i].as_ref().unwrap();
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &result.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &slot.buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bpr),
+                    rows_per_image: Some(oh),
+                },
+            },
+            wgpu::Extent3d { width: ow, height: oh, depth_or_array_layers: 1 },
+        );
+        let sub = self.queue.submit([enc.finish()]);
+        *slot.mapped.lock().unwrap() = None;
+        let mapped = slot.mapped.clone();
+        slot.buf.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+            *mapped.lock().unwrap() = Some(r.is_ok());
+        });
+        // the accumulator goes back to the pool: a later frame writing it is ordered after this
+        // copy on the one queue
+        self.pool.release(result);
+        self.in_flight.push_back(InFlight { ticket, complete, gpu: Some(sub), out_w: ow, out_h: oh });
+        Ok(ticket)
+    }
+
+    /// Wait for the OLDEST submitted frame and copy it out — the bytes `execute` returns.
+    fn collect(&mut self, ticket: u64, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+        let Some(f) = self.in_flight.pop_front() else {
+            return Err(GpuExecError::Validation("nothing submitted".into()));
+        };
+        if f.ticket != ticket {
+            return Err(GpuExecError::Validation(format!("collect {ticket}, the oldest is {}", f.ticket)));
+        }
+        let n = (f.out_w as usize) * (f.out_h as usize) * 4;
+        let Some(sub) = f.gpu else {
+            out.clear();
+            out.resize(n, 0);
+            return Ok(f.complete);
+        };
+        self.device
+            .poll(wgpu::PollType::Wait { submission_index: Some(sub), timeout: None })
+            .map_err(|_| GpuExecError::DeviceLost)?;
+        let slot = self.ring[(ticket % RING as u64) as usize].as_ref().ok_or(GpuExecError::DeviceLost)?;
+        if *slot.mapped.lock().unwrap() != Some(true) {
+            return Err(GpuExecError::DeviceLost);
+        }
+        out.clear();
+        out.reserve(n);
+        {
+            let slice = slot.buf.slice(..);
+            let data = slice.get_mapped_range().map_err(|_| GpuExecError::DeviceLost)?;
+            for row in 0..f.out_h as usize {
+                let s = row * slot.bpr as usize;
+                out.extend_from_slice(&data[s..s + f.out_w as usize * 4]);
+            }
+        }
+        slot.buf.unmap();
+        Ok(f.complete)
+    }
+
     fn execute(&mut self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
         let (ow, oh) = (plan.out_w, plan.out_h);
         if ow > self.max_dim || oh > self.max_dim {

@@ -588,6 +588,7 @@ impl KtApp {
             force_encoder: self.render_setup.encoder.clone(),
             resolution: self.render_setup.resolution,
             placeholders: self.render_setup.missing.clone(),
+            ..Default::default()
         };
         let opts_thread = opts.clone();
         let out_path_thread = out_path.clone();

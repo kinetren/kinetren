@@ -111,6 +111,20 @@ in the source's state and arrive through the retune lane.
   frame is a function not of the reel's revision but of what the worker managed to put in; written under the revision's key, it gave a BLACK reel forever: the key does not move from the warm-up, and outside the composite is declared complete. The live player
   fell into this on every cold start.
 
+## The export is a pipeline inside one file (export-throughput)
+
+- `export_pipeline::run` is the product's export; `ExportOptions.serial` (= the former one-thread
+  export, `render_raw_video_range_with` + `render_raw_audio_range`) is its REFERENCE: t1451 holds
+  the pipelined frames and samples equal to it. A change to what a frame is goes into the shared
+  code (`build_plan`, `chunk_requests`/`decode_requests`), never into one of the two paths.
+- **Nothing the writer emits may depend on timing**: the audio is interleaved by the fixed rule
+  (after frame `i`, the audio up to its end), and the progress counts are the WRITER's (frames and
+  audio frames written) — t955 compares two exports' event streams element by element.
+- **The look-ahead is bytes, not chunks** (`LOOKAHEAD_BYTES` under `PIPE_CACHE_BYTES`): a chunk
+  being composed must never be evicted (R.15 item 1), and at 4K decode sizes a chunk is one frame.
+- A stream stage (datamosh) keeps the serial export: its pre-roll decodes on the compose thread.
+- The clock is read only into `ExportProfile` (`kt-cli export --time`), never to steer.
+
 ## Tests
 1–3 (concatenation/crossfade/gain), 7 (seek determinism), 9 (scheduler), 11 (golden export), 13 (viewport black), 14 (loop).
 - Tests 166–168: `tests/loop_fx.rs` (the seam of the wrap-around, a short region, a complex edit without underruns).

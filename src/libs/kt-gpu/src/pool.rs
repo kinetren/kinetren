@@ -86,11 +86,19 @@ pub(crate) struct UploadCache {
     order: u64,
     bytes: u64,
     budget: u64,
+    /// Evicted textures kept for the next upload of their size (export-throughput D5): an
+    /// export uploads every source frame once, and a texture per frame was a device allocation
+    /// per frame. A reused texture is rewritten by `write_texture`, which the queue orders after
+    /// every submission already reading it.
+    spare: HashMap<(u32, u32), Vec<Tex>>,
 }
+
+/// Spare textures kept per size.
+const SPARE_PER_SIZE: usize = 4;
 
 impl UploadCache {
     pub fn new(budget: u64) -> UploadCache {
-        UploadCache { map: HashMap::new(), order: 0, bytes: 0, budget }
+        UploadCache { map: HashMap::new(), order: 0, bytes: 0, budget, spare: HashMap::new() }
     }
 
     pub fn get_or_upload(
@@ -106,7 +114,10 @@ impl UploadCache {
             *stamp = self.order;
             return tex.view.clone();
         }
-        let tex = create_tex(device, frame.width, frame.height, "kt-gpu upload");
+        let tex = match self.spare.get_mut(&(frame.width, frame.height)).and_then(|v| v.pop()) {
+            Some(t) => t,
+            None => create_tex(device, frame.width, frame.height, "kt-gpu upload"),
+        };
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &tex.texture,
@@ -130,6 +141,10 @@ impl UploadCache {
             let Some(k) = oldest else { break };
             if let Some((t, _)) = self.map.remove(&k) {
                 self.bytes -= tex_bytes(t.w, t.h);
+                let spare = self.spare.entry((t.w, t.h)).or_default();
+                if spare.len() < SPARE_PER_SIZE {
+                    spare.push(t);
+                }
             }
         }
         view

@@ -5,6 +5,15 @@ month, newest first.
 
 ## kt26.11
 
+- **The final render is about four times faster, and it no longer crashes on some footage.** It
+  used one core for everything in turn; now it reads, draws, converts and encodes at the same
+  time on all of them, and the sound renders alongside the picture instead of after it. A
+  project that jumps around in long 4K files no longer reads minutes of video it does not show,
+  and a picture-in-picture of the same clip no longer makes it re-read the clip for every frame.
+  The render of a project with a square 1080×1080 video used to crash within seconds. On a
+  machine without a graphics card the render now draws on the processor's cores, which is the
+  faster way there.
+
 - **Camera ISP no longer smears the edges of the frame.** "Phone at night" and the looks with a
   distorting lens filled a band along the edges — about 30 px on a 1080p frame — with streaks of
   the edge pixels. The simulated lens is now framed on what your footage recorded, and the

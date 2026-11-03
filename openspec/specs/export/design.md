@@ -24,7 +24,7 @@ The old engine kept two composition codes: one for the preview and another for e
 - **The region in kt-cli — "we do not do it"** (a direct decision of the owner): the divergence from the GUI is deliberate.
 - **"Let's speed up the preview, it's only for display"** — forbidden by the verdict F-RES under invariant 7: the cost "the preview is not faster than export on the same frame" is named in advance; the only permitted way to speed up is to reduce Quality.
 - **Streaming to the pipes of an external `ffmpeg` (stdin + mkfifo)** — an interim decision, replaced by the in-process muxer: without an external process the system FFmpeg's hardware encoders became available, and invariant 9 was strengthened to "not only without temp files, but without processes".
-- **Explicit SIMD in export** — no: the CPU path is the byte reference, and auto-vectorization would change the f64 sums and the determinism between machines; the speed-up is the GPU.
+- ~~**Explicit SIMD in export** — no: the CPU path is the byte reference, and auto-vectorization would change the f64 sums and the determinism between machines; the speed-up is the GPU.~~ **Revisited (export-throughput D10):** the premise is gone — the AVX2 twins (R.32 and the barriers' `simd.rs`) are byte-exact by rule and run in the export already. What the export lacked was cores, not lanes. The rule that stands: SIMD in any kernel only as a byte-exact twin of its scalar text.
 
 ## Non-obvious details
 
@@ -33,7 +33,7 @@ The old engine kept two composition codes: one for the preview and another for e
 - Export reads frames as a span (`read_video_span`), not frame by frame (`src/libs/kt-engine/src/export.rs`, `render_raw_video_range_with`): frame-by-frame reading, when the project fps > the source fps, went into a seek plus decoder re-creation on every second frame and diverged from the preview's sampling semantics — judder in the finished file.
 - Natives and procedurality of sources are taken by export from the OPEN sources (`SourceFacts`, `VideoRenderer::new_with_facts` in `src/libs/kt-engine/src/video.rs`): `VideoRenderer::new` does not know them (step ≡ 1). An export that builds a renderer without facts would diverge from the preview in the decode scale step — the order and the cache keys would become different.
 - The generator sources are opened BY the export itself via `gen_sources(project)` (`src/libs/kt-engine/src/export.rs`): their address is derived from the event, and the caller has nowhere to get them; there must be no second enumeration.
-- The muxer writes video and audio SEQUENTIALLY into one `Muxer` (`src/libs/kt-engine/src/export.rs`, `export_mp4_with_backends`); the interleaving is done by `av_interleaved_write_frame`; `audio_sources`/`video_sources` are TWO independent sets, both opened by the caller (`open_all()` twice in `src/apps/kt-cli/src/main.rs` and `src/apps/kt-app/src/render_dialog.rs`) — one export is two full passes over the material.
+- The muxer is written by ONE writer (`src/libs/kt-engine/src/export_pipeline.rs`, `write_all`): video frame `i`, then the audio up to that frame's end (export-throughput D2; until 2026-11-03 the whole audio pass followed the video pass); the interleaving of packets is done by `av_interleaved_write_frame`; `audio_sources`/`video_sources` are TWO independent sets, both opened by the caller (`open_all()` twice in `src/apps/kt-cli/src/main.rs` and `src/apps/kt-app/src/render_dialog.rs`) — one export is two full passes over the material.
 - The export pause is a cooperative 40 ms wait in the progress wrappers (`src/libs/kt-engine/src/export.rs`), cancellable; the ETA and speed are computed by the UI — wall-clock in the engine is forbidden.
 - During encoder probes the FFmpeg log level is raised to FATAL and lowered back (`src/libs/kt-ffmpeg/src/muxer_impl.rs`, `Muxer::open`): failed candidates are normal. A known remainder: `h264_vaapi`/`h264_qsv` with our frame scheme (yuv420p, no hw context) never open (−22), but they stay in the list and in the dialog's combo box (F-EXP-004; the verdict "bring the list in line with the truth" — not done).
 - `ExportError` (`src/libs/kt-engine/src/export.rs`) no longer contains `GpuRequired`; `FfmpegFailed(ExitStatus)` is a remnant of the pipe path and is not produced by live code.
@@ -136,3 +136,42 @@ halves separately with scripted numbers; t1312 drives a REAL export of the owner
 window frame by frame to Close (red on the old code with his panic text), and the live scenario
 `renderregion.py` checks that the supervisor opened no crash window — with the supervisor a UI panic
 no longer ends the process a scenario started, so "the process is alive" alone would pass a crash.
+
+## The final render is pipelined (export-throughput, 2026-11-03)
+
+- **What hurt.** The owner (kkt-26.11.03 C1): "our final render is VERY slow, slower even than the
+  preview; it seems not parallel but strongly sequential". One thread did decode → composite →
+  GPU readback (a full wait per frame) → RGBA→YUV → encode; libx264 was opened without threads;
+  the audio pass started after the last video frame. Measuring it found two decode defects that
+  cost more than all of that (media-index design, "The decoder reads what it is asked, once"),
+  and a crash: the showcase export died in 3 s (`RGBA_TAIL_PAD`, t1450).
+- **One file, its stages concurrent** (`export_pipeline::run`): decode a byte budget ahead with a
+  thread per source, the GPU on one thread with three frames in flight (`submit`/`collect`) or
+  CPU frame workers (one scratch each, over the shared renderer), the conversion on the frame
+  workers, one writer, the audio on its own thread. The encoder receives exactly the serial
+  export's frames and samples (t1451); `ExportOptions.serial` keeps the former export as that
+  reference and as the "before" of `kt-cli export --serial --time`. Kept rejected: chunks rendered
+  in parallel and joined (F-COL-040) — one file, one encoder, one order.
+- **Nothing written depends on timing**: the audio interleave is a fixed rule, the progress counts
+  are the writer's (t955 compares two exports' events element by element; the first version
+  reported the audio thread's own count and broke it).
+- **The look-ahead is a byte budget** (`LOOKAHEAD_BYTES` = 4 serial budgets under a cache of 5): a
+  chunk being composed is never evicted (R.15 item 1), and at 4K decode sizes a chunk is ONE frame
+  — the first version, two chunks ahead, kept 2 of 16 CPU workers busy (337 s).
+- **The encoder's threads** (`threads=auto`, in the open report, t1456). A machine writes the same
+  file run after run; two machines differ, as they did before (the encoder is the machine's).
+- **The export's GPU device is HighPerformance; a software rasterizer composes on the CPU.**
+  LowPower stays for the UI (invariant 12). llvmpipe/lavapipe rasterize one frame at a time through
+  one queue; the CPU workers compose a frame each: 131.9 s against 101.4 s on the showcase.
+  `KT_VIDEO_GPU=1` takes the adapter anyway (`kt_gpu::export_engine`).
+- **A stream stage keeps the serial export**: its pre-roll decodes on the compose thread.
+
+### Measured
+
+Release, the showcase (104.0 s, 2600 frames of 1080p25, libx264 veryfast crf 23, seven VP8/VP9
+files up to 3840×2160), 32 cores, no GPU (llvmpipe), media in the page cache, output in
+`/dev/shm`, other sessions' builds on the machine (load 10–50). Busy seconds per stage summed over
+the stage's threads; "decoded" is pictures out of the decoders for the 5,644 the export uses.
+
+@MEASURED@
+

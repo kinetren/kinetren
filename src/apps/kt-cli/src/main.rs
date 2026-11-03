@@ -738,6 +738,7 @@ fn probe_encoders() -> String {
             video_bitrate: None,
             audio_bitrate: 128_000,
             force_encoder: Some(spec.name.to_string()),
+            threads: 0,
         };
         let line = match kt_ffmpeg::Muxer::open(&cfg) {
             Ok(m) => match &m.open_report().device {
@@ -1187,14 +1188,18 @@ fn run(args: &[String]) -> i32 {
         }
         Some("export") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
-                eprintln!("usage: kt-cli export <in.kt> <out.mp4> [encoder]");
+                eprintln!("usage: kt-cli export <in.kt> <out.mp4> [encoder] [--time] [--serial]");
                 return 2;
             };
+            // --time: where the export's time went, stage by stage (export-throughput D6);
+            // --serial: the former one-thread export, the "before" of every such measurement
+            let time = args.iter().any(|a| a == "--time");
+            let serial = args.iter().any(|a| a == "--serial");
             // a third argument can pin the video encoder (otherwise
             // auto-selection: nvenc → vaapi → qsv → libx264). It is needed where
             // the render MUST be reproducible — for example in the cross-render
             // conformance (test 158).
-            let encoder = args.get(3).cloned();
+            let encoder = args.get(3).filter(|a| !a.starts_with("--")).cloned();
             let project = match load_project_resolved(input) {
                 Ok(p) => p,
                 Err(code) => return code,
@@ -1235,23 +1240,25 @@ fn run(args: &[String]) -> i32 {
                     return 1;
                 }
             };
-            let opts = kt_engine::ExportOptions { force_encoder: encoder, ..Default::default() };
+            let profile = time.then(|| std::sync::Arc::new(kt_engine::export::ExportProfile::default()));
+            let opts = kt_engine::ExportOptions {
+                force_encoder: encoder,
+                serial,
+                profile: profile.clone(),
+                ..Default::default()
+            };
             // R.29: rendering on the GPU by default (headless device, the same
             // composition code); no adapter → CPU with a note in stderr,
             // KT_VIDEO_GPU=0 — forced CPU
-            let video_gpu = if std::env::var("KT_VIDEO_GPU").as_deref() == Ok("0") {
-                None
-            } else {
-                match kt_gpu::GpuContext::new_headless().and_then(kt_gpu::GpuFxEngine::new) {
-                    Ok(e) => {
-                        use kt_engine::VideoGpuExec as _;
-                        eprintln!("video: GPU ({})", e.info().name);
-                        Some(e as std::sync::Arc<dyn kt_engine::VideoGpuExec>)
-                    }
-                    Err(err) => {
-                        eprintln!("video: CPU (no GPU: {err})");
-                        None
-                    }
+            let video_gpu = match kt_gpu::export_engine() {
+                Ok(e) => {
+                    use kt_engine::VideoGpuExec as _;
+                    eprintln!("video: GPU ({})", e.info().name);
+                    Some(e as std::sync::Arc<dyn kt_engine::VideoGpuExec>)
+                }
+                Err(err) => {
+                    eprintln!("video: CPU ({err})");
+                    None
                 }
             };
             match kt_engine::export_mp4_with_backends(
@@ -1286,6 +1293,23 @@ fn run(args: &[String]) -> i32 {
                         stats.missing_video_layers,
                         stats.encoder
                     );
+                    if let Some(p) = &profile {
+                        eprint!("stages:\n{}", p.report());
+                        use std::sync::atomic::Ordering::Relaxed;
+                        let (ns, n, px) = (
+                            kt_ffmpeg::iostats::RGBA_NS.load(Relaxed),
+                            kt_ffmpeg::iostats::RGBA_FRAMES.load(Relaxed),
+                            kt_ffmpeg::iostats::RGBA_PIXELS.load(Relaxed),
+                        );
+                        eprintln!(
+                            "  of decode: {} pictures decoded in {:.2} s, {} backward reopens; {n} to RGBA ({:.1} Mpx each) in {:.2} s",
+                            kt_ffmpeg::iostats::VDEC_FRAMES.load(Relaxed),
+                            kt_ffmpeg::iostats::VDEC_NS.load(Relaxed) as f64 / 1e9,
+                            kt_ffmpeg::iostats::VIDEO_REOPENS.load(Relaxed),
+                            px as f64 / n.max(1) as f64 / 1e6,
+                            ns as f64 / 1e9
+                        );
+                    }
                     0
                 }
                 Err(e) => {
