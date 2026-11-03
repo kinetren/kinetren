@@ -102,3 +102,27 @@ BEFORE/AFTER. Decisions and what the footage taught:
   "save your changes?" (durability, t1413) and the project search hid its finds (ui-reach, t1414);
   both were fixed in the same change, and the steps prove them live (the welcome step answers no
   question; the search step requires a window with results).
+
+### The orchestrator's review of the first footage set (2026-11-03)
+
+- **"underruns: 41098/1" in the hero.** Not a counting error and not the debug build: the release
+  build counts the same (+51 407 frames on the cold pass). The audio render starved for ~0.5–1 s
+  when playback, started 2.6 s after opening, reached the cut into a new 4K source; a second pass
+  over the same passage counts 0. The step now warms the passage the way a person scrubs it
+  (the paused playhead stepped through it), and refuses a take whose status line is not 0/0. A
+  single callback-underrun frame at the start of playback happens in some takes (a real ~20 µs
+  gap): those are retaken. The bell's "1" is the software-render notice of the virtual screen; the
+  step reads it.
+- **The footage run uses the release build** (`readme-shots.py --release`): the debug preview
+  lags further behind 4K decodes.
+- **The recent card printed the machine's path.** The welcome step opens a copy of the project in
+  `--recent-dir` (default `/tmp/Videos`): the card shows a folder that names nobody.
+- **Diagnostics: the prefetch thrash is real.** On the release build, three different stretches
+  (the intro, the 4K night city, the Lake Bled glow) all play with the 512 MB video cache full and
+  "cache entries dropped before the first read" in the log; the image shows it as it is. Reported
+  for its own investigation; the README's Diagnostics text promises exactly this kind of reading.
+- **The gallery's base frame is the nearest stored thumbnail.** It is keyed at whole seconds, and
+  a missing key is filled from the sidecar's nearest thumbnail up to 2 s away (`request_near`, the
+  bin-scrub rule) instead of a decode: after the earlier shots that was the grey storm at the
+  start of the Coffee Run shot. The gallery step opens a copy with an empty index, so the cells
+  are decoded at the playhead, as for a person opening the project fresh.

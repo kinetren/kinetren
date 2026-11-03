@@ -11,7 +11,8 @@ pipeline itself — gestures, probes, crops, the list of images — lives in
 `scripts/live/readme_shots.py`, which `live-check.sh` also runs on the
 fixture videos, so this command cannot rot unnoticed.
 
-Build first: `cd src && cargo build -p kt-app -p kt-cli`. The footage is
+Build first: `cd src && cargo build --release -p kt-app -p kt-cli` and pass `--release` (the debug
+build lags behind 4K footage: underruns and "Loading…" in the pictures). The footage is
 referenced, never copied; only the WebP images land in `--out`
 (default `docs/images/`).
 """
@@ -36,6 +37,12 @@ def main():
                     help="scratch directory: project, sidecar index, raw screenshots")
     ap.add_argument("--display", default=os.environ.get("KT_SHOT_DISPLAY", ":96"))
     ap.add_argument("--keep", action="store_true", help="keep the full-screen PNGs in WORK/raw")
+    ap.add_argument("--release", action="store_true",
+                    help="shoot the release build (target/release): the debug build lags behind "
+                         "4K footage, and its underruns and \"Loading…\" would be in the pictures")
+    ap.add_argument("--recent-dir", default="/tmp/Videos",
+                    help="where the welcome shot's copy of the project lives: its recent card "
+                         "prints this folder, so it must not be a machine's path (default /tmp/Videos)")
     args = ap.parse_args()
     if not args.sources:
         ap.print_usage(sys.stderr)
@@ -44,10 +51,12 @@ def main():
     if not os.path.isdir(args.sources):
         print(f"readme-shots.py: {args.sources}: not a directory", file=sys.stderr)
         return 2
+    profile = "release" if args.release else "debug"
+    flag = " --release" if args.release else ""
     for tool in ("kinetren", "kt-cli"):
-        path = os.path.join(REPO, "src", "target", "debug", tool)
+        path = os.path.join(REPO, "src", "target", profile, tool)
         if not os.path.exists(path):
-            sys.exit(f"no {path} — build it: cd src && cargo build -p kt-app -p kt-cli")
+            sys.exit(f"no {path} — build it: cd src && cargo build{flag} -p kt-app -p kt-cli")
     for tool in ("Xvfb", "openbox", "xwd", "convert"):
         if not shutil.which(tool):
             sys.exit(f"no {tool} in PATH")
@@ -59,11 +68,17 @@ def main():
     # must not leak in
     os.environ.pop("KT_LIVE_BENCH", None)
     with Screen(args.display, args.work):
+        import kt_live
         import readme_shots
+
+        if args.release:
+            kt_live.KT_APP = os.path.join(REPO, "src", "target", "release", "kinetren")
+            kt_live.KT_CLI = os.path.join(REPO, "src", "target", "release", "kt-cli")
 
         try:
             written = readme_shots.shoot(os.path.abspath(args.sources), os.path.abspath(args.out),
-                                         os.path.abspath(args.work), keep_raw=args.keep)
+                                         os.path.abspath(args.work), keep_raw=args.keep,
+                                         recent_dir=args.recent_dir)
         except readme_shots.StepError as e:
             sys.exit(f"FAILED: {e}\n  screenshots and logs: {os.path.join(args.work, 'raw')}")
     for path in written:
