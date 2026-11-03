@@ -27,3 +27,6 @@
 - [x] 5.1 Specs merged on archive; `openspec/specs/audio-fx/design.md` and `audio-render/design.md` get the why (D2–D5); kt-fx and kt-plugin-api CLAUDE.md get the rules (done)
 - [x] 5.2 `docs/guide/whats-new.md` `## kt26.11` line; `docs/ktprompts/kkt-26.11.01-index.md` K15 row moved; `docs/features/audio/processing/pitch-shift.md` updated; `features-index.py --check`, `ktprompts-index.py --check`, `specs-user-path.py --check`
 - [x] 5.3 `cargo clippy --all-targets` (no new warning), `cargo test --workspace` green (t815/t640 red only under the machine's load, green alone); archive the change; `git merge master`; `./scripts/finish.sh` and the version in the report
+
+`finish.sh`: kt26.11.03-3d5a0137 — live scenarios green (pitchtail: four steps); the workshop's only red
+was t640 ("sidecar write frames failed: sqlite: database is locked" under the machine's load), green alone.
