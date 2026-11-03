@@ -5,6 +5,14 @@ month, newest first.
 
 ## kt26.11
 
+- **Ctrl+F shows what it finds again.** The search window kept the height of its empty field, so
+  the media, events and markers it found were hidden under its bottom edge until you dragged the
+  window larger.
+
+- **Opening a project with a reel no longer asks to save changes you did not make.** Once the
+  reel's preview had drawn on the timeline, opening another project or quitting asked "save your
+  changes?" about a project nobody had touched, and quitting left a recovery file behind.
+
 - **Rendering a region no longer closes the program at 100 %.** A render of a region that does not
   start exactly on a frame — any region drawn by hand, even 0.2 s — used to reach 100 % and take the
   whole program down, sometimes with the file half-written. It now finishes, shows its summary and

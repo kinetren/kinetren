@@ -165,13 +165,48 @@ fn transition_kind(i: usize) -> TransitionKind {
     }
 }
 
-/// Montage FX cycle (every fifth cut is styled).
+/// A plugin effect as the gallery's cell gives it: the template, then the named variant's values
+/// (`variant` is the cell's caption key, `""` — the template alone). The README shows what a
+/// person picks, so the looks come from the plugins' own presets, not from numbers made up here.
+fn look(id: &str, variant: &str) -> FxInstance {
+    let mut fx = FxInstance::plugin(id).unwrap_or_else(|| panic!("{id} is not registered"));
+    let ui = match &fx {
+        FxInstance::Plugin(slot) => &slot.manifest().ui,
+        _ => unreachable!(),
+    };
+    let sets: Vec<(&str, f64)> = ui
+        .template
+        .iter()
+        .chain(if variant.is_empty() {
+            [].iter()
+        } else {
+            ui.variants
+                .iter()
+                .find(|v| v.name_key == variant)
+                .unwrap_or_else(|| panic!("{id} has no variant {variant}"))
+                .sets
+                .iter()
+        })
+        .copied()
+        .collect();
+    for (name, v) in sets {
+        fx.set_param(name, v);
+    }
+    fx
+}
+
+/// Montage FX cycle (every fifth cut is styled): looks a reader notices at a glance
+/// (readme-shots-showcase, the owner: "the effects used are dullish") — no plain blur or noise.
 fn montage_fx(i: usize) -> Vec<FxInstance> {
-    match i % 4 {
-        0 => vec![FxInstance::glow(0.6)],
-        1 => vec![FxInstance::vhs(6, 0.5)],
-        2 => vec![FxInstance::noise(0.08)],
-        _ => vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(), FxInstance::edges(40)],
+    match i % 8 {
+        0 => vec![look("duotone", "fxreg.var.neon"), look("glow", "fxreg.var.soft")],
+        1 => vec![look("halftone", "fxreg.var.print")],
+        2 => vec![look("kaleidoscope", "fxreg.var.mandala")],
+        3 => vec![look("chromatic_aberration", "fxreg.var.strong"), look("glow", "fxreg.var.dream")],
+        4 => vec![look("posterize", "fxreg.var.comic"), look("vignette", "fxreg.var.strong")],
+        5 => vec![look("vhs_tape", "fxreg.var.worn_tape")],
+        6 => vec![look("glow", "fxreg.var.golden"), look("vignette", "fxreg.var.strong")],
+        _ => vec![look("lens_distort", "fxreg.var.fisheye"), look("chromatic_aberration", "fxreg.var.subtle")],
     }
 }
 
@@ -387,7 +422,10 @@ pub fn build(src: &[Source]) -> Project {
     // a stronger glow and another picture
     clips.push(clip(id(), ClipKind::Video, 0, 0.0, reel_len, reel_len * 0.5, REEL.0, 0.0));
     let other_pic = vids[(vids.iter().position(|&v| v == pip_src).unwrap_or(0) + 3) % nv];
-    let mut c = clip(id(), ClipKind::Video, 0, total * 0.5, reel_len, reel_len * 0.5, REEL.0, 0.0);
+    // a little before the middle: the plain 16:9 cut after it stays alone on screen for the
+    // README's effect shots, and the hero catches this instance over a styled cut
+    let reel_at = total * 0.47;
+    let mut c = clip(id(), ClipKind::Video, 0, reel_at, reel_len, reel_len * 0.5, REEL.0, 0.0);
     c.overrides = vec![
         Override::value(p_title, ParamValue::Text("REELS".into())),
         Override::value(p_glow, ParamValue::Num(0.9)),
@@ -417,16 +455,16 @@ pub fn build(src: &[Source]) -> Project {
     c.geometry.pos_x = 0.3;
     c.geometry.pos_y = -0.26;
     c.geometry.rot = -4.0;
-    c.fx = vec![FxInstance::glow(0.4)];
+    // the frame floats over the montage: a shadow under its transparent margins, a soft glow
+    c.fx = vec![look("glow", "fxreg.var.soft"), look("drop_shadow", "fxreg.var.far")];
     clips.push(c);
-    // a VHS insert
+    // an insert filmed again by a cheap webcam (the camera simulation)
     let ins = vids[(vids.iter().position(|&v| v == pip).unwrap_or(0) + 1) % nv];
     let ins_at = total * 0.78;
     let ins_len = (total * 0.03).min(2.4).min(src[ins].dur * 0.4);
     let mut c =
         clip(id(), ClipKind::Video, 0, ins_at, ins_len, src[ins].dur * 0.5, ins as u64 + 1, 0.0);
-    c.fx = vec![FxInstance::vhs(8, 0.6), FxInstance::noise(0.12)];
-    c.opacity = 0.9;
+    c.fx = vec![look("camera_isp", "fxreg.var.cheap_webcam")];
     clips.push(c);
 
     // ---- A lane 1 "MUSIC": beds from the longest music files (audio-only
@@ -509,12 +547,12 @@ pub fn build(src: &[Source]) -> Project {
         start: t(m0),
         duration: t(m1 - m0),
         targets: MorphTargets::Clips { ids: targets },
-        // what the batch does: another source in place of the targets, and
-        // a VHS look with glow on top
+        // what the batch does: another source in place of the targets, played back from a worn
+        // rental tape (the VHS Tape simulation)
         patch: MorphPatch {
             media: Some(MediaId(swap as u64 + 1)),
             absolute_source_in: Some(t(src[swap].dur * 0.3)),
-            video_fx: vec![FxInstance::vhs(8, 0.6), FxInstance::glow(0.6)],
+            video_fx: vec![look("vhs_tape", "fxreg.var.worn_tape")],
             ..Default::default()
         },
         timed: false,
@@ -529,7 +567,9 @@ pub fn build(src: &[Source]) -> Project {
     {
         p.markers.push(Marker::named(t(total * u), name));
     }
-    p.region = Some(Region { start: t(total * 0.25), end: t(total * 0.5) });
+    // from CHASE to a little past DROP: the mid-edit reel instance plays inside the loop, so the
+    // README's hero can wait for it without the loop cutting it off
+    p.region = Some(Region { start: t(total * 0.25), end: t(total * 0.55) });
     p.loop_enabled = true;
 
     for (kind, lane, name) in [
@@ -561,8 +601,9 @@ pub fn build(src: &[Source]) -> Project {
         view_start: 0.0,
         // the whole edit in ≈ 1500 px of timeline
         ticks_per_px: (t(total).0 as f64 / 1500.0).max(1.0),
-        // the cursor sits on the picture-in-picture: four layers on screen
-        cursor: t(pip_at + pip_len * 0.5).0,
+        // inside the looped region, a moment before the mid-edit reel instance: the README's
+        // hero presses Space here and is shot ~3 s later, with the stinger over a styled cut
+        cursor: t(reel_at - 2.6).0,
         bin_free: true,
         bin_layout: free_grid(&[&footage, &tracks, &generated]),
         bin_groups: [("FOOTAGE", footage), ("MUSIC", tracks), ("GENERATED", generated)]

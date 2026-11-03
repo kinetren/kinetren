@@ -1067,7 +1067,7 @@ no column inside a window SHALL have a fixed width, unless the guard lists that 
 the question on close) is declared with its reason and is exempt. The size the person gave a window
 SHALL be kept across openings: a window opened per object (effects, morpher, transition, camera,
 track) SHALL open at the size its kind was last given, and a single window at its own last size, in
-the same run and after a restart. A resizable window SHALL still not grow by itself (t918, t923).
+the same run and after a restart. A resizable window SHALL still not grow by itself (t918, t923). A window whose content arrives after it opens (the finds of the project search) SHALL open SIZED, with room for that content, not fitted to its empty form: a fitted window fills the height it measured at opening and clips what comes later.
 Why: kkt-26.11.01 item 12, the owner: "if you make the Guide window bigger its elements will not
 take the whole area, and again you look through a needle's eye on a big window … and so everywhere
 … I am tired of reminding"; "some windows grow in width but not in height". The body was capped at
@@ -1106,6 +1106,17 @@ guard over all windows instead.
 - **PATH** (not a UI scenario: a source scan that keeps fixed sizes out of the windows; the
   consequence the person sees is held by t1125)
 - **TEST** t1127 (`src/apps/kt-app/src/window_fill_tests.rs`)
+
+#### Scenario: The project search shows what it finds
+- **WHEN** the search window is opened on a project with three markers whose names start with "DR",
+  and "dr" is typed after it opened
+- **THEN** the finds lie inside the search window's frame (before: the window stayed the height of
+  its empty field and the finds were laid out below its edge, unseen)
+- **PATH** press Ctrl+F → a window titled "Search the project" with an empty field and room under it
+  → type "char" → the media 01-charge.webm and 05-charlotte-by-night.webm and every event that uses
+  them are listed under the field, the first one highlighted
+- **TEST** t1414 (`src/apps/kt-app/src/layout_tests.rs`), live `readme_shots.py`
+  (`src/scripts/live/readme_shots.py`, the search step)
 
 ### Requirement: The Guide draws real tables and separate index cards and uses its whole window
 A table on a guide page SHALL be drawn as a grid table: a header row in its own shade, a rule between

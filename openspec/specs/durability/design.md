@@ -185,3 +185,16 @@ first call (Linux). The FFmpeg download root follows it in a test build. Rejecte
 goes stale silently). t1310 checks the outcome (a unique journal line lands in the test's journal, not
 the person's); t1311 forbids direct requests of the person's directories in kt-app outside the
 resolver. kt-cli only reads the data directory, and its tests that touch it give the process its own.
+
+## A background preview is not an edit (readme-shots-showcase, archived 2026-11-03)
+
+The README pipeline's welcome step picked a template over the untouched showcase and got "save
+your changes?" with `dirty_content` false. The reel preview service set `dirty_ui` each time a
+render arrived (since R.56), and three readers trust that flag: the unsaved-work guard, the 30 s
+recovery write and the write on exit. So every project with a reel asked a question about nothing
+and left a recovery file that the next start offered to restore (the probe reproduced exactly
+that). A finished preview now asks for one repaint and touches no dirty flag (t1413, red on the old
+line). The other writers of `dirty_ui` were read: each follows a person's gesture (bin layout and
+groups, region and loop, band expand/collapse, the meters' width, the geometry frame toggle,
+detach, the automation axis) or the lesson sandbox, which never reaches Recent or recovery. Rule:
+work the program does by itself never sets a dirty flag; it asks for a repaint.

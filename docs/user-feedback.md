@@ -2456,8 +2456,10 @@ The owner, verbatim: "надо обновить скриншоты в readme, т
 the effects used are dullish, the new simulation effects are not shown (BEFORE/AFTER), and so on).
 
 **Taken as (change `readme-shots-showcase`):** the four shots docs-refresh added to the pipeline
-(Datamosh, Camera ISP, VHS Tape, masks) are taken on the owner's README footage
-(`../sources/README_SOURCES`, already fetched) as before/after pairs and shown in the README;
+(Datamosh, Camera ISP, VHS Tape, masks) are taken on the free showcase footage (the Wikimedia
+set of `src/scripts/fetch-showcase-media.py`, which the owner downloads himself; not
+`../sources/README_SOURCES` — "old samples must not be there", 2026-10-22) as before/after pairs
+and shown in the README;
 the shots that show effects (the hero, the effect gallery, the morpher before/after) are re-chosen so
 they show the striking effects, not a plain blur; the other shots are re-taken so the README matches
 today's program (the welcome window, Diagnostics, Preferences where they belong). Every image is

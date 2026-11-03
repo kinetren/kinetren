@@ -34,13 +34,14 @@ OWN_PROCESS = True
 
 SHOTS = [
     ("hero", "the whole window during playback: free-layout bin, layered preview, live meters"),
+    ("welcome", "the welcome window: the tour, templates, the recent project with its poster, What's new"),
     ("timeline", "the timeline: a nested reel expanded in place mid-edit, its veiled tails"),
     ("media-bin", "the media bin in free layout with its groups"),
     ("reel-parameters", "the published parameters of a reel instance"),
     ("search", "Ctrl+F: searching the project"),
     ("morpher-before-after", "the same frame without and with the morpher"),
     ("slowed-reverb-automation", "Slowed+Reverb on the music bed with rate/mix curves"),
-    ("video-fx", "the video FX editor with the effect picker open"),
+    ("video-fx", "the effect gallery scrolled to the stylize, camera and tape cells"),
     ("titles", "a title generator in the event window"),
     ("transitions", "the transition editor"),
     ("morpher", "the morpher batch editor"),
@@ -48,14 +49,14 @@ SHOTS = [
     ("perf-panel", "the diagnostics panel during playback"),
     ("fx-datamosh", "the same frame after a cut without and with Datamosh (Cut mosh)"),
     ("fx-camera-isp", "the same frame without and with Camera ISP (Phone at night)"),
-    ("fx-vhs-tape", "the VHS Tape deck face with a clogged head, and the frame it gives"),
+    ("fx-vhs-tape", "the VHS Tape deck face with a chipped head, and the frame it gives"),
     ("masks", "a Pen mask drawn on the preview, a Duotone limited to it"),
 ]
 
 # Shots the pipeline takes whose images wait for the owner's run on the showcase footage (he
 # fetches it himself, 2026-10-21): `readme-check.py` lets one be absent while nothing references
 # it. Once `readme-shots.py` has written it, reference it in the docs and drop it from here.
-AWAITING_FOOTAGE = ["fx-datamosh", "fx-camera-isp", "fx-vhs-tape", "masks"]
+AWAITING_FOOTAGE = []
 
 RUST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 FIXTURES = os.path.join(RUST, "fixtures")
@@ -105,11 +106,23 @@ def targets(project):
     # a double click inside a transition window opens the transition, not
     # the event: the styled cut must have none on either side
     joined = {t[k] for t in doc["transitions"] for k in ("a", "b") if t.get(k)}
-    styled = [c for c in clips if c["kind"] == "video" and c["lane"] == 1 and c.get("fx")
-              and c["id"] not in joined]
-    if not styled:
-        raise StepError("showcase project: no styled montage cut without transitions")
-    video = max(styled, key=lambda c: (c["duration"], -c["start"]))
+    paths = {m["id"]: m.get("path", "") for m in doc.get("media", [])}
+
+    def named(word, cands):
+        """The first candidate cut from the footage file whose name has `word`; otherwise the
+        middle one (the fixtures have no such names)."""
+        return next((c for c in cands if word in paths.get(c["media"], "").lower()),
+                    cands[len(cands) // 2])
+
+    # the gallery previews every effect on the event's own frame AS IT IS NOW (under the
+    # playhead): a plain cut, or every cell would show the event's look on top of its own; the
+    # park of Coffee Run is bright and colourful, so the presets visibly differ (a dark aerial
+    # frame made them look alike)
+    unstyled = [c for c in clips if c["kind"] == "video" and c["lane"] == 1 and not c.get("fx")
+                and c["id"] not in joined and c["duration"] >= 72000]
+    if not unstyled:
+        raise StepError("showcase project: no plain montage cut without transitions")
+    video = named("coffee", sorted(unstyled, key=lambda c: c["start"]))
     title = first("title", lambda c: (c.get("gen") or {}).get("kind") == "text")
     trans = next((t for t in doc["transitions"]
                   if t["kind"].get("kind") != "crossfade"
@@ -125,17 +138,22 @@ def targets(project):
     reel = first("reel instance with overrides",
                  lambda c: c["media"] == reel_id and c.get("overrides"))
     # full-frame cuts for the effect shots: a main-track video event nothing else covers (no
-    # other video track at its time, no transition, not a reel or a generator)
+    # other video track at its time, no transition, not a reel or a generator) and with no look
+    # of its own — the "before" half is the plain frame
     reels = {q["id"] for q in doc["sequences"]}
-    paths = {m["id"]: m.get("path", "") for m in doc.get("media", [])}
     videos = [c for c in clips if c["kind"] == "video"]
 
     def alone(c):
         end = c["start"] + c["duration"]
         return (c["kind"] == "video" and c["lane"] == 1 and c["duration"] >= 72000
                 and c["id"] not in joined and c["media"] not in reels and not c.get("gen")
+                and not c.get("fx")
+                # its own blurred backdrop (the same clip under a slightly wider frame) is part
+                # of its picture; anything else on screen is not
                 and not any(o["lane"] != c["lane"] and o["start"] < end
-                            and o["start"] + o["duration"] > c["start"] for o in videos))
+                            and o["start"] + o["duration"] > c["start"]
+                            and not (o["media"] == c["media"] and o["start"] == c["start"])
+                            for o in videos))
 
     plain = [c for c in clips if alone(c)]
     if not plain:
@@ -146,17 +164,45 @@ def targets(project):
                         for o in clips)]
     if not after_cut:
         raise StepError("showcase project: no main-track cut between two sources")
-    # a dark clip shows the night phone best (the Charlotte night drone shot of the footage)
-    night = next((c for c in plain if "charlotte" in paths.get(c["media"], "").lower()), plain[0])
-    return {"reel": reel, "music": music, "video": video, "title": title,
-            "transition": (trans, by_id[trans["b"]]), "morph": doc["morphers"][0],
-            "cut": after_cut[len(after_cut) // 2], "night": night, "plain": plain[len(plain) // 2]}
+    # a dark clip shows the night phone best (the Charlotte night drone shot of the footage); the
+    # night city cut right after another drone shot moshes best: its lights bleed into the old
+    # picture. The tape needs a bright picture: a clogged head over a night city is
+    # snow and nothing else; the bright cartoon of Coffee Run shows the tape's bleed and dropouts
+    # best. The mask is drawn on the longest night shot (the skyline)
+    night = named("charlotte", plain)
+    longest = sorted(plain, key=lambda c: (-c["duration"], c["start"]))
+    # the morpher's frame: the middle of its longest plain target from another source than the
+    # one it swaps in (or "before" and "after" show the same film)
+    m = doc["morphers"][0]
+    swap = m.get("patch", {}).get("media")
+    ids = set(m.get("targets", {}).get("ids", []))
+    under = [c for c in clips if c["id"] in ids and not c.get("fx") and c["media"] != swap]
+    span = (m["start"], m["start"] + m["duration"])
+    under = [c for c in under if c["start"] >= span[0] and c["start"] + c["duration"] <= span[1]]
+    morph_at = (max(under, key=lambda c: (c["duration"], -c["start"])) if under else None)
+    morph_at = (morph_at["start"] + morph_at["duration"] // 2 if morph_at
+                else m["start"] + m["duration"] // 2)
+    # the lightest stretch to play under Diagnostics: the NASA vertical clip and the square one
+    # after it are small files; the start of the edit has the 4K Charge under the intro reel
+    # (the fixtures have no such file: the earliest plain cut, so the 6 s of playback with the
+    # loop off do not run past the end of their short edit)
+    by_start = sorted(unstyled, key=lambda c: c["start"])
+    first_plain = next((c for c in by_start if "webb" in paths.get(c["media"], "").lower()),
+                       by_start[0])
+    return {"reel": reel, "music": music, "video": video, "title": title, "first_plain": first_plain,
+            "transition": (trans, by_id[trans["b"]]), "morph": m, "morph_at": morph_at,
+            "cut": named("charlotte", sorted(after_cut, key=lambda c: (-c["duration"], c["start"]))),
+            "night": night,
+            "bright": named("coffee", longest), "mask": named("charlotte", longest)}
 
 
 class Shooter:
-    def __init__(self, kt_live, project, tg, raw):
+    def __init__(self, kt_live, project, tg, raw, recent_dir=None):
         self.kt = kt_live
         self.project = project
+        # where the welcome shot's copy of the project lives: its recent card prints the folder,
+        # and a README must not publish a machine's path
+        self.recent_dir = recent_dir or os.path.join(os.path.dirname(project), "Videos")
         self.tg = tg
         self.raw = raw
         self.crops = {}  # name -> (full-screen png, (x, y, w, h) on screen)
@@ -286,14 +332,24 @@ class Shooter:
                 return
         self.require(step, False, f"“{name}” opened by a double click")
 
-    def open_event(self, app, step, clip):
-        x, y = self.point(app, step, clip["kind"], clip["lane"], clip["start"] + clip["duration"] // 2)
+    def open_event(self, app, step, clip, at=None):
+        """`at`: where on the event to click — the click also puts the playhead there."""
+        at = clip["start"] + clip["duration"] // 2 if at is None else at
+        x, y = self.point(app, step, clip["kind"], clip["lane"], at)
         # the context menu, not a double click: under a heavy decode the
         # UI frame is slow and two clicks fall apart in egui's frame clock
         app.click(x, y)
         app.right_click(x, y)
         self.require(step, app.click_probe("tl.fx"), "click on “tl.fx”")
         return self.below_header(app, step, "win.fx", app.has_probe("win.fx"))
+
+    def read_bell(self, app, step):
+        """This virtual screen has no GPU, and the program says so once ("software render").
+        A person reads it by clicking the bell; unread, it is a "1" in the status strip."""
+        self.require(step, app.click_probe("bell"), "click on the bell (read the notice)")
+        app.key("Escape")
+        app.wait_frame(2, what="the notices window closed", soft=True)
+        self.require(step, int(app.geom().get("windows", 0)) == 0, "the notices window closed")
 
     # ---- the shots -----------------------------------------------------
 
@@ -318,10 +374,42 @@ class Shooter:
         try:
             self.widen_bin(app, step)
             self.still(app, step, "screen settled with the wide bin")
-            # playback: the meters show live levels, the preview moves
+            self.read_bell(app, step)
+            # warm the passage the way a person scrubs it: the playhead stepped through it on
+            # pause. Played cold, 2.6 s after opening, the cut into a new 4K source starves the
+            # audio for ~0.5 s on this machine (release and debug alike; a second pass is clean),
+            # and the status line would publish those underruns
+            cur = app.geom().get("playhead", 0)
+            for k in range(1, 7):
+                self.seek(app, cur + k * 90000)
+                self.still(app, step, f"the passage warmed, step {k}")
+            self.seek(app, cur)
+            self.still(app, step, "the playhead back on the project's cursor")
+            # playback from the project's cursor, a moment before the mid-edit reel instance: the
+            # shot waits for the playhead to be well inside it (the stinger over a styled cut)
             app.key("space")
             self.kt.pause(3.0, "meters and preview need a moment of playback to show levels")
             self.require(step, app.playing(), "playback running")
+            reel = self.tg["reel"]
+            region = json.load(open(self.project))["project"].get("region") or {}
+            lo = reel["start"] + min(180000, reel["duration"] * 2 // 5)
+            hi = min(reel["start"] + reel["duration"], region.get("end", 1 << 62))
+            # ... and for a decoded picture: the "Loading…" scrim over a frame still being
+            # composed is published by the program, and the same dump must not have it
+            deadline = time.time() + 60.0
+            while True:
+                g = app.geom()
+                loading = any(f["param"] == "preview.loading" for f in g.get("fields", []))
+                if lo <= g.get("playhead", 0) < hi and not loading:
+                    # the status line shows these: a published hero has none
+                    self.require(step, g.get("underruns", 0) == 0 and g.get("callback_underruns", 0) == 0,
+                                 f"no underruns before the shot (render {g.get('underruns')}, "
+                                 f"callback {g.get('callback_underruns')})")
+                    break
+                self.require(step, time.time() < deadline,
+                             f"the playhead inside the mid-edit reel ({lo}..{hi} ticks) "
+                             "with a decoded picture (no “preview.loading”)")
+                self.kt.poll_step(0.1)
             g = app.geom()
             ww, wh = self.kt.geometry()["w"], self.kt.geometry()["h"]
             tl, bin_ = g["timeline"], g["bin"]
@@ -343,6 +431,7 @@ class Shooter:
         step = "timeline"
         app = self.fresh(step)
         try:
+            self.read_bell(app, step)
             reel = self.tg["reel"]
             rows_before = len(app.geom()["rows"])
             mid = reel["start"] + reel["duration"] // 2
@@ -396,7 +485,11 @@ class Shooter:
             app.key("ctrl+f")
             self.require(step, app.has_probe("win.search"), "the search window opened")
             app.type_text("char")
+            # the window grows with its results a frame or two after the typing: its rectangle
+            # is read once the screen settled, or the crop holds the field alone
+            self.still(app, step, "the search results listed")
             r = self.probe(app, step, "win.search", app.has_probe("win.search"))
+            self.require(step, r["h"] > 120, f"the search window lists results (height {r['h']})")
             self.capture(app, step, "search", r)
         finally:
             self.close(app)
@@ -416,8 +509,7 @@ class Shooter:
         from PIL import Image, ImageDraw, ImageFont
 
         step = "morpher-before-after"
-        m = self.tg["morph"]
-        at = m["start"] + m["duration"] // 2
+        at = self.tg["morph_at"]
         doc = json.load(open(self.project))
         doc["project"]["morphers"][0]["enabled"] = False
         before_project = self.project.replace(".kt", "-no-morpher.kt")
@@ -453,7 +545,7 @@ class Shooter:
             font = ImageFont.truetype("DejaVuSans-Bold.ttf", 24)
         except OSError:
             font = ImageFont.load_default()
-        for i, (img, label) in enumerate(zip(frames, ("Without the morpher", "With the morpher: source swap + VHS + glow"))):
+        for i, (img, label) in enumerate(zip(frames, ("Without the morpher", "With the morpher: another source from a worn VHS tape"))):
             out.paste(img.resize((w, h)), (i * (w + gap), label_h))
             draw.text((i * (w + gap) + 12, 10), label, fill=(230, 230, 230), font=font)
         path = os.path.join(self.raw, "morpher-before-after.png")
@@ -534,8 +626,10 @@ class Shooter:
 
     def datamosh(self):
         c = self.tg["cut"]
-        # a few frames after the cut: the new shot's motion drags the old shot's picture
-        self.effect_before_after("fx-datamosh", c, c["start"] + 21600, "datamosh",
+        # 20 frames after the cut: the new shot's motion has dragged the old shot's picture far
+        # enough to see, and both shots are still recognisable
+        # (half the cut when it is shorter: the fixtures' cuts are)
+        self.effect_before_after("fx-datamosh", c, c["start"] + min(72000, c["duration"] // 2), "datamosh",
                                  "fxreg.var.datamosh.0")
 
     def camera_isp(self):
@@ -548,7 +642,7 @@ class Shooter:
         from PIL import Image
 
         step = "fx-vhs-tape"
-        c = self.tg["plain"]
+        c = self.tg["bright"]
         at = c["start"] + c["duration"] // 2
         app = self.fresh(step)
         try:
@@ -558,8 +652,10 @@ class Shooter:
             self.add_effect(app, step, c, "vhs tape", "fxreg.tpl.vhs_tape")
             self.require(step, app.has_probe("deck.head.0.0", tries=40), "the deck face drawn")
             self.require(step, app.click_probe("deck.head.0.0"), "click on head A of the drum")
-            self.require(step, app.has_probe("deck.cond.Clogged", tries=20), "the condition row of head A")
-            self.require(step, app.click_probe("deck.cond.Clogged"), "click on “Clogged”")
+            # Chipped: the picture stays, with the dropouts and noise of a damaged head. A dirty or
+            # clogged head loses the FM carrier altogether — honest snow, but nothing to look at
+            self.require(step, app.has_probe("deck.cond.Chipped", tries=20), "the condition row of head A")
+            self.require(step, app.click_probe("deck.cond.Chipped"), "click on “Chipped”")
             # the panel first (the window covers part of the preview), then the frame without it
             win = self.probe(app, step, "win.fx", app.has_probe("win.fx"))
             png = self.still(app, step, "the deck face settled")
@@ -588,7 +684,7 @@ class Shooter:
     def masks(self):
         """A Duotone limited to a Pen mask drawn around the middle of the frame, feathered."""
         step = "masks"
-        c = self.tg["plain"]
+        c = self.tg["mask"]
         at = c["start"] + c["duration"] // 2
         app = self.fresh(step)
         try:
@@ -631,17 +727,97 @@ class Shooter:
             self.close(app)
 
     def event_window(self, name, clip, picker=False):
-        app = self.fresh(name)
+        saved = self.project
+        if picker:
+            # a copy with an empty sidecar index: the gallery's base frame is the thumbnail at
+            # the playhead, and a missing one is filled from the NEAREST thumbnail already in
+            # the index (up to 2 s away, the bin-scrub rule) — after the earlier shots that was
+            # the grey storm at the start of the Coffee Run shot, not the park under the playhead
+            folder = os.path.join(self.raw, f"{name}-project")
+            os.makedirs(folder, exist_ok=True)
+            self.project = os.path.join(folder, os.path.basename(saved))
+            shutil.copy(saved, self.project)
+        try:
+            app = self.fresh(name)
+        finally:
+            self.project = saved
         try:
             r = self.open_event(app, name, clip)
             if picker:
                 self.require(name, app.click_probe("fxreg.add.video"), "click on “+ effect…” (video)")
                 self.still(app, name, "effect picker opened")
+                # the gallery's end: the stylize looks, Camera ISP and VHS Tape, each cell
+                # rendered on the event's own frame. A cell's rectangle is published from the
+                # laid-out list, below the fold too: "on screen" is its bottom inside the popup
+                pop = self.probe(app, name, "fxreg.popup", app.has_probe("fxreg.popup"))
+                win = self.kt.geometry()
+                px, py = win["x"] + int(pop["x"] + pop["w"] / 2), win["y"] + int(pop["y"] + pop["h"] * 0.6)
+
+                def last_cell_shown():
+                    c = app._probe_rect("fxreg.var.vhs_tape.0") if app.has_probe("fxreg.var.vhs_tape.0", tries=2) else None
+                    return c is not None and pop["y"] < c["y"] and c["y"] + c["h"] <= pop["y"] + pop["h"]
+
+                for _ in range(40):
+                    if last_cell_shown():
+                        break
+                    app.wheel(px, py, 5)
+                    app.wait_frame(2, what="the gallery scrolled", soft=True)
+                self.require(name, last_cell_shown(), "the gallery scrolled to the VHS Tape cells")
+                # the cells render one by one; the search field keeps its blinking caret, so
+                # "settled" ignores a change no wider than the caret
+                from PIL import Image, ImageChops
+                deadline, calm = time.time() + 180.0, 0
+                prev = Image.open(app.shot("cells")).convert("RGB")
+                while calm < 3:
+                    self.require(name, time.time() < deadline, "the gallery cells rendered")
+                    self.kt.poll_step(1.0)
+                    cur = Image.open(app.shot("cells")).convert("RGB")
+                    box = ImageChops.difference(cur, prev).getbbox()
+                    calm = calm + 1 if box is None or box[2] - box[0] <= 4 else 0
+                    prev = cur
                 parts = [self.probe(app, name, "win.fx", app.has_probe("win.fx")),
                          self.probe(app, name, "fxreg.popup", app.has_probe("fxreg.popup"))]
                 r = self.union(*parts)
                 self.keep[name] = [self.abs((q["x"], q["y"], q["w"], q["h"])) for q in parts]
             self.capture(app, name, name, r)
+        finally:
+            self.close(app)
+
+    def welcome(self):
+        """The welcome window with the showcase as its recent project: a template closes the
+        showcase (its poster is rendered at close), Help → Welcome window… shows the card."""
+        step = "welcome"
+        os.makedirs(self.recent_dir, exist_ok=True)
+        copy = os.path.join(self.recent_dir, os.path.basename(self.project))
+        shutil.copy(self.project, copy)  # the media are referenced by absolute paths
+        saved = self.project
+        self.project = copy
+        try:
+            app = self.fresh(step)
+        finally:
+            self.project = saved
+        try:
+            store = os.path.join(self.raw, step, "store")
+            self.require(step, app.click_probe("menu.help"), "click on “Help”")
+            self.require(step, app.click_probe("help.welcome"), "click on “Welcome window…”")
+            self.require(step, app.has_probe("welcome.window", tries=20), "the welcome window opened")
+            self.require(step, app.click_probe("welcome.tpl.1080p25"), "click on the 1080p25 template")
+            # the showcase is untouched: no question about unsaved work, though its reel preview
+            # has arrived by now (t1413 — the preview used to mark the project edited)
+            self.require(step, not app.has_probe("ask.discard", tries=6),
+                         "no “save your changes?” over the untouched showcase")
+            self.require(step, app.wait_gone("welcome.window"), "the template closed the window")
+            posters = os.path.join(store, "posters")
+            deadline = time.time() + 180
+            while time.time() < deadline and not (os.path.isdir(posters) and os.listdir(posters)):
+                self.kt.poll_step(0.5)
+            self.require(step, os.path.isdir(posters) and bool(os.listdir(posters)),
+                         f"the showcase poster rendered into {posters}")
+            self.require(step, app.click_probe("menu.help"), "click on “Help”")
+            self.require(step, app.click_probe("help.welcome"), "click on “Welcome window…”")
+            self.require(step, app.has_probe("welcome.recent.0", tries=20), "the showcase as a recent card")
+            r = self.below_header(app, step, "welcome.window", app.has_probe("welcome.window"))
+            self.capture(app, step, "welcome", r)
         finally:
             self.close(app)
 
@@ -685,6 +861,16 @@ class Shooter:
         step = "perf-panel"
         app = self.fresh(step)
         try:
+            # a stretch a person plays, not the heaviest one: the region cleared (Esc — with the
+            # loop merely off, playback stops at the region's end) and the playhead on the edit's
+            # lightest plain cut. Inside the loop the debug build decodes 4K footage under a reel
+            # and two effects, and the problem log fills with underruns that describe the build,
+            # not the program. Seek first: the open window's graphs redraw on their own, and the
+            # screen never settles under them
+            app.key("Escape")
+            first = self.tg["first_plain"]
+            self.seek(app, first["start"])
+            self.still(app, step, "the playhead on the lightest plain cut")
             self.require(step, app.click_probe("tb.diag"), "click on the diagnostics button")
             self.probe(app, step, "win.diag", app.has_probe("win.diag"))
             app.key("space")
@@ -699,12 +885,26 @@ class Shooter:
             self.close(app)
 
     def run(self):
-        self.overview()
+        # the hero is retaken in a fresh program until its status line is clean: one take in
+        # a few has a single callback-underrun frame at the start of playback (a real ~20 µs
+        # gap, not a counting error), and a published "0/1" reads like a fault
+        for attempt in range(3):
+            try:
+                self.overview()
+                break
+            except StepError as e:
+                if "no underruns" not in str(e) or attempt == 2:
+                    raise
+                print(f"   retake of the hero: {e}", flush=True)
+        self.welcome()
         self.timeline()
         self.reel_parameters()
         self.search()
         self.morpher_before_after()
         self.event_window("slowed-reverb-automation", self.tg["music"])
+        # opened by a click in the event's middle: the playhead lands there, and the cells are
+        # drawn on that frame (a ruler click near a cut snaps to it — the event's first frames
+        # are the grey start of the shot)
         self.event_window("video-fx", self.tg["video"], picker=True)
         self.event_window("titles", self.tg["title"])
         self.transition()
@@ -744,7 +944,7 @@ def publish(crops, keep, out):
     shutil.rmtree(staged, ignore_errors=True)
 
 
-def shoot(sources, images, work, keep_raw=False):
+def shoot(sources, images, work, keep_raw=False, recent_dir=None):
     """The whole pipeline; returns the list of written images."""
     import kt_live
 
@@ -752,7 +952,7 @@ def shoot(sources, images, work, keep_raw=False):
     # the render dialog's file pick (KT_FILE_PICK seam): a presentable name
     os.environ["KT_FILE_PICK"] = os.path.join(work, "kinetren-showcase.mp4")
     project = build_project(kt_live.KT_CLI, sources, work)
-    shooter = Shooter(kt_live, project, targets(project), os.path.join(work, "raw"))
+    shooter = Shooter(kt_live, project, targets(project), os.path.join(work, "raw"), recent_dir)
     shooter.run()
     publish(shooter.crops, shooter.keep, images)
     if not keep_raw:

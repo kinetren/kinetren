@@ -1949,7 +1949,10 @@ impl KtApp {
         self.reel_previews
             .set_paused(self.player.transport.is_playing() || self.render_job.is_some());
         if self.reel_previews.poll() {
-            self.dirty_ui = true;
+            // a finished preview is a picture to show, NOT an edit: `dirty_ui` here made every
+            // project with a reel ask "save your changes?" untouched and leave a recovery file
+            // on exit (readme-shots-showcase, t1413). One repaint shows the new texture.
+            ui.ctx().request_repaint();
             // Textures live exactly as long as their band: a reel evicted from the
             // LRU or made stale by an edit has no right to hold tens of megabytes in
             // video memory
@@ -2509,7 +2512,10 @@ impl KtApp {
             crate::window_shell::Kind::Tool,
         )
             .anchor(egui::Align2::CENTER_CENTER, [0.0, -80.0])
-            .width(460.0, [320.0, 60.0])
+            // SIZED, not fitted: a fitted window measures its content when it opens — the empty
+            // field — and then fills that height, so the finds that arrive with the typing were
+            // laid out below its edge and never seen (readme-shots-showcase, t1414)
+            .size([460.0, 320.0], [320.0, 120.0])
             .show(ctx, |ui| {
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.search_query)
@@ -6678,6 +6684,8 @@ impl KtApp {
                 .map(|t0| t0.elapsed() > std::time::Duration::from_millis(180))
                 .unwrap_or(false);
             if show_overlay {
+                // the README's hero waits for a frame without it (a picture mid-load is not one)
+                crate::widgets::field_probe::note("preview.loading", img_rect);
                 painter.rect_filled(img_rect, 2.0, egui::Color32::from_black_alpha(140));
                 painter.text(
                     img_rect.center(),

@@ -774,6 +774,46 @@ fn t824_showcase_is_rich_valid_and_deterministic() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// t1412 (readme-shots-showcase): the showcase's looks are the striking ones the README shows
+/// (the owner, 2026-11-03: "the effects used are dullish, the new simulation effects are not
+/// shown"): the styled montage cuts carry at least six kinds, none of them a plain blur, noise or
+/// gain; a simulation is on the timeline and in the morpher's look; the VHS look-alike is not
+/// offered where the VHS Tape simulation exists.
+#[test]
+fn t1412_showcase_looks_are_striking() {
+    kt_plugins_builtin::install();
+    use kt_model::ClipKind;
+    let dir = showcase_sources("t1412");
+    let out = dir.join("s.kt");
+    let st = cli()
+        .args(["showcase", out.to_str().unwrap(), "--sources", dir.join("sources").to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+    let p = kt_model::project_file::from_text(&std::fs::read_to_string(&out).unwrap()).unwrap().project;
+    const DULL: [&str; 3] = ["blur", "noise", "gain"];
+    const SIMULATIONS: [&str; 3] = ["vhs_tape", "camera_isp", "datamosh"];
+    let tags = |fx: &[kt_model::FxInstance]| -> Vec<String> { fx.iter().map(|f| f.tag().to_string()).collect() };
+    let mut montage: Vec<String> = p
+        .clips
+        .iter()
+        .filter(|c| c.kind == ClipKind::Video && c.lane == 1)
+        .flat_map(|c| tags(&c.fx))
+        .collect();
+    for t in &montage {
+        assert!(!DULL.contains(&t.as_str()), "a dull look on a montage cut: {t}");
+    }
+    montage.sort();
+    montage.dedup();
+    assert!(montage.len() >= 6, "montage looks: {montage:?}");
+    let all: Vec<String> = p.clips.iter().filter(|c| c.kind == ClipKind::Video).flat_map(|c| tags(&c.fx)).collect();
+    assert!(all.iter().any(|t| SIMULATIONS.contains(&t.as_str())), "a simulation on the timeline: {all:?}");
+    assert!(!all.iter().any(|t| t == "vhs"), "the VHS look-alike on the timeline: {all:?}");
+    let morph = tags(&p.morphers[0].patch.video_fx);
+    assert!(morph.iter().any(|t| SIMULATIONS.contains(&t.as_str())), "the morpher's look: {morph:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// t825 (readme-showcase): a missing or empty sources directory and an
 /// existing output are refused; `--force` writes atomically.
 #[test]

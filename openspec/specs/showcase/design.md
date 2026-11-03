@@ -65,3 +65,64 @@ four rounds of review (2026-10-21/22) the owner asked for:
 - The full `readme_shots` run takes several minutes, so `finish.sh` runs over its time
   budget. Running only the hero shot inside `live-check.sh` is an open option.
 - Old images remain in git history until the owner squashes.
+
+## Striking looks and the footage run (readme-shots-showcase, archived 2026-11-03)
+
+The owner (2026-11-03): the README's effects were "dullish" and the simulations were not shown as
+BEFORE/AFTER. Decisions and what the footage taught:
+
+- **The showcase dresses its events from the gallery's own cells** (`showcase::look`: the plugin's
+  template, then a named variant). The README shows what a click gives; a retuned preset retunes
+  the showcase. Plain blur, noise and gain are banned from the montage (t1412); the VHS look-alike
+  is not used where VHS Tape exists. The blurred backdrop of non-16:9 cuts keeps its blur: it is
+  structure, not a presented look.
+- **Frames were chosen by looking, in scratch sessions, before they were fixed in the pipeline.**
+  Datamosh 6 frames after a cut is a clean frame (a drone barely moves); 20 frames after the Lake
+  Bled → Charlotte cut the city is dragged over the hillside. A dirty or clogged VHS head loses the
+  FM carrier and gives snow on every clip tried; a chipped head on the bright Coffee Run keeps a
+  picture with the tape's dropouts and bleed. Camera ISP "Security cam, IR" washed the morpher's
+  swapped picture to white, so the morpher plays it from a worn tape. Halftone comic was a pure dot
+  field and Posterize with ink edges went black on this footage.
+- **The hero waits for a playhead position, not a time.** A debug build's preview runs a second or
+  two behind a 4K decode under a reel and two effects: "3 s after Space" showed "Loading…". The
+  project's cursor sits a moment before the mid-edit reel instance, the looped region reaches past
+  it, and the shot waits for the playhead inside it AND for a frame without the "Loading…" scrim:
+  one run caught it mid-load, so the program publishes the scrim as `preview.loading` where it
+  paints it, and the step takes the first dump with the playhead in place and no scrim.
+- **The gallery opens on a plain cut**: its cells preview each effect on the event's output, so a
+  styled event showed its own look in every cell. It is wheeled to its end, where the colour,
+  distortion, camera and tape cells are; a cell's rectangle is published below the fold too, so
+  "on screen" is its bottom inside the popup, and "settled" ignores the search field's caret.
+- **Diagnostics plays the lightest stretch with the region cleared** (Esc): inside the loop the
+  debug build filled the problem log with underruns that describe the build, not the program; with
+  the loop merely off, playback stops at the region's end (the fixtures' short edit reached it).
+- **A clip's own blurred backdrop does not disqualify it** for the effect shots: it is part of its
+  picture.
+- **The pipeline found two program defects on the way** — an untouched project with a reel asked
+  "save your changes?" (durability, t1413) and the project search hid its finds (ui-reach, t1414);
+  both were fixed in the same change, and the steps prove them live (the welcome step answers no
+  question; the search step requires a window with results).
+
+### The orchestrator's review of the first footage set (2026-11-03)
+
+- **"underruns: 41098/1" in the hero.** Not a counting error and not the debug build: the release
+  build counts the same (+51 407 frames on the cold pass). The audio render starved for ~0.5–1 s
+  when playback, started 2.6 s after opening, reached the cut into a new 4K source; a second pass
+  over the same passage counts 0. The step now warms the passage the way a person scrubs it
+  (the paused playhead stepped through it), and refuses a take whose status line is not 0/0. A
+  single callback-underrun frame at the start of playback happens in some takes (a real ~20 µs
+  gap): those are retaken. The bell's "1" is the software-render notice of the virtual screen; the
+  step reads it.
+- **The footage run uses the release build** (`readme-shots.py --release`): the debug preview
+  lags further behind 4K decodes.
+- **The recent card printed the machine's path.** The welcome step opens a copy of the project in
+  `--recent-dir` (default `/tmp/Videos`): the card shows a folder that names nobody.
+- **Diagnostics: the prefetch thrash is real.** On the release build, three different stretches
+  (the intro, the 4K night city, the Lake Bled glow) all play with the 512 MB video cache full and
+  "cache entries dropped before the first read" in the log; the image shows it as it is. Reported
+  for its own investigation; the README's Diagnostics text promises exactly this kind of reading.
+- **The gallery's base frame is the nearest stored thumbnail.** It is keyed at whole seconds, and
+  a missing key is filled from the sidecar's nearest thumbnail up to 2 s away (`request_near`, the
+  bin-scrub rule) instead of a decode: after the earlier shots that was the grey storm at the
+  start of the Coffee Run shot. The gallery step opens a copy with an empty index, so the cells
+  are decoded at the playhead, as for a person opening the project fresh.
