@@ -31,6 +31,11 @@ gen testsrc_h264.mp4 -f lavfi -i "testsrc=size=320x180:rate=30:duration=2" \
 gen testsrc_25fps.mp4 -f lavfi -i "testsrc=size=320x180:rate=25:duration=2" \
     -c:v libx264 -preset veryfast -g 13 -pix_fmt yuv420p -f mp4
 
+# 12 s testsrc 30 fps H.264, a keyframe a second (export-throughput t1453/t1454: a jump forward
+# past the decoder's look-ahead must seek, not decode every picture in between)
+gen testsrc_12s.mp4 -f lavfi -i "testsrc=size=320x180:rate=30:duration=12" \
+    -c:v libx264 -preset veryfast -g 30 -pix_fmt yuv420p -f mp4
+
 # 2 s testsrc VP9 (threads=1 path)
 gen testsrc_vp9.webm -f lavfi -i "testsrc=size=320x180:rate=30:duration=2" \
     -c:v libvpx-vp9 -cpu-used 8 -g 15 -f webm

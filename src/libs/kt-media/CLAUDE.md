@@ -95,3 +95,18 @@ Media sources: the trait `MediaSource`, `SyntheticSource` (tests), `FfmpegSource
 - `unsafe impl Send` is correct, because an instance is owned by exactly one MediaWorker (&mut self); Sync is deliberately not implemented.
 - The packet index is persisted in the sidecar DB (`packet_index`, schema v2): `FfmpegSource::open_indexed(path, db)` takes the index from the DB when the file is unchanged (identity of size/mtime/xxhash via `ensure_media`) and skips the full scan pass; after a fresh scan — it saves it. DB errors = cache errors: a silent fallback to the ordinary open. Test 34.
 - The decoding layer implementation — the crate kt-ffmpeg (dlopen of the system FFmpeg 6/7/8/9, without linking); rsmpeg is removed.
+
+## Decoders of one file in the export (export-throughput D9)
+
+- `FfmpegSource::read_video_span_qualities` gives a run of keys (keys more than 2 s apart start a
+  new run) the decoder that reaches it by decoding on, else a fresh one while the file has fewer
+  than `MAX_CURSORS` (2), else the least recently used — a function of the requests, never of
+  timing. One decoder for a file read at two places (a picture-in-picture of the same footage)
+  seeked back and decoded a 4K GOP for every frame (t1455: 60 reopens → 2). The second decoder is
+  opened with the packet index the first already has. Only the export's own sources use it; the
+  preview's `MediaWorker` still has one decoder per media (a known follow-up).
+
+- **`frame_alloc::return_large_frames_to_os()` is the binaries' FIRST statement** (kt-cli, kt-app;
+  export-throughput D11, t1458): glibc's dynamic mmap threshold let freed 8–33 MB frames pile up in
+  per-thread arenas — the pipelined export peaked at 16.2 GB, 7.3 GB with the fixed 1 MiB threshold.
+  A new binary that decodes frames on several threads calls it too.

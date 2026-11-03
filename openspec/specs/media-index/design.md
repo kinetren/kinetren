@@ -386,3 +386,31 @@ is the archived change `2026-11-03-video-prefetch-thrash`):
 `kt-cli probe` plays the range with an infinitely fast decoder (`simulate_video_playback`, the same
 pass the player runs) and prints the window against the cache: the first thing to run when the
 panel reports thrash again.
+## The decoder reads what it is asked, once (export-throughput, 2026-11-03)
+
+Found by measuring the slow final render (export design, "The final render is pipelined"); the
+showcase project reads seven VP8/VP9 files up to 3840×2160.
+
+- **The RGBA conversion overruns the frame.** `sws_scale` of a 1080×1080 YUV420P picture to RGBA
+  at its size wrote 32 bytes past the exact-size `Vec` — FFmpeg 6.1's x86 yuv2rgb converts in pixel
+  blocks and its stride guard holds for every row but the last — into the next heap chunk's header:
+  the showcase export died in three seconds with `malloc(): corrupted top size`, and any width off
+  the block could corrupt the preview's heap the same way. The conversion now writes into
+  `RGBA_TAIL_PAD` (256) spare bytes, cut off after it (`sws_to_rgba`); t1450 sweeps the widths
+  (worst 56 bytes). Rejected: an aligned stride and a copy — a second pass over every frame.
+- **A far forward read was decoded linearly.** `prepare_for` returned "the answer is already held"
+  when the held frame was before the target and a deferred frame existed — without asking whether
+  the target was before THAT frame. Past it, nothing sought: a two-minute jump in 4K decoded 3,733
+  pictures for one event, and the preview did the same after a click far ahead. The exit now needs
+  `target < pending_pts`, and every key of a span is decided (two events of one file can stand
+  minutes apart in one span). t1453.
+- **A span at several qualities decodes once** (`read_video_span_qualities`/`read_video_span_sizes`,
+  a few `SwsContext`s per size): the showcase's sharp layer and its blurred backdrop read the same
+  footage at two decode sizes. t1454.
+- **One file read at two places gets two decoders in the export** (`FfmpegSource` cursors, at most
+  two): a picture-in-picture of the same footage 7 s earlier, a reel 47 s apart — one decoder sought
+  back and decoded a GOP of 4K for every frame (238 reopens). A run of keys (keys more than 2 s
+  apart start a new one) goes to the decoder that reaches it by decoding on, else a fresh one, else
+  the least recently used — a function of the requests. Decoded pictures for the showcase: 101,009
+  → 9,190 (for 5,644 used). t1455. Not done: the preview's `MediaWorker` keeps one decoder per media
+  and has the same ping-pong on such a project (a follow-up; its queue is its own design).

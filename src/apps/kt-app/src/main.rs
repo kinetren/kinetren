@@ -84,6 +84,8 @@ mod window_frame;
 mod window_shell;
 
 fn main() -> eframe::Result {
+    // frame-sized buffers go back to the system when freed (export-throughput D11)
+    kt_media::frame_alloc::return_large_frames_to_os();
     // the first process watches the editor and shows the crash window (render-crash-and-recovery)
     if let Some(code) = supervisor::run() {
         std::process::exit(code);

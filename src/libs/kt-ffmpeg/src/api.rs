@@ -45,6 +45,7 @@ macro_rules! ffmpeg_api {
             avutil::av_frame_free: unsafe extern "C" fn(*mut *mut ffi::AVFrame),
             avutil::av_frame_unref: unsafe extern "C" fn(*mut ffi::AVFrame),
             avutil::av_frame_get_buffer: unsafe extern "C" fn(*mut ffi::AVFrame, c_int) -> c_int,
+            avutil::av_frame_make_writable: unsafe extern "C" fn(*mut ffi::AVFrame) -> c_int,
             avutil::av_rescale_q: unsafe extern "C" fn(i64, ffi::AVRational, ffi::AVRational) -> i64,
             avutil::av_channel_layout_default: unsafe extern "C" fn(*mut ffi::AVChannelLayout, c_int),
             avutil::av_channel_layout_copy:

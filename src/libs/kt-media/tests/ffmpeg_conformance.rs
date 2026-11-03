@@ -228,6 +228,89 @@ fn t21_ffmpeg_span_equals_per_frame_and_no_reopen() {
     assert!(decoded <= 62, "the span decodes each frame once: decoded={decoded}");
 }
 
+/// t1453 (export-throughput D8): a span far AHEAD of the decoder seeks. After a span the decoder
+/// holds the answer and a deferred frame; the early exit "the answer is already held" did not
+/// check the target was before that frame, so a jump of minutes decoded every picture in between
+/// (3,733 4K pictures for one event of the showcase export). The pictures equal a fresh source's.
+#[test]
+fn t1453_a_far_forward_span_seeks() {
+    use kt_time::{TICK_HZ, Tick};
+    let path = fixture("testsrc_12s.mp4");
+    let step = TICK_HZ / 30;
+    let q = Some(Quality { width: 160, height: 90 });
+    let near: Vec<Tick> = (0..10).map(|i| Tick(i * step)).collect();
+    let far: Vec<Tick> = (0..10).map(|i| Tick(10 * TICK_HZ + i * step)).collect();
+    let mut src = FfmpegSource::open(&path).unwrap();
+    src.read_video_span(&near, q, &mut |_, _| {}).unwrap();
+    let (_, before) = src.decode_debug_stats();
+    let mut got = Vec::new();
+    src.read_video_span(&far, q, &mut |k, f| got.push((k, f))).unwrap();
+    let (_, after) = src.decode_debug_stats();
+    // the jump is 10 s: decoding through it is ~290 pictures, a seek is at most a GOP (30) + 10
+    assert!(after - before <= 45, "the jump decoded {} pictures instead of seeking", after - before);
+    let mut fresh = FfmpegSource::open(&path).unwrap();
+    for (k, f) in &got {
+        assert_eq!(f.rgba, fresh.read_video_frame(*k, q).unwrap().rgba, "the frame at {k:?} after the seek");
+    }
+}
+
+/// t1454 (export-throughput D7): a span at two decode qualities decodes each picture once and
+/// gives at each quality the frames a span at that quality alone gives.
+#[test]
+fn t1454_a_span_at_two_qualities_decodes_once() {
+    use kt_time::{TICK_HZ, Tick};
+    let path = fixture("testsrc_12s.mp4");
+    let step = TICK_HZ / 25; // the project's grid ≠ the source's: frames repeat
+    let (qa, qb) = (Quality { width: 160, height: 90 }, Quality { width: 96, height: 54 });
+    let keys: Vec<Tick> = (0..40).map(|i| Tick(2 * TICK_HZ + i * step)).collect();
+    let mut both: Vec<(Tick, Quality)> = keys.iter().flat_map(|k| [(*k, qa), (*k, qb)]).collect();
+    both.sort();
+    let mut src = FfmpegSource::open(&path).unwrap();
+    let mut got = std::collections::BTreeMap::new();
+    src.read_video_span_qualities(&both, &mut |k, q, f| {
+        got.insert((k, q), f);
+    })
+    .unwrap();
+    let (reopens, decoded) = src.decode_debug_stats();
+    assert_eq!(got.len(), both.len());
+    assert!(reopens <= 1, "one forward pass: reopens={reopens}");
+    assert!(decoded <= 30 + 40, "each picture decoded once: decoded={decoded}");
+    for q in [qa, qb] {
+        let mut alone = FfmpegSource::open(&path).unwrap();
+        alone
+            .read_video_span(&keys, Some(q), &mut |k, f| assert_eq!(f.rgba, got[&(k, q)].rgba, "{k:?} at {q:?}"))
+            .unwrap();
+    }
+}
+
+/// t1455 (export-throughput D9): one file read at two places at once (a picture-in-picture of
+/// the same footage 7 s earlier) gets a decoder per place. With one decoder every chunk of the
+/// showcase export seeked back and decoded a GOP of 4K — twice per frame. The frames are the ones
+/// a fresh source gives.
+#[test]
+fn t1455_two_places_of_one_file_get_two_decoders() {
+    use kt_time::{TICK_HZ, Tick};
+    let path = fixture("testsrc_12s.mp4");
+    let step = TICK_HZ / 30;
+    let q = Quality { width: 160, height: 90 };
+    let mut src = FfmpegSource::open(&path).unwrap();
+    let mut got = Vec::new();
+    // 30 chunks of one frame, each asking 1.0 s + n and 8.0 s + n
+    for n in 0..30 {
+        let keys = [(Tick(TICK_HZ + n * step), q), (Tick(8 * TICK_HZ + n * step), q)];
+        src.read_video_span_qualities(&keys, &mut |k, _, f| got.push((k, f))).unwrap();
+    }
+    let (reopens, decoded) = src.decode_debug_stats();
+    assert_eq!(got.len(), 60);
+    // two decoders, each opened once and decoding forward: two GOPs of lead-in + 60 frames
+    assert!(reopens <= 2, "each place keeps its decoder: reopens={reopens}");
+    assert!(decoded <= 2 * 30 + 60 + 4, "no GOP per chunk: decoded={decoded}");
+    let mut fresh = FfmpegSource::open(&path).unwrap();
+    for (k, f) in &got {
+        assert_eq!(f.rgba, fresh.read_video_frame(*k, Some(q)).unwrap().rgba, "the frame at {k:?}");
+    }
+}
+
 // ---- Packet index in the sidecar DB -------------------------------------------
 
 /// Test 34: persistence of the packet index.

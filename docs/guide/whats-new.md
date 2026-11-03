@@ -8,6 +8,15 @@ month, newest first.
 - **A busy disk no longer makes the program forget its previews.** On a spinning disk under heavy
   writing, opening a project could rebuild the previews of its compositions, and the waveforms and
   loudness of its media, as if seen for the first time. The program now keeps using what it stored.
+- **The final render is several times faster, and it no longer crashes on some footage.** It
+  used one core for everything in turn; now it reads, draws, converts and encodes at the same
+  time on all of them, and the sound renders alongside the picture instead of after it. A
+  project that jumps around in long 4K files no longer reads minutes of video it does not show,
+  and a picture-in-picture of the same clip no longer makes it re-read the clip for every frame.
+  The render of a project with a square 1080×1080 video used to crash within seconds. On a
+  machine without a graphics card the render now draws on the processor's cores, which is the
+  faster way there.
+
 - **Camera ISP no longer smears the edges of the frame.** "Phone at night" and the looks with a
   distorting lens filled a band along the edges — about 30 px on a 1080p frame — with streaks of
   the edge pixels. The simulated lens is now framed on what your footage recorded, and the

@@ -109,6 +109,9 @@ struct VideoPath {
     still: bool,
     sws: *mut ffi::SwsContext,
     sws_key: (c_int, c_int, c_int, c_int, c_int),
+    /// Contexts of the other sizes a multi-size span converts to (export-throughput D7): the
+    /// same picture to two sizes must not rebuild a context per picture.
+    sws_spare: Vec<((c_int, c_int, c_int, c_int, c_int), *mut ffi::SwsContext)>,
     eof: bool,
     /// Diagnostics: decoder recreations (backward) and decoded frames.
     backward_reopens: u64,
@@ -440,6 +443,52 @@ impl Source {
         Ok(())
     }
 
+    /// A span at SEVERAL sizes in one forward pass (export-throughput D7): `keys` are
+    /// (key, width, height), ordered by key; each key's picture is chosen once — by the same
+    /// rule as `read_video_span` — and converted to every size asked at it. A source asked at two
+    /// decode sizes (the showcase's sharp layer and its blurred backdrop) was decoded twice per
+    /// chunk, the second time after a backward seek that recreates the decoder.
+    pub fn read_video_span_sizes(
+        &mut self,
+        keys: &[(Tick, u32, u32)],
+        emit: &mut dyn FnMut(Tick, (u32, u32), RgbaFrame),
+    ) -> Result<(), FfError> {
+        let api = self.api;
+        let v = self.video.as_mut().ok_or(FfError::OutOfRange)?;
+        if keys.is_empty() {
+            return Ok(());
+        }
+        debug_assert!(keys.windows(2).all(|w| w[0].0 <= w[1].0), "span keys must be ordered");
+        let mut i = 0;
+        while i < keys.len() {
+            let k = keys[i].0;
+            let target = v.target_ts(api, k);
+            // every key decides between decoding on and seeking (D8): the keys of two events of
+            // one file can stand minutes apart in one span
+            v.prepare_for(api, target)?;
+            let frame = v.frame_for(api, target)?;
+            while i < keys.len() && keys[i].0 == k {
+                let (_, w, h) = keys[i];
+                let rgba = v.to_rgba(api, frame, w, h)?;
+                emit(k, (w, h), rgba);
+                i += 1;
+            }
+        }
+        Ok(())
+    }
+
+    /// Where the video decoder stands, in ticks of the file's own time: the pts of the frame it
+    /// last answered with (`None` — nothing decoded since it was opened). An export choosing one of
+    /// several decoders of a file asks it (export-throughput D9).
+    pub fn video_cursor(&self) -> Option<Tick> {
+        let v = self.video.as_ref()?;
+        if v.held_pts == i64::MIN {
+            return None;
+        }
+        let rel = v.held_pts - v.start_time;
+        Some(Tick(unsafe { (self.api.av_rescale_q)(rel, v.time_base, tb(1, TICK_HZ as i32)) }))
+    }
+
     /// Diagnostics for performance tests (item 14/15): how many times the decoder
     /// was recreated (backward seek) and how many frames were decoded.
     pub fn video_debug_stats(&self) -> (u64, u64) {
@@ -461,6 +510,9 @@ impl Drop for Source {
             unsafe {
                 if !v.sws.is_null() {
                     (api.sws_freeContext)(v.sws);
+                }
+                for (_, c) in v.sws_spare.drain(..) {
+                    (api.sws_freeContext)(c);
                 }
                 (api.avcodec_free_context)(&mut v.dec);
                 (api.avformat_close_input)(&mut v.fmt);
@@ -701,6 +753,7 @@ impl VideoPath {
             still,
             sws: core::ptr::null_mut(),
             sws_key: (0, 0, 0, 0, 0),
+            sws_spare: Vec::new(),
             eof: false,
             backward_reopens: 0,
             frames_decoded: 0,
@@ -763,6 +816,7 @@ impl VideoPath {
         self.drop_cached_frames(api);
         self.eof = false;
         self.backward_reopens += 1;
+        crate::iostats::VIDEO_REOPENS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -780,6 +834,16 @@ impl VideoPath {
     /// Next decoded frame (ownership belongs to the caller:
     /// av_frame_free). None = end of stream. Updates last_pts.
     fn decode_next_frame(&mut self, api: &Api) -> Result<Option<*mut ffi::AVFrame>, FfError> {
+        let mark = std::time::Instant::now();
+        let r = self.decode_next_frame_inner(api);
+        crate::iostats::VDEC_NS.fetch_add(mark.elapsed().as_nanos() as u64, core::sync::atomic::Ordering::Relaxed);
+        if matches!(r, Ok(Some(_))) {
+            crate::iostats::VDEC_FRAMES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
+        r
+    }
+
+    fn decode_next_frame_inner(&mut self, api: &Api) -> Result<Option<*mut ffi::AVFrame>, FfError> {
         let pkt = unsafe { (api.av_packet_alloc)() };
         let frame = unsafe { (api.av_frame_alloc)() };
         let res = (|| -> Result<Option<*mut ffi::AVFrame>, FfError> {
@@ -871,8 +935,13 @@ impl VideoPath {
         if self.still {
             return Ok(());
         }
-        // the answer is already held — no seek or decode required
-        if !self.held.is_null() && self.held_pts <= target_ts && !self.pending.is_null() {
+        // the answer is already held — no seek or decode required. Only while the target is
+        // BEFORE the deferred frame: past it, the answer is ahead and the jump decides between
+        // decoding forward and seeking (export-throughput D8). Without the bound a jump of two
+        // minutes forward decoded every picture in between — 3,733 4K pictures for one event
+        // of the showcase, and the same in the preview after a click far ahead.
+        if !self.held.is_null() && self.held_pts <= target_ts && !self.pending.is_null() && target_ts < self.pending_pts
+        {
             return Ok(());
         }
         let forward_ok = match self.last_pts {
@@ -963,10 +1032,23 @@ impl VideoPath {
             (height.max(2) as c_int) & !1,
         );
         let key = (dst_w, dst_h, f.width, f.height, f.format);
-        if self.sws.is_null() || self.sws_key != key {
-            if !self.sws.is_null() {
-                unsafe { (api.sws_freeContext)(self.sws) };
+        if !self.sws.is_null() && self.sws_key != key {
+            // keep the current context for its size; take this size's if it is kept
+            let found = self.sws_spare.iter().position(|(k, _)| *k == key);
+            self.sws_spare.push((self.sws_key, self.sws));
+            match found {
+                Some(i) => {
+                    let (k, c) = self.sws_spare.swap_remove(i);
+                    (self.sws_key, self.sws) = (k, c);
+                }
+                None => self.sws = core::ptr::null_mut(),
             }
+            if self.sws_spare.len() > 3 {
+                let (_, old) = self.sws_spare.remove(0);
+                unsafe { (api.sws_freeContext)(old) };
+            }
+        }
+        if self.sws.is_null() {
             self.sws = unsafe {
                 (api.sws_getContext)(
                     f.width,
@@ -986,23 +1068,21 @@ impl VideoPath {
             }
             self.sws_key = key;
         }
-        let row = dst_w as usize * 4;
-        let mut rgba = vec![0u8; row * dst_h as usize];
-        let dst_data: [*mut u8; 4] = [rgba.as_mut_ptr(), core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut()];
-        let dst_linesize: [c_int; 4] = [row as c_int, 0, 0, 0];
-        let r = unsafe {
-            (api.sws_scale)(
-                self.sws,
-                f.data.as_ptr() as *const *const u8,
-                f.linesize.as_ptr(),
-                0,
-                f.height,
-                dst_data.as_ptr(),
-                dst_linesize.as_ptr(),
-            )
-        };
-        if r < 0 {
-            return Err(averr(api, "sws_scale", r));
+        let mark = std::time::Instant::now();
+        let rgba = sws_to_rgba(
+            api,
+            self.sws,
+            f.data.as_ptr() as *const *const u8,
+            f.linesize.as_ptr(),
+            f.height,
+            dst_w as usize,
+            dst_h as usize,
+        )?;
+        {
+            use core::sync::atomic::Ordering::Relaxed;
+            crate::iostats::RGBA_NS.fetch_add(mark.elapsed().as_nanos() as u64, Relaxed);
+            crate::iostats::RGBA_FRAMES.fetch_add(1, Relaxed);
+            crate::iostats::RGBA_PIXELS.fetch_add(dst_w as u64 * dst_h as u64, Relaxed);
         }
         let pts = if f.best_effort_timestamp != AV_NOPTS_VALUE {
             f.best_effort_timestamp
@@ -1013,5 +1093,90 @@ impl VideoPath {
         let pts_tick =
             Tick(unsafe { (api.av_rescale_q)(rel, self.time_base, tb(1, TICK_HZ as i32)) });
         Ok(RgbaFrame { pts: pts_tick, width: dst_w as u32, height: dst_h as u32, rgba })
+    }
+}
+
+/// RGBA conversion into an exact-size frame (export-throughput D1). The x86 yuv2rgb kernels of
+/// `sws_scale` convert in blocks of pixels and write PAST the last row when the width is not a
+/// multiple of the block: 32 bytes at 1080×1080 on FFmpeg 6.1, and the next heap chunk's header
+/// with them — the showcase export died with `malloc(): corrupted top size`. The destination
+/// therefore carries `RGBA_TAIL_PAD` spare bytes, cut off after the conversion. An earlier row's
+/// overrun lands on the start of the next row, which the next row then overwrites.
+fn sws_to_rgba(
+    api: &Api,
+    sws: *mut ffi::SwsContext,
+    src: *const *const u8,
+    src_linesize: *const c_int,
+    src_h: c_int,
+    dst_w: usize,
+    dst_h: usize,
+) -> Result<Vec<u8>, FfError> {
+    let row = dst_w * 4;
+    let n = row * dst_h;
+    let mut rgba = vec![0u8; n + crate::RGBA_TAIL_PAD];
+    let dst_data: [*mut u8; 4] = [rgba.as_mut_ptr(), core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut()];
+    let dst_linesize: [c_int; 4] = [row as c_int, 0, 0, 0];
+    let r = unsafe { (api.sws_scale)(sws, src, src_linesize, 0, src_h, dst_data.as_ptr(), dst_linesize.as_ptr()) };
+    if r < 0 {
+        return Err(averr(api, "sws_scale", r));
+    }
+    rgba.truncate(n);
+    Ok(rgba)
+}
+
+/// How many bytes past the frame the decode's RGBA conversion writes for a `src` YUV420P picture
+/// converted to `dst` (the guard of `RGBA_TAIL_PAD`, t1450): the spare tail is filled with a
+/// marker and the last changed byte is found.
+pub fn rgba_conversion_overrun(api: &'static Api, src: (u32, u32), dst: (u32, u32)) -> Result<usize, FfError> {
+    unsafe {
+        let mut f = (api.av_frame_alloc)();
+        (*f).format = ffi::AV_PIX_FMT_YUV420P as c_int;
+        (*f).width = src.0 as c_int;
+        (*f).height = src.1 as c_int;
+        if (api.av_frame_get_buffer)(f, 0) < 0 {
+            (api.av_frame_free)(&mut f);
+            return Err(FfError::Av("frame buffer".into()));
+        }
+        for (plane, h) in [(0usize, src.1), (1, src.1.div_ceil(2)), (2, src.1.div_ceil(2))] {
+            let ls = (*f).linesize[plane] as usize;
+            core::ptr::write_bytes((*f).data[plane], 0x5A + plane as u8 * 0x20, ls * h as usize);
+        }
+        let sws = (api.sws_getContext)(
+            src.0 as c_int,
+            src.1 as c_int,
+            ffi::AV_PIX_FMT_YUV420P,
+            dst.0 as c_int,
+            dst.1 as c_int,
+            ffi::AV_PIX_FMT_RGBA,
+            ffi::SWS_FAST_BILINEAR as c_int,
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            core::ptr::null(),
+        );
+        if sws.is_null() {
+            (api.av_frame_free)(&mut f);
+            return Err(FfError::Av("sws_getContext failed".into()));
+        }
+        // the same conversion with a marked tail: a write past the frame changes the marker
+        let row = dst.0 as usize * 4;
+        let n = row * dst.1 as usize;
+        let mut buf = vec![0xA5u8; n + 4096];
+        let dst_data: [*mut u8; 4] = [buf.as_mut_ptr(), core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut()];
+        let dst_linesize: [c_int; 4] = [row as c_int, 0, 0, 0];
+        let r = (api.sws_scale)(
+            sws,
+            (*f).data.as_ptr() as *const *const u8,
+            (*f).linesize.as_ptr(),
+            0,
+            src.1 as c_int,
+            dst_data.as_ptr(),
+            dst_linesize.as_ptr(),
+        );
+        (api.sws_freeContext)(sws);
+        (api.av_frame_free)(&mut f);
+        if r < 0 {
+            return Err(averr(api, "sws_scale", r));
+        }
+        Ok(buf[n..].iter().rposition(|b| *b != 0xA5).map_or(0, |i| i + 1))
     }
 }

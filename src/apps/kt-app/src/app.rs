@@ -9403,13 +9403,7 @@ impl Drop for KtApp {
 pub const APP_ID: &str = "com.kinetren.Kinetren";
 
 pub(crate) fn export_video_gpu() -> Result<std::sync::Arc<dyn kt_engine::VideoGpuExec>, String> {
-    if std::env::var("KT_VIDEO_GPU").as_deref() == Ok("0") {
-        return Err("KT_VIDEO_GPU=0".into());
-    }
-    match kt_gpu::GpuContext::new_headless().and_then(kt_gpu::GpuFxEngine::new) {
-        Ok(e) => Ok(e),
-        Err(err) => Err(err.to_string()),
-    }
+    kt_gpu::export_engine().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>)
 }
 
 pub fn run() -> eframe::Result {
