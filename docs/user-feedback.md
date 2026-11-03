@@ -2449,6 +2449,20 @@ The MIME file stays. The compose step could not read our SVG icon: gdk-pixbuf's 
 in the workflows, a guard holds them, and the metadata compose runs in seconds before the long
 Flatpak build.
 
+## 2026-11-03 — README screenshots are dull
+
+The owner, verbatim: "надо обновить скриншоты в readme, там скучноватые эффекты используются, не
+показываются новые симуляционные эффекты (ДО/ПОСЛЕ) и пр." (the README screenshots need updating:
+the effects used are dullish, the new simulation effects are not shown (BEFORE/AFTER), and so on).
+
+**Taken as (change `readme-shots-showcase`):** the four shots docs-refresh added to the pipeline
+(Datamosh, Camera ISP, VHS Tape, masks) are taken on the owner's README footage
+(`../sources/README_SOURCES`, already fetched) as before/after pairs and shown in the README;
+the shots that show effects (the hero, the effect gallery, the morpher before/after) are re-chosen so
+they show the striking effects, not a plain blur; the other shots are re-taken so the README matches
+today's program (the welcome window, Diagnostics, Preferences where they belong). Every image is
+looked at before it is committed.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
