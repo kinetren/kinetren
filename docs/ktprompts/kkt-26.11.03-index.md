@@ -8,5 +8,5 @@ requests). Columns and states — as in [`v26.10-index.md`](v26.10-index.md). Th
 
 | # | Line | Claim (brief) | State | Address | Stage |
 |---|---|---|---|---|---|
-| C1 | 1-2 | the final render (export) is VERY slow, slower even than the preview, and looks not parallel but strongly sequential | no: defect, measured before the fix → export, video-plan | `export-throughput` | discussion |
-| C2 | 4-5 | "the math" is separate in every place and not accelerated; one mechanism to accelerate computations on whatever the machine has (AVX, CUDA, OpenCL, Vulkan) — something like compiled shaders, or another approach altogether | no: architecture, discussed with the owner first → plugins, video-fx, audio-fx | `compute-backends` | discussion |
+| C1 | 1-2 | the final render (export) is VERY slow, slower even than the preview, and looks not parallel but strongly sequential | no: defect, measured before the fix → export, video-plan | `export-throughput` | queue 1 (next free executor) |
+| C2 | 4-5 | "the math" is separate in every place and not accelerated; one mechanism to accelerate computations on whatever the machine has (AVX, CUDA, OpenCL, Vulkan) — something like compiled shaders, or another approach altogether | no: architecture, discussed with the owner first → plugins, video-fx, audio-fx | `compute-backends` | queue 2: reconnaissance note + one-effect prototype, then the owner decides the migration |

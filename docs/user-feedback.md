@@ -2483,8 +2483,16 @@ The owner, verbatim (registry `docs/ktprompts/kkt-26.11.03-index.md`):
   altogether.)
 
 **Taken as:** C1 is a defect, measured first (where the time of an export goes, stage by stage)
-and fixed as `export-throughput`; C2 is an architecture question discussed with the owner before
-any change (`compute-backends`).
+and fixed as `export-throughput`. Reading the code confirmed the owner's guess: one thread runs
+decode → compose → GPU readback (a full wait per frame) → RGBA→YUV → encode, the encoder is opened
+without a thread count, and the whole audio pass starts only after the video pass ends; the
+preview, by contrast, decodes on a thread per source at 640×360. C2 is an architecture question
+(`compute-backends`): wgpu already is "shaders that compile" (Vulkan/DX12/Metal from one WGSL) and
+the CPU has an AVX2 switch, so CUDA/OpenCL would add a third text of every kernel and no new
+hardware; what is missing is the many cores and one kernel text instead of three (scalar, SIMD
+twin, WGSL). A reconnaissance note (Nuke BlinkScript, Halide, ISPC, CubeCL, rust-gpu; how Resolve,
+Premiere, Blender pick a backend) and a one-effect prototype come first; migrating every effect is
+the owner's decision on the measured prototype.
 
 ## What the user repeated more than once
 
