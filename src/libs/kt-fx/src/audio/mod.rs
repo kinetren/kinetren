@@ -229,6 +229,16 @@ fn read_material(
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChainOpts {
     pub pitch_engine: kt_model::PitchEngine,
+    /// The project frame rate (sim-audio-pairs): the audio half of a simulated device reads the
+    /// picture's frame grid (`AudioState::place`). 0 — unknown, read as 25.
+    pub fps: u32,
+}
+
+impl ChainOpts {
+    /// Where a clip starting at timeline frame `start` sits, for its nodes.
+    pub fn placement(&self, start: i64) -> kt_plugin_api::Placement {
+        kt_plugin_api::Placement { start, fps_num: if self.fps == 0 { 25 } else { self.fps }, fps_den: 1 }
+    }
 }
 
 pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
@@ -388,6 +398,8 @@ impl TrackProcessor {
 /// FxStateStore). Read strictly sequentially; a gap → reset + pre-roll.
 pub struct ClipProcessor {
     fingerprint: u64,
+    /// The timeline frame of the clip's frame 0 (sim-audio-pairs, `AudioState::place`).
+    origin: i64,
     /// Clip-local frame that will come out next (continuity marker).
     next_local: i64,
     src_in: i64,
@@ -522,6 +534,7 @@ impl ClipProcessor {
     ) -> ClipProcessor {
         let mut p = ClipProcessor {
             fingerprint: chain_fingerprint(fx),
+            origin: 0,
             next_local: i64::MIN,
             src_in: src_in_frames,
             warp: None,
@@ -656,6 +669,19 @@ impl ClipProcessor {
         }
     }
 
+    /// Seat the clip on the timeline (sim-audio-pairs): its frame 0 is timeline frame `start`.
+    /// Without a state reset — a moved clip keeps its nodes (invariant 3).
+    pub fn set_origin(&mut self, start: i64) {
+        if self.origin == start {
+            return;
+        }
+        self.origin = start;
+        let at = self.opts.placement(start);
+        for (_, node) in &mut self.nodes {
+            node.place(at);
+        }
+    }
+
     /// Update the clip length (trim) without resetting the state.
     pub fn set_clip_len(&mut self, clip_len_frames: i64) {
         self.clip_len = clip_len_frames.max(1);
@@ -708,9 +734,13 @@ impl ClipProcessor {
             }
             _ => MixCfg { slot: i, from: usize::MAX, base_amount: 1.0 },
         });
+        let at = self.opts.placement(self.origin);
         for (slot, node) in &mut self.nodes {
             node.apply(&fx[*slot], structural);
             node.bind_lfo(&self.auto, *slot, self.clip_len);
+            if structural {
+                node.place(at);
+            }
         }
         self.recompute_lookahead();
         // warp half of Slowed+Reverb (source consumption)

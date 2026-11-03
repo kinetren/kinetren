@@ -113,6 +113,15 @@ drum to set it Clean, Dirty, Clogged or Chipped. **Two decks** records on one an
 another. Presets: Good deck, Dirty heads, Clogged head, Chipped head, 4-head still, Worn
 rental tape, LP. The older **VHS** effect is a quick look without the process.
 
+**The sound of the tape.** Put VHS Tape on an event with linked audio and the audio gets
+**VHS Tape** too — the same deck, one panel: its **Sound** section chooses **Hi-Fi**,
+**Normal (linear)** or **Mix**, mono or stereo linear tracks, **Dolby B**, the audio head's
+gap and dirt, the bias and the record level. Hi-Fi is FM written by the drum's heads: a
+clogged or dirty head, mistracking or a dropout breaks the sound in the same field the
+picture loses. The linear track is read by a still head at the tape's speed: LP is duller,
+the narrow stereo tracks hiss more, and the capstan's flutter wobbles the pitch. Its checkbox
+in the audio's chain lets the deck's sound out or keeps the event's own.
+
 **Camera ISP** treats the frame as a developed picture: it undoes the source camera into a
 scene, films it through a simulated lens (defocus, distortion, chromatic aberration,
 vignetting, colour shading) onto a colour mosaic (RGGB and its phases, Quad Bayer,

@@ -50,6 +50,8 @@ const GOLDEN: &[(&str, [u64; 4])] = &[
     // ci-green-again's frozen math on top (glibc's `atan2f` in the vocoder was an ulp off; before
     // the edge change this case gave windows-latest's 0xcf5eeac6705fa16b): 0x3c85… → 0xd77b…
     ("pitch_shift", [0x07c61de143e7dafd, 0xd77b5f105aefa860, 0x2058048daf9756f7, 0xd39bab6d08fb5c31]),
+    // sim-audio-pairs: NEW kinds (no variant before them), printed once when they arrived
+    ("vhs_tape_sound", [0xe30113ba5fa88c1d, 0xf43ea95d1a43ff20, 0x9453454703773cfc, 0x7e3002dcf7eb2059]),
 ];
 
 fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool, engine: PitchEngine) -> Project {

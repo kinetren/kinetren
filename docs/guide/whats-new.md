@@ -5,6 +5,10 @@ month, newest first.
 
 ## kt26.11
 
+- **VHS Tape now plays the sound too.** Put it on an event with linked audio and the audio gets
+  the same deck: Hi-Fi tracks that crackle exactly where a clogged head or a dropout breaks the
+  picture, or the linear track — dull at LP, with tape hiss and the capstan's wobble. Its Sound
+  section is in the deck panel; the checkbox in the audio's chain switches it off.
 - **Camera ISP no longer smears the edges of the frame.** "Phone at night" and the looks with a
   distorting lens filled a band along the edges — about 30 px on a 1080p frame — with streaks of
   the edge pixels. The simulated lens is now framed on what your footage recorded, and the

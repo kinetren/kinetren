@@ -26,7 +26,20 @@ pub const ROWS: &[&str] = &[
     "play_b_gap",
     "play_b_output",
     "tracking_um",
+    // the sound section (sim-audio-pairs)
+    "ac_gap",
+    "ac_spacing",
+    "bias",
+    "rec_level_db",
 ];
+
+/// The number rows of the sound section, in the order drawn.
+const SOUND_ROWS: &[&str] = &["ac_gap", "ac_spacing", "bias", "rec_level_db"];
+
+/// Whether `f` is a half of the VHS deck (the picture's or the sound's): both draw this face.
+pub fn is_deck(f: &FxInstance) -> bool {
+    matches!(f.tag(), "vhs_tape" | "vhs_tape_sound")
+}
 
 /// A head's condition: what its spacing, gap and output say (the presets of the selector).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,7 +112,11 @@ fn switch(ui: &mut egui::Ui, f: &mut FxInstance, row: &str, labels: &[&str], ch:
     ui.horizontal(|ui| {
         for (i, l) in labels.iter().enumerate() {
             let r = ui.add(egui::Button::selectable(i == cur, *l).frame_when_inactive(true));
-            crate::widgets::field_probe::note(&format!("deck.{row}.{i}"), r.rect);
+            // both halves of a deck draw this face in one window: only a face on screen publishes
+            // its places, or a scrolled-away one would win the name
+            if ui.clip_rect().contains_rect(r.rect) {
+                crate::widgets::field_probe::note(&format!("deck.{row}.{i}"), r.rect);
+            }
             if r.clicked() && i != cur {
                 f.set_param(row, i as f64);
                 ch.base = true;
@@ -245,6 +262,20 @@ pub fn draw(
                 ui.label(egui::RichText::new(tr(k::deck::PICK_HEAD)).weak().small());
             }
         }
+        // the sound of the same deck (sim-audio-pairs): one device, one panel on both halves
+        ui.separator();
+        ui.label(egui::RichText::new(tr(k::deck::SOUND)).strong());
+        switch(ui, f, "audio_out", &[tr(k::deck::HIFI), tr(k::deck::NORMAL), tr(k::deck::MIX)], &mut ch);
+        ui.horizontal(|ui| {
+            switch(ui, f, "linear_tracks", &[tr(k::deck::MONO), tr(k::deck::STEREO)], &mut ch);
+            flag(ui, f, "dolby", tr(k::deck::DOLBY), &mut ch);
+        });
+        for row in SOUND_ROWS {
+            if let Some(spec) = f.param_specs().iter().find(|s| s.name == *row).cloned() {
+                ch |= crate::widgets::param_row_bound(ui, f, &spec, bind.as_deref_mut(), pubc);
+            }
+        }
+        ui.label(egui::RichText::new(tr(k::deck::SOUND_NOTE)).weak().small());
     });
     ui.data_mut(|d| d.insert_temp(sel_id, sel));
     ch

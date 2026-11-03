@@ -274,6 +274,15 @@ of the velocity envelope of Vegas). It follows that there are TWO AXES, and they
   meaning is not created (item 9 of the kt-app checklist).
 - `UnlinkClip` ends the synchronization by itself; `LinkClips` does NOT align retroactively — to link two clips with different speeds and silently rewrite one would be a loss of work.
 
+## A simulated device is shared by a link pair (sim-audio-pairs)
+
+- `sync_pairs_to_link_group` runs beside `sync_warp_to_link_group` (SetFx, SetFxAuto,
+  SetFxBypass): a paired kind (`Decl.pair`, `Registry::counterpart`) on one event puts its
+  counterpart on every linked event of the OTHER kind — the n-th to the n-th, values and curves
+  copied, presence shared. Bypass and masks are each side's own: the audio half's checkbox is "the
+  device's sound off". A morpher patch derives the other half in `chain_for`/`auto_for`
+  (`derived_pairs`, one text for both). t1461.
+
 ## Named areas (R.35 item 2)
 - `MarkedArea { name, start, duration, lanes, color }` in `Project.areas`.
   `lanes` are SEMANTIC keys of tracks, not row numbers: a permutation of

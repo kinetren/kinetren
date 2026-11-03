@@ -70,11 +70,15 @@ shape can be keyed over time.
 
 ### Simulations
 
-Three effects model the real process instead of painting its look:
+Three effects model the real process instead of painting its look. Each records sound too:
+put one on an event with linked audio and the audio gets the same device's sound, with its own
+switch in the audio's chain.
 
 - **VHS Tape** records the picture to tape and plays it back: FM luma, colour-under
   chroma, two or four heads on a drum, SP/LP/EP, tracking, a TBC, one deck or two. Click a
-  head on the drawn drum to make it dirty, clogged or chipped.
+  head on the drawn drum to make it dirty, clogged or chipped. The sound plays from the same
+  deck: Hi-Fi FM tracks that crackle in the very fields a clogged head drops from the picture,
+  or the linear track — dull at LP, with its hiss and the capstan's flutter.
 - **Camera ISP** turns the frame back into a scene and films it again: lens, colour
   mosaic (Bayer, Quad Bayer, X-Trans, RGBW, RGB-IR), a sensor with real noise, and every
   block of the camera's processor, each one switchable or set wrong. **View** shows the

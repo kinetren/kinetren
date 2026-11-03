@@ -484,6 +484,11 @@ pub fn param_label(name: &str) -> String {
         "dark_clip" => tr(k::fxp::DARK_CLIP),
         "chroma_db" => tr(k::fxp::CHROMA_DB),
         "tape_saturation" => tr(k::fxp::TAPE_SATURATION),
+        // the deck's sound (sim-audio-pairs)
+        "ac_gap" => tr(k::fxp::AC_GAP),
+        "ac_spacing" => tr(k::fxp::AC_SPACING),
+        "bias" => tr(k::fxp::BIAS),
+        "rec_level_db" => tr(k::fxp::REC_LEVEL_DB),
         "rec_a_spacing" | "rec_b_spacing" | "play_a_spacing" | "play_b_spacing" => tr(k::fxp::SPACING),
         "rec_a_gap" | "rec_b_gap" | "play_a_gap" | "play_b_gap" => tr(k::fxp::GAP),
         "rec_a_output" | "rec_b_output" | "play_a_output" | "play_b_output" => tr(k::fxp::OUTPUT),

@@ -430,6 +430,10 @@ tape_saturation = "Saturación de la cinta:"
 spacing = "Separación cabeza-cinta:"
 gap = "Longitud del entrehierro:"
 output = "Salida de la cabeza:"
+ac_gap = "Entrehierro del cabezal de audio:"
+ac_spacing = "Separación cabezal de audio–cinta:"
+bias = "Polarización de grabación:"
+rec_level_db = "Nivel de grabación:"
 
 [fxreg]
 add = "+ efecto…"
@@ -517,6 +521,7 @@ vhs_tape = "vhs tape cassette vcr simulation cinta casete vídeo simulación cab
 # “Soft” for blur and for glow means the same thing, and two keys for it are pointless.
 # A variant name IS TRANSLATED (unlike the effect name);
 # “Ink” and “Blueprint” are not industry terms.
+vhs_tape_sound = "vhs cinta casete vídeo hifi pista de audio lineal platina trémolo siseo simulación"
 [fxreg.var]
 soft = "Suave"
 strong = "Fuerte"
@@ -1853,6 +1858,14 @@ dirty = "Sucia"
 clogged = "Obstruida"
 chipped = "Astillada"
 pick_head = "Pulse una cabeza del tambor para fijar su estado"
+sound = "Sonido"
+hifi = "Hi-Fi"
+normal = "Normal (lineal)"
+mix = "Mezcla"
+mono = "Pista mono"
+stereo = "Pistas estéreo"
+dolby = "Dolby B"
+sound_note = "La misma platina reproduce el sonido del evento: los cabezales Hi-Fi van junto a los de vídeo de arriba, la pista lineal la lee su propio cabezal fijo"
 
 [masks]
 group = "Máscaras"

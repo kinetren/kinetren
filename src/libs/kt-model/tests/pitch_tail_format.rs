@@ -98,7 +98,9 @@ fn t1336_rings_on_is_format_3_cut_is_the_former_file() {
     assert_eq!(project_file::version_for(&one), 3);
 
     // a build that reads up to 2 sees a version above its ceiling: the same check as `from_text`
-    let newer = text.replace("\"kinetren\": 3", "\"kinetren\": 4");
-    assert!(matches!(project_file::from_text(&newer), Err(project_file::ProjectFileError::TooNew { version: 4 })));
-    const { assert!(3 > project_file::PROJECT_FILE_VERSION_MASKS && project_file::PROJECT_FILE_READS == 3) };
+    // (sim-audio-pairs raised the ceiling to 4: a version above THIS build's ceiling is refused)
+    let above = project_file::PROJECT_FILE_READS + 1;
+    let newer = text.replace("\"kinetren\": 3", &format!("\"kinetren\": {above}"));
+    assert!(matches!(project_file::from_text(&newer), Err(project_file::ProjectFileError::TooNew { version }) if version == above));
+    const { assert!(3 > project_file::PROJECT_FILE_VERSION_MASKS && project_file::PROJECT_FILE_READS >= 3) };
 }

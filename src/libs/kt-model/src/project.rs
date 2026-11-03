@@ -1555,6 +1555,50 @@ impl MorphPatch {
                 || self.source_in_delta.0 != 0)
     }
 
+    /// The halves of simulated devices (sim-audio-pairs) this kind's chain gets from the OTHER
+    /// kind's enabled slots, with their curves: the n-th enabled paired slot over there gives its
+    /// counterpart here unless this side already holds an n-th one of that kind itself. One text for
+    /// `chain_for` and `auto_for`, so a curve never lands on another slot.
+    fn derived_pairs(&self, kind: ClipKind) -> Vec<(FxInstance, Vec<ParamCurve>)> {
+        let reg = crate::plugin_slot::registry();
+        let (own, own_off, other, other_off, other_auto) = match kind {
+            ClipKind::Video => (&self.video_fx, &self.video_bypass, &self.audio_fx, &self.audio_bypass, &self.audio_auto),
+            ClipKind::Audio => (&self.audio_fx, &self.audio_bypass, &self.video_fx, &self.video_bypass, &self.video_auto),
+        };
+        let count = |fx: &[FxInstance], off: &[bool], id: &str| {
+            fx.iter()
+                .enumerate()
+                .filter(|(i, f)| !off.get(*i).copied().unwrap_or(false) && matches!(f, FxInstance::Plugin(p) if p.id == id))
+                .count()
+        };
+        let mut seen: Vec<(String, usize)> = Vec::new();
+        let mut out = Vec::new();
+        for (i, f) in other.iter().enumerate() {
+            if other_off.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let FxInstance::Plugin(p) = f else { continue };
+            let Some(here) = reg.counterpart(&p.id) else { continue };
+            let n = match seen.iter_mut().find(|(id, _)| id == here) {
+                Some((_, n)) => {
+                    *n += 1;
+                    *n
+                }
+                None => {
+                    seen.push((here.to_string(), 1));
+                    1
+                }
+            };
+            if n <= count(own, own_off, here) {
+                continue;
+            }
+            let Some(mut slot) = crate::plugin_slot::PluginSlot::new(kt_plugin_api::Family::Fx, here) else { continue };
+            slot.values = p.values.clone();
+            out.push((FxInstance::Plugin(slot), other_auto.get(i).cloned().unwrap_or_default()));
+        }
+        out
+    }
+
     /// ENABLED effects of the patch for a clip of this kind. A disabled slot
     /// is simply not appended: the clip has its own bypass numbering, and
     /// they must not be mixed.
@@ -1574,6 +1618,9 @@ impl MorphPatch {
         // `split_chains` in the UI rest on this — but it is not a pixel filter,
         // but a rule for choosing the source frame. Without this the layer would slow
         // the sound and not the picture: a desync that nobody asked for.
+        // the other half of each simulated device (sim-audio-pairs): a layer that puts VHS Tape on
+        // the picture puts the same tape on the sound of the events it covers
+        out.extend(self.derived_pairs(kind).into_iter().map(|(f, _)| f));
         if kind == ClipKind::Video {
             out.extend(
                 self.audio_fx
@@ -1616,6 +1663,7 @@ impl MorphPatch {
             .filter(|(i, _)| !off.get(*i).copied().unwrap_or(false))
             .map(|(i, _)| pick(i))
             .collect();
+        out.extend(self.derived_pairs(kind).into_iter().map(|(_, a)| a));
         if kind == ClipKind::Video {
             out.extend(
                 self.audio_fx
@@ -4823,6 +4871,8 @@ impl FxInstance {
                 FxInstance::builtin("camera_isp"),
                 // vhs-tape-simulation: new kinds at the end
                 FxInstance::builtin("vhs_tape"),
+                // sim-audio-pairs: the audio halves of the simulated devices
+                FxInstance::builtin("vhs_tape_sound"),
             ]
         })
     }
@@ -5923,6 +5973,27 @@ impl Project {
             reel.clips().iter().any(|c| c.fx.iter().any(rings))
                 || reel.tracks().iter().any(|t| t.fx.iter().any(rings))
                 || reel.morphers().iter().any(|m| m.patch.audio_fx.iter().chain(&m.patch.video_fx).any(rings))
+        })
+    }
+
+    /// A simulated device's sound rows are set somewhere (sim-audio-pairs): a slot of a paired
+    /// video kind holds one of its `foreign_rows` (the rows only its sound reads) off its default.
+    pub fn has_device_sound(&self) -> bool {
+        let sound = |f: &FxInstance| match f {
+            FxInstance::Plugin(p) => {
+                let m = p.manifest();
+                m.decl.pair.is_some()
+                    && m.decl.foreign_rows.iter().any(|row| {
+                        let i = m.passport.iter().position(|s| s.name == *row);
+                        i.is_some_and(|i| p.values.get(i).is_some_and(|v| *v != m.row(i).store.cast(m.passport[i].default)))
+                    })
+            }
+            _ => false,
+        };
+        self.reels().any(|(_, reel)| {
+            reel.clips().iter().any(|c| c.fx.iter().any(sound))
+                || reel.tracks().iter().any(|t| t.fx.iter().any(sound))
+                || reel.morphers().iter().any(|m| m.patch.audio_fx.iter().chain(&m.patch.video_fx).any(sound))
         })
     }
 

@@ -182,11 +182,34 @@ fn t322_audio_registry_contract() {
                     e.set_param("high_gain_db", -12.0);
                     e
                 }
+                // the VHS deck's sound (sim-audio-pairs): the play drum's heads play only with two
+                // decks; the linear track's rows are heard when the deck outputs it (Mix); a
+                // dropout's length when there are dropouts in the second probed
+                ("vhs_tape_sound", p) if p.starts_with("play_") => {
+                    let mut e = (*f).clone();
+                    e.set_param("decks", 1.0);
+                    e
+                }
+                ("vhs_tape_sound", "ac_gap" | "ac_spacing" | "bias" | "rec_level_db" | "tape_saturation") => {
+                    let mut e = (*f).clone();
+                    e.set_param("audio_out", 2.0);
+                    e
+                }
+                ("vhs_tape_sound", "dropout_us") => {
+                    let mut e = (*f).clone();
+                    e.set_param("dropouts_per_s", 200.0);
+                    e
+                }
                 _ => (*f).clone(),
             }
         };
         let mut audible_probe: Vec<(String, f64)> = Vec::new();
-        for spec in f.auto_params() {
+        // the rows of a pair's shared passport this half does not read (sim-audio-pairs)
+        let foreign: &[&str] = match f {
+            FxInstance::Plugin(p) => p.manifest().decl.foreign_rows,
+            _ => &[],
+        };
+        for spec in f.auto_params().filter(|s| !foreign.contains(&&*s.name)) {
             let base = base_for(&spec.name);
             let base_out = render_on(vec![base.clone()], vec![], false, 0, stim);
             let heard = probe_values(spec).into_iter().find(|probe| {

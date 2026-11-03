@@ -447,8 +447,11 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                 });
             // v14 (shape-masks): masks on an event, a slot or a track
             let has_v14 = p.has_masks();
+            // v16 (sim-audio-pairs): a simulated device's sound rows are set
+            if p.has_device_sound() {
+                crate::meta::KT_META_V16
             // v15 (pitch-tail-choice): a pitch whose echo of the effects before it rings on
-            if p.has_ringing_echo() {
+            } else if p.has_ringing_echo() {
                 crate::meta::KT_META_V15
             } else if has_v14 {
                 crate::meta::KT_META_V14

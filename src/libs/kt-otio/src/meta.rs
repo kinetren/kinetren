@@ -14,7 +14,7 @@ pub const KT_NS: &str = "kt";
 /// are byte-stable and open in old builds.
 /// One Pan3d does NOT bump the version: an unknown effect
 /// degrades into foreign-passthrough.
-pub const KT_META_VERSION: u32 = 15;
+pub const KT_META_VERSION: u32 = 16;
 pub const KT_META_V1: u32 = 1;
 /// Cameras and camera tracks (R.29).
 pub const KT_META_V2: u32 = 2;
@@ -88,6 +88,10 @@ pub const KT_META_V14: u32 = 14;
 /// An old build ignores a slot row its passport does not name and would cut that echo silently.
 /// Raised ONLY by content.
 pub const KT_META_V15: u32 = 15;
+/// sim-audio-pairs: a simulated device's sound rows (the VHS deck's audio output, the stream's
+/// audio bitrate, the camera's microphone) on its video slot. An old build ignores those rows and
+/// would drop the device's sound settings silently. Raised ONLY by content.
+pub const KT_META_V16: u32 = 16;
 
 // ---- typed metadata.kt envelopes (otio-types approach) -----------------
 // Structurally small things get OWN types (model evolution does not silently move the file schema);

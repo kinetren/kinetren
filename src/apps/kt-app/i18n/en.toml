@@ -430,6 +430,10 @@ tape_saturation = "Tape saturation:"
 spacing = "Head-to-tape spacing:"
 gap = "Gap length:"
 output = "Head output:"
+ac_gap = "Audio head gap:"
+ac_spacing = "Audio head spacing:"
+bias = "Record bias:"
+rec_level_db = "Record level:"
 
 [fxreg]
 add = "+ effect…"
@@ -517,6 +521,7 @@ vhs_tape = "vhs tape cassette vcr simulation heads drum tracking"
 # “Soft” for blur and for glow means the same thing, and two keys for it are pointless.
 # A variant name IS TRANSLATED (unlike the effect name);
 # “Ink” and “Blueprint” are not industry terms.
+vhs_tape_sound = "vhs tape cassette vcr hifi linear audio track deck flutter hiss simulation"
 [fxreg.var]
 soft = "Soft"
 strong = "Strong"
@@ -1858,6 +1863,14 @@ dirty = "Dirty"
 clogged = "Clogged"
 chipped = "Chipped"
 pick_head = "Click a head on the drum to set its condition"
+sound = "Sound"
+hifi = "Hi-Fi"
+normal = "Normal (linear)"
+mix = "Mix"
+mono = "Mono track"
+stereo = "Stereo tracks"
+dolby = "Dolby B"
+sound_note = "The same deck plays the event's sound: the Hi-Fi heads ride beside the video heads above, the linear track is read by its own stationary head"
 
 [masks]
 group = "Masks"

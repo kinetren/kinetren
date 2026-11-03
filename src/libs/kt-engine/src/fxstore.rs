@@ -138,6 +138,7 @@ impl FxStateStore {
         fx: &[FxInstance],
         auto: &kt_fx::AutoProfiles,
         src_in_frames: i64,
+        start_frames: i64,
         clip_len_frames: i64,
         opts: kt_fx::ChainOpts,
     ) {
@@ -184,6 +185,11 @@ impl FxStateStore {
                     ClipProcessor::new_with_opts(fx, auto, src_in_frames, clip_len_frames, opts),
                 );
             }
+        }
+        // the clip's seat on the timeline (sim-audio-pairs): a simulated device's sound reads the
+        // device state where its picture does
+        if let Some(p) = self.map.get_mut(&id) {
+            p.set_origin(start_frames);
         }
     }
 

@@ -430,6 +430,10 @@ tape_saturation = "تشبع الشريط:"
 spacing = "المسافة بين الرأس والشريط:"
 gap = "طول الفجوة:"
 output = "خرج الرأس:"
+ac_gap = "فجوة رأس الصوت:"
+ac_spacing = "تباعد رأس الصوت عن الشريط:"
+bias = "انحياز التسجيل:"
+rec_level_db = "مستوى التسجيل:"
 
 [fxreg]
 add = "+ مؤثر…"
@@ -517,6 +521,7 @@ vhs_tape = "vhs tape cassette vcr simulation شريط كاسيت فيديو مح
 # “Soft” for blur and for glow means the same thing, and two keys for it are pointless.
 # A variant name IS TRANSLATED (unlike the effect name);
 # “Ink” and “Blueprint” are not industry terms.
+vhs_tape_sound = "vhs شريط كاسيت فيديو hifi مسار صوت خطي ارتعاش هسهسة محاكاة"
 [fxreg.var]
 soft = "ناعم"
 strong = "قوي"
@@ -1853,6 +1858,14 @@ dirty = "متسخ"
 clogged = "مسدود"
 chipped = "مكسور"
 pick_head = "انقر رأسًا على الأسطوانة لتحديد حالته"
+sound = "الصوت"
+hifi = "Hi-Fi"
+normal = "عادي (خطي)"
+mix = "مزج"
+mono = "مسار أحادي"
+stereo = "مساران مجسمان"
+dolby = "Dolby B"
+sound_note = "يشغّل الجهاز نفسه صوت الحدث: رؤوس Hi-Fi بجانب رؤوس الفيديو أعلاه، ويقرأ المسار الخطي رأسه الثابت"
 
 [masks]
 group = "الأقنعة"

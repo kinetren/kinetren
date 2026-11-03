@@ -951,6 +951,17 @@ pub struct Decl {
     /// How the step relates to alpha (R.53, item 417; plugin-api-barriers D1): the chain's alpha
     /// fold reads it instead of matching a kind.
     pub alpha: barrier::AlphaRel,
+    /// The AUDIO half of a simulated device (sim-audio-pairs): declared by a VIDEO kind, the id of
+    /// the audio-effect kind that records the same device's sound. The two share ONE passport (one
+    /// device, one set of physical rows), the model mirrors the pair across an A/V link group, and
+    /// each half derives the device state from the rows and the timeline position itself — no state
+    /// crosses threads (invariant 2). The registry refuses a pair whose passports differ.
+    pub pair: Option<&'static str>,
+    /// Rows of a pair's shared passport this half does NOT read (sim-audio-pairs): the picture's
+    /// record circuits on the sound's slot, a motion vector on the stream's sound. The contracts
+    /// that ask every automatable row to act (t322) skip them; the registry refuses a name the
+    /// passport lacks.
+    pub foreign_rows: &'static [&'static str],
 }
 
 /// A time-warp declaration (D11.5): which rows the host's warp machinery reads.
@@ -979,6 +990,8 @@ impl Default for Decl {
             time_warp: None,
             legacy_fields: &[],
             alpha: barrier::AlphaRel::Preserves,
+            pair: None,
+            foreign_rows: &[],
         }
     }
 }
@@ -1372,6 +1385,32 @@ impl HostOpts {
     }
 }
 
+/// Where an audio clip sits (`AudioState::place`): `start` — the timeline frame (48 kHz) of the
+/// clip's frame 0; the project's frame rate `fps_num / fps_den`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Placement {
+    pub start: i64,
+    pub fps_num: u32,
+    pub fps_den: u32,
+}
+
+impl Default for Placement {
+    fn default() -> Placement {
+        Placement { start: 0, fps_num: 25, fps_den: 1 }
+    }
+}
+
+impl Placement {
+    /// The timeline time (s) of the clip-local frame `pos`.
+    pub fn seconds(&self, pos: i64) -> f64 {
+        (self.start + pos) as f64 / kt_time::AUDIO_SAMPLE_RATE as f64
+    }
+    /// The project frame rate (frames/s).
+    pub fn fps(&self) -> f64 {
+        self.fps_num.max(1) as f64 / self.fps_den.max(1) as f64
+    }
+}
+
 /// The state of one audio slot (D2a), owned by the host's processor and touched only by the audio
 /// render thread (invariant 2): the host calls it once per chunk, the per-frame loop is inside.
 pub trait AudioState: Send {
@@ -1396,6 +1435,11 @@ pub trait AudioState: Send {
     }
     /// A real seek: zero the buffers, jump the smoothers to their targets.
     fn reset(&mut self);
+    /// Where the clip sits (sim-audio-pairs): the timeline frame of its frame 0 and the project's
+    /// frame grid. The audio half of a simulated device reads the device state at the TIMELINE
+    /// position its picture reads (a tape's field, a stream's frame); the host calls it whenever the
+    /// clip is synced, so a move re-seats the state without a reset (invariant 3).
+    fn place(&mut self, _at: Placement) {}
     /// A copy that continues EXACTLY as this state would on the same input (pitch-tail-choice D4):
     /// the host splits a chain off at an event's out-point to let its echo ring on. `None` — this
     /// state cannot be copied, and the host then keeps the echo of its chain cut at the event's end.
@@ -1663,6 +1707,29 @@ impl Registry {
         if m.decl.time_warp.is_some() && m.media != Media::AudioFx {
             return refuse("a time warp on a plugin that is not an audio effect");
         }
+        if let Some(r) = m.decl.foreign_rows.iter().find(|r| !m.passport.iter().any(|s| s.name == **r)) {
+            return Err(Refusal { id: m.id.to_string(), reason: format!("a foreign row `{r}` the passport lacks") });
+        }
+        // a simulated device's pair (sim-audio-pairs): one passport, declared by the video half
+        if let Some(a) = m.decl.pair {
+            if m.media != Media::VideoFx {
+                return refuse("a pair declared by a kind that is not a video effect");
+            }
+            if self.plugins.iter().any(|o| o.manifest().decl.pair == Some(a)) {
+                return refuse("two video kinds name the same audio pair");
+            }
+            if let Some(o) = self.get(Family::Fx, a)
+                && let Err(why) = pair_fits(m, o.manifest())
+            {
+                return refuse(why);
+            }
+        }
+        if m.media == Media::AudioFx
+            && let Some(v) = self.plugins.iter().find(|o| o.manifest().decl.pair == Some(&*m.id))
+            && let Err(why) = pair_fits(v.manifest(), m)
+        {
+            return refuse(why);
+        }
         self.plugins.push(p);
         Ok(())
     }
@@ -1685,6 +1752,29 @@ impl Registry {
     /// The plugin of `family` with `id` (an id is unique within its family only).
     pub fn get(&self, family: Family, id: &str) -> Option<&std::sync::Arc<dyn Plugin>> {
         self.plugins.iter().find(|p| p.manifest().id == id && p.manifest().media.family() == family)
+    }
+
+    /// The other half of a simulated device (sim-audio-pairs): for a video kind its declared audio
+    /// pair, for an audio kind the video kind that declares it; `None` — the kind is not paired (or
+    /// its other half is not registered).
+    pub fn counterpart(&self, id: &str) -> Option<&str> {
+        let p = self.get(Family::Fx, id)?;
+        match p.manifest().decl.pair {
+            Some(a) => self.get(Family::Fx, a).map(|o| &*o.manifest().id),
+            None => self.plugins.iter().find(|o| o.manifest().decl.pair == Some(id)).map(|o| &*o.manifest().id),
+        }
+    }
+
+    /// Every declared pair whose audio half is not registered — the assembler's completeness check
+    /// (the registration order cannot refuse a half that never comes).
+    pub fn unpaired(&self) -> Vec<(String, &'static str)> {
+        self.plugins
+            .iter()
+            .filter_map(|p| {
+                let a = p.manifest().decl.pair?;
+                self.get(Family::Fx, a).is_none().then(|| (p.manifest().id.to_string(), a))
+            })
+            .collect()
     }
 
     /// The ids in registration order.
@@ -1710,6 +1800,23 @@ impl Registry {
     pub fn is_empty(&self) -> bool {
         self.plugins.is_empty()
     }
+}
+
+/// Whether audio kind `a` can be the pair of video kind `v`: an audio effect that declares no pair
+/// itself and has the SAME passport — names, ranges, defaults, units, kinds and file forms (one
+/// device, one state; a row of one half missing on the other would be a parameter only one half of
+/// the device obeys).
+fn pair_fits(v: &Manifest, a: &Manifest) -> Result<(), &'static str> {
+    if a.media != Media::AudioFx {
+        return Err("a pair that is not an audio effect");
+    }
+    if a.decl.pair.is_some() {
+        return Err("an audio pair that declares a pair itself");
+    }
+    if v.passport != a.passport || v.rows != a.rows {
+        return Err("a pair whose passport differs from its video half's");
+    }
+    Ok(())
 }
 
 static INSTALLED: std::sync::OnceLock<std::sync::Arc<Registry>> = std::sync::OnceLock::new();

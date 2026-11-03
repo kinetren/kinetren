@@ -1634,7 +1634,7 @@ pub(crate) fn draw_video_fx_params(
             &["mix", "reverb_delay_ms", "damp", "decay", "wet_gain", "predelay_ms", "width"]
         }
         // the VHS tape's heads and tracking are on its deck face (vhs-tape-simulation, D11)
-        FxInstance::Plugin(p) if p.id == "vhs_tape" => crate::deck_face::ROWS,
+        FxInstance::Plugin(p) if p.id == "vhs_tape" || p.id == "vhs_tape_sound" => crate::deck_face::ROWS,
         _ => &[],
     };
 
@@ -1889,7 +1889,7 @@ pub(crate) fn draw_video_fx_params(
         ch |= crate::eq_graph::draw(ui, f, bind.as_deref_mut(), hover);
     }
     // the deck face of the VHS tape simulation: its switches, drums and heads (D11)
-    if f.tag() == "vhs_tape" {
+    if crate::deck_face::is_deck(f) {
         ch |= crate::deck_face::draw(ui, f, bind.as_deref_mut(), pubc);
     }
 

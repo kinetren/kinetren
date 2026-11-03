@@ -145,6 +145,111 @@ fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
     }
 }
 
+/// The halves of a simulated device — shared by a link pair A/V (sim-audio-pairs).
+///
+/// A video kind may declare the audio kind that records the same device's sound
+/// (`Decl.pair`: VHS Tape's tape and deck, Datamosh's stream, Camera ISP's microphone). The two
+/// halves have ONE passport, and here they become one device: the N-th slot of a paired kind on the
+/// edited event and the N-th slot of its counterpart on every partner of the OTHER kind (video ↔
+/// audio) carry the same values and the same curves. Synchronous, as for the warp: the PRESENCE (one
+/// addition puts the device on both events, one removal takes it off both), all rows and all
+/// curves. Each its own: the slot's bypass — the checkbox on the audio half is exactly "do not
+/// let the device's sound through" — and the masks. The rule lives in the model for the same
+/// reason as `sync_warp_to_link_group`: SetFx also comes from paste, presets, a morpher bake and
+/// kt-cli.
+fn sync_pairs_to_link_group(p: &mut Project, id: ClipId) {
+    let reg = crate::plugin_slot::registry();
+    let Some(src) = p.clips.iter().find(|c| c.id == id) else { return };
+    let Some(group) = src.link_group else { return };
+    // the paired slots of the source, in chain order: (counterpart id, values, curves)
+    let mine: Vec<(String, Vec<f64>, Vec<ParamCurve>)> = src
+        .fx
+        .iter()
+        .enumerate()
+        .filter_map(|(i, f)| match f {
+            FxInstance::Plugin(slot) => {
+                let other = reg.counterpart(&slot.id)?;
+                Some((other.to_string(), slot.values.clone(), src.fx_auto.get(i).cloned().unwrap_or_default()))
+            }
+            _ => None,
+        })
+        .collect();
+    // the kinds this event could pair: every paired kind of its own class (a kind removed from the
+    // source must leave the partner too)
+    let kind = src.kind;
+    let partners: Vec<ClipId> = p
+        .clips
+        .iter()
+        .filter(|c| c.id != id && c.link_group == Some(group) && c.kind != kind)
+        .map(|c| c.id)
+        .collect();
+    for pid in partners {
+        let Some(c) = p.clips.iter_mut().find(|c| c.id == pid) else { continue };
+        // the partner's slots of a kind that pairs with the source's class
+        let theirs: Vec<(usize, String)> = c
+            .fx
+            .iter()
+            .enumerate()
+            .filter_map(|(i, f)| match f {
+                FxInstance::Plugin(slot) if reg.counterpart(&slot.id).is_some() => Some((i, slot.id.clone())),
+                _ => None,
+            })
+            .collect();
+        // match the n-th occurrence of each kind
+        let mut used = vec![false; theirs.len()];
+        let mut keep: Vec<usize> = Vec::new();
+        let mut add: Vec<(String, Vec<f64>, Vec<ParamCurve>)> = Vec::new();
+        for (other, values, curves) in &mine {
+            match theirs.iter().enumerate().find(|(k, (_, tid))| !used[*k] && tid == other) {
+                Some((k, (i, _))) => {
+                    used[k] = true;
+                    keep.push(*i);
+                    if let FxInstance::Plugin(slot) = &mut c.fx[*i] {
+                        slot.values = values.clone();
+                    }
+                    if c.fx_auto.len() <= *i {
+                        c.fx_auto.resize(*i + 1, Vec::new());
+                    }
+                    c.fx_auto[*i] = curves.clone();
+                }
+                None => add.push((other.clone(), values.clone(), curves.clone())),
+            }
+        }
+        // a slot of the partner whose half left the source goes too (from the back: indices stay)
+        for (k, (i, _)) in theirs.iter().enumerate().rev() {
+            if used[k] {
+                continue;
+            }
+            c.fx.remove(*i);
+            if *i < c.fx_auto.len() {
+                c.fx_auto.remove(*i);
+            }
+            if *i < c.fx_bypass.len() {
+                c.fx_bypass.remove(*i);
+            }
+            if *i < c.masks.slots.len() {
+                c.masks.slots.remove(*i);
+            }
+            if c.geometry_pos > *i {
+                c.geometry_pos -= 1;
+            }
+        }
+        for (other, values, curves) in add {
+            let Some(mut slot) = crate::plugin_slot::PluginSlot::new(kt_plugin_api::Family::Fx, &other) else { continue };
+            slot.values = values;
+            c.fx.push(FxInstance::Plugin(slot));
+            c.fx_auto.resize(c.fx.len(), Vec::new());
+            if let Some(last) = c.fx_auto.last_mut() {
+                *last = curves;
+            }
+        }
+        while c.fx_auto.last().is_some_and(|v| v.is_empty()) {
+            c.fx_auto.pop();
+        }
+        c.masks.canonicalize();
+    }
+}
+
 pub const MIN_CLIP_DURATION: Tick = Tick(90);
 
 // a command lives for one gesture and is not stored in bulk; `AddClip` carries a whole event and
@@ -2204,6 +2309,7 @@ impl TimelineModel {
             Command::SetFxBypass { id, bypass } => {
                 Self::clip_mut_on(p, id).fx_bypass = bypass;
                 sync_warp_to_link_group(p, id);
+                sync_pairs_to_link_group(p, id);
             }
             Command::SetFx { id, fx } => {
                 let c = Self::clip_mut_on(p, id);
@@ -2219,6 +2325,7 @@ impl TimelineModel {
                 c.geometry_pos = c.geometry_pos.min(fx.len());
                 c.fx = fx;
                 sync_warp_to_link_group(p, id);
+                sync_pairs_to_link_group(p, id);
             }
             Command::SetMasks { id, mut masks } => {
                 masks.canonicalize();
@@ -2232,6 +2339,7 @@ impl TimelineModel {
             Command::SetFxAuto { id, auto } => {
                 Self::clip_mut_on(p, id).fx_auto = auto;
                 sync_warp_to_link_group(p, id);
+                sync_pairs_to_link_group(p, id);
             }
             Command::SetClipGen { id, kind } => {
                 let c = Self::clip_mut_on(p, id);

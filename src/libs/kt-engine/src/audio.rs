@@ -847,7 +847,7 @@ impl AudioRenderer {
             covers,
             overlaps,
             overlap_layers,
-            opts: kt_fx::ChainOpts { pitch_engine: project.settings.pitch_engine },
+            opts: kt_fx::ChainOpts { pitch_engine: project.settings.pitch_engine, fps: project.settings.fps },
             stages,
             nests,
             loop_region: std::cell::Cell::new(None),
@@ -979,7 +979,7 @@ impl AudioRenderer {
     /// of the store — the audio render thread — after each rebuild of the graph).
     pub fn sync_fx(&self, store: &mut crate::fxstore::FxStateStore) {
         for c in &self.clips {
-            store.sync_clip(c.id, &c.fx, &c.auto, c.source_in, c.end - c.start, self.opts);
+            store.sync_clip(c.id, &c.fx, &c.auto, c.source_in, c.start, c.end - c.start, self.opts);
         }
         let alive: std::collections::HashSet<_> = self.clips.iter().map(|c| c.id).collect();
         store.retain_clips(&|id| alive.contains(&id));
@@ -1003,7 +1003,7 @@ impl AudioRenderer {
             let sub = store.key_mut(*target);
             for (key_id, key_lane) in keys {
                 for c in self.clips.iter().filter(|c| c.lane == *key_lane) {
-                    sub.sync_clip(c.id, &c.fx, &c.auto, c.source_in, c.end - c.start, opts);
+                    sub.sync_clip(c.id, &c.fx, &c.auto, c.source_in, c.start, c.end - c.start, opts);
                 }
                 if let Some(ks) = self.stages.iter().find(|s| s.id == *key_id) {
                     sub.sync_track(ks.id, &ks.fx, opts);
@@ -1524,8 +1524,8 @@ impl AudioRenderer {
             let prev = &self.clips[pi];
             let prev_len = prev.end - prev.start;
             if store.hand_on(prev.id, prev_len, clip.id) {
-                store.sync_clip(prev.id, &prev.fx, &prev.auto, prev.source_in, prev_len, self.opts);
-                store.sync_clip(clip.id, &clip.fx, &clip.auto, clip.source_in, clip_len, self.opts);
+                store.sync_clip(prev.id, &prev.fx, &prev.auto, prev.source_in, prev.start, prev_len, self.opts);
+                store.sync_clip(clip.id, &clip.fx, &clip.auto, clip.source_in, clip.start, clip_len, self.opts);
             }
         }
         let Some(proc) = store.get_mut(clip.id) else { return };

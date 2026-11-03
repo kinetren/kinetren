@@ -430,6 +430,10 @@ tape_saturation = "磁带饱和："
 spacing = "磁头与磁带间距："
 gap = "磁隙长度："
 output = "磁头输出："
+ac_gap = "音频磁头缝隙："
+ac_spacing = "音频磁头与磁带间距："
+bias = "录音偏磁："
+rec_level_db = "录音电平："
 
 [fxreg]
 add = "+ 特效…"
@@ -517,6 +521,7 @@ vhs_tape = "vhs tape cassette vcr simulation 录像带 磁带 录像机 模拟 �
 # “Soft” for blur and for glow means the same thing, and two keys for it are pointless.
 # A variant name IS TRANSLATED (unlike the effect name);
 # “Ink” and “Blueprint” are not industry terms.
+vhs_tape_sound = "vhs 录像带 磁带 录像机 hifi 线性 音轨 抖晃 嘶声 模拟"
 [fxreg.var]
 soft = "柔和"
 strong = "强烈"
@@ -1853,6 +1858,14 @@ dirty = "脏污"
 clogged = "堵塞"
 chipped = "崩口"
 pick_head = "点击磁鼓上的磁头以设置其状态"
+sound = "声音"
+hifi = "Hi-Fi"
+normal = "普通（线性）"
+mix = "混合"
+mono = "单声道音轨"
+stereo = "立体声音轨"
+dolby = "Dolby B"
+sound_note = "同一台录像机播放该事件的声音：Hi-Fi 磁头紧挨上方的视频磁头，线性音轨由其固定磁头读取"
 
 [masks]
 group = "遮罩"
