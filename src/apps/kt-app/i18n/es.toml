@@ -522,6 +522,7 @@ vhs_tape = "vhs tape cassette vcr simulation cinta casete vídeo simulación cab
 # A variant name IS TRANSLATED (unlike the effect name);
 # “Ink” and “Blueprint” are not industry terms.
 vhs_tape_sound = "vhs cinta casete vídeo hifi pista de audio lineal platina trémolo siseo simulación"
+datamosh_sound = "datamosh glitch códec aac flujo paquete roto audio ocultación"
 [fxreg.var]
 soft = "Suave"
 strong = "Fuerte"
@@ -759,6 +760,9 @@ rename_preset = "Renombrar…"
 delete_preset = "Eliminar"
 delete_preset_hint = "Elimina la entrada del archivo: deshacer no la devuelve"
 eq_graph_hint = "Arrastra un punto para frecuencia y ganancia; la rueda sobre el central ajusta la Q"
+mosh_sound = "Sonido: los paquetes de audio del flujo"
+mosh_audio_kbps = "Tasa de bits de audio, kbit/s"
+mosh_audio_predict = "Predicción espectral (AAC Main): un fotograma clave perdido emborrona el sonido"
 
 [render]
 already_running = "ya hay un render en curso"

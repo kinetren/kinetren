@@ -76,3 +76,43 @@ Why: kkt-26.11.03b D1; F-FX-012 — the defect must be heard where it is seen.
 - **WHEN** the same rows and input are played twice at one timeline seat, and once 4801 frames later
 - **THEN** the two runs are byte-equal and the shifted one differs
 - **TEST** t1466 (`src/plugins/fx-video-tape/tests/sound.rs`)
+
+### Requirement: The stream's sound is a real audio codec broken by the picture's schedule
+`datamosh_sound` SHALL code the event's sound with a real lossy codec (`kt_plugin_api::audio_codec`:
+an MDCT of 2048/1024, per-line backward-adaptive prediction with resets, Rice-coded lines, a bit
+reservoir, a decoder that checks what it parses and conceals what it cannot decode), and SHALL break
+that stream by the datamosh's own rows on the picture's own schedule (`mosh::Sched` over the audio
+event's layout, on the project frame grid): the encoder resets at every I-frame of the picture's GOP;
+an I-frame the `mosh` gate deletes is deleted with its audio packet, so the decoder conceals that frame
+and every frame that borrowed bits from it, misses the reset, and the residual lands on the wrong
+prediction until an intact I-frame; `bloom` repeats the run's first P-frame's packet; `freeze` holds the
+predictor's history; `residual` scales the residual applied; `loss` flips bits in hit packet slots;
+`qp` is the finest quantiser step. Motion vectors have no audio meaning (foreign rows). The predictor
+SHALL stay inside its stability triangle and the decoder inside its range: a broken stream smears and
+saturates at full scale, it never runs away.
+Why: kkt-26.11.03b D1; F-FX-013 — a cut mosh in the picture is a broken audio frame at the same moment.
+
+#### Scenario: The codec's transform and its code are exact
+- **WHEN** a block goes through the fast DCT-IV, a signal through MDCT and overlap-add, lines through the Rice code
+- **THEN** the DCT equals the direct sum, the signal comes back exactly, the lines come back and their size is predicted
+- **TEST** t1470, t1470b, t1470c (`src/libs/kt-plugin-api/src/audio_codec.rs`)
+
+#### Scenario: The intact stream plays the sound back
+- **WHEN** a moving tone through the stream with no breakage: with prediction, without it, and at `qp` 51
+- **THEN** no frame is concealed, the SNR is above 25 dB, the coarser quantiser costs fidelity
+- **TEST** t1471 (`src/plugins/fx-video-codec/tests/sound.rs`)
+
+#### Scenario: A deleted I-frame breaks the sound until the Reset
+- **WHEN** `mosh` is drawn on from 0.6 s to 1.8 s of an event starting at 3.0 s (GOP 24, 25 fps: the I-frame at 3.96 s is deleted) and a Reset key rises at its end
+- **THEN** up to the audio frame of 3.96 s the output equals the intact stream byte for byte; frames are concealed there; the sound stays broken (error > 0.05) until the Reset; after it the error is below 0.01
+- **TEST** t1472 (`src/plugins/fx-video-codec/tests/sound.rs`)
+
+#### Scenario: Bloom, loss and the residual act as in the picture
+- **WHEN** `bloom` is on; `loss` is 0.4 (and 0); `residual` is 0.25
+- **THEN** the bloom's repeated packet moves the sound away from the intact stream; the loss breaks frames and at 0 changes no byte; the cut residual lets the prediction run (five times the error)
+- **TEST** t1473, t1474, t1475 (`src/plugins/fx-video-codec/tests/sound.rs`)
+
+#### Scenario: The stream is a function of the rows and the timeline
+- **WHEN** the same rows and input are played twice
+- **THEN** the two runs are byte-equal, concealment included
+- **TEST** t1476 (`src/plugins/fx-video-codec/tests/sound.rs`)

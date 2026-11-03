@@ -522,6 +522,7 @@ vhs_tape = "vhs tape cassette vcr simulation شريط كاسيت فيديو مح
 # A variant name IS TRANSLATED (unlike the effect name);
 # “Ink” and “Blueprint” are not industry terms.
 vhs_tape_sound = "vhs شريط كاسيت فيديو hifi مسار صوت خطي ارتعاش هسهسة محاكاة"
+datamosh_sound = "datamosh خلل مرمز aac تدفق حزمة صوت إخفاء"
 [fxreg.var]
 soft = "ناعم"
 strong = "قوي"
@@ -759,6 +760,9 @@ rename_preset = "إعادة تسمية…"
 delete_preset = "حذف"
 delete_preset_hint = "يحذف السجل من الملف: التراجع لا يعيده"
 eq_graph_hint = "اسحب نقطة النطاق لضبط التردد والكسب؛ عجلة الفأرة فوق النقطة الوسطى تضبط Q"
+mosh_sound = "الصوت: حزم الصوت في التدفق"
+mosh_audio_kbps = "معدل بتات الصوت، kbit/s"
+mosh_audio_predict = "التنبؤ الطيفي (AAC Main): فقدان إطار مفتاحي يلطخ الصوت"
 
 [render]
 already_running = "هناك تصدير جارٍ بالفعل"

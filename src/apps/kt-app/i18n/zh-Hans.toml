@@ -522,6 +522,7 @@ vhs_tape = "vhs tape cassette vcr simulation 录像带 磁带 录像机 模拟 �
 # A variant name IS TRANSLATED (unlike the effect name);
 # “Ink” and “Blueprint” are not industry terms.
 vhs_tape_sound = "vhs 录像带 磁带 录像机 hifi 线性 音轨 抖晃 嘶声 模拟"
+datamosh_sound = "datamosh 故障 编解码器 aac 码流 损坏 音频包 隐藏"
 [fxreg.var]
 soft = "柔和"
 strong = "强烈"
@@ -759,6 +760,9 @@ rename_preset = "重命名…"
 delete_preset = "删除"
 delete_preset_hint = "从预设文件中删除该条目：撤销无法恢复"
 eq_graph_hint = "拖动频段点可调频率和增益；在中间点上滚轮调 Q 值"
+mosh_sound = "声音：码流的音频包"
+mosh_audio_kbps = "音频码率，kbit/s"
+mosh_audio_predict = "频谱预测（AAC Main）：丢失关键帧会使声音拖尾"
 
 [render]
 already_running = "已经在导出了"

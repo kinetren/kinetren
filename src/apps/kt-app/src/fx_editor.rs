@@ -1841,7 +1841,7 @@ pub(crate) fn draw_video_fx_params(
         // the datamosh codec's choice and flag rows (datamosh-codec-path): the encoded height, the
         // block size and the second input are combos, the vector swap a checkbox; the numeric rows
         // stay in the shared grid
-        FxInstance::Plugin(p) if p.id == "datamosh" => {
+        FxInstance::Plugin(p) if p.id == "datamosh" || p.id == "datamosh_sound" => {
             let combo = |ui: &mut egui::Ui, p: &mut kt_model::PluginSlot, row: &str, label: &str, items: &[&str], ch: &mut crate::widgets::ParamsChanged| {
                 let mut v = p.get(row).unwrap_or(0.0) as usize;
                 ui.horizontal(|ui| {
@@ -1867,6 +1867,15 @@ pub(crate) fn draw_video_fx_params(
                     ch.base = true;
                 }
             });
+            // the stream's sound (sim-audio-pairs): one stream, one panel on both halves
+            ui.separator();
+            ui.label(egui::RichText::new(tr(k::fx::MOSH_SOUND)).strong());
+            combo(ui, p, "audio_kbps", tr(k::fx::MOSH_AUDIO_KBPS), &["32", "64", "96", "128", "192"], &mut ch);
+            let mut predict = p.get("audio_predict") == Some(1.0);
+            if ui.checkbox(&mut predict, tr(k::fx::MOSH_AUDIO_PREDICT)).changed() {
+                p.set("audio_predict", if predict { 1.0 } else { 0.0 });
+                ch.base = true;
+            }
         }
         // noise's colour flag row (a plugin slot since plugin-api-barriers 4.2)
         FxInstance::Plugin(p) if p.id == "noise" => {

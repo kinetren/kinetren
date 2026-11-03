@@ -13,7 +13,7 @@ pub const BUILTIN_IDS: &[&str] =
     "tremolo", "auto_pan", "vibrato", "chorus", "flanger", "phaser", "pitch_shift", "delay", "slowed_reverb",
     "lens_distort", "twirl", "ripple", "kaleidoscope", "cylinder3d", "corner_pin", "mirror", "event_grid", "pan3d",
     "pixelate", "edges", "halftone", "chromatic_aberration", "vhs", "noise",
-    "blur", "glow", "sharpen", "radial_blur", "drop_shadow", "datamosh",
+    "blur", "glow", "sharpen", "radial_blur", "drop_shadow", "datamosh", "datamosh_sound",
     "camera_isp",
     "vhs_tape", "vhs_tape_sound",
     "wipe", "iris", "clock", "barn", "luma", "push", "slide", "zoom", "spin", "flash", "dip", "blinds", "checker",

@@ -209,7 +209,10 @@ fn t322_audio_registry_contract() {
             FxInstance::Plugin(p) => p.manifest().decl.foreign_rows,
             _ => &[],
         };
-        for spec in f.auto_params().filter(|s| !foreign.contains(&&*s.name)) {
+        // a gate that acts on its RISING EDGE: a constant value has none, it needs a curve (t1472b
+        // draws one)
+        let edge_only = |name: &str| f.tag() == "datamosh_sound" && name == "reset";
+        for spec in f.auto_params().filter(|s| !foreign.contains(&&*s.name) && !edge_only(&s.name)) {
             let base = base_for(&spec.name);
             let base_out = render_on(vec![base.clone()], vec![], false, 0, stim);
             let heard = probe_values(spec).into_iter().find(|probe| {

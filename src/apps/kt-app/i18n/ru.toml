@@ -522,6 +522,7 @@ vhs_tape = "vhs tape cassette vcr simulation кассета лента виде�
 # A variant name IS TRANSLATED (unlike the effect name);
 # “Ink” and “Blueprint” are not industry terms.
 vhs_tape_sound = "vhs кассета видеомагнитофон hifi линейная звуковая дорожка детонация шипение симуляция"
+datamosh_sound = "датамош глитч кодек aac поток сломанный пакет звук маскировка"
 [fxreg.var]
 soft = "Мягко"
 strong = "Сильно"
@@ -759,6 +760,9 @@ rename_preset = "Переименовать…"
 delete_preset = "Удалить"
 delete_preset_hint = "Удаляет запись из файла пресетов: undo её не вернёт"
 eq_graph_hint = "Точка полосы тянется по частоте и усилению; колесо над средней — добротность"
+mosh_sound = "Звук: аудиопакеты потока"
+mosh_audio_kbps = "Битрейт звука, кбит/с"
+mosh_audio_predict = "Спектральное предсказание (AAC Main): потерянный ключевой кадр размазывает звук"
 
 [render]
 already_running = "рендер уже идёт"

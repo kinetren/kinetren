@@ -5,6 +5,9 @@ month, newest first.
 
 ## kt26.11
 
+- **Datamosh breaks the sound too.** On an event with linked audio, the sound now goes through a
+  real audio codec in the same stream: where the picture loses a keyframe the sound loses a packet
+  at the same moment and smears until the next clean keyframe — a Reset key heals both.
 - **VHS Tape now plays the sound too.** Put it on an event with linked audio and the audio gets
   the same deck: Hi-Fi tracks that crackle exactly where a clogged head or a dropout breaks the
   picture, or the linear track — dull at LP, with tape hiss and the capstan's wobble. Its Sound

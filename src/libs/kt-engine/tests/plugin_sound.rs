@@ -52,6 +52,7 @@ const GOLDEN: &[(&str, [u64; 4])] = &[
     ("pitch_shift", [0x07c61de143e7dafd, 0xd77b5f105aefa860, 0x2058048daf9756f7, 0xd39bab6d08fb5c31]),
     // sim-audio-pairs: NEW kinds (no variant before them), printed once when they arrived
     ("vhs_tape_sound", [0xe30113ba5fa88c1d, 0xf43ea95d1a43ff20, 0x9453454703773cfc, 0x7e3002dcf7eb2059]),
+    ("datamosh_sound", [0x12610e550cbf3e8b, 0x3c7a95efaa5bc0ef, 0x7c510fdeb0c3ac52, 0xe5dc823f49eefa43]),
 ];
 
 fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool, engine: PitchEngine) -> Project {

@@ -85,7 +85,8 @@ switch in the audio's chain.
   picture after any stage.
 - **Datamosh** runs its own video codec over the clip and breaks it on purpose: dropped
   keyframes, blooming motion, borrowed motion vectors, with curves and Reset keys on the
-  beat.
+  beat. The sound rides in the same stream, through a real audio codec: where a keyframe is
+  dropped the audio packet goes with it, and the sound smears until the next Reset.
 
 ![The same frame after a cut without and with Datamosh: the night city's motion drags the previous shot's hillside](docs/images/fx-datamosh.webp)
 

@@ -24,10 +24,11 @@
 
 ## 2. The datamosh pair (stage b)
 
-- [ ] 2.1 the codec in kt-plugin-api (`codec_audio`): MDCT 2048/1024 sine window, per-line
+- [x] 2.1 the codec in kt-plugin-api (`audio_codec`): MDCT 2048/1024 sine window, per-line
       prediction with resets, Rice-coded lines, the bit reservoir, a decoder with concealment
-- [ ] 2.2 `datamosh_sound`: the schedule on the picture's frame grid, the gates' damage
-- [ ] 2.3 tests t1470–t1476; specs; commit; prune
+- [x] 2.2 `datamosh_sound`: the schedule on the picture's frame grid, the gates' damage; the panel's
+      audio bitrate and prediction, catalogues ×5
+- [x] 2.3 tests t1470–t1476; specs; commit; prune
 
 ## 3. The camera pair (stage c)
 

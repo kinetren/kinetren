@@ -7,6 +7,7 @@
 //! crate does not depend on kt-model and an edit of one effect does not cascade through the core.
 //! kt-model re-exports everything here under its former names.
 
+pub mod audio_codec;
 pub mod barrier;
 pub mod curves;
 pub mod dsp;

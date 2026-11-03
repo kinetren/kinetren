@@ -64,6 +64,24 @@ Two systems, chosen by the deck's audio output row (Hi-Fi / normal / mix), recor
 The deck's sound rows go at the END of the passport (row 32…): the picture's words never read them, so
 the picture keeps its bytes; with `omit_default` a project without them writes the former text.
 
+### D6. The stream's sound: an own codec, the picture's schedule (F-FX-013)
+An own small codec, not the system FFmpeg's AAC: the audio render thread opens no codec (invariant 5,
+the callback rules), its bytes are not frozen across FFmpeg versions (invariant 11), and a real decoder
+cannot be told which packets to lose. `kt_plugin_api::audio_codec`: MDCT 2048/1024 through a 256-point
+FFT, AAC-Main-like order-2 NLMS per line with resets, one global step on a 1.5 dB ladder chosen by a
+rate control, Rice lines in bands of 16, a bit reservoir (a frame's data may begin in earlier slots),
+concealment by the last spectrum at −3 dB with scrambled signs.
+The schedule is the picture's own: `MoshSound::sched(n)` builds `mosh::Sched` over a `StreamLayout` of
+the audio event (cut from the placement, `first = cut − before`, rows from the slot's curves) and asks
+`sched_i`, `dropped`, `pkt_pos` for the positions falling in audio frame `n`. The clean encoder resets
+at EVERY I-frame; only the decoder misses a deleted one — otherwise the mismatch, which is the mosh,
+would not exist. The audio frames sit on the absolute timeline grid.
+Found by t1472: a decoder on the wrong history ran away (error 56 000): the weights are held inside
+the stability triangle, the lines and the PCM to the decoder's range. After that the picture's
+behaviour came by itself: the sound stays broken until an intact I-frame.
+An audio stream cannot carry over the sound of the event before (the state sees its own event's
+input); `first = cut − before` assumes the event before is long enough.
+
 ## Risks / Trade-offs
 - The Hi-Fi FM costs ~16 complex samples per audio frame; measured in tasks (release).
 - An audio stream of the datamosh cannot carry over the sound of the event before (the audio state

@@ -142,6 +142,14 @@ put a **Reset** key where the picture should start clean. Presets: Cut mosh, Blo
 Transplant, Melt. A frame looks the same whether you play up to it, jump to it or render
 it.
 
+**The sound of the stream.** Put Datamosh on an event with linked audio and the audio gets
+**Datamosh** too: the sound is coded by a small audio codec into the same stream and broken
+at the same moments. A dropped keyframe takes its audio packet with it — the decoder patches
+the gap and the sound smears until the next intact keyframe, so a **Reset** key heals both;
+**Bloom** repeats a packet, **Freeze reference** holds the codec's prediction, **Residual**
+and **Loss** act on the sound as on the picture. The panel adds the **audio bitrate** and
+**spectral prediction**.
+
 ## Track effects and ducking
 
 Every track has its own chain in the track window (right-click the header). The
