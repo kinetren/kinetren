@@ -1913,7 +1913,7 @@ pub(crate) fn draw_video_fx_params(
         return ch;
     }
     // camera_isp is drawn as its pipeline (camera-isp-simulation 3.1): stage blocks with bypasses
-    if f.tag() == "camera_isp" {
+    if matches!(f.tag(), "camera_isp" | "camera_isp_sound") {
         ch |= crate::isp_panel::draw(ui, f, bind, pubc);
         return ch;
     }

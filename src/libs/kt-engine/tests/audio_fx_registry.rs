@@ -200,6 +200,13 @@ fn t322_audio_registry_contract() {
                     e.set_param("dropouts_per_s", 200.0);
                     e
                 }
+                // the camera's microphone: the AGC's and the suppressor's rows act when they are in
+                // the chain and the level reaches them; the wind is heard through the capsule
+                ("camera_isp_sound", "mic_agc_target") => {
+                    let mut e = (*f).clone();
+                    e.set_param("mic_scene_spl", 120.0);
+                    e
+                }
                 _ => (*f).clone(),
             }
         };
@@ -229,7 +236,7 @@ fn t322_audio_registry_contract() {
 
         // (c) the curve of the first Smooth parameter works: the output is equal to
         // neither the constant default nor the constant probe
-        if let Some(spec) = f.auto_params().next() {
+        if let Some(spec) = f.auto_params().find(|s| !foreign.contains(&&*s.name) && !edge_only(&s.name)) {
             let probe =
                 audible_probe.iter().find(|(n, _)| *n == spec.name).map(|(_, v)| *v).unwrap();
             let curved = render_on(fx.clone(), curve_for(spec, probe), false, 0, stim);

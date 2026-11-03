@@ -1,18 +1,18 @@
 ---
 id: F-FX-012
 title: The sound of the VHS tape — the linear track and Hi-Fi FM from the same deck
-status: in-progress
+status: done
 priority: B
 cost: M
 category: fx/simulate
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: partial
+we_have: yes
 crates: [kt-plugin-api, kt-model, kt-fx, kt-engine, kt-app]
 invariants: [1, 2, 3, 11]
 ui_rules: [17]
 round: kkt-26.11.03b
 point: D1
-tests: []
+tests: [t1460, t1461, t1462, t1463, t1464, t1465, t1466, t1467, t1468, t1485]
 depends_on: [F-FX-009]
 trackers: []
 services: []
@@ -91,30 +91,7 @@ tied to a picture.
 ## How it fits Kinotrain
 
 CAPABILITY: openspec/specs/audio-fx/
-
-### What already exists
-
-The deck and its time base in `src/plugins/fx-video-tape/src/deck.rs` (the capstan flutter at
-5.3 Hz, the drum phase, the dropout field `hash3(frame, line)`, the head rows), the deck face
-`src/apps/kt-app/src/deck_face.rs`, the audio plugin contract `kt_plugin_api::AudioState`, and the
-precedent of an A/V pair mirrored in the model: `sync_warp_to_link_group`
-(`src/libs/kt-model/src/model.rs`).
-
-### What is missing
-
-The audio half and a way for the pair to be one device: the same passport, mirrored across the link
-group, and the timeline origin for the audio state (the picture reads the absolute timeline tick,
-an audio state only its clip-local frame).
-
-### What hinders
-
-Invariant 2: the deck state may not be shared across threads — it must be DERIVED from the rows and
-the timeline position on each side. Invariant 3: the pair added to an audio chain must not reset the
-other slots' state (a structural change of that clip only).
-
-### Which invariants it touches
-
-1 (the sound stays f32 48 kHz stereo inside), 2, 3, 11 (frozen math, no platform libm).
+Done as `vhs_tape_sound` (`src/plugins/fx-video-tape/src/sound.rs`, change `sim-audio-pairs`): both VHS audio systems, driven by the deck rows and the picture's own line table at the timeline time; the pair is mirrored across the link group.
 
 ## Estimate
 
@@ -129,7 +106,7 @@ other slots' state (a structural change of that clip only).
 
 ## Verdict
 
-Take (change `sim-audio-pairs`): the audio half of `vhs_tape` as a simulation of both VHS audio
+**Done** (round kkt-26.11.03b, D1, 2026-11-03). Take (change `sim-audio-pairs`): the audio half of `vhs_tape` as a simulation of both VHS audio
 systems, driven by the same deck rows and the same timeline-keyed time base and dropout field.
 
 ## Sources

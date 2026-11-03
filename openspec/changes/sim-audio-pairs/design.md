@@ -25,7 +25,8 @@ inside `mutate_on`, so the mirror is in the same undo step). The n-th slot of a 
 edited event matches the n-th slot of its counterpart on every partner of the other kind: values and
 curves copied, a missing one appended, an extra one removed (presence is shared: one device). Bypass
 and masks are each side's own — the audio slot's checkbox is "do not let the device's sound through".
-Two VHS Tape slots (a dub of a dub) give two sound slots. A morpher patch hands the other half to the
+Two VHS Tape slots (a dub of a dub) give two sound slots. As with the warp, `LinkClips` does not align
+retroactively, and a later edit of one event then aligns its partner to it (presence included). A morpher patch hands the other half to the
 other kind's events in `chain_for`/`auto_for` (`derived_pairs`, one text for both) unless the patch
 already holds that slot itself.
 
@@ -82,7 +83,22 @@ behaviour came by itself: the sound stays broken until an intact I-frame.
 An audio stream cannot carry over the sound of the event before (the state sees its own event's
 input); `first = cut − before` assumes the event before is long enough.
 
+### D7. The camera's microphone (F-FX-014)
+The chain of `fx-video-camera/src/mic.rs` runs per sample at 48 kHz: pressure, wind, the port's biquad
+(Helmholtz f, Q 3), the vent, the capsule's noise and overload, the AGC (detector 10 ms up, 600 ms
+down; the gain 20 ms down, 1.5 s up — it holds a sine's PEAK at the target), the suppressor (512-point
+STFT with a sqrt-Hann window, minimum statistics over two 0.75 s windows, a spectral gain with a floor),
+the device's coding. A device rate goes through 63-tap filters (zeros between the kept samples, the
+interpolator's gain restored); AAC is `audio_codec` without prediction. All paths have one delay
+(`LA` = 2N + 512 + 62), so the look-ahead is a constant: the codec's 2N is a pure delay for PCM/G.711,
+the filters' 62 for AAC. `set_targets` moves the numbers with their curves and swaps filter
+coefficients keeping the filters' state; the channels, the codec and the bitrate are structural.
+Looks that name no device keep the plain camera microphone, which the note records.
+
 ## Risks / Trade-offs
-- The Hi-Fi FM costs ~16 complex samples per audio frame; measured in tasks (release).
+- The Hi-Fi FM costs ~16 complex samples per audio frame, the camera's chain an STFT and a codec.
+  Measured on the dev profile (opt-level 1) by the physics tests' own runs on a loaded machine: about
+  6 s of deck sound in 0.3 s, 17 s of microphone in 0.34 s, 12 s of stream in 0.06 s — all far under
+  real time, so they need no neutral path and no worker.
 - An audio stream of the datamosh cannot carry over the sound of the event before (the audio state
   sees only its event's input) — written in the note.

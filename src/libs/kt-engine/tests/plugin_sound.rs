@@ -53,6 +53,7 @@ const GOLDEN: &[(&str, [u64; 4])] = &[
     // sim-audio-pairs: NEW kinds (no variant before them), printed once when they arrived
     ("vhs_tape_sound", [0xe30113ba5fa88c1d, 0xf43ea95d1a43ff20, 0x9453454703773cfc, 0x7e3002dcf7eb2059]),
     ("datamosh_sound", [0x12610e550cbf3e8b, 0x3c7a95efaa5bc0ef, 0x7c510fdeb0c3ac52, 0xe5dc823f49eefa43]),
+    ("camera_isp_sound", [0x1257022e3ea6401f, 0xf734c4d6e88a3fa2, 0x9c086f1ee1a2185b, 0x3fb9aaf6390d05eb]),
 ];
 
 fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool, engine: PitchEngine) -> Project {
@@ -117,7 +118,12 @@ fn cases(f: &FxInstance) -> [u64; 4] {
     for spec in f.param_specs().iter().filter(|s| s.ty == ParamType::Num) {
         at70.set_param(&spec.name, spec.min + 0.7 * (spec.max - spec.min));
     }
-    let curve = f.param_specs().iter().find(|s| s.kind == ParamKind::Smooth).map(|spec| {
+    // the first Smooth row this kind reads (a paired kind shares rows only its other half reads)
+    let foreign: &[&str] = match f {
+        FxInstance::Plugin(p) => p.manifest().decl.foreign_rows,
+        _ => &[],
+    };
+    let curve = f.param_specs().iter().find(|s| s.kind == ParamKind::Smooth && !foreign.contains(&&*s.name)).map(|spec| {
         let to = spec.min + 0.3 * (spec.max - spec.min);
         vec![vec![ParamCurve {
             param: spec.name.to_string(),

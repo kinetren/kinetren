@@ -82,7 +82,9 @@ switch in the audio's chain.
 - **Camera ISP** turns the frame back into a scene and films it again: lens, colour
   mosaic (Bayer, Quad Bayer, X-Trans, RGBW, RGB-IR), a sensor with real noise, and every
   block of the camera's processor, each one switchable or set wrong. **View** shows the
-  picture after any stage.
+  picture after any stage. Its looks are devices, and the sound goes through the device's
+  microphone: the port's resonance, wind, the AGC breathing up between words, the noise
+  suppressor and the phone's AAC, a webcam's 16 kHz or a security camera's G.711.
 - **Datamosh** runs its own video codec over the clip and breaks it on purpose: dropped
   keyframes, blooming motion, borrowed motion vectors, with curves and Reset keys on the
   beat. The sound rides in the same stream, through a real audio codec: where a keyframe is

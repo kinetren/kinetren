@@ -18,7 +18,7 @@
       t1467 (engine: placement, bypass identity, determinism), t1485 (format 4 / OTIO v16 by content);
       t973c row printed, t322 enablers
 - [x] 1.6 kt-app: the audio kind in the picker (no variants: R.54), the deck face's sound section on
-      both halves, labels, catalogues ×5, font subsets; t1468; live scenario `vhs_sound` (t1469) — it
+      both halves, labels, catalogues ×5, font subsets; t1468; live scenario `vhs_sound` — it
       found that the off-screen half's face published the probe names (fixed: only a face on screen does)
 - [x] 1.7 specs, What's new line, README/guide mention; commit; `target-prune.py`
 
@@ -32,9 +32,10 @@
 
 ## 3. The camera pair (stage c)
 
-- [ ] 3.1 the microphone rows in `camera_isp`'s passport, the looks set them
-- [ ] 3.2 `camera_isp_sound`: wind, port, capsule, AGC, NS, the codec
-- [ ] 3.3 the ISP panel's sound blocks; tests t1477–t1484; specs; commit; prune
+- [x] 3.1 the microphone rows in `camera_isp`'s passport, the looks set them
+- [x] 3.2 `camera_isp_sound`: wind, port, capsule, AGC, NS, the codec; curves on its numbers
+- [x] 3.3 the ISP panel's Microphone block on both halves; tests t1477–t1483, t1486, live
+      `stream_sound`/`camera_mic`; specs; commit; prune
 
 ## 4. Close
 

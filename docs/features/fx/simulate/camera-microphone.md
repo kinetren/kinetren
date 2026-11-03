@@ -1,18 +1,18 @@
 ---
 id: F-FX-014
 title: The camera's microphone — the sound chain of the device the ISP simulates
-status: in-progress
+status: done
 priority: C
 cost: M
 category: fx/simulate
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: partial
+we_have: yes
 crates: [kt-plugin-api, kt-app]
 invariants: [1, 2, 11]
 ui_rules: [17]
 round: kkt-26.11.03b
 point: D1
-tests: []
+tests: [t1477, t1478, t1479, t1480, t1481, t1482, t1483, t1486]
 depends_on: [F-FX-010, F-FX-012, F-FX-013]
 trackers: []
 services: []
@@ -82,26 +82,7 @@ the phone look also sounds like the phone that shot it.
 ## How it fits Kinotrain
 
 CAPABILITY: openspec/specs/audio-fx/
-
-### What already exists
-
-The ISP's passport and looks in `src/plugins/fx-video-camera/src/lib.rs` (the `VARIANTS` phone at
-night, cheap webcam, security IR), the ISP panel `src/apps/kt-app/src/isp_panel.rs` with stage
-blocks and bypasses, the pairing mechanism of F-FX-012, the codec of F-FX-013.
-
-### What is missing
-
-The microphone rows in the camera's passport (one device, one panel), the looks setting them, and
-the audio state that runs the chain.
-
-### What hinders
-
-Nothing in the camera's picture moves in time the way a tape or a stream does; the pair shares the
-DEVICE (the looks, the sensor seed for the capsule's noise), not a defect schedule.
-
-### Which invariants it touches
-
-1, 2, 11.
+Done as `camera_isp_sound` (`src/plugins/fx-video-camera/src/mic.rs`, change `sim-audio-pairs`): the microphone chain in physical quantities, set by the same looks; the ISP panel's Microphone block.
 
 ## Estimate
 
@@ -116,7 +97,7 @@ DEVICE (the looks, the sensor seed for the capsule's noise), not a defect schedu
 
 ## Verdict
 
-Take: the camera's microphone chain as the audio half of `camera_isp`, set by the same looks.
+**Done** (round kkt-26.11.03b, D1, 2026-11-03). Take: the camera's microphone chain as the audio half of `camera_isp`, set by the same looks.
 Cinema raw, wrong CFA phase and no-IR-cut are not devices with a microphone of their own — their
 looks leave the microphone at the defaults (a clean camera microphone).
 

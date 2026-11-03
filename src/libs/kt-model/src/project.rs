@@ -4874,6 +4874,7 @@ impl FxInstance {
                 // sim-audio-pairs: the audio halves of the simulated devices
                 FxInstance::builtin("vhs_tape_sound"),
                 FxInstance::builtin("datamosh_sound"),
+                FxInstance::builtin("camera_isp_sound"),
             ]
         })
     }

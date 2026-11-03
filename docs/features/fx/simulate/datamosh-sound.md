@@ -1,18 +1,18 @@
 ---
 id: F-FX-013
 title: The sound of the broken stream — an audio codec damaged with the picture
-status: in-progress
+status: done
 priority: C
 cost: M
 category: fx/simulate
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: partial
+we_have: yes
 crates: [kt-plugin-api, kt-fx, kt-engine, kt-app]
 invariants: [1, 2, 11]
 ui_rules: [17]
 round: kkt-26.11.03b
 point: D1
-tests: []
+tests: [t1470, t1471, t1472, t1473, t1474, t1475, t1476, t1486]
 depends_on: [F-FX-011, F-FX-012]
 trackers: []
 services: []
@@ -88,28 +88,7 @@ demand is the owner's own (`docs/ktprompts/kkt-26.11.03b.txt`).
 ## How it fits Kinotrain
 
 CAPABILITY: openspec/specs/audio-fx/
-
-### What already exists
-
-The broken stream's schedule `src/plugins/fx-video-codec/src/mosh.rs` (`Sched::sched_i`,
-`dropped`, `pkt_pos`, `frozen_ref` — pure functions of the rows and the positions), the pairing
-mechanism of F-FX-012, the frozen math `kt_plugin_api::math`.
-
-### What is missing
-
-An audio codec. Using the system FFmpeg's AAC encoder was considered and rejected: the audio render
-thread may not open a codec (invariant 5 and the cpal-callback rule), its output is not frozen
-across FFmpeg versions (invariant 11), and a real decoder cannot be told which packets to lose
-mid-stream from inside our chain.
-
-### What hinders
-
-The stream schedule lives in video positions on the project grid; the audio state learns the grid
-and its clip's timeline origin through the host (the same origin F-FX-012 needs).
-
-### Which invariants it touches
-
-1, 2, 11 (the MDCT and the predictor in frozen math, the same bytes on every platform).
+Done as `datamosh_sound` (`src/plugins/fx-video-codec/src/sound.rs`, `kt_plugin_api::audio_codec`, change `sim-audio-pairs`): an own AAC-Main-like codec broken by the datamosh rows on the picture's `mosh::Sched`.
 
 ## Estimate
 
@@ -124,7 +103,7 @@ and its clip's timeline origin through the host (the same origin F-FX-012 needs)
 
 ## Verdict
 
-Take: a small own codec (determinism and a decoder we control) whose damage is driven by the
+**Done** (round kkt-26.11.03b, D1, 2026-11-03). Take: a small own codec (determinism and a decoder we control) whose damage is driven by the
 datamosh rows and schedule, as the paired audio half of `datamosh`.
 
 ## Sources

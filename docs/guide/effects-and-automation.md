@@ -132,6 +132,16 @@ correction, colour matrix, tone curve, denoise, sharpening, YUV. Every block can
 switched off or set wrong; **View** shows the picture after any stage. Presets: Phone at
 night, Cheap webcam, Security cam, IR, Cinema raw, Wrong CFA phase, No IR-cut filter.
 
+**The sound of the camera.** Put Camera ISP on an event with linked audio and the audio gets
+**Camera ISP** too: the event's sound is filmed again through the device's **Microphone** —
+the last block of the panel. The scene's level and the wind reach an acoustic port (a real
+resonator: its diameter, length and cavity set its peak), the capsule adds its noise and
+overloads, the **Automatic gain control** lifts quiet moments so the room breathes between
+words, **Noise suppression** takes the floor down and leaves its artefacts when pushed, and
+the device's codec finishes it: AAC, 16 kHz PCM or 8 kHz G.711. The looks set all of it:
+Phone at night, Cheap webcam and Security cam each sound like the device they film with.
+Cinema raw and the two defect presets keep a plain camera microphone.
+
 **Datamosh** encodes the clip with its own small video codec — motion search, a
 prediction loop, quantised detail, keyframes — and breaks it on purpose. **Mosh** drops the
 keyframes, so the previous shot is dragged by the new shot's motion; **Bloom** repeats one

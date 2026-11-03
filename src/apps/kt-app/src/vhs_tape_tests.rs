@@ -159,3 +159,58 @@ fn t1468_the_deck_s_sound_is_on_the_linked_audio() {
     assert_eq!(m.clip(ClipId(1)).unwrap().fx[0].get_param("audio_out"), Some(1.0), "the deck did not take Normal");
     assert_eq!(m.clip(ClipId(2)).unwrap().fx[0].get_param("audio_out"), Some(1.0), "the deck's sound did not follow");
 }
+
+/// t1486 (sim-audio-pairs; capability `audio-fx`): Datamosh and Camera ISP on an event with linked
+/// audio put the stream's sound and the camera's microphone on that audio, and the effects window
+/// shows their sound controls on both halves' panels; removing the effect takes its sound off.
+#[test]
+fn t1486_the_stream_and_the_camera_sound_on_the_linked_audio() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    for (kind, sound) in [("datamosh", "datamosh_sound"), ("camera_isp", "camera_isp_sound")] {
+        let mut h = harness();
+        // after the harness: it sets the catalogue language of this thread
+        let label = if kind == "datamosh" { tr(k::fx::MOSH_SOUND) } else { tr(k::isp::block::MICROPHONE) };
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+        for (id, clip_kind) in [(1, ClipKind::Video), (2, ClipKind::Audio)] {
+            p.clips.push(ClipEvent {
+                r#gen: None,
+                gen_auto: Vec::new(),
+                overrides: Vec::new(),
+                geometry: Default::default(),
+                geometry_pos: 0,
+                geometry_auto: Vec::new(),
+                id: ClipId(id),
+                link_group: Some(GroupId(1)),
+                kind: clip_kind,
+                lane: 0,
+                start: kt_time::Tick(0),
+                duration: kt_time::Tick(180_000),
+                source_in: kt_time::Tick(0),
+                media: MediaId(1),
+                gain_db: 0.0,
+                reversed: false,
+                fx: vec![],
+                fx_bypass: vec![],
+                fx_auto: vec![],
+                opacity: 1.0,
+                fx_off: false,
+                masks: Default::default(),
+            });
+        }
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        assert!(app.apply(Command::SetFx { id: ClipId(1), fx: vec![FxInstance::builtin(kind)] }));
+        let tags: Vec<&str> = app.model.clip(ClipId(2)).unwrap().fx.iter().map(|f| f.tag()).collect();
+        assert_eq!(tags, [sound], "{kind}: no sound on the linked audio");
+        app.open_fx_editor(ClipId(1));
+        h.step();
+        h.step();
+        assert_eq!(h.query_all_by_label(label).count(), 2, "{kind}: the sound controls are not on both halves");
+        // the device leaves both halves
+        assert!(h.state_mut().apply(Command::SetFx { id: ClipId(1), fx: vec![] }));
+        assert!(h.state().model.clip(ClipId(2)).unwrap().fx.is_empty(), "{kind}: the sound outlived its device");
+    }
+}

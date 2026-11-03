@@ -32,7 +32,7 @@ visible and switchable off; presets, paste, automation and morpher batches go th
 - **WHEN** the person adds VHS Tape to the picture and presses "Normal (linear)" on the audio's face
 - **THEN** the audio chain holds `vhs_tape_sound`, two Sound sections are drawn, and both halves'
   `audio_out` is Normal in the MODEL
-- **TEST** t1468 (`src/apps/kt-app/src/vhs_tape_tests.rs`), live `vhs_sound` (t1469, `src/scripts/live/vhs_sound.py`)
+- **TEST** t1468 (`src/apps/kt-app/src/vhs_tape_tests.rs`), live `vhs_sound` (`src/scripts/live/vhs_sound.py`)
 
 ### Requirement: The VHS deck's sound is the same deck's linear track and Hi-Fi FM
 `vhs_tape_sound` SHALL simulate the two VHS audio systems of the deck `vhs_tape` simulates, from the
@@ -116,3 +116,58 @@ Why: kkt-26.11.03b D1; F-FX-013 — a cut mosh in the picture is a broken audio 
 - **WHEN** the same rows and input are played twice
 - **THEN** the two runs are byte-equal, concealment included
 - **TEST** t1476 (`src/plugins/fx-video-codec/tests/sound.rs`)
+
+### Requirement: The camera's microphone is the device's sound chain, set by the same looks
+`camera_isp_sound` SHALL film the event's sound again through the microphone chain of the device the
+camera simulates, step by step and in physical quantities: the scene's pressure from the source's
+full-scale SPL (94 dB = 1 Pa); wind at the port growing with the cube of its speed, low in frequency,
+in gusts; the acoustic port as a Helmholtz resonator from its diameter, length and front cavity; the
+capsule's vent high-pass, self-noise (dBA) and acoustic overload point (the converter's full scale);
+an AGC; a noise suppressor on a minimum-statistics noise floor; and the device's coding — AAC at its
+bitrate (`audio_codec`, no prediction), 16-bit PCM at 16 kHz, or G.711 µ-law at 8 kHz, the rate change
+through real anti-alias and anti-image filters. The AGC and the suppressor are switchable like the
+ISP's blocks. The looks are devices and set the chain with the sensor: Phone at night (stereo MEMS, a
+hard AGC and suppressor, AAC), Cheap webcam (one capsule behind a long channel, USB 16 kHz, no
+suppressor), Security cam (one capsule outdoors, wind, G.711). Looks that name no device (Cinema raw,
+Wrong CFA phase, No IR-cut filter) keep the plain camera microphone. The pair shares the device, not a
+defect schedule: nothing in the camera's picture moves in time; the sensor seed seeds the capsule.
+Why: kkt-26.11.03b D1; F-FX-014 — what makes "phone sound" is the device's processing, which an
+impulse response cannot hold.
+
+#### Scenario: The port is a Helmholtz resonator
+- **WHEN** a 0.6 × 3 mm port into 20 mm³: tones at 800 Hz, at the port's frequency and 2.5 times it
+- **THEN** the frequency is 3–4 kHz, the peak is at least twice the level at 800 Hz, the top rolls off
+- **TEST** t1477 (`src/plugins/fx-video-camera/tests/mic.rs`)
+
+#### Scenario: The AGC lifts a quiet scene to its target, up to its maximum gain
+- **WHEN** a quiet tone and a far quieter one through a 40 dB AGC
+- **THEN** the first's peak settles at the target within 30 %, the second's gain stops at 40 dB
+- **TEST** t1478 (`src/plugins/fx-video-camera/tests/mic.rs`)
+
+#### Scenario: The noise suppressor takes the floor down
+- **WHEN** a steady floor with tone bursts for 4 s, suppressor on at 0.7 and off
+- **THEN** the gaps' level falls at least 6 dB, the bursts stay within 6 dB
+- **TEST** t1479 (`src/plugins/fx-video-camera/tests/mic.rs`)
+
+#### Scenario: The device's rate limits the band
+- **WHEN** tones through AAC, 16 kHz PCM and G.711
+- **THEN** AAC keeps 6 kHz; PCM drops 10 kHz and G.711 drops 6 kHz by at least 34 dB; µ-law keeps small samples
+- **TEST** t1480 (`src/plugins/fx-video-camera/tests/mic.rs`)
+
+#### Scenario: Wind is low turbulence growing with its speed
+- **WHEN** silence at 0, 2 and 8 m/s
+- **THEN** 2 m/s is heard over the calm capsule and 8 m/s stands at least 26 dB above it
+- **TEST** t1481 (`src/plugins/fx-video-camera/tests/mic.rs`)
+
+#### Scenario: The chain is deterministic and the looks are devices
+- **WHEN** the chain plays twice; each look's rows are read
+- **THEN** the bytes are equal; the phone is stereo with AGC, suppressor and AAC, the webcam mono at 16 kHz with a port below 5 kHz, the security camera G.711 with wind, a look naming no device keeps the plain microphone
+- **TEST** t1482, t1483 (`src/plugins/fx-video-camera/tests/mic.rs`)
+
+#### Scenario: The stream's and the camera's sound on the linked audio
+- **PATH** a video event linked to its audio → Datamosh (or Camera ISP) added to the picture → the
+  effects window shows both halves' chains, each panel with its sound controls (the audio bitrate and
+  prediction; the Microphone block) → the effect removed from the picture → the audio's chain is empty
+- **WHEN** the person adds either effect to a linked pair and later removes it
+- **THEN** the audio chain holds its sound kind, both panels show the sound controls, and removal takes the sound off
+- **TEST** t1486 (`src/apps/kt-app/src/vhs_tape_tests.rs`), live `stream_sound`, `camera_mic` (`src/scripts/live/stream_sound.py`, `camera_mic.py`)

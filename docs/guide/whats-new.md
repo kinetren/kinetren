@@ -5,6 +5,10 @@ month, newest first.
 
 ## kt26.11
 
+- **Camera ISP records the sound too.** On an event with linked audio, the sound goes through the
+  device's microphone: the phone's port and noise suppressor, a webcam's 16 kHz, a security
+  camera's G.711 and wind, with an automatic gain control that lifts the room between words.
+  The looks set it, and the Microphone block in the panel lets you change every step.
 - **Datamosh breaks the sound too.** On an event with linked audio, the sound now goes through a
   real audio codec in the same stream: where the picture loses a keyframe the sound loses a packet
   at the same moment and smears until the next clean keyframe — a Reset key heals both.
