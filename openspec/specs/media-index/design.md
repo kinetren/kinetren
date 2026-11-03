@@ -327,3 +327,29 @@ long, where to. Two decisions on the downloader's side:
   the pinned hash; the size is pinned next to the hash (`PINNED_SIZE`), so a mirror announcing
   another Content-Length fails at once with "announced A bytes, expected B" instead of after up to
   57 MB. Without Content-Length the hash stays the only test. t949.
+
+## The video look-ahead fits the cache until it is read (video-prefetch-thrash, 2026-11-03)
+
+The README diagnostics shot showed the 512 MB video cache full and a stream of "dropped before the
+first read" on the showcase edit. Four causes, each found by measuring, not guessing (the full record
+is the archived change `2026-11-03-video-prefetch-thrash`):
+
+- **The window counted one frame per tick.** Half the budget divided by one frame of the largest
+  decode quality ignored the stack of layers: one pass asked for 604 MB. The window is now walked
+  frame by frame, nearest first, and cut at a whole frame within half the budget, every layer at
+  its own decode size (`video_prefetch_wants`).
+- **LRU ranked a prefetched frame by its insertion,** so the window's nearest frame — decoded
+  first — went first. Each pass refreshes the window far → near (`BurstCache::refresh`).
+- **Requests outlived the frames they were for.** Look-ahead the playhead passed and Playback
+  requests for frames the preview had left stayed queued; Playback outranks the look-ahead, so a
+  lagging decoder decoded frames nobody would read before the window ahead. Both are withdrawn; the
+  window starts at the frame on screen (playhead minus latency) so the withdrawal never drops what
+  the latency still has to show.
+- **The counter called waste thrash.** Once nothing wanted was dropped, an eviction log during the
+  shot showed every remaining unread drop was an entry the prefetch had stopped asking for (the
+  window a seek left, frames the picture skipped). Thrash is now "dropped unread while the latest
+  pass still wanted it"; the rest is `abandoned_evictions`, printed by `kt-cli probe`.
+
+`kt-cli probe` plays the range with an infinitely fast decoder (`simulate_video_playback`, the same
+pass the player runs) and prints the window against the cache: the first thing to run when the
+panel reports thrash again.
