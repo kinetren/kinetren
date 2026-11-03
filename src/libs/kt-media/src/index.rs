@@ -138,6 +138,15 @@ impl MediaIndexDb {
         // sources) — short writes must not fail with SQLITE_BUSY. Set before any statement,
         // so every one of them waits rather than fails at once.
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+        // No lock of the sidecar is held across an fsync (t1460). On a loaded spinning disk one
+        // fsync took 137 s, and a connection waiting behind it gave up after the busy timeout:
+        // a commit synced the WAL under the write lock (synchronous=FULL), the last close
+        // checkpointed and synced under the EXCLUSIVE lock that blocks every opening. NORMAL
+        // keeps a WAL database consistent on power loss (only the last commits roll back — a
+        // cache can lose them); without the close checkpoint the WAL stays next to the file and
+        // the passive auto-checkpoint, which blocks nobody, folds it in.
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;
         // WAL is a property of the FILE: once set it stays, and every later opening only reads
         // it — a write here is what collided with the other threads' openings (t1171)
         let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?;

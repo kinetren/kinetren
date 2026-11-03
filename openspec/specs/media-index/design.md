@@ -313,6 +313,39 @@ The "open end" of the section above closed. t640 went red on a QUIET machine (lo
   the collision, still loses on a slow disk); one shared connection (rejected above — it serialises
   every thread's DB work).
 
+## No sidecar lock across an fsync (sidecar-fsync-stall, 2026-11-03)
+
+t1171, t640, t411 and t1413 went red only in the whole-workspace `finish.sh` run, and were green
+alone in seconds.
+
+- **Cause, measured.** The build machine's disks are rotational, and `/tmp` is on one of them.
+  Under fsync write load, one opening round of a new sidecar took 137 s. Gate waiters do not fail;
+  a SQLite lock held across the fsync does. Two such locks:
+  - a WAL commit synced under the write lock (`synchronous=FULL`);
+  - the LAST close checkpointed and synced under the EXCLUSIVE database lock every opening needs.
+
+  The connection returned by `open` is dropped outside `open_gate`, so the next opener met the
+  previous one's close. The waiters outwaited the 5 s busy timeout, and the cache missed:
+  - t1171 `DatabaseBusy`;
+  - t640 a re-rendered reel;
+  - t411 a loudness measured again, unrounded, instead of read back at 1/100.
+- **The rule.** Every opening sets `synchronous=NORMAL` and `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE`.
+  The passive auto-checkpoint, which blocks nobody, folds the WAL in, and `-wal`/`-shm` stay after
+  exit. What still syncs under a lock:
+  - a new sidecar's first WAL header, inside the gate, so in-process openers wait, not fail;
+  - the header of a WAL restarted after a full checkpoint, roughly once per 4 MB of writes. Only
+    another writer waits on it, and a lost write is a cache miss.
+- **The check (t1460).** A VFS shim stalls every fsync. Two threads open, write, read and close a
+  ready sidecar. Results:
+  - old code: the finish.sh `DatabaseBusy`;
+  - either setting alone: red;
+  - both: green with zero stalled syncs.
+- **Rejected:**
+  - a longer busy timeout (it does not outlast a 137 s fsync);
+  - `synchronous=OFF` (checkpoints unsynced, so an OS crash can corrupt the file, and corruption
+    found later than the opening would mean lasting misses);
+  - moving the tests' temp files to tmpfs (it hides a stall a person's spinning disk has too).
+
 ## The download tells everything (ffmpeg-download-window-info, 2026-10-29)
 
 The owner (kkt 2026-10-27): the download window showed too little — where from, how fast, how
