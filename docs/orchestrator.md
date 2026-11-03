@@ -128,11 +128,12 @@ The current stage: `sim-audio-pairs` is what remains (`export-throughput`, `loop
 the sidecar fix are merged). Then, in the owner's order:
 
 1. **Performance**: the preview and the final render, and "the math" (AVX, Vulkan…):
-   `compute-backends` (the owner answers its memo), `preview-throughput` (started 2026-11-04 from
+   the move of the heavy math to Vulkan compute in plain WGSL (`compute-backends`, its branch is not
+   merged: the prototype goes, two owner's decisions are open), `preview-throughput` (started 2026-11-04 from
    the merged export work: the frame path at full quality, 4K decode speed, one decoder per file),
    `hw-encode-context` (Intel and AMD encode in hardware).
 2. **Build and CI speed** ("все что больше 10мин+ это ужас"): the local build/test loop, the
-   cost of a plugin edit, CI wall time (21 min on 2026-11-02: windows-build 13 min → windows-test
+   cost of a plugin edit, an ARM build (owner, 2026-11-04), CI wall time (21 min on 2026-11-02: windows-build 13 min → windows-test
    7 min in series); the proposed-only change `ci-speedup` is the starting point.
 3. **Usability**: first `r72-timeline-transport-defects` (19 tasks, none done), then control layouts like other editors (v26.10 L1/L2 — "Layout & Controls style",
    a customize button and a settings code), `preview-canvas-and-gizmos`, the small defects
