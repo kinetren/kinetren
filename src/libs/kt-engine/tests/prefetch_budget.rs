@@ -189,3 +189,37 @@ fn t1418_passed_look_ahead_is_withdrawn() {
     assert_eq!(got, want, "only the Playback frame and the look-ahead still ahead are decoded");
     worker.shutdown();
 }
+
+/// Test 1418b: the preview's Playback request is THE FRAME ON SCREEN. Paging the paused
+/// preview over ten frames of a slow file decodes the frame being decoded and the one now
+/// shown, not the eight in between. Before, every shown frame queued one more Playback
+/// request; Playback outranks the look-ahead, so a decoder slower than the picture spent
+/// itself on frames nobody would read while the window ahead starved.
+#[test]
+fn t1418b_preview_withdraws_the_frames_it_left() {
+    let mut p = stack(1);
+    p.clips[0].duration = Tick(20 * SEC);
+    let src = SyntheticSource::new(Tick(60 * SEC), AudioPattern::Silence)
+        .with_video_delay(Duration::from_millis(60));
+    let (player, _consumer) = kt_engine::Player::new(p, vec![(MediaId(1), Box::new(src))]);
+    let q = player.preview_quality();
+    let step = SEC / 25;
+    // far from the paused playhead: the look-ahead window (at 0) does not cover these
+    let at = |i: i64| Tick(10 * SEC + i * step);
+    let sid = kt_engine::source_id(MediaId(1));
+    let mut buf = Vec::new();
+    for i in 0..10 {
+        let _ = player.compose_preview_into(at(i), &mut buf);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !player.cache.contains_video(sid, Some(q), at(9).0) {
+        assert!(std::time::Instant::now() < deadline, "the frame on screen never arrived");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // what was still queued would be decoded within a few frame times
+    std::thread::sleep(Duration::from_millis(400));
+    let between: Vec<i64> =
+        (1..9).filter(|&i| player.cache.contains_video(sid, Some(q), at(i).0)).collect();
+    assert!(between.len() <= 1, "frames the preview had left were decoded: {between:?}");
+}

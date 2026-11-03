@@ -305,12 +305,13 @@ impl Player {
             let stop = stop.clone();
             let quality = preview_quality.clone();
             let region_p = loop_region.clone();
+            let shared_p = shared.clone();
             std::thread::Builder::new()
                 .name("prefetch".into())
                 .spawn(move || {
                     prefetch_loop(
                         cache, transport, workers, natives_p, project, quality, stop, wake_p,
-                        stats_p, version_p, content_p, region_p,
+                        stats_p, version_p, content_p, region_p, shared_p,
                     )
                 })
                 .expect("spawn prefetch")
@@ -718,6 +719,9 @@ impl Player {
     /// path as `compose_preview_into`, but without composite — needed by
     /// diagnostics and harness tests that check “the edit has reached
     /// the picture”.
+    /// A Playback request is the frame on screen: the next preview composite
+    /// withdraws it unless it is a layer of that frame (video-prefetch-thrash), so a
+    /// caller that waits for the frame re-submits in its loop.
     pub fn request_video(&self, media: kt_model::MediaId, pts: Tick, q: Quality) {
         let step = self.video.lock().unwrap().grid.frame_step();
         if let Some(w) = self.workers.read().unwrap().get(&media) {
@@ -901,7 +905,19 @@ impl Player {
         let step = video.grid.frame_step();
         // the decode quality comes FROM THE REQUEST (R.46, item 318): a clip with a zooming
         // chain is warmed larger than Quality, and exactly that must be asked for
-        for (media, src_pts, dq) in video.layers_at(aligned, q) {
+        let layers = video.layers_at(aligned, q);
+        // Playback is THE FRAME ON SCREEN: a request for a frame the picture has left is
+        // withdrawn (video-prefetch-thrash). It outranks the look-ahead, so when decoding
+        // lagged, every frame shown queued one more, and the decoder spent itself on frames
+        // nobody would read while the window ahead starved.
+        for (media, w) in self.workers.read().unwrap().iter() {
+            w.withdraw_video(Priority::Playback, |pts, wq| {
+                layers
+                    .iter()
+                    .any(|(m, p, dq)| m == media && p.0 == pts && wq == Some((dq.width, dq.height)))
+            });
+        }
+        for (media, src_pts, dq) in layers {
             let idx = video_cache_idx(src_pts);
             // contains, not get: the probe must not refresh the LRU (item 19)
             if !self.cache.contains_video(source_id(media), Some(dq), idx)
@@ -1574,6 +1590,7 @@ fn prefetch_loop(
     project_version: Arc<AtomicU64>,
     content_version: Arc<AtomicU64>,
     loop_region: Arc<Mutex<Option<(i64, i64)>>>,
+    shared: Arc<AudioShared>,
 ) {
     // renderers are cached until the project version changes: cloning the Project and
     // rebuilding the graphs every 100 ms was expensive even at idle (item 1)
@@ -1632,7 +1649,18 @@ fn prefetch_loop(
                 false,
             );
         }
-        let t0 = transport.playhead();
+        // the window starts at the frame ON SCREEN, not at the audio playhead: under an
+        // output latency the picture is `latency` behind (`video_display_frame`), and a
+        // window from the playhead would leave those frames out — and withdraw their
+        // requests below (video-prefetch-thrash). The reverse window stays as it was.
+        let rate = f32::from_bits(shared.playback_rate.load(Ordering::Acquire));
+        let shown = if rate > 0.0 {
+            let latency = shared.latency_smooth.load(Ordering::Acquire);
+            video_display_frame(head, latency, region, 1, rate)
+        } else {
+            head
+        };
+        let t0 = Tick::from_audio_frames(shown);
         let q = *preview_quality.lock().unwrap();
         let step = video.grid.frame_step();
         let region_ticks =

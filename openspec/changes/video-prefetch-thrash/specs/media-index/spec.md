@@ -7,13 +7,18 @@ video budget and at most 2 s; the playhead's own frame SHALL always be asked. Ea
 mark the window's cached entries recent from the furthest frame to the nearest, without counting
 a read, so the eviction takes what was shown or is no longer wanted first and, among the window,
 the frame furthest ahead. Look-ahead requests the window no longer asks for SHALL be withdrawn
-from the decoder's queue; Playback requests are not touched. `kt-cli probe` SHALL report the
+from the decoder's queue; the window SHALL start at the frame on screen (the playhead minus the
+output latency), not at the audio playhead. A Playback video request SHALL mean the frame on
+screen: composing the preview withdraws the Playback requests that are not a layer of the frame
+it composes. `kt-cli probe` SHALL report the
 window against the cache and the entries a playback of the range drops before the first read.
 Why: the window was half the budget divided by ONE frame of the largest decode quality, while a
 stack of layers asks for several frames per tick — on the README showcase one pass wanted 604 MB
 of a 512 MB cache, and the Diagnostics panel reported prefetch thrash on three stretches; LRU
 ranked a prefetched frame by its insertion, so the window's nearest frames went first; a request
-the playhead had passed was still decoded into an entry nobody read.
+the playhead had passed was still decoded into an entry nobody read — and the preview queued one
+Playback request per frame shown, which outranks the look-ahead, so a lagging decoder decoded the
+frames the picture had left before the window ahead.
 
 #### Scenario: A stack of layers plays without dropping unread entries
 - **WHEN** three video layers of 1080p frames play for 4 s against a 128 MB cache with an infinitely fast decoder
@@ -34,3 +39,8 @@ the playhead had passed was still decoded into an entry nobody read.
 - **WHEN** the decoder is busy while twenty look-ahead requests and one Playback request are queued, and the look-ahead before the playhead is withdrawn
 - **THEN** the decoder serves the Playback frame and the ten requests still ahead, nothing behind
 - **TEST** t1418 (`src/libs/kt-engine/tests/prefetch_budget.rs`)
+
+#### Scenario: The preview withdraws the frames it left
+- **WHEN** the paused preview pages over ten frames of a file whose every frame takes 60 ms to decode
+- **THEN** the decoder decodes the frame it was on and the frame now shown; of the eight in between, at most one
+- **TEST** t1418b (`src/libs/kt-engine/tests/prefetch_budget.rs`)

@@ -1,6 +1,6 @@
 # Tasks: video-prefetch-thrash
 
-Test numbers t1416–t1418 are used by this change (t1419 is left to the other reservations).
+Test numbers t1416–t1418 (with t1416b, t1418b) are used by this change (t1419 is left to the other reservations).
 
 ## 1. Measure
 
@@ -16,6 +16,11 @@ Test numbers t1416–t1418 are used by this change (t1419 is left to the other r
 - [x] 2.3 Passed look-ahead withdrawn from the queue (`MediaWorker::withdraw_video`); t1418
   - Done. t1416/t1416b/t1418 red on the old window and a no-op withdraw, green after; t1417
     holds plain LRU's loss inside the test
+
+- [x] 2.4 The preview's Playback request withdraws the frames it left (`compose_preview_measured`); the window starts at the frame on screen; t1418b
+  - Done. Found by the first re-shoot (task 3.2): 59 no-read drops and "decoding cannot keep up"
+    left on the fixed build. t1418b red with the withdrawal off (all eight frames between
+    decoded), green after
 
 ## 3. Close
 

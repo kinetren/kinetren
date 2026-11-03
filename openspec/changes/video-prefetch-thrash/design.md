@@ -70,6 +70,28 @@ prefetch loop alone, so the loop owns them: each pass withdraws the ones its win
 asks for (`MediaWorker::withdraw_video`). Playback requests (the frame on screen) are not
 touched; a span already taken by the decoder is not interrupted.
 
+### D4b. The preview's Playback request is the frame on screen
+
+The first re-shoot of the diagnostics image on the fixed build still showed 1–4 drops a
+second and "video hit 75 % — decoding cannot keep up" (no-read drops 59 in all, against 543
+before; V-fps 25.7 against 13.9). The rest came from the queue's other end: the preview asks
+for the frame it shows at Playback priority, and Playback outranks the look-ahead whatever the
+direction. Under a decoder slower than the picture (4K layers on llvmpipe in Xvfb), every frame
+shown queued one more request; the old ones, behind the decoder's cursor, were still served
+before the whole look-ahead window — entries nobody would read, while the window starved and
+the picture asked for more. `compose_preview_measured` now withdraws the Playback video requests
+that are not a layer of the frame it is composing (t1418b: ten frames paged on a slow file
+decode two, not ten). The diagnostic `request_video` re-submits in its loop, so a composite
+between two of its calls costs it one retry.
+
+### D4c. The window starts at the frame on screen
+
+The display shows the playhead minus the smoothed output latency (`video_display_frame`). A
+window from the audio playhead left the frames between them out, and with D3 it would also
+withdraw their requests — on a device with 40–100 ms of latency, the very frames about to be
+shown. The prefetch loop now starts the forward window at `video_display_frame(head,
+latency_smooth, region, 1, rate)`; the reverse window stays as it was (forward from the head).
+
 ### D4. One wiring for the player, the probe and the tests
 
 `video_prefetch_pass` (refresh + missing keys) is what the player submits, and
