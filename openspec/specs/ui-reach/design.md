@@ -601,3 +601,13 @@ View is a mess of everything".
 - **Not added:** a GPU/CPU preference and an autosave interval — neither is exposed today
   (`KT_AUTOSAVE_SECS` is a test seam, the GPU fallback is automatic); adding them is a feature
   without a request.
+
+## A window whose content comes later is sized (readme-shots-showcase, archived 2026-11-03)
+
+The project search was a `.width()` window since windows-fill-their-area: the shell fits such a
+window to its content for two frames, then fills that size. At opening its content was the empty
+field (71 points), and the finds that arrived with the typing were laid out below its edge — Ctrl+F
+showed nothing until the person dragged the window. Found by the README pipeline (its fixture runs
+had been writing a 2 KB `search.webp` that nobody looked at). The window is sized now (460×320,
+minimum 320×120), t1414. Rule for a new window: fit only a window whose content is complete at
+opening; one that lists results, finds or anything that arrives later opens sized.
