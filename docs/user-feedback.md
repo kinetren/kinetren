@@ -2465,6 +2465,27 @@ they show the striking effects, not a plain blur; the other shots are re-taken s
 today's program (the welcome window, Diagnostics, Preferences where they belong). Every image is
 looked at before it is committed.
 
+## 2026-11-03 — the final render is slow; one way to accelerate the math
+
+The owner, verbatim (registry `docs/ktprompts/kkt-26.11.03-index.md`):
+
+- "У нас ОЧЕНЬ медленный финальный рендер, даже медленее чем превью. А еще - он вроде не
+  распаралелленый, а очень сильно последовательный." (our final render is VERY slow, slower even
+  than the preview; and it seems not parallel but strongly sequential.)
+- "Как я понимаю, у нас "математика" в каждом месте своя, и она не ускоренная. Нужно подумать как
+  ее ускорять и при том, что на машине может быть как AVX, так и cuda, так и opencl, так и vulkan -
+  т.е. нужен механизм, который позволит ускорять различные расчеты в программе. Наверное уже за нас
+  всё придумано давно, и есть что-то типо шейдеров которые умеют компилироваться. Может быть вообще
+  другой подход выбрать." (as I understand it, the "math" is separate in every place and not
+  accelerated; we must think how to accelerate it, given the machine may have AVX, CUDA, OpenCL or
+  Vulkan — a mechanism that accelerates the program's various computations; probably someone
+  invented it long ago, something like shaders that compile; maybe a different approach
+  altogether.)
+
+**Taken as:** C1 is a defect, measured first (where the time of an export goes, stage by stage)
+and fixed as `export-throughput`; C2 is an architecture question discussed with the owner before
+any change (`compute-backends`).
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
