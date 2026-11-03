@@ -98,6 +98,10 @@ struct AudioClip {
     /// The RUN PREDECESSOR (pitch-event-edges D3): the event this one continues as a split of one
     /// material — its processor is handed on at the join (`run_predecessors`).
     run_prev: Option<usize>,
+    /// The next event continues this one's material as a split (pitch-tail-choice D5): a pitch whose
+    /// echo of the effects before it rings on does not ring here — the next piece's context
+    /// carries that echo, as the uncut event would.
+    ring_off: bool,
 }
 
 /// The run predecessor of every clip (pitch-event-edges D3): the clip on the same track that ends
@@ -107,6 +111,23 @@ struct AudioClip {
 /// no tail (it is silent after its end, so its processor is free to go on). Then the two are ONE
 /// stream: the predecessor's processor is handed on at the join instead of starting cold.
 fn run_predecessors(clips: &[AudioClip], overlaps: &[bool]) -> Vec<Option<usize>> {
+    split_predecessors(clips, overlaps, false)
+}
+
+/// Whether each clip is continued by the next piece of a split (pitch-tail-choice D5): the same
+/// relation as `run_predecessors`, except that the predecessor may ring — a split whose echo before
+/// the pitch rings on hands nothing on, but its left piece must not ring that echo as well.
+fn split_continued(clips: &[AudioClip], overlaps: &[bool]) -> Vec<bool> {
+    let mut out = vec![false; clips.len()];
+    for ai in split_predecessors(clips, overlaps, true).into_iter().flatten() {
+        out[ai] = true;
+    }
+    out
+}
+
+/// The predecessor `a` of every clip `b` that continues `a`'s material frame for frame (see
+/// `run_predecessors`); `ringing` lets `a` have a tail.
+fn split_predecessors(clips: &[AudioClip], overlaps: &[bool], ringing: bool) -> Vec<Option<usize>> {
     let mut by_end: std::collections::HashMap<(u32, i64), Vec<usize>> = Default::default();
     for (i, c) in clips.iter().enumerate() {
         by_end.entry((c.lane, c.end)).or_default().push(i);
@@ -130,7 +151,7 @@ fn run_predecessors(clips: &[AudioClip], overlaps: &[bool]) -> Vec<Option<usize>
                 && !b.reversed
                 && !overlaps[*ai]
                 && !overlaps[bi]
-                && a.ext_end == a.end
+                && (ringing || a.ext_end == a.end)
                 && a.tail_ext == 0
                 && b.head_ext == 0
                 && a.fade_out.is_none()
@@ -716,6 +737,7 @@ impl AudioRenderer {
                     src_ends: std::cell::Cell::new(None),
                     ctx: false,
                     run_prev: None,
+                    ring_off: false,
                 }
             })
             .collect();
@@ -803,6 +825,10 @@ impl AudioRenderer {
         let runs = run_predecessors(&clips, &overlaps);
         for (c, r) in clips.iter_mut().zip(runs) {
             c.run_prev = r;
+        }
+        let continued = split_continued(&clips, &overlaps);
+        for (c, off) in clips.iter_mut().zip(continued) {
+            c.ring_off = off;
         }
         let mut nests = std::collections::HashMap::new();
         if depth < kt_model::MAX_NEST_DEPTH {
@@ -1504,6 +1530,7 @@ impl AudioRenderer {
         }
         let Some(proc) = store.get_mut(clip.id) else { return };
         proc.set_material_ext(clip.head_ext, clip.tail_ext);
+        proc.set_ring_end(clip.ring_off);
         // the loop span in clip-local frames, for an event that covers the region end; an event
         // that reads across its edges and starts INSIDE the region is not what sounds after the
         // wrap — its input continues into its own material (pitch-event-edges D5)

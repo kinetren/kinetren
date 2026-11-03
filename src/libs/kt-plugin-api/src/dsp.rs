@@ -49,6 +49,7 @@ pub const COMB_TUNINGS: [usize; 8] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 
 pub const ALLPASS_TUNINGS: [usize; 4] = [556, 441, 341, 225];
 pub const STEREO_SPREAD: usize = 23;
 
+#[derive(Clone)]
 pub struct Comb {
     pub buf: Vec<f32>,
     pos: usize,
@@ -69,6 +70,7 @@ impl Comb {
     }
 }
 
+#[derive(Clone)]
 pub struct Allpass {
     pub buf: Vec<f32>,
     pos: usize,
@@ -355,6 +357,7 @@ pub fn apply_width(frame: &mut [f32], width: f32) {
 
 /// Stereo freeverb. Changing delay re-creates the lines (this is a structural change of
 /// the geometry — unavoidable), but wet/dry are smoothed and do NOT touch the buffers.
+#[derive(Clone)]
 pub struct Freeverb {
     combs: [Vec<Comb>; CH],
     allpasses: [Vec<Allpass>; CH],

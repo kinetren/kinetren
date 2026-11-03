@@ -84,6 +84,7 @@ macro_rules! plugin_boilerplate {
 /// same phase as a cold render (invariant 11). The node holds a COPY of the points of the
 /// rate_hz curve (bind on apply_params/set_auto): the model is not
 /// read in process (invariant 2).
+#[derive(Clone)]
 struct LfoDrive {
     base_hz: f64,
     points: Vec<(f64, f64)>,
@@ -141,12 +142,16 @@ impl AudioKernel for Tremolo {
 }
 
 /// Tremolo: g = 1 − depth·(0.5 + 0.5·sin φ).
+#[derive(Clone)]
 struct TremoloNode {
     lfo: LfoDrive,
     depth: SmoothedParam,
 }
 
 impl AudioState for TremoloNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], _structural: bool) {
         let (rate_hz, depth) = (k[0] as f32, k[1] as f32);
         self.lfo.base_hz = rate_hz as f64;
@@ -209,12 +214,16 @@ impl AudioKernel for AutoPan {
 }
 
 /// Autopan: p = depth·sin φ, the pan law — as in Gain.
+#[derive(Clone)]
 struct AutoPanNode {
     lfo: LfoDrive,
     depth: SmoothedParam,
 }
 
 impl AudioState for AutoPanNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], _structural: bool) {
         let (rate_hz, depth) = (k[0] as f32, k[1] as f32);
         self.lfo.base_hz = rate_hz as f64;
@@ -289,6 +298,7 @@ impl AudioKernel for Vibrato {
 }
 
 /// Vibrato: 100 % wet, delay = 1 ms + depth·(0.5+0.5·sin φ).
+#[derive(Clone)]
 struct VibratoNode {
     lfo: LfoDrive,
     depth_ms: SmoothedParam,
@@ -296,6 +306,9 @@ struct VibratoNode {
 }
 
 impl AudioState for VibratoNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], _structural: bool) {
         let (rate_hz, depth_ms) = (k[0] as f32, k[1] as f32);
         self.lfo.base_hz = rate_hz as f64;
@@ -387,6 +400,7 @@ impl AudioKernel for Chorus {
 }
 
 /// Chorus: base 15 ms, voice k — phase +k·2π/voices, right channel +90°.
+#[derive(Clone)]
 struct ChorusNode {
     lfo: LfoDrive,
     depth_ms: SmoothedParam,
@@ -396,6 +410,9 @@ struct ChorusNode {
 }
 
 impl AudioState for ChorusNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], _structural: bool) {
         let (rate_hz, depth_ms, mix, voices) = (k[0] as f32, k[1] as f32, k[2] as f32, k[3] as u32);
         self.lfo.base_hz = rate_hz as f64;
@@ -501,6 +518,7 @@ impl AudioKernel for Flanger {
 }
 
 /// Flanger: base 0.5 ms, feedback into the ring (sign = phase inversion).
+#[derive(Clone)]
 struct FlangerNode {
     lfo: LfoDrive,
     depth_ms: SmoothedParam,
@@ -510,6 +528,9 @@ struct FlangerNode {
 }
 
 impl AudioState for FlangerNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], _structural: bool) {
         let (rate_hz, depth_ms, feedback, mix) = (k[0] as f32, k[1] as f32, k[2] as f32, k[3] as f32);
         self.lfo.base_hz = rate_hz as f64;
@@ -607,6 +628,7 @@ impl AudioKernel for Phaser {
 }
 
 /// Phaser: a cascade of 1-pole allpass filters, center sweep 200..2000 Hz (exp).
+#[derive(Clone)]
 struct PhaserNode {
     lfo: LfoDrive,
     depth: SmoothedParam,
@@ -618,6 +640,9 @@ struct PhaserNode {
 }
 
 impl AudioState for PhaserNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], _structural: bool) {
         let (rate_hz, depth, feedback, stages, mix) = (k[0] as f32, k[1] as f32, k[2] as f32, k[3] as u32, k[4] as f32);
         self.lfo.base_hz = rate_hz as f64;
@@ -720,6 +745,10 @@ fn pitch_lookahead(p: &ParamValues, c: &dyn SlotCurves) -> i64 {
     if neutral { 0 } else { PITCH_LOOKAHEAD_FRAMES }
 }
 
+/// The keys of the pitch's echo row (pitch-tail-choice D1): the echo of the effects standing before
+/// the pitch is CUT at the event's end (the default) or RINGS on after it.
+pub const ECHO_BEFORE: &[&str] = &["cut", "ring"];
+
 /// Pitch change without a change of duration (R.48, item 339).
 pub struct PitchShift {
     m: Manifest,
@@ -730,14 +759,29 @@ impl PitchShift {
         PitchShift {
             m: in_category(manifest(
                 "pitch_shift",
-                vec![smooth("semitones", -24.0, 24.0, 0.0, 1.0, ParamUnit::St), smooth("cents", -100.0, 100.0, 0.0, 1.0, ParamUnit::None)],
-                // both were `skip_serializing_if = "is_zero"`
-                vec![RowDecl { store: Store::F32, omit_default: true }, RowDecl { store: Store::F32, omit_default: true }],
+                vec![
+                    smooth("semitones", -24.0, 24.0, 0.0, 1.0, ParamUnit::St),
+                    smooth("cents", -100.0, 100.0, 0.0, 1.0, ParamUnit::None),
+                    // the echo of the effects before the pitch at the event's end (pitch-tail-choice)
+                    ParamSpec::choice_row("echo_before", ECHO_BEFORE, 0),
+                ],
+                // both were `skip_serializing_if = "is_zero"`; the echo row is written only when it rings
+                vec![
+                    RowDecl { store: Store::F32, omit_default: true },
+                    RowDecl { store: Store::F32, omit_default: true },
+                    RowDecl { store: Store::Choice(ECHO_BEFORE), omit_default: true },
+                ],
                 "Pitch Shift",
                 "fxreg.kw.pitch_shift",
                 // a grain reads around its moment: at an event edge it needs the material the event was
                 // cut from (pitch-event-edges D1)
-                Decl { state: true, lookahead: Some(pitch_lookahead), reads_across_edges: true, ..Decl::default() },
+                Decl {
+                    state: true,
+                    lookahead: Some(pitch_lookahead),
+                    reads_across_edges: true,
+                    echo_row: Some("echo_before"),
+                    ..Decl::default()
+                },
             ), "fxreg.cat.timestretch"),
         }
     }
@@ -771,6 +815,7 @@ impl AudioKernel for PitchShift {
 }
 
 /// Phase vocoder state: FFT plans and phase accumulators.
+#[derive(Clone)]
 struct PvState {
     fwd: std::sync::Arc<dyn realfft::RealToComplex<f32>>,
     inv: std::sync::Arc<dyn realfft::ComplexToReal<f32>>,
@@ -834,6 +879,7 @@ impl PvState {
 /// ring, the accumulator and the grid, exactly as the reverb keeps its tail. Until the first seam
 /// the stream position IS the clip position, so every render without a seam is the former one
 /// bit for bit (t338).
+#[derive(Clone)]
 struct PitchNode {
     vocoder: bool,
     semitones: f32,
@@ -1064,6 +1110,9 @@ impl PitchNode {
 }
 
 impl AudioState for PitchNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], _structural: bool) {
         let (semitones, cents) = (k[0] as f32, k[1] as f32);
         self.semitones = semitones.clamp(-24.0, 24.0);
@@ -1216,6 +1265,7 @@ impl AudioKernel for Delay {
 /// NOT structural); time is smoothed over 100 ms — tape glide without clicks;
 /// the filter in the loop — one-pole LP (the tail darkens with each repeat,
 /// a legacy of the F-AUD-009 feature); pingpong — cross feedback.
+#[derive(Clone)]
 struct DelayNode {
     time_ms: SmoothedParam,
     feedback: SmoothedParam,
@@ -1226,6 +1276,9 @@ struct DelayNode {
 }
 
 impl AudioState for DelayNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], _structural: bool) {
         let (time_ms, feedback, mix, pingpong) = (k[0] as f32, k[1] as f32, k[2] as f32, k[3] != 0.0);
         self.time_ms.set_target(time_ms.clamp(1.0, DELAY_MAX_MS));
@@ -1367,12 +1420,16 @@ impl AudioKernel for SlowedReverb {
 
 /// The reverb half of the Slowed+Reverb slot (the warp half lives in a separate processor field —
 /// the warp holds the monopoly on consuming the source).
+#[derive(Clone)]
 struct ReverbNode {
     rv: Freeverb,
     base_mix: f64,
 }
 
 impl AudioState for ReverbNode {
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        Some(Box::new(self.clone()))
+    }
     fn apply(&mut self, k: &[f64], structural: bool) {
         // k[0] is the rate (the host's warp), k[7] the frame mode (video only)
         let (mix, delay, damp, decay, wet_gain, predelay, width) =

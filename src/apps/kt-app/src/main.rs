@@ -61,6 +61,8 @@ mod window_fill_tests;
 mod welcome_prefs_tests;
 #[cfg(test)]
 mod vhs_tape_tests;
+#[cfg(test)]
+mod pitch_tail_tests;
 mod reel_preview;
 mod render_dialog;
 mod settings_window;

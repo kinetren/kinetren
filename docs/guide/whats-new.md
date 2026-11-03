@@ -10,6 +10,11 @@ month, newest first.
   the edge pixels. The simulated lens is now framed on what your footage recorded, and the
   camera's processor crops its distortion correction to what its sensor saw, as a phone does:
   the edges are picture, and a corrected lens frames slightly tighter.
+- **Pitch: choose what happens to the echo before it.** When a reverb or an echo stands before a
+  pitch (Slowed+Reverb under a morpher's pitch, for example), the pitch effect now has the line
+  "Echo of the effects before the pitch": **cut at the event's end** (as before — the joins stay
+  seamless) or **rings on after the event** (the echo goes on past the event's end, pitched, as
+  without the pitch). Projects that use "rings on" open only in this version and newer.
 
 - **Ctrl+F shows what it finds again.** The search window kept the height of its empty field, so
   the media, events and markers it found were hidden under its bottom edge until you dragged the

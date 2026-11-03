@@ -229,6 +229,19 @@ The most frequent live complaint from reconnaissance was "the music drowns out t
   rules); feeding the material only for the look-ahead and letting their tail ring (the pitched
   material is heard for ≈ 40 ms after the event, or the tail gets a 96 ms hole). A warp starting in
   hold or backwards keeps the cold edges: there is no "before" for it.
+- **The echo before the pitch: cut or rings on** (pitch-tail-choice, 2026-11-03, the owner: "what does
+  reverb have to do with pitch?!? well then make an option so it can be done this way and that way").
+  A row of the pitch itself (`echo_before`, declared to the host as `Decl.echo_row`), not a project
+  setting: the choice is about what stands before THIS pitch, and the row travels with the slot into
+  morpher batches and presets. "Cut" is the context as above, byte for byte. "Rings on" keeps the body
+  and, where the input reaches the out-point, FORKS the nodes up to the pitch into a twin fed silence
+  that gives the output from the out-point on — the echo of the event's own sound, with nothing of the
+  next material and no hole (the deepest window past the out-point 0.97 / 0.87 / 0.82 / 0.32 of the
+  echo's level for WSOLA ±7 and the vocoder ±7, against the rejected alternative's 96 ms of silence).
+  This needed `AudioState::fork` (every built-in kind, t1330); a cheaper second processor warmed by a
+  seek pre-roll would have had its own WSOLA offsets and phases (a click) and cost a whole tail per
+  event end. Rejected after measuring: restarting the ringing nodes at the in-point (no echo of the
+  material before it) — a step in the pitch's input, the vocoder at 0.29 at every event start.
 
 ## Deferred
 

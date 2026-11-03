@@ -286,6 +286,15 @@ Rules of a lookahead node:
   kt-engine); `fresh_entry` (D4) — a tail-less context chain entered at its first frame or after it
   ended is a seek, not a seam: its ring holds where it stopped. `before_material` silences only a
   FOLDED input; an unfolded one before the material is the context pre-roll.
+- **the echo before the pitch: cut or rings on** (pitch-tail-choice): the edge-reader's declared
+  `Decl.echo_row` (pitch's `echo_before`) on and a ringing node before it make `ring`. Everything up to
+  the out-point is the cut path byte for byte; where the INPUT reaches the out-point nodes `0..=ctx`
+  are FORKED into a twin fed silence (`AudioState::fork`; a kind that cannot fork leaves the end cut),
+  the gate merges main before `gate_end` and twin from it, and once the gate's content is past
+  `gate_end` the twin REPLACES nodes `0..=ctx` (`ringing`: the input stops at the out-point, the gate
+  does not cut on the right). Main and twin run ONE per-node code, `Pass::run` — never two copies. The
+  engine's `set_ring_end` turns it off for a piece the next piece of a split continues. Restarting the
+  nodes before the pitch at the in-point was tried and dropped: the vocoder fell to 0.29 at every start.
 
 ## Video effects of R.47 (items 332-335): classes and checklist
 

@@ -37,6 +37,12 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   `frame_values`/`gpu_values` give a kernel its passport values when eight cooked numbers do not
   fit. The hosts call ONLY the value forms; their defaults cook, so a kind with ≤ 8 rows keeps its
   bytes (t1187). A kernel overriding them keeps `frame`/`gpu` as the cooked shim.
+- **An audio state forks** (pitch-tail-choice D4): `AudioState::fork` gives a copy that continues
+  exactly as the state would on the same input — the host splits the chain up to a pitch at the
+  event's out-point to let the echo before it ring on. Default `None` (the host then keeps that
+  echo cut); every built-in implements it by `Clone`, so a new state derives `Clone` and its
+  `CurveRead` readers copy through `clone_box`. t1330 runs every built-in audio kind. `Decl.echo_row`
+  names the choice row of an edge-reading kind (`reads_across_edges`).
 - The module is `generator`, not `gen`: `gen` is a reserved keyword in Rust 2024.
 - Mandatory tests: t972 (`tests/registry.rs`) and every family's frozen-form test (t973,
   t1048) when a row or a declaration changes.

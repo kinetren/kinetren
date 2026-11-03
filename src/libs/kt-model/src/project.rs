@@ -5911,6 +5911,21 @@ pub fn check_transition_full(
 impl Project {
     /// Does any event or track of the project (its reels included) carry a mask
     /// (shape-masks)? The file version depends on this predicate.
+    /// Some effect slot of the document — an event's, a track's or a morpher patch's, in any reel —
+    /// lets the echo of the effects before an edge-reading kind ring on (pitch-tail-choice D6): the
+    /// kind's declared echo row is set. The file is then format 3.
+    pub fn has_ringing_echo(&self) -> bool {
+        let rings = |f: &FxInstance| match f {
+            FxInstance::Plugin(p) => p.manifest().decl.echo_row.is_some_and(|row| p.get(row).is_some_and(|v| v != 0.0)),
+            _ => false,
+        };
+        self.reels().any(|(_, reel)| {
+            reel.clips().iter().any(|c| c.fx.iter().any(rings))
+                || reel.tracks().iter().any(|t| t.fx.iter().any(rings))
+                || reel.morphers().iter().any(|m| m.patch.audio_fx.iter().chain(&m.patch.video_fx).any(rings))
+        })
+    }
+
     pub fn has_masks(&self) -> bool {
         self.clips.iter().any(|c| !c.masks.is_empty())
             || self.tracks.iter().any(|t| !t.masks.is_empty())

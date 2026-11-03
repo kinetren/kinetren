@@ -81,6 +81,14 @@ The third — "the music drowns out the voice" (the most frequent live complaint
   (it is not what sounds after the wrap). Rejected: one processor per run keyed by its first clip (an
   edit that moves a cut would destroy states, invariant 3); cloning the state (two owners of one
   stream).
+- **A split under "rings on" rings only at its end** (pitch-tail-choice, 2026-11-03). A ringing
+  predecessor hands nothing on (it still sounds when the next piece starts), and the next piece's
+  context already carries the echo of the join's material — so `split_continued` (the run relation
+  with the tail allowed) tells the left piece not to ring (`ClipProcessor::set_ring_end`); the split
+  is the "cut" split up to its last piece's end (t1332). Known and left: a loop that re-enters a chain
+  with a tail through a seam starts the lap with the pitch's ring where it stopped (≈ 75 ms of silence
+  with "rings on", a partial dip with some past-the-end material with "cut") — pitch-event-edges D4
+  keeps tail chains on the seam.
 
 ## Deferred
 

@@ -925,6 +925,11 @@ pub struct Decl {
     /// last such node. `false` for a node that shapes what the event OUTPUTS (the limiter): it must
     /// not react to material that is never heard.
     pub reads_across_edges: bool,
+    /// The row of an edge-reading kind that chooses what happens to the ECHO of the nodes standing
+    /// before it at the event's end (pitch-tail-choice D1): its value 0 — cut with the event (the
+    /// context, as `reads_across_edges` describes), non-zero — the nodes before it hear only the
+    /// event's own sound and ring on past its end. `None` — always cut.
+    pub echo_row: Option<&'static str>,
     pub threads: Threads,
     /// The planner class; required for a video effect.
     pub video_class: Option<VideoClass>,
@@ -965,6 +970,7 @@ impl Default for Decl {
             tail: None,
             lookahead: None,
             reads_across_edges: false,
+            echo_row: None,
             threads: Threads::Concurrent,
             video_class: None,
             gpu: Gpu::None,
@@ -1317,6 +1323,14 @@ pub trait SlotCurves {
 /// A slot's curve kept by an audio state: the value at progress `s`, `base` without a curve.
 pub trait CurveRead: Send {
     fn value(&self, base: f64, s: f64) -> f64;
+    /// A copy that reads the same curve (an audio state's `fork` copies its readers).
+    fn clone_box(&self) -> Box<dyn CurveRead>;
+}
+
+impl Clone for Box<dyn CurveRead> {
+    fn clone(&self) -> Box<dyn CurveRead> {
+        self.clone_box()
+    }
 }
 
 /// No curves: the registry's checks and every caller without a clip.
@@ -1327,6 +1341,9 @@ struct NoCurve;
 impl CurveRead for NoCurve {
     fn value(&self, base: f64, _s: f64) -> f64 {
         base
+    }
+    fn clone_box(&self) -> Box<dyn CurveRead> {
+        Box::new(NoCurve)
     }
 }
 
@@ -1379,6 +1396,12 @@ pub trait AudioState: Send {
     }
     /// A real seek: zero the buffers, jump the smoothers to their targets.
     fn reset(&mut self);
+    /// A copy that continues EXACTLY as this state would on the same input (pitch-tail-choice D4):
+    /// the host splits a chain off at an event's out-point to let its echo ring on. `None` — this
+    /// state cannot be copied, and the host then keeps the echo of its chain cut at the event's end.
+    fn fork(&self) -> Option<Box<dyn AudioState>> {
+        None
+    }
 }
 
 /// An audio effect's kernel: builds the state of one slot.

@@ -66,12 +66,23 @@ pub const PROJECT_FILE_VERSION: u32 = 1;
 /// the masks silently gone.
 pub const PROJECT_FILE_VERSION_MASKS: u32 = 2;
 
+/// The version a file is written with WHEN an effect slot lets the echo before a pitch ring on
+/// (pitch-tail-choice D6). An older build ignores a slot row its passport does not name: it would
+/// open the project and silently cut the echo the person chose to ring — so it refuses instead.
+pub const PROJECT_FILE_VERSION_ECHO: u32 = 3;
+
 /// The highest version this build reads.
-pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_MASKS;
+pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_ECHO;
 
 /// The version this project needs — by its content.
 pub fn version_for(project: &Project) -> u32 {
-    if project.has_masks() { PROJECT_FILE_VERSION_MASKS } else { PROJECT_FILE_VERSION }
+    if project.has_ringing_echo() {
+        PROJECT_FILE_VERSION_ECHO
+    } else if project.has_masks() {
+        PROJECT_FILE_VERSION_MASKS
+    } else {
+        PROJECT_FILE_VERSION
+    }
 }
 
 /// Extension of the project file. `.ktproj` is NOT reused: two different

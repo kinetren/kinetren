@@ -48,6 +48,18 @@ Raise or lower the pitch of an event's sound without touching its length: the vo
 
 **Second: pitch costs more than it seems, because of the analysis window.** Both algorithms look FORWARD (grain/FFT window), that is, they introduce a delay into the signal path. A host that cannot compensate it either shifts the track relative to the others or is forced to render the effect offline — hence Audition's split into Realtime and Rendered.
 
+**Fourth: what happens to the echo of the effects standing BEFORE the pitch at the clip's end.**
+Clip pitch is applied to the source media with handles (Premiere, Resolve, Reaper): the grains at
+a clip's edges read the material the clip was cut from, otherwise they are half silence and every
+cut dips. A clip effect with memory — a reverb, an echo — is cut at the clip's end in Vegas (event
+FX), Premiere (clip effects) and Resolve (clip-level Fairlight FX): the usual advice is to extend the
+clip or move the effect to the track. Nobody offers both: a reverb that rings past the clip's end
+AND a pitch after it that still reads across the edges. The non-obvious detail: with one pitch
+stream the two wishes collide — the pitch's look-ahead past the out-point wants the next material,
+the echo past the out-point must not contain it. A second stream of the effects up to the pitch,
+split off exactly where the material ends and fed silence from there, gives the echo without the
+next material and without a hole.
+
 **Third: pitch and speed are different axes, but they live in one node.** In Vegas "Lock to stretch" ties them back together, because the editor sometimes wants to speed up without the "chipmunk" effect, and at other times wants to raise the pitch without speeding up.
 
 ## Pros
@@ -96,3 +108,8 @@ Take both engines at once: they cover different material, and the choice between
 
 **Implemented in R.48** — items 337, 339–340
 (t337–t340). Formant correction and a mode per event (instead of a project setting) were not done.
+
+**pitch-event-edges / pitch-context-whole-chain (2026-11-01)** — the pitch reads its own material
+across the event's edges (t1105–t1114). **pitch-tail-choice (2026-11-03)** — a switch on the pitch
+effect: the echo of the effects before it is cut at the event's end (the default) or rings on after
+it (t1330–t1339).
