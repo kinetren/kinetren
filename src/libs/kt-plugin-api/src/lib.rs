@@ -14,6 +14,7 @@ pub mod generator;
 pub mod geo;
 pub mod math;
 pub mod pixfont;
+pub mod shade;
 pub mod stream;
 pub mod trans;
 

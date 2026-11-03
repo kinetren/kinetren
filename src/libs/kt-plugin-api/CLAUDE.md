@@ -43,6 +43,13 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   echo cut); every built-in implements it by `Clone`, so a new state derives `Clone` and its
   `CurveRead` readers copy through `clone_box`. t1330 runs every built-in audio kind. `Decl.echo_row`
   names the choice row of an edge-reading kind (`reads_across_edges`).
+- **`shade` is a PROTOTYPE nothing shipped calls** (compute-backends, F-EXT-004): one kernel text
+  in the common subset of Rust and WGSL → `cpu` (the text's `f32` is f64, the byte reference),
+  `cpu_f32` and the `WGSL` string; `run_pointwise` = row bands on scoped threads × one loop compiled
+  for SSE2/SSE4.1/AVX2/AVX-512. The copies are byte-equal only because rustc never contracts FMA nor
+  reassociates — never add a `fast-math`-style flag or an `fma` intrinsic to it. The subset has no
+  `var`/`if`/loops and no splat constructors; a helper carries its kernel's prefix (every plugin's
+  WGSL lands in one fused module). t1500/t1501; the migration is the owner's decision.
 - The module is `generator`, not `gen`: `gen` is a reserved keyword in Rust 2024.
 - Mandatory tests: t972 (`tests/registry.rs`) and every family's frozen-form test (t973,
   t1048) when a row or a declaration changes.
