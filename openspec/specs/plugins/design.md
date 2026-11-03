@@ -129,7 +129,7 @@ registry's graph check (which therefore sees a graph broken only at a ninth row'
 two branches that needed it at once wrote the same text (`ebc58282`, `831cccf5`), so it merged
 without a conflict.
 
-## One kernel text — the compute-backends prototype (archived 2026-11-03)
+## One kernel text — the compute-backends prototype (archived 2026-11-04)
 
 C2 of kkt-26.11.03 asked for one mechanism to accelerate the math on AVX, CUDA, OpenCL or Vulkan.
 The GPU side already is "shaders that compile" (WGSL through wgpu onto Vulkan/DX12/Metal/GL, every
