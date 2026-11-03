@@ -41,6 +41,9 @@ list may be short of items from them.
 | 22 | Windows supervisor | If the crash supervisor is killed, the editor keeps running | `render-crash-and-recovery/design.md` | open | later |
 | 23 | frame toggle glyph | The toggle's glyph sits in every preview crop | kt-app preview | unknown | С.3, check first |
 | 37 | VHS speed | The VHS CPU path runs at about 10 fps, no SIMD twin | `fx-video-tape` | open | С.1, follows the `compute-backends` decision |
+| 42 | VHS thread cap | VHS Tape uses at most 16 threads, so half of a 32-thread machine idles | `src/plugins/fx-video-tape/src/sim.rs:126` | reported by `compute-backends` | С.1 |
+| 43 | Datamosh motion search | One thread, 67 ms per 1080p frame, multiplied by the frame chain | `src/plugins/fx-video-codec/src/codec.rs:279` | reported by `compute-backends` | С.1, moves to compute |
+| 44 | no ARM build | The program cannot run on ARM at all; the owner wants it | `.github`, `scripts` | open | С.2 |
 
 ## Internal
 
@@ -61,6 +64,7 @@ list may be short of items from them.
 | 36 | a copied `target/` builds another worktree's text | `CARGO_MANIFEST_DIR` in build.rs | open | С.2 |
 | 38 | Flatpak steps after compose never ran on a real runner | CI | unknown | needs the owner's push |
 | 41 | `pkill -f` kills the caller's own shell | agent scripts | trap | goes into the briefs |
+| 45 | Color Grade GPU and CPU add in a different order: 140 channels per 1080p frame differ by 1 | `src/plugins/fx-video-color/src/color_grade.wgsl` | reported by `compute-backends` | not a defect once the math moves to compute |
 
 ## Changes left unfinished
 

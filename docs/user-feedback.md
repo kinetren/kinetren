@@ -2542,6 +2542,26 @@ proposal cards, with no list and no verdict.
   a verdict on every open row at the end of each stage (`docs/orchestrator.md`, "What executors
   find and leave").
 
+## 2026-11-04 — the math is everywhere, not one effect (answer to the `compute-backends` memo)
+
+> Речь в моем запросе не шла только про процессорный рендер. У нас в куче мест есть куча математики,
+> как простой пример VHS Tape, Datamosh(там вообще кодер какой-то) И ТАК ДАЛЕЕ В ДРУГИХ МЕСТАХ
+> ПРОГРАММЫ, и я не верю что невозможно взять условный opencl а лучше vulkan и на нем не писать всякие
+> вещи где мы например AVX применяем или еще что-то делаем.
+> Отвечай.
+> п.1. сначала отвечай
+> п.2. похер на эталон
+> п.3. "ограниченный язык ядер" - а нам что нужно какой-то язык еще придумать? мы в каменном веке?!?
+> за нас уже все сто раз придумали
+> п.4. не уверен пока ты не ответишь
+> п.5. да ARM нужен
+> п.6. я не собираюсь снимать замеры
+
+- Taken as: the memo answered a narrower question. The heavy math moves to Vulkan compute written in
+  plain WGSL through wgpu, no kernel language, no OpenCL or CUDA; an ARM build is wanted; measuring
+  is the agents' work. The one-kernel-text prototype is dropped. Two decisions are open with the
+  owner: what happens on a machine without a GPU API, and whether "эталон" covers video only.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
