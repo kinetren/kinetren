@@ -34,7 +34,7 @@ Each video effect was a separate rasterization into a buffer of output size, wit
 
 ## Rejected and why
 
-- **Tessellation / vertex UV mapping** — all five geometric effects are analytically invertible (affines, tile-modulo, planar homography), and the inverse per-pixel mapping covers the same more simply and more precisely; compute and tessellation are unavailable under the downlevel limits of egui-wgpu on GL and on llvmpipe.
+- **Tessellation / vertex UV mapping** — all five geometric effects are analytically invertible (affines, tile-modulo, planar homography), and the inverse per-pixel mapping covers the same more simply and more precisely; compute and tessellation are unavailable under the downlevel limits of egui-wgpu on GL (GL only: llvmpipe on Vulkan runs compute, F-EXT-004).
 - **A merge switch (UI or env flag)** — rejected by the owner: if the merged result is mathematically equal to the step-by-step result minus the losses, there is nothing to choose.
 - **Build the geometry program straight into K·out** — breaks the integer geometry of the grid (10 px / 4 columns at K = 2 give a different cell layout). Instead, conjugation: the program is in 1× semantics, the scales are contributed by two affines at the edges, and at K = 1 both are exactly identical.
 - **Hysteresis for "flapping K" and for the scale step** on the frame where the threshold is crossed — forbidden by determinism; the size of the jump is bounded by the tolerance of the kernels' invariance to K.

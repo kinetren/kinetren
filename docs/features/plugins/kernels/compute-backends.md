@@ -201,8 +201,9 @@ noise); its rlib grows 24 KB. Per effect the four SIMD copies of the loop are �
   subset with a translator (a proc-macro reading the Rust syntax tree and printing WGSL — what
   CubeCL does), or barriers keep two texts.
 - **The GPU is fragment passes, not compute** (`src/libs/kt-gpu/CLAUDE.md`): egui-wgpu on GL gives
-  WebGL2 limits. Any compute-only system (CubeCL, Halide's GPU schedules, CUDA, OpenCL) cannot run on
-  that path.
+  WebGL2 limits, so compute cannot run on THAT device. It is not a limit of the machine: llvmpipe on
+  Vulkan runs compute (`src/libs/kt-gpu/tests/compute_mosh.rs`), and the first version of this note
+  was wrong to read it as one.
 - **wgpu is pinned to eframe's major** — a library bringing its own wgpu (CubeCL) means two majors in
   one process, incompatible types, the preview unable to share the device.
 - **f64 halves the SIMD width.** An f32 reference would double it but regenerates the goldens
@@ -333,3 +334,28 @@ t1500). WGSL-форма того же текста укладывается в �
 6. **Замер на вашей видеокарте.** Здесь настоящей нет. Команда (из каталога `src`):
    `cargo test --release -p kt-gpu --test single_source -- --ignored --nocapture`. Она покажет,
    сколько стоит проход и выгрузка кадра на вашем железе против 3 мс процессора.
+
+## Ответ владельца и пересмотр (04.11.2026)
+
+Владелец: «Речь в моем запросе не шла только про процессорный рендер … я не верю что невозможно взять
+условный opencl а лучше vulkan и на нем не писать всякие вещи где мы например AVX применяем»; «похер на
+эталон»; «"ограниченный язык ядер" - а нам что нужно какой-то язык еще придумать?»; «да ARM нужен».
+
+**Он прав, memo выше отвечало на слишком узкий вопрос.** Его держало требование побайтного эталона на
+процессоре. Без него общий подмножественный язык и процессорная копия не нужны: ядро пишется обычным
+compute-шейдером WGSL, с циклами, массивами и `if`. Утверждение про «compute не работает на llvmpipe»
+было ошибкой: не работает только устройство интерфейса на GL.
+
+Проверка (`src/libs/kt-gpu/tests/compute_mosh.rs`, `compute_vhs_cost.rs`, release, 1080p, Vulkan через
+llvmpipe, настоящей видеокарты здесь нет, на машине шла чужая работа, нагрузка ≈ 25; при нагрузке ≈ 48 кодер давал 78/70 мс):
+
+| Что | Сейчас, CPU | Vulkan compute на эмуляции |
+|---|---|---|
+| Кодер Datamosh, P-кадр | 67 мс (один поток) | 34 мс (с загрузкой и выгрузкой) |
+| Качество кодера, яркость PSNR | 46,01 дБ | 46,01 дБ |
+| VHS Tape | 95 мс (полосы строк) | 108 мс (текущий граф из 14 фрагментных проходов) |
+
+Вместо этапов А/Б/В: compute-узел в контракте плагина и своё Vulkan-устройство; затем Datamosh (у него
+нет GPU-пути вообще); затем тяжёлые эффекты и удаление их CPU- и AVX-копий (816 строк, все только
+x86-64). Прототип `shade`/`single_source` при этом удаляется. Открытый вопрос: что делает программа на
+машине без Vulkan/DX12/Metal.
