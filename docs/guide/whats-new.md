@@ -5,7 +5,7 @@ month, newest first.
 
 ## kt26.11
 
-- **The final render is about four times faster, and it no longer crashes on some footage.** It
+- **The final render is several times faster, and it no longer crashes on some footage.** It
   used one core for everything in turn; now it reads, draws, converts and encodes at the same
   time on all of them, and the sound renders alongside the picture instead of after it. A
   project that jumps around in long 4K files no longer reads minutes of video it does not show,

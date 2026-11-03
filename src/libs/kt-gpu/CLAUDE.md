@@ -89,7 +89,7 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
 - `UploadCache` keeps up to four evicted textures per size for reuse.
 - `export_engine()`: the export's device is HighPerformance (`new_headless_for_export`; the UI stays
   LowPower, invariant 12), and a software rasterizer (llvmpipe/lavapipe) is refused in favour of the
-  CPU frame workers unless `KT_VIDEO_GPU=1` — 131.9 s against 101.4 s on the showcase, 32 cores.
+  CPU frame workers unless `KT_VIDEO_GPU=1` — 133.9 s against 95.6 s on the showcase, 32 cores.
 
 ## Tests
 

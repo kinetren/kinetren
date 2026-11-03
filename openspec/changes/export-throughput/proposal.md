@@ -41,6 +41,8 @@ block can corrupt the heap — in the preview too.
   their order are exactly those of the serial export. Cancellation and errors stop every stage;
   pause and progress keep working. A project with a stream stage (datamosh) keeps the serial
   composite — its pre-roll decodes on the compose thread.
+- **Frame-sized buffers go back to the system**: the binaries fix glibc's mmap threshold at 1 MiB
+  (freed frames stayed in per-thread arenas; the pipelined export peaked at 16.2 GB, now 7.3 GB).
 - **The encoder gets its threads** (`threads=auto`, reported in the open report's options).
 - **GPU readback is pipelined**: a ring of staging buffers, so the copy of frame N overlaps the
   work on N+1; the export engine does not fill the readback memo; the export's headless adapter
@@ -71,4 +73,4 @@ block can corrupt the heap — in the preview too.
 - `src/libs/kt-gpu/src/{engine.rs,context.rs}` (staging ring, export adapter).
 - `src/apps/kt-cli/src/main.rs` (`export --time`, `--serial`), `src/apps/kt-app` (the export
   engine's adapter).
-- Tests t1450–t1457; `docs/guide/whats-new.md`; `openspec/specs/export/design.md`.
+- Tests t1450–t1458; `docs/guide/whats-new.md`; `openspec/specs/export/design.md`.

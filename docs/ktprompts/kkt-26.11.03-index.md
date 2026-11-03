@@ -8,5 +8,5 @@ requests). Columns and states — as in [`v26.10-index.md`](v26.10-index.md). Th
 
 | # | Line | Claim (brief) | State | Address | Stage |
 |---|---|---|---|---|---|
-| C1 | 1-2 | the final render (export) is VERY slow, slower even than the preview, and looks not parallel but strongly sequential | done export-throughput, t1451 t1452 t1453 t1455 t1456 t1457 | `export-throughput`: the showcase 429.6 s → 101.4 s (stages concurrent, the encoder threaded, two decode defects); before that it crashed in 3 s (t1450) | export-throughput |
+| C1 | 1-2 | the final render (export) is VERY slow, slower even than the preview, and looks not parallel but strongly sequential | done export-throughput, t1451 t1452 t1453 t1455 t1456 t1457 t1458 | `export-throughput`: the showcase 324 s (llvmpipe) / 861 s (CPU) → 95.6 s (stages concurrent, the encoder threaded, two decode defects); before that it crashed in 3 s (t1450) | export-throughput |
 | C2 | 4-5 | "the math" is separate in every place and not accelerated; one mechanism to accelerate computations on whatever the machine has (AVX, CUDA, OpenCL, Vulkan) — something like compiled shaders, or another approach altogether | no: architecture, discussed with the owner first → plugins, video-fx, audio-fx | `compute-backends` | queue 2: reconnaissance note + one-effect prototype, then the owner decides the migration |

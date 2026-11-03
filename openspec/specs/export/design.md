@@ -162,7 +162,7 @@ no longer ends the process a scenario started, so "the process is alive" alone w
   file run after run; two machines differ, as they did before (the encoder is the machine's).
 - **The export's GPU device is HighPerformance; a software rasterizer composes on the CPU.**
   LowPower stays for the UI (invariant 12). llvmpipe/lavapipe rasterize one frame at a time through
-  one queue; the CPU workers compose a frame each: 131.9 s against 101.4 s on the showcase.
+  one queue; the CPU workers compose a frame each: 133.9 s against 95.6 s on the showcase.
   `KT_VIDEO_GPU=1` takes the adapter anyway (`kt_gpu::export_engine`).
 - **A stream stage keeps the serial export**: its pre-roll decodes on the compose thread.
 
@@ -173,5 +173,28 @@ files up to 3840×2160), 32 cores, no GPU (llvmpipe), media in the page cache, o
 `/dev/shm`, other sessions' builds on the machine (load 10–50). Busy seconds per stage summed over
 the stage's threads; "decoded" is pictures out of the decoders for the 5,644 the export uses.
 
-@MEASURED@
+| run | wall | peak RSS | decode | compose | readback | convert | encode | pictures decoded |
+|---|---|---|---|---|---|---|---|---|
+| master + the RGBA pad, GPU (llvmpipe), one thread | 324.0 s | 4.6 GB | — | — | — | — | — | ≈101,000 |
+| master + the RGBA pad, CPU, one thread | 860.9 s | 3.7 GB | — | — | — | — | — | ≈101,000 |
+| `--serial`, GPU (llvmpipe): the decode fixes only | 206.7 s | 7.9 GB | 34.8 | 120.9 | — | 8.2 | 40.6 | 9,190 |
+| `--serial`, CPU: the decode fixes only | 634.4 s | 5.0 GB | 34.9 | 551.3 | — | 7.4 | 38.6 | 9,190 |
+| pipelined, GPU (llvmpipe, `KT_VIDEO_GPU=1`), 4 workers | 132.6 s | 14.9 GB | 55.1 | 117.1 | 10.3 | 14.2 | 5.1 | 9,083 |
+| pipelined, CPU (the default here), 16 workers | **95.0 s** | 16.2 GB | 63.8 | 1190.6 | — | 14.0 | 7.7 | 9,190 |
+| the same, with frame buffers returned to the system (D11) | 115.7 s¹ | **7.3 GB** | 89.9 | 1343.7 | — | 14.6 | 8.6 | 9,190 |
+| GPU (llvmpipe) with D11 | 191.0 s¹ | 7.3 GB | 75.8 | 132.0 | 50.9 | 15.1 | 5.1 | 9,083 |
+
+¹ load 55–80 from other sessions' builds during these two runs (10–45 during the others): the wall
+times are not comparable with the rows above; the RSS is. Audio and audio encode: 1–3 s busy in
+every run. On this machine the export went from 324 s (the program's default then, llvmpipe) to
+95 s; the CPU path from 861 s to 95 s. Where the time went before: the decoders made 101,009
+pictures for 5,644 used (D8, D9) and one core composed. Now the composite is the bottleneck,
+spread over 16 workers (1190 s busy in 95 s); the next gain is the composite itself (the owner's
+C2, `compute-backends`), not the plumbing.
+
+- **Freed frames stay with glibc's arenas unless large allocations are mapped** (D11,
+  `kt_media::frame_alloc`): the dynamic mmap threshold rises to 32 MB after the first large free,
+  and decoded frames freed on another thread stayed in per-thread arenas — 9 GB of the 16.2 GB.
+  The binaries fix the threshold at 1 MiB first thing (t1458); `MALLOC_ARENA_MAX=2` alone gave
+  10.2 GB.
 

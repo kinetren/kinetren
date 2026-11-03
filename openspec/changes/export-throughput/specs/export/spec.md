@@ -20,8 +20,8 @@ the wall time; `--serial` runs the reference.
 Why: the owner (2026-11-03, kkt-26.11.03 C1): "our final render is VERY slow, slower even than the
 preview; it seems not parallel but strongly sequential". It was: one thread did decode →
 composite → readback (a full wait per frame) → conversion → encode, libx264 encoded on one
-thread, and the audio pass started after the last video frame. The showcase export took 429.6 s
-for 104 s of 1080p25 and now takes 101 s.
+thread, and the audio pass started after the last video frame. The showcase export took 324 s (llvmpipe)
+and 861 s (CPU) for 104 s of 1080p25, and now takes 96 s.
 
 #### Scenario: The pipelined export writes the serial streams
 - **WHEN** the demo project (layers, transitions, FX, automation, audio FX) is rendered over a

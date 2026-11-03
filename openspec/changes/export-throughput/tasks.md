@@ -1,6 +1,6 @@
 # Tasks
 
-Test numbers t1450–t1457 are reserved by this change (t1415–t1419 and t1430–t1434 are taken by
+Test numbers t1450–t1458 are reserved by this change (t1415–t1419 and t1430–t1434 are taken by
 sibling changes). Every stage ends with a commit (English message, first line = the stage and
 what was done, no `Co-Authored-By` or other agent lines) and `scripts/target-prune.py`.
 
@@ -37,11 +37,19 @@ what was done, no `Co-Authored-By` or other agent lines) and `scripts/target-pru
   path, upload texture reuse, `new_headless_for_export`, `export_engine` (a software rasterizer
   composes on the CPU); t1457 (D5)
 
+- [x] 2.6 Frame-sized buffers back to the system (`frame_alloc`, the binaries' first statement);
+  t1458; peak RSS 16.2 → 7.3 GB (D11)
+
 ## 3. Records and finish
 
-- [ ] 3.1 Before/after per stage on release in `openspec/specs/export/design.md`; the revisited
+- [x] 3.1 Before/after per stage on release in `openspec/specs/export/design.md`; the revisited
   SIMD rejection (D10); the media-index design for D1/D7–D9; crate CLAUDE.md lines
-- [ ] 3.2 `docs/guide/whats-new.md` (## kt26.11); registry `kkt-26.11.03-index.md` row C1
-- [ ] 3.3 `cargo test --workspace`, `cargo clippy --all-targets` (no new warnings in the changed
-  lines); commit; `scripts/target-prune.py`
-- [ ] 3.4 `./scripts/finish.sh`, the version here; archive the change
+- [x] 3.2 `docs/guide/whats-new.md` (## kt26.11); registry `kkt-26.11.03-index.md` row C1
+- [x] 3.3 `cargo test --workspace`, `cargo clippy --all-targets` (no new warnings in the changed
+  lines); commit; `scripts/target-prune.py`. Recorded: 1468 passed, 1 red — t640 (load-sensitive,
+  green alone, 11.7 s); clippy: one `is_multiple_of` in export.rs fixed, the two kt-cli warnings
+  (main.rs:711, :1168) are older than this change
+- [x] 3.4 No `finish.sh` (the orchestrator runs it per stage, owner 2026-11-03): the live scenarios
+  `render` and `renderregion`. Recorded: the pipelined render finished the scenario's 40 s project
+  before it reached Pause; the project is 200 s now (`kt-demo-200s.mp4`, 11 % at the Log step),
+  `render` green alone on the first try, `renderregion` green; archive the change

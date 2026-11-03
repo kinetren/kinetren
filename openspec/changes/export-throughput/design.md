@@ -49,7 +49,7 @@ encoder, one frame order.
   frames it decoded for the unwritten chunks stay under four (`LOOKAHEAD_BYTES`): the next chunk
   (≤ half a budget) and frames shared with older chunks fit in the rest, and the LRU drops the
   written chunks first. The first version gated on "two chunks ahead": at 4K decode sizes a chunk
-  is ONE frame, and two of sixteen CPU workers were busy (337 s). The byte budget gave 101 s.
+  is ONE frame, and two of sixteen CPU workers were busy (337 s). The byte budget gave 95.6 s.
 - **A stream stage keeps the serial export.** Its pre-roll (`stream_preroll`, datamosh D6)
   decodes on the compose thread from the export's own sources; `has_stream_stages` routes such a
   project to the serial path.
@@ -100,8 +100,8 @@ identity across thread counts is not promised.
   for, on its own device.
 - **A software rasterizer composes on the CPU.** `kt_gpu::export_engine` refuses a
   `DeviceType::Cpu` adapter (llvmpipe, lavapipe) unless `KT_VIDEO_GPU=1`: it rasterizes one frame
-  at a time through one queue, the CPU workers compose a frame each. On the showcase: 131.9 s on
-  llvmpipe, 101.4 s on the CPU workers. The render window's backend row says why.
+  at a time through one queue, the CPU workers compose a frame each. On the showcase: 133.9 s on
+  llvmpipe, 95.6 s on the CPU workers. The render window's backend row says why.
 
 ### D6. The stage profile
 `ExportOptions.profile: Option<Arc<ExportProfile>>` — busy nanoseconds per stage (decode,
@@ -143,6 +143,16 @@ determinism. That premise is gone: the AVX2 twins (R.32, kt-fx `video_simd.rs`, 
 export lacked was cores, not lanes. The rejection is replaced by the rule that stands: SIMD in any
 kernel only as a byte-exact twin of its scalar text.
 
+### D11. Frame-sized buffers go back to the system
+The first pipelined runs peaked at 16.2 GB (CPU) and 14.9 GB (llvmpipe) against 5.0 GB serial.
+Not the workers (4 workers: 14.1 GB) but glibc: its mmap threshold is DYNAMIC, rising up to 32 MB
+after the first large free, so decoded frames (8–33 MB) came from per-thread arenas and, freed on
+another thread, stayed there. `MALLOC_ARENA_MAX=2` gave 10.2 GB; a fixed 1 MiB threshold 7.3 GB.
+`kt_media::frame_alloc::return_large_frames_to_os` sets it first thing in kt-cli and kt-app (the
+preview's decode threads free frames the same way); small allocations are untouched; no-op off
+glibc. t1458. **Rejected:** a frame pool — every stage would have to return buffers to it, and
+the cache's evictions happen wherever an insert lands.
+
 ## Measurements
 
 Release build, the showcase (104.0 s, 2600 frames 1080p25, libx264 veryfast crf 23), one binary,
@@ -152,9 +162,9 @@ Release build, the showcase (104.0 s, 2600 frames 1080p25, libx264 veryfast crf 
 
 ## Risks / Trade-offs
 
-- **Memory.** The pipeline's cache is 960 MB (five serial budgets), the CPU workers' scratch at
-  most 1 GiB (≤ 16 workers, eight output frames each), two decoders for a file read at two places.
-  The showcase's peak RSS is in the measurements.
+- **Memory.** The pipeline's cache is 960 MB (five serial budgets), the CPU workers' scratch, two
+  decoders for a file read at two places: the showcase peaks at 7.3 GB against 5.0 GB serial
+  (D11; 16.2 GB before it).
 - **The file's bytes differ from the serial export's** (x264 with threads, audio interleaved
   earlier); the frames and samples handed to the encoder are the same (t1451), and one machine
   writes the same file every run.

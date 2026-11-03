@@ -26,6 +26,8 @@ use kt_otio::Retained;
 use kt_time::{AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, Tick};
 
 fn main() {
+    // frame-sized buffers go back to the system when freed (export-throughput D11)
+    kt_media::frame_alloc::return_large_frames_to_os();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = run(&args);
     std::process::exit(code);

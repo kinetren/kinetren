@@ -99,3 +99,7 @@ Media sources: the trait `MediaSource`, `SyntheticSource` (tests), `FfmpegSource
   opened with the packet index the first already has. Only the export's own sources use it; the
   preview's `MediaWorker` still has one decoder per media (a known follow-up).
 
+- **`frame_alloc::return_large_frames_to_os()` is the binaries' FIRST statement** (kt-cli, kt-app;
+  export-throughput D11, t1458): glibc's dynamic mmap threshold let freed 8–33 MB frames pile up in
+  per-thread arenas — the pipelined export peaked at 16.2 GB, 7.3 GB with the fixed 1 MiB threshold.
+  A new binary that decodes frames on several threads calls it too.
