@@ -34,13 +34,14 @@ OWN_PROCESS = True
 
 SHOTS = [
     ("hero", "the whole window during playback: free-layout bin, layered preview, live meters"),
+    ("welcome", "the welcome window: the tour, templates, the recent project with its poster, What's new"),
     ("timeline", "the timeline: a nested reel expanded in place mid-edit, its veiled tails"),
     ("media-bin", "the media bin in free layout with its groups"),
     ("reel-parameters", "the published parameters of a reel instance"),
     ("search", "Ctrl+F: searching the project"),
     ("morpher-before-after", "the same frame without and with the morpher"),
     ("slowed-reverb-automation", "Slowed+Reverb on the music bed with rate/mix curves"),
-    ("video-fx", "the video FX editor with the effect picker open"),
+    ("video-fx", "the effect gallery scrolled to the stylize, camera and tape cells"),
     ("titles", "a title generator in the event window"),
     ("transitions", "the transition editor"),
     ("morpher", "the morpher batch editor"),
@@ -55,7 +56,7 @@ SHOTS = [
 # Shots the pipeline takes whose images wait for the owner's run on the showcase footage (he
 # fetches it himself, 2026-10-21): `readme-check.py` lets one be absent while nothing references
 # it. Once `readme-shots.py` has written it, reference it in the docs and drop it from here.
-AWAITING_FOOTAGE = ["fx-datamosh", "fx-camera-isp", "fx-vhs-tape", "masks"]
+AWAITING_FOOTAGE = ["fx-datamosh", "fx-camera-isp", "fx-vhs-tape", "masks", "welcome"]
 
 RUST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 FIXTURES = os.path.join(RUST, "fixtures")
@@ -125,7 +126,8 @@ def targets(project):
     reel = first("reel instance with overrides",
                  lambda c: c["media"] == reel_id and c.get("overrides"))
     # full-frame cuts for the effect shots: a main-track video event nothing else covers (no
-    # other video track at its time, no transition, not a reel or a generator)
+    # other video track at its time, no transition, not a reel or a generator) and with no look
+    # of its own — the "before" half is the plain frame
     reels = {q["id"] for q in doc["sequences"]}
     paths = {m["id"]: m.get("path", "") for m in doc.get("media", [])}
     videos = [c for c in clips if c["kind"] == "video"]
@@ -134,6 +136,7 @@ def targets(project):
         end = c["start"] + c["duration"]
         return (c["kind"] == "video" and c["lane"] == 1 and c["duration"] >= 72000
                 and c["id"] not in joined and c["media"] not in reels and not c.get("gen")
+                and not c.get("fx")
                 and not any(o["lane"] != c["lane"] and o["start"] < end
                             and o["start"] + o["duration"] > c["start"] for o in videos))
 
@@ -453,7 +456,7 @@ class Shooter:
             font = ImageFont.truetype("DejaVuSans-Bold.ttf", 24)
         except OSError:
             font = ImageFont.load_default()
-        for i, (img, label) in enumerate(zip(frames, ("Without the morpher", "With the morpher: source swap + VHS + glow"))):
+        for i, (img, label) in enumerate(zip(frames, ("Without the morpher", "With the morpher: another source, a security camera at night"))):
             out.paste(img.resize((w, h)), (i * (w + gap), label_h))
             draw.text((i * (w + gap) + 12, 10), label, fill=(230, 230, 230), font=font)
         path = os.path.join(self.raw, "morpher-before-after.png")
@@ -637,11 +640,70 @@ class Shooter:
             if picker:
                 self.require(name, app.click_probe("fxreg.add.video"), "click on “+ effect…” (video)")
                 self.still(app, name, "effect picker opened")
+                # the gallery's end: the stylize looks, Camera ISP and VHS Tape, each cell
+                # rendered on the event's own frame. A cell's rectangle is published from the
+                # laid-out list, below the fold too: "on screen" is its bottom inside the popup
+                pop = self.probe(app, name, "fxreg.popup", app.has_probe("fxreg.popup"))
+                win = self.kt.geometry()
+                px, py = win["x"] + int(pop["x"] + pop["w"] / 2), win["y"] + int(pop["y"] + pop["h"] * 0.6)
+
+                def last_cell_shown():
+                    c = app._probe_rect("fxreg.var.vhs_tape.0") if app.has_probe("fxreg.var.vhs_tape.0", tries=2) else None
+                    return c is not None and pop["y"] < c["y"] and c["y"] + c["h"] <= pop["y"] + pop["h"]
+
+                for _ in range(40):
+                    if last_cell_shown():
+                        break
+                    app.wheel(px, py, 5)
+                    app.wait_frame(2, what="the gallery scrolled", soft=True)
+                self.require(name, last_cell_shown(), "the gallery scrolled to the VHS Tape cells")
+                # the cells render one by one; the search field keeps its blinking caret, so
+                # "settled" ignores a change no wider than the caret
+                from PIL import Image, ImageChops
+                deadline, calm = time.time() + 180.0, 0
+                prev = Image.open(app.shot("cells")).convert("RGB")
+                while calm < 3:
+                    self.require(name, time.time() < deadline, "the gallery cells rendered")
+                    self.kt.poll_step(1.0)
+                    cur = Image.open(app.shot("cells")).convert("RGB")
+                    box = ImageChops.difference(cur, prev).getbbox()
+                    calm = calm + 1 if box is None or box[2] - box[0] <= 4 else 0
+                    prev = cur
                 parts = [self.probe(app, name, "win.fx", app.has_probe("win.fx")),
                          self.probe(app, name, "fxreg.popup", app.has_probe("fxreg.popup"))]
                 r = self.union(*parts)
                 self.keep[name] = [self.abs((q["x"], q["y"], q["w"], q["h"])) for q in parts]
             self.capture(app, name, name, r)
+        finally:
+            self.close(app)
+
+    def welcome(self):
+        """The welcome window with the showcase as its recent project: a template closes the
+        showcase (its poster is rendered at close), Help → Welcome window… shows the card."""
+        step = "welcome"
+        app = self.fresh(step)
+        try:
+            store = os.path.join(self.raw, step, "store")
+            self.require(step, app.click_probe("menu.help"), "click on “Help”")
+            self.require(step, app.click_probe("help.welcome"), "click on “Welcome window…”")
+            self.require(step, app.has_probe("welcome.window", tries=20), "the welcome window opened")
+            self.require(step, app.click_probe("welcome.tpl.1080p25"), "click on the 1080p25 template")
+            # the showcase is untouched: no question about unsaved work, though its reel preview
+            # has arrived by now (t1413 — the preview used to mark the project edited)
+            self.require(step, not app.has_probe("ask.discard", tries=6),
+                         "no “save your changes?” over the untouched showcase")
+            self.require(step, app.wait_gone("welcome.window"), "the template closed the window")
+            posters = os.path.join(store, "posters")
+            deadline = time.time() + 180
+            while time.time() < deadline and not (os.path.isdir(posters) and os.listdir(posters)):
+                self.kt.poll_step(0.5)
+            self.require(step, os.path.isdir(posters) and bool(os.listdir(posters)),
+                         f"the showcase poster rendered into {posters}")
+            self.require(step, app.click_probe("menu.help"), "click on “Help”")
+            self.require(step, app.click_probe("help.welcome"), "click on “Welcome window…”")
+            self.require(step, app.has_probe("welcome.recent.0", tries=20), "the showcase as a recent card")
+            r = self.below_header(app, step, "welcome.window", app.has_probe("welcome.window"))
+            self.capture(app, step, "welcome", r)
         finally:
             self.close(app)
 
@@ -700,6 +762,7 @@ class Shooter:
 
     def run(self):
         self.overview()
+        self.welcome()
         self.timeline()
         self.reel_parameters()
         self.search()

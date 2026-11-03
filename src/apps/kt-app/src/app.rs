@@ -1949,7 +1949,10 @@ impl KtApp {
         self.reel_previews
             .set_paused(self.player.transport.is_playing() || self.render_job.is_some());
         if self.reel_previews.poll() {
-            self.dirty_ui = true;
+            // a finished preview is a picture to show, NOT an edit: `dirty_ui` here made every
+            // project with a reel ask "save your changes?" untouched and leave a recovery file
+            // on exit (readme-shots-showcase, t1413). One repaint shows the new texture.
+            ui.ctx().request_repaint();
             // Textures live exactly as long as their band: a reel evicted from the
             // LRU or made stale by an edit has no right to hold tens of megabytes in
             // video memory

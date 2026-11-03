@@ -19601,3 +19601,54 @@ fn t965_encoder_combo_and_progress_row_follow_the_device() {
     assert!(texts.iter().any(|t| t == row), "the video row does not name the device: {texts:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Test 1413 (readme-shots-showcase): a reel's background preview is not an edit.
+///
+/// Found by the README pipeline: the showcase, opened and untouched, asked "save your changes?"
+/// when a template replaced it. The reel preview service set `dirty_ui` each time a render
+/// arrived, and the unsaved-work question, the 30 s recovery write and the write on exit all read
+/// that flag. What is asserted is what the person meets: after the preview of the reel is on
+/// screen, leaving the project asks nothing and leaves no recovery file behind.
+#[test]
+fn t1413_reel_preview_does_not_mark_the_project_edited() {
+    let dir = std::env::temp_dir().join(format!("kt-t1413-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("t1413.kt");
+    let seq = {
+        let (h, _g, seq) = harness_with_nest();
+        let p = h.state().model.document().clone();
+        std::fs::write(&path, crate::app::project_text_of(&p, &Default::default(), None)).unwrap();
+        seq
+    };
+    let rec = crate::app::recovery_path_for(Some(&path));
+    let _ = std::fs::remove_file(&rec);
+    {
+        let mut app = KtApp::open(&path).expect("project opens");
+        // the barrier is off in the harness; on here — the write on Drop is part of the check
+        app.recovery_on_drop = true;
+        app.workspace_file = Some(dir.join("ws.json"));
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(W, H))
+            .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
+        crate::icons::install_fonts(&h.ctx);
+        h.step();
+        let key = reel_key_of(&mut h, seq);
+        let deadline = std::time::Instant::now() + WAIT_BG;
+        while h.state().reel_previews.get(&key).map(|p| p.peaks.is_none()).unwrap_or(true)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            h.step();
+        }
+        assert!(h.state().reel_previews.get(&key).is_some(), "the reel preview was not computed");
+        assert!(h.state().reel_previews.renders() >= 1, "no render arrived: the test checks nothing");
+        h.step();
+        let app = h.state_mut();
+        assert!(!app.dirty_content && !app.dirty_ui, "the reel preview marked the project edited");
+        assert!(app.guard_unsaved(crate::app::Pending::New), "File → New asked about unsaved work");
+        assert!(app.ask.is_none(), "a question is up on an untouched project");
+    } // here Drop: an untouched project leaves no recovery
+    assert!(!rec.exists(), "an untouched project left a recovery file: {}", rec.display());
+    let _ = std::fs::remove_dir_all(&dir);
+}
