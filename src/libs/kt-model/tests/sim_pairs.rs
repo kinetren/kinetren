@@ -132,6 +132,51 @@ fn t1461b_a_morpher_patch_hands_the_other_half_on() {
     assert_eq!(only_sound.chain_for(ClipKind::Video).iter().map(|f| f.tag()).collect::<Vec<_>>(), ["vhs_tape"]);
 }
 
+/// t1461c: a preset or a pasted chain goes through the same door as the picker (`append_chain_block`,
+/// then SetFx and SetFxAuto): the device lands on both halves, its curve too, and a preset holding
+/// the sound puts the tape on the picture.
+#[test]
+fn t1461c_a_preset_or_a_paste_carries_the_pair() {
+    kt_plugins_builtin::install();
+    let mut m = TimelineModel::new(project());
+    let curve = ParamCurve {
+        param: "tracking_um".into(),
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick(900_000), 30.0)]),
+        source: Default::default(),
+    };
+    let block = ops::FxChainBlock {
+        slots: vec![ops::FxSlotBlock {
+            fx: FxInstance::plugin("vhs_tape").unwrap(),
+            bypass: false,
+            curves: vec![curve],
+            masks: Vec::new(),
+        }],
+        src_in: Tick(0),
+        fx_off: false,
+    };
+    let v = get(&m, 10);
+    let (mut fx, mut bypass, mut auto) = (v.fx.clone(), v.fx_bypass.clone(), v.fx_auto.clone());
+    ops::append_chain_block(&mut fx, &mut bypass, &mut auto, &block, v.source_in);
+    m.apply(Command::SetFx { id: ClipId(10), fx }).unwrap();
+    m.apply(Command::SetFxAuto { id: ClipId(10), auto }).unwrap();
+    let a = get(&m, 11);
+    assert_eq!(ids(&a), ["gain", "vhs_tape_sound"], "the paste did not reach the audio");
+    assert_eq!(a.fx_auto[1][0].param, "tracking_um", "the pasted curve did not reach the sound");
+
+    // a preset of the sound, on the audio: the picture gets the tape
+    let mut m = TimelineModel::new(project());
+    let a = get(&m, 11);
+    let block = ops::FxChainBlock {
+        slots: vec![ops::FxSlotBlock { fx: FxInstance::plugin("vhs_tape_sound").unwrap(), bypass: false, curves: vec![], masks: Vec::new() }],
+        src_in: Tick(0),
+        fx_off: false,
+    };
+    let (mut fx, mut bypass, mut auto) = (a.fx.clone(), a.fx_bypass.clone(), a.fx_auto.clone());
+    ops::append_chain_block(&mut fx, &mut bypass, &mut auto, &block, a.source_in);
+    m.apply(Command::SetFx { id: ClipId(11), fx }).unwrap();
+    assert_eq!(ids(&get(&m, 10)), ["vhs_tape"], "the sound's preset did not reach the picture");
+}
+
 /// t1485 (capability `project-format`): a deck's sound row off its default writes the project as
 /// format 4 — an older build refuses it instead of dropping the device's sound settings; a deck at
 /// its defaults, or a sound slot's own rows, leave the former format and text.

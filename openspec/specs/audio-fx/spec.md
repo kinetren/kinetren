@@ -419,6 +419,11 @@ visible and switchable off; presets, paste, automation and morpher batches go th
   on; two sounds follow two tapes; the gain alone remains
 - **TEST** t1461 (`src/libs/kt-model/tests/sim_pairs.rs`)
 
+#### Scenario: A preset or a pasted chain carries the pair
+- **WHEN** a chain block holding VHS Tape with a curve is appended to the picture's chain; a block holding the sound to the audio's
+- **THEN** the audio holds the sound with the curve; the picture holds the tape
+- **TEST** t1461c (`src/libs/kt-model/tests/sim_pairs.rs`)
+
 #### Scenario: A morpher layer's tape reaches the sound
 - **WHEN** a patch carries VHS Tape with a tracking curve; then bypassed; then holding the sound itself; a patch carrying only the sound
 - **THEN** its audio chain is `vhs_tape_sound` with the curve in the same position; bypassed — none; held — one; the video chain of the sound-only patch is `vhs_tape`
