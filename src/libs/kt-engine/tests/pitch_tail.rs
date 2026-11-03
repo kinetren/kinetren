@@ -1,4 +1,4 @@
-//! Tests t1330-t1335, t1339 (pitch-tail-choice, kkt-26.11.01 item 15): the echo of the effects
+//! Tests t1330-t1335, t1339 (pitch-tail-choice, kkt-26.11.01 item 15), t1440-t1441 (loop-pitch-tail-dip): the echo of the effects
 //! standing before the pitch — cut at the event's end (the default) or ringing on after it.
 //!
 //! The owner, asked why his reverb's echo now ends with the event: "what does reverb have to do with
@@ -541,4 +541,126 @@ fn t1339_the_ringing_echo_through_a_seam_and_a_seek() {
     }
 }
 
+/// `laps` laps of `region` played from its start in pieces of `step`, as the transport does.
+fn looped(p: &Project, region: std::ops::Range<i64>, laps: i64, step: i64) -> Vec<f32> {
+    let r = AudioRenderer::new(p);
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+    let mut f = sine();
+    let span = region.end - region.start;
+    let mut out = vec![0f32; (laps * span) as usize * CH];
+    let (mut done, mut pos) = (0i64, region.start);
+    while done < laps * span {
+        let n = step.min(laps * span - done);
+        r.render_looped_with(
+            &mut f,
+            &mut store,
+            region.clone(),
+            pos,
+            &mut out[done as usize * CH..(done + n) as usize * CH],
+        );
+        done += n;
+        pos += n;
+    }
+    out
+}
 
+/// The deepest 64-frame window of the first 1 024 frames of `a` as a share of the same window of `b`.
+fn worst_start(a: &[f32], b: &[f32]) -> f64 {
+    (0..31).map(|w| rms(a, w * 32, 64) / rms(b, w * 32, 64).max(1e-9)).fold(f64::INFINITY, f64::min)
+}
+
+const LAPS: i64 = 4;
+
+/// t1440: a loop that re-enters an event with an echo before its pitch — at the event's start or
+/// inside it, the region running 200 ms past the out-point, so the echo has rung out by the wrap —
+/// starts every lap as playing from that point does, in both echo choices. Before, a lap began with
+/// the pitch's look-ahead ring of where the previous lap stopped: ≈ 75 ms of silence with "rings on"
+/// (the deepest window 0.000 of the straight play), about half the level with "cut".
+#[test]
+fn t1440_a_loop_lap_starts_as_playing_from_there() {
+    let end = START + LEN;
+    for engine in ENGINES {
+        for st in [7.0, -7.0] {
+            for rings in [false, true] {
+                let pf = if rings { ring(pitch(st)) } else { pitch(st) };
+                let p = events_project(engine, &[(START, LEN, SRC)], vec![echo(), pf]);
+                for rs in [START, START + 2_400] {
+                    let region = rs..end + 9_600;
+                    let span = region.end - region.start;
+                    let out = looped(&p, region.clone(), LAPS, 1_024);
+                    assert!(
+                        looped(&p, region.clone(), LAPS, 333) == out,
+                        "{engine:?} {st} {rings} from {rs}: pieces of 333"
+                    );
+                    let from_there = render_with(&p, &mut sine(), rs, span, 1_024);
+                    for k in 0..LAPS {
+                        let lap = &out[(k * span) as usize * CH..((k + 1) * span) as usize * CH];
+                        let dip = worst_start(lap, &from_there);
+                        assert!(
+                            lap == &from_there[..],
+                            "{engine:?} {st} rings {rings} from {rs}: lap {k} is not the play from there (deepest start window {dip:.3})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// t1441: where the previous lap still rings at the wrap (the region ends 50 ms past the out-point;
+/// an echo without and with feedback), a lap is the play from its start plus what the earlier laps
+/// ring on, each continuing its own stream — as copies of the event one after another would sound;
+/// with "cut" nothing of them is heard past the out-point, so the lap is the play from there byte for
+/// byte. At most `MAX_LAPS` earlier laps ring at once.
+#[test]
+fn t1441_earlier_laps_ring_on_over_a_new_lap() {
+    let end = START + LEN;
+    let region = START..end + 2_400;
+    let span = region.end - region.start;
+    let feedback = |fb: f64| fx("delay", &[100.0, fb, 0.5, 0.0]);
+    for engine in ENGINES {
+        for fb in [0.0, 0.6] {
+            for rings in [false, true] {
+                let pf = if rings { ring(pitch(7.0)) } else { pitch(7.0) };
+                let p = events_project(engine, &[(START, LEN, SRC)], vec![feedback(fb), pf]);
+                let out = looped(&p, region.clone(), LAPS + 3, 1_024);
+                assert!(
+                    looped(&p, region.clone(), LAPS + 3, 333) == out,
+                    "{engine:?} fb {fb} rings {rings}: pieces of 333"
+                );
+                // one cold play from the region start, long enough for every lap's ring
+                let long = span * (kt_engine::fxstore::MAX_LAPS as i64 + 2) + 48_000 * 2;
+                let straight = render_with(&p, &mut sine(), region.start, long, 1_024);
+                let at = |i: i64| straight.get(i as usize).copied().unwrap_or(0.0);
+                for k in 0..LAPS + 3 {
+                    let lap = &out[(k * span) as usize * CH..((k + 1) * span) as usize * CH];
+                    let earlier = (k as usize).min(kt_engine::fxstore::MAX_LAPS) as i64;
+                    let want: Vec<f32> = (0..span * CH as i64)
+                        .map(|i| {
+                            let mut ring = 0f32;
+                            for j in (1..=earlier).rev() {
+                                ring += at(j * span * CH as i64 + i);
+                            }
+                            at(i) + ring
+                        })
+                        .collect();
+                    assert!(lap == &want[..], "{engine:?} fb {fb} rings {rings}: lap {k}");
+                    if !rings {
+                        assert!(
+                            lap == &straight[..(span as usize * CH)],
+                            "{engine:?} fb {fb} cut: lap {k} is the play from there"
+                        );
+                    }
+                    if k > 0 {
+                        let dip = worst_start(lap, &straight);
+                        assert!(
+                            dip >= 0.5,
+                            "{engine:?} fb {fb} rings {rings}: lap {k} starts at {dip:.3} of the play from there"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
