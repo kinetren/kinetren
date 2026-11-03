@@ -159,6 +159,12 @@ reasons and history are in the `design.md` next to it. Here — one line each, t
     physical chain step by step and which parameters are physical quantities. Its interface is
     a device-like panel, not a column of sliders.
   - An imitation is never offered as the answer to such a request, nor renamed into one.
+  - **A simulated device that records picture AND sound simulates both** (owner, 2026-11-03:
+    "агенты … не подумали что к тому же vhs tape должен быть парный audio-фильтр, к datamosh
+    тоже"). The tape, the codec, the phone: the audio half is a paired effect on the linked
+    audio, driven by the SAME device state (one tape, one deck, one stream), so a dropout, a
+    head clog or a broken keyframe is seen and heard at the same moment. A new simulation
+    effect is not done until its pair exists or its note says why the device has no sound.
 - **Caches are allowed where they pay** (owner, 2026-11-01): a memo or a disk tier is a normal
   tool, not a last resort. It must be keyed by what determines the result (content hashes,
   revisions — never a guess that can go stale silently), bounded in size, and invisible to
