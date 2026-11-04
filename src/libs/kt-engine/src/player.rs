@@ -41,6 +41,9 @@ pub const ENGINE_RATE_MAX: f32 = 8.0;
 /// Master volume ceiling (+24 dB — the top of the UI fader).
 pub const MASTER_GAIN_MAX: f32 = 16.0;
 const PLAYBACK_AUDIO_LOOKAHEAD_FRAMES: i64 = AUDIO_SAMPLE_RATE as i64 / 5; // 200 ms
+/// How long a start waits for its audio (cold-start-audio). Past it the render goes on with what
+/// there is: a source that never answers must not stop playback.
+const START_AUDIO_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
 const PREFETCH_AUDIO_LOOKAHEAD_FRAMES: i64 = 2 * AUDIO_SAMPLE_RATE as i64; // 2 c
 
 /// The part shared with the audio callback: ring + consumption counter + flush.
@@ -1161,6 +1164,11 @@ fn audio_render_loop(ctx: RenderCtx) {
     // the local render position (frames); may lead the playhead by the ring
     let mut render_head: i64 = transport.playhead_frames();
     let mut last_generation = transport.generation();
+    // The ring has not been filled since a play position was set: nothing has sounded, so the
+    // clock stands (before the first frame, invariant 6) and waiting for the audio costs no sync.
+    // Filling at once rendered a whole ring of silence ahead of the decoders.
+    let mut starting = true;
+    let mut start_wait: Option<std::time::Instant> = None;
     let mut last_dir: i64 = 1;
     // The “armedness” of the loop wrap — transport semantics (the wrap only
     // from inside the region, item 132): a seek past the end (for reverse — past the start)
@@ -1196,6 +1204,8 @@ fn audio_render_loop(ctx: RenderCtx) {
         let generation = transport.generation();
         let generation_changed = generation != last_generation;
         if generation_changed {
+            starting = true;
+            start_wait = None;
             last_generation = generation;
             store.reset_all(); // pre-roll at the next read
             render_head = transport.playhead_frames();
@@ -1219,6 +1229,8 @@ fn audio_render_loop(ctx: RenderCtx) {
         if dir_changed {
             flight.push(crate::flight::Ev::Dir, dir, 0);
             last_dir = dir;
+            starting = true;
+            start_wait = None;
             store.reset_all();
             render_head = transport.playhead_frames();
             shared.consumed_frames.store(0, Ordering::Release);
@@ -1251,6 +1263,8 @@ fn audio_render_loop(ctx: RenderCtx) {
             render_head = transport.playhead_frames();
             shared.consumed_frames.store(0, Ordering::Release);
             shared.flush.store(true, Ordering::Release);
+            starting = true;
+            start_wait = None;
         }
         last_effective_some = effective_some;
         // we advance the playhead by what the callback consumed (with the sign of the
@@ -1387,9 +1401,40 @@ fn audio_render_loop(ctx: RenderCtx) {
                     );
                 }
             }
+            // a start waits until the bursts of a whole ring are there: the fill below is one
+            // pass over all of it, and what is missing now would be silence, not a late burst.
+            // Plus the look-ahead margin: the first refill reads just past the ring.
+            let audio_missing = starting && {
+                let ring = RING_CAPACITY_FRAMES as i64
+                    + (PLAYBACK_AUDIO_LOOKAHEAD_FRAMES as f32 * rate_now.abs().max(1.0)) as i64;
+                let wins: Vec<std::ops::Range<i64>> = if dir < 0 {
+                    std::iter::once((render_head - ring).max(0)..render_head).collect()
+                } else {
+                    lookahead_windows(render_head, ring, effective_region)
+                };
+                let workers = workers.read().unwrap();
+                wins.into_iter().fold(0, |n, win| {
+                    n + prefetch_audio_pass(
+                        &renderer,
+                        &cache,
+                        &workers,
+                        win,
+                        Priority::Playback,
+                        generation,
+                        dir < 0,
+                    )
+                }) > 0
+            };
+            let hold = audio_missing
+                && start_wait.get_or_insert_with(std::time::Instant::now).elapsed()
+                    < START_AUDIO_GRACE;
+            if !hold {
+                starting = false;
+                start_wait = None;
+            }
             // we fill the ring: render_head is linear, loop mapping is inside
             // render_looped_with (the wrap does NOT bump the generation — FX live)
-            while producer.slots() >= chunk.len() {
+            while !hold && producer.slots() >= chunk.len() {
                 let stats = if dir < 0 {
                     // reverse (J4 v1.4): the block BEFORE render_head, the material is
                     // reversed frame by frame before the ring; FX — dry

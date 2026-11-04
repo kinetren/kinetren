@@ -533,3 +533,71 @@ fn t1536_a_held_picture_does_not_freeze() {
     }
     player.pause();
 }
+
+/// A file that takes `burst` to decode one audio burst.
+struct SlowAudio {
+    info: MediaInfo,
+    burst: Duration,
+}
+
+impl MediaSource for SlowAudio {
+    fn info(&self) -> &MediaInfo {
+        &self.info
+    }
+    fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError> {
+        std::thread::sleep(self.burst);
+        Ok(AudioBurst::silence(idx))
+    }
+    fn read_video_frame(&mut self, p: Tick, q: Option<Quality>) -> Result<VideoFrame, MediaError> {
+        Ok(GopSource::frame(p.0, q.unwrap_or(SHARP)))
+    }
+    fn keyframe_before(&self, p: Tick) -> Option<Tick> {
+        Some(p)
+    }
+}
+
+fn cold_player(burst: Duration) -> (Player, rtrb::Consumer<f32>) {
+    let mut p = sharp_over_backdrop();
+    p.clips.truncate(1);
+    p.clips[0].kind = ClipKind::Audio;
+    p.ensure_tracks(LaneKind::Audio, 1);
+    p.validate().unwrap();
+    let info = MediaInfo {
+        duration: Tick(60 * SEC),
+        has_video: false,
+        has_audio: true,
+        fps: None,
+        width: 0,
+        height: 0,
+        sar: (1, 1),
+        still: false,
+    };
+    let src = SlowAudio { info, burst };
+    Player::new(p, vec![(MediaId(1), Box::new(src) as Box<dyn MediaSource>)])
+}
+
+/// t1537: the first play after opening starts with its sound. The render filled the whole ring in
+/// one pass the moment Play landed, ahead of the decoder: a ring of silence per event, on 1 start
+/// in 4 of the showcase, and every start here. The start now waits for the ring's bursts; the clock
+/// stands meanwhile, so nothing goes out of sync.
+#[test]
+fn t1537_a_cold_start_begins_with_its_sound() {
+    let (player, ring) = cold_player(Duration::from_millis(4));
+    let o =
+        BenchOptions { from: Tick(0), to: Tick(SEC), settle: Duration::ZERO, ..Default::default() };
+    let r = play_range(&player, ring, o);
+    assert_eq!(r.underruns, 0, "silence at the start: {:?}", r.underrun_at);
+    assert!(r.wall_s >= 0.9, "the range played in real time: {} s", r.wall_s);
+}
+
+/// t1538: the wait has a limit: a source that does not answer delays the start and stops nothing.
+#[test]
+fn t1538_a_dead_source_does_not_stop_the_start() {
+    let (player, ring) = cold_player(Duration::from_secs(3));
+    let o =
+        BenchOptions { from: Tick(0), to: Tick(SEC), settle: Duration::ZERO, ..Default::default() };
+    let began = Instant::now();
+    let r = play_range(&player, ring, o);
+    assert!(began.elapsed() < Duration::from_secs(3), "the start waited for the source");
+    assert!(r.underruns > 0, "scene guard: the source really gave nothing");
+}

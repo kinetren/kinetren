@@ -294,3 +294,22 @@ reports only the mix format.
 - **WHEN** the edge converts 1 s of a 1 kHz stereo sine (L) and silence (R) for a 44.1 kHz stereo device, a 48 kHz 6-channel device and a 48 kHz stereo device, filling in callback-sized chunks of 441, 512 and 1024 frames under an allocation-counting allocator
 - **THEN** 44 100 device frames consume between 48 000 and 48 000 + one resampler chunk + the kernel's two priming frames; the spectrum of the 44.1 kHz output peaks at 1 kHz and every other component is at least 60 dB down; the 6-channel output has the sine in channel 0 and exact zeros in channels 1–5; the stereo output is the kernel's output as before the edge, bit for bit; zero allocations happen on the filling thread during the fills (counted per thread, so another thread of the harness cannot blur it)
 - **TEST** t857 (`src/apps/kt-app/src/audio_out.rs`)
+
+### Requirement: A start begins with its sound
+A start (opening, a seek, a change of direction, a loop flip) SHALL hold the render until the audio
+of a whole ring and the look-ahead margin is in the cache, at most `START_AUDIO_GRACE`, and SHALL then
+go on with what there is. The clock SHALL stand until the first frame reaches the output. A pass of
+the callback before that first frame, with the ring empty, SHALL NOT count as an underrun.
+Why: the render filled the ring in one pass when Play landed, ahead of the decoders: 0.34 s of silence
+on the first play, on 1 start of 4 of the showcase (`docs/found-defects.md` row 11; cold-start-audio,
+2026-11-04).
+
+#### Scenario: A cold start
+- **WHEN** a range plays with no warm-up from a source that takes 4 ms a burst
+- **THEN** no frame of it is an underrun, and it plays in real time
+- **TEST** t1537 (`src/libs/kt-engine/tests/preview_throughput.rs`)
+
+#### Scenario: A source that does not answer
+- **WHEN** a source takes 3 s a burst
+- **THEN** the start goes on within the grace, with its underruns counted
+- **TEST** t1538 (`src/libs/kt-engine/tests/preview_throughput.rs`)

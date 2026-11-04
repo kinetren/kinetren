@@ -842,6 +842,9 @@ fn process_cpu_s() -> f64 {
     (tick(11) + tick(12)) / 100.0
 }
 
+/// The warm-up of a person who stands on the frame before pressing Play; `--cold` has none.
+const BENCH_SETTLE: std::time::Duration = std::time::Duration::from_millis(1500);
+
 /// `kt-cli preview` (preview-throughput): see the dispatch.
 fn preview_run(
     project: &Project,
@@ -852,6 +855,7 @@ fn preview_run(
     cpu: bool,
     ui_ms: f64,
     free_running: bool,
+    cold: bool,
 ) -> Result<(), String> {
     use kt_ffmpeg::iostats as io;
     use std::sync::atomic::Ordering::Relaxed;
@@ -888,6 +892,7 @@ fn preview_run(
         to: Tick((to * kt_time::TICK_HZ as f64) as i64),
         ui_ns: (ui_ms * 1e6) as u64,
         free_running,
+        settle: if cold { std::time::Duration::ZERO } else { BENCH_SETTLE },
         ..Default::default()
     };
     let snap = || {
@@ -1400,7 +1405,7 @@ fn run(args: &[String]) -> i32 {
             let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3))
             else {
                 eprintln!(
-                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--cpu] [--ui-ms N] [--free-running]"
+                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--cpu] [--ui-ms N] [--free-running] [--cold]"
                 );
                 return 2;
             };
@@ -1419,7 +1424,8 @@ fn run(args: &[String]) -> i32 {
             let ui_ms = opt("--ui-ms").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
             let cpu = args.iter().any(|a| a == "--cpu");
             let free = args.iter().any(|a| a == "--free-running");
-            match preview_run(&project, input, from, to, size, cpu, ui_ms, free) {
+            let cold = args.iter().any(|a| a == "--cold");
+            match preview_run(&project, input, from, to, size, cpu, ui_ms, free, cold) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");

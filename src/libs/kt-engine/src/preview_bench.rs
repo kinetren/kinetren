@@ -129,7 +129,7 @@ fn output_clock(
                 while ring.pop().is_ok() {}
                 primed = false;
             }
-            if !transport.is_playing() {
+            if !transport.is_playing() || (!primed && ring.slots() < 2) {
                 continue;
             }
             let mut next = || -> Option<(f32, f32)> {
