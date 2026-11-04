@@ -49,11 +49,46 @@ The old engine kept two composition codes: one for the preview and another for e
 
 ## Deferred
 
-- Bring the list of encoders in the dialog and in the candidates to what actually opens (vaapi/qsv), name the encoder in the progress line, and remove the "CRF" label from the slider for non-CRF encoders (F-EXP-004, S). Hardware encoding for Intel/AMD (hw contexts, NV12, a second branch of frame filling) — separate work, L.
+- Bring the list of encoders in the dialog and in the candidates to what actually opens (vaapi/qsv), and remove the "CRF" label from the slider for non-CRF encoders (F-EXP-004, S). Hardware encoding for Intel/AMD (hw contexts, NV12, a second branch of frame filling) — separate work, L.
 - Scaling of FX pixel parameters (blur/glow/vhs) by `quality / project` and the test "the resolution fraction does not change the picture" — the remainder of F-RES-006 (preview and export are equal only at an IDENTICAL Quality).
-- A line "export runs on GPU/CPU" in the render window and the summary (the data exists, the surface does not).
 - A rational fps (24000/1001) in the model, time and export — the residual NTSC drift of 0.1 %.
 - Sound in the cross-render (the mlt adapter is limited on audio).
+
+## The render window at the level of v1 (render-window-v1-parity, archived 2026-11-04)
+
+The owner asked for at least v1's information (two labelled forms, the speed chart, the log, Open
+file / Open folder); we took v1's rows, chart and log but not its fixed settings string, which was
+printed before anything was known. The window now learns the encoder, pixel format, options and
+backend from the run itself, and freezes at the end.
+
+- **D1. Events, not state.** `export_mp4_with_backends` takes `impl Fn(ExportEvent)`, where
+  `ExportEvent = Opened(EncoderReport) | Progress(ExportProgress) | Log(ExportLog)`. `ExportProgress`
+  stays `Copy` (it gains `video_bytes`/`audio_bytes`); `ExportLog` is an enum of facts, not preformatted
+  text, so the UI translates it and t955 compares values. Rejected: a non-`Copy` progress carrying an
+  `Option<Arc<EncoderReport>>` (every step would carry a pointer set once — a state, not an event), and a
+  second callback for logs (two channels whose relative order is lost). `BgJob::poll_with` visits every
+  message because `poll` kept only the last: a log line between two progress steps was lost.
+- **D2. Packet bytes from the muxer.** `Muxer::open` keeps every candidate that exists in the build and
+  failed, with its code (only `last_err` survived), and the opened candidate's options; `drain` counts
+  `pkt.size` per stream before `av_interleaved_write_frame`. Packet bytes, not `avio_tell` and not
+  `metadata(out).len()`: they are per stream (the bitrate row is the VIDEO bitrate), do not jump at the
+  `+faststart` rewrite, mix in no container overhead, and are available to `kt-cli` and tests. The sum is
+  at most the file size (t954).
+- **D3. The UI owns every clock** (invariant 11: no wall clock in the offline path). The engine reports
+  counts; elapsed stops at the result (`finished_at`) — before, it kept growing after Done; remaining,
+  speed samples (≥ 0.5 s), size so far, estimated final size (after 2 % of the frames) and the current
+  bitrate (a ratio of counts) are the window's. A `Clock` seam lets t957 draw frames at 11 s and 15 s
+  without sleeping.
+- **D8. The overwrite question is always ours** (`Ask::OverwriteRender`: Replace / Choose another name /
+  Cancel). Asked even where the native save dialog already asked: the native question is not guaranteed
+  (the `KT_FILE_PICK` seam, portals that do not confirm), ours names size and date, and the behaviour is
+  one on every OS and in the live rig. Before it, a failed render over an old file deleted the old file
+  too (`cleanup_on_err`). Cost accepted: a double question where the native dialog confirms.
+- **D5–D7, D9.** The window follows the R.66 form contract (`window_body` + `window_actions`; Close is far
+  from Cancel); the final block replaces the run rows and nothing animates in the final state; Open file /
+  Open folder use the one OS helper `util::open_in_file_manager` (invariant 9 is about the export path,
+  not the UI); the log is a ring of 800 lines in the job with two files on disk (`render.log` rotated one
+  step).
 
 ## `kt-cli showcase` (readme-showcase, 2026-10-21)
 
