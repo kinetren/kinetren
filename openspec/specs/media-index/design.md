@@ -197,9 +197,6 @@ composition, and the preview hung in "Loading" forever.
   is closed by the guard "media in use", and a new `AddMedia` gives a new id — a pair of commands with the effect
   of relinking does not exist. Material for relinking BY CONTENT already lies in the DB
   (xxh3-128 in `ensure_media`).
-- The list of encoders in the render dialog does not match what will open: `h264_vaapi`/
-  `h264_qsv` without a hw context never open, and "Auto" on Intel/AMD silently falls
-  back to libx264 (`docs/features/export/pipeline/hardware-encoder-selection.md`; capability `export`).
 - Found along the way and not fixed: `warp_prefetch.rs` (t17) fills the legacy field
   `automation` when `fx_auto` is empty, and the migration is not called in the tests — it has no curve
   at all, and it under-tests after the move of automation.
@@ -423,3 +420,11 @@ What belongs here: `MediaWorker` serves a moment once at every size (D1), which 
 pictures to about 756 on 12 s of the showcase; the look-ahead asks the first frame of a cut past its
 bytes (D3); audio is read between the chunks of a span; while the CPU workers serve, the display
 orders no decode (D5). Software decode is not the limit, so hardware decode was not taken up.
+
+## Hardware functions are optional, the report outlives the driver (hw-encode-context)
+
+`declare_api!` fails the whole load on one missing name, so the hardware context functions have a
+second table: a trimmed FFmpeg still opens media and only loses the device candidates. The report
+and the render window's list open each render node through `hw_trial`, in a throwaway process: the
+tool that diagnoses a driver that faults must not fault with it, and the editor must not die because
+a window was opened. Why, and what it does not cover: `openspec/specs/export/design.md`.

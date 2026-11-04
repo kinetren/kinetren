@@ -134,8 +134,8 @@ closed: `finish.sh` at kt26.11.04-02fb2ddd, master there. Next, in the owner's o
 
 1. **Performance**: the preview and the final render, and "the math" (AVX, Vulkan…):
    the move of the heavy math to Vulkan compute in plain WGSL (`compute-kernels` in the
-   `compute-backends` session; the owner decided "да, удаляем", references of video and audio may be
-   updated), `hw-encode-context` (Intel and AMD encode in hardware).
+   `compute-backends` session; the owner decided "да, удаляем", then "удаляй" with the number for the
+   CPU composite, about 40 % slower with no card; references of video and audio may be updated), `hw-encode-context` (Intel and AMD encode in hardware).
 2. **Build and CI speed** ("все что больше 10мин+ это ужас"): the local build/test loop, the
    cost of a plugin edit, an ARM build (owner, 2026-11-04), CI wall time (21 min on 2026-11-02: windows-build 13 min → windows-test
    7 min in series); the proposed-only change `ci-speedup` is the starting point.

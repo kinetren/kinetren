@@ -5,3 +5,9 @@ via ffmpeg: aac 44.1k mono, flac 48k stereo, h264, vp9, muxed A/V — about 2 se
 
 The generated files go into `out/` (they are not committed to git, see .gitignore) and
 are checked by hash before use.
+
+## fake_va
+
+`fake_va/ktfake_drv_video.c`: a VA-API driver without a GPU, built by the tests that use it (t1551–t1556,
+live `hwencode`). It runs the hardware export path through the real libva and FFmpeg on any Linux
+machine, and fails on request (`KT_FAKE_VA`). It proves our path, never a real driver.

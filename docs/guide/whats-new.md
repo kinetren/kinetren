@@ -9,6 +9,12 @@ month, newest first.
   card, through Vulkan on the processor, a frame takes about a third less time. Existing moshes may
   look slightly different, because the search picks some other vectors. On a computer with no Vulkan, DX12 or
   Metal the effect leaves the frame intact and its panel says why.
+- **Hardware encoding on Linux no longer risks the render.** Choosing `h264_vaapi` used to end the
+  program. Now the render tries a hardware encoder on the side first: if the graphics driver fails
+  or crashes there, a render left on Auto goes on with the next encoder, and one you chose by hand
+  stops with a message saying what went wrong, while the program and your project stay open. On
+  Intel and AMD graphics the render can now use the card, though we have not yet been able to test
+  that on real hardware.
 - **Camera ISP records the sound too.** On an event with linked audio, the sound goes through the
   device's microphone: the phone's port and noise suppressor, a webcam's 16 kHz, a security
   camera's G.711 and wind, with an automatic gain control that lifts the room between words.

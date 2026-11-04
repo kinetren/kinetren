@@ -50,6 +50,18 @@ fn t960_each_candidate_declares_its_context() {
     }
 }
 
+/// t1550 (hw-encode-context D10): a candidate that loads a libva driver into the process meets it in
+/// a throwaway process first. On Linux that is VAAPI and QSV, whose session reaches the same driver
+/// by itself; nothing else, and nothing on Windows, where there is no libva.
+#[test]
+fn t1550_the_candidates_that_load_a_va_driver_are_tried_apart() {
+    let tried = |os| -> Vec<&str> {
+        video_encoder_candidates(os).into_iter().filter(|e| e.trial).map(|e| e.name).collect()
+    };
+    assert_eq!(tried(Os::Linux), ["h264_vaapi", "h264_qsv"]);
+    assert!(tried(Os::Windows).is_empty());
+}
+
 /// The values of a C enum in a vendored header: `name` → its value, counted the way C does.
 fn header_enum(header: &str, enum_name: &str) -> std::collections::HashMap<String, i64> {
     let text = std::fs::read_to_string(header).unwrap();
