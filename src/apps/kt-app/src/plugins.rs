@@ -12,6 +12,7 @@ pub fn install() -> &'static Arc<Registry> {
     let reg = kt_plugins_builtin::install();
     #[cfg(test)]
     let reg = kt_plugins_builtin::install_with(test_tint::register);
+    kt_plugin_api::compute::install(kt_gpu::compute::open);
     reg
 }
 

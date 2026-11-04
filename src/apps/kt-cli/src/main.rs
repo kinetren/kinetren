@@ -1181,6 +1181,7 @@ fn run(args: &[String]) -> i32 {
     kt_ffmpeg::set_search_dirs(ffmpeg_user_choice(), download);
     // the built-in plugin set, before any project is read (plugin-api-stage1, D6)
     kt_plugins_builtin::install();
+    kt_plugin_api::compute::install(kt_gpu::compute::open);
     match args.first().map(String::as_str) {
         Some("ffmpeg") => {
             // the search report (media-index): what was loaded, what was rejected and why

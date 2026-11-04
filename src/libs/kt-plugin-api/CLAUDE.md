@@ -43,6 +43,10 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   echo cut); every built-in implements it by `Clone`, so a new state derives `Clone` and its
   `CurveRead` readers copy through `clone_box`. t1330 runs every built-in audio kind. `Decl.echo_row`
   names the choice row of an edge-reading kind (`reads_across_edges`).
+- **`compute` is the door to the host's compute device** (compute-kernels): a kernel gives WGSL
+  shaders and buffers as one `Job`, and bindings are fixed (0 the uniform, then reads, then writes).
+  `host()` is `None` with no device or after `fail`, and a kernel then has a no-device path of its
+  own (Datamosh passes the frame through); a job's error is never a panic. t1502, t1503.
 - **`shade` is a PROTOTYPE nothing shipped calls** (compute-backends, F-EXT-004): one kernel text
   in the common subset of Rust and WGSL → `cpu` (the text's `f32` is f64, the byte reference),
   `cpu_f32` and the `WGSL` string; `run_pointwise` = row bands on scoped threads × one loop compiled

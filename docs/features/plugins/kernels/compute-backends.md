@@ -12,7 +12,7 @@ invariants: [7, 11]
 ui_rules: []
 round: null
 point: null
-tests: [t1500, t1501]
+tests: [t1500, t1501, t1502, t1503, t1504, t1505]
 depends_on: [F-EXT-003]
 trackers: []
 services: []
@@ -202,7 +202,7 @@ noise); its rlib grows 24 KB. Per effect the four SIMD copies of the loop are �
   CubeCL does), or barriers keep two texts.
 - **The GPU is fragment passes, not compute** (`src/libs/kt-gpu/CLAUDE.md`): egui-wgpu on GL gives
   WebGL2 limits, so compute cannot run on THAT device. It is not a limit of the machine: llvmpipe on
-  Vulkan runs compute (`src/libs/kt-gpu/tests/compute_mosh.rs`), and the first version of this note
+  Vulkan runs compute (`src/libs/kt-gpu/src/compute.rs`), and the first version of this note
   was wrong to read it as one.
 - **wgpu is pinned to eframe's major** — a library bringing its own wgpu (CubeCL) means two majors in
   one process, incompatible types, the preview unable to share the device.
@@ -346,7 +346,7 @@ t1500). WGSL-форма того же текста укладывается в �
 compute-шейдером WGSL, с циклами, массивами и `if`. Утверждение про «compute не работает на llvmpipe»
 было ошибкой: не работает только устройство интерфейса на GL.
 
-Проверка (`src/libs/kt-gpu/tests/compute_mosh.rs`, `compute_vhs_cost.rs`, release, 1080p, Vulkan через
+Проверка (проба кодера вошла в программу как `src/plugins/fx-video-codec/src/wgsl/`; `compute_vhs_cost.rs`, release, 1080p, Vulkan через
 llvmpipe, настоящей видеокарты здесь нет, на машине шла чужая работа, нагрузка ≈ 25; при нагрузке ≈ 48 кодер давал 78/70 мс):
 
 | Что | Сейчас, CPU | Vulkan compute на эмуляции |
@@ -367,3 +367,17 @@ x86-64). Прототип `shade`/`single_source` при этом удаляет
   CI работал минутами и падал, поэтому отключён). Поставку своего программного Vulkan не проверяли.
 - **Эталоны видео и звука можно удалять или обновлять.** Звук при этом остаётся на процессоре: снятие
   эталона разрешает менять его байты, а не переносит его на видеокарту.
+
+Решение владельца: «да, удаляем» (04.11.2026). Этап 1 сделан в change `compute-kernels`: дверь compute в
+контракте плагина, отдельное устройство, кодер Datamosh на шейдерах, его процессорный текст удалён.
+
+Цена удаления процессорной сборки кадра, ещё не показанная владельцу при решении: экспорт витрины на этой
+машине без видеокарты 95,6 с на процессоре против 133,9 с через llvmpipe, по замеру `export-throughput`
+(`openspec/specs/export/design.md`). Причина там же: llvmpipe рисует по одному кадру через одну очередь.
+Этот этап не начат, он ждёт отдельного ответа.
+
+Замер итогового пути в программе (release, 1080p, та же картинка, Vulkan через llvmpipe, нагрузка ≈ 20):
+P-кадр 46 мс против 67 мс прежнего кодера. В пробе было 34 мс: итоговый путь заново создаёт буферы на
+каждый кадр и читает обратно весь остаток, а не только восстановленный кадр. Первый кадр после запуска
+занял 6,6 с: открытие устройства и компиляция двух шейдеров на llvmpipe; пробе это не было видно,
+потому что её таймер стартовал после компиляции.

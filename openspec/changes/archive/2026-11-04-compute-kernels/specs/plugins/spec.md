@@ -27,5 +27,5 @@ plugin still sees nothing of wgpu.
 
 #### Scenario: Datamosh with no compute device leaves the frame and says why
 - **WHEN** the stream stage runs with no compute host installed
-- **THEN** the frame is the source frame and the status names the missing device
+- **THEN** the frame is the source frame, and `compute::unavailable` gives the panel its reason
 - **TEST** t1505 (`src/plugins/fx-video-codec/tests/no_device.rs`)

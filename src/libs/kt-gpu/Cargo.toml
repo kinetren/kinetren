@@ -23,5 +23,3 @@ xxhash-rust.workspace = true
 kt-plugins-builtin = { workspace = true }
 # the single-text Color Grade prototype (compute-backends, t1501)
 fx-video-color = { workspace = true }
-# the Datamosh encoder as a compute shader: the Vulkan probe of compute-backends (F-EXT-004)
-fx-video-codec = { workspace = true }
