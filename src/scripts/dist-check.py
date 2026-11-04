@@ -8,13 +8,15 @@ read-only, cancels superseded runs and uploads nothing that lingers; the
 release workflow runs only on `v*` tags with `contents: write` and nothing
 else; the README's install section names `make` and `make install`; the GUI
 binary is `kinetren` wherever a person meets it. The Windows delivery (change
-windows-build): the `windows` stage of the same Dockerfile (and a final `linux`
+windows-build): the `windows-cross` and `windows` stages of the same Dockerfile (and a final `linux`
 stage, so a plain build stays Linux), `make windows` / `make windows-test`, the PE
 import check and no DLL in the zip, the release attaching the zip, and the CI job
 that runs the cross-built archive on windows-latest without compiling there. FFmpeg 9
 on Linux (change ffmpeg-9): the test-only `ffmpeg-test` stage with its pinned source
 tarball (the same pin as the vendored headers), `make ffmpeg-test` and the `ffmpeg9`
-CI job with the expected major, and no release taking from that stage.
+CI job with the expected major, and no release taking from that stage. The caches (change
+ci-speedup): every job that compiles restores one before it compiles, only the default branch
+writes one, a key names what decides the content, and the test-order profile names real tests.
 
 The workflows are checked by line patterns, not parsed: the standard library
 has no YAML parser, and these are shape guarantees, not a YAML validator.
@@ -55,6 +57,7 @@ MIME_TYPES = [
 INSTALL = "src/packaging/install.sh"
 UI_PROBE = "src/scripts/ui-probe.py"
 RUNTIME_FFMPEG = "src/packaging/flatpak/runtime-ffmpeg.txt"
+NEXTEST = "src/.config/nextest.toml"
 LICENSE = "LICENSE"
 FLATPAK_GUIDE = "docs/flatpak.md"
 # the metainfo's languages besides English (design Open Question 3: English + Russian until a speaker
@@ -189,6 +192,92 @@ def check_ci(r, pinned):
         r.err(CI, "every artifact upload needs `retention-days` of 3 or less (only releases are kept)")
 
 
+def ci_jobs(ci):
+    """The jobs of a workflow as {name: text}: `  name:` at two spaces under `jobs:`."""
+    body = ci[ci.index("\njobs:\n"):] if "\njobs:\n" in ci else ""
+    parts = re.split(r"^  ([\w-]+):\n", body, flags=re.M)
+    return dict(zip(parts[1::2], parts[2::2]))
+
+
+def ci_steps(job):
+    """The steps of a job, each as its text (a step starts with `      - ` at six spaces)."""
+    return re.split(r"^      - ", job, flags=re.M)[1:]
+
+
+# what decides the content of a cache, by what its `path` holds (t1421); no date or run number
+CACHE_KEYS = [
+    ("src/target/", ["env.RUST_TOOLCHAIN", "hashFiles('src/packaging/Dockerfile')", "hashFiles('src/Cargo.lock')"]),
+    ("-image.tar.gz", ["hashFiles('src/packaging/Dockerfile')"]),
+    (".flatpak-builder", ["hashFiles('src/packaging/flatpak/"]),
+]
+# the jobs that compile: what they must restore, and the line that compiles
+CACHED_BUILDS = [
+    ("windows-build", "src/target/win-container", "cargo nextest archive"),
+    ("ffmpeg9", "src/target/ffmpeg-test-container", "ffmpeg-test.sh"),
+    ("test", "Swatinem/rust-cache@", "cargo build"),
+]
+
+
+def check_ci_caches(r):
+    """Only the default branch writes a cache, every compiling job restores one before it
+    compiles, and a key names what decides the content (change ci-speedup, t1420, t1421). Why: a
+    cache written from a side branch competes for the repository's 10 GB with master's."""
+    ci = r.read(CI) or ""
+    jobs = ci_jobs(ci)
+    for name, job in jobs.items():
+        for step in ci_steps(job):
+            if re.search(r"uses:\s*actions/cache@", step):
+                r.err(CI, f"{name}: `actions/cache` saves from any branch: use actions/cache/restore "
+                          "and a save step on the default branch")
+            if re.search(r"uses:\s*actions/cache/save@", step) and not re.search(
+                r"^\s*if:.*default_branch", step, re.M
+            ):
+                r.err(CI, f"{name}: an `actions/cache/save` step without a condition on the default branch")
+            if re.search(r"uses:\s*Swatinem/rust-cache@", step) and not re.search(
+                r"save-if:.*default_branch", step
+            ):
+                r.err(CI, f"{name}: `Swatinem/rust-cache` without a `save-if` on the default branch")
+            if not re.search(r"uses:\s*actions/cache/restore@", step):
+                continue
+            key = re.search(r"^\s*key:(.*)$", step, re.M)
+            key = key.group(1) if key else ""
+            if re.search(r"github\.(run|sha)|date", key):
+                r.err(CI, f"{name}: a cache key names a run or a date, not what decides the content")
+            for held, needed in CACHE_KEYS:
+                if held in step:
+                    for n in needed:
+                        if n not in key:
+                            r.err(CI, f"{name}: the key of `{held}` lacks {n}")
+    for name, restores, compiles in CACHED_BUILDS:
+        steps = ci_steps(jobs.get(name, ""))
+        at = [i for i, s in enumerate(steps) if restores in s and re.search(r"uses:.*(cache/restore|rust-cache)@", s)]
+        built = [i for i, s in enumerate(steps) if compiles in s]
+        if not at or not built or at[0] > built[0]:
+            r.err(CI, f"{name}: compiles without restoring {restores} first")
+
+
+def check_test_order(r):
+    """Every test the nextest profile starts first exists (change ci-speedup, t1422): a renamed
+    test would silently fall out of the order."""
+    text = r.read(NEXTEST)
+    if text is None:
+        r.err(NEXTEST, "missing: the long tests start first")
+        return
+    named = re.findall(r"test\((t\d+[a-z]?)_\)", text)
+    if not named:
+        r.err(NEXTEST, "names no test")
+    source = ""
+    for top in ("src/libs", "src/apps", "src/plugins"):
+        for d, _, files in os.walk(os.path.join(r.root, top)):
+            for f in files:
+                if f.endswith(".rs"):
+                    with open(os.path.join(d, f), encoding="utf-8", errors="replace") as fh:
+                        source += fh.read()
+    for t in named:
+        if not re.search(rf"\bfn {t}_", source):
+            r.err(NEXTEST, f"no `#[test]` named {t}_…")
+
+
 def check_release(r):
     rel = r.read(RELEASE)
     if rel is None:
@@ -215,8 +304,10 @@ def check_windows(r):
     df = r.read(DOCKERFILE)
     if df is not None:
         froms = re.findall(r"^FROM\s+(.*)$", df, re.M)
-        if not any(re.match(r"base\s+AS\s+windows\s*$", f) for f in froms):
-            r.err(DOCKERFILE, "no `FROM base AS windows` stage (the Windows cross-build)")
+        if not any(re.match(r"base\s+AS\s+windows-cross\s*$", f) for f in froms):
+            r.err(DOCKERFILE, "no `FROM base AS windows-cross` stage (the Windows cross-build)")
+        if not any(re.match(r"windows-cross\s+AS\s+windows\s*$", f) for f in froms):
+            r.err(DOCKERFILE, "no `FROM windows-cross AS windows` stage (wine for the Windows tests here)")
         if not froms or not re.match(r"base\s+AS\s+linux\s*$", froms[-1]):
             r.err(DOCKERFILE, "the last stage must be `FROM base AS linux`: a plain build stays Linux")
     mk = r.read(MAKEFILE)
@@ -765,6 +856,8 @@ def main():
     pinned = check_container(r)
     check_make(r)
     check_ci(r, pinned)
+    check_ci_caches(r)
+    check_test_order(r)
     check_release(r)
     check_windows(r)
     check_ffmpeg_test(r)

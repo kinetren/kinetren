@@ -132,6 +132,7 @@ codegen-units = 1
 # enabled — the dev profile’s safety net is intact (item 301).
 [profile.dev]
 opt-level = 1
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 2
