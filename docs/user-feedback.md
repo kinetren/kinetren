@@ -2561,6 +2561,14 @@ proposal cards, with no list and no verdict.
   plain WGSL through wgpu, no kernel language, no OpenCL or CUDA; an ARM build is wanted; measuring
   is the agents' work. The one-kernel-text prototype is dropped. Two decisions are open with the
   owner: what happens on a machine without a GPU API, and whether "эталон" covers video only.
+- His answer, written in the `compute-backends` session the same day:
+
+> в.1. а если мы удалим - мы даже через llvm не сможем работать на текущей машине или что?!?
+> в.2. и видео и аудио можно удалить/обновить эталон
+
+- Taken as: "эталон" covers video and audio, a reference may be deleted or updated. The first answer
+  is a question back: deleting the CPU copies must not cost this machine its render through llvmpipe.
+  `compute-backends` answers it; the decision to delete stays open until then.
 
 ## What the user repeated more than once
 
