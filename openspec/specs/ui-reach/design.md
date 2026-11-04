@@ -611,3 +611,32 @@ showed nothing until the person dragged the window. Found by the README pipeline
 had been writing a 2 KB `search.webp` that nobody looked at). The window is sized now (460×320,
 minimum 320×120), t1414. Rule for a new window: fit only a window whose content is complete at
 opening; one that lists results, finds or anything that arrives later opens sized.
+
+## One shell for every window (shared-window-shell, archived 2026-11-04)
+
+`window_shell` builds every registry window (21 `egui::Window` sites and 2 modals); a site keeps its
+content and its declared kind. The reasons, in the order they cost something:
+
+- **The hand-kept Esc list lost four windows.** `escape_action` named its windows one by one, and the
+  transition, camera, project-settings and envelope-fit windows were simply never added (R.52's lesson
+  "editor windows MUST join the cascade" was already on record). The list is deleted: the shell records
+  every window it shows each frame with its kind and its Esc action, and Esc acts on the one highest in
+  egui's own layer order (t919, t920). A new window cannot be forgotten, because it cannot be built
+  without the shell (t921 scans for `egui::Window::new`, `Modal::new`, window-level scroll and
+  `collapsible(` outside it; t757's scanner follows the shell call).
+- **Layer order, not a fixed priority.** The old order closed the FX window first even with the camera
+  window drawn over it; the person closes what they see on top. Rejected: keeping the list and adding
+  the four names — it is the mechanism that lost them.
+- **The kinds table is the contract.** `Tool` (cross, never collapses, Esc closes and keeps edits),
+  `Dialog` (Esc is the declared "loses nothing" action: Cancel / No; project settings cancels as its
+  cross does), `Progress` (no cross, Esc untouched — a reason string is mandatory: a job of minutes must
+  not die from an Esc meant for the timeline), `Modal` (the declared safe answer). Collapsing was removed
+  from the seven windows that had it only by egui's default: nobody chose it, and a collapsed window still
+  takes Esc and covers the timeline with its title bar. Four dialogs had their own copy of the same five
+  Esc lines while a text field had focus; the shell consumes Esc for a focused window in the same frame
+  (t919). The detached preview viewport is not an `egui::Window` and keeps its local Esc.
+- **The form contract is checked on the three biggest windows.** t779 had `OpenWin::Cant` for the
+  morpher, transition and camera windows — the three with the most content; they now have real scenes.
+  t918 runs every openable window at the scales 1.0/1.1/1.2/1.25/1.5 for 300 frames and requires the
+  outer rect to stay put.
+

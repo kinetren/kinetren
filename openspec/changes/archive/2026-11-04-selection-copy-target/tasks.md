@@ -71,4 +71,5 @@ message, first line = the stage and what was done). Stage only this change's fil
     The scenario now waits for `nest.enter` before listing the items; 3 of 3 green alone.
     Screenshots: `target/live-out/select/05…08-step-*.png` (copy of the one event, paste, triple-click
     region).
-- [ ] 5.2 After archiving: set F-TL-013 to `done` with its frozen verdict and `CAPABILITY:`, and append to `openspec/specs/ui-timeline/design.md` the "why" of D1 (link groups counted, the range-marker consequence, Vegas/Premiere rejected) and D3 (no delayed double click)
+- [x] 5.2 After archiving: set F-TL-013 to `done` with its frozen verdict and `CAPABILITY:`, and append to `openspec/specs/ui-timeline/design.md` the "why" of D1 (link groups counted, the range-marker consequence, Vegas/Premiere rejected) and D3 (no delayed double click)
+  - Done in the archive commit (2026-11-04): F-TL-013 is `done` (`round: ktprompts-26.10.18`, tests t924–t929, "How it fits" cut to the frozen 5 lines); `openspec/specs/ui-timeline/design.md` has the section "What Copy takes, and the triple click" (D1 link groups, the range-marker consequence, Vegas/Premiere rejected; D3 no delayed double click).

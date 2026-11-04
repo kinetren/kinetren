@@ -262,7 +262,10 @@ body and take the context into account the same way. The menu item name SHALL sa
 will happen, and remain distinguishable in every language.
 Why: "the hint is pale and faded… everywhere such situations are made as
 errors"; "marker here with a selected region must produce a region marker";
-"Remove crossfade… turns out to be the fadeout from the end that removes it".
+"Remove crossfade… turns out to be the fadeout from the end that removes it". Two paths to
+one action SHALL also share one catalog name, with the chord in the chord column, not in the
+translated text: the Edit menu's "Split / cut region" promised a cut-out that neither it nor `S`
+ever did (owner's decision 2026-10-26, change `split-menu-label`: rename, keep the action).
 
 #### Scenario: Stop against a neighbour outside the view
 - **WHEN** an event is moved onto an occupied place, the obstacle is not visible
@@ -284,6 +287,12 @@ errors"; "marker here with a selected region must produce a region marker";
 - **THEN** the menu offers "Transition from…" (the neighbour ladder is equal to the joint one), double-click opens the properties
 - **TEST** t466 (`src/apps/kt-app/src/layout_tests.rs`)
 
+#### Scenario: The Edit menu's split is the event menu's split and the S key
+- **WHEN** a region is drawn and the playhead stands inside an event with nothing selected; Edit → "Split at playhead" is clicked; the edit is undone and `S` is pressed instead; the label and chord of the Edit item and of the event menu's split item are read in each of the five catalogs
+- **THEN** both paths split the same events at the same tick and leave the region's interior in place; the Edit item shows the event menu's label with `S` in the chord column; no catalog's split label contains a chord; the toolbar scissors button's hint is the split label followed by its key
+- **PATH** a region over part of an event, the playhead inside the event → Edit menu → the item reads "Split at playhead" with S on the right → click → the event is cut in two at the playhead, the region still covers both halves → Ctrl+Z → the event is whole again → S → the same cut at the same place
+- **TEST** t870 (`src/apps/kt-app/src/layout_tests.rs`)
+
 ### Requirement: Multiple selection, marquee, moving a batch, double clicks
 The selection SHALL be a set: Ctrl+click adds/removes and does not move
 the cursor, a plain click selects one and places the cursor. The frame starts ONLY from
@@ -292,11 +301,25 @@ tool" button mode); Ctrl on an event still disables snapping. Moving a batch mov
 time, mutual shifts do not change, the stop is the first contact of any participant,
 the commit is one batch from the ORIGINAL starts with the crossfade handles returned.
 Operations that make no sense on a set require exactly one selected item and say so.
-Double-click on an event — the FX window; Shift+double-click and the menu item — the region from the
-event (one body); double-click on the ribbon of a range marker — the region along its
-bounds plus selection of its events.
+Double-click on an event — the FX window; a TRIPLE click on an event, Shift+double-click and the
+menu item — the region from the event (one body: the span of the event's link group); double-click
+on the ribbon of a range marker — the region along its bounds plus selection of its events.
+A triple click SHALL leave nothing of its second click behind: the FX window that this gesture's
+double click opened closes again, a reel that it expanded in place collapses again; on the level
+line, whose double click resets the level, the third click does nothing more.
+COPY (Ctrl+C and the menu item) SHALL take, in this order: (1) when the selection is exactly ONE
+event (with its link partners, which travel with it anyway) — that event, whole, whether a region
+exists or not; (2) otherwise, when a region exists — what lies in the region on all tracks,
+cropped to it; (3) otherwise — the selected events with their link groups. The status line SHALL
+name which of them was taken ("the selected event", "the region", "the selected events") and the
+count; a region left in place by rule (1) is not cleared. The selection of morpher layers and
+cameras does not take part in Copy (unchanged).
 Why: "area selection is missing… ctrl… or as in Vegas — a toggle button";
 the hint promised "double-click — FX" since R.18, but the gesture set a region.
+ktprompts 26.10.18 (2026-10-27), the owner: "4. If I selected one event, copy-paste must take it,
+not the region I selected. 5. A triple click on an event selects a region over its bounds." Before
+this, the region always won: a loop region kept for listening made a click on one event and
+Ctrl+C copy every event of every track inside the loop.
 
 #### Scenario: Ctrl+click and frame
 - **WHEN** Ctrl+click on events; Ctrl+drag from empty space; a plain drag from empty space without the button
@@ -327,6 +350,42 @@ the hint promised "double-click — FX" since R.18, but the gesture set a region
 - **WHEN** double-click on an event, Shift+double-click, double-click on the ribbon of a range marker (harness with a step of 0.02 s, a separate one for each gesture)
 - **THEN** the FX window; a region from the event; a region from the marker with the events inside selected; with several overlapping, by flag/name
 - **TEST** t206, t207 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: One selected event wins over the region
+- **WHEN** a region covers three events on two tracks; one of them, which has an audio partner, is clicked; Ctrl+C; Ctrl+V at a free place
+- **THEN** the clipboard holds that event and its partner, whole (not cropped to the region), and the paste puts exactly these two; the region is still in place with the loop state unchanged; the status line names "the selected event" and the count 2; on the code before the change the clipboard held all three events cropped to the region
+- **PATH** drag on the ruler → the region over three events → click one event → it is highlighted, the region stays → Ctrl+C → the status line "Copied the selected event: 2" → move the playhead to empty time → Ctrl+V → the event and its audio appear there whole
+- **TEST** t924 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: Several selected events, nothing selected, no region
+- **WHEN** a region exists and two events of different link groups are Ctrl+clicked; Ctrl+C; then Esc and the region is set again with nothing selected; Ctrl+C; then with no region two events are selected; Ctrl+C
+- **THEN** the first copy is the region block (every crossing event, cropped) and the status line says "the region"; the second is the region block too; the third is the two events with their groups and the status line says "the selected events"
+- **PATH** drag on the ruler → region → Ctrl+click two events → Ctrl+C → "Copied the region: N" → Esc → drag the region again → Ctrl+C → "Copied the region: N" → Esc twice → Ctrl+click two events → Ctrl+C → "Copied the selected events: 2"
+- **TEST** t925 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: Copy after a double-click on a range marker
+- **WHEN** a range marker crosses three events and is double-clicked; Ctrl+C; separately a range marker that crosses exactly one event is double-clicked; Ctrl+C
+- **THEN** with three events the region block is copied (cropped to the marker's range, the marker travels with it), as before the change; with one event that event is copied whole, because it is the one selected event, and the status line says "the selected event"
+- **PATH** double-click the ribbon of a range marker over three events → region over it, three events highlighted → Ctrl+C → "Copied the region: 3" → double-click a range marker over one event → one event highlighted → Ctrl+C → "Copied the selected event: 1"
+- **TEST** t926 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: Triple click on an event sets the region over it
+- **WHEN** an event with an audio partner and no FX window open is triple-clicked on its body (harness step 0.02 s between clicks); separately with the FX window of another event already open
+- **THEN** the region equals the span of the event and its partner, the event is selected, no FX window of this event is open after the third click; the already open FX window of the other event stays open; one triple click adds no history step
+- **PATH** triple-click the body of an event → the FX window flashes open on the second click and is gone after the third → the region band over exactly the event and its audio → press L → the loop plays exactly the event
+- **TEST** t927 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: Triple click on a reel and on the level line
+- **WHEN** a reel instance is triple-clicked on its body; separately the level line of an audio event set to −6 dB is triple-clicked
+- **THEN** on the reel the region covers the instance and the reel is NOT left expanded (the second click's expansion is undone); on the level line the gain is 0 dB (the double click's reset, one history step) and the region is unchanged
+- **PATH** triple-click a reel instance → it expands on the second click and collapses back on the third → the region band over the instance → triple-click an audio event's level line → the line jumps to 0 dB, the region stays where it was
+- **TEST** t928 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: Three ways to a region over an event are one body and are promised
+- **WHEN** for the same event the region is set by a triple click, by Shift+double-click and by the menu item "Region over this event"; the event's hover hint and the menu item's chord column are read
+- **THEN** the three regions are equal; the hint of an event names the triple click next to "double click — FX" in all five catalogs; the menu item's chord column names the triple click; the hint does not promise a gesture the timeline does not perform (t83 family)
+- **PATH** hover an event → the status line "… double click — FX, triple click — region …" → right-click it → "Region over this event   3×click" → click the item → the same region as the triple click gave
+- **TEST** t929 (`src/apps/kt-app/src/reach_tests.rs`)
 
 ### Requirement: Model edits from the UI go through wrappers; autosave is background and guarded
 Any model edit from the UI SHALL go through the application wrappers (`apply`,
@@ -618,8 +677,15 @@ change. Arabic is reordered WORD BY WORD (shaping atoms); the content of a
 `TextEdit` — never. Every window SHALL have an explicit id. Strings in a background
 thread MUST NOT be translated. The language on first launch comes from the OS locale; the choice
 is stored outside the project. Layout is checked with the real fonts in all languages.
+Cyrillic (U+0400…U+052F) SHALL appear only in `i18n/ru.toml`, in the endonym `Русский` of the
+`[lang]` section of every catalog, and in test data declared as such; a non-Russian catalog and
+a committed project fixture MUST NOT carry it.
 Why: the user twice got a square placeholder stub; changing a window title
 would reset its position; per-character reversal makes an Arabic phrase worse.
+2026-10-27 (ktprompts 26.10.18 item 10): "in a composition's fx-chain there is a published
+element with parameters, and in the English version it literally says «Лента»" — t131 already
+kept Cyrillic out of string literals, so the word came from somewhere a literal guard does not
+look: a name the program itself stored in the project.
 
 #### Scenario: Glyphs of all non-ASCII characters
 - **WHEN** the kt-app sources (recursively) and the `i18n/*.toml` catalogs are scanned, expanding `\u{…}`
@@ -650,6 +716,12 @@ would reset its position; per-character reversal makes an Arabic phrase worse.
 - **WHEN** `src/**/src/**/*.rs` of the whole workspace is walked
 - **THEN** zero Cyrillic in string and character literals outside test code
 - **TEST** t131 (`src/apps/kt-app/src/i18n_tests.rs`)
+
+#### Scenario: Cyrillic only where it is the subject
+- **WHEN** the catalogs `en`, `es`, `zh-Hans`, `ar` are scanned value by value, and the committed project and exchange fixtures (`src/fixtures/**` `.kt`/`.otio`/`.ktproj`, the live-scenario projects) are scanned as text; a Cyrillic word is temporarily put into `es.toml` and into a copy of a fixture
+- **THEN** the only Cyrillic found in the four catalogs is the endonym `Русский` of `[lang]`; a fixture carries Cyrillic only if it is in the test's declared list of Cyrillic test data, each with a reason; both temporary additions are red with the file and the key or line
+- **PATH** there is no gesture: the guard reads the catalogs and fixtures and names the file and the key or line of a Cyrillic word that does not belong there — it is verified by running the test, not by mouse
+- **TEST** t933 (`src/apps/kt-app/src/i18n_tests.rs`)
 
 ### Requirement: Compositions in the interface (capability `compositions`)
 Gestures over the reels SHALL obey the shared layout rules: what plays is decided
@@ -1241,3 +1313,119 @@ third kind of editor, introduced once and shared by every owner.
 - **THEN** the click plays and pauses as before; during playback the contour is drawn at the animated position and no handle is hit-tested
 - **PATH** with a mask selected click an empty corner of the picture → playback starts → the mask's line moves with the animation, its points are gone → click again → it stops, the points are back
 - **TEST** t1282 (`src/apps/kt-app/src/mask_tests.rs`)
+
+### Requirement: A menu label never carries its key; a chord is shown only where it holds
+A menu item's translated label SHALL NOT contain its key or gesture. The key SHALL be drawn in the
+chord column (`widgets::menu_item`), and a gesture there as a translated chord text (like
+"Enter, 2×click"). An item SHALL show a chord only where pressing it in that context does exactly
+what the item does. Paste from a context menu pastes at the click, so it shows no `Ctrl+V`. Delete
+morpher shows `Del` only when that morpher is the whole selection.
+Why: `i18n/README.md` rule 3; five `[tl.menu]` labels carried "(Ctrl+C)", "(Ctrl+V)", "(Del)" and
+"(Shift+double click)" in the text, and two of those promises were false where they stood (owner,
+2026-10-26: do it, and put the gesture in the chord column).
+
+#### Scenario: No menu label carries a key, and the chords shown are true
+- **WHEN** every `[tl.menu]` and `[menu.*]` value (except the `*_accel` chord texts) is read in each of the five languages; the event menu and the empty-space menu with a region are opened by a right click; the morpher Delete chord is asked for with that morpher alone in the selection and with a second morpher selected
+- **THEN** no label contains `Ctrl+`, `Del`, `Supr`, `Shift+` or a key in parentheses; Copy shows `Ctrl+C`, Region over this event shows the translated triple-click chord ("3×click" in English; it was "Shift+2×click" until `selection-copy-target` made the triple click the simplest way), Delete clips in the region shows `Del`, both Paste items show no chord; Delete morpher shows `Del` only when it is alone in the selection
+- **PATH** right-click a clip → the menu: "Copy" with Ctrl+C on the right, "Paste" with nothing on the right, "Region over this event" with 3×click on the right → Esc → draw a region, right-click empty track space → "Delete clips in the region" with Del on the right
+- **TEST** t871 (`src/apps/kt-app/src/reach_tests.rs`)
+
+### Requirement: The video compose cost is a number, in the panel and in the probe
+The performance panel SHALL show the compose time of the last shown video frame and its
+average over the last second, in milliseconds, next to the existing FX backend line ("FX:
+GPU (<adapter>)" or the CPU line). The CPU line names the reason when the GPU was given up
+for the session. `kt-cli probe <project> <from> <to> --time`
+SHALL print, after the audio section, a video section: the frames composed, compose ms p50 /
+p95 / max, the backend, and the passes and sub-samples per frame. The section is computed on
+a warm cache, without the UI, through the same plan executor as the preview. The SPEED is
+judged on a release build, as for audio.
+Why: ktprompts v26.10.18 item 8. "fps drops" could not be split between the grid, the
+morpher's strength slot, the GPU readback or a CPU fallback, because there was no number for
+the video compose. `probe --time` measured only the audio render (R.43, item 301).
+
+#### Scenario: The probe and the panel name the cost and the backend
+- **WHEN** `kt-cli probe` is run with `--time` over a project with a morpher event grid 12×30 on a 4 s event, once with `KT_VIDEO_GPU=0`; and the same project is played in the harness with the performance panel open
+- **THEN** the probe prints the video section with the frame count of the range, p50/p95/max in ms, `backend=CPU` for the forced run, and per-frame passes and sub-samples equal to the counters of t946; the panel shows "Compose" with a millisecond value that changes while playing, next to the FX backend line, and stops repainting when playback stops
+- **PATH** open the project with the morpher grid → open the Performance panel → it shows "Compose — ms" under "Preview 960×540" and the line "FX: GPU (<adapter>)" (or the CPU line with the reason) → press Play → the compose value updates while the grid grows from 1×1 to 12×30 → press Stop → the last values stay and the panel no longer repaints
+- **TEST** t947 (`src/apps/kt-cli/tests/cli.rs`, `src/apps/kt-app/src/layout_tests.rs`)
+
+### Requirement: A window does not grow by itself
+The width and height of a window SHALL change only by the person's resize gesture or by content
+that became larger in its own right (a slot added, a group expanded, a longer name). Repeated
+frames with the same content — pointer motion, hover, playback, idle repaints — MUST NOT change the
+size of any window by more than one physical pixel in total, at any display scale, including
+fractional ones and the program's own zoom (1.1, 1.2, 1.25, 1.3, 1.5). A width once reached by such growth is not a "size the person
+chose" and SHALL NOT be remembered as one.
+Why: kkt item 2 (2026-10-27), the owner: "on my other system the morpher window endlessly tries
+to grow in width; other windows don't do this. Move the mouse anywhere in the main window or the
+morpher window — it widens fast; don't move it — slowly." Growth that follows the frame count
+is a ratchet: every frame may only add, never take back (egui 0.36 `Resize` keeps the maximum of
+the requested and the last content size). The R.67 lesson "one scroll per window" removed the
+window-level scroll from the FX and transition windows, but the morpher, camera, notices and
+diagnostics windows kept it, because nothing held the rule for all windows. Found 2026-10-28: the
+window-level scroll under the program's style grows the morpher window one physical pixel per frame
+at zoom 1.1 (the owner's first Ctrl+=), 1.3, 1.35, 1.85 — and a frameless button grows two points
+while hovered, which a content-sized window keeps for good.
+
+#### Scenario: Every window keeps its size over frames at fractional scales
+- **WHEN** each window of the registry that the harness can open (the morpher, transition and camera windows in their own scenes) is opened at display scale 1.0, 1.1, 1.2, 1.25 and 1.5, and 300 frames are run with the pointer moving over the main window and over the window itself
+- **THEN** the window's outer rectangle at frame 300 differs from the one at frame 3 by at most one physical pixel in width and height; a window that fails is named with its scale and both widths
+- **PATH** open the morpher window from the morph block's double-click → move the mouse over the timeline and over the window for five seconds → the window's right edge stays where it was
+- **TEST** t918 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: The owner's morpher scene does not widen
+- **WHEN** a morpher layer in batch mode with a chain of twelve slots, two area references and an open curve graph is opened at the program's zoom 1.1, 1.2, 1.25, 1.3 and 1.5 (the program's own style applied); 600 frames are run with the pointer moving over the main window, then the same over the morpher window, then the same with no pointer motion and a frame every step
+- **THEN** the width at the end equals the width at frame 3 within one physical pixel in all three runs; the window-level scroll is absent (one body scroll); the test fails on the code before the change in the same scene that the first investigation stage recorded as growing
+- **PATH** put a morpher layer on a morph track → double-click it → the morpher window → add effects until the strip wraps → open a curve → move the mouse around the main window → the morpher window's width does not change
+- **TEST** t923 (`src/apps/kt-app/src/layout_tests.rs`), live scenario `src/scripts/live/winshell.py` (the real program, Ctrl+= once and twice — zoom 1.1 and 1.2, the owner's case)
+
+### Requirement: An editing window refuses a kind of effect or an event only for a technical reason it names
+The morpher window's effect picker SHALL offer every effect kind of the registry, video and audio
+together, as its preset list already does; a picked audio effect SHALL land in the patch's audio chain
+and act on the audio targets. An event carrying slowed reverb (a time warp, with or without a speed
+curve, a shaped curve or a formula) SHALL be copied, pasted, cut to the clipboard and split at the cursor
+by the same gestures and with the same result as any event: no refusal, the chain and the curves travel,
+every piece's material is the integral of its speed. Where a window does refuse something, it SHALL say
+the technical reason in the status line, and that reason SHALL hold in the current engine.
+Why: ktprompts v26.10.18 items 1 and 3 — "the morpher does not let me put audio effects on", "slowed does
+not let me copy-paste the event and cut it — childish excuses". The morpher's single strip (R.35 S2) passed
+"video" to the picker by oversight; the "cannot cut a warped clip" answer outlived its reason (R.39).
+
+#### Scenario: The morpher picker offers audio effects
+- **WHEN** the harness app has a morpher over an audio and a video track; its window is opened; "+ effect…" is clicked; "pitch" is typed in the search; Pitch shift is picked; the window is closed and the project rendered
+- **THEN** the picker lists the audio kinds (Reverb, Pitch shift, EQ, Compressor, …) next to the video kinds; Pitch shift appears in the morpher's single strip after the morph slot; the model holds it in the patch's audio chain; the audio target sounds shifted inside the block and unchanged outside it
+- **PATH** right-click the morph track → "Add morpher" → the purple block appears → double-click it → the morpher window opens with one chain strip starting with the purple morph slot → click "+ effect…" → the gallery lists video effects and, under their own heading, audio effects → type "pitch" → Pitch shift remains → click it → the strip shows "Pitch shift" after the morph slot → close the window → press Space → inside the block the sound is higher
+- **TEST** t912 (`src/apps/kt-app/src/reach_tests.rs`)
+
+#### Scenario: A slowed event is copied, pasted, cut and split like any event
+- **WHEN** the harness app has an audio event with slowed reverb at 0.8× and a speed curve 0.5→1.5 (linked to its video event); the event is selected and Ctrl+C, then the cursor moved and Ctrl+V; S is pressed with the cursor in the middle of the original; one half is selected, copied (Ctrl+C), deleted (Delete) and pasted elsewhere (Ctrl+V) — the program has no Ctrl+X; a region over half the event is copied and pasted
+- **THEN** no gesture is refused and no error note appears (the split was refused before this change: the right half's speed keys moved with the anchor to a negative tick, and validation rejected the whole batch — `BadFxAuto`); the pasted copy has the same chain, bypass and curves, and sounds byte-for-byte like the original over its length; the split pieces' entry points are the integral of the speed and their joint has no material gap; the link partner is split and pasted with it; the region copy holds the piece by the same integral
+- **PATH** click the slowed event → it is outlined → Ctrl+C → the status line says "1 event copied" → click the ruler further right → Ctrl+V → a copy with the same "Slowed reverb" badge appears at the cursor with its video partner → click the middle of the original on the ruler → press S → the event and its partner split into two → click the right half → Ctrl+C → Delete → it disappears → click the ruler elsewhere → Ctrl+V → it reappears there, the filmstrip continuing where the left half ended
+- **TEST** t917 (`src/apps/kt-app/src/reach_tests.rs`)
+
+### Requirement: A name the program chose follows the interface language
+A reel that the program named by itself — the default reel name of the collapse
+gesture, with or without the number `unique_name` adds — SHALL be SHOWN in the current
+interface language wherever a reel name is shown (the head of an instance's chain strip, the path
+crumbs, the media bin card, the reel's settings window title, search hits, the rename dialog's
+prefill). A name is "chosen by the program" when it equals the default reel name of ANY of the
+five catalogs, optionally followed by a space and a number; any other name is the person's text
+and is shown exactly as stored. The stored name in the project file SHALL NOT change by being
+shown; renaming stores what the person typed. Lookups by name (search, the rename uniqueness check)
+SHALL compare both the stored and the shown form.
+Why: ktprompts 26.10.18 item 10. The default name is written into the file silently at collapse
+(`tr(msg.nest_default_name)`, no question asked), so a reel created in the Russian interface
+carried «Лента» into every other language — a word the person never typed. Existing files are
+covered too, because the rule reads the name, not a flag.
+
+#### Scenario: A default reel name is shown in the current language
+- **WHEN** a selection is collapsed twice in the Russian interface (names «Лента», «Лента 2»), a third reel is renamed «Интро», the project is saved and reopened in English; then switched to Chinese
+- **THEN** in English the reels are shown as "Reel", "Reel 2" and «Интро»; in Chinese as the zh-Hans default name, its "2", and «Интро»; the project file still holds «Лента», «Лента 2», «Интро» byte for byte; renaming "Reel 2" to "Outro" stores "Outro"
+- **PATH** in the Russian interface select two events → Collapse into a reel → the bin card «Лента» → View → Language → English → the bin card reads "Reel", the instance on the timeline reads "Reel" → right-click it → Rename the reel… → the field shows "Reel" → type "Outro" → Enter → the card reads "Outro" in every language
+- **TEST** t932 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: Every place that shows a reel name uses the shown form
+- **WHEN** a reel stored as «Лента» has an instance with one published parameter; in English the instance's FX window is opened, the reel is entered (crumbs), its settings window is opened, the bin is shown and Ctrl+F searches "Reel"
+- **THEN** the head of the instance's chain strip reads "📌 Reel" (the owner's case), the crumbs, the settings window title, the bin card and the search hit all read "Reel"; the search finds the reel by "Reel" and by «Лента»
+- **PATH** double-click the reel instance → the FX window → the head of the strip "📌 Reel", the published parameter below it → Enter the reel → crumbs "Root › Reel" → Ctrl+F, type "Reel" → the reel is found
+- **TEST** t934 (`src/apps/kt-app/src/layout_tests.rs`)

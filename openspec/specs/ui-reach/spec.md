@@ -362,14 +362,55 @@ The six densest forms (the effect chain, morpher, transition, camera, project se
 render) SHALL be laid out on the model of the "Transform" section: collapsible groups, pairs
 on one line, a unit for every number, a slider for a quantity with both limits, reset
 in one action. The other windows of the registry are NOT subject to re-layout, but they obey the form contract.
+EVERY WINDOW OF THE REGISTRY SHALL be built by ONE window shell, and a window site MUST NOT set
+by itself what the shell decides: the id, the title cross, collapsing, resizing, the scroll
+policy, the width rule and the meaning of Esc. A window declares its KIND (tool window, dialog,
+progress, message) and, where the kind allows it, its own default size; the body scrolls
+in the shell's one body scroll, and a scroll of the window itself MUST NOT exist. Esc SHALL close the
+window that is ON TOP for the person (the egui layer order), one window per press, before the
+non-window steps of the Esc cascade (drag, region and selection, collapse, leaving the reel):
+a tool window closes and KEEPS its edits; a dialog takes its action that loses nothing (Cancel,
+Later, No). A window whose job must not be stopped by a stray key (export progress, analysis
+progress) SHALL declare that Esc does not touch it, with a written reason of at least 25
+characters, and Esc then goes on to the next window. The title cross, where the kind has one, and
+Esc SHALL take one path with one consequence.
 Why: R.63, the owner's words: "I forbid any agents to spawn any additional windows without an obvious purpose (like the window on closing the program)";
 "why does the agent… force him to enter all the parameters again"; "duck under a track…
-why didn't you simply name it properly"; "meaningless copy-pastes of the same code keep piling up everywhere". R.65: the ducking snapshot was taken together with its own parameter memory — a live instrument has its memory by construction, and a second one (in the store) would diverge from the project. R.66 (the owner's direct request of R.64 "go over this in all the other widgets and windows too"): prose about the look of a form does not work — by that point the scrolling of the body existed in exactly one window out of twenty-one, and it was added only after a test dropped a window with buttons hidden behind the edge.
+why didn't you simply name it properly"; "meaningless copy-pastes of the same code keep piling up everywhere". R.65: the ducking snapshot was taken together with its own parameter memory — a live instrument has its memory by construction, and a second one (in the store) would diverge from the project. R.66 (the owner's direct request of R.64 "go over this in all the other widgets and windows too"): prose about the look of a form does not work — by that point the scrolling of the body existed in exactly one window out of twenty-one, and it was added only after a test dropped a window with buttons hidden behind the edge. 2026-10-27
+(ktprompts 26.10.18 item 6): the camera window did not close on Esc — the Esc cascade was a
+hand-kept list, and four windows were missing from it; the owner: "we have lots of duplicated
+code, though I asked that all widgets and windows reuse code and have the widest behaviour".
+kkt item 2: the morpher window kept the window-level scroll that R.67 removed from the FX and
+transition windows, and on another system it grew wider by itself.
 
 #### Scenario: The window registry
-- **WHEN** the kt-app sources are scanned for `egui::Window::new` and `Modal::new`; a window without an entry is temporarily added; the entry of a live window is removed from the registry
+- **WHEN** the kt-app sources are scanned for the places where the window shell is called; a window without an entry is temporarily added; the entry of a live window is removed from the registry
 - **THEN** each place of window creation is found in the registry with a reason of at least 25 characters; both violations are red; the windows `duck` and `inst_params` are absent from the registry and do not exist in the code
 - **TEST** t757 (`src/apps/kt-app/src/reach_tests.rs`)
+
+#### Scenario: No window is built outside the shell
+- **WHEN** the kt-app sources outside the shell module (test code cut off) are scanned for `egui::Window::new`, `Modal::new`, a window-level `.vscroll(`/`.scroll(`/`.hscroll(`, `.collapsible(` and `.open(&mut` on a window; separately a window built by hand is temporarily added to a copy of a source
+- **THEN** none is found in the program; the added one is red with its file and line; the shell module itself is the only place where these calls stand
+- **PATH** there is no gesture: the guard reads the kt-app sources and names the file and line of a window built by hand — it is verified by running the test, not by mouse
+- **TEST** t921 (`src/apps/kt-app/src/reach_tests.rs`)
+
+#### Scenario: Esc closes every window
+- **WHEN** each window of the registry is opened in its own scene (the morpher, transition and camera windows in a scene with a morpher layer, a transition and a camera event; the dialogs from their own gesture) and Esc is pressed once
+- **THEN** the window is gone; a tool window's edits made before Esc are still in the model and its session is one undo step; a dialog left no trace (no command, no paste, no rename) and focus is released, so Space starts playback at once; the declared exceptions (export progress, analysis progress) stay open with their job running, and each has a reason of at least 25 characters; the camera window — the owner's case — closes
+- **PATH** double-click the camera block on the camera track → the camera window opens over the timeline → change the zoom field → press Esc → the window is gone, the camera block keeps the new zoom, Ctrl+Z returns the old zoom in one step
+- **TEST** t919 (`src/apps/kt-app/src/reach_tests.rs`)
+
+#### Scenario: Esc closes the top window first
+- **WHEN** the FX window of an event is opened, then the camera window over it; Esc; then the FX and morpher windows are opened and the FX window is clicked to bring it to the top; Esc; with no window open and a region and a selection present — Esc
+- **THEN** the first Esc closes the camera window and leaves the FX window open; the second pair closes the FX window (the one on top) and leaves the morpher window; with no window open Esc clears the region and the selection as before (the loop stays armed)
+- **PATH** double-click an event → its FX window → double-click the camera block → the camera window on top of it → Esc → only the FX window is left → open the morpher window, click the FX window's title → FX is on top → Esc → only the morpher window is left
+- **TEST** t920 (`src/apps/kt-app/src/reach_tests.rs`)
+
+#### Scenario: The title cross and Esc are one path
+- **WHEN** each openable window of the registry that has a title cross is opened twice in the same scene; once it is closed by a click on the cross, once by Esc; the model, the undo stack, the clipboard and the focus are compared
+- **THEN** both closings leave the same model, the same undo depth and the same focus state; every window of the kind "tool window" and "dialog" has the cross in the same place of its title row and no collapse arrow, every "progress" window has no cross, as its kind declares
+- **PATH** open the project settings window from the toolbar → change the frame rate → click the cross at the right of its title → the window closes, the rate is unchanged; open it again → change the rate → Esc → the window closes, the rate is unchanged
+- **TEST** t922 (`src/apps/kt-app/src/reach_tests.rs`)
 
 #### Scenario: A tool remembers its parameters and delivers curves
 - **WHEN** the workspace (the meters' width, the project view) goes round a loop through the store file, and a file without the section is read again; separately — the track's sidechain compressor: the key and the parameters are edited in the track's window
@@ -1324,3 +1365,52 @@ repeat the unanswerable question.
 - **THEN** a screenshot per step shows the window, the choice before and after; the saved `.kt` carries `"echo_before": "ring"` and is format 3
 - **PATH** double-click the audio event → the FX window (Delay, Pitch Shift) → click the Pitch Shift slot → the echo line "cut at the event's end" → open it → pick "rings on after the event" → Ctrl+S
 - **TEST** t1338 (`src/scripts/live/pitchtail.py`)
+
+### Requirement: The FFmpeg window tells what the download does, how fast, and where it went
+Before the click on **Download FFmpeg <pin>**, the FFmpeg window SHALL say what will happen: the
+archive's name and size; the source and its mirror; the check against the SHA-256 built
+into Kinetren (shortened, the full value in a hover); that only the DLLs and the licence
+are unpacked, and into which folder; that nothing else on the computer changes; and that
+deleting the folder removes it. During the download the window SHALL show the host in use with
+"mirror k of n", the received and total size, the speed and the time left (a rate smoothed
+over the last seconds; a dash while nothing arrives), the verifying step, and "unpacking: n
+of m files". After a success the window SHALL name the installed folder and the verified hash. After a
+failure it lists one line per mirror tried, with that mirror's reason. An **Open folder** button
+SHALL open the installed folder, or the folder of the loaded FFmpeg, in the system file
+manager. The texts come from the five catalogs. The window repaints only while the
+download runs (invariant 12), and the speed and time left are computed by a pure function of the
+samples.
+Why: `kkt.txt` 2026-10-27: "the FFmpeg download window is not informative — what speed,
+where it installs, etc." The person clicked Download and saw only "Connecting…" and
+"X of Y MB". The source, the mirror, the folder and the reason of a failure stayed inside
+the program.
+
+#### Scenario: Speed and time left are honest numbers
+- **WHEN** the rate function is fed byte samples: steady 4 MB/s for 5 s; a burst then a 3 s stall; no announced total (the pinned size is used); the first sample only
+- **THEN** steady gives 4.0 MB/s and the time left from the remaining bytes; the stall gives a dash for the speed and no time left (not an infinite or frozen value); without a total the pinned size is the total; one sample gives a dash; the function allocates nothing per frame
+- **PATH** View → FFmpeg… → **Download FFmpeg 9.0.2** → the bar reads "12 of 57 MB · 4.0 MB/s · about 11 s left" → the network stalls → the speed shows "—" and the time left disappears instead of growing → bytes arrive again → speed and time left come back
+- **TEST** t948 (`src/apps/kt-app/src/ffmpeg_setup.rs`)
+
+#### Scenario: Before the click the window says what will happen
+- **WHEN** the harness opens View → FFmpeg… with the Windows rules forced and no pin folder, the download root pointed into the test's own folder
+- **THEN** the window shows the archive name `ffmpeg-9.0.2-full_build-shared.7z`, its size in MB, the hosts `www.gyan.dev` and `github.com` (as the mirror), the first 16 hex digits of the pinned SHA-256 (the full value in the hover), the folder `<root>/9.0.2`, and the line about removal; the **Download** and **Open folder** buttons are there; nothing repaints while the window rests
+- **PATH** View → FFmpeg… → the window shows the current state, then the block "Download gets ffmpeg-9.0.2-full_build-shared.7z (57 MB) from www.gyan.dev (mirror: github.com), checks SHA-256 4d2060a8b34a940a…, unpacks only the DLLs and the licence into …\kinetren\ffmpeg\9.0.2; nothing else changes; delete the folder to remove it" → hover the hash → the full 64 digits → the buttons **Download FFmpeg 9.0.2**, **Open folder**, **Locate folder…**, **Rescan** are in the row below
+- **TEST** t950 (`src/apps/kt-app/src/reach_tests.rs`)
+
+#### Scenario: During the download the window shows source, speed and time left
+- **WHEN** the harness starts the download from a local test server pair (the first mirror answers 404, the second serves the t848 archive slowly)
+- **THEN** while bytes arrive the window shows "127.0.0.1 — mirror 2 of 2", "X of Y MB · S MB/s · about T left", and under "Tried:" the first mirror with "404"; then "Checking SHA-256…" and "Unpacking: n of m files"; the bar and the text move; **Cancel** is shown instead of **Download**
+- **PATH** View → FFmpeg… → **Download FFmpeg 9.0.2** → the bar appears with "127.0.0.1 — mirror 1 of 2, connecting…" → a line "Tried: 127.0.0.1 … — 404" appears and the bar shows "mirror 2 of 2" → "1 of 3 MB · 0.5 MB/s · about 4 s left" grows → "Checking SHA-256…" → "Unpacking: 2 of 3 files" → the bar is gone
+- **TEST** t951 (`src/apps/kt-app/src/reach_tests.rs`)
+
+#### Scenario: After the download the window says where it went, or why it did not
+- **WHEN** the harness download from the test server succeeds; then a second harness run where both mirrors fail (404, then a hash mismatch); in both runs **Open folder** is pressed
+- **THEN** after the success the window shows "Installed into <root>/9.0.2", "SHA-256 … matches", and (with FFmpeg already loaded) the existing "restart to use it" line of ffmpeg-9; **Open folder** asks the file-manager seam to open `<root>/9.0.2`; after the failure the window lists both mirrors, each with its own reason (404; "checksum mismatch: expected …, got …"), the folder has no traces, and **Open folder** opens the download root
+- **PATH** (continuing the previous path) the bar is gone → the window shows "Installed into …\kinetren\ffmpeg\9.0.2" and "SHA-256 4d2060a8… matches" → **Open folder** → Explorer opens the folder with the DLLs and the licence → (another run, no network) **Download** → after a while red "FFmpeg was not installed:" with two lines "www.gyan.dev — …" and "github.com — …" → **Open folder** → the download folder, without leftovers
+- **TEST** t952 (`src/apps/kt-app/src/reach_tests.rs`)
+
+#### Scenario: The new texts are in every catalog and every font
+- **WHEN** the catalog and font guards run over the new `[ffmpeg]` keys
+- **THEN** all five catalogs have every key with the same positional placeholders, no extra or unused keys, every non-ASCII glyph is in the loaded fonts, and t100, t125, t128 and t171 stay green
+- **PATH** View → Language → Arabic (then Chinese, Russian, Spanish) → View → FFmpeg… → the "what happens" block, the progress line and **Open folder** are in that language with no tofu boxes and no English left over
+- **TEST** t953 (`src/apps/kt-app/src/i18n_tests.rs`, `src/apps/kt-app/src/font_tests.rs`)

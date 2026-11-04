@@ -85,6 +85,35 @@ Reconnaissance of other editors (Vegas Adjustment Events, AE adjustment layer) r
   `MorphRefInsideSequence`, `src/libs/kt-model/src/project.rs`): it stays outside and gets into the collapse report; one that did travel inside is removed from the root, otherwise the layer would land twice (capability `compositions`).
 - **Diagnostics — `kt-cli probe`** (`src/apps/kt-cli/src/main.rs`): the effective events AFTER the morpher layers and "foreign media in the batch". The first thing to ask about a complaint "here the sound/picture is from another event" — item 298 was found by it in a single run.
 
+## The morpher offers both kinds and cuts a warped event (slowed-reverb-is-an-event, archived 2026-11-04)
+
+- **R1. No audio effects in the morpher's picker was an oversight, not a decision.** R.35 S2 (commit
+  b505219c) merged the morpher's two chain strips into ONE violet-slot strip and passed `audio = false`
+  to `chain_strip`; before it the audio strip passed `true`. The preset list of the same strip already
+  showed both kinds ("split_chains will sort them") and `split_chains` routes an audio kind into
+  `patch.audio_fx`. Only the picker filter refused. `PickKinds { Video, Audio, Both }` replaces the bool;
+  the morpher passes `Both` and the gallery shows audio kinds as a named list (they have no picture).
+  One strip stays: R.35 S2's owner request was ONE strip, not two "+ effect" buttons.
+- **R3. The veto outlived its reason.** `windows_on` returned the whole body for a warped target
+  (`no_cut`, R.37, from R.35 finding 2: "the `source_in` of a piece computed linearly for a stretched clip
+  points to the wrong place"). Since R.39 `clip_slice` computes `source_in` as the integral of the speed
+  and moves the keys with the anchor (t270 group), and the morpher already cut pieces with it. The visible
+  cost of the veto: a layer whose patch carried slowed slowed the WHOLE event regardless of its window; a
+  source swap over part of a slowed event replaced the whole body.
+- **D3. A patch's warp acts in its window.** A warped target is cut by `clip_slice`; a patch carrying a
+  time warp cuts its target and only the window piece gets the patch's warp, the outer pieces keep the
+  material mapping they had without the layer ("a layer never moves material outside its window", as for
+  every other patch). The piece-id rule (piece 0 keeps the original id) and the forbidden zones are
+  unchanged. A jump in the material at the window's right edge is what this means; a rippling slowdown
+  belongs on the event's own speed curve (Open Question 3, kept D3).
+- **Revised rule (R.35 finding 2, R.37):** "a clip with its own or appended time warp MUST NOT be cut".
+  Its premise was removed by R.39; t238 was inverted by the owner's decision (2026-10-28), not deleted.
+- **R3'. Copy, paste, cut and split of a slowed event had no refusal in the code.** `Command::Split`
+  checks only bounds; `copy_clips`/`copy_region_block` cut with `clip_slice`; nothing refuses by kind.
+  What the owner met was most likely the morpher veto (R3) or the region winning over a selected event
+  (`selection-copy-target`). t917 drives the real gestures (Ctrl+C/V/X, `S`, region copy) on a slowed
+  event with a speed curve and a linked partner, so any future refusal is red.
+
 ## Deferred
 
 - The composite stage "effects on the mixed picture of the tracks below" — a separate object, not the first (`docs/features/morpher/gaps/composite-below-vs-per-clip.md`).

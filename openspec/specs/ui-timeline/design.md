@@ -303,6 +303,70 @@ preferences leave View for one window, File › Preferences…; View keeps only 
 viewed (Detach/Dock, Diagnostics…, Notices). The switch is still ONE (t1294 counts its writers), and
 its value lives in the user store, so opening another project no longer resets it (t1295).
 
+## What Copy takes, and the triple click (selection-copy-target, archived 2026-11-04)
+
+Copy takes, in this order: ONE selected event (counted by link group) whole, with the region left
+in place; else the region; else the selection. Written in `copy_selection` only, and the status
+line names the rule that fired (`copied_event` / `copied_region` / `copied_events`), because the
+three branches look alike on the screen.
+
+- **Link groups are counted, not ids.** A click on a video event selects only it, but its audio
+  partner travels anyway; the person who clicked one A/V pair has selected "one event". The
+  consequence is written down: a range marker that crosses exactly ONE event, double-clicked and
+  copied, gives that event whole, not the cropped piece (t926). Remembering whether the selection
+  came from a click or from a region gesture was rejected: an invisible state that decides what
+  Copy takes is a mode, and modes are what the owner keeps complaining about.
+- **Why not "any selection wins"** (Premiere, Resolve): it would change the range-marker
+  double click (R.33 item 8 selects the crossing events AND sets the region), whose Ctrl+C would
+  stop cropping to the marker. **Why not Vegas's "selection limited by the region"**: it needs a
+  third block builder (selected ∩ region) and it reverses the owner's request, where the one event
+  must not be cropped. Several selected events keep the region rule until the owner decides.
+- **A triple click undoes its second click.** egui reports `triple_clicked()` on the third press,
+  AFTER `double_clicked()` fired on the second. The double-click branch leaves a one-frame record
+  (`pending_double`: FX window opened / reel expanded / level reset); the triple-click branch sets
+  the region from the event and closes the window or collapses the reel the gesture itself
+  opened. The level line keeps its reset and ignores the third click. **No delayed double
+  click**: waiting 0.3 s to learn whether a third click comes would open every FX window late,
+  and the double click is used a hundred times more often than the triple (the FX window flashes
+  for ~0.3 s during a triple click; t927 asserts it is closed after the third).
+- The chord column of "Region over this event" and the event's hint name the triple click;
+  Shift+double-click still works and is the same body (`region_from_event`, t929).
+- Open and unchanged: Delete still follows the region-first order (the owner asked about
+  copy-paste only; "what Ctrl+C takes is what Delete removes" is the recommended next answer).
+
+## A window that grew by itself (shared-window-shell, archived 2026-11-04)
+
+The owner's morpher window widened by one physical pixel per frame after Ctrl+= pressed once or
+twice (Ubuntu, 1920×1080, native scale 1.0, zoom ≈ 1.1–1.2), "slowly when the mouse does not move" —
+the idle repaint rate. The cause was found by bisecting the owner's scene (t923): the **window-level
+scroll** `.vscroll(true)` (the morpher and camera windows; notices and diagnostics had it with narrow
+bodies). egui's `Resize` only grows (`desired_size.max(last_content_size)`); with a window scroll a body
+a fraction of a pixel wider than the window is reported as content and the window keeps it, every frame.
+Without `.vscroll`, no zoom of the sweep 1.05…2.0 grew (0 of 20 against 4 of 20 with it). The minimal
+reproduction outside the tree had missed it by trying 1.25/1.5/1.75/2.0 instead of 1.1/1.3 and by
+different margins; it is the program's own zoom, not the OS scale, that triggers it. The rule is the
+one of "One scroll per window" (R.67), now applied to all windows: **the shell never sets a window-level
+scroll**, only the body scroll (`window_body`). The width-rounding variant (b) was kept in reserve and
+not needed. `track_window`'s own copy of the body scroll also grew its height 30 points a frame up to a
+ceiling; it now uses the shared body.
+
+## A program-chosen reel name follows the language (i18n-gaps, archived 2026-11-04)
+
+- **D3. Recognised by its text, shown in the current language.** `reel_display_name(stored)` returns the
+  current language's default plus the same number if `stored` equals the default reel name of ANY of the
+  five catalogs, optionally followed by `" " + digits`; any other text is returned untouched. Every place
+  that shows a reel name goes through it (strip head, bin card, crumbs, settings title, published-parameter
+  windows, rename prefill), and the search and the rename uniqueness check compare both forms. Rejected: a
+  flag `Sequence.name_auto` (a project-format field for a display concern, and it would not fix the owner's
+  EXISTING file; teaching the reader to set it for old names is the reader learning an old form, which
+  R.67 forbids); an empty stored name (names are unique addresses in the model and OTIO needs one); leaving
+  it as data (the person never typed the word, the program wrote it). Cost, written down: a person who
+  deliberately typed exactly "Reel" or "Reel 3" sees it in the other language too (t932b keeps their
+  other texts untouched).
+- **D4. A Cyrillic placement guard.** t933 extends t131 beyond literals: catalogs other than `ru.toml` value
+  by value (the `[lang]` endonym excepted), and committed fixtures as text with a declared list of Cyrillic
+  test data and a reason per entry. The `.desktop`/MIME files are checked against `ru.toml` by t930.
+
 ## Deferred
 
 - `lane_names` live in `Project.ui`, and `swap_reel` does not swap them — the full entry

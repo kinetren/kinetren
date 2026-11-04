@@ -125,7 +125,7 @@ message, the first line = the stage and what was done). Stage only this change's
     "0.0 MB"/"0.0 Mbit/s" for a small file, "Done" twice in the log; the first fixture rendered
     in under a second. Fixed; `./scripts/live-check.sh render` — 1 of 1 green. Screenshots:
     `target/live-out/render/01-step-settings.png` … `08-step-closed.png`.
-- [ ] 4.2 `openspec/specs/export/design.md` Deferred: strike "name the encoder in the progress line" and "a line export runs on GPU/CPU" as done by this change (after archive). Verify `openspec validate --specs` is green
+- [x] 4.2 `openspec/specs/export/design.md` Deferred: strike "name the encoder in the progress line" and "a line export runs on GPU/CPU" as done by this change (after archive). Verify `openspec validate --specs` is green
 - [x] 4.3 Commit stage 4
   - Committed with stage 3 (one commit: the coverage guard t804 needs the scenario).
 
@@ -135,4 +135,5 @@ message, the first line = the stage and what was done). Stage only this change's
   - `./scripts/finish.sh` green: **kt26.10.29-ed1f2df9**. The live scenario `render` ran inside it
     (8 screenshots `target/live-out/render/01-step-settings.png` … `08-step-closed.png`); `trans`
     passed on the second try alone (a known load flake, not this change). Cost: 737 s (693 s live).
-- [ ] 5.2 After archiving: set F-EXP-005 to `done` with its frozen verdict and `CAPABILITY:`, and append the "why" (D1 events not state, D2 packet bytes, D3 clocks in the UI, D8 always ask, the owner's v1-level request) to `openspec/specs/export/design.md`
+- [x] 5.2 After archiving: set F-EXP-005 to `done` with its frozen verdict and `CAPABILITY:`, and append the "why" (D1 events not state, D2 packet bytes, D3 clocks in the UI, D8 always ask, the owner's v1-level request) to `openspec/specs/export/design.md`
+  - 4.2 and 5.2 done in the archive commit (2026-11-04): the two Deferred lines struck in `openspec/specs/export/design.md` (the rest of the encoder-list line stays: F-EXP-004); F-EXP-005 is `done`; the design has "The render window at the level of v1".

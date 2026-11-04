@@ -262,3 +262,34 @@ request of 2026-11-01 (kkt-26.11.01 item 13): both checkboxes moved together int
 Preferences…, the update check right after statistics (t878 checks the adjacency). The how-to-switch-
 off text names the new path. When the state already says a newer release is out, the start window's
 What's new pane is headed by the same line (no request of its own).
+
+## Desktop integration speaks every language and claims only our files (i18n-gaps, archived 2026-11-04)
+
+- **D1. The translations live in the catalogs; the packaging files are kept equal by a guard.** A
+  `[desktop]` section in the five catalogs holds `generic_name`, `comment`, `keywords` (space-separated,
+  like `[fxreg.kw]`, because an Arabic value may not hold an ASCII `;`) and the three MIME comments. t125
+  exempts the `desktop.` prefix; t930 is the user of the section: it maps each language to its freedesktop
+  locale (`zh-Hans` → `zh_CN`), joins the keywords with `;` and a trailing `;`, and compares with the
+  `.desktop` and MIME files. The files are edited by hand (six lines per language) and the guard prints the
+  exact line to paste. Rejected: a generator that rewrites the files (a second writer of committed files,
+  checklist rule 20); translations only in the packaging files (a translator works in the catalogs and
+  would never see them). Arabic stays in logical order in the packaging; only egui needs the reordered
+  table.
+- **D2. `*.kt` with a magic rule; `.ktproj` its own type.** `*.kt` is also shared-mime-info's Kotlin
+  glob, so a glob alone would make every Kotlin source a "Kinetren project". The project type has the glob
+  plus a magic match on the root marker `"kinetren"` within the first 64 bytes (priority 80), and the
+  writer's key order is part of the format (t935 writes the file through `to_text`, so a reorder turns it
+  red). The legacy `.ktproj` is `application/x-kinotrain-legacy-project` ("Older Kinotrain project"),
+  listed in `MimeType=` so a double click starts Kinetren, whose "Open" names the import door (R.67).
+  Rejected: dropping `*.ktproj` (the file manager would say "unknown" about exactly the files a person
+  double-clicks); routing a launched `.ktproj` straight into the import (contradicts R.67).
+- The packaging files are now `com.kinetren.Kinetren.desktop` and `com.kinetren.Kinetren.xml` (one
+  application ID, flatpak-flathub D1); t930, t931 and t935 read them under those names.
+- **The manual check (task 4.2), recorded 2026-11-04.** `make install` was not run: it builds a release
+  tarball in Docker and writes over the installed program in the home directory. The packaging's own
+  `install.sh` was run under a throwaway `HOME` instead, with stub binaries, and the result read through
+  Gio (the library the file managers use): `film.kt` → "Kinetren project" ("Proyecto de Kinetren" with
+  `LANGUAGE=es`); a Kotlin `Main.kt` → "Kotlin source code"; `demo.ktproj` → "Older Kinotrain project"
+  ("Proyecto antiguo de Kinotrain"); the application search for "montage" finds
+  `com.kinetren.Kinetren.desktop`; `desktop-file-validate` passes. No file manager window was opened.
+

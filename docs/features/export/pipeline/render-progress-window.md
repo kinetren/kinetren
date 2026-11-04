@@ -1,18 +1,18 @@
 ---
 id: F-EXP-005
 title: The render progress window — what the person learns while the file is being written
-status: candidate
+status: done
 priority: B
 cost: M
 category: export/pipeline
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, shotcut-26.09]
-we_have: partial
+we_have: yes
 crates: [kt-engine, kt-ffmpeg, kt-app]
 invariants: [9, 11, 12]
 ui_rules: [3, 10, 13, 16, 19, 22]
-round: null
-point: null
-tests: []
+round: kkt-26.10.27
+point: change render-window-v1-parity (the owner's v1-level request)
+tests: [954, 955, 956, 957, 958, 959]
 depends_on: [F-EXP-004, F-EXP-002]
 trackers: []
 services: []
@@ -108,38 +108,7 @@ ktprompts v26.10 T12 "the render window counts statistics after finish".
 ## How it fits Kinotrain
 
 CAPABILITY: openspec/specs/export/ — the contract is in `spec.md`, the "why" in `design.md`.
-
-### What already exists
-
-- `src/apps/kt-app/src/render_dialog.rs` — the settings window (`draw_render_setup`) and the
-  progress window (`draw_render_dialog`): a file line, one grey line of settings that names the
-  encoder only as "auto encoder" until the end, a phase, a bar, a min/avg/cur/max speed line, one
-  counters line with elapsed and ETA, Pause/Cancel, a summary with the encoder, loudness, missing
-  sources and lost layers.
-- `src/libs/kt-engine/src/export.rs` — `ExportProgress` (frames done/total, phase) and
-  `ExportStats.encoder` (known only in the final stats, although `Muxer::open` chose it before
-  the first frame).
-- `src/apps/kt-app/src/graphs.rs` — `RollingGraph`, the v1 multi-line graph port of the
-  performance panel: the speed chart already has a widget (rule 24 of the kt-app checklist).
-
-### What is missing
-
-The v1 labelled form (resolution, frame rate, video, audio, mux) and run rows (phase, progress,
-elapsed, remaining, output length); the speed chart; the log and its file; the encoder, pixel
-format and backend during the run; file size, current bitrate and free space; Open file / Open
-folder; a question before writing over an existing file; counters frozen at the finish.
-
-### What hinders
-
-Invariant 11: no wall clock in the offline path — every time-based number (elapsed, remaining,
-speed) is the UI's; the engine reports only counts (frames, samples, bytes). Invariant 12: the
-chart and the counters repaint only while the job runs. Rule 22: a floating log window would be a
-new window — the log has to live inside the progress window.
-
-### Which invariants it touches
-
-9 (the encoder named from the real open), 11 (counts only from the engine), 12 (repaint only
-while running). UI rules 3, 10, 13, 16, 19, 22.
+The engine reports events (the opened encoder, progress with packet bytes, log facts) and counts only; every clock belongs to the window in `render_dialog.rs`, which shows two forms, the speed chart, the log, a frozen final block and Open file / Open folder.
 
 ## Estimate
 
