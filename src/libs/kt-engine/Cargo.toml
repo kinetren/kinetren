@@ -19,6 +19,8 @@ thiserror = { workspace = true }
 kt-plugin-api = { workspace = true }
 
 [dev-dependencies]
+# the compute host for the Datamosh tests (compute-kernels; dev only)
+kt-gpu = { workspace = true }
 # the built-in plugin set for the tests (plugin-api-stage1; dev only — t975)
 kt-plugins-builtin = { workspace = true }
 serde_json = { workspace = true }

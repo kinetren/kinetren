@@ -15,7 +15,12 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
 - **Fragment passes, NOT compute**: the default device of egui-wgpu on the
   GL backend is created with downlevel_webgl2 limits (compute is unavailable),
   and the live check runs llvmpipe via `WGPU_BACKEND=gl`. Everything here
-  MUST work on llvmpipe.
+  MUST work on llvmpipe. That is the GL device only: llvmpipe on VULKAN runs
+  compute shaders (`compute.rs`, F-EXT-004), and so does any device
+  created outside egui-wgpu's GL path.
+- **The compute host (`compute.rs`) is a device of its own** (compute-kernels): Vulkan, DX12 or Metal
+  whatever `WGPU_BACKEND` says, because the interface may be on GL. WARP is refused here too. Only
+  Vulkan through llvmpipe has run it so far; DX12 and Metal are untested.
 - **All textures are Rgba8Uint** — textureLoad returns raw bytes without
   unorm losses; integer kernels (composite, noise, mirror, tiling) are
   byte-for-byte equal to the CPU, bilinear ones — within tolerance (f32 against f64).

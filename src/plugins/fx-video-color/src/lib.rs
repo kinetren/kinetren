@@ -2,6 +2,8 @@
 //! Posterize is the pilot (D9): the smallest kernel that crosses all four executor positions — the
 //! CPU barrier, the CPU tap of the fused pass, its own GPU pass and the GPU tap arm.
 
+pub mod single_source;
+
 use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;
 

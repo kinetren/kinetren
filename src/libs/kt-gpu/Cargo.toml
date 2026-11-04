@@ -21,3 +21,5 @@ xxhash-rust.workspace = true
 [dev-dependencies]
 # the built-in plugin set for the tests (plugin-api-stage1; dev only — t975)
 kt-plugins-builtin = { workspace = true }
+# the single-text Color Grade prototype (compute-backends, t1501)
+fx-video-color = { workspace = true }

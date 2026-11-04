@@ -2,9 +2,11 @@
 //! estimation, a closed prediction loop, an 8×8 DCT residual quantised by QP. No entropy coding,
 //! no B-frames, integer-pel vectors — the MECHANISM of an inter-frame codec, not a standard's syntax.
 //!
-//! Determinism (invariant 11): integer arithmetic, plus IEEE f64 in the DCT with no fused ops and
-//! no platform libm — the basis comes from the frozen `fcos`.
+//! The motion search and the residual are compute shaders (`wgsl/`, compute-kernels): `encode` is a
+//! job for the host's device, and `None` means the device failed. The same machine gives the same
+//! bytes; another device may differ, the codec's look does not depend on it.
 
+use kt_plugin_api::compute::{self, Buf, Init, Job, Step};
 use kt_plugin_api::math::FrozenMath;
 use std::sync::OnceLock;
 
@@ -128,99 +130,6 @@ impl Planes {
 }
 
 // ---------------------------------------------------------------------------------------------
-// the DCT
-// ---------------------------------------------------------------------------------------------
-
-/// The orthonormal 8×8 DCT-II basis `C[u][x]`.
-fn basis() -> &'static [[f64; 8]; 8] {
-    static B: OnceLock<[[f64; 8]; 8]> = OnceLock::new();
-    B.get_or_init(|| {
-        let mut c = [[0.0; 8]; 8];
-        for (u, row) in c.iter_mut().enumerate() {
-            let k = if u == 0 { 0.353_553_390_593_273_73 } else { 0.5 };
-            for (x, v) in row.iter_mut().enumerate() {
-                *v = k * (((2 * x + 1) * u) as f64 * std::f64::consts::PI / 16.0).fcos();
-            }
-        }
-        c
-    })
-}
-
-fn round_away(v: f64) -> f64 {
-    if v >= 0.0 { (v + 0.5).floor() } else { -((-v + 0.5).floor()) }
-}
-
-/// Quantise and reconstruct one 8×8 block of residual in place (forward DCT, a uniform step with
-/// rounding half away from zero, inverse DCT rounded to an integer).
-fn quant_block(blk: &mut [i32; 64], q: f64) {
-    let c = basis();
-    let mut t = [0.0f64; 64];
-    // rows: t[y][u] = Σx C[u][x] · b[y][x]
-    for y in 0..8 {
-        for u in 0..8 {
-            let mut s = 0.0;
-            for x in 0..8 {
-                s += c[u][x] * blk[y * 8 + x] as f64;
-            }
-            t[y * 8 + u] = s;
-        }
-    }
-    // columns: F[v][u] = Σy C[v][y] · t[y][u], quantised
-    let mut f = [0.0f64; 64];
-    for u in 0..8 {
-        for v in 0..8 {
-            let mut s = 0.0;
-            for y in 0..8 {
-                s += c[v][y] * t[y * 8 + u];
-            }
-            f[v * 8 + u] = round_away(s / q) * q;
-        }
-    }
-    // inverse: columns then rows
-    for u in 0..8 {
-        for y in 0..8 {
-            let mut s = 0.0;
-            for v in 0..8 {
-                s += c[v][y] * f[v * 8 + u];
-            }
-            t[y * 8 + u] = s;
-        }
-    }
-    for y in 0..8 {
-        for x in 0..8 {
-            let mut s = 0.0;
-            for u in 0..8 {
-                s += c[u][x] * t[y * 8 + u];
-            }
-            blk[y * 8 + x] = round_away(s) as i32;
-        }
-    }
-}
-
-/// `src − pred`, quantised per 8×8 block; returns the reconstructed residual.
-fn code_residual(src: &[u8], pred: &[u8], w: usize, h: usize, q: f64) -> Vec<i16> {
-    let mut out = vec![0i16; w * h];
-    let mut blk = [0i32; 64];
-    for by in (0..h).step_by(8) {
-        for bx in (0..w).step_by(8) {
-            for y in 0..8 {
-                for x in 0..8 {
-                    let i = (by + y) * w + bx + x;
-                    blk[y * 8 + x] = src[i] as i32 - pred[i] as i32;
-                }
-            }
-            quant_block(&mut blk, q);
-            for y in 0..8 {
-                for x in 0..8 {
-                    out[(by + y) * w + bx + x] = blk[y * 8 + x].clamp(-512, 512) as i16;
-                }
-            }
-        }
-    }
-    out
-}
-
-// ---------------------------------------------------------------------------------------------
 // motion
 // ---------------------------------------------------------------------------------------------
 
@@ -254,83 +163,6 @@ pub fn predict(rf: &Planes, mv: &[(i16, i16)], bs: usize) -> Planes {
     p
 }
 
-#[allow(clippy::too_many_arguments)]
-fn sad(cur: &[u8], rf: &[u8], w: usize, h: usize, bx: usize, by: usize, bs: usize, vx: i32, vy: i32) -> u32 {
-    let mut s = 0u32;
-    for y in 0..bs {
-        let sy = (by as i32 + y as i32 + vy).clamp(0, h as i32 - 1) as usize;
-        let row = (by + y) * w;
-        for x in 0..bs {
-            let sx = (bx as i32 + x as i32 + vx).clamp(0, w as i32 - 1) as usize;
-            s += (cur[row + bx + x] as i32 - rf[sy * w + sx] as i32).unsigned_abs();
-        }
-    }
-    s
-}
-
-/// The cost order: SAD, then the shorter vector, then (vy, vx) — total, so the search is
-/// deterministic whatever the visiting order.
-fn cost(s: u32, v: (i32, i32)) -> (u32, i32, i32, i32) {
-    (s, v.0.abs() + v.1.abs(), v.1, v.0)
-}
-
-/// Block-matching motion estimation of `cur` against `rf` (luma): candidates (0,0) and the left
-/// and top neighbours' vectors, a diamond of step 2 to convergence, a ±1 refinement.
-pub fn estimate(cur: &Planes, rf: &Planes, cfg: &Cfg) -> Vec<(i16, i16)> {
-    let (w, h, bs, r) = (cur.w, cur.h, cfg.bs, cfg.search.max(0));
-    let (bw, bh) = (w / bs, h / bs);
-    let mut mv = vec![(0i16, 0i16); bw * bh];
-    let clampv = |v: (i32, i32)| (v.0.clamp(-r, r), v.1.clamp(-r, r));
-    for byi in 0..bh {
-        for bxi in 0..bw {
-            let (bx, by) = (bxi * bs, byi * bs);
-            let eval = |v: (i32, i32)| cost(sad(&cur.y, &rf.y, w, h, bx, by, bs, v.0, v.1), v);
-            let mut best = (0, 0);
-            let mut bc = eval(best);
-            let mut cands = Vec::with_capacity(2);
-            if bxi > 0 {
-                let l = mv[byi * bw + bxi - 1];
-                cands.push((l.0 as i32, l.1 as i32));
-            }
-            if byi > 0 {
-                let t = mv[(byi - 1) * bw + bxi];
-                cands.push((t.0 as i32, t.1 as i32));
-            }
-            for c in cands {
-                let c = clampv(c);
-                let cc = eval(c);
-                if cc < bc {
-                    (best, bc) = (c, cc);
-                }
-            }
-            for step in [2, 1] {
-                for _ in 0..16 {
-                    let mut moved = false;
-                    let pts: &[(i32, i32)] = if step == 2 {
-                        &[(2, 0), (-2, 0), (0, 2), (0, -2)]
-                    } else {
-                        &[(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)]
-                    };
-                    let base = best;
-                    for d in pts {
-                        let c = clampv((base.0 + d.0, base.1 + d.1));
-                        let cc = eval(c);
-                        if cc < bc {
-                            (best, bc) = (c, cc);
-                            moved = true;
-                        }
-                    }
-                    if !moved || step == 1 {
-                        break;
-                    }
-                }
-            }
-            mv[byi * bw + bxi] = (best.0 as i16, best.1 as i16);
-        }
-    }
-    mv
-}
-
 // ---------------------------------------------------------------------------------------------
 // encode / decode
 // ---------------------------------------------------------------------------------------------
@@ -351,26 +183,92 @@ pub fn reconstruct(pred: &Planes, res: &Residual, gain_q8: i32) -> Planes {
     o
 }
 
+/// The residual shader with the DCT-II basis `C[u][x]` as its table.
+fn residual_shader() -> &'static str {
+    static S: OnceLock<String> = OnceLock::new();
+    S.get_or_init(|| {
+        let mut c = String::from("var<private> C: array<f32, 64> = array<f32, 64>(");
+        for u in 0..8 {
+            let k = if u == 0 { 0.353_553_390_593_273_73 } else { 0.5 };
+            for x in 0..8 {
+                c += &format!("{:.9},", k * (((2 * x + 1) * u) as f64 * std::f64::consts::PI / 16.0).fcos());
+            }
+        }
+        format!("{c});\n{}", include_str!("wgsl/residual.wgsl"))
+    })
+}
+
+fn words(v: &[u8]) -> Vec<u8> {
+    v.iter().flat_map(|b| (*b as u32).to_le_bytes()).collect()
+}
+
+fn uniform(v: &[[u8; 4]]) -> Vec<u8> {
+    v.concat()
+}
+
+fn i16s(v: &[u8]) -> Vec<i16> {
+    v.chunks_exact(4).map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as i16).collect()
+}
+
 /// Encode `src` against the encoder's previous reconstruction (`None` — an intra frame). Closed
-/// loop: the returned reconstruction is exactly what an intact decoder makes of the packet.
-pub fn encode(src: &Planes, prev: Option<&Planes>, cfg: &Cfg) -> Clean {
-    let (w, h) = (src.w, src.h);
-    let q = cfg.qstep();
-    let (intra, mv, pred) = match prev {
-        None => (true, vec![(0, 0); (w / cfg.bs) * (h / cfg.bs)], Planes::grey(w, h)),
-        Some(rf) => {
-            let mv = estimate(src, rf, cfg);
-            let pred = predict(rf, &mv, cfg.bs);
-            (false, mv, pred)
+/// loop: the returned reconstruction is exactly what an intact decoder makes of the packet. `None`
+/// — no device, or the device failed (`compute::unavailable` says why).
+pub fn encode(src: &Planes, prev: Option<&Planes>, cfg: &Cfg) -> Option<Clean> {
+    let host = compute::host()?;
+    let (w, h, bs) = (src.w as u32, src.h as u32, cfg.bs as u32);
+    let (bw, bh) = (w / bs, h / bs);
+    let mv_bytes = (bw * bh * 8) as u64;
+    let q = cfg.qstep() as f32;
+    let cur = [words(&src.y), words(&src.cb), words(&src.cr)];
+    let rf = prev.map(|p| [words(&p.y), words(&p.cb), words(&p.cr)]);
+    let rf_init = |i: usize| rf.as_ref().map_or(Init::Zero(16), |r| Init::Bytes(&r[i]));
+    // 0–2 the source, 3–5 the reference, 6 the zero seed, 7–8 the two sweeps' vectors, 9–11 the residual
+    let plane_bytes = [(w * h * 4) as u64, (w * h) as u64, (w * h) as u64];
+    let buffers = [
+        Init::Bytes(&cur[0]), Init::Bytes(&cur[1]), Init::Bytes(&cur[2]),
+        rf_init(0), rf_init(1), rf_init(2),
+        Init::Zero(mv_bytes), Init::Zero(mv_bytes), Init::Zero(mv_bytes),
+        Init::Zero(plane_bytes[0]), Init::Zero(plane_bytes[1]), Init::Zero(plane_bytes[2]),
+    ];
+    let search_u = uniform(&[w.to_le_bytes(), h.to_le_bytes(), bs.to_le_bytes(), cfg.search.max(0).to_le_bytes()]);
+    let residual_u = |pw: u32, ph: u32, shift: u32| {
+        uniform(&[pw.to_le_bytes(), ph.to_le_bytes(), bs.to_le_bytes(), shift.to_le_bytes(), q.to_le_bytes(), bw.to_le_bytes(), (prev.is_none() as u32).to_le_bytes(), [0; 4]])
+    };
+    let us = [residual_u(w, h, 0), residual_u(w / 2, h / 2, 1), residual_u(w / 2, h / 2, 1)];
+    let search = include_str!("wgsl/search.wgsl");
+    let groups = [bw.div_ceil(8), bh.div_ceil(8), 1];
+    let mut steps = Vec::new();
+    if prev.is_some() {
+        steps.push(Step { shader: search, uniform: &search_u, read: &[Buf(0), Buf(3), Buf(6)], write: &[Buf(7)], groups });
+        steps.push(Step { shader: search, uniform: &search_u, read: &[Buf(0), Buf(3), Buf(7)], write: &[Buf(8)], groups });
+    }
+    let reads = [[Buf(0), Buf(3), Buf(8)], [Buf(1), Buf(4), Buf(8)], [Buf(2), Buf(5), Buf(8)]];
+    let writes = [[Buf(9)], [Buf(10)], [Buf(11)]];
+    for (i, pw) in [w, w / 2, w / 2].into_iter().enumerate() {
+        let ph = if i == 0 { h } else { h / 2 };
+        steps.push(Step {
+            shader: residual_shader(),
+            uniform: &us[i],
+            read: &reads[i],
+            write: &writes[i],
+            groups: [(pw / 8).div_ceil(8), (ph / 8).div_ceil(8), 1],
+        });
+    }
+    let got = match host.run(&Job { buffers: &buffers, steps: &steps, reads: &[Buf(8), Buf(9), Buf(10), Buf(11)] }) {
+        Ok(g) => g,
+        Err(e) => {
+            compute::fail(e);
+            return None;
         }
     };
-    let res = Residual {
-        y: code_residual(&src.y, &pred.y, w, h, q),
-        cb: code_residual(&src.cb, &pred.cb, w / 2, h / 2, q),
-        cr: code_residual(&src.cr, &pred.cr, w / 2, h / 2, q),
-    };
+    let mv: Vec<(i16, i16)> = got[0]
+        .chunks_exact(8)
+        .map(|c| (i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as i16, i32::from_le_bytes([c[4], c[5], c[6], c[7]]) as i16))
+        .collect();
+    let res = Residual { y: i16s(&got[1]), cb: i16s(&got[2]), cr: i16s(&got[3]) };
+    let pred = prev.map_or_else(|| Planes::grey(src.w, src.h), |rf| predict(rf, &mv, cfg.bs));
     let recon = reconstruct(&pred, &res, 256);
-    Clean { recon, pkt: Packet { intra, mv, res } }
+    Some(Clean { recon, pkt: Packet { intra: prev.is_none(), mv, res } })
 }
 
 /// Zero the residual of luma block `i` (and its chroma) — a lost macroblock.

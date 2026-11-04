@@ -128,3 +128,18 @@ bytes — t1187). The host calls only these forms: kt-fx `apply_barrier`, the kt
 registry's graph check (which therefore sees a graph broken only at a ninth row's top — t1210). The
 two branches that needed it at once wrote the same text (`ebc58282`, `831cccf5`), so it merged
 without a conflict.
+
+## One kernel text — the compute-backends prototype (archived 2026-11-04)
+
+C2 of kkt-26.11.03 asked for one mechanism to accelerate the math on AVX, CUDA, OpenCL or Vulkan.
+The GPU side already is "shaders that compile" (WGSL through wgpu onto Vulkan/DX12/Metal/GL, every
+vendor); what was missing is the cores and one text instead of three. `kt_plugin_api::shade` proves
+the mechanism on Color Grade without shipping it: the common subset of Rust and WGSL is one text
+(`shared_kernel!`: `cpu` with `f32` = f64, `cpu_f32`, `WGSL` by `stringify!`), and one band loop is
+compiled for SSE2/SSE4.1/AVX2/AVX-512 and run on scoped threads. The bytes stay because rustc emits
+no FMA contraction and no reassociation and the subset's builtins are exact (t1500); the WGSL keeps
+the kind's tolerance class (t1501). Rejected: CubeCL (compute-only, an LLVM JIT as its CPU form),
+rust-gpu (a pinned nightly), Halide/ISPC/Slang (a second language and toolchain, their own float
+rules), CUDA/OpenCL (no new hardware over Vulkan/DX12/Metal, a third text and tolerance class per
+effect). Measurements, the migration estimate and the owner's questions: F-EXT-004
+(`docs/features/plugins/kernels/compute-backends.md`).

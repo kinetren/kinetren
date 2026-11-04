@@ -450,7 +450,7 @@ fn clean_at(keys: &mut Keys, input: &dyn StreamInput, memo: &StreamMemo, side: S
     for q in j..=p {
         let src = source(input, side, q, w, h)?;
         let cfg = keys.s.at(q).cfg;
-        let c = Arc::new(codec::encode(&src, if q == gs { None } else { prev.as_ref().map(|c| &c.recon) }, &cfg));
+        let c = Arc::new(codec::encode(&src, if q == gs { None } else { prev.as_ref().map(|c| &c.recon) }, &cfg)?);
         let k = keys.clean(side, q)?;
         memo.put(k, c.clone(), clean_bytes(&c));
         prev = Some(c.clone());
@@ -587,7 +587,7 @@ fn broken(s: &Sched, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Opti
                     Some(x) => x,
                     None => {
                         let src = source(input, Side::Main, p, w, h)?;
-                        let x = Arc::new(codec::encode(&src, None, &s.at(p).cfg).recon);
+                        let x = Arc::new(codec::encode(&src, None, &s.at(p).cfg)?.recon);
                         memo.put(ik, x.clone(), x.bytes());
                         x
                     }

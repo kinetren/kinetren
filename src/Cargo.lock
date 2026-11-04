@@ -1529,6 +1529,7 @@ dependencies = [
 name = "fx-video-codec"
 version = "0.1.0"
 dependencies = [
+ "kt-gpu",
  "kt-plugin-api",
 ]
 
@@ -2221,6 +2222,7 @@ dependencies = [
  "crossbeam-channel",
  "kt-cache",
  "kt-fx",
+ "kt-gpu",
  "kt-media",
  "kt-model",
  "kt-plugin-api",
@@ -2266,6 +2268,7 @@ dependencies = [
 name = "kt-gpu"
 version = "0.1.0"
 dependencies = [
+ "fx-video-color",
  "kt-cache",
  "kt-engine",
  "kt-fx",

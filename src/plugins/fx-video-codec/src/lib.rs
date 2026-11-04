@@ -4,8 +4,10 @@
 //! its rows: dropped I-frames, a repeated P-frame (bloom), a frozen reference, edited or
 //! transplanted vectors, lost residual and lost macroblocks (F-FX-011).
 //!
-//! It is a `VideoClass::Stream` source stage: the host runs it on the CPU in the plan's common code
-//! and hands both executors the decoded picture (design D2, D4).
+//! It is a `VideoClass::Stream` source stage: the host runs it in the plan's common code and hands
+//! both executors the decoded picture (design D2, D4). The encoder's math is compute shaders
+//! (compute-kernels); with no compute device the stage passes the source frame through and the
+//! effect's panel says why.
 
 pub mod codec;
 pub mod mosh;
@@ -154,6 +156,18 @@ impl Datamosh {
     }
 }
 
+/// The source frame untouched, under its own key: what the stage shows with no compute device.
+fn pass_through(input: &dyn StreamInput, n: i64, out: &mut Vec<u8>) -> Option<StreamOut> {
+    let mut size = None;
+    input.with_frame(Side::Main, n, &mut |f| {
+        out.clear();
+        out.extend_from_slice(f.rgba);
+        size = Some((f.w, f.h));
+    });
+    let (w, h) = size?;
+    Some(StreamOut { w, h, key: input.ident(Side::Main, n) })
+}
+
 /// The presets (task 2.3): the classic cut mosh (every I-frame after the stream start dropped —
 /// the avidemux method; a `reset` curve key ends it on the beat), bloom, a vector transplant, a melt.
 pub const VARIANTS: &[UiVariant] = &[
@@ -250,7 +264,13 @@ impl StreamKernel for Datamosh {
         mosh::needs(mosh::Rows::from(p), lay, n, memo)
     }
     fn render(&self, p: &[f64], input: &dyn StreamInput, n: i64, memo: &StreamMemo, out: &mut Vec<u8>) -> Option<StreamOut> {
-        let (pic, key) = mosh::render(mosh::Rows::from(p), input, n, memo)?;
+        if kt_plugin_api::compute::host().is_none() {
+            return pass_through(input, n, out);
+        }
+        let Some((pic, key)) = mosh::render(mosh::Rows::from(p), input, n, memo) else {
+            // the device failed on this very frame: the frame is not a missing one
+            return if kt_plugin_api::compute::host().is_none() { pass_through(input, n, out) } else { None };
+        };
         let (w, h) = input.size();
         pic.to_rgba(w, h, out);
         Some(StreamOut { w: w.min(pic.w as u32), h: h.min(pic.h as u32), key })

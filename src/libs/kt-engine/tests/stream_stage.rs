@@ -16,6 +16,17 @@ use kt_plugin_api::generator::lowbias32;
 use kt_plugin_api::stream::StreamMemo;
 use kt_time::Tick;
 
+/// The stage's encoder needs the host's compute device: skip without one, as the GPU tests do.
+fn no_device() -> bool {
+    kt_plugin_api::compute::install(kt_gpu::compute::open);
+    let none = kt_plugin_api::compute::host().is_none();
+    if none {
+        assert!(std::env::var("KT_REQUIRE_GPU").as_deref() != Ok("1"), "KT_REQUIRE_GPU=1, but no compute device");
+        eprintln!("skipped: no compute device");
+    }
+    none
+}
+
 const STEP: i64 = 3000; // 30 fps
 
 /// A textured source: value noise (hashed lattice every 8 px, bilinear) moving `speed` px per
@@ -184,6 +195,9 @@ fn big_cache() -> BurstCache {
 /// t1241: a frame inside the mosh is the same bytes after playing up to it and after a cold seek.
 #[test]
 fn t1241_seek_equals_play() {
+    if no_device() {
+        return;
+    }
     let n = Tick(38 * STEP);
     let p = project(true);
     let (mut played, cache) = (renderer(&p), big_cache());
@@ -228,6 +242,9 @@ fn export(p: &Project, range: (i64, i64)) -> Vec<u8> {
 /// boundary, which keeps the memo) equals one in one go; a piece starting inside the mosh pre-rolls.
 #[test]
 fn t1242_export_in_pieces_equals_one_go() {
+    if no_device() {
+        return;
+    }
     let p = project(true);
     let whole = export(&p, (26, 46));
     let mut parts = export(&p, (26, 33));
@@ -241,6 +258,9 @@ fn t1242_export_in_pieces_equals_one_go() {
 /// included) with an empty memo, then only the next frame's own source.
 #[test]
 fn t1248_the_order_asks_what_the_stage_reads() {
+    if no_device() {
+        return;
+    }
     let p = project(true);
     let (mut vr, cache) = (renderer(&p), big_cache());
     let t = Tick(36 * STEP);
@@ -269,6 +289,9 @@ fn mad(a: &[u8], b: &[u8]) -> f64 {
 /// curves; a seek still equals playing.
 #[test]
 fn t1246_a_reset_key_ends_the_mosh_on_the_beat() {
+    if no_device() {
+        return;
+    }
     let beat = 44;
     let p = project_with(true, Some(beat), 1.0);
     // the same slot with the mosh gate off: the intact codec (the source draws its texture in output

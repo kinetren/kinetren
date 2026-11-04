@@ -143,7 +143,9 @@ Phone at night, Cheap webcam and Security cam each sound like the device they fi
 Cinema raw and the two defect presets keep a plain camera microphone.
 
 **Datamosh** encodes the clip with its own small video codec — motion search, a
-prediction loop, quantised detail, keyframes — and breaks it on purpose. **Mosh** drops the
+prediction loop, quantised detail, keyframes — and breaks it on purpose. The encoding runs on the
+graphics card, or through Vulkan on the processor when there is no card. With neither, the
+frame stays intact and the panel says why. **Mosh** drops the
 keyframes, so the previous shot is dragged by the new shot's motion; **Bloom** repeats one
 frame's motion; **Freeze reference** holds the picture being moved; the vectors can be
 scaled, turned, swapped or taken from the track above or below (**Vectors from**); detail

@@ -370,6 +370,36 @@ the passport declares them.
   the registry checked the graph on row 11's top, and blur's bytes are its frozen golden
 - **TEST** t1210 (`src/libs/kt-fx/tests/barrier_values.rs`), t1051
 
+### Requirement: One kernel text gives the CPU byte reference and the GPU kernel
+A kernel written once in the common subset of Rust and WGSL (`kt_plugin_api::shade`,
+`shared_kernel!`) SHALL give its CPU form with the text's `f32` computed as f64 and its WGSL form as
+the same tokens. The CPU form SHALL be byte for byte the kind's CPU reference at every SIMD level the
+host compiles its loop for (baseline, SSE4.1, AVX2, AVX-512) and at every number of row bands; the
+WGSL form SHALL compile in the own-pass frame of a point-wise plugin and stay within the kind's
+existing tolerance class of the CPU reference. Until the owner orders the migration the shipped
+plugins SHALL keep their own kernels; the single text is a prototype no shipped path calls.
+Why: today one effect is up to three texts (scalar, AVX2 twin, WGSL) on one core (C2 of
+kkt-26.11.03). Rust neither contracts `a·b + c` into an FMA nor reassociates, and the subset's
+builtins are exact, so one text compiled for any SIMD level is the same bytes; a pixel of a point-wise
+kernel is a pure function of itself and its position, so bands of rows on scoped threads are the
+same bytes (invariant 11). The WGSL form is f32, as the hand-written mirror is, so the tolerance
+class does not move (invariant 7).
+
+#### Scenario: The single-text Color Grade is the shipped kernel byte for byte
+- **WHEN** Color Grade written once runs on a 257×67 frame crossing every byte value, at six
+  parameter sets (identity, hue ±180, saturation 0 and 2, brightness ±1), compiled for the baseline,
+  SSE4.1, AVX2 and AVX-512 (a level the CPU lacks falls back), on 1, 3 and 8 bands
+- **THEN** every frame equals the shipped `grade` through the barrier loop byte for byte, and the
+  WGSL form holds both functions and no Rust-only syntax
+- **TEST** t1500 (`src/plugins/fx-video-color/tests/single_source.rs`)
+
+#### Scenario: The single text's WGSL runs on the GPU within the kind's tolerance
+- **WHEN** the WGSL form and the hand-written `color_grade.wgsl` are compiled in the own-pass frame
+  `assembled_shaders` gives a point-wise plugin and run at four parameter sets on a 192×108 frame
+- **THEN** the single text compiles, and both GPU frames are within `FrameTol::BILINEAR` (Color
+  Grade's class in t181) of the CPU reference
+- **TEST** t1501 (`src/libs/kt-gpu/tests/single_source.rs`)
+
 ### Requirement: A simulated device's two halves are one passport
 A video kind MAY declare the audio kind that records the same device's sound (`Decl.pair`). The
 two SHALL have the same passport and row forms; the registry SHALL refuse, by name and in either
@@ -405,3 +435,33 @@ clip-local frame, so the sound could not lose the field the picture loses.
 - **THEN** the sound is lost while head A reads on the TIMELINE's tape grid (eight times head B's
   error); switched off it gives the dry bytes; the two renders are byte-equal
 - **TEST** t1467 (`src/libs/kt-engine/tests/sim_pairs.rs`)
+
+### Requirement: A kernel runs compute shaders through the host's door
+A kernel SHALL be able to name WGSL compute shaders and buffers as a job the host runs on its own
+compute device (Vulkan, DX12 or Metal, whatever backend the interface uses). The host SHALL report a
+shader it cannot compile as an error, without a panic. With no compute device `host()` SHALL give
+nothing, and the kernel SHALL say so instead of drawing something else.
+Why: the owner, C2 of kkt-26.11.03 — the math runs on Vulkan rather than on hand-written copies; a
+plugin still sees nothing of wgpu.
+
+#### Scenario: A job runs and reads back
+- **WHEN** a job doubles the words of a buffer in a compute shader, on a machine with a compute device
+- **THEN** the buffer read back holds the doubled words, and a second job with the same text reuses
+  the compiled shader
+- **TEST** t1502 (`src/libs/kt-gpu/tests/compute_host.rs`)
+
+#### Scenario: A shader the device refuses is an error
+- **WHEN** a job names a shader that does not compile
+- **THEN** `run` returns an error naming it, and the next valid job on the same host runs
+- **TEST** t1503 (`src/libs/kt-gpu/tests/compute_host.rs`)
+
+#### Scenario: The Datamosh encoder keeps its quality on the compute device
+- **WHEN** a moving textured picture is encoded in a closed loop at QP 24
+- **THEN** the reconstruction's luma PSNR holds above 40 dB on every P-frame, and most blocks of the
+  moving area carry the true motion
+- **TEST** t1504 (`src/plugins/fx-video-codec/tests/codec.rs`)
+
+#### Scenario: Datamosh with no compute device leaves the frame and says why
+- **WHEN** the stream stage runs with no compute host installed
+- **THEN** the frame is the source frame, and `compute::unavailable` gives the panel its reason
+- **TEST** t1505 (`src/plugins/fx-video-codec/tests/no_device.rs`)

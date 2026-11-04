@@ -18,6 +18,17 @@ const W: u32 = 128;
 const H: u32 = 96;
 
 /// Value noise: hashed lattice every 8 px, bilinear between; `dx`/`dy` translate it.
+/// The encoder needs the host's compute device: skip without one, as the GPU tests do.
+fn no_device() -> bool {
+    kt_plugin_api::compute::install(kt_gpu::compute::open);
+    let none = kt_plugin_api::compute::host().is_none();
+    if none {
+        assert!(std::env::var("KT_REQUIRE_GPU").as_deref() != Ok("1"), "KT_REQUIRE_GPU=1, but no compute device");
+        eprintln!("skipped: no compute device");
+    }
+    none
+}
+
 fn tex(seed: u32, dx: i32, dy: i32) -> Vec<u8> {
     let lat = |x: i32, y: i32, c: u32| -> i32 {
         (lowbias32(seed.wrapping_mul(0x9e37) ^ lowbias32((x as u32).wrapping_mul(73) ^ lowbias32((y as u32).wrapping_mul(151) ^ c))) % 200) as i32 + 28
@@ -162,6 +173,9 @@ fn err(a: &Planes, b: &Planes, x0: usize, x1: usize) -> (f64, i32) {
 /// loop keeps the error from growing along the GOP.
 #[test]
 fn t1235_intact_stream_round_trips_within_the_quantiser() {
+    if no_device() {
+        return;
+    }
     let s = Mock::new(0, 0, 24, |k| tex(5, k as i32, 0));
     let mut means = vec![];
     for qp in [10.0, 30.0] {
@@ -197,6 +211,9 @@ fn cut_stream() -> Mock {
 /// t1236: dropping the I-frame at the cut keeps A's texture, moved by B's vectors.
 #[test]
 fn t1236_dropped_i_frame_moves_the_previous_shot_with_the_new_motion() {
+    if no_device() {
+        return;
+    }
     let s = cut_stream();
     let moshed = params(&[(rows::BEFORE, 12.0), (rows::MOSH, 1.0), (rows::QP, 12.0)]);
     let intact = params(&[(rows::BEFORE, 12.0), (rows::QP, 12.0)]);
@@ -223,6 +240,9 @@ fn t1236_dropped_i_frame_moves_the_previous_shot_with_the_new_motion() {
 /// t1237: a bloom applies packet b's vector field again on every frame of (b, b+N].
 #[test]
 fn t1237_bloom_repeats_one_vector_field() {
+    if no_device() {
+        return;
+    }
     let mut s = Mock::new(0, 0, 30, |k| tex(3, 2 * k as i32, (k / 3) as i32));
     let (b, len) = (6i64, 5i64);
     // the bloom gate is on over [b, b+len]: frame b decodes its own packet, then repeats it
@@ -233,7 +253,7 @@ fn t1237_bloom_repeats_one_vector_field() {
     let mut cl: Vec<codec::Clean> = vec![];
     for k in 0..=(b + len + 1) {
         let src = planes(&s.main[&k]);
-        let c = codec::encode(&src, cl.last().map(|c| &c.recon), &cfg);
+        let c = codec::encode(&src, cl.last().map(|c| &c.recon), &cfg).unwrap();
         cl.push(c);
     }
     assert!(!cl[b as usize].pkt.intra && cl[b as usize].pkt.mv.iter().any(|v| *v != (0, 0)));
@@ -262,6 +282,9 @@ fn rgba(p: &[f64], s: &Mock, n: i64, memo: &StreamMemo) -> Vec<u8> {
 /// t1238: frame N is the same bytes however it is reached; the needs answer what the memo lacks.
 #[test]
 fn t1238_seek_equals_play() {
+    if no_device() {
+        return;
+    }
     let cases: Vec<(Vec<f64>, Option<Curve>)> = vec![
         (params(&[(rows::BEFORE, 12.0), (rows::MOSH, 1.0), (rows::GOP, 8.0)]), None),
         {
@@ -314,6 +337,9 @@ fn t1238_seek_equals_play() {
 /// Linux must agree — the frozen DCT basis and integer planes make it so).
 #[test]
 fn t1239_determinism() {
+    if no_device() {
+        return;
+    }
     let p = params(&[(rows::BEFORE, 12.0), (rows::MOSH, 1.0), (rows::MV_ROTATE, 30.0), (rows::LOSS, 0.1)]);
     let run = move || {
         let s = cut_stream();
@@ -333,6 +359,9 @@ const PINNED: u64 = 0x9b02_633b_8b23_0698;
 /// t1243: the other breakages change exactly the stream they name.
 #[test]
 fn t1243_freeze_transplant_vector_ops_and_loss() {
+    if no_device() {
+        return;
+    }
     let memo = StreamMemo::new(256 << 20);
     // freeze: every P-frame in [5, 15) predicts from the picture at 4
     let s = Mock::new(0, 0, 30, |k| tex(4, 2 * k as i32, 0));
@@ -343,7 +372,7 @@ fn t1243_freeze_transplant_vector_ops_and_loss() {
     let cfg = Rows::from(&p).cfg;
     let mut cl: Vec<codec::Clean> = vec![];
     for k in 0..=12 {
-        let c = codec::encode(&planes(&sf.main[&k]), cl.last().map(|c| &c.recon), &cfg);
+        let c = codec::encode(&planes(&sf.main[&k]), cl.last().map(|c| &c.recon), &cfg).unwrap();
         cl.push(c);
     }
     let rf = dec(&p, &sf, 4, &memo);
@@ -395,6 +424,9 @@ fn t1243_freeze_transplant_vector_ops_and_loss() {
 /// for byte; no region is the whole frame.
 #[test]
 fn t1244_a_region_of_interest_confines_the_mosh() {
+    if no_device() {
+        return;
+    }
     let memo = StreamMemo::new(256 << 20);
     let moshed = params(&[(rows::BEFORE, 12.0), (rows::MOSH, 1.0), (rows::QP, 12.0)]);
     let intact = params(&[(rows::BEFORE, 12.0), (rows::QP, 12.0)]);
@@ -428,6 +460,9 @@ fn t1244_a_region_of_interest_confines_the_mosh() {
 /// beat; `mosh` off keeps the next keyframe intact (inactivity).
 #[test]
 fn t1245_reset_and_inactivity_follow_the_curves() {
+    if no_device() {
+        return;
+    }
     let memo = StreamMemo::new(256 << 20);
     let base = params(&[(rows::BEFORE, 12.0), (rows::QP, 12.0), (rows::GOP, 0.0)]);
     let b = |n: i64| planes(&tex(2, 2 * n as i32, 0));
@@ -463,11 +498,38 @@ fn t1245_reset_and_inactivity_follow_the_curves() {
     assert_ne!(*dec(&bb, &t, 9, &memo), *dec(&bb, &cut_stream(), 9, &memo));
 }
 
+/// t1504 (compute-kernels): the encoder on the compute device keeps its quality in a closed loop,
+/// and the moving picture's blocks carry the true motion.
+#[test]
+fn t1504_the_compute_encoder_keeps_its_quality() {
+    if no_device() {
+        return;
+    }
+    let cfg = Cfg { bs: 16, search: 16, qp: 24.0 };
+    let mut prev: Option<codec::Clean> = None;
+    for k in 0..8 {
+        let src = planes(&tex(9, 2 * k, k));
+        let c = codec::encode(&src, prev.as_ref().map(|c| &c.recon), &cfg).unwrap();
+        let mse = src.y.iter().zip(&c.recon.y).map(|(a, b)| (*a as f64 - *b as f64).powi(2)).sum::<f64>() / src.y.len() as f64;
+        let psnr = 10.0 * (255.0 * 255.0 / mse.max(1e-9)).log10();
+        assert!(psnr > 40.0, "frame {k}: {psnr:.2} dB");
+        if k > 0 {
+            // the picture moves right and down, so a block reads the reference up and to the left
+            let true_motion = c.pkt.mv.iter().filter(|v| **v == (-2, -1)).count();
+            assert!(true_motion * 2 > c.pkt.mv.len(), "frame {k}: {true_motion} of {} blocks", c.pkt.mv.len());
+        }
+        prev = Some(c);
+    }
+}
+
 /// The cost (datamosh-codec-path, task 5.1) — a measurement, not a check: run on a RELEASE build
 /// with `cargo test --release -p fx-video-codec --test codec cost -- --ignored --nocapture`.
 #[test]
 #[ignore]
 fn cost_per_frame_at_360_lines() {
+    if no_device() {
+        return;
+    }
     let (w, h) = (640u32, 360u32);
     let frames: Vec<Vec<u8>> = (0..61)
         .map(|k| {
@@ -490,7 +552,7 @@ fn cost_per_frame_at_360_lines() {
     let t0 = std::time::Instant::now();
     let mut prev: Option<codec::Clean> = None;
     for p in &planes {
-        prev = Some(codec::encode(p, prev.as_ref().map(|c| &c.recon), &cfg));
+        prev = Some(codec::encode(p, prev.as_ref().map(|c| &c.recon), &cfg).unwrap());
     }
     let enc = t0.elapsed().as_secs_f64() * 1000.0 / planes.len() as f64;
     let c = prev.unwrap();

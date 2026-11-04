@@ -43,6 +43,17 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   echo cut); every built-in implements it by `Clone`, so a new state derives `Clone` and its
   `CurveRead` readers copy through `clone_box`. t1330 runs every built-in audio kind. `Decl.echo_row`
   names the choice row of an edge-reading kind (`reads_across_edges`).
+- **`compute` is the door to the host's compute device** (compute-kernels): a kernel gives WGSL
+  shaders and buffers as one `Job`, and bindings are fixed (0 the uniform, then reads, then writes).
+  `host()` is `None` with no device or after `fail`, and a kernel then has a no-device path of its
+  own (Datamosh passes the frame through); a job's error is never a panic. t1502, t1503.
+- **`shade` is a PROTOTYPE nothing shipped calls** (compute-backends, F-EXT-004): one kernel text
+  in the common subset of Rust and WGSL → `cpu` (the text's `f32` is f64, the byte reference),
+  `cpu_f32` and the `WGSL` string; `run_pointwise` = row bands on scoped threads × one loop compiled
+  for SSE2/SSE4.1/AVX2/AVX-512. The copies are byte-equal only because rustc never contracts FMA nor
+  reassociates — never add a `fast-math`-style flag or an `fma` intrinsic to it. The subset has no
+  `var`/`if`/loops and no splat constructors; a helper carries its kernel's prefix (every plugin's
+  WGSL lands in one fused module). t1500/t1501; the migration is the owner's decision.
 - **A simulated device's two halves are one passport** (sim-audio-pairs): a video kind declares
   its audio pair (`Decl.pair`), the audio kind is built from the SAME passport function; the
   registry refuses a mismatch in either order (t1484) and the assembler refuses a missing half
