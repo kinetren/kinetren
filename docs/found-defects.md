@@ -38,7 +38,7 @@ list may be short of items from them.
 | 23 | frame toggle glyph | The toggle's glyph sits in every preview crop | kt-app preview | unknown | С.3, check first |
 | 37 | VHS speed | The VHS CPU path runs at about 10 fps, no SIMD twin | `fx-video-tape` | open | С.1, follows the `compute-backends` decision |
 | 42 | VHS thread cap | VHS Tape uses at most 16 threads, so half of a 32-thread machine idles | `src/plugins/fx-video-tape/src/sim.rs:126` | reported by `compute-backends` | С.1 |
-| 43 | Datamosh motion search | One thread, 67 ms per 1080p frame, multiplied by the frame chain | `src/plugins/fx-video-codec/src/codec.rs:279` | reported by `compute-backends` | С.1, moves to compute |
+| 43 | Datamosh motion search | Fixed for the encoder by `compute-kernels`: 46 ms instead of 67 at 1080p on llvmpipe, one buffer set per frame keeps it from the probe's 34 ms; `predict` and `reconstruct` stay on one CPU thread, so a clean decode is not faster | `src/plugins/fx-video-codec/src/codec.rs` `encode`, `predict`, `reconstruct` | partly fixed | С.1 |
 | 46 | sound of a device effect on a track chain | VHS and Datamosh sound on a track's chain may count fields and frames from the wrong time: `TrackProcessor` never calls `place` | `src/libs/kt-fx/src/audio/mod.rs` | not checked | С.3, check first |
 | 47 | `vhs_tape` red 2 of 5, once a Ctrl+S that did not save | If the Ctrl+S is the program's, a person loses edits | `src/scripts/live/kt_live.py:1407` | cause unknown | current stage, read `finish.sh`'s result first |
 | 48 | Datamosh sound at a cut | The audio half assumes a long previous event, so after a short one the break may miss the picture's | `src/plugins/fx-video-codec/src/sound.rs` | open | С.3 |
@@ -50,6 +50,8 @@ list may be short of items from them.
 | 54 | one-off composite stalls | 1.7-1.9 s at one cut and once 21.9 s, on the old path only; at most 25 ms since | composite | cause unknown | watch |
 | 55 | RGBA conversion, one thread per file | The next limit for 4K at native size | `kt-ffmpeg` `to_rgba` | not reached in the measurements | С.1 |
 | 56 | a start on a really cold disk | The OS page cache could not be dropped here; if sound misses the 500 ms wait, the silence stays as before | start of playback | not measured | watch |
+| 64 | first frame of Datamosh | The first frame after a start took 6.6 s on llvmpipe under load about 20: the compute device opens and the shaders compile, no disk cache of shaders; new with `compute-kernels` | `src/libs/kt-gpu/src/compute.rs` `open`, `pipe` | open | С.1, next compute stage |
+| 65 | Datamosh not seen on a real device | The compute path ran only on Vulkan through llvmpipe: no real card, DX12, Metal or ARM yet; the panel's message without a device was not looked at in the live program | `fx-video-codec` | open | С.2 CI and the ARM build |
 | 44 | no ARM build | The program cannot run on ARM at all; the owner wants it | `.github`, `scripts` | open | С.2 |
 
 ## Internal
