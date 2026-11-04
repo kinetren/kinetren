@@ -2572,6 +2572,9 @@ proposal cards, with no list and no verdict.
   stops only on Linux without `mesa-vulkan-drivers` and on Windows without a graphics driver.
 - His decision, the same session: "да, удаляем". The CPU and AVX copies of the effects that move to
   Vulkan compute go; the change is `compute-kernels`, Datamosh first.
+- The first stage showed the premise was wrong for the whole render: with no card the CPU composite
+  renders the demo project in 96 s, llvmpipe in 134 s. Asked again with that number, in the same
+  session: "удаляй". The CPU composite goes after every effect has a shader, about 40 % slower here.
 
 ## What the user repeated more than once
 
