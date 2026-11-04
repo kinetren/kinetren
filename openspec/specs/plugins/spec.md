@@ -370,7 +370,6 @@ the passport declares them.
   the registry checked the graph on row 11's top, and blur's bytes are its frozen golden
 - **TEST** t1210 (`src/libs/kt-fx/tests/barrier_values.rs`), t1051
 
-<<<<<<< HEAD
 ### Requirement: One kernel text gives the CPU byte reference and the GPU kernel
 A kernel written once in the common subset of Rust and WGSL (`kt_plugin_api::shade`,
 `shared_kernel!`) SHALL give its CPU form with the text's `f32` computed as f64 and its WGSL form as
@@ -400,7 +399,7 @@ class does not move (invariant 7).
 - **THEN** the single text compiles, and both GPU frames are within `FrameTol::BILINEAR` (Color
   Grade's class in t181) of the CPU reference
 - **TEST** t1501 (`src/libs/kt-gpu/tests/single_source.rs`)
-=======
+
 ### Requirement: A simulated device's two halves are one passport
 A video kind MAY declare the audio kind that records the same device's sound (`Decl.pair`). The
 two SHALL have the same passport and row forms; the registry SHALL refuse, by name and in either
@@ -436,4 +435,3 @@ clip-local frame, so the sound could not lose the field the picture loses.
 - **THEN** the sound is lost while head A reads on the TIMELINE's tape grid (eight times head B's
   error); switched off it gives the dry bytes; the two renders are byte-equal
 - **TEST** t1467 (`src/libs/kt-engine/tests/sim_pairs.rs`)
->>>>>>> orch-26-11-01
