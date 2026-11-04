@@ -148,8 +148,10 @@ See above: 108 GB free against 5 GB used. "Disk usage" stays, under `always()`, 
 After D1 the Flatpak job is the likely longest. Inside the sandbox only `--ccache`'s directory
 survives (`/run/ccache`, kept in `.flatpak-builder/ccache`). `flatpak-build.sh` passes `--ccache`
 when `KT_FLATPAK_CCACHE` is set, which only the CI job does: the release builds from nothing. The
-manifest gets one line that links `src/target` into that directory when `CCACHE_DIR` is set, and does
-nothing otherwise, so Flathub's build is unchanged. The prune runs before the save, as in D1.
+manifest gets one line that links `src/target` into that directory when `CCACHE_DIR` is `/run/ccache`,
+and does nothing otherwise, so Flathub's build is unchanged. Not "when `CCACHE_DIR` is set":
+flatpak-builder always sets it, to `/run/ccache/disabled` without `--ccache`, and a target there
+fails the build. The prune runs before the save, as in D1.
 
 Rejected: lowering `lto` or `codegen-units` for CI. That would be 2 to 3 min, but the job is the only
 CI build of the `dist` profile, so it would stop checking what ships. A cache of the installed
@@ -165,7 +167,16 @@ waited on the disk: 240 s of wall for 367 CPU-s, `ld.mold` in uninterruptible sl
 
 `debug = 1` is what the release profiles use. A/B on one tree, one after the other:
 
-LOCAL_AB
+| | Full debug info | `debug = 1` |
+|---|---|---|
+| `target` after a test build | 24 GB | 13 GB |
+| The ~120 test binaries and the two programs | 17.2 GB | 8.3 GB |
+| Cold `cargo test --workspace --no-run` | 1108 s, 1315 s | 571 s |
+| A plugin edit, seven rounds | 344-766 s, median 606 s | 172-376 s, median 314 s |
+
+All of these ran under other sessions' load of 13 to 130, so only the ratio means anything, and it is
+about 2. Alone on the machine (load under 5) a plugin edit at `debug = 1` took 7 s and 68 s; the full
+debug side was never timed alone, so row 31's 158 s has no twin here and no "158 → 7" is claimed.
 
 `"line-tables-only"` was tried first and t1072 refused it: the crash report loses the function's
 module path. What `debug = 1` gives up: variables and types in a debugger. Rejected, for now: merging
