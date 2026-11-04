@@ -35,7 +35,7 @@ The old engine kept two composition codes: one for the preview and another for e
 - The generator sources are opened BY the export itself via `gen_sources(project)` (`src/libs/kt-engine/src/export.rs`): their address is derived from the event, and the caller has nowhere to get them; there must be no second enumeration.
 - The muxer is written by ONE writer (`src/libs/kt-engine/src/export_pipeline.rs`, `write_all`): video frame `i`, then the audio up to that frame's end (export-throughput D2; until 2026-11-03 the whole audio pass followed the video pass); the interleaving of packets is done by `av_interleaved_write_frame`; `audio_sources`/`video_sources` are TWO independent sets, both opened by the caller (`open_all()` twice in `src/apps/kt-cli/src/main.rs` and `src/apps/kt-app/src/render_dialog.rs`) — one export is two full passes over the material.
 - The export pause is a cooperative 40 ms wait in the progress wrappers (`src/libs/kt-engine/src/export.rs`), cancellable; the ETA and speed are computed by the UI — wall-clock in the engine is forbidden.
-- During encoder probes the FFmpeg log level is raised to FATAL and lowered back (`src/libs/kt-ffmpeg/src/muxer_impl.rs`, `Muxer::open`): failed candidates are normal. A known remainder: `h264_vaapi`/`h264_qsv` with our frame scheme (yuv420p, no hw context) never open (−22), but they stay in the list and in the dialog's combo box (F-EXP-004; the verdict "bring the list in line with the truth" — not done).
+- During encoder probes the FFmpeg log level is raised to FATAL and lowered back (`src/libs/kt-ffmpeg/src/muxer_impl.rs`, `Muxer::open`): failed candidates are normal.
 - `ExportError` (`src/libs/kt-engine/src/export.rs`) no longer contains `GpuRequired`; `FfmpegFailed(ExitStatus)` is a remnant of the pipe path and is not produced by live code.
 - `project_range` (`src/libs/kt-engine/src/export.rs`) — `max(material, timeline_end)`; `timeline_end` is written to the file ONLY when its length exceeds the material, otherwise our own file would accumulate a field and break the byte stability of the roundtrip (t151).
 - Loudness: `ExportStats.loudness` is computed in `render_raw_audio_range` (`src/libs/kt-engine/src/export.rs`) by the same meter `kt_fx::audio::loudness` (`src/libs/kt-fx/src/audio/loudness.rs`) as the source analysis; the reason for f64 is the SUMS of squares (0.37 LU of drift over 10 minutes in f32), not the biquad coefficients (those give ≤ 0.002 LU) — t403b guards exactly this claim.
@@ -49,7 +49,6 @@ The old engine kept two composition codes: one for the preview and another for e
 
 ## Deferred
 
-- Bring the list of encoders in the dialog and in the candidates to what actually opens (vaapi/qsv), and remove the "CRF" label from the slider for non-CRF encoders (F-EXP-004, S). Hardware encoding for Intel/AMD (hw contexts, NV12, a second branch of frame filling) — separate work, L.
 - Scaling of FX pixel parameters (blur/glow/vhs) by `quality / project` and the test "the resolution fraction does not change the picture" — the remainder of F-RES-006 (preview and export are equal only at an IDENTICAL Quality).
 - A rational fps (24000/1001) in the model, time and export — the residual NTSC drift of 0.1 %.
 - Sound in the cross-render (the mlt adapter is limited on audio).
@@ -233,3 +232,38 @@ C2, `compute-backends`), not the plumbing.
   The binaries fix the threshold at 1 MiB first thing (t1458); `MALLOC_ARENA_MAX=2` alone gave
   10.2 GB.
 
+## Hardware encoding meets its driver outside the render (hw-encode-context, 2026-11-04)
+
+**The crash could not be seen, so it is contained.** The owner: "if you choose h264_vaapi the app
+just crashes at render" (ktprompts v26.10 T16). No machine here has a render node, so which fault it
+was stays unproven. The device step (no device → no `avcodec_open2`) removes one candidate, and it
+also made things worse: with a render node every Auto export now loads the VA driver, where until
+then Auto got −22 and never touched it. A driver that faults gives no return code, so no cascade can
+fall down on it. `kt_ffmpeg::hw_trial`: our own binary started once more opens the device, opens
+the encoder and encodes three frames into `/dev/null`; only its `ok` lets the driver into the render
+process. On the code before this, a fake driver that aborts ended `kt-cli export` with SIGABRT in
+6 runs of 6, forced and on Auto; t1551 holds the opposite.
+
+**What the trial does not cover.** A driver that passes three frames and faults later ends the
+render in the render's own process; what is left then is the supervisor's window and the autosave.
+A refusal in the middle of the render is an error with no partial file (t1554): the stream cannot
+move to another encoder half way.
+
+**A device candidate is one step** — device → frames → open, and what fails before the open never
+reaches `avcodec_open2`. The surfaces are per export, and each NV12 frame the workers convert is
+uploaded by the one writer thread (`encode_video_frame`), so the pipelined export needs nothing
+of its own for hardware: the converters do not know about surfaces.
+
+**Everything hardware-only is an optional table** (media-index): a build without `hwcontext` keeps
+working and loses the candidate.
+
+**QSV has no device context.** `qsvenc` makes its own session from system NV12 frames; a derived
+device would only choose the node on a two-GPU machine, and could not be run anywhere. It has the
+trial, because on Linux that session reaches the same VA driver. Not measured on an Intel machine.
+
+**What is proven is the path, not a driver.** `fixtures/fake_va` is a VA driver under the real libva
+and FFmpeg that fails in every known way and, healthy, encodes I_PCM from the surface, so the file
+decodes to what was uploaded: t1551–t1556 and the live `hwencode` run on any machine, a CI runner
+included. `make hw-test` (`KT_EXPECT_HW=vaapi`, t963 made loud) stays for a machine with a real
+render node. Whether Intel's or AMD's driver opens, its quality and its speed have never been
+measured, and t963's bound of 6/255 is the proposal's, not a measurement.

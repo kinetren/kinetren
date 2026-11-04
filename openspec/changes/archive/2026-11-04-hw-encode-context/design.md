@@ -118,7 +118,9 @@ so the bitrate mode silently used the driver's default). The render window names
 t963 runs only when `KT_EXPECT_HW=vaapi` is set, and then fails unless VAAPI opened (the t865
 pattern). `make hw-test` runs the FFmpeg tests on the host with that variable. The decode bound for
 the mean absolute difference is set from the first run on the owner's machine and written here
-(starting proposal: ≤ 6 of 255 per channel at QP 23 for the synthetic ramp).
+(starting proposal: ≤ 6 of 255 per channel at QP 23 for the synthetic ramp). Revised 2026-11-04:
+that first run will not come, so the bound stays the proposal's 6, unmeasured on hardware. t1556 runs
+t963's own body on the fake driver (D11), which is lossless to NV12, and holds it to 3.
 
 ### D9. As built (stages 1–4, 2026-10-29)
 - **The probe on two machines without a render node did not crash** (task 1.1): FFmpeg 6.1.1 gives
@@ -132,6 +134,53 @@ the mean absolute difference is set from the first run on the owner's machine an
   the combo used to call `available_encoders()` every frame (harmless while it was a name lookup).
 - **The skipped candidates are their own log fact** (`ExportLog::Skipped`), separate from
   `NotOpened`: "the encoder was never opened" is exactly what t962 asserts.
+
+### D10. A libva driver first meets a throwaway process (`hw_trial`)
+D3 removes the failed-init path only when there is no device. With a render node the driver is
+loaded into the process, and D3 made that NEW for every Auto export on Intel and AMD: until this
+change Auto got −22 and never touched a driver, so a driver that faults would have taken from them
+the render that worked. T16's cause could not be proven either way (no machine here has a render
+node, and the owner does not take measurements), and H1 and H2 both fault inside the process, where
+no return code reaches the cascade. So the cause is contained rather than argued about:
+- a candidate with `trial` (`h264_vaapi`, Linux `h264_qsv`) is first opened by OUR OWN binary started
+  again (`--kt-hw-trial`, served by `hw_trial::serve()` at the top of `main` of kt-app and kt-cli, before the supervisor):
+  device, frames, encoder, three frames into `/dev/null`, flush. Only `ok` lets the driver into the
+  render process. A signal, a time limit (20 s; 5 s for a device, asked on the UI thread) or a
+  refusal is a skip with the reason. Forced, that reason is the export error. It is also why a
+  driver that opens and cannot encode falls down the cascade instead of failing the first frame.
+- `available_encoders` and `hw_report` ask the same way, one node at a time: the render window's
+  list and the report that diagnoses a bad driver must outlive it.
+- No render node → no trial: nothing to load, no process started. Every export asks again, nothing
+  is remembered (the spec's "no cached verdict"). The cost is one process start per export on a
+  machine with a render node, which only the hardware path pays.
+- A process that does not host the trial (a test harness) opens in-process (`Verdict::NotHosted`).
+Rejected: `fork` (a threaded process, and libva then runs in a copy of it); a list of known-bad
+drivers (it is a cached verdict, wrong the day a driver updates). What it does NOT cover: a driver
+that passes three frames and faults later ends the render in the render process; the supervisor's
+crash window and the autosave are what is left there.
+NVENC, AMF and Media Foundation keep the in-process open: no libva, and no report of a fault.
+
+### D11. The path runs on no hardware: a fake VA driver (`fixtures/fake_va`)
+Tasks 1.1, 1.2, 3.3 and 4.3 waited for "the owner's machine"; the owner does not take measurements
+(2026-11-04), so nothing had ever executed the surface path. `ktfake_drv_video.c` is a VA driver the
+REAL libva loads into the REAL FFmpeg (`LIBVA_DRIVER_NAME`, `LIBVA_DRIVERS_PATH`), with every known
+way of failing as one value of `KT_FAKE_VA`; healthy, it is an H.264 encoder that writes I_PCM
+macroblocks from the surface behind FFmpeg's packed headers, so the file decodes to exactly what was
+uploaded. libva refuses a file that is not a DRM node and CI has none, so the same library is
+LD_PRELOADed for `drmGetNodeTypeFromFd` and the "render node" is a regular file. No libva-dev: the
+structures mirror the stable ABI by hand.
+It proves OUR path through the real libva and FFmpeg 6.1 (open, frames, upload through the pipelined
+export, flush, cleanup) and every failure arm. It proves NOTHING about a real driver: whether Intel's
+or AMD's opens, its quality, its speed. Those stay unmeasured, and nothing here claims them.
+
+### D2 revised (2026-11-04): QSV keeps system NV12 frames, no device context
+Decided without the Intel measurement of task 1.2, which will not come. `ffmpeg -c:v h264_qsv` from
+system NV12 frames is FFmpeg's documented use: with neither `hw_frames_ctx` nor `hw_device_ctx`
+`qsvenc` builds an internal session of its own, and here it reaches exactly that step ("Error
+creating a MFX session: -9", no device). A QSV device derived from VAAPI would only choose the node
+on a two-GPU machine, and could not be run anywhere. So the brief's "VAAPI/QSV a device and a frames
+context" holds for VAAPI only. On Linux QSV's session loads the same VA driver, hence its `trial`
+(D10). NOT measured on an Intel machine; if it does not open there, the cascade reaches libx264.
 
 ## Risks / Trade-offs
 
@@ -158,5 +207,4 @@ Nothing stored changes. Rollback = revert; a machine falls back to libx264 as be
    cascade). Recommended: keep — NVENC is the faster and better encoder of the two.
 2. **Expose the VAAPI device choice in the UI?** Recommended: not now — the environment variable and
    the report cover the two-GPU case; a setting can follow if the owner meets it.
-3. **QSV on Linux**: if NV12 system frames open (stage 1), no QSV context is built. Recommended:
-   accept whatever the measurement shows, recorded as a revision of D2.
+3. Closed: D2 revised (2026-11-04), no QSV context.

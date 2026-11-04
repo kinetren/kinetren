@@ -27,7 +27,6 @@ list may be short of items from them.
 | 12 | gallery near a cut | A missing thumbnail is filled from the nearest stored one, so near a cut it shows the other shot | `request_near` | open | later |
 | 13 | sound generator | An audio generator event draws no waveform | generators | unknown | С.3, check first |
 | 14 | Noise default | Added Noise shows nothing until the amount is raised | barrier noise kernel | open | owner's decision: a fix moves bytes |
-| 15 | VAAPI/QSV | Intel and AMD never encode in hardware; picking `h264_vaapi` by hand crashes the render | change `hw-encode-context`, 14 of 21 tasks done | open | С.1 |
 | 16 | loop freeze on wine | Play with a loop region freezes the picture until a click | change `loop-play-latency-hold` | open, unverified | С.3, wine probe first |
 | 17 | `.kt` MIME | A name-only guess can open `.kt` as Kotlin | `src/packaging/kinetren-mime.xml` | open | owner's decision |
 | 18 | seam outside a wrap | A clip dragged during playback does not refill the pitch look-ahead | kt-engine audio | deliberate | only on a complaint |
@@ -50,6 +49,9 @@ list may be short of items from them.
 | 54 | one-off composite stalls | 1.7-1.9 s at one cut and once 21.9 s, on the old path only; at most 25 ms since | composite | cause unknown | watch |
 | 55 | RGBA conversion, one thread per file | The next limit for 4K at native size | `kt-ffmpeg` `to_rgba` | not reached in the measurements | С.1 |
 | 56 | a start on a really cold disk | The OS page cache could not be dropped here; if sound misses the 500 ms wait, the silence stays as before | start of playback | not measured | watch |
+| 66 | **random broken frames in a pipeline export** | `kt-cli demo` exported with `libx264`: "missing layers" 5, 7, 8, 10, different every run; some frames differ by up to 5.8 dB between two runs (197, 198, 231, 287, 352...). `--serial` gives 0 and the same md5 twice. Breaks invariant 11, t1451 does not catch it; suspected cache eviction | `src/libs/kt-engine` `export_pipeline.rs` | reported by `hw-encode-context`, new since `export-throughput` | fix now |
+| 67 | render error window | The text starts with "Error: io:" and the Video row stays on "choosing the encoder…" | `kt-app/src/render_dialog.rs` | open | С.3 |
+| 68 | hardware encoding unproven | No real Intel or AMD driver ran; the T16 crash is isolated, its cause not proven; a driver that fails after the three trial frames still ends the render; only FFmpeg 6.1.1 ran | `kt-ffmpeg` `hw_trial.rs` | open | needs a machine with a card |
 | 64 | first frame of Datamosh | The first frame after a start took 6.6 s on llvmpipe under load about 20: the compute device opens and the shaders compile, no disk cache of shaders; new with `compute-kernels` | `src/libs/kt-gpu/src/compute.rs` `open`, `pipe` | open | С.1, next compute stage |
 | 65 | Datamosh not seen on a real device | The compute path ran only on Vulkan through llvmpipe: no real card, DX12, Metal or ARM yet; the panel's message without a device was not looked at in the live program | `fx-video-codec` | open | С.2 CI and the ARM build |
 | 44 | no ARM build | The program cannot run on ARM at all; the owner wants it | `.github`, `scripts` | open | С.2 |
@@ -86,7 +88,7 @@ list may be short of items from them.
 
 - **`r72-timeline-transport-defects`: 19 tasks, none done.** Seventeen timeline defects the owner
   meets every day, ordered by him on 2026-10-30. Verdict: first in С.3.
-- `hw-encode-context`: row 15. `loop-play-latency-hold`: row 16.
+- `loop-play-latency-hold`: row 16.
 - `fx-lens-and-camera` (2 of 14 done), `flatpak-flathub` (11 tasks open): after С.3.
 - Every task done, or only the archive steps left: ARCHIVED 2026-11-04 (specs and design records merged,
   F-TL-013 and F-EXP-005 `done`): `ffmpeg-download-window-info`, `menu-chords-out-of-text`,

@@ -37,6 +37,9 @@ pub struct EncoderSpec {
     pub hardware: bool,
     pub pix: PixFmt,
     pub ctx: HwKind,
+    /// Opening it loads a libva driver into the process, so the first contact happens in a
+    /// throwaway one (`hw_trial`, hw-encode-context D10).
+    pub trial: bool,
 }
 
 impl EncoderSpec {
@@ -88,13 +91,17 @@ impl EncoderSpec {
 }
 
 const fn hw(name: &'static str, pix: PixFmt) -> EncoderSpec {
-    EncoderSpec { name, hardware: true, pix, ctx: HwKind::None }
+    EncoderSpec { name, hardware: true, pix, ctx: HwKind::None, trial: false }
 }
 const fn vaapi(name: &'static str) -> EncoderSpec {
-    EncoderSpec { name, hardware: true, pix: PixFmt::Nv12, ctx: HwKind::Vaapi }
+    EncoderSpec { name, hardware: true, pix: PixFmt::Nv12, ctx: HwKind::Vaapi, trial: true }
+}
+/// System NV12 frames, but the library's own session reaches the same VA driver on Linux.
+const fn qsv_on_va() -> EncoderSpec {
+    EncoderSpec { name: "h264_qsv", hardware: true, pix: PixFmt::Nv12, ctx: HwKind::None, trial: true }
 }
 const fn sw(name: &'static str) -> EncoderSpec {
-    EncoderSpec { name, hardware: false, pix: PixFmt::Yuv420p, ctx: HwKind::None }
+    EncoderSpec { name, hardware: false, pix: PixFmt::Yuv420p, ctx: HwKind::None, trial: false }
 }
 
 /// The cascade of `os`, in order of preference.
@@ -103,7 +110,7 @@ pub fn video_encoder_candidates(os: Os) -> Vec<EncoderSpec> {
         Os::Linux => vec![
             hw("h264_nvenc", PixFmt::Yuv420p),
             vaapi("h264_vaapi"),
-            hw("h264_qsv", PixFmt::Nv12),
+            qsv_on_va(),
             sw("libx264"),
             sw("mpeg4"),
         ],

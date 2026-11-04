@@ -1234,3 +1234,196 @@ fn t964_cli_names_the_hardware_encoding_devices() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The fake VA driver of `fixtures/fake_va`, built for this test run, and a "render node" that is
+/// a regular file: the real libva and the real FFmpeg on a machine with no graphics card.
+/// `None` where the scene cannot exist (it says why): not Linux, or an FFmpeg without VAAPI.
+struct FakeVa {
+    dir: std::path::PathBuf,
+    driver: std::path::PathBuf,
+}
+
+impl FakeVa {
+    fn new(test: &str) -> Option<FakeVa> {
+        kt_plugins_builtin::install();
+        if !(cfg!(target_os = "linux") && kt_media::ffmpeg::backend_info().is_some()) {
+            eprintln!("{test} skipped: needs FFmpeg on Linux");
+            return None;
+        }
+        let dir = std::env::temp_dir().join(format!("kt-cli-{test}-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("dri")).unwrap();
+        std::fs::write(dir.join("dri").join("renderD128"), b"a regular file").unwrap();
+        let driver = dir.join("ktfake_drv_video.so");
+        let source = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/fake_va/ktfake_drv_video.c");
+        let built = ["cc", "clang"].iter().any(|cc| {
+            Command::new(cc)
+                .args(["-shared", "-fPIC", "-O1", "-w", "-o"])
+                .arg(&driver)
+                .arg(source)
+                .status()
+                .is_ok_and(|s| s.success())
+        });
+        assert!(built, "no C compiler built the fake driver");
+        let fake = FakeVa { dir, driver };
+        let out = fake.run("", &["ffmpeg", "--probe-encoders"]);
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        let line = text.lines().find(|l| l.trim_start().starts_with("h264_vaapi:")).unwrap_or("");
+        if line.contains("not in this FFmpeg build") {
+            eprintln!("{test} skipped: this FFmpeg has no h264_vaapi");
+            return None;
+        }
+        assert!(line.contains(": opens on "), "the healthy fake driver does not open: {text}");
+        Some(fake)
+    }
+
+    fn command(&self, mode: &str) -> Command {
+        let mut c = cli();
+        c.env("KT_FAKE_VA", mode)
+            .env("KT_FAKE_VA_LOG", self.dir.join("driver.log"))
+            .env("KT_DRI_DIR", self.dir.join("dri"))
+            .env_remove("KINETREN_VAAPI_DEVICE")
+            .env("LD_PRELOAD", &self.driver)
+            .env("LIBVA_DRIVERS_PATH", &self.dir)
+            .env("LIBVA_DRIVER_NAME", "ktfake")
+            .env("XDG_DATA_HOME", self.dir.join("xdg"));
+        c
+    }
+
+    fn run(&self, mode: &str, args: &[&str]) -> std::process::Output {
+        self.command(mode).args(args).output().unwrap()
+    }
+
+    /// A short synthetic project, its path.
+    fn project(&self) -> String {
+        let mut p = owner_grid_case();
+        p.morphers.clear();
+        p.clips[0].duration = kt_time::Tick(90_000);
+        p.validate().unwrap();
+        let path = self.dir.join("short.kt");
+        std::fs::write(&path, kt_model::project_file::to_text(&p, None)).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    fn out(&self, name: &str) -> String {
+        self.dir.join(name).to_string_lossy().into_owned()
+    }
+
+    /// A forced `h264_vaapi` with `mode`: it ended by itself with an error, and left no file. The
+    /// output, for the reason.
+    fn forced_fails(&self, mode: &str) -> String {
+        let out = self.out(&format!("forced-{mode}.mp4"));
+        let r = self.run(mode, &["export", &self.project(), &out, "h264_vaapi"]);
+        let all = format!("{}{}", String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&r.stderr));
+        assert_eq!(r.status.code(), Some(1), "{mode}: the process did not end with an error: {:?} {all}", r.status);
+        assert!(!std::path::Path::new(&out).exists(), "{mode}: a file was left behind");
+        all
+    }
+
+    /// The cascade with `mode`: the render still comes out, from another encoder, and the log says
+    /// why. The output.
+    fn auto_renders(&self, mode: &str) -> String {
+        let out = self.out(&format!("auto-{mode}.mp4"));
+        let r = self.run(mode, &["export", &self.project(), &out]);
+        let all = format!("{}{}", String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&r.stderr));
+        assert!(r.status.success(), "{mode}: the cascade did not render: {:?} {all}", r.status);
+        assert!(all.contains("encoder h264_vaapi skipped: "), "{mode}: the skip is not in the log: {all}");
+        assert!(!all.contains("encoder: h264_vaapi (hardware"), "{mode}: it was opened: {all}");
+        assert!(std::fs::metadata(&out).unwrap().len() > 0, "{mode}: no file");
+        all
+    }
+}
+
+impl Drop for FakeVa {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// t1551 (hw-encode-context D10, ktprompts v26.10 T16): a driver that FAULTS — on load, in the
+/// encoder's open, on the first picture — ends a throwaway process, not the render. Forced, the
+/// export is an error naming the crash; left to the cascade, the render comes out of the next
+/// encoder; the report that diagnoses such a driver survives it too.
+#[test]
+fn t1551_a_driver_that_crashes_does_not_end_the_render() {
+    let Some(fake) = FakeVa::new("t1551") else { return };
+    for mode in ["init-abort", "context-abort", "frame-abort"] {
+        let all = fake.forced_fails(mode);
+        assert!(all.contains("the driver crashed in a test process (signal 6)"), "{mode}: {all}");
+        fake.auto_renders(mode);
+        let r = fake.run(mode, &["ffmpeg", "--probe-encoders"]);
+        let text = String::from_utf8_lossy(&r.stdout);
+        assert!(r.status.success(), "{mode}: the report died: {:?} {text}", r.status);
+        assert!(text.contains("h264_vaapi: fails: the driver crashed"), "{mode}: {text}");
+    }
+    let text = String::from_utf8_lossy(&fake.run("init-abort", &["ffmpeg"]).stdout).into_owned();
+    assert!(text.contains("does not open as a VAAPI device (the driver crashed"), "{text}");
+}
+
+/// t1552 (D3, D10): a driver that REFUSES, at each part of the one step: the forced error names
+/// the part, the cascade goes on to the next encoder. A driver that opens and cannot encode is
+/// found before the render starts — "first frames" — and does not fail the export half way.
+#[test]
+fn t1552_each_refused_part_is_named_and_the_cascade_goes_on() {
+    let Some(fake) = FakeVa::new("t1552") else { return };
+    for (mode, part) in [
+        ("init-refuse", "no VAAPI device ("),
+        ("surfaces-refuse", "frames context: code "),
+        ("context-refuse", "encoder: code "),
+        ("frame-refuse", "first frames: encoder send"),
+        ("frame-empty", "first frames: the encoder produced no data"),
+    ] {
+        let all = fake.forced_fails(mode);
+        assert!(all.contains(part), "{mode}: the error does not name “{part}”: {all}");
+        let all = fake.auto_renders(mode);
+        assert!(all.contains(part), "{mode}: the log does not name “{part}”: {all}");
+    }
+}
+
+/// t1553 (D10): a driver that HANGS is left behind: the test process is killed at its time limit,
+/// the export goes on, and nobody waits for it for ever.
+#[test]
+fn t1553_a_driver_that_hangs_is_left_behind() {
+    let Some(fake) = FakeVa::new("t1553") else { return };
+    let started = std::time::Instant::now();
+    let out = fake.out("hang.mp4");
+    let r = fake
+        .command("context-hang")
+        .env("KT_HW_TRIAL_TIMEOUT_MS", "1000")
+        .args(["export", &fake.project(), &out])
+        .output()
+        .unwrap();
+    let all = format!("{}{}", String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&r.stderr));
+    assert!(r.status.success(), "{all}");
+    assert!(all.contains("encoder h264_vaapi skipped: the driver did not answer in 1 s"), "{all}");
+    assert!(std::path::Path::new(&out).exists(), "no file: {all}");
+    assert!(started.elapsed().as_secs() < 60, "{:?}", started.elapsed());
+}
+
+/// t1554 (the export spec's cancel-and-error scenario on a hardware encoder): a driver that passes
+/// the trial and fails in the MIDDLE of the render is a clear error, with no partial file — the
+/// frames of a stream cannot move to another encoder half way.
+#[test]
+fn t1554_a_failure_in_the_middle_is_an_error_and_no_file() {
+    let Some(fake) = FakeVa::new("t1554") else { return };
+    let all = fake.forced_fails("frame-refuse-after-8");
+    assert!(all.contains("encoder: h264_vaapi (hardware"), "it did not start on VAAPI: {all}");
+    assert!(all.contains("encoder send"), "the error does not say what failed: {all}");
+}
+
+/// t1555 (D3, D4, D10): a healthy driver: left to the cascade the hardware encoder is chosen, and
+/// the device is named; every frame of the pipelined export reaches the driver in THIS process,
+/// after the throwaway process met it first. Each one logged its pictures when it closed.
+#[test]
+fn t1555_a_healthy_driver_gets_every_frame_after_the_trial() {
+    let Some(fake) = FakeVa::new("t1555") else { return };
+    let _ = std::fs::remove_file(fake.dir.join("driver.log"));
+    let out = fake.out("healthy.mp4");
+    let r = fake.run("", &["export", &fake.project(), &out]);
+    let all = format!("{}{}", String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&r.stderr));
+    assert!(r.status.success(), "{all}");
+    assert!(all.contains("encoder: h264_vaapi (hardware, nv12)"), "{all}");
+    assert!(all.contains("encoder h264_vaapi\n") || all.trim_end().ends_with("encoder h264_vaapi"), "{all}");
+    let log = std::fs::read_to_string(fake.dir.join("driver.log")).unwrap();
+    assert!(log.contains("frames 3\n"), "the trial's three pictures: {log}");
+    assert!(log.contains("frames 30\n"), "every frame in the render's own process: {log}");
+}

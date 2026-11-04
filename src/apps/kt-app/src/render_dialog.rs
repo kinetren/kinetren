@@ -669,7 +669,7 @@ impl KtApp {
                             .encoder
                             .clone()
                             .unwrap_or_else(|| tr(k::render::ENCODER_AUTO).to_string());
-                        egui::ComboBox::from_id_salt("enc").selected_text(&sel).show_ui(ui, |ui| {
+                        let combo = egui::ComboBox::from_id_salt("enc").selected_text(&sel).show_ui(ui, |ui| {
                             ui.selectable_value(
                                 &mut self.render_setup.encoder,
                                 None,
@@ -681,9 +681,11 @@ impl KtApp {
                                     Some(d) => format!("{} ({d})", e.name),
                                     None => e.name.clone(),
                                 };
-                                ui.selectable_value(&mut self.render_setup.encoder, Some(e.name.clone()), label);
+                                let r = ui.selectable_value(&mut self.render_setup.encoder, Some(e.name.clone()), label);
+                                crate::widgets::field_probe::note(&format!("render.encoder.{}", e.name), r.rect);
                             }
                         });
+                        crate::widgets::field_probe::note("render.encoder", combo.response.rect);
                         ui.end_row();
 
                         ui.label(tr(k::render::QUALITY));

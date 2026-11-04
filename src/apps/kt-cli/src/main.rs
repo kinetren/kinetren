@@ -28,6 +28,8 @@ use kt_time::{AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, Tick};
 fn main() {
     // frame-sized buffers go back to the system when freed (export-throughput D11)
     kt_media::frame_alloc::return_large_frames_to_os();
+    // a throwaway process that meets a hardware driver for the export (hw-encode-context D10)
+    kt_ffmpeg::hw_trial::serve();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = run(&args);
     std::process::exit(code);
@@ -801,14 +803,7 @@ fn probe_encoders() -> String {
                 None => format!("  {}: opens\n", spec.name),
             },
             // the failing part only: "no VAAPI device (…)", "code N", "not in this FFmpeg build"
-            Err(e) => {
-                let e = e.to_string();
-                let part = e
-                    .split_once(&format!("{}: ", spec.name))
-                    .map(|(_, rest)| rest.strip_suffix(')').unwrap_or(rest).to_string())
-                    .unwrap_or(e);
-                format!("  {}: fails: {part}\n", spec.name)
-            }
+            Err(e) => format!("  {}: fails: {}\n", spec.name, kt_ffmpeg::hw_trial::failing_part(&e.to_string(), spec.name)),
         };
         out.push_str(&line);
         let _ = std::fs::remove_file(&path);

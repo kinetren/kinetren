@@ -12,7 +12,7 @@ invariants: [9, 10, 11]
 ui_rules: [4, 16, 19]
 round: null
 point: null
-tests: [25]
+tests: [25, 962, 1551, 1552, 1556]
 depends_on: [F-EXP-001, F-RES-006, F-RES-008]
 trackers: [shotcut, kde-bugzilla, kde-invent, openshot, olive, mlt, losslesscut, flowblade, pitivi]
 checked: 2026-09-08
@@ -269,3 +269,10 @@ opened. The list in the window is narrowed to what has a device (the narrow part
   `src/libs/kt-engine/tests/{export_options,golden_export}.rs`,
   `src/apps/kt-app/src/render_dialog.rs`, `src/apps/kt-cli/src/main.rs`,
   `src/apps/kt-app/i18n/{en,ru}.toml`.
+
+**Revision (2026-11-04): delivered, not measured on hardware** — change `hw-encode-context`
+archived. `h264_vaapi` is opened on a device and a frames context, and the list offers it only with
+a device that opens. A libva driver first meets a throwaway process, so a driver that faults or
+hangs costs a skip and not the render. QSV keeps system NV12 frames. Proven on a fake VA driver
+under the real libva and FFmpeg (`fixtures/fake_va`), never on a real card: whether Intel's or
+AMD's driver opens, its quality and its speed remain unknown.
