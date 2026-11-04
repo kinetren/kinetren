@@ -2,8 +2,8 @@
 //! estimation, a closed prediction loop, an 8×8 DCT residual quantised by QP. No entropy coding,
 //! no B-frames, integer-pel vectors — the MECHANISM of an inter-frame codec, not a standard's syntax.
 //!
-//! The motion search and the residual are compute shaders (`wgsl/`, compute-kernels): `encode` is a
-//! job for the host's device, and `None` means the device failed. The same machine gives the same
+//! The motion search, the residual and the decoder are compute shaders (`wgsl/`, compute-kernels):
+//! `encode` and `decode` are jobs for the host's device, and `None` means the device failed. The same machine gives the same
 //! bytes; another device may differ, the codec's look does not depend on it.
 
 use kt_plugin_api::compute::{self, Buf, Init, Job, Step};
@@ -130,58 +130,8 @@ impl Planes {
 }
 
 // ---------------------------------------------------------------------------------------------
-// motion
-// ---------------------------------------------------------------------------------------------
-
-/// Block-copy prediction of one plane: the block at (bx, by) of size `bs` reads the reference at
-/// `+ (vx, vy)` with clamped coordinates (unrestricted vectors).
-#[allow(clippy::too_many_arguments)]
-fn mc_block(rf: &[u8], w: usize, h: usize, bx: usize, by: usize, bs: usize, vx: i32, vy: i32, out: &mut [u8]) {
-    for y in 0..bs {
-        let sy = (by as i32 + y as i32 + vy).clamp(0, h as i32 - 1) as usize;
-        for x in 0..bs {
-            let sx = (bx as i32 + x as i32 + vx).clamp(0, w as i32 - 1) as usize;
-            out[(by + y) * w + bx + x] = rf[sy * w + sx];
-        }
-    }
-}
-
-/// The prediction of all three planes from `rf` by the vector field (one vector per luma block of
-/// `bs`; the chroma block of `bs/2` takes the vector halved, floored).
-pub fn predict(rf: &Planes, mv: &[(i16, i16)], bs: usize) -> Planes {
-    let (w, h) = (rf.w, rf.h);
-    let mut p = Planes::grey(w, h);
-    let bw = w / bs;
-    for (i, &(vx, vy)) in mv.iter().enumerate() {
-        let (bx, by) = ((i % bw) * bs, (i / bw) * bs);
-        let (vx, vy) = (vx as i32, vy as i32);
-        mc_block(&rf.y, w, h, bx, by, bs, vx, vy, &mut p.y);
-        let (cs, cw, chh) = (bs / 2, w / 2, h / 2);
-        mc_block(&rf.cb, cw, chh, bx / 2, by / 2, cs, vx >> 1, vy >> 1, &mut p.cb);
-        mc_block(&rf.cr, cw, chh, bx / 2, by / 2, cs, vx >> 1, vy >> 1, &mut p.cr);
-    }
-    p
-}
-
-// ---------------------------------------------------------------------------------------------
 // encode / decode
 // ---------------------------------------------------------------------------------------------
-
-fn add_clamp(pred: &[u8], res: &[i16], gain_q8: i32, out: &mut [u8]) {
-    for ((o, &p), &r) in out.iter_mut().zip(pred).zip(res) {
-        let r = if gain_q8 == 256 { r as i32 } else { (r as i32 * gain_q8) >> 8 };
-        *o = (p as i32 + r).clamp(0, 255) as u8;
-    }
-}
-
-/// Reconstruct a picture: `pred + g × residual`, clamped.
-pub fn reconstruct(pred: &Planes, res: &Residual, gain_q8: i32) -> Planes {
-    let mut o = Planes::grey(pred.w, pred.h);
-    add_clamp(&pred.y, &res.y, gain_q8, &mut o.y);
-    add_clamp(&pred.cb, &res.cb, gain_q8, &mut o.cb);
-    add_clamp(&pred.cr, &res.cr, gain_q8, &mut o.cr);
-    o
-}
 
 /// The residual shader with the DCT-II basis `C[u][x]` as its table.
 fn residual_shader() -> &'static str {
@@ -210,6 +160,62 @@ fn i16s(v: &[u8]) -> Vec<i16> {
     v.chunks_exact(4).map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as i16).collect()
 }
 
+fn narrow(v: &[u8]) -> Vec<u8> {
+    v.chunks_exact(4).map(|c| c[0]).collect()
+}
+
+fn wide(v: &[i16]) -> Vec<u8> {
+    v.iter().flat_map(|r| (*r as i32).to_le_bytes()).collect()
+}
+
+fn decode_uniforms(w: u32, h: u32, bs: u32, gain_q8: i32, intra: bool) -> [Vec<u8>; 3] {
+    let u = |pw: u32, ph: u32, shift: u32| {
+        uniform(&[pw.to_le_bytes(), ph.to_le_bytes(), bs.to_le_bytes(), shift.to_le_bytes(), gain_q8.to_le_bytes(), (w / bs).to_le_bytes(), (intra as u32).to_le_bytes(), [0; 4]])
+    };
+    [u(w, h, 0), u(w / 2, h / 2, 1), u(w / 2, h / 2, 1)]
+}
+
+fn decode_step<'a>(u: &'a [u8], read: &'a [Buf], write: &'a [Buf], groups: [u32; 3]) -> Step<'a> {
+    Step { shader: include_str!("wgsl/decode.wgsl"), uniform: u, read, write, groups }
+}
+
+/// Decode a picture: the prediction from `rf` by the vector field (one vector per luma block of
+/// `bs`; the chroma block of `bs/2` takes the vector halved, floored) plus `g × residual`, clamped.
+/// `None`: as `encode`.
+pub fn decode(rf: &Planes, mv: &[(i16, i16)], bs: usize, res: &Residual, gain_q8: i32) -> Option<Planes> {
+    let host = compute::host()?;
+    let (w, h, b) = (rf.w as u32, rf.h as u32, bs as u32);
+    let (bw, bh) = (w / b, h / b);
+    let vectors: Vec<u8> = mv.iter().flat_map(|v| [(v.0 as i32).to_le_bytes(), (v.1 as i32).to_le_bytes()].concat()).collect();
+    let rf_words = [words(&rf.y), words(&rf.cb), words(&rf.cr)];
+    let res_words = [wide(&res.y), wide(&res.cb), wide(&res.cr)];
+    let plane = |i: usize| res_words[i].len() as u64;
+    // 0–2 the reference, 3 the vectors, 4–6 the residual, 7–9 the picture
+    let buffers = [
+        Init::Bytes(&rf_words[0]), Init::Bytes(&rf_words[1]), Init::Bytes(&rf_words[2]),
+        Init::Bytes(&vectors),
+        Init::Bytes(&res_words[0]), Init::Bytes(&res_words[1]), Init::Bytes(&res_words[2]),
+        Init::Zero(plane(0)), Init::Zero(plane(1)), Init::Zero(plane(2)),
+    ];
+    let us = decode_uniforms(w, h, b, gain_q8, false);
+    let reads = [[Buf(0), Buf(3), Buf(4)], [Buf(1), Buf(3), Buf(5)], [Buf(2), Buf(3), Buf(6)]];
+    let writes = [[Buf(7)], [Buf(8)], [Buf(9)]];
+    let groups = [bw.div_ceil(8), bh.div_ceil(8), 1];
+    let steps = [
+        decode_step(&us[0], &reads[0], &writes[0], groups),
+        decode_step(&us[1], &reads[1], &writes[1], groups),
+        decode_step(&us[2], &reads[2], &writes[2], groups),
+    ];
+    let got = match host.run(&Job { buffers: &buffers, steps: &steps, reads: &[Buf(7), Buf(8), Buf(9)] }) {
+        Ok(g) => g,
+        Err(e) => {
+            compute::fail(e);
+            return None;
+        }
+    };
+    Some(Planes { w: rf.w, h: rf.h, y: narrow(&got[0]), cb: narrow(&got[1]), cr: narrow(&got[2]) })
+}
+
 /// Encode `src` against the encoder's previous reconstruction (`None` — an intra frame). Closed
 /// loop: the returned reconstruction is exactly what an intact decoder makes of the packet. `None`
 /// — no device, or the device failed (`compute::unavailable` says why).
@@ -222,12 +228,14 @@ pub fn encode(src: &Planes, prev: Option<&Planes>, cfg: &Cfg) -> Option<Clean> {
     let cur = [words(&src.y), words(&src.cb), words(&src.cr)];
     let rf = prev.map(|p| [words(&p.y), words(&p.cb), words(&p.cr)]);
     let rf_init = |i: usize| rf.as_ref().map_or(Init::Zero(16), |r| Init::Bytes(&r[i]));
-    // 0–2 the source, 3–5 the reference, 6 the zero seed, 7–8 the two sweeps' vectors, 9–11 the residual
+    // 0–2 the source, 3–5 the reference, 6 the zero seed, 7–8 the two sweeps' vectors, 9–11 the
+    // residual, 12–14 the reconstruction
     let plane_bytes = [(w * h * 4) as u64, (w * h) as u64, (w * h) as u64];
     let buffers = [
         Init::Bytes(&cur[0]), Init::Bytes(&cur[1]), Init::Bytes(&cur[2]),
         rf_init(0), rf_init(1), rf_init(2),
         Init::Zero(mv_bytes), Init::Zero(mv_bytes), Init::Zero(mv_bytes),
+        Init::Zero(plane_bytes[0]), Init::Zero(plane_bytes[1]), Init::Zero(plane_bytes[2]),
         Init::Zero(plane_bytes[0]), Init::Zero(plane_bytes[1]), Init::Zero(plane_bytes[2]),
     ];
     let search_u = uniform(&[w.to_le_bytes(), h.to_le_bytes(), bs.to_le_bytes(), cfg.search.max(0).to_le_bytes()]);
@@ -254,7 +262,13 @@ pub fn encode(src: &Planes, prev: Option<&Planes>, cfg: &Cfg) -> Option<Clean> {
             groups: [(pw / 8).div_ceil(8), (ph / 8).div_ceil(8), 1],
         });
     }
-    let got = match host.run(&Job { buffers: &buffers, steps: &steps, reads: &[Buf(8), Buf(9), Buf(10), Buf(11)] }) {
+    let ds = decode_uniforms(w, h, bs, 256, prev.is_none());
+    let dreads = [[Buf(3), Buf(8), Buf(9)], [Buf(4), Buf(8), Buf(10)], [Buf(5), Buf(8), Buf(11)]];
+    let dwrites = [[Buf(12)], [Buf(13)], [Buf(14)]];
+    for i in 0..3 {
+        steps.push(decode_step(&ds[i], &dreads[i], &dwrites[i], groups));
+    }
+    let got = match host.run(&Job { buffers: &buffers, steps: &steps, reads: &[Buf(8), Buf(9), Buf(10), Buf(11), Buf(12), Buf(13), Buf(14)] }) {
         Ok(g) => g,
         Err(e) => {
             compute::fail(e);
@@ -266,8 +280,7 @@ pub fn encode(src: &Planes, prev: Option<&Planes>, cfg: &Cfg) -> Option<Clean> {
         .map(|c| (i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as i16, i32::from_le_bytes([c[4], c[5], c[6], c[7]]) as i16))
         .collect();
     let res = Residual { y: i16s(&got[1]), cb: i16s(&got[2]), cr: i16s(&got[3]) };
-    let pred = prev.map_or_else(|| Planes::grey(src.w, src.h), |rf| predict(rf, &mv, cfg.bs));
-    let recon = reconstruct(&pred, &res, 256);
+    let recon = Planes { w: src.w, h: src.h, y: narrow(&got[4]), cb: narrow(&got[5]), cr: narrow(&got[6]) };
     Some(Clean { recon, pkt: Packet { intra: prev.is_none(), mv, res } })
 }
 

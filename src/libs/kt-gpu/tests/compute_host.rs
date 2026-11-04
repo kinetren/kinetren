@@ -1,4 +1,5 @@
-//! t1502, t1503 (compute-kernels, capability `plugins`): the compute door on the host's device.
+//! t1502, t1503 (compute-kernels), t1570, t1571 (compute-kernels-render), capability `plugins`: the
+//! compute door on the host's device.
 
 use kt_plugin_api::compute::{Buf, ComputeHost, Init, Job, Step};
 
@@ -45,4 +46,29 @@ fn t1503_a_refused_shader_is_an_error_not_a_panic() {
     let err = double(&*host, "this is not a shader").unwrap_err();
     assert!(err.contains("refused"), "{err}");
     assert_eq!(double(&*host, DOUBLE).unwrap()[8], 16, "the host survives");
+}
+
+#[test]
+fn t1570_a_zero_buffer_is_zero_after_a_job_used_it() {
+    let Some(host) = host() else { return };
+    assert_eq!(double(&*host, DOUBLE).unwrap()[8], 16);
+    let got = host.run(&Job { buffers: &[Init::Zero(36)], steps: &[], reads: &[Buf(0)] }).unwrap();
+    assert_eq!(got[0], vec![0u8; 36], "the buffer of the last job came back unclean");
+}
+
+#[test]
+fn t1571_the_pool_reuses_and_stays_bounded() {
+    let Ok(device) = kt_gpu::compute::open_device() else { return };
+    double(&*device, DOUBLE).unwrap();
+    let one = device.pooled_bytes();
+    assert!(one > 0, "a finished job left nothing to reuse");
+    double(&*device, DOUBLE).unwrap();
+    assert_eq!(device.pooled_bytes(), one, "the same job grew the pool");
+    // six live buffers of 200 MiB against a bound of 1 GiB: the last does not fit
+    let big = vec![0u8; 200 << 20];
+    for _ in 0..3 {
+        let buffers = [Init::Bytes(&big); 6];
+        device.run(&Job { buffers: &buffers, steps: &[], reads: &[] }).unwrap();
+        assert!(device.pooled_bytes() <= 1 << 30);
+    }
 }

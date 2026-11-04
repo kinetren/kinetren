@@ -1,4 +1,4 @@
-//! The codec model of `datamosh` (datamosh-codec-path): t1235–t1239, t1243.
+//! The codec model of `datamosh` (datamosh-codec-path): t1235–t1239, t1243; t1572 (compute-kernels-render).
 //!
 //! The stream is synthetic: a value-noise texture (a lattice of hashed values every 8 px, bilinear)
 //! translated by whole pixels, so motion estimation has an exact answer and every expectation is a
@@ -261,13 +261,13 @@ fn t1237_bloom_repeats_one_vector_field() {
     for j in (b + 1)..=(b + len) {
         let prev = dec(&p, &s, j - 1, &memo);
         let pk = &cl[b as usize].pkt;
-        let want = codec::reconstruct(&codec::predict(&prev, &pk.mv, cfg.bs), &pk.res, 256);
+        let want = codec::decode(&prev, &pk.mv, cfg.bs, &pk.res, 256).unwrap();
         assert_eq!(*dec(&p, &s, j, &memo), want, "frame {j} is packet {b} applied again");
     }
     // after the bloom the stream continues with its own packet
     let j = b + len + 1;
     let pk = &cl[j as usize].pkt;
-    let want = codec::reconstruct(&codec::predict(&dec(&p, &s, j - 1, &memo), &pk.mv, cfg.bs), &pk.res, 256);
+    let want = codec::decode(&dec(&p, &s, j - 1, &memo), &pk.mv, cfg.bs, &pk.res, 256).unwrap();
     assert_eq!(*dec(&p, &s, j, &memo), want);
     let plain = dec(&params(&[]), &Mock::new(0, 0, 30, |k| tex(3, 2 * k as i32, (k / 3) as i32)), b + len, &memo);
     assert_ne!(*plain, *dec(&p, &s, b + len, &memo), "the bloom changes the picture");
@@ -378,7 +378,7 @@ fn t1243_freeze_transplant_vector_ops_and_loss() {
     let rf = dec(&p, &sf, 4, &memo);
     for j in [5i64, 9, 12] {
         let pk = &cl[j as usize].pkt;
-        let want = codec::reconstruct(&codec::predict(&rf, &pk.mv, cfg.bs), &pk.res, 256);
+        let want = codec::decode(&rf, &pk.mv, cfg.bs, &pk.res, 256).unwrap();
         assert_eq!(*dec(&p, &sf, j, &memo), want, "frozen frame {j}");
     }
     // after the gate the reference updates again
@@ -558,8 +558,49 @@ fn cost_per_frame_at_360_lines() {
     let c = prev.unwrap();
     let t1 = std::time::Instant::now();
     for _ in 0..planes.len() {
-        let _ = codec::reconstruct(&codec::predict(&c.recon, &c.pkt.mv, 16), &c.pkt.res, 200);
+        let _ = codec::decode(&c.recon, &c.pkt.mv, 16, &c.pkt.res, 200).unwrap();
     }
     let dec = t1.elapsed().as_secs_f64() * 1000.0 / planes.len() as f64;
     eprintln!("640x368: encode {enc:.2} ms/frame, broken decode {dec:.2} ms/frame; a cold seek through a 300-frame chain ≈ {:.0} ms", 300.0 * (enc + dec));
+}
+
+#[test]
+fn t1572_the_decoder_copies_by_the_vector_clamps_and_scales() {
+    if no_device() {
+        return;
+    }
+    let (w, h, bs) = (32usize, 16usize, 16usize);
+    let mut rf = Planes::grey(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            rf.y[y * w + x] = (x * 4 + y) as u8;
+        }
+    }
+    for y in 0..h / 2 {
+        for x in 0..w / 2 {
+            rf.cb[y * w / 2 + x] = (x * 8 + y) as u8;
+        }
+    }
+    let zero = vec![0i16; w * h];
+    let chroma = vec![0i16; w * h / 4];
+    let mut res = codec::Residual { y: zero, cb: chroma.clone(), cr: chroma };
+    res.y[0] = 100;
+    res.y[1] = -100;
+    res.y[2] = 300;
+    res.y[3] = 3;
+    // block 0 reads 3 right and 2 up (off the frame); block 1 reads 5 left and 3 down
+    let mv = [(3i16, -2i16), (-5, 3)];
+    let got = codec::decode(&rf, &mv, bs, &res, 128).unwrap();
+    let luma = |x: i32, y: i32| rf.y[y.clamp(0, 15) as usize * w + x.clamp(0, 31) as usize] as i32;
+    let want = |x: i32, y: i32, r: i32| (luma(x, y) + ((r * 128) >> 8)).clamp(0, 255) as u8;
+    assert_eq!(got.y[0], want(3, -2, 100), "the residual at half gain over the copy");
+    assert_eq!(got.y[1], want(4, -2, -100), "a negative residual floors");
+    assert_eq!(got.y[2], want(5, -2, 300));
+    assert_eq!(got.y[3], want(6, -2, 3));
+    assert_eq!(got.y[5 * w + 7], want(10, 3, 0), "the block's own pixel");
+    assert_eq!(got.y[15 * w + 31], want(26, 18, 0), "off the bottom: clamped");
+    // the chroma block is 8 wide and takes the vector halved, floored: (3,-2) → (1,-1), (-5,3) → (-3,1)
+    let cb = |x: i32, y: i32| rf.cb[y.clamp(0, 7) as usize * w / 2 + x.clamp(0, 15) as usize];
+    assert_eq!(got.cb[3 * w / 2 + 2], cb(3, 2));
+    assert_eq!(got.cb[3 * w / 2 + 8 + 2], cb(8 + 2 - 3, 3 + 1));
 }
