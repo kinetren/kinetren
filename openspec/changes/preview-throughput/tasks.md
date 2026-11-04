@@ -24,3 +24,17 @@ message, first line = the stage and what was done, no `Co-Authored-By` or other 
 - [x] 2.3 The first frame of a cut past the window (D3); t1528
 - [x] 2.4 The real program measured under Xvfb, `submit` split out of `encode`
 - [x] 2.5 Tests of kt-engine, kt-gpu, kt-app, kt-cli, clippy, commit, target-prune
+
+## 3. The CPU path
+
+- [x] 3.1 `compose_ahead.rs`: workers over a shared renderer, the stamp, the pool, `take` (D4)
+- [x] 3.2 A miss holds, workers start past what cannot arrive, the window starts at their frontier
+- [x] 3.3 The audio underruns of 26–57 s traced to Playback requests behind the window (D5); t1534
+  red with the bug put back, after a first version that stayed green
+- [x] 3.4 A burst between the chunks of a span; t1529 red without it
+- [x] 3.5 t1530–t1533
+- [x] 3.6 The real program: llvmpipe against CPU workers; the software adapter stays on the GPU path
+- [x] 3.7 The hold is bounded: t947 found a frozen picture in reverse, at rate 0 and on a clock that
+  stands; t1536 red on an endless hold
+- [x] 3.8 An empty post-FX memo is no video miss; t1535
+- [x] 3.9 The kt-app suite six times clean, the whole workspace (t815 alone red: its 2 s write limit), clippy, commit, target-prune

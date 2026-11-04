@@ -37,6 +37,17 @@ the budget were also taken off the queue and dropped silently.
   V-fps counts them
 - **TEST** t1524 (`src/libs/kt-engine/tests/preview_throughput.rs`)
 
+### Requirement: A burst does not wait out a video span of its own priority
+Between the chunks of a video span the worker SHALL read the audio bursts queued at the span's own
+priority and go on with the span, without moving the video cursor.
+Why: a span holds up to 64 keys, seconds of 4K, and a burst of the look-ahead left behind it turned
+urgent only after the render had missed it (preview-throughput, 2026-11-04).
+
+#### Scenario: A burst during a long span
+- **WHEN** a burst is queued at NearPrefetch while a span of 32 pictures runs at that priority
+- **THEN** it is read after fewer than 16 pictures, the span finishes all 32, and nothing reopens
+- **TEST** t1529 (`src/libs/kt-engine/tests/preview_throughput.rs`)
+
 ### Requirement: The first frame of a cut is asked before the window reaches it
 Past the look-ahead's bytes, up to its 2 s, one prefetch pass SHALL ask the layers that start a read
 the moment before was not doing, at most `CUT_LEAD_KEYS` keys, and no later frames of them.
@@ -49,3 +60,14 @@ reach an event's first frame: 52 incomplete composites at that one cut, however 
 - **THEN** the pass asks the window's four frames and the cut's first frame, after them; nearer than
   the bytes reach it adds nothing, and a stack without a cut asks what it asked before
 - **TEST** t1528 (`src/libs/kt-engine/tests/prefetch_budget.rs`)
+
+### Requirement: Only a frame counts as a video miss
+A lookup of an empty post-FX memo SHALL NOT count as a video miss; a hit of the memo SHALL still count
+as a hit.
+Why: the panel warns of a low hit rate below 80 %, and on the CPU path it read 41–57 % with every
+decoded frame in the cache (preview-throughput, 2026-11-04).
+
+#### Scenario: An empty memo
+- **WHEN** an empty post-FX memo is looked up, and then a frame that is not in the cache
+- **THEN** the first adds no video miss and the second adds one
+- **TEST** t1535 (`src/libs/kt-cache/src/lib.rs`)

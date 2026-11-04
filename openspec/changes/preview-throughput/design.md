@@ -54,6 +54,71 @@ to the same 2 s, `video_prefetch_wants` adds the layers that start a read (`jump
 A speed changes the stride of a read, so "the same read" is the same media and size within four
 frames; a faster stride looks like a jump, and the key limit is what bounds it.
 
+## D4. The CPU path composes ahead of the display
+
+One thread cannot compose a frame in less than the frame's own cost: p95 381 ms at 1080p, on the UI
+thread, 8–9 V-fps. `compose_ahead.rs` runs workers (half the cores, at most 16, bounded by the memory
+of their scratches) over a shared renderer with `compose_export_with`, the export's own call: a
+frame is a function of (cache, t, quality), so which worker made it does not show in its bytes
+(t1530). The UI takes a finished frame by a swap.
+
+- Workers read the cache and nothing else, and a frame whose layers are not all there is left for
+  later, so they never decode and never compose incomplete (invariant 5).
+- The key is (project version, content version, quality): a frame of another state of the project
+  cannot reach the screen (t1532).
+- They sleep on a condvar while the transport stands (invariant 12, t1531), and start on the first
+  frame played on the CPU path, so a GPU session has no such threads.
+- A stream stage keeps the synchronous path, as in the export (t1533).
+
+Three things decided whether this worked, each found by measuring:
+
+1. **A miss holds the picture, within a limit.** The first version composed a missed frame on the UI
+   thread as well: a 500 ms stall that also threw the display past frames on their way, 30 % of them
+   wasted. While the workers serve, a miss returns incomplete and the UI asks again next frame, the
+   path a decode miss already takes. The hold is a promise, and the first version of it was not
+   bounded: the workers serve forward play alone, so in reverse, at rate 0 or on a clock that stands
+   nobody would bring the frame and the picture froze with the transport running. t947 caught it
+   only as noise (2 failures of 4 runs of the suite). `may_hold` now answers yes for a frame in a
+   worker's hands, or for three frames on one tick at a forward rate; past that the caller composes
+   (t1536, red on an endless hold).
+2. **Workers start past what cannot arrive in time.** A composite begun for a frame nearer than the
+   composite's own smoothed cost ends after the display has left.
+3. **The decode window starts at the workers' frontier.** Measured from the display, its 0.64 s left
+   0.24 s past a 0.4 s composite, and the workers stood waiting for frames at 16 fps (`lead_ticks`,
+   `shifted_head`).
+
+## D5. The display orders no decode while the workers serve
+
+With the window moved, 26–57 s came out with 38,026 frames of audio underrun where the old path had
+none, all at 50–53 s: a 4K file with chromatic aberration and glow, its audio on the same worker.
+Moving audio out from behind long spans did not cure it (34,698 and 5,573 after that change). The
+evidence was the decoder: 3,165 pictures and 27 reopens against the GPU path's 2,230 and 17 on the
+same range. On a miss the UI still submitted a Playback request for the frame on screen, which now
+stands BEHIND the window, so the decoder seeked back through a 4K GOP for a frame about to be
+skipped, on the worker that also reads that file's audio. The hold now comes before the requests:
+0 underruns in three runs, 2,540 pictures, 20 reopens (t1534).
+
+The first t1534 stayed green with the bug put back: the frame on screen was still in the cache, so
+no request went out. It was rewritten without timing: the clock stands, and the frame asked lies past
+the look-ahead, so only a Playback request can decode it.
+
+Separately, a video span no longer holds audio of its own priority: the burst is read between
+chunks and the span goes on, without moving the video cursor (t1529). This was not the cure for the
+underruns above; it stands on its own, as a span of 64 keys could otherwise hold a burst for seconds.
+
+## The hit rate counted a memo as a frame
+
+A lookup of an empty post-FX memo counted as a video miss, though no frame was missing: on the CPU
+path the rate read 41 % before this change and 57 % with the workers, with every decoded frame
+there, and the panel's warning fires below 80 %. Only a frame now counts as a miss; a memo hit
+still counts as a hit, which t-postfx and the mask tests read (t1535).
+
+## The software adapter stays on the GPU path
+
+The export refuses a software rasterizer in favour of CPU workers. The preview does not follow it:
+in the real program at 1080p llvmpipe gives 19–20 V-fps and the CPU workers 18, both with no underrun.
+The numbers do not justify a second rule, and `gpufx` keeps running the path real cards use.
+
 ## What a real window costs on a software rasterizer
 
 Measured in the real release program under Xvfb, 1080p, llvmpipe: `queue.submit` takes about 30 ms

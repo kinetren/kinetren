@@ -33,7 +33,8 @@ Software decode is not the limit, so hardware decode is not part of this change.
   composite to a display texture the UI draws, so the UI thread neither waits for the device nor
   copies the frame out and in again. Readback stays for `execute_into` (export, tests, fallback).
 - **The CPU path composes ahead on worker threads**, so a frame is ready when the display reaches
-  it and the UI thread only picks it up. The UI's synchronous compose stays for a miss.
+  it and the UI thread only picks it up. While the workers serve, a miss holds the picture; the
+  synchronous compose stays for the first frame, a pause and a stream stage.
 - **`kt-cli preview`** prints V-fps and V-skipped as the performance panel counts them, and where a
   frame's time went, stage by stage.
 - **The first frame of a cut is asked before the window reaches it**: a decoder needs the same time
@@ -43,7 +44,8 @@ Software decode is not the limit, so hardware decode is not part of this change.
 
 ### Modified Capabilities
 
-- `media-index`: the worker's span covers every decode size of a moment.
+- `media-index`: the worker's span covers every decode size of a moment; audio is read between its
+  chunks; the first frame of a cut is asked early.
 - `video-plan`: the preview's two executors keep up without standing on the UI thread.
 
 ## Impact

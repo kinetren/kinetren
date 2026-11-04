@@ -72,12 +72,14 @@ impl GopSource {
     }
 
     fn frame(pts: i64, q: Quality) -> VideoFrame {
-        let n = q.width as usize * q.height as usize * 4;
+        // a picture of its own per moment: a frame from the wrong moment does not compare equal
+        let n = q.width as usize * q.height as usize;
+        let v = (pts / STEP) as u8;
         VideoFrame {
             pts: Tick(pts),
             width: q.width,
             height: q.height,
-            rgba: vec![255u8; n].into_boxed_slice(),
+            rgba: [v, v.wrapping_mul(3), 255 - v, 255].repeat(n).into_boxed_slice(),
             has_alpha: false,
         }
     }
@@ -241,6 +243,68 @@ fn t1522_a_span_fits_half_the_budget_at_each_keys_size() {
     w.shutdown();
 }
 
+/// t1529: a burst of the look-ahead does not wait out a long video span of its own priority: it
+/// is read between the span's chunks, and the span goes on without moving the video cursor.
+#[test]
+fn t1529_audio_is_read_between_the_chunks_of_a_span() {
+    let counts = Arc::new(Mutex::new(Counts::default()));
+    let src = GopSource::new((640, 360), Duration::from_millis(40), counts.clone());
+    let src = AudioLog { inner: src, counts: counts.clone(), audio_at: Default::default() };
+    let at = src.audio_at.clone();
+    let cache = Arc::new(BurstCache::new(CacheConfig {
+        max_audio_bytes: 1 << 20,
+        max_video_bytes: 1 << 30,
+    }));
+    let w = MediaWorker::spawn(MediaId(1), Box::new(src), cache.clone());
+    for i in 0..32 {
+        near(&w, i * STEP, SHARP);
+    }
+    // the span is under way: at 40 ms a picture it holds the worker for over a second
+    std::thread::sleep(Duration::from_millis(120));
+    w.submit(DecodeRequest {
+        kind: RequestKind::Audio { idx: 7 },
+        prio: Priority::NearPrefetch,
+        generation: 0,
+    });
+    wait_idle(&w);
+    let pictures_before_audio = at.lock().unwrap().expect("the burst was read");
+    assert!(pictures_before_audio < 16, "the burst waited for {pictures_before_audio} pictures");
+    let c = counts.lock().unwrap();
+    assert_eq!(c.reopens, 0, "the video cursor did not move");
+    assert_eq!(c.pictures, 32, "the span went on where it was");
+    w.shutdown();
+}
+
+/// Notes how many pictures were decoded when the first burst was read.
+struct AudioLog {
+    inner: GopSource,
+    counts: Arc<Mutex<Counts>>,
+    audio_at: Arc<Mutex<Option<u64>>>,
+}
+
+impl MediaSource for AudioLog {
+    fn info(&self) -> &MediaInfo {
+        self.inner.info()
+    }
+    fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError> {
+        self.audio_at.lock().unwrap().get_or_insert(self.counts.lock().unwrap().pictures);
+        self.inner.read_audio_burst(idx)
+    }
+    fn read_video_frame(&mut self, p: Tick, q: Option<Quality>) -> Result<VideoFrame, MediaError> {
+        self.inner.read_video_frame(p, q)
+    }
+    fn keyframe_before(&self, p: Tick) -> Option<Tick> {
+        self.inner.keyframe_before(p)
+    }
+    fn read_video_span_qualities(
+        &mut self,
+        keys: &[(Tick, Quality)],
+        emit: &mut dyn FnMut(Tick, Quality, VideoFrame),
+    ) -> Result<(), MediaError> {
+        self.inner.read_video_span_qualities(keys, emit)
+    }
+}
+
 fn clip(id: u64, lane: u32, geometry: EventGeometry) -> ClipEvent {
     ClipEvent {
         r#gen: None,
@@ -321,4 +385,151 @@ fn t1524_a_layer_over_its_backdrop_plays_in_time() {
         c.pictures,
         c.reopens,
     );
+}
+
+fn cpu_player(p: Project, picture: Duration) -> (Player, rtrb::Consumer<f32>, Arc<Mutex<Counts>>) {
+    let counts = Arc::new(Mutex::new(Counts::default()));
+    let src = GopSource::new((3840, 1608), picture, counts.clone());
+    let (player, ring) = Player::new(p, vec![(MediaId(1), Box::new(src) as Box<dyn MediaSource>)]);
+    player.set_preview_quality(Quality { width: 640, height: 360 });
+    (player, ring, counts)
+}
+
+/// t1530: a frame composed ahead is the frame the synchronous path composes: the display takes
+/// them from the workers, and every frame shown equals the plan's own composite of its moment.
+#[test]
+fn t1530_a_frame_composed_ahead_is_the_same_frame() {
+    let p = sharp_over_backdrop();
+    let (player, ring, _) = cpu_player(p.clone(), Duration::ZERO);
+    let o =
+        BenchOptions { from: Tick(0), to: Tick(3 * SEC), hash_frames: true, ..Default::default() };
+    let r = play_range(&player, ring, o);
+    let (composed, taken) = player.compose_ahead_counts();
+    assert!(
+        taken > 20,
+        "scene guard: the display took frames from the workers: {composed}/{taken}"
+    );
+
+    let mut facts = kt_engine::SourceFacts::default();
+    let counts = Arc::new(Mutex::new(Counts::default()));
+    let mut src = GopSource::new((3840, 1608), Duration::ZERO, counts);
+    facts.observe(MediaId(1), src.info());
+    let mut vr = VideoRenderer::new_with_facts(&p, &facts);
+    let q = Quality { width: 640, height: 360 };
+    let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 1 << 30 });
+    let sid = kt_engine::source_id(MediaId(1));
+    for (t, want) in &r.frames {
+        for (_, pts, dq) in vr.layers_at(*t, q) {
+            let f = src.read_video_frame(pts, Some(dq)).unwrap();
+            cache.insert_video(sid, Some(dq), kt_engine::video_cache_idx(pts), f.into());
+        }
+        let (bytes, full) = vr.compose_from_cache(&cache, *t, q);
+        assert!(full);
+        assert_eq!(xxhash_rust::xxh3::xxh3_64(&bytes), *want, "the frame at {t:?}");
+    }
+}
+
+/// t1531: the workers exist only for playback: nothing starts on a paused frame, and nothing runs
+/// once the transport stands (invariant 12).
+#[test]
+fn t1531_nothing_is_composed_ahead_in_a_pause() {
+    let (player, ring, _) = cpu_player(sharp_over_backdrop(), Duration::ZERO);
+    let mut buf = Vec::new();
+    for _ in 0..20 {
+        player.compose_preview_into(Tick(SEC), &mut buf);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(player.compose_ahead_counts(), (0, 0), "a paused frame starts no worker");
+    let o = BenchOptions { from: Tick(0), to: Tick(SEC), ..Default::default() };
+    play_range(&player, ring, o);
+    // the composites under way when the transport stopped finish; nothing new starts
+    std::thread::sleep(Duration::from_millis(200));
+    let after = player.compose_ahead_counts();
+    assert!(after.0 > 0, "scene guard: playing composed ahead");
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(player.compose_ahead_counts(), after, "the pause composes nothing");
+}
+
+/// t1533: a stream stage keeps the synchronous path: its frame depends on the frames before it.
+#[test]
+fn t1533_a_stream_stage_is_not_composed_ahead() {
+    kt_plugins_builtin::install();
+    let mut p = sharp_over_backdrop();
+    p.clips[0].fx = vec![FxInstance::plugin("datamosh").expect("datamosh is built in")];
+    p.clips[0].fx_bypass = vec![false];
+    let (player, ring, _) = cpu_player(p, Duration::ZERO);
+    let o = BenchOptions { from: Tick(0), to: Tick(2 * SEC), ..Default::default() };
+    let r = play_range(&player, ring, o);
+    assert!(r.composites > 0, "scene guard: the frames were composed");
+    assert_eq!(player.compose_ahead_counts().0, 0, "no frame was composed ahead");
+}
+
+/// t1534: while the workers serve, the display orders no decode. It stands behind the look-ahead,
+/// which starts at the workers' frontier, so a Playback request for the frame on screen seeked
+/// the decoder back: on the showcase a 4K GOP for a frame about to be skipped, and 38,026 frames
+/// of silence from the audio on the same worker. The clock stands here, so the look-ahead stays
+/// at the head, and the frame asked lies past it: only a Playback request could decode it.
+#[test]
+fn t1534_the_display_orders_no_decode_while_the_workers_serve() {
+    let (player, _ring, counts) = cpu_player(sharp_over_backdrop(), Duration::ZERO);
+    let mut buf = Vec::new();
+    serving(&player, &mut buf);
+
+    let far = 5 * SEC;
+    let (_, complete) = player.compose_preview_into(Tick(far), &mut buf);
+    assert!(!complete, "the frame is on its way: the picture holds");
+    // the display moved on before the hold ran out, as it does while playing
+    std::thread::sleep(Duration::from_millis(40));
+    player.pause();
+    let material = 10 * SEC + far;
+    let c = counts.lock().unwrap();
+    assert!(
+        !c.calls.iter().flatten().any(|k| k.0 >= material),
+        "the display ordered a decode at {material}"
+    );
+}
+
+/// Until the workers have composed something and the first picture is up.
+fn serving(player: &Player, buf: &mut Vec<u8>) {
+    player.seek(Tick(0));
+    player.play();
+    let until = Instant::now() + Duration::from_secs(20);
+    while player.compose_ahead_counts().0 == 0 {
+        assert!(Instant::now() < until, "scene guard: the workers never served");
+        player.compose_preview_into(Tick(0), buf);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!buf.is_empty(), "scene guard: a frame has been shown");
+}
+
+/// Asks `t` as the UI does, every UI frame, for at most 3 s: did the frame arrive?
+fn arrives(player: &Player, t: Tick, buf: &mut Vec<u8>) -> bool {
+    let until = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < until {
+        if player.compose_preview_into(t, buf).1 {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    false
+}
+
+/// t1536: holding the picture is a promise with a limit. Nobody brings a frame on a clock that
+/// stands, in reverse, or at a stopped rate: the workers serve forward play alone, and an endless
+/// hold would freeze the picture with the transport running. (Found by t947.)
+#[test]
+fn t1536_a_held_picture_does_not_freeze() {
+    let (player, _ring, _) = cpu_player(sharp_over_backdrop(), Duration::ZERO);
+    let mut buf = Vec::new();
+    serving(&player, &mut buf);
+    // no output device: the transport plays and the clock stands
+    assert!(arrives(&player, Tick(SEC), &mut buf), "on a clock that stands");
+    for rate in [-1.0, 0.0] {
+        player.set_playback_rate(rate);
+        assert!(
+            arrives(&player, Tick(2 * SEC + (rate as i64 + 2) * STEP), &mut buf),
+            "at rate {rate}"
+        );
+    }
+    player.pause();
 }

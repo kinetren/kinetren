@@ -961,11 +961,18 @@ fn preview_run(
         reopens
     );
     if std::env::var_os("KT_BENCH_STARVED").is_some() {
+        for (t, n) in &r.underrun_at {
+            println!("  underrun {:.2}: {n}", t.0 as f64 / kt_time::TICK_HZ as f64);
+        }
         for (t, m) in &r.starved {
             let ids: Vec<String> =
                 m.iter().map(|(m, (w, h))| format!("{}@{w}x{h}", m.0)).collect();
             println!("  starved {:.2}: {}", t.0 as f64 / kt_time::TICK_HZ as f64, ids.join(" "));
         }
+    }
+    let (ahead, taken) = player.compose_ahead_counts();
+    if ahead > 0 {
+        println!("  composed ahead {ahead}, taken by the display {taken}");
     }
     let lookups = (r.video_hits + r.video_misses).max(1);
     println!(

@@ -371,16 +371,7 @@ fn worker_loop(
         match job {
             Job::Audio { idx } => {
                 cursor_audio = idx * kt_time::AUDIO_BURST_TICKS;
-                if !cache.contains_audio(source_id, idx) && !failed_audio.contains(&idx) {
-                    stats.audio_decodes.fetch_add(1, Ordering::Relaxed);
-                    match source.read_audio_burst(idx) {
-                        Ok(burst) => cache.insert_audio(source_id, Arc::new(burst)),
-                        Err(kt_media::MediaError::OutOfRange) => {
-                            failed_audio.insert(idx);
-                        }
-                        Err(_) => {}
-                    }
-                }
+                read_audio(source, source_id, cache, stats, &mut failed_audio, idx);
             }
             Job::VideoSpan { keys, generation_of_span, prio_of_span } => {
                 cursor_video = keys.iter().map(|k| k.pts).max().unwrap_or(cursor_video);
@@ -434,6 +425,27 @@ fn worker_loop(
                         let q = shared.queue.lock().unwrap();
                         q.audio.keys().next().is_some_and(|(p, _)| *p < prio_of_span)
                     };
+                    if !audio_waits {
+                        // Audio of the span's own priority is read here, and the span goes on
+                        // (preview-throughput D5). The rule "a span is not given up for equal
+                        // priority" keeps the VIDEO cursor from zigzagging, and this does not move
+                        // it: audio has its own demuxer. Left waiting behind a long span, the
+                        // bursts of the look-ahead turn urgent only when the render has already
+                        // missed them (t1529).
+                        loop {
+                            let next = {
+                                let mut q = shared.queue.lock().unwrap();
+                                let key = q.audio.keys().next().copied();
+                                key.filter(|k| k.0 == prio_of_span).map(|k| {
+                                    q.audio.remove(&k);
+                                    k.1
+                                })
+                            };
+                            let Some(idx) = next else { break };
+                            cursor_audio = idx * kt_time::AUDIO_BURST_TICKS;
+                            read_audio(source, source_id, cache, stats, &mut failed_audio, idx);
+                        }
+                    }
                     if audio_waits {
                         // UNFINISHED WORK IS RETURNED TO THE QUEUE, not dropped:
                         // the keys were already taken off it when the span was assembled, and
@@ -464,6 +476,28 @@ fn worker_loop(
                 }
             }
         }
+    }
+}
+
+/// Decode one audio burst into the cache, unless it is there or known to be past the end.
+fn read_audio(
+    source: &mut dyn MediaSource,
+    source_id: SourceId,
+    cache: &BurstCache,
+    stats: &DecodeStats,
+    failed: &mut std::collections::HashSet<i64>,
+    idx: i64,
+) {
+    if cache.contains_audio(source_id, idx) || failed.contains(&idx) {
+        return;
+    }
+    stats.audio_decodes.fetch_add(1, Ordering::Relaxed);
+    match source.read_audio_burst(idx) {
+        Ok(burst) => cache.insert_audio(source_id, Arc::new(burst)),
+        Err(kt_media::MediaError::OutOfRange) => {
+            failed.insert(idx);
+        }
+        Err(_) => {}
     }
 }
 

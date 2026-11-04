@@ -29,6 +29,8 @@ pub struct BenchOptions {
     /// Do not wait for the device between UI frames: the queue then backs up into the next
     /// submit, as it does in a real window on a software rasterizer.
     pub free_running: bool,
+    /// Keep a hash of every frame shown from the bytes path, for a test to compare.
+    pub hash_frames: bool,
 }
 
 impl Default for BenchOptions {
@@ -41,6 +43,7 @@ impl Default for BenchOptions {
             ui_ns: 0,
             settle: Duration::from_millis(1500),
             free_running: false,
+            hash_frames: false,
         }
     }
 }
@@ -65,6 +68,10 @@ pub struct BenchReport {
     pub compose_ms: Percentiles,
     /// Why composites came out incomplete: (moment, the media whose frame was missing).
     pub starved: Vec<(Tick, MissingLayers)>,
+    /// (moment, hash of its bytes), under `hash_frames`.
+    pub frames: Vec<(Tick, u64)>,
+    /// When audio went missing: (moment, frames of underrun since the last UI frame).
+    pub underrun_at: Vec<(Tick, u64)>,
     /// The moment of the slowest composite.
     pub worst_at: Tick,
     pub composites: u64,
@@ -188,6 +195,7 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
     let mut key: Option<(i64, bool)> = None;
     let mut gen_lap = (player.transport.generation(), 0u64);
     let mut next_vsync = Instant::now();
+    let mut seen_under = under0;
     loop {
         next_vsync += frame;
         let ui0 = Instant::now();
@@ -210,8 +218,8 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
             let new_frame = key.map(|x| x.0) != Some(k);
             // the program's choice: on the display target while the executor has one
             let shown_yet = key.is_some();
-            let o = PresentOptions { show_incomplete: !shown_yet, glow: false };
-            let c = match player.present_preview(Tick(k), o) {
+            let present = PresentOptions { show_incomplete: !shown_yet, glow: false };
+            let c = match player.present_preview(Tick(k), present) {
                 Some((_, c)) => c,
                 None => player.compose_preview_into(Tick(k), &mut buf).1,
             };
@@ -231,6 +239,9 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
             r.stages.copy_ns += cost.stages.copy_ns;
             if c && new_frame {
                 r.shown += 1;
+                if o.hash_frames {
+                    r.frames.push((Tick(k), xxhash_rust::xxh3::xxh3_64(&buf)));
+                }
             }
             r.incomplete += u64::from(!c);
             if !c {
@@ -239,6 +250,11 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
             key = Some((k, c));
         }
         stalls.push(ui0.elapsed().as_secs_f64() * 1e3);
+        let under = player.underruns.load(Ordering::Relaxed);
+        if under != seen_under {
+            r.underrun_at.push((t, under - seen_under));
+            seen_under = under;
+        }
         // a real window's swapchain holds the UI back here, inside the paint, not in the preview
         let device0 = Instant::now();
         if !o.free_running {
