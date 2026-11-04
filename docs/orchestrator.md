@@ -133,10 +133,9 @@ The stage of `export-throughput`, `loop-pitch-tail-dip`, the sidecar fix and `si
 closed: `finish.sh` at kt26.11.04-02fb2ddd, master there. Next, in the owner's order:
 
 1. **Performance**: the preview and the final render, and "the math" (AVX, Vulkan…):
-   the move of the heavy math to Vulkan compute in plain WGSL (`compute-backends`, its branch is not
-   merged: the prototype goes, two owner's decisions are open), `preview-throughput` (started 2026-11-04 from
-   the merged export work: the frame path at full quality, 4K decode speed, one decoder per file),
-   `hw-encode-context` (Intel and AMD encode in hardware).
+   the move of the heavy math to Vulkan compute in plain WGSL (`compute-kernels` in the
+   `compute-backends` session; the owner decided "да, удаляем", references of video and audio may be
+   updated), `hw-encode-context` (Intel and AMD encode in hardware).
 2. **Build and CI speed** ("все что больше 10мин+ это ужас"): the local build/test loop, the
    cost of a plugin edit, an ARM build (owner, 2026-11-04), CI wall time (21 min on 2026-11-02: windows-build 13 min → windows-test
    7 min in series); the proposed-only change `ci-speedup` is the starting point.

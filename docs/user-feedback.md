@@ -2568,7 +2568,10 @@ proposal cards, with no list and no verdict.
 
 - Taken as: "эталон" covers video and audio, a reference may be deleted or updated. The first answer
   is a question back: deleting the CPU copies must not cost this machine its render through llvmpipe.
-  `compute-backends` answers it; the decision to delete stays open until then.
+  `compute-backends` answered that this machine keeps working through Vulkan on llvmpipe; the render
+  stops only on Linux without `mesa-vulkan-drivers` and on Windows without a graphics driver.
+- His decision, the same session: "да, удаляем". The CPU and AVX copies of the effects that move to
+  Vulkan compute go; the change is `compute-kernels`, Datamosh first.
 
 ## What the user repeated more than once
 
