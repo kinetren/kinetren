@@ -56,7 +56,7 @@ list may be short of items from them.
 
 | # | Item | Where | State | Verdict |
 |---|---|---|---|---|
-| 24 | t815's 2 s limit fails under disk or CPU load | `kt-app/src/layout_tests.rs:18065` | open, verified | С.2 |
+| 24 | t815 measures the disk: 8 KB took 7.1 s in `finish.sh`, a false red; that write runs only on exit, autosave has its own thread | `kt-app/src/layout_tests.rs:18065` | open, verified | С.2 |
 | 25 | `formula` live scenario red under load | `src/scripts/live/formula.py` | open | С.2 |
 | 26 | live scenarios red in a batch, green alone; displays collide | `scripts/live-check.sh` | open | С.2 |
 | 27 | sidecar "database is locked" (t640, t1171, t411, t1413) | `kt-media` | fixed by `ece65c8f`, to confirm on the merged tree | confirm in the stage's `finish.sh` |

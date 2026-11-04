@@ -129,8 +129,8 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
 
 ## Current plan (2026-11-04)
 
-The current stage: `sim-audio-pairs` is what remains (`export-throughput`, `loop-pitch-tail-dip` and
-the sidecar fix are merged). Then, in the owner's order:
+The stage of `export-throughput`, `loop-pitch-tail-dip`, the sidecar fix and `sim-audio-pairs` is
+closed: `finish.sh` at kt26.11.04-02fb2ddd, master there. Next, in the owner's order:
 
 1. **Performance**: the preview and the final render, and "the math" (AVX, Vulkan…):
    the move of the heavy math to Vulkan compute in plain WGSL (`compute-backends`, its branch is not
