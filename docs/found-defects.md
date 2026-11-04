@@ -85,8 +85,8 @@ list may be short of items from them.
   meets every day, ordered by him on 2026-10-30. Verdict: first in С.3.
 - `hw-encode-context`: row 15. `loop-play-latency-hold`: row 16.
 - `fx-lens-and-camera` (2 of 14 done), `flatpak-flathub` (11 tasks open): after С.3.
-- Every task done, or only the archive steps left: `ffmpeg-download-window-info`,
-  `menu-chords-out-of-text`, `morpher-event-grid-cost`, `split-menu-label`, `still-image-frame-rule`,
-  `selection-copy-target`, `shared-window-shell`, `slowed-reverb-is-an-event`,
-  `render-window-v1-parity`, `i18n-gaps` (manual check 4.2 left). Verdict: one cleaning executor
-  checks and archives them.
+- Every task done, or only the archive steps left: ARCHIVED 2026-11-04 (specs and design records merged,
+  F-TL-013 and F-EXP-005 `done`): `ffmpeg-download-window-info`, `menu-chords-out-of-text`,
+  `morpher-event-grid-cost`, `split-menu-label`, `still-image-frame-rule`, `selection-copy-target`,
+  `shared-window-shell`, `slowed-reverb-is-an-event`, `render-window-v1-parity`, `i18n-gaps` (manual
+  check 4.2 run on a throwaway HOME through Gio, not by `make install`).
