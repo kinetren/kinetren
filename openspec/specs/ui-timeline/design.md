@@ -303,6 +303,37 @@ preferences leave View for one window, File › Preferences…; View keeps only 
 viewed (Detach/Dock, Diagnostics…, Notices). The switch is still ONE (t1294 counts its writers), and
 its value lives in the user store, so opening another project no longer resets it (t1295).
 
+## What Copy takes, and the triple click (selection-copy-target, archived 2026-11-04)
+
+Copy takes, in this order: ONE selected event (counted by link group) whole, with the region left
+in place; else the region; else the selection. Written in `copy_selection` only, and the status
+line names the rule that fired (`copied_event` / `copied_region` / `copied_events`), because the
+three branches look alike on the screen.
+
+- **Link groups are counted, not ids.** A click on a video event selects only it, but its audio
+  partner travels anyway; the person who clicked one A/V pair has selected "one event". The
+  consequence is written down: a range marker that crosses exactly ONE event, double-clicked and
+  copied, gives that event whole, not the cropped piece (t926). Remembering whether the selection
+  came from a click or from a region gesture was rejected: an invisible state that decides what
+  Copy takes is a mode, and modes are what the owner keeps complaining about.
+- **Why not "any selection wins"** (Premiere, Resolve): it would change the range-marker
+  double click (R.33 item 8 selects the crossing events AND sets the region), whose Ctrl+C would
+  stop cropping to the marker. **Why not Vegas's "selection limited by the region"**: it needs a
+  third block builder (selected ∩ region) and it reverses the owner's request, where the one event
+  must not be cropped. Several selected events keep the region rule until the owner decides.
+- **A triple click undoes its second click.** egui reports `triple_clicked()` on the third press,
+  AFTER `double_clicked()` fired on the second. The double-click branch leaves a one-frame record
+  (`pending_double`: FX window opened / reel expanded / level reset); the triple-click branch sets
+  the region from the event and closes the window or collapses the reel the gesture itself
+  opened. The level line keeps its reset and ignores the third click. **No delayed double
+  click**: waiting 0.3 s to learn whether a third click comes would open every FX window late,
+  and the double click is used a hundred times more often than the triple (the FX window flashes
+  for ~0.3 s during a triple click; t927 asserts it is closed after the third).
+- The chord column of "Region over this event" and the event's hint name the triple click;
+  Shift+double-click still works and is the same body (`region_from_event`, t929).
+- Open and unchanged: Delete still follows the region-first order (the owner asked about
+  copy-paste only; "what Ctrl+C takes is what Delete removes" is the recommended next answer).
+
 ## Deferred
 
 - `lane_names` live in `Project.ui`, and `swap_reel` does not swap them — the full entry

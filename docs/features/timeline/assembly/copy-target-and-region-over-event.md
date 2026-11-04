@@ -1,18 +1,18 @@
 ---
 id: F-TL-013
 title: What Copy takes — the selected event or the time range; a range over an event by a gesture
-status: candidate
+status: done
 priority: B
 cost: S
 category: timeline/assembly
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: partial
+we_have: yes
 crates: [kt-app]
 invariants: []
 ui_rules: [16, 17]
-round: null
-point: null
-tests: []
+round: ktprompts-26.10.18
+point: change selection-copy-target (items 4–5)
+tests: [924, 925, 926, 927, 928, 929]
 depends_on: []
 checked: 2026-10-28
 ---
@@ -76,30 +76,8 @@ selection-versus-range precedence that could be quoted verbatim within the rule'
 
 ## How it fits Kinotrain
 
-CAPABILITY: openspec/specs/ui-timeline/
-
-### What already exists
-
-`KtApp::copy_selection` in `src/apps/kt-app/src/app.rs:4568`: a region ALWAYS wins
-(`kt_model::ops::copy_region_block`, every event crossing the region on every track, cropped);
-the selection is used only without a region (`copy_clips` with link groups). `region_from_event`
-(`app.rs:4031`) — the region over an event's link group, one body for Shift+double-click
-(`src/apps/kt-app/src/timeline.rs:3243`) and the menu item "Region over this event"
-(`timeline.rs:5924`). `region_from_marked_range` (`app.rs:4415`) sets a region AND selects the
-crossing events. `delete_action` (`app.rs:5089`) has the same region-first order.
-
-### What is missing
-
-A precedence rule that lets one selected event win over the region; a triple-click gesture.
-
-### What hinders
-
-The double click on an event opens the FX window (`timeline.rs:3237`), on the level line resets
-the level, on a reel expands it in place — all three fire before a triple click is known.
-
-### Which invariants it touches
-
-None of 1–12; UI rules 16 (an impossible action is named) and 17 (paired ways behave the same).
+CAPABILITY: openspec/specs/ui-timeline/ — the contract is in `spec.md`, the "why" and the paths in the code are in `design.md`.
+Copy takes one selected event whole, else the region, else the selection (`copy_selection`); a triple click on an event sets the region through `region_from_event`, the one body shared with Shift+double-click and the menu item.
 
 ## Estimate
 
@@ -116,7 +94,8 @@ None of 1–12; UI rules 16 (an impossible action is named) and 17 (paired ways 
 
 Take: the owner asked for both (ktprompts 26.10.18 items 4–5); one selected event wins over the
 region, a triple click sets the region over the event through the existing one body. The rule for
-several selected events is decided in change `selection-copy-target`.
+several selected events is decided in change `selection-copy-target` (archived 2026-11-04): they keep the
+region rule, because "any selection wins" would change the range-marker double click; the target is named in the status line.
 
 ## Sources
 
