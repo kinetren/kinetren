@@ -7,7 +7,7 @@
 //! The wall clock is legal here: this is the preview's path, not an offline one (invariant 11).
 
 use crate::player::{Player, varispeed_fill};
-use crate::video_plan::GpuStages;
+use crate::video_plan::{GpuStages, PresentOptions};
 use kt_time::{AUDIO_SAMPLE_RATE, Tick};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,6 +26,9 @@ pub struct BenchOptions {
     pub ui_ns: u64,
     /// Warm the window before the clock starts, as a person who pressed Play on a paused frame.
     pub settle: Duration,
+    /// Do not wait for the device between UI frames: the queue then backs up into the next
+    /// submit, as it does in a real window on a software rasterizer.
+    pub free_running: bool,
 }
 
 impl Default for BenchOptions {
@@ -37,6 +40,7 @@ impl Default for BenchOptions {
             display_hz: 60,
             ui_ns: 0,
             settle: Duration::from_millis(1500),
+            free_running: false,
         }
     }
 }
@@ -67,6 +71,8 @@ pub struct BenchReport {
     pub composed_on_gpu: u64,
     /// Sums over all composites.
     pub plan_ns: u64,
+    /// Waiting for the device at the end of the UI frames, as a swapchain would.
+    pub device_ns: u64,
     pub stages: GpuStages,
     pub underruns: u64,
     pub video_hits: u64,
@@ -202,7 +208,13 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
         };
         if need {
             let new_frame = key.map(|x| x.0) != Some(k);
-            let (_, c) = player.compose_preview_into(Tick(k), &mut buf);
+            // the program's choice: on the display target while the executor has one
+            let shown_yet = key.is_some();
+            let o = PresentOptions { show_incomplete: !shown_yet, glow: false };
+            let c = match player.present_preview(Tick(k), o) {
+                Some((_, c)) => c,
+                None => player.compose_preview_into(Tick(k), &mut buf).1,
+            };
             let cost = player.video_cost();
             let ms = cost.compose_ns as f64 / 1e6;
             if composes.iter().all(|w: &f64| *w < ms) {
@@ -227,6 +239,12 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
             key = Some((k, c));
         }
         stalls.push(ui0.elapsed().as_secs_f64() * 1e3);
+        // a real window's swapchain holds the UI back here, inside the paint, not in the preview
+        let device0 = Instant::now();
+        if !o.free_running {
+            player.finish_present();
+        }
+        r.device_ns += device0.elapsed().as_nanos() as u64;
         let busy_until = ui0 + Duration::from_nanos(o.ui_ns);
         let wake = next_vsync.max(busy_until);
         if let Some(d) = wake.checked_duration_since(Instant::now()) {

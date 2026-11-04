@@ -36,3 +36,16 @@ the budget were also taken off the queue and dropped silently.
 - **THEN** at least 70 % of the grid's frames reach the screen, counted as the performance panel's
   V-fps counts them
 - **TEST** t1524 (`src/libs/kt-engine/tests/preview_throughput.rs`)
+
+### Requirement: The first frame of a cut is asked before the window reaches it
+Past the look-ahead's bytes, up to its 2 s, one prefetch pass SHALL ask the layers that start a read
+the moment before was not doing, at most `CUT_LEAD_KEYS` keys, and no later frames of them.
+Why: at 1080p the window is about 0.7 s long, and on the showcase a 4K file took about 0.85 s to
+reach an event's first frame: 52 incomplete composites at that one cut, however fast the rest was
+(preview-throughput, 2026-11-04). With this, 297 of 300 frames at 1080p.
+
+#### Scenario: A cut past the window
+- **WHEN** a cut stands 1 s ahead of a 0.16 s window
+- **THEN** the pass asks the window's four frames and the cut's first frame, after them; nearer than
+  the bytes reach it adds nothing, and a stack without a cut asks what it asked before
+- **TEST** t1528 (`src/libs/kt-engine/tests/prefetch_budget.rs`)

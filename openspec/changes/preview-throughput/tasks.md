@@ -15,3 +15,12 @@ message, first line = the stage and what was done, no `Co-Authored-By` or other 
   a budget at each key's size, unfit keys stay queued; t1520–t1522 red on the old worker (D1)
 - [x] 1.2 The consequence: t1524 through the real player, red on the old worker
 - [x] 1.3 Tests of kt-engine, kt-gpu, kt-cli, clippy, commit, target-prune
+
+## 2. The picture on the device, and the cut
+
+- [x] 2.1 `present`, the display pass, the targets; t1525–t1527, t1525 red without the premultiply
+- [x] 2.2 `Player::present_preview`, `preview_display.rs`, `draw_preview`, the dump's
+  `compose.on_display`, asserted by the live `gpufx`
+- [x] 2.3 The first frame of a cut past the window (D3); t1528
+- [x] 2.4 The real program measured under Xvfb, `submit` split out of `encode`
+- [x] 2.5 Tests of kt-engine, kt-gpu, kt-app, kt-cli, clippy, commit, target-prune

@@ -36,6 +36,27 @@ pub(crate) fn create_tex(device: &wgpu::Device, w: u32, h: u32, label: &str) -> 
     Tex { texture, view, w, h }
 }
 
+/// The format egui samples a registered texture in.
+pub(crate) const DISPLAY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+/// A target the UI draws (preview-throughput D2). COPY_SRC serves `read_display` alone.
+pub(crate) fn create_display_tex(device: &wgpu::Device, w: u32, h: u32, label: &str) -> Tex {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DISPLAY_FORMAT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    Tex { texture, view, w, h }
+}
+
 fn tex_bytes(w: u32, h: u32) -> u64 {
     w as u64 * h as u64 * 4
 }

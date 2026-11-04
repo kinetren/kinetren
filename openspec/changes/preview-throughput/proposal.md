@@ -35,7 +35,9 @@ Software decode is not the limit, so hardware decode is not part of this change.
 - **The CPU path composes ahead on worker threads**, so a frame is ready when the display reaches
   it and the UI thread only picks it up. The UI's synchronous compose stays for a miss.
 - **`kt-cli preview`** prints V-fps and V-skipped as the performance panel counts them, and where a
-  frame's time went, stage by stage. The panel shows the same stages.
+  frame's time went, stage by stage.
+- **The first frame of a cut is asked before the window reaches it**: a decoder needs the same time
+  to reach it however near it is asked.
 
 ## Capabilities
 

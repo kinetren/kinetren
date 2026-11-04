@@ -1147,7 +1147,8 @@ impl KtApp {
              \"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\
              \"nest\":{},\"clipboard\":{},\"status\":\"{}\",\
              \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"morphers\":{},\
-             \"compose\":{{\"ms\":{:.2},\"avg\":{:.2},\"gpu\":{},\"subsamples\":{}}},\
+             \"compose\":{{\"ms\":{:.2},\"avg\":{:.2},\"gpu\":{},\"subsamples\":{},\
+             \"on_display\":{},\"shown\":{},\"skipped\":{},\"last_ms\":[{:.2},{:.2},{:.2},{:.2},{:.2}]}},\
              \"notices\":[{}],\
              \"window\":{{\"w\":{:.1},\"h\":{:.1}}},\
              \"bin\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
@@ -1184,6 +1185,14 @@ impl KtApp {
             self.perf.compose_ms_avg,
             self.player.video_cost().gpu,
             self.player.video_cost().cost.subsamples,
+            self.preview_on_display_now(),
+            self.perf.video_frames_shown,
+            self.perf.video_cells_skipped,
+            self.player.video_cost().plan_ns as f64 / 1e6,
+            self.player.video_cost().stages.upload_ns as f64 / 1e6,
+            self.player.video_cost().stages.encode_ns as f64 / 1e6,
+            self.player.video_cost().compose_ns as f64 / 1e6,
+            self.player.video_cost().stages.submit_ns as f64 / 1e6,
             // the last notification AS SHOWN (the bell): the status line
             // covers it with the hover hint.
             self.notices

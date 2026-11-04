@@ -50,6 +50,8 @@ def main(out):
         print(f"   preview brightness: without FX {plain:.1f}, with Edges {fx:.1f}")
         app.expect(plain > 120.0, f"frame without FX is light: {plain:.1f}")
         app.expect(fx < plain * 0.2, f"Edges darkened the flat frame: {fx:.1f} vs {plain:.1f}")
+        # the pixels above came from the device, not from a silent fallback to the bytes path
+        app.expect(app.geom()["compose"]["on_display"], "the picture stays on the device")
         return app.done()
 
 

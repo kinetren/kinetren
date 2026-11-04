@@ -19,7 +19,7 @@ use crate::fxstore::FxStateStore;
 use crate::prefetch::{prefetch_audio_pass, video_prefetch_pass};
 use crate::transport::Transport;
 use crate::video::{VideoRenderer, video_cache_idx};
-use crate::video_plan::{GpuBackendInfo, GpuExecError, VideoGpuExec};
+use crate::video_plan::{GpuBackendInfo, GpuExecError, PresentOptions, VideoGpuExec};
 use crate::worker::{DecodeRequest, DecodeStats, MediaWorker, RequestKind};
 use crate::{Priority, source_id};
 use kt_cache::{BurstCache, CacheConfig};
@@ -881,10 +881,40 @@ impl Player {
     pub fn compose_preview_into(&self, t: Tick, out: &mut Vec<u8>) -> (Quality, bool) {
         // the wall clock is legal here: the preview, not an offline path (invariant 11)
         let t0 = std::time::Instant::now();
-        let (q, complete, gpu, cost, plan_ns, stages) = self.compose_preview_measured(t, out);
+        let (q, complete, gpu, cost, plan_ns, stages) = self
+            .compose_preview_measured(t, Target::Bytes(out))
+            .expect("the bytes target always has the CPU executor");
         *self.video_cost.lock().unwrap() =
             VideoCost { gpu, cost, compose_ns: t0.elapsed().as_nanos() as u64, plan_ns, stages };
         (q, complete)
+    }
+
+    /// Compose the frame at `t` onto the executor's display target, without a readback
+    /// (preview-throughput D2). `None` — this frame needs the bytes path: no executor, a poisoned
+    /// one, or a plan it refused (`TooLarge`).
+    pub fn present_preview(&self, t: Tick, o: PresentOptions) -> Option<(Quality, bool)> {
+        // the wall clock is legal here: the preview, not an offline path (invariant 11)
+        let t0 = std::time::Instant::now();
+        {
+            let g = self.video_gpu.lock().unwrap();
+            if g.poisoned.is_some() || !g.exec.as_ref().is_some_and(|e| e.can_present()) {
+                return None;
+            }
+        }
+        let (q, complete, gpu, cost, plan_ns, stages) =
+            self.compose_preview_measured(t, Target::Display(o))?;
+        *self.video_cost.lock().unwrap() =
+            VideoCost { gpu, cost, compose_ns: t0.elapsed().as_nanos() as u64, plan_ns, stages };
+        Some((q, complete))
+    }
+
+    /// Wait for what `present_preview` handed to the device (`preview_bench`: a real window's
+    /// swapchain does this; without it a headless run would race ahead of the device).
+    pub fn finish_present(&self) {
+        let exec = self.video_gpu.lock().unwrap().exec.clone();
+        if let Some(e) = exec {
+            e.finish_present();
+        }
     }
 
     /// The cost of the last preview compose: the backend that ACTUALLY composed it, what it
@@ -896,8 +926,8 @@ impl Player {
     fn compose_preview_measured(
         &self,
         t: Tick,
-        out: &mut Vec<u8>,
-    ) -> (Quality, bool, bool, kt_fx::video::FrameCost, u64, crate::video_plan::GpuStages) {
+        target: Target<'_>,
+    ) -> Option<(Quality, bool, bool, kt_fx::video::FrameCost, u64, crate::video_plan::GpuStages)> {
         let t0 = std::time::Instant::now();
         let q = self.preview_quality();
         let mut video = self.video.lock().unwrap();
@@ -933,6 +963,7 @@ impl Player {
         }
         // GPU executor by default (R.29); TooLarge — CPU only for
         // this plan, DeviceLost/Validation — “poison” until the end of the session
+        let mut target = target;
         if let Some(exec) = {
             let g = self.video_gpu.lock().unwrap();
             if g.poisoned.is_none() { g.exec.clone() } else { None }
@@ -940,11 +971,16 @@ impl Player {
             let gone = {
                 let plan = video.frame_plan(&self.cache, aligned, q);
                 let plan_ns = t0.elapsed().as_nanos() as u64;
-                match exec.execute_into(&plan, out) {
+                let done = match &mut target {
+                    Target::Bytes(out) => exec.execute_into(&plan, out),
+                    Target::Display(o) => exec.present(&plan, *o),
+                };
+                match done {
                     Ok(complete) => {
-                        return (q, complete, true, exec.last_cost(), plan_ns, exec.last_stages());
+                        let stages = exec.last_stages();
+                        return Some((q, complete, true, exec.last_cost(), plan_ns, stages));
                     }
-                    Err(GpuExecError::TooLarge { .. }) => None,
+                    Err(GpuExecError::TooLarge { .. } | GpuExecError::Unsupported(_)) => None,
                     Err(e) => Some(format!("{e:?}")),
                 }
             };
@@ -952,8 +988,9 @@ impl Player {
                 self.video_gpu.lock().unwrap().poisoned = Some(reason);
             }
         }
+        let Target::Bytes(out) = target else { return None };
         let complete = video.compose_from_cache_into(&self.cache, aligned, q, out);
-        (q, complete, false, video.last_cost(), 0, Default::default())
+        Some((q, complete, false, video.last_cost(), 0, Default::default()))
     }
 
     /// The layers of the frame at `t` the cache does not hold (a diagnostic of `preview_bench`).
@@ -974,6 +1011,12 @@ impl Player {
         let (q, complete) = self.compose_preview_into(t, &mut out);
         (out, q, complete)
     }
+}
+
+/// Where a preview composite goes.
+enum Target<'a> {
+    Bytes(&'a mut Vec<u8>),
+    Display(PresentOptions),
 }
 
 /// The cost of one preview compose (morpher-event-grid-cost, D1).

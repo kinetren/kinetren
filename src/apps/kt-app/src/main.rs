@@ -67,6 +67,7 @@ mod reel_preview;
 mod render_dialog;
 mod settings_window;
 mod prefs_window;
+mod preview_display;
 mod supervisor;
 mod telemetry;
 mod track_window;

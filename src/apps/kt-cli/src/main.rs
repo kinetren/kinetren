@@ -851,6 +851,7 @@ fn preview_run(
     size: Option<kt_media::Quality>,
     cpu: bool,
     ui_ms: f64,
+    free_running: bool,
 ) -> Result<(), String> {
     use kt_ffmpeg::iostats as io;
     use std::sync::atomic::Ordering::Relaxed;
@@ -886,6 +887,7 @@ fn preview_run(
         from: Tick((from * kt_time::TICK_HZ as f64) as i64),
         to: Tick((to * kt_time::TICK_HZ as f64) as i64),
         ui_ns: (ui_ms * 1e6) as u64,
+        free_running,
         ..Default::default()
     };
     let snap = || {
@@ -938,13 +940,14 @@ fn preview_run(
         r.composed_on_gpu
     );
     println!(
-        "  per composite, ms: plan {:.2}, upload {:.2} ({:.1} MB), encode {:.2}, wait {:.2}, copy {:.2}",
+        "  per composite, ms: plan {:.2}, upload {:.2} ({:.1} MB), encode {:.2}, wait {:.2}, copy {:.2}; device at the frame's end {:.2}",
         ms(r.plan_ns),
         ms(r.stages.upload_ns),
         r.stages.upload_bytes as f64 / 1e6 / n,
         ms(r.stages.encode_ns),
         ms(r.stages.wait_ns),
-        ms(r.stages.copy_ns)
+        ms(r.stages.copy_ns),
+        ms(r.device_ns)
     );
     let per = |ns: u64, count: u64| ns as f64 / 1e6 / count.max(1) as f64;
     println!(
@@ -1390,7 +1393,7 @@ fn run(args: &[String]) -> i32 {
             let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3))
             else {
                 eprintln!(
-                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--cpu] [--ui-ms N]"
+                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--cpu] [--ui-ms N] [--free-running]"
                 );
                 return 2;
             };
@@ -1408,7 +1411,8 @@ fn run(args: &[String]) -> i32 {
             });
             let ui_ms = opt("--ui-ms").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
             let cpu = args.iter().any(|a| a == "--cpu");
-            match preview_run(&project, input, from, to, size, cpu, ui_ms) {
+            let free = args.iter().any(|a| a == "--free-running");
+            match preview_run(&project, input, from, to, size, cpu, ui_ms, free) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");
