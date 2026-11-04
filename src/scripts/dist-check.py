@@ -215,6 +215,7 @@ CACHED_BUILDS = [
     ("windows-build", "src/target/win-container", "cargo nextest archive"),
     ("ffmpeg9", "src/target/ffmpeg-test-container", "ffmpeg-test.sh"),
     ("test", "Swatinem/rust-cache@", "cargo build"),
+    ("flatpak", ".flatpak-builder", "flatpak-build.sh"),
 ]
 
 

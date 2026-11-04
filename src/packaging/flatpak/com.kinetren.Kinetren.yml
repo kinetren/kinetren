@@ -48,6 +48,9 @@ modules:
     buildsystem: simple
     build-commands:
       - rustc --version
+      # a build with --ccache (the CI job) keeps its target directory in the directory that outlives
+      # the run; without it (Flathub, the release) this line does nothing
+      - test -z "${CCACHE_DIR:-}" || { mkdir -p "$CCACHE_DIR/target" && ln -s "$CCACHE_DIR/target" src/target; }
       - export KINETREN_POSTHOG_KEY="$(cat src/packaging/posthog-key)" && cd src && cargo --offline build --profile dist -p kt-app -p kt-cli
       - install -Dm755 src/target/dist/kinetren /app/bin/kinetren
       - install -Dm755 src/target/dist/kt-cli /app/bin/kt-cli

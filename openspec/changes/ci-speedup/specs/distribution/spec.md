@@ -20,7 +20,8 @@ public repository, minutes are free and unlimited, but anything uploaded lingers
 default. Build caches live in the Actions cache (capped at 10 GB per repository and evicted
 automatically), not in artifacts. The Windows cross-build compiled 308 crates from scratch on
 every push (6.4 min) and was the whole critical path of a 13-min run; caches written from side
-branches compete for the same 10 GB and evict the default branch's.
+branches compete for the same 10 GB and evict the default branch's. The job has no disk clean-up:
+after it the runner had 108 GB free, and the job used 5 GB.
 
 #### Scenario: Workflow shape is guarded
 - **WHEN** `dist-check.py --check` reads `ci.yml`
@@ -42,6 +43,38 @@ branches compete for the same 10 GB and evict the default branch's.
   a cache key lacks the toolchain or `Cargo.lock` hash
 - **THEN** the repository passes; each copy fails, naming the job and what its key lacks
 - **TEST** t1421 (`src/apps/kt-cli/tests/dist_guard.rs`)
+
+### Requirement: Windows build — cross-compiled in the same container, portable zip
+The Windows build SHALL be cross-compiled for `x86_64-pc-windows-gnu` from the `windows-cross`
+stage of the one committed Dockerfile (`src/packaging/Dockerfile`), which holds the same
+pinned Rust toolchain, mingw-w64 as linker and C compiler, and clang for bindgen with the
+Windows target. The `windows` stage is `windows-cross` plus wine for running tests; the CI
+job, which runs nothing Windows, compiles in `windows-cross`. `make windows` (and `release-build.sh --target
+windows`) SHALL produce `src/target/dist-out/kinetren-<version>-windows-x86_64.zip` with a
+`.sha256` next to it. The zip holds `kinetren.exe`, `kt-cli.exe`, `README-windows.txt` (how
+to get FFmpeg: the program's Download button, or a shared build of a supported major via
+winget/scoop) and the licence files, and no FFmpeg DLL. The delivery checks SHALL run inside
+the container: the PE import table of both exes names no `av*`/`sw*` DLL and no mingw
+runtime DLL (`libgcc_s*`, `libstdc++*`, `libwinpthread*`); every imported DLL belongs to the
+Windows system set. A failed check leaves no zip in `dist-out`. The host still needs only
+Docker, make, a POSIX shell and git.
+Why: the owner chose a cross-build in Docker (2026-10-22): one machine, one container, one
+`make` builds both deliveries, and the Linux owner can build the Windows zip without
+Windows. A mingw runtime DLL missing from the zip is the most common way a cross-built exe
+fails on a clean Windows ("libgcc_s_seh-1.dll was not found"), so the exe must not need one.
+Wine is 2.5 GB of the 5.5 GB image, so the CI job does not carry it.
+Shipping FFmpeg DLLs would break the owner's rule "no FFmpeg build of our own" and bring
+licence duties for distributing it.
+
+#### Scenario: The Windows parts of the tree are consistent
+- **WHEN** `src/scripts/dist-check.py --check` runs on the repository; then on temporary copies where, one at a time, the Dockerfile lacks the `windows-cross` or `windows` stage, the Makefile lacks `windows` or `windows-test`, the release workflow doesn't attach the zip, the CI workflow lacks the Windows job, `release-build.sh` lacks the PE import check, or the zip recipe adds a `*.dll`
+- **THEN** the repository passes; each copy fails and the violation is reported with its file
+- **TEST** t860 (`src/apps/kt-cli/tests/dist_guard.rs`)
+
+#### Scenario: The zip passes the delivery checks
+- **WHEN** `make windows` finishes
+- **THEN** both exes import only Windows system DLLs (no `av*`, `sw*`, `libgcc_s*`, `libstdc++*`, `libwinpthread*`), the zip has no `.dll`, and `sha256sum -c` passes on the pair; otherwise the build fails and no zip is left
+- **TEST** guard inside `src/scripts/release-build.sh` (invariant 10, Windows form; media-index scenario "Release binary is not linked against libav*")
 
 ## ADDED Requirements
 

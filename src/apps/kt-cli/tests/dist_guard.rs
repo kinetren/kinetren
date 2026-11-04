@@ -1057,7 +1057,7 @@ fn t1420_only_the_default_branch_writes_a_cache() {
         ),
         (
             "save-anywhere",
-            |d| edit(d, CI, &format!("if: {MAIN_ONLY} && steps.builder-cache"), "if: steps.builder-cache"),
+            |d| edit(d, CI, &format!("if: {MAIN_ONLY} && steps.builder-cache.outputs.cache-hit != 'true'\n        uses: actions/cache/save@v4"), "uses: actions/cache/save@v4"),
             "flatpak: an `actions/cache/save` step without a condition",
         ),
         (
@@ -1076,7 +1076,12 @@ fn t1421_every_compiling_job_restores_a_cache_keyed_by_its_inputs() {
         eprintln!("t1421 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
         return;
     }
-    let cases: [(&str, fn(&Path), &str); 5] = [
+    let cases: [(&str, fn(&Path), &str); 6] = [
+        (
+            "flatpak-no-restore",
+            |d| edit(d, CI, "uses: actions/cache/restore@v4\n        with:\n          path: .flatpak-builder", "uses: actions/checkout@v4\n        with:\n          path: .flatpak-keep"),
+            "flatpak: compiles without restoring .flatpak-builder",
+        ),
         (
             "windows-no-restore",
             |d| edit(d, CI, "uses: actions/cache/restore@v4\n        with:\n          path: |\n            src/target/win-container", "uses: actions/checkout@v4\n        with:\n          path: |\n            src/target/win-keep"),

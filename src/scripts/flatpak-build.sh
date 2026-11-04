@@ -35,7 +35,11 @@ fi
 src/scripts/appstream-compose-check.sh
 flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 
-flatpak-builder --user --install-deps-from=flathub --force-clean \
+# the CI job keeps the third-party artifacts between runs (change ci-speedup, D7); the release does
+# not: it builds from nothing
+CCACHE=()
+[ -n "${KT_FLATPAK_CCACHE:-}" ] && CCACHE=(--ccache)
+flatpak-builder --user --install-deps-from=flathub --force-clean "${CCACHE[@]}" \
     --mirror-screenshots-url="$MEDIA_URL" --compose-url-policy=full \
     --repo="$REPO" --install "$BUILD" "$MANIFEST"
 

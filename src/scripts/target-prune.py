@@ -2,7 +2,7 @@
 """Remove the STALE build artifacts of target/debug — what no current build of this tree needs.
 
 Why (the owner, 2026-10-30: "the target folder in these sessions eats the disk very fast"):
-a fresh full build of the workspace is ~22 GB, but every edit of a core crate leaves a NEW copy
+a fresh full build of the workspace is ~14 GB, but every edit of a core crate leaves a NEW copy
 of each of the ~96 test binaries (full debug info, hundreds of MB each) and of the incremental
 cache under a new hash, and cargo never removes the old ones. One working day of an agent grew a
 worktree's target to 142 GB.

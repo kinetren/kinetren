@@ -143,9 +143,19 @@ jobs:
         with:
           path: .flatpak-builder
           key: flatpak-builder-${{ hashFiles('src/packaging/flatpak/*.yml', 'src/packaging/flatpak/cargo-sources.json') }}
+          restore-keys: flatpak-builder-
 
       - name: Build, lint and check the Flatpak
+        env:
+          KT_FLATPAK_CCACHE: "1"
         run: src/scripts/flatpak-build.sh
+
+      - name: Keep only the third-party artifacts
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.builder-cache.outputs.cache-hit != 'true'
+        working-directory: src
+        run: |
+          cargo metadata --no-deps --format-version 1 --offline > "$RUNNER_TEMP/metadata.json"
+          python3 scripts/ci-cache-prune.py ../.flatpak-builder/ccache/target "$RUNNER_TEMP/metadata.json"
 
       - name: Save the flatpak-builder cache
         if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.builder-cache.outputs.cache-hit != 'true'
@@ -296,7 +306,7 @@ jobs:
           mkdir -p ~/.cargo/registry
           docker run --rm --network=host -u "$(id -u):$(id -g)" -v "$PWD:/kt" -w /kt/src \
             -v "$(src/scripts/cargo-registry.sh kinetren-build:windows-cross):/usr/local/cargo/registry" \
-            -e CARGO_TARGET_DIR=/kt/src/target/win-container -e RUSTFLAGS= -e CARGO_PROFILE_DEV_DEBUG=0 \
+            -e CARGO_TARGET_DIR=/kt/src/target/win-container -e RUSTFLAGS= -e CARGO_PROFILE_DEV_DEBUG=0 -e CARGO_INCREMENTAL=0 \
             kinetren-build:windows-cross \
             cargo nextest archive --target x86_64-pc-windows-gnu --workspace \
               --archive-file /kt/src/target/windows-tests.tar.zst
