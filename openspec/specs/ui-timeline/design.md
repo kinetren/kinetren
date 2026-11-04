@@ -334,6 +334,22 @@ three branches look alike on the screen.
 - Open and unchanged: Delete still follows the region-first order (the owner asked about
   copy-paste only; "what Ctrl+C takes is what Delete removes" is the recommended next answer).
 
+## A window that grew by itself (shared-window-shell, archived 2026-11-04)
+
+The owner's morpher window widened by one physical pixel per frame after Ctrl+= pressed once or
+twice (Ubuntu, 1920×1080, native scale 1.0, zoom ≈ 1.1–1.2), "slowly when the mouse does not move" —
+the idle repaint rate. The cause was found by bisecting the owner's scene (t923): the **window-level
+scroll** `.vscroll(true)` (the morpher and camera windows; notices and diagnostics had it with narrow
+bodies). egui's `Resize` only grows (`desired_size.max(last_content_size)`); with a window scroll a body
+a fraction of a pixel wider than the window is reported as content and the window keeps it, every frame.
+Without `.vscroll`, no zoom of the sweep 1.05…2.0 grew (0 of 20 against 4 of 20 with it). The minimal
+reproduction outside the tree had missed it by trying 1.25/1.5/1.75/2.0 instead of 1.1/1.3 and by
+different margins; it is the program's own zoom, not the OS scale, that triggers it. The rule is the
+one of "One scroll per window" (R.67), now applied to all windows: **the shell never sets a window-level
+scroll**, only the body scroll (`window_body`). The width-rounding variant (b) was kept in reserve and
+not needed. `track_window`'s own copy of the body scroll also grew its height 30 points a frame up to a
+ceiling; it now uses the shared body.
+
 ## Deferred
 
 - `lane_names` live in `Project.ui`, and `swap_reel` does not swap them — the full entry
