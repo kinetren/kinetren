@@ -1504,17 +1504,18 @@ fn run(args: &[String]) -> i32 {
             // R.29: rendering on the GPU by default (headless device, the same
             // composition code); no adapter → CPU with a note in stderr,
             // KT_VIDEO_GPU=0 — forced CPU
-            let video_gpu = match kt_gpu::export_engine() {
+            let mut engines: Vec<std::sync::Arc<dyn kt_engine::VideoGpuExec>> = match kt_gpu::export_engines() {
                 Ok(e) => {
                     use kt_engine::VideoGpuExec as _;
-                    eprintln!("video: GPU ({})", e.info().name);
-                    Some(e as std::sync::Arc<dyn kt_engine::VideoGpuExec>)
+                    eprintln!("video: GPU ({}, {} engines)", e[0].info().name, e.len());
+                    e.into_iter().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>).collect()
                 }
                 Err(err) => {
                     eprintln!("video: CPU ({err})");
-                    None
+                    Vec::new()
                 }
             };
+            let video_gpu = (!engines.is_empty()).then(|| engines.remove(0));
             match kt_engine::export_mp4_with_backends(
                 &project,
                 audio_sources,
@@ -1522,7 +1523,7 @@ fn run(args: &[String]) -> i32 {
                 output,
                 None,
                 &opts,
-                &kt_engine::ExportBackends { video_gpu },
+                &kt_engine::ExportBackends { video_gpu, video_gpu_more: engines },
                 &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 // the log facts, in English, on stderr (render-window-v1-parity, D1)

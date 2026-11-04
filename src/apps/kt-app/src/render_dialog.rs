@@ -598,17 +598,18 @@ impl KtApp {
             // R.29: GPU render by default — its own headless device per
             // job (the UI queue does not share time with the export); if there is no engine
             // → CPU (for 2D this is a full-fledged path), and the window says why (D4)
-            let video_gpu = match crate::app::export_video_gpu() {
+            let mut engines = match crate::app::export_video_gpu() {
                 Ok(e) => {
-                    send.send(RenderMsg::Backend(BackendLine::Gpu(e.info().name.clone())));
-                    Some(e)
+                    send.send(RenderMsg::Backend(BackendLine::Gpu(e[0].info().name.clone())));
+                    e
                 }
                 Err(reason) => {
                     send.send(RenderMsg::Backend(BackendLine::Cpu(reason)));
-                    None
+                    Vec::new()
                 }
             };
-            let backends = kt_engine::ExportBackends { video_gpu };
+            let video_gpu = (!engines.is_empty()).then(|| engines.remove(0));
+            let backends = kt_engine::ExportBackends { video_gpu, video_gpu_more: engines };
             kt_engine::export::export_mp4_with_backends(
                 &project,
                 a,

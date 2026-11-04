@@ -296,8 +296,14 @@ pub(crate) fn run<S: ExportSink>(
         halt.load(Ordering::Acquire)
     };
     let gate = Gate::default();
-    let gpu = backends.video_gpu.clone();
-    let workers = frame_workers(gpu.is_none(), quality);
+    // several devices: the workers compose as the CPU's do, each on its own engine
+    let engines: Vec<Arc<dyn crate::VideoGpuExec>> = if backends.video_gpu_more.is_empty() {
+        Vec::new()
+    } else {
+        backends.video_gpu.iter().chain(&backends.video_gpu_more).cloned().collect()
+    };
+    let gpu = backends.video_gpu.clone().filter(|_| engines.is_empty());
+    let workers = if engines.is_empty() { frame_workers(gpu.is_none(), quality) } else { engines.len() };
     if let Some(p) = prof {
         p.frame_workers.store(workers as u64, Ordering::Relaxed);
     }
@@ -385,9 +391,10 @@ pub(crate) fn run<S: ExportSink>(
 
         // --- frame workers: compose (CPU) and convert ---
         let mut worker_handles = Vec::new();
-        for (jr, dt, br, mut conv) in worker_parts {
+        for (n, (jr, dt, br, mut conv)) in worker_parts.into_iter().enumerate() {
             let pool_tx = rgba_pool_tx.clone();
             let pool_rx = rgba_pool_rx.clone();
+            let engine = engines.get(n).cloned();
             worker_handles.push(scope.spawn(move || -> std::io::Result<()> {
                 let mut scratch = ExportScratch::default();
                 while let Ok(job) = jr.recv() {
@@ -395,7 +402,12 @@ pub(crate) fn run<S: ExportSink>(
                         Job::Compose { t } => {
                             let mut buf = pool_rx.try_recv().unwrap_or_default();
                             let mark = Instant::now();
-                            let complete = video_ref.compose_export_with(cache_ref, t, quality, &mut scratch, &mut buf);
+                            let complete = match &engine {
+                                Some(e) => e
+                                    .execute_into(&video_ref.frame_plan(cache_ref, t, quality), &mut buf)
+                                    .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?,
+                                None => video_ref.compose_export_with(cache_ref, t, quality, &mut scratch, &mut buf),
+                            };
                             ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
                             (buf, complete)
                         }

@@ -105,21 +105,33 @@ pub fn assert_frames_close(cpu: &[u8], gpu: &[u8], w: u32, h: u32, tol: FrameTol
     );
 }
 
-/// The export's GPU engine (export-throughput D5), or why the export composes on the CPU: no
-/// adapter, or a SOFTWARE rasterizer (llvmpipe/lavapipe). The pipelined CPU composite runs a frame
-/// per core; a software adapter rasterizes one frame at a time through one queue, and was the
-/// slower of the two on the showcase (133.9 s against 95.6 s, 32 cores). `KT_VIDEO_GPU=1` takes the
-/// adapter anyway, `KT_VIDEO_GPU=0` never asks.
+/// The export's GPU engine (export-throughput D5). `KT_VIDEO_GPU=0` never asks.
 pub fn export_engine() -> Result<std::sync::Arc<GpuFxEngine>, String> {
-    let gpu = std::env::var("KT_VIDEO_GPU");
-    if gpu.as_deref() == Ok("0") {
+    if std::env::var("KT_VIDEO_GPU").as_deref() == Ok("0") {
         return Err("KT_VIDEO_GPU=0".into());
     }
     let ctx = GpuContext::new_headless_for_export().map_err(|e| e.to_string())?;
-    if ctx.adapter_info.device_type == wgpu::DeviceType::Cpu && gpu.as_deref() != Ok("1") {
-        return Err(format!("{} is a software rasterizer: the CPU composite is faster", ctx.adapter_info.name));
-    }
     GpuFxEngine::new(ctx).map_err(|e| e.to_string())
+}
+
+/// The engines an export composes on (compute-kernels-render, D4): a software adapter runs one frame
+/// per queue, so a quarter of the cores get a device each, 2 to 8; a card gets one.
+/// `KT_VIDEO_ENGINES` overrides it.
+pub fn export_engines() -> Result<Vec<std::sync::Arc<GpuFxEngine>>, String> {
+    let first = export_engine()?;
+    use kt_engine::VideoGpuExec as _;
+    let software = first.info().software;
+    let parallel = (std::thread::available_parallelism().map_or(4, |n| n.get()) / 4).clamp(2, 8);
+    let n = std::env::var("KT_VIDEO_ENGINES").ok().and_then(|v| v.parse().ok()).unwrap_or(if software { parallel } else { 1 });
+    let mut engines = vec![first];
+    let more: Vec<_> = std::thread::scope(|s| {
+        let open: Vec<_> = (1..n).map(|_| s.spawn(export_engine)).collect();
+        open.into_iter().map(|h| h.join().expect("engine thread")).collect()
+    });
+    for e in more {
+        engines.push(e?);
+    }
+    Ok(engines)
 }
 
 /// Adapter for tests: skip with a printout if there is NO wgpu adapter; the caller installs the

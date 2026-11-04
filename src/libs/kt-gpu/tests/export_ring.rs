@@ -1,4 +1,5 @@
-//! t1457 (export-throughput D5, capability export): the GPU export with its readback ring.
+//! t1457 (export-throughput D5), t1573 (compute-kernels-render D4), capability export: the GPU export
+//! with its readback ring and on several devices.
 //! `submit`/`collect` give the bytes `execute_into` gives, frame for frame, and the pipelined
 //! export on the GPU writes the serial GPU export's frames (one device: byte for byte,
 //! invariant 11). Skipped without an adapter (`KT_REQUIRE_GPU=1` makes it a failure).
@@ -61,7 +62,7 @@ fn t1457_the_readback_ring_gives_the_executed_bytes() {
     let q = Quality { width: 640, height: 360 };
     let range = (Tick(90_000 * 3), Tick(90_000 * 5));
     let never = Arc::new(AtomicBool::new(false));
-    let backends = ExportBackends { video_gpu: Some(gpu.clone() as Arc<dyn VideoGpuExec>) };
+    let backends = ExportBackends { video_gpu: Some(gpu.clone() as Arc<dyn VideoGpuExec>), ..Default::default() };
 
     // the serial GPU export (execute_into per frame)
     let mut serial = Vec::new();
@@ -72,7 +73,7 @@ fn t1457_the_readback_ring_gives_the_executed_bytes() {
     .unwrap();
     // the pipelined one (submit ahead, collect in order) on a FRESH engine: no memo to lean on
     let fresh = kt_gpu::test_engine().unwrap();
-    let backends2 = ExportBackends { video_gpu: Some(fresh.clone() as Arc<dyn VideoGpuExec>) };
+    let backends2 = ExportBackends { video_gpu: Some(fresh.clone() as Arc<dyn VideoGpuExec>), ..Default::default() };
     let mut piped = Hashes::default();
     render_pipelined(&p, sources(&p), sources(&p), q, Some(range), &backends2, &never, None, &mut piped).unwrap();
     assert!(serial.len() > 40);
@@ -114,4 +115,25 @@ fn t1457_the_readback_ring_gives_the_executed_bytes() {
     for (i, (g, w)) in got.iter().zip(&want).enumerate() {
         assert!(g == w, "ring frame {i} differs from execute_into");
     }
+}
+
+#[test]
+fn t1573_several_engines_write_the_frames_of_one() {
+    kt_plugins_builtin::install();
+    let Some(one) = kt_gpu::test_engine() else { return };
+    let p = kt_model::demo::demo_project(kt_model::demo::DemoSources::Synth);
+    let q = Quality { width: 640, height: 360 };
+    let range = (Tick(90_000 * 3), Tick(90_000 * 5));
+    let never = Arc::new(AtomicBool::new(false));
+    let single = ExportBackends { video_gpu: Some(one as Arc<dyn VideoGpuExec>), ..Default::default() };
+    let mut want = Hashes::default();
+    render_pipelined(&p, sources(&p), sources(&p), q, Some(range), &single, &never, None, &mut want).unwrap();
+    let more: Vec<Arc<dyn VideoGpuExec>> =
+        (0..2).map(|_| kt_gpu::test_engine().unwrap() as Arc<dyn VideoGpuExec>).collect();
+    let several =
+        ExportBackends { video_gpu: Some(kt_gpu::test_engine().unwrap() as Arc<dyn VideoGpuExec>), video_gpu_more: more };
+    let mut got = Hashes::default();
+    render_pipelined(&p, sources(&p), sources(&p), q, Some(range), &several, &never, None, &mut got).unwrap();
+    assert!(want.0.len() > 40);
+    assert_eq!(got.0, want.0, "the file does not depend on how many devices composed it");
 }

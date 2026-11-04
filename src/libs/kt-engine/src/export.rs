@@ -184,6 +184,9 @@ pub fn render_raw_audio_range(
 #[derive(Default, Clone)]
 pub struct ExportBackends {
     pub video_gpu: Option<Arc<dyn VideoGpuExec>>,
+    /// More executors on devices of their own: a software adapter runs one frame per queue, so
+    /// each frame worker composes on its own (compute-kernels-render, D4). Empty on a real card.
+    pub video_gpu_more: Vec<Arc<dyn VideoGpuExec>>,
 }
 
 /// Export video stream: RGBA frames on the project's fps grid. The composite is

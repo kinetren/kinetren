@@ -32,3 +32,25 @@ frame is its own job. t1572 holds the clamp, the floored chroma vector and the g
 A kernel asks for the same set every frame, whatever kernel it is, so the pool sits in `ComputeDevice`
 by (size, usage), bounded by 1 GiB. A reused `Init::Zero` buffer is cleared in the job (t1570): the
 pool is invisible to the bytes.
+
+### D4. A software adapter composes on several devices
+
+llvmpipe runs one frame per queue, and that was the whole gap against the CPU workers: a device per
+frame worker removes it. An export asks `kt_gpu::export_engines`: a card gets one device, a software
+adapter a quarter of the cores, 2 to 8, each with its own worker. The workers compose as the CPU's did
+and the file does not depend on their number (t1573).
+
+Measured with `kt-cli export` (release, 32 cores, libx264, other sessions running; two passes of the
+same day, seconds of the whole export, peak memory on the second):
+
+| | CPU composite | one device | 8 devices | 16 devices |
+|---|---|---|---|---|
+| demo, first pass | 101.0 | 115.6 | 70.5 | |
+| demo, second pass | 36.8 (2.4 GB) | | 43.1 (6.6 GB) | 58.3 (11.2 GB) |
+| showcase, first pass | 390.7 | 457.8 | 222.5 | |
+| showcase, second pass | 167.4 (7.2 GB) | | 154.7 (17.0 GB) | 187.6 (25.5 GB) |
+
+The load swung between 30 and 190, so the table says "about even at 8 devices", not more. Before
+this the owner was told 134 s against 96 s; that figure was the single device. The price is memory:
+each device keeps its own textures. Limiting llvmpipe's threads per device gave no steady gain
+(34 s to 300 s on the demo under load) and stays out.

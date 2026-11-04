@@ -115,7 +115,7 @@ fn t184_gpu_preview_equals_gpu_export_cold_and_warm() {
     let Some(e2) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let target = 17usize;
-    let backends = ExportBackends { video_gpu: Some(e1.clone()) };
+    let backends = ExportBackends { video_gpu: Some(e1.clone()), ..Default::default() };
     let export_frame = gpu_export_frames(&backends, q, &[target]).remove(0);
 
     // “preview”: an independent cache, direct decoding of the layers, the same frame plan
@@ -153,7 +153,7 @@ fn t184b_gpu_export_deterministic_and_close_to_cpu() {
     let Some(e1) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let grab = [0usize, 17, 40];
-    let backends = ExportBackends { video_gpu: Some(e1) };
+    let backends = ExportBackends { video_gpu: Some(e1), ..Default::default() };
     let a = gpu_export_frames(&backends, q, &grab);
     let b = gpu_export_frames(&backends, q, &grab);
     assert_eq!(a, b, "GPU export must be deterministic on the device");
@@ -218,7 +218,7 @@ fn t301_export_without_gpu_renders_3d() {
     let cpu_plain = render(&with_fx(vec![]), &cpu_only);
     assert_ne!(cpu3d, cpu_plain, "Pan3d on CPU must change the picture");
     if let Some(e) = test_engine() {
-        let gpu = ExportBackends { video_gpu: Some(e) };
+        let gpu = ExportBackends { video_gpu: Some(e), ..Default::default() };
         let gpu3d = render(&with_fx(vec![pan3d]), &gpu);
         assert_frames_close(&cpu3d, &gpu3d, q.width, q.height, FrameTol::GEOM, "t301-cpu-vs-gpu");
     }
