@@ -277,4 +277,23 @@ pub trait VideoGpuExec: Send + Sync {
     fn last_cost(&self) -> kt_fx::video::FrameCost {
         kt_fx::video::FrameCost::default()
     }
+    /// Where the last frame's time went (preview-throughput): a diagnostic, read by the
+    /// performance panel and `kt-cli preview`; it never steers anything (invariant 11).
+    fn last_stages(&self) -> GpuStages {
+        GpuStages::default()
+    }
+}
+
+/// The stages of one GPU frame on the caller's thread, in nanoseconds (preview-throughput).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct GpuStages {
+    /// Copying decoded frames to the device.
+    pub upload_ns: u64,
+    pub upload_bytes: u64,
+    /// Resolving the plan (without the upload), encoding the passes, the submit.
+    pub encode_ns: u64,
+    /// Waiting for the device to finish the frame.
+    pub wait_ns: u64,
+    /// Copying the finished frame out of the mapped buffer, and into the readback memo.
+    pub copy_ns: u64,
 }

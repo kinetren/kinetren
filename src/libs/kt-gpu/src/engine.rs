@@ -5,8 +5,10 @@
 //! integer kernels byte for byte, bilinear ones within tolerance (t181/t182).
 
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use kt_engine::{
+    GpuStages,
     Cam3d, FramePlan, GpuBackendInfo, GpuExecError, LayerSrc, PlanLayer, TransMix, VideoGpuExec,
     video_plan::SoloFade,
 };
@@ -730,6 +732,8 @@ struct Inner {
     readback: ReadbackCache,
     /// What the last `execute` ran (morpher-event-grid-cost, D1).
     last_cost: kt_fx::video::FrameCost,
+    /// Where the last `execute` spent its time (preview-throughput).
+    last_stages: GpuStages,
     staging: Option<(wgpu::Buffer, u32, u32, u32)>, // (buf, padded_bpr, w, h)
     /// The export's readback ring (export-throughput D5): a frame submitted, its copy in flight,
     /// while the caller builds and submits the next; slot = ticket % `RING`.
@@ -1131,6 +1135,7 @@ impl GpuFxEngine {
                 upload: UploadCache::new(UPLOAD_BUDGET),
                 readback: ReadbackCache::new(READBACK_BUDGET),
                 last_cost: Default::default(),
+                last_stages: Default::default(),
                 staging: None,
                 ring: (0..RING).map(|_| None).collect(),
                 in_flight: Default::default(),
@@ -1166,6 +1171,10 @@ impl VideoGpuExec for GpuFxEngine {
 
     fn last_cost(&self) -> kt_fx::video::FrameCost {
         self.inner.lock().unwrap().last_cost
+    }
+
+    fn last_stages(&self) -> GpuStages {
+        self.inner.lock().unwrap().last_stages
     }
 
     fn readback_depth(&self) -> usize {
@@ -1309,11 +1318,15 @@ impl Inner {
         }
         let key = plan_key(plan);
         self.last_cost = Default::default();
+        self.last_stages = Default::default();
+        let mark = Instant::now();
         if let Some((data, complete)) = self.readback.get(key) {
             out.clear();
             out.extend_from_slice(data);
+            self.last_stages.copy_ns = mark.elapsed().as_nanos() as u64;
             return Ok(complete);
         }
+        let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
 
         // --- resolve: presence/size by the rules of the CPU executor ---
         let (jobs, complete) = self.resolve_plan(plan)?;
@@ -1387,6 +1400,11 @@ impl Inner {
             wgpu::Extent3d { width: ow, height: oh, depth_or_array_layers: 1 },
         );
         self.queue.submit([enc.finish()]);
+        self.last_stages.upload_ns = self.upload.spent_ns - upload_before.0;
+        self.last_stages.upload_bytes = self.upload.spent_bytes - upload_before.1;
+        self.last_stages.encode_ns =
+            (mark.elapsed().as_nanos() as u64).saturating_sub(self.last_stages.upload_ns);
+        let mark = Instant::now();
 
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
@@ -1400,6 +1418,8 @@ impl Inner {
             Ok(Ok(())) => {}
             _ => return Err(GpuExecError::DeviceLost),
         }
+        self.last_stages.wait_ns = mark.elapsed().as_nanos() as u64;
+        let mark = Instant::now();
         out.clear();
         out.reserve(n);
         {
@@ -1413,6 +1433,7 @@ impl Inner {
 
         self.pool.release(result);
         self.readback.insert(key, out.clone(), complete);
+        self.last_stages.copy_ns = mark.elapsed().as_nanos() as u64;
         Ok(complete)
     }
 

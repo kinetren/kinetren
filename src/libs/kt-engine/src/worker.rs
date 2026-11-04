@@ -253,10 +253,10 @@ fn worker_loop(
             Audio {
                 idx: i64,
             },
-            /// The first key + the tail added forward (any priorities).
+            /// The first key + the tail added forward (any priorities, every decode size:
+            /// `read_video_span_qualities` decodes a picture once and converts it to each).
             VideoSpan {
-                keys: Vec<(Tick, i64)>, // (pts, coverage step)
-                quality: Option<(u32, u32)>,
+                keys: Vec<SpanKey>,
                 /// The generation of the first key: with it an unfinished tail
                 /// returns to the queue and is honestly cancelled by a seek.
                 generation_of_span: u64,
@@ -313,9 +313,16 @@ fn worker_loop(
                         // priority: while even one Playback key was alive (the frame incomplete),
                         // the spans degenerated into “one frame at a time with seeks” —
                         // the cache stopped growing.
-                        let mut keys = vec![(Tick(first_pts), first_step)];
+                        //
+                        // ABOVE decode sizes too (preview-throughput): a file asked at two sizes
+                        // at one moment (a sharp layer over its blurred backdrop) went out as
+                        // two spans, and the second, behind the cursor, seeked back and rebuilt
+                        // the decoder: 9 pictures decoded per frame asked on the showcase. A
+                        // native-size key (None, a thumbnail's) keeps a span of its own.
+                        let mut keys = vec![SpanKey { pts: first_pts, quality, step: first_step }];
                         let horizon = first_pts + SPAN_MAX_AHEAD_TICKS;
-                        let budget = span_key_budget(quality, cache.max_video_bytes());
+                        let mut room =
+                            (cache.max_video_bytes() / 2).saturating_sub(key_bytes(quality));
                         let mut cand: Vec<(VideoQueueKey, i64)> = Vec::new();
                         for p in [
                             crate::Priority::Playback,
@@ -325,26 +332,30 @@ fn worker_loop(
                         ] {
                             cand.extend(
                                 q.video
-                                    .range((p, first_pts + 1, None)..)
+                                    .range((p, first_pts, None)..)
                                     .take_while(|(k, _)| k.0 == p && k.1 <= horizon)
-                                    .filter(|(k, _)| k.2 == quality)
+                                    .filter(|(k, _)| {
+                                        k.2.is_some() == quality.is_some() && (k.1, k.2) != (first_pts, quality)
+                                    })
                                     .map(|(&k, &(_, step))| (k, step)),
                             );
                         }
-                        cand.sort_by_key(|(k, _)| k.1);
-                        cand.dedup_by_key(|(k, _)| k.1);
+                        cand.sort_by_key(|(k, _)| (k.1, k.2));
+                        cand.dedup_by_key(|(k, _)| (k.1, k.2));
                         for (k, step) in cand {
-                            if keys.len() < budget
-                                && !cache.contains_video(source_id, quality.map(into_q), k.1)
-                                && !failed_video.contains(&(k.1, quality))
+                            let bytes = key_bytes(k.2);
+                            if cache.contains_video(source_id, k.2.map(into_q), k.1)
+                                || failed_video.contains(&(k.1, k.2))
                             {
-                                keys.push((Tick(k.1), step));
+                                q.video.remove(&k);
+                            } else if keys.len() < SPAN_MAX_KEYS && bytes <= room {
+                                room -= bytes;
+                                keys.push(SpanKey { pts: k.1, quality: k.2, step });
+                                q.video.remove(&k);
                             }
-                            q.video.remove(&k);
                         }
                         break Job::VideoSpan {
                             keys,
-                            quality,
                             generation_of_span: first_gen,
                             prio_of_span: key.0,
                         };
@@ -371,14 +382,13 @@ fn worker_loop(
                     }
                 }
             }
-            Job::VideoSpan { keys, quality, generation_of_span, prio_of_span } => {
-                let q = quality.map(into_q);
-                cursor_video = keys.last().map(|(k, _)| k.0).unwrap_or(cursor_video);
-                let missing: Vec<(Tick, i64)> = keys
+            Job::VideoSpan { keys, generation_of_span, prio_of_span } => {
+                cursor_video = keys.iter().map(|k| k.pts).max().unwrap_or(cursor_video);
+                let missing: Vec<SpanKey> = keys
                     .into_iter()
-                    .filter(|(k, _)| {
-                        !cache.contains_video(source_id, q, k.0)
-                            && !failed_video.contains(&(k.0, quality))
+                    .filter(|k| {
+                        !cache.contains_video(source_id, k.quality.map(into_q), k.pts)
+                            && !failed_video.contains(&(k.pts, k.quality))
                     })
                     .collect();
                 if missing.is_empty() {
@@ -389,10 +399,8 @@ fn worker_loop(
                     stats.video_span_batches.fetch_add(1, Ordering::Relaxed);
                     stats.video_span_frames.fetch_add(missing.len() as u64, Ordering::Relaxed);
                 }
-                let steps: std::collections::HashMap<i64, i64> =
-                    missing.iter().map(|(k, s)| (k.0, *s)).collect();
-                let pts_only: Vec<Tick> = missing.iter().map(|(k, _)| *k).collect();
-                let mut emitted: std::collections::HashSet<i64> = std::collections::HashSet::new();
+                let mut emitted: std::collections::HashSet<ReadKey> =
+                    std::collections::HashSet::new();
                 // A SPAN IS DECODED IN CHUNKS, and between them the worker looks into
                 // the queue (R.63 item 13).
                 //
@@ -407,15 +415,16 @@ fn worker_loop(
                 // the audio burst itself decodes in 14 µs against 22–61 ms for
                 // a frame. An abandoned span tail loses nothing: the prefetch pass
                 // is idempotent and will re-ask for what is missing (t9).
+                //
+                // A chunk is counted in MOMENTS: the sizes of one moment stay together, the
+                // picture is decoded once for all of them.
                 const SPAN_CHUNK: usize = 4;
                 let mut res = Ok(());
                 let mut done_keys = 0usize;
-                for chunk in pts_only.chunks(SPAN_CHUNK) {
-                    res = source.read_video_span(chunk, q, &mut |k, frame| {
-                        emitted.insert(k.0);
-                        let span = steps.get(&k.0).copied().unwrap_or(1).max(1);
-                        cache.insert_video_span(source_id, q, k.0, span, Arc::new(frame));
-                    });
+                for chunk in span_chunks(&missing, SPAN_CHUNK) {
+                    res = read_chunk(source, chunk, &mut |k| {
+                        emitted.insert(k);
+                    }, source_id, cache);
                     done_keys += chunk.len();
                     if res.is_err() {
                         break;
@@ -434,11 +443,10 @@ fn worker_loop(
                         // the span's Playback key is always
                         // FIRST and already computed.
                         let mut q = shared.queue.lock().unwrap();
-                        for k in pts_only.iter().skip(done_keys) {
-                            let step = steps.get(&k.0).copied().unwrap_or(1).max(1);
+                        for k in missing.iter().skip(done_keys) {
                             q.video
-                                .entry((prio_of_span, k.0, quality))
-                                .or_insert((generation_of_span, step));
+                                .entry((prio_of_span, k.pts, k.quality))
+                                .or_insert((generation_of_span, k.step));
                         }
                         break;
                     }
@@ -448,9 +456,9 @@ fn worker_loop(
                     // but ONLY those we actually reached: the abandoned span tail was not decoded at all,
                     // and marking it “dead” would mean those frames would
                     // NEVER be shown.
-                    for k in pts_only.iter().take(done_keys) {
-                        if !emitted.contains(&k.0) {
-                            failed_video.insert((k.0, quality));
+                    for k in missing.iter().take(done_keys) {
+                        if !emitted.contains(&(k.pts, k.quality)) {
+                            failed_video.insert((k.pts, k.quality));
                         }
                     }
                 }
@@ -459,21 +467,78 @@ fn worker_loop(
     }
 }
 
-fn into_q((width, height): (u32, u32)) -> Quality {
-    Quality { width, height }
+/// A key the decoder answered: (pts, decode size).
+type ReadKey = (i64, Option<(u32, u32)>);
+
+/// One key of a video span.
+#[derive(Debug, Clone, Copy)]
+struct SpanKey {
+    pts: i64,
+    quality: Option<(u32, u32)>,
+    /// The width of the coverage band on the project grid.
+    step: i64,
 }
 
-/// A span must not be able to evict itself: no more than half the video budget
-/// per pass (item 19v). For a 640×360 preview this is the former 64 keys.
-fn span_key_budget(quality: Option<(u32, u32)>, max_video_bytes: usize) -> usize {
-    const SPAN_MAX_KEYS: usize = 64;
-    match quality {
-        Some((w, h)) => {
-            let frame_bytes = (w as usize * h as usize * 4).max(1);
-            ((max_video_bytes / 2) / frame_bytes).clamp(1, SPAN_MAX_KEYS)
+/// How many keys one span holds at most.
+const SPAN_MAX_KEYS: usize = 64;
+
+/// A span's keys ordered by moment, cut after every `moments` distinct pts.
+fn span_chunks(keys: &[SpanKey], moments: usize) -> Vec<&[SpanKey]> {
+    let mut out = Vec::new();
+    let (mut start, mut seen) = (0, 0);
+    for i in 0..keys.len() {
+        if i == 0 || keys[i].pts != keys[i - 1].pts {
+            if seen == moments {
+                out.push(&keys[start..i]);
+                start = i;
+                seen = 0;
+            }
+            seen += 1;
         }
-        None => SPAN_MAX_KEYS,
     }
+    if start < keys.len() {
+        out.push(&keys[start..]);
+    }
+    out
+}
+
+/// Decode a chunk into the cache. All sizes of one file go through one forward pass; keys of the
+/// native size (never mixed with sized ones) through the plain span.
+fn read_chunk(
+    source: &mut dyn MediaSource,
+    chunk: &[SpanKey],
+    done: &mut dyn FnMut(ReadKey),
+    source_id: SourceId,
+    cache: &BurstCache,
+) -> Result<(), kt_media::MediaError> {
+    let step_of = |pts: i64, q: Option<(u32, u32)>| {
+        chunk.iter().find(|k| k.pts == pts && k.quality == q).map_or(1, |k| k.step.max(1))
+    };
+    let sized: Vec<(Tick, Quality)> =
+        chunk.iter().filter_map(|k| k.quality.map(|q| (Tick(k.pts), into_q(q)))).collect();
+    if sized.len() == chunk.len() {
+        return source.read_video_span_qualities(&sized, &mut |k, q, frame| {
+            let wh = (q.width, q.height);
+            done((k.0, Some(wh)));
+            cache.insert_video_span(source_id, Some(q), k.0, step_of(k.0, Some(wh)), Arc::new(frame));
+        });
+    }
+    let pts: Vec<Tick> = chunk.iter().map(|k| Tick(k.pts)).collect();
+    source.read_video_span(&pts, None, &mut |k, frame| {
+        done((k.0, None));
+        cache.insert_video_span(source_id, None, k.0, step_of(k.0, None), Arc::new(frame));
+    })
+}
+
+/// A span must not be able to evict itself: its keys take at most half the video budget, each
+/// counted at its own decode size (item 19v). A native-size key has no known size: only
+/// `SPAN_MAX_KEYS` bounds it, as before.
+fn key_bytes(quality: Option<(u32, u32)>) -> usize {
+    quality.map_or(0, |(w, h)| w as usize * h as usize * 4)
+}
+
+fn into_q((width, height): (u32, u32)) -> Quality {
+    Quality { width, height }
 }
 
 enum Pick {

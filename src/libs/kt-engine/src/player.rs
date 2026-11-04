@@ -881,9 +881,9 @@ impl Player {
     pub fn compose_preview_into(&self, t: Tick, out: &mut Vec<u8>) -> (Quality, bool) {
         // the wall clock is legal here: the preview, not an offline path (invariant 11)
         let t0 = std::time::Instant::now();
-        let (q, complete, gpu, cost) = self.compose_preview_measured(t, out);
+        let (q, complete, gpu, cost, plan_ns, stages) = self.compose_preview_measured(t, out);
         *self.video_cost.lock().unwrap() =
-            VideoCost { gpu, cost, compose_ns: t0.elapsed().as_nanos() as u64 };
+            VideoCost { gpu, cost, compose_ns: t0.elapsed().as_nanos() as u64, plan_ns, stages };
         (q, complete)
     }
 
@@ -897,7 +897,8 @@ impl Player {
         &self,
         t: Tick,
         out: &mut Vec<u8>,
-    ) -> (Quality, bool, bool, kt_fx::video::FrameCost) {
+    ) -> (Quality, bool, bool, kt_fx::video::FrameCost, u64, crate::video_plan::GpuStages) {
+        let t0 = std::time::Instant::now();
         let q = self.preview_quality();
         let mut video = self.video.lock().unwrap();
         let aligned = video.grid.align_floor(t);
@@ -938,8 +939,11 @@ impl Player {
         } {
             let gone = {
                 let plan = video.frame_plan(&self.cache, aligned, q);
+                let plan_ns = t0.elapsed().as_nanos() as u64;
                 match exec.execute_into(&plan, out) {
-                    Ok(complete) => return (q, complete, true, exec.last_cost()),
+                    Ok(complete) => {
+                        return (q, complete, true, exec.last_cost(), plan_ns, exec.last_stages());
+                    }
                     Err(GpuExecError::TooLarge { .. }) => None,
                     Err(e) => Some(format!("{e:?}")),
                 }
@@ -949,7 +953,20 @@ impl Player {
             }
         }
         let complete = video.compose_from_cache_into(&self.cache, aligned, q, out);
-        (q, complete, false, video.last_cost())
+        (q, complete, false, video.last_cost(), 0, Default::default())
+    }
+
+    /// The layers of the frame at `t` the cache does not hold (a diagnostic of `preview_bench`).
+    pub fn missing_layers(&self, t: Tick) -> Vec<(MediaId, (u32, u32))> {
+        let q = self.preview_quality();
+        let layers = self.video.lock().unwrap().layers_at(t, q);
+        layers
+            .into_iter()
+            .filter(|(m, p, dq)| {
+                !self.cache.contains_video(source_id(*m), Some(*dq), video_cache_idx(*p))
+            })
+            .map(|(m, _, dq)| (m, (dq.width, dq.height)))
+            .collect()
     }
 
     pub fn compose_preview(&self, t: Tick) -> (Vec<u8>, Quality, bool) {
@@ -966,6 +983,10 @@ pub struct VideoCost {
     pub gpu: bool,
     pub cost: kt_fx::video::FrameCost,
     pub compose_ns: u64,
+    /// The part of `compose_ns` before the executor: the order, the requests, `frame_plan`
+    /// (preview-throughput; GPU path only, the CPU's plan is its composite).
+    pub plan_ns: u64,
+    pub stages: crate::video_plan::GpuStages,
 }
 
 impl Drop for Player {
