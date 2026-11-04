@@ -153,6 +153,8 @@ jobs:
       - name: Keep only the third-party artifacts
         if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.builder-cache.outputs.cache-hit != 'true'
         working-directory: src
+        # this job installs no toolchain: cargo is the runner image's; housekeeping must not fail a check
+        continue-on-error: true
         run: |
           cargo metadata --no-deps --format-version 1 --offline > "$RUNNER_TEMP/metadata.json"
           python3 scripts/ci-cache-prune.py ../.flatpak-builder/ccache/target "$RUNNER_TEMP/metadata.json"
