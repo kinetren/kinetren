@@ -142,3 +142,35 @@ correspondence by vertex, accepted explicitly). Inserting a point keys it at eve
 at the same curve parameter of the split segment — the shape at the keys does not change, which is
 what the editors that "forbid changing the number of points" could not offer. Track masks stay static
 (the track has no time domain yet).
+
+## Speed takes every shape: sampling instead of a refusal (slowed-reverb-is-an-event, archived 2026-11-04)
+
+The owner's claim (ktprompts v26.10.18): slowed reverb behaves like a special case — the morpher does
+not offer audio effects, speed refuses shapes and formulas, the morpher does not cut a slowed event.
+Each refusal was read in the code for the reason it states, and whether the reason holds today.
+
+- **R2. The reason holds for the profile, not for the curve.** The closed-form warp map
+  (`segments`/`source_progress`/`consumed_abs`) integrates a piecewise-LINEAR rate exactly, and that is
+  what the old text "Speed takes the linear shape only" protected. But it constrains only the PROFILE
+  the map reads. Sampling was already accepted: a formula layer on `rate` was legal because
+  `resolve_one` samples it on the frame grid into Linear keys (t707 asserted the resolved speed passes
+  `check_fx_auto`), so the spec's own scenario "at speed the formula is rejected" contradicted its test.
+- **D2. One sampling function (`rate_profile_points`) feeds the profile.** Linear segments pass bit for
+  bit; every other shape and a segment formula is evaluated on a fixed grid, 240 audio frames = 450
+  ticks (5 ms), fps-independent so the raw-clip readers (timeline, trim limit) need no project. The 10 ms
+  trapezoid left 4.4 ticks of error over 10 s on `1 + 0.5·sin(6t)`, over the one-audio-frame bound of
+  t913. The profile is long, so nothing per chunk walks it (binary search in `param_at` and
+  `AudioClip::src_ends`). Rejected: a closed-form integral per shape (a formula cannot integrate, and
+  the inverse map would need a numeric root per shape); sampling on the project frame grid (the raw-clip
+  readers have no fps at hand). `check_fx_auto` lost `RateShapeMustBeLinear`; the UI's refusal lines and
+  `shape_rate_linear` went with it.
+- **The suspected neighbour was real.** The formula layer was resolved only in `effective_clips`, while
+  the interface's warp readers read the RAW clip and `from_curves_rev` skipped a curve with no keys — the
+  timeline's material map would have ignored a speed formula that the render obeys (t913 proves the
+  readers agree).
+- **Revised rule (R.61):** "a new kind of segment shape MUST be discarded in `segments` and shown as an
+  error" — shapes are now sampled; the closed form stays exact on what it reads. The owner decided it
+  explicitly (2026-10-28: "yes, invert t696, t696b and t238"), which is why those named tests flipped.
+- Open and recommended: a LINK on the speed curve (needs other events, so only `effective_clips` can
+  resolve it; the material map would need the resolved snapshot the morpher preview already builds).
+

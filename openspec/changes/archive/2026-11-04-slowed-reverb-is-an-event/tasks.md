@@ -115,4 +115,5 @@ message, the first line = the stage and what was done). t696, t696b and
     Live screenshots: `slowedcut/01-step-open, 02-step-pasted, 03-step-cut`, `morph/06…08`.
     The owner is asked to repeat items 1–3 on this build (in the session report); his answer goes
     into `docs/user-feedback.md` when it comes.
-- [ ] 5.2 After archiving: append the "why" (R1 oversight of R.35 S2; R2 the profile vs. the curve, D2 sampling; R3 the veto outlived R.39) and the revisions to `openspec/specs/automation/design.md` and `openspec/specs/morpher/design.md`
+- [x] 5.2 After archiving: append the "why" (R1 oversight of R.35 S2; R2 the profile vs. the curve, D2 sampling; R3 the veto outlived R.39) and the revisions to `openspec/specs/automation/design.md` and `openspec/specs/morpher/design.md`
+  - Done in the archive commit (2026-11-04): `openspec/specs/automation/design.md` "Speed takes every shape" (R2, D2, the revised R.61 rule) and `openspec/specs/morpher/design.md` "The morpher offers both kinds and cuts a warped event" (R1, R3, D3, R3', the revised R.35/R.37 rule).

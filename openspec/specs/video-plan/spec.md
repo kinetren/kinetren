@@ -359,8 +359,8 @@ lost the transition; a strength that cut a chain at one effect broke the fusion 
 
 #### Scenario: A transition on a cut clip is alive, the cut is neither heard nor seen
 - **WHEN** a layer cuts the tail of a clip together with the crossfade window / a patch does nothing to this kind of clip / a clip with a time warp
-- **THEN** the transition is reattached to the piece with the joint and the frame equals the one cut by hand; the result is byte-for-byte as before; a warped clip is not cut at all
-- **TEST** t237 (`src/libs/kt-engine/tests/morph_slice_render.rs`), t238 (`src/libs/kt-engine/tests/morph_slice_render.rs`)
+- **THEN** the transition is reattached to the piece with the joint and the frame equals the one cut by hand; the result is byte-for-byte as before; a warped clip is cut at the integral of its speed and, outside the layer's window, its frames are byte-for-byte as without the layer and its sound is the same material within a resampler restart at the seam (t916 states the measure)
+- **TEST** t237 (`src/libs/kt-engine/tests/morph_slice_render.rs`), t238 (`src/libs/kt-engine/tests/morph_slice_render.rs`), t916 (`src/libs/kt-engine/tests/morph_slice_render.rs`)
 
 ### Requirement: The camera is resolved by one rule per programme
 The 3D camera for Pan3d SHALL be resolved by one function: pinned by id → active by time → the default "50 mm" (an identity for Pan3d with defaults); a camera pinned to a nonexistent id falls back to the active one; a chain without a Pan3d camera does not get one.
