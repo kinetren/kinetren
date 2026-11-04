@@ -205,8 +205,8 @@ impl Predictor {
     }
     /// The prediction of every line.
     pub fn predict(&self, out: &mut [f64]) {
-        for k in 0..N {
-            out[k] = self.a1[k] * self.r1[k] + self.a2[k] * self.r2[k];
+        for (k, o) in out.iter_mut().enumerate().take(N) {
+            *o = self.a1[k] * self.r1[k] + self.a2[k] * self.r2[k];
         }
     }
     /// Learn from the reconstructed frame `rec` (whose prediction was `pred`).
@@ -515,6 +515,7 @@ impl Decoder {
     }
 
     /// Decode `pkt` (its payload as received: `bits`) into `N` output samples.
+    #[allow(clippy::too_many_arguments)]
     pub fn decode(&mut self, pkt: &Packet, bits: &[bool], dmg: Damage, bw: usize, predict: bool, frame: u64, out: &mut [f64]) {
         if pkt.reset && !dmg.no_reset && !dmg.lost {
             self.pred.reset();
@@ -545,8 +546,8 @@ impl Decoder {
         }
         self.last.copy_from_slice(&self.spec);
         imdct(&self.spec, &mut self.block);
-        for n in 0..N {
-            out[n] = self.tail[n] + self.block[n];
+        for (n, o) in out.iter_mut().enumerate().take(N) {
+            *o = self.tail[n] + self.block[n];
             self.tail[n] = self.block[N + n];
         }
     }

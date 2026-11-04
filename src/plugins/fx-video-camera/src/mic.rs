@@ -276,8 +276,8 @@ impl Ns {
         for v in &mut self.outbuf[NS_N - NS_HOP..] {
             *v = 0.0;
         }
-        for n in 0..NS_N {
-            self.outbuf[n] += re[n] / NS_N as f64 * win(n);
+        for (n, r) in re.iter().enumerate() {
+            self.outbuf[n] += r / NS_N as f64 * win(n);
         }
     }
 }

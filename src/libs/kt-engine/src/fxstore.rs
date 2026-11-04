@@ -149,6 +149,7 @@ impl FxStateStore {
     /// - the chain structure is the same → reuse the state, carry the parameters;
     /// - the structure changed → recreate ONLY this clip;
     /// - the chain is empty → no processor needed.
+    #[allow(clippy::too_many_arguments)]
     pub fn sync_clip(
         &mut self,
         id: ClipId,

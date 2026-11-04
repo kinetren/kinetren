@@ -17,6 +17,7 @@
 //! - `loss` hits a packet slot with bit errors: the Rice-coded lines after the first flipped bit
 //!   decode as garbage, or the decoder's checks catch it and it conceals;
 //! - `qp` is the finest quantiser step the encoder may use (6 steps double it, as the picture's).
+//!
 //! Motion vectors, the block size, the search range and the second input have no audio meaning.
 //!
 //! Frame grids: the audio frames sit on the absolute timeline (frame `n` = samples `[nN, (n+1)N)`),
@@ -277,7 +278,7 @@ impl MoshSound {
                 if self.deleted.contains(&frame_j) {
                     dmg.lost = true;
                 }
-                let h = lowbias32(seed ^ (frame_j as u32).wrapping_mul(0x85EB_CA6B) ^ c as u32 * 0x27D4_EB2F);
+                let h = lowbias32(seed ^ (frame_j as u32).wrapping_mul(0x85EB_CA6B) ^ (c as u32 * 0x27D4_EB2F));
                 if ((h >> 8) as f64 / 16_777_216.0) < fs.loss {
                     for f in 0..FLIPS {
                         let hp = lowbias32(h ^ (f + 1));

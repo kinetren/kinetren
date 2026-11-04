@@ -39,6 +39,12 @@
 
 ## 4. Close
 
-- [ ] 4.1 notes frozen as done; registry D1 closed; What's new; README mention
-- [ ] 4.2 `cargo test --workspace`, clippy, `./scripts/finish.sh` — version recorded here
-- [ ] 4.3 archive the change
+- [x] 4.1 notes frozen as done; registry D1 closed; What's new; README and guide mention
+- [x] 4.2 master merged into the branch (17 commits; `start_lap` of loop-pitch-tail-dip takes the
+      clip's start). `cargo test --workspace --no-fail-fast`: 2 reds of 214 targets, both green alone
+      (t815 timing, 2.07 s under load; t939 `gen.sh` failed in the parallel run). After the clippy
+      fixes the touched crates are green; clippy clean on this change's files. Live on the merged
+      tree: `vhs_sound`, `stream_sound`, `camera_mic`, `datamosh` green; `vhs_tape` red once in the
+      five-scenario run, green twice alone. `finish.sh` is the orchestrator's, once per stage (its
+      amendment of 2026-11-04): not run here
+- [x] 4.3 the change archived

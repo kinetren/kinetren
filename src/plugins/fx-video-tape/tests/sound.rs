@@ -213,10 +213,10 @@ fn t1465_the_capstan_wobbles_the_linear_track() {
     let mut m = 4800;
     while m + win < y.len() {
         let (mut c, mut s) = (0.0, 0.0);
-        for j in m..m + win {
+        for (j, o) in y.iter().enumerate().skip(m).take(win) {
             let ph = std::f64::consts::TAU * hz * j as f64 / FS;
-            c += y[j][0] as f64 * ph.fcos();
-            s += y[j][0] as f64 * ph.fsin();
+            c += o[0] as f64 * ph.fcos();
+            s += o[0] as f64 * ph.fsin();
         }
         // y ≈ a·sin(ω(t − τ)): phase −ωτ
         let phase = (-c).fatan2(s);
