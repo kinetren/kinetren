@@ -19,21 +19,22 @@ use kt_plugin_api::{
 pub mod deck;
 pub mod sig;
 pub mod sim;
+pub mod sound;
 pub mod standard;
 
 use deck::{row, Deck, LT_W, WORDS};
 
 /// The plugins of this family, in the assembler's order.
 pub fn plugins() -> Vec<Arc<dyn Plugin>> {
-    vec![Arc::new(VhsTape::new())]
+    vec![Arc::new(VhsTape::new()), Arc::new(VhsTapeSound::new())]
 }
 
 fn num(name: &'static str, min: f64, max: f64, default: f64, step: f64, unit: ParamUnit) -> ParamSpec {
     ParamSpec::num(name, min, max, default, step, unit, ParamKind::Smooth)
 }
 
-/// The passport, in file order (`deck::row`).
-fn passport() -> Vec<ParamSpec> {
+/// The passport, in file order (`deck::row`) — ONE for both halves of the deck.
+pub fn passport() -> Vec<ParamSpec> {
     let mut p = vec![
         ParamSpec::choice_row("standard", &["pal", "ntsc"], 0),
         ParamSpec::choice_row("speed", &["sp", "lp", "ep"], 0),
@@ -64,10 +65,24 @@ fn passport() -> Vec<ParamSpec> {
         num("dark_clip", -0.8, 0.0, -0.45, 0.01, ParamUnit::Percent),
         num("chroma_db", -24.0, -3.0, -12.0, 0.5, ParamUnit::Db),
         num("tape_saturation", 0.0, 1.0, 0.25, 0.01, ParamUnit::Norm),
+        // the deck's sound (sim-audio-pairs): read by the audio half only; the picture's words
+        // never look at these rows, so the picture keeps its bytes
+        ParamSpec::choice_row("audio_out", AUDIO_OUTS, 0),
+        ParamSpec::choice_row("linear_tracks", LINEAR_TRACKS, 0),
+        ParamSpec::flag_row("dolby", false),
+        num("ac_gap", 0.3, 5.0, 1.0, 0.05, ParamUnit::Um),
+        num("ac_spacing", 0.0, 5.0, 0.1, 0.01, ParamUnit::Um),
+        num("bias", 0.5, 1.5, 1.0, 0.01, ParamUnit::Ratio),
+        num("rec_level_db", -20.0, 12.0, 0.0, 0.5, ParamUnit::Db),
     ]);
     debug_assert_eq!(p.len(), row::COUNT);
     p
 }
+
+/// The deck's audio output: the Hi-Fi FM tracks, the normal (linear) track, or both mixed.
+pub const AUDIO_OUTS: &[&str] = &["hifi", "normal", "mix"];
+/// The linear audio: one mono track (1.0 mm) or two stereo tracks (0.35 mm).
+pub const LINEAR_TRACKS: &[&str] = &["mono", "stereo"];
 
 /// The head rows of drum 1 (records; plays too with one deck) and drum 2 (plays, with two decks).
 pub const HEAD_ROWS: [&str; 12] = [
@@ -101,7 +116,9 @@ fn rows() -> Vec<RowDecl> {
                 "decks" => Store::Choice(&["one", "two"]),
                 "heads" => Store::Choice(&["two", "four"]),
                 "transport" => Store::Choice(&["play", "still"]),
-                "tbc" | "doc" | "comb" => Store::Bool,
+                "audio_out" => Store::Choice(AUDIO_OUTS),
+                "linear_tracks" => Store::Choice(LINEAR_TRACKS),
+                "tbc" | "doc" | "comb" | "dolby" => Store::Bool,
                 _ => Store::F32,
             };
             RowDecl { store, omit_default: true }
@@ -163,6 +180,10 @@ impl VhsTape {
                     gpu: Gpu::Barrier,
                     // the tape records what a camera saw over black: the output is opaque
                     alpha: AlphaRel::Destroys,
+                    // the same deck plays the sound the picture was recorded with (sim-audio-pairs)
+                    pair: Some("vhs_tape_sound"),
+                    // the deck's sound rows: the picture never reads them
+                    foreign_rows: &["audio_out", "linear_tracks", "dolby", "ac_gap", "ac_spacing", "bias", "rec_level_db"],
                     ..Decl::default()
                 },
                 ui: UiDecl {
@@ -183,6 +204,61 @@ impl Plugin for VhsTape {
     }
     fn barrier(&self) -> Option<&dyn BarrierKernel> {
         Some(self)
+    }
+}
+
+/// The sound of the same deck (sim-audio-pairs, F-FX-012): the audio half of `vhs_tape`, with its
+/// passport, played through the linear track or Hi-Fi FM (`sound`).
+pub struct VhsTapeSound {
+    m: Manifest,
+}
+
+impl Default for VhsTapeSound {
+    fn default() -> VhsTapeSound {
+        VhsTapeSound::new()
+    }
+}
+
+impl VhsTapeSound {
+    pub fn new() -> VhsTapeSound {
+        VhsTapeSound {
+            m: Manifest {
+                id: "vhs_tape_sound".into(),
+                media: Media::AudioFx,
+                passport: passport(),
+                rows: rows(),
+                decl: Decl {
+                    state: true,
+                    lookahead: Some(|_, _| sound::LA),
+                    // the picture's record circuits (the luma clips, the colour-under level), and
+                    // the switching skew whose phase step the deck's switching pulse holds out
+                    foreign_rows: &["white_clip", "dark_clip", "chroma_db", "switch_skew_us"],
+                    ..Decl::default()
+                },
+                ui: UiDecl {
+                    name: "VHS Tape",
+                    category_key: "fxreg.cat.simulate",
+                    keywords_key: "fxreg.kw.vhs_tape_sound",
+                    // an audio entry has no variants: a sound has no thumbnail (R.54)
+                    ..UiDecl::default()
+                },
+            },
+        }
+    }
+}
+
+impl Plugin for VhsTapeSound {
+    fn manifest(&self) -> &Manifest {
+        &self.m
+    }
+    fn audio(&self) -> Option<&dyn kt_plugin_api::AudioKernel> {
+        Some(self)
+    }
+}
+
+impl kt_plugin_api::AudioKernel for VhsTapeSound {
+    fn build(&self, _opts: &kt_plugin_api::HostOpts) -> Box<dyn kt_plugin_api::AudioState> {
+        Box::new(sound::TapeSound::new())
     }
 }
 

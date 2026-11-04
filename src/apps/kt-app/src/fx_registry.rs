@@ -272,6 +272,19 @@ pub fn registry() -> &'static [FxEntry] {
                 template: FxInstance::builtin("stereo_width"),
             },
         ];
+        // the audio halves of simulated devices (sim-audio-pairs) and any other audio plugin the
+        // rows above do not list: their manifest gives the row, as for the video plugins below
+        for p in crate::plugins::audio_fx() {
+            let m = p.manifest();
+            if v.iter().any(|e| e.audio && e.template.tag() == &*m.id) {
+                continue;
+            }
+            let tmpl = FxInstance::plugin(&m.id).expect("an installed plugin builds its slot");
+            let category = crate::i18n::key_by_name(m.ui.category_key).unwrap_or(k::fxreg::cat::STYLE);
+            let keywords = crate::i18n::key_by_name(m.ui.keywords_key);
+            // no variants: a sound has no thumbnail (R.54)
+            v.push(FxEntry { name: m.ui.name, category, audio: true, video: false, keywords, template: tmpl, variants: Vec::new() });
+        }
         let mut video: Vec<FxEntry> = video_fx_templates()
             .into_iter()
             .map(|(name, tmpl)| {
@@ -1076,7 +1089,9 @@ mod tests {
         // R.47 Q3: “blur” finds Blur AND Radial Blur
         assert_eq!(filter_entries(reg, false, "blur").len(), 2);
         assert_eq!(filter_entries(reg, true, "gain").len(), 1);
-        assert!(filter_entries(reg, true, "vhs").is_empty(), "video effect is not in the audio list");
+        // the audio list finds the deck's SOUND (sim-audio-pairs), never a video effect
+        let vhs_audio: Vec<&str> = filter_entries(reg, true, "vhs").iter().map(|e| e.template.tag()).collect();
+        assert_eq!(vhs_audio, ["vhs_tape_sound"], "a video effect is in the audio list");
         // R.19: English keywords must find the effect in ANY language — the effect name is not translated,
         // and it will be searched by it
         for lang in crate::i18n::Lang::ALL {

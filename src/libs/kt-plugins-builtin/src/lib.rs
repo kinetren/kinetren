@@ -13,9 +13,9 @@ pub const BUILTIN_IDS: &[&str] =
     "tremolo", "auto_pan", "vibrato", "chorus", "flanger", "phaser", "pitch_shift", "delay", "slowed_reverb",
     "lens_distort", "twirl", "ripple", "kaleidoscope", "cylinder3d", "corner_pin", "mirror", "event_grid", "pan3d",
     "pixelate", "edges", "halftone", "chromatic_aberration", "vhs", "noise",
-    "blur", "glow", "sharpen", "radial_blur", "drop_shadow", "datamosh",
-    "camera_isp",
-    "vhs_tape",
+    "blur", "glow", "sharpen", "radial_blur", "drop_shadow", "datamosh", "datamosh_sound",
+    "camera_isp", "camera_isp_sound",
+    "vhs_tape", "vhs_tape_sound",
     "wipe", "iris", "clock", "barn", "luma", "push", "slide", "zoom", "spin", "flash", "dip", "blinds", "checker",
     "blocks", "spiral", "split", "squeeze", "stretch",
     "whip", "blur_dissolve", "pixelate", "glitch", "shake", "film_burn", "light_leaks", "zoom_blur",
@@ -55,6 +55,8 @@ pub fn builtin() -> Registry {
     }
     let ids: Vec<String> = reg.ids().iter().map(|s| s.to_string()).collect();
     assert_eq!(ids, BUILTIN_IDS, "the families give another set than BUILTIN_IDS");
+    // a simulated device's sound is never silently missing (sim-audio-pairs)
+    assert!(reg.unpaired().is_empty(), "a declared pair is not registered: {:?}", reg.unpaired());
     reg
 }
 

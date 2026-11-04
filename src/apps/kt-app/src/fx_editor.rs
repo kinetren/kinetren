@@ -1634,7 +1634,7 @@ pub(crate) fn draw_video_fx_params(
             &["mix", "reverb_delay_ms", "damp", "decay", "wet_gain", "predelay_ms", "width"]
         }
         // the VHS tape's heads and tracking are on its deck face (vhs-tape-simulation, D11)
-        FxInstance::Plugin(p) if p.id == "vhs_tape" => crate::deck_face::ROWS,
+        FxInstance::Plugin(p) if p.id == "vhs_tape" || p.id == "vhs_tape_sound" => crate::deck_face::ROWS,
         _ => &[],
     };
 
@@ -1841,7 +1841,7 @@ pub(crate) fn draw_video_fx_params(
         // the datamosh codec's choice and flag rows (datamosh-codec-path): the encoded height, the
         // block size and the second input are combos, the vector swap a checkbox; the numeric rows
         // stay in the shared grid
-        FxInstance::Plugin(p) if p.id == "datamosh" => {
+        FxInstance::Plugin(p) if p.id == "datamosh" || p.id == "datamosh_sound" => {
             let combo = |ui: &mut egui::Ui, p: &mut kt_model::PluginSlot, row: &str, label: &str, items: &[&str], ch: &mut crate::widgets::ParamsChanged| {
                 let mut v = p.get(row).unwrap_or(0.0) as usize;
                 ui.horizontal(|ui| {
@@ -1867,6 +1867,15 @@ pub(crate) fn draw_video_fx_params(
                     ch.base = true;
                 }
             });
+            // the stream's sound (sim-audio-pairs): one stream, one panel on both halves
+            ui.separator();
+            ui.label(egui::RichText::new(tr(k::fx::MOSH_SOUND)).strong());
+            combo(ui, p, "audio_kbps", tr(k::fx::MOSH_AUDIO_KBPS), &["32", "64", "96", "128", "192"], &mut ch);
+            let mut predict = p.get("audio_predict") == Some(1.0);
+            if ui.checkbox(&mut predict, tr(k::fx::MOSH_AUDIO_PREDICT)).changed() {
+                p.set("audio_predict", if predict { 1.0 } else { 0.0 });
+                ch.base = true;
+            }
         }
         // noise's colour flag row (a plugin slot since plugin-api-barriers 4.2)
         FxInstance::Plugin(p) if p.id == "noise" => {
@@ -1889,7 +1898,7 @@ pub(crate) fn draw_video_fx_params(
         ch |= crate::eq_graph::draw(ui, f, bind.as_deref_mut(), hover);
     }
     // the deck face of the VHS tape simulation: its switches, drums and heads (D11)
-    if f.tag() == "vhs_tape" {
+    if crate::deck_face::is_deck(f) {
         ch |= crate::deck_face::draw(ui, f, bind.as_deref_mut(), pubc);
     }
 
@@ -1904,7 +1913,7 @@ pub(crate) fn draw_video_fx_params(
         return ch;
     }
     // camera_isp is drawn as its pipeline (camera-isp-simulation 3.1): stage blocks with bypasses
-    if f.tag() == "camera_isp" {
+    if matches!(f.tag(), "camera_isp" | "camera_isp_sound") {
         ch |= crate::isp_panel::draw(ui, f, bind, pubc);
         return ch;
     }

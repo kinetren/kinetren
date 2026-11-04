@@ -9,6 +9,7 @@
 
 pub mod codec;
 pub mod mosh;
+pub mod sound;
 
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ use kt_plugin_api::{
 
 /// The plugins of this family, in the assembler's order.
 pub fn plugins() -> Vec<Arc<dyn Plugin>> {
-    vec![Arc::new(Datamosh::new())]
+    vec![Arc::new(Datamosh::new()), Arc::new(DatamoshSound::new())]
 }
 
 /// Row indices (passport order).
@@ -41,6 +42,9 @@ pub mod rows {
     pub const RESIDUAL: usize = 14;
     pub const LOSS: usize = 15;
     pub const SEED: usize = 16;
+    /// The stream's sound (sim-audio-pairs): the audio bitrate and the codec's prediction.
+    pub const AUDIO_KBPS: usize = 17;
+    pub const AUDIO_PREDICT: usize = 18;
 }
 
 /// The datamosh: an own codec broken by its rows.
@@ -66,54 +70,76 @@ fn structural(name: &'static str, min: f64, max: f64, def: f64, step: f64, unit:
 }
 
 impl Datamosh {
-    pub fn new() -> Datamosh {
+    /// The passport — ONE for the picture's stream and its sound.
+    pub fn passport() -> Vec<ParamSpec> {
+        vec![
+            // 0 — keyframes only at the stream start, the cut and the resets
+            structural("gop", 0.0, 600.0, 24.0, 1.0, ParamUnit::Count),
+            live("qp", 0.0, 51.0, 24.0, 1.0, ParamUnit::Count),
+            ParamSpec::choice_row("lines", mosh::LINES, 2),
+            ParamSpec::choice_row("block", mosh::BLOCKS, 0),
+            structural("search", 1.0, 64.0, 16.0, 1.0, ParamUnit::Px),
+            structural("before", 0.0, 300.0, 0.0, 1.0, ParamUnit::Count),
+            // the gates: on at 1, off at 0; drawn by curves (a Hold key on the beat)
+            live("mosh", 0.0, 1.0, 0.0, 1.0, ParamUnit::None),
+            live("reset", 0.0, 1.0, 0.0, 1.0, ParamUnit::None),
+            live("bloom", 0.0, 1.0, 0.0, 1.0, ParamUnit::None),
+            live("freeze", 0.0, 1.0, 0.0, 1.0, ParamUnit::None),
+            live("mv_scale", -16.0, 16.0, 1.0, 0.05, ParamUnit::Ratio),
+            live("mv_rotate", -180.0, 180.0, 0.0, 1.0, ParamUnit::Deg),
+            ParamSpec::flag_row("mv_swap", false),
+            ParamSpec::choice_row("vectors_from", mosh::FROM, 0),
+            live("residual", 0.0, 1.0, 1.0, 0.01, ParamUnit::Percent),
+            live("loss", 0.0, 1.0, 0.0, 0.01, ParamUnit::Percent),
+            structural("seed", 0.0, 9999.0, 0.0, 1.0, ParamUnit::Count),
+            // the stream's sound (sim-audio-pairs): read by the audio half only
+            ParamSpec::choice_row("audio_kbps", sound::KBPS, 3),
+            ParamSpec::flag_row("audio_predict", true),
+        ]
+    }
+
+    /// The rows' file forms, in passport order.
+    pub fn rows() -> Vec<RowDecl> {
         let u32_row = RowDecl { store: Store::U32, omit_default: true };
         let f64_row = RowDecl { store: Store::F64, omit_default: true };
+        vec![
+            u32_row,
+            f64_row,
+            RowDecl { store: Store::Choice(mosh::LINES), omit_default: true },
+            RowDecl { store: Store::Choice(mosh::BLOCKS), omit_default: true },
+            u32_row,
+            u32_row,
+            f64_row,
+            f64_row,
+            f64_row,
+            f64_row,
+            f64_row,
+            f64_row,
+            RowDecl { store: Store::Bool, omit_default: true },
+            RowDecl { store: Store::Choice(mosh::FROM), omit_default: true },
+            f64_row,
+            f64_row,
+            u32_row,
+            RowDecl { store: Store::Choice(sound::KBPS), omit_default: true },
+            RowDecl { store: Store::Bool, omit_default: true },
+        ]
+    }
+
+    pub fn new() -> Datamosh {
         Datamosh {
             m: Manifest {
                 id: "datamosh".into(),
                 media: Media::VideoFx,
-                passport: vec![
-                    // 0 — keyframes only at the stream start, the cut and the resets
-                    structural("gop", 0.0, 600.0, 24.0, 1.0, ParamUnit::Count),
-                    live("qp", 0.0, 51.0, 24.0, 1.0, ParamUnit::Count),
-                    ParamSpec::choice_row("lines", mosh::LINES, 2),
-                    ParamSpec::choice_row("block", mosh::BLOCKS, 0),
-                    structural("search", 1.0, 64.0, 16.0, 1.0, ParamUnit::Px),
-                    structural("before", 0.0, 300.0, 0.0, 1.0, ParamUnit::Count),
-                    // the gates: on at 1, off at 0; drawn by curves (a Hold key on the beat)
-                    live("mosh", 0.0, 1.0, 0.0, 1.0, ParamUnit::None),
-                    live("reset", 0.0, 1.0, 0.0, 1.0, ParamUnit::None),
-                    live("bloom", 0.0, 1.0, 0.0, 1.0, ParamUnit::None),
-                    live("freeze", 0.0, 1.0, 0.0, 1.0, ParamUnit::None),
-                    live("mv_scale", -16.0, 16.0, 1.0, 0.05, ParamUnit::Ratio),
-                    live("mv_rotate", -180.0, 180.0, 0.0, 1.0, ParamUnit::Deg),
-                    ParamSpec::flag_row("mv_swap", false),
-                    ParamSpec::choice_row("vectors_from", mosh::FROM, 0),
-                    live("residual", 0.0, 1.0, 1.0, 0.01, ParamUnit::Percent),
-                    live("loss", 0.0, 1.0, 0.0, 0.01, ParamUnit::Percent),
-                    structural("seed", 0.0, 9999.0, 0.0, 1.0, ParamUnit::Count),
-                ],
-                rows: vec![
-                    u32_row,
-                    f64_row,
-                    RowDecl { store: Store::Choice(mosh::LINES), omit_default: true },
-                    RowDecl { store: Store::Choice(mosh::BLOCKS), omit_default: true },
-                    u32_row,
-                    u32_row,
-                    f64_row,
-                    f64_row,
-                    f64_row,
-                    f64_row,
-                    f64_row,
-                    f64_row,
-                    RowDecl { store: Store::Bool, omit_default: true },
-                    RowDecl { store: Store::Choice(mosh::FROM), omit_default: true },
-                    f64_row,
-                    f64_row,
-                    u32_row,
-                ],
-                decl: Decl { video_class: Some(VideoClass::Stream), ..Decl::default() },
+                passport: Datamosh::passport(),
+                rows: Datamosh::rows(),
+                decl: Decl {
+                    video_class: Some(VideoClass::Stream),
+                    // the stream's audio packets ride beside the picture's (sim-audio-pairs)
+                    pair: Some("datamosh_sound"),
+                    // the stream's sound rows: the picture never reads them
+                    foreign_rows: &["audio_kbps", "audio_predict"],
+                    ..Decl::default()
+                },
                 ui: UiDecl {
                     name: "Datamosh",
                     category_key: "fxreg.cat.style",
@@ -142,6 +168,64 @@ pub const VARIANTS: &[UiVariant] = &[
         sets: &[("before", 12.0), ("mosh", 1.0), ("residual", 0.25), ("qp", 30.0)],
     },
 ];
+
+/// The passport's defaults.
+pub fn defaults() -> Vec<f64> {
+    Datamosh::passport().iter().map(|s| s.default).collect()
+}
+
+/// The sound of the broken stream (sim-audio-pairs, F-FX-013): the audio half of `datamosh`.
+pub struct DatamoshSound {
+    m: Manifest,
+}
+
+impl Default for DatamoshSound {
+    fn default() -> DatamoshSound {
+        DatamoshSound::new()
+    }
+}
+
+impl DatamoshSound {
+    pub fn new() -> DatamoshSound {
+        DatamoshSound {
+            m: Manifest {
+                id: "datamosh_sound".into(),
+                media: Media::AudioFx,
+                passport: Datamosh::passport(),
+                rows: Datamosh::rows(),
+                decl: Decl {
+                    state: true,
+                    lookahead: Some(|_, _| sound::LA),
+                    // motion vectors have no audio meaning
+                    foreign_rows: &["mv_scale", "mv_rotate"],
+                    ..Decl::default()
+                },
+                ui: UiDecl {
+                    name: "Datamosh",
+                    category_key: "fxreg.cat.style",
+                    keywords_key: "fxreg.kw.datamosh_sound",
+                    // an audio entry has no variants: a sound has no thumbnail (R.54)
+                    ..UiDecl::default()
+                },
+            },
+        }
+    }
+}
+
+impl Plugin for DatamoshSound {
+    fn manifest(&self) -> &Manifest {
+        &self.m
+    }
+    fn audio(&self) -> Option<&dyn kt_plugin_api::AudioKernel> {
+        Some(self)
+    }
+}
+
+impl kt_plugin_api::AudioKernel for DatamoshSound {
+    fn build(&self, _opts: &kt_plugin_api::HostOpts) -> Box<dyn kt_plugin_api::AudioState> {
+        Box::new(sound::MoshSound::new())
+    }
+}
 
 impl Plugin for Datamosh {
     fn manifest(&self) -> &Manifest {

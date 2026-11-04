@@ -20,6 +20,11 @@ pub fn video_fx() -> impl Iterator<Item = &'static Arc<dyn Plugin>> {
     install().plugins().filter(|p| p.manifest().media == Media::VideoFx)
 }
 
+/// The installed audio-effect plugins (the picker lists the ones its hand-made rows do not).
+pub fn audio_fx() -> impl Iterator<Item = &'static Arc<dyn Plugin>> {
+    install().plugins().filter(|p| p.manifest().media == Media::AudioFx)
+}
+
 /// The catalog keys the installed manifests name (t125 counts them as used, t976 requires them).
 #[cfg(test)]
 pub fn manifest_keys() -> Vec<&'static str> {

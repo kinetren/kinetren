@@ -5,6 +5,19 @@ month, newest first.
 
 ## kt26.11
 
+- **Camera ISP records the sound too.** On an event with linked audio, the sound goes through the
+  device's microphone: the phone's port and noise suppressor, a webcam's 16 kHz, a security
+  camera's G.711 and wind, with an automatic gain control that lifts the room between words.
+  The looks set it, and the Microphone block in the panel lets you change every step.
+  A project that uses a look with a device microphone, or changes a device's sound settings, opens
+  only in this version and newer.
+- **Datamosh breaks the sound too.** On an event with linked audio, the sound now goes through a
+  real audio codec in the same stream: where the picture loses a keyframe the sound loses a packet
+  at the same moment and smears until the next clean keyframe — a Reset key heals both.
+- **VHS Tape now plays the sound too.** Put it on an event with linked audio and the audio gets
+  the same deck: Hi-Fi tracks that crackle exactly where a clogged head or a dropout breaks the
+  picture, or the linear track — dull at LP, with tape hiss and the capstan's wobble. Its Sound
+  section is in the deck panel; the checkbox in the audio's chain switches it off.
 - **A busy disk no longer makes the program forget its previews.** On a spinning disk under heavy
   writing, opening a project could rebuild the previews of its compositions, and the waveforms and
   loudness of its media, as if seen for the first time. The program now keeps using what it stored.

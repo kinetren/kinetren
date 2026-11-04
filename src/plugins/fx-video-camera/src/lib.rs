@@ -42,12 +42,13 @@ use kt_plugin_api::{
 
 pub mod cfa;
 pub mod cpu;
+pub mod mic;
 #[cfg(target_arch = "x86_64")]
 mod simd;
 
 /// The plugins of this family, in the assembler's order.
 pub fn plugins() -> Vec<Arc<dyn Plugin>> {
-    vec![Arc::new(CameraIsp::new())]
+    vec![Arc::new(CameraIsp::new()), Arc::new(CameraIspSound::new())]
 }
 
 // ---- the passport ------------------------------------------------------------------------------
@@ -211,8 +212,45 @@ pub fn passport() -> Vec<(ParamSpec, RowDecl)> {
         choice("decode_matrix", DECODE_MATRICES, 0),
         // what the effect shows
         choice("view", VIEWS, 0),
+        // the device's microphone (sim-audio-pairs, F-FX-014): read by the audio half only
+        choice("mic_channels", mic::CHANNELS, 1),
+        num("mic_scene_spl", 40.0, 130.0, 94.0, 0.5, Db),
+        num("mic_wind", 0.0, 15.0, 0.0, 0.1, None),
+        num("mic_port_d", 0.2, 3.0, 1.0, 0.05, None),
+        num("mic_port_l", 0.2, 5.0, 0.8, 0.05, None),
+        num("mic_front_v", 1.0, 60.0, 6.0, 0.5, None),
+        num("mic_hpf", 20.0, 400.0, 80.0, 1.0, Hz),
+        num("mic_self_noise", 15.0, 50.0, 29.0, 0.5, Db),
+        num("mic_aop", 100.0, 140.0, 120.0, 0.5, Db),
+        flag("mic_agc", true),
+        num("mic_agc_target", -30.0, -3.0, -12.0, 0.5, Db),
+        num("mic_agc_max", 0.0, 40.0, 18.0, 0.5, Db),
+        flag("mic_ns", true),
+        num("mic_ns_strength", 0.0, 1.0, 0.3, 0.01, Norm),
+        choice("mic_codec", mic::CODECS, 0),
+        choice("mic_kbps", mic::AAC_KBPS, 2),
     ]
 }
+
+/// The microphone rows: the picture never reads them (`Decl.foreign_rows` of the video half).
+pub const MIC_ROWS: &[&str] = &[
+    "mic_channels",
+    "mic_scene_spl",
+    "mic_wind",
+    "mic_port_d",
+    "mic_port_l",
+    "mic_front_v",
+    "mic_hpf",
+    "mic_self_noise",
+    "mic_aop",
+    "mic_agc",
+    "mic_agc_target",
+    "mic_agc_max",
+    "mic_ns",
+    "mic_ns_strength",
+    "mic_codec",
+    "mic_kbps",
+];
 
 /// The passport's row names, in order (`ix` finds a row; built once).
 fn names() -> &'static [&'static str] {
@@ -262,6 +300,16 @@ const VARIANTS: &[UiVariant] = &[
             ("distortion", -0.06),
             ("color_shading", 0.25),
             ("color_lsc_strength", 0.7),
+            // its microphones: a small port in a thin case, a quiet street, a hard-working AGC and
+            // noise suppressor, AAC at a phone's bitrate
+            ("mic_scene_spl", 86.0),
+            ("mic_port_d", 0.8),
+            ("mic_port_l", 1.0),
+            ("mic_front_v", 4.0),
+            ("mic_wind", 1.5),
+            ("mic_agc_max", 30.0),
+            ("mic_ns_strength", 0.7),
+            ("mic_kbps", 1.0),
         ],
     },
     // a cheap module: bilinear demosaic, a weak CCM, a mis-tuned WB, strong vignetting barely
@@ -298,6 +346,17 @@ const VARIANTS: &[UiVariant] = &[
             ("fcs", 0.0),
             ("purple", 0.0),
             ("raw_nr", 0.0),
+            // one electret capsule behind a long channel into a hollow case, USB audio at 16 kHz,
+            // an AGC and no noise suppressor
+            ("mic_channels", 0.0),
+            ("mic_codec", 1.0),
+            ("mic_port_d", 0.6),
+            ("mic_port_l", 3.0),
+            ("mic_front_v", 20.0),
+            ("mic_hpf", 150.0),
+            ("mic_self_noise", 38.0),
+            ("mic_aop", 112.0),
+            ("mic_ns", 0.0),
         ],
     },
     // a security camera at night: RGB-IR without the IR-cut filter under its IR illuminator,
@@ -320,6 +379,17 @@ const VARIANTS: &[UiVariant] = &[
             ("vignetting", 1.2),
             ("lsc_strength", 0.7),
             ("raw_nr_strength", 1.5),
+            // one cheap capsule outdoors: wind at the port, a hard AGC, G.711 at 8 kHz
+            ("mic_channels", 0.0),
+            ("mic_codec", 2.0),
+            ("mic_port_d", 0.5),
+            ("mic_port_l", 2.0),
+            ("mic_front_v", 30.0),
+            ("mic_hpf", 250.0),
+            ("mic_self_noise", 42.0),
+            ("mic_wind", 3.0),
+            ("mic_agc_max", 30.0),
+            ("mic_ns", 0.0),
         ],
     },
     // a large clean pixel: deep well, 14 bits, OLPF, edge-directed demosaic, no NR or sharpening, 4:4:4
@@ -816,6 +886,9 @@ impl CameraIsp {
                     video_class: Some(VideoClass::Barrier),
                     gpu: Gpu::Barrier,
                     alpha: AlphaRel::Preserves,
+                    // the device's microphone (sim-audio-pairs): the picture never reads its rows
+                    pair: Some("camera_isp_sound"),
+                    foreign_rows: MIC_ROWS,
                     ..Decl::default()
                 },
                 ui: UiDecl {
@@ -831,6 +904,72 @@ impl CameraIsp {
 
     fn defaults(&self) -> Vec<f64> {
         ParamValues::defaults(&self.m.passport).0
+    }
+}
+
+/// The passport's defaults.
+pub fn defaults() -> Vec<f64> {
+    static D: std::sync::OnceLock<Vec<f64>> = std::sync::OnceLock::new();
+    D.get_or_init(|| passport().iter().map(|(s, _)| s.default).collect()).clone()
+}
+
+/// The sensor's and the ISP's rows: the microphone never reads them (the seed it does).
+fn picture_rows() -> &'static [&'static str] {
+    static R: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    R.get_or_init(|| names().iter().copied().filter(|n| !MIC_ROWS.contains(n) && *n != "sensor_seed").collect())
+}
+
+/// The camera's microphone (sim-audio-pairs, F-FX-014): the audio half of `camera_isp`, set by the
+/// same looks (`mic`).
+pub struct CameraIspSound {
+    m: Manifest,
+}
+
+impl Default for CameraIspSound {
+    fn default() -> CameraIspSound {
+        CameraIspSound::new()
+    }
+}
+
+impl CameraIspSound {
+    pub fn new() -> CameraIspSound {
+        let (passport, rows): (Vec<ParamSpec>, Vec<RowDecl>) = passport().into_iter().unzip();
+        CameraIspSound {
+            m: Manifest {
+                id: "camera_isp_sound".into(),
+                media: Media::AudioFx,
+                passport,
+                rows,
+                decl: Decl {
+                    state: true,
+                    lookahead: Some(|_, _| mic::LA),
+                    foreign_rows: picture_rows(),
+                    ..Decl::default()
+                },
+                ui: UiDecl {
+                    name: "Camera ISP",
+                    category_key: "fxreg.cat.camera",
+                    keywords_key: "fxreg.kw.camera_isp_sound",
+                    // an audio entry has no variants: a sound has no thumbnail (R.54)
+                    ..UiDecl::default()
+                },
+            },
+        }
+    }
+}
+
+impl Plugin for CameraIspSound {
+    fn manifest(&self) -> &Manifest {
+        &self.m
+    }
+    fn audio(&self) -> Option<&dyn kt_plugin_api::AudioKernel> {
+        Some(self)
+    }
+}
+
+impl kt_plugin_api::AudioKernel for CameraIspSound {
+    fn build(&self, _opts: &kt_plugin_api::HostOpts) -> Box<dyn kt_plugin_api::AudioState> {
+        Box::new(mic::MicSound::new())
     }
 }
 

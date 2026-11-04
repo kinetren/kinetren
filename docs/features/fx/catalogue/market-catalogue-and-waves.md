@@ -54,9 +54,10 @@ that short-form editing expects; none of the five core editors organises its pan
 The guard t978 compares the five lists with them; a plugin registered through another door is not
 listed.
 
-- **Audio effects (18):** `gain`, `slowed_reverb`, `filter`, `eq`, `distortion`, `bitcrusher`,
+- **Audio effects (21):** `gain`, `slowed_reverb`, `filter`, `eq`, `distortion`, `bitcrusher`,
   `stereo_width`, `tremolo`, `auto_pan`, `vibrato`, `chorus`, `flanger`, `phaser`, `delay`,
-  `compressor`, `gate`, `limiter`, `pitch_shift`.
+  `compressor`, `gate`, `limiter`, `pitch_shift`, `vhs_tape_sound`, `datamosh_sound`,
+  `camera_isp_sound`.
 - **Layer marker (1):** `layer_mix`.
 - **Video effects (30):** `color_grade`, `duotone`, `posterize`, `vignette`, `corner_pin`, `sharpen`,
   `pixelate`, `chromatic_aberration`, `radial_blur`, `drop_shadow`, `halftone`, `camera_isp`, `lens_distort`,

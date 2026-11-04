@@ -231,6 +231,11 @@ row printed with `KT_PRINT_GOLDEN=1` once), t973 its file form — do not write 
 effect.
 
 
+**The clip's seat on the timeline** (sim-audio-pairs): `ClipProcessor::set_origin(start)` and
+`ChainOpts.fps` reach every node as `AudioState::place` — at build and on every sync, without a
+reset. The audio half of a simulated device reads its device at the timeline time the picture reads
+(a tape's field, a stream's frame); `pos` alone is clip-local. t1467.
+
 ## Chain lookahead (R.48, items 337-339)
 
 An effect with an analysis window (a limiter, pitch) reads the source FORWARD, while its output is delivered aligned:

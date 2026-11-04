@@ -149,12 +149,14 @@ impl FxStateStore {
     /// - the chain structure is the same → reuse the state, carry the parameters;
     /// - the structure changed → recreate ONLY this clip;
     /// - the chain is empty → no processor needed.
+    #[allow(clippy::too_many_arguments)]
     pub fn sync_clip(
         &mut self,
         id: ClipId,
         fx: &[FxInstance],
         auto: &kt_fx::AutoProfiles,
         src_in_frames: i64,
+        start_frames: i64,
         clip_len_frames: i64,
         opts: kt_fx::ChainOpts,
     ) {
@@ -202,6 +204,11 @@ impl FxStateStore {
                 );
             }
         }
+        // the clip's seat on the timeline (sim-audio-pairs): a simulated device's sound reads the
+        // device state where its picture does
+        if let Some(p) = self.map.get_mut(&id) {
+            p.set_origin(start_frames);
+        }
     }
 
     /// Hand the processor of `from` (a run predecessor of `len` frames that has just played to its
@@ -243,6 +250,7 @@ impl FxStateStore {
         fx: &[FxInstance],
         auto: &kt_fx::AutoProfiles,
         src_in_frames: i64,
+        start_frames: i64,
         clip_len_frames: i64,
         opts: kt_fx::ChainOpts,
     ) -> bool {
@@ -262,7 +270,7 @@ impl FxStateStore {
         }
         laps.ringing.push(old);
         // the spare carries the parameters of when it rang out; a new one is built by `sync_clip`
-        self.sync_clip(id, fx, auto, src_in_frames, clip_len_frames, opts);
+        self.sync_clip(id, fx, auto, src_in_frames, start_frames, clip_len_frames, opts);
         if let Some(p) = self.map.get_mut(&id) {
             p.reset();
         }

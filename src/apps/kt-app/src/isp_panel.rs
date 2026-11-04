@@ -101,6 +101,18 @@ pub(crate) const BLOCKS: &[(&str, &[Stage])] = &[
             Stage { key: "yuv", bypass: Some("yuv"), rows: &["matrix", "chroma", "decode_matrix"] },
         ],
     ),
+    // the device's microphone (sim-audio-pairs): one device, one panel on both halves
+    (
+        "microphone",
+        &[
+            Stage { key: "scene_sound", bypass: None, rows: &["mic_channels", "mic_scene_spl", "mic_wind"] },
+            Stage { key: "port", bypass: None, rows: &["mic_port_d", "mic_port_l", "mic_front_v"] },
+            Stage { key: "capsule", bypass: None, rows: &["mic_hpf", "mic_self_noise", "mic_aop"] },
+            Stage { key: "agc", bypass: Some("mic_agc"), rows: &["mic_agc_target", "mic_agc_max"] },
+            Stage { key: "ns", bypass: Some("mic_ns"), rows: &["mic_ns_strength"] },
+            Stage { key: "mic_codec", bypass: None, rows: &["mic_codec", "mic_kbps"] },
+        ],
+    ),
 ];
 
 /// The view row: drawn above the blocks (what the effect shows), not a stage.
@@ -203,6 +215,20 @@ fn stage_rows(
 /// A row's caption (`widgets::param_label` falls back here).
 pub(crate) fn row_label(name: &str) -> Option<&'static str> {
     Some(match name {
+        "mic_channels" => tr(k::isp::row::MIC_CHANNELS),
+        "mic_scene_spl" => tr(k::isp::row::MIC_SCENE_SPL),
+        "mic_wind" => tr(k::isp::row::MIC_WIND),
+        "mic_port_d" => tr(k::isp::row::MIC_PORT_D),
+        "mic_port_l" => tr(k::isp::row::MIC_PORT_L),
+        "mic_front_v" => tr(k::isp::row::MIC_FRONT_V),
+        "mic_hpf" => tr(k::isp::row::MIC_HPF),
+        "mic_self_noise" => tr(k::isp::row::MIC_SELF_NOISE),
+        "mic_aop" => tr(k::isp::row::MIC_AOP),
+        "mic_agc_target" => tr(k::isp::row::MIC_AGC_TARGET),
+        "mic_agc_max" => tr(k::isp::row::MIC_AGC_MAX),
+        "mic_ns_strength" => tr(k::isp::row::MIC_NS_STRENGTH),
+        "mic_codec" => tr(k::isp::row::MIC_CODEC),
+        "mic_kbps" => tr(k::isp::row::MIC_KBPS),
         "src_curve" => tr(k::isp::row::SRC_CURVE),
         "src_saturation" => tr(k::isp::row::SRC_SATURATION),
         "src_wb_r" => tr(k::isp::row::SRC_WB_R),
@@ -297,6 +323,12 @@ fn stage_title(key: &str) -> &'static str {
         "purple" => tr(k::isp::stage::PURPLE),
         "sharpen" => tr(k::isp::stage::SHARPEN),
         "yuv" => tr(k::isp::stage::YUV),
+        "scene_sound" => tr(k::isp::stage::SCENE_SOUND),
+        "port" => tr(k::isp::stage::PORT),
+        "capsule" => tr(k::isp::stage::CAPSULE),
+        "agc" => tr(k::isp::stage::AGC),
+        "ns" => tr(k::isp::stage::NS),
+        "mic_codec" => tr(k::isp::stage::MIC_CODEC),
         _ => "",
     }
 }
@@ -312,6 +344,7 @@ fn block_title(key: &str) -> &'static str {
         "lens_correction" => tr(k::isp::block::LENS_CORRECTION),
         "colour" => tr(k::isp::block::COLOUR),
         "yuv" => tr(k::isp::block::YUV),
+        "microphone" => tr(k::isp::block::MICROPHONE),
         _ => "",
     }
 }
@@ -335,6 +368,8 @@ fn pair_note(key: &str) -> Option<&'static str> {
         "fcs" => tr(k::isp::pair::FCS),
         "purple" => tr(k::isp::pair::PURPLE),
         "sharpen" => tr(k::isp::pair::SHARPEN),
+        "agc" => tr(k::isp::pair::AGC),
+        "ns" => tr(k::isp::pair::NS),
         _ => return None,
     })
 }
@@ -342,6 +377,15 @@ fn pair_note(key: &str) -> Option<&'static str> {
 /// A choice row's variant caption.
 pub(crate) fn choice_label(row: &str, key: &str) -> Option<&'static str> {
     Some(match (row, key) {
+        ("mic_channels", "mono") => tr(k::isp::choice::MIC_CHANNELS_MONO),
+        ("mic_channels", "stereo") => tr(k::isp::choice::MIC_CHANNELS_STEREO),
+        ("mic_codec", "aac") => tr(k::isp::choice::MIC_CODEC_AAC),
+        ("mic_codec", "pcm16k") => tr(k::isp::choice::MIC_CODEC_PCM16K),
+        ("mic_codec", "g711") => tr(k::isp::choice::MIC_CODEC_G711),
+        ("mic_kbps", "64") => tr(k::isp::choice::MIC_KBPS_64),
+        ("mic_kbps", "96") => tr(k::isp::choice::MIC_KBPS_96),
+        ("mic_kbps", "128") => tr(k::isp::choice::MIC_KBPS_128),
+        ("mic_kbps", "192") => tr(k::isp::choice::MIC_KBPS_192),
         ("src_curve", "srgb") => tr(k::isp::choice::SRC_CURVE_SRGB),
         ("src_curve", "bt709") => tr(k::isp::choice::SRC_CURVE_BT709),
         ("src_curve", "gamma22") => tr(k::isp::choice::SRC_CURVE_GAMMA22),
