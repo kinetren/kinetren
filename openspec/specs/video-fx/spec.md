@@ -862,4 +862,4 @@ Datamosh too"; the root CLAUDE.md rule written with it.
 #### Scenario: Every built-in simulation of a sound-recording device is paired
 - **WHEN** the built-in set is assembled
 - **THEN** `vhs_tape` names `vhs_tape_sound`, `datamosh` names `datamosh_sound`, `camera_isp` names `camera_isp_sound`, and no declared pair is missing (the assembler refuses otherwise)
-- **TEST** t1460 (`src/libs/kt-plugin-api/tests/pairs.rs`), the assembler's check in `kt_plugins_builtin::builtin`
+- **TEST** t1484 (`src/libs/kt-plugin-api/tests/pairs.rs`), the assembler's check in `kt_plugins_builtin::builtin`

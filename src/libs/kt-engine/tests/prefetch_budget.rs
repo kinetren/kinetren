@@ -223,3 +223,37 @@ fn t1418b_preview_withdraws_the_frames_it_left() {
         (1..9).filter(|&i| player.cache.contains_video(sid, Some(q), at(i).0)).collect();
     assert!(between.len() <= 1, "frames the preview had left were decoded: {between:?}");
 }
+
+/// Test 1528 (preview-throughput D3): a cut past the window's bytes still gets its first frame
+/// asked, and only that: a decoder needs the same time to reach it however near it is asked,
+/// and the bytes of the frames after it stay within the budget.
+#[test]
+fn t1528_the_first_frame_of_a_cut_is_asked_past_the_window() {
+    let mut p = stack(1);
+    p.clips[0].duration = Tick(SEC);
+    p.media.push(MediaRef::new(MediaId(2), "checker"));
+    let mut b = p.clips[0].clone();
+    (b.id, b.media, b.start, b.source_in) = (ClipId(2), MediaId(2), Tick(SEC), Tick(40 * SEC));
+    p.clips.push(b);
+    p.validate().unwrap();
+    let vr = VideoRenderer::new(&p);
+    let step = vr.grid.frame_step();
+    let frame = Q.width as usize * Q.height as usize * 4;
+    // a window of 4 frames: 0.16 s, the cut stands 1 s ahead
+    let wants = video_prefetch_wants(&vr, Tick(0), Q, None, 8 * frame + 1);
+    let of = |m: u64| wants.iter().filter(|(id, _, _)| id.0 == m).collect::<Vec<_>>();
+    assert_eq!(of(1).len(), 4, "the window is its bytes: {wants:?}");
+    assert_eq!(of(2).len(), 1, "exactly the cut's first frame: {wants:?}");
+    let first = vr.layers_at(Tick(SEC), Q)[0];
+    assert_eq!(*of(2)[0], first, "it is the key the plan will read at the cut");
+    assert_eq!(wants.last(), Some(&first), "after the window: the nearest frames go first");
+
+    // nearer than the bytes reach, the cut is an ordinary part of the window
+    let wants = video_prefetch_wants(&vr, Tick(SEC - 2 * step), Q, None, 8 * frame + 1);
+    assert_eq!(wants.len(), 4, "no lead on top of a window that holds the cut: {wants:?}");
+
+    // a stack without a cut asks exactly the window it asked before
+    let vr = VideoRenderer::new(&stack(3));
+    let wants = video_prefetch_wants(&vr, Tick(SEC), Q, None, BUDGET);
+    assert!(bytes(&wants) <= BUDGET / 2);
+}

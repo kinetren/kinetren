@@ -1,4 +1,4 @@
-//! t1460 (sim-audio-pairs; capability `plugins`): a simulated device's two halves are one passport.
+//! t1484 (sim-audio-pairs; capability `plugins`): a simulated device's two halves are one passport.
 //! The registry refuses, by name and in either registration order, a pair whose passports differ, a
 //! pair that is not an audio effect, an audio kind that declares a pair, a pair declared by a kind
 //! that is not a video effect, and two video kinds naming one audio kind; `counterpart` answers both
@@ -49,7 +49,7 @@ fn refused(reg: &mut Registry, p: Arc<dyn Plugin>, what: &str) {
 }
 
 #[test]
-fn t1460_a_pair_is_one_passport() {
+fn t1484_a_pair_is_one_passport() {
     // video first, then its sound: paired both ways
     let mut reg = Registry::new();
     reg.register(video("tape", Some("tape_sound"), 0.05)).unwrap();

@@ -45,7 +45,7 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   names the choice row of an edge-reading kind (`reads_across_edges`).
 - **A simulated device's two halves are one passport** (sim-audio-pairs): a video kind declares
   its audio pair (`Decl.pair`), the audio kind is built from the SAME passport function; the
-  registry refuses a mismatch in either order (t1460) and the assembler refuses a missing half
+  registry refuses a mismatch in either order (t1484) and the assembler refuses a missing half
   (`unpaired`). `Decl.foreign_rows` names the shared rows a half does not read (the picture's
   record circuits on the sound) — t322 skips them. An audio half reads the device at the TIMELINE
   position its picture reads: `AudioState::place` gives it its clip's timeline start and the

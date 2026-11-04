@@ -8,4 +8,4 @@ round is in `docs/user-feedback.md` ("2026-11-03 — paired audio for the simula
 
 | # | Line | Claim (brief) | State | Address | Stage |
 |---|---|---|---|---|---|
-| D1 | 1 | paired effects for the simulation effects: VHS Tape must have a paired audio filter, Datamosh too; "again the agents did not think" | done sim-audio-pairs: t1460–t1486 | `vhs_tape_sound`, `datamosh_sound`, `camera_isp_sound`, live `vhs_sound`, `stream_sound`, `camera_mic` | done 2026-11-04 |
+| D1 | 1 | paired effects for the simulation effects: VHS Tape must have a paired audio filter, Datamosh too; "again the agents did not think" | done sim-audio-pairs: t1461–t1486 | `vhs_tape_sound`, `datamosh_sound`, `camera_isp_sound`, live `vhs_sound`, `stream_sound`, `camera_mic` | done 2026-11-04 |

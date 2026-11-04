@@ -36,6 +36,27 @@ pub(crate) fn create_tex(device: &wgpu::Device, w: u32, h: u32, label: &str) -> 
     Tex { texture, view, w, h }
 }
 
+/// The format egui samples a registered texture in.
+pub(crate) const DISPLAY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+/// A target the UI draws (preview-throughput D2). COPY_SRC serves `read_display` alone.
+pub(crate) fn create_display_tex(device: &wgpu::Device, w: u32, h: u32, label: &str) -> Tex {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DISPLAY_FORMAT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    Tex { texture, view, w, h }
+}
+
 fn tex_bytes(w: u32, h: u32) -> u64 {
     w as u64 * h as u64 * 4
 }
@@ -91,6 +112,9 @@ pub(crate) struct UploadCache {
     /// per frame. A reused texture is rewritten by `write_texture`, which the queue orders after
     /// every submission already reading it.
     spare: HashMap<(u32, u32), Vec<Tex>>,
+    /// Nanoseconds and bytes spent uploading, cumulative (preview-throughput, a diagnostic).
+    pub spent_ns: u64,
+    pub spent_bytes: u64,
 }
 
 /// Spare textures kept per size.
@@ -98,7 +122,15 @@ const SPARE_PER_SIZE: usize = 4;
 
 impl UploadCache {
     pub fn new(budget: u64) -> UploadCache {
-        UploadCache { map: HashMap::new(), order: 0, bytes: 0, budget, spare: HashMap::new() }
+        UploadCache {
+            map: HashMap::new(),
+            order: 0,
+            bytes: 0,
+            budget,
+            spare: HashMap::new(),
+            spent_ns: 0,
+            spent_bytes: 0,
+        }
     }
 
     pub fn get_or_upload(
@@ -114,6 +146,7 @@ impl UploadCache {
             *stamp = self.order;
             return tex.view.clone();
         }
+        let mark = std::time::Instant::now();
         let tex = match self.spare.get_mut(&(frame.width, frame.height)).and_then(|v| v.pop()) {
             Some(t) => t,
             None => create_tex(device, frame.width, frame.height, "kt-gpu upload"),
@@ -133,6 +166,8 @@ impl UploadCache {
             },
             wgpu::Extent3d { width: frame.width, height: frame.height, depth_or_array_layers: 1 },
         );
+        self.spent_ns += mark.elapsed().as_nanos() as u64;
+        self.spent_bytes += frame.rgba.len() as u64;
         let view = tex.view.clone();
         self.bytes += tex_bytes(frame.width, frame.height);
         self.map.insert(key, (tex, self.order));

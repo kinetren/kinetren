@@ -74,7 +74,9 @@ fn frame_bytes(q: Quality) -> usize {
 /// memo, the frames just shown); `video_prefetch_pass` keeps the window ahead of those.
 ///
 /// The playhead's own frame is always asked for, whatever its size: without it nothing
-/// would be shown at all.
+/// would be shown at all. Past the bytes, up to the same 2 s, come the first frames of the
+/// cuts ahead (`jumps_to`): a 1080p window is 0.7 s long, and on the showcase a 4K file took
+/// 0.85 s to reach an event's first frame, so that cut was late however fast everything was.
 pub fn video_prefetch_wants(
     video: &VideoRenderer,
     t0: Tick,
@@ -87,24 +89,52 @@ pub fn video_prefetch_wants(
     let mut out: Vec<(MediaId, Tick, Quality)> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut bytes = 0usize;
+    // the bytes ran out: from here on only what a decoder must jump to
+    let mut full = false;
+    let mut leads = 0usize;
+    let mut before: Vec<(MediaId, Tick, Quality)> = Vec::new();
     for r in lookahead_windows(t0.0, PREFETCH_VIDEO_LOOKAHEAD_TICKS, region_ticks) {
         let mut t = video.grid.align_floor(Tick(r.start));
         while t.0 < r.end {
+            let layers = video.layers_at(t, q);
             // a source slower than the project grid repeats its frame, and a blended
             // pair shares a side with the next tick: a key is counted once
-            let frame: Vec<_> =
-                video.layers_at(t, q).into_iter().filter(|k| !seen.contains(k)).collect();
-            let fb: usize = frame.iter().map(|(_, _, dq)| frame_bytes(*dq)).sum();
-            if bytes + fb > share && !out.is_empty() {
-                return out;
+            let frame: Vec<_> = layers.iter().filter(|k| !seen.contains(*k)).copied().collect();
+            if !full {
+                let fb: usize = frame.iter().map(|(_, _, dq)| frame_bytes(*dq)).sum();
+                full = bytes + fb > share && !out.is_empty();
             }
-            bytes += fb;
-            seen.extend(frame.iter().copied());
-            out.extend(frame);
+            if !full {
+                bytes += frame.iter().map(|(_, _, dq)| frame_bytes(*dq)).sum::<usize>();
+                seen.extend(frame.iter().copied());
+                out.extend(frame);
+            } else {
+                for k in frame.into_iter().filter(|k| jumps_to(k, &before, step)) {
+                    if leads == CUT_LEAD_KEYS {
+                        return out;
+                    }
+                    leads += 1;
+                    seen.insert(k);
+                    out.push(k);
+                }
+            }
+            before = layers;
             t = Tick(t.0 + step);
         }
     }
     out
+}
+
+/// Keys past the window's bytes that one pass may still ask: two sizes at each of three cuts.
+const CUT_LEAD_KEYS: usize = 6;
+
+/// Does this layer of a moment start a read the moment before was not doing? The decoder has
+/// to seek and decode up to it, which takes the same time however near the playhead it is
+/// asked, so the first frame of a cut is asked early and the frames after it in their turn
+/// (preview-throughput D3). A speed changes the stride of a read, so "the same read" is any
+/// key of the same size within a few frames.
+fn jumps_to(key: &(MediaId, Tick, Quality), before: &[(MediaId, Tick, Quality)], step: i64) -> bool {
+    !before.iter().any(|(m, pts, dq)| m == &key.0 && dq == &key.2 && (key.1.0 - pts.0).abs() <= 4 * step)
 }
 
 /// One video prefetch pass against the cache: what of the window is MISSING (nearest

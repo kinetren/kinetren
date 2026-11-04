@@ -277,4 +277,47 @@ pub trait VideoGpuExec: Send + Sync {
     fn last_cost(&self) -> kt_fx::video::FrameCost {
         kt_fx::video::FrameCost::default()
     }
+    /// Can this executor show a frame without reading it back (`present`)?
+    fn can_present(&self) -> bool {
+        false
+    }
+    /// Plan → the executor's display target, the frame stays on the device and nobody waits for
+    /// it (preview-throughput D2). Ok(complete) as `execute_into`; an incomplete frame leaves the
+    /// target as it is unless `show_incomplete`. The passes are those of `execute_into`.
+    fn present(&self, _plan: &FramePlan<'_>, _o: PresentOptions) -> Result<bool, GpuExecError> {
+        Err(GpuExecError::Unsupported("no display target"))
+    }
+    /// Wait until everything presented has finished: what a swapchain does to a real window.
+    /// Only a headless caller needs it (`preview_bench`).
+    fn finish_present(&self) {}
+    /// Where the last frame's time went (preview-throughput): a diagnostic, read by the
+    /// performance panel and `kt-cli preview`; it never steers anything (invariant 11).
+    fn last_stages(&self) -> GpuStages {
+        GpuStages::default()
+    }
+}
+
+/// How `VideoGpuExec::present` treats a frame.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PresentOptions {
+    /// Write an incomplete frame too: nothing has been shown yet.
+    pub show_incomplete: bool,
+    /// Refresh the 32×18 ambient glow target as well.
+    pub glow: bool,
+}
+
+/// The stages of one GPU frame on the caller's thread, in nanoseconds (preview-throughput).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct GpuStages {
+    /// Copying decoded frames to the device.
+    pub upload_ns: u64,
+    pub upload_bytes: u64,
+    /// Resolving the plan (without the upload), encoding the passes, the submit.
+    pub encode_ns: u64,
+    /// The part of `encode_ns` inside `queue.submit`.
+    pub submit_ns: u64,
+    /// Waiting for the device to finish the frame.
+    pub wait_ns: u64,
+    /// Copying the finished frame out of the mapped buffer, and into the readback memo.
+    pub copy_ns: u64,
 }

@@ -80,6 +80,11 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
   on a session already idle fires at once. A session id does not take a subscription, and a session
   still starting is not listed yet. The tool's reply must say "Subscribed"; a failure is fixed
   before the turn ends. Between notices, `list_sessions` is checked on every turn.
+- **A watcher runs while any executor runs**: `python3 src/scripts/executor-watch.py <worktree
+  names>` in the background; its exit wakes the orchestrator, which reads the report, handles it and
+  starts the watcher again. An idle notice alone is not enough: it also fires on a pause with a
+  background test run, and the real end then passes unseen (2026-11-04: `sim-audio-pairs` stood
+  2 h 18 min, hours after this very section was written).
 - **"Working" is a measured claim.** Any statement of who works comes from
   `mcp__ccd_session_mgmt__list_sessions` in the same turn and carries its time. An `isRunning: false`
   session is said to have stopped, with what it waits for. An earlier statement is never repeated.

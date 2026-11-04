@@ -18,6 +18,13 @@ month, newest first.
   the same deck: Hi-Fi tracks that crackle exactly where a clogged head or a dropout breaks the
   picture, or the linear track — dull at LP, with tape hiss and the capstan's wobble. Its Sound
   section is in the deck panel; the checkbox in the audio's chain switches it off.
+- **The preview keeps up at full quality.** A shot over its own blurred backdrop used to make the
+  program decode the same video about ten times over; now each picture is decoded once, the sound
+  no longer drops out there, and playback at the project's full size stays smooth where it used to
+  stutter. The interface stays responsive during playback, even on a computer without a graphics
+  card, where frames are now prepared ahead on several processor cores, and a cut into a large 4K
+  file no longer arrives late. The first play after opening a project starts with its sound
+  instead of a moment of silence.
 - **A busy disk no longer makes the program forget its previews.** On a spinning disk under heavy
   writing, opening a project could rebuild the previews of its compositions, and the waveforms and
   loudness of its media, as if seen for the first time. The program now keeps using what it stored.

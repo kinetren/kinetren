@@ -368,6 +368,10 @@ pub struct KtApp {
     pub(crate) title_outdated: bool,
     /// Reusable buffer of the preview composition (no per-frame allocations).
     pub(crate) preview_buf: Vec<u8>,
+    /// The picture on the device; `None` — the bytes path (no engine, the harness).
+    preview_display: Option<crate::preview_display::PreviewDisplay>,
+    /// The last frame shown lives in `preview_display`, not in `texture`.
+    preview_on_display: bool,
     /// Throttling of the glow mip: every N new frames (ambient does not flicker).
     glow_skip: u8,
     /// Name of the wgpu adapter/backend (perf panel diagnostics).
@@ -734,7 +738,14 @@ impl KtApp {
             .map_err(|e| e.to_string()),
         };
         match built {
-            Ok(engine) => self.player.set_video_gpu(Some(engine)),
+            Ok(engine) => {
+                // KT_PREVIEW_READBACK=1: the bytes path, to compare a picture or its cost
+                let readback = std::env::var_os("KT_PREVIEW_READBACK").is_some();
+                self.preview_display = frame.wgpu_render_state().filter(|_| !readback).map(|rs| {
+                    crate::preview_display::PreviewDisplay::new(engine.clone(), rs.clone())
+                });
+                self.player.set_video_gpu(Some(engine));
+            }
             Err(e) => self.warn(crate::tf!(k::msg::VIDEO_FX_CPU, e)),
         }
     }
@@ -882,6 +893,8 @@ impl KtApp {
             last_title: String::new(),
             title_outdated: false,
             preview_buf: Vec::new(),
+            preview_display: None,
+            preview_on_display: false,
             glow_skip: 0,
             gpu_info: None,
             gpu_fx_lost_notified: false,
@@ -1160,6 +1173,8 @@ impl KtApp {
             last_title: String::new(),
             title_outdated: false,
             preview_buf: Vec::new(),
+            preview_display: None,
+            preview_on_display: false,
             glow_skip: 0,
             gpu_info: None,
             gpu_fx_lost_notified: false,
@@ -1319,6 +1334,13 @@ impl KtApp {
         }
         if !err.is_empty() {
             app.note(crate::tf!(k::msg::MEDIA_MISSING_COUNT, err.len()));
+        }
+        // KT_PREVIEW_SIZE=WxH — the preview's size without the menu (measurements)
+        if let Some((w, h)) = std::env::var("KT_PREVIEW_SIZE")
+            .ok()
+            .and_then(|s| Some((s.split_once('x')?.0.parse().ok()?, s.split_once('x')?.1.parse().ok()?)))
+        {
+            app.player.set_preview_quality(kt_media::Quality { width: w, height: h });
         }
         // KT_AUTOPLAY=1 — play at once (perf debugging without input)
         if std::env::var_os("KT_AUTOPLAY").is_some() {
@@ -2312,11 +2334,11 @@ impl KtApp {
             ));
             // preview: a blurred texture slightly wider than the panel, very low alpha
             if let (Some(glow), true, false) =
-                (&self.glow_texture, self.preview_rect.is_finite(), self.preview_detached)
+                (self.preview_glow_id(), self.preview_rect.is_finite(), self.preview_detached)
             {
                 let r = self.preview_rect.expand(28.0);
                 fg.image(
-                    glow.id(),
+                    glow,
                     r,
                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 14),
@@ -6438,11 +6460,27 @@ impl KtApp {
         if need {
             self.last_compose_retry = std::time::Instant::now();
             let mut rgba = std::mem::take(&mut self.preview_buf);
+            let shown_any = self.texture.is_some() || self.preview_on_display;
             // composition by the ratcheted key, not the raw t:
             // otherwise on a retry (the frame is still loading) the picture was rebuilt
             // for a position 1–2 cells behind the key, and an earlier frame
             // went on screen (item 14 of round 14)
-            let (cq, c) = self.player.compose_preview_into(Tick(key_tick), &mut rgba);
+            //
+            // On the device when it can: the frame is not waited for, read back, converted
+            // and uploaded again on this thread (preview-throughput D2).
+            let presented = self.preview_display.as_ref().and_then(|_| {
+                self.player.present_preview(
+                    Tick(key_tick),
+                    kt_engine::PresentOptions {
+                        show_incomplete: !shown_any,
+                        glow: self.sw_render == Some(false)
+                            && self.glow_skip.wrapping_add(1) % 4 == 1,
+                    },
+                )
+            });
+            let on_display = presented.is_some();
+            let (cq, c) = presented
+                .unwrap_or_else(|| self.player.compose_preview_into(Tick(key_tick), &mut rgba));
             complete = c;
             let cost = self.player.video_cost();
             self.perf.compose_ms_last = cost.compose_ns as f32 / 1e6;
@@ -6450,7 +6488,17 @@ impl KtApp {
             self.perf.compose_n += 1;
             // we hold the last FULL frame: an incomplete composite does not overwrite the
             // picture (the flicker “black frame ↔ Loading”, item 14/15)
-            if c || self.texture.is_none() {
+            if on_display && (c || !shown_any) {
+                self.glow_skip = self.glow_skip.wrapping_add(1);
+                if let Some(d) = &mut self.preview_display {
+                    d.sync(self.smooth_scaling);
+                }
+                self.preview_on_display = true;
+                if new_frame {
+                    self.perf.video_frames_shown += 1;
+                }
+            } else if !on_display && (c || !shown_any) {
+                self.preview_on_display = false;
                 // glow mip: a coarse box downscale 32×18; during playback — every 4th new frame
                 // (ambient glow flicker will not notice)
                 self.glow_skip = self.glow_skip.wrapping_add(1);
@@ -6560,7 +6608,7 @@ impl KtApp {
         }
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(10, 10, 12));
-        if let Some(tex) = &self.texture {
+        if let Some(tex_id) = self.preview_texture_id() {
             let scale =
                 (rect.width() / q.width as f32).min(rect.height() / q.height as f32).max(0.05);
             let size = egui::vec2(q.width as f32 * scale, q.height as f32 * scale);
@@ -6568,7 +6616,7 @@ impl KtApp {
             // ambient glow as on YouTube (item 18): a BLURRED mini-copy
             // (32×18, LINEAR stretch = strong blur) + vignette to the background
             if self.sw_render == Some(false)
-                && let Some(glow) = &self.glow_texture
+                && let Some(glow) = self.preview_glow_id()
             {
                 let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
                 for (expand, alpha) in [(0.35f32, 40u8), (0.18, 60)] {
@@ -6578,7 +6626,7 @@ impl KtApp {
                     )
                     .intersect(rect);
                     painter.image(
-                        glow.id(),
+                        glow,
                         glow_rect,
                         uv,
                         egui::Color32::from_rgba_unmultiplied(255, 255, 255, alpha),
@@ -6632,7 +6680,7 @@ impl KtApp {
                 painter.add(egui::Shape::mesh(vin));
             }
             painter.image(
-                tex.id(),
+                tex_id,
                 img_rect,
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 egui::Color32::WHITE,
@@ -6968,6 +7016,26 @@ impl KtApp {
             ui.memory_mut(|m| m.surrender_focus(resp.id));
         }
         self.hint(resp, tr(k::hint::SPEED_ENTRY));
+    }
+
+    /// Does the frame on screen live on the device (the geometry dump tells a scenario)?
+    pub(crate) fn preview_on_display_now(&self) -> bool {
+        self.preview_on_display
+    }
+
+    /// The texture of the frame on screen: the device's, or the uploaded bytes'.
+    fn preview_texture_id(&self) -> Option<egui::TextureId> {
+        match (&self.preview_display, self.preview_on_display) {
+            (Some(d), true) => d.id(),
+            _ => self.texture.as_ref().map(|t| t.id()),
+        }
+    }
+
+    fn preview_glow_id(&self) -> Option<egui::TextureId> {
+        match (&self.preview_display, self.preview_on_display) {
+            (Some(d), true) => d.glow_id(),
+            _ => self.glow_texture.as_ref().map(|t| t.id()),
+        }
     }
 
     /// Preview controls (item 17 of round 7: without obvious labels — the values

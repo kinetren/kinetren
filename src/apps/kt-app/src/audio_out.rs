@@ -97,6 +97,12 @@ pub fn start(
                     data.fill(0.0);
                     return;
                 };
+                // Nothing has played yet and the render is waiting for the start's audio: the
+                // clock stands by design (invariant 6), and an empty pass here is no underrun.
+                if !edge.started() && ring.slots() < 2 {
+                    data.fill(0.0);
+                    return;
+                }
                 // the L/R pair atomically: we do not take half a frame from the ring — otherwise
                 // a permanent channel swap (a latent defect of the former code,
                 // test 45); the underrun is counted honestly
@@ -199,6 +205,11 @@ impl OutputEdge {
     /// The extra delay of the edge, in engine frames (latency compensation adds it).
     pub fn latency_frames(&self) -> i64 {
         self.rs.as_ref().map(|r| r.delay_engine).unwrap_or(0)
+    }
+
+    /// Has a frame of this start reached the output?
+    pub fn started(&self) -> bool {
+        self.vs.primed
     }
 
     /// After a seek: the old position's tail must not sound.

@@ -23,11 +23,7 @@ list may be short of items from them.
 | 4 | transparent tail | Video of a width not divisible by 8 has its last columns unwritten; the heap fix t1450 did not cover them | `kt-ffmpeg/src/source_impl.rs` | likely open, no test | С.3 |
 | 5 | vocoder start phase | A looped vocoder lap can be 6.5 dB quieter than the first | kt-fx vocoder pitch | open | С.3 |
 | 6 | loudness rounding | The same file shows -18.7466 or -18.75 depending on the sidecar | `kt-app/src/util.rs:210`, `:254` | open, verified | С.3 |
-| 7 | 4K decode | The panel says decoding cannot keep up on 4K layers | decode speed | open | С.1, `preview-throughput` |
-| 8 | one decoder per file | A picture-in-picture of the same file ping-pongs seeks in the preview; export is fixed | `kt-engine/src/worker.rs` | open | С.1, `preview-throughput` |
-| 9 | readback stall | Full-quality preview stops on each frame's return from the GPU | `kt-gpu/src/engine.rs:1231` | open | С.1, `preview-throughput` |
 | 10 | export composite and memory | Composite is now the bottleneck; export peaks at 7.3 GB of memory | `kt-engine/src/export_pipeline.rs` | open | С.1, follows the `compute-backends` decision |
-| 11 | cold-cache underruns | The first play after opening starves audio (+51k underrun frames, on release too) | prefetch | unknown since `0e7772ff` | С.1, re-measure in `preview-throughput` |
 | 12 | gallery near a cut | A missing thumbnail is filled from the nearest stored one, so near a cut it shows the other shot | `request_near` | open | later |
 | 13 | sound generator | An audio generator event draws no waveform | generators | unknown | С.3, check first |
 | 14 | Noise default | Added Noise shows nothing until the amount is raised | barrier noise kernel | open | owner's decision: a fix moves bytes |
@@ -43,6 +39,17 @@ list may be short of items from them.
 | 37 | VHS speed | The VHS CPU path runs at about 10 fps, no SIMD twin | `fx-video-tape` | open | С.1, follows the `compute-backends` decision |
 | 42 | VHS thread cap | VHS Tape uses at most 16 threads, so half of a 32-thread machine idles | `src/plugins/fx-video-tape/src/sim.rs:126` | reported by `compute-backends` | С.1 |
 | 43 | Datamosh motion search | One thread, 67 ms per 1080p frame, multiplied by the frame chain | `src/plugins/fx-video-codec/src/codec.rs:279` | reported by `compute-backends` | С.1, moves to compute |
+| 46 | sound of a device effect on a track chain | VHS and Datamosh sound on a track's chain may count fields and frames from the wrong time: `TrackProcessor` never calls `place` | `src/libs/kt-fx/src/audio/mod.rs` | not checked | С.3, check first |
+| 47 | `vhs_tape` red 2 of 5, once a Ctrl+S that did not save | If the Ctrl+S is the program's, a person loses edits | `src/scripts/live/kt_live.py:1407` | cause unknown | current stage, read `finish.sh`'s result first |
+| 48 | Datamosh sound at a cut | The audio half assumes a long previous event, so after a short one the break may miss the picture's | `src/plugins/fx-video-codec/src/sound.rs` | open | С.3 |
+| 49 | unknown rows dropped silently | An older build drops rows it does not know and loses their settings on saving | `src/libs/kt-model/src/plugin_slot.rs` | open | С.3 |
+| 50 | morpher hides the sound half | The sound half follows the layer, is not visible in its strip and cannot be switched off there | morpher | deliberate, reported | owner informed |
+| 51 | format 4 | A project using a device's sound settings does not open in older builds; choosing a look sets them | project format | deliberate, in What's new | owner informed |
+| 52 | window preview below 25 fps | With no real graphics card, `queue.submit` takes 30 ms in a window and 0.5 ms without one, so 17-20 fps there | `kt-gpu/src/engine.rs`, `present` | cause unknown; no real card measured | С.1 |
+| 53 | dropped-frame counter on the CPU path | The panel shows 0-14 skipped frames with real losses; V-fps is right | `kt-app` `draw_preview` | open | С.1 |
+| 54 | one-off composite stalls | 1.7-1.9 s at one cut and once 21.9 s, on the old path only; at most 25 ms since | composite | cause unknown | watch |
+| 55 | RGBA conversion, one thread per file | The next limit for 4K at native size | `kt-ffmpeg` `to_rgba` | not reached in the measurements | С.1 |
+| 56 | a start on a really cold disk | The OS page cache could not be dropped here; if sound misses the 500 ms wait, the silence stays as before | start of playback | not measured | watch |
 | 44 | no ARM build | The program cannot run on ARM at all; the owner wants it | `.github`, `scripts` | open | С.2 |
 
 ## Internal
@@ -64,6 +71,12 @@ list may be short of items from them.
 | 36 | a copied `target/` builds another worktree's text | `CARGO_MANIFEST_DIR` in build.rs | open | С.2 |
 | 38 | Flatpak steps after compose never ran on a real runner | CI | unknown | needs the owner's push |
 | 41 | `pkill -f` kills the caller's own shell | agent scripts | trap | goes into the briefs |
+| 57 | t836, t362 red once under load; t1524 has a thin margin (70 % against 64 %) | `telemetry.rs`, `project_lock.rs` | open | С.2 |
+| 58 | t939 runs `gen.sh` on every call | `kt-app/src/layout_tests.rs:17714` | open | С.2 |
+| 59 | `loop` live scenario allows one stale dump read | `src/scripts/live/loop.py:54` | open | С.2 |
+| 60 | `docs/features/README.md` drifts from `--table`, `--check` does not see it | docs | open | С.2 |
+| 61 | dead code warnings; two clippy notes | `kt-app/src/reel_preview.rs:188`, `:265`; `kt-cli/src/main.rs` | open | С.2 |
+| 62 | two chains in a window share probe names | `kt-app/src/deck_face.rs` | open | С.2 |
 | 45 | Color Grade GPU and CPU add in a different order: 140 channels per 1080p frame differ by 1 | `src/plugins/fx-video-color/src/color_grade.wgsl` | reported by `compute-backends` | not a defect once the math moves to compute |
 
 ## Changes left unfinished

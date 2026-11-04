@@ -1,0 +1,73 @@
+## ADDED Requirements
+
+### Requirement: The live decoder serves a moment once, at every size asked
+A video span of a `MediaWorker` SHALL carry every decode size asked at its moments and go through
+`read_video_span_qualities`, so a picture is decoded once and converted to each size, and a file
+read at two places gets its second decoder there. The worker SHALL look into its queue between
+chunks of whole moments, never between the sizes of one moment. A span SHALL hold at most half the
+video budget, every key counted at its own decode size, and the keys that do not fit SHALL stay
+queued. A native-size key SHALL keep a span of its own. The source stays owned by that worker's
+thread (invariant 5).
+Why: `kt-cli preview` on the showcase (preview-throughput, 2026-11-04): a sharp layer over its
+blurred backdrop asks one file at two sizes, and two spans, one per size, sent the second behind
+the cursor, which rebuilt the decoder: 3,844–5,413 pictures decoded to deliver about 550, 55–75
+reopens in 12 s, 9.5–12.8 of 25 V-fps at 1080p, 42,762–82,482 frames of audio underrun. Keys past
+the budget were also taken off the queue and dropped silently.
+
+#### Scenario: Two sizes of one moment are one decode
+- **WHEN** a worker is asked 8 moments of one file at two decode sizes
+- **THEN** both sizes of every moment reach the cache, no read goes behind the cursor, and the
+  decoder produces each picture once
+- **TEST** t1520 (`src/libs/kt-engine/tests/preview_throughput.rs`)
+
+#### Scenario: A chunk is whole moments
+- **WHEN** a span of 10 moments at two sizes is decoded
+- **THEN** every read holds at most four moments, and no moment is asked in two reads
+- **TEST** t1521 (`src/libs/kt-engine/tests/preview_throughput.rs`)
+
+#### Scenario: A span fits the cache at each key's own size
+- **WHEN** a tiny key is queued before twelve 4K keys against a cache of three 4K frames
+- **THEN** no read holds more than half the budget, and every key is still decoded in the end
+- **TEST** t1522 (`src/libs/kt-engine/tests/preview_throughput.rs`)
+
+#### Scenario: A sharp layer over its backdrop plays in time
+- **WHEN** a file costing 12 ms a picture stands twice at one moment, at two decode sizes, at 25 fps,
+  and 4 s are played through the real player against a wall-clock output device
+- **THEN** at least 70 % of the grid's frames reach the screen, counted as the performance panel's
+  V-fps counts them
+- **TEST** t1524 (`src/libs/kt-engine/tests/preview_throughput.rs`)
+
+### Requirement: A burst does not wait out a video span of its own priority
+Between the chunks of a video span the worker SHALL read the audio bursts queued at the span's own
+priority and go on with the span, without moving the video cursor.
+Why: a span holds up to 64 keys, seconds of 4K, and a burst of the look-ahead left behind it turned
+urgent only after the render had missed it (preview-throughput, 2026-11-04).
+
+#### Scenario: A burst during a long span
+- **WHEN** a burst is queued at NearPrefetch while a span of 32 pictures runs at that priority
+- **THEN** it is read after fewer than 16 pictures, the span finishes all 32, and nothing reopens
+- **TEST** t1529 (`src/libs/kt-engine/tests/preview_throughput.rs`)
+
+### Requirement: The first frame of a cut is asked before the window reaches it
+Past the look-ahead's bytes, up to its 2 s, one prefetch pass SHALL ask the layers that start a read
+the moment before was not doing, at most `CUT_LEAD_KEYS` keys, and no later frames of them.
+Why: at 1080p the window is about 0.7 s long, and on the showcase a 4K file took about 0.85 s to
+reach an event's first frame: 52 incomplete composites at that one cut, however fast the rest was
+(preview-throughput, 2026-11-04). With this, 297 of 300 frames at 1080p.
+
+#### Scenario: A cut past the window
+- **WHEN** a cut stands 1 s ahead of a 0.16 s window
+- **THEN** the pass asks the window's four frames and the cut's first frame, after them; nearer than
+  the bytes reach it adds nothing, and a stack without a cut asks what it asked before
+- **TEST** t1528 (`src/libs/kt-engine/tests/prefetch_budget.rs`)
+
+### Requirement: Only a frame counts as a video miss
+A lookup of an empty post-FX memo SHALL NOT count as a video miss; a hit of the memo SHALL still count
+as a hit.
+Why: the panel warns of a low hit rate below 80 %, and on the CPU path it read 41–57 % with every
+decoded frame in the cache (preview-throughput, 2026-11-04).
+
+#### Scenario: An empty memo
+- **WHEN** an empty post-FX memo is looked up, and then a frame that is not in the cache
+- **THEN** the first adds no video miss and the second adds one
+- **TEST** t1535 (`src/libs/kt-cache/src/lib.rs`)

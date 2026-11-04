@@ -387,7 +387,7 @@ device obeys.
   naming a video kind, an audio pair declaring a pair
 - **THEN** the first two register and name each other as counterparts, `unpaired` empties when the
   sound arrives; every other one is refused naming its reason
-- **TEST** t1460 (`src/libs/kt-plugin-api/tests/pairs.rs`)
+- **TEST** t1484 (`src/libs/kt-plugin-api/tests/pairs.rs`)
 
 ### Requirement: An audio state knows where its clip sits on the timeline
 The host SHALL tell every audio state the timeline frame of its clip's frame 0 and the project frame

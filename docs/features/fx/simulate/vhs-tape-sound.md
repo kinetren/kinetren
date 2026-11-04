@@ -12,7 +12,7 @@ invariants: [1, 2, 3, 11]
 ui_rules: [17]
 round: kkt-26.11.03b
 point: D1
-tests: [t1460, t1461, t1462, t1463, t1464, t1465, t1466, t1467, t1468, t1485]
+tests: [t1484, t1461, t1462, t1463, t1464, t1465, t1466, t1467, t1468, t1485]
 depends_on: [F-FX-009]
 trackers: []
 services: []

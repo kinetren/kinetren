@@ -832,6 +832,169 @@ fn export_log_line(l: &kt_engine::export::ExportLog) -> String {
     }
 }
 
+/// User + system CPU seconds of this process so far (Linux; 0 elsewhere): a loaded machine
+/// stretches wall time and leaves this honest.
+fn process_cpu_s() -> f64 {
+    let Ok(stat) = std::fs::read_to_string("/proc/self/stat") else { return 0.0 };
+    let after_name = stat.rsplit(')').next().unwrap_or("");
+    let f: Vec<&str> = after_name.split_whitespace().collect();
+    let tick = |i: usize| f.get(i).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+    (tick(11) + tick(12)) / 100.0
+}
+
+/// The warm-up of a person who stands on the frame before pressing Play; `--cold` has none.
+const BENCH_SETTLE: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// `kt-cli preview` (preview-throughput): see the dispatch.
+fn preview_run(
+    project: &Project,
+    path: &str,
+    from: f64,
+    to: f64,
+    size: Option<kt_media::Quality>,
+    cpu: bool,
+    ui_ms: f64,
+    free_running: bool,
+    cold: bool,
+) -> Result<(), String> {
+    use kt_ffmpeg::iostats as io;
+    use std::sync::atomic::Ordering::Relaxed;
+    let mut sources: Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)> = Vec::new();
+    for m in &project.media {
+        let mut db = kt_media::index::MediaIndexDb::open(
+            &std::path::Path::new(path).with_extension("ktindex.db"),
+        )
+        .ok();
+        match kt_media::factory::open_indexed(&m.path, db.as_mut()) {
+            Ok(s) => sources.push((m.id, s)),
+            Err(e) => eprintln!("  skipped: {}: {e}", m.path),
+        }
+    }
+    let (player, ring) = kt_engine::Player::new(project.clone(), sources);
+    let q = size.unwrap_or(kt_media::Quality {
+        width: project.settings.width,
+        height: project.settings.height,
+    });
+    player.set_preview_quality(q);
+    let gpu = if cpu { None } else { kt_gpu::GpuContext::new_headless().and_then(kt_gpu::GpuFxEngine::new).ok() };
+    let backend = match &gpu {
+        Some(e) => {
+            use kt_engine::VideoGpuExec as _;
+            format!("GPU ({})", e.info().name)
+        }
+        None => "CPU".to_string(),
+    };
+    if let Some(e) = gpu {
+        player.set_video_gpu(Some(e));
+    }
+    let opts = kt_engine::preview_bench::BenchOptions {
+        from: Tick((from * kt_time::TICK_HZ as f64) as i64),
+        to: Tick((to * kt_time::TICK_HZ as f64) as i64),
+        ui_ns: (ui_ms * 1e6) as u64,
+        free_running,
+        settle: if cold { std::time::Duration::ZERO } else { BENCH_SETTLE },
+        ..Default::default()
+    };
+    let snap = || {
+        (
+            io::VIDEO_REOPENS.load(Relaxed),
+            io::VDEC_FRAMES.load(Relaxed),
+            io::VDEC_NS.load(Relaxed),
+            io::RGBA_FRAMES.load(Relaxed),
+            io::RGBA_NS.load(Relaxed),
+            io::RGBA_PIXELS.load(Relaxed),
+        )
+    };
+    let io0 = snap();
+    let cpu0 = process_cpu_s();
+    let r = kt_engine::preview_bench::play_range(&player, ring, opts);
+    let cpu_s = process_cpu_s() - cpu0;
+    let io1 = snap();
+    let (reopens, vdec, vdec_ns, rgba, rgba_ns, rgba_px) = (
+        io1.0 - io0.0,
+        io1.1 - io0.1,
+        io1.2 - io0.2,
+        io1.3 - io0.3,
+        io1.4 - io0.4,
+        io1.5 - io0.5,
+    );
+    let n = r.composites.max(1) as f64;
+    let ms = |ns: u64| ns as f64 / 1e6 / n;
+    println!("-- preview {}x{}, {backend}, {:.1}–{:.1} s --", q.width, q.height, from, to);
+    println!(
+        "  shown {} of {} grid frames in {:.1} s: V-fps {:.1}, V-skipped {}, incomplete {}, underruns {}",
+        r.shown,
+        r.grid_frames,
+        r.wall_s,
+        r.shown as f64 / r.wall_s.max(1e-3),
+        r.skipped,
+        r.incomplete,
+        r.underruns
+    );
+    println!(
+        "  UI thread in the preview, ms per UI frame: p50 {:.1}, p95 {:.1}, max {:.1}",
+        r.ui_stall_ms.p50, r.ui_stall_ms.p95, r.ui_stall_ms.max
+    );
+    println!(
+        "  composite ms: p50 {:.1}, p95 {:.1}, max {:.1} at {:.2} s ({} composites, {} on the GPU)",
+        r.compose_ms.p50,
+        r.compose_ms.p95,
+        r.compose_ms.max,
+        r.worst_at.0 as f64 / kt_time::TICK_HZ as f64,
+        r.composites,
+        r.composed_on_gpu
+    );
+    println!(
+        "  per composite, ms: plan {:.2}, upload {:.2} ({:.1} MB), encode {:.2}, wait {:.2}, copy {:.2}; device at the frame's end {:.2}",
+        ms(r.plan_ns),
+        ms(r.stages.upload_ns),
+        r.stages.upload_bytes as f64 / 1e6 / n,
+        ms(r.stages.encode_ns),
+        ms(r.stages.wait_ns),
+        ms(r.stages.copy_ns),
+        ms(r.device_ns)
+    );
+    let per = |ns: u64, count: u64| ns as f64 / 1e6 / count.max(1) as f64;
+    println!(
+        "  decode: {} requested, {} pictures ({:.1} ms each), {} RGBA ({:.1} ms each, {:.2} Mpx), {} reopens",
+        r.video_decodes,
+        vdec,
+        per(vdec_ns, vdec),
+        rgba,
+        per(rgba_ns, rgba),
+        rgba_px as f64 / 1e6 / rgba.max(1) as f64,
+        reopens
+    );
+    if std::env::var_os("KT_BENCH_STARVED").is_some() {
+        for (t, n) in &r.underrun_at {
+            println!("  underrun {:.2}: {n}", t.0 as f64 / kt_time::TICK_HZ as f64);
+        }
+        for (t, m) in &r.starved {
+            let ids: Vec<String> =
+                m.iter().map(|(m, (w, h))| format!("{}@{w}x{h}", m.0)).collect();
+            println!("  starved {:.2}: {}", t.0 as f64 / kt_time::TICK_HZ as f64, ids.join(" "));
+        }
+    }
+    let (ahead, taken) = player.compose_ahead_counts();
+    if ahead > 0 {
+        println!("  composed ahead {ahead}, taken by the display {taken}");
+    }
+    let lookups = (r.video_hits + r.video_misses).max(1);
+    println!(
+        "  cache: video hit {:.0}%, dropped unread {}, abandoned {}",
+        r.video_hits as f64 / lookups as f64 * 100.0,
+        r.unused_evictions,
+        r.abandoned_evictions
+    );
+    println!(
+        "  process CPU {:.1} s over {:.1} s ({:.1} cores)",
+        cpu_s,
+        r.wall_s,
+        cpu_s / r.wall_s.max(1e-3)
+    );
+    Ok(())
+}
+
 /// Open all sources of the project. Common to the offline render and `probe --time`.
 ///
 /// `strict` — an unavailable file is an error (render: silent silence in the
@@ -1234,6 +1397,41 @@ fn run(args: &[String]) -> i32 {
                 }
             }
             probe_range(&project, Some(input.as_str()), from, to, timed.then_some(input.as_str()))
+        }
+        // Playing a range the way the program plays it (preview-throughput): the real player on
+        // real footage, the wall clock as the output device; V-fps and V-skipped as the
+        // performance panel counts them, and where a frame's time went, stage by stage.
+        Some("preview") => {
+            let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3))
+            else {
+                eprintln!(
+                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--cpu] [--ui-ms N] [--free-running] [--cold]"
+                );
+                return 2;
+            };
+            let (Ok(from), Ok(to)) = (from.parse::<f64>(), to.parse::<f64>()) else {
+                eprintln!("from/to are seconds");
+                return 2;
+            };
+            let project = match load_project_resolved(input) {
+                Ok(p) => p,
+                Err(code) => return code,
+            };
+            let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
+            let size = opt("--size").and_then(|s| s.split_once('x')).and_then(|(w, h)| {
+                Some(kt_media::Quality { width: w.parse().ok()?, height: h.parse().ok()? })
+            });
+            let ui_ms = opt("--ui-ms").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+            let cpu = args.iter().any(|a| a == "--cpu");
+            let free = args.iter().any(|a| a == "--free-running");
+            let cold = args.iter().any(|a| a == "--cold");
+            match preview_run(&project, input, from, to, size, cpu, ui_ms, free, cold) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            }
         }
         Some("render") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
