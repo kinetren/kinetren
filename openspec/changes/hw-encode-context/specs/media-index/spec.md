@@ -40,7 +40,9 @@ hardware context functions are present (or which one is missing), and on Linux e
 does, the driver's vendor string. `kt-cli ffmpeg --probe-encoders` SHALL additionally try to open
 every hardware candidate of the OS cascade with the export's own opening code at 1280×720 and
 print, per candidate, "opens" or the failing part and its code; without the flag nothing is
-opened beyond the devices. The section never changes the exit code.
+opened beyond the devices. The section never changes the exit code. Where the binary hosts it, each
+device SHALL be opened in a throwaway process (capability `export`), so a driver that faults is a
+line of the report and not the end of it.
 Why: on Windows there are several causes of failure, and they are not obvious (a static build, FFmpeg 9,
 a mixed set). Without a named cause the user sees only placeholders and does not know
 what to do. The same holds for hardware encoding: "no hardware encoder" has a device cause (no

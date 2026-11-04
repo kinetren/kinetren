@@ -53,6 +53,11 @@ with libav*"), `export` (the encoder cascade).
   surface (pts and duration kept); `Drop` frees frames → contexts → frames context → device.
   The list for the UI (`available_encoders`) opens the DEVICE, never the encoder, and kt-app asks
   it once per settings window, not per frame.
+- **A libva driver first meets a throwaway process** (`hw_trial.rs`, D10): a driver that faults
+  gives no return code, so `trial` candidates are opened by our own binary started again, and only
+  its `ok` lets the driver in. A binary that exports calls `hw_trial::serve()` at the top of `main`;
+  anything else (a test harness) opens in-process. `available_encoders` and `hw_report` ask the same
+  way. A driver that fails, however it fails, can be had on any machine: `fixtures/fake_va`.
 - **The hardware seam is thread-local** (`hw_seam`): a test binary runs exports in parallel, and
   `KINETREN_VAAPI_DEVICE`/`KT_DRI_DIR` would steer all of them. Processes (kt-cli tests) use the
   variables. The proof on hardware is opt-in and loud: `KT_EXPECT_HW=vaapi` (`make hw-test`) makes

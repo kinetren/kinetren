@@ -83,7 +83,27 @@ fn vaapi_vendor(_dev: *mut ffi::AVBufferRef) -> String {
     "unknown".into()
 }
 
-/// The hardware section of the report (media-index): the table, and each render node.
+/// Open `node` as a VAAPI device here: the driver's vendor, or why not.
+pub fn hw_open_device(api: &'static Api, node: &str) -> Result<String, String> {
+    let hw = hw_api().map_err(|m| format!("hardware context functions missing: {m}"))?;
+    let c = CString::new(node).map_err(|_| "device path contains NUL".to_string())?;
+    let mut dev: *mut ffi::AVBufferRef = core::ptr::null_mut();
+    unsafe { (api.av_log_set_level)(8) };
+    let r = unsafe {
+        (hw.av_hwdevice_ctx_create)(&mut dev, ffi::AV_HWDEVICE_TYPE_VAAPI, c.as_ptr(), core::ptr::null_mut(), 0)
+    };
+    unsafe { (api.av_log_set_level)(16) };
+    if r >= 0 && !dev.is_null() {
+        let vendor = vaapi_vendor(dev);
+        unsafe { (hw.av_buffer_unref)(&mut dev) };
+        Ok(vendor)
+    } else {
+        Err(format!("code {r}"))
+    }
+}
+
+/// The hardware section of the report (media-index): the table, and each render node — asked in
+/// a throwaway process where there is one, so this report outlives the driver it is about.
 pub fn hw_report(api: &'static Api) -> crate::HwReport {
     let functions = hw_api().map(|_| ());
     let linux = crate::search::Os::NATIVE == crate::search::Os::Linux;
@@ -94,28 +114,14 @@ pub fn hw_report(api: &'static Api) -> crate::HwReport {
             .map(|n| format!("{dir}/renderD{n}"))
             .filter(|p| std::path::Path::new(p).exists())
             .collect();
-        unsafe { (api.av_log_set_level)(8) };
         for node in all {
-            let v = match hw_api() {
-                Err(m) => Err(format!("hardware context functions missing: {m}")),
-                Ok(hw) => {
-                    let c = CString::new(node.as_str()).unwrap();
-                    let mut dev: *mut ffi::AVBufferRef = core::ptr::null_mut();
-                    let r = unsafe {
-                        (hw.av_hwdevice_ctx_create)(&mut dev, ffi::AV_HWDEVICE_TYPE_VAAPI, c.as_ptr(), core::ptr::null_mut(), 0)
-                    };
-                    if r >= 0 && !dev.is_null() {
-                        let vendor = vaapi_vendor(dev);
-                        unsafe { (hw.av_buffer_unref)(&mut dev) };
-                        Ok(vendor)
-                    } else {
-                        Err(format!("code {r}"))
-                    }
-                }
+            let v = match crate::hw_trial::ask_device(&node) {
+                crate::hw_trial::Verdict::Passed(vendor) => Ok(vendor),
+                crate::hw_trial::Verdict::Refused(why) => Err(why),
+                crate::hw_trial::Verdict::NotHosted => hw_open_device(api, &node),
             };
             nodes.push((node, v));
         }
-        unsafe { (api.av_log_set_level)(16) };
     }
     crate::HwReport { functions, nodes, linux }
 }
@@ -133,16 +139,31 @@ pub fn available_encoders(api: &'static Api) -> Vec<crate::AvailableEncoder> {
             crate::encoders::HwKind::None => None,
             crate::encoders::HwKind::Vaapi => {
                 let Ok(hw) = hw_api() else { continue };
-                unsafe { (api.av_log_set_level)(8) };
-                let dev = open_vaapi_device(hw);
-                unsafe { (api.av_log_set_level)(16) };
-                match dev {
-                    Ok((mut d, path)) => {
-                        unsafe { (hw.av_buffer_unref)(&mut d) };
-                        Some(path)
+                let mut device = None;
+                let mut in_process = false;
+                for path in crate::vaapi_device_paths() {
+                    match crate::hw_trial::ask_device(&path) {
+                        crate::hw_trial::Verdict::Passed(_) => {
+                            device = Some(path);
+                            break;
+                        }
+                        crate::hw_trial::Verdict::Refused(_) => {}
+                        crate::hw_trial::Verdict::NotHosted => in_process = true,
                     }
-                    Err(_) => continue,
                 }
+                if in_process {
+                    unsafe { (api.av_log_set_level)(8) };
+                    let dev = open_vaapi_device(hw);
+                    unsafe { (api.av_log_set_level)(16) };
+                    if let Ok((mut d, path)) = dev {
+                        unsafe { (hw.av_buffer_unref)(&mut d) };
+                        device = Some(path);
+                    }
+                }
+                if device.is_none() {
+                    continue;
+                }
+                device
             }
         };
         out.push(crate::AvailableEncoder { name: e.name.to_string(), device });
@@ -248,15 +269,24 @@ impl Muxer {
                 last_err = format!("{name}: not in this FFmpeg build");
                 continue;
             }
+            let skip = |report: &mut crate::OpenReport, last_err: &mut String, why: String| {
+                *last_err = format!("{name}: {why}");
+                report.skipped.push((name.to_string(), why));
+            };
+            // A DRIVER FIRST MEETS A THROWAWAY PROCESS (D10): a fault in it ends that process, not
+            // this render. Without a render node there is no driver to load and nothing to ask.
+            if spec.trial
+                && !crate::vaapi_device_paths().is_empty()
+                && let crate::hw_trial::Verdict::Refused(why) = crate::hw_trial::ask_encoder(name, cfg)
+            {
+                skip(&mut report, &mut last_err, why);
+                continue;
+            }
             // A DEVICE CANDIDATE IS ONE STEP: device → frames → open (D3). What fails before
             // the open skips it WITHOUT `avcodec_open2` — the encoder's failed-init path stays
             // out of the cascade (ktprompts v26.10 T16).
             let mut device: Option<(&'static HwApi, *mut ffi::AVBufferRef, *mut ffi::AVBufferRef, String)> = None;
             if spec.ctx == crate::encoders::HwKind::Vaapi {
-                let skip = |report: &mut crate::OpenReport, last_err: &mut String, why: String| {
-                    *last_err = format!("{name}: {why}");
-                    report.skipped.push((name.to_string(), why));
-                };
                 let hw = match hw_api() {
                     Ok(h) => h,
                     Err(m) => {
@@ -412,7 +442,10 @@ impl Muxer {
             return Err(averr(api, "creating file", r));
         }
         let mut mopts: *mut ffi::AVDictionary = core::ptr::null_mut();
-        set(&mut mopts, "movflags", "+faststart");
+        // the trial's sink cannot be read back for the rewrite
+        if cfg.path != crate::hw_trial::TRIAL_SINK {
+            set(&mut mopts, "movflags", "+faststart");
+        }
         let r = unsafe { (api.avformat_write_header)(fmt, &mut mopts) };
         unsafe { (api.av_dict_free)(&mut mopts) };
         if r < 0 {
@@ -629,8 +662,18 @@ impl Muxer {
         }
     }
 
+    /// `finish`, and the encoded video bytes in the end.
+    pub fn finish_counted(mut self) -> Result<u64, FfError> {
+        self.finish_mut()?;
+        Ok(self.bytes[0])
+    }
+
     /// Flush the tails, close the file.
     pub fn finish(mut self) -> Result<(), FfError> {
+        self.finish_mut()
+    }
+
+    fn finish_mut(&mut self) -> Result<(), FfError> {
         let api = self.api;
         // pad the incomplete audio frame with silence
         if !self.audio_fifo.is_empty() {

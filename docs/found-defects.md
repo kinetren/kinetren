@@ -27,7 +27,6 @@ list may be short of items from them.
 | 12 | gallery near a cut | A missing thumbnail is filled from the nearest stored one, so near a cut it shows the other shot | `request_near` | open | later |
 | 13 | sound generator | An audio generator event draws no waveform | generators | unknown | С.3, check first |
 | 14 | Noise default | Added Noise shows nothing until the amount is raised | barrier noise kernel | open | owner's decision: a fix moves bytes |
-| 15 | VAAPI/QSV | Intel and AMD never encode in hardware; picking `h264_vaapi` by hand crashes the render | change `hw-encode-context`, 14 of 21 tasks done | open | С.1 |
 | 16 | loop freeze on wine | Play with a loop region freezes the picture until a click | change `loop-play-latency-hold` | open, unverified | С.3, wine probe first |
 | 17 | `.kt` MIME | A name-only guess can open `.kt` as Kotlin | `src/packaging/kinetren-mime.xml` | open | owner's decision |
 | 18 | seam outside a wrap | A clip dragged during playback does not refill the pitch look-ahead | kt-engine audio | deliberate | only on a complaint |
@@ -83,7 +82,7 @@ list may be short of items from them.
 
 - **`r72-timeline-transport-defects`: 19 tasks, none done.** Seventeen timeline defects the owner
   meets every day, ordered by him on 2026-10-30. Verdict: first in С.3.
-- `hw-encode-context`: row 15. `loop-play-latency-hold`: row 16.
+- `loop-play-latency-hold`: row 16.
 - `fx-lens-and-camera` (2 of 14 done), `flatpak-flathub` (11 tasks open): after С.3.
 - Every task done, or only the archive steps left: `ffmpeg-download-window-info`,
   `menu-chords-out-of-text`, `morpher-event-grid-cost`, `split-menu-label`, `still-image-frame-rule`,

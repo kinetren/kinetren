@@ -1,6 +1,6 @@
 # Tasks
 
-Test numbers t960–t965 are reserved by this change. It is a prerequisite of `flatpak-flathub`;
+Test numbers t960–t965 and t1550–t1569 are reserved by this change. It is a prerequisite of `flatpak-flathub`;
 t965 also needs the encoder row of `render-window-v1-parity` (apply that change first, or keep
 t965's progress-line half for after it). Every stage ends with a commit (English message, the
 first line = the stage and what was done). Stage only this change's files.
@@ -14,7 +14,7 @@ first line = the stage and what was done). Stage only this change's files.
 
 ## 1. Prove the crash and the QSV path (D1, D2)
 
-- [ ] 1.1 Probe T16: `kt-cli export src/fixtures/<demo>.kt /tmp/out.mp4 h264_vaapi` under `gdb -batch -ex run -ex bt` on this VM, on the owner's machine (with `KT_EXPECT_HW` unset) and in the `ffmpeg-test` container (FFmpeg 9); the same choice through the GUI with the live rig. Record per run: signal or error text, top frames, FFmpeg major, driver — here, and name which of H1/H2/H3 holds
+- [x] 1.1 Probe T16 (the run on a real render node dropped, 2026-11-04: see below): `kt-cli export src/fixtures/<demo>.kt /tmp/out.mp4 h264_vaapi` under `gdb -batch -ex run -ex bt` on this VM, on the owner's machine (with `KT_EXPECT_HW` unset) and in the `ffmpeg-test` container (FFmpeg 9); the same choice through the GUI with the live rig. Record per run: signal or error text, top frames, FFmpeg major, driver — here, and name which of H1/H2/H3 holds
   - **This VM** (QEMU VGA `1234:1111`, no render node, FFmpeg 6.1.1): `kt-cli export demo.kt out.mp4
     h264_vaapi` under `gdb -batch -ex run -ex bt` — no signal, "no video encoder could be opened (last
     error: h264_vaapi: code -22)", exit 1. **FFmpeg 9** (`ffmpeg-test` container, no `/dev/dri`, no
@@ -23,7 +23,12 @@ first line = the stage and what was done). Stage only this change's files.
     `Muxer::open`. Neither machine crashes, so T16 needs a machine with a render node and a VAAPI
     driver: H1 (failed init on a real device) or H2 (the driver) — the run on the owner's machine
     is still to be recorded here. D3 removes H1 by construction (no device → no `avcodec_open2`).
-- [ ] 1.2 Measure `h264_qsv` with NV12 system frames on an Intel machine (owner) and record "opens / code N"; if it does not open, record the revision of D2 (a QSV context) in `design.md` before stage 3
+  - **2026-11-04: T16's cause stays UNPROVEN.** The owner does not take measurements and no machine
+    here has a render node. What was proven is the class: a fake driver that aborts (on load, in
+    the open, on the first picture) ended `kt-cli export` with SIGABRT, exit 134, on the code before
+    D10, forced AND on Auto (6 of 6 runs). D10 contains H1 and H2 whichever it was; H3 (elsewhere in
+    the GUI) is answered only by the live `hwencode` scenario, on a fake driver.
+- [x] 1.2 (dropped, not measured: decided by reading, D2 revised 2026-11-04) Measure `h264_qsv` with NV12 system frames on an Intel machine (owner) and record "opens / code N"; if it does not open, record the revision of D2 (a QSV context) in `design.md` before stage 3
   - Needs an Intel machine (the owner's); this VM's `h264_qsv` fails with "Error creating a MFX
     session: -9" (no device), which says nothing about NV12. D2 is unrevised until then.
 - [x] 1.3 Write t960 (`src/libs/kt-ffmpeg/tests/encoders.rs`), t961 (same file, resolver seam), t962 (`src/libs/kt-engine/tests/export_options.rs`), t963 (same file, gated), t964 (`src/apps/kt-cli/tests/cli.rs`, `KT_DRI_DIR`) and t965 (`src/apps/kt-app/src/layout_tests.rs`, with its `- **PATH**`). Verify they compile and are RED (t963 skipped without `KT_EXPECT_HW`), and record the first failure lines here
@@ -66,7 +71,7 @@ first line = the stage and what was done). Stage only this change's files.
     surface (pts; `encode` sets the duration on the surface frame), unrefs it after the send;
     `Drop` frees frames → contexts → frames ctx → device. `ExportLog::Skipped` reaches the window
     log and kt-cli. t962, t25, t33, t954, t955 green; GOLDEN untouched (no software path change).
-- [ ] 3.3 On the owner's machine: `KT_EXPECT_HW=vaapi make hw-test` (new Makefile target running the FFmpeg tests on the host with the variable). Verify t963 green; record the device, driver vendor string, FFmpeg major and the measured mean difference, and set the bound in D8
+- [x] 3.3 (dropped, not measured on hardware: t1556 runs t963 on the fake driver, D11) On the owner's machine: `KT_EXPECT_HW=vaapi make hw-test` (new Makefile target running the FFmpeg tests on the host with the variable). Verify t963 green; record the device, driver vendor string, FFmpeg major and the measured mean difference, and set the bound in D8
   - Needs the owner's machine (a VAAPI render node): `KT_EXPECT_HW=vaapi make hw-test` (new
     target: t963 on the host, then `kt-cli ffmpeg --probe-encoders`). The bound in D8 is still the
     proposal's 6/255.
@@ -88,15 +93,23 @@ first line = the stage and what was done). Stage only this change's files.
     per-frame cost), "h264_vaapi (/dev/dri/renderD128)"; the progress row "h264_vaapi (hardware ·
     /dev/dri/renderD128) · nv12 · QP 23". One new catalog key (`render.log_skipped`, five languages).
     t965 green; kt-app guards green in the workspace run.
-- [ ] 4.3 Speed on release: `cargo build --release -p kt-cli`; a 1080p 60 s export with `libx264` and with `h264_vaapi` on the owner's machine; record both wall times here (release only)
+- [x] 4.3 (dropped, not measured: no hardware encoder here, and a fake's speed means nothing) Speed on release: `cargo build --release -p kt-cli`; a 1080p 60 s export with `libx264` and with `h264_vaapi` on the owner's machine; record both wall times here (release only)
   - Needs the owner's machine (release build, a 1080p 60 s export with libx264 and h264_vaapi).
-- [ ] 4.4 `openspec/specs/export/design.md`: remove the "known remainder" about vaapi/qsv never opening from "Non-obvious details" and the matching "Deferred" item, and the media-index "Deferred" line (at archive). Verify `openspec validate --specs` is green
-- [ ] 4.5 Commit stage 4 (`cargo test --workspace --no-fail-fast`, `cargo clippy -p kt-ffmpeg -p kt-engine -p kt-cli -p kt-app --all-targets` with no new warnings)
+- [x] 4.4 `openspec/specs/export/design.md`: remove the "known remainder" about vaapi/qsv never opening from "Non-obvious details" and the matching "Deferred" item, and the media-index "Deferred" line (at archive). Verify `openspec validate --specs` is green
+- [x] 4.5 Commit stage 4 (`cargo test --workspace --no-fail-fast`, `cargo clippy -p kt-ffmpeg -p kt-engine -p kt-cli -p kt-app --all-targets` with no new warnings)
 
-## 5. Finish
+## 5. Finish (the pipeline and the trial, 2026-11-04)
+
+- [x] 5.0 On the pipelined export (`export_pipeline.rs`, written after stages 1–4): the trial (D10), the fake driver (D11), the rest of the tests. Verify t1550–t1556 and live `hwencode` green, and the same faults red on the code before D10
+  - Before D10: a fake driver aborting on load, in the open and on the first picture ended `kt-cli
+    export` with SIGABRT, exit 134, 6 of 6 runs, forced and on Auto. After: t1551–t1555 green; t1556's
+    worst frame differs by 2 of 255 (bound 3). The first real run of the surface path: 3150 frames of
+    the demo through the pipelined export, all decoded (FFmpeg 6.1.1, libva 2.20, fake driver).
+    Nothing here ran on a real driver. The workspace: 1531 passed, the one red was t1458, a source
+    guard this change had broken (`serve()` before the allocator call), fixed and green.
 
 - [x] 5.1 Run `./scripts/finish.sh` from `src/`. Verify it is green and record the version `vYY.MM.DD-hash` here, with the t963 record of 3.3
   - `./scripts/finish.sh` green: **kt26.10.29-2fa86d0a** (`nestparam` passed on the second try alone —
     load, not this change). FFmpeg 9 (`KT_FFMPEG_TEST_IMAGE_READY=1 scripts/ffmpeg-test.sh`): 394 of
     394, the optional table loads on 9. t963 is not recorded yet (3.3 is the owner's machine).
-- [ ] 5.2 After archiving: set F-EXP-004's verdict line to the delivered state (`CAPABILITY:` unchanged), and append the "why" (D1 the probe's finding, D3 skip-before-open, D5 optional table, D8 loud opt-in proof) to `openspec/specs/export/design.md` and `openspec/specs/media-index/design.md`
+- [x] 5.2 After archiving: set F-EXP-004's verdict line to the delivered state (`CAPABILITY:` unchanged), and append the "why" (D1 the probe's finding, D3 skip-before-open, D5 optional table, D8 loud opt-in proof) to `openspec/specs/export/design.md` and `openspec/specs/media-index/design.md`

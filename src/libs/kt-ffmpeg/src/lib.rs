@@ -10,6 +10,7 @@
 
 pub mod api;
 pub mod encoders;
+pub mod hw_trial;
 pub mod loader;
 pub mod search;
 
@@ -344,6 +345,23 @@ pub fn backend_error() -> Option<String> {
     init().err()
 }
 
+/// The folder chosen in the app, for the throwaway process of `hw_trial`.
+pub(crate) fn user_ffmpeg_dir() -> Option<String> {
+    state().user_choice.clone()
+}
+
+/// Open `path` as a VAAPI device in THIS process: the driver's vendor, or why not (the trial's
+/// work); `None` when FFmpeg is not loaded.
+pub(crate) fn hw_open_device(path: &str) -> Option<Result<String, String>> {
+    match init() {
+        Ok((Backend::V6(api), _)) => Some(v6::hw_open_device(api, path)),
+        Ok((Backend::V7(api), _)) => Some(v7::hw_open_device(api, path)),
+        Ok((Backend::V8(api), _)) => Some(v8::hw_open_device(api, path)),
+        Ok((Backend::V9(api), _)) => Some(v9::hw_open_device(api, path)),
+        Err(_) => None,
+    }
+}
+
 /// The test seam of the hardware path (hw-encode-context): THREAD-LOCAL, because a test binary
 /// runs many exports at once and an environment variable would steer all of them.
 pub mod hw_seam {
@@ -489,7 +507,8 @@ pub struct OpenReport {
     pub options: Vec<(String, String)>,
     pub tried: Vec<(String, i32)>,
     /// Device candidates skipped BEFORE `avcodec_open2` (hw-encode-context D3), with the reason:
-    /// "no VAAPI device …", "hardware context functions missing: …", "frames context: code N".
+    /// "no VAAPI device …", "hardware context functions missing: …", "frames context: code N",
+    /// and whatever the throwaway process found (`hw_trial`): "the driver crashed …".
     pub skipped: Vec<(String, String)>,
     /// The device the opened encoder uses (a render node), if it needs one.
     pub device: Option<String>,
@@ -541,6 +560,16 @@ impl Muxer {
             Muxer::V7(m) => m.bytes(),
             Muxer::V8(m) => m.bytes(),
             Muxer::V9(m) => m.bytes(),
+        }
+    }
+
+    /// `finish`, and the encoded video bytes in the end (the trial asks whether any came out).
+    pub(crate) fn finish_counted(self) -> Result<u64, FfError> {
+        match self {
+            Muxer::V6(m) => m.finish_counted(),
+            Muxer::V7(m) => m.finish_counted(),
+            Muxer::V8(m) => m.finish_counted(),
+            Muxer::V9(m) => m.finish_counted(),
         }
     }
 

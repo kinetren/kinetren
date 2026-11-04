@@ -519,6 +519,61 @@ fn t963_sixty_frames_through_vaapi_decode() {
     assert!(worst <= BOUND, "VAAPI frames differ by {worst:.2} > {BOUND}");
 }
 
+/// t1556 (hw-encode-context D4): t963 itself, on the fake driver of `fixtures/fake_va`, which keeps
+/// every sample: what the pipelined export uploads to a surface is what the file decodes to, every
+/// frame, in order. This is the only run of the upload a machine without a graphics card can give;
+/// it proves our path through the real libva and FFmpeg, not any real driver. A child process,
+/// because the driver is chosen by the environment libva reads at load time.
+#[test]
+fn t1556_the_upload_decodes_to_the_frames_it_was_given() {
+    if std::env::var("KT_EXPECT_HW").is_ok() {
+        return; // the child, or a real machine's run of t963
+    }
+    if !(cfg!(target_os = "linux") && kt_media::ffmpeg::backend_info().is_some()) {
+        eprintln!("t1556 skipped: needs FFmpeg on Linux");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let driver = dir.path().join("ktfake_drv_video.so");
+    let source = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/fake_va/ktfake_drv_video.c");
+    let built = ["cc", "clang"].iter().any(|cc| {
+        std::process::Command::new(cc)
+            .args(["-shared", "-fPIC", "-O1", "-w", "-o"])
+            .arg(&driver)
+            .arg(source)
+            .status()
+            .is_ok_and(|s| s.success())
+    });
+    assert!(built, "no C compiler built the fake driver");
+    let node = dir.path().join("renderD128");
+    std::fs::write(&node, b"a regular file").unwrap();
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["t963_sixty_frames_through_vaapi_decode", "--exact", "--nocapture"])
+        .env("KT_EXPECT_HW", "vaapi")
+        .env("KINETREN_VAAPI_DEVICE", &node)
+        .env("LD_PRELOAD", &driver)
+        .env("LIBVA_DRIVERS_PATH", dir.path())
+        .env("LIBVA_DRIVER_NAME", "ktfake")
+        .output()
+        .unwrap();
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    if all.contains("not in this FFmpeg build") {
+        eprintln!("t1556 skipped: this FFmpeg has no h264_vaapi");
+        return;
+    }
+    assert!(out.status.success(), "{all}");
+    assert!(all.contains("t963: the worst frame's mean absolute difference"), "t963 did not run: {all}");
+    let worst: f64 = all
+        .split("mean absolute difference ")
+        .nth(1)
+        .and_then(|t| t.split_whitespace().next())
+        .and_then(|t| t.parse().ok())
+        .expect("the measured difference");
+    eprintln!("t1556: {worst}");
+    // lossless to NV12: what is left is swscale's RGB → 4:2:0 → RGB round trip
+    assert!(worst <= 3.0, "the file differs from the uploaded frames by {worst}");
+}
+
 /// t1456 (export-throughput D3): the video encoder is opened with its threads — `auto` for the
 /// export, `1` for the serial reference — and says so in the open report; both files hold every
 /// frame and the same audio length.
