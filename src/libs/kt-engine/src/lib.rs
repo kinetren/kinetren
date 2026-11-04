@@ -6,12 +6,15 @@
 //! Ahead: M7 (export). Architecture and thread ownership — docs/architecture.md.
 
 pub mod audio;
+mod compose_ahead;
 pub mod export;
+pub mod export_pipeline;
 pub mod fetch;
 pub mod flight;
 pub mod fxstore;
 pub mod player;
 pub mod prefetch;
+pub mod preview_bench;
 pub mod transitions;
 pub mod transport;
 pub mod video;
@@ -147,7 +150,8 @@ pub use video::{
     nest_memo_key, nest_source_id, reel_chain_of_clip, resolve_cam3d, video_cache_idx,
 };
 pub use video_plan::{
-    Cam3d, FramePlan, GpuBackendInfo, GpuExecError, LayerSrc, PlanLayer, VideoGpuExec,
+    Cam3d, FramePlan, GpuBackendInfo, GpuExecError, GpuStages, LayerSrc, PlanLayer, PresentOptions,
+    VideoGpuExec,
 };
 pub use worker::{DecodeRequest, MediaWorker, RequestKind, Retune};
 

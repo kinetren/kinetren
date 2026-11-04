@@ -620,3 +620,154 @@ seek left behind and the frames the picture skipped, none of which was still wan
 - **WHEN** a warmed window is left by a seek and evicted unread; then an entry the latest pass still wants is evicted unread; then an audio burst is evicted unread
 - **THEN** the first are counted as abandoned, not as thrash; the second and the audio burst are thrash
 - **TEST** t1417b (`src/libs/kt-cache/src/lib.rs`)
+
+### Requirement: No lock of the sidecar is held across an fsync
+A connection to the sidecar SHALL NOT hold a SQLite lock that another opening, reader or writer
+waits on while the disk syncs:
+- a commit SHALL NOT sync the WAL (`synchronous=NORMAL` in WAL mode);
+- closing a connection SHALL NOT checkpoint, sync or take the database's EXCLUSIVE lock (no
+  checkpoint on close; the passive auto-checkpoint folds the WAL in).
+
+Both SHALL be set on every opening and SHALL NOT write the file. The `-wal` and `-shm` files MAY
+stay next to the sidecar after the last connection closes.
+
+Why: on the build machine's spinning disks one fsync under a parallel test run took 137 s. A commit
+synced under the write lock, and the last close checkpointed and synced under the EXCLUSIVE lock
+every opening needs. Connections waiting behind them gave up after the 5 s busy timeout, and the
+error became a cache miss: t1171 `DatabaseBusy`, t640 a re-rendered reel, t411 a loudness measured
+again instead of read back. These were red only in the whole-workspace finish.sh run. The same
+stall happens next to a person's project on a spinning disk.
+
+#### Scenario: Two threads use a ready sidecar while every fsync is stalled
+- **WHEN** a ready sidecar was written while the disk answered; then every fsync blocks until
+  released, and two threads released by one barrier each open the sidecar, write a media record and
+  a loudness, read it back and close, five times
+- **THEN** both threads finish within 3 s (under the 5 s busy timeout), with no error and no fsync
+  attempted. Before: one thread's commit hung in the fsync, and the other failed with `DatabaseBusy`
+  ("database is locked") after 5 s; with `synchronous=NORMAL` alone, a close hung in its checkpoint; without the close checkpoint
+  alone, a commit hung and the other thread's write failed with `DatabaseBusy`
+- **TEST** t1460 (`src/libs/kt-media/tests/sidecar_stall.rs`); its consequences in the
+  whole-workspace run: t1171 (`src/libs/kt-media/tests/index_db.rs`), t640 and t1413
+  (`src/apps/kt-app/src/layout_tests.rs`), t411 (`src/apps/kt-app/src/util.rs`)
+
+### Requirement: The decoder reads what it is asked, once, without corrupting memory
+The RGBA conversion of a decoded picture SHALL write into a frame buffer with
+`kt_ffmpeg::RGBA_TAIL_PAD` spare bytes after the frame, cut off after the conversion — libswscale's
+x86 kernels write past the last row when the width is not a multiple of their block. A read whose
+target is past the decoder's deferred frame SHALL decide between decoding on and seeking by the
+forward bound, never decode every picture up to it; every key of a span SHALL be decided so.
+A span asked at several decode qualities SHALL decode each picture once and convert it to every
+quality asked at it. The export's own source of a file read at two places at once SHALL give each
+place its own decoder (at most two per file), chosen by the requests alone. The binaries SHALL fix
+the allocator's mmap threshold at 1 MiB before anything else, so a freed frame-sized buffer goes
+back to the system instead of a thread's arena.
+Why: the showcase export (export-throughput, 2026-11-03) died within three seconds with
+`malloc(): corrupted top size` — a 1080×1080 source's conversion wrote 32 bytes into the next
+heap chunk's header. Once it ran, its decoders produced 101,009 pictures to deliver 5,644: a
+jump of two minutes forward was decoded linearly (3,733 4K pictures for one event), and a
+picture-in-picture of the same footage 7 s earlier made one decoder seek back and decode a GOP
+for every frame. Pipelined, glibc's arenas then held 9 GB of freed frames: 16.2 GB peak.
+
+#### Scenario: The conversion's overrun fits the pad
+- **WHEN** YUV420P pictures of the owner's 1080×1080 and of every even width up to 130 are
+  converted to RGBA at their size and from three times their width, through the system FFmpeg
+- **THEN** no conversion writes more than `RGBA_TAIL_PAD` bytes past the frame (the worst
+  measured is 56 bytes)
+- **TEST** t1450 (`src/libs/kt-ffmpeg/tests/rgba_tail.rs`)
+
+#### Scenario: A far forward span seeks
+- **WHEN** a span is read at 0 s and the next span at 10 s of a 30 fps file with a keyframe a
+  second
+- **THEN** the second span decodes at most a GOP and its frames (45 pictures, not 300), and its
+  frames equal a fresh source's
+- **TEST** t1453 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`)
+
+#### Scenario: A span at two qualities decodes once
+- **WHEN** forty keys on a 25 fps grid are asked at 160×90 and 96×54 in one span of a 30 fps file
+- **THEN** the decoder opens once, decodes at most a GOP plus the keys, and each quality's frames
+  equal a span at that quality alone
+- **TEST** t1454 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`)
+
+#### Scenario: Two places of one file get two decoders
+- **WHEN** thirty one-frame chunks each ask the file at 1 s + n and at 8 s + n
+- **THEN** the decoders open at most twice and decode at most two GOPs and the sixty frames (one
+  decoder: sixty reopens), and the frames equal a fresh source's
+- **TEST** t1455 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`)
+
+#### Scenario: Frame-sized buffers return to the system
+- **WHEN** the process starts (kt-cli, kt-app)
+- **THEN** the first statement of each entry point fixes the threshold, and on glibc the allocator
+  takes it (the showcase's pipelined export peaks at 7.3 GB, not 16.2 GB)
+- **TEST** t1458 (`src/libs/kt-media/src/frame_alloc.rs`)
+
+### Requirement: The live decoder serves a moment once, at every size asked
+A video span of a `MediaWorker` SHALL carry every decode size asked at its moments and go through
+`read_video_span_qualities`, so a picture is decoded once and converted to each size, and a file
+read at two places gets its second decoder there. The worker SHALL look into its queue between
+chunks of whole moments, never between the sizes of one moment. A span SHALL hold at most half the
+video budget, every key counted at its own decode size, and the keys that do not fit SHALL stay
+queued. A native-size key SHALL keep a span of its own. The source stays owned by that worker's
+thread (invariant 5).
+Why: `kt-cli preview` on the showcase (preview-throughput, 2026-11-04): a sharp layer over its
+blurred backdrop asks one file at two sizes, and two spans, one per size, sent the second behind
+the cursor, which rebuilt the decoder: 3,844–5,413 pictures decoded to deliver about 550, 55–75
+reopens in 12 s, 9.5–12.8 of 25 V-fps at 1080p, 42,762–82,482 frames of audio underrun. Keys past
+the budget were also taken off the queue and dropped silently.
+
+#### Scenario: Two sizes of one moment are one decode
+- **WHEN** a worker is asked 8 moments of one file at two decode sizes
+- **THEN** both sizes of every moment reach the cache, no read goes behind the cursor, and the
+  decoder produces each picture once
+- **TEST** t1520 (`src/libs/kt-engine/tests/preview_throughput.rs`)
+
+#### Scenario: A chunk is whole moments
+- **WHEN** a span of 10 moments at two sizes is decoded
+- **THEN** every read holds at most four moments, and no moment is asked in two reads
+- **TEST** t1521 (`src/libs/kt-engine/tests/preview_throughput.rs`)
+
+#### Scenario: A span fits the cache at each key's own size
+- **WHEN** a tiny key is queued before twelve 4K keys against a cache of three 4K frames
+- **THEN** no read holds more than half the budget, and every key is still decoded in the end
+- **TEST** t1522 (`src/libs/kt-engine/tests/preview_throughput.rs`)
+
+#### Scenario: A sharp layer over its backdrop plays in time
+- **WHEN** a file costing 12 ms a picture stands twice at one moment, at two decode sizes, at 25 fps,
+  and 4 s are played through the real player against a wall-clock output device
+- **THEN** at least 70 % of the grid's frames reach the screen, counted as the performance panel's
+  V-fps counts them
+- **TEST** t1524 (`src/libs/kt-engine/tests/preview_throughput.rs`)
+
+### Requirement: A burst does not wait out a video span of its own priority
+Between the chunks of a video span the worker SHALL read the audio bursts queued at the span's own
+priority and go on with the span, without moving the video cursor.
+Why: a span holds up to 64 keys, seconds of 4K, and a burst of the look-ahead left behind it turned
+urgent only after the render had missed it (preview-throughput, 2026-11-04).
+
+#### Scenario: A burst during a long span
+- **WHEN** a burst is queued at NearPrefetch while a span of 32 pictures runs at that priority
+- **THEN** it is read after fewer than 16 pictures, the span finishes all 32, and nothing reopens
+- **TEST** t1529 (`src/libs/kt-engine/tests/preview_throughput.rs`)
+
+### Requirement: The first frame of a cut is asked before the window reaches it
+Past the look-ahead's bytes, up to its 2 s, one prefetch pass SHALL ask the layers that start a read
+the moment before was not doing, at most `CUT_LEAD_KEYS` keys, and no later frames of them.
+Why: at 1080p the window is about 0.7 s long, and on the showcase a 4K file took about 0.85 s to
+reach an event's first frame: 52 incomplete composites at that one cut, however fast the rest was
+(preview-throughput, 2026-11-04). With this, 297 of 300 frames at 1080p.
+
+#### Scenario: A cut past the window
+- **WHEN** a cut stands 1 s ahead of a 0.16 s window
+- **THEN** the pass asks the window's four frames and the cut's first frame, after them; nearer than
+  the bytes reach it adds nothing, and a stack without a cut asks what it asked before
+- **TEST** t1528 (`src/libs/kt-engine/tests/prefetch_budget.rs`)
+
+### Requirement: Only a frame counts as a video miss
+A lookup of an empty post-FX memo SHALL NOT count as a video miss; a hit of the memo SHALL still count
+as a hit.
+Why: the panel warns of a low hit rate below 80 %, and on the CPU path it read 41–57 % with every
+decoded frame in the cache (preview-throughput, 2026-11-04).
+
+#### Scenario: An empty memo
+- **WHEN** an empty post-FX memo is looked up, and then a frame that is not in the cache
+- **THEN** the first adds no video miss and the second adds one
+- **TEST** t1535 (`src/libs/kt-cache/src/lib.rs`)

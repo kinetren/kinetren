@@ -50,6 +50,18 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   reassociates — never add a `fast-math`-style flag or an `fma` intrinsic to it. The subset has no
   `var`/`if`/loops and no splat constructors; a helper carries its kernel's prefix (every plugin's
   WGSL lands in one fused module). t1500/t1501; the migration is the owner's decision.
+- **A simulated device's two halves are one passport** (sim-audio-pairs): a video kind declares
+  its audio pair (`Decl.pair`), the audio kind is built from the SAME passport function; the
+  registry refuses a mismatch in either order (t1484) and the assembler refuses a missing half
+  (`unpaired`). `Decl.foreign_rows` names the shared rows a half does not read (the picture's
+  record circuits on the sound) — t322 skips them. An audio half reads the device at the TIMELINE
+  position its picture reads: `AudioState::place` gives it its clip's timeline start and the
+  project fps; it derives the state from rows + time, never shares it with the picture.
+- **`audio_codec` is the ONE lossy audio codec of the simulations** (sim-audio-pairs): an MDCT
+  (2048/1024, sine window, through a 256-point FFT), AAC-Main-like per-line prediction with resets,
+  Rice-coded lines, a bit reservoir, a concealing decoder; frozen math, the same bytes everywhere.
+  The predictor stays inside its stability triangle and the decoder inside its range: a broken
+  stream smears and saturates, it never runs away (fed the wrong history it reached 56 000).
 - The module is `generator`, not `gen`: `gen` is a reserved keyword in Rust 2024.
 - Mandatory tests: t972 (`tests/registry.rs`) and every family's frozen-form test (t973,
   t1048) when a row or a declaration changes.

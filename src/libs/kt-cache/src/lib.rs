@@ -362,9 +362,13 @@ impl BurstCache {
         let counter = inner.recency_counter;
         let is_audio = key.kind == BurstKind::Audio;
         let Some(entry) = inner.map.get_mut(&key) else {
-            match is_audio {
-                true => self.stats.audio_misses.fetch_add(1, Ordering::Relaxed),
-                false => self.stats.video_misses.fetch_add(1, Ordering::Relaxed),
+            // A post-FX memo that holds nothing yet is no missing frame: counted as one, the first
+            // composite of every frame with an effect read as a decode that could not keep up, and
+            // the panel warned of a low hit rate on the CPU path (preview-throughput).
+            match key.kind {
+                BurstKind::Audio => self.stats.audio_misses.fetch_add(1, Ordering::Relaxed),
+                BurstKind::PostFxVideo { .. } => 0,
+                _ => self.stats.video_misses.fetch_add(1, Ordering::Relaxed),
             };
             return None;
         };
@@ -985,5 +989,16 @@ mod perf_counter_tests {
         let (_, second) = cache.get_video_stamped(src, None, 0).expect("frame is stored");
         assert_ne!(first, second, "same address, different bytes — the number must differ");
         assert!(second > first, "numbers are monotonic and not reused");
+    }
+
+    /// t1535: an empty post-FX memo is no missing frame. Counted as one, the hit rate of the CPU
+    /// path fell to 57 % with every decoded frame there, and the panel warned of a slow decoder.
+    #[test]
+    fn t1535_an_empty_post_fx_memo_is_not_a_video_miss() {
+        let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 1 << 20 });
+        assert!(cache.get_postfx_video(SourceId(1), (4, 2), 7, 0).is_none());
+        assert_eq!(cache.stats().video_misses, 0, "the memo held nothing, no frame was missing");
+        assert!(cache.get(BurstKey { source: SourceId(1), kind: BurstKind::video(None), idx: 0 }).is_none());
+        assert_eq!(cache.stats().video_misses, 1, "a frame that is not there still counts");
     }
 }

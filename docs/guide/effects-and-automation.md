@@ -113,6 +113,15 @@ drum to set it Clean, Dirty, Clogged or Chipped. **Two decks** records on one an
 another. Presets: Good deck, Dirty heads, Clogged head, Chipped head, 4-head still, Worn
 rental tape, LP. The older **VHS** effect is a quick look without the process.
 
+**The sound of the tape.** Put VHS Tape on an event with linked audio and the audio gets
+**VHS Tape** too — the same deck, one panel: its **Sound** section chooses **Hi-Fi**,
+**Normal (linear)** or **Mix**, mono or stereo linear tracks, **Dolby B**, the audio head's
+gap and dirt, the bias and the record level. Hi-Fi is FM written by the drum's heads: a
+clogged or dirty head, mistracking or a dropout breaks the sound in the same field the
+picture loses. The linear track is read by a still head at the tape's speed: LP is duller,
+the narrow stereo tracks hiss more, and the capstan's flutter wobbles the pitch. Its checkbox
+in the audio's chain lets the deck's sound out or keeps the event's own.
+
 **Camera ISP** treats the frame as a developed picture: it undoes the source camera into a
 scene, films it through a simulated lens (defocus, distortion, chromatic aberration,
 vignetting, colour shading) onto a colour mosaic (RGGB and its phases, Quad Bayer,
@@ -123,6 +132,16 @@ correction, colour matrix, tone curve, denoise, sharpening, YUV. Every block can
 switched off or set wrong; **View** shows the picture after any stage. Presets: Phone at
 night, Cheap webcam, Security cam, IR, Cinema raw, Wrong CFA phase, No IR-cut filter.
 
+**The sound of the camera.** Put Camera ISP on an event with linked audio and the audio gets
+**Camera ISP** too: the event's sound is filmed again through the device's **Microphone** —
+the last block of the panel. The scene's level and the wind reach an acoustic port (a real
+resonator: its diameter, length and cavity set its peak), the capsule adds its noise and
+overloads, the **Automatic gain control** lifts quiet moments so the room breathes between
+words, **Noise suppression** takes the floor down and leaves its artefacts when pushed, and
+the device's codec finishes it: AAC, 16 kHz PCM or 8 kHz G.711. The looks set all of it:
+Phone at night, Cheap webcam and Security cam each sound like the device they film with.
+Cinema raw and the two defect presets keep a plain camera microphone.
+
 **Datamosh** encodes the clip with its own small video codec — motion search, a
 prediction loop, quantised detail, keyframes — and breaks it on purpose. **Mosh** drops the
 keyframes, so the previous shot is dragged by the new shot's motion; **Bloom** repeats one
@@ -132,6 +151,14 @@ or whole blocks can be lost. These take curves: switch the mosh on and off on th
 put a **Reset** key where the picture should start clean. Presets: Cut mosh, Bloom,
 Transplant, Melt. A frame looks the same whether you play up to it, jump to it or render
 it.
+
+**The sound of the stream.** Put Datamosh on an event with linked audio and the audio gets
+**Datamosh** too: the sound is coded by a small audio codec into the same stream and broken
+at the same moments. A dropped keyframe takes its audio packet with it — the decoder patches
+the gap and the sound smears until the next intact keyframe, so a **Reset** key heals both;
+**Bloom** repeats a packet, **Freeze reference** holds the codec's prediction, **Residual**
+and **Loss** act on the sound as on the picture. The panel adds the **audio bitrate** and
+**spectral prediction**.
 
 ## Track effects and ducking
 

@@ -8,7 +8,7 @@ project is OUR synthetic fixture (a generator), not one of the owner's.
 
 PATH (export spec):
 1. File → Render… → the settings window;
-2. Render… → the question "kt-demo-40s.mp4 already exists (… MB, date). Replace it?" with Replace and
+2. Render… → the question "kt-demo-200s.mp4 already exists (… MB, date). Replace it?" with Replace and
    Choose another name, the file's bytes untouched;
 3. Choose another name → the save step again (the seam answers the same file) → the same question;
 4. Replace → the progress window: "Output" (resolution, fps, the encoder that opened, audio,
@@ -33,13 +33,15 @@ OWN_PROCESS = True
 def main(out):
     require_tools()
     os.makedirs(out, exist_ok=True)
-    target = os.path.join(out, "kt-demo-40s.mp4")
+    target = os.path.join(out, "kt-demo-200s.mp4")
     old = bytes(range(256)) * 16
     with open(target, "wb") as f:
         f.write(old)
     was = os.environ.get("KT_FILE_PICK")
     os.environ["KT_FILE_PICK"] = target
-    proj = project_with_clips(os.path.join(out, "render.otio"), [(0.0, 40.0, "synth:Ramp")])
+    # long enough to still run through the Log and Pause steps: the pipelined export
+    # (export-throughput) rendered the former 40 s before the scenario reached Pause
+    proj = project_with_clips(os.path.join(out, "render.otio"), [(0.0, 200.0, "synth:Ramp")])
 
     def untouched():
         with open(target, "rb") as f:
@@ -58,7 +60,7 @@ def main(out):
             app.expect(app.has_probe("ask.replace"), "an existing file is asked about")
             app.expect(not app.has_probe("render.pause", tries=2), "the render did not start before the answer")
             app.expect(untouched(), "the file is untouched before Replace")
-            app.step("overwrite", "“kt-demo-40s.mp4 already exists (… MB, date). Replace it?”")
+            app.step("overwrite", "“kt-demo-200s.mp4 already exists (… MB, date). Replace it?”")
 
             # 3) another name: the save step again, the same file, the same question
             app.click_probe("ask.other_name", "Choose another name")

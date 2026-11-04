@@ -182,11 +182,44 @@ fn t322_audio_registry_contract() {
                     e.set_param("high_gain_db", -12.0);
                     e
                 }
+                // the VHS deck's sound (sim-audio-pairs): the play drum's heads play only with two
+                // decks; the linear track's rows are heard when the deck outputs it (Mix); a
+                // dropout's length when there are dropouts in the second probed
+                ("vhs_tape_sound", p) if p.starts_with("play_") => {
+                    let mut e = (*f).clone();
+                    e.set_param("decks", 1.0);
+                    e
+                }
+                ("vhs_tape_sound", "ac_gap" | "ac_spacing" | "bias" | "rec_level_db" | "tape_saturation") => {
+                    let mut e = (*f).clone();
+                    e.set_param("audio_out", 2.0);
+                    e
+                }
+                ("vhs_tape_sound", "dropout_us") => {
+                    let mut e = (*f).clone();
+                    e.set_param("dropouts_per_s", 200.0);
+                    e
+                }
+                // the camera's microphone: the AGC's and the suppressor's rows act when they are in
+                // the chain and the level reaches them; the wind is heard through the capsule
+                ("camera_isp_sound", "mic_agc_target") => {
+                    let mut e = (*f).clone();
+                    e.set_param("mic_scene_spl", 120.0);
+                    e
+                }
                 _ => (*f).clone(),
             }
         };
         let mut audible_probe: Vec<(String, f64)> = Vec::new();
-        for spec in f.auto_params() {
+        // the rows of a pair's shared passport this half does not read (sim-audio-pairs)
+        let foreign: &[&str] = match f {
+            FxInstance::Plugin(p) => p.manifest().decl.foreign_rows,
+            _ => &[],
+        };
+        // a gate that acts on its RISING EDGE: a constant value has none, it needs a curve (t1472b
+        // draws one)
+        let edge_only = |name: &str| f.tag() == "datamosh_sound" && name == "reset";
+        for spec in f.auto_params().filter(|s| !foreign.contains(&&*s.name) && !edge_only(&s.name)) {
             let base = base_for(&spec.name);
             let base_out = render_on(vec![base.clone()], vec![], false, 0, stim);
             let heard = probe_values(spec).into_iter().find(|probe| {
@@ -203,7 +236,7 @@ fn t322_audio_registry_contract() {
 
         // (c) the curve of the first Smooth parameter works: the output is equal to
         // neither the constant default nor the constant probe
-        if let Some(spec) = f.auto_params().next() {
+        if let Some(spec) = f.auto_params().find(|s| !foreign.contains(&&*s.name) && !edge_only(&s.name)) {
             let probe =
                 audible_probe.iter().find(|(n, _)| *n == spec.name).map(|(_, v)| *v).unwrap();
             let curved = render_on(fx.clone(), curve_for(spec, probe), false, 0, stim);

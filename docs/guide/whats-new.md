@@ -5,6 +5,38 @@ month, newest first.
 
 ## kt26.11
 
+- **Camera ISP records the sound too.** On an event with linked audio, the sound goes through the
+  device's microphone: the phone's port and noise suppressor, a webcam's 16 kHz, a security
+  camera's G.711 and wind, with an automatic gain control that lifts the room between words.
+  The looks set it, and the Microphone block in the panel lets you change every step.
+  A project that uses a look with a device microphone, or changes a device's sound settings, opens
+  only in this version and newer.
+- **Datamosh breaks the sound too.** On an event with linked audio, the sound now goes through a
+  real audio codec in the same stream: where the picture loses a keyframe the sound loses a packet
+  at the same moment and smears until the next clean keyframe — a Reset key heals both.
+- **VHS Tape now plays the sound too.** Put it on an event with linked audio and the audio gets
+  the same deck: Hi-Fi tracks that crackle exactly where a clogged head or a dropout breaks the
+  picture, or the linear track — dull at LP, with tape hiss and the capstan's wobble. Its Sound
+  section is in the deck panel; the checkbox in the audio's chain switches it off.
+- **The preview keeps up at full quality.** A shot over its own blurred backdrop used to make the
+  program decode the same video about ten times over; now each picture is decoded once, the sound
+  no longer drops out there, and playback at the project's full size stays smooth where it used to
+  stutter. The interface stays responsive during playback, even on a computer without a graphics
+  card, where frames are now prepared ahead on several processor cores, and a cut into a large 4K
+  file no longer arrives late. The first play after opening a project starts with its sound
+  instead of a moment of silence.
+- **A busy disk no longer makes the program forget its previews.** On a spinning disk under heavy
+  writing, opening a project could rebuild the previews of its compositions, and the waveforms and
+  loudness of its media, as if seen for the first time. The program now keeps using what it stored.
+- **The final render is several times faster, and it no longer crashes on some footage.** It
+  used one core for everything in turn; now it reads, draws, converts and encodes at the same
+  time on all of them, and the sound renders alongside the picture instead of after it. A
+  project that jumps around in long 4K files no longer reads minutes of video it does not show,
+  and a picture-in-picture of the same clip no longer makes it re-read the clip for every frame.
+  The render of a project with a square 1080×1080 video used to crash within seconds. On a
+  machine without a graphics card the render now draws on the processor's cores, which is the
+  faster way there.
+
 - **Camera ISP no longer smears the edges of the frame.** "Phone at night" and the looks with a
   distorting lens filled a band along the edges — about 30 px on a 1080p frame — with streaks of
   the edge pixels. The simulated lens is now framed on what your footage recorded, and the
@@ -15,6 +47,10 @@ month, newest first.
   "Echo of the effects before the pitch": **cut at the event's end** (as before — the joins stay
   seamless) or **rings on after the event** (the echo goes on past the event's end, pitched, as
   without the pitch). Projects that use "rings on" open only in this version and newer.
+- **A loop over an echo before a pitch no longer dips at every lap.** When the loop region started
+  at an event with an echo or reverb before its pitch, each pass began with a short hole (with
+  "rings on") or a sudden drop with a bit of foreign sound (with "cut"). Every pass now starts as
+  playing from that point does, and the echo of the pass before still rings on over it.
 - **Playing layered 4K footage keeps its frames ready.** Where several layers play at once —
   a shot over its blurred backdrop, a picture-in-picture, a composition — the preview used to
   ask for more frames ahead than its memory holds and threw away the ones it needed next, so

@@ -100,3 +100,117 @@ fn t1193_the_deck_face_sets_a_head_s_condition() {
     assert_eq!(tape(&h).get_param("decks"), Some(1.0));
     assert!(h.query_by_label("deck.head.1.0").is_some(), "two decks: no play drum");
 }
+
+/// t1468 (sim-audio-pairs; capability `audio-fx`): VHS Tape on an event with linked audio puts the
+/// deck's sound on that audio — visible in its chain with its own switch — and the effects window
+/// shows the deck face with its Sound section on both halves; "Normal (linear)" pressed on the face
+/// reaches both halves in the MODEL (the sound's own edits reach the picture: t1461).
+#[test]
+fn t1468_the_deck_s_sound_is_on_the_linked_audio() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    for (id, kind) in [(1, ClipKind::Video), (2, ClipKind::Audio)] {
+        p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
+            overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
+            id: ClipId(id),
+            link_group: Some(GroupId(1)),
+            kind,
+            lane: 0,
+            start: kt_time::Tick(0),
+            duration: kt_time::Tick(180_000),
+            source_in: kt_time::Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![],
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            opacity: 1.0,
+            fx_off: false,
+            masks: Default::default(),
+        });
+    }
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    // the person adds VHS Tape to the picture (the picker's door is SetFx)
+    assert!(app.apply(Command::SetFx { id: ClipId(1), fx: vec![FxInstance::builtin("vhs_tape")] }));
+    let audio = app.model.clip(ClipId(2)).unwrap().clone();
+    assert_eq!(audio.fx.iter().map(|f| f.tag()).collect::<Vec<_>>(), ["vhs_tape_sound"], "no sound on the linked audio");
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+    // the deck face on both halves, each with its Sound section
+    let normals: Vec<egui::Rect> = h.query_all_by_label(tr(k::deck::NORMAL)).map(|n| n.rect()).collect();
+    assert_eq!(normals.len(), 2, "the Sound section is not on both halves");
+    assert!(h.query_all_by_label(tr(k::deck::SOUND)).count() == 2);
+    // the first fold's face (the lower one is below the harness window's fold)
+    let upper = *normals.iter().min_by(|a, b| a.center().y.total_cmp(&b.center().y)).unwrap();
+    click(&mut h, upper.center());
+    let m = &h.state().model;
+    assert_eq!(m.clip(ClipId(1)).unwrap().fx[0].get_param("audio_out"), Some(1.0), "the deck did not take Normal");
+    assert_eq!(m.clip(ClipId(2)).unwrap().fx[0].get_param("audio_out"), Some(1.0), "the deck's sound did not follow");
+}
+
+/// t1486 (sim-audio-pairs; capability `audio-fx`): Datamosh and Camera ISP on an event with linked
+/// audio put the stream's sound and the camera's microphone on that audio, and the effects window
+/// shows their sound controls on both halves' panels; removing the effect takes its sound off.
+#[test]
+fn t1486_the_stream_and_the_camera_sound_on_the_linked_audio() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    for (kind, sound) in [("datamosh", "datamosh_sound"), ("camera_isp", "camera_isp_sound")] {
+        let mut h = harness();
+        // after the harness: it sets the catalogue language of this thread
+        let label = if kind == "datamosh" { tr(k::fx::MOSH_SOUND) } else { tr(k::isp::block::MICROPHONE) };
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+        for (id, clip_kind) in [(1, ClipKind::Video), (2, ClipKind::Audio)] {
+            p.clips.push(ClipEvent {
+                r#gen: None,
+                gen_auto: Vec::new(),
+                overrides: Vec::new(),
+                geometry: Default::default(),
+                geometry_pos: 0,
+                geometry_auto: Vec::new(),
+                id: ClipId(id),
+                link_group: Some(GroupId(1)),
+                kind: clip_kind,
+                lane: 0,
+                start: kt_time::Tick(0),
+                duration: kt_time::Tick(180_000),
+                source_in: kt_time::Tick(0),
+                media: MediaId(1),
+                gain_db: 0.0,
+                reversed: false,
+                fx: vec![],
+                fx_bypass: vec![],
+                fx_auto: vec![],
+                opacity: 1.0,
+                fx_off: false,
+                masks: Default::default(),
+            });
+        }
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        assert!(app.apply(Command::SetFx { id: ClipId(1), fx: vec![FxInstance::builtin(kind)] }));
+        let tags: Vec<&str> = app.model.clip(ClipId(2)).unwrap().fx.iter().map(|f| f.tag()).collect();
+        assert_eq!(tags, [sound], "{kind}: no sound on the linked audio");
+        app.open_fx_editor(ClipId(1));
+        h.step();
+        h.step();
+        assert_eq!(h.query_all_by_label(label).count(), 2, "{kind}: the sound controls are not on both halves");
+        // the device leaves both halves
+        assert!(h.state_mut().apply(Command::SetFx { id: ClipId(1), fx: vec![] }));
+        assert!(h.state().model.clip(ClipId(2)).unwrap().fx.is_empty(), "{kind}: the sound outlived its device");
+    }
+}

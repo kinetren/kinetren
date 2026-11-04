@@ -10,7 +10,7 @@ mod engine;
 mod pool;
 
 pub use context::{GpuContext, GpuInitError};
-pub use engine::{GpuFxEngine, assembled_composite, assembled_shaders, plugin_taps, plugin_transitions, plugin_warps};
+pub use engine::{DisplayTarget, GpuFxEngine, assembled_composite, assembled_shaders, plugin_taps, plugin_transitions, plugin_warps};
 
 /// A single method of comparing GPU-vs-CPU frames (R.29): ad-hoc epsilons in
 /// tests are forbidden; only this helper is used.
@@ -102,6 +102,23 @@ pub fn assert_frames_close(cpu: &[u8], gpu: &[u8], w: u32, h: u32, tol: FrameTol
         tol.mean_lsb,
         hist
     );
+}
+
+/// The export's GPU engine (export-throughput D5), or why the export composes on the CPU: no
+/// adapter, or a SOFTWARE rasterizer (llvmpipe/lavapipe). The pipelined CPU composite runs a frame
+/// per core; a software adapter rasterizes one frame at a time through one queue, and was the
+/// slower of the two on the showcase (133.9 s against 95.6 s, 32 cores). `KT_VIDEO_GPU=1` takes the
+/// adapter anyway, `KT_VIDEO_GPU=0` never asks.
+pub fn export_engine() -> Result<std::sync::Arc<GpuFxEngine>, String> {
+    let gpu = std::env::var("KT_VIDEO_GPU");
+    if gpu.as_deref() == Ok("0") {
+        return Err("KT_VIDEO_GPU=0".into());
+    }
+    let ctx = GpuContext::new_headless_for_export().map_err(|e| e.to_string())?;
+    if ctx.adapter_info.device_type == wgpu::DeviceType::Cpu && gpu.as_deref() != Ok("1") {
+        return Err(format!("{} is a software rasterizer: the CPU composite is faster", ctx.adapter_info.name));
+    }
+    GpuFxEngine::new(ctx).map_err(|e| e.to_string())
 }
 
 /// Adapter for tests: skip with a printout if there is NO wgpu adapter; the caller installs the

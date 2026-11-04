@@ -251,3 +251,28 @@ The most frequent live complaint from reconnaissance was "the music drowns out t
 - SIMD for audio nodes (the 1.3× rule from the video kernels was not applied).
 - Found and not fixed: `warp_prefetch.rs` (t17) fills the legacy `automation` field when
   `fx_auto` is empty, and the migration is not called in the tests — it has no curve at all.
+
+## Simulated devices: the sound half (sim-audio-pairs, 2026-11-04)
+
+The owner, kkt-26.11.03b D1: a simulated device that records picture and sound simulates both. The full
+decisions are in `openspec/changes/archive/2026-11-04-sim-audio-pairs/design.md`; what a later change
+must not undo:
+
+- **One device = one passport.** The audio half is built from the video half's passport; the registry
+  refuses a difference. No second "device" entity: no new file form, no new undo path.
+- **Mirrored in the model like the warp**, inside the same undo step; bypass and masks stay each
+  side's own, so "the device's sound off" is the audio slot's checkbox.
+- **Nothing crosses threads.** Each half derives the device from rows + timeline time through the
+  same pure functions (`deck::row_geo`/`lt_scalar`, `mosh::Sched`). A clip-local `pos` cannot do it:
+  the picture reads the absolute tick, hence `AudioState::place` (t1467 stands half a field off the grid).
+- **The clean encoder resets at EVERY I-frame; only the decoder misses one.** Skipping the reset on the
+  encoder side removes the mismatch, which IS the mosh.
+- **A broken stream must stay bounded.** A predictor fed the wrong history ran to 56 000: its weights
+  stay in the stability triangle, lines and PCM in the decoder's range. Then the sound stays broken
+  until an intact I-frame, as the picture does, by itself (t1472).
+- **Compander detectors attack fast and release slowly.** A symmetric 16 Hz detector pumped a lost
+  field into the next one; with the carrier detector's mute the defect beats at the head's fields.
+- **The head that matters is the one reading, not the field**: from the switch point (`h/2 −
+  switch_lines`) the next head plays, so field B's tail carries head A's loss, in sound as in picture.
+- **Own codec, not the system FFmpeg's**: the render thread opens no codec, FFmpeg's bytes are not
+  frozen across versions, and a real decoder cannot be told which packets to lose.

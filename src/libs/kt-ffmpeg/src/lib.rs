@@ -22,6 +22,17 @@ pub mod iostats {
     pub static OPENS: AtomicU64 = AtomicU64::new(0);
     /// Read packets (av_read_frame over all paths, including the scan).
     pub static PACKET_READS: AtomicU64 = AtomicU64::new(0);
+    /// Nanoseconds spent converting decoded pictures to RGBA (`sws_scale` into the frame), all
+    /// threads together — the share of decoding that is ours to parallelise (export-throughput D6).
+    pub static RGBA_NS: AtomicU64 = AtomicU64::new(0);
+    /// Decoded pictures converted to RGBA, and their pixels.
+    pub static RGBA_FRAMES: AtomicU64 = AtomicU64::new(0);
+    pub static RGBA_PIXELS: AtomicU64 = AtomicU64::new(0);
+    /// Video pictures out of the decoder, the time spent getting them (demux + decode, all
+    /// threads together), and backward seeks that recreated a decoder.
+    pub static VDEC_FRAMES: AtomicU64 = AtomicU64::new(0);
+    pub static VDEC_NS: AtomicU64 = AtomicU64::new(0);
+    pub static VIDEO_REOPENS: AtomicU64 = AtomicU64::new(0);
     /// (opens, packet_reads)
     pub fn snapshot() -> (u64, u64) {
         (OPENS.load(Ordering::Relaxed), PACKET_READS.load(Ordering::Relaxed))
@@ -88,6 +99,9 @@ pub struct MuxConfig {
     pub audio_bitrate: u32,
     /// Forced encoder (otherwise automatic choice with hw priority).
     pub force_encoder: Option<String>,
+    /// The video encoder's threads (export-throughput D3): 0 = the encoder decides (`auto`),
+    /// 1 = one thread (the former export, `ExportOptions.serial`).
+    pub threads: u32,
 }
 
 /// Chosen encoder (for display in the UI).
@@ -446,6 +460,24 @@ pub fn hw_report() -> Option<HwReport> {
     }
 }
 
+/// Spare bytes after every decoded RGBA frame for `sws_scale` to overrun (export-throughput D1):
+/// its x86 yuv2rgb kernels write past the last row when the width is not a multiple of their block
+/// (32 bytes at 1080×1080 on FFmpeg 6.1 — the showcase export died of the heap corruption). Two
+/// AVX-512 blocks of 32 pixels; t1450 sweeps widths and holds the overrun under it.
+pub const RGBA_TAIL_PAD: usize = 256;
+
+/// How far past the frame the decode's RGBA conversion of a `src` YUV420P picture to `dst` writes,
+/// in bytes (t1450); `None` — FFmpeg is not loaded.
+pub fn rgba_conversion_overrun(src: (u32, u32), dst: (u32, u32)) -> Option<Result<usize, FfError>> {
+    match init() {
+        Ok((Backend::V6(api), _)) => Some(v6::rgba_conversion_overrun(api, src, dst)),
+        Ok((Backend::V7(api), _)) => Some(v7::rgba_conversion_overrun(api, src, dst)),
+        Ok((Backend::V8(api), _)) => Some(v8::rgba_conversion_overrun(api, src, dst)),
+        Ok((Backend::V9(api), _)) => Some(v9::rgba_conversion_overrun(api, src, dst)),
+        Err(_) => None,
+    }
+}
+
 /// What the muxer's open cascade did (render-window-v1-parity, D2): the encoder that opened,
 /// whether it is hardware, the pixel format it is fed, the options it was opened with, and every
 /// candidate that exists in this FFmpeg and failed before it, with its error code.
@@ -522,6 +554,37 @@ impl Muxer {
         }
     }
 
+    /// A converter of this muxer's size and pixel format (export-throughput D4).
+    pub fn video_converter(&self) -> Result<VideoConverter, FfError> {
+        match self {
+            Muxer::V6(m) => m.video_converter().map(VideoConverter::V6),
+            Muxer::V7(m) => m.video_converter().map(VideoConverter::V7),
+            Muxer::V8(m) => m.video_converter().map(VideoConverter::V8),
+            Muxer::V9(m) => m.video_converter().map(VideoConverter::V9),
+        }
+    }
+
+    /// A frame for a `VideoConverter` to fill.
+    pub fn alloc_video_frame(&self) -> Result<VideoFrame, FfError> {
+        match self {
+            Muxer::V6(m) => m.alloc_video_frame().map(VideoFrame::V6),
+            Muxer::V7(m) => m.alloc_video_frame().map(VideoFrame::V7),
+            Muxer::V8(m) => m.alloc_video_frame().map(VideoFrame::V8),
+            Muxer::V9(m) => m.alloc_video_frame().map(VideoFrame::V9),
+        }
+    }
+
+    /// The next frame, already converted, to the encoder.
+    pub fn write_video_frame(&mut self, f: &VideoFrame) -> Result<(), FfError> {
+        match (self, f) {
+            (Muxer::V6(m), VideoFrame::V6(f)) => m.write_video_frame(f),
+            (Muxer::V7(m), VideoFrame::V7(f)) => m.write_video_frame(f),
+            (Muxer::V8(m), VideoFrame::V8(f)) => m.write_video_frame(f),
+            (Muxer::V9(m), VideoFrame::V9(f)) => m.write_video_frame(f),
+            _ => Err(FfError::Av("a frame of another FFmpeg major".into())),
+        }
+    }
+
     /// Audio 48 kHz stereo f32 interleaved (any length).
     pub fn write_audio(&mut self, samples: &[f32]) -> Result<(), FfError> {
         match self {
@@ -540,6 +603,34 @@ impl Muxer {
             Muxer::V9(m) => m.finish(),
         }
     }
+}
+
+/// RGBA → the encoder's pixel format, one per thread (export-throughput D4).
+pub enum VideoConverter {
+    V6(v6::VideoConverter),
+    V7(v7::VideoConverter),
+    V8(v8::VideoConverter),
+    V9(v9::VideoConverter),
+}
+
+impl VideoConverter {
+    pub fn convert(&mut self, rgba: &[u8], out: &mut VideoFrame) -> Result<(), FfError> {
+        match (self, out) {
+            (VideoConverter::V6(c), VideoFrame::V6(f)) => c.convert(rgba, f),
+            (VideoConverter::V7(c), VideoFrame::V7(f)) => c.convert(rgba, f),
+            (VideoConverter::V8(c), VideoFrame::V8(f)) => c.convert(rgba, f),
+            (VideoConverter::V9(c), VideoFrame::V9(f)) => c.convert(rgba, f),
+            _ => Err(FfError::Av("a frame of another FFmpeg major".into())),
+        }
+    }
+}
+
+/// A converted frame in the encoder's pixel format.
+pub enum VideoFrame {
+    V6(v6::VideoFrame),
+    V7(v7::VideoFrame),
+    V8(v8::VideoFrame),
+    V9(v9::VideoFrame),
 }
 
 /// Open source — dynamic dispatch by version.
@@ -635,6 +726,30 @@ impl Source {
             Source::V7(s) => s.read_video_span(keys, width, height, emit),
             Source::V8(s) => s.read_video_span(keys, width, height, emit),
             Source::V9(s) => s.read_video_span(keys, width, height, emit),
+        }
+    }
+
+    /// Where the video decoder stands (export-throughput D9).
+    pub fn video_cursor(&self) -> Option<Tick> {
+        match self {
+            Source::V6(s) => s.video_cursor(),
+            Source::V7(s) => s.video_cursor(),
+            Source::V8(s) => s.video_cursor(),
+            Source::V9(s) => s.video_cursor(),
+        }
+    }
+
+    /// A span at several sizes in one forward pass (export-throughput D7).
+    pub fn read_video_span_sizes(
+        &mut self,
+        keys: &[(Tick, u32, u32)],
+        emit: &mut dyn FnMut(Tick, (u32, u32), RgbaFrame),
+    ) -> Result<(), FfError> {
+        match self {
+            Source::V6(s) => s.read_video_span_sizes(keys, emit),
+            Source::V7(s) => s.read_video_span_sizes(keys, emit),
+            Source::V8(s) => s.read_video_span_sizes(keys, emit),
+            Source::V9(s) => s.read_video_span_sizes(keys, emit),
         }
     }
 

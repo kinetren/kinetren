@@ -113,6 +113,13 @@ impl AudioNode {
         }
     }
 
+    /// Where the clip sits on the timeline (sim-audio-pairs).
+    pub(crate) fn place(&mut self, at: kt_plugin_api::Placement) {
+        if let AudioNode::Plugin(n) = self {
+            n.place(at);
+        }
+    }
+
     pub(crate) fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
         match self {
             AudioNode::Plugin(n) => n.set_targets(&SlotView { auto, slot }, s),

@@ -231,6 +231,11 @@ row printed with `KT_PRINT_GOLDEN=1` once), t973 its file form — do not write 
 effect.
 
 
+**The clip's seat on the timeline** (sim-audio-pairs): `ClipProcessor::set_origin(start)` and
+`ChainOpts.fps` reach every node as `AudioState::place` — at build and on every sync, without a
+reset. The audio half of a simulated device reads its device at the timeline time the picture reads
+(a tape's field, a stream's frame); `pos` alone is clip-local. t1467.
+
 ## Chain lookahead (R.48, items 337-339)
 
 An effect with an analysis window (a limiter, pitch) reads the source FORWARD, while its output is delivered aligned:
@@ -284,8 +289,10 @@ Rules of a lookahead node:
 - **a split is one stream** (D3): `hand_on` rebases a processor that has just played its event to
   the end so the next piece of the same material continues it (the engine decides who, D3 in
   kt-engine); `fresh_entry` (D4) — a tail-less context chain entered at its first frame or after it
-  ended is a seek, not a seam: its ring holds where it stopped. `before_material` silences only a
-  FOLDED input; an unfolded one before the material is the context pre-roll.
+  ended is a seek, not a seam: its ring holds where it stopped. `lap_entry` (loop-pitch-tail-dip) — the
+  same re-entry of a chain WITH a tail is a seek too: the engine keeps what still rings of the previous
+  lap in that lap's own processor (`FxStateStore::start_lap`), never by a seam. `before_material`
+  silences only a FOLDED input; an unfolded one before the material is the context pre-roll.
 - **the echo before the pitch: cut or rings on** (pitch-tail-choice): the edge-reader's declared
   `Decl.echo_row` (pitch's `echo_before`) on and a ringing node before it make `ring`. Everything up to
   the out-point is the cut path byte for byte; where the INPUT reaches the out-point nodes `0..=ctx`

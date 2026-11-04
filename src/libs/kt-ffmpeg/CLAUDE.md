@@ -61,7 +61,21 @@ with libav*"), `export` (the encoder cascade).
   version folder in it, newest first (numeric), so an earlier pin's download keeps working
   (t864); temporary `.partial-<pid>` entries are not candidates.
 
-Tests: t10/t21/t37/t112 (conformance), t844–t847 (search, one-folder load under wine/Windows,
+- **The decode's RGBA frame has `RGBA_TAIL_PAD` spare bytes** (export-throughput D1): libswscale's
+  x86 yuv2rgb writes past the last row when the width is not a multiple of its block (32 bytes at
+  1080×1080 on 6.1) — an exact-size buffer corrupted the heap (the showcase export crashed in 3 s).
+  A new conversion into a buffer of ours converts through `sws_to_rgba` or pads the same way (t1450).
+- **`prepare_for`'s "already held" exit holds only while the target is before the deferred frame**
+  (D8): past it, the jump decides between decoding on and seeking — without the bound a two-minute
+  jump decoded every 4K picture in between (t1453). Every key of a span goes through `prepare_for`.
+- `read_video_span_sizes` decodes each picture once for every size asked at it (D7, t1454);
+  `video_cursor` says where the decoder stands, for a caller choosing among decoders of one file.
+- The muxer: `MuxConfig.threads` (0 = `auto`, in the open report's options, t1456); conversion is a
+  separate `VideoConverter` per thread, `write_video_frame` takes the frames in order (D3, D4).
+- `iostats::{VDEC_FRAMES, VDEC_NS, VIDEO_REOPENS, RGBA_*}` — the decode counters `kt-cli export
+  --time` prints; the first thing to read when an export is slow.
+
+Tests: t10/t21/t37/t112 (conformance), t1450 (RGBA tail), t1453–t1455 (span seek/qualities/decoders, in kt-media), t844–t847 (search, one-folder load under wine/Windows,
 retry), t858 (encoders), t862 (table == headers), t863 (Linux plan), t864 (earlier download),
 t865 (a run proves its major), t960 (device contexts), t961 (optional table == headers), t962
 (no device: skip or error, never a crash), t963 (VAAPI on hardware, opt-in), t964 (kt-cli report).

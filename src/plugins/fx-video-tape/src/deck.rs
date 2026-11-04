@@ -34,7 +34,17 @@ pub mod row {
     pub const DARK_CLIP: usize = 29;
     pub const CHROMA_LEVEL: usize = 30;
     pub const SATURATION: usize = 31;
-    pub const COUNT: usize = 32;
+    /// The deck's sound (sim-audio-pairs): the audio output (Hi-Fi, normal, mix), the linear
+    /// tracks (mono, stereo), Dolby B on the linear track, the stationary audio head's gap and
+    /// spacing (µm), the record bias against its optimum, the record level (dB).
+    pub const AUDIO_OUT: usize = 32;
+    pub const LINEAR_TRACKS: usize = 33;
+    pub const DOLBY: usize = 34;
+    pub const AC_GAP: usize = 35;
+    pub const AC_SPACING: usize = 36;
+    pub const BIAS: usize = 37;
+    pub const REC_LEVEL: usize = 38;
+    pub const COUNT: usize = 39;
 
     /// The first row of drum `d` (0 record, 1 play), head `h` (0 A, 1 B).
     pub const fn head(d: usize, h: usize) -> usize {

@@ -229,6 +229,16 @@ fn read_material(
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChainOpts {
     pub pitch_engine: kt_model::PitchEngine,
+    /// The project frame rate (sim-audio-pairs): the audio half of a simulated device reads the
+    /// picture's frame grid (`AudioState::place`). 0 — unknown, read as 25.
+    pub fps: u32,
+}
+
+impl ChainOpts {
+    /// Where a clip starting at timeline frame `start` sits, for its nodes.
+    pub fn placement(&self, start: i64) -> kt_plugin_api::Placement {
+        kt_plugin_api::Placement { start, fps_num: if self.fps == 0 { 25 } else { self.fps }, fps_den: 1 }
+    }
 }
 
 pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
@@ -388,6 +398,8 @@ impl TrackProcessor {
 /// FxStateStore). Read strictly sequentially; a gap → reset + pre-roll.
 pub struct ClipProcessor {
     fingerprint: u64,
+    /// The timeline frame of the clip's frame 0 (sim-audio-pairs, `AudioState::place`).
+    origin: i64,
     /// Clip-local frame that will come out next (continuity marker).
     next_local: i64,
     src_in: i64,
@@ -522,6 +534,7 @@ impl ClipProcessor {
     ) -> ClipProcessor {
         let mut p = ClipProcessor {
             fingerprint: chain_fingerprint(fx),
+            origin: 0,
             next_local: i64::MIN,
             src_in: src_in_frames,
             warp: None,
@@ -656,6 +669,19 @@ impl ClipProcessor {
         }
     }
 
+    /// Seat the clip on the timeline (sim-audio-pairs): its frame 0 is timeline frame `start`.
+    /// Without a state reset — a moved clip keeps its nodes (invariant 3).
+    pub fn set_origin(&mut self, start: i64) {
+        if self.origin == start {
+            return;
+        }
+        self.origin = start;
+        let at = self.opts.placement(start);
+        for (_, node) in &mut self.nodes {
+            node.place(at);
+        }
+    }
+
     /// Update the clip length (trim) without resetting the state.
     pub fn set_clip_len(&mut self, clip_len_frames: i64) {
         self.clip_len = clip_len_frames.max(1);
@@ -708,9 +734,13 @@ impl ClipProcessor {
             }
             _ => MixCfg { slot: i, from: usize::MAX, base_amount: 1.0 },
         });
+        let at = self.opts.placement(self.origin);
         for (slot, node) in &mut self.nodes {
             node.apply(&fx[*slot], structural);
             node.bind_lfo(&self.auto, *slot, self.clip_len);
+            if structural {
+                node.place(at);
+            }
         }
         self.recompute_lookahead();
         // warp half of Slowed+Reverb (source consumption)
@@ -862,11 +892,13 @@ impl ClipProcessor {
             } else if self.folding() && Some(self.fold(local + self.la)) == self.in_next {
                 // The output wraps to the loop start, and the INPUT already did, `la` frames
                 // ago (pitch-loop-silence, D2): the chain is continuous, nothing to re-seat.
-            } else if self.fresh_entry(local) {
+            } else if self.fresh_entry(local) || self.lap_entry(local) {
                 // A FRESH ENTRY (pitch-event-edges D4): the event had stopped and is read again
                 // from its first frame (a loop lap over several events) — its output was silent in
                 // between, so there is nothing to ring through, and a seam would reuse a look-ahead
-                // ring holding the material from where it stopped.
+                // ring holding the material from where it stopped. A NEW LAP of a chain with a tail
+                // starts the same way (loop-pitch-tail-dip): the engine has moved what still rings
+                // of the previous lap to a stream of its own (`FxStateStore::start_lap`).
                 self.hard_seek(local, pull);
             } else {
                 // SEAM: the position jumped, but the OUTPUT is continuous (wrap of a
@@ -902,11 +934,33 @@ impl ClipProcessor {
         if self.next_local == i64::MIN {
             return true;
         }
+        self.tail_frames() == 0 && self.reentry(local)
+    }
+
+    /// Reading `local` starts a NEW LAP of a chain with a tail (loop-pitch-tail-dip): the context
+    /// applies, and the event is entered again at its first frame or after its out-point, not
+    /// continuously and not as the expected input-first wrap. The look-ahead ring holds where the
+    /// previous lap stopped, so a seam would start the lap with that (≈ 75 ms of silence with "rings
+    /// on"); the lap starts as a seek there does, and what still rings of the previous lap is the
+    /// engine's to keep (`past_out_point`).
+    pub fn lap_entry(&self, local: i64) -> bool {
+        self.next_local != i64::MIN && self.tail_frames() > 0 && self.reentry(local)
+    }
+
+    /// The context applies and `local` re-enters the event (the rule shared by `fresh_entry` and
+    /// `lap_entry`).
+    fn reentry(&self, local: i64) -> bool {
         self.ctx.is_some()
-            && self.tail_frames() == 0
             && self.next_local != local
             && (local == -self.head_ext || self.next_local >= self.clip_len + self.tail_ext)
             && !(self.folding() && Some(self.fold(local + self.la)) == self.in_next)
+    }
+
+    /// The processor stands in its tail: its next frame is at or past the material's end, so what it
+    /// gives from here on is the echo of the lap it played (loop-pitch-tail-dip). Before the end — a
+    /// lap cut by the wrap — nothing of it is heard any more.
+    pub fn past_out_point(&self) -> bool {
+        self.next_local != i64::MIN && self.next_local >= self.clip_len + self.tail_ext
     }
 
     /// Hand this processor on to the NEXT event of a split (pitch-event-edges D3): it has just

@@ -847,7 +847,7 @@ impl AudioRenderer {
             covers,
             overlaps,
             overlap_layers,
-            opts: kt_fx::ChainOpts { pitch_engine: project.settings.pitch_engine },
+            opts: kt_fx::ChainOpts { pitch_engine: project.settings.pitch_engine, fps: project.settings.fps },
             stages,
             nests,
             loop_region: std::cell::Cell::new(None),
@@ -979,7 +979,7 @@ impl AudioRenderer {
     /// of the store — the audio render thread — after each rebuild of the graph).
     pub fn sync_fx(&self, store: &mut crate::fxstore::FxStateStore) {
         for c in &self.clips {
-            store.sync_clip(c.id, &c.fx, &c.auto, c.source_in, c.end - c.start, self.opts);
+            store.sync_clip(c.id, &c.fx, &c.auto, c.source_in, c.start, c.end - c.start, self.opts);
         }
         let alive: std::collections::HashSet<_> = self.clips.iter().map(|c| c.id).collect();
         store.retain_clips(&|id| alive.contains(&id));
@@ -1003,7 +1003,7 @@ impl AudioRenderer {
             let sub = store.key_mut(*target);
             for (key_id, key_lane) in keys {
                 for c in self.clips.iter().filter(|c| c.lane == *key_lane) {
-                    sub.sync_clip(c.id, &c.fx, &c.auto, c.source_in, c.end - c.start, opts);
+                    sub.sync_clip(c.id, &c.fx, &c.auto, c.source_in, c.start, c.end - c.start, opts);
                 }
                 if let Some(ks) = self.stages.iter().find(|s| s.id == *key_id) {
                     sub.sync_track(ks.id, &ks.fx, opts);
@@ -1524,22 +1524,40 @@ impl AudioRenderer {
             let prev = &self.clips[pi];
             let prev_len = prev.end - prev.start;
             if store.hand_on(prev.id, prev_len, clip.id) {
-                store.sync_clip(prev.id, &prev.fx, &prev.auto, prev.source_in, prev_len, self.opts);
-                store.sync_clip(clip.id, &clip.fx, &clip.auto, clip.source_in, clip_len, self.opts);
+                store.sync_clip(prev.id, &prev.fx, &prev.auto, prev.source_in, prev.start, prev_len, self.opts);
+                store.sync_clip(clip.id, &clip.fx, &clip.auto, clip.source_in, clip.start, clip_len, self.opts);
             }
         }
-        let Some(proc) = store.get_mut(clip.id) else { return };
-        proc.set_material_ext(clip.head_ext, clip.tail_ext);
-        proc.set_ring_end(clip.ring_off);
         // the loop span in clip-local frames, for an event that covers the region end; an event
         // that reads across its edges and starts INSIDE the region is not what sounds after the
         // wrap — its input continues into its own material (pitch-event-edges D5)
-        proc.set_loop_span(self.loop_region.get().and_then(|(rs, re)| {
+        let span = self.loop_region.get().and_then(|(rs, re)| {
             (clip.start < re && clip.end >= re && (!clip.ctx || clip.start <= rs))
                 .then_some((rs - clip.start, re - clip.start))
-        }));
+        });
+        let configure = |proc: &mut kt_fx::ClipProcessor| {
+            proc.set_material_ext(clip.head_ext, clip.tail_ext);
+            proc.set_ring_end(clip.ring_off);
+            proc.set_loop_span(span);
+        };
+        configure(match store.get_mut(clip.id) {
+            Some(proc) => proc,
+            None => return,
+        });
+        // A NEW LOOP LAP of a chain that reads across its edges and has a tail (loop-pitch-tail-dip):
+        // the lap starts as a seek there does, and what the previous lap still rings past its
+        // out-point goes on in its own processor, summed below
+        let ext_len = clip.ext_end - clip.start;
+        if clip.ctx
+            && store.start_lap(clip.id, local, ext_len, &clip.fx, &clip.auto, clip.source_in, clip.start, clip_len, self.opts)
+            && let Some(proc) = store.get_mut(clip.id)
+        {
+            configure(proc);
+        }
+        let Some(proc) = store.get_mut(clip.id) else { return };
         let count = (to - from) as usize;
         let mut buf = vec![0f32; count * AUDIO_CHANNELS];
+        let mut laps_out: Option<Vec<f32>> = None;
         {
             let reversed = clip.reversed;
             let win = SrcWindow {
@@ -1557,6 +1575,24 @@ impl AudioRenderer {
                 fill_source(fetcher, media, src_frame, win, reversed, dst, n)
             };
             proc.read(local, &mut buf, &mut pull);
+            // the earlier laps ring on, each continuing its own stream
+            if let Some(laps) = store.laps_mut(clip.id) {
+                let mut sum = vec![0f32; count * AUDIO_CHANNELS];
+                let mut ring = vec![0f32; count * AUDIO_CHANNELS];
+                for lap in laps.iter_mut() {
+                    let Some(at) = lap.next_local() else { continue };
+                    let n = (ext_len - at).clamp(0, count as i64) as usize * AUDIO_CHANNELS;
+                    if n == 0 {
+                        continue;
+                    }
+                    lap.read(at, &mut ring[..n], &mut pull);
+                    for (s, r) in sum.iter_mut().zip(&ring[..n]) {
+                        *s += *r;
+                    }
+                }
+                store.retire_laps(clip.id, ext_len);
+                laps_out = Some(sum);
+            }
         }
         stats.underruns += pull_underruns;
         stats.warmup_misses += warmup_misses;
@@ -1572,6 +1608,15 @@ impl AudioRenderer {
             let bi = (k as usize) * AUDIO_CHANNELS;
             for ch in 0..AUDIO_CHANNELS {
                 out[oi + ch] += buf[bi + ch] * w;
+            }
+        }
+        // the earlier laps' echo at the weight of the tail zone it lies in (1.0 · the clip gain)
+        if let Some(sum) = laps_out {
+            for (k, fr) in sum.chunks_exact(AUDIO_CHANNELS).enumerate() {
+                let oi = ((from + k as i64 - range.start) as usize) * AUDIO_CHANNELS;
+                for ch in 0..AUDIO_CHANNELS {
+                    out[oi + ch] += fr[ch] * clip.gain;
+                }
             }
         }
     }

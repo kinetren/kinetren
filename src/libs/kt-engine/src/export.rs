@@ -20,6 +20,9 @@ use kt_model::{MediaId, Project};
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS, Tick};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
+
+pub use crate::export_pipeline::{ExportConverter, ExportProfile, ExportSink};
 
 /// Export progress (ETA/speed is computed by the UI — wall-clock is not ours, inv. 10).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -249,6 +252,23 @@ pub fn render_raw_video_range_with(
     range: Option<(Tick, Tick)>,
     backends: &ExportBackends,
     cancel: &Arc<AtomicBool>,
+    progress: impl FnMut(u64),
+    emit: impl FnMut(&[u8]) -> std::io::Result<()>,
+) -> std::io::Result<ExportStats> {
+    render_raw_video_profiled(project, sources, quality, range, backends, cancel, None, progress, emit)
+}
+
+/// The serial video pass with its stage times (export-throughput D6): `profile` only receives
+/// clock readings, the render does not see them.
+#[allow(clippy::too_many_arguments)]
+fn render_raw_video_profiled(
+    project: &Project,
+    sources: Vec<(MediaId, Box<dyn MediaSource>)>,
+    quality: Quality,
+    range: Option<(Tick, Tick)>,
+    backends: &ExportBackends,
+    cancel: &Arc<AtomicBool>,
+    profile: Option<&ExportProfile>,
     mut progress: impl FnMut(u64),
     mut emit: impl FnMut(&[u8]) -> std::io::Result<()>,
 ) -> std::io::Result<ExportStats> {
@@ -310,41 +330,18 @@ pub fn render_raw_video_range_with(
         // chunk keys for each source: strictly increasing, duplicates removed
         // group key — (media, DECODE QUALITY): the decoder span does not mix
         // sizes (kt-media), and the request already comes with the quality (R.46)
-        let mut per_src: std::collections::BTreeMap<(MediaId, Quality), Vec<Tick>> =
-            Default::default();
-        for (media, src_pts, dq) in
-            video.wanted_frames(kt_time::TickRange::new(t, chunk_end), quality)
-        {
-            per_src.entry((media, dq)).or_default().push(src_pts);
+        let mark = Instant::now();
+        for (media, keys) in chunk_requests(&video, &cache, (t, chunk_end), quality, |m| src.contains_key(&m), &mut stats.missing_video_layers) {
+            decode_requests(src.get_mut(&media).unwrap(), media, &keys, &cache, &mut stats.missing_video_layers);
         }
-        for ((media, dq), keys) in per_src {
-            let Some(s) = src.get_mut(&media) else {
-                stats.missing_video_layers += keys.len() as u64;
-                continue;
-            };
-            let sid = source_id(media);
-            let missing: Vec<Tick> = keys
-                .into_iter()
-                .filter(|k| cache.get_video(sid, Some(dq), video_cache_idx(*k)).is_none())
-                .collect();
-            if missing.is_empty() {
-                continue;
-            }
-            let ok = s
-                .read_video_span(&missing, Some(dq), &mut |k, frame| {
-                    cache.insert_video(sid, Some(dq), video_cache_idx(k), frame.into());
-                })
-                .is_ok();
-            if !ok {
-                stats.missing_video_layers += 1;
-            }
-        }
+        ExportProfile::add(profile.map(|p| &p.decode_ns), mark);
         while t < chunk_end {
             if cancel.load(Ordering::Acquire) {
                 return Err(std::io::Error::other("cancelled"));
             }
             progress(stats.video_frames);
             stream_preroll(&video, &cache, &mut src, t, quality);
+            let mark = Instant::now();
             let complete = match &backends.video_gpu {
                 Some(gpu) => {
                     let plan = video.frame_plan(&cache, t, quality);
@@ -353,6 +350,7 @@ pub fn render_raw_video_range_with(
                 }
                 None => video.compose_export_into(&cache, t, quality, &mut frame_buf),
             };
+            ExportProfile::add(profile.map(|p| &p.compose_ns), mark);
             if !complete {
                 stats.missing_video_layers += 1;
             }
@@ -362,6 +360,58 @@ pub fn render_raw_video_range_with(
         }
     }
     Ok(stats)
+}
+
+/// One chunk's decode requests per source (export-throughput D7): the frames the chunk names
+/// and the cache lacks, as (key, decode quality) ordered by key — one forward pass per source
+/// whatever qualities it is asked at. A request of a source not in `has` counts its keys missing.
+/// The serial and the pipelined export both decode through this and `decode_requests`.
+pub(crate) fn chunk_requests(
+    video: &VideoRenderer,
+    cache: &BurstCache,
+    (t0, t1): (Tick, Tick),
+    quality: Quality,
+    has: impl Fn(MediaId) -> bool,
+    missing: &mut u64,
+) -> Vec<(MediaId, Vec<(Tick, Quality)>)> {
+    let mut per_media: std::collections::BTreeMap<MediaId, Vec<(Tick, Quality)>> = Default::default();
+    for (media, src_pts, dq) in video.wanted_frames(kt_time::TickRange::new(t0, t1), quality) {
+        per_media.entry(media).or_default().push((src_pts, dq));
+    }
+    let mut out = Vec::new();
+    for (media, mut keys) in per_media {
+        if !has(media) {
+            *missing += keys.len() as u64;
+            continue;
+        }
+        let sid = source_id(media);
+        keys.sort();
+        keys.dedup();
+        keys.retain(|(k, dq)| cache.get_video(sid, Some(*dq), video_cache_idx(*k)).is_none());
+        if !keys.is_empty() {
+            out.push((media, keys));
+        }
+    }
+    out
+}
+
+/// Decode one source's requests into the cache; a failed span counts one missing layer.
+pub(crate) fn decode_requests(
+    s: &mut Box<dyn MediaSource>,
+    media: MediaId,
+    keys: &[(Tick, Quality)],
+    cache: &BurstCache,
+    missing: &mut u64,
+) {
+    let sid = source_id(media);
+    let ok = s
+        .read_video_span_qualities(keys, &mut |k, dq, frame| {
+            cache.insert_video(sid, Some(dq), video_cache_idx(k), frame.into());
+        })
+        .is_ok();
+    if !ok {
+        *missing += 1;
+    }
 }
 
 /// The stream stages' PRE-ROLL before frame `t` (datamosh-codec-path, D6): while the frame names
@@ -460,6 +510,12 @@ pub struct ExportOptions {
     /// Labels of the sources the caller opened as placeholders: each becomes a log fact
     /// (render-window-v1-parity, D1) — export cannot tell a placeholder from a source itself.
     pub placeholders: Vec<String>,
+    /// The former one-thread export (export-throughput D2): video pass, then audio pass, the
+    /// encoder on one thread. The reference the pipelined export is held to (t1451) and the
+    /// "before" of `kt-cli export --serial --time`.
+    pub serial: bool,
+    /// Collects the busy time of every stage (`kt-cli export --time`).
+    pub profile: Option<Arc<ExportProfile>>,
 }
 
 impl Default for ExportOptions {
@@ -471,6 +527,8 @@ impl Default for ExportOptions {
             force_encoder: None,
             resolution: None,
             placeholders: Vec::new(),
+            serial: false,
+            profile: None,
         }
     }
 }
@@ -557,6 +615,7 @@ pub fn export_mp4_with_backends(
         video_bitrate: opts.video_bitrate,
         audio_bitrate: opts.audio_bitrate,
         force_encoder: opts.force_encoder.clone(),
+        threads: if opts.serial { 1 } else { 0 },
     });
     let events = Arc::new(events);
     let mut muxer = match muxer {
@@ -619,60 +678,131 @@ pub fn export_mp4_with_backends(
         let _ = std::fs::remove_file(out_path);
         e
     };
+    let profile = opts.profile.as_deref();
+    let started = Instant::now();
     events(ExportEvent::Log(ExportLog::Phase(ExportPhase::Video)));
-    let vstats = {
-        let v_done = v_done.clone();
-        let report = report.clone();
-        render_raw_video_range_with(
+    // a stream stage's pre-roll decodes on the compose thread (datamosh-codec-path D6): such a
+    // project keeps the serial export (export-throughput D2)
+    let serial = opts.serial || VideoRenderer::new(project).has_stream_stages();
+    let (vstats, astats) = if serial {
+        let vstats = {
+            let v_done = v_done.clone();
+            let report = report.clone();
+            let mut conv = muxer.video_converter().map_err(|e| cleanup_on_err(ExportError::Io(std::io::Error::other(e))))?;
+            let mut vf = muxer.alloc_video_frame().map_err(|e| cleanup_on_err(ExportError::Io(std::io::Error::other(e))))?;
+            render_raw_video_profiled(
+                project,
+                video_sources,
+                quality,
+                range,
+                backends,
+                cancel,
+                profile,
+                |done| {
+                    wait_paused();
+                    v_done.store(done, Ordering::Relaxed);
+                    if done % 10 == 0 {
+                        report(ExportPhase::Video);
+                    }
+                },
+                |rgba| {
+                    let mark = Instant::now();
+                    conv.convert(rgba, &mut vf).map_err(std::io::Error::other)?;
+                    ExportProfile::add(profile.map(|p| &p.convert_ns), mark);
+                    let mark = Instant::now();
+                    muxer.write_video_frame(&vf).map_err(std::io::Error::other)?;
+                    ExportProfile::add(profile.map(|p| &p.encode_ns), mark);
+                    store_bytes(&muxer);
+                    Ok(())
+                },
+            )
+            .map_err(|e| cleanup_on_err(e.into()))?
+        };
+        // the renderer reports the frames done BEFORE each frame: the last frame is counted here, or
+        // the finished window would read "179 / 180" (live scenario `render`)
+        v_done.store(vstats.video_frames, Ordering::Relaxed);
+        // 2) audio
+        events(ExportEvent::Log(ExportLog::Phase(ExportPhase::Audio)));
+        let audio_started = Instant::now();
+        let astats = {
+            let a_done = a_done.clone();
+            let report = report.clone();
+            render_raw_audio_range(
+                project,
+                audio_sources,
+                range,
+                cancel,
+                |done| {
+                    wait_paused();
+                    a_done.store(done, Ordering::Relaxed);
+                    if done % 48_000 < 1024 {
+                        report(ExportPhase::Audio);
+                    }
+                },
+                |chunk| {
+                    let mark = Instant::now();
+                    muxer.write_audio(chunk).map_err(std::io::Error::other)?;
+                    ExportProfile::add(profile.map(|p| &p.audio_encode_ns), mark);
+                    store_bytes(&muxer);
+                    Ok(())
+                },
+            )
+            .map_err(|e| cleanup_on_err(e.into()))?
+        };
+        if let Some(p) = profile {
+            let pass = audio_started.elapsed().as_nanos() as u64;
+            let enc = p.audio_encode_ns.load(Ordering::Relaxed);
+            p.audio_ns.fetch_add(pass.saturating_sub(enc), Ordering::Relaxed);
+            p.wall_ns.fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
+        (vstats, astats)
+    } else {
+        // 1+2) the stages concurrently (export-throughput D2): the same frames and samples
+        let paused = &wait_paused;
+        let video_done = |done: u64| {
+            v_done.store(done, Ordering::Relaxed);
+            if done.is_multiple_of(10) {
+                report(ExportPhase::Video);
+            }
+        };
+        // the writer's counts, in its fixed order (t955): a second of audio written after the
+        // last video frame is a step of the audio phase
+        let audio_done = |done: u64| {
+            let before = a_done.swap(done, Ordering::Relaxed);
+            if done / 48_000 != before / 48_000 && v_done.load(Ordering::Relaxed) >= total_video {
+                report(ExportPhase::Audio);
+            }
+        };
+        let bytes = |(v, a): (u64, u64)| {
+            v_bytes.store(v, Ordering::Relaxed);
+            a_bytes.store(a, Ordering::Relaxed);
+        };
+        let video_finished = || {
+            events(ExportEvent::Log(ExportLog::Phase(ExportPhase::Audio)));
+            report(ExportPhase::Audio);
+        };
+        let hooks = crate::export_pipeline::Hooks {
+            wait_paused: paused,
+            video_done: &video_done,
+            audio_done: &audio_done,
+            bytes: &bytes,
+            video_finished: &video_finished,
+            profile,
+        };
+        crate::export_pipeline::run(
             project,
             video_sources,
+            audio_sources,
             quality,
             range,
             backends,
             cancel,
-            |done| {
-                wait_paused();
-                v_done.store(done, Ordering::Relaxed);
-                if done % 10 == 0 {
-                    report(ExportPhase::Video);
-                }
-            },
-            |rgba| {
-                muxer.write_video(rgba).map_err(std::io::Error::other)?;
-                store_bytes(&muxer);
-                Ok(())
-            },
+            &hooks,
+            &mut muxer,
         )
         .map_err(|e| cleanup_on_err(e.into()))?
     };
-    // the renderer reports the frames done BEFORE each frame: the last frame is counted here, or
-    // the finished window would read "179 / 180" (live scenario `render`)
     v_done.store(vstats.video_frames, Ordering::Relaxed);
-    // 2) audio
-    events(ExportEvent::Log(ExportLog::Phase(ExportPhase::Audio)));
-    let astats = {
-        let a_done = a_done.clone();
-        let report = report.clone();
-        render_raw_audio_range(
-            project,
-            audio_sources,
-            range,
-            cancel,
-            |done| {
-                wait_paused();
-                a_done.store(done, Ordering::Relaxed);
-                if done % 48_000 < 1024 {
-                    report(ExportPhase::Audio);
-                }
-            },
-            |chunk| {
-                muxer.write_audio(chunk).map_err(std::io::Error::other)?;
-                store_bytes(&muxer);
-                Ok(())
-            },
-        )
-        .map_err(|e| cleanup_on_err(e.into()))?
-    };
 
     if cancel.load(Ordering::Acquire) {
         drop(muxer);
@@ -699,6 +829,49 @@ pub fn export_mp4_with_backends(
         // the loudness is computed on the audio pass — with the same meter, the same
         // buffer and without the master gain (item 371)
         loudness: astats.loudness,
+    })
+}
+
+/// The pipelined export of `project` into any sink (export-throughput D2, t1451): the product
+/// passes the muxer, a test a recorder. No pause, no progress.
+#[allow(clippy::too_many_arguments)]
+pub fn render_pipelined<S: ExportSink>(
+    project: &Project,
+    audio_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
+    video_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
+    quality: Quality,
+    range: Option<(Tick, Tick)>,
+    backends: &ExportBackends,
+    cancel: &Arc<AtomicBool>,
+    profile: Option<&ExportProfile>,
+    sink: &mut S,
+) -> std::io::Result<ExportStats> {
+    let hooks = crate::export_pipeline::Hooks {
+        wait_paused: &|| {},
+        video_done: &|_| {},
+        audio_done: &|_| {},
+        bytes: &|_| {},
+        video_finished: &|| {},
+        profile,
+    };
+    let (v, a) = crate::export_pipeline::run(
+        project,
+        video_sources,
+        audio_sources,
+        quality,
+        range,
+        backends,
+        cancel,
+        &hooks,
+        sink,
+    )?;
+    Ok(ExportStats {
+        video_frames: v.video_frames,
+        missing_video_layers: v.missing_video_layers,
+        audio_frames: a.audio_frames,
+        underruns: a.underruns,
+        loudness: a.loudness,
+        encoder: String::new(),
     })
 }
 

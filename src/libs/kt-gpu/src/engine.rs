@@ -5,17 +5,20 @@
 //! integer kernels byte for byte, bilinear ones within tolerance (t181/t182).
 
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use kt_engine::{
-    Cam3d, FramePlan, GpuBackendInfo, GpuExecError, LayerSrc, PlanLayer, TransMix, VideoGpuExec,
-    video_plan::SoloFade,
+    Cam3d, FramePlan, GpuBackendInfo, GpuExecError, GpuStages, LayerSrc, PlanLayer, PresentOptions,
+    TransMix, VideoGpuExec, video_plan::SoloFade,
 };
 use kt_model::FxInstance;
 use kt_time::Tick;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::context::{GpuContext, GpuInitError};
-use crate::pool::{FORMAT, ReadbackCache, Tex, TexturePool, UploadCache, create_tex};
+use crate::pool::{
+    DISPLAY_FORMAT, FORMAT, ReadbackCache, Tex, TexturePool, UploadCache, create_display_tex, create_tex,
+};
 
 const SLOT: u64 = 256; // dynamic offset alignment (the maximum per the spec)
 /// Uniform of the merged geometry pass (R.44): the primitive program does not fit
@@ -25,6 +28,27 @@ const GEOM_SLOT_UNITS: u32 = (GEOM_UNIFORM_BYTES as u64 / SLOT) as u32;
 const UPLOAD_BUDGET: u64 = 256 * 1024 * 1024;
 const TRANSIENT_BUDGET: u64 = 128 * 1024 * 1024;
 const READBACK_BUDGET: u64 = 64 * 1024 * 1024;
+/// Frames in flight between `submit` and `collect` (export-throughput D5): one being read back,
+/// one being rendered, one being built — more only adds staging memory.
+const RING: usize = 3;
+
+/// A staging buffer of the readback ring and the map callback's verdict.
+struct RingSlot {
+    buf: wgpu::Buffer,
+    bpr: u32,
+    w: u32,
+    h: u32,
+    mapped: Arc<std::sync::Mutex<Option<bool>>>,
+}
+
+/// A submitted frame: on the device (with its submission) or ready without one (an empty plan).
+struct InFlight {
+    ticket: u64,
+    complete: bool,
+    gpu: Option<wgpu::SubmissionIndex>,
+    out_w: u32,
+    out_h: u32,
+}
 
 /// Uniform of all passes: 2×vec4<u32> + 2×vec4<f32> + mat4 (see common.wgsl).
 #[derive(Default, Clone, Copy)]
@@ -709,7 +733,21 @@ struct Inner {
     readback: ReadbackCache,
     /// What the last `execute` ran (morpher-event-grid-cost, D1).
     last_cost: kt_fx::video::FrameCost,
+    /// Where the last `execute` spent its time (preview-throughput).
+    last_stages: GpuStages,
+    /// The preview's display pass and targets (preview-throughput D2).
+    display_pipe: wgpu::RenderPipeline,
+    display: Option<Tex>,
+    /// Bumped when `display` is a new texture: the UI registers it again.
+    display_generation: u64,
+    glow: Option<Tex>,
     staging: Option<(wgpu::Buffer, u32, u32, u32)>, // (buf, padded_bpr, w, h)
+    /// The export's readback ring (export-throughput D5): a frame submitted, its copy in flight,
+    /// while the caller builds and submits the next; slot = ticket % `RING`.
+    ring: Vec<Option<RingSlot>>,
+    /// Submitted, not yet collected, in submission order.
+    in_flight: std::collections::VecDeque<InFlight>,
+    next_ticket: u64,
     dummy: Tex,
     max_dim: u32,
 }
@@ -731,6 +769,9 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
 ];
 
 const COMMON: &str = include_str!("shaders/common.wgsl");
+const DISPLAY: &str = include_str!("shaders/display.wgsl");
+/// The ambient glow's target, the size the CPU loop picks.
+const GLOW_SIZE: (u32, u32) = (32, 18);
 
 /// Where a pass's pipeline comes from.
 #[derive(Clone, Copy)]
@@ -1017,6 +1058,35 @@ impl GpuFxEngine {
                 })
             })
             .collect();
+        let display_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("display"),
+            source: wgpu::ShaderSource::Wgsl(format!("{COMMON}\n{DISPLAY}").into()),
+        });
+        let display_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("display"),
+            layout: Some(&pipe_layout),
+            vertex: wgpu::VertexState {
+                module: &display_module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &display_module,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: DISPLAY_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
         // The merged geometry pass (R.44): the GEOM_UNIFORM_BYTES uniform does not fit into
         // the shared layout (128 B) — its own layout and pipe from the same arena buffer.
         let geom_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1104,7 +1174,15 @@ impl GpuFxEngine {
                 upload: UploadCache::new(UPLOAD_BUDGET),
                 readback: ReadbackCache::new(READBACK_BUDGET),
                 last_cost: Default::default(),
+                last_stages: Default::default(),
+                display_pipe,
+                display: None,
+                display_generation: 0,
+                glow: None,
                 staging: None,
+                ring: (0..RING).map(|_| None).collect(),
+                in_flight: Default::default(),
+                next_ticket: 0,
                 dummy,
                 max_dim,
             }),
@@ -1125,6 +1203,83 @@ fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
+/// The preview's display target, for the UI to register with its renderer.
+#[derive(Clone)]
+pub struct DisplayTarget {
+    pub view: wgpu::TextureView,
+    pub size: (u32, u32),
+    /// Changes when the target is a new texture.
+    pub generation: u64,
+}
+
+impl GpuFxEngine {
+    /// What `present` last drew into; `None` before the first frame.
+    pub fn display_target(&self) -> Option<DisplayTarget> {
+        let g = self.inner.lock().unwrap();
+        g.display.as_ref().map(|d| DisplayTarget {
+            view: d.view.clone(),
+            size: (d.w, d.h),
+            generation: g.display_generation,
+        })
+    }
+
+    /// The 32×18 ambient glow; `None` until a `present` asked for it.
+    pub fn glow_view(&self) -> Option<wgpu::TextureView> {
+        self.inner.lock().unwrap().glow.as_ref().map(|t| t.view.clone())
+    }
+
+    /// The display target's bytes (premultiplied, as egui samples them): tests only.
+    pub fn read_display(&self) -> Option<Vec<u8>> {
+        self.read_target(|i| i.display.as_ref())
+    }
+
+    /// The ambient glow's bytes: tests only.
+    pub fn read_glow(&self) -> Option<Vec<u8>> {
+        self.read_target(|i| i.glow.as_ref())
+    }
+
+    fn read_target(&self, pick: impl Fn(&Inner) -> Option<&Tex>) -> Option<Vec<u8>> {
+        let g = self.inner.lock().unwrap();
+        let t = pick(&g)?;
+        let bpr = (t.w * 4).next_multiple_of(256);
+        let buf = g.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("kt-gpu display read"),
+            size: bpr as u64 * t.h as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = g.device.create_command_encoder(&Default::default());
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &t.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bpr),
+                    rows_per_image: Some(t.h),
+                },
+            },
+            wgpu::Extent3d { width: t.w, height: t.h, depth_or_array_layers: 1 },
+        );
+        g.queue.submit([enc.finish()]);
+        let slice = buf.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        g.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+        let data = slice.get_mapped_range().ok()?;
+        let mut out = Vec::with_capacity(t.w as usize * t.h as usize * 4);
+        for row in 0..t.h as usize {
+            let s = row * bpr as usize;
+            out.extend_from_slice(&data[s..s + t.w as usize * 4]);
+        }
+        Some(out)
+    }
+}
+
 impl VideoGpuExec for GpuFxEngine {
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
         self.inner.lock().unwrap().execute(plan, out)
@@ -1137,9 +1292,292 @@ impl VideoGpuExec for GpuFxEngine {
     fn last_cost(&self) -> kt_fx::video::FrameCost {
         self.inner.lock().unwrap().last_cost
     }
+
+    fn last_stages(&self) -> GpuStages {
+        self.inner.lock().unwrap().last_stages
+    }
+
+    fn can_present(&self) -> bool {
+        true
+    }
+
+    fn present(&self, plan: &FramePlan<'_>, o: PresentOptions) -> Result<bool, GpuExecError> {
+        self.inner.lock().unwrap().present(plan, o)
+    }
+
+    fn finish_present(&self) {
+        let device = self.inner.lock().unwrap().device.clone();
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    }
+
+    fn readback_depth(&self) -> usize {
+        RING
+    }
+
+    fn submit(&self, plan: &FramePlan<'_>) -> Result<u64, GpuExecError> {
+        self.inner.lock().unwrap().submit(plan)
+    }
+
+    fn collect(&self, ticket: u64, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+        self.inner.lock().unwrap().collect(ticket, out)
+    }
 }
 
 impl Inner {
+    /// `execute` without the wait (export-throughput D5): the same resolve, the same passes, the
+    /// copy into the ring's staging buffer, the map requested — and back to the caller. The
+    /// readback memo is neither asked nor filled: an export composes every moment once, and the
+    /// memo's copy of each 1080p frame (8 MB) was pure cost.
+    fn submit(&mut self, plan: &FramePlan<'_>) -> Result<u64, GpuExecError> {
+        let (ow, oh) = (plan.out_w, plan.out_h);
+        if ow > self.max_dim || oh > self.max_dim {
+            return Err(GpuExecError::TooLarge { w: ow, h: oh });
+        }
+        if self.in_flight.len() >= RING {
+            return Err(GpuExecError::Validation("readback ring full: collect before submitting".into()));
+        }
+        let ticket = self.next_ticket;
+        self.next_ticket += 1;
+        self.last_cost = Default::default();
+        let (jobs, complete) = self.resolve_plan(plan)?;
+        for j in &jobs {
+            self.last_cost.add(j.cost());
+        }
+        if jobs.is_empty() {
+            self.in_flight.push_back(InFlight { ticket, complete, gpu: None, out_w: ow, out_h: oh });
+            return Ok(ticket);
+        }
+        let total: u32 = jobs.iter().map(|j| j.slot_units()).sum();
+        if total > self.arena_slots {
+            let slots = total.next_power_of_two();
+            self.arena = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("kt-gpu uniforms"),
+                size: SLOT * slots as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.arena_slots = slots;
+        }
+        self.slot = 0;
+        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
+        let result = self.encode_jobs(&mut enc, &jobs, ow, oh);
+        let padded_bpr = (ow * 4).next_multiple_of(256);
+        let i = (ticket % RING as u64) as usize;
+        let fits = matches!(&self.ring[i], Some(r) if r.bpr == padded_bpr && r.w == ow && r.h == oh);
+        if !fits {
+            self.ring[i] = Some(RingSlot {
+                buf: self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("kt-gpu readback ring"),
+                    size: padded_bpr as u64 * oh as u64,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                }),
+                bpr: padded_bpr,
+                w: ow,
+                h: oh,
+                mapped: Default::default(),
+            });
+        }
+        let slot = self.ring[i].as_ref().unwrap();
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &result.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &slot.buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bpr),
+                    rows_per_image: Some(oh),
+                },
+            },
+            wgpu::Extent3d { width: ow, height: oh, depth_or_array_layers: 1 },
+        );
+        let sub = self.queue.submit([enc.finish()]);
+        *slot.mapped.lock().unwrap() = None;
+        let mapped = slot.mapped.clone();
+        slot.buf.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+            *mapped.lock().unwrap() = Some(r.is_ok());
+        });
+        // the accumulator goes back to the pool: a later frame writing it is ordered after this
+        // copy on the one queue
+        self.pool.release(result);
+        self.in_flight.push_back(InFlight { ticket, complete, gpu: Some(sub), out_w: ow, out_h: oh });
+        Ok(ticket)
+    }
+
+    /// Wait for the OLDEST submitted frame and copy it out — the bytes `execute` returns.
+    fn collect(&mut self, ticket: u64, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+        let Some(f) = self.in_flight.pop_front() else {
+            return Err(GpuExecError::Validation("nothing submitted".into()));
+        };
+        if f.ticket != ticket {
+            return Err(GpuExecError::Validation(format!("collect {ticket}, the oldest is {}", f.ticket)));
+        }
+        let n = (f.out_w as usize) * (f.out_h as usize) * 4;
+        let Some(sub) = f.gpu else {
+            out.clear();
+            out.resize(n, 0);
+            return Ok(f.complete);
+        };
+        self.device
+            .poll(wgpu::PollType::Wait { submission_index: Some(sub), timeout: None })
+            .map_err(|_| GpuExecError::DeviceLost)?;
+        let slot = self.ring[(ticket % RING as u64) as usize].as_ref().ok_or(GpuExecError::DeviceLost)?;
+        if *slot.mapped.lock().unwrap() != Some(true) {
+            return Err(GpuExecError::DeviceLost);
+        }
+        out.clear();
+        out.reserve(n);
+        {
+            let slice = slot.buf.slice(..);
+            let data = slice.get_mapped_range().map_err(|_| GpuExecError::DeviceLost)?;
+            for row in 0..f.out_h as usize {
+                let s = row * slot.bpr as usize;
+                out.extend_from_slice(&data[s..s + f.out_w as usize * 4]);
+            }
+        }
+        slot.buf.unmap();
+        Ok(f.complete)
+    }
+
+    /// `execute` that ends in the display target instead of a readback (preview-throughput D2):
+    /// the same resolve and passes, then the display pass, and back without waiting. An
+    /// incomplete frame is not drawn at all unless asked: the picture holds the last full frame.
+    fn present(&mut self, plan: &FramePlan<'_>, o: PresentOptions) -> Result<bool, GpuExecError> {
+        let (ow, oh) = (plan.out_w, plan.out_h);
+        if ow > self.max_dim || oh > self.max_dim {
+            return Err(GpuExecError::TooLarge { w: ow, h: oh });
+        }
+        self.last_cost = Default::default();
+        self.last_stages = Default::default();
+        let mark = Instant::now();
+        let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
+        let (jobs, complete) = self.resolve_plan(plan)?;
+        for j in &jobs {
+            self.last_cost.add(j.cost());
+        }
+        if complete || o.show_incomplete {
+            // the arena: the jobs plus the display pass and the glow's
+            let total: u32 = jobs.iter().map(|j| j.slot_units()).sum::<u32>() + 2;
+            if total > self.arena_slots {
+                let slots = total.next_power_of_two();
+                self.arena = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("kt-gpu uniforms"),
+                    size: SLOT * slots as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                self.arena_slots = slots;
+            }
+            self.slot = 0;
+            if !self.display.as_ref().is_some_and(|d| (d.w, d.h) == (ow, oh)) {
+                self.display = Some(create_display_tex(&self.device, ow, oh, "kt-gpu display"));
+                self.display_generation += 1;
+            }
+            if o.glow && self.glow.is_none() {
+                let (w, h) = GLOW_SIZE;
+                self.glow = Some(create_display_tex(&self.device, w, h, "kt-gpu glow"));
+            }
+            let display = self.display.as_ref().unwrap().view.clone();
+            let mut enc = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
+            if jobs.is_empty() {
+                // nothing to compose: the empty frame `execute` returns as zeros
+                enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &display,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+            } else {
+                let result = self.encode_jobs(&mut enc, &jobs, ow, oh);
+                self.pass_display(&mut enc, &result.view, &display, (ow, oh), (ow, oh));
+                if o.glow {
+                    let glow = self.glow.as_ref().unwrap().view.clone();
+                    self.pass_display(&mut enc, &result.view, &glow, (ow, oh), GLOW_SIZE);
+                }
+                // a later frame writing the accumulator is ordered after this one on the queue
+                self.pool.release(result);
+            }
+            let submit = Instant::now();
+            self.queue.submit([enc.finish()]);
+            self.last_stages.submit_ns = submit.elapsed().as_nanos() as u64;
+        }
+        self.last_stages.upload_ns = self.upload.spent_ns - upload_before.0;
+        self.last_stages.upload_bytes = self.upload.spent_bytes - upload_before.1;
+        self.last_stages.encode_ns =
+            (mark.elapsed().as_nanos() as u64).saturating_sub(self.last_stages.upload_ns);
+        Ok(complete)
+    }
+
+    /// The display pass: integer composite → the Rgba8Unorm texture egui samples.
+    fn pass_display(
+        &mut self,
+        enc: &mut wgpu::CommandEncoder,
+        src: &wgpu::TextureView,
+        target: &wgpu::TextureView,
+        (sw, sh): (u32, u32),
+        (tw, th): (u32, u32),
+    ) {
+        let offset = self.slot as u64 * SLOT;
+        debug_assert!(self.slot < self.arena_slots, "uniform arena overflow");
+        self.slot += 1;
+        let u = UniformData { u: [sw, sh, tw, th, 0, 0, 0, 0], ..Default::default() };
+        self.queue.write_buffer(&self.arena, offset, &u.bytes());
+        let dummy = self.dummy.view.clone();
+        let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.arena,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(128),
+                    }),
+                },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(src) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&dummy) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&dummy) },
+            ],
+        });
+        let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        rp.set_pipeline(&self.display_pipe);
+        rp.set_bind_group(0, &bg, &[offset as u32]);
+        rp.draw(0..3, 0..1);
+    }
+
     fn execute(&mut self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
         let (ow, oh) = (plan.out_w, plan.out_h);
         if ow > self.max_dim || oh > self.max_dim {
@@ -1147,11 +1585,15 @@ impl Inner {
         }
         let key = plan_key(plan);
         self.last_cost = Default::default();
+        self.last_stages = Default::default();
+        let mark = Instant::now();
         if let Some((data, complete)) = self.readback.get(key) {
             out.clear();
             out.extend_from_slice(data);
+            self.last_stages.copy_ns = mark.elapsed().as_nanos() as u64;
             return Ok(complete);
         }
+        let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
 
         // --- resolve: presence/size by the rules of the CPU executor ---
         let (jobs, complete) = self.resolve_plan(plan)?;
@@ -1225,6 +1667,11 @@ impl Inner {
             wgpu::Extent3d { width: ow, height: oh, depth_or_array_layers: 1 },
         );
         self.queue.submit([enc.finish()]);
+        self.last_stages.upload_ns = self.upload.spent_ns - upload_before.0;
+        self.last_stages.upload_bytes = self.upload.spent_bytes - upload_before.1;
+        self.last_stages.encode_ns =
+            (mark.elapsed().as_nanos() as u64).saturating_sub(self.last_stages.upload_ns);
+        let mark = Instant::now();
 
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
@@ -1238,6 +1685,8 @@ impl Inner {
             Ok(Ok(())) => {}
             _ => return Err(GpuExecError::DeviceLost),
         }
+        self.last_stages.wait_ns = mark.elapsed().as_nanos() as u64;
+        let mark = Instant::now();
         out.clear();
         out.reserve(n);
         {
@@ -1251,6 +1700,7 @@ impl Inner {
 
         self.pool.release(result);
         self.readback.insert(key, out.clone(), complete);
+        self.last_stages.copy_ns = mark.elapsed().as_nanos() as u64;
         Ok(complete)
     }
 

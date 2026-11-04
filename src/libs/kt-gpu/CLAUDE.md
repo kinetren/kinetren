@@ -80,6 +80,19 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
   `kt_fx::geom::pan3d_forward`, there is no GPU-only path any more — the CPU computes the same
   (t187 checks every run, t301 — export without GPU).
 
+## The export's readback ring (export-throughput D5)
+
+- `submit`/`collect` (`readback_depth` = `RING` = 3): the same resolve and passes as `execute`, the
+  copy into the ring's staging buffer, the map requested; `collect` waits for THAT submission. The
+  arena and the pool's accumulators are reused by frames in flight — legal because
+  `queue.write_buffer` and later passes are ordered after earlier submissions on the one queue;
+  never write a buffer of a frame in flight by mapping it. The ring neither asks nor fills the
+  readback memo (an export composes every moment once). t1457 holds the ring to `execute_into`.
+- `UploadCache` keeps up to four evicted textures per size for reuse.
+- `export_engine()`: the export's device is HighPerformance (`new_headless_for_export`; the UI stays
+  LowPower, invariant 12), and a software rasterizer (llvmpipe/lavapipe) is refused in favour of the
+  CPU frame workers unless `KT_VIDEO_GPU=1` — 133.9 s against 95.6 s on the showcase, 32 cores.
+
 ## Tests
 
 - `tests/parity.rs` — t181 (each effect and the chains, tolerances by the kind

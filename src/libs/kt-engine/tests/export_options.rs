@@ -73,6 +73,7 @@ fn t25_force_libx264_and_roundtrip_via_own_source() {
         audio_bitrate: 128_000,
         resolution: None,
         placeholders: Vec::new(),
+        ..Default::default()
     };
     let stats = export_mp4_with(
         &tiny_project(),
@@ -516,4 +517,53 @@ fn t963_sixty_frames_through_vaapi_decode() {
     assert_eq!(decoded, 60, "every grid key is read back");
     eprintln!("t963: the worst frame's mean absolute difference {worst:.2} (bound {BOUND})");
     assert!(worst <= BOUND, "VAAPI frames differ by {worst:.2} > {BOUND}");
+}
+
+/// t1456 (export-throughput D3): the video encoder is opened with its threads — `auto` for the
+/// export, `1` for the serial reference — and says so in the open report; both files hold every
+/// frame and the same audio length.
+#[test]
+fn t1456_the_encoder_gets_its_threads() {
+    let dir = tempfile::tempdir().unwrap();
+    for (serial, want) in [(false, "auto"), (true, "1")] {
+        let out = dir.path().join(format!("t1456-{serial}.mp4")).to_string_lossy().to_string();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let opts = ExportOptions { force_encoder: Some("libx264".into()), serial, ..Default::default() };
+        let stats = {
+            let seen = seen.clone();
+            kt_engine::export_mp4_with_backends(
+                &two_seconds(),
+                sources(),
+                sources(),
+                &out,
+                None,
+                &opts,
+                &kt_engine::ExportBackends::default(),
+                &Arc::new(AtomicBool::new(false)),
+                &Arc::new(AtomicBool::new(false)),
+                move |e| seen.lock().unwrap().push(e),
+            )
+            .expect("export")
+        };
+        let report = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .find_map(|e| match e {
+                kt_engine::export::ExportEvent::Opened(r) => Some(r.clone()),
+                _ => None,
+            })
+            .expect("the encoder is named");
+        assert!(
+            report.options.iter().any(|(k, v)| k == "threads" && v == want),
+            "serial={serial}: {:?}",
+            report.options
+        );
+        assert_eq!(stats.video_frames, 60);
+        assert_eq!(stats.audio_frames, 2 * 48_000);
+        let mut src = kt_media::ffmpeg::FfmpegSource::open(&out).unwrap();
+        let keys: Vec<Tick> = (0..60).map(|i| Tick(i * 3000)).collect();
+        src.read_video_span(&keys, Some(Quality { width: 320, height: 180 }), &mut |_, _| {}).unwrap();
+        assert!(src.decode_debug_stats().1 >= 60, "serial={serial}: every frame is in the file");
+    }
 }

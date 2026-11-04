@@ -157,8 +157,10 @@ pub struct Muxer {
     aenc: *mut ffi::AVCodecContext,
     vstream_idx: c_int,
     astream_idx: c_int,
-    sws: *mut ffi::SwsContext,
-    vframe: *mut ffi::AVFrame,
+    /// The muxer's own RGBA → encoder-format conversion (`write_video`); a pipelined export
+    /// converts on its own `VideoConverter`s and hands the frames to `write_video_frame`.
+    conv: VideoConverter,
+    vframe: VideoFrame,
     aframe: *mut ffi::AVFrame,
     pkt: *mut ffi::AVPacket,
     width: c_int,
@@ -321,6 +323,11 @@ impl Muxer {
                 }
                 None => spec.quality_options(cfg.quality),
             };
+            // the encoder's own threads (export-throughput D3): the AVCodecContext default is ONE
+            // thread, and libx264 encoded a 1080p export on one core of 32. `auto` lets the
+            // encoder size itself; a device encoder ignores it.
+            let mut opts = opts;
+            opts.push(("threads", if cfg.threads == 0 { "auto".to_string() } else { cfg.threads.to_string() }));
             for (k, v) in &opts {
                 set(&mut vopts, k, v);
             }
@@ -413,13 +420,7 @@ impl Muxer {
         }
 
         // --- working buffers ---
-        let vframe = unsafe { (api.av_frame_alloc)() };
-        unsafe {
-            (*vframe).format = vpix;
-            (*vframe).width = width;
-            (*vframe).height = height;
-            (api.av_frame_get_buffer)(vframe, 0);
-        }
+        let vframe = VideoFrame::alloc(api, vpix, width, height)?;
         let aframe = unsafe { (api.av_frame_alloc)() };
         unsafe {
             (*aframe).format = ffi::AV_SAMPLE_FMT_FLTP;
@@ -434,20 +435,7 @@ impl Muxer {
             Some((hw, dev, frames, _)) => (Some(*hw), *dev, *frames),
             None => (None, core::ptr::null_mut(), core::ptr::null_mut()),
         };
-        let sws = unsafe {
-            (api.sws_getContext)(
-                width,
-                height,
-                ffi::AV_PIX_FMT_RGBA,
-                width,
-                height,
-                vpix,
-                ffi::SWS_BILINEAR as c_int,
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-                core::ptr::null(),
-            )
-        };
+        let conv = VideoConverter::new(api, width, height, vpix)?;
         Ok(Muxer {
             api,
             fmt,
@@ -455,7 +443,7 @@ impl Muxer {
             aenc,
             vstream_idx,
             astream_idx,
-            sws,
+            conv,
             vframe,
             aframe,
             pkt: unsafe { (api.av_packet_alloc)() },
@@ -489,34 +477,45 @@ impl Muxer {
     }
 
     pub fn write_video(&mut self, rgba: &[u8]) -> Result<(), FfError> {
-        let api = self.api;
-        let expected = self.width as usize * self.height as usize * 4;
-        if rgba.len() != expected {
-            return Err(FfError::Av(format!(
-                "frame is {} bytes, expected {expected}",
-                rgba.len()
-            )));
-        }
+        self.conv.convert(rgba, &mut self.vframe)?;
+        let f = self.vframe.frame;
+        self.encode_video_frame(f)
+    }
+
+    /// A converter of this muxer's size and encoder pixel format (export-throughput D4): the
+    /// pipelined export runs several, one frame each, on their own threads. The conversion is a
+    /// pure function of the RGBA bytes, so which converter did a frame does not show in it.
+    pub fn video_converter(&self) -> Result<VideoConverter, FfError> {
+        VideoConverter::new(self.api, self.width, self.height, self.conv.pix)
+    }
+
+    /// A frame a `VideoConverter` fills, of this muxer's size and pixel format.
+    pub fn alloc_video_frame(&self) -> Result<VideoFrame, FfError> {
+        VideoFrame::alloc(self.api, self.conv.pix, self.width, self.height)
+    }
+
+    /// One converted frame to the encoder, in order: the next pts, the device upload for a
+    /// hardware encoder. The frame may be refilled after this returns.
+    pub fn write_video_frame(&mut self, f: &VideoFrame) -> Result<(), FfError> {
         unsafe {
-            let src: [*const u8; 4] = [rgba.as_ptr(), core::ptr::null(), core::ptr::null(), core::ptr::null()];
-            let src_ls: [c_int; 4] = [self.width * 4, 0, 0, 0];
-            (api.sws_scale)(
-                self.sws,
-                src.as_ptr(),
-                src_ls.as_ptr(),
-                0,
-                self.height,
-                (*self.vframe).data.as_ptr(),
-                (*self.vframe).linesize.as_ptr(),
-            );
-            (*self.vframe).pts = self.video_pts;
+            if (*f.frame).width != self.width || (*f.frame).height != self.height || (*f.frame).format != self.conv.pix {
+                return Err(FfError::Av("a converted frame of another size or format".into()));
+            }
+        }
+        self.encode_video_frame(f.frame)
+    }
+
+    fn encode_video_frame(&mut self, frame: *mut ffi::AVFrame) -> Result<(), FfError> {
+        let api = self.api;
+        unsafe {
+            (*frame).pts = self.video_pts;
             // a device encoder: the NV12 frame goes to a surface of the frames context (D4)
             if let Some(hw) = self.hw {
                 let r = (hw.av_hwframe_get_buffer)(self.hw_frames, self.hwframe, 0);
                 if r < 0 {
                     return Err(averr(api, "getting a VAAPI surface", r));
                 }
-                let r = (hw.av_hwframe_transfer_data)(self.hwframe, self.vframe, 0);
+                let r = (hw.av_hwframe_transfer_data)(self.hwframe, frame, 0);
                 if r < 0 {
                     (api.av_frame_unref)(self.hwframe);
                     return Err(averr(api, "uploading a frame to the surface", r));
@@ -525,7 +524,8 @@ impl Muxer {
             }
         }
         self.video_pts += 1;
-        self.encode(true)
+        let f = if self.hw.is_some() { self.hwframe } else { frame };
+        self.encode(f, true)
     }
 
     pub fn write_audio(&mut self, samples: &[f32]) -> Result<(), FfError> {
@@ -543,18 +543,18 @@ impl Muxer {
             }
             self.audio_pts += self.frame_size as i64;
             self.audio_fifo.drain(..self.frame_size * AUDIO_CHANNELS);
-            self.encode(false)?;
+            let f = self.aframe;
+            self.encode(f, false)?;
         }
         Ok(())
     }
 
-    fn encode(&mut self, video: bool) -> Result<(), FfError> {
+    fn encode(&mut self, frame: *mut ffi::AVFrame, video: bool) -> Result<(), FfError> {
         let api = self.api;
-        let (enc, frame, stream_idx, tb_src) = if video {
-            let f = if self.hw.is_some() { self.hwframe } else { self.vframe };
-            (self.venc, f, self.vstream_idx, tb(1, self.fps))
+        let (enc, stream_idx, tb_src) = if video {
+            (self.venc, self.vstream_idx, tb(1, self.fps))
         } else {
-            (self.aenc, self.aframe, self.astream_idx, tb(1, AUDIO_SAMPLE_RATE as c_int))
+            (self.aenc, self.astream_idx, tb(1, AUDIO_SAMPLE_RATE as c_int))
         };
         // ffmpeg-9: the frame says how long it lasts — one tick of its encoder time base for
         // video, `frame_size` samples for audio. Without it the LAST video sample was written
@@ -656,10 +656,6 @@ impl Drop for Muxer {
     fn drop(&mut self) {
         let api = self.api;
         unsafe {
-            if !self.sws.is_null() {
-                (api.sws_freeContext)(self.sws);
-            }
-            (api.av_frame_free)(&mut self.vframe);
             if !self.hwframe.is_null() {
                 (api.av_frame_free)(&mut self.hwframe);
             }
@@ -678,5 +674,110 @@ impl Drop for Muxer {
                 self.fmt = core::ptr::null_mut();
             }
         }
+    }
+}
+
+/// RGBA → the encoder's pixel format (export-throughput D4): its own `SwsContext`, so several run
+/// at once on different frames. `Muxer::video_converter` makes them with the muxer's parameters.
+pub struct VideoConverter {
+    api: &'static Api,
+    sws: *mut ffi::SwsContext,
+    width: c_int,
+    height: c_int,
+    pix: ffi::AVPixelFormat,
+}
+
+// SAFETY: the context is used by one thread at a time (`&mut self`), never shared.
+unsafe impl Send for VideoConverter {}
+
+impl VideoConverter {
+    fn new(api: &'static Api, width: c_int, height: c_int, pix: ffi::AVPixelFormat) -> Result<VideoConverter, FfError> {
+        let sws = unsafe {
+            (api.sws_getContext)(
+                width,
+                height,
+                ffi::AV_PIX_FMT_RGBA,
+                width,
+                height,
+                pix,
+                ffi::SWS_BILINEAR as c_int,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null(),
+            )
+        };
+        if sws.is_null() {
+            return Err(FfError::Av("sws_getContext failed (RGBA → encoder format)".into()));
+        }
+        Ok(VideoConverter { api, sws, width, height, pix })
+    }
+
+    /// Convert one RGBA frame (width×height×4 bytes) into `out`.
+    pub fn convert(&mut self, rgba: &[u8], out: &mut VideoFrame) -> Result<(), FfError> {
+        let api = self.api;
+        let expected = self.width as usize * self.height as usize * 4;
+        if rgba.len() != expected {
+            return Err(FfError::Av(format!("frame is {} bytes, expected {expected}", rgba.len())));
+        }
+        unsafe {
+            // the encoder may still hold a reference to the buffer it was last sent
+            let r = (api.av_frame_make_writable)(out.frame);
+            if r < 0 {
+                return Err(averr(api, "making the frame writable", r));
+            }
+            let src: [*const u8; 4] = [rgba.as_ptr(), core::ptr::null(), core::ptr::null(), core::ptr::null()];
+            let src_ls: [c_int; 4] = [self.width * 4, 0, 0, 0];
+            (api.sws_scale)(
+                self.sws,
+                src.as_ptr(),
+                src_ls.as_ptr(),
+                0,
+                self.height,
+                (*out.frame).data.as_ptr(),
+                (*out.frame).linesize.as_ptr(),
+            );
+        }
+        Ok(())
+    }
+}
+
+impl Drop for VideoConverter {
+    fn drop(&mut self) {
+        unsafe { (self.api.sws_freeContext)(self.sws) };
+    }
+}
+
+/// A frame in the encoder's pixel format (export-throughput D4), owned and reusable.
+pub struct VideoFrame {
+    api: &'static Api,
+    frame: *mut ffi::AVFrame,
+}
+
+// SAFETY: owned exclusively; moved between the converter and the writer threads, never shared.
+unsafe impl Send for VideoFrame {}
+
+impl VideoFrame {
+    fn alloc(api: &'static Api, pix: ffi::AVPixelFormat, width: c_int, height: c_int) -> Result<VideoFrame, FfError> {
+        unsafe {
+            let mut frame = (api.av_frame_alloc)();
+            if frame.is_null() {
+                return Err(FfError::Av("av_frame_alloc failed".into()));
+            }
+            (*frame).format = pix;
+            (*frame).width = width;
+            (*frame).height = height;
+            let r = (api.av_frame_get_buffer)(frame, 0);
+            if r < 0 {
+                (api.av_frame_free)(&mut frame);
+                return Err(averr(api, "allocating a video frame", r));
+            }
+            Ok(VideoFrame { api, frame })
+        }
+    }
+}
+
+impl Drop for VideoFrame {
+    fn drop(&mut self) {
+        unsafe { (self.api.av_frame_free)(&mut self.frame) };
     }
 }

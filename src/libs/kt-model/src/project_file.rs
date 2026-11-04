@@ -71,12 +71,20 @@ pub const PROJECT_FILE_VERSION_MASKS: u32 = 2;
 /// open the project and silently cut the echo the person chose to ring — so it refuses instead.
 pub const PROJECT_FILE_VERSION_ECHO: u32 = 3;
 
+/// The version a file is written with WHEN a simulated device's sound rows are set (sim-audio-pairs:
+/// the VHS deck's audio output, the stream's audio bitrate, the camera's microphone). An older build
+/// knows the video kind but not these rows: it would open the project and drop the device's sound
+/// settings on its next save — so it refuses instead.
+pub const PROJECT_FILE_VERSION_SOUND: u32 = 4;
+
 /// The highest version this build reads.
-pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_ECHO;
+pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_SOUND;
 
 /// The version this project needs — by its content.
 pub fn version_for(project: &Project) -> u32 {
-    if project.has_ringing_echo() {
+    if project.has_device_sound() {
+        PROJECT_FILE_VERSION_SOUND
+    } else if project.has_ringing_echo() {
         PROJECT_FILE_VERSION_ECHO
     } else if project.has_masks() {
         PROJECT_FILE_VERSION_MASKS

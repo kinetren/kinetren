@@ -2513,6 +2513,63 @@ at the same moment; adding the video effect to an event with linked audio adds i
 visible and switchable off. The rule is written into CLAUDE.md next to "imitation is not
 simulation", so the next simulation effect is not done without its pair.
 
+## 2026-11-04 — "three are working" while two had stopped
+
+> Ты врешь. Трое не работали двое тупо меня ждали пока я не отвечу и мы потеряли из-за тебя время.
+> Запомни на будущее для оркестраторов.
+
+The owner is right. The transcripts: `compute-backends` ended its turn at 21:21 with questions for
+him and stood 69 minutes until he answered it himself; `export-throughput` ended at 21:41 and stood
+50 minutes unmerged. "Three are working" was written at 20:44 and nobody corrected it. The cause:
+the app wakes the orchestrator only when NONE of its sessions still works, and `sim-audio-pairs` was
+working, so the two notes waited for his next message while two of three slots were empty.
+
+- Taken as: the section "Never let a stopped executor stand" in `docs/orchestrator.md`, the same
+  turn: a subscription to each executor's idle notice right after its start, a status claim only
+  from a check made in the same turn with its time, an executor's question carried to the owner at
+  once, a freed slot filled in the same turn.
+
+## 2026-11-04 — what the agents find and leave is not collected
+
+> Еще претензия - а ты вообще читаешь что там агенты находят какие-то баги которые не трогают? Как
+> бы нам это надо собирать и обдумывать тоже..
+
+The reports were read, but what they left stayed in the orchestrator's session memory and on
+proposal cards, with no list and no verdict.
+
+- Taken as: `docs/found-defects.md`, harvested from the executors' transcripts since 2026-11-01; a
+  mandatory "Найдено, не исправлено" section in every report; the list updated with every merge;
+  a verdict on every open row at the end of each stage (`docs/orchestrator.md`, "What executors
+  find and leave").
+
+## 2026-11-04 — the math is everywhere, not one effect (answer to the `compute-backends` memo)
+
+> Речь в моем запросе не шла только про процессорный рендер. У нас в куче мест есть куча математики,
+> как простой пример VHS Tape, Datamosh(там вообще кодер какой-то) И ТАК ДАЛЕЕ В ДРУГИХ МЕСТАХ
+> ПРОГРАММЫ, и я не верю что невозможно взять условный opencl а лучше vulkan и на нем не писать всякие
+> вещи где мы например AVX применяем или еще что-то делаем.
+> Отвечай.
+> п.1. сначала отвечай
+> п.2. похер на эталон
+> п.3. "ограниченный язык ядер" - а нам что нужно какой-то язык еще придумать? мы в каменном веке?!?
+> за нас уже все сто раз придумали
+> п.4. не уверен пока ты не ответишь
+> п.5. да ARM нужен
+> п.6. я не собираюсь снимать замеры
+
+- Taken as: the memo answered a narrower question. The heavy math moves to Vulkan compute written in
+  plain WGSL through wgpu, no kernel language, no OpenCL or CUDA; an ARM build is wanted; measuring
+  is the agents' work. The one-kernel-text prototype is dropped. Two decisions are open with the
+  owner: what happens on a machine without a GPU API, and whether "эталон" covers video only.
+- His answer, written in the `compute-backends` session the same day:
+
+> в.1. а если мы удалим - мы даже через llvm не сможем работать на текущей машине или что?!?
+> в.2. и видео и аудио можно удалить/обновить эталон
+
+- Taken as: "эталон" covers video and audio, a reference may be deleted or updated. The first answer
+  is a question back: deleting the CPU copies must not cost this machine its render through llvmpipe.
+  `compute-backends` answers it; the decision to delete stays open until then.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
