@@ -17,10 +17,10 @@ message, no co-author lines) and `src/scripts/target-prune.py`. The baseline is 
   default branch — t1420 green
 - [x] 2.2 D1: `windows-build` restores/saves `src/target/win-container` and the registry, the prune
   leaves no workspace-member artifact. Run here twice: the second compiled the 32 workspace crates
-  only, 405-424 against 906 CPU-s
+  only, 405-424 against 906 CPU-s; on four pinned cores 99 s against 234 s of compile
 - [x] 2.3 D3: `ffmpeg9` restores/saves `target/ffmpeg-test-container`
 - [x] 2.4 D2: the `windows-cross` stage, its image saved/loaded by the Dockerfile's hash; 3.0 GB
-  against 5.5 GB, 684 MB saved
+  against 5.5 GB, 653 MB saved, `docker load` 29 s
 - [x] 2.5 D6: the disk clean-up removed
 - [x] 2.6 `CARGO_INCREMENTAL=0` reaches the container builds
 
@@ -40,9 +40,13 @@ message, no co-author lines) and `src/scripts/target-prune.py`. The baseline is 
 
 ## 6. Measure and close
 
-- [ ] 6.1 `cargo test -p kt-cli --test dist_guard`, `dist-check.py --check`, `cargo clippy --workspace
-  --all-targets`, the whole `cargo nextest run --workspace` green
-- [ ] 6.2 A real `flatpak-build.sh` cold and warm with `KT_FLATPAK_CCACHE=1`
-- [ ] 6.3 The owner: after the merge, a cold and a warm master run; per-job times against the design's
-  table, cache sizes within D4's budget
-- [ ] 6.4 Archive: `openspec validate --strict`
+- [x] 6.1 `cargo test -p kt-cli --test dist_guard`, `dist-check.py --check`, `cargo clippy --workspace
+  --all-targets` (no errors, 33 warning lines as before), `cargo nextest run --workspace`: 1528 of
+  1528. t815 went red twice under load, green alone: a wall-clock bound on a disk write, not this
+  change (row 28 of `docs/found-defects.md`)
+- [x] 6.2 A real `flatpak-build.sh` with `KT_FLATPAK_CCACHE=1`, cold and warm: the warm run green, 32
+  crates compiled, no third-party one
+- [x] 6.3 Archive: `openspec validate --strict`
+
+What is left is not the tree's: after the merge, a cold and a warm master run give the per-job times
+to set against the design's table, and the sizes against D4's budget. The owner sends those logs.

@@ -60,11 +60,11 @@ list may be short of items from them.
 | 25 | `formula` live scenario red under load | `src/scripts/live/formula.py` | open | С.2 |
 | 26 | live scenarios red in a batch, green alone; displays collide | `scripts/live-check.sh` | open | С.2 |
 | 27 | sidecar "database is locked" (t640, t1171, t411, t1413) | `kt-media` | fixed by `ece65c8f`, to confirm on the merged tree | confirm in the stage's `finish.sh` |
-| 28 | load-flaky tests: t663, t888, t947, t951, t952, t476, t795, t986, t939, t20 | various | open | С.2 |
+| 28 | load-flaky tests: t663, t888, t947, t951, t952, t476, t795, t986, t939, t20, t815 (a wall-clock bound on writing the restore record: 0.05 s quiet, 2-13 s on a busy disk) | various | open | С.2 |
 | 29 | two parallel fixture generations share one temp name | `src/fixtures/gen.sh` | open | С.2 |
 | 30 | `BadWindow` in ui-probe, the `welcome` scenario | live | open | С.2 |
-| 31 | a plugin edit costs 158 s of test build | workspace | open | С.2 |
-| 32 | CI wall 21 min; `ci-speedup` proposed only | `.github/workflows/ci.yml` | open | С.2 |
+| 31 | a plugin edit rebuilds every test target of the core crates (no early cut-off, ~120 binaries); `debug = 1` halved it, the cascade stays | workspace | reduced by `ci-speedup` | С.2 |
+| 32 | CI wall 13.0 min in the only log (21 min has none); `ci-speedup` estimates ~9, to confirm on a warm master run | `.github/workflows/ci.yml` | applied, awaits the logs | С.2 |
 | 33 | `font_tests::sources()` misses code after the first `#[cfg(test)]` | kt-app `font_tests.rs` | open | С.2 |
 | 34 | `cargo fmt --all` reformats about 60 files | tree | open | С.2, one commit |
 | 35 | old clippy warnings | kt-gpu, kt-cli, kt-app | unknown | С.2 |

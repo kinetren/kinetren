@@ -59,22 +59,31 @@ was noise:
 
 | Build | Cold | Warm (third-party restored, workspace rebuilt) | Warm / cold |
 |---|---|---|---|
-| `cargo nextest archive`, Windows | 906 CPU-s, 308 crates | 405-424 CPU-s, 32 crates | 0.46 |
+| `cargo nextest archive`, Windows, under load | 906 CPU-s, 308 crates | 405-424 CPU-s, 32 crates | 0.46 |
+| The same on four pinned cores, machine quiet | 743 CPU-s, compile 234 s | 311 CPU-s, compile 99 s | 0.42 |
 | `cargo build --profile dist` | 846 CPU-s, 384 crates | 511 CPU-s, 32 crates | 0.60 |
 
+The Flatpak path was run for real: `flatpak-build.sh` with `KT_FLATPAK_CCACHE=1` in a privileged
+ubuntu:24.04, as the job's steps, then the prune, a one-line edit, and the build again. The second
+run compiled the 32 workspace crates and no third-party one, and was green to the end: both linter
+runs and the sandbox's export. It took 3 min 53 s on 32 cores, of which 55 s after the compile. Its
+first run compiled 384 crates and was refused by the linter only for `appid-url-not-reachable`
+(`https://kinetren.com` timed out), which no build decides. Without D7 a green job would be, by the
+same arithmetic, ~10 min.
+
 The pruned Windows target is 1.19 GB, 343 MB compressed (saved in 8 s); the `dist` one 1.55 GB,
-456 MB. The `windows-cross` image is 3.0 GB against 5.5 GB with wine, 684 MB as `docker save | gzip
--1`. What CI spent is scaled by the ratio: **estimated**, per job, on a warm run (caches exist, the
+456 MB. The `windows-cross` image is 3.0 GB against 5.5 GB with wine, 653 MB as `docker save | gzip
+-1`, and `docker load` takes 29 s here. What CI spent is scaled by the ratio: **estimated**, per job, on a warm run (caches exist, the
 Dockerfile and `Cargo.lock` unchanged):
 
 | Job | Before, min | After, min (estimated) | Basis |
 |---|---|---|---|
-| windows-build | 8.8 | ~4.7 | compile 381 s × 0.46 = 175 s; image 91 s → ~35 s (684 MB at the 150 MB/s of the run's cache restore, plus `docker load`); target restore ~10 s |
+| windows-build | 8.8 | ~4.6 | compile 381 s × 0.42-0.46 = 160-175 s; image 91 s → ~35 s (653 MB at the 150 MB/s of the run's cache restore, plus the 29 s of `docker load`); target restore ~10 s |
 | windows-test | 4.1 | ~4.0 | order: 7 s at most; nothing else changes |
-| **Windows chain** | **12.9** | **~8.7** | the critical path |
+| **Windows chain** | **12.9** | **~8.6** | the critical path |
 | test | 8.2 | ~7.0 | clean-up -48 s; order up to -28 s |
 | ffmpeg9 | 7.9 | ~2.8, 6.7 when the Dockerfile changes | image hit ~45 s against 263 s; compile 160 s × 0.46 = 74 s |
-| flatpak | 8.4 to compose, green unknown | to compose ~5.8; green FLATPAK_GREEN | compile 393 s × 0.60 = 236 s |
+| flatpak | 8.4 to compose, green unknown | ~7.5 green | compile 393 s × 0.60 = 236 s: to compose ~5.8; after it 55 s measured here, plus the linter's install, ~1 min by the SDK's 34 s |
 | **wall** | **13.0** | **~9** | the longest path |
 
 The margin under 10 min is thin. A cold run stays what it was plus the saves: the first master run
@@ -115,7 +124,7 @@ a new key clears it.
 The CI job runs no Windows binary, so it does not need wine, which is 2.5 GB of the 5.5 GB image and
 the slow half of its build. The `windows` stage becomes `windows-cross` plus wine; `make windows`,
 the release and `windows-test.sh` stay on `windows`, the CI job compiles in `windows-cross`, and that
-image is saved like `ffmpeg-test` (684 MB).
+image is saved like `ffmpeg-test` (653 MB; `docker load` 29 s against the 91 s build).
 
 ### D3. The FFmpeg 9 build restores `target/ffmpeg-test-container`
 
@@ -129,7 +138,8 @@ Every `actions/cache` is a `restore` step plus a `save` step under the default-b
 t1421 guards that every compiling job restores before it compiles and what a key names.
 
 **Size**: estimated, nothing was read from GitHub: test 0.6 GB (measured in the log), Windows target
-0.35 + registry ~0.2, image 0.7, FFmpeg image and target ~1, Flatpak ~1: about 4 GB of the 10 GB.
+0.35 + registry ~0.2, image 0.65, FFmpeg image and target ~1, Flatpak ~0.8 (1.9 GB on disk before compression, 1.6 GB of it the pruned
+target): about 4 GB of the 10 GB.
 
 ### D5. The long tests start first; no threads inside tests
 

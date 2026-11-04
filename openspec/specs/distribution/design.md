@@ -262,3 +262,31 @@ request of 2026-11-01 (kkt-26.11.01 item 13): both checkboxes moved together int
 Preferences…, the update check right after statistics (t878 checks the adjacency). The how-to-switch-
 off text names the new path. When the state already says a newer release is out, the start window's
 What's new pane is headed by the same line (no request of its own).
+
+## CI speed (change `ci-speedup`, archived 2026-11-05)
+
+The owner: "все что больше 10мин+ это ужас". The run of 9e1f1a45 took 13.0 min, and 12.9 of them were
+`windows-build` then `windows-test`, compiling 308 crates from nothing on every push. The measured
+tables and the estimate of ~9 min are in the archived change's design; the estimate waits for the
+logs of a warm master run.
+
+- **Every compiling job restores third-party artifacts; only the default branch writes them.** The
+  workspace's own crates are pruned before saving (`ci-cache-prune.py`, names from `cargo metadata`):
+  they rebuild on every push, and they are most of the directory. Cargo's fingerprints decide every
+  rebuild, so a cache can only cost a compile. Side branches do not write: they would compete with
+  master's entries for the repository's 10 GB.
+- **The CI job compiles in `windows-cross`, the stage without wine.** It runs nothing Windows, and wine
+  is 2.5 GB of 5.5 GB. The archive runs on a real Windows runner.
+- **The Flatpak's cache goes through `--ccache`'s directory**, the only one that outlives the sandbox,
+  and only the CI job asks for it. The manifest's line tests `CCACHE_DIR` for `/run/ccache`, not for
+  being set: flatpak-builder always sets it, to `/run/ccache/disabled` without `--ccache`, and a target
+  there fails the build Flathub runs.
+- **No disk clean-up in the `test` job**: 108 GB free against 5 GB used. **No incremental compilation
+  in the containers**: job-level env does not reach `docker run`, so it is passed by name.
+- **Long tests start first** (`src/.config/nextest.toml`); the order is worth under 30 s on the runners'
+  four cores, which is why threads inside t1053 and t943 were dropped.
+- **Rejected:** `sccache` (a second cache layer); `Swatinem/rust-cache` on the container's target (it
+  needs a matching host toolchain and could not be tried here); lower `lto` or `codegen-units` for the
+  Flatpak job (it is CI's only build of the `dist` profile, so it would stop checking what ships);
+  skipping jobs on branches (changes what a push proves: the owner's call).
+
