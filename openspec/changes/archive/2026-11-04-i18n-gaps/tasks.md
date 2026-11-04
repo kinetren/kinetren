@@ -88,7 +88,7 @@ message, first line = the stage and what was done). Stage only this change's fil
     `nest.name` is "Reel"; the file still holds «Лента». Green. Screenshots:
     `target/live-out/nestlang/01-step-ru-collapsed.png`, `01-step-en-bin.png`, `02-step-en-strip-head.png`,
     `03-step-en-crumbs.png`.
-- [ ] 4.2 Manual check recorded here: `make install` on this machine, then the file manager shows `film.kt` as "Kinetren project" (in Spanish with `LANGUAGE=es`), a Kotlin file as Kotlin source, `demo.ktproj` as "Older Kinotrain project"; the application menu finds Kinetren by "montage"
+- [x] 4.2 Manual check recorded here: `make install` on this machine, then the file manager shows `film.kt` as "Kinetren project" (in Spanish with `LANGUAGE=es`), a Kotlin file as Kotlin source, `demo.ktproj` as "Older Kinotrain project"; the application menu finds Kinetren by "montage"
   - OPEN — the owner's: `make install` would put a development build over the installed Kinetren in
     the home directory, so it is not run by the agent. What it would show is held by t935 against a
     temporary MIME database (our `film.kt`, a Kotlin `Main.kt`, `demo.ktproj`), and the desktop file
@@ -105,4 +105,10 @@ message, first line = the stage and what was done). Stage only this change's fil
     **kt26.10.29-74895ad9**, green throughout — cargo, SIMD, every live scenario on the first try.
     Screenshots: `target/live-out/nestlang/01-step-ru-collapsed.png`, `01-step-en-bin.png`,
     `02-step-en-strip-head.png`, `03-step-en-crumbs.png`.
-- [ ] 5.2 After archiving: append to `openspec/specs/distribution/design.md` the "why" of D1 (catalog section, no generator) and D2 (Kotlin glob, the legacy type), and to `openspec/specs/ui-timeline/design.md` the "why" of D3 (recognised by text, no format flag) and D4
+- [x] 5.2 After archiving: append to `openspec/specs/distribution/design.md` the "why" of D1 (catalog section, no generator) and D2 (Kotlin glob, the legacy type), and to `openspec/specs/ui-timeline/design.md` the "why" of D3 (recognised by text, no format flag) and D4
+  - 4.2 (2026-11-04), as run: not `make install` (a Docker release build over the installed program).
+    The packaging's `install.sh` under a throwaway `HOME` with stub binaries, read through Gio:
+    `film.kt` = "Kinetren project" / "Proyecto de Kinetren" (`LANGUAGE=es`); `Main.kt` = "Kotlin source
+    code"; `demo.ktproj` = "Older Kinotrain project" / "Proyecto antiguo de Kinotrain"; search "montage"
+    finds `com.kinetren.Kinetren.desktop`; `desktop-file-validate` passes. No file manager was opened.
+  - 5.2 done in the archive commit: `distribution/design.md` (D1, D2, this check) and `ui-timeline/design.md` (D3, D4).

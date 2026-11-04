@@ -350,6 +350,23 @@ scroll**, only the body scroll (`window_body`). The width-rounding variant (b) w
 not needed. `track_window`'s own copy of the body scroll also grew its height 30 points a frame up to a
 ceiling; it now uses the shared body.
 
+## A program-chosen reel name follows the language (i18n-gaps, archived 2026-11-04)
+
+- **D3. Recognised by its text, shown in the current language.** `reel_display_name(stored)` returns the
+  current language's default plus the same number if `stored` equals the default reel name of ANY of the
+  five catalogs, optionally followed by `" " + digits`; any other text is returned untouched. Every place
+  that shows a reel name goes through it (strip head, bin card, crumbs, settings title, published-parameter
+  windows, rename prefill), and the search and the rename uniqueness check compare both forms. Rejected: a
+  flag `Sequence.name_auto` (a project-format field for a display concern, and it would not fix the owner's
+  EXISTING file; teaching the reader to set it for old names is the reader learning an old form, which
+  R.67 forbids); an empty stored name (names are unique addresses in the model and OTIO needs one); leaving
+  it as data (the person never typed the word, the program wrote it). Cost, written down: a person who
+  deliberately typed exactly "Reel" or "Reel 3" sees it in the other language too (t932b keeps their
+  other texts untouched).
+- **D4. A Cyrillic placement guard.** t933 extends t131 beyond literals: catalogs other than `ru.toml` value
+  by value (the `[lang]` endonym excepted), and committed fixtures as text with a declared list of Cyrillic
+  test data and a reason per entry. The `.desktop`/MIME files are checked against `ru.toml` by t930.
+
 ## Deferred
 
 - `lane_names` live in `Project.ui`, and `swap_reel` does not swap them — the full entry
