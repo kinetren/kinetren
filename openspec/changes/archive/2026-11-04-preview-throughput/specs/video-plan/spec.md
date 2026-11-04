@@ -9,7 +9,7 @@ as it is, unless nothing has been shown yet. Without an executor, or for a plan 
 preview SHALL take the bytes path. Export SHALL keep its readback.
 Why: at 1080p the UI thread spent about 33 ms of a 40 ms frame uploading, waiting for the device
 and copying the frame out, before converting it and uploading it a second time (`kt-cli preview`,
-llvmpipe; preview-throughput, 2026-11-04). The p95 stall per UI frame went from 36 ms to 7–8 ms.
+llvmpipe; preview-throughput, 2026-11-04). The p95 stall per UI frame went from 36–55 ms to 7–11 ms.
 
 #### Scenario: The picture does not change when the readback goes
 - **WHEN** half-transparent events are presented and executed at the same moments, across a

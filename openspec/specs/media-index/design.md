@@ -415,3 +415,11 @@ showcase project reads seven VP8/VP9 files up to 3840×2160.
   the least recently used — a function of the requests. Decoded pictures for the showcase: 101,009
   → 9,190 (for 5,644 used). t1455. Not done: the preview's `MediaWorker` keeps one decoder per media
   and has the same ping-pong on such a project (a follow-up; its queue is its own design).
+
+## The live decoder (preview-throughput, 2026-11-04)
+
+The measurements and the reasons are in `openspec/specs/video-plan/design.md`, "The preview keeps up".
+What belongs here: `MediaWorker` serves a moment once at every size (D1), which took 3,844–5,413
+pictures to about 756 on 12 s of the showcase; the look-ahead asks the first frame of a cut past its
+bytes (D3); audio is read between the chunks of a span; while the CPU workers serve, the display
+orders no decode (D5). Software decode is not the limit, so hardware decode was not taken up.

@@ -38,3 +38,11 @@ message, first line = the stage and what was done, no `Co-Authored-By` or other 
   stands; t1536 red on an endless hold
 - [x] 3.8 An empty post-FX memo is no video miss; t1535
 - [x] 3.9 The kt-app suite six times clean, the whole workspace (t815 alone red: its 2 s write limit), clippy, commit, target-prune
+
+## 4. Close
+
+- [x] 4.1 The real program before and after, the whole edit on each path; the table in the design
+- [x] 4.2 Live scenarios: gpufx, generator, conform, seekjump, nestpreview, stills, masks, geomctl,
+  loop, rate, all green on the final code
+- [x] 4.3 The table in `openspec/specs/video-plan/design.md`, a note in `media-index/design.md`,
+  `kt-cli preview` in the root guide, What's new

@@ -27,6 +27,12 @@ cargo run -p kt-cli -- probe <project.kt> <from_s> <to_s> [--time]
                            # --time: does the audio render keep up with real time
                            # (judge SPEED only on a RELEASE build — debug
                            # is 9 times slower, item 301)
+cargo run -p kt-cli -- preview <project.kt> <from_s> <to_s> [--size WxH] [--cpu]
+                           # plays a range through the real player against a wall-clock
+                           # output device: V-fps and V-skipped as the performance panel
+                           # counts them, and a frame's time stage by stage. On a RELEASE
+                           # build, with the footage in /dev/shm: on a busy disk two runs
+                           # differ by hundreds of incomplete composites
 python3 scripts/subset-fonts.py  # CJK/Arabic font subsets from the translation catalogs
 ./scripts/live-check.sh    # live scenarios on a virtual screen (Xvfb+openbox):
                            # the real kt-app, real gestures, screenshots in

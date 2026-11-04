@@ -128,7 +128,64 @@ at 0.56 ms. What blocks is inside the software driver with a window attached; `p
 available here, so the cause is not known and is not claimed. On this adapter the frame's cost is the
 rasterizer's own work, whoever waits for it. A real card was not measured: none is available.
 
+## Measured, before and after
+
+Release builds, the showcase project (1080p, 25 fps, 104 s, 101 events), footage in /dev/shm, the
+binaries alternating. **This machine has no real graphics card: every "GPU" row is llvmpipe on 32
+cores, and no number here says what a real card does.** The machine carried other sessions' load
+(5–20) throughout.
+
+`kt-cli preview`, one frame's stages on the UI thread, ms per composite (34–46 s, 1080p):
+
+| stage | before | D1 | D1–D3 |
+|---|---|---|---|
+| plan | 0.03 | 0.03 | 0.06 |
+| upload | 2.0 | 3.5 | 3.5 |
+| encode + submit | 0.2 | 0.25 | 0.3 |
+| wait for the device | 11.5–13.2 | 18–23 | 0 |
+| copy out | 3.5–4.1 | 4.5–5.0 | 0 |
+| UI stall, p95 per UI frame | 43–57 | 40–55 | 7–11 |
+
+At 640×360 the same frame was: plan 0.03, upload 1.4, encode 0.3, wait 5.5, copy 0.3 (the before
+column, with 72 incomplete composites). "Before" composes fewer complete frames, so its per-composite
+stages look cheaper; that is starvation, not speed. The device's work did not go away with D2: a
+headless run waits for it at the end of the frame (15–19 ms), and in a window the swapchain does.
+
+`kt-cli preview`, the whole edit, 0–104 s:
+
+| path | V-fps | V-skipped | incomplete | underrun, frames | pictures | reopens | UI stall p95, ms |
+|---|---|---|---|---|---|---|---|
+| GPU 1080p, before | 11.3 | 374 | 2003 | 193,987 | 42,654 | 661 | 49.3 |
+| GPU 1080p, after | 21.0 | 356 | 104 | 0 | 10,934 | 113 | 6.2 |
+| CPU 1080p, before | 5.2 | 1588 | 766 | 160,426 | 53,479 | 842 | 227.5 |
+| CPU 1080p, after | 15.0 | 0 | 2503 | 0 | 11,961 | 115 | 0.1 |
+| GPU 640×360, before | 17.4 | 298 | 1119 | 109,205 | 55,296 | 852 | 20.1 |
+| GPU 640×360, after | 22.0 | 282 | 70 | 0 | 10,814 | 113 | 2.7 |
+
+On the CPU path "after", V-skipped and incomplete do not mean what they mean above: a held frame
+counts as an incomplete composite per UI frame, and the ratchet moves past it. Read V-fps.
+
+The real program, release, Xvfb, 1080p, the loop region 26–57 s, the panel's counters, 18 s each,
+three rounds. A round counted only if the GPU "after" run reached 20 UI frames per second, a rule
+set before the data; two earlier rounds with the machine swamped (under 6 UI fps) were discarded.
+
+| path | V-fps | underrun, frames | UI frames/s |
+|---|---|---|---|
+| GPU, before | 8.7–10.3 | 75,983–82,767 | 21.7–26.8 |
+| GPU, after | 17.0–19.7 | 0 | 24.3–29.7 |
+| CPU, before | 4.4–4.7 | 63,695–79,695 | 14.4–15.7 |
+| CPU, after | 17.6–18.4 | 0 | 48.4–52.4 |
+
+"Before" here is the final tree with the old `worker.rs` and `prefetch.rs`, compose-ahead off and
+`KT_PREVIEW_READBACK=1`: a temporary build, the base branch has neither the counters nor the size
+variable. 25 V-fps is NOT reached in a window on this rasterizer: the composite and the UI's own
+painting share the same CPU rasterizer (see the next section). Headless the GPU path reaches 24.7
+on 34–46 s.
+
 ## Hardware decode: not needed
 
-After D1 a picture costs about 3 ms out of the decoder plus 8 ms of RGBA conversion at about 2.7 Mpx,
-one worker per file. Software decode is not the limit, so no architecture question arises.
+After D1 a picture costs about 2 ms out of the decoder plus 8–9 ms of RGBA conversion at about 2.7
+Mpx, one worker per file, and every run's decoders kept up on 4K VP9 footage. The waste was the
+decoding of pictures nobody asked for, not the speed of decoding. No architecture question arises.
+The RGBA conversion is the larger half, on one thread per file: at 4K native size it is the next
+limit to meet, but nothing measured here reaches it.
