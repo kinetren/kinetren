@@ -9,6 +9,7 @@
 
 pub mod audio_codec;
 pub mod barrier;
+pub mod compute;
 pub mod curves;
 pub mod dsp;
 pub mod generator;

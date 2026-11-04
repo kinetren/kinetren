@@ -5,6 +5,7 @@
 //! kt-cli). The CPU path of kt-fx/kt-engine remains the byte reference;
 //! GPU-vs-CPU conformance is tests/parity.rs (tolerances, t181/t182/t183).
 
+pub mod compute;
 mod context;
 mod engine;
 mod pool;
