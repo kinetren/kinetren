@@ -98,6 +98,10 @@ def main():
         return 2
     target, meta = args
     dry = "--dry-run" in sys.argv
+    if not os.path.isdir(target):
+        # a build that kept nothing here (`--ccache` gave it no directory) saves what it has
+        print(f"ci-cache-prune.py: no {target}, nothing to prune")
+        return 0
     with open(meta, encoding="utf-8") as f:
         packages, targets = names(json.load(f))
     if not packages:
