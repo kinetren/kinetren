@@ -64,11 +64,11 @@ list may be short of items from them.
 | 25 | `formula` live scenario red under load | `src/scripts/live/formula.py` | open | С.2 |
 | 26 | live scenarios red in a batch, green alone; displays collide | `scripts/live-check.sh` | open | С.2 |
 | 27 | sidecar "database is locked" (t640, t1171, t411, t1413) | `kt-media` | fixed by `ece65c8f`, to confirm on the merged tree | confirm in the stage's `finish.sh` |
-| 28 | load-flaky tests: t663, t888, t947, t951, t952, t476, t795, t986, t939, t20 | various | open | С.2 |
+| 28 | load-flaky tests: t663, t888, t947, t951, t952, t476, t795, t986, t939, t20, t815 (a wall-clock bound on writing the restore record: 0.05 s quiet, 2-13 s on a busy disk) | various | open | С.2 |
 | 29 | two parallel fixture generations share one temp name | `src/fixtures/gen.sh` | open | С.2 |
 | 30 | `BadWindow` in ui-probe, the `welcome` scenario | live | open | С.2 |
-| 31 | a plugin edit costs 158 s of test build | workspace | open | С.2 |
-| 32 | CI wall 21 min; `ci-speedup` proposed only | `.github/workflows/ci.yml` | open | С.2 |
+| 31 | a plugin edit rebuilds every test target of the core crates (no early cut-off, ~120 binaries); `debug = 1` halved it, the cascade stays | workspace | reduced by `ci-speedup` | С.2 |
+| 32 | CI wall 13.0 min in the only log (21 min has none); `ci-speedup` estimates ~9, to confirm on a warm master run | `.github/workflows/ci.yml` | applied, awaits the logs | С.2 |
 | 33 | `font_tests::sources()` misses code after the first `#[cfg(test)]` | kt-app `font_tests.rs` | open | С.2 |
 | 34 | `cargo fmt --all` reformats about 60 files | tree | open | С.2, one commit |
 | 35 | old clippy warnings | kt-gpu, kt-cli, kt-app | unknown | С.2 |
@@ -82,6 +82,8 @@ list may be short of items from them.
 | 61 | dead code warnings; two clippy notes | `kt-app/src/reel_preview.rs:188`, `:265`; `kt-cli/src/main.rs` | open | С.2 |
 | 62 | two chains in a window share probe names | `kt-app/src/deck_face.rs` | open | С.2 |
 | 63 | TEST lines point at the wrong file: `automation` t645 names `auto_plan.rs`; the other specs were not checked | `openspec/specs/*/spec.md` | open | С.2 |
+| 69 | Flathub linter depends on our site answering | `https://kinetren.com` slow: the job fails with `appid-url-not-reachable` | `src/scripts/flatpak-build.sh` | open | С.2 |
+| 70 | live scenarios are most of `finish.sh` | 72 scenarios take 3269 s in a row, at least 817 s on 4 workers, `readme_shots` alone 593 s | `src/scripts/live` | open | С.2 |
 | 45 | Color Grade GPU and CPU add in a different order: 140 channels per 1080p frame differ by 1 | `src/plugins/fx-video-color/src/color_grade.wgsl` | reported by `compute-backends` | not a defect once the math moves to compute |
 
 ## Changes left unfinished
