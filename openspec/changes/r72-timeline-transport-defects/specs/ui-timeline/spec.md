@@ -11,7 +11,7 @@ Why: "in Vegas you can do a fade… by pulling the upper corner"; "fades for aud
 - **THEN** the fade appears inside the event (the body and `source_in` are untouched), a pushed-in one disappears; the level is written as `SetOpacity`/`SetGain`; a fade window without a neighbour is dragged as usual (test 157 holds)
 - **TEST** t173, t176, t157 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Level is reachable on a narrow event through the menu
+#### Scenario: Level is reachable on a narrow event
 - **WHEN** an event 20 px wide
 - **THEN** the fade handles each take a third of the width, the line is drawn from 6 px, the middle moves the event (U5.3 of R.72 took the level gesture off a narrow event, a later word of the owner than R.40) and the event menu has a number field for the same value
 - **TEST** t278 (`src/apps/kt-app/src/layout_tests.rs`)

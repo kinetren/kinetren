@@ -6185,9 +6185,13 @@ impl KtApp {
                     ui.close();
                 }
                 // a composition has no frame of its own to stand on
-                if !self.is_nest(id) && ui.button(tr(k::tl::menu::FRAME_HOLD)).clicked() {
-                    self.insert_frame_hold(id);
-                    ui.close();
+                if !self.is_nest(id) {
+                    let r = ui.button(tr(k::tl::menu::FRAME_HOLD));
+                    crate::widgets::field_probe::note("clip.frame_hold", r.rect);
+                    if r.clicked() {
+                        self.insert_frame_hold(id);
+                        ui.close();
+                    }
                 }
                 {
                     let r = ui.button(tr(k::tl::menu::FX));
